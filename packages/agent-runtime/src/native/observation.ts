@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, type FSWatcher, watch } from 'node:fs';
+import { existsSync, type FSWatcher, statSync, watch } from 'node:fs';
 import { lstat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
@@ -72,6 +72,9 @@ export function assertNativeSourceCurrent(
   throw unavailable;
 }
 
+/** Recursive fs.watch is native on macOS and Windows; on Linux it is per-file and inode-bound. */
+const REARM_EVERY_EVENT = process.platform === 'linux';
+
 interface SourceSnapshot {
   digest: string;
   host: string;
@@ -81,6 +84,7 @@ interface SourceSnapshot {
 /** One process owner per host. Observes durable journal commits, including other processes. */
 export class NativeHostObservation {
   private watchers: FSWatcher[] = [];
+  private armedIdentity = '';
   private receipt: NativeSourceReceipt;
   private snapshot?: SourceSnapshot;
   private accountDigest = '';
@@ -318,14 +322,28 @@ export class NativeHostObservation {
     this.receipt = { ...this.receipt, revision: this.receipt.revision + 1, changed };
     this.publish(this.current());
   }
-  private arm(): void {
-    for (const watcher of this.watchers) watcher.close();
-    this.watchers = [];
+  /** Re-arms only when a watched directory moved, appeared or was replaced. Closing a
+   * recursive watcher blocks the event loop for seconds on a large tree, so unchanged
+   * targets keep their watchers across events. Linux is the exception: Node emulates
+   * recursive watching there with per-file inotify watchers that stay on a replaced file's
+   * old inode, so every event re-arms to follow atomic metadata commits. */
+  private arm(force = true): void {
     const targets = new Map<string, boolean>();
     const root = nearestDirectory(this.client.root);
     targets.set(root, root === this.client.root);
     const configParent = nearestDirectory(dirname(providerAccountsConfigPath(this.home)));
     targets.set(configParent, targets.get(configParent) ?? false);
+    const identity = [...targets]
+      .map(([path, recursive]) => {
+        const stats = statSync(path);
+        return `${path}\0${recursive}\0${stats.dev}:${stats.ino}`;
+      })
+      .join('\n');
+    if (!force && !REARM_EVERY_EVENT && this.watchers.length > 0 && identity === this.armedIdentity)
+      return;
+    for (const watcher of this.watchers) watcher.close();
+    this.watchers = [];
+    this.armedIdentity = identity;
 
     for (const [path, recursive] of targets) {
       const watcher = watch(path, { recursive }, (_event, filename) => {
@@ -351,7 +369,7 @@ export class NativeHostObservation {
     }
     const generation = this.generation;
     try {
-      this.arm();
+      this.arm(false);
       if (this.receipt.ready) await this.fence();
       // Registration changes fail the account fingerprint fence and re-arm the owner.
       // Provider login/keychain state has no reliable subscribed feed. Its one structured

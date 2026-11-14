@@ -45,13 +45,26 @@ function usage(value: unknown): EvalBenchUsage {
   };
 }
 
-/** The operator selects one root; callers cannot supply a filesystem path. */
-async function source(root: string, file: string) {
+function sourceLabel(root: string, file: string): string {
   const requested = path.relative(root, path.resolve(root, file));
-  const label =
-    requested && !requested.startsWith('..') && !path.isAbsolute(requested)
-      ? requested
-      : 'source outside configured dataset';
+  return requested && !requested.startsWith('..') && !path.isAbsolute(requested)
+    ? requested
+    : 'source outside configured dataset';
+}
+
+export async function resolveBenchRoot(rootPath: string): Promise<string> {
+  try {
+    return await realpath(rootPath);
+  } catch {
+    throw new GatewayMethodError(
+      'BENCHMARK_SOURCE_UNREADABLE',
+      'Configured benchmark dataset is unavailable',
+    );
+  }
+}
+
+/** The operator selects one root; callers cannot supply a filesystem path. */
+export async function readBenchText(root: string, file: string) {
   try {
     const resolved = await realpath(path.resolve(root, file));
     const relative = path.relative(root, resolved);
@@ -63,16 +76,27 @@ async function source(root: string, file: string) {
     if ((await stat(resolved)).size > 4 * 1024 * 1024)
       throw new GatewayMethodError('BENCHMARK_SOURCE_INVALID', 'Benchmark record exceeds 4 MiB');
     const text = await readFile(resolved, 'utf8');
-    const value: unknown = JSON.parse(text);
-    return { value, sha256: createHash('sha256').update(text).digest('hex') };
+    return { text, sha256: createHash('sha256').update(text).digest('hex') };
   } catch (error) {
     if (error instanceof GatewayMethodError) throw error;
-    if (error instanceof SyntaxError)
-      throw new GatewayMethodError('BENCHMARK_SOURCE_INVALID', `Invalid benchmark JSON: ${label}`);
     const missing = error instanceof Error && 'code' in error && error.code === 'ENOENT';
     throw new GatewayMethodError(
       missing ? 'ENOENT' : 'BENCHMARK_SOURCE_UNREADABLE',
-      `Benchmark source unreadable: ${label}`,
+      `Benchmark source unreadable: ${sourceLabel(root, file)}`,
+    );
+  }
+}
+
+export async function readBenchSource(root: string, file: string) {
+  const source = await readBenchText(root, file);
+  try {
+    const value: unknown = JSON.parse(source.text);
+    return { value, sha256: source.sha256 };
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    throw new GatewayMethodError(
+      'BENCHMARK_SOURCE_INVALID',
+      `Invalid benchmark JSON: ${sourceLabel(root, file)}`,
     );
   }
 }
@@ -142,16 +166,8 @@ export async function readEvalBench(
 ): Promise<EvalBenchResult> {
   if (!rootPath)
     return { configured: false, dataset: null, trials: [], rollups: [], infraFailures: [] };
-  let root: string;
-  try {
-    root = await realpath(rootPath);
-  } catch {
-    throw new GatewayMethodError(
-      'BENCHMARK_SOURCE_UNREADABLE',
-      'Configured benchmark dataset is unavailable',
-    );
-  }
-  const index = record((await source(root, 'trial-records/index.json')).value, 'index');
+  const root = await resolveBenchRoot(rootPath);
+  const index = record((await readBenchSource(root, 'trial-records/index.json')).value, 'index');
   if (
     index.schema !== 'bench-trial-index/1' ||
     !Array.isArray(index.trials) ||
@@ -161,7 +177,7 @@ export async function readEvalBench(
   let originals: EvalBenchOriginal[] = [];
   try {
     const receipts = record(
-      (await source(root, 'reference-usage.json')).value,
+      (await readBenchSource(root, 'reference-usage.json')).value,
       'original usage receipts',
     );
     if (receipts.schema !== 'bench-reference-usage/1' || !Array.isArray(receipts.originals))
@@ -174,7 +190,7 @@ export async function readEvalBench(
   const trials: EvalBenchTrial[] = [];
   for (const entry of index.trials) {
     const row = record(entry, 'index row');
-    const data = await source(root, string(row.file, 'record file'));
+    const data = await readBenchSource(root, string(row.file, 'record file'));
     const trial = parseBenchTrial(data.value, data.sha256, originals);
     if (trial.runId !== row.runId) throw new Error('Benchmark index and record run IDs differ');
     if (trials.some((t) => t.runId === trial.runId)) throw new Error('Duplicate benchmark run');
@@ -201,3 +217,5 @@ export async function readEvalBench(
     infraFailures,
   };
 }
+
+export { optionalString as benchOptionalString, record as benchRecord };

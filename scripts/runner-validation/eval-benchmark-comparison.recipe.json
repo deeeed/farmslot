@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Read-only benchmark comparison and HTML snapshot",
+  "description": "Use an explicit authenticated gateway profile, FARMSLOT_EVAL_COMPARE_RUN_IDS and FARMSLOT_EVAL_COMPARE_OUTPUT. Optional FARMSLOT_EVAL_COMPARE_EXPECT selects verified, identity-unverified, base-unverified, budget or patch-missing against an isolated fixture dataset. Never modify the operator dataset.",
+  "workflow": {
+    "entry": "provenance-and-bounded-comparison",
+    "nodes": {
+      "provenance-and-bounded-comparison": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/eval-benchmark-comparison.mts",
+        "timeout_ms": 120000,
+        "intent": "Read selected trials through authenticated RPC. Assert full base hashes for verified comparisons, or explicit missing identity, missing patches, unequal bases or budget limits. File filtering and scope must not convert missing evidence into a pass. Export an inert standalone HTML snapshot.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

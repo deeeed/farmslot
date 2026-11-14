@@ -75,7 +75,7 @@
     },
     {
       "key": "services/gateway/src/fleet/state.ts:type-any:: any",
-      "count": 6
+      "count": 7
     },
     {
       "key": "services/gateway/src/index.ts:as-unknown:as unknown",

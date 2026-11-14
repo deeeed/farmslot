@@ -1,0 +1,1 @@
+- Add optional project `default_domain`: the task domain when neither the run, the slot nor the pool names one.
