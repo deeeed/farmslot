@@ -1,0 +1,1 @@
+- Blind trial tools use the retained project pack instead of inheriting the node's live project registry.
