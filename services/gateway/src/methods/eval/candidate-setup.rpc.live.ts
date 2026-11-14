@@ -118,7 +118,8 @@ test('eval RPC freezes the configured default and rejects a stale repeated strat
       taskProfile: 'fix-bug',
       source: reference.source,
       objectiveHash: 'synthetic-objective',
-      problemStatement: 'Correct the example behavior.',
+      problemStatement:
+        'Correct the example behavior.\n\nAcceptance criteria:\n- First authored criterion.\n- Second authored criterion.\n- Third authored criterion.',
       referencePackageId: reference.packageId,
       referencePackageHash: reference.packageHash,
       referencePackagePath,
@@ -151,6 +152,12 @@ test('eval RPC freezes the configured default and rejects a stale repeated strat
   };
   const first = await client.call<EvalTrialStartResult>('eval.trial.start', params);
   assert.ok(first.run);
+  const criteria = [
+    'First authored criterion.',
+    'Second authored criterion.',
+    'Third authored criterion.',
+  ];
+  assert.deepEqual(first.run.ticketData?.acceptanceCriteria, criteria);
   const frozen = first.run.executionTemplate;
   assert.equal(frozen?.relativePath, 'fix-bug/mobile.md');
   assert.equal(first.candidatePackage.axes.template?.hash, frozen?.sha256);

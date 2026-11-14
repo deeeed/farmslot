@@ -32,7 +32,6 @@ import {
   type ResultPackageManifest,
   type Run,
   type RunStartRefSource,
-  type RunTicketData,
   type TemplateProvenance,
 } from '@farmslot/protocol';
 
@@ -88,6 +87,7 @@ import {
   resolveEvalSource,
   writeMergedPrInputs,
 } from './eval/source-resolution.js';
+import { buildBlindTicketData } from './eval/ticket-data.js';
 import { runCreate } from './run.js';
 
 const DEFAULT_RUBRIC_ID = 'eval-default';
@@ -667,21 +667,6 @@ async function writeCandidateInputs(input: {
       source: input.startRefAuto ? 'eval-reference' : 'eval-candidate',
     });
   }
-}
-
-function buildBlindTicketData(problem: string, acceptanceCriteria?: string[]): RunTicketData {
-  return {
-    source: 'manual',
-    title: problem.split('\n')[0].slice(0, 200),
-    description: problem,
-    acceptanceCriteria: acceptanceCriteria
-      ? [...acceptanceCriteria]
-      : ['Satisfy the supplied problem statement and retain local artifacts.'],
-    affectedArea: 'eval',
-    stepsToReproduce: [],
-    screenshots: [],
-    labels: ['eval', 'artifact-only'],
-  };
 }
 
 export async function evalTrialStart(
