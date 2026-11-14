@@ -73,6 +73,8 @@ export interface RemoteNodeStackOptions {
   nodeEnv?: NodeJS.ProcessEnv;
   /** Exercise the default-off node link in this owned fixture only. */
   nodeLink?: boolean;
+  /** Newly allocated caller-owned writable state, already registered with the reaper; cleaned with this stack. */
+  workerRoot?: string;
   machine: string;
   /** Slot ids; each starts with `<project>-` and belongs to that project's pool. */
   slots: string[];
@@ -380,10 +382,12 @@ export async function startRemoteNodeStack(
   const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
   const tmuxSocket = path.join(tmuxDir, `tmux-${uid}`, 'default');
   const baseEnv = childEnv(fakeBin, tmuxDir);
+  const ownedRoots = [fixture, ...(options.workerRoot ? [options.workerRoot] : [])];
+  const ownsCommand = (command: string) => ownedRoots.some((owned) => command.includes(owned));
   // Only ever the stack's own socket: without -S a missing tmux directory falls back to /tmp.
   reaper.command(['tmux', '-S', tmuxSocket, 'kill-server'], baseEnv);
   // Native supervisors and runners are detached from the stack's groups; they all name the fixture.
-  reaper.command(['pkill', '-KILL', '-f', fixture], baseEnv);
+  for (const owned of ownedRoots) reaper.command(['pkill', '-KILL', '-f', owned], baseEnv);
   const createdLinks: string[] = [];
   const link = async (target: string, at: string) => {
     await symlink(target, at);
@@ -452,9 +456,7 @@ export async function startRemoteNodeStack(
           // Cancellation can stop the private server before its socket disappears.
           // Only an already-empty owned fixture makes that cleanup complete.
           if (
-            listProcesses().some(
-              (entry) => entry.command.includes(fixture) && entry.pid !== process.pid,
-            )
+            listProcesses().some((entry) => ownsCommand(entry.command) && entry.pid !== process.pid)
           )
             throw error;
         }
@@ -463,7 +465,7 @@ export async function startRemoteNodeStack(
     // Anything left that names the fixture (runners, held fixture calls) is reported and killed.
     await attempt('leftovers', async () => {
       const left = listProcesses().filter(
-        ({ pid, command }) => command.includes(fixture) && pid !== process.pid,
+        ({ pid, command }) => ownsCommand(command) && pid !== process.pid,
       );
       for (const { pid, command } of left) {
         errors.push(`leftover ${pid} ${command.slice(0, 160)}`);
@@ -478,14 +480,16 @@ export async function startRemoteNodeStack(
     for (const at of createdLinks)
       if ((await lstat(at).catch(() => undefined))?.isSymbolicLink()) await unlink(at);
     // A process that exited during the removal can still write into it: remove until it stays gone.
-    await attempt('fixture', async () => {
-      const until = Date.now() + 5000;
-      do {
-        await rm(fixture, { recursive: true, force: true });
-        await delay(250);
-      } while (existsSync(fixture) && Date.now() < until);
-      if (existsSync(fixture)) throw new Error(`${fixture} keeps reappearing`);
-    });
+    for (const owned of ownedRoots) {
+      await attempt(owned === fixture ? 'fixture' : 'worker fixture', async () => {
+        const until = Date.now() + 5000;
+        do {
+          await rm(owned, { recursive: true, force: true });
+          await delay(250);
+        } while (existsSync(owned) && Date.now() < until);
+        if (existsSync(owned)) throw new Error(`${owned} keeps reappearing`);
+      });
+    }
     return errors;
   };
   let stopping: Promise<string[]> | undefined;
@@ -511,8 +515,9 @@ export async function startRemoteNodeStack(
     await cp(path.join(root, '.gitignore'), path.join(fixture, '.gitignore'));
     await mkdir(path.join(home, 'run-archive'), { recursive: true, mode: 0o700 });
     await mkdir(nodeHome, { recursive: true, mode: 0o700 });
-    for (const name of ['pool', 'node-pool', 'runs', 'slots', 'bin', 'holds', 'origins', 'seeds'])
+    for (const name of ['pool', 'node-pool', 'runs', 'bin', 'holds', 'origins', 'seeds'])
       await mkdir(path.join(fixture, name));
+    await mkdir(path.join(options.workerRoot ?? fixture, 'slots'));
     await mkdir(tmuxDir, { mode: 0o700 });
 
     // ---- homes
@@ -619,7 +624,7 @@ export async function startRemoteNodeStack(
       );
       git(fixture, 'clone', '-q', '--bare', seed, origin(pack.name));
     }
-    const slotRepo = (slotId: string) => path.join(fixture, 'slots', slotId);
+    const slotRepo = (slotId: string) => path.join(options.workerRoot ?? fixture, 'slots', slotId);
     const projectOf = (slotId: string) => {
       const pack = packs.find((candidate) => slotId.startsWith(`${candidate.name}-`));
       if (!pack) throw new Error(`Slot ${slotId} belongs to no project`);
@@ -834,7 +839,13 @@ export async function startRemoteNodeStack(
       },
       120_000,
     );
-    await log('stack ready', { fixture, port, machine, slots: options.slots.length });
+    await log('stack ready', {
+      fixture,
+      workerRoot: options.workerRoot,
+      port,
+      machine,
+      slots: options.slots.length,
+    });
 
     return {
       fixture,
