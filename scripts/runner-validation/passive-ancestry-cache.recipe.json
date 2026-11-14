@@ -9,7 +9,7 @@
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx services/gateway/src/host-services/workspace-metadata.live.ts --assert-budget --assert-ancestry-budget",
         "timeout_ms": 240000,
-        "intent": "Replay the same 67-slot/two-node workload with actual production node handlers. Assert at most75 total executions per logical minute and preserve the 90-second workspace refresh, negative ancestry and node-replacement behavior.",
+        "intent": "Replay the same 67-slot/two-node workload with actual production node handlers. Assert at most75 total executions per logical minute and preserve the 90-second workspace refresh, negative ancestry and node-replacement behavior. Invalidate an actual outstanding ancestry query and prove its completion cannot seed a later hit.",
         "next": "dispatch-smoke"
       },
       "dispatch-smoke": {

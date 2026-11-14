@@ -21,6 +21,7 @@ function relativeTo(directory: string, file: string): string {
 export async function localWorkspaceVersion(
   vars: WorkspaceVersionSource,
   defaultBranch: string,
+  previous?: WorkspaceMetadataVersion,
 ): Promise<WorkspaceMetadataVersion | undefined> {
   const marker = path.posix.join(vars.remoteRepo, policy.marker);
   if (!(await slotFileExists(vars, marker))) return undefined;
@@ -76,10 +77,25 @@ export async function localWorkspaceVersion(
     refValue,
     metadata,
   ]);
-  return {
-    version,
-    ancestryCacheable: policy.files.every(
-      (file, index) => !file.blocksAncestryCache || metadata[index] === null,
-    ),
-  };
+  // Reuse the packed-ref index only when the complete metadata generation is unchanged.
+  if (previous?.version === version) return previous;
+  let ancestryCacheable = policy.files.every(
+    (file, index) => !file.blocksAncestryCache || metadata[index] === null,
+  );
+  const packedIndex = policy.files.findIndex(
+    (file) => file.directory === 'common' && file.path === policy.packedRefs,
+  );
+  if (ancestryCacheable && metadata[packedIndex] != null) {
+    const packed = await slotReadFile(vars, path.posix.join(commonDir, policy.packedRefs));
+    ancestryCacheable = !packed.split('\n').some((line) => {
+      if (line.startsWith('#') || line.startsWith('^')) return false;
+      return (
+        line
+          .trim()
+          .split(/\s+/, 2)[1]
+          ?.startsWith(policy.replacementRefs + '/') === true
+      );
+    });
+  }
+  return { version, ancestryCacheable };
 }

@@ -1,12 +1,16 @@
 import { shellQuote } from '../../core/tmux.js';
 
-import { WORKSPACE_METADATA_POLICY } from './workspace-metadata-policy.js';
+import {
+  WORKSPACE_METADATA_POLICY,
+  type WorkspaceMetadataVersion,
+} from './workspace-metadata-policy.js';
 
 export interface WorkspaceMetadataRoot {
   slotId: string;
   machine: string;
   repo: string;
   defaultBranch: string;
+  previous?: WorkspaceMetadataVersion;
 }
 
 /** Trusted passive probe, like workspace-probe. General node filesystem .git access stays denied. */
@@ -45,7 +49,18 @@ def version(root):
   else:
    value=file.lstat();metadata.append([value.st_mtime_ns/1000000,value.st_size])
  fingerprint=json.dumps([root['machine'],repo,default,os.path.normpath(gitdir),os.path.normpath(common),info.st_mtime_ns/1000000,info.st_size,head,refvalue,metadata],separators=(',',':'))
- return dict(version=fingerprint,ancestryCacheable=all(not entry.get('blocksAncestryCache') or metadata[index] is None for index,entry in enumerate(policy['files'])))
+ previous=root.get('previous')
+ if previous and previous.get('version')==fingerprint: return previous
+ cacheable=all(not entry.get('blocksAncestryCache') or metadata[index] is None for index,entry in enumerate(policy['files']))
+ packed_index=next(index for index,entry in enumerate(policy['files']) if entry['directory']=='common' and entry['path']==policy['packedRefs'])
+ if cacheable and metadata[packed_index] is not None:
+  with pathlib.Path(common,policy['packedRefs']).open() as stream:
+   for line in stream:
+    if line.startswith(('#','^')): continue
+    fields=line.split()
+    if len(fields)==2 and fields[1].startswith(policy['replacementRefs']+'/'):
+     cacheable=False;break
+ return dict(version=fingerprint,ancestryCacheable=cacheable)
 
 rows=[]
 for root in json.loads(sys.argv[1]):

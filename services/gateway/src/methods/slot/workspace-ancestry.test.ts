@@ -194,3 +194,22 @@ test('a replacement connection cannot reuse or receive the old flight positive',
   await read(q);
   assert.equal(calls.length, count + 1, 'old flight must not populate a replacement cache');
 });
+
+test('invalidating an outstanding query prevents its completion from restoring a positive', async () => {
+  const q = query();
+  let release: (value: ExecResult) => void = () => assert.fail('missing release');
+  paused = new Promise((resolve) => {
+    release = resolve;
+  });
+  const pending = read(q);
+  invalidate(q.vars.slotId);
+  release({ exitCode: 0, stdout: '', stderr: '' });
+  try {
+    await pending;
+  } finally {
+    paused = undefined;
+  }
+  const before = calls.length;
+  await read(q);
+  assert.equal(calls.length, before + 1, 'the invalidated flight must not seed a later hit');
+});

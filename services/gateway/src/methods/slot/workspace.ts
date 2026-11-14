@@ -372,7 +372,7 @@ interface WorkspaceInspection {
   pending: boolean;
   until: number;
   promise: Promise<SlotWorkspace>;
-  version?: string;
+  metadata?: WorkspaceMetadataVersion;
   workspace?: SlotWorkspace;
   error?: string;
   retryAt?: number;
@@ -438,9 +438,18 @@ export async function observeSlotWorkspaces(
   slots: readonly SlotStatus[],
   inventory: readonly SlotStatus[] = slots,
 ): Promise<SlotStatus[]> {
+  const previousMetadata = new Map<string, WorkspaceMetadataVersion>();
+  for (const slot of inventory) {
+    const cached = inspections.get(slot.slot);
+    if (cached?.metadata && cached.connection === getNode(slot.machine)?.ws)
+      previousMetadata.set(slot.slot, cached.metadata);
+  }
   let versions: Promise<Map<string, WorkspaceMetadataVersion>> | undefined;
   const metadata = () =>
-    (versions ??= passiveWorkspaceVersions(inventory.filter(workspaceObservable)));
+    (versions ??= passiveWorkspaceVersions(
+      inventory.filter(workspaceObservable),
+      previousMetadata,
+    ));
   return Promise.all(
     slots.map(async (slot) => {
       if (!workspaceObservable(slot)) return { ...slot, workspace: undefined };
@@ -470,7 +479,6 @@ export async function observeSlotWorkspaces(
       ) {
         const previous = cached;
         const bindingKey = workspaceObservationKey(slot, 'binding');
-        let inspectionMetadata: WorkspaceMetadataVersion | undefined;
         const inspect = () =>
           inspectSlotWorkspace(
             slot.slot,
@@ -478,16 +486,15 @@ export async function observeSlotWorkspaces(
               network: slot.lifecycle !== 'busy' && slot.agent !== 'working',
               passive: true,
             },
-            inspectionMetadata,
+            entry.metadata,
           );
         const promise = Promise.resolve().then(async () => {
-          inspectionMetadata = (await metadata()).get(slot.slot);
-          entry.version = inspectionMetadata?.version;
+          entry.metadata = (await metadata()).get(slot.slot);
           if (
             previous?.key === key &&
             previous.until !== 0 &&
             previous.connection === connection &&
-            previous.version === entry.version &&
+            previous.metadata?.version === entry.metadata?.version &&
             previous.retryAt !== undefined &&
             previous.retryAt > Date.now()
           ) {
@@ -500,8 +507,8 @@ export async function observeSlotWorkspaces(
           if (
             previous?.bindingKey === bindingKey &&
             previous.until !== 0 &&
-            entry.version !== undefined &&
-            previous.version === entry.version &&
+            entry.metadata?.version !== undefined &&
+            previous.metadata?.version === entry.metadata?.version &&
             retained &&
             !retained.error &&
             Date.now() - Date.parse(retained.observedAt) < PASSIVE_WORKSPACE_MAX_AGE_MS

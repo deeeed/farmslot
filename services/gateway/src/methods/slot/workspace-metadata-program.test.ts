@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -109,4 +109,68 @@ test('local and remote metadata bypass ancestry caches for shallow, grafted and 
     assert.equal(await remote(), false, file);
     await rm(target, { recursive: true, force: true });
   }
+});
+
+test('packed-only replacement refs in a linked common repository disable local and remote reuse', async (t) => {
+  const { localWorkspaceVersion } = await import('./workspace-version.js');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'metadata-packed-replace-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'linked'),
+    common = path.join(root, 'shared'),
+    gitDir = path.join(common, 'worktrees/linked');
+  await mkdir(repo);
+  await mkdir(gitDir, { recursive: true });
+  await writeFile(path.join(repo, '.git'), `gitdir: ${gitDir}\n`);
+  await writeFile(path.join(gitDir, 'commondir'), '../..\n');
+  await writeFile(path.join(gitDir, 'HEAD'), 'a'.repeat(40) + '\n');
+  await writeFile(
+    path.join(common, 'packed-refs'),
+    '# pack-refs with: peeled fully-peeled sorted\n' +
+      'b'.repeat(40) +
+      ' refs/replace/' +
+      'a'.repeat(40) +
+      '\n',
+  );
+  const vars = { host: 'localhost', machine: 'fixture', sshTarget: '', remoteRepo: repo };
+  const local = await localWorkspaceVersion(vars, 'main');
+  assert.ok(local);
+  const readRemote = async (previous?: typeof local) => {
+    const result = await execLocal(
+      workspaceMetadataCommand([
+        { slotId: 'packed', machine: 'fixture', repo, defaultBranch: 'main', previous },
+      ]),
+      { timeout: 1000 },
+    );
+    assert.equal(result.exitCode, 0, result.stderr);
+    const rows: unknown = JSON.parse(result.stdout);
+    assert.ok(Array.isArray(rows));
+    const row: unknown = rows[0];
+    assert.ok(
+      isRecord(row) &&
+        typeof row.version === 'string' &&
+        typeof row.ancestryCacheable === 'boolean',
+    );
+    return { version: row.version, ancestryCacheable: row.ancestryCacheable };
+  };
+  const remote = await readRemote();
+  assert.deepEqual(
+    { local: local.ancestryCacheable, remote: remote.ancestryCacheable },
+    { local: false, remote: false },
+  );
+  const packed = path.join(common, 'packed-refs');
+  // chmod changes neither mtime nor size: unchanged generations must not rescan file contents.
+  await chmod(packed, 0o000);
+  try {
+    assert.deepEqual(await localWorkspaceVersion(vars, 'main', local), local);
+    assert.deepEqual(await readRemote(remote), remote);
+  } finally {
+    await chmod(packed, 0o600);
+  }
+  await writeFile(packed, 'c'.repeat(40) + ' refs/heads/main\n');
+  assert.equal((await localWorkspaceVersion(vars, 'main', local))?.ancestryCacheable, true);
+  assert.equal(
+    (await readRemote(remote)).ancestryCacheable,
+    true,
+    'changed packed refs must be read again',
+  );
 });

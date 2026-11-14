@@ -27,7 +27,7 @@ interface PositiveAncestry {
   key: string;
   connection: ConnectedNode['ws'] | undefined;
   until: number;
-  result: ExecResult;
+  result?: ExecResult;
 }
 const positives = new Map<string, PositiveAncestry>();
 const POSITIVE_TTL_MS = 10 * 60_000;
@@ -74,25 +74,42 @@ export async function readDefaultWorkspaceAncestry(
     reusable &&
     cached?.key === key &&
     cached.connection === connection &&
-    cached.until > Date.now()
+    cached.until > Date.now() &&
+    cached.result !== undefined
   )
     return cached.result;
   // Do not let a missing/unsupported metadata observation revive an earlier positive later.
   if (query.passive) positives.delete(vars.slotId);
   const head = reusable ? shellQuote(query.headSha) : 'HEAD';
-  const result = await readSlotCommand(
-    vars,
-    withFarmGitConfig(
-      `git -C ${shellQuote(vars.remoteRepo)} merge-base --is-ancestor ${head} ${shellQuote(query.baseSha)}`,
-    ),
-    { timeout: timeoutMs, cwd: '/' },
-  );
-  if (reusable && result.exitCode === 0 && getNode(vars.machine)?.ws === connection) {
+  const flight: PositiveAncestry | undefined = reusable ? { key, connection, until: 0 } : undefined;
+  if (flight) {
     if (positives.size >= MAX_SLOTS) {
       const oldest = positives.keys().next().value;
       if (oldest !== undefined) positives.delete(oldest);
     }
-    positives.set(vars.slotId, { key, connection, result, until: Date.now() + POSITIVE_TTL_MS });
+    positives.set(vars.slotId, flight);
   }
-  return result;
+  try {
+    const result = await readSlotCommand(
+      vars,
+      withFarmGitConfig(
+        `git -C ${shellQuote(vars.remoteRepo)} merge-base --is-ancestor ${head} ${shellQuote(query.baseSha)}`,
+      ),
+      { timeout: timeoutMs, cwd: '/' },
+    );
+    // This object is also the flight's invalidation token. Deletion or replacement wins.
+    if (
+      flight &&
+      result.exitCode === 0 &&
+      getNode(vars.machine)?.ws === connection &&
+      positives.get(vars.slotId) === flight
+    ) {
+      flight.result = result;
+      flight.until = Date.now() + POSITIVE_TTL_MS;
+    }
+    return result;
+  } finally {
+    if (flight && !flight.result && positives.get(vars.slotId) === flight)
+      positives.delete(vars.slotId);
+  }
 }

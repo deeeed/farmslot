@@ -305,6 +305,43 @@ try {
   assert.ok(replacementRead);
   assert.equal((await replacementRead).stdout, String(replacementPid));
   console.log(JSON.stringify({ pendingReplacementSeparated: true, oldPid, replacementPid }));
+  if (ancestryBudget) {
+    const { passiveWorkspaceVersions } = await import('../methods/slot/workspace-metadata.js');
+    const { readDefaultWorkspaceAncestry, invalidatePassiveDefaultAncestry } =
+      await import('../methods/slot/workspace-ancestry.js');
+    const metadata = (await passiveWorkspaceVersions(fleet.slots)).get(vars.slotId);
+    assert.equal(metadata?.ancestryCacheable, true);
+    const query = {
+      vars,
+      headSha: oldHead,
+      baseSha: currentHead,
+      originKey: 'invalidation-control',
+      ownership: {
+        epoch: 1,
+        currentRunId: null,
+        cleanupRunId: null,
+        handoffRunId: null,
+        recoveryId: null,
+      },
+      metadata,
+      passive: true,
+      timeoutMs: 5000,
+    };
+    invalidatePassiveDefaultAncestry(vars.slotId);
+    const beforeInvalidation = total();
+    const flight = readDefaultWorkspaceAncestry(query);
+    // The actual node command is async; invalidate before it can complete, without a fake executor.
+    invalidatePassiveDefaultAncestry(vars.slotId);
+    assert.equal((await flight).exitCode, 0);
+    assert.equal((await readDefaultWorkspaceAncestry(query)).exitCode, 0);
+    assert.equal((await readDefaultWorkspaceAncestry(query)).exitCode, 0);
+    assert.equal(
+      total() - beforeInvalidation,
+      2,
+      'an invalidated ancestry flight cannot seed a later hit',
+    );
+    console.log(JSON.stringify({ pendingAncestryInvalidationSeparated: true, actualCommands: 2 }));
+  }
 } finally {
   mock.timers.reset();
   for (const socket of sockets) unregister?.(socket);

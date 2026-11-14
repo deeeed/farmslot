@@ -23,6 +23,7 @@ import { localWorkspaceVersion } from './workspace-version.js';
 interface MetadataQuery {
   vars: SlotVars;
   root: WorkspaceMetadataRoot;
+  previous?: WorkspaceMetadataVersion;
 }
 interface MetadataBatch {
   key: string;
@@ -42,7 +43,10 @@ async function remoteVersions(
   const connection = getNode(first.vars.machine)?.ws;
   if (!connection) return new Map();
   queries.sort((a, b) => a.root.slotId.localeCompare(b.root.slotId));
-  const roots = queries.map((query) => query.root);
+  const roots = queries.map((query) => ({
+    ...query.root,
+    ...(query.previous ? { previous: query.previous } : {}),
+  }));
   const key = JSON.stringify(queries.map(({ vars, root }) => [vars.host, root]));
   const cached = batches.get(first.vars.machine);
   if (
@@ -106,6 +110,7 @@ async function remoteVersions(
 /** All passive roots share one metadata command per remote node per interval. */
 export async function passiveWorkspaceVersions(
   slots: readonly SlotStatus[],
+  previous: ReadonlyMap<string, WorkspaceMetadataVersion> = new Map(),
 ): Promise<Map<string, WorkspaceMetadataVersion>> {
   // A scoped owner/source must never join a machine-wide read or cache.
   if (currentSlotCommandExecutor() || currentProjectSources()) return new Map();
@@ -118,6 +123,7 @@ export async function passiveWorkspaceVersions(
           getProjectField(project.projectJson, 'default_branch') || DEFAULT_BRANCH;
         return {
           vars,
+          previous: previous.get(slot.slot),
           root: { slotId: slot.slot, machine: vars.machine, repo: vars.remoteRepo, defaultBranch },
         };
       } catch {
@@ -133,7 +139,11 @@ export async function passiveWorkspaceVersions(
       if (!query) return;
       if (slotFilesReadInProcess(query.vars)) {
         try {
-          const version = await localWorkspaceVersion(query.vars, query.root.defaultBranch);
+          const version = await localWorkspaceVersion(
+            query.vars,
+            query.root.defaultBranch,
+            query.previous,
+          );
           if (version !== undefined) versions.set(query.root.slotId, version);
         } catch {
           // An unreadable local checkout follows the same authoritative fallback as a remote one.
