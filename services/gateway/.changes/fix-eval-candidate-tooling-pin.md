@@ -1,0 +1,1 @@
+- Add remote node initialization proof for trial-local candidate templates and retained tooling.

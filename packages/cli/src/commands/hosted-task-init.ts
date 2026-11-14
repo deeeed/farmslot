@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
+import os from 'node:os';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -480,6 +481,7 @@ export async function runHostedTaskInit(inputFile: string): Promise<TaskInitResu
   if (!/^\.task-init-[0-9a-f-]{36}\.json$/.test(path.basename(file)))
     throw refusal('Only owned temporary task-init transport files are accepted.');
   const stat = fs.lstatSync(file);
+  let candidateSourceDir: string | undefined;
   try {
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 8 * 1024 * 1024)
       throw refusal('Hosted task request must be a regular file of at most 8 MiB.');
@@ -565,7 +567,9 @@ export async function runHostedTaskInit(inputFile: string): Promise<TaskInitResu
       request,
     );
     if (request.template.candidate) {
-      fs.mkdirSync(path.dirname(selected.entry.path), { recursive: true });
+      // Tooling pins exclude task outputs; stage the source outside that tree.
+      candidateSourceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'farmslot-candidate-template-'));
+      selected.entry.path = path.join(candidateSourceDir, 'candidate-template.md');
       fs.writeFileSync(selected.entry.path, request.template.candidate.markdown);
     }
     const {
@@ -616,7 +620,7 @@ export async function runHostedTaskInit(inputFile: string): Promise<TaskInitResu
         throw refusal('Static tasks cannot discard a declared provider or marker policy.');
       const scripted =
         request.runner === 'scripted' && process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS === '1';
-      return produce({
+      return await produce({
         ...installation,
         ...(scripted ? { reuseInstalledInputs: true } : {}),
         bindingIdentity: null,
@@ -629,7 +633,7 @@ export async function runHostedTaskInit(inputFile: string): Promise<TaskInitResu
       });
     }
     const host = await hostedTaskRecipeHostOptions(slot);
-    return shared.withProjectRecipeHost(host, async (selectedHost) => {
+    return await shared.withProjectRecipeHost(host, async (selectedHost) => {
       if (
         !selectedHost.provider.commandOptions?.task ||
         !Array.isArray(selectedHost.provider.commandOptions.task.stepGates)
@@ -639,6 +643,7 @@ export async function runHostedTaskInit(inputFile: string): Promise<TaskInitResu
       return produce(execution);
     });
   } finally {
+    if (candidateSourceDir) fs.rmSync(candidateSourceDir, { recursive: true, force: true });
     if (stat.isFile() || stat.isSymbolicLink()) fs.rmSync(file, { force: true });
   }
 }
