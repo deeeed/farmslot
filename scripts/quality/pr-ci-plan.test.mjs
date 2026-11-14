@@ -139,3 +139,50 @@ test('full validation supplements docs and suites omitted by package quality', a
     false,
   );
 });
+
+test('PR scope excludes main advances present in the synthetic merge checkout', async (t) => {
+  const { execFileSync } = await import('node:child_process');
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const path = await import('node:path');
+  const { GIT_LOCATION_ENV } = await import('./run-tsx-tests.mjs');
+  const { prChangedFiles } = await import('./pr-ci-plan.mjs');
+  const root = mkdtempSync(path.join(tmpdir(), 'pr-change-range-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const env = { ...process.env };
+  for (const name of GIT_LOCATION_ENV) delete env[name];
+  const git = (...args) =>
+    execFileSync('git', args, {
+      cwd: root,
+      env,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+  git('init', '-q', '-b', 'main');
+  for (const [key, value] of [
+    ['user.name', 'Test'],
+    ['user.email', 'test@example.invalid'],
+    ['commit.gpgsign', 'false'],
+    ['core.hooksPath', '/dev/null'],
+  ])
+    git('config', key, value);
+  git('commit', '-q', '--allow-empty', '-m', 'base');
+  const base = git('rev-parse', 'HEAD');
+  git('checkout', '-q', '-b', 'pr');
+  mkdirSync(path.join(root, 'scripts/quality'), { recursive: true });
+  writeFileSync(path.join(root, 'scripts/quality/change.mjs'), 'export {};\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'CI change');
+  const head = git('rev-parse', 'HEAD');
+  git('checkout', '-q', 'main');
+  writeFileSync(path.join(root, 'upstream.ts'), 'export {};\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'main advance');
+  git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  git('merge', '-q', '--no-edit', 'pr');
+  assert.match(git('diff', '--name-only', `${base}...HEAD`), /upstream\.ts/);
+  assert.deepEqual(
+    prChangedFiles(root, { base: { ref: 'main', sha: base }, head: { sha: head } }),
+    ['scripts/quality/change.mjs'],
+  );
+});

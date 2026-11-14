@@ -5,6 +5,7 @@ import path from 'node:path';
 import { isMainModule } from './lib/step-timing.mjs';
 import { ownerOf, readGraph, selectAffectedTests } from './affected-tests.mjs';
 import { ciParitySteps } from './ci-local.mjs';
+import { GIT_LOCATION_ENV } from './run-tsx-tests.mjs';
 import {
   affectedWorkspaceNames,
   isCiControlFile,
@@ -337,6 +338,20 @@ export function createPrPlan({ root, changed, workspaces, selected, durations = 
   return { schemaVersion: 1, changed, selected, jobs };
 }
 
+export function prChangedFiles(root, pullRequest) {
+  const env = { ...process.env };
+  for (const name of GIT_LOCATION_ENV) delete env[name];
+  // The checked-out synthetic merge can include main commits newer than the
+  // event's base SHA. Compare the PR head against the fetched base branch.
+  const result = spawnSync(
+    'git',
+    ['diff', '--name-only', '-z', `origin/${pullRequest.base.ref}...${pullRequest.head.sha}`],
+    { cwd: root, env, encoding: 'utf8' },
+  );
+  if (result.status !== 0) throw new Error(`Cannot determine PR changes: ${result.stderr}`);
+  return result.stdout.split('\0').filter(Boolean);
+}
+
 if (isMainModule(import.meta.url)) {
   const root = process.cwd();
   const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
@@ -375,7 +390,7 @@ if (isMainModule(import.meta.url)) {
       );
       if (files.length < 100) break;
     }
-  } else changed = git(['diff', '--name-only', '-z', `${base}...HEAD`]);
+  } else changed = prChangedFiles(root, event.pull_request);
   const workspaces = workspaceTestCatalog(root);
   const graph = readGraph(root, files, workspaces);
   const selected = selectAffectedTests({ files, changed, workspaces, graph });
