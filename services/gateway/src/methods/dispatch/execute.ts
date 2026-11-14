@@ -55,6 +55,7 @@ import {
   resolveTmuxPaneId,
   resolveTmuxSession,
   shellQuote,
+  tmuxFieldFormat,
   tmuxShellSnippet,
 } from '../../core/tmux.js';
 import { writeTmuxLaunchScript } from '../../core/tmux-launch-script.js';
@@ -211,7 +212,11 @@ async function captureAgentPaneTarget(
     await execOnSlot(
       vars,
       tmuxShellSnippet(
-        `display-message -p -t ${shellQuote(target)} '#{session_name}:#{window_index}.#{pane_index}|#{window_name}|#{pane_id}' 2>/dev/null`,
+        `display-message -p -t ${shellQuote(target)} '${tmuxFieldFormat(
+          '#{session_name}:#{window_index}.#{pane_index}',
+          '#{window_name}',
+          '#{pane_id}',
+        )}' 2>/dev/null`,
       ),
     )
   ).stdout.trim();
@@ -347,6 +352,9 @@ async function cleanupDeadPanesInSession(
       `
 list-windows -t ${shellQuote(session)} -F '#I' 2>/dev/null | while IFS= read -r win; do
   [ -n "$win" ] || continue
+  # Both fields are integers and \`read\` splits on whitespace, so a space cannot
+  # ambiguate them; this format stays as it is rather than moving to the shared
+  # separator, which would mean reworking the loop into awk for no defect.
   "$TMUX_BIN" list-panes -t ${shellQuote(session)}:"$win" -F '#{pane_index} #{pane_dead}' 2>/dev/null | while read -r pane dead; do
     if [ "$dead" = "1" ]; then
       "$TMUX_BIN" kill-pane -t ${shellQuote(session)}:"$win"."$pane" 2>/dev/null || true

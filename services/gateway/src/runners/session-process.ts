@@ -8,7 +8,7 @@ import {
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { EXEC_TIMEOUT_EXIT_CODE, execOnSlot, type ExecOnSlotOptions } from '../core/exec.js';
-import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
+import { shellQuote, splitTmuxFields, tmuxFieldFormat, tmuxShellSnippet } from '../core/tmux.js';
 import { NodeRpcTimeoutError } from '../fleet/node-rpc.js';
 
 import {
@@ -1382,7 +1382,13 @@ export async function resolveRetainedRunnerPane(
   const listed = await exec(
     vars,
     tmuxShellSnippet(
-      `list-panes -s -t ${shellQuote(session)} -F '#{window_index}|#{window_name}|#{pane_index}|#{pane_pid}|#{window_activity}' 2>/dev/null`,
+      `list-panes -s -t ${shellQuote(session)} -F '${tmuxFieldFormat(
+        '#{window_index}',
+        '#{window_name}',
+        '#{pane_index}',
+        '#{pane_pid}',
+        '#{window_activity}',
+      )}' 2>/dev/null`,
     ),
     { timeout: 10_000 },
   );
@@ -1402,7 +1408,7 @@ export async function resolveRetainedRunnerPane(
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => {
-      const [windowIndex, windowName, paneIndex, panePid, activityRaw] = line.split('|');
+      const [windowIndex, windowName, paneIndex, panePid, activityRaw] = splitTmuxFields(line, 5);
       return {
         windowIndex: windowIndex || '',
         windowName: windowName || '',

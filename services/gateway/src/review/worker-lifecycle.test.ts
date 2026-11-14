@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
 import type { SlotVars } from '../core/config.js';
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux.js';
 
 const vars = { slotId: 'macwork-mm-2', remoteRepo: '/tmp/repo' } as SlotVars;
 const issuedCommands: string[] = [];
@@ -30,10 +31,14 @@ mock.module('../core/exec.js', {
       if (cmdIncludes(cmd, "list-panes -a -F '#{session_name}")) {
         const windows: string[] = [];
         if (issuedCommands.some((command) => cmdIncludes(command, "-n 'dev'"))) {
-          windows.push('mm-2\tdev\t@201\t2\t100\t%201\t2201');
+          windows.push(
+            `mm-2${TMUX_FIELD_SEPARATOR}dev${TMUX_FIELD_SEPARATOR}@201${TMUX_FIELD_SEPARATOR}2${TMUX_FIELD_SEPARATOR}100${TMUX_FIELD_SEPARATOR}%201${TMUX_FIELD_SEPARATOR}2201`,
+          );
         }
         if (issuedCommands.some((command) => cmdIncludes(command, "-n 'review'"))) {
-          windows.push('mm-2\treview\t@202\t3\t101\t%202\t2202');
+          windows.push(
+            `mm-2${TMUX_FIELD_SEPARATOR}review${TMUX_FIELD_SEPARATOR}@202${TMUX_FIELD_SEPARATOR}3${TMUX_FIELD_SEPARATOR}101${TMUX_FIELD_SEPARATOR}%202${TMUX_FIELD_SEPARATOR}2202`,
+          );
         }
         return { exitCode: 0, stdout: windows.join('\n'), stderr: '' };
       }

@@ -4,6 +4,7 @@ import { mock, test } from 'node:test';
 import type { AgentContext, Run } from '@farmslot/protocol';
 
 import { withSlotCommandExecutor } from '../core/exec-scope.js';
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
@@ -48,7 +49,8 @@ mock.module('../core/exec.js', {
       return {
         exitCode: 0,
         stdout: command.includes('list-panes')
-          ? (paneInventory ?? `${paneSession}\t1\tdev\t1\t%1\t101\tbash\t/repo\n`)
+          ? (paneInventory ??
+            `${paneSession}${TMUX_FIELD_SEPARATOR}1${TMUX_FIELD_SEPARATOR}dev${TMUX_FIELD_SEPARATOR}1${TMUX_FIELD_SEPARATOR}%1${TMUX_FIELD_SEPARATOR}101${TMUX_FIELD_SEPARATOR}bash${TMUX_FIELD_SEPARATOR}/repo\n`)
           : '',
         stderr: '',
       };
@@ -223,7 +225,7 @@ test('recovery never adopts the log pane after boot failed before a pi worker la
   worker.runnerSessionPath = null;
   runnerAlive = false;
   observed = null;
-  paneInventory = 'slot-1\t2\tdevserver-log\t1\t%250\t88042\ttail\t/repo\n';
+  paneInventory = `slot-1${TMUX_FIELD_SEPARATOR}2${TMUX_FIELD_SEPARATOR}devserver-log${TMUX_FIELD_SEPARATOR}1${TMUX_FIELD_SEPARATOR}%250${TMUX_FIELD_SEPARATOR}88042${TMUX_FIELD_SEPARATOR}tail${TMUX_FIELD_SEPARATOR}/repo\n`;
 
   await reconcileRunAgentRuntime(run);
 
@@ -235,7 +237,7 @@ test('recovery excludes the log pane even when its process probe reports a runne
   const worker = launchingWorker();
   worker.runner = 'pi';
   worker.target = null;
-  paneInventory = 'slot-1\t2\tdevserver-log\t1\t%250\t88042\ttail\t/repo\n';
+  paneInventory = `slot-1${TMUX_FIELD_SEPARATOR}2${TMUX_FIELD_SEPARATOR}devserver-log${TMUX_FIELD_SEPARATOR}1${TMUX_FIELD_SEPARATOR}%250${TMUX_FIELD_SEPARATOR}88042${TMUX_FIELD_SEPARATOR}tail${TMUX_FIELD_SEPARATOR}/repo\n`;
 
   await reconcileRunAgentRuntime(run);
 
@@ -248,9 +250,9 @@ test('recovery records the pi pane it proved live beside an idle shell and log p
   worker.target = null;
   runnerPanePid = '103';
   paneInventory = [
-    'slot-1\t2\tdevserver-log\t1\t%250\t88042\ttail\t/repo',
-    'slot-1\t1\tdev\t1\t%1\t101\tzsh\t/repo',
-    'slot-1\t1\tdev\t2\t%3\t103\tnode\t/repo',
+    `slot-1${TMUX_FIELD_SEPARATOR}2${TMUX_FIELD_SEPARATOR}devserver-log${TMUX_FIELD_SEPARATOR}1${TMUX_FIELD_SEPARATOR}%250${TMUX_FIELD_SEPARATOR}88042${TMUX_FIELD_SEPARATOR}tail${TMUX_FIELD_SEPARATOR}/repo`,
+    `slot-1${TMUX_FIELD_SEPARATOR}1${TMUX_FIELD_SEPARATOR}dev${TMUX_FIELD_SEPARATOR}1${TMUX_FIELD_SEPARATOR}%1${TMUX_FIELD_SEPARATOR}101${TMUX_FIELD_SEPARATOR}zsh${TMUX_FIELD_SEPARATOR}/repo`,
+    `slot-1${TMUX_FIELD_SEPARATOR}1${TMUX_FIELD_SEPARATOR}dev${TMUX_FIELD_SEPARATOR}2${TMUX_FIELD_SEPARATOR}%3${TMUX_FIELD_SEPARATOR}103${TMUX_FIELD_SEPARATOR}node${TMUX_FIELD_SEPARATOR}/repo`,
   ].join('\n');
 
   await reconcileRunAgentRuntime(run);

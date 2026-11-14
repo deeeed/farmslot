@@ -2,7 +2,7 @@ import type { AgentContext } from '@farmslot/protocol';
 
 import type { SlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
-import { tmuxShellSnippet } from '../core/tmux.js';
+import { splitTmuxFields, tmuxFieldFormat, tmuxShellSnippet } from '../core/tmux.js';
 
 import {
   probeRunnerDescendantPid,
@@ -39,7 +39,9 @@ export async function readRetainedWorkerProgressTarget(
   const census = async () => {
     const listed = await readers.exec(
       vars,
-      tmuxShellSnippet("list-panes -a -F '#{session_name}\t#{pane_id}\t#{pane_pid}'"),
+      tmuxShellSnippet(
+        `list-panes -a -F '${tmuxFieldFormat('#{session_name}', '#{pane_id}', '#{pane_pid}')}'`,
+      ),
       { timeout: 10_000 },
     );
     if (listed.exitCode !== 0 || !listed.stdout.trim())
@@ -48,7 +50,7 @@ export async function readRetainedWorkerProgressTarget(
       .trim()
       .split('\n')
       .map((line) => {
-        const [session, paneId, panePid] = line.split('\t');
+        const [session, paneId, panePid] = splitTmuxFields(line, 3);
         return { session, paneId, panePid };
       });
     if (

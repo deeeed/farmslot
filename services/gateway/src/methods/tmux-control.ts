@@ -27,6 +27,8 @@ import {
   pasteTmuxText,
   resolveTmuxSession,
   shellQuote,
+  splitTmuxFields,
+  tmuxFieldFormat,
   tmuxShellSnippet,
 } from '../core/tmux.js';
 
@@ -104,7 +106,12 @@ export async function tmuxNewWindow(params: TmuxNewWindowParams): Promise<TmuxNe
   const created = await execOnSlot(
     vars,
     tmuxShellSnippet(
-      `new-window -P -F '#{pane_id}|#{window_index}|#{window_name}|#{session_name}' -t ${shellQuote(session)}`,
+      `new-window -P -F '${tmuxFieldFormat(
+        '#{pane_id}',
+        '#{window_index}',
+        '#{window_name}',
+        '#{session_name}',
+      )}' -t ${shellQuote(session)}`,
     ),
   );
   clearTmuxListCache(vars, session);
@@ -113,7 +120,7 @@ export async function tmuxNewWindow(params: TmuxNewWindowParams): Promise<TmuxNe
       `tmux new-window in ${session} failed: ${created.stderr?.trim() || created.stdout?.trim() || `exit ${created.exitCode}`}`,
     );
   }
-  const [paneId, windowIndex, windowName, sessionName] = created.stdout.trim().split('|');
+  const [paneId, windowIndex, windowName, sessionName] = splitTmuxFields(created.stdout.trim(), 4);
   return {
     ok: true,
     ...(paneId && /^%\d+$/.test(paneId) ? { paneId } : {}),
@@ -182,7 +189,11 @@ async function listTmuxWindows(
   const { stdout: winOut } = await execOnSlot(
     vars,
     tmuxShellSnippet(
-      `list-windows -t ${shellQuote(session)} -F '#{window_index}|#{window_name}|#{window_active}'`,
+      `list-windows -t ${shellQuote(session)} -F '${tmuxFieldFormat(
+        '#{window_index}',
+        '#{window_name}',
+        '#{window_active}',
+      )}'`,
     ),
     { timeout: TMUX_LIST_TIMEOUT_MS },
   );
@@ -190,21 +201,30 @@ async function listTmuxWindows(
   const windows: TmuxWindow[] = [];
 
   for (const line of winOut.trim().split('\n').filter(Boolean)) {
-    const [indexStr, name, activeStr] = line.split('|');
+    const [indexStr, name, activeStr] = splitTmuxFields(line, 3);
     const winIndex = parseInt(indexStr, 10);
 
     // Get panes for this window
     const { stdout: paneOut } = await execOnSlot(
       vars,
       tmuxShellSnippet(
-        `list-panes -t ${shellQuote(`${session}:${winIndex}`)} -F '#{pane_index}|#{pane_active}|#{pane_width}|#{pane_height}|#{pane_title}|#{pane_current_command}|#{pane_id}|#{pane_pid}'`,
+        `list-panes -t ${shellQuote(`${session}:${winIndex}`)} -F '${tmuxFieldFormat(
+          '#{pane_index}',
+          '#{pane_active}',
+          '#{pane_width}',
+          '#{pane_height}',
+          '#{pane_title}',
+          '#{pane_current_command}',
+          '#{pane_id}',
+          '#{pane_pid}',
+        )}'`,
       ),
       { timeout: TMUX_LIST_TIMEOUT_MS },
     );
 
     const panes: TmuxPane[] = [];
     for (const paneLine of paneOut.trim().split('\n').filter(Boolean)) {
-      const [pi, pa, pw, ph, pt, pc, pid, ppid] = paneLine.split('|');
+      const [pi, pa, pw, ph, pt, pc, pid, ppid] = splitTmuxFields(paneLine, 8);
       panes.push({
         index: parseInt(pi, 10),
         active: pa === '1',

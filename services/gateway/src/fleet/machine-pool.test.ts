@@ -14,6 +14,8 @@ import { after, test } from 'node:test';
 
 import type { FleetStatus, NodeTmuxPane } from '@farmslot/protocol';
 
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux.js';
+
 const root = mkdtempSync(path.join(tmpdir(), 'machine-pool-'));
 for (const dir of ['scripts', 'services/gateway', 'pool', 'projects'])
   mkdirSync(path.join(root, dir), { recursive: true });
@@ -121,7 +123,10 @@ test('refinement resolves the machine with both pool files without opening tmux'
   const previousPath = process.env.PATH;
   const bin = path.join(root, 'fake-bin');
   mkdirSync(bin, { recursive: true });
-  writeFileSync(path.join(bin, 'tmux'), "#!/bin/sh\nprintf 'fixture\\t0\\tshell\\t0\\t%%7\\n'\n", {
+  // The stub stands in for `tmux -P -F`, whose fields the gateway separates with
+  // TMUX_FIELD_SEPARATOR rather than a tab.
+  const row = `fixture${TMUX_FIELD_SEPARATOR}0${TMUX_FIELD_SEPARATOR}shell${TMUX_FIELD_SEPARATOR}0${TMUX_FIELD_SEPARATOR}%%7`;
+  writeFileSync(path.join(bin, 'tmux'), `#!/bin/sh\nprintf '${row}\\n'\n`, {
     mode: 0o755,
   });
   process.env.PATH = `${bin}:${previousPath}`;

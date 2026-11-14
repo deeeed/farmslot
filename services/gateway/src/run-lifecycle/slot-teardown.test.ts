@@ -17,6 +17,7 @@ import {
 // import graph reaches slot-teardown, which would then load before the mocks apply.
 import * as realCore from '../core/index.js';
 import * as realTmux from '../core/tmux.js';
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux.js';
 import * as realOwnedStop from '../runners/owned-stop.js';
 import * as realSessionArchive from '../runners/session-archive.js';
 import type { RunnerDescendantPidProbe } from '../runners/session-process.js';
@@ -214,9 +215,14 @@ mock.module('../core/index.js', {
         display &&
         tmuxInventory
           .split('\n')
-          .map((line) => line.split('\t'))
+          .map((line) => line.split(TMUX_FIELD_SEPARATOR))
           .find((fields) => fields[1] === display[1]);
-      if (shown) return { stdout: `${shown.slice(0, 3).join('\t')}\n`, stderr: '', exitCode: 0 };
+      if (shown)
+        return {
+          stdout: `${shown.slice(0, 3).join(TMUX_FIELD_SEPARATOR)}\n`,
+          stderr: '',
+          exitCode: 0,
+        };
       if (/send-keys -t '%\d+' -l '\/exit'/.test(cmd)) runnerProbe = { state: 'absent' };
       if (cmd.startsWith('lsof -a -d cwd'))
         return {
@@ -1016,7 +1022,7 @@ test('an unreadable live process identity cannot masquerade as an exited occupan
 });
 
 test('a reused configured slot session accepts its unrecorded idle shell', async () => {
-  tmuxInventory = 'mmt-1\t%3\t111\t/slot\t/slot\t$2\t1791363049\n';
+  tmuxInventory = `mmt-1${TMUX_FIELD_SEPARATOR}%3${TMUX_FIELD_SEPARATOR}111${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}$2${TMUX_FIELD_SEPARATOR}1791363049\n`;
   rawProcessCensus = '111 1 111 Fri Oct 9 01:00:00 2026 /bin/zsh\n';
   cwdProcessCensus = 'p111\nn/slot\n';
   assert.equal(await slotTeardownBlocker(run), null);
@@ -1036,7 +1042,7 @@ test('boot failure before worker launch releases a slot whose only pane tails th
       target: null,
     },
   ];
-  tmuxInventory = 'mmt-1\t%250\t88042\t/slot\t/slot\t$2\t1791363049\tdevserver-log\n';
+  tmuxInventory = `mmt-1${TMUX_FIELD_SEPARATOR}%250${TMUX_FIELD_SEPARATOR}88042${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}$2${TMUX_FIELD_SEPARATOR}1791363049${TMUX_FIELD_SEPARATOR}devserver-log\n`;
   rawProcessCensus = '88042 1 88042 Fri Oct 9 01:00:00 2026 /usr/bin/tail\n';
   cwdProcessCensus = 'p88042\nn/slot\n';
 
@@ -1051,7 +1057,7 @@ test('boot failure before worker launch releases a slot whose only pane tails th
 });
 
 test('a childless tail of another file in the dev-server log window still blocks teardown', async () => {
-  tmuxInventory = 'mmt-1\t%250\t88042\t/slot\t/slot\t$2\t1791363049\tdevserver-log\n';
+  tmuxInventory = `mmt-1${TMUX_FIELD_SEPARATOR}%250${TMUX_FIELD_SEPARATOR}88042${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}$2${TMUX_FIELD_SEPARATOR}1791363049${TMUX_FIELD_SEPARATOR}devserver-log\n`;
   rawProcessCensus = '88042 1 88042 Fri Oct 9 01:00:00 2026 /usr/bin/tail\n';
   cwdProcessCensus = 'p88042\nn/slot\n';
   logTailArgs = 'tail -F /slot/another-file.log';
@@ -1060,7 +1066,7 @@ test('a childless tail of another file in the dev-server log window still blocks
 });
 
 test('the dev-server log tail requires readable matching arguments and no children', async () => {
-  tmuxInventory = 'mmt-1\t%250\t88042\t/slot\t/slot\t$2\t1791363049\tdevserver-log\n';
+  tmuxInventory = `mmt-1${TMUX_FIELD_SEPARATOR}%250${TMUX_FIELD_SEPARATOR}88042${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}$2${TMUX_FIELD_SEPARATOR}1791363049${TMUX_FIELD_SEPARATOR}devserver-log\n`;
   const root = '88042 1 88042 Fri Oct 9 01:00:00 2026 /usr/bin/tail\n';
   rawProcessCensus = root;
   cwdProcessCensus = 'p88042\nn/slot\n';
@@ -1089,7 +1095,7 @@ test('a dev-server log name grants no authority over a foreign pane or another p
     ['foreign', '/usr/bin/tail'],
     ['mmt-1', 'node'],
   ]) {
-    tmuxInventory = `${session}\t%250\t88042\t/slot\t/slot\t$2\t1791363049\tdevserver-log\n`;
+    tmuxInventory = `${session}${TMUX_FIELD_SEPARATOR}%250${TMUX_FIELD_SEPARATOR}88042${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}$2${TMUX_FIELD_SEPARATOR}1791363049${TMUX_FIELD_SEPARATOR}devserver-log\n`;
     rawProcessCensus = `88042 1 88042 Fri Oct 9 01:00:00 2026 ${command}\n`;
     cwdProcessCensus = 'p88042\nn/slot\n';
     assert.ok(await slotTeardownBlocker(run));
@@ -1097,22 +1103,22 @@ test('a dev-server log name grants no authority over a foreign pane or another p
 });
 
 test('a foreign controller and a different session origin remain protected', async () => {
-  tmuxInventory = 'xreview-controller\t%3\t111\t/slot\t/slot\t$2\t1791363049\n';
+  tmuxInventory = `xreview-controller${TMUX_FIELD_SEPARATOR}%3${TMUX_FIELD_SEPARATOR}111${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}$2${TMUX_FIELD_SEPARATOR}1791363049\n`;
   assert.match((await slotTeardownBlocker(run)) ?? '', /without verified slot ownership/);
-  tmuxInventory = 'mmt-1\t%3\t111\t/slot\t/operator\t$2\t1791363049\n';
+  tmuxInventory = `mmt-1${TMUX_FIELD_SEPARATOR}%3${TMUX_FIELD_SEPARATOR}111${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}/operator${TMUX_FIELD_SEPARATOR}$2${TMUX_FIELD_SEPARATOR}1791363049\n`;
   assert.match((await slotTeardownBlocker(run)) ?? '', /started outside this slot checkout/);
-  tmuxInventory = 'mmt-1\t%3\t111\t/slot\t/slot\t\t\n';
+  tmuxInventory = `mmt-1${TMUX_FIELD_SEPARATOR}%3${TMUX_FIELD_SEPARATOR}111${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}${TMUX_FIELD_SEPARATOR}\n`;
   assert.match((await slotTeardownBlocker(run)) ?? '', /without verified slot ownership/);
 });
 
 test('a live unrecorded runner in the reused slot session stays protected', async () => {
-  tmuxInventory = 'mmt-1\t%3\t111\t/slot\t/slot\t$2\t1791363049\n';
+  tmuxInventory = `mmt-1${TMUX_FIELD_SEPARATOR}%3${TMUX_FIELD_SEPARATOR}111${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}$2${TMUX_FIELD_SEPARATOR}1791363049\n`;
   runnerProbe = { state: 'present', pid: '222' };
   assert.match((await slotTeardownBlocker(run)) ?? '', /is not quiescent/);
 });
 
 test('a non-runner child in an unrecorded slot pane still blocks cleanup', async () => {
-  tmuxInventory = 'mmt-1\t%3\t111\t/slot\t/slot\t$2\t1791363049\n';
+  tmuxInventory = `mmt-1${TMUX_FIELD_SEPARATOR}%3${TMUX_FIELD_SEPARATOR}111${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}$2${TMUX_FIELD_SEPARATOR}1791363049\n`;
   rawProcessCensus =
     '111 1 111 Fri Oct 9 01:00:00 2026 /bin/zsh\n222 111 111 Fri Oct 9 01:00:00 2026 node\n';
   cwdProcessCensus = 'p111\nn/slot\np222\nn/slot\n';
@@ -1134,7 +1140,7 @@ function closedRunUnrecordedWorker(taskDir: string | null): void {
       target: { session: 'mmt-1', window: 'dev', pane: '0', paneId: '%53', target: 'mmt-1:dev' },
     },
   ];
-  tmuxInventory = 'mmt-1\t%3\t111\t/slot\t/slot\t$2\t1791363049\n';
+  tmuxInventory = `mmt-1${TMUX_FIELD_SEPARATOR}%3${TMUX_FIELD_SEPARATOR}111${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}$2${TMUX_FIELD_SEPARATOR}1791363049\n`;
   paneLaunch = taskDir
     ? `bash -c bash -lc 'export DISABLE_OMC=1; if [ -f "\${HOME}/slot/${taskDir}/inputs/inherited/recipe-source.json" ]; then :; fi; claude'`
     : '-zsh';

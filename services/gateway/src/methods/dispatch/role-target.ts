@@ -2,13 +2,13 @@
 
 import type { AgentContextTarget } from '@farmslot/protocol';
 
-import { DEVSERVER_LOG_WINDOW_NAME } from '../../core/tmux.js';
+import { DEVSERVER_LOG_WINDOW_NAME, splitTmuxFields } from '../../core/tmux.js';
 
 export { buildDispatchRoleShellCommand } from '../../core/tmux.js';
 
 export function parseCapturedAgentPaneTarget(session: string, raw: string): AgentContextTarget {
   const [rawTarget = session, windowName = null, paneId = null] = raw
-    ? raw.split('|', 3)
+    ? splitTmuxFields(raw, 3)
     : [session, null, null];
   const match = rawTarget.match(/^[^:]+:(\d+)(?:\.(\d+))?$/);
   const window = windowName?.trim() || match?.[1] || null;

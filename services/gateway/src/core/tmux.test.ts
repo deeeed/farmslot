@@ -10,6 +10,7 @@ import {
   selectResolvedTmuxSession,
   shellQuote,
   throwIfTmuxQueryTimedOut,
+  TMUX_FIELD_SEPARATOR,
   tmuxDiscoveryFailedResult,
   tmuxSendTextCommand,
   tmuxSessionProbeShouldKeepConfigured,
@@ -175,9 +176,9 @@ describe('selectResolvedTmuxSession', () => {
 describe('selectExactTmuxWindowPane', () => {
   it('does not bind a missing reviewer window to a prefixed sibling', () => {
     const panes = [
-      'ff-1\trev2-claude\t%21\t2001',
-      'ff-1\trev-claude\t%22\t2002',
-      'ff-2\trev-claude\t%23\t2003',
+      `ff-1${TMUX_FIELD_SEPARATOR}rev2-claude${TMUX_FIELD_SEPARATOR}%21${TMUX_FIELD_SEPARATOR}2001`,
+      `ff-1${TMUX_FIELD_SEPARATOR}rev-claude${TMUX_FIELD_SEPARATOR}%22${TMUX_FIELD_SEPARATOR}2002`,
+      `ff-2${TMUX_FIELD_SEPARATOR}rev-claude${TMUX_FIELD_SEPARATOR}%23${TMUX_FIELD_SEPARATOR}2003`,
     ].join('\n');
 
     assert.deepEqual(selectExactTmuxWindowPane(panes, 'ff-1', 'rev-claude'), {

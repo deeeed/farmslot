@@ -19,6 +19,30 @@ const TMUX_DISCOVERY_TIMEOUT_MS = 15_000;
 /** Passive slot infrastructure, never an agent window. */
 export const DEVSERVER_LOG_WINDOW_NAME = 'devserver-log';
 
+/**
+ * Field separator for every tmux `-F` query. A literal tab cannot be used: tmux
+ * 3.4 escapes control characters in format output, so a tab-separated row
+ * arrives there as a single field (3.3a and 3.7 pass the tab through), and
+ * every parser that splits on the tab silently saw no rows. The separator is
+ * printable, so it survives on every version.
+ */
+export const TMUX_FIELD_SEPARATOR = '<<FARMSLOT_TMUX_FIELD>>';
+
+/** A `-F` format body: `tmuxFieldFormat('#{pane_id}', '#{pane_pid}')`. */
+export function tmuxFieldFormat(...fields: string[]): string {
+  return fields.join(TMUX_FIELD_SEPARATOR);
+}
+
+/**
+ * The fields of one `-F` row. A separator inside the last value — a path or a
+ * command is free-form — keeps that value whole instead of adding a field.
+ */
+export function splitTmuxFields(line: string, count: number): string[] {
+  const parts = line.split(TMUX_FIELD_SEPARATOR);
+  if (parts.length <= count) return parts;
+  return [...parts.slice(0, count - 1), parts.slice(count - 1).join(TMUX_FIELD_SEPARATOR)];
+}
+
 export function tmuxDiscoveryFailedResult(err: unknown): ExecResult | null {
   const message = err instanceof Error ? err.message : String(err);
   if (
@@ -302,7 +326,9 @@ export async function resolveTmuxSession(
     try {
       const { stdout, exitCode } = await execTmuxDiscovery(
         vars,
-        tmuxShellSnippet(`list-panes -a -F '#{session_name}|#{pane_current_path}' 2>/dev/null`),
+        tmuxShellSnippet(
+          `list-panes -a -F '${tmuxFieldFormat('#{session_name}', '#{pane_current_path}')}' 2>/dev/null`,
+        ),
       );
       if (tmuxSessionProbeShouldKeepConfigured(exitCode)) return configured;
       const matchingSessions: string[] = [];
@@ -310,7 +336,7 @@ export async function resolveTmuxSession(
         .split('\n')
         .map((line) => line.trim())
         .filter(Boolean)) {
-        const [sessionName, panePath] = line.split('|');
+        const [sessionName, panePath] = splitTmuxFields(line, 2);
         if (!sessionName || !panePath) continue;
         if (panePath === vars.remoteRepo || panePath.startsWith(`${vars.remoteRepo}/`)) {
           matchingSessions.push(sessionName);
@@ -479,7 +505,15 @@ export async function listExactTmuxWindows(
   const result = await execOnSlot(
     vars,
     tmuxShellSnippet(
-      `list-panes -a -F '#{session_name}\t#{window_name}\t#{window_id}\t#{window_index}\t#{window_activity}\t#{pane_id}\t#{pane_pid}' 2>/dev/null`,
+      `list-panes -a -F '${tmuxFieldFormat(
+        '#{session_name}',
+        '#{window_name}',
+        '#{window_id}',
+        '#{window_index}',
+        '#{window_activity}',
+        '#{pane_id}',
+        '#{pane_pid}',
+      )}' 2>/dev/null`,
     ),
     { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
   );
@@ -489,7 +523,7 @@ export async function listExactTmuxWindows(
   const windows = new Map<string, TmuxWindowRef>();
   for (const line of result.stdout.split('\n')) {
     const [candidateSession, candidateName, windowId, indexRaw, activityRaw, paneId, panePid] =
-      line.split('\t');
+      splitTmuxFields(line, 7);
     if (candidateSession !== session || candidateName !== windowName) continue;
     if (!/^@\d+$/.test(windowId ?? '') || !/^%\d+$/.test(paneId ?? '')) continue;
     if (!/^\d+$/.test(panePid ?? '')) continue;
@@ -587,12 +621,12 @@ export async function resolveTmuxWindowIdentity(
   const result = await execOnSlot(
     vars,
     tmuxShellSnippet(
-      `display-message -p -t ${shellQuote(target)} '#{window_id}\t#{session_name}\t#{window_name}' 2>/dev/null`,
+      `display-message -p -t ${shellQuote(target)} '${tmuxFieldFormat('#{window_id}', '#{session_name}', '#{window_name}')}' 2>/dev/null`,
     ),
     { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
   );
   throwIfTmuxQueryTimedOut(result, `resolveTmuxWindowIdentity ${target}`);
-  const [windowId, session, window] = result.stdout.trim().split('\t');
+  const [windowId, session, window] = splitTmuxFields(result.stdout.trim(), 3);
   return result.exitCode === 0 && /^@\d+$/.test(windowId ?? '') && session && window
     ? { windowId: windowId!, session, window }
     : null;
@@ -632,7 +666,7 @@ export function selectExactTmuxWindowPane(
 ): { paneId: string; panePid: string } | null {
   let selected: { paneId: string; panePid: string } | null = null;
   for (const line of output.split('\n')) {
-    const [candidateSession, candidateWindow, paneId, panePid] = line.split('\t');
+    const [candidateSession, candidateWindow, paneId, panePid] = splitTmuxFields(line, 4);
     if (
       candidateSession !== session ||
       (windowName !== undefined && candidateWindow !== windowName)
@@ -660,12 +694,12 @@ export async function resolveExactTmuxWindowPane(
     const result = await execOnSlot(
       vars,
       tmuxShellSnippet(
-        `display-message -p -t ${shellQuote(target)} '#{pane_id}\t#{pane_pid}' 2>/dev/null`,
+        `display-message -p -t ${shellQuote(target)} '${tmuxFieldFormat('#{pane_id}', '#{pane_pid}')}' 2>/dev/null`,
       ),
       { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
     );
     throwIfTmuxQueryTimedOut(result, `resolveExactTmuxWindowPane ${target}`);
-    const [paneId, panePid] = result.stdout.trim().split('\t');
+    const [paneId, panePid] = splitTmuxFields(result.stdout.trim(), 2);
     return result.exitCode === 0 && /^%\d+$/.test(paneId ?? '') && /^\d+$/.test(panePid ?? '')
       ? { paneId: paneId!, panePid: panePid! }
       : null;
@@ -674,12 +708,12 @@ export async function resolveExactTmuxWindowPane(
     const result = await execOnSlot(
       vars,
       tmuxShellSnippet(
-        `list-panes -t ${shellQuote(target)} -F '#{pane_id}\t#{pane_pid}' 2>/dev/null | head -1`,
+        `list-panes -t ${shellQuote(target)} -F '${tmuxFieldFormat('#{pane_id}', '#{pane_pid}')}' 2>/dev/null | head -1`,
       ),
       { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
     );
     throwIfTmuxQueryTimedOut(result, `resolveExactTmuxWindowPane ${target}`);
-    const [paneId, panePid] = result.stdout.trim().split('\t');
+    const [paneId, panePid] = splitTmuxFields(result.stdout.trim(), 2);
     return result.exitCode === 0 && /^%\d+$/.test(paneId ?? '') && /^\d+$/.test(panePid ?? '')
       ? { paneId: paneId!, panePid: panePid! }
       : null;
@@ -691,7 +725,7 @@ export async function resolveExactTmuxWindowPane(
   const result = await execOnSlot(
     vars,
     tmuxShellSnippet(
-      `list-panes -a -F '#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_pid}' 2>/dev/null`,
+      `list-panes -a -F '${tmuxFieldFormat('#{session_name}', '#{window_name}', '#{pane_id}', '#{pane_pid}')}' 2>/dev/null`,
     ),
     { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
   );

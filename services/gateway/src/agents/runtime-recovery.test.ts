@@ -7,9 +7,10 @@ import path from 'node:path';
 import { after, before, test } from 'node:test';
 
 import { poolDirectory } from '../core/config.js';
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux.js';
 import { createRun, deleteRun, getRun, updateRun, updateRunAgentContexts } from '../runs/store.js';
 
-import { paneReadDetail, restoreTmuxWorker } from './runtime-recovery.js';
+import { classifyPaneRows, paneReadDetail, restoreTmuxWorker } from './runtime-recovery.js';
 
 // Real tmux only on the test runner's private server (scripts/quality/run-tsx-tests.mjs):
 // no $TMUX, and plain `tmux` (from the code under test) resolving to that socket.
@@ -133,25 +134,112 @@ after(() => {
   rmSync(testPoolFile, { force: true });
 });
 
+const noDroppedRows = {
+  unparsable: 0,
+  fields: null,
+  otherSession: 0,
+  otherSessionNames: [],
+  devserverLog: 0,
+};
+
+const PANE_FIELDS = ['fs-1', '0', 'dev', '0', '%0', '1890', 'sh', '/repo'];
+
+test('pane rows are read by the field separator, not by a tab', () => {
+  const kept = classifyPaneRows([PANE_FIELDS.join(TMUX_FIELD_SEPARATOR)], 'fs-1');
+  assert.equal(kept.panes.length, 1);
+  assert.deepEqual(kept.dropped.unparsable, 0);
+  assert.equal(kept.panes[0]?.paneId, '%0');
+  assert.equal(kept.panes[0]?.cwd, '/repo');
+
+  // tmux 3.4 escapes control characters in -F output, so the row it returns for a
+  // tab-separated format arrives as one field. Reading that row loosely would bind
+  // a run to the wrong pane, so it is rejected and counted.
+  const tabbed = classifyPaneRows([PANE_FIELDS.join('\t')], 'fs-1');
+  assert.deepEqual(tabbed.panes, []);
+  assert.equal(tabbed.dropped.unparsable, 1);
+  assert.equal(tabbed.dropped.fields, 1);
+});
+
+test('pane rows of another session and the devserver log are counted apart', () => {
+  const rows = [
+    ['other', '0', 'dev', '0', '%1', '1', 'sh', '/repo'].join(TMUX_FIELD_SEPARATOR),
+    ['fs-1', '0', 'devserver-log', '0', '%2', '2', 'sh', '/repo'].join(TMUX_FIELD_SEPARATOR),
+    PANE_FIELDS.join(TMUX_FIELD_SEPARATOR),
+  ];
+  const read = classifyPaneRows(rows, 'fs-1');
+  assert.equal(read.panes.length, 1);
+  assert.equal(read.panes[0]?.paneId, '%0');
+  assert.equal(read.dropped.otherSession, 1);
+  assert.deepEqual(read.dropped.otherSessionNames, ['other']);
+  assert.equal(read.dropped.devserverLog, 1);
+  assert.equal(read.dropped.unparsable, 0);
+});
+
+test('a separator inside the last field keeps that value whole', () => {
+  const cwd = `/repo/odd${TMUX_FIELD_SEPARATOR}name`;
+  const read = classifyPaneRows(
+    [[...PANE_FIELDS.slice(0, 7), cwd].join(TMUX_FIELD_SEPARATOR)],
+    'fs-1',
+  );
+  assert.equal(read.panes.length, 1);
+  assert.equal(read.panes[0]?.cwd, cwd);
+});
+
 test('pane-read detail reports the exit code, the rows printed and tmux stderr', () => {
   // A failed read that still delivered rows must say so: the count is what tmux
-  // printed before the session and window-name filters, not what survived them.
+  // printed before parsing and the filters, not what survived them.
   assert.equal(
     paneReadDetail({
       exitCode: 1,
       stderr: "can't find window: dev",
       rows: 0,
+      dropped: noDroppedRows,
       panes: [],
     }),
     "tmux exit 1, rows 0, can't find window: dev",
   );
   assert.equal(
-    paneReadDetail({ exitCode: 124, stderr: '', rows: 2, panes: [] }),
+    paneReadDetail({ exitCode: 124, stderr: '', rows: 2, dropped: noDroppedRows, panes: [] }),
     'tmux exit 124, rows 2',
   );
   assert.equal(
-    paneReadDetail({ exitCode: 0, stderr: '', rows: 1, panes: [] }),
+    paneReadDetail({ exitCode: 0, stderr: '', rows: 1, dropped: noDroppedRows, panes: [] }),
     'tmux exit 0, rows 1',
+  );
+});
+
+test('pane-read detail names what dropped the rows a successful read printed', () => {
+  // The Ubuntu sweep reported "rows 1" with no pane and no stderr; each reason
+  // below produces that same shape, so the detail has to separate them.
+  assert.equal(
+    paneReadDetail({
+      exitCode: 0,
+      stderr: '',
+      rows: 1,
+      dropped: { ...noDroppedRows, unparsable: 1, fields: 1 },
+      panes: [],
+    }),
+    'tmux exit 0, rows 1, unparsable 1 (fields 1)',
+  );
+  assert.equal(
+    paneReadDetail({
+      exitCode: 0,
+      stderr: '',
+      rows: 2,
+      dropped: { ...noDroppedRows, otherSession: 2, otherSessionNames: ['mm-1', 'archive-7'] },
+      panes: [],
+    }),
+    'tmux exit 0, rows 2, other session 2 ("mm-1" "archive-7")',
+  );
+  assert.equal(
+    paneReadDetail({
+      exitCode: 0,
+      stderr: '',
+      rows: 1,
+      dropped: { ...noDroppedRows, devserverLog: 1 },
+      panes: [],
+    }),
+    'tmux exit 0, rows 1, devserver-log 1',
   );
 });
 

@@ -4,7 +4,7 @@ import type { AgentContext } from '@farmslot/protocol';
 
 import { execOnSlot, type loadSlotVars } from '../core/index.js';
 import { slotRealpath } from '../core/slot-io.js';
-import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
+import { shellQuote, splitTmuxFields, tmuxFieldFormat, tmuxShellSnippet } from '../core/tmux.js';
 
 import {
   listRunnerSessionFiles,
@@ -30,7 +30,11 @@ export async function observeAdoptableTmuxWorker(
   const listed = await execOnSlot(
     vars,
     tmuxShellSnippet(
-      `list-panes -s -t ${shellQuote(`=${session}`)} -F '#{pane_id}\t#{pane_pid}\t#{pane_current_path}'`,
+      `list-panes -s -t ${shellQuote(`=${session}`)} -F '${tmuxFieldFormat(
+        '#{pane_id}',
+        '#{pane_pid}',
+        '#{pane_current_path}',
+      )}'`,
     ),
   );
   if (listed.exitCode !== 0)
@@ -41,7 +45,7 @@ export async function observeAdoptableTmuxWorker(
     : await listRunnerSessionFiles(vars, context.runner);
   const candidates: AdoptableTmuxWorker[] = [];
   for (const line of listed.stdout.trim().split('\n')) {
-    const [paneId, panePid, cwd] = line.split('\t');
+    const [paneId, panePid, cwd] = splitTmuxFields(line, 3);
     if (!paneId || !panePid || !cwd || (await slotRealpath(vars, cwd)) !== repository) continue;
     const observedProcess = await probeRunnerDescendantPid(vars, panePid, context.runner);
     if (observedProcess.state === 'unknown')

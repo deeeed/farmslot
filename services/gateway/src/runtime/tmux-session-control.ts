@@ -15,8 +15,9 @@ export function endTmuxSessionArgv(params: TmuxWorkerEndSessionParams): string[]
 const cp=require('node:child_process');
 const {worker,expectedPid}=JSON.parse(process.argv[1]);
 const tmux=args=>{const r=cp.spawnSync('tmux',args,{encoding:'utf8'});if(r.error)throw r.error;if(r.status!==0)throw Error(r.stderr||'Tmux operation failed');return r.stdout.trimEnd();};
-const [pid,sessionId,...name]=tmux(['display-message','-p','-t',worker.paneId,'#{pane_pid}\t#{session_id}\t#{session_name}']).split('\t');
-if(Number(pid)!==expectedPid||name.join('\t')!==worker.session||!/^\$\d+$/.test(sessionId))throw Error('Session changed; refresh before ending it');
+const SEP='<<FARMSLOT_TMUX_FIELD>>';
+const [pid,sessionId,...name]=tmux(['display-message','-p','-t',worker.paneId,'#{pane_pid}'+SEP+'#{session_id}'+SEP+'#{session_name}']).split(SEP);
+if(Number(pid)!==expectedPid||name.join(SEP)!==worker.session||!/^\$\d+$/.test(sessionId))throw Error('Session changed; refresh before ending it');
 const condition='#{&&:#{==:#{pane_pid},'+expectedPid+'},#{==:#{session_id},'+sessionId+'}}';
 const result=tmux(['if-shell','-F','-t',worker.paneId,condition,"kill-session -t '"+sessionId+"'",'display-message -p session-changed']);
 if(result)throw Error('Session changed; refresh before ending it');
@@ -31,12 +32,12 @@ export function createTmuxSessionArgv(session: string): string[] {
 const cp=require('node:child_process');
 const session=process.argv[1];
 const cwd=require('node:os').homedir();
-const args=['new-session','-d','-s',session,'-c',cwd,'-P','-F','#{window_index}\t#{pane_index}\t#{pane_id}\t#{pane_pid}',process.env.SHELL||'/bin/sh'];
+const separator='<<FARMSLOT_TMUX_FIELD>>';
+const args=['new-session','-d','-s',session,'-c',cwd,'-P','-F',['#{window_index}','#{pane_index}','#{pane_id}','#{pane_pid}'].join(separator),process.env.SHELL||'/bin/sh'];
 const r=cp.spawnSync('tmux',args,{encoding:'utf8'});
 if(r.error)throw r.error;
 if(r.status!==0)throw Error(r.stderr||'Could not create terminal');
-const [window,pane,paneId,pid]=r.stdout.trim().split('\t');
-const separator='<<FARMSLOT_TMUX_FIELD>>';
+const [window,pane,paneId,pid]=r.stdout.trim().split(separator);
 const metadata=cp.spawnSync('tmux',['display-message','-p','-t',paneId,['#{window_name}','#{pane_title}','#{pane_current_command}','#{pane_current_path}'].join(separator)],{encoding:'utf8'});
 if(metadata.error)throw metadata.error;
 if(metadata.status!==0)throw Error(metadata.stderr||'Could not inspect created terminal');

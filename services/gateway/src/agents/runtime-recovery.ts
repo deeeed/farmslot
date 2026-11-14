@@ -26,7 +26,9 @@ import {
   resolveTmuxSession,
   respawnTmuxWindowWithCommand,
   shellQuote,
+  splitTmuxFields,
   TMUX_WINDOW_RESPAWN_SETTLE_MS,
+  tmuxFieldFormat,
   tmuxShellSnippet,
 } from '../core/tmux.js';
 import { blindTrialWorkerBoundary } from '../evals/blind-git.js';
@@ -107,8 +109,16 @@ function stableWindowName(ctx: AgentContext): string | null {
   return roleWindow?.trim() || null;
 }
 
+/** How many fields the pane-runtime format asks tmux for. */
+const PANE_RUNTIME_FIELDS = 8;
+
 function parseTmuxPaneRuntime(line: string): TmuxPaneRuntime | null {
-  const [session, window, windowName, pane, paneId, panePid, command, cwd] = line.split('\t');
+  const fields = splitTmuxFields(line, PANE_RUNTIME_FIELDS);
+  // A row the separator did not split is not a short row to read loosely: it is a
+  // row this tmux rendered some other way, and guessing which field is which
+  // would bind a run to the wrong pane.
+  if (fields.length !== PANE_RUNTIME_FIELDS) return null;
+  const [session, window, windowName, pane, paneId, panePid, command, cwd] = fields;
   if (!session || !window || !pane) return null;
   return {
     session,
@@ -207,19 +217,95 @@ async function tmuxWindowExists(
   return result.exitCode === 0;
 }
 
-/** `rows` counts the lines tmux printed, before the session and window-name filters. */
+/**
+ * `rows` counts the lines tmux printed, before parsing and the session and
+ * window-name filters; `dropped` says what became of the rows that are not in
+ * `panes`, so "rows 1" with no pane names its own reason.
+ */
 export type TargetPaneRead = {
   exitCode: number;
   stderr: string;
   rows: number;
+  dropped: DroppedPaneRows;
   panes: TmuxPaneRuntime[];
 };
 
-/** Why a pane read produced nothing: the tmux exit code, its stderr, and rows it did print. */
+/**
+ * Rows a read printed but did not return. `fields` is the field count of the
+ * first unparsable row: a row tmux did not tab-separate as the format asks
+ * arrives as one field, which no other failure looks like.
+ */
+type DroppedPaneRows = {
+  unparsable: number;
+  fields: number | null;
+  otherSession: number;
+  otherSessionNames: string[];
+  devserverLog: number;
+};
+
+const EMPTY_DROPPED: DroppedPaneRows = {
+  unparsable: 0,
+  fields: null,
+  otherSession: 0,
+  otherSessionNames: [],
+  devserverLog: 0,
+};
+
+/**
+ * Why a pane read produced nothing: the tmux exit code, its stderr, the rows it
+ * printed and what dropped them. Session names are farm-generated and bounded;
+ * no row content is included, since a row carries the pane's command and cwd.
+ */
 export function paneReadDetail(read: TargetPaneRead): string {
   const parts = [`tmux exit ${read.exitCode}`, `rows ${read.rows}`];
+  const { unparsable, fields, otherSession, otherSessionNames, devserverLog } = read.dropped;
+  if (unparsable) {
+    parts.push(`unparsable ${unparsable}${fields === null ? '' : ` (fields ${fields})`}`);
+  }
+  if (otherSession) {
+    const names = otherSessionNames.map((name) => JSON.stringify(name)).join(' ');
+    parts.push(`other session ${otherSession}${names ? ` (${names})` : ''}`);
+  }
+  if (devserverLog) parts.push(`devserver-log ${devserverLog}`);
   if (read.stderr) parts.push(read.stderr);
   return parts.join(', ');
+}
+
+/** Bounded: two names are enough to tell a wrong server from a stale session. */
+const MAX_REPORTED_SESSION_NAMES = 2;
+
+export function classifyPaneRows(
+  lines: string[],
+  session: string,
+): { panes: TmuxPaneRuntime[]; dropped: DroppedPaneRows } {
+  const panes: TmuxPaneRuntime[] = [];
+  const dropped: DroppedPaneRows = { ...EMPTY_DROPPED, otherSessionNames: [] };
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const pane = parseTmuxPaneRuntime(line);
+    if (!pane) {
+      dropped.unparsable += 1;
+      if (dropped.fields === null)
+        dropped.fields = splitTmuxFields(line, PANE_RUNTIME_FIELDS).length;
+      continue;
+    }
+    if (pane.session !== session) {
+      dropped.otherSession += 1;
+      if (
+        dropped.otherSessionNames.length < MAX_REPORTED_SESSION_NAMES &&
+        !dropped.otherSessionNames.includes(pane.session)
+      ) {
+        dropped.otherSessionNames.push(pane.session);
+      }
+      continue;
+    }
+    if (pane.windowName === DEVSERVER_LOG_WINDOW_NAME) {
+      dropped.devserverLog += 1;
+      continue;
+    }
+    panes.push(pane);
+  }
+  return { panes, dropped };
 }
 
 async function readTargetPanes(
@@ -232,7 +318,16 @@ async function readTargetPanes(
     tmuxShellSnippet(
       [
         `list-panes -t ${shellQuote(target)} `,
-        `-F '#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}'`,
+        `-F '${tmuxFieldFormat(
+          '#{session_name}',
+          '#{window_index}',
+          '#{window_name}',
+          '#{pane_index}',
+          '#{pane_id}',
+          '#{pane_pid}',
+          '#{pane_current_command}',
+          '#{pane_current_path}',
+        )}'`,
       ].join(''),
     ),
     { timeout: 3000 },
@@ -242,18 +337,13 @@ async function readTargetPanes(
   const stderr = result.stderr.trim();
   // A timed-out or failed read keeps whatever rows it did deliver: reporting `rows 0`
   // for output the execution layer preserved would contradict the diagnostic itself.
-  const rows = result.stdout.split('\n').filter((line) => line.trim()).length;
-  if (result.exitCode !== 0) return { exitCode: result.exitCode, stderr, rows, panes: [] };
-  return {
-    exitCode: 0,
-    stderr,
-    rows,
-    panes: result.stdout
-      .split('\n')
-      .map((line) => parseTmuxPaneRuntime(line))
-      .filter((pane): pane is TmuxPaneRuntime => Boolean(pane))
-      .filter((pane) => pane.session === session && pane.windowName !== DEVSERVER_LOG_WINDOW_NAME),
-  };
+  const lines = result.stdout.split('\n');
+  const rows = lines.filter((line) => line.trim()).length;
+  if (result.exitCode !== 0) {
+    return { exitCode: result.exitCode, stderr, rows, dropped: EMPTY_DROPPED, panes: [] };
+  }
+  const { panes, dropped } = classifyPaneRows(lines, session);
+  return { exitCode: 0, stderr, rows, dropped, panes };
 }
 
 async function listTargetPanes(

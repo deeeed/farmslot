@@ -7,6 +7,7 @@ import type { AgentContext, Run } from '@farmslot/protocol';
 // and only the slot, run-store and process probes these tests drive are faked.
 import * as realCore from '../core/index.js';
 import * as realTmux from '../core/tmux.js';
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux.js';
 import * as realRunStore from '../runs/store.js';
 
 import * as realSessionLifecycle from './session-lifecycle.js';
@@ -49,9 +50,10 @@ mock.module('../core/index.js', {
       if (cmd.includes('list-panes -a'))
         return {
           stdout: [...panes]
-            .map(
-              ([id, pane]) =>
-                `${pane.session}\t${pane.window ?? 'dev'}\t@${id.slice(1)}\t${id}\t${pane.panePid}`,
+            .map(([id, pane]) =>
+              [pane.session, pane.window ?? 'dev', `@${id.slice(1)}`, id, pane.panePid].join(
+                TMUX_FIELD_SEPARATOR,
+              ),
             )
             .join('\n'),
           stderr: '',
@@ -61,7 +63,11 @@ mock.module('../core/index.js', {
       if (display) {
         const pane = panes.get(display[1]);
         return pane
-          ? { stdout: `${pane.session}\t${display[1]}\t${pane.panePid}\n`, stderr: '', exitCode: 0 }
+          ? {
+              stdout: `${[pane.session, display[1], pane.panePid].join(TMUX_FIELD_SEPARATOR)}\n`,
+              stderr: '',
+              exitCode: 0,
+            }
           : { stdout: '', stderr: "can't find pane", exitCode: 1 };
       }
       const root = /^ps -ww -o command= -p '(\d+)'$/.exec(cmd);

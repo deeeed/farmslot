@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
 import type { SlotVars } from '../core/config.js';
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux.js';
 
 import type { ObservabilityReading, RunnerSessionDeliveryState } from './observability-types.js';
 
@@ -96,20 +97,25 @@ mock.module('../core/exec.js', {
         return { exitCode: 0, stdout: '@1\n', stderr: '' };
       }
       if (command.includes('#{pane_current_command}')) {
-        return { exitCode: 0, stdout: `%1|123|${runnerAlive ? 'node' : 'zsh'}`, stderr: '' };
+        return {
+          exitCode: 0,
+          stdout: ['%1', '123', runnerAlive ? 'node' : 'zsh'].join(TMUX_FIELD_SEPARATOR),
+          stderr: '',
+        };
       }
       if (command.includes('display-message -p -t')) {
-        return { exitCode: 0, stdout: '%1\t123\n', stderr: '' };
+        return { exitCode: 0, stdout: `%1${TMUX_FIELD_SEPARATOR}123\n`, stderr: '' };
       }
       if (command.includes("list-panes -a -F '#{session_name}")) {
-        const rows = Array.from(
-          { length: namedWindowCount },
-          (_, index) => `test-1\tdev\t@${index + 1}\t${index + 1}\t100\t%${index + 1}\t123`,
+        const rows = Array.from({ length: namedWindowCount }, (_, index) =>
+          ['test-1', 'dev', `@${index + 1}`, `${index + 1}`, '100', `%${index + 1}`, '123'].join(
+            TMUX_FIELD_SEPARATOR,
+          ),
         );
         return { exitCode: 0, stdout: rows.join('\n'), stderr: '' };
       }
       if (command.includes('#{pane_pid}')) {
-        return { exitCode: 0, stdout: '%1\t123\n', stderr: '' };
+        return { exitCode: 0, stdout: `%1${TMUX_FIELD_SEPARATOR}123\n`, stderr: '' };
       }
       if (command.includes('list-panes')) {
         const panes = Array.from({ length: paneCount }, (_, index) => `%${index + 1}`).join('\n');
