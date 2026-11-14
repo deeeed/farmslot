@@ -1,0 +1,1 @@
+- Require canonical Farmslot rules during worker and paired reviews, with current review-template fixtures.
