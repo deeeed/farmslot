@@ -85,12 +85,24 @@ export function tmuxRuleViolations(rel, source) {
     /TMUX_MODEL_DRIVER_SOCKET:\s*socket/u.test(source) &&
     /delete process\.env\.TMUX\b/u.test(source) &&
     /\bafter\(\(\)\s*=>/u.test(source);
+  // The prepare Git fixture must exercise both a fresh and an existing server.
+  // It owns a mkdtemp socket and supplies it explicitly on every server command.
+  const fixturePrivate =
+    /const root = mkdtempSync\(['"]\/tmp\//u.test(source) &&
+    /const socket = path\.join\(root, ['"]tmux\.sock['"]\)/u.test(source) &&
+    /TMUX_TMPDIR: root/u.test(source) &&
+    /delete env\.TMUX\b/u.test(source) &&
+    /const tmuxArgs = \['-S', socket, '-f', '\/dev\/null'\]/u.test(source) &&
+    /t\.after\(\(\) =>/u.test(source) &&
+    /rmSync\(root,/u.test(source);
   const spawns = [...source.matchAll(SPAWN_TMUX)];
   for (const spawn of spawns) {
-    const after = source.slice(spawn.index, spawn.index + spawn[0].length + 60);
+    const after = source.slice(spawn.index, spawn.index + spawn[0].length + 120);
+    if (/['"`]tmux['"`],\s*\[['"`]-V['"`]\]/u.test(after)) continue;
     if (
       !/['"`]tmux['"`],\s*\[\s*'-S',\s*tmuxSandbox!?,/u.test(after) &&
-      !(driverPrivate && /['"`]tmux['"`],\s*\[\s*'-L',\s*socket,/u.test(after))
+      !(driverPrivate && /['"`]tmux['"`],\s*\[\s*'-L',\s*socket,/u.test(after)) &&
+      !(fixturePrivate && /['"`]tmux['"`],\s*\[\.\.\.tmuxArgs,/u.test(after))
     ) {
       violations.push(
         `line ${lineOf(source, spawn.index)}: spawns tmux without -S tmuxSandbox: ${spawn[0]}`,
@@ -100,6 +112,7 @@ export function tmuxRuleViolations(rel, source) {
   if (
     spawns.length > 0 &&
     !driverPrivate &&
+    !fixturePrivate &&
     !source.includes('process.env.FARMSLOT_TMUX_SANDBOX')
   ) {
     violations.push('runs tmux without requiring the test runner sandbox (FARMSLOT_TMUX_SANDBOX)');
@@ -107,7 +120,13 @@ export function tmuxRuleViolations(rel, source) {
   const killServer = /['"`]kill-server['"`]/u.exec(source);
   if (
     killServer &&
-    !(driverPrivate && /execFileSync\('tmux',\s*\['-L',\s*socket,\s*'kill-server'\]/u.test(source))
+    !(
+      driverPrivate && /execFileSync\('tmux',\s*\['-L',\s*socket,\s*'kill-server'\]/u.test(source)
+    ) &&
+    !(
+      fixturePrivate &&
+      /spawnSync\('tmux',\s*\[\.\.\.tmuxArgs, 'kill-server'\], \{ env \}\)/u.test(source)
+    )
   ) {
     violations.push(
       `line ${lineOf(source, killServer.index)}: passes kill-server (the runner ends its own server)`,
@@ -265,5 +284,18 @@ test('the detector holds TypeScript and shell tests to the sandbox rule', () => 
   assert.deepEqual(
     tmuxRuleViolations('a.test.sh', '# tmux kill-server is never used here\necho ok\n'),
     [],
+  );
+});
+
+test('fresh-server Git fixtures own and clean their explicit private socket', () => {
+  const file = 'services/gateway/src/methods/slot/prepare-git-maintenance.test.ts';
+  const source = readFileSync(path.join(repoRoot, file), 'utf8');
+  assert.deepEqual(tmuxRuleViolations(file, source), []);
+  assert.ok(
+    tmuxRuleViolations(file, source.replace("['-S', socket", "['-S', '/tmp/shared.sock'")).length >
+      0,
+  );
+  assert.ok(
+    tmuxRuleViolations(file, source + "\nspawnSync('tmux', ['kill-server']);\n").length > 0,
   );
 });
