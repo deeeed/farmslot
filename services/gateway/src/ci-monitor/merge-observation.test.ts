@@ -143,3 +143,35 @@ test('a watch stopped mid-read still records the merge of the PR the run links',
   assert.equal(getRun(run.id)?.prState, 'MERGED');
   assert.equal(getRun(run.id)?.mergedAt, '2026-07-27T12:50:12Z');
 });
+
+function dropLine(lines: string[], prNumber: number): string {
+  const line = lines.find((entry) => entry.includes(`dropped PR #${prNumber}`));
+  assert.ok(line, `expected a drop log for PR #${prNumber}`);
+  return line;
+}
+
+test('a merge response for a run with no PR does not say it links PR #none', async () => {
+  await loadAllRuns();
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000051',
+    prNumber: 411,
+  });
+  const lines: string[] = [];
+  const log = mock.method(console, 'log', (...args: unknown[]) => {
+    lines.push(args.map(String).join(' '));
+  });
+  whileReading = () => updateRun(run.id, { prNumber: null });
+  try {
+    const outcome = await monitorCI(run.id, 411, 'deeeed/farmslot', new AbortController().signal);
+    assert.equal(outcome.result, 'aborted');
+  } finally {
+    whileReading = undefined;
+    log.mock.restore();
+  }
+  const line = dropLine(lines, 411);
+  assert.match(line, /the run no longer links a PR/);
+  assert.doesNotMatch(line, /#none/);
+  assert.equal(getRun(run.id)?.prState, undefined);
+});
