@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { test } from 'node:test';
+import { after, before, mock, test } from 'node:test';
 import {
   blindReviewRows,
   blindReviewPacketHash,
@@ -20,6 +20,11 @@ import {
   type RunnerApproval,
   type RunnerConfig,
 } from './workflow-navigation-runner.mts';
+
+before(() => {
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-24T00:00:00Z') });
+});
+after(() => mock.timers.reset());
 
 const sha = (value: string) => createHash('sha256').update(value).digest('hex');
 const cases = [
