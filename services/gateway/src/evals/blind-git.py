@@ -324,7 +324,7 @@ def operator_shell_secret_paths():
     protected = [root / name for root in homes for name in startup]
     protected += [home / name for name in [
         '.bashrc', '.bash_profile', '.bash_login', '.bash_logout', '.bash_history', '.profile',
-        '.config/secrets', '.netrc', '.npmrc', '.yarnrc', '.yarnrc.yml', '.pypirc',
+        '.config/secrets', '.netrc', '.npmrc', '.yarnrc', '.pypirc',
         '.docker/config.json', '.git-credentials', '.aws', '.kube/config', '.gnupg']]
     return protected
 
@@ -347,6 +347,10 @@ def worker_private_rules(capsule):
     rules += ['(deny %s (regex #"/(gateways[.]json|credentials[.]json|provider-accounts[.]json|active-provider-accounts[.]json|node[.]secret|providers[.]env)([./]|$)"))' % operation
               for operation in ['file-read*', 'file-write*']]
     rules += rename_guard_rules(protected)
+    # Yarn reads ~/.yarnrc.yml in every project; an absent file must read as absent, not EPERM.
+    yarnrc = Path.home() / '.yarnrc.yml'
+    rules += ['(deny file-write* file-link (subpath %s))' % quote(p) for p in path_aliases(yarnrc)]
+    rules += rename_guard_rules([yarnrc])
     # Pi loads extensions inside this same seatbelt. File rules cannot distinguish
     # Pi's loader from its tool children; denying extension sources breaks startup.
     return rules
@@ -1099,6 +1103,9 @@ def isolate(spec):
     snapshots = sorted({spec['baseSha']} | ({spec['proof']['baseSha']} if spec.get('proof') else set()))
     (prepared / 'shallow').write_text('\n'.join(snapshots) + '\n')
     git(repo, 'update-ref', 'refs/heads/' + spec['branch'], spec['baseSha'], git_dir=prepared)
+    # Project checks diff against origin/main (git merge-base origin/main HEAD). Point it at the
+    # verified base: a local tracking ref only, with no remote URL and no reference history.
+    git(repo, 'update-ref', 'refs/remotes/origin/main', spec['baseSha'], git_dir=prepared)
     git(repo, 'symbolic-ref', 'HEAD', 'refs/heads/' + spec['branch'], git_dir=prepared)
     git(repo, 'read-tree', spec['baseSha'], git_dir=prepared)
     prepare_submodules(repo, original_directory, prepared,

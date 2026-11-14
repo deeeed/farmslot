@@ -2542,3 +2542,36 @@ console.log('host stores EPERM; own checkout, pin and Pi home usable');
     );
   },
 );
+
+test(
+  'blind core worker setup sees its Node location and a readable-but-fixed ~/.yarnrc.yml',
+  { skip: process.platform !== 'darwin' },
+  (t) => {
+    const root = fixture();
+    t.after(() => rmSync(root, { recursive: true }));
+    const home = path.join(root, 'home');
+    mkdirSync(home);
+    const launchEnv = { ...env, HOME: home, CORE_NODE_BIN: path.dirname(process.execPath) };
+    profile(root, launchEnv);
+    const yarnrc = path.join(home, '.yarnrc.yml');
+    const probe = (contents: string) =>
+      worker(
+        root,
+        [
+          `node -e ${q(`try { require('node:fs').readFileSync(${JSON.stringify(yarnrc)}); console.log('READ ${contents}') } catch (e) { console.log('READ ' + e.code) }`)}`,
+          `if (printf x >> ${q(yarnrc)}) 2>/dev/null; then echo WRITE ok; else echo WRITE denied; fi`,
+          '"$CORE_NODE_BIN/node" -e "console.log(\'NODE ok\')"',
+        ].join('; '),
+        launchEnv,
+      );
+    const absent = probe('present');
+    assert.equal(absent.status, 0, absent.stderr);
+    assert.match(absent.stdout, /^READ ENOENT$/mu);
+    assert.match(absent.stdout, /^WRITE denied$/mu);
+    assert.match(absent.stdout, /^NODE ok$/mu);
+    writeFileSync(yarnrc, 'nodeLinker: node-modules\n');
+    const present = probe('present');
+    assert.match(present.stdout, /^READ present$/mu);
+    assert.match(present.stdout, /^WRITE denied$/mu);
+  },
+);

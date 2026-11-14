@@ -42,6 +42,7 @@ inherited Git configuration cannot cross the boundary.
 | `FARMSLOT_MACHINE`                | Locates task tools, task state or slot identity; Seatbelt still denies gateway credentials and RPC. |
 | `FARMSLOT_RUN_ID`                 | Locates task tools, task state or slot identity; Seatbelt still denies gateway credentials and RPC. |
 | `FARMSLOT_NODE22_BIN`             | Locates task tools, task state or slot identity; Seatbelt still denies gateway credentials and RPC. |
+| `CORE_NODE_BIN`                   | Selects installed toolchains or project build mode.                                                 |
 | `FARMSLOT_PROJECTS_DIR`           | Locates task tools, task state or slot identity; Seatbelt still denies gateway credentials and RPC. |
 | `FARMSLOT_POOL_DIR`               | Locates task tools, task state or slot identity; Seatbelt still denies gateway credentials and RPC. |
 | `FARMSLOT_RUNS_DIR`               | Locates task tools, task state or slot identity; Seatbelt still denies gateway credentials and RPC. |
@@ -152,16 +153,26 @@ model adapter. Custom providers that require another environment name must add
 an exact capability entry and a regression test. Prefer the runner's own config
 for custom provider authentication.
 
+## Base ref
+
+The isolated repository has no remotes. Isolation records
+`refs/remotes/origin/main` at the verified base commit (no remote URL, no
+reference objects), so project checks that run `git merge-base origin/main HEAD`
+diff against the trial base. `FARMSLOT_CI_BASE_REF` carries the same commit.
+
 ## Shell startup files
 
 `BASH_ENV`, `ENV` and the operator's `ZDOTDIR` never cross `env -i`. The wrapper
 sets `ZDOTDIR` to the capsule's empty `boundary/shell`. Seatbelt also denies reads
 and writes of the operator's zsh and bash startup files and histories,
-`~/.config/secrets`, `~/.netrc`, `~/.npmrc`, `~/.yarnrc(.yml)`, `~/.pypirc`,
+`~/.config/secrets`, `~/.netrc`, `~/.npmrc`, `~/.yarnrc`, `~/.pypirc`,
 `~/.docker/config.json`, `~/.git-credentials`, `~/.aws`, `~/.kube/config`,
 `~/.gnupg` and the checkout's `.agent/.launch` scripts, with each resolved symlink
 target. A worker that resets `ZDOTDIR` or runs `bash -l` still reads none of them.
 Tools that read those files for registry authentication see them as absent.
+`~/.yarnrc.yml` is readable but not writable: Yarn reads it in every project, and
+an absent file must stat as absent rather than `EPERM`. A registry token kept
+there is visible to the worker; keep tokens in the environment instead.
 
 Tmux launch scripts live in the slot runtime beside each checkout
 (`<parent>/.farmslot-runtime/<slot>/.agent/.launch`, from `runnerLaunchDir`), and

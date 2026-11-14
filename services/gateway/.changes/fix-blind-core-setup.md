@@ -1,0 +1,1 @@
+- Restore blind core worker setup: pass `CORE_NODE_BIN` through the blind environment, record `refs/remotes/origin/main` at the verified blind base so `git merge-base origin/main HEAD` works without a remote, and let the worker read (never write) `~/.yarnrc.yml` so an absent file reads as absent instead of `EPERM`.
