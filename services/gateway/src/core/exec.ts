@@ -2,7 +2,7 @@
 // TypeScript port of lib/slot-common.sh: is_local, run_on, remote
 // Uses node-rpc.ts for remote execution via connected nodes.
 import { type ChildProcess, spawn } from 'node:child_process';
-import { accessSync, constants, statSync } from 'node:fs';
+import { Socket } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -114,66 +114,63 @@ export interface ExecOptions {
  * A process that owns every local command it starts: the gateway-background process, whose
  * commands must not outlive it. Each command gets its own process group and is handed to
  * `started`, so the owner can kill the group of any command that has not exited when it exits.
- * Each also carries a guard (GUARD_PRELUDE) that kills its group if the owner dies outright.
+ * A watchdog (COMMAND_WATCHDOG) kills those groups if the owner dies outright.
  */
 export interface LocalCommandOwner {
   started(command: ChildProcess): void;
-  /** The owner's pid, which each command's guard watches. */
-  pid: number;
+  /** False starts no watchdog: tests prove the owner's own cleanup without one. */
+  watchdog?: boolean;
 }
 let localCommandOwner: LocalCommandOwner | undefined;
+let commandWatchdog: ChildProcess | undefined;
+
+/**
+ * One POSIX sh per owner (dash on Linux), in its own process group, reading `+<pid>` when a
+ * command starts and `-<pid>` when it exits from a pipe that only the owner holds open. When the
+ * pipe closes, the owner is gone however it died: the watchdog SIGKILLs the group of each command
+ * still registered whose leader is alive, then exits. `read`, `case` and `kill` are builtins, so
+ * commands start no extra process and nothing polls.
+ * - Each command is its group's leader (detached spawn), so its pid names its group, and the
+ *   group id is not reused while the leader lives: an exited leader is either unregistered or,
+ *   unreaped, still holds its pid.
+ * - Like the per-command guard it replaces, it kills only groups whose leader is still running;
+ *   descendants left by a command that already exited are not its concern.
+ * - Its cwd is /, its stdout and stderr are /dev/null, and group signals to commands never reach it.
+ */
+export const COMMAND_WATCHDOG =
+  's=" "; while IFS= read -r l; do case $l in +*) s="$s${l#+} ";; -*) p=${l#-}; case $s in *" $p "*) s="${s%% $p *} ${s#* $p }";; esac;; esac; done; for p in $s; do kill -0 "$p" 2>/dev/null && kill -s KILL -- "-$p" 2>/dev/null; done; exit 0';
 
 export function ownLocalCommands(owner: LocalCommandOwner | undefined): void {
   localCommandOwner = owner;
+  commandWatchdog?.stdin?.end();
+  commandWatchdog = undefined;
+  if (!owner || owner.watchdog === false) return;
+  const watchdog = spawn('/bin/sh', ['-c', COMMAND_WATCHDOG], {
+    cwd: '/',
+    stdio: ['pipe', 'ignore', 'ignore'],
+    detached: true,
+  });
+  watchdog.unref();
+  // The pipe must not keep the owner's event loop alive; its write end closes when the owner exits.
+  if (watchdog.stdin instanceof Socket) watchdog.stdin.unref();
+  // A failed write means the watchdog is gone; the owner's own exit cleanup still kills its
+  // commands, so a lost registration only loses the outright-death guarantee.
+  watchdog.stdin?.on('error', (error: NodeJS.ErrnoException) => {
+    if (error.code !== 'EPIPE') throw error;
+    console.warn('[exec] command watchdog exited early; outright-death cleanup is off');
+  });
+  commandWatchdog = watchdog;
 }
 
-/**
- * Run as `sh -c PRELUDE sh <owner pid> <executable> <argv...>` (POSIX sh: dash on Linux). A guard
- * subshell joins the command's process group, then the shell execs the command, which keeps the
- * shell's pid: the exit status, signal, output and group are the command's own. Once a second the
- * guard exits if the command (`$$`, the parent shell's pid, now the command's) is gone, and
- * SIGKILLs its own group (`kill 0`) if the owner is gone, however the owner died.
- * - It ignores TERM (in the subshell only, so the command's own dispositions are untouched): the
- *   owner's timeout sends TERM to the group, and the guard must outlive that until KILL.
- * - It only ever signals its own group, whose id is not reused while the guard is in it.
- * - A reused owner pid can only look alive and delay the kill (a leak in a rare case); a pid that
- *   now belongs to another user fails `kill -0`, which is right, as the owner is then gone.
- * - Its cwd is /, so its last polling interval cannot hold a completed checkout.
- * - Its stdio is /dev/null, so it never holds the command's pipes.
- */
-const GUARD_PRELUDE =
-  'o=$1; shift; (cd / || kill -KILL 0; trap \'\' TERM; while kill -0 "$$" 2>/dev/null; do kill -0 "$o" 2>/dev/null || kill -KILL 0; sleep 1; done) </dev/null >/dev/null 2>&1 & exec "$@"';
-
-/**
- * Whether the prelude's `exec` runs what spawn would: an existing cwd, and an executable spawn
- * would find (a path, or a name on the command's PATH). Otherwise the command starts unwrapped, so
- * its spawn error stays exactly today's.
- */
-function preludeRunsExactly(executable: string, cwd: string | undefined, envPath: string): boolean {
-  const accessible = (file: string, kind: 'directory' | 'executable') => {
-    try {
-      if (kind === 'directory') return statSync(file).isDirectory();
-      accessSync(file, constants.X_OK);
-      return statSync(file).isFile();
-    } catch (error) {
-      // Missing or not permitted: spawn would fail too, and reports it in its own words.
-      if (
-        ['ENOENT', 'ENOTDIR', 'EACCES', 'ELOOP'].includes(
-          (error as NodeJS.ErrnoException).code ?? '',
-        )
-      )
-        return false;
-      throw error;
-    }
-  };
-  const base = cwd === undefined ? process.cwd() : path.resolve(cwd);
-  if (cwd !== undefined && !accessible(base, 'directory')) return false;
-  if (executable.includes('/')) return accessible(path.resolve(base, executable), 'executable');
-  return envPath
-    .split(':')
-    .some((directory) =>
-      accessible(path.resolve(base, directory || '.', executable), 'executable'),
-    );
+/** Registers a started command with the watchdog until it exits. */
+function watchCommand(command: ChildProcess): void {
+  const watchdog = commandWatchdog;
+  const pid = command.pid;
+  if (!watchdog?.stdin || pid === undefined) return;
+  watchdog.stdin.write(`+${pid}\n`);
+  command.once('exit', () => {
+    if (watchdog.stdin?.writable) watchdog.stdin.write(`-${pid}\n`);
+  });
 }
 
 /** Signals every process in a command's group; false when none is left (ESRCH). */
@@ -228,24 +225,16 @@ function spawnLocalProcess(
       const owner = localCommandOwner;
       const useProcessGroup = owner !== undefined || opts?.signal != null || opts?.timeout != null;
       const env = localCommandEnvironment();
-      // A command that would fail to start runs unwrapped: it fails as spawn reports it, and
-      // leaves no process to guard.
-      const guarded =
-        owner !== undefined && preludeRunsExactly(executable, opts?.cwd, env.PATH ?? '');
-      const proc = guarded
-        ? spawn('/bin/sh', ['-c', GUARD_PRELUDE, 'sh', String(owner.pid), executable, ...argv], {
-            cwd: opts?.cwd,
-            env,
-            stdio: ['ignore', 'pipe', 'pipe'],
-            detached: true,
-          })
-        : spawn(executable, argv, {
-            cwd: opts?.cwd,
-            env,
-            stdio: ['ignore', 'pipe', 'pipe'],
-            detached: useProcessGroup,
-          });
-      if (proc.pid !== undefined) owner?.started(proc);
+      const proc = spawn(executable, argv, {
+        cwd: opts?.cwd,
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        detached: useProcessGroup,
+      });
+      if (proc.pid !== undefined && owner) {
+        owner.started(proc);
+        watchCommand(proc);
+      }
 
       let stdout = '';
       let stderr = '';
