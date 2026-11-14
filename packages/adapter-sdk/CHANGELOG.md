@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.27.7 - 2026-11-14
+
+- Align published dependencies with the protocol 0.84 and runtime 0.47 release cohort.
+
 ## 0.27.6 - 2026-11-13
 
 - Let `prepareRuntime` return `Promise<void | boolean>`; only explicit `false` preserves the current plan, and existing `void` results still require replanning.

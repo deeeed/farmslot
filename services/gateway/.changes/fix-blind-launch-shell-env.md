@@ -1,2 +1,0 @@
-- Start blind trial launch shells with `env -i` and no startup files. Worker names reach the worker subshell on a file descriptor, so the pane's long-lived shells hold no credential in their environment or argv, and pool credentials outside the blind allowlist are no longer written into the launch script. Non-blind launches are unchanged.
-- Deny blind workers every slot's `.farmslot-runtime` tree except their own slot runtime, and every tmux launch directory, so a blind worker cannot read a sibling slot's launch script and its inlined pool credentials.

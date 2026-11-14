@@ -1,1 +1,0 @@
-- Keep pool and project.json backups from configuration saves in `<home>/state/config-backups/` instead of beside the file. Each file keeps its newest 10 backups, two saves in the same minute no longer share one backup, and a save moves that file's old `<file>.bak.<YYYY-MM-DDTHHMM>` copies out of `pool/` and `projects/`.

@@ -6,6 +6,10 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.36.3 - 2026-11-14
+
+- A run file that fails to load is no longer requested again on every render. It loads again when the run or file link changes, when the view opens again, or when the gateway connection comes back.
+
 ## 0.36.2 - 2026-11-13
 
 - Expand checklist step titles to read their instructions, collapsed by default.

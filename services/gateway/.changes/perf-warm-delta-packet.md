@@ -1,1 +1,0 @@
-- Freeze compact WARM delta packets, verify reused coverage, compact supported retained sessions before new task instructions, and capture the first terminal review session for later continuation.

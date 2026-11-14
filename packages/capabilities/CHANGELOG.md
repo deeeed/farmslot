@@ -6,6 +6,10 @@ All notable changes to `@farmslot/capabilities` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.7.1 - 2026-11-14
+
+- Align published dependencies with the protocol 0.84 and runtime 0.47 release cohort.
+
 ## 0.7.0 - 2026-11-07
 
 - Support notification-only file watches and ranged append reads for retained terminal conversations.

@@ -1,1 +1,0 @@
-- Batch passive Git metadata reads per remote node so unchanged slot workspaces reuse their observations without repeated full Git probes, while retaining ownership, freshness and explicit inspection checks.

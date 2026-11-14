@@ -1,11 +1,13 @@
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, readFileSync } from 'node:fs';
+import { appendFileSync, globSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { isFragmentPath } from '../release/changelog-fragments.mjs';
 import { loadWorkspacePackages } from '../release/lib/workspace-utils.mjs';
 
 import { filterMatches, PATH_FILTERS } from './lib/path-filters.mjs';
 import { isMainModule } from './lib/step-timing.mjs';
+import { discoverTests, parseArgs } from './run-tsx-tests.mjs';
 
 // These suites use an app-specific job name or live in a parent workspace.
 const APP_OWNERS = {
@@ -20,9 +22,29 @@ const SHARED_INPUTS = new Set([
   '.yarnrc.yml',
   '.github/workflows/farmslot-quality.yml',
   'scripts/quality/workspace-test-targets.mjs',
+  'apps/command-center/tsconfig.base.json',
+  '.github/actions/ci-setup/action.yml',
 ]);
 
-export function selectWorkspaceTests(workspaces, changedFiles, filters, jobIds) {
+// CI implementation changes exercise their own contracts and runtime bootstrap
+// smokes on PRs. The full workspace suites are owned by main/merge/nightly.
+export function isCiControlFile(file) {
+  return (
+    file.startsWith('.github/workflows/') ||
+    file.startsWith('.github/actions/') ||
+    file.startsWith('scripts/quality/') ||
+    ['.gitignore', '.prettierrc.json', '.prettierignore', 'eslint.config.mjs'].includes(file)
+  );
+}
+
+export function runtimeImpactFiles(files) {
+  return files === null ? null : files.filter((file) => !isCiControlFile(file));
+}
+
+export function affectedWorkspaceNames(workspaces, changedFiles) {
+  changedFiles =
+    changedFiles?.filter((file) => !workspaces.some(({ dir }) => isFragmentPath(file, dir))) ??
+    null;
   const all =
     changedFiles === null ||
     changedFiles.some(
@@ -58,6 +80,12 @@ export function selectWorkspaceTests(workspaces, changedFiles, filters, jobIds) 
     }
   } while (expanded);
 
+  return affected;
+}
+
+export function selectWorkspaceTests(workspaces, changedFiles, filters, jobIds) {
+  const affected = affectedWorkspaceNames(workspaces, changedFiles);
+
   const targets = new Set(Object.keys(filters).filter((name) => filters[name] === 'true'));
   // Existing filters also describe source dependencies outside package manifests.
   const affectedPaths = workspaces
@@ -92,6 +120,7 @@ export function workspaceTestCatalog(repoRoot) {
     name: pkg.name,
     test: pkg.scripts?.test,
     quality: pkg.scripts?.quality,
+    scripts: pkg.scripts ?? {},
     dependencies: Object.keys({
       ...pkg.dependencies,
       ...pkg.devDependencies,
@@ -103,6 +132,39 @@ export function workspaceTestCatalog(repoRoot) {
   if (tracked.status !== 0) throw new Error(`Cannot inventory workspace tests: ${tracked.stderr}`);
   assertWorkspaceTestScripts(catalog, tracked.stdout.split('\0').filter(Boolean));
   return catalog;
+}
+
+// Select from the suite's real discovery roots. A tracked live/test-support file
+// is not made a unit test merely by sharing a filename suffix.
+export function workspaceSuiteFiles(workspaces, repoRoot) {
+  const files = new Set();
+  for (const workspace of workspaces) {
+    const script =
+      workspace.test ?? workspace.scripts?.['test:lib'] ?? workspace.scripts?.['test:ui'];
+    if (!script) continue;
+    const workspaceRoot = path.resolve(repoRoot, workspace.dir);
+    for (const match of script.matchAll(/run-tsx-tests\.mjs\s+([^&]+)/g)) {
+      const parsed = parseArgs(match[1].trim().split(/\s+/));
+      const cwd = path.resolve(workspaceRoot, parsed.cwd ?? '.');
+      for (const file of discoverTests(parsed.roots, cwd))
+        files.add(path.relative(repoRoot, file).split(path.sep).join('/'));
+    }
+    const tokens = [...script.matchAll(/"([^"]+)"|'([^']+)'|([^\s]+)/g)].map(
+      (match) => match[1] ?? match[2] ?? match[3],
+    );
+    for (const token of tokens.filter((value) => /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(value))) {
+      for (const file of globSync(token, { cwd: workspaceRoot }))
+        files.add(
+          path.relative(repoRoot, path.join(workspaceRoot, file)).split(path.sep).join('/'),
+        );
+    }
+  }
+  for (const file of [
+    'apps/command-center/scripts/agentic/run-recipe.test.mjs',
+    'apps/command-center/scripts/agentic/recording-target.test.mjs',
+  ])
+    files.add(file);
+  return files;
 }
 
 export function assertWorkspaceTestScripts(workspaces, files) {

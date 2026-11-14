@@ -1,1 +1,0 @@
-- Configuration proof scripts expect pool and project.json backups under `<home>/state/config-backups/`.
