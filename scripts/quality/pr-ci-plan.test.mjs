@@ -251,7 +251,11 @@ test('script batches keep native Node tests separate from typed tests', async ()
   assert.deepEqual(assigned.sort(), [...selected].sort());
   for (const task of tasks) {
     if (task.args.some((arg) => /\.[cm]?js$/.test(arg))) {
-      assert.deepEqual(task.args.slice(0, 2), ['node', '--test']);
+      assert.deepEqual(task.args.slice(0, 3), [
+        'node',
+        '--experimental-test-module-mocks',
+        '--test',
+      ]);
       assert.ok(!task.args.includes('tsx'));
       assert.ok(!task.args.some((arg) => arg.startsWith('TSX_TSCONFIG_PATH=')));
     } else {
@@ -277,9 +281,12 @@ test('native fixture children and typed tests work after changing cwd', async (t
   writeFileSync(child, "const value: string = 'typed-child-ok'; process.stdout.write(value);\n");
   writeFileSync(
     native,
-    `import assert from 'node:assert/strict'; import { test } from 'node:test'; import { execFileSync } from 'node:child_process';
+    `import assert from 'node:assert/strict'; import { test, mock } from 'node:test'; import { execFileSync } from 'node:child_process';
+    mock.module('node:os', { namedExports: { hostname: () => 'native-fixture' } });
+    const { hostname } = await import('node:os');
     test('native child has no tsx loader', () => {
       assert.ok(!process.execArgv.includes('tsx'));
+      assert.equal(hostname(), 'native-fixture');
       assert.equal(execFileSync(process.execPath, ['child.cjs'], { cwd: ${JSON.stringify(fixture)}, encoding: 'utf8' }), 'native-child-ok');
     });\n`,
   );

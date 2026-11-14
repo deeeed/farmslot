@@ -303,7 +303,7 @@ export function createPrPlan({ root, changed, workspaces, selected, durations = 
   const typed = [];
   for (const file of remaining) (/\.[cm]?js$/.test(file) ? native : typed).push(file);
   const scriptGroups = [
-    [native, ['node', '--test']],
+    [native, ['node', '--experimental-test-module-mocks', '--test']],
     [
       typed,
       [
