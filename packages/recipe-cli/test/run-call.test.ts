@@ -2357,7 +2357,7 @@ describe('run', () => {
     assert.ok(fs.existsSync(String(envelope.reportPath)));
     assert.deepEqual(
       calls.runners.map((runner) => runner.adapter),
-      ['web', 'web'],
+      ['web'],
     );
     assert.ok(calls.members.includes('run.prepareRuntime:9444'));
     assert.ok(calls.members.includes('run.teardown'));
@@ -2425,12 +2425,12 @@ describe('run', () => {
       ),
     );
     assert.equal(run.value, 0, run.stderr.join('\n'));
-    // Each preflight plans with an unbound runner, then rebuilds with the authorized mutation.
+    // Plan unbound, then construct the runner with the authorized mutation.
     const bound = calls.runners.map((runner) => runner.trustedMutation ?? '');
-    assert.equal(bound.length, 4);
-    assert.deepEqual([bound[0], bound[2]], ['', '']);
+    assert.equal(bound.length, 2);
+    assert.equal(bound[0], '');
     assert.match(bound[1] ?? '', /^grant@sha256:[0-9a-f]{8}$/u);
-    assert.equal(bound[3], bound[1]);
+    assert.deepEqual(calls.mutationHooks, ['load:web', 'authorize:web']);
   });
 
   test('keeps the first runner when authorize has nothing to bind for the plan', async () => {
@@ -2473,17 +2473,8 @@ describe('run', () => {
       ),
     );
     assert.equal(run.value, 0, run.stderr.join('\n'));
-    // Two preflights (before and after the checkout lock), one runner each, none bound.
-    assert.deepEqual(calls.runners, [
-      { adapter: 'web', trustTaskActions: true },
-      { adapter: 'web', trustTaskActions: true },
-    ]);
-    assert.deepEqual(calls.mutationHooks, [
-      'load:web',
-      'authorize:web',
-      'load:web',
-      'authorize:web',
-    ]);
+    assert.deepEqual(calls.runners, [{ adapter: 'web', trustTaskActions: true }]);
+    assert.deepEqual(calls.mutationHooks, ['load:web', 'authorize:web']);
   });
 
   test('an inherited untrusted source follows the HUD policy; a surface that opts out still wins', async () => {

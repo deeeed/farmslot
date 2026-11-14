@@ -155,6 +155,25 @@ test('bounds a stalled update and never replays it after an indeterminate respon
   assert.equal(requests.filter((r) => r.action === 'hud-update').length, 1);
 });
 
+test('expires a queued update independently and never submits it after its deadline', async () => {
+  const { state, requests, session } = await fixture();
+  state.stall = true;
+  const order: string[] = [];
+  const first = session.send('hide-step-deferred', [], 250).catch((error: Error) => {
+    order.push('first');
+    return error;
+  });
+  const second = session.send('hide-step-deferred', [], 25).catch((error: Error) => {
+    order.push('second');
+    return error;
+  });
+  const [firstError, secondError] = await Promise.all([first, second]);
+  assert.ok(firstError instanceof Error && /timeout/.test(firstError.message));
+  assert.ok(secondError instanceof Error && /timeout/.test(secondError.message));
+  assert.deepEqual(order, ['second', 'first']);
+  assert.equal(requests.filter((r) => r.action === 'hud-update').length, 1);
+});
+
 test('preserves payload validation and rejects synchronous capture commands', async () => {
   const { session, requests } = await fixture();
   await assert.rejects(() => session.send('show-step-json-deferred', ['{}']), /step.intent/);

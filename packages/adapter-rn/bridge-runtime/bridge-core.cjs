@@ -1302,13 +1302,6 @@ function placeAfter(order, name, anchor, field) {
 // Main
 // ---------------------------------------------------------------------------
 
-/**
- * Run the bridge CLI for `process.argv`: print help, or resolve the target,
- * run one command and print its JSON result. Failures exit with the typed
- * bridge exit code. Invalid host config throws before anything runs.
- * @param {BridgeCliConfig} [config]
- * @returns {Promise<void>}
- */
 function selectedTargetPin(env = process.env) {
   const platform = String(env.RECIPE_RN_EXPLICIT_PLATFORM || '').toLowerCase();
   const androidPin = env.ANDROID_TARGET_DEVICE_NAME || env.ANDROID_DEVICE || '';
@@ -1435,7 +1428,26 @@ function createBrokerHudSession(socketPath, env = process.env) {
         () => undefined,
         () => undefined,
       );
-      return result;
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(
+          () => {
+            reject(
+              coded(new Error('CDP broker HUD command timeout'), BRIDGE_ERROR_CODES.CDP_TIMEOUT),
+            );
+          },
+          Math.max(0, deadline - Date.now()),
+        );
+        result.then(
+          (value) => {
+            clearTimeout(timer);
+            resolve(value);
+          },
+          (error) => {
+            clearTimeout(timer);
+            reject(error);
+          },
+        );
+      });
     },
     async close() {
       closed = true;
@@ -1445,6 +1457,13 @@ function createBrokerHudSession(socketPath, env = process.env) {
   };
 }
 
+/**
+ * Run the bridge CLI for `process.argv`: print help, or resolve the target,
+ * run one command and print its JSON result. Failures exit with the typed
+ * bridge exit code. Invalid host config throws before anything runs.
+ * @param {BridgeCliConfig} [config]
+ * @returns {Promise<void>}
+ */
 function runBridgeCli(config = {}) {
   const hostCommands = config.commands || {};
   const commandDocs = config.commandDocs || {};
