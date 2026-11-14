@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { test } from 'node:test';
+import { after, before, mock, test } from 'node:test';
 import { navigationReferenceHash, sealPlan } from './workflow-navigation.mts';
 import {
   adviceState,
@@ -15,6 +15,11 @@ import type { AssessmentProvider } from '../../services/gateway/src/assessment/p
 import { createTypeSafeProvider } from '../../services/gateway/src/assessment/typesafe.js';
 import type { RunnerApproval } from './workflow-navigation-runner.mts';
 import type { AdviceConfig } from './workflow-navigation-advice.mts';
+
+before(() => {
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-24T00:00:00Z') });
+});
+after(() => mock.timers.reset());
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const cases = [
