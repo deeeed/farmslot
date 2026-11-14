@@ -243,6 +243,7 @@ test('a failed profile sample keeps sessions observable; profile reads recover o
   t.mock.method(console, 'warn', (...args: unknown[]) => warnings.push(args));
   const fixture = setup();
   const receipts: NativeSourceReceipt[] = [];
+  let samplePublished: (() => void) | undefined;
   let fail = true;
   const status: NativeProfileStatusResult = {
     profile: {
@@ -265,7 +266,10 @@ test('a failed profile sample keeps sessions observable; profile reads recover o
   const source = new NativeHostObservation(
     new NativeSessionClient(fixture.root),
     'A',
-    (receipt) => receipts.push(receipt),
+    (receipt) => {
+      receipts.push(receipt);
+      samplePublished?.();
+    },
     fixture.home,
     async () => {
       if (fail) throw new Error('Account capability unavailable');
@@ -280,11 +284,12 @@ test('a failed profile sample keeps sessions observable; profile reads recover o
     });
     assert.match(JSON.stringify(warnings), /Account capability unavailable/);
     fail = false;
-    const before = receipts.length;
-    // The next 60 s account sample. setImmediate is not mocked, so polling lets it settle.
+    const sampled = new Promise<void>((resolve) => {
+      samplePublished = resolve;
+    });
+    // The publication follows both asynchronous scans; event-loop turns do not fence IO.
     t.mock.timers.tick(60_000);
-    for (let i = 0; i < 50 && receipts.length === before; i++)
-      await new Promise((resolve) => setImmediate(resolve));
+    await sampled;
     assert.deepEqual(receipts.at(-1)?.changed, ['profiles']);
     assert.equal((await source.profileStatus('profile')).account.login, 'authenticated');
     assert.equal((await source.fence()).ready, true);
