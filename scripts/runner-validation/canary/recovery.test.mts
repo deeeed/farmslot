@@ -41,7 +41,11 @@ for (const cases of [undefined, ['node-timeout'], ['interrupted-teardown']] as c
   test(`every recovery stack receives Node pin with cases=${cases?.join(',') ?? 'all'}`, async (t) => {
     const evidence = await mkdtemp(path.join(os.tmpdir(), 'recovery-stack-options-'));
     t.after(() => rm(evidence, { recursive: true, force: true }));
-    const allocated: Array<{ slots: string[]; nodeBin?: string }> = [];
+    const allocated: Array<{
+      slots: string[];
+      nodeBin?: string;
+      gatewayEnv?: NodeJS.ProcessEnv;
+    }> = [];
     const stop = new Error('stop before allocating fixture processes');
     let rejectAllocation!: (error: Error) => void;
     const allocation = new Promise<never>((_resolve, reject) => {
@@ -71,7 +75,9 @@ for (const cases of [undefined, ['node-timeout'], ['interrupted-teardown']] as c
         evidence,
         reaper: { group() {}, command() {}, path() {}, done() {} },
         cliSnapshots: '/unused',
-        onCleanup() {},
+        onCleanup(cleanup) {
+          t.after(() => cleanup());
+        },
         onCheck() {},
         log: async () => {},
       }),
@@ -96,6 +102,7 @@ for (const cases of [undefined, ['node-timeout'], ['interrupted-teardown']] as c
     );
     for (const stack of allocated) {
       assert.equal(stack.nodeBin, path.dirname(process.execPath));
+      assert.match(stack.gatewayEnv?.FARMSLOT_GITHUB_API_URL ?? '', /^http:\/\/127\.0\.0\.1:\d+$/);
     }
   });
 }
