@@ -1,0 +1,1 @@
+- Wait for preceding Git index work before a replay checkout, preserving existing locks and reporting a bounded busy result.

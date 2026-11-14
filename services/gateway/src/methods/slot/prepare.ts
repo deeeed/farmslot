@@ -41,6 +41,7 @@ import { assertStorageVolumePresent } from '../../core/storage-volume.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { farmCommandRootsForSlot } from '../../fleet/farm-paths.js';
 import { excludeSlotScaffolding } from '../../fleet/slot-scaffolding.js';
+import { waitForSlotGitIndex } from '../../host-services/parked-work.js';
 import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
 import {
   assertNoOperatorCollision,
@@ -785,6 +786,7 @@ async function slotPrepareInner(
   };
   if (branch) await opts?.beforeBranchSetup?.();
   if (branch && opts?.preserveBranch) {
+    if (current !== branch) await waitForSlotGitIndex(vars, execOnSlot);
     let localExists =
       (
         await execOnSlot(

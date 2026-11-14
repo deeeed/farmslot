@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
+import { existsSync, watch } from 'node:fs';
 import {
   chmod,
   lstat,
@@ -10,10 +11,14 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
+import vm from 'node:vm';
+
+import { isRecord } from '@farmslot/protocol/recipe';
 
 import type { execOnSlot } from '../core/exec.js';
 import { makeVars } from '../runners/test-fixtures.js';
@@ -24,7 +29,9 @@ import {
   pruneParkedGitWork,
   readParkedGitWork,
   restoreParkedGitWork,
+  waitForSlotGitIndex,
 } from './parked-work.js';
+import { PARKED_WORK_PROGRAM } from './parked-work-program.js';
 
 const execute = promisify(execFile);
 const localExec: typeof execOnSlot = async (_vars, command) => {
@@ -323,6 +330,100 @@ test('retention keeps unknown promisor ancestry local and still prunes verified 
   const published = await prune();
   assert.equal(published[0]?.ref, receipt.ref);
   assert.equal(published[0]?.pruneReason, 'remote');
+});
+
+test('an index lock that does not settle is retained with a bounded busy error', async (t) => {
+  const { repo, git, options } = await fixture(t);
+  const lock = path.join(repo, '.git/index.lock');
+  await writeFile(lock, 'unknown-owner');
+  const refs = git('for-each-ref', '--format=%(refname) %(objectname)');
+  let clock = 0;
+  let output = '';
+  class ClockDate extends Date {
+    static now() {
+      return clock;
+    }
+  }
+  vm.runInNewContext(PARKED_WORK_PROGRAM, {
+    require: createRequire(import.meta.url),
+    Buffer,
+    Date: ClockDate,
+    Atomics: {
+      wait: (_array: Int32Array, _index: number, _value: number, delay: number) => {
+        clock += delay;
+        return 'timed-out';
+      },
+    },
+    process: {
+      argv: ['node', JSON.stringify({ ...options, repo, op: 'waitIndex' })],
+      env: process.env,
+      stdout: {
+        write: (text: string) => {
+          output += text;
+        },
+      },
+      stderr: { write: () => {} },
+    },
+  });
+  const result: unknown = JSON.parse(output);
+  assert.ok(isRecord(result));
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'GIT_BUSY');
+  assert.match(String(result.message), /index\.lock.*60000ms/);
+  assert.equal(clock, 60000);
+  assert.equal(await readFile(lock, 'utf8'), 'unknown-owner');
+  assert.equal(git('for-each-ref', '--format=%(refname) %(objectname)'), refs);
+});
+
+test('prepare-style checkout waits for the preceding Git index writer', async (t) => {
+  const { vars, repo, git, options } = await fixture(t);
+  // The release's Git work has returned the checkout to its idle branch.
+  git('checkout', '-q', 'main');
+  const holder = spawn('git', ['-C', repo, 'update-index', '--index-info']);
+  const closed = new Promise<void>((resolve) => holder.once('close', () => resolve()));
+  t.after(async () => {
+    if (!holder.stdin.writableEnded) holder.stdin.end();
+    await closed;
+  });
+  const indexLock = path.join(repo, '.git/index.lock');
+  await new Promise<void>((resolve, reject) => {
+    const watcher = watch(path.dirname(indexLock), () => {
+      if (existsSync(indexLock)) resolve();
+    });
+    watcher.once('error', reject);
+    t.after(() => watcher.close());
+    holder.once('error', reject);
+    holder.once('close', () => reject(new Error('Git exited before its index lock was observed')));
+    if (existsSync(indexLock)) resolve();
+    else if (holder.exitCode !== null) reject(new Error('Git index writer already exited'));
+  });
+  let observedWait = false;
+  let originalLockPreserved = false;
+  const waitingExec: typeof execOnSlot = async (_vars, command) => {
+    const pending = execute('bash', ['-c', command]);
+    pending.child.stderr?.on('data', (chunk) => {
+      if (!observedWait && String(chunk).includes('Waiting for Git index lock')) {
+        observedWait = true;
+        originalLockPreserved = existsSync(indexLock) && holder.exitCode === null;
+        holder.stdin.end();
+      }
+    });
+    const result = await pending;
+    return { ...result, exitCode: 0 };
+  };
+  await waitForSlotGitIndex(vars, waitingExec);
+  const capture = await parkGitWork(vars, options, waitingExec);
+  const result = await executeParkedGitMutation(
+    vars,
+    { slotId: 'proof' },
+    capture,
+    `git checkout ticket`,
+    waitingExec,
+  );
+  assert.equal(result.exitCode, 0, result.stderr);
+  assert.ok(observedWait, 'the checkout waits instead of failing on the preceding writer');
+  assert.ok(originalLockPreserved, 'the waiter never deletes a live writer lock');
+  assert.equal(git('branch', '--show-current'), 'ticket');
 });
 
 test('an ignored file that reset would expose to clean is retained in the original snapshot', async (t) => {

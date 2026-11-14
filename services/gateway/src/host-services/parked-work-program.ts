@@ -7,7 +7,7 @@ const crypto = require('node:crypto');
 const cp = require('node:child_process');
 const input = JSON.parse(process.argv[1]);
 const repo = input.repo.startsWith('~/') ? path.join(os.homedir(), input.repo.slice(2)) : input.repo;
-const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'farm-park-'));
+const temporary = input.op==='waitIndex' ? null : fs.mkdtempSync(path.join(os.tmpdir(), 'farm-park-'));
 const env = { ...process.env };
 for (const key of ['GIT_DIR','GIT_WORK_TREE','GIT_INDEX_FILE','GIT_OBJECT_DIRECTORY','GIT_ALTERNATE_OBJECT_DIRECTORIES','GIT_COMMON_DIR','GIT_NAMESPACE','GIT_PREFIX']) delete env[key];
 env.GIT_OPTIONAL_LOCKS = '0';
@@ -84,6 +84,17 @@ function exposedIgnoredPaths(targets) {
     for(const file of ignored)if(!kept.has(file))exposed.add(file);
   }
   return [...exposed];
+}
+function waitForIndex(indexPath) {
+  const lock = path.resolve(repo,indexPath)+'.lock';
+  if(!exists(lock)) return;
+  process.stderr.write('Waiting for Git index lock '+lock+'\n');
+  const until=Date.now()+60000, sleeper=new Int32Array(new SharedArrayBuffer(4));
+  while(exists(lock)) {
+    const remaining=until-Date.now();
+    if(remaining<=0) fail('GIT_BUSY','Git index lock '+lock+' did not settle within 60000ms; no lock was removed');
+    Atomics.wait(sleeper,0,0,Math.min(50,remaining));
+  }
 }
 function snapshot(full) {
   const head = text(['rev-parse','HEAD']);
@@ -261,7 +272,8 @@ function prune() {
 }
 try {
   let value;
-  if(input.op==='park')value=park();
+  if(input.op==='waitIndex') { waitForIndex(text(['rev-parse','--git-path','index'])); value=true; }
+  else if(input.op==='park')value=park();
   else if(input.op==='list')value=inventory();
   else if(input.op==='lookup') { const sha=refSha(input.ref); const meta=refSha(metadataRef(input.ref)); value={headSha:sha,metadata:meta?git(['cat-file','blob',meta]).stdout.toString('utf8'):null}; }
   else if(input.op==='mutate')value=mutate();
@@ -272,5 +284,5 @@ try {
 } catch(error) {
   process.stdout.write(JSON.stringify({ok:false,code:error.code||'PARK_FAILED',message:error.code?error.message:'Parked-work operation failed'})+'\n');
   process.exitCode=error.code==='WORK_CHANGED'?42:1;
-} finally { fs.rmSync(temporary,{recursive:true,force:true}); }
+} finally { if(temporary) fs.rmSync(temporary,{recursive:true,force:true}); }
 `;
