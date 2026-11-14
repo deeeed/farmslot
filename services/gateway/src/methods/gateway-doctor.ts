@@ -22,6 +22,7 @@ import { backgroundHost, type BackgroundHostStatus } from '../host-services/back
 import type { GatewayAuthRuntime } from '../security/auth.js';
 import { activeAdminCredentialCount } from '../security/credential-store.js';
 
+import { passiveWorkspaceVersions } from './slot/workspace-metadata.js';
 import { gatewayStatus } from './gateway-status.js';
 
 const execFile = promisify(execFileCb);
@@ -264,6 +265,21 @@ export function backgroundHostCheck(status: BackgroundHostStatus): GatewayDoctor
 async function workspaceSection(): Promise<GatewayDoctorSection> {
   const [projects, pools] = await Promise.all([loadProjectConfigs(), loadPoolConfigs()]);
   const slots = pools.flatMap((pool) => pool.slots.map((slot) => ({ pool, slot })));
+  const metadata = await passiveWorkspaceVersions(
+    slots.map(({ slot }) => ({ slot: slot.id })),
+    new Map(),
+    true,
+  );
+  const borrowed = [...metadata].flatMap(([slotId, value]) =>
+    value.alternatesPath ? [`${slotId}: ${value.alternatesPath}`] : [],
+  );
+  const indexErrors = [...metadata].flatMap(([slotId, value]) =>
+    (value.indexErrors ?? []).map((error) => `${slotId}: ${error}`),
+  );
+  const indexWarnings = [...metadata].flatMap(([slotId, value]) =>
+    (value.indexWarnings ?? []).map((warning) => `${slotId}: ${warning}`),
+  );
+  const unverified = slots.filter(({ slot }) => !metadata.has(slot.id)).map(({ slot }) => slot.id);
   const storageErrors = [
     ...gatewayStorageVolumeErrors(),
     ...slots.flatMap(({ pool, slot }) => {
@@ -275,6 +291,24 @@ async function workspaceSection(): Promise<GatewayDoctorSection> {
     id: 'workspace',
     label: 'Workspace',
     checks: [
+      {
+        id: 'git-object-stores',
+        label: 'Slot Git object stores and indexes',
+        ok: borrowed.length === 0 && indexErrors.length === 0,
+        ...(unverified.length || indexWarnings.length ? { warn: true } : {}),
+        detail:
+          [
+            ...borrowed,
+            ...indexErrors,
+            ...indexWarnings,
+            ...(unverified.length ? [`Not inspected: ${unverified.join(', ')}`] : []),
+          ].join('\n') ||
+          `No Git alternates or broken index cache trees found in ${metadata.size} slot(s)`,
+        hint:
+          borrowed.length || indexErrors.length
+            ? 'Repair idle object stores or derived index cache trees; leave active slots unchanged.'
+            : undefined,
+      },
       {
         id: 'storage-volumes',
         label: 'Storage volumes',

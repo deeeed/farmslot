@@ -71,6 +71,42 @@ test('one metadata command reads normal and linked roots, detects changes, and i
   );
 });
 
+test('local and remote metadata expose alternates in the linked common directory', async (t) => {
+  const { localWorkspaceVersion } = await import('./workspace-version.js');
+  const { makeVars } = await import('../../runners/test-fixtures.js');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'metadata-alternates-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'linked');
+  const common = path.join(root, 'common');
+  const gitDir = path.join(common, 'worktrees/linked');
+  await mkdir(repo);
+  await mkdir(gitDir, { recursive: true });
+  await mkdir(path.join(common, 'objects/info'), { recursive: true });
+  await writeFile(path.join(repo, '.git'), 'gitdir: ../common/worktrees/linked\n');
+  await writeFile(path.join(gitDir, 'HEAD'), 'a'.repeat(40) + '\n');
+  await writeFile(path.join(gitDir, 'commondir'), '../..\n');
+  const alternates = path.join(common, 'objects/info/alternates');
+  await writeFile(alternates, '');
+  const vars = makeVars({ host: 'localhost', machine: 'fixture', remoteRepo: repo });
+  const roots: WorkspaceMetadataRoot[] = [
+    { slotId: vars.slotId, machine: vars.machine, repo, defaultBranch: 'main' },
+  ];
+  const remote = await execLocal(workspaceMetadataCommand(roots), { timeout: 5000 });
+  assert.equal(remote.exitCode, 0, remote.stderr);
+  const rows: unknown = JSON.parse(remote.stdout);
+  assert.ok(Array.isArray(rows) && isRecord(rows[0]));
+  assert.equal(rows[0].alternatesPath, alternates);
+  const local = await localWorkspaceVersion(vars, 'main');
+  assert.equal(local?.alternatesPath, alternates);
+  await rm(alternates);
+  assert.equal((await localWorkspaceVersion(vars, 'main', local))?.alternatesPath, undefined);
+  const cleared: unknown = JSON.parse(
+    (await execLocal(workspaceMetadataCommand(roots), { timeout: 5000 })).stdout,
+  );
+  assert.ok(Array.isArray(cleared) && isRecord(cleared[0]));
+  assert.equal(cleared[0].alternatesPath, undefined);
+});
+
 test('local and remote metadata bypass ancestry caches for shallow, grafted and replaced graphs', async (t) => {
   const { localWorkspaceVersion } = await import('./workspace-version.js');
   const root = await mkdtemp(path.join(os.tmpdir(), 'metadata-graph-'));

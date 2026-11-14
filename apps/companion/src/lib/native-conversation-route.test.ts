@@ -3,7 +3,7 @@ import test, { mock } from 'node:test';
 
 import React from 'react';
 
-import type { NativeSessionReadResult } from '@farmslot/protocol';
+import type { NativeSessionReadResult, NativeSessionTargetParams } from '@farmslot/protocol';
 import type {
   NativeConversationState,
   ResourceQuery,
@@ -12,6 +12,10 @@ import type {
 
 import type { NativeConversationParams } from '../features/native-conversation/use-native-conversation-controller';
 
+import {
+  createNativeConversationStorage,
+  nativeConversationStorageKey,
+} from './native-conversation-storage';
 import type { WorkspaceAccess } from './workspace-access';
 
 let access: WorkspaceAccess = 'none';
@@ -95,7 +99,10 @@ const conversation: NativeConversationState = {
     : undefined,
 };
 mock.module('../hooks/useNativeConversation', {
-  namedExports: { useNativeConversation: () => conversation },
+  namedExports: {
+    useNativeConversation: (target?: NativeSessionTargetParams): NativeConversationState =>
+      target ? conversation : { status: 'loading' },
+  },
 });
 const loading = { status: 'loading' };
 mock.module('@react-native-async-storage/async-storage', {
@@ -148,6 +155,18 @@ mock.module('../features/native-conversation/use-native-session-setup', {
 mock.module('../features/native-conversation/use-native-profile-selection', {
   namedExports: {
     useNativeProfileSelection: () => ({ viewModel: { ready: false }, actions: {} }),
+  },
+});
+let storageNode: string | undefined;
+mock.module('./native-conversation-storage', {
+  namedExports: {
+    createNativeConversationStorage,
+    nativeConversationStorageKey: (
+      identity: Parameters<typeof nativeConversationStorageKey>[0],
+    ) => {
+      storageNode = identity.node;
+      return nativeConversationStorageKey(identity);
+    },
   },
 });
 let readConversation: (params: NativeConversationParams) => {
@@ -212,6 +231,27 @@ test('cold offline native route renders scoped saved history with stale controls
     for (const control of ['writable', 'canSend', 'canStop'])
       assert.match(html, new RegExp(`&quot;${control}&quot;:false`));
   }
+});
+
+test('bare native links render local history while preserving stored control keys', async () => {
+  const render = await load();
+  access = 'none';
+  remembered = 'native';
+  status = 'disconnected';
+  hasClient = false;
+  for (const executionNodeId of [undefined, '']) {
+    params = { sessionId: 'saved-session', executionNodeId };
+    const html = render();
+    assert.match(html, /saved complete answer/);
+    assert.equal(
+      storageNode,
+      '',
+      'Existing bare-link drafts and delivery records retain their key',
+    );
+  }
+  params = {};
+  render();
+  assert.equal(storageNode, '', 'New-conversation drafts retain their prior namespace');
 });
 
 test('missing retained scope and a current live revocation still reject history', async () => {
