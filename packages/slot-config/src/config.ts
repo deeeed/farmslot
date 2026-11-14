@@ -224,7 +224,7 @@ export interface SlotVars {
   projectName: string;
   /** Owned runner hook directory when execution keeps observations outside the checkout. */
   runnerObservabilityDir?: string;
-  /** Pool-level domain default (slot.domain ?? pool.domain); task-level domain overrides. */
+  /** Default task domain: slot.domain ?? pool.domain ?? the pack's default_domain; a task-level domain overrides. */
   domain?: string;
   /** Validated `pool.env`: exported into every shell the gateway runs on this machine. */
   machineEnv?: Record<string, string>;
@@ -299,6 +299,8 @@ export interface RawProjectJson {
   };
   /** ADR-049 Amendment 3: pack rules selecting the one required skill set for dev and review. */
   required_skills?: RequiredSkillsConfig;
+  /** Task domain when neither the run, the slot nor the pool names one. */
+  default_domain?: string;
   static_review?: {
     workspace?: { retention_days?: number; root?: string };
     domain?: string;
@@ -759,6 +761,18 @@ export function resolveRemoteRepo(repo: string, osType: string, sshUser: string)
 // ─── loadSlotVars ───
 
 /** `pools`: one readSlotPools() shared by the lookups of one operation; read now when omitted. */
+// The pack's `default_domain` is the last domain fallback (after slot and pool), so a
+// pack whose work is one domain freezes that domain without every caller passing it.
+async function packDefaultDomain(projectName: string): Promise<string | undefined> {
+  if (!projectName) return undefined;
+  try {
+    return (await loadProjectVars(projectName)).projectJson.default_domain;
+  } catch (error) {
+    if (isMissingProjectConfigError(error)) return undefined;
+    throw error;
+  }
+}
+
 export async function loadSlotVars(slotId: string, pools?: SlotPools): Promise<SlotVars> {
   const { pool, slot } = await resolveSlot(slotId, pools);
 
@@ -853,7 +867,7 @@ export async function loadSlotVars(slotId: string, pools?: SlotPools): Promise<S
     sshTarget,
     remoteRepo,
     projectName,
-    domain: slot.domain ?? pool.domain,
+    domain: slot.domain ?? pool.domain ?? (await packDefaultDomain(projectName)),
     machineEnv,
     resourceVars,
   };
@@ -943,6 +957,14 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   validateCommandEnvConfig(projectJson, projectConfig);
   validateExecutionTemplatesConfig(projectJson, projectConfig);
   validateRequiredSkillsConfig(projectJson, projectConfig);
+  if (
+    projectJson.default_domain !== undefined &&
+    (typeof projectJson.default_domain !== 'string' ||
+      !DOMAIN_NAME_RE.test(projectJson.default_domain))
+  )
+    throw new Error(
+      `default_domain must be a domain name (lowercase letters, digits, -) in ${projectConfig}`,
+    );
   normalizeRawStaticReview(projectJson.static_review, projectConfig, projectJson.reference_repos);
   normalizeProjectWorkflowDefaults(projectJson.workflow_defaults);
   if (projectJson.qa !== undefined) validateQaConfig(projectJson.qa);
@@ -987,6 +1009,7 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
 }
 
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const DOMAIN_NAME_RE = /^[a-z][a-z0-9-]*$/;
 function validateEnvironmentMutation(value: unknown, field: string, projectConfig: string): void {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`${projectConfig}: ${field} must be an object`);

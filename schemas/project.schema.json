@@ -6,6 +6,11 @@
   "type": "object",
   "required": ["name"],
   "properties": {
+    "default_domain": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Task domain when neither the run, the slot nor the pool names one."
+    },
     "approvalPolicy": {
       "type": "object",
       "additionalProperties": false,
