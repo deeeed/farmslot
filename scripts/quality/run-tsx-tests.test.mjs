@@ -705,7 +705,7 @@ test('failures are aggregated rather than reported one at a time', () => {
 // real runner end to end: two failing files with a passing file sorted AFTER them,
 // so a fail-fast runner could not produce the passing file's marker or the second
 // failure. Deliberately slower than the rest of this suite — it spawns real
-// `yarn exec tsx` processes — because that is the only way to prove the execution
+// `node --import tsx` processes — because that is the only way to prove the execution
 // contract rather than the reporting of it.
 // The module-mock lane used to batch every file into one
 // `node --import tsx --experimental-test-module-mocks --test <files...>` process.
@@ -731,10 +731,10 @@ test('module-mock files run one per process and never under --test', () => {
     'exactly one file per process — a shared process is what allowed the silent skip',
   );
 
-  // The non-mock shape is unchanged.
+  // Both lanes use the workspace loader, so no global tsx binary is needed.
   assert.deepEqual(
     testCommand('/repo/src/b.test.ts', { cwd: '/repo', tsconfig: 'tsconfig.json' }),
-    ['exec', 'tsx', '--tsconfig', 'tsconfig.json', 'src/b.test.ts'],
+    ['exec', 'node', '--import', 'tsx', 'src/b.test.ts'],
   );
 });
 
@@ -1148,7 +1148,10 @@ test('CI selection runs the affected file and excludes an unrelated failing file
   const root = mkdtempSync(path.join(tmpdir(), 'ci-selection-'));
   try {
     const included = path.join(root, 'included.test.ts');
-    writeFileSync(included, "import { test } from 'node:test'; test('selected', () => {});\n");
+    writeFileSync(
+      included,
+      "import assert from 'node:assert/strict'; import { test } from 'node:test'; test('selected', () => { assert.equal(process.env.FARMSLOT_CI_TEST_SELECTION, undefined); });\n",
+    );
     writeFileSync(path.join(root, 'excluded.test.ts'), "throw new Error('unrelated file ran');\n");
     const selection = path.join(root, 'selection.json');
     writeFileSync(selection, JSON.stringify({ root, files: [included] }));

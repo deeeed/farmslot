@@ -126,15 +126,14 @@ function worker(id) {
     );
     mkdirSync(directory, { recursive: true });
     const started = Date.now();
-    run(task.args, {
-      cwd: path.join(root, task.cwd),
-      env: {
-        ...process.env,
-        FARMSLOT_CI_TEST_SELECTION: selection,
-        FARMSLOT_QUALITY_TIMINGS_DIR: directory,
-        FARMSLOT_TSX_TEST_WORKERS: '2',
-      },
-    });
+    const env = {
+      ...process.env,
+      FARMSLOT_QUALITY_TIMINGS_DIR: directory,
+      FARMSLOT_TSX_TEST_WORKERS: '2',
+    };
+    delete env.FARMSLOT_CI_TEST_SELECTION;
+    if (task.tests) env.FARMSLOT_CI_TEST_SELECTION = selection;
+    run(task.args, { cwd: path.join(root, task.cwd), env });
     const reports = readdirSync(directory)
       .filter((name) => name.startsWith('tsx-tests-'))
       .map((name) => JSON.parse(readFileSync(path.join(directory, name), 'utf8')));
