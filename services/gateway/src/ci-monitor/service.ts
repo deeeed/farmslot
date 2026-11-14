@@ -621,10 +621,11 @@ export async function monitorCI(
       // its observation: a later relink clears it in the store.
       const current = getRun(runId);
       if (!current || current.prNumber !== prNumber || prRelinked(watchedPR, current)) {
-        const relink =
-          current?.prNumber === prNumber
-            ? 'its PR link moved or was removed'
-            : `the run now links another PR (#${current?.prNumber ?? 'none'})`;
+        let relink: string;
+        if (!current) relink = 'the run is gone';
+        else if (current.prNumber === prNumber) relink = 'its PR link moved or was removed';
+        else if (current.prNumber == null) relink = 'the run no longer links a PR';
+        else relink = `the run now links another PR (#${current.prNumber})`;
         console.log(
           `[ci-monitor] run ${runId.slice(0, 8)} — dropped PR #${prNumber} ${pr.prState}: ${relink}`,
         );
