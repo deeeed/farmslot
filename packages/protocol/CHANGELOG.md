@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- The run list says "default" when a run sends no reasoning effort. Pi's "off" omits that effort and the model still uses its own default. "none" is an explicit disable and still reads "off".
 
 ## 0.84.0 - 2026-11-14
 

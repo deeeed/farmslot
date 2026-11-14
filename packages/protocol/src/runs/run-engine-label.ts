@@ -45,7 +45,20 @@ export function runWorkerEffort(
   return null;
 }
 
-/** "runner/model · effort"; the effort only when known. Null when neither runner nor model is. */
+/**
+ * Word shown for a run's reasoning effort.
+ * No value, and Pi's `off`, both mean no reasoning effort was sent. The model
+ * keeps its own default and still reasons, so the list says `default`.
+ * Any other stored level is shown as written. `none` is an explicit disable.
+ */
+export function reasoningEffortLabel(effort: string | null | undefined): string {
+  const value = effort?.trim() ?? '';
+  if (value === '' || value.toLowerCase() === 'off') return 'default';
+  if (value.toLowerCase() === 'none') return 'off';
+  return value;
+}
+
+/** "runner/model · effort". Null when neither runner nor model is. */
 export function runEngineLabel(engine: {
   runner: string | null;
   model: string | null;
@@ -53,5 +66,5 @@ export function runEngineLabel(engine: {
 }): string | null {
   const base = engine.model ? `${engine.runner ?? 'runner'}/${engine.model}` : engine.runner;
   if (!base) return null;
-  return engine.effort ? `${base} · ${engine.effort}` : base;
+  return `${base} · ${reasoningEffortLabel(engine.effort)}`;
 }

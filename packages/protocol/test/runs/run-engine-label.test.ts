@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  reasoningEffortLabel,
   type RunEffortSource,
   runEngineLabel,
   runWorkerEffort,
@@ -61,16 +62,22 @@ test('a reviewer context or another profile choice never stands in for the worke
   );
 });
 
-test('the label adds the effort only when known', () => {
+test('the label says default when no reasoning effort was sent', () => {
   assert.equal(
     runEngineLabel({ runner: 'grok', model: 'grok-4.7', effort: 'medium' }),
     'grok/grok-4.7 · medium',
   );
   assert.equal(
     runEngineLabel({ runner: 'grok', model: 'grok-4.7', effort: null }),
-    'grok/grok-4.7',
+    'grok/grok-4.7 · default',
   );
-  assert.equal(runEngineLabel({ runner: null, model: 'opus' }), 'runner/opus');
+  assert.equal(
+    runEngineLabel({ runner: 'pi', model: 'litellm/glm-5p3-flash', effort: 'off' }),
+    'pi/litellm/glm-5p3-flash · default',
+  );
+  assert.equal(reasoningEffortLabel(' OFF '), 'default');
+  assert.equal(reasoningEffortLabel('none'), 'off');
+  assert.equal(runEngineLabel({ runner: null, model: 'opus' }), 'runner/opus · default');
   assert.equal(runEngineLabel({ runner: 'codex', model: null, effort: 'high' }), 'codex · high');
   assert.equal(runEngineLabel({ runner: null, model: null, effort: 'high' }), null);
 });
