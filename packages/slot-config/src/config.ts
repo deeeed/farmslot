@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import {
   assertSourceEntry,
+  deepFreeze,
   DEFAULT_TASK_DIR,
   FAILURE_CATEGORIES,
   type FlowType,
@@ -60,6 +61,7 @@ import { literalReplacement } from '@farmslot/protocol/scripts/literal-replaceme
 
 import { SlotConfigError } from './error.js';
 import { referenceRepoKeysIn, referenceRepoPlaceholder } from './hooks.js';
+import { readJsonFile } from './json-file-cache.js';
 import { machinePoolFileName, resolveMachinePoolEntry } from './machine-pool.js';
 import { parseProjectOwnedPaths, type ProjectOwnedPath } from './owned-paths.js';
 import { farmslotRoot } from './repo-root.js';
@@ -68,7 +70,11 @@ import {
   projectSourceContext,
   resolveSourceBinding,
 } from './source-binding.js';
-import { readSourceRuntimeSettings, usesRuntimeSettings } from './source-runtime-settings.js';
+import {
+  readSourceRuntimeSettings,
+  type SourceRuntimeSettings,
+  usesRuntimeSettings,
+} from './source-runtime-settings.js';
 
 function currentPoolDir(): string {
   return currentFarmPaths('gateway').pool;
@@ -882,21 +888,24 @@ function validateMachineEnv(raw: unknown, machine: string): Record<string, strin
 
 // ─── loadProjectVars ───
 
-// Short-TTL cache so the live-recipe-context read path doesn't re-parse
-// project.json from disk on every cached file read. Cold panel-open burst
-// would otherwise hit project.json 20-36× per slot before the artifact-text
-// cache absorbs the load (each readPortableTextIfExists for a remote slot
-// transitively calls resolveWorkerTaskDir → loadProjectVars). 5s TTL matches
-// the artifact-text cache TTL — long enough to absorb a burst, short enough
-// for project.json edits to land in the next refresh cycle.
-const PROJECT_VARS_CACHE_TTL_MS = 5_000;
-const projectVarsCache = new Map<string, { value: ProjectVars; at: number }>();
+/** The vars built from one version of a project's project.json and runtime settings. */
+interface CachedProjectVars {
+  /** The pack version the vars came from; a new materialization replaces the entry. */
+  source: string;
+  document: unknown;
+  settings: SourceRuntimeSettings | undefined;
+  value: ProjectVars;
+}
+
+// Hot paths (live-recipe context, task-dir resolution, timers) load project vars many times a
+// second. The vars are rebuilt and revalidated only when readJsonFile hands back another version
+// of project.json or of its runtime settings, so an edit is seen by the next call. One entry per
+// project, so retired pack materializations are not retained.
+const projectVarsCache = new Map<string, CachedProjectVars>();
 
 export function invalidateProjectVarsCache(projectName?: string): void {
   if (!projectName) projectVarsCache.clear();
-  else
-    for (const key of projectVarsCache.keys())
-      if (key.startsWith(`${projectName}\0`)) projectVarsCache.delete(key);
+  else projectVarsCache.delete(projectName);
 }
 
 export async function loadProjectVars(projectName: string): Promise<ProjectVars> {
@@ -904,21 +913,33 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   const packRoot = sourceContext
     ? resolveSourceBinding(sourceContext.pack, sourceContext.materialization).root
     : path.join(currentProjectsDir(), projectName);
-  const cacheKey = `${projectName}\0${packRoot}\0${sourceContext?.materialization.lock.digest ?? 'legacy'}`;
-  const cached = projectVarsCache.get(cacheKey);
-  if (cached && Date.now() - cached.at < PROJECT_VARS_CACHE_TTL_MS)
-    return { ...cached.value, sourceContext };
-
+  const source = `${packRoot}\0${sourceContext?.materialization.lock.digest ?? 'legacy'}`;
   const projectConfig = path.join(packRoot, 'project.json');
   const projectFixturesDir = path.join(packRoot, 'fixtures');
   const projectTemplatesDir = path.join(packRoot, 'templates');
 
   let projectJson: RawProjectJson;
+  let document: unknown;
+  let settings: SourceRuntimeSettings | undefined;
   try {
-    const content = await readFile(projectConfig, 'utf-8');
-    projectJson = JSON.parse(content);
-    if (await usesRuntimeSettings(projectName))
-      Object.assign(projectJson, await readSourceRuntimeSettings(projectName));
+    document = await readJsonFile(projectConfig);
+    settings = (await usesRuntimeSettings(projectName))
+      ? await readSourceRuntimeSettings(projectName)
+      : undefined;
+    const cached = projectVarsCache.get(projectName);
+    if (
+      cached &&
+      cached.source === source &&
+      cached.document === document &&
+      cached.settings === settings
+    )
+      return { ...cached.value, sourceContext };
+    // The cached document is shared and frozen: settings merge into a shallow copy of it.
+    // As JSON.parse's result was before: the validators below check its fields.
+    projectJson = (
+      document === null || typeof document !== 'object' ? document : { ...document }
+    ) as RawProjectJson;
+    if (settings) Object.assign(projectJson, settings);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       throw new Error(`Project config not found: ${projectConfig}`);
@@ -976,13 +997,14 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
     projectConfig,
     projectFixturesDir,
     projectTemplatesDir,
-    projectJson,
-    ...(roadmap ? { roadmap } : {}),
+    // Every later call with this version gets the same document: freeze it so a write throws.
+    projectJson: deepFreeze(projectJson),
+    ...(roadmap ? { roadmap: deepFreeze(roadmap) } : {}),
     runtimeDir,
     artifactDir,
     recipeDir,
   };
-  projectVarsCache.set(cacheKey, { value, at: Date.now() });
+  projectVarsCache.set(projectName, { source, document, settings, value });
   return value;
 }
 

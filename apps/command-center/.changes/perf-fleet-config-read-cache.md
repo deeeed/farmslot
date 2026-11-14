@@ -1,0 +1,1 @@
+- The type-escape baseline records the gateway project-config merge as an explicit untyped value, the same value `JSON.parse` returned there before.

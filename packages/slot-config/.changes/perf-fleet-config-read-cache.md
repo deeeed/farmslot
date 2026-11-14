@@ -1,0 +1,1 @@
+- Read project.json and runtime settings through a stat-checked, frozen read cache (`readJsonFile`); `loadProjectVars` rebuilds only when either file changes, replacing its 5-second TTL.

@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { statSync } from 'node:fs';
-import { copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { isRecord, parseProjectVisualClaimReviewPolicy } from '@farmslot/protocol';
+import { deepFreeze, isRecord, parseProjectVisualClaimReviewPolicy } from '@farmslot/protocol';
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { resolveApprovalPolicy } from '@farmslot/protocol/review-approval-policy.cjs';
 
+import { readJsonFile } from './json-file-cache.js';
 import { readWorkspaceState, resolveWorkspaceRoot, WORKSPACE_STATE_FILE } from './repo-root.js';
 import { projectSourceContext } from './source-binding.js';
 
@@ -20,14 +21,21 @@ function settingsPath(project: string): string {
   return path.join(currentFarmPaths('node').state.sources, 'runtime-settings', `${project}.json`);
 }
 
+const NO_SETTINGS: SourceRuntimeSettings = Object.freeze({});
+/** Validated settings per cached file version, so an unchanged file keeps its identity. */
+const validatedSettings = new WeakMap<object, SourceRuntimeSettings>();
+
+/** A project's runtime settings, frozen and shared while the file is unchanged. */
 export async function readSourceRuntimeSettings(project: string): Promise<SourceRuntimeSettings> {
   let raw: unknown;
   try {
-    raw = JSON.parse(await readFile(settingsPath(project), 'utf8'));
+    raw = await readJsonFile(settingsPath(project));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    return {};
+    return NO_SETTINGS;
   }
+  const known = isRecord(raw) ? validatedSettings.get(raw) : undefined;
+  if (known) return known;
   if (
     !isRecord(raw) ||
     raw.schemaVersion !== 1 ||
@@ -39,13 +47,13 @@ export async function readSourceRuntimeSettings(project: string): Promise<Source
     )
   )
     throw new Error('Invalid project runtime settings');
-  if (raw.values.visual_claim_review !== undefined)
-    raw.values.visual_claim_review = parseProjectVisualClaimReviewPolicy(
-      raw.values.visual_claim_review,
-    );
-  if (raw.values.approvalPolicy !== undefined)
-    raw.values.approvalPolicy = resolveApprovalPolicy(raw.values.approvalPolicy);
-  return raw.values;
+  const values: SourceRuntimeSettings = { ...raw.values };
+  if (values.visual_claim_review !== undefined)
+    values.visual_claim_review = parseProjectVisualClaimReviewPolicy(values.visual_claim_review);
+  if (values.approvalPolicy !== undefined)
+    values.approvalPolicy = resolveApprovalPolicy(values.approvalPolicy);
+  validatedSettings.set(raw, deepFreeze(values));
+  return values;
 }
 
 const pending = new Map<string, Promise<unknown>>();
