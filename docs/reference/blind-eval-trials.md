@@ -97,3 +97,9 @@ Status: proposed contract for ADR-030 Amendment 4.
 ## Public surface
 
 The protocol package owns the case, trial and result-package fields consumed by the existing eval RPCs and Command Center comparison readers. The gateway owns input validation, Git isolation, first-output capture and contamination assessment. Existing framework prepare/dispatch/teardown contracts remain the lifecycle path. Harnesses inherit the blinded task, base and worker boundary; they receive no reference lookup capability or new command. Additive wire metadata follows protocol patch versioning and the matching-reader rollout.
+
+## Dispatch canary
+
+The existing fullflow canary runs a `blind-dispatch` case with its allowlisted low-effort Luna model before its implementation and QA cases after gateway deployment and nightly. Run only that case with `--profile fullflow --target isolated --only blind-dispatch`.
+
+Use the disposable stack's synthetic repository, dedicated slot, family and experiment manifest. Never attach dataset identifiers or use a dataset manifest. Success requires verified blind isolation, completed admission/task-init/prepare/dispatch, and a tool call in this worker's structured transcript. Cancel after the first tool call, verify capsule restoration and slot readiness, then archive the run. Admission, inference, restoration or cleanup failure fails the existing canary report and status alert.

@@ -9,6 +9,7 @@ import { cancelledRunSlotHold, isTerminalRunStatus, runOutputCloseUnavailableRea
 import { writeJson } from '../lib/isolated-stack.mjs';
 import { startRemoteNodeStack } from '../lib/remote-node-stack.mjs';
 
+import { runBlindDispatch } from './blind-dispatch.mjs';
 import { FULLFLOW_MODEL, FULLFLOW_PROJECT, FULLFLOW_SEED, fullflowPack } from './fullflow-fixture.mjs';
 import { REVIEWER } from './fixtures.mjs';
 import { FULLFLOW_CANCEL_REASON, fullflowCloseAction, fullflowFailure, fullflowGateFailure, fullflowNativeFailure, fullflowTerminal, fullflowTimings } from './fullflow-outcome.js';
@@ -17,7 +18,7 @@ import { failureText, type CheckResult } from './outcome.mjs';
 import { driveRun, readSlot, retire } from './run-driver.mjs';
 import { fullflowScopeAudit } from './fullflow-scope.mjs';
 
-export const FULLFLOW_CASES = ['fix-bug', 'qa'] as const;
+export const FULLFLOW_CASES = ['blind-dispatch', 'fix-bug', 'qa'] as const;
 type FullflowCase = (typeof FULLFLOW_CASES)[number];
 type Worker = { runner: string; model: string };
 interface PiTurnReceipt { cwd: string; usage?: { totalTokens?: number }; stopReason?: string }
@@ -30,6 +31,7 @@ export async function runFullflow(options: FullflowOptions): Promise<void> {
   const worker = options.worker ?? FULLFLOW_MODEL;
   const pack = await fullflowPack(root, worker);
   const cases = options.cases ?? FULLFLOW_CASES;
+  if (cases.includes('blind-dispatch')) pack.projectJson.blind_keep_ignored = ['.fullflow'];
   const controller = new AbortController();
   let inFlight: Promise<void> | undefined;
   const agent = path.join(evidence, 'pi-agent');
@@ -69,7 +71,7 @@ export default function(pi) {
     machine: 'fullflow',
     slots: cases.map((name) => `${FULLFLOW_PROJECT}-${name}-1`),
     projects: () => [pack],
-    seeds: { [FULLFLOW_PROJECT]: FULLFLOW_SEED },
+    seeds: { [FULLFLOW_PROJECT]: { ...FULLFLOW_SEED, '.gitignore': FULLFLOW_SEED['.gitignore'] + '.fullflow/\n' } },
     slotFiles: () => ({
       // A last guard even if a model ignores the task's local-only publication instruction.
       '.git/hooks/pre-push': '#!/bin/sh\necho "fullflow: push is disabled" >&2\nexit 1\n',
@@ -88,6 +90,11 @@ export default function(pi) {
 
   for (const name of cases) {
     if (controller.signal.aborted) break;
+    if (name === 'blind-dispatch') {
+      inFlight = runBlindDispatch({ stack, evidence, worker: REVIEWER, signal: controller.signal, log, onCheck: options.onCheck });
+      await inFlight;
+      continue;
+    }
     inFlight = (async () => {
       const started = Date.now();
       const slotId = `${FULLFLOW_PROJECT}-${name}-1`;
