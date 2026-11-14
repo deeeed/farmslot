@@ -161,7 +161,7 @@ export function createPrPlan({ root, changed, workspaces, selected, durations = 
   // ciParitySteps remains the shared owner of architecture and repository guards.
   for (const [label, args] of parity) {
     // Gateway and agent-runtime suites already own these test files.
-    if (label === 'static review execution guard') continue;
+    if (label === 'static review execution guard' || label === 'large files') continue;
     if (
       label === 'deterministic receipt guard' &&
       assigned.has('packages/agent-runtime/test/deterministic-checks.test.cjs')
