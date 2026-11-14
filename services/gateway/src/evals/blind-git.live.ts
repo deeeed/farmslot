@@ -441,7 +441,8 @@ module['boundary'](json.loads(sys.argv[2]))
     assert.equal(git(repo, 'rev-parse', 'HEAD'), base);
     assert.equal(readFileSync(path.join(repo, 'value.txt'), 'utf8'), 'base\n');
     assert.equal(existsSync(path.join(repo, 'answer.txt')), false);
-    assert.equal(readFileSync(path.join(repo, 'private-input.txt'), 'utf8'), 'preserved\n');
+    // Ignored leftovers wait in the capsule until restore.
+    assert.equal(existsSync(path.join(repo, 'private-input.txt')), false);
     assert.equal(git(repo, 'remote'), '');
     assert.equal(git(repo, 'config', '--local', '--get', 'commit.gpgsign'), 'false');
     assert.equal(git(repo, 'config', '--local', '--get', 'user.email'), 'fixture@example.invalid');
@@ -553,6 +554,7 @@ module['restore'](json.loads(sys.argv[2]))
     assert.equal(existsSync(path.join(repo, '.git')), false);
     assert.equal(command('restore', spec).headSha, head);
     assert.equal(existsSync(workerTemp), false, 'restoration removes only the allocated temp');
+    assert.equal(readFileSync(path.join(repo, 'private-input.txt'), 'utf8'), 'preserved\n');
     assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
     assert.equal(git(repo, 'status', '--porcelain'), '');
     assert.equal(git(repo, 'remote', 'get-url', 'origin'), path.join(root, 'upstream'));
@@ -598,6 +600,7 @@ test('proof Git admits both source snapshots and keeps product and pinned inputs
     baseSha: headSha,
     referenceCommits: [golden],
     proof: { baseSha, headSha, treeSha, diffSha256: 'a'.repeat(64) },
+    keepIgnored: ['tasks/current', '.runtime'],
   };
   assert.equal(command('isolate', spec).status, 'isolated');
   assert.equal(git(repo, 'cat-file', '-t', baseSha), 'commit');
@@ -644,6 +647,134 @@ test('proof Git admits both source snapshots and keeps product and pinned inputs
   writeFileSync(path.join(repo, 'value.txt'), 'supplied\n');
   writeFileSync(path.join(task, 'inputs/qa.json'), '{"tampered":true}');
   assert.throws(() => command('verify', spec), /input.*changed/);
+});
+
+function ignoredFixture(root: string) {
+  const repo = path.join(root, 'repo');
+  mkdirSync(repo);
+  git(repo, 'init', '-q', '-b', 'main');
+  writeFileSync(
+    path.join(repo, '.gitignore'),
+    'temp/\n.env.local\ncoverage/\nnode_modules/\n.agent/\n',
+  );
+  mkdirSync(path.join(repo, 'packages/a'), { recursive: true });
+  writeFileSync(path.join(repo, 'packages/a/index.js'), 'base\n');
+  const baseSha = commit(repo, 'base');
+  const files: Record<string, string> = {
+    'temp/recipe/runtime/eval-cancel-proof/answer.txt': 'FAKE_EARLIER_ANSWER\n',
+    'temp/recipe/runtime/operations/0000.json': '{"logPath":"temp/tasks/T-1/old/artifacts"}\n',
+    'temp/recipe/runtime/status.json':
+      '{"operations":[{"command":"run","logPath":"temp/tasks/T-1/old/artifacts/operations/0000.log"}]}\n',
+    'temp/recipe/runtime/prepare.json': '{"run":"earlier"}\n',
+    'temp/tasks/T-1/old/artifacts/notes.md': 'earlier run notes\n',
+    '.env.local': 'FAKE_MARKER=earlier\n',
+    'coverage/lcov.info': 'earlier coverage\n',
+    '.agent/old.log': 'earlier log\n',
+    '.agent/.observability/node-support-hash': 'this-run-hash\n',
+    'temp/tasks/T-2/current/TASK.md': 'this run task\n',
+    'node_modules/pkg/index.js': 'cache\n',
+    'packages/a/node_modules/b.js': 'nested cache\n',
+  };
+  for (const [name, text] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(repo, name)), { recursive: true });
+    writeFileSync(path.join(repo, name), text);
+  }
+  const spec: BlindGitSpec = {
+    slotId: 'ignored-fixture',
+    slotEpoch: 1,
+    repo,
+    capsule: path.join(root, '.farmslot-blind-evals/ignored-fixture/trial-1'),
+    runId: 'trial',
+    branch: 'eval/trial',
+    baseSha,
+    referenceCommits: [],
+    keepIgnored: [
+      'node_modules',
+      '.agent/.observability/node-support-hash',
+      'temp/tasks/T-2/current',
+    ],
+  };
+  return { repo, spec, files };
+}
+
+const movedLeftovers = [
+  'temp/recipe/runtime/eval-cancel-proof/answer.txt',
+  'temp/recipe/runtime/operations/0000.json',
+  'temp/recipe/runtime/status.json',
+  'temp/recipe/runtime/prepare.json',
+  'temp/tasks/T-1/old/artifacts/notes.md',
+  '.env.local',
+  'coverage/lcov.info',
+  '.agent/old.log',
+];
+
+test('blind isolation moves earlier ignored leftovers aside and restores them byte-identical', (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'blind-ignored-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const { repo, spec, files } = ignoredFixture(root);
+  assert.equal(command('isolate', spec).status, 'isolated');
+  for (const name of movedLeftovers)
+    assert.equal(existsSync(path.join(repo, name)), false, `${name} stays outside the boundary`);
+  for (const name of Object.keys(files).filter((name) => !movedLeftovers.includes(name)))
+    assert.equal(readFileSync(path.join(repo, name), 'utf8'), files[name], `${name} stays`);
+  // Prepare writes this run's runtime files after isolation (fixtures phase onward).
+  mkdirSync(path.join(repo, 'temp/recipe/runtime/operations'), { recursive: true });
+  writeFileSync(path.join(repo, 'temp/recipe/runtime/prepare.json'), '{"run":"trial"}\n');
+  assert.equal(
+    readFileSync(path.join(repo, 'temp/recipe/runtime/prepare.json'), 'utf8'),
+    '{"run":"trial"}\n',
+  );
+  // The worker writes its own runtime state, including a path an earlier run also used.
+  writeFileSync(path.join(repo, 'temp/tasks/T-2/current/out.txt'), 'trial output\n');
+  writeFileSync(path.join(repo, 'temp/recipe/runtime/operations/0000.json'), '{"trial":true}\n');
+  assert.equal(command('restore', spec).status, 'restored');
+  for (const [name, text] of Object.entries(files))
+    assert.equal(readFileSync(path.join(repo, name), 'utf8'), text, `${name} restored`);
+  assert.equal(
+    readFileSync(path.join(repo, 'temp/tasks/T-2/current/out.txt'), 'utf8'),
+    'trial output\n',
+  );
+  assert.equal(
+    readFileSync(
+      path.join(spec.capsule, 'trial-ignored/temp/recipe/runtime/operations/0000.json'),
+      'utf8',
+    ),
+    '{"trial":true}\n',
+    'a colliding trial file is set aside, never deleted',
+  );
+  assert.equal(
+    readFileSync(path.join(spec.capsule, 'trial-ignored/temp/recipe/runtime/prepare.json'), 'utf8'),
+    '{"run":"trial"}\n',
+  );
+  assert.equal(command('restore', spec).status, 'restored');
+});
+
+test('restore after an isolate killed mid-move returns every moved ignored path', (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'blind-ignored-kill-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const { repo, spec, files } = ignoredFixture(root);
+  // The journal records the full move list before the first rename; the kill
+  // lands after three of the six moves.
+  mkdirSync(spec.capsule, { recursive: true, mode: 0o700 });
+  writeFileSync(
+    path.join(spec.capsule, 'state.json'),
+    JSON.stringify({
+      ...spec,
+      phase: 'preparing',
+      originalDirectory: path.join(repo, '.git'),
+      originalHead: spec.baseSha,
+      originalIsDirectory: true,
+      ignoredMoved: ['.agent/old.log', '.env.local', 'coverage', 'temp/recipe', 'temp/tasks/T-1'],
+    }),
+  );
+  for (const name of ['.agent/old.log', '.env.local', 'coverage']) {
+    const target = path.join(spec.capsule, 'original-ignored', name);
+    mkdirSync(path.dirname(target), { recursive: true });
+    execFileSync('mv', [path.join(repo, name), target]);
+  }
+  assert.equal(command('restore', spec).status, 'restored');
+  for (const [name, text] of Object.entries(files))
+    assert.equal(readFileSync(path.join(repo, name), 'utf8'), text, `${name} restored`);
 });
 
 test('blind isolate batches a partial clone fetch and heals a capsule a killed isolate left behind', async (t) => {
@@ -786,4 +917,176 @@ test('a restored blind trial isolates again from its base, but never over candid
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('healing a restored capsule keeps its ignored files and isolates the leftovers again', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'blind-ignored-heal-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const { repo, spec, files } = ignoredFixture(root);
+  assert.equal(command('isolate', spec).status, 'isolated');
+  mkdirSync(path.join(repo, 'temp/recipe/runtime'), { recursive: true });
+  writeFileSync(path.join(repo, 'temp/recipe/runtime/status.json'), '{"trial":1}\n');
+  assert.equal(command('restore', spec).status, 'restored');
+  // A file whose original never came back stays where only the capsule holds it.
+  const stranded = path.join(spec.capsule, 'original-ignored/stranded.txt');
+  writeFileSync(stranded, 'stranded original\n');
+  assert.equal(command('isolate', spec).status, 'isolated');
+  const parent = path.dirname(spec.capsule);
+  const [aside] = readdirSync(parent).filter((name) => name.startsWith('trial-1.interrupted-'));
+  assert.ok(aside, 'the restored capsule is kept aside');
+  assert.deepEqual(readdirSync(path.join(parent, aside)).sort(), [
+    'original-ignored',
+    'state.json',
+    'trial-ignored',
+  ]);
+  assert.equal(
+    readFileSync(path.join(parent, aside, 'trial-ignored/temp/recipe/runtime/status.json'), 'utf8'),
+    '{"trial":1}\n',
+  );
+  assert.equal(
+    readFileSync(path.join(parent, aside, 'original-ignored/stranded.txt'), 'utf8'),
+    'stranded original\n',
+  );
+  // The fresh isolation moved the earlier leftovers aside again.
+  for (const name of movedLeftovers)
+    assert.equal(existsSync(path.join(repo, name)), false, `${name} stays outside the boundary`);
+  assert.equal(command('restore', spec).status, 'restored');
+  for (const [name, text] of Object.entries(files))
+    assert.equal(readFileSync(path.join(repo, name), 'utf8'), text, `${name} restored`);
+});
+
+test('a failure before the Git swap returns every moved ignored path', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'blind-ignored-rollback-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const { repo, spec, files } = ignoredFixture(root);
+  // Fail after the moves, while the prepared Git is still being built.
+  const failed = spawnSync(
+    'python3',
+    [
+      '-c',
+      `
+import json, runpy, sys
+module = runpy.run_path(sys.argv[1], run_name='blind_git_fixture')
+def fail(*args, **kwargs):
+    raise RuntimeError('fixture pack failure')
+module['isolate'].__globals__['pack_into'] = fail
+module['isolate'](json.loads(sys.argv[2]))
+`,
+      new URL('./blind-git.py', import.meta.url).pathname,
+      JSON.stringify(spec),
+    ],
+    { env, encoding: 'utf8', timeout: 60_000 },
+  );
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.stderr, /fixture pack failure/);
+  for (const [name, text] of Object.entries(files))
+    assert.equal(readFileSync(path.join(repo, name), 'utf8'), text, `${name} restored`);
+  assert.equal(
+    JSON.parse(readFileSync(path.join(spec.capsule, 'state.json'), 'utf8')).phase,
+    'restored',
+  );
+});
+
+test('isolation moves ignored leftovers inside submodules and keeps nested caches', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'blind-ignored-nested-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const upstream = path.join(root, 'module-upstream');
+  mkdirSync(upstream);
+  git(upstream, 'init', '-q', '-b', 'main');
+  writeFileSync(path.join(upstream, '.gitignore'), 'proof/\n');
+  writeFileSync(path.join(upstream, 'value.txt'), 'module\n');
+  commit(upstream, 'module');
+  const repo = path.join(root, 'repo');
+  mkdirSync(repo);
+  git(repo, 'init', '-q', '-b', 'main');
+  writeFileSync(path.join(repo, '.gitignore'), 'temp/\npackages/a/.yarn/\n');
+  mkdirSync(path.join(repo, 'packages/a'), { recursive: true });
+  writeFileSync(path.join(repo, 'packages/a/index.js'), 'base\n');
+  git(
+    repo,
+    '-c',
+    'protocol.file.allow=always',
+    'submodule',
+    'add',
+    '-q',
+    `file://${upstream}`,
+    'sdk',
+  );
+  const baseSha = commit(repo, 'base');
+  const files: Record<string, string> = {
+    'sdk/proof/answer.json': 'FAKE_EARLIER_ANSWER\n',
+    'temp/generated-app/answer.txt': 'FAKE_EARLIER_ANSWER\n',
+    'temp/generated-app/node_modules/pkg/index.js': 'cache\n',
+    'packages/a/.yarn/cache/pkg.zip': 'cache\n',
+  };
+  for (const [name, text] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(repo, name)), { recursive: true });
+    writeFileSync(path.join(repo, name), text);
+  }
+  const spec: BlindGitSpec = {
+    slotId: 'ignored-nested-fixture',
+    slotEpoch: 1,
+    repo,
+    capsule: path.join(root, '.farmslot-blind-evals/ignored-nested-fixture/trial-1'),
+    runId: 'trial',
+    branch: 'eval/trial',
+    baseSha,
+    referenceCommits: [],
+    keepIgnored: ['node_modules', '.yarn/*'],
+  };
+  assert.equal(command('isolate', spec).status, 'isolated');
+  assert.equal(existsSync(path.join(repo, 'sdk/proof/answer.json')), false, 'submodule leftover');
+  assert.equal(existsSync(path.join(repo, 'temp/generated-app/answer.txt')), false);
+  assert.equal(
+    readFileSync(path.join(repo, 'temp/generated-app/node_modules/pkg/index.js'), 'utf8'),
+    'cache\n',
+    'a cache under a collapsed ignored parent stays',
+  );
+  assert.equal(
+    readFileSync(path.join(repo, 'packages/a/.yarn/cache/pkg.zip'), 'utf8'),
+    'cache\n',
+    'a nested .yarn cache stays',
+  );
+  assert.equal(command('restore', spec).status, 'restored');
+  for (const [name, text] of Object.entries(files))
+    assert.equal(readFileSync(path.join(repo, name), 'utf8'), text, `${name} restored`);
+});
+
+test('a restore interrupted before the ignored files return finishes on retry without a marker', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'blind-ignored-restore-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const { repo, spec, files } = ignoredFixture(root);
+  assert.equal(command('isolate', spec).status, 'isolated');
+  const interrupted = spawnSync(
+    'python3',
+    [
+      '-c',
+      `
+import json, runpy, sys
+module = runpy.run_path(sys.argv[1], run_name='blind_git_fixture')
+def stop(*args, **kwargs):
+    raise RuntimeError('fixture interrupted restore')
+module['restore'].__globals__['restore_ignored'] = stop
+module['restore'](json.loads(sys.argv[2]))
+`,
+      new URL('./blind-git.py', import.meta.url).pathname,
+      JSON.stringify(spec),
+    ],
+    { env, encoding: 'utf8', timeout: 60_000 },
+  );
+  assert.notEqual(interrupted.status, 0);
+  assert.match(interrupted.stderr, /fixture interrupted restore/);
+  // The original Git is back, so the slot shows no blind marker, but the journal is unfinished.
+  assert.notEqual(
+    spawnSync('git', ['-C', repo, 'config', '--get', 'farmslot.blindRun'], { env }).status,
+    0,
+  );
+  assert.notEqual(
+    JSON.parse(readFileSync(path.join(spec.capsule, 'state.json'), 'utf8')).phase,
+    'restored',
+  );
+  assert.equal(existsSync(path.join(repo, '.env.local')), false);
+  assert.equal(command('restore', spec).status, 'restored');
+  for (const [name, text] of Object.entries(files))
+    assert.equal(readFileSync(path.join(repo, name), 'utf8'), text, `${name} restored`);
 });
