@@ -164,6 +164,15 @@ mock.module('../tasks/agent-runtime-script.js', {
 mock.module('./package-store.js', {
   namedExports: { sha256Text: (value: string) => createHash('sha256').update(value).digest('hex') },
 });
+let reprobes: string[] = [];
+mock.module('../methods/slot/slot-tracking.js', {
+  namedExports: {
+    reprobeSlotRepoBlocker: async (slot: SlotVars) => {
+      reprobes.push(slot.slotId);
+      return { readable: true, blocker: null };
+    },
+  },
+});
 mock.module('./proof-output.js', {
   namedExports: {
     freezeProofOutput: async () => undefined,
@@ -394,8 +403,11 @@ test('a recorded GitHub access attempt makes the frozen first output invalid', a
 test('a finished trial restores its own Git and reports why it could not', async (t) => {
   await fixture(t);
   slotCommands.length = 0;
+  reprobes = [];
   assert.equal(await restoreFinishedBlindTrialGit(run), null);
   assert.ok(slotCommands.some((command) => command.includes('"action":"restore"')));
+  // The restored slot's saved repo verdict is re-read, not left naming the trial.
+  assert.deepEqual(reprobes, [vars.slotId]);
   marker = { exitCode: 1, stdout: '', stderr: '' };
   slotCommands.length = 0;
   assert.equal(await restoreFinishedBlindTrialGit(run), null, 'already restored');

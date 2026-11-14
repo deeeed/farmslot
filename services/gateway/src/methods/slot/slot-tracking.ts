@@ -23,9 +23,11 @@ import {
   execOnSlot,
   expandTemplate,
   getProjectField,
+  loadProjectVars,
   type ProjectVars,
   type RawProjectJson,
   type SlotVars,
+  updateSlotStatus,
 } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
 import { farmslotRoot } from '../../projects/repo-root.js';
@@ -134,6 +136,20 @@ export async function probeDefaultBranch(
     options,
   );
   return readDefaultBranchProbe(output, defaultBranch);
+}
+
+/**
+ * Re-read a slot's saved repo verdict after its Git changed underneath it (a
+ * blind trial restore or a reclaim). An unreadable probe leaves the saved one.
+ */
+export async function reprobeSlotRepoBlocker(vars: SlotVars): Promise<DefaultBranchProbe> {
+  const { projectJson } = await loadProjectVars(vars.projectName);
+  const probe = await probeDefaultBranch(
+    vars,
+    getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH,
+  );
+  if (probe.readable) await updateSlotStatus(vars.slotId, { repo_blocker: probe.blocker });
+  return probe;
 }
 
 export type { ResetSlotRepoToIdleOptions, SlotIdleResetResult };

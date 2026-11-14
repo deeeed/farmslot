@@ -460,6 +460,16 @@ export async function restoreBlindTrialGit(
   )
     throw new Error('Blind trial Git restoration was not confirmed.');
   await assertOwnership();
+  // The saved repo verdict still names this trial's isolated Git; selection reads it.
+  const { reprobeSlotRepoBlocker } = await import('../methods/slot/slot-tracking.js');
+  const probe = await reprobeSlotRepoBlocker(vars).catch((error: unknown) => ({
+    readable: false as const,
+    error: (error as Error).message,
+  }));
+  if (!probe.readable)
+    console.warn(
+      `[blind-trial] ${vars.slotId}: repo verdict not refreshed after restore: ${probe.error}`,
+    );
 }
 
 /** The blind trial whose isolated Git directory the slot repo still holds, if any. */

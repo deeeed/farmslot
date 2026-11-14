@@ -95,7 +95,7 @@ import {
 import { resolveDispatchTargetBranch } from '../methods/dispatch/target-branch.js';
 import {
   assertSlotNotOperatorRoot,
-  probeDefaultBranch,
+  reprobeSlotRepoBlocker,
   resetSlotRepoToIdle,
   slotIdleResetStepDetail,
 } from '../methods/slot/slot-tracking.js';
@@ -802,13 +802,9 @@ async function reclaimCancelledSlotForSelection(
   requestingRunId: string,
 ): Promise<boolean> {
   if (!(await reclaimCancelledSlot(slotId, requestingRunId))) return false;
-  const vars = await loadSlotVars(slotId);
-  const { projectJson } = await loadProjectVars(vars.projectName);
-  const defaultBranch = getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH;
-  const probe = await probeDefaultBranch(vars, defaultBranch);
+  const probe = await reprobeSlotRepoBlocker(await loadSlotVars(slotId));
   if (!probe.readable)
     throw new Error(`Slot ${slotId}: cannot re-probe reclaimed repo: ${probe.error}`);
-  await updateSlotStatus(slotId, { repo_blocker: probe.blocker });
   return true;
 }
 
