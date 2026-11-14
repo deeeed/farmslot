@@ -8,6 +8,12 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      gateway_shards:
+        description: Temporary gateway scheduling comparison
+        type: choice
+        default: '4'
+        options: ['4', '8']
 
 # Cancel superseded runs for the same pull request (or ref, for pushes and
 # manual dispatch). Queue time is currently 0, so this buys runner-seconds
@@ -894,7 +900,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.gateway_shards == '8' && '[1,2,3,4,5,6,7,8]' || '[1,2,3,4]') }}
     defaults:
       run:
         shell: bash
