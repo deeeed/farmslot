@@ -400,6 +400,57 @@ def blind_pi_home(spec, capsule):
     return runtime / '.blind-pi', runtime / '.blind-pi' / capsule.name
 
 
+# Providers the Farmslot Pi extension registers for a blind worker, and the
+# variable each takes its key from at runtime.
+PI_STATIC_PROVIDER_KEYS = {'litellm': 'LITELLM_API_KEY', 'ollama': 'OLLAMA_API_KEY'}
+PI_STATIC_PROVIDER_FIELDS = ['baseUrl', 'api', 'compat', 'models']
+PI_STATIC_MODEL_FIELDS = ['id', 'name', 'api', 'reasoning', 'input', 'cost', 'contextWindow',
+                          'maxTokens', 'thinkingLevelMap', 'compat']
+
+
+def check_pi_agent_dir(spec, capsule):
+    # A configured Pi home inside a denied store would reopen the operator's logins.
+    configured = os.environ.get('PI_CODING_AGENT_DIR')
+    if not configured:
+        return
+    agent = Path(os.path.expanduser(configured)).resolve()
+    repo = Path(spec['repo']).resolve()
+    if any(inside(agent, Path(p).resolve()) for p in host_secret_paths(spec, repo, capsule, [])):
+        raise RuntimeError('Blind trial PI_CODING_AGENT_DIR %s is inside a store the blind sandbox '
+                           'denies; unset it so the trial uses its own Pi home' % json.dumps(configured))
+
+
+def write_blind_pi_models(target):
+    # The extension keeps the operator's static model definitions for its
+    # providers (preservePiStaticModels). Copy only those definitions: keys are
+    # env references, and headers or any other provider field are dropped.
+    keys = dict(PI_STATIC_PROVIDER_KEYS)
+    keys[os.environ.get('FARMSLOT_PI_ROUTER_ID') or 'router'] = 'FARMSLOT_PI_ROUTER_KEY'
+    try:
+        providers = json.loads((Path.home() / '.pi/agent/models.json').read_text()).get('providers', {})
+        static = {}
+        for name, key in keys.items():
+            provider = providers.get(name)
+            if not isinstance(provider, dict):
+                continue
+            url = urlsplit(provider.get('baseUrl') or '')
+            if url.username or url.password or url.query or url.fragment:
+                continue  # A URL can embed a credential; the extension supplies the endpoint.
+            entry = {field: provider[field] for field in PI_STATIC_PROVIDER_FIELDS if field in provider}
+            entry['models'] = [{field: model[field] for field in PI_STATIC_MODEL_FIELDS if field in model}
+                               for model in provider.get('models', []) if isinstance(model, dict)]
+            static[name] = {**entry, 'apiKey': '$' + key}
+    except FileNotFoundError:
+        static = {}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        # Never report parser details: they can quote the operator's key bytes.
+        raise RuntimeError('Cannot read the operator Pi static models for the blind trial') from None
+    temporary = target.with_suffix('.pending')
+    temporary.write_text(json.dumps({'providers': static}, indent=1) + '\n')
+    temporary.chmod(0o600)
+    temporary.replace(target)
+
+
 def host_secret_paths(spec, repo, capsule, checkouts):
     home = Path.home()
     denied = [home / name for name in HOME_SECRET_STORES] + sorted(gateway_homes())
@@ -647,6 +698,8 @@ def prepare_boundary(spec, capsule):
         (pi / 'bin').symlink_to(tools)
     if not (root / 'pi-agent').is_symlink():
         (root / 'pi-agent').symlink_to(pi)
+    check_pi_agent_dir(spec, capsule)
+    write_blind_pi_models(pi / 'models.json')
     # Keep socket paths below sockaddr_un's macOS limit even for deep capsules.
     temporary = root / 'tmp'
     if not temporary.is_symlink():
