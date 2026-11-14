@@ -13,6 +13,7 @@ test(
     skip: !tmuxSandbox && 'needs the test runner tmux sandbox (FARMSLOT_TMUX_SANDBOX)',
   },
   (context) => {
+    assert.equal(tmuxSandbox, process.env.FARMSLOT_TMUX_SANDBOX);
     const directory = mkdtempSync(path.join(tmpdir(), 'review-receipt-'));
     const session = `receipt-${process.pid}-${Date.now()}`;
     const input = {
