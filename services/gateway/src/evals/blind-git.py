@@ -1,4 +1,5 @@
 """Gateway-owned Git isolation for one blind trial; sent to the node on stdin."""
+import fnmatch
 import hashlib
 import json
 import os
@@ -1063,6 +1064,55 @@ def restore_submodule_entries(state):
             entry.unlink(missing_ok=True)
 
 
+def ignored_moves(repo, keep):
+    # Gitignored leftovers of earlier runs (task folders, runtime ledgers, env
+    # files) are moved into the capsule. Listed caches and this run's own
+    # prepared files stay; a kept path inside an ignored directory keeps only itself.
+    def kept(rel):
+        return any(fnmatch.fnmatchcase(rel, p) or ('/' not in p and fnmatch.fnmatchcase(rel.rsplit('/', 1)[-1], p))
+                   for p in keep)
+    def holds_kept(rel):
+        return any(p.startswith(rel + '/') for p in keep)
+    moves = []
+    def visit(rel):
+        if kept(rel):
+            return
+        entry = repo / rel
+        if holds_kept(rel) and entry.is_dir() and not entry.is_symlink():
+            for child in sorted(entry.iterdir()):
+                visit(rel + '/' + child.name)
+        else:
+            moves.append(rel)
+    listed = git(repo, 'ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory').stdout
+    for name in listed.split(b'\0'):
+        if name:
+            visit(name.decode().rstrip('/'))
+    return moves
+
+
+def move_back(source, destination, aside):
+    # Never delete: a path the trial created where an original returns is set aside in the capsule.
+    if not os.path.lexists(destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        source.rename(destination)
+    elif (source.is_dir() and not source.is_symlink()
+          and destination.is_dir() and not destination.is_symlink()):
+        for child in sorted(source.iterdir()):
+            move_back(child, destination / child.name, aside / child.name)
+        source.rmdir()
+    else:
+        aside.parent.mkdir(parents=True, exist_ok=True)
+        destination.rename(aside)
+        source.rename(destination)
+
+
+def restore_ignored(repo, capsule, state):
+    for rel in state.get('ignoredMoved', []):
+        source = capsule / 'original-ignored' / rel
+        if os.path.lexists(source):
+            move_back(source, repo / rel, capsule / 'trial-ignored' / rel)
+
+
 def isolate(spec):
     repo, capsule = Path(spec['repo']), Path(spec['capsule'])
     journal = capsule / 'state.json'
@@ -1095,8 +1145,13 @@ def isolate(spec):
     state = {**spec, 'phase': 'preparing',
              'originalDirectory': str(original_directory),
              'originalHead': git(repo, 'rev-parse', 'HEAD').stdout.decode().strip(),
-             'originalIsDirectory': (repo / '.git').is_dir()}
+             'originalIsDirectory': (repo / '.git').is_dir(),
+             'ignoredMoved': ignored_moves(repo, spec.get('keepIgnored', []))}
     save(journal, state)
+    for rel in state['ignoredMoved']:
+        target = capsule / 'original-ignored' / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).rename(target)
     git(repo, 'init', '-q', '--bare', '--template=', '--object-format=' + ('sha256' if len(spec['baseSha']) == 64 else 'sha1'), str(prepared))
     objects = capsule / 'base.objects'
     objects.write_bytes(git(repo, 'rev-list', '--objects', '--no-object-names', '--no-walk',
@@ -1137,6 +1192,7 @@ def isolate(spec):
             original.rename(repo / '.git')
             restore_submodule_entries(state)
             git(repo, 'reset', '--hard', state['originalHead'])
+        restore_ignored(repo, capsule, state)
         state['phase'] = 'restored'
         save(journal, state)
         raise
@@ -1198,6 +1254,7 @@ def restore(spec):
         elif git(repo, 'config', '--get', 'farmslot.blindRun', check=False).stdout.strip():
             raise RuntimeError('Blind trial interrupted preparation lost original Git metadata')
         restore_submodule_entries(state)
+        restore_ignored(repo, capsule, state)
         state['phase'] = 'restored'
         save(journal, state)
         remove_worker_temp(capsule)
@@ -1251,6 +1308,7 @@ def restore(spec):
     if retained.exists():
         shutil.copyfile(retained / 'index', directory / 'index')
         shutil.rmtree(retained)
+    restore_ignored(repo, capsule, state)
     state['phase'] = 'restored'
     save(journal, state)
     for name in ['base.objects', 'candidate.objects']:

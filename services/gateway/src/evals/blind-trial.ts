@@ -14,6 +14,7 @@ import { reportedFarmPaths } from '@farmslot/slot-config';
 import { shSingleQuote } from '../../../../scripts/lib/shell-quote.mjs';
 import {
   getOrchestratorTaskRoot,
+  getProjectFieldRaw,
   loadMachineSlots,
   loadProjectVars,
   loadSlotVars,
@@ -149,6 +150,37 @@ async function resolvedSiblingRepos(vars: SlotVars): Promise<string[]> {
   );
 }
 
+/** Ignored caches a blind trial keeps in place when isolation moves earlier runs' leftovers aside. */
+export const DEFAULT_BLIND_KEEP_IGNORED = [
+  'node_modules',
+  '.yarn/*',
+  'ios/Pods',
+  'ios/build',
+  'android/.gradle',
+  'android/build',
+  'android/app/build',
+  'build',
+  'dist',
+];
+
+/** The project's cache list, plus this run's own task folder when it already exists. */
+async function keptIgnoredPaths(run: Run): Promise<string[]> {
+  const project = await loadProjectVars(run.project);
+  const configured = getProjectFieldRaw(project.projectJson, 'blind_keep_ignored');
+  return [
+    ...(Array.isArray(configured) ? configured.map(String) : DEFAULT_BLIND_KEEP_IGNORED),
+    ...(run.taskFile
+      ? [
+          path.posix.join(
+            resolveProjectTaskDirName(project.projectJson),
+            path.basename(path.dirname(path.dirname(run.taskFile))),
+            path.basename(path.dirname(run.taskFile)),
+          ),
+        ]
+      : []),
+  ];
+}
+
 export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal): Promise<void> {
   const run = getRun(runId);
   if (!run?.engineState?.evalExperiment) return;
@@ -181,7 +213,10 @@ export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal):
     throw new Error(
       'Blind trial trusted repository identity is missing. Restore this trial and create a new blind run.',
     );
-  const spec = gitSpec(run, vars, blind, isolation.slotEpoch, isolation.capsulePath);
+  const spec = {
+    ...gitSpec(run, vars, blind, isolation.slotEpoch, isolation.capsulePath),
+    keepIgnored: await keptIgnoredPaths(run),
+  };
   await executeGit('isolate', vars, spec, signal);
   // The worker sandbox denies the node's other slot checkouts, resolved as each slot's own launch resolves them.
   const siblingRepos = await resolvedSiblingRepos(vars);
