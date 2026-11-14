@@ -367,9 +367,12 @@ selection rules. Non-blind recipes retain slot and explicit-flag precedence.
 The boundary allocates a mode-0700 directory under `/private/tmp/fs-blind-*`,
 retains its protected `boundary/tmp` link across launches, and removes the
 directory during restoration. The wrapper assigns `TMPDIR`, `TMP`, `TEMP` and
-`MAC_CHROMIUM_TMPDIR` from that link, replacing ambient values. Chromium on macOS
-uses the latter for its singleton socket directory; `TMPDIR` alone does not
-redirect it. The boundary also creates a fixed `broker` child directory and sets
+`MAC_CHROMIUM_TMPDIR` from that link, replacing ambient values. macOS `mktemp`
+still ignores that `TMPDIR` and writes under `/var/folders`, which the profile
+denies. `boundary/bin/mktemp` is first on `PATH` and places a default or `-t`
+template in the trial directory. An explicit template is unchanged. Chromium on
+macOS uses `MAC_CHROMIUM_TMPDIR` for its singleton socket directory; `TMPDIR`
+alone does not redirect it. The boundary also creates a fixed `broker` child directory and sets
 `FARMSLOT_BLIND_BROKER_DIR` there. The shared broker package puts hashed socket
 paths there and ownership sidecars in general trial temp, outside `broker`.
 Non-blind broker paths remain independent of `TMPDIR`.

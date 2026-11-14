@@ -663,6 +663,83 @@ test('boundary ps refuses environment output in every option form and passes oth
   }
 });
 
+test('boundary mktemp writes a default macOS temp file in the trial directory', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'blind-mktemp-')));
+  t.after(() => rmSync(root, { recursive: true }));
+  const trial = path.join(root, 'trial');
+  mkdirSync(trial);
+  const extracted = spawnSync(
+    'python3',
+    [
+      '-c',
+      "import runpy, sys; print(runpy.run_path(sys.argv[1], run_name='fixture')['MKTEMP_WRAPPER'], end='')",
+      fileURLToPath(new URL('./blind-git.py', import.meta.url)),
+    ],
+    { encoding: 'utf8', timeout: 4500 },
+  );
+  assert.equal(extracted.status, 0, extracted.stderr);
+  const wrapper = path.join(root, 'mktemp');
+  writeFileSync(wrapper, extracted.stdout, { mode: 0o700 });
+  const run = (args: string[], tmpdir = `${trial}/`) =>
+    spawnSync(wrapper, args, {
+      encoding: 'utf8',
+      env: { PATH: '/usr/bin:/bin', TMPDIR: tmpdir },
+    });
+  const created = (args: string[]) => {
+    const result = run(args);
+    assert.equal(result.status, 0, `${args.join(' ')} ${result.stderr}`);
+    const out = result.stdout.trim();
+    assert.ok(out.startsWith(`${trial}/`), out);
+    return out;
+  };
+  for (const args of [
+    [],
+    ['-d'],
+    ['-t', 'probe'],
+    ['-d', '-t', 'probe'],
+    ['-t', 'probe', '-d'],
+    ['-tprobe'],
+  ]) {
+    const out = created(args);
+    assert.equal(statSync(out).isDirectory(), args.includes('-d'));
+    assert.equal(path.dirname(out), trial);
+  }
+  const dry = created(['-q', '-u']);
+  assert.throws(() => statSync(dry));
+  const explicit = path.join(root, 'explicit.XXXXXX');
+  const placed = run([explicit]);
+  assert.equal(placed.status, 0, placed.stderr);
+  const placedPath = placed.stdout.trim();
+  assert.ok(placedPath.startsWith(path.join(root, 'explicit.')));
+  assert.equal(path.dirname(placedPath), root);
+  assert.equal(statSync(placedPath).isFile(), true);
+  const missing = run(['-t']);
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /option requires an argument -- t/u);
+  const unknown = run(['-Z']);
+  assert.notEqual(unknown.status, 0);
+  assert.equal(unknown.stdout, '');
+  if (process.platform === 'darwin') {
+    const bare = spawnSync('/usr/bin/mktemp', [], {
+      encoding: 'utf8',
+      env: { TMPDIR: trial, PATH: '/usr/bin:/bin' },
+    });
+    const stray = bare.stdout.trim();
+    t.after(() => {
+      if (stray) rmSync(stray, { force: true });
+    });
+    assert.equal(bare.status, 0, bare.stderr);
+    assert.match(stray, /^\/var\/folders\//u);
+    const ambient = run([], '');
+    const ambientPath = ambient.stdout.trim();
+    t.after(() => {
+      if (ambientPath) rmSync(ambientPath, { force: true });
+    });
+    assert.equal(ambient.status, 0, ambient.stderr);
+    assert.match(ambientPath, /^\/var\/folders\//u);
+  }
+});
+
 test('blind profile denies every slot runtime but its own, and every launch directory', () => {
   // Nothing is created: rules come from paths alone, outside /tmp and /var aliases.
   const root = '/blind-runtime-fixture';

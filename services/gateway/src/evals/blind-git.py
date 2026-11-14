@@ -90,6 +90,63 @@ for arg in "$@"; do
 done
 COMMAND_MODE=unix2003 exec REAL_PS "$@"
 '''
+# macOS mktemp ignores TMPDIR and writes under /var/folders, which the trial denies.
+# A missing template, or -t, is created in the trial directory. An explicit template stays.
+MKTEMP_WRAPPER = '''#!/bin/sh
+real=/usr/bin/mktemp
+dir=${TMPDIR:-}
+dir=${dir%/}
+[ -n "$dir" ] || exec "$real" "$@"
+i=0
+for arg in "$@"; do
+  i=$((i + 1))
+  eval "saved_$i=\\$arg"
+done
+count=$i
+passthrough() {
+  j=1
+  set --
+  while [ "$j" -le "$count" ]; do
+    eval "set -- \\"\\$@\\" \\"\\$saved_$j\\""
+    j=$((j + 1))
+  done
+  exec "$real" "$@"
+}
+directory=; quiet=; dry=; prefix=; template=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -d) directory=1; shift ;;
+    -q) quiet=1; shift ;;
+    -u) dry=1; shift ;;
+    -t)
+      shift
+      [ $# -gt 0 ] || { echo 'mktemp: option requires an argument -- t' >&2; exit 1; }
+      prefix=$1
+      shift
+      ;;
+    -t*) prefix=${1#-t}; shift ;;
+    --)
+      shift
+      if [ $# -gt 0 ]; then template=$1; shift; fi
+      [ $# -eq 0 ] || passthrough
+      break
+      ;;
+    -*) passthrough ;;
+    *) template=$1; shift; [ $# -eq 0 ] || passthrough; break ;;
+  esac
+done
+[ -n "$prefix" ] && [ -n "$template" ] && passthrough
+set --
+[ -n "$directory" ] && set -- "$@" -d
+[ -n "$quiet" ] && set -- "$@" -q
+[ -n "$dry" ] && set -- "$@" -u
+if [ -z "$template" ]; then
+  name=${prefix:-tmp}
+  case "$name" in */*) passthrough ;; esac
+  template="$dir/$name.XXXXXXXXXX"
+fi
+exec "$real" "$@" "$template"
+'''
 SANDBOX = '/usr/bin/sandbox-exec'
 SANDBOX_REQUIRED = 'Blind eval trials need macOS sandbox-exec on the slot node; refusing an unsandboxed worker'
 NODE_INSTALLATIONS = ['farmslot-node', 'farmslot-node-dev']
@@ -789,6 +846,9 @@ def prepare_boundary(spec, capsule):
     (root / 'bin/ps').unlink(missing_ok=True)
     (root / 'bin/ps').write_text(PS_WRAPPER.replace('REAL_PS', shlex.quote(str(ps))))
     (root / 'bin/ps').chmod(0o700)
+    # Bare macOS mktemp ignores TMPDIR. Workers find this wrapper first on PATH.
+    (root / 'bin/mktemp').write_text(MKTEMP_WRAPPER)
+    (root / 'bin/mktemp').chmod(0o700)
     script = BOUNDARY_SCRIPT.replace('ATTEMPTS', shlex.quote(str(root / 'attempts.log')))
     for name in ['gh', 'deny']:
         (root / 'bin' / name).write_text(script)
