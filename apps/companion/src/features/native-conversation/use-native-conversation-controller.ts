@@ -118,12 +118,14 @@ export function useNativeConversationController(params: NativeConversationParams
   const pendingRef = useRef(pending);
   const responsesRef = useRef(responses);
   const refreshRef = useRef<() => Promise<void>>(async () => undefined);
-  const node = params.executionNodeId ?? 'local';
+  // Keep existing draft and delivery-record keys while normalizing the execution target.
+  const storedNode = params.executionNodeId ?? 'local';
+  const node = storedNode || 'local';
   const storageKey = nativeConversationStorageKey({
     profile,
     gatewayUrl,
     principalId,
-    node,
+    node: storedNode,
     sessionId: params.sessionId,
     runId: params.runId,
     contextId: params.contextId,
