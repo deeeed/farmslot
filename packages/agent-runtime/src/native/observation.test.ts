@@ -106,6 +106,69 @@ test('armed source sees real journal appends before fs.watch callback; no comman
   }
 });
 
+test('source events keep their watchers; a created or replaced directory re-arms', async (t) => {
+  const watch = fs.watch;
+  let armed = 0;
+  t.mock.method(fs, 'watch', (...args: Parameters<typeof watch>) => {
+    armed++;
+    return watch(...args);
+  });
+  syncBuiltinESMExports();
+  const fixture = setup();
+  const ready = () => fixture.source.current().ready;
+  // Each separate atomic commit is published by its watcher event alone: no fence is called.
+  // The ceiling only reports a hang; watcher delivery is usually milliseconds.
+  const delivered = async (label: string) => {
+    const seen = fixture.notices.length;
+    fixture.commitMetadata();
+    for (let i = 0; i < 250 && (fixture.notices.length === seen || !ready()); i++) await delay(20);
+    assert.ok(fixture.notices.length > seen && ready(), label);
+  };
+  try {
+    await fixture.source.start();
+    const started = armed;
+    assert.ok(started > 0);
+    // A just-created FSEvents stream can miss its first events: commit until it delivers one.
+    const primed = fixture.notices.length;
+    for (let i = 0; i < 250 && fixture.notices.length === primed; i++) {
+      fixture.commitMetadata();
+      await delay(20);
+    }
+    assert.ok(fixture.notices.length > primed, 'the new watcher delivers');
+    for (let i = 0; i < 3; i++) await delivered(`commit ${i} is delivered by the watcher`);
+    // Linux re-arms on every event, since Node's recursive watch there is inode-bound.
+    if (process.platform !== 'linux')
+      assert.equal(armed, started, 'events under an unchanged root reuse its watchers');
+    // Count from the replacement itself: Linux has already re-armed on the commits above.
+    const replaced = armed;
+    rmSync(fixture.root, { recursive: true, force: true });
+    mkdirSync(join(fixture.root, 'sessions'), { recursive: true, mode: 0o700 });
+    fixture.commitMetadata();
+    // Commits drive recovery until the replaced root is armed and admitted.
+    for (let i = 0; i < 250 && !(armed > replaced && ready()); i++) {
+      await delay(20);
+      fixture.commitMetadata();
+    }
+    assert.ok(armed > replaced && ready(), 'a replaced root is armed again and admitted');
+    // The replacement's delete and create events can recover the source more than once: without
+    // further commits, wait until arming has been quiet for 200 ms.
+    let quiet = 0;
+    for (let i = 0, last = armed; i < 250 && !(quiet >= 10 && ready()); i++) {
+      await delay(20);
+      quiet = armed === last ? quiet + 1 : 0;
+      last = armed;
+    }
+    assert.ok(quiet >= 10 && ready(), 'arming settles after the replacement');
+    const rearmed = armed;
+    for (let i = 0; i < 2; i++) await delivered(`commit ${i} after replacement is delivered`);
+    if (process.platform !== 'linux') assert.equal(armed, rearmed, 'the new watchers are kept');
+  } finally {
+    fixture.close();
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+});
+
 test('healthy journal append supersedes a held read without revoking source admission', async (t) => {
   const fixture = setup();
   const notices: unknown[][] = [];
