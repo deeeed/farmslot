@@ -1,7 +1,11 @@
+const PACKED_REFS = 'packed-refs';
+const REPLACEMENT_REFS = 'refs/replace';
+
 interface WorkspaceMetadataFile {
   directory: 'git' | 'common';
   path: string;
   appendDefaultBranch?: boolean;
+  blocksAncestryCache?: boolean;
 }
 interface WorkspaceMetadataPolicy {
   marker: string;
@@ -11,6 +15,8 @@ interface WorkspaceMetadataPolicy {
   symbolicHeadPrefix: string;
   refRootPrefix: string;
   reftableHead: string;
+  packedRefs: string;
+  replacementRefs: string;
   files: readonly WorkspaceMetadataFile[];
 }
 
@@ -23,11 +29,21 @@ export const WORKSPACE_METADATA_POLICY: WorkspaceMetadataPolicy = {
   symbolicHeadPrefix: 'ref: ',
   refRootPrefix: 'refs/',
   reftableHead: 'ref: refs/heads/.invalid',
+  packedRefs: PACKED_REFS,
+  replacementRefs: REPLACEMENT_REFS,
   files: [
     { directory: 'git', path: 'index' },
-    { directory: 'common', path: 'packed-refs' },
+    { directory: 'common', path: PACKED_REFS },
     { directory: 'common', path: 'config' },
     { directory: 'common', path: 'refs/remotes/origin', appendDefaultBranch: true },
     { directory: 'git', path: 'FETCH_HEAD' },
+    { directory: 'common', path: 'shallow', blocksAncestryCache: true },
+    { directory: 'common', path: 'info/grafts', blocksAncestryCache: true },
+    { directory: 'common', path: REPLACEMENT_REFS, blocksAncestryCache: true },
   ],
 };
+
+export interface WorkspaceMetadataVersion {
+  version: string;
+  ancestryCacheable: boolean;
+}

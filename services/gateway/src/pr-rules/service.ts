@@ -164,8 +164,8 @@ export class PRRuleService {
       );
       for (const rule of snapshot.rules) {
         if (!this.authorized(rule.ownerId, rule.ownerGeneration ?? 0)) continue;
-        if (!rule.enabled || (rule.scan.nextScanAt && Date.parse(rule.scan.nextScanAt) > now))
-          continue;
+        const nextScanAt = this.store.nextScanAt(rule.id);
+        if (!rule.enabled || (nextScanAt && Date.parse(nextScanAt) > now)) continue;
         await runWithPrincipalOwner(rule, () => this.scan(rule.ownerId, rule.id));
       }
       for (const submission of this.store.snapshot((data) => data.submissions ?? [])) {
