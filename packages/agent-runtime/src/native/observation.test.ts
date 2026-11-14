@@ -139,14 +139,17 @@ test('source events keep their watchers; a created or replaced directory re-arms
     // Linux re-arms on every event, since Node's recursive watch there is inode-bound.
     if (process.platform !== 'linux')
       assert.equal(armed, started, 'events under an unchanged root reuse its watchers');
+    // Count from the replacement itself: Linux has already re-armed on the commits above.
+    const replaced = armed;
     rmSync(fixture.root, { recursive: true, force: true });
     mkdirSync(join(fixture.root, 'sessions'), { recursive: true, mode: 0o700 });
+    fixture.commitMetadata();
     // Commits drive recovery until the replaced root is armed and admitted.
-    for (let i = 0; i < 250 && !(armed > started && ready()); i++) {
-      fixture.commitMetadata();
+    for (let i = 0; i < 250 && !(armed > replaced && ready()); i++) {
       await delay(20);
+      fixture.commitMetadata();
     }
-    assert.ok(armed > started && ready(), 'a replaced root is armed again and admitted');
+    assert.ok(armed > replaced && ready(), 'a replaced root is armed again and admitted');
     // The replacement's delete and create events can recover the source more than once: without
     // further commits, wait until arming has been quiet for 200 ms.
     let quiet = 0;
