@@ -369,13 +369,14 @@ retains its protected `boundary/tmp` link across launches, and removes the
 directory during restoration. The wrapper assigns `TMPDIR`, `TMP`, `TEMP` and
 `MAC_CHROMIUM_TMPDIR` from that link, replacing ambient values. macOS `mktemp`
 still ignores that `TMPDIR` and writes under `/var/folders`, which the profile
-denies. `boundary/bin/mktemp` is first on `PATH` and places a default or `-t`
-template in the trial directory. An explicit template is unchanged. Chromium on
-macOS uses `MAC_CHROMIUM_TMPDIR` for its singleton socket directory; `TMPDIR`
-alone does not redirect it. The boundary also creates a fixed `broker` child directory and sets
-`FARMSLOT_BLIND_BROKER_DIR` there. The shared broker package puts hashed socket
-paths there and ownership sidecars in general trial temp, outside `broker`.
-Non-blind broker paths remain independent of `TMPDIR`.
+denies. `boundary/bin/mktemp` is first on `PATH` and places a default, `-t`,
+combined-flag, or `--directory` template in the trial directory. An explicit
+template is unchanged, including a template after `--`. Chromium on macOS uses
+`MAC_CHROMIUM_TMPDIR` for its singleton socket directory; `TMPDIR` alone does
+not redirect it. The boundary also creates a fixed `broker` child directory
+and sets `FARMSLOT_BLIND_BROKER_DIR` there. The shared broker package puts
+hashed socket paths there and ownership sidecars in general trial temp,
+outside `broker`. Non-blind broker paths remain independent of `TMPDIR`.
 
 Seatbelt denies shared temporary writes, including `/tmp`, `/var/tmp` and
 `/var/folders`, then admits the trial directory and existing task write scope.

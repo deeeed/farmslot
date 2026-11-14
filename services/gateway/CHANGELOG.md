@@ -5,7 +5,6 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
-- Blind workers get a boundary `mktemp` that writes a default macOS temp file in the trial directory. Bare `mktemp`, including `prepare-sandbox`, writes that file there. The seatbelt denies `/var/folders`. An explicit template is unchanged.
 - The settlement drop log says the run is gone, or that it no longer links a PR, instead of `another PR (#none)`.
 
 ## 0.39.3 - 2026-11-14

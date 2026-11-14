@@ -683,7 +683,8 @@ test('boundary mktemp writes a default macOS temp file in the trial directory', 
   const run = (args: string[], tmpdir = `${trial}/`) =>
     spawnSync(wrapper, args, {
       encoding: 'utf8',
-      env: { PATH: '/usr/bin:/bin', TMPDIR: tmpdir },
+      cwd: root,
+      env: { PATH: '/usr/bin:/bin', TMPDIR: tmpdir, HOME: '/should-not-appear' },
     });
   const created = (args: string[]) => {
     const result = run(args);
@@ -692,6 +693,12 @@ test('boundary mktemp writes a default macOS temp file in the trial directory', 
     assert.ok(out.startsWith(`${trial}/`), out);
     return out;
   };
+  const wantsDirectory = (args: string[]) =>
+    args.includes('-d') ||
+    args.includes('-dq') ||
+    args.includes('-dt') ||
+    args.includes('-dtprobe') ||
+    args.includes('--directory');
   for (const args of [
     [],
     ['-d'],
@@ -699,13 +706,24 @@ test('boundary mktemp writes a default macOS temp file in the trial directory', 
     ['-d', '-t', 'probe'],
     ['-t', 'probe', '-d'],
     ['-tprobe'],
+    ['-dq'],
+    ['-dt', 'probe'],
+    ['-dtprobe'],
+    ['-qt', 'probe'],
+    ['--directory', '-t', 'probe'],
+    ['--quiet', '-t', 'probe'],
   ]) {
     const out = created(args);
-    assert.equal(statSync(out).isDirectory(), args.includes('-d'));
+    assert.equal(statSync(out).isDirectory(), wantsDirectory(args), args.join(' '));
     assert.equal(path.dirname(out), trial);
   }
   const dry = created(['-q', '-u']);
   assert.throws(() => statSync(dry));
+  const dryDir = run(['-du']);
+  assert.equal(dryDir.status, 0, dryDir.stderr);
+  const dryDirPath = dryDir.stdout.trim();
+  assert.ok(dryDirPath.startsWith(`${trial}/`), dryDirPath);
+  assert.throws(() => statSync(dryDirPath));
   const explicit = path.join(root, 'explicit.XXXXXX');
   const placed = run([explicit]);
   assert.equal(placed.status, 0, placed.stderr);
@@ -716,9 +734,25 @@ test('boundary mktemp writes a default macOS temp file in the trial directory', 
   const missing = run(['-t']);
   assert.equal(missing.status, 1);
   assert.match(missing.stderr, /option requires an argument -- t/u);
-  const unknown = run(['-Z']);
+  const unknown = run(['-Z', "a b'$HOME'"]);
   assert.notEqual(unknown.status, 0);
   assert.equal(unknown.stdout, '');
+  const dashed = run(['--', "-z'a b'$HOME'.XXXXXX"]);
+  assert.equal(dashed.status, 0, dashed.stderr);
+  const dashedName = dashed.stdout.trim();
+  assert.ok(dashedName.startsWith("-z'a b'$HOME'."), dashedName);
+  assert.equal(dashedName.includes('/should-not-appear'), false);
+  assert.equal(statSync(path.join(root, dashedName)).isFile(), true);
+  const multi = run(["a b'$HOME'.XXXXXX", 'c"d.XXXXXX']);
+  assert.equal(multi.status, 0, multi.stderr);
+  const names = multi.stdout.trim().split('\n');
+  assert.equal(names.length, 2);
+  assert.ok(names[0].startsWith("a b'$HOME'."), names[0]);
+  assert.ok(names[1].startsWith('c"d.'), names[1]);
+  for (const name of names) {
+    assert.equal(name.includes('/should-not-appear'), false);
+    assert.equal(statSync(path.join(root, name)).isFile(), true);
+  }
   if (process.platform === 'darwin') {
     const bare = spawnSync('/usr/bin/mktemp', [], {
       encoding: 'utf8',

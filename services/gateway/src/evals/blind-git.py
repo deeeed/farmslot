@@ -91,61 +91,89 @@ done
 COMMAND_MODE=unix2003 exec REAL_PS "$@"
 '''
 # macOS mktemp ignores TMPDIR and writes under /var/folders, which the trial denies.
-# A missing template, or -t, is created in the trial directory. An explicit template stays.
+# A missing template, -t, combined short flags, and --directory are created in the
+# trial directory. An explicit template is unchanged. -p and --tmpdir name a
+# directory, so those calls keep the original arguments.
 MKTEMP_WRAPPER = '''#!/bin/sh
 real=/usr/bin/mktemp
 dir=${TMPDIR:-}
 dir=${dir%/}
 [ -n "$dir" ] || exec "$real" "$@"
-i=0
+directory=
+quiet=
+dry=
+prefix=
+template=
+need_t=
+opts_done=
 for arg in "$@"; do
-  i=$((i + 1))
-  eval "saved_$i=\\$arg"
-done
-count=$i
-passthrough() {
-  j=1
-  set --
-  while [ "$j" -le "$count" ]; do
-    eval "set -- \\"\\$@\\" \\"\\$saved_$j\\""
-    j=$((j + 1))
-  done
-  exec "$real" "$@"
-}
-directory=; quiet=; dry=; prefix=; template=
-while [ $# -gt 0 ]; do
-  case "$1" in
-    -d) directory=1; shift ;;
-    -q) quiet=1; shift ;;
-    -u) dry=1; shift ;;
-    -t)
-      shift
-      [ $# -gt 0 ] || { echo 'mktemp: option requires an argument -- t' >&2; exit 1; }
-      prefix=$1
-      shift
-      ;;
-    -t*) prefix=${1#-t}; shift ;;
+  if [ -n "$need_t" ]; then
+    prefix=$arg
+    need_t=
+    continue
+  fi
+  if [ -n "$opts_done" ]; then
+    [ -z "$template" ] || exec "$real" "$@"
+    template=$arg
+    continue
+  fi
+  case $arg in
     --)
-      shift
-      if [ $# -gt 0 ]; then template=$1; shift; fi
-      [ $# -eq 0 ] || passthrough
-      break
+      opts_done=1
       ;;
-    -*) passthrough ;;
-    *) template=$1; shift; [ $# -eq 0 ] || passthrough; break ;;
+    --directory) directory=1 ;;
+    --quiet) quiet=1 ;;
+    --dry-run) dry=1 ;;
+    --tmpdir|--tmpdir=*) exec "$real" "$@" ;;
+    --*) exec "$real" "$@" ;;
+    -*)
+      flags=${arg#-}
+      while [ -n "$flags" ]; do
+        c=${flags%"${flags#?}"}
+        flags=${flags#?}
+        case $c in
+          d) directory=1 ;;
+          q) quiet=1 ;;
+          u) dry=1 ;;
+          t)
+            if [ -n "$flags" ]; then
+              prefix=$flags
+              flags=
+            else
+              need_t=1
+            fi
+            ;;
+          *) exec "$real" "$@" ;;
+        esac
+      done
+      ;;
+    *)
+      opts_done=1
+      template=$arg
+      ;;
   esac
 done
-[ -n "$prefix" ] && [ -n "$template" ] && passthrough
+[ -z "$need_t" ] || { echo 'mktemp: option requires an argument -- t' >&2; exit 1; }
+case $prefix in
+  */*) exec "$real" "$@" ;;
+esac
 set --
 [ -n "$directory" ] && set -- "$@" -d
 [ -n "$quiet" ] && set -- "$@" -q
 [ -n "$dry" ] && set -- "$@" -u
-if [ -z "$template" ]; then
-  name=${prefix:-tmp}
-  case "$name" in */*) passthrough ;; esac
-  template="$dir/$name.XXXXXXXXXX"
+if [ -z "$prefix" ] && [ -z "$template" ]; then
+  prefix=tmp
 fi
-exec "$real" "$@" "$template"
+if [ -n "$prefix" ]; then
+  set -- "$@" "$dir/$prefix.XXXXXXXXXX"
+fi
+if [ -n "$template" ]; then
+  case $template in
+    -*) set -- "$@" -- "$template" ;;
+    *) set -- "$@" "$template" ;;
+  esac
+fi
+exec "$real" "$@"
 '''
 SANDBOX = '/usr/bin/sandbox-exec'
 SANDBOX_REQUIRED = 'Blind eval trials need macOS sandbox-exec on the slot node; refusing an unsandboxed worker'
