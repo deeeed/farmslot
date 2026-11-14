@@ -102,3 +102,48 @@ test('blind isolate and restore suppress automatic maintenance without persistin
   }
   assert.equal(readFileSync(path.join(repo, '.git/config'), 'utf8'), config);
 });
+
+test('blind prefetch shares one deadline across snapshots and fails fast once it passes', () => {
+  // Controlled clock: each checkout takes 400 s of a 600 s budget.
+  const result = execFileSync(
+    'python3',
+    [
+      '-c',
+      `import json, pathlib, runpy, subprocess, sys, tempfile
+blind = runpy.run_path(sys.argv[1], run_name='fixture')
+g = blind['prefetch_partial_clone'].__globals__
+clock = [0.0]
+timeouts = []
+class Listed: stdout = b'?missing\\n'
+g['git'] = lambda *args, **kwargs: Listed()
+g['time'] = type('T', (), {'monotonic': staticmethod(lambda: clock[0])})
+def run(*args, **kwargs):
+    timeouts.append(kwargs['timeout'])
+    clock[0] += 400
+g['subprocess'] = type('S', (), {'run': staticmethod(run), 'CalledProcessError': subprocess.CalledProcessError, 'TimeoutExpired': subprocess.TimeoutExpired})
+root = pathlib.Path(tempfile.mkdtemp())
+outcomes = []
+for snapshots in [['a', 'b'], ['a', 'b', 'c']]:
+    clock[0] = 0.0; timeouts.clear()
+    try:
+        blind['prefetch_partial_clone'](root, snapshots, root)
+        outcomes.append({'ok': True, 'timeouts': list(timeouts)})
+    except RuntimeError as error:
+        outcomes.append({'ok': False, 'timeouts': list(timeouts), 'error': str(error)})
+import shutil; shutil.rmtree(root)
+print(json.dumps(outcomes))`,
+      new URL('./blind-git.py', import.meta.url).pathname,
+    ],
+    { encoding: 'utf8', timeout: 4500 },
+  );
+  const [two, three] = JSON.parse(result) as Array<{
+    ok: boolean;
+    timeouts: number[];
+    error?: string;
+  }>;
+  // The second snapshot gets only what the first left, not another full budget.
+  assert.deepEqual(two, { ok: true, timeouts: [600, 200] });
+  assert.equal(three!.ok, false);
+  assert.deepEqual(three!.timeouts, [600, 200]);
+  assert.match(three!.error!, /missing from this partial clone and could not be fetched/);
+});

@@ -739,3 +739,47 @@ lock = open(sys.argv[1], 'a'); fcntl.flock(lock, fcntl.LOCK_EX); print('held', f
   );
   assert.equal(existsSync(offlineSpec.capsule), false);
 });
+
+test('a restored blind trial isolates again from its base, but never over candidate commits', () => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'blind-reisolate-')));
+  try {
+    const repo = path.join(root, 'slot');
+    mkdirSync(repo);
+    git(repo, 'init', '-q', '-b', 'main');
+    writeFileSync(path.join(repo, 'value.txt'), 'base\n');
+    const baseSha = commit(repo, 'base');
+    const parent = path.join(root, '.farmslot-blind-evals/reisolate-fixture');
+    const spec: BlindGitSpec = {
+      slotId: 'reisolate-fixture',
+      slotEpoch: 1,
+      repo,
+      capsule: path.join(parent, 'trial-1'),
+      runId: 'trial',
+      branch: 'eval/trial',
+      baseSha,
+      referenceCommits: [],
+    };
+    // Unchanged trial: restore keeps its branch at the base; a retry isolates afresh.
+    assert.equal(command('isolate', spec).status, 'isolated');
+    assert.equal(command('restore', spec).status, 'restored');
+    assert.equal(command('isolate', spec).status, 'isolated');
+    const [aside] = readdirSync(parent).filter((name) => name.startsWith('trial-1.interrupted-'));
+    assert.ok(aside, 'the restored capsule is kept aside');
+    // Its stores are gone; only the journal and receipts remain.
+    assert.deepEqual(
+      readdirSync(path.join(parent, aside)).filter((name) => !name.endsWith('.json')),
+      [],
+    );
+    // Candidate work: the retry refuses and the candidate branch survives.
+    writeFileSync(path.join(repo, 'value.txt'), 'candidate\n');
+    const candidate = commit(repo, 'candidate');
+    assert.equal(command('restore', spec).status, 'restored');
+    assert.throws(
+      () => command('isolate', spec),
+      /holds candidate commits from an earlier attempt/,
+    );
+    assert.equal(git(repo, 'rev-parse', 'refs/heads/eval/trial'), candidate);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

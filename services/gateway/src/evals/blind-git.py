@@ -11,6 +11,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 from urllib.parse import urlsplit
 
 os.umask(0o077)
@@ -1065,7 +1066,8 @@ def restore_submodule_entries(state):
 
 
 # A partial clone fetches each missing object on demand, one request per object:
-# a Mobile base exceeded the isolate budget that way. Fetch them in one batch first.
+# a Mobile base exceeded the isolate budget that way. Fetch them in one batch first,
+# within one deadline for every snapshot, well inside the gateway's 900 s isolate budget.
 PREFETCH_TIMEOUT_S = 600
 
 
@@ -1078,10 +1080,14 @@ def prefetch_partial_clone(repo, snapshots, scratch_root):
         # A checkout into scratch batches the fetch; the slot's index and files are untouched.
         (scratch / 'tree').mkdir()
         env = {**os.environ, 'GIT_INDEX_FILE': str(scratch / 'index')}
+        deadline = time.monotonic() + PREFETCH_TIMEOUT_S
         for sha in snapshots:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired('read-tree', PREFETCH_TIMEOUT_S)
             subprocess.run(GIT + ['-C', str(repo), '--work-tree=' + str(scratch / 'tree'), 'read-tree',
                                   '-u', '--reset', sha], env=env, capture_output=True, check=True,
-                           timeout=PREFETCH_TIMEOUT_S)
+                           timeout=remaining)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         raise RuntimeError('Blind trial base objects are missing from this partial clone and could not be '
                            'fetched; fetch the base on the slot and retry') from None
@@ -1112,7 +1118,22 @@ def isolate_locked(spec):
             # An interrupted isolate left the swap half done, or its capsule was restored:
             # finish the restoration, keep that capsule aside and isolate afresh.
             restore(spec)
-            capsule.rename(capsule.with_name(capsule.name + '.interrupted-' + os.urandom(4).hex()))
+            repo = Path(spec['repo'])
+            branch = 'refs/heads/' + spec['branch']
+            kept = git(repo, 'rev-parse', '--verify', '--quiet', branch, check=False).stdout.decode().strip()
+            if kept and kept != spec['baseSha']:
+                raise RuntimeError('Blind trial branch %s holds candidate commits from an earlier attempt; '
+                                   'keep or release them before retrying this trial' % spec['branch'])
+            if kept:
+                # Restoration left the unchanged trial branch checked out: drop only that ref.
+                git(repo, 'checkout', '-q', '--detach', spec['baseSha'])
+                git(repo, 'update-ref', '-d', branch, spec['baseSha'])
+            aside = capsule.with_name(capsule.name + '.interrupted-' + os.urandom(4).hex())
+            capsule.rename(aside)
+            # Restored: no store there is referenced any more. Keep only its journal and receipts.
+            for entry in aside.iterdir():
+                if entry.suffix != '.json':
+                    shutil.rmtree(entry) if entry.is_dir() and not entry.is_symlink() else entry.unlink()
             return isolate_locked(spec)
         if state['phase'] != 'isolated':
             raise RuntimeError('Blind trial capsule requires restoration before preparation')
