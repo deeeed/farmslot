@@ -86,7 +86,6 @@ async function cdpEvalAsync(client, expression, timeoutMs = cdpMessageTimeout())
   const deadline = Date.now() + timeoutMs;
   try {
     while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, pollInterval));
       const check = await client.send(
         'Runtime.evaluate',
         {
@@ -103,6 +102,10 @@ async function cdpEvalAsync(client, expression, timeoutMs = cdpMessageTimeout())
       if (val?.status === 'rejected') {
         throw new Error(`Async evaluation error: ${val.error}`);
       }
+      // The expression already ran once; only wait when its result is still pending.
+      await new Promise((r) =>
+        setTimeout(r, Math.min(pollInterval, Math.max(0, deadline - Date.now()))),
+      );
     }
     throw new Error(`Async evaluation timed out after ${timeoutMs}ms`);
   } finally {
