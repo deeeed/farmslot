@@ -100,6 +100,6 @@ The protocol package owns the case, trial and result-package fields consumed by 
 
 ## Dispatch canary
 
-The existing fullflow canary runs a `blind-dispatch` case with its allowlisted low-effort Luna model before its implementation and QA cases after gateway deployment and nightly. Run only that case with `--profile fullflow --target isolated --only blind-dispatch`.
+The existing fullflow canary runs a `blind-dispatch` case with its selected cheap worker before its implementation and QA cases after gateway deployment and nightly. Run only that case with `--profile fullflow --target isolated --only blind-dispatch`.
 
-Use the disposable stack's synthetic repository, dedicated slot, family and experiment manifest. Never attach dataset identifiers or use a dataset manifest. Success requires verified blind isolation, completed admission/task-init/prepare/dispatch, and a tool call in this worker's structured transcript. Cancel after the first tool call, verify capsule restoration and slot readiness, then archive the run. Admission, inference, restoration or cleanup failure fails the existing canary report and status alert.
+Use the disposable stack's synthetic repository, dedicated slot, family and experiment manifest. Never attach dataset identifiers or use a dataset manifest. Success requires verified blind isolation, completed admission/task-init/prepare/dispatch, and a tool call in this worker's structured transcript or provider turn hook. Cancel after the first tool call, verify capsule restoration and slot readiness, then archive the run. Admission, inference, restoration or cleanup failure fails the existing canary report and status alert.

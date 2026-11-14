@@ -1,7 +1,7 @@
 // A single model/tool call through blind admission, on the fullflow stack's own slot and manifest.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -21,7 +21,7 @@ import { writeJson } from '../lib/isolated-stack.mjs';
 import type { RemoteNodeStack } from '../lib/remote-node-stack.mjs';
 
 import { FULLFLOW_PROJECT } from './fullflow-fixture.mjs';
-import { firstBlindTool } from './blind-dispatch-proof.js';
+import { firstBlindTool, readCanaryTurns, type BlindToolMessage } from './blind-dispatch-proof.js';
 import type { CheckResult } from './outcome.mjs';
 import { type Log } from './run-driver.mjs';
 
@@ -30,6 +30,7 @@ interface BlindDispatchOptions {
   evidence: string;
   worker: { runner: string; model: string };
   signal: AbortSignal;
+  turnReceipts: string;
   log: Log;
   onCheck(check: CheckResult): void;
 }
@@ -38,6 +39,7 @@ export async function runBlindDispatch(options: BlindDispatchOptions): Promise<v
   const { stack, worker, signal, log } = options;
   const slotId = `${FULLFLOW_PROJECT}-blind-dispatch-1`;
   const dir = path.join(options.evidence, 'blind-dispatch');
+  const referenceRoot = path.join(stack.fixture, 'node-pool', 'canary-reference');
   const started = Date.now();
   const readSlot = async () =>
     (await stack.call<{ fleet: { slots: SlotStatus[] } }>('fleet.status')).fleet.slots.find(
@@ -59,7 +61,8 @@ export async function runBlindDispatch(options: BlindDispatchOptions): Promise<v
   await mkdir(dir, { recursive: true });
   try {
     // Make a real hidden answer in a separate repository, without adding objects to the slot.
-    const answer = path.join(stack.fixture, 'blind-answer');
+    await mkdir(referenceRoot, { recursive: true });
+    const answer = path.join(referenceRoot, 'answer');
     const git = (cwd: string, ...args: string[]) =>
       execFileSync('git', args, { cwd, encoding: 'utf8', stdio: 'pipe' }).trim();
     git(stack.fixture, 'clone', '--no-local', '-q', stack.slotRepo(slotId), answer);
@@ -78,12 +81,10 @@ export async function runBlindDispatch(options: BlindDispatchOptions): Promise<v
       'fixture: correct sum',
     );
     const headSha = git(answer, 'rev-parse', 'HEAD');
-    const referenceRoot = path.join(dir, 'reference');
     const packagePath = path.join(
       referenceRoot,
       'artifacts/packages/reference.result-package.json',
     );
-    await mkdir(referenceRoot, { recursive: true });
     await writeFile(
       path.join(referenceRoot, 'reference.diff'),
       git(answer, 'diff', baseSha, headSha) + '\n',
@@ -122,6 +123,7 @@ export async function runBlindDispatch(options: BlindDispatchOptions): Promise<v
       outcomeClaims: [],
       missingData: [],
     });
+    await rm(answer, { recursive: true });
     const experiment = await stack.call<EvalExperimentCreateResult>('eval.experiment.create', {
       project: FULLFLOW_PROJECT,
       source: { kind: 'package', packagePath },
@@ -150,7 +152,8 @@ export async function runBlindDispatch(options: BlindDispatchOptions): Promise<v
     await log('blind-dispatch: run created', { runId: run.id, slotId });
     await writeJson(path.join(dir, 'start.json'), trial);
     const deadline = started + 5 * 60_000;
-    let tool: WorkerSessionHistoryGetResult['snapshot']['messages'][number] | undefined;
+    let tool: BlindToolMessage | undefined;
+    let proofSource = '';
     let previousState = '';
     while (!tool) {
       signal.throwIfAborted();
@@ -181,12 +184,29 @@ export async function runBlindDispatch(options: BlindDispatchOptions): Promise<v
         assert.equal(snapshot.runId, run.id);
         await writeJson(path.join(dir, 'history-latest.json'), snapshot);
         tool = firstBlindTool(snapshot);
+        proofSource = snapshot.source;
+        if (!tool) {
+          const receipts = await readCanaryTurns(
+            options.turnReceipts,
+            stack.slotRepo(slotId),
+            started,
+          );
+          check.modelCalls = receipts.length;
+          tool = firstBlindTool({ source: 'structured-hook', messages: receipts });
+          if (tool) {
+            proofSource = 'structured-hook';
+            await writeJson(path.join(dir, 'provider-turns.json'), receipts);
+          }
+        }
       }
       if (!tool) await delay(500, undefined, { signal });
     }
-    check.modelCalls = 1;
+    check.modelCalls = Math.max(1, check.modelCalls);
     run = (await stack.call<{ run: Run }>('run.get', { runId: run.id })).run;
-    await writeJson(path.join(dir, 'first-model-tool.json'), tool);
+    await writeJson(path.join(dir, 'first-model-tool.json'), {
+      source: proofSource,
+      message: tool,
+    });
     for (const name of ['find-slot', 'write-task', 'prepare', 'dispatch'])
       assert(
         run.steps.some((step) => step.name === name && step.status === 'done'),
@@ -258,6 +278,7 @@ export async function runBlindDispatch(options: BlindDispatchOptions): Promise<v
         const archived = await stack.call<{ ok: boolean }>('run.archive', { runId: run.id });
         assert(archived.ok, 'Blind trial archive failed');
         await writeJson(path.join(dir, 'archive.json'), archived);
+        await cp(referenceRoot, path.join(dir, 'reference'), { recursive: true });
       } catch (error) {
         check.status = 'fail';
         check.differences.push(`cleanup: ${String(error)}`);

@@ -10,6 +10,7 @@ import { writeJson } from '../lib/isolated-stack.mjs';
 import { startRemoteNodeStack } from '../lib/remote-node-stack.mjs';
 
 import { runBlindDispatch } from './blind-dispatch.mjs';
+import { readCanaryTurns } from './blind-dispatch-proof.js';
 import { FULLFLOW_MODEL, FULLFLOW_PROJECT, FULLFLOW_SEED, fullflowPack } from './fullflow-fixture.mjs';
 import { REVIEWER } from './fixtures.mjs';
 import { FULLFLOW_CANCEL_REASON, fullflowCloseAction, fullflowFailure, fullflowGateFailure, fullflowNativeFailure, fullflowTerminal, fullflowTimings } from './fullflow-outcome.js';
@@ -21,7 +22,6 @@ import { fullflowScopeAudit } from './fullflow-scope.mjs';
 export const FULLFLOW_CASES = ['blind-dispatch', 'fix-bug', 'qa'] as const;
 type FullflowCase = (typeof FULLFLOW_CASES)[number];
 type Worker = { runner: string; model: string };
-interface PiTurnReceipt { cwd: string; usage?: { totalTokens?: number }; stopReason?: string }
 type FullflowOptions = Pick<IsolatedOptions, 'root' | 'evidence' | 'log' | 'reaper' | 'ownerTag' | 'cliSnapshots' | 'cliSnapshot' | 'onCheck' | 'onCleanup'> & { cases?: readonly FullflowCase[]; worker?: Worker };
 
 export async function runFullflow(options: FullflowOptions): Promise<void> {
@@ -49,7 +49,7 @@ export async function runFullflow(options: FullflowOptions): Promise<void> {
 export default function(pi) {
   let turns = 0;
   pi.on('turn_end', (event, ctx) => {
-    appendFileSync(${JSON.stringify(path.join(evidence, 'pi-turns.jsonl'))}, JSON.stringify({ at: new Date().toISOString(), pid: process.pid, cwd: ctx.cwd, usage: event.message.usage, stopReason: event.message.stopReason }) + '\\n');
+    appendFileSync(${JSON.stringify(path.join(evidence, 'pi-turns.jsonl'))}, JSON.stringify({ at: new Date().toISOString(), pid: process.pid, cwd: ctx.cwd, role: event.message.role, usage: event.message.usage, stopReason: event.message.stopReason, tools: event.message.content.filter((block) => block.type === 'toolCall').map((block) => ({ id: block.id, name: block.name })) }) + '\\n');
     if (++turns >= 150) ctx.abort();
   });
 }
@@ -91,7 +91,7 @@ export default function(pi) {
   for (const name of cases) {
     if (controller.signal.aborted) break;
     if (name === 'blind-dispatch') {
-      inFlight = runBlindDispatch({ stack, evidence, worker: REVIEWER, signal: controller.signal, log, onCheck: options.onCheck });
+      inFlight = runBlindDispatch({ stack, evidence, worker, turnReceipts: path.join(evidence, 'pi-turns.jsonl'), signal: controller.signal, log, onCheck: options.onCheck });
       await inFlight;
       continue;
     }
@@ -264,8 +264,7 @@ export default function(pi) {
           check.modelCalls = (run.sessionUsage ?? []).reduce((sum, usage) => sum + (usage.turns ?? 0), 0);
           const receiptsFile = path.join(evidence, 'pi-turns.jsonl');
           if (worker.runner === 'pi' && existsSync(receiptsFile)) {
-            const receipts: PiTurnReceipt[] = (await readFile(receiptsFile, 'utf8')).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
-            const scoped = receipts.filter((receipt) => receipt.cwd === stack.slotRepo(slotId));
+            const scoped = await readCanaryTurns(receiptsFile, stack.slotRepo(slotId));
             check.modelCalls = scoped.length + (run.sessionUsage ?? []).filter((usage) => usage.runner !== 'pi').reduce((sum, usage) => sum + (usage.turns ?? 0), 0);
             await writeJson(path.join(dir, 'pi-turns.json'), scoped);
           }
