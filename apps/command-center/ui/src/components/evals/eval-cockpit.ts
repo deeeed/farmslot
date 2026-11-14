@@ -1,3 +1,4 @@
+import { html } from 'lit';
 import { customElement } from 'lit/decorators.js';
 
 import type {
@@ -14,6 +15,7 @@ import { evalTaskProfileFlow, Methods } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 import { defaultModelForRunner } from '@farmslot/review-dispatch';
 
+import './eval-bench-view.js';
 import '../queue/dispatch-queue-panel.js';
 
 import { gateway } from '../../gateway-client.js';
@@ -916,6 +918,8 @@ export class EvalCockpit extends EvalCockpitState {
   }
 
   override render() {
+    if (!this.mock && new URLSearchParams(location.hash.split('?')[1]).get('view') !== 'plan')
+      return html`<eval-bench-view></eval-bench-view>`;
     const selectedCaseCount = this._selectedCases.length;
     const enabledCandidateCount = this._enabledCandidates().length;
     return renderEvalCockpitShell({

@@ -1,0 +1,1 @@
+- Read an operator-configured benchmark dataset and original-usage receipts without exposing arbitrary filesystem paths.
