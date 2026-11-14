@@ -399,6 +399,7 @@ test('acceptedAt checkpoint recovery repairs native metrics exactly once', async
 
 test('slotless native review captures its request receipt without a terminal target', async (t) => {
   reset();
+  await launch();
   const directory = mkdtempSync(path.join(tmpdir(), 'review-receipt-pool-'));
   writeFileSync(path.join(directory, 'host.json'), JSON.stringify(configuredPool));
   const previousPool = process.env.FARMSLOT_POOL_DIR;
@@ -413,8 +414,22 @@ test('slotless native review captures its request receipt without a terminal tar
   run.metrics.model = 'litellm/synthetic-model';
   run.effort = 'off';
   run.createdAt = new Date().toISOString();
-  selectedExecutable = 'pi';
-  createdSessionPatch = { nativeSessionPath: '/private/pi/session.jsonl' };
+  // Readback may run on a gateway whose local OS cannot launch a Pi source sandbox.
+  // Seed the retained host fixture; the live recipe covers actual Pi admission.
+  assert.ok(host);
+  host = {
+    ...host,
+    runner: 'pi',
+    model: run.metrics.model,
+    version: '1.4.0',
+    nativeSessionPath: '/private/pi/session.jsonl',
+  };
+  run.agentContexts = run.agentContexts?.map((context) => ({
+    ...context,
+    runner: 'pi',
+    model: run.metrics.model,
+    effort: 'off',
+  }));
   const observer = registry.getRunnerObservability('pi');
   assert.ok(observer);
   const original = observer.getReasoningReceipt;
@@ -437,7 +452,6 @@ test('slotless native review captures its request receipt without a terminal tar
       reasoning: { mode: 'omitted' },
     };
   };
-  await launch();
   await readReviewWorkspaceWorker(run.id);
   await readReviewWorkspaceWorker(run.id);
   assert.equal(run.slotId, null);
