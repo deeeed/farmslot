@@ -8,7 +8,7 @@
   "properties": {
     "default_domain": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9-]*$",
+      "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$",
       "description": "Task domain when neither the run, the slot nor the pool names one."
     },
     "approvalPolicy": {

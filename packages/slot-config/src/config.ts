@@ -760,19 +760,22 @@ export function resolveRemoteRepo(repo: string, osType: string, sshUser: string)
 
 // ─── loadSlotVars ───
 
-/** `pools`: one readSlotPools() shared by the lookups of one operation; read now when omitted. */
 // The pack's `default_domain` is the last domain fallback (after slot and pool), so a
 // pack whose work is one domain freezes that domain without every caller passing it.
+// Any project load failure leaves it unset instead of failing slot resolution: release,
+// cleanup, attach and fleet probes must keep working on a pack whose project.json is
+// missing or invalid, and every domain-dependent path loads the project itself and
+// fails there with the real error.
 async function packDefaultDomain(projectName: string): Promise<string | undefined> {
   if (!projectName) return undefined;
   try {
     return (await loadProjectVars(projectName)).projectJson.default_domain;
-  } catch (error) {
-    if (isMissingProjectConfigError(error)) return undefined;
-    throw error;
+  } catch {
+    return undefined;
   }
 }
 
+/** `pools`: one readSlotPools() shared by the lookups of one operation; read now when omitted. */
 export async function loadSlotVars(slotId: string, pools?: SlotPools): Promise<SlotVars> {
   const { pool, slot } = await resolveSlot(slotId, pools);
 
@@ -960,11 +963,9 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   if (
     projectJson.default_domain !== undefined &&
     (typeof projectJson.default_domain !== 'string' ||
-      !DOMAIN_NAME_RE.test(projectJson.default_domain))
+      !isValidDomainName(projectJson.default_domain))
   )
-    throw new Error(
-      `default_domain must be a domain name (lowercase letters, digits, -) in ${projectConfig}`,
-    );
+    throw new Error(`${projectConfig}: default_domain must be a valid domain`);
   normalizeRawStaticReview(projectJson.static_review, projectConfig, projectJson.reference_repos);
   normalizeProjectWorkflowDefaults(projectJson.workflow_defaults);
   if (projectJson.qa !== undefined) validateQaConfig(projectJson.qa);
@@ -1009,7 +1010,6 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
 }
 
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const DOMAIN_NAME_RE = /^[a-z][a-z0-9-]*$/;
 function validateEnvironmentMutation(value: unknown, field: string, projectConfig: string): void {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`${projectConfig}: ${field} must be an object`);

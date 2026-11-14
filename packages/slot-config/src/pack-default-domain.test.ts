@@ -84,7 +84,23 @@ test('no pack default and no project config leave the domain unset', async (t) =
   assert.equal((await loadSlotVars('a')).domain, undefined);
 });
 
-test('an invalid pack default domain is refused at load', async (t) => {
+test('an invalid pack default domain is refused at load, with the canonical domain contract', async (t) => {
   farm(t, { project: { default_domain: 'Perps Team' } });
-  await assert.rejects(loadProjectVars('pack'), /default_domain must be a domain name/);
+  await assert.rejects(loadProjectVars('pack'), /default_domain must be a valid domain/);
+  for (const name of ['v1.2', 'a_b', '0x']) {
+    invalidateProjectVarsCache();
+    farm(t, { project: { default_domain: name } });
+    assert.equal((await loadSlotVars('a')).domain, name);
+  }
+});
+
+test('slot resolution still works when the pack project.json is invalid', async (t) => {
+  // Release, cleanup, attach and fleet probes rely on loadSlotVars without project config.
+  farm(t, { project: { default_domain: 'Perps Team' } });
+  const vars = await loadSlotVars('a');
+  assert.equal(vars.domain, undefined);
+  assert.equal(vars.slotId, 'a');
+  invalidateProjectVarsCache();
+  farm(t, { pool: { domain: 'pool-domain' }, project: { default_domain: 'Perps Team' } });
+  assert.equal((await loadSlotVars('a')).domain, 'pool-domain');
 });
