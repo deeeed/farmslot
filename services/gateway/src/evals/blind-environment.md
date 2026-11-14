@@ -210,10 +210,35 @@ Pi locks and reads `auth.json` in its agent directory before using any provider
 and refuses one it cannot read. When `PI_CODING_AGENT_DIR` is unset, boundary
 preparation creates `<slot runtime>/.blind-pi/<capsule>` and links it as
 `boundary/pi-agent`; the launch wrapper exports it. The trial's Pi sessions,
-trust and lock files stay there across retained launches. Its providers come
-from the pool through the Farmslot extension; the operator's `models.json` is
-not read. An explicitly configured `PI_CODING_AGENT_DIR` is kept and must lie
-outside the denied stores.
+trust and lock files stay there across retained launches.
+
+The Farmslot extension keeps static model definitions from `models.json` in Pi's
+home (`preservePiStaticModels`); router models such as `localsparks/*` exist only
+there. Boundary preparation reads the operator's `~/.pi/agent/models.json` outside
+the sandbox and writes the trial's `models.json` (mode 0600) with only the
+providers the extension registers: the router id, `litellm` and `ollama`. It keeps
+`baseUrl`, `api`, `compat` and each model's definition fields. Every `apiKey` is
+an environment reference (`$FARMSLOT_PI_ROUTER_KEY`, `$LITELLM_API_KEY`,
+`$OLLAMA_API_KEY`); the extension supplies the key from the worker's admitted
+environment at runtime. Headers, other fields and providers whose URL carries
+user information, a query or a fragment are dropped. Within `compat` and the
+other copied model fields, any key named like a credential (`apiKey`, `headers`,
+`accessToken`, `client_secret` and similar) and any credential-shaped string are
+dropped at every depth. The operator file is parsed as Pi parses it: `//`
+comments and trailing commas are allowed. The file is written through the trial
+home directory with a fresh exclusive temporary name and an atomic rename, so a
+link the worker plants there is replaced, never followed; boundary preparation
+refuses a Pi home or `.blind-pi` directory that is a link or not the operator's.
+The trial never reads the operator's `models.json`, `settings.json` or `auth.json`.
+
+An explicitly configured `PI_CODING_AGENT_DIR` is kept only outside the denied
+stores; boundary preparation refuses one inside them. A pool `pi_path` launcher
+runs inside the sandbox, so one that assigns `PI_CODING_AGENT_DIR` (for example
+`export PI_CODING_AGENT_DIR="$HOME/.pi/agent"`) points Pi back at the denied
+operator home, and Pi stops with `EPERM` before any model request. Such a
+launcher must keep an existing value:
+`export PI_CODING_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"`. Non-blind
+launches are unchanged.
 
 Residual: other runs' task pins (pinned CLI copies and retained recipe inputs)
 stay readable; `~/.claude.json`, other home files, other checkouts on the volume

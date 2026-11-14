@@ -400,6 +400,110 @@ def blind_pi_home(spec, capsule):
     return runtime / '.blind-pi', runtime / '.blind-pi' / capsule.name
 
 
+# Providers the Farmslot Pi extension registers for a blind worker, and the
+# variable each takes its key from at runtime.
+PI_STATIC_PROVIDER_KEYS = {'litellm': 'LITELLM_API_KEY', 'ollama': 'OLLAMA_API_KEY'}
+PI_STATIC_PROVIDER_FIELDS = ['baseUrl', 'api', 'compat', 'models']
+PI_STATIC_MODEL_FIELDS = ['id', 'name', 'api', 'reasoning', 'input', 'cost', 'contextWindow',
+                          'maxTokens', 'thinkingLevelMap', 'compat']
+
+
+def check_pi_agent_dir(spec, capsule):
+    # A configured Pi home inside a denied store would reopen the operator's logins.
+    configured = os.environ.get('PI_CODING_AGENT_DIR')
+    if not configured:
+        return
+    agent = Path(os.path.expanduser(configured)).resolve()
+    repo = Path(spec['repo']).resolve()
+    if any(inside(agent, Path(p).resolve()) for p in host_secret_paths(spec, repo, capsule, [])):
+        raise RuntimeError('Blind trial PI_CODING_AGENT_DIR %s is inside a store the blind sandbox '
+                           'denies; unset it so the trial uses its own Pi home' % json.dumps(configured))
+
+
+# Never copy a value under a credential-like key, at any depth: apiKey, headers,
+# accessToken, client_secret and the like. Schema fields such as maxTokensField stay.
+PI_SECRET_KEY = re.compile(r'(key|token|secret|password|passwd|credentials?|cookie|auth|authorization|bearer|headers?)$')
+PI_PROVIDER_TOKEN = re.compile(r'^(sk-|gh[pos]_|github_pat_|xox[bp]-|glpat-|hf_|xai-|fw_|AIza|AKIA|ATATT)')
+
+
+def credential_shaped(value):
+    # credential-redaction.ts isSecretValue: provider shapes, or 16+ characters
+    # mixing two of lowercase, uppercase and digits. References, URLs and paths are not.
+    if PI_PROVIDER_TOKEN.match(value):
+        return True
+    if '$' in value or re.search(r'\s', value) or re.match(r'^[a-z][\w+.-]*://', value, re.I):
+        return False
+    if re.fullmatch(r'[~.]?/?[\w.-]+(/[\w.-]+)+/?', value):
+        return False
+    return len(value) >= 16 and sum(bool(re.search(c, value)) for c in ['[a-z]', '[A-Z]', '[0-9]']) >= 2
+
+
+def scrub_pi_value(value):
+    if isinstance(value, dict):
+        return {k: scrub_pi_value(v) for k, v in value.items()
+                if not PI_SECRET_KEY.search(re.sub(r'[^a-z]', '', k.lower())) and not (isinstance(v, str) and credential_shaped(v))}
+    if isinstance(value, list):
+        return [scrub_pi_value(v) for v in value if not (isinstance(v, str) and credential_shaped(v))]
+    return value
+
+
+def strip_json_comments(text):
+    # Pi's models.json loader (pi-coding-agent utils/json.js stripJsonComments):
+    # drop // line comments and trailing commas, leaving string literals intact.
+    string = r'"(?:\\.|[^"\\])*"'
+    text = re.sub(string + r'|//[^\n]*', lambda m: m.group(0) if m.group(0)[0] == '"' else '', text)
+    return re.sub(string + r'|,(\s*[}\]])', lambda m: m.group(1) if m.group(1) is not None else m.group(0), text)
+
+
+def private_dir(path):
+    # The worker can rename entries in its own Pi home; never follow a link it planted.
+    info = os.lstat(path)
+    if os.path.islink(path) or not os.path.isdir(path) or info.st_uid != os.getuid():
+        raise RuntimeError('Blind trial Pi home is not a private directory')
+
+
+def write_blind_pi_models(target):
+    # The extension keeps the operator's static model definitions for its
+    # providers (preservePiStaticModels). Copy only those definitions: keys are
+    # env references, and headers or any credential-like field are dropped.
+    keys = dict(PI_STATIC_PROVIDER_KEYS)
+    keys[os.environ.get('FARMSLOT_PI_ROUTER_ID') or 'router'] = 'FARMSLOT_PI_ROUTER_KEY'
+    try:
+        text = (Path.home() / '.pi/agent/models.json').read_text()
+        providers = json.loads(strip_json_comments(text)).get('providers', {})
+        static = {}
+        for name, key in keys.items():
+            provider = providers.get(name)
+            if not isinstance(provider, dict):
+                continue
+            url = urlsplit(provider.get('baseUrl') or '')
+            if url.username or url.password or url.query or url.fragment:
+                continue  # A URL can embed a credential; the extension supplies the endpoint.
+            entry = {field: provider[field] for field in PI_STATIC_PROVIDER_FIELDS if field in provider}
+            entry['compat'] = scrub_pi_value(entry.get('compat', {}))
+            entry['models'] = [{field: (model[field] if field in ('id', 'name') else scrub_pi_value(model[field]))
+                                for field in PI_STATIC_MODEL_FIELDS if field in model}
+                               for model in provider.get('models', []) if isinstance(model, dict)]
+            static[name] = {**entry, 'apiKey': '$' + key}
+    except FileNotFoundError:
+        static = {}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        # Never report parser details: they can quote the operator's key bytes.
+        raise RuntimeError('Cannot read the operator Pi static models for the blind trial') from None
+    # Write through the directory itself: a fresh exclusive temporary file, never
+    # an existing path or link, then an atomic rename that replaces any link at target.
+    private_dir(target.parent)
+    directory = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        name = '.models.%s.pending' % os.urandom(8).hex()
+        handle = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+        with os.fdopen(handle, 'w') as file:
+            file.write(json.dumps({'providers': static}, indent=1) + '\n')
+        os.replace(name, target.name, src_dir_fd=directory, dst_dir_fd=directory)
+    finally:
+        os.close(directory)
+
+
 def host_secret_paths(spec, repo, capsule, checkouts):
     home = Path.home()
     denied = [home / name for name in HOME_SECRET_STORES] + sorted(gateway_homes())
@@ -640,13 +744,17 @@ def prepare_boundary(spec, capsule):
         parents=True, exist_ok=True)
     # The launch selects this trial's Pi home (blind-environment.md), reusing the
     # operator's managed fd/rg binaries read-only.
-    pi = blind_pi_home(spec, capsule)[1]
+    homes, pi = blind_pi_home(spec, capsule)
     pi.mkdir(mode=0o700, parents=True, exist_ok=True)
+    for directory in [homes, pi]:
+        private_dir(directory)
     tools = Path.home() / '.pi/agent/bin'
     if tools.is_dir() and not os.path.lexists(pi / 'bin'):
         (pi / 'bin').symlink_to(tools)
     if not (root / 'pi-agent').is_symlink():
         (root / 'pi-agent').symlink_to(pi)
+    check_pi_agent_dir(spec, capsule)
+    write_blind_pi_models(pi / 'models.json')
     # Keep socket paths below sockaddr_un's macOS limit even for deep capsules.
     temporary = root / 'tmp'
     if not temporary.is_symlink():

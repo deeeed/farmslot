@@ -1,12 +1,24 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { runnerLaunchDir } from '../../../../scripts/lib/runner-runtime.cjs';
+import { redactCommandCredentials } from '../core/credential-redaction.js';
 
 import { buildBlindGitCommand, withBlindTrialBoundary } from './blind-git.js';
 
@@ -831,4 +843,274 @@ print(json.dumps({'profile': profile, 'volume': [str(p) for p in volume]}))`,
     assert.ok(volume.includes(path.join('/Volumes/fixture', name)), name);
   // The legacy in-checkout launch directory also refuses hard links.
   assert.ok(lines.includes(`(deny file-link (subpath ${q(path.join(repo, '.agent/.launch'))}))`));
+});
+
+test('blind Pi static models keep only extension providers, with env key references and no credential', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'seatbelt-pi-models-')));
+  t.after(() => rmSync(root, { recursive: true }));
+  const home = path.join(root, 'home');
+  mkdirSync(path.join(home, '.pi/agent'), { recursive: true });
+  const model = (id: string) => ({
+    id,
+    name: id,
+    reasoning: true,
+    input: ['text'],
+    contextWindow: 65536,
+    maxTokens: 1024,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    headers: { 'x-api-key': 'sk-FAKESECRETmodelheader0123456789' },
+    apiKey: 'FAKE_SECRET-model-key',
+  });
+  writeFileSync(
+    path.join(home, '.pi/agent/models.json'),
+    JSON.stringify({
+      providers: {
+        localsparks: {
+          baseUrl: 'http://192.0.2.1:8890/v1',
+          api: 'openai-completions',
+          apiKey: 'sk-FAKESECRETrouterkey0123456789abc',
+          headers: { Authorization: 'Bearer sk-FAKESECRETbearer0123456789abc' },
+          compat: { supportsDeveloperRole: false },
+          models: [model('GLM-fixture-s1234')],
+        },
+        litellm: {
+          baseUrl: 'https://litellm.example.invalid/v1',
+          api: 'openai-completions',
+          apiKey: 'Fake0Secret1Litellm2Key3',
+          models: [model('fixture-litellm')],
+        },
+        // A key in the URL drops the provider; the extension supplies the endpoint.
+        ollama: {
+          baseUrl: 'http://user:FakeSecret0123456789@192.0.2.2/v1',
+          models: [model('fixture-ollama')],
+        },
+        lmstudio: { baseUrl: 'http://192.0.2.3/v1', apiKey: 'Fake0Secret1Studio2Key3', models: [] },
+      },
+    }),
+  );
+  const target = path.join(root, 'models.json');
+  const result = spawnSync(
+    'python3',
+    [
+      '-c',
+      `import os, pathlib, runpy, sys
+from unittest.mock import patch
+blind = runpy.run_path(sys.argv[1], run_name='fixture')
+with patch.dict(os.environ, {'HOME': sys.argv[2], 'FARMSLOT_PI_ROUTER_ID': 'localsparks'}, clear=True):
+    blind['write_blind_pi_models'](pathlib.Path(sys.argv[3]))`,
+      fileURLToPath(new URL('./blind-git.py', import.meta.url)),
+      home,
+      target,
+    ],
+    { encoding: 'utf8', timeout: 4500 },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const text = readFileSync(target, 'utf8');
+  assert.equal(statSync(target).mode & 0o777, 0o600);
+  // The shared redaction check finds no credential-shaped value.
+  assert.equal(redactCommandCredentials(text).count, 0, text);
+  assert.doesNotMatch(text, /FAKE|Fake|headers|user:/u);
+  const providers = JSON.parse(text).providers as Record<
+    string,
+    { apiKey: string; models: { id: string }[] }
+  >;
+  assert.deepEqual(Object.keys(providers).sort(), ['litellm', 'localsparks']);
+  assert.equal(providers.localsparks!.apiKey, '$FARMSLOT_PI_ROUTER_KEY');
+  assert.equal(providers.litellm!.apiKey, '$LITELLM_API_KEY');
+  for (const provider of Object.values(providers)) {
+    assert.match(provider.apiKey, /^\$[A-Z_][A-Z0-9_]*$/u);
+    for (const entry of provider.models) assert.ok(!('apiKey' in entry) && !('headers' in entry));
+  }
+  assert.deepEqual(
+    providers.localsparks!.models.map((entry) => entry.id),
+    ['GLM-fixture-s1234'],
+  );
+});
+
+test('blind boundary refuses a configured Pi home inside a denied store', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'seatbelt-pi-home-')));
+  t.after(() => rmSync(root, { recursive: true }));
+  const home = path.join(root, 'home');
+  mkdirSync(home);
+  const check = (agentDir?: string) =>
+    spawnSync(
+      'python3',
+      [
+        '-c',
+        `import os, pathlib, runpy, sys
+from unittest.mock import patch
+blind = runpy.run_path(sys.argv[1], run_name='fixture')
+env = {'HOME': sys.argv[2]}
+if len(sys.argv) > 4: env['PI_CODING_AGENT_DIR'] = sys.argv[4]
+with patch.dict(os.environ, env, clear=True):
+    blind['check_pi_agent_dir']({'repo': sys.argv[3]}, pathlib.Path(sys.argv[3]) / 'capsule')`,
+        fileURLToPath(new URL('./blind-git.py', import.meta.url)),
+        home,
+        path.join(root, 'repo'),
+        ...(agentDir === undefined ? [] : [agentDir]),
+      ],
+      { encoding: 'utf8', timeout: 4500 },
+    );
+  for (const denied of ['~/.pi/agent', path.join(home, '.pi'), path.join(home, '.config/pi')]) {
+    const result = check(denied);
+    assert.notEqual(result.status, 0, denied);
+    assert.match(
+      result.stderr,
+      /PI_CODING_AGENT_DIR .* is inside a store the blind sandbox denies/u,
+    );
+  }
+  for (const allowed of [undefined, path.join(root, 'pool-pi-home')])
+    assert.equal(check(allowed).status, 0, String(allowed));
+});
+
+test('a non-blind pi launch keeps the pool launcher and operator Pi home, with no blind boundary', async () => {
+  const { buildLaunchCommand, buildRunnerSessionReloadCommand } =
+    await import('../runners/launch-command.js');
+  const { makeVars } = await import('../runners/test-fixtures.js');
+  const launcher = '/Users/operator/.npm-global/bin/farmslot-pi-anthropic';
+  const vars = makeVars({ remoteRepo: '/work/product', piPath: launcher });
+  const model = 'localsparks/GLM-fixture-s1234';
+  const blind = { blindTrialBoundary: { capsule: '/work/capsule', baseSha: 'a'.repeat(40) } };
+  const commands = {
+    fresh: buildLaunchCommand(vars, 'pi', model, 'Task', { taskDir: '/work/product/task' }),
+    retained: buildRunnerSessionReloadCommand(vars, 'pi', model, 'session-1', {}),
+  };
+  for (const [stage, command] of Object.entries(commands)) {
+    assert.ok(command.includes(launcher), stage);
+    // Pi resolves its default operator home; nothing selects or denies another.
+    assert.doesNotMatch(command, /PI_CODING_AGENT_DIR|pi-agent|sandbox-exec|blind/u, stage);
+  }
+  // Only the blind launch selects the trial's home.
+  assert.match(
+    buildLaunchCommand(vars, 'pi', model, 'Task', { taskDir: '/work/product/task', ...blind }),
+    /PI_CODING_AGENT_DIR=.*\/work\/capsule\/boundary\/pi-agent/u,
+  );
+});
+
+function writeBlindPiModels(t: TestContext, operatorModels: string, prepare = '') {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'seatbelt-pi-write-')));
+  t.after(() => rmSync(root, { recursive: true }));
+  const home = path.join(root, 'home');
+  mkdirSync(path.join(home, '.pi/agent'), { recursive: true, mode: 0o700 });
+  writeFileSync(path.join(home, '.pi/agent/models.json'), operatorModels);
+  const trial = path.join(root, 'trial-pi');
+  mkdirSync(trial, { mode: 0o700 });
+  const result = spawnSync(
+    'python3',
+    [
+      '-c',
+      `import os, pathlib, runpy, sys
+from unittest.mock import patch
+blind = runpy.run_path(sys.argv[1], run_name='fixture')
+root, trial = pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
+${prepare}
+with patch.dict(os.environ, {'HOME': str(root / 'home'), 'FARMSLOT_PI_ROUTER_ID': 'localsparks'}, clear=True):
+    blind['write_blind_pi_models'](trial / 'models.json')`,
+      fileURLToPath(new URL('./blind-git.py', import.meta.url)),
+      root,
+      trial,
+    ],
+    { encoding: 'utf8', timeout: 4500 },
+  );
+  return { root, trial, result };
+}
+
+const piModel = { id: 'GLM-fixture-s1234', name: 'Fixture', contextWindow: 65536, maxTokens: 1024 };
+
+test('blind Pi static models drop credentials nested in provider and model compat', (t) => {
+  const { trial, result } = writeBlindPiModels(
+    t,
+    JSON.stringify({
+      providers: {
+        localsparks: {
+          baseUrl: 'http://192.0.2.1:8890/v1',
+          compat: {
+            supportsStore: true,
+            apiKey: 'sk-FAKESECRETcompatkey0123456789',
+            headers: { Authorization: 'Bearer sk-FAKESECRETcompatheader01234' },
+            chatTemplateKwargs: { enable_thinking: true, token: 'Fake0Secret1Kwargs2Token3' },
+          },
+          models: [
+            {
+              ...piModel,
+              compat: {
+                maxTokensField: 'max_tokens',
+                accessToken: 'Fake0Secret1Model2Token3',
+                nested: {
+                  client_secret: 'Fake0Secret1Nested2Value3',
+                  note: 'Fake0Secret1Bare2Value3',
+                },
+              },
+            },
+          ],
+        },
+      },
+    }),
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const text = readFileSync(path.join(trial, 'models.json'), 'utf8');
+  assert.equal(redactCommandCredentials(text).count, 0, text);
+  assert.doesNotMatch(text, /FAKE|Fake|Bearer|apiKey": "sk|headers|token"|secret/u);
+  const provider = JSON.parse(text).providers.localsparks;
+  assert.equal(provider.apiKey, '$FARMSLOT_PI_ROUTER_KEY');
+  assert.deepEqual(provider.compat, {
+    supportsStore: true,
+    chatTemplateKwargs: { enable_thinking: true },
+  });
+  assert.deepEqual(provider.models[0].compat, { maxTokensField: 'max_tokens', nested: {} });
+  assert.equal(provider.models[0].id, 'GLM-fixture-s1234');
+});
+
+test('blind Pi static models parse the operator file as Pi does, with comments and trailing commas', (t) => {
+  const { trial, result } = writeBlindPiModels(
+    t,
+    `{
+  // Local Sparks router, as operators annotate it.
+  "providers": {
+    "localsparks": {
+      "baseUrl": "http://192.0.2.1:8890/v1", // endpoint
+      "models": [{ "id": "GLM-fixture-s1234", "name": "Fixture // not a comment", },],
+    },
+  },
+}
+`,
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const models = JSON.parse(readFileSync(path.join(trial, 'models.json'), 'utf8')).providers
+    .localsparks.models as { id: string; name: string }[];
+  assert.deepEqual(models, [{ id: 'GLM-fixture-s1234', name: 'Fixture // not a comment' }]);
+});
+
+test('blind Pi static models never write through a link the worker planted in its Pi home', (t) => {
+  const operator = JSON.stringify({ providers: { localsparks: { models: [piModel] } } });
+  // Every pending name and the target itself point at a fake operator login.
+  const planted = `auth = root / 'operator-auth.json'
+auth.write_text('FAKE_SECRET operator login')
+for name in ['models.pending', 'models.json']:
+    (trial / name).symlink_to(auth)`;
+  const { root, trial, result } = writeBlindPiModels(t, operator, planted);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    readFileSync(path.join(root, 'operator-auth.json'), 'utf8'),
+    'FAKE_SECRET operator login',
+  );
+  assert.ok(!lstatSync(path.join(trial, 'models.json')).isSymbolicLink());
+  assert.equal(
+    JSON.parse(readFileSync(path.join(trial, 'models.json'), 'utf8')).providers.localsparks
+      .models[0].id,
+    piModel.id,
+  );
+  // A Pi home swapped for a link is refused before anything is written.
+  const swapped = writeBlindPiModels(
+    t,
+    operator,
+    `import shutil
+target = root / 'elsewhere'
+target.mkdir(mode=0o700)
+shutil.rmtree(trial)
+trial.symlink_to(target)`,
+  );
+  assert.notEqual(swapped.result.status, 0);
+  assert.match(swapped.result.stderr, /Blind trial Pi home is not a private directory/u);
+  assert.deepEqual(readdirSync(path.join(swapped.root, 'elsewhere')), []);
 });

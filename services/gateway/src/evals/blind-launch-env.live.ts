@@ -3,7 +3,9 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { once } from 'node:events';
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -14,6 +16,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -324,6 +327,280 @@ setInterval(() => {}, 1000);
     const own = path.dirname(path.dirname(runnerLaunchDir(root)));
     t.diagnostic(
       `own slot runtime: ${(readdirSync(own, { recursive: true }) as string[]).sort().join(' ')}`,
+    );
+  },
+);
+
+test(
+  'blind pi through the production launch uses its own home and the static router model, never the operator Pi home',
+  { skip: !isolated, timeout: 180_000 },
+  async (t) => {
+    const pi = execFileSync('/usr/bin/which', ['pi'], { encoding: 'utf8' }).trim();
+    const bashDir = ['/opt/homebrew/bin', '/usr/local/bin'].find((dir) =>
+      existsSync(path.join(dir, 'bash')),
+    );
+    const previousPath = process.env.PATH;
+    process.env.PATH = [
+      ...new Set([
+        path.dirname(process.execPath),
+        path.dirname(pi),
+        ...(bashDir ? [bashDir] : []),
+        '/usr/bin',
+        '/bin',
+        '/usr/sbin',
+        '/sbin',
+      ]),
+    ].join(':');
+    t.after(() => {
+      process.env.PATH = previousPath;
+    });
+    const { buildRoleLaunchCommandWithDiagnosticHold } =
+      await import('../methods/dispatch/execute.js');
+    const { writeTmuxLaunchScript } = await import('../core/tmux-launch-script.js');
+    const launch = await import('../runners/launch-command.js');
+    const { makeVars } = await import('../runners/test-fixtures.js');
+    const { redactCommandCredentials } = await import('../core/credential-redaction.js');
+
+    const home = realpathSync(mkdtempSync(path.join(os.homedir(), '.blind-pi-home-')));
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    // The router serves another model; the selected one exists only in the static models.
+    const requested: string[] = [];
+    const server = createServer((request, response) => {
+      let body = '';
+      request.on('data', (chunk) => (body += chunk));
+      request.on('end', () => {
+        if (request.url?.endsWith('/models')) {
+          response.writeHead(200, { 'content-type': 'application/json' });
+          response.end(JSON.stringify({ data: [{ id: 'served-elsewhere' }] }));
+          return;
+        }
+        try {
+          requested.push(String(JSON.parse(body).model));
+        } catch {
+          requested.push(`unparsed ${request.method} ${request.url}`);
+        }
+        response.writeHead(200, { 'content-type': 'text/event-stream' });
+        const chunk = {
+          id: 'f',
+          object: 'chat.completion.chunk',
+          created: 0,
+          model: 'fixture',
+          choices: [
+            {
+              index: 0,
+              delta: { role: 'assistant', content: 'blind-pi-home-ok' },
+              finish_reason: null,
+            },
+          ],
+        };
+        response.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        response.write(
+          `data: ${JSON.stringify({ ...chunk, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`,
+        );
+        response.end('data: [DONE]\n\n');
+      });
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    t.after(() => new Promise((resolve) => server.close(resolve)));
+    const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`;
+    // Synthetic operator Pi home: fake credentials only.
+    const operator = path.join(home, '.pi/agent');
+    mkdirSync(path.join(operator, 'sessions'), { recursive: true });
+    writeFileSync(
+      path.join(operator, 'auth.json'),
+      '{"anthropic":{"type":"api_key","key":"FAKE_SECRET-auth"}}',
+    );
+    writeFileSync(path.join(operator, 'settings.json'), '{"defaultProvider":"anthropic"}');
+    // Pi's managed fd, shared read-only with the trial, so Pi does not download it.
+    mkdirSync(path.join(operator, 'bin'));
+    const fd = path.join(os.homedir(), '.pi/agent/bin/fd');
+    if (existsSync(fd)) copyFileSync(fd, path.join(operator, 'bin/fd'));
+    writeFileSync(
+      path.join(operator, 'models.json'),
+      JSON.stringify({
+        providers: {
+          localsparks: {
+            baseUrl: url,
+            api: 'openai-completions',
+            apiKey: 'sk-FAKESECRETfixture0123456789abcdef',
+            headers: { Authorization: 'Bearer sk-FAKESECRETheader0123456789' },
+            models: [
+              {
+                id: 'GLM-fixture-s1234',
+                name: 'Fixture',
+                reasoning: true,
+                thinkingLevelMap: { minimal: 'low', low: 'low', medium: 'medium', high: 'high' },
+                input: ['text'],
+                contextWindow: 65536,
+                maxTokens: 1024,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                headers: { 'x-key': 'FAKE_SECRET-model-header' },
+              },
+            ],
+          },
+          other: {
+            baseUrl: url,
+            api: 'openai-completions',
+            apiKey: 'FAKE_SECRET-other',
+            models: [],
+          },
+        },
+      }),
+    );
+    const operatorFiles = () =>
+      (readdirSync(path.join(home, '.pi'), { recursive: true }) as string[]).sort();
+    const before = operatorFiles();
+
+    const root = path.join(home, 'repo');
+    const capsule = path.join(home, '.farmslot-blind-evals/fixture/run-epoch');
+    mkdirSync(path.join(capsule, 'boundary'), { recursive: true });
+    mkdirSync(path.join(root, 'task'), { recursive: true });
+    execFileSync('git', ['init', '-q', root]);
+    writeFileSync(path.join(root, 'task/TASK.md'), 'Reply with one word.\n');
+    writeFileSync(path.join(capsule, 'state.json'), '{"originalIsDirectory":true}');
+    const machineEnv = {
+      PATH: process.env.PATH,
+      FARMSLOT_PI_ROUTER_ID: 'localsparks',
+      FARMSLOT_PI_ROUTER_URL: url,
+      FARMSLOT_PI_ROUTER_KEY: 'FAKE_SECRET-router-key',
+    };
+    execFileSync(
+      'python3',
+      [
+        '-I',
+        '-c',
+        `import pathlib, runpy, sys
+blind = runpy.run_path(sys.argv[1], run_name='fixture')
+blind['prepare_boundary']({'repo': sys.argv[2], 'siblingRepos': [], 'launchDirs': [sys.argv[4]], 'slotResourcePorts': {}}, pathlib.Path(sys.argv[3]))`,
+        fileURLToPath(new URL('./blind-git.py', import.meta.url)),
+        root,
+        capsule,
+        runnerLaunchDir(root),
+      ],
+      { env: { ...machineEnv, HOME: home }, encoding: 'utf8', timeout: 20_000 },
+    );
+    const temporary = path.join(capsule, 'boundary/tmp');
+    t.after(() => {
+      if (existsSync(temporary)) rmSync(realpathSync(temporary), { recursive: true, force: true });
+    });
+
+    const socket = path.join(process.env.TMUX_TMPDIR!, `tmux-${process.getuid!()}`, 'default');
+    mkdirSync(path.dirname(socket), { recursive: true, mode: 0o700 });
+    const serverEnv = {
+      PATH: process.env.PATH,
+      HOME: home,
+      USER: process.env.USER,
+      LOGNAME: process.env.LOGNAME,
+      SHELL: '/bin/zsh',
+      TERM: 'xterm-256color',
+      TMUX_TMPDIR: process.env.TMUX_TMPDIR,
+    };
+    const tmux = (...args: string[]) =>
+      execFileSync('tmux', ['-S', socket, '-f', '/dev/null', ...args], {
+        env: serverEnv,
+        encoding: 'utf8',
+      });
+    tmux(
+      'new-session',
+      '-d',
+      '-x',
+      '200',
+      '-y',
+      '50',
+      '-s',
+      'blind',
+      '-n',
+      'worker',
+      '-c',
+      root,
+      '/bin/cat',
+    );
+    t.after(() => {
+      spawnSync('tmux', ['-S', socket, 'kill-server'], { env: serverEnv });
+    });
+    // Pool pi launchers as operators write them: one keeps a given Pi home, one resets it.
+    const launchers = {
+      keeps: `#!/bin/zsh\nexport PI_CODING_AGENT_DIR="\${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"\nexec ${q(pi)} "$@"\n`,
+      resets: `#!/bin/zsh\nexport PI_CODING_AGENT_DIR="$HOME/.pi/agent"\nexec ${q(pi)} "$@"\n`,
+    };
+    const model = 'localsparks/GLM-fixture-s1234';
+    for (const [name, body] of Object.entries(launchers)) {
+      await t.test(`a launcher that ${name} the Pi home`, async () => {
+        const launcher = path.join(home, `farmslot-pi-${name}`);
+        writeFileSync(launcher, body, { mode: 0o755 });
+        const vars = makeVars({ machine: 'local', remoteRepo: root, piPath: launcher, machineEnv });
+        const options = {
+          taskDir: path.join(root, 'task'),
+          taskFile: path.join(root, 'task/TASK.md'),
+          blindTrialBoundary: { capsule, baseSha: 'a'.repeat(40) },
+        };
+        const names = launch.blindLaunchEnvironment(vars, 'pi', model);
+        const command = launch.wrapWorkerShellCommand(
+          launch.buildLaunchCommand(vars, 'pi', model, 'Synthetic task', options),
+          { projectJson: {}, vars },
+        );
+        const target = 'blind:worker';
+        const log = path.join(home, `${name}.log`);
+        tmux('pipe-pane', '-t', target, `cat >> ${q(log)}`);
+        const entry = await writeTmuxLaunchScript(
+          vars,
+          target,
+          buildRoleLaunchCommandWithDiagnosticHold(command, root, true),
+          names,
+        );
+        const start = requested.length;
+        tmux('respawn-window', '-k', '-t', target, '-c', root, entry);
+        let text = '';
+        for (let attempt = 0; attempt < 600; attempt++) {
+          await delay(100);
+          text = tmux('capture-pane', '-p', '-J', '-S', '-', '-t', target);
+          if (
+            requested.length > start ||
+            /Model "[^"]*" not found|Failed to load|launch command exited/u.test(text)
+          )
+            break;
+        }
+        const output = `${text}\n${existsSync(log) ? readFileSync(log, 'utf8') : ''}`
+           
+          .replaceAll(
+            /\u001b(?:\[[0-9;?<>=]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)|[()][0-9A-B])/gu,
+            '',
+          )
+          .replaceAll(/FAKE_SECRET[\w-]*/gu, '[fake]');
+        if (name === 'keeps') {
+          assert.ok(
+            requested.slice(start).includes('GLM-fixture-s1234'),
+            `static model request missing (${requested.slice(start).join(', ')}; stopped on ${/Model "[^"]*" not found|Failed to load|launch command exited/u.exec(text)?.[0] ?? 'timeout'}):\n${output.slice(-3000)}`,
+          );
+          assert.doesNotMatch(output, /EPERM|Model "[^"]*" not found|Failed to load/u);
+        } else {
+          // Fails closed: the denied operator home stops Pi before any request.
+          assert.match(output, /EPERM: operation not permitted, mkdir '[^']*\/\.pi\/agent\//u);
+          assert.equal(requested.length, start, 'a reset Pi home must not reach the model');
+        }
+        tmux('respawn-window', '-k', '-t', target, '-c', root, '/bin/cat');
+      });
+    }
+    // The trial's static models keep definitions only: no key value, header or other provider.
+    const trialHome = realpathSync(path.join(capsule, 'boundary/pi-agent'));
+    const staticModels = readFileSync(path.join(trialHome, 'models.json'), 'utf8');
+    assert.equal(redactCommandCredentials(staticModels).count, 0, 'credential-shaped value');
+    assert.doesNotMatch(staticModels, /FAKE|headers|"other"/u);
+    const providers = JSON.parse(staticModels).providers;
+    assert.deepEqual(Object.keys(providers), ['localsparks']);
+    assert.equal(providers.localsparks.apiKey, '$FARMSLOT_PI_ROUTER_KEY');
+    assert.deepEqual(
+      providers.localsparks.models.map((entry: { id: string }) => entry.id),
+      ['GLM-fixture-s1234'],
+    );
+    // Nothing was written to the operator's Pi home; the trial session is in its own.
+    assert.deepEqual(operatorFiles(), before);
+    assert.ok(
+      (readdirSync(path.join(trialHome, 'sessions'), { recursive: true }) as string[]).some(
+        (file) => file.endsWith('.jsonl'),
+      ),
+      'trial session written in the trial home',
     );
   },
 );
