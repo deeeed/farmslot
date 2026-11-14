@@ -6,15 +6,19 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { runnerRuntimeDir } from './lib/runner-runtime.cjs';
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const RUNTIME_DIR = '.sandbox/farmslot-farm/agent';
 
 // Regression: codex session/usage discovery scanned ~/.codex/sessions, but workers run with an
-// isolated CODEX_HOME=<repo>/<runtimeDir>/codex-home, so the rollout (with the token usage) lives
-// under the slot repo and was never found → run.metrics tokens null → cost breakdown showed 0.
+// isolated CODEX_HOME=<runnerRuntimeDir>/codex-home, so the rollout (with the token usage) lives
+// beside the slot repo and was never found → run.metrics tokens null → cost breakdown showed 0.
 function makeFixtureRollout() {
   const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'codex-metrics-')));
   const repo = path.join(base, 'repo');
-  const sessDir = path.join(repo, '.sandbox/farmslot-farm/agent/codex-home/sessions/2026/06/30');
+  const runtime = runnerRuntimeDir(repo, RUNTIME_DIR);
+  const sessDir = path.join(runtime, 'codex-home/sessions/2026/06/30');
   fs.mkdirSync(sessDir, { recursive: true });
   const rollout = path.join(sessDir, 'rollout-proof.jsonl');
   fs.writeFileSync(
@@ -37,11 +41,11 @@ function makeFixtureRollout() {
       }),
     ].join('\n') + '\n',
   );
-  return { base, repo, rollout };
+  return { base, repo, runtime, rollout };
 }
 
 test('codex session discovery finds the per-slot codex-home rollout (not ~/.codex)', (t) => {
-  const { base, repo, rollout } = makeFixtureRollout();
+  const { base, repo, runtime, rollout } = makeFixtureRollout();
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const src = fs.readFileSync(
     path.join(ROOT, 'services/gateway/src/runners/session-process.ts'),
@@ -54,11 +58,8 @@ test('codex session discovery finds the per-slot codex-home rollout (not ~/.code
   const py = match[1]
     .replace('${JSON.stringify(repo)}', JSON.stringify(repo))
     .replace('${JSON.stringify(runner)}', JSON.stringify('codex'))
-    .replace('${JSON.stringify(runtimeDir)}', JSON.stringify('.sandbox/farmslot-farm/agent'))
-    .replace(
-      '${JSON.stringify(runnerRuntimeDir(repo, runtimeDir))}',
-      JSON.stringify(path.join(repo, '.sandbox/farmslot-farm/agent')),
-    )
+    .replace('${JSON.stringify(runtimeDir)}', JSON.stringify(RUNTIME_DIR))
+    .replace('${JSON.stringify(runnerRuntimeDir(repo, runtimeDir))}', JSON.stringify(runtime))
     .replace(
       "${homeRoot === undefined ? 'str(Path.home())' : JSON.stringify(homeRoot)}",
       JSON.stringify(base),
