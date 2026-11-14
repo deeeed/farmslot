@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
 import type { PRReviewRequest, PRRulePreviewItem, PRTeamProfile } from '@farmslot/protocol';
+
+import { resourceRevisions } from '../resources/revisions.js';
 
 import { resolvePreviewQaPreset } from './qa-preset.js';
 import { PRRuleStore } from './store.js';
@@ -497,4 +499,200 @@ test('publication authority cannot move to another owner sharing the same GitHub
     { item: { ...f.item, review } },
   );
   assert.notEqual(result.intentId, linked.intentId);
+});
+
+test('unchanged submission rechecks keep published state and disk stable while retaining fresh check times', async (t) => {
+  const now = Date.now();
+  t.mock.timers.enable({ apis: ['Date'], now });
+  const { store, file, team, request, item } = await fixture(t);
+  item.subject.reviewObservation = {
+    observedAt: new Date().toISOString(),
+    headSha: 'head-a',
+    state: 'open',
+    draft: false,
+    decision: null,
+    reviewer: 'reader',
+    requested: true,
+    review: null,
+  };
+  const submitted = await store.submit('owner', request);
+  const first = await store.applySubmission(
+    'owner',
+    submitted.id,
+    submitted.revision,
+    team.revision,
+    { item },
+  );
+  const published = store.snapshot();
+  const bytes = await readFile(file, 'utf8');
+  const stamp = await stat(file);
+  const key = { family: 'pr-automation', scope: 'farm' } as const;
+  const revision = resourceRevisions.revision(key);
+  t.mock.timers.tick(1000);
+  const observation = {
+    ...item,
+    subject: {
+      ...item.subject,
+      reviewObservation: {
+        ...item.subject.reviewObservation,
+        observedAt: new Date().toISOString(),
+      },
+    },
+  };
+  const checked = await store.applySubmission('owner', first.id, first.revision, team.revision, {
+    item: observation,
+  });
+  assert.equal(
+    checked.revision,
+    first.revision,
+    'unchanged observations do not replace admission authority',
+  );
+  assert.equal(checked.checkedAt, new Date().toISOString());
+  assert.equal(checked.updatedAt, first.updatedAt);
+  assert.equal(store.snapshot(), published);
+  assert.equal(resourceRevisions.revision(key), revision);
+  assert.equal(await readFile(file, 'utf8'), bytes);
+  assert.equal((await stat(file)).ino, stamp.ino);
+  assert.equal(
+    await store.reloadFromFile(),
+    false,
+    'own file notifications retain private observations',
+  );
+  await writeFile(file, JSON.stringify(published, null, 2));
+  assert.equal(
+    await store.reloadFromFile(),
+    false,
+    'formatting-only notifications retain private observations',
+  );
+  await store.saveTeam('owner', { ...team.config, name: 'Changed team' }, team.id, team.revision);
+  const persisted = await PRRuleStore.load(file);
+  assert.equal(
+    persisted.submission(first.id, 'owner').checkedAt,
+    checked.checkedAt,
+    'a real commit includes the latest check metadata',
+  );
+  assert.equal(resourceRevisions.revision(key), revision + 1);
+});
+
+test('repeated submission errors stay quiet but an error transition persists and notifies', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const { store, file, team, request } = await fixture(t);
+  const submitted = await store.submit('owner', request);
+  const first = await store.applySubmission(
+    'owner',
+    submitted.id,
+    submitted.revision,
+    team.revision,
+    { error: 'Source unavailable' },
+  );
+  const before = await readFile(file, 'utf8');
+  const snapshot = store.snapshot();
+  const key = { family: 'pr-automation', scope: 'farm' } as const;
+  const revision = resourceRevisions.revision(key);
+  t.mock.timers.tick(1000);
+  const repeated = await store.applySubmission('owner', first.id, first.revision, team.revision, {
+    error: 'Source unavailable',
+  });
+  assert.equal(repeated.revision, first.revision);
+  assert.equal(await readFile(file, 'utf8'), before);
+  assert.equal(store.snapshot(), snapshot);
+  assert.equal(resourceRevisions.revision(key), revision);
+  t.mock.timers.tick(1000);
+  const changed = await store.applySubmission('owner', first.id, first.revision, team.revision, {
+    error: 'Authority revoked',
+  });
+  assert.equal(changed.revision, first.revision + 1);
+  assert.equal(resourceRevisions.revision(key), revision + 1);
+  assert.equal(
+    (await PRRuleStore.load(file)).submission(first.id, 'owner').error,
+    'Authority revoked',
+  );
+  await assert.rejects(
+    store.applySubmission('owner', first.id, first.revision, team.revision, { error: 'stale' }),
+    /changed/,
+  );
+});
+
+test('rechecks preserve contribution order and consent while new head facts still publish', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const { store, file, team, request, item } = await fixture(t);
+  const one = await store.submit('owner', request);
+  const first = await store.applySubmission('owner', one.id, one.revision, team.revision, { item });
+  const two = await store.submit('owner', { ...request, idempotencyKey: 'request-two' });
+  await store.applySubmission('owner', two.id, two.revision, team.revision, { item });
+  await store.decideReview(first.intentId!, 'owner', 'defer');
+  const snapshot = store.snapshot();
+  const order = snapshot.intents[0].contributions.map((entry) => entry.submissionId);
+  t.mock.timers.tick(1000);
+  await store.applySubmission('owner', first.id, first.revision, team.revision, { item });
+  assert.equal(store.snapshot(), snapshot);
+  assert.deepEqual(
+    store.snapshot().intents[0].contributions.map((entry) => entry.submissionId),
+    order,
+  );
+  assert.ok(store.snapshot().intents[0].contributions[0].deferredAt);
+  const changed = await store.applySubmission('owner', first.id, first.revision, team.revision, {
+    item: { ...item, subject: { ...item.subject, headSha: 'head-b' } },
+  });
+  assert.equal(changed.revision, first.revision + 1);
+  assert.notEqual(changed.intentId, first.intentId);
+  assert.equal((await PRRuleStore.load(file)).intent(changed.intentId!)?.headSha, 'head-b');
+});
+
+test('a new review event timestamp is meaningful and a stale contribution fence is repaired durably', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const { store, file, team, request, item } = await fixture(t);
+  const at = new Date().toISOString();
+  item.subject.reviewObservation = {
+    observedAt: at,
+    headSha: 'head-a',
+    state: 'open',
+    draft: false,
+    decision: null,
+    reviewer: 'reader',
+    requested: true,
+    review: { state: 'COMMENTED', commit: 'head-a', submittedAt: at },
+  };
+  const submitted = await store.submit('owner', request);
+  const first = await store.applySubmission(
+    'owner',
+    submitted.id,
+    submitted.revision,
+    team.revision,
+    { item },
+  );
+  t.mock.timers.tick(1000);
+  const event = {
+    ...item,
+    subject: {
+      ...item.subject,
+      reviewObservation: {
+        ...item.subject.reviewObservation,
+        observedAt: new Date().toISOString(),
+        review: { state: 'COMMENTED', commit: 'head-a', submittedAt: new Date().toISOString() },
+      },
+    },
+  };
+  const next = await store.applySubmission('owner', first.id, first.revision, team.revision, {
+    item: event,
+  });
+  assert.equal(next.revision, first.revision + 1);
+  const stale = structuredClone(store.snapshot());
+  stale.submissions![0].revision++;
+  await writeFile(file, JSON.stringify(stale));
+  await store.reloadFromFile();
+  const receipt = store.submission(first.id, 'owner');
+  const repaired = await store.applySubmission(
+    'owner',
+    receipt.id,
+    receipt.revision,
+    team.revision,
+    { item: event },
+  );
+  assert.equal(repaired.revision, receipt.revision + 1);
+  const restarted = await PRRuleStore.load(file);
+  assert.equal(
+    restarted.intent(repaired.intentId!)?.contributions[0].submissionRevision,
+    repaired.revision,
+  );
 });

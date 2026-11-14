@@ -7,6 +7,7 @@ import test from 'node:test';
 import type { PRRuleSubject } from '@farmslot/protocol';
 
 import { PRRuleService } from './service.js';
+import { PRSourceCheckpoints, prSourceCheckpointScope } from './source-checkpoints.js';
 import { PRRuleStore } from './store.js';
 
 test('preview is read-only, scans deduplicate, and provider outages are recorded without admission', async (t) => {
@@ -100,7 +101,7 @@ async function revisionFixture(t: test.TestContext) {
     observedAt: new Date().toISOString(),
     facts: { state: { state: 'known', value: 'open' } },
   };
-  return { store, team, rule, subject };
+  return { store, team, rule, subject, directory };
 }
 
 test('webhooks schedule explicit repository sources without legacy fallback or provider reads', async (t) => {
@@ -449,4 +450,71 @@ test('PR previews and scans never invoke assessments even when the provider is e
   await store.setEnabled('owner', rule.id, rule.revision, true, false);
   await service.scan('owner', rule.id);
   assert.equal((await assessmentHistory('owner')).records.length, 0);
+});
+
+test('quiet scan clocks retain the next due time without replacing the published list', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const { store, rule, directory } = await revisionFixture(t);
+  const checkpoints = await PRSourceCheckpoints.load(join(directory, 'checkpoints.json'));
+  const traversals: string[] = [];
+  await store.setEnabled('owner', rule.id, rule.revision, true, false);
+  let reads = 0,
+    extraPage = false;
+  const service = new PRRuleService(
+    store,
+    () => true,
+    () => {},
+    async (team, rule) => {
+      reads++;
+      const result = await checkpoints.read(
+        prSourceCheckpointScope(team, rule, {
+          host: 'github.com',
+          scope: 'fixture',
+          token: 'fixture-only',
+        }),
+        2,
+        async (traversal) => {
+          await traversal.pages('repository', async (cursor) => ({
+            nodes: [],
+            pageInfo: {
+              hasNextPage: extraPage && cursor === null,
+              endCursor: extraPage && cursor === null ? 'next' : null,
+            },
+          }));
+          return { subjects: [], complete: true, errors: [], ignoredItems: 0 };
+        },
+      );
+      traversals.push(result.progress.id);
+      return result;
+    },
+    undefined,
+    undefined,
+    undefined,
+    checkpoints,
+  );
+  await service.scan('owner', rule.id);
+  const published = store.snapshot();
+  const oldDue = Date.parse(published.rules[0].scan.nextScanAt!);
+  t.mock.timers.tick(1000);
+  await service.scan('owner', rule.id);
+  assert.notEqual(
+    traversals[0],
+    traversals[1],
+    'completed checkpoints create fresh traversal identities',
+  );
+  assert.equal(store.snapshot(), published);
+  assert.equal(store.nextScanAt(rule.id), new Date(oldDue + 1000).toISOString());
+  await service.tick(oldDue);
+  assert.equal(reads, 2, 'a private deadline prevents a premature repeat scan');
+  t.mock.timers.tick(60_000);
+  await service.tick(oldDue + 1000);
+  assert.equal(reads, 3);
+  extraPage = true;
+  t.mock.timers.tick(60_000);
+  await service.scan('owner', rule.id);
+  assert.equal(
+    store.rule(rule.id, 'owner').scan.sourceProgress?.pages,
+    2,
+    'changed coverage counts still publish',
+  );
 });

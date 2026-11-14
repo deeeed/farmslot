@@ -31,28 +31,29 @@ jobs:
     name: Detect changed quality targets
     runs-on: ubuntu-24.04
     outputs:
-      repo: ${{ steps.filter.outputs.repo }}
-      package_readiness: ${{ steps.filter.outputs.package_readiness }}
-      command_center: ${{ steps.filter.outputs.command_center }}
-      desktop: ${{ steps.filter.outputs.desktop }}
-      companion: ${{ steps.filter.outputs.companion }}
-      docs: ${{ steps.filter.outputs.docs }}
-      cli: ${{ steps.filter.outputs.cli }}
-      adapter_rn: ${{ steps.filter.outputs.adapter_rn }}
-      agent_runtime: ${{ steps.filter.outputs.agent_runtime }}
-      capabilities: ${{ steps.filter.outputs.capabilities }}
-      protocol: ${{ steps.filter.outputs.protocol }}
-      review_dispatch: ${{ steps.filter.outputs.review_dispatch }}
-      recipe_runner: ${{ steps.filter.outputs.recipe_runner }}
-      recipe_cli: ${{ steps.filter.outputs.recipe_cli }}
-      adapter_sdk: ${{ steps.filter.outputs.adapter_sdk }}
-      adapter_node: ${{ steps.filter.outputs.adapter_node }}
-      adapter_web: ${{ steps.filter.outputs.adapter_web }}
-      skills: ${{ steps.filter.outputs.skills }}
-      theme: ${{ steps.filter.outputs.theme }}
-      gateway: ${{ steps.filter.outputs.gateway }}
-      node: ${{ steps.filter.outputs.node }}
-      model_transport: ${{ steps.filter.outputs.model_transport }}
+      workspace_tests: ${{ steps.coverage.outputs.workspace_tests }}
+      repo: ${{ steps.coverage.outputs.repo }}
+      package_readiness: ${{ steps.coverage.outputs.package_readiness }}
+      command_center: ${{ steps.coverage.outputs.command_center }}
+      desktop: ${{ steps.coverage.outputs.desktop }}
+      companion: ${{ steps.coverage.outputs.companion }}
+      docs: ${{ steps.coverage.outputs.docs }}
+      cli: ${{ steps.coverage.outputs.cli }}
+      adapter_rn: ${{ steps.coverage.outputs.adapter_rn }}
+      agent_runtime: ${{ steps.coverage.outputs.agent_runtime }}
+      capabilities: ${{ steps.coverage.outputs.capabilities }}
+      protocol: ${{ steps.coverage.outputs.protocol }}
+      review_dispatch: ${{ steps.coverage.outputs.review_dispatch }}
+      recipe_runner: ${{ steps.coverage.outputs.recipe_runner }}
+      recipe_cli: ${{ steps.coverage.outputs.recipe_cli }}
+      adapter_sdk: ${{ steps.coverage.outputs.adapter_sdk }}
+      adapter_node: ${{ steps.coverage.outputs.adapter_node }}
+      adapter_web: ${{ steps.coverage.outputs.adapter_web }}
+      skills: ${{ steps.coverage.outputs.skills }}
+      theme: ${{ steps.coverage.outputs.theme }}
+      gateway: ${{ steps.coverage.outputs.gateway }}
+      node: ${{ steps.coverage.outputs.node }}
+      model_transport: ${{ steps.coverage.outputs.model_transport }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -260,6 +261,37 @@ jobs:
               - 'scripts/lib/**'
               - 'services/gateway/**'
 
+      - name: Select dependency-affected workspace tests
+        id: coverage
+        env:
+          QUALITY_FILTER_OUTPUTS: ${{ toJSON(steps.filter.outputs) }}
+        run: node scripts/quality/workspace-test-targets.mjs
+
+  workspace-tests:
+    name: Workspace tests (${{ matrix.workspace }})
+    needs: changes
+    if: needs.changes.outputs.workspace_tests != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.changes.outputs.workspace_tests) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: corepack enable
+      - run: yarn install --immutable
+      - name: Build protocol prerequisite
+        run: yarn workspace @farmslot/protocol build
+      - name: Run the workspace suite
+        env:
+          WORKSPACE: ${{ matrix.workspace }}
+          SCRIPT: ${{ matrix.script }}
+        run: yarn workspace "$WORKSPACE" "$SCRIPT"
+
   repo:
     name: Repository quality guards
     needs: changes
@@ -283,6 +315,9 @@ jobs:
 
       - name: Install workspace dependencies
         run: yarn install --immutable
+
+      - name: Workspace test selection contracts
+        run: node --test scripts/quality/workspace-test-targets.test.mjs
 
       - name: Local CI parity
         run: yarn ci:local
@@ -432,6 +467,8 @@ jobs:
     if: needs.changes.outputs.command_center == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      FARMSLOT_TSX_TEST_WORKERS: '2'
     defaults:
       run:
         shell: bash

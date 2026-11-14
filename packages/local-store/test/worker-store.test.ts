@@ -14,9 +14,7 @@ import { ResourceStoreWorkerClient } from '../src/worker-client.js';
 import type { StoreWorkerPort, StoreWorkerResponse } from '../src/worker-protocol.js';
 
 function fixture() {
-  const worker = new Worker(new URL('./sqlite-worker.fixture.ts', import.meta.url), {
-    execArgv: ['--import', 'tsx'],
-  });
+  const worker = new Worker(new URL('./sqlite-worker.bootstrap.mjs', import.meta.url));
   const port: StoreWorkerPort = {
     postMessage: (request) => worker.postMessage(request),
     onMessage(listener) {
