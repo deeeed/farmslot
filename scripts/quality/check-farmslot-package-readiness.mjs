@@ -11,12 +11,17 @@ import { checkCjsEsmExports } from './check-cjs-esm-exports.mjs';
 const argv = process.argv.slice(2);
 const args = new Set(argv);
 const runPack = args.has('--pack');
+const prebuilt = args.has('--prebuilt');
 const strictPublish = args.has('--publish');
 const requireChangelog = strictPublish || args.has('--require-changelog');
 const packageFilter = parsePackageFilter(argv);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 process.chdir(repoRoot);
+
+const buildReceipt = prebuilt
+  ? (await import('./ci-build-state.mjs')).verifyBuildReceipt(repoRoot)
+  : null;
 
 const rootLicense = readFileSync('LICENSE', 'utf8');
 
@@ -488,6 +493,16 @@ function buildPackage(pkgSpec) {
     JSON.stringify(manifest.exports ?? {}).includes('"./dist/') ||
     JSON.stringify(manifest.exports ?? {}).includes('"dist/');
   if (!shipsFromDist && !manifest.scripts?.build) return true;
+  if (buildReceipt) {
+    if (
+      !manifest.scripts?.build ||
+      !buildReceipt.projects.some((project) => project.name === pkgSpec.name)
+    ) {
+      fail(`${pkgSpec.name} has no verified prerequisite build`);
+      return false;
+    }
+    return true;
+  }
   const result = spawnSync('yarn', ['workspace', pkgSpec.name, 'build'], {
     cwd: process.cwd(),
     encoding: 'utf8',

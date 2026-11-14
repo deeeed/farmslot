@@ -14,6 +14,17 @@ import {
 export const TIMINGS_ARTIFACT_NAME = 'quality-steps.json';
 
 export const STEPS = [
+  [
+    'full main CI contracts',
+    [
+      'node',
+      '--test',
+      'scripts/quality/full-ci-plan.test.mjs',
+      'scripts/quality/full-ci-receipts.test.mjs',
+      'scripts/quality/ci-build-state.test.mjs',
+      'scripts/quality/nightly-ci-alert.test.mjs',
+    ],
+  ],
   ['format', ['yarn', 'format:check']],
   ['ESLint cache guard tests', ['node', '--test', 'scripts/quality/check-eslint-ratchet.test.mjs']],
   ['lint', ['yarn', 'lint']],
