@@ -1090,3 +1090,59 @@ module['restore'](json.loads(sys.argv[2]))
   for (const [name, text] of Object.entries(files))
     assert.equal(readFileSync(path.join(repo, name), 'utf8'), text, `${name} restored`);
 });
+
+test('isolation keeps farm tooling and the deps stamp, moves generated sources, and handles self-ignoring folders', async (t) => {
+  const { DEFAULT_BLIND_KEEP_IGNORED } = await import('./blind-trial.js');
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'blind-ignored-tooling-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'repo');
+  mkdirSync(repo);
+  git(repo, 'init', '-q', '-b', 'main');
+  writeFileSync(
+    path.join(repo, '.gitignore'),
+    '.agents/\ntemp/\ndevelopment/build/*.js\nshared/lib/manifestFlags.*\n',
+  );
+  mkdirSync(path.join(repo, 'development/build'), { recursive: true });
+  writeFileSync(path.join(repo, 'development/build/index.ts'), 'source\n');
+  mkdirSync(path.join(repo, 'shared/lib'), { recursive: true });
+  writeFileSync(path.join(repo, 'shared/lib/index.ts'), 'source\n');
+  const baseSha = commit(repo, 'base');
+  const kept: Record<string, string> = {
+    '.agents/skills/proof/SKILL.md': 'skill\n',
+    'temp/farmslot/deps-setup.stamp': 'stamp\n',
+  };
+  const moved: Record<string, string> = {
+    'temp/recipe/runtime/status.json': '{"operations":["earlier"]}\n',
+    'temp/farmslot/ci-parity-selection.json': '{"selection":"earlier"}\n',
+    // Built by an earlier run, possibly from its own fix.
+    'development/build/constants.js': 'generated\n',
+    'shared/lib/manifestFlags.js': 'generated\n',
+    '.agents/earlier-notes.md': 'FAKE_EARLIER_ANSWER\n',
+    // A folder that ignores itself: Git lists it and every entry in it.
+    'hooks/_/.gitignore': '*\n',
+    'hooks/_/pre-commit': 'hook\n',
+  };
+  for (const [name, text] of Object.entries({ ...kept, ...moved })) {
+    mkdirSync(path.dirname(path.join(repo, name)), { recursive: true });
+    writeFileSync(path.join(repo, name), text);
+  }
+  const spec: BlindGitSpec = {
+    slotId: 'ignored-tooling-fixture',
+    slotEpoch: 1,
+    repo,
+    capsule: path.join(root, '.farmslot-blind-evals/ignored-tooling-fixture/trial-1'),
+    runId: 'trial',
+    branch: 'eval/trial',
+    baseSha,
+    referenceCommits: [],
+    keepIgnored: DEFAULT_BLIND_KEEP_IGNORED,
+  };
+  assert.equal(command('isolate', spec).status, 'isolated');
+  for (const [name, text] of Object.entries(kept))
+    assert.equal(readFileSync(path.join(repo, name), 'utf8'), text, `${name} stays`);
+  for (const name of Object.keys(moved))
+    assert.equal(existsSync(path.join(repo, name)), false, `${name} moves`);
+  assert.equal(command('restore', spec).status, 'restored');
+  for (const [name, text] of Object.entries({ ...kept, ...moved }))
+    assert.equal(readFileSync(path.join(repo, name), 'utf8'), text, `${name} restored`);
+});
