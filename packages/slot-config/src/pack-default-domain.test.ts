@@ -97,7 +97,14 @@ test('an invalid pack default domain is refused at load, with the canonical doma
 test('slot resolution still works when the pack project.json is invalid', async (t) => {
   // Release, cleanup, attach and fleet probes rely on loadSlotVars without project config.
   farm(t, { project: { default_domain: 'Perps Team' } });
+  const warn = t.mock.method(console, 'warn', () => {});
   const vars = await loadSlotVars('a');
+  await loadSlotVars('a');
+  assert.equal(warn.mock.callCount(), 1, 'the dropped pack domain is reported once');
+  assert.match(
+    String(warn.mock.calls[0]?.arguments[0]),
+    /pack: default_domain unavailable \(.*default_domain must be a valid domain\)/,
+  );
   assert.equal(vars.domain, undefined);
   assert.equal(vars.slotId, 'a');
   invalidateProjectVarsCache();

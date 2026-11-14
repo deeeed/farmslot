@@ -770,10 +770,21 @@ async function packDefaultDomain(projectName: string): Promise<string | undefine
   if (!projectName) return undefined;
   try {
     return (await loadProjectVars(projectName)).projectJson.default_domain;
-  } catch {
+  } catch (error) {
+    // A missing pack is normal here; anything else silently drops the pack domain, so
+    // say so once per pack and reason.
+    const message = error instanceof Error ? error.message : String(error);
+    if (
+      !isMissingProjectConfigError(error) &&
+      !warnedPackDomain.has(`${projectName}\0${message}`)
+    ) {
+      warnedPackDomain.add(`${projectName}\0${message}`);
+      console.warn(`[slot-config] ${projectName}: default_domain unavailable (${message})`);
+    }
     return undefined;
   }
 }
+const warnedPackDomain = new Set<string>();
 
 /** `pools`: one readSlotPools() shared by the lookups of one operation; read now when omitted. */
 export async function loadSlotVars(slotId: string, pools?: SlotPools): Promise<SlotVars> {
