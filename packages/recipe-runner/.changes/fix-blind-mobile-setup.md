@@ -1,0 +1,1 @@
+- Blind trials now pass `{{prepare_base_sha}}` to the prepare `artifact_check` hook: the trial's full 40-character base SHA, empty for other runs. mm-harness 0.96.20 uses it to pick the Runway artifact for that commit (`runway-artifact-check.sh --base-commit`).

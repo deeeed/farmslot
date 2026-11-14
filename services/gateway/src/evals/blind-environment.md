@@ -186,6 +186,15 @@ the checkout (`.farmslot-runtime`) and, on a local slot, the signing log under
 the runtime dir; that log moves aside with the older logs, and later phases
 write new ones.
 
+Ignored operator config that prepare does not write is moved aside as well, for
+example `android/local.properties` (Android SDK path) or `ios/.xcode.env.local`
+(Node path for Xcode builds). The Mobile and Extension packs write their env
+files (`.js.env`, `.ios.env`, `.android.env`, `.e2e.env`, `.metamaskrc`) as
+fixtures after isolation, and neither writes nor reads those two files. Gradle
+then takes the SDK from `ANDROID_HOME`, and Xcode uses the tracked
+`ios/.xcode.env`. A slot that relies on either file needs it in the project's
+`blind_keep_ignored`.
+
 ## Base ref
 
 The isolated repository has no remotes. Isolation records
