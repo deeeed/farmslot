@@ -953,11 +953,17 @@ test('evalTrialStart automatically replays from the reference base commit when a
     // An interactive template axis must not make a blind trial wait for an operator.
     const workerDir = path.join(farmslotRoot(), 'projects', 'farmslot-farm', 'templates', 'worker');
     const interactiveTemplate = path.join(workerDir, 'fix-bug-interactive.md');
+    // Restore any operator-owned copy of this supported template after the test.
+    const existing = await readFile(interactiveTemplate, 'utf-8').catch(() => undefined);
     await writeFile(
       interactiveTemplate,
       await readFile(path.join(workerDir, 'fix-bug.md'), 'utf-8'),
     );
-    t.after(() => rm(interactiveTemplate, { force: true }));
+    t.after(() =>
+      existing === undefined
+        ? rm(interactiveTemplate, { force: true })
+        : writeFile(interactiveTemplate, existing, 'utf-8'),
+    );
     const interactive = await evalTrialStart(
       {
         project: 'farmslot-farm',
