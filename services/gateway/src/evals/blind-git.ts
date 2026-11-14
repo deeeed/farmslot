@@ -109,7 +109,7 @@ const BLIND_ENVIRONMENT = [
   'FARMSLOT_RUN_ID',
   'FARMSLOT_NODE22_BIN',
   'CORE_NODE_BIN',
-  'FARMSLOT_PROJECTS_DIR',
+  // Task-bound tools resolve the retained project pack when no live registry is inherited.
   'FARMSLOT_POOL_DIR',
   'FARMSLOT_RUNS_DIR',
   'FARMSLOT_NATIVE_STATE_DIR',

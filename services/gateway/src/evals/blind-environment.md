@@ -43,7 +43,6 @@ inherited Git configuration cannot cross the boundary.
 | `FARMSLOT_RUN_ID`                 | Locates task tools, task state or slot identity; Seatbelt still denies gateway credentials and RPC. |
 | `FARMSLOT_NODE22_BIN`             | Locates task tools, task state or slot identity; Seatbelt still denies gateway credentials and RPC. |
 | `CORE_NODE_BIN`                   | Selects installed toolchains or project build mode.                                                 |
-| `FARMSLOT_PROJECTS_DIR`           | Locates task tools, task state or slot identity; Seatbelt still denies gateway credentials and RPC. |
 | `FARMSLOT_POOL_DIR`               | Locates task tools, task state or slot identity; Seatbelt still denies gateway credentials and RPC. |
 | `FARMSLOT_RUNS_DIR`               | Locates task tools, task state or slot identity; Seatbelt still denies gateway credentials and RPC. |
 | `FARMSLOT_NATIVE_STATE_DIR`       | Locates task tools, task state or slot identity; Seatbelt still denies gateway credentials and RPC. |
@@ -243,6 +242,8 @@ the trial's own included, and any `.farmslot-runtime/*/.agent/.launch` path.
 Boundary preparation creates the own slot runtime, since the worker cannot create
 it inside the denied tree. Measured in a live launch, the worker writes only
 `.agent/.observability` there; the gateway writes `.agent/.launch` from outside.
+
+`FARMSLOT_PROJECTS_DIR` is omitted from blind worker environments. Task-bound tools use the retained project pack through their existing fallback instead of scanning the node's live project registry. The pool selector remains available for the selected public harness installation.
 
 ## Host credential stores
 

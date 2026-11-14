@@ -574,6 +574,8 @@ test('blind boundary strips gateway credentials, routing, tmux and SSH agent var
       FARMSLOT_GATEWAY: 'ws://127.0.0.1:1',
       FARMSLOT_GATEWAY_PROFILE: 'synthetic-profile',
       FARMSLOT_HOME: '/synthetic/tools-home',
+      FARMSLOT_PROJECTS_DIR: '/synthetic/live-projects',
+      FARMSLOT_POOL_DIR: '/synthetic/pool',
       FARMSLOT_TASK_DIR: '/synthetic/task',
       OPENAI_API_KEY: 'synthetic-provider',
       ZDOTDIR: '/synthetic/operator-zdotdir',
@@ -592,6 +594,8 @@ test('blind boundary strips gateway credentials, routing, tmux and SSH agent var
     worker.stdout,
     /^(?:FARMSLOT_(?:NODE_TOKEN|GATEWAY(?:_TOKEN|_PASSWORD|_PROFILE)?)|GW_URL|GATEWAY_URL)=/mu,
   );
+  assert.doesNotMatch(worker.stdout, /^FARMSLOT_PROJECTS_DIR=/mu);
+  assert.match(worker.stdout, /^FARMSLOT_POOL_DIR=\/synthetic\/pool$/mu);
   assert.match(worker.stdout, /^FARMSLOT_HOME=\/synthetic\/tools-home$/mu);
   assert.match(worker.stdout, /^FARMSLOT_TASK_DIR=\/synthetic\/task$/mu);
   assert.match(worker.stdout, /^OPENAI_API_KEY=synthetic-provider$/mu);
