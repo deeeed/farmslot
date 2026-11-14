@@ -762,14 +762,18 @@ test('a restored blind trial isolates again from its base, but never over candid
     // Unchanged trial: restore keeps its branch at the base; a retry isolates afresh.
     assert.equal(command('isolate', spec).status, 'isolated');
     assert.equal(command('restore', spec).status, 'restored');
+    // An interrupted attempt can leave a written object store and loose files beside its records.
+    const pack = path.join(spec.capsule, 'interrupted.git/objects/pack');
+    mkdirSync(pack, { recursive: true });
+    writeFileSync(path.join(pack, 'pack-fixture.pack'), 'PACK fixture\n');
+    writeFileSync(path.join(spec.capsule, 'candidate.objects'), 'fixture\n');
+    writeFileSync(path.join(spec.capsule, 'receipt.json'), '{"kept":true}\n');
     assert.equal(command('isolate', spec).status, 'isolated');
     const [aside] = readdirSync(parent).filter((name) => name.startsWith('trial-1.interrupted-'));
     assert.ok(aside, 'the restored capsule is kept aside');
     // Its stores are gone; only the journal and receipts remain.
-    assert.deepEqual(
-      readdirSync(path.join(parent, aside)).filter((name) => !name.endsWith('.json')),
-      [],
-    );
+    assert.deepEqual(readdirSync(path.join(parent, aside)).sort(), ['receipt.json', 'state.json']);
+    assert.equal(readFileSync(path.join(parent, aside, 'receipt.json'), 'utf8'), '{"kept":true}\n');
     // Candidate work: the retry refuses and the candidate branch survives.
     writeFileSync(path.join(repo, 'value.txt'), 'candidate\n');
     const candidate = commit(repo, 'candidate');
