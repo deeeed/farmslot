@@ -128,22 +128,34 @@ test('source events keep their watchers; a created or replaced directory re-arms
     await fixture.source.start();
     const started = armed;
     assert.ok(started > 0);
+    // A just-created FSEvents stream can miss its first events: commit until it delivers one.
+    const primed = fixture.notices.length;
+    for (let i = 0; i < 250 && fixture.notices.length === primed; i++) {
+      fixture.commitMetadata();
+      await delay(20);
+    }
+    assert.ok(fixture.notices.length > primed, 'the new watcher delivers');
     for (let i = 0; i < 3; i++) await delivered(`commit ${i} is delivered by the watcher`);
     // Linux re-arms on every event, since Node's recursive watch there is inode-bound.
     if (process.platform !== 'linux')
       assert.equal(armed, started, 'events under an unchanged root reuse its watchers');
     rmSync(fixture.root, { recursive: true, force: true });
     mkdirSync(join(fixture.root, 'sessions'), { recursive: true, mode: 0o700 });
-    // The replacement's delete and create events can recover the source more than once, so wait
-    // until it is admitted and arming has been quiet for 200 ms.
-    let quiet = 0;
-    for (let i = 0, last = armed; i < 250 && !(armed > started && ready() && quiet >= 10); i++) {
+    // Commits drive recovery until the replaced root is armed and admitted.
+    for (let i = 0; i < 250 && !(armed > started && ready()); i++) {
       fixture.commitMetadata();
+      await delay(20);
+    }
+    assert.ok(armed > started && ready(), 'a replaced root is armed again and admitted');
+    // The replacement's delete and create events can recover the source more than once: without
+    // further commits, wait until arming has been quiet for 200 ms.
+    let quiet = 0;
+    for (let i = 0, last = armed; i < 250 && !(quiet >= 10 && ready()); i++) {
       await delay(20);
       quiet = armed === last ? quiet + 1 : 0;
       last = armed;
     }
-    assert.ok(armed > started && ready(), 'a replaced root is armed again and admitted');
+    assert.ok(quiet >= 10 && ready(), 'arming settles after the replacement');
     const rearmed = armed;
     for (let i = 0; i < 2; i++) await delivered(`commit ${i} after replacement is delivered`);
     if (process.platform !== 'linux') assert.equal(armed, rearmed, 'the new watchers are kept');
