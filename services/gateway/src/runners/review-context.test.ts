@@ -31,6 +31,7 @@ mock.module('../runs/store.js', {
     getRun: () => run,
     getRunWithArchived: async () => run,
     getAllRuns: () => [run],
+    updateRun: (_id: string, patch: Partial<Run>) => Object.assign(run, patch),
     persistRunNow: async () => {},
   },
 });

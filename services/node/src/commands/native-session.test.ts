@@ -42,6 +42,7 @@ test('native target metadata reports its actual home and refuses an old ready ho
   assert.deepEqual(service.metadata('owner'), {
     homeDirectory: os.homedir(),
     supportsStandaloneDelegation: true,
+    supportsWorkerCompaction: true,
   });
   assert.throws(() => service.metadata('other'), /not owned/);
   const hostRoot = path.join(root, 'nodes/fixture-machine');
@@ -57,6 +58,7 @@ test('native target metadata reports its actual home and refuses an old ready ho
   );
   const old = service.metadata('owner');
   assert.equal(old.supportsStandaloneDelegation, false);
+  assert.equal(old.supportsWorkerCompaction, false);
   assert.equal(JSON.stringify(old).includes(secret), false);
   writeFileSync(
     path.join(hostRoot, 'host.json'),
@@ -66,9 +68,11 @@ test('native target metadata reports its actual home and refuses an old ready ho
       socket,
       token: secret,
       supportsStandaloneDelegation: true,
+      supportsWorkerCompaction: true,
       conversationStreaming: 1,
     }),
     { mode: 0o600 },
   );
   assert.equal(service.metadata('owner').supportsStandaloneDelegation, true);
+  assert.equal(service.metadata('owner').supportsWorkerCompaction, true);
 });

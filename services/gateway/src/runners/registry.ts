@@ -1,5 +1,6 @@
 import { CLAUDE_ACP_EFFORTS } from '@farmslot/agent-runtime/native/claude-acp';
 import { nativeRunnerDefinitions } from '@farmslot/agent-runtime/native/registry';
+import { claudeCompactionArgs } from '@farmslot/agent-runtime/scripts/context-compaction.cjs';
 
 import { piProviderEnvironment } from '../../../../scripts/runners/pi-farmslot-providers.mjs';
 
@@ -225,6 +226,11 @@ export interface RunnerSessionContinuation {
     args: (sessionId: string) => string[];
     workspace: 'retained' | 'current';
     reservation?: 'create-chat';
+    /** Missing means unsupported on this transport. The adapter owns exact CLI syntax. */
+    compaction?: {
+      protocol: 'claude-stream-json';
+      args: (sessionId: string, model: string) => string[];
+    };
   } | null;
 }
 
@@ -443,7 +449,14 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     ],
     sessionContinuation: {
       native: true,
-      terminal: { args: (sessionId) => ['--resume', sessionId], workspace: 'retained' },
+      terminal: {
+        args: (sessionId) => ['--resume', sessionId],
+        workspace: 'retained',
+        compaction: {
+          protocol: 'claude-stream-json',
+          args: claudeCompactionArgs,
+        },
+      },
     },
     nativeTransport: 'claude-stream-json',
     nativeChoices: { models: [...RUNNER_PICKER_MODELS.claude], modes: ['default'] },

@@ -6,21 +6,21 @@ Public docs: <https://farmslot.io/docs/guides/adapter-rn>
 
 ## Source layout
 
-| Path                                                                         | Owns                                                                                             |
-| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `bin/`                                                                       | Published `farmslot-adapter-rn` executable shim.                                                 |
-| `src/cli.ts`                                                                 | Init command parsing and CLI entrypoint.                                                         |
-| `src/scaffold.ts`                                                            | File-copy and package-script scaffolding.                                                        |
-| `src/doctor.ts`                                                              | Project integration checks.                                                                      |
-| `src/runner.ts`                                                              | Expo smoke runner wiring built on `@farmslot/recipe-runner`.                                     |
-| `src/redaction.ts`                                                           | Output redaction helpers for generated artifacts.                                                |
-| `templates/`                                                                 | Versionless project scaffold copied into consuming Expo apps.                                    |
-| `bridge-runtime/`                                                            | Hermes CDP bridge libraries (`lib/*.cjs`) and the console forwarder.                             |
-| `bridge-runtime/bridge-core.cjs`                                             | Generic bridge CLI (`runBridgeCli`); a host preset adds its commands, routes and recovery hints. |
-| `metro/`                                                                     | Metro config wrapper, detached launcher and log generation/coalescing helpers.                   |
-| `src/tool-paths.ts`, `src/devices.ts`                                        | adb/idb discovery (`RECIPE_RN_ADB_PATH`/`RECIPE_RN_IDB_PATH`) and connected-device listing.      |
-| `src/video-recorder.ts`                                                      | Device video recorders.                                                                          |
-| `src/metro-env.ts`, `src/source-freshness.ts`, `src/fingerprint-baseline.ts` | Bundle-input fingerprints with recorded baselines; the project supplies the inputs.              |
+| Path                                                                         | Owns                                                                                        |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `bin/`                                                                       | Published `farmslot-adapter-rn` executable shim.                                            |
+| `src/cli.ts`                                                                 | Init command parsing and CLI entrypoint.                                                    |
+| `src/scaffold.ts`                                                            | File-copy and package-script scaffolding.                                                   |
+| `src/doctor.ts`                                                              | Project integration checks.                                                                 |
+| `src/runner.ts`                                                              | Expo smoke runner wiring built on `@farmslot/recipe-runner`.                                |
+| `src/redaction.ts`                                                           | Output redaction helpers for generated artifacts.                                           |
+| `templates/`                                                                 | Versionless project scaffold copied into consuming Expo apps.                               |
+| `bridge-runtime/`                                                            | Hermes CDP bridge libraries (`lib/*.cjs`) and the console forwarder.                        |
+| `bridge-runtime/bridge-core.cjs`                                             | Generic bridge CLI (`runBridgeCli`) and deferred HUD client (`createBrokerHudSession`).     |
+| `metro/`                                                                     | Metro config wrapper, detached launcher and log generation/coalescing helpers.              |
+| `src/tool-paths.ts`, `src/devices.ts`                                        | adb/idb discovery (`RECIPE_RN_ADB_PATH`/`RECIPE_RN_IDB_PATH`) and connected-device listing. |
+| `src/video-recorder.ts`                                                      | Device video recorders.                                                                     |
+| `src/metro-env.ts`, `src/source-freshness.ts`, `src/fingerprint-baseline.ts` | Bundle-input fingerprints with recorded baselines; the project supplies the inputs.         |
 
 ## Relationship to the harness
 
@@ -31,6 +31,14 @@ Public docs: <https://farmslot.io/docs/guides/adapter-rn>
 - `@farmslot/adapter-rn` adds Expo-friendly scaffolding (package scripts, a default recipe, optional dev-only React Native bridge/HUD files, integration checks) and the generic React Native runtime a harness drives: the Hermes bridge libraries, Metro helpers, device tools, recorders and freshness fingerprints. Product commands, routes and env names stay in the host harness.
 
 ### Bridge CLI preset
+
+`createBrokerHudSession(socketPath, env)` requires an existing broker. Its
+`send(command, args, timeoutMs)` accepts only `show-step-json-deferred` and
+`hide-step-deferred`. It serializes submissions, counts the deadline from
+`send()` including queue time, and never submits expired queued work or replays
+a failed update. A missing socket reports `NO_TARGET`. Call `close()` to drain
+accepted work and release the sockets. Synchronous capture commands keep their
+existing bridge path.
 
 A host's bridge script is a preset over `runBridgeCli`:
 

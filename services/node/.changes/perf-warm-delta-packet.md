@@ -1,0 +1,1 @@
+- Report native-host compaction support during capability negotiation, including older hosts that cannot compact.

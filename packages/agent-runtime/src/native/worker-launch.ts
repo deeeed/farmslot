@@ -75,6 +75,7 @@ export const NATIVE_WORKER_READ = 'native.worker.read';
 export const NATIVE_WORKER_CANCEL_COMMAND = 'native.worker.cancelCommand';
 /** Adds a message to the running turn when it can; otherwise sends it. An older host refuses it. */
 export const NATIVE_WORKER_STEER = 'native.worker.steer';
+export const NATIVE_WORKER_COMPACT = 'native.worker.compact';
 export const NATIVE_WORKER_METHODS: readonly string[] = [
   NATIVE_WORKER_READ,
   NATIVE_WORKER_STATE,
@@ -89,7 +90,13 @@ export const NATIVE_WORKER_METHODS: readonly string[] = [
   NATIVE_WORKER_CANCEL,
   NATIVE_WORKER_CANCEL_COMMAND,
   NATIVE_WORKER_STEER,
+  NATIVE_WORKER_COMPACT,
 ];
+
+export interface NativeWorkerStateResult {
+  stateDirectory: string;
+  supportsContextCompaction?: boolean;
+}
 
 export interface NativeWorkerTarget {
   sessionId: string;
