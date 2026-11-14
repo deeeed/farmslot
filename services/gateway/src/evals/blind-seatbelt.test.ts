@@ -251,7 +251,6 @@ test('blind profile denies shell startup and secret files, including resolved do
       '.config/secrets',
       '.netrc',
       '.npmrc',
-      '.yarnrc.yml',
       '.pypirc',
       '.docker/config.json',
     ].map((name) => path.join(home, name)),
@@ -1113,4 +1112,41 @@ trial.symlink_to(target)`,
   assert.notEqual(swapped.result.status, 0);
   assert.match(swapped.result.stderr, /Blind trial Pi home is not a private directory/u);
   assert.deepEqual(readdirSync(path.join(swapped.root, 'elsewhere')), []);
+});
+
+test('blind profile lets Yarn read but never write the operator ~/.yarnrc.yml', (t) => {
+  const { home, profile } = generatedProfile(t);
+  const yarnrc = JSON.stringify(path.join(home, '.yarnrc.yml'));
+  assert.ok(!profile.includes(`(deny file-read* (subpath ${yarnrc}))`));
+  const write = `(deny file-write* file-link (subpath ${yarnrc}))`;
+  assert.ok(profile.includes(write));
+  assert.ok(profile.indexOf(write) > profile.lastIndexOf('(allow file-write*'));
+});
+
+test('blind workers receive the core project Node location and no unlisted pool entry', async () => {
+  const { buildLaunchCommand } = await import('../runners/launch-command.js');
+  const { makeVars } = await import('../runners/test-fixtures.js');
+  const vars = makeVars({
+    remoteRepo: '/work/product',
+    machineEnv: { CORE_NODE_BIN: '/synthetic/node/bin', UNLISTED_POOL_SETTING: 'synthetic' },
+  });
+  const command = buildLaunchCommand(vars, 'pi', 'litellm/fixture', 'Task', {
+    taskDir: '/work/product/task',
+    blindTrialBoundary: { capsule: '/work/capsule', baseSha: 'a'.repeat(40) },
+  });
+  assert.match(command, /CORE_NODE_BIN=/u);
+  assert.doesNotMatch(command, /UNLISTED_POOL_SETTING/u);
+});
+
+test('blind profile lets core setup read the node pool JSON, nothing else there, and never write it', (t) => {
+  const { home, profile } = generatedProfile(t);
+  for (const name of ['farmslot-node', 'farmslot-node-dev']) {
+    const pool = path.join(home, name, 'pool');
+    const read = `(allow file-read* (literal ${JSON.stringify(pool)}))`;
+    assert.ok(profile.includes(read), name);
+    assert.ok(profile.includes('(allow file-read* (regex "^'), name);
+    assert.ok(profile.includes(`(deny file-link (subpath ${JSON.stringify(pool)}))`), name);
+    // The installation's write denial is never reopened.
+    assert.ok(!profile.includes(`(allow file-write* (subpath ${JSON.stringify(pool)}))`), name);
+  }
 });
