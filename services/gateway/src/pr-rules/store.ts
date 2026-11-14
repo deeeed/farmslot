@@ -45,8 +45,10 @@ import {
   reviewIntentId,
   reviewSubjectRevision,
   sameReviewPurpose,
+  setReviewContribution,
   updateReviewDisplay,
 } from './intents.js';
+import { type PRRecheckSource, retainRecheckVersion } from './recheck.js';
 import { decodePRRuleStore } from './store-schema.js';
 import { applyReviewSubmission, createReviewSubmission } from './submissions.js';
 
@@ -98,12 +100,17 @@ export class PRRuleStore {
   }
   /** JSON text of `data`, as written to the file. Drafts and whole-store copies parse it. */
   private text: string;
+  /** Fresh clocks stay private until a substantive commit publishes them. */
+  private observedText: string;
+  private observedData: PRRuleStoreData;
   private constructor(
     private readonly file: string,
     private data: PRRuleStoreData,
   ) {
     freezeStoreState(data);
     this.text = JSON.stringify(data);
+    this.observedText = this.text;
+    this.observedData = data;
   }
 
   static async load(file: string): Promise<PRRuleStore> {
@@ -187,6 +194,8 @@ export class PRRuleStore {
           if (dataChanged) {
             this.data = freezeStoreState(data);
             this.text = JSON.stringify(data);
+            this.observedText = this.text;
+            this.observedData = this.data;
           }
           this.sourceUnavailable = false;
           this.sourceFailure = undefined;
@@ -437,8 +446,9 @@ export class PRRuleStore {
     result: { item: PRRulePreviewItem } | { error: string },
   ): Promise<PRReviewSubmission> {
     const copy = structuredClone(result);
-    return this.change((data) =>
-      applyReviewSubmission(data, ownerId, id, revision, teamRevision, copy),
+    return this.change(
+      (data) => applyReviewSubmission(data, ownerId, id, revision, teamRevision, copy),
+      { kind: 'submission', id },
     );
   }
 
@@ -505,8 +515,18 @@ export class PRRuleStore {
     return this.change((data) => {
       const intent = data.intents.find((item) => item.id === id);
       if (!intent) throw new Error('Review intent not found');
-      Object.assign(intent, update);
-      intent.updatedAt = new Date().toISOString();
+      const fields = [
+        'queueItemId',
+        'runId',
+        'status',
+        'waitingReason',
+        'reviewedSha',
+        'dispatchHold',
+      ] as const;
+      if (fields.some((field) => field in update && intent[field] !== update[field])) {
+        Object.assign(intent, update);
+        intent.updatedAt = new Date().toISOString();
+      }
       return intent;
     });
   }
@@ -706,7 +726,7 @@ export class PRRuleStore {
     targetPRKey?: string,
   ): Promise<boolean> {
     const preview = structuredClone(input);
-    return this.change(async (data) => {
+    const apply = async (data: PRRuleStoreData) => {
       const rule = data.rules.find(
         (item) => item.id === preview.ruleId && matchesPrincipalOwner(item, ownerId),
       );
@@ -937,9 +957,7 @@ export class PRRuleStore {
               ? existing.deferredAt
               : undefined,
         };
-        intent.contributions = intent.contributions
-          .filter((source) => source.ruleId !== rule.id)
-          .concat(contribution);
+        setReviewContribution(intent, contribution);
         intent.updatedAt = preview.checkedAt;
         eligible.add(intent.id);
         subjects[key].admitted = true;
@@ -963,27 +981,45 @@ export class PRRuleStore {
       rule.scan.rebasePending = false;
       rule.scan.backfillRequested = false;
       return true;
-    });
+    };
+    return this.change(apply, { kind: 'rule', id: input.ruleId });
   }
 
-  private change<T>(mutate: (data: PRRuleStoreData) => T | Promise<T>): Promise<T> {
+  /** Scheduler clocks may be newer than the published, versioned list. */
+  nextScanAt(ruleId: string): string | undefined {
+    this.assertReadable();
+    return this.observedData.rules.find((rule) => rule.id === ruleId)?.scan.nextScanAt;
+  }
+
+  private change<T>(
+    mutate: (data: PRRuleStoreData) => T | Promise<T>,
+    recheck?: PRRecheckSource,
+  ): Promise<T> {
     this.writesPending += 1;
     const operation = async () =>
       useReviewWorkspaceStorage(async () => {
         this.assertReadable();
         // Parsing the committed text is several times cheaper than cloning the store, and
         // comparing texts says whether the transaction changed what the file holds.
-        const draft: PRRuleStoreData = JSON.parse(this.text);
-        const result = structuredClone(await mutate(draft));
+        const draft: PRRuleStoreData = JSON.parse(this.observedText);
+        const changed = await mutate(draft);
         const now = Date.now();
         const archived = slimTerminalIntents(draft.intents, now);
         decodePRRuleStore(draft);
         for (const intent of draft.intents)
           if (['held', 'needs-configuration', 'queued', 'running'].includes(intent.status))
             assertReviewWorkspaceAdmissionOpen(intent.pr);
+        const observationOnly = recheck
+          ? retainRecheckVersion(this.observedData, draft, recheck)
+          : false;
+        const result = structuredClone(changed);
         const text = JSON.stringify(draft);
-        // An unchanged store is not rewritten.
-        if (text === this.text) return result;
+        if (text === this.observedText) return result;
+        if (observationOnly) {
+          this.observedData = freezeStoreState(JSON.parse(text));
+          this.observedText = text;
+          return result;
+        }
         // Full records reach the archive before the store keeps only their stubs: a failure in
         // between leaves a duplicate there, never a loss.
         await appendIntentArchive(intentArchiveFile(this.file), archived, now);
@@ -991,6 +1027,8 @@ export class PRRuleStore {
         // Committed state is exactly what a restart would load: no keys the file drops.
         this.data = freezeStoreState(JSON.parse(text));
         this.text = text;
+        this.observedData = this.data;
+        this.observedText = text;
         publishPRAutomationResources();
         return result;
       });

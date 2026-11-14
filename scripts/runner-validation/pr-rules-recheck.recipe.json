@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Keep PR-rule observation rechecks quiet",
+  "description": "Pass a private operator-store copy in FARMSLOT_PR_RULES_PROOF_INPUT and a new evidence directory in FARMSLOT_PR_RULES_PROOF_OUTPUT. Uses isolated authenticated production RPC and a GitHub HTTP fixture. Never writes the operator store.",
+  "workflow": {
+    "entry": "recheck",
+    "nodes": {
+      "recheck": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/pr-rules-recheck.mjs \"$FARMSLOT_PR_RULES_PROOF_INPUT\" \"$FARMSLOT_PR_RULES_PROOF_OUTPUT\"",
+        "timeout_ms": 120000,
+        "intent": "Unchanged rechecks preserve disk bytes and RPC views without notifications; a new head persists and notifies a real client.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

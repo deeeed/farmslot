@@ -87,6 +87,17 @@ export function contributionBlockedReason(
   return undefined;
 }
 
+/** Re-observing a source must not change which contributor has first preference. */
+export function setReviewContribution(
+  intent: PRReviewIntent,
+  contribution: PRReviewContribution,
+): void {
+  const key = contribution.ruleId === undefined ? 'submissionId' : 'ruleId';
+  const index = intent.contributions.findIndex((item) => item[key] === contribution[key]);
+  if (index < 0) intent.contributions.push(contribution);
+  else intent.contributions[index] = contribution;
+}
+
 export async function reconcileReviewIntent(
   intent: PRReviewIntent,
   teams: readonly PRTeamProfile[],

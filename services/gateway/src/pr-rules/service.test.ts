@@ -450,3 +450,31 @@ test('PR previews and scans never invoke assessments even when the provider is e
   await service.scan('owner', rule.id);
   assert.equal((await assessmentHistory('owner')).records.length, 0);
 });
+
+test('quiet scan clocks retain the next due time without replacing the published list', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const { store, rule } = await revisionFixture(t);
+  await store.setEnabled('owner', rule.id, rule.revision, true, false);
+  let reads = 0;
+  const service = new PRRuleService(
+    store,
+    () => true,
+    () => {},
+    async () => {
+      reads++;
+      return { subjects: [], complete: true, errors: [], ignoredItems: 0 };
+    },
+  );
+  await service.scan('owner', rule.id);
+  const published = store.snapshot();
+  const oldDue = Date.parse(published.rules[0].scan.nextScanAt!);
+  t.mock.timers.tick(1000);
+  await service.scan('owner', rule.id);
+  assert.equal(store.snapshot(), published);
+  assert.equal(store.nextScanAt(rule.id), new Date(oldDue + 1000).toISOString());
+  await service.tick(oldDue);
+  assert.equal(reads, 2, 'a private deadline prevents a premature repeat scan');
+  t.mock.timers.tick(60_000);
+  await service.tick(oldDue + 1000);
+  assert.equal(reads, 3);
+});

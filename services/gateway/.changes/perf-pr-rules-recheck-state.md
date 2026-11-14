@@ -1,0 +1,1 @@
+- Keep unchanged PR-rule observation clocks in memory so scheduler re-checks do not rewrite the store or invalidate clients; substantive policy and admission changes still persist.
