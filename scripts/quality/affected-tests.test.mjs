@@ -114,3 +114,35 @@ test('script execution by a literal source path selects its test consumer', () =
     ['scripts/tool.test.mjs'],
   );
 });
+
+test('review template changes select their golden consumer without widening gateway tests', () => {
+  const golden = 'services/gateway/src/review/templates-golden.test.ts';
+  const files = [
+    'projects/farmslot-farm/templates/worker/review.md',
+    golden,
+    'services/gateway/src/review/unrelated.test.ts',
+  ];
+  const workspaces = [{ name: '@farmslot/gateway', dir: 'services/gateway', dependencies: [] }];
+  const graph = buildSourceGraph(files, workspaces, () => 'export {};');
+  for (const name of ['review.md', 'review.static-code.md', 'review.full-live.md']) {
+    assert.deepEqual(
+      selectAffectedTests({
+        files,
+        changed: [`projects/farmslot-farm/templates/worker/${name}`],
+        workspaces,
+        graph,
+      }),
+      [golden],
+      name,
+    );
+  }
+  assert.deepEqual(
+    selectAffectedTests({
+      files,
+      changed: ['projects/another/templates/worker/review.md'],
+      workspaces,
+      graph,
+    }),
+    [],
+  );
+});
