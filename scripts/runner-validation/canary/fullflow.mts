@@ -5,7 +5,7 @@ import { appendFile, cp, mkdir, readFile, readdir, writeFile } from 'node:fs/pro
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { cancelledRunSlotHold, isTerminalRunStatus, runOutputCloseUnavailableReason, type BacklogCreateResult, type BacklogEnqueueResult, type BacklogListResult, type NativeSessionReadResult, type Run, type RunCancelResult, type SlotReleaseResult, type SlotStatus } from '../../../packages/protocol/src/index.js';
+import { cancelledRunSlotHold, isTerminalRunStatus, isRecord, runOutputCloseUnavailableReason, type BacklogCreateResult, type BacklogEnqueueResult, type BacklogListResult, type NativeSessionReadResult, type Run, type RunCancelResult, type SlotReleaseResult, type SlotStatus } from '../../../packages/protocol/src/index.js';
 import { writeJson } from '../lib/isolated-stack.mjs';
 import { startRemoteNodeStack } from '../lib/remote-node-stack.mjs';
 
@@ -31,7 +31,11 @@ export async function runFullflow(options: FullflowOptions): Promise<void> {
   const worker = options.worker ?? FULLFLOW_MODEL;
   const pack = await fullflowPack(root, worker);
   const cases = options.cases ?? FULLFLOW_CASES;
-  if (cases.includes('blind-dispatch')) pack.projectJson.blind_keep_ignored = ['.fullflow'];
+  const blindRuntime = cases.includes('blind-dispatch') ? '.agent' : undefined;
+  if (blindRuntime) {
+    pack.projectJson.blind_keep_ignored = ['.fullflow'];
+    pack.projectJson.paths = { ...(isRecord(pack.projectJson.paths) ? pack.projectJson.paths : {}), runtime_dir: blindRuntime };
+  }
   const controller = new AbortController();
   let inFlight: Promise<void> | undefined;
   const agent = path.join(evidence, 'pi-agent');
@@ -58,6 +62,7 @@ export default function(pi) {
   const realClaude = worker.runner === 'claude'
     ? execFileSync('sh', ['-c', 'command -v claude'], { encoding: 'utf8' }).trim() : undefined;
   const manifest = await readFile(path.join(root, 'docs/examples/recipes/farmslot-v1.action-manifest.json'), 'utf8');
+  const workerEnvironment = worker.runner === 'pi' ? { LITELLM_API_KEY: process.env.LITELLM_API_KEY, PI_CODING_AGENT_DIR: agent } : {};
   const stack = await startRemoteNodeStack({
     ...options,
     onCleanup: (stop) => options.onCleanup?.(async () => {
@@ -67,7 +72,9 @@ export default function(pi) {
       try { await inFlight; } catch (error) { errors.push(`case finalization: ${String(error)}`); }
       return [...errors, ...await stop()];
     }),
-    nodeEnv: worker.runner === 'pi' ? { LITELLM_API_KEY: process.env.LITELLM_API_KEY, PI_CODING_AGENT_DIR: agent } : {},
+    // Tmux eval launches route through the gateway's remote shim; native cases inherit nodeEnv.
+    gatewayEnv: workerEnvironment,
+    nodeEnv: workerEnvironment,
     machine: 'fullflow',
     slots: cases.map((name) => `${FULLFLOW_PROJECT}-${name}-1`),
     projects: () => [pack],
@@ -275,6 +282,7 @@ export default function(pi) {
           if (task && existsSync(task)) await cp(task, path.join(dir, 'task'), { recursive: true });
           const runtime = path.join(stack.slotRepo(slotId), '.sandbox/farmslot-farm');
           if (existsSync(runtime)) await cp(runtime, path.join(dir, 'slot-runtime'), { recursive: true });
+          if (blindRuntime && existsSync(path.join(stack.slotRepo(slotId), blindRuntime))) await cp(path.join(stack.slotRepo(slotId), blindRuntime), path.join(dir, 'slot-runner-runtime'), { recursive: true });
           const retired = await retire(stack.call, run.id);
           if (retired) { check.status = 'fail'; check.differences.push(`cleanup: ${retired}`); }
           await writeJson(path.join(dir, 'slot-after-close.json'), await readSlot(stack.call, slotId));

@@ -1,6 +1,6 @@
 // A single model/tool call through blind admission, on the fullflow stack's own slot and manifest.
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { copyFile, cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -39,7 +39,7 @@ export async function runBlindDispatch(options: BlindDispatchOptions): Promise<v
   const { stack, worker, signal, log } = options;
   const slotId = `${FULLFLOW_PROJECT}-blind-dispatch-1`;
   const dir = path.join(options.evidence, 'blind-dispatch');
-  const referenceRoot = path.join(stack.fixture, 'node-pool', 'canary-reference');
+  const referenceRoot = path.join(stack.fixture, 'node-home', 'canary-reference');
   const started = Date.now();
   const readSlot = async () =>
     (await stack.call<{ fleet: { slots: SlotStatus[] } }>('fleet.status')).fleet.slots.find(
@@ -154,6 +154,7 @@ export async function runBlindDispatch(options: BlindDispatchOptions): Promise<v
     const deadline = started + 5 * 60_000;
     let tool: BlindToolMessage | undefined;
     let proofSource = '';
+    let referenceHidden = false;
     let previousState = '';
     while (!tool) {
       signal.throwIfAborted();
@@ -162,6 +163,32 @@ export async function runBlindDispatch(options: BlindDispatchOptions): Promise<v
         'Blind dispatch did not reach a model/tool call within five minutes',
       );
       run = (await stack.call<{ run: Run }>('run.get', { runId: run.id })).run;
+      const isolation = run.engineState?.evalExperiment?.blind?.isolation;
+      if (!referenceHidden && isolation?.verifiedAt) {
+        const probe = spawnSync(
+          '/usr/bin/sandbox-exec',
+          [
+            '-f',
+            path.join(isolation.capsulePath, 'boundary/sandbox.sb'),
+            process.execPath,
+            '-e',
+            "try { require('node:fs').readFileSync(process.argv[1]); process.exit(41); } catch (error) { process.exit(['EPERM','EACCES'].includes(error.code) ? 42 : 43); }",
+            path.join(referenceRoot, 'reference.diff'),
+          ],
+          { cwd: stack.slotRepo(slotId), encoding: 'utf8', timeout: 5000 },
+        );
+        await writeJson(path.join(dir, 'reference-read-denial.json'), {
+          status: probe.status,
+          signal: probe.signal,
+          error: probe.error?.message,
+        });
+        assert.equal(
+          probe.status,
+          42,
+          'The worker boundary must deny reading the retained reference diff',
+        );
+        referenceHidden = true;
+      }
       const state = [run.status, ...run.steps.map((step) => `${step.name}:${step.status}`)].join(
         ' ',
       );
@@ -201,6 +228,7 @@ export async function runBlindDispatch(options: BlindDispatchOptions): Promise<v
       }
       if (!tool) await delay(500, undefined, { signal });
     }
+    assert(referenceHidden, 'Reference read isolation was not verified');
     check.modelCalls = Math.max(1, check.modelCalls);
     run = (await stack.call<{ run: Run }>('run.get', { runId: run.id })).run;
     await writeJson(path.join(dir, 'first-model-tool.json'), {
