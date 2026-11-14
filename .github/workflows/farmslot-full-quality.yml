@@ -146,6 +146,7 @@ jobs:
             /scripts/quality/full-ci-run.mjs
             /scripts/quality/full-ci-receipts.mjs
             /scripts/quality/lib/step-timing.mjs
+            /scripts/quality/lib/latest-attempts.mjs
           sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@v4
         with:

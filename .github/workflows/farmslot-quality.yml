@@ -86,6 +86,7 @@ jobs:
           sparse-checkout: |
             /scripts/quality/pr-ci-run.mjs
             /scripts/quality/lib/step-timing.mjs
+            /scripts/quality/lib/latest-attempts.mjs
           sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@v4
         with:

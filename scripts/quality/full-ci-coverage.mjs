@@ -18,6 +18,7 @@ function docsCleanCheck(task) {
 export function inDocsPipeline(task) {
   return (
     task.label === 'docs build' ||
+    task.label === 'pages build' ||
     task.cwd === 'apps/docs' ||
     task.cwd.startsWith('apps/docs/') ||
     docsCleanCheck(task)
@@ -132,9 +133,13 @@ export function assertCoverage(plan, root) {
   );
   if (new Set(docs.map((entry) => entry.job)).size > 1)
     throw new Error('Generated docs and their clean-tree check must share a checkout');
-  const clean = docs.findIndex(({ task }) => docsCleanCheck(task));
-  if (clean !== -1 && clean !== docs.length - 1)
+  const generated = docs.filter(({ task }) => task.label !== 'pages build');
+  const clean = generated.findIndex(({ task }) => docsCleanCheck(task));
+  if (clean !== -1 && clean !== generated.length - 1)
     throw new Error('Generated docs clean-tree check must follow the generators and build');
+  const pages = docs.findIndex(({ task }) => task.label === 'pages build');
+  const built = docs.findLastIndex(({ task }) => task.label === 'docs build');
+  if (pages !== -1 && pages <= built) throw new Error('Pages build must follow its docs producer');
   const baseline = coverageOf([...prerequisiteTasks(root), ...monolithicCommands(root)], root);
   const actual = coverageOf(
     [

@@ -1,16 +1,16 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { latestAttempts } from './lib/latest-attempts.mjs';
+
 export function latestFullReceipts(directory) {
-  const latest = new Map();
-  for (const name of readdirSync(directory)) {
+  const artifacts = readdirSync(directory).map((name) => {
     const match = /^full-ci-(.+)-attempt-([1-9]\d*)$/.exec(name);
     if (!match) throw new Error(`Unexpected full CI artifact ${name}`);
     const [, id, rawAttempt] = match;
-    const attempt = Number(rawAttempt);
-    if (!latest.has(id) || attempt > latest.get(id).attempt) latest.set(id, { attempt, name });
-  }
-  return [...latest].map(([id, { name }]) => {
+    return { id, attempt: rawAttempt, name };
+  });
+  return latestAttempts(artifacts).map(({ id, name }) => {
     const receipt = JSON.parse(readFileSync(path.join(directory, name, `${id}.json`), 'utf8'));
     if (receipt.id !== id) throw new Error(`Artifact/receipt mismatch for ${id}`);
     return receipt;

@@ -46,6 +46,16 @@ test('generated docs cannot pass a clean-tree guard in a different or earlier ch
   const position = pipeline.tasks.findIndex((task) => task.command.includes('apps/docs/docs'));
   pipeline.tasks.unshift(...pipeline.tasks.splice(position, 1));
   assert.throws(() => assertCoverage(reordered, root), /follow the generators/);
+  const separatedPages = structuredClone(plan);
+  const docsJob = separatedPages.jobs.find((job) =>
+    job.tasks.some((task) => task.label === 'pages build'),
+  );
+  const pageIndex = docsJob.tasks.findIndex((task) => task.label === 'pages build');
+  const [pages] = docsJob.tasks.splice(pageIndex, 1);
+  separatedPages.jobs
+    .find((job) => job.id.startsWith('guards-') && job !== docsJob)
+    .tasks.push(pages);
+  assert.throws(() => assertCoverage(separatedPages, root), /share a checkout/);
 });
 
 for (const [label, mutate] of [

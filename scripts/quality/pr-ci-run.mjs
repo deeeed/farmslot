@@ -11,6 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { latestAttempts } from './lib/latest-attempts.mjs';
 import { isMainModule } from './lib/step-timing.mjs';
 
 function run(args, options = {}) {
@@ -186,19 +187,13 @@ function worker(id) {
 
 function verify() {
   const plan = JSON.parse(readFileSync('.cache/pr-ci/plan.json', 'utf8'));
-  const latest = new Map();
-  for (const artifact of readdirSync('.cache/pr-ci/results')) {
+  const artifacts = readdirSync('.cache/pr-ci/results').map((artifact) => {
     const match = /^pr-ci-(.+)-attempt-([1-9]\d*)$/.exec(artifact);
     if (!match) throw new Error(`Unexpected artifact: ${artifact}`);
     const [, id, attempt] = match;
-    if (!latest.has(id) || Number(attempt) > latest.get(id).attempt) {
-      latest.set(id, {
-        attempt: Number(attempt),
-        directory: `.cache/pr-ci/results/${artifact}/receipts`,
-      });
-    }
-  }
-  const receipts = [...latest.values()].flatMap(({ directory }) =>
+    return { id, attempt, directory: `.cache/pr-ci/results/${artifact}/receipts` };
+  });
+  const receipts = latestAttempts(artifacts).flatMap(({ directory }) =>
     readdirSync(directory)
       .filter((name) => name.endsWith('.json'))
       .map((name) => JSON.parse(readFileSync(`${directory}/${name}`, 'utf8'))),
