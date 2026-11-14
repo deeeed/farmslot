@@ -10,6 +10,8 @@ import type {
   NativeApprovalMode,
   NativeCommandObservation,
   NativeCommandReceipt,
+  NativeContextCompactionRecord,
+  NativeContextCompactionRequest,
   NativeConversationCursor,
   NativeConversationUpdate,
   NativeSessionCreateParams,
@@ -29,6 +31,7 @@ import {
   NATIVE_WORKER_CANCEL,
   NATIVE_WORKER_CANCEL_COMMAND,
   NATIVE_WORKER_CLOSE,
+  NATIVE_WORKER_COMPACT,
   NATIVE_WORKER_CONFIRM_STOPPED,
   NATIVE_WORKER_ENSURE,
   NATIVE_WORKER_INTERRUPT,
@@ -65,13 +68,16 @@ export class NativeSessionClient {
   /** Public target metadata only; never starts a host or exposes its IPC credential. */
   metadata() {
     let supportsStandaloneDelegation = true;
+    let supportsWorkerCompaction = true;
     const file = join(this.root, 'host.json');
     if (existsSync(file) && existsSync(join(this.root, 'ready.json'))) {
       try {
         const host = readJson<HostIdentity>(file);
         this.assertHostNode(host);
-        if (alive(host.pid) && existsSync(host.socket))
+        if (alive(host.pid) && existsSync(host.socket)) {
           supportsStandaloneDelegation = host.supportsStandaloneDelegation === true;
+          supportsWorkerCompaction = host.supportsWorkerCompaction === true;
+        }
       } catch {
         // Corrupt private metadata must not leak credential-bearing JSON parse errors.
         throw Object.assign(new Error('Native host metadata is unavailable'), {
@@ -79,7 +85,7 @@ export class NativeSessionClient {
         });
       }
     }
-    return { homeDirectory: homedir(), supportsStandaloneDelegation };
+    return { homeDirectory: homedir(), supportsStandaloneDelegation, supportsWorkerCompaction };
   }
   workerStateDirectory(owner: string, sessionId: string): string {
     return join(this.root, 'workers', createHash('sha256').update(owner).digest('hex'), sessionId);
@@ -312,6 +318,26 @@ export class NativeSessionClient {
       ...this.workerTarget(target),
       commandId,
       text,
+    });
+  }
+  compact(owner: string, target: NativeWorkerTarget, compaction: NativeContextCompactionRequest) {
+    const worker = this.workerTarget(target);
+    if (!this.metadata().supportsWorkerCompaction)
+      return Promise.resolve<NativeContextCompactionRecord>({
+        operationId: compaction.operationId,
+        lineageId: compaction.lineageId,
+        packetDigest: compaction.packetDigest,
+        nativeSessionId: compaction.nativeSessionId,
+        focusSha256: createHash('sha256').update(compaction.focus).digest('hex'),
+        status: 'unsupported',
+        requestedAt: new Date().toISOString(),
+        reason: 'Native host does not support structured context compaction',
+      });
+    return this.call<NativeContextCompactionRecord>({
+      method: NATIVE_WORKER_COMPACT,
+      owner,
+      ...worker,
+      compaction,
     });
   }
   steerWorker(owner: string, target: NativeWorkerTarget, commandId: string, text: string) {

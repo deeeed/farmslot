@@ -11,6 +11,7 @@ import {
   readClaudeProcessBinding,
   readClaudeProcessState,
   readClaudePromptAcceptance,
+  readClaudeSessionBinding,
 } from './claude-process-observability.js';
 import { makeVars } from './test-fixtures.js';
 
@@ -21,6 +22,35 @@ const registration = {
   status: 'idle',
   statusUpdatedAt: 2000,
 };
+
+test('fresh review binding uses the exact process registration and rejects stale or replaced processes', async () => {
+  for (const mode of ['current', 'stale', 'replaced']) {
+    let processReads = 0;
+    const binding = await readClaudeSessionBinding(makeVars(), 'worker', 1500, {
+      pane: async () => ({ paneId: '%owned', panePid: '7' }),
+      process: async () => ({
+        state: 'present',
+        pid: mode === 'replaced' && ++processReads > 1 ? '43' : '42',
+      }),
+      exec: async () => ({
+        exitCode: 0,
+        stderr: '',
+        stdout: JSON.stringify({
+          record: { ...registration, statusUpdatedAt: mode === 'stale' ? 1100 : 2000 },
+          processStartedAt: 900,
+          sessionPath: '/sessions/saved-review.jsonl',
+        }),
+      }),
+    });
+    if (mode === 'current')
+      assert.deepEqual(binding, {
+        sessionId: 'saved-review',
+        sessionPath: '/sessions/saved-review.jsonl',
+        observedAt: 2000,
+      });
+    else assert.equal(binding, null);
+  }
+});
 
 test('native registration binds pid generation and an explicit native turn state', () => {
   assert.deepEqual(claudeProcessRegistration(registration, '42', 900), {

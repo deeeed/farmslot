@@ -685,7 +685,7 @@ harness extension is added; existing review consumers inherit the behavior.
 
 ## Amendment 14: compact WARM delta packets, 2026-11-13
 
-**Status:** Proposed, following the lead's approved direction.
+**Status:** Accepted, lead-approved scope, 2026-11-13.
 **Specification:** [WARM delta packets](../reference/review-modes-warm-cold.md#warm-delta-packets).
 
 ### Decision

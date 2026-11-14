@@ -60,6 +60,7 @@ function piTool(name: string, args: unknown): NativeSessionTool {
  */
 export const piNativeAdapter: NativeAdapter = {
   capabilities: {
+    contextCompaction: false,
     modes: ['default'],
     approvalModes: ['ask', 'bypass'],
     streaming: true,

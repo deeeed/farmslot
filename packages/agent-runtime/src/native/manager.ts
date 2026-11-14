@@ -18,6 +18,8 @@ import {
   type NativeApprovalMode,
   type NativeCommandObservation,
   type NativeCommandReceipt,
+  type NativeContextCompactionRecord,
+  type NativeContextCompactionRequest,
   type NativeProfileInfo,
   type NativeSessionCreateParams,
   type NativeSessionEnsureParams,
@@ -241,6 +243,7 @@ interface SessionRecord {
   context: Record<string, string>;
   sending: boolean;
   configuring?: boolean;
+  compacting?: string;
   /** A read-only checkout: no checkpoints. */
   readOnlyCheckout?: boolean;
   /** Git checkpoints around each turn, or none (no Git working tree); opened when first needed. */
@@ -649,6 +652,10 @@ export class NativeSessionManager {
       ? workerLaunch.effort
       : (params.effort ?? previous?.info.effort ?? transport.defaultEffort);
     const info: NativeSessionInfo = {
+      ...(previous?.info.contextCompactions &&
+      previous.info.nativeSessionId === params.resumeSessionId
+        ? { contextCompactions: structuredClone(previous.info.contextCompactions) }
+        : {}),
       id: previous?.info.id ?? reservedId ?? randomUUID(),
       generation: randomUUID(),
       hostPid: process.pid,
@@ -1122,6 +1129,7 @@ export class NativeSessionManager {
     if (
       (record.info.state !== 'idle' && !stopped) ||
       record.sending ||
+      record.compacting ||
       record.pendingRequests.size ||
       [...record.commands.values()].some((command) => command.queued)
     )
@@ -1443,6 +1451,7 @@ export class NativeSessionManager {
       record.info.state !== 'idle' ||
       record.sending ||
       record.configuring ||
+      record.compacting ||
       record.pendingRequests.size ||
       [...record.commands.values()].some(
         (command) =>
@@ -1465,6 +1474,83 @@ export class NativeSessionManager {
     } finally {
       record.configuring = false;
     }
+  }
+
+  async compactWorker(
+    owner: string,
+    id: string,
+    generation: string,
+    leaseId: string,
+    request: NativeContextCompactionRequest,
+  ): Promise<NativeContextCompactionRecord> {
+    this.assertWorkerLease(owner, id, generation, leaseId);
+    const record = this.owned(owner, id);
+    this.assertAccountCurrent(record);
+    if (record.info.nativeSessionId !== request.nativeSessionId)
+      throw new Error('Compaction must preserve the exact provider session');
+    const focusSha256 = createHash('sha256').update(request.focus).digest('hex');
+    const existing = record.info.contextCompactions?.find(
+      (row) => row.operationId === request.operationId,
+    );
+    if (existing) {
+      if (
+        existing.lineageId !== request.lineageId ||
+        existing.packetDigest !== request.packetDigest ||
+        existing.nativeSessionId !== request.nativeSessionId ||
+        existing.focusSha256 !== focusSha256
+      )
+        throw new Error('Compaction operation identity changed');
+      return structuredClone(existing);
+    }
+    if (
+      !record.adapter ||
+      record.info.state !== 'idle' ||
+      record.sending ||
+      record.compacting ||
+      record.configuring ||
+      record.pendingRequests.size ||
+      [...record.commands.values()].some(
+        (c) => c.generation === generation && ['pending', 'unknown', 'accepted'].includes(c.state),
+      )
+    )
+      throw new Error('Compaction requires an idle owned worker without pending input');
+    const result: NativeContextCompactionRecord = {
+      operationId: request.operationId,
+      lineageId: request.lineageId,
+      packetDigest: request.packetDigest,
+      nativeSessionId: request.nativeSessionId,
+      focusSha256,
+      requestedAt: new Date().toISOString(),
+      status: 'pending',
+    };
+    record.info.contextCompactions = [...(record.info.contextCompactions ?? []), result];
+    if (!record.info.capabilities.contextCompaction || !record.adapter.compact) {
+      result.status = 'unsupported';
+      result.reason = 'Runner adapter has no structured context compaction capability';
+      this.persist(record);
+      return structuredClone(result);
+    }
+    record.compacting = request.operationId;
+    try {
+      this.persist(record);
+      const evidence = await record.adapter.compact(request.focus);
+      this.assertWorkerLease(owner, id, generation, leaseId, true);
+      this.assertAccountCurrent(record);
+      if (evidence.nativeSessionId !== request.nativeSessionId || !evidence.boundaryId)
+        throw new Error('Compaction evidence belongs to another session');
+      result.evidence = evidence;
+      result.status = 'confirmed';
+      this.persist(record);
+    } catch (error) {
+      // The provider may have compacted. Keep uncertainty; never resend this operation.
+      this.assertWorkerLease(owner, id, generation, leaseId, true);
+      result.status = 'unconfirmed';
+      result.reason = error instanceof Error ? error.message : String(error);
+      this.persist(record);
+    } finally {
+      record.compacting = undefined;
+    }
+    return structuredClone(result);
   }
 
   private updateConversation(
@@ -1626,6 +1712,11 @@ export class NativeSessionManager {
         ...(existing.steered ? { steered: true } : {}),
       };
     }
+    if (
+      record.compacting ||
+      record.info.contextCompactions?.some((row) => ['pending', 'unconfirmed'].includes(row.status))
+    )
+      throw new Error('Context compaction is unconfirmed; task input remains fenced');
     if (!record.adapter || ['starting', 'closing', 'closed', 'failed'].includes(record.info.state))
       throw new Error('Native session cannot accept input in its current state');
     if (

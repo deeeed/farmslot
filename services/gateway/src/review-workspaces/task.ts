@@ -14,6 +14,7 @@ import {
 } from '@farmslot/agent-runtime';
 import { durableWrite } from '@farmslot/agent-runtime/native/storage';
 import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
+import { readCoveragePolicy } from '@farmslot/agent-runtime/scripts/review-coverage.cjs';
 import {
   ACCEPTANCE_STATUS_ARTIFACT,
   enumerateChecklistCheckboxes,
@@ -52,6 +53,7 @@ import {
 } from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
 import { loadPoolConfigs } from '../fleet/state.js';
+import { readLocalCommand } from '../host-services/read-command.js';
 import { collectSupportFiles } from '../node-support/files.js';
 import { normalizeReviewRecommendation, reviewPolicyFindings } from '../review/approval-policy.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
@@ -67,10 +69,10 @@ import {
   reviewCommitFromMarkdown,
   reviewRecommendationFromMarkdown,
 } from '../run-engine/review-artifacts.js';
-import { requestNativeNode } from '../runners/native/node.js';
+import { execNativeNodeArgv, requestNativeNode } from '../runners/native/node.js';
 import { assertReviewWorkspaceRun } from '../runners/native/review-workspace.js';
 import { runnerObservabilitySnapshotFiles } from '../runners/runner-observability.js';
-import { getRun, runsDirectory } from '../runs/store.js';
+import { getRun, getRunWithArchived, runsDirectory } from '../runs/store.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 import { readConfiguredExecutionTemplateSnapshot } from '../tasks/execution-template-catalog.js';
 import { collectSubtaskMetricsFromTaskDir } from '../tasks/subtask-metrics.js';
@@ -81,6 +83,12 @@ import {
   resolveWorkerTerminalContract,
 } from '../tasks/worker-terminal-contract.js';
 
+import type { ReviewCompactionPreparation } from './compaction.js';
+import {
+  type PreparedReviewCoverage,
+  prepareReviewCoverage,
+  verifyReviewCoverage,
+} from './coverage.js';
 import { resolveReviewWorkspacePool } from './pool.js';
 
 const exec = promisify(execFile);
@@ -139,6 +147,45 @@ interface Snapshot {
   terminalContract: WorkerTerminalContractDocument;
   prompt: string;
   files: Array<{ path: string; sha256: string }>;
+  compaction?: ReviewCompactionPreparation;
+}
+
+export interface ReviewWorkspaceTaskLaunch {
+  prompt: string;
+  taskFile: string;
+  compaction?: ReviewCompactionPreparation;
+}
+
+function reviewCoverageInstructions(coverage: PreparedReviewCoverage): string[] {
+  return [
+    '',
+    '## Coverage rows',
+    '',
+    'Full scope and criteria tables remain mandatory. Register all required child checklist units during setup; inspect work in its normal order. Before completing the parent, author current findings and prose in artifacts/review.md and add coverage to artifacts/review-result.json. The existing parent mark complete command composes artifacts/review-ledger.md, the full Diff scope table and artifacts/review-coverage.json before validation. Do not author duplicate tables.',
+    'Coverage shape: {"schemaVersion":1,"applicabilityChecked":true,"reuse":["validated row key"],"rows":[...]}. For a current scope row use {"kind":"scope","path":"relative/file","scope":"ticket AC or required test","justification":"reason or finding","sources":["relative/file"],"artifacts":[]}. For a current criterion use {"kind":"criterion","unitId":"registered child id, or root without children","stepNumber":1,"outcome":"PASS|FINDING|NOT_APPLICABLE|NOT_CHECKED","evidence":"evidence or explicit gap","sources":["inspected source path"],"artifacts":[]}. A packet row key may replace kind/identity fields for an update.',
+    'Sources are repository-relative paths. Artifact citations are separate proof under artifacts/, never acceptance-status.json or managed review outputs. Empty arrays must be explicit. Every current contribution path and registered criterion requires an update or validated reuse; do not turn missing evidence into PASS. Row data never grants a current-head verdict. Version-1 result readers ignore this additive coverage field.',
+    ...(coverage.packet
+      ? [
+          'For reuse, first verify current-delta applicability. Only inputs/warm-delta.json reusableKeys may go in reuse. New paths, changed assumptions, hashes or rule bindings require current rows. Preserve prior unresolved findings in the current typed issues. Use frozen baseline references on demand; do not reread old task commands.',
+        ]
+      : ['First reviews evaluate all rows and use reuse: [].']),
+  ];
+}
+
+async function coverageGit(run: Run, args: string[]): Promise<string> {
+  const workspace = run.reviewWorkspace;
+  if (!workspace) throw new Error('Review coverage requires its owned workspace');
+  const argv = ['git', '-C', workspace.checkoutPath, ...args];
+  const result =
+    workspace.executionNodeId === 'local'
+      ? await readLocalCommand(argv.map(shellQuote).join(' '), {
+          cwd: workspace.checkoutPath,
+          timeout: 30000,
+          maxBuffer: 4 * 1024 * 1024,
+        })
+      : await execNativeNodeArgv(run.nativeOwnerPrincipalId!, workspace.machine, argv, 30000);
+  if (result.exitCode !== 0) throw new Error(result.stderr || 'Review coverage inventory failed');
+  return result.stdout;
 }
 
 function ownedRun(runId: string, deps: Dependencies) {
@@ -283,7 +330,7 @@ export async function materializeReviewWorkspaceTask(
   runId: string,
   subject: ReviewWorkspaceSubject,
   deps: Dependencies = defaults,
-): Promise<{ prompt: string; taskFile: string }> {
+): Promise<ReviewWorkspaceTaskLaunch> {
   const run = structuredClone(ownedRun(runId, deps));
   if (isTerminalRunStatus(run.status)) throw new Error('Static review run is already terminal');
   assertSubject(subject);
@@ -334,8 +381,21 @@ export async function materializeReviewWorkspaceTask(
       path: file.relativePath,
       sha256: file.sha256,
     }));
+    const coverage = await prepareReviewCoverage({
+      run,
+      subject,
+      instructionFiles: guidanceManifest,
+      viewDir: (id) => viewDirFor(id, deps),
+      getPrior: async (id) => deps.getRun(id) ?? getRunWithArchived(id),
+      git: (args) => coverageGit(run, args),
+    });
+    if (coverage)
+      terminalContract.commands.complete.artifacts.push(
+        'artifacts/review-coverage.json',
+        'artifacts/review-ledger.md',
+      );
     const taskDir = run.reviewWorkspace.taskPath;
-    const prompt = `Read ${shellQuote(path.posix.join(taskDir, 'TASK.md'))}. Run ${shellQuote(path.posix.join(taskDir, 'mark'))} start before reviewing. Follow the exact CHECKLIST.md and frozen inputs. Review source read-only and write reports only in the task directory. Finish through the shared mark command; native idle is not task completion.`;
+    const prompt = `${coverage?.packet ? `Read ${shellQuote(path.posix.join(taskDir, 'inputs/warm-delta.json'))} first. This is the current review; old task commands are obsolete. ` : ''}Read ${shellQuote(path.posix.join(taskDir, 'TASK.md'))}. Run ${shellQuote(path.posix.join(taskDir, 'mark'))} start before reviewing. Follow the exact CHECKLIST.md and frozen inputs. Review source read-only and write reports only in the task directory. Finish through the shared mark command; native idle is not task completion.`;
     const exampleIssue = {
       file: 'src/file.ts',
       line: 1,
@@ -355,7 +415,9 @@ export async function materializeReviewWorkspaceTask(
         ? ['Frozen skills, libraries and reference checkouts: inputs/review-support.json.']
         : []),
       `Review diff: git -C ${shellQuote(run.reviewWorkspace.checkoutPath)} ${GIT_DIFF_COMMAND.slice(4)} ${subject.baseSha}...${subject.headSha}`,
-      `Whole-contribution inventory: git -C ${shellQuote(run.reviewWorkspace.checkoutPath)} diff --name-status ${subject.contributionBaseSha ?? subject.baseSha}...${subject.headSha}`,
+      coverage
+        ? 'Whole-contribution inventory is frozen in inputs/instruction-manifest.json reviewCoverage.scopePaths; preserve all scope rows.'
+        : `Whole-contribution inventory: git -C ${shellQuote(run.reviewWorkspace.checkoutPath)} diff --name-status ${subject.contributionBaseSha ?? subject.baseSha}...${subject.headSha}`,
       ...(run.repeatReviewContext
         ? [
             'Previous review: inputs/prior-review.json. Recheck its unresolved findings against the review diff and retain a consolidated result.',
@@ -375,6 +437,7 @@ export async function materializeReviewWorkspaceTask(
       `  "issues": ${JSON.stringify([exampleIssue])}`,
       '}',
       '```',
+      ...(coverage ? reviewCoverageInstructions(coverage) : []),
     ].join('\n');
     const handoff = buildHandoffMetadata({
       attemptId: run.id,
@@ -415,7 +478,9 @@ export async function materializeReviewWorkspaceTask(
           DOMAIN: run.domain ?? '',
           TEMPLATE: run.executionTemplate!.id,
         },
-        description: subject.body,
+        description: coverage?.packet
+          ? 'Validated WARM continuation. Frozen current scope and prior findings are in inputs/warm-delta.json; full PR facts remain in inputs/review-subject.json. Use baseline references only when needed, rather than reopening obsolete task directories.'
+          : subject.body,
         acceptanceCriteria: [],
         addendum: instructions,
         hasTicketData: false,
@@ -429,8 +494,18 @@ export async function materializeReviewWorkspaceTask(
       );
     await writeFile(
       path.join(bundleDir, 'inputs/instruction-manifest.json'),
-      `${JSON.stringify({ domain: run.domain ?? null, executionTemplate: run.executionTemplate, files: guidanceManifest }, null, 2)}\n`,
+      `${JSON.stringify({ domain: run.domain ?? null, executionTemplate: run.executionTemplate, files: guidanceManifest, ...(coverage ? { reviewCoverage: coverage.policy } : {}) }, null, 2)}\n`,
     );
+    if (coverage?.priorIndexBytes)
+      await writeFile(
+        path.join(bundleDir, 'inputs/prior-review-coverage.json'),
+        coverage.priorIndexBytes,
+      );
+    if (coverage?.packet)
+      await writeFile(
+        path.join(bundleDir, 'inputs/warm-delta.json'),
+        JSON.stringify(coverage.packet, null, 2) + '\n',
+      );
     if (run.repeatReviewContext)
       await writeFile(
         path.join(bundleDir, 'inputs/prior-review.json'),
@@ -448,6 +523,14 @@ export async function materializeReviewWorkspaceTask(
     const files = await collectTaskBundle(bundleDir);
     snapshot = {
       version: 1,
+      ...(coverage?.packet
+        ? {
+            compaction: {
+              packetDigest: sha256(JSON.stringify(coverage.packet, null, 2) + '\n'),
+              focus: coverage.packet.compactionFocus,
+            },
+          }
+        : {}),
       runId,
       workspace: structuredClone(run.reviewWorkspace),
       subject,
@@ -500,6 +583,7 @@ export async function materializeReviewWorkspaceTask(
   return {
     prompt: snapshot.prompt,
     taskFile: await materializeReviewViewer(run, bundleDir, deps),
+    ...(snapshot.compaction ? { compaction: snapshot.compaction } : {}),
   };
 }
 
@@ -711,7 +795,35 @@ export async function readReviewWorkspaceCompletion(
   const mirror = await mkdtemp(path.join(os.tmpdir(), 'workspace-review-completion-'));
   const viewer = viewDirFor(run.id, deps);
   try {
-    await slotCopyDir(io, snapshot.workspace.artifactPath, path.join(mirror, 'artifacts'));
+    await slotCopyDir(io, path.posix.join(taskDir, 'artifacts'), path.join(mirror, 'artifacts'));
+    const manifest = await readFile(
+      path.join(deps.snapshotRoot(), run.id, 'bundle/inputs/instruction-manifest.json'),
+      'utf8',
+    );
+    if (
+      sha256(manifest) !==
+      snapshot.files.find((file) => file.path === 'inputs/instruction-manifest.json')?.sha256
+    )
+      throw new Error('Frozen review instruction manifest changed');
+    const coveragePolicy = readCoveragePolicy(manifest);
+    if (coveragePolicy && !blocked) {
+      await writeFile(path.join(mirror, 'CHECKLIST.md'), checklist);
+      await mirrorWorkerSubtasks(io, taskDir, mirror, VIEW_SUBTASK_MIRROR);
+      await verifyReviewCoverage(
+        {
+          run,
+          subject: snapshot.subject,
+          instructionFiles: [],
+          viewDir: (id) => viewDirFor(id, deps),
+          getPrior: async (id) => deps.getRun(id) ?? getRunWithArchived(id),
+          git: (args) => coverageGit(run, args),
+        },
+        mirror,
+        coveragePolicy,
+        modelResult,
+        reviewMd,
+      );
+    }
     await writeFile(path.join(mirror, RESULT), `${JSON.stringify(artifact, null, 2)}\n`);
     await writeFile(
       path.join(mirror, 'artifacts/line-comments.json'),
@@ -768,6 +880,11 @@ export async function readReviewWorkspaceCompletion(
         ...(snapshot.files.some((file) => file.path === 'inputs/prior-review.json')
           ? ['inputs/prior-review.json']
           : []),
+        ...snapshot.files
+          .filter((file) =>
+            ['inputs/warm-delta.json', 'inputs/prior-review-coverage.json'].includes(file.path),
+          )
+          .map((file) => file.path),
       ],
     },
   };

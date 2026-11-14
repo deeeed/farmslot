@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 
 import {
   type NativeApprovalMode,
+  type NativeContextCompactionEvidence,
   nativeResultJsonSchema,
   type NativeSessionResponse,
   type NativeSessionTool,
@@ -18,9 +19,23 @@ import type { NativeAdapter, NativeEventInput } from './types.js';
 
 type JsonRecord = Record<string, unknown>;
 
+interface PendingContextCompaction {
+  resolve(evidence: NativeContextCompactionEvidence): void;
+  reject(error: Error): void;
+  evidence?: NativeContextCompactionEvidence;
+}
+
 const { claudeReadOnlyReviewArgs } = createRequire(import.meta.url)(
   '../../scripts/workspace-trust.cjs',
 ) as { claudeReadOnlyReviewArgs: readonly string[] };
+const { claudeCompactionBoundary } = createRequire(import.meta.url)(
+  '../../scripts/context-compaction.cjs',
+) as {
+  claudeCompactionBoundary: (
+    message: unknown,
+    nativeSessionId: string,
+  ) => NativeContextCompactionEvidence | undefined;
+};
 
 /** Upstream fixed hook-history loss in 2.1.83 and interrupted-tool resume in 2.1.265. */
 export function claudeResumeUnavailableReason(version: string): string | undefined {
@@ -115,6 +130,7 @@ export const claudeNativeAdapter: NativeAdapter = {
     questions: true,
     interrupt: true,
     resume: true,
+    contextCompaction: true,
     structuredResultSchemas: [PIPELINE_VISUAL_RESULT_SCHEMA, PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA],
     resumeAcrossWorkspaces: true,
   },
@@ -149,6 +165,7 @@ export const claudeNativeAdapter: NativeAdapter = {
           timer: NodeJS.Timeout;
         }
       | undefined;
+    let pendingCompaction: PendingContextCompaction | undefined;
     let resolveInitialized: (() => void) | undefined;
     let rejectInitialized: ((error: Error) => void) | undefined;
     const pendingCommands = new Map<string, string>();
@@ -198,7 +215,8 @@ export const claudeNativeAdapter: NativeAdapter = {
         ['user', 'assistant', 'stream_event', 'result', 'control_request'].includes(
           String(message.type),
         ) ||
-        (message.type === 'system' && message.subtype === 'init');
+        (message.type === 'system' &&
+          ['init', 'compact_boundary'].includes(String(message.subtype)));
       const sessionId =
         conversationEvent && typeof message.session_id === 'string'
           ? message.session_id
@@ -217,6 +235,29 @@ export const claudeNativeAdapter: NativeAdapter = {
             data: { identityConfirmed: true },
           });
         }
+      }
+
+      if (pendingCompaction) {
+        if (message.type === 'system' && message.subtype === 'compact_boundary') {
+          pendingCompaction.evidence = claudeCompactionBoundary(message, nativeSessionId);
+        } else if (message.type === 'result') {
+          const pending = pendingCompaction;
+          pendingCompaction = undefined;
+          if (message.is_error === true || !pending.evidence)
+            pending.reject(new Error('Compaction ended without an exact-session manual boundary'));
+          else pending.resolve(pending.evidence);
+        } else if (
+          toolUseBlocks(record(message.message).content).length ||
+          (message.type === 'control_request' && record(message.request).subtype === 'can_use_tool')
+        ) {
+          const pending = pendingCompaction;
+          pendingCompaction = undefined;
+          pending.reject(new Error('Compaction attempted ordinary tool work'));
+          process.child.kill();
+        }
+        // Maintenance replay, summaries and result frames cannot accept a task command
+        // or finish a reviewer turn. Provider history remains available for usage accounting.
+        return;
       }
 
       if (message.type === 'control_response') {
@@ -488,6 +529,10 @@ export const claudeNativeAdapter: NativeAdapter = {
         if (!initialized)
           rejectInitialized?.(failure ?? new Error('Claude closed before initialization'));
         closed = true;
+        pendingCompaction?.reject(
+          failure ?? protocolFailure ?? new Error('Runner closed during compaction'),
+        );
+        pendingCompaction = undefined;
         publish({
           type: 'session.closed',
           ...(failure ? { status: 'failed' } : {}),
@@ -497,7 +542,7 @@ export const claudeNativeAdapter: NativeAdapter = {
     );
 
     const changeApprovalMode = async (mode: NativeApprovalMode): Promise<void> => {
-      if (commandId || pendingApprovalMode)
+      if (commandId || pendingApprovalMode || pendingCompaction)
         throw new Error('Wait for the current turn before changing approvals');
       await new Promise<void>((resolve, reject) => {
         const requestId = `farmslot-approval-mode:${randomUUID()}`;
@@ -566,7 +611,32 @@ export const claudeNativeAdapter: NativeAdapter = {
     return {
       nativeSessionId,
       setApprovalMode: changeApprovalMode,
+      async compact(focus) {
+        if (
+          !focus.trim() ||
+          commandId ||
+          turnStarted ||
+          pendingCompaction ||
+          pendingApprovalMode ||
+          pendingRequests.size ||
+          closed
+        )
+          throw new Error('Compaction requires an idle retained session');
+        return new Promise<NativeContextCompactionEvidence>((resolve, reject) => {
+          pendingCompaction = { resolve, reject };
+          try {
+            process.write({
+              type: 'user',
+              message: { role: 'user', content: `/compact ${focus}` },
+            });
+          } catch (error) {
+            pendingCompaction = undefined;
+            reject(error);
+          }
+        });
+      },
       async send(text, id) {
+        if (pendingCompaction) throw new Error('Compaction must finish before task delivery');
         if (!text) throw new Error('Claude prompt must not be empty');
         // Correlation is assigned before writing. Native replay may arrive after
         // tool requests and streamed output, so send must not wait for that replay.

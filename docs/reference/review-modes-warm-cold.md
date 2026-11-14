@@ -415,7 +415,7 @@ Grant-time head records provenance. Later fix heads on the same owned branch use
 
 ## WARM delta packets
 
-Under proposed ADR-063 Amendment 14, the gateway freezes `inputs/warm-delta.json`
+Under ADR-063 Amendment 14, the gateway freezes `inputs/warm-delta.json`
 with lineage and validated baseline identity, prior/current heads, compared
 ranges, unresolved findings, changed audit rows and required completion actions.
 Existing delta/range-diff rules apply; merge-resolution changes remain visible.
@@ -468,6 +468,8 @@ same-attempt recovery skips compaction and preserves its in-progress work.
 Validation covers stale hashes, missing evidence, new scope paths, rule changes,
 merge resolutions, pending/confirmed restart recovery and controlled WARM cost.
 Report delta calls/output and compaction separately, under normal accounting.
+Use `scripts/runner-validation/warm-delta-packet.recipe.json` for the opt-in
+coverage-integrity and controlled gateway proof.
 The measured target is 8–12 delta calls and under 10,000 output tokens, not a quota
 or a reason to omit required inspection. Billing changes remain separate.
 

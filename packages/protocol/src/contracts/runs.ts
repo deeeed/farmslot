@@ -558,6 +558,8 @@ export interface ReviewSessionTrace {
   refusalReason?: ReviewSessionRefusalReason;
   /** Why a retained session was unavailable for a COLD review; expiry may require full scope. */
   fallback?: ReviewSessionFallback;
+  /** Persisted before maintenance delivery, reconciled by exact session/packet identity. */
+  compaction?: import('../rpc/native-session.js').NativeContextCompactionRecord;
 }
 
 /** Recorded generation display values, projected by the gateway from retained review records. */

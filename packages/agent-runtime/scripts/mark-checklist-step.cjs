@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
+const { materializeReviewCoverage } = require('./review-coverage.cjs');
 const { validateEvidenceManifest, evidenceManifestArtifacts } = require('./evidence-manifest.cjs');
 const {
   expandedArtifactsForCommand,
@@ -516,6 +517,7 @@ function resolveTarget(taskPath, stepNumber, markLast) {
 }
 
 const taskDir = path.dirname(signalPath);
+if (terminalCommand === 'complete') materializeReviewCoverage(taskDir);
 
 // Validate existing declarations before a progress mark changes the checklist or
 // signal. Missing manifests are normal before proof capture; reviewers must be

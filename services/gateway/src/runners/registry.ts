@@ -18,6 +18,7 @@ export {
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 
 import { parse as parseLaunchShell } from 'shell-quote';
@@ -225,6 +226,11 @@ export interface RunnerSessionContinuation {
     args: (sessionId: string) => string[];
     workspace: 'retained' | 'current';
     reservation?: 'create-chat';
+    /** Missing means unsupported on this transport. The adapter owns exact CLI syntax. */
+    compaction?: {
+      protocol: 'claude-stream-json';
+      args: (sessionId: string, model: string) => string[];
+    };
   } | null;
 }
 
@@ -443,7 +449,19 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     ],
     sessionContinuation: {
       native: true,
-      terminal: { args: (sessionId) => ['--resume', sessionId], workspace: 'retained' },
+      terminal: {
+        args: (sessionId) => ['--resume', sessionId],
+        workspace: 'retained',
+        compaction: {
+          protocol: 'claude-stream-json',
+          args: (sessionId, model) => {
+            const adapter = createRequire(import.meta.url)(
+              '../../../../packages/agent-runtime/scripts/context-compaction.cjs',
+            ) as { claudeCompactionArgs: (sessionId: string, model: string) => string[] };
+            return adapter.claudeCompactionArgs(sessionId, model);
+          },
+        },
+      },
     },
     nativeTransport: 'claude-stream-json',
     nativeChoices: { models: [...RUNNER_PICKER_MODELS.claude], modes: ['default'] },

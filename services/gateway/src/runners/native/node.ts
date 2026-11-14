@@ -3,6 +3,7 @@ import { WebSocket } from 'ws';
 import {
   NATIVE_WORKER_CANCEL,
   NATIVE_WORKER_CLOSE,
+  NATIVE_WORKER_COMPACT,
   NATIVE_WORKER_CONFIRM_STOPPED,
   NATIVE_WORKER_ENSURE,
   NATIVE_WORKER_METHODS,
@@ -294,7 +295,7 @@ export async function routeNativeExecution(
         ...(requester ? { requester } : {}),
         ...(isNativeObservedRead() ? { observe: true } : {}),
       },
-      { timeout: 60_000, requireSameConnection: true },
+      { timeout: method === NATIVE_WORKER_COMPACT ? 185_000 : 60_000, requireSameConnection: true },
     );
   } catch (error) {
     // A timeout is retryable only while the same issued owner still has authority.

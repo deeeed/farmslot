@@ -1,5 +1,6 @@
 import type {
   NativeApprovalMode,
+  NativeContextCompactionEvidence,
   NativeResultSchema,
   NativeSessionCapabilities,
   NativeSessionEvent,
@@ -40,6 +41,8 @@ export interface NativeAdapterSession {
   nativeSessionId: string;
   capabilities?: NativeSessionCapabilities;
   send(text: string, commandId: string): Promise<void>;
+  /** No ordinary turn, task signal or source inspection is permitted during maintenance. */
+  compact?(focus: string): Promise<NativeContextCompactionEvidence>;
   /** Changes only the next idle standalone turn. Never grants worker authority. */
   setApprovalMode?(mode: NativeApprovalMode): Promise<void>;
   /** Adds input to the running turn (`capabilities.steer`); rejects when the runner refuses it. */

@@ -6,6 +6,7 @@ import { resolveTmuxPaneId } from '../core/tmux.js';
 import {
   readClaudeProcessState,
   readClaudePromptAcceptance,
+  readClaudeSessionBinding,
 } from './claude-process-observability.js';
 import { readSlotClockMs } from './observability-clock.js';
 import {
@@ -250,6 +251,7 @@ PY`;
 }
 
 export const claudeHookObservability: RunnerObservability = {
+  getSessionBinding: readClaudeSessionBinding,
   async listSessionFiles(vars) {
     const result = await execOnSlot(vars, buildClaudeSessionDiscoveryCommand(vars.remoteRepo));
     if (result.exitCode !== 0) throw new Error('Claude session discovery failed');

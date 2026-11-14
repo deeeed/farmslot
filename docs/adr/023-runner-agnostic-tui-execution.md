@@ -262,7 +262,7 @@ owns the contract. No public command, flag, SDK export or harness extension is a
 
 ## Amendment 3: continuation context compaction, 2026-11-13
 
-**Status:** Proposed, following the lead's approved direction.
+**Status:** Accepted, lead-approved scope, 2026-11-13.
 
 ### Decision
 

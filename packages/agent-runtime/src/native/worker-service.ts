@@ -5,6 +5,7 @@ import {
   NATIVE_WORKER_CANCEL,
   NATIVE_WORKER_CANCEL_COMMAND,
   NATIVE_WORKER_CLOSE,
+  NATIVE_WORKER_COMPACT,
   NATIVE_WORKER_CONFIRM_STOPPED,
   NATIVE_WORKER_ENSURE,
   NATIVE_WORKER_INTERRUPT,
@@ -38,7 +39,10 @@ export async function routeNativeWorkerSession(
       !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(params.sessionId)
     )
       throw new NativeSessionMethodError('INVALID_PARAMS', 'Expected a reserved worker session ID');
-    return { stateDirectory: client.prepareWorkerState(owner, params.sessionId) };
+    return {
+      stateDirectory: client.prepareWorkerState(owner, params.sessionId),
+      supportsContextCompaction: client.metadata().supportsWorkerCompaction,
+    };
   }
   let request;
   try {
@@ -54,6 +58,7 @@ export async function routeNativeWorkerSession(
       resumeCommandId: params.resumeCommandId,
       commandId: params.commandId,
       text: params.text,
+      compaction: params.compaction,
       requestId: params.requestId,
       response: params.response,
       after: params.after,
@@ -63,6 +68,12 @@ export async function routeNativeWorkerSession(
     throw new NativeSessionMethodError('INVALID_PARAMS', (error as Error).message);
   }
   try {
+    if (request.method === NATIVE_WORKER_COMPACT)
+      return await client.compact(
+        owner,
+        { sessionId: request.id, generation: request.generation, leaseId: request.leaseId },
+        request.compaction,
+      );
     if (request.method === NATIVE_WORKER_READ)
       return await observeExistingNativeHost(() =>
         client.readWorker(

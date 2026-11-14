@@ -3,6 +3,7 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import {
+  NATIVE_WORKER_COMPACT,
   NATIVE_WORKER_ENSURE,
   NATIVE_WORKER_READ,
   NATIVE_WORKER_RESUME,
@@ -18,6 +19,7 @@ import {
 } from '@farmslot/agent-runtime/native/worker-launch';
 import {
   type AgentContext,
+  isRecord,
   isTerminalRunStatus,
   nativeProfileSessionParams,
   type NativeSessionInfo,
@@ -31,6 +33,11 @@ import { upsertAgentContext } from '../../agents/contexts.js';
 import { loadMachinePool, type RawProjectJson } from '../../core/config.js';
 import { resolveProjectCommandEnv } from '../../core/project-env.js';
 import { isNodeTransportUnavailableError } from '../../fleet/node-rpc.js';
+import {
+  prepareReviewCompaction,
+  type ReviewCompactionPreparation,
+  unsupportedCompaction,
+} from '../../review-workspaces/compaction.js';
 import {
   reviewWorkspaceCommandEnvOptions,
   reviewWorkspaceReadOnlyRoots,
@@ -205,6 +212,7 @@ export async function launchReviewWorkspaceWorker(input: {
   prompt: string;
   /** Explicit operator continuation, never a new review/session admission. */
   resumeCommandId?: string;
+  compaction?: ReviewCompactionPreparation;
   deadline: number;
   assertCurrent: () => void | Promise<void>;
 }): Promise<NativeSessionReadResult> {
@@ -466,6 +474,38 @@ export async function launchReviewWorkspaceWorker(input: {
   await check();
   const snapshot = await readReviewWorkspaceWorker(run.id, { deadline: input.deadline });
   const receipt = snapshot.commands.find((command) => command.commandId === binding.commandId);
+  await prepareReviewCompaction({
+    runId: run.id,
+    preparation: input.compaction,
+    providerSessionId: snapshot.session.nativeSessionId ?? '',
+    unfinishedRecovery: Boolean(input.resumeCommandId || receipt),
+    assertCurrent: async () => {
+      await check();
+    },
+    execute: async (request) => {
+      if (!snapshot.session.capabilities.contextCompaction)
+        return unsupportedCompaction(
+          request,
+          'Runner adapter has no structured compaction capability',
+        );
+      const state = await route(binding.ownerPrincipalId, NATIVE_WORKER_STATE, target(binding));
+      if (!isRecord(state) || state.supportsContextCompaction !== true)
+        return unsupportedCompaction(
+          request,
+          'Execution node has no structured compaction capability',
+        );
+      await check();
+      // Maintenance is sent once; uncertain replies are reconciled through the saved record.
+      return routeNativeExecution(binding.ownerPrincipalId, NATIVE_WORKER_COMPACT, {
+        ...target(binding),
+        compaction: request,
+      });
+    },
+    reconcile: async (operationId) =>
+      (
+        await readReviewWorkspaceWorker(run.id, { deadline: input.deadline })
+      ).session.contextCompactions?.find((row) => row.operationId === operationId),
+  });
   if (!receipt) {
     await check();
     await route(binding.ownerPrincipalId, NATIVE_WORKER_SEND, {

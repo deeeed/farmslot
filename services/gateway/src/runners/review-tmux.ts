@@ -6,6 +6,7 @@ import { nativeRunnerDefinitions } from '@farmslot/agent-runtime/native/registry
 import {
   isRecord,
   isTerminalRunStatus,
+  type NativeContextCompactionRequest,
   parseGitHubRef,
   type Run,
   type RunnerPromptAcceptance,
@@ -18,6 +19,11 @@ import { loadMachinePool, loadProjectVars } from '../core/config.js';
 import { execFileArgv } from '../core/exec.js';
 import { machineShellEnv, resolveProjectCommandEnv } from '../core/project-env.js';
 import { WarmReviewRefusal } from '../review/session-mode.js';
+import {
+  prepareReviewCompaction,
+  type ReviewCompactionPreparation,
+  unsupportedCompaction,
+} from '../review-workspaces/compaction.js';
 import {
   bindReviewWorkspaceSupportValue,
   reviewWorkspaceReadOnlyRoots,
@@ -136,6 +142,48 @@ async function reviewEnvironment(run: Run) {
         : {}),
     },
   });
+}
+
+async function reviewTerminalCompaction(
+  run: Run,
+  action: 'execute' | 'inspect',
+  request: NativeContextCompactionRequest,
+  assertCurrent: () => Promise<unknown>,
+): Promise<unknown> {
+  assertNativeRunOwner(run);
+  const workspace = run.reviewWorkspace!;
+  const runner = run.metrics.runner!;
+  const capability = getRunnerDefinition(runner).sessionContinuation.terminal?.compaction;
+  if (action === 'execute' && !capability)
+    return unsupportedCompaction(
+      request,
+      'Runner adapter has no structured terminal compaction capability',
+    );
+  const pool = await loadMachinePool(workspace.machine);
+  const input = {
+    action,
+    request,
+    runner,
+    cwd: workspace.checkoutPath,
+    task: workspace.taskPath,
+    protocol: capability?.protocol,
+    args: capability?.args(request.nativeSessionId, run.metrics.model!),
+    executable: interactiveRunnerExecutable({ runner, machine: pool }),
+    environment: await reviewEnvironment(run),
+    readOnlyRoots: reviewWorkspaceReadOnlyRoots(workspace),
+  };
+  const script = path.posix.join(
+    workspace.taskPath,
+    'inputs/runtime/node_modules/@farmslot/agent-runtime/scripts/review-compaction.cjs',
+  );
+  const argv = ['node', script, JSON.stringify(input)];
+  await assertCurrent();
+  const result =
+    workspace.executionNodeId === 'local'
+      ? await execFileArgv([process.execPath, ...argv.slice(1)], { timeout: 190000 })
+      : await execNativeNodeArgv(run.nativeOwnerPrincipalId!, workspace.machine, argv, 190000);
+  if (result.exitCode !== 0) throw new Error(result.stderr || 'Review compaction operation failed');
+  return JSON.parse(result.stdout);
 }
 
 export function verifiedWarmReviewSessionId(run: Run): string | undefined {
@@ -346,6 +394,7 @@ export async function launchReviewTmux(
   runId: string,
   prompt: string,
   assertCurrent: () => Promise<unknown>,
+  compaction?: ReviewCompactionPreparation,
 ) {
   await assertCurrent();
   const run = getRun(runId)!;
@@ -356,6 +405,34 @@ export async function launchReviewTmux(
   if (previous?.nativeSession)
     throw new Error('Stop the native reviewer before changing execution transport');
   const runnerSessionId = previous?.runnerSessionId ?? (await reserveReviewSession(run));
+  await prepareReviewCompaction({
+    runId,
+    preparation: compaction,
+    providerSessionId: runnerSessionId ?? '',
+    unfinishedRecovery: Boolean(previous?.promptDeliveryStartedAt),
+    assertCurrent: async () => {
+      await assertCurrent();
+    },
+    execute: async (request) => {
+      if ((await reviewTmuxOperation(run, 'inspect')).exists)
+        throw new Error('The retained task terminal is already live');
+      await assertCurrent();
+      return reviewTerminalCompaction(run, 'execute', request, assertCurrent);
+    },
+    reconcile: async (operationId) =>
+      reviewTerminalCompaction(
+        run,
+        'inspect',
+        {
+          operationId,
+          lineageId: run.repeatReviewContext!.session!.reviewId!,
+          nativeSessionId: runnerSessionId!,
+          packetDigest: compaction!.packetDigest,
+          focus: compaction!.focus,
+        },
+        assertCurrent,
+      ),
+  });
   const prior = run.repeatReviewContext?.priorRunId
     ? await getRunWithArchived(run.repeatReviewContext.priorRunId)
     : undefined;
