@@ -28,7 +28,7 @@ Or invoke the **`fs-release-cut`** agent skill for a succinct NO / SOON / YES si
 
 ## Release test suites
 
-Run `yarn test:release-live` on the release commit before cutting. Don't cut if it fails. It runs the slow suites that the 5 s test rule moved out of the default and CI suites. Add each new `*.live` file to that script.
+Before cutting, run `yarn test:release-live` on the commit you cut from. Don't cut if it fails. It runs the suites listed in that script. When the 5 s test rule moves a test out of the default and CI suites, add the test's suite to that script.
 
 ## Cut workflow
 
