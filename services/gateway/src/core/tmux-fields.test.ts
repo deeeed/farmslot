@@ -1,7 +1,21 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { splitTmuxFields, TMUX_FIELD_SEPARATOR, tmuxFieldFormat } from './tmux-fields.js';
+
+test('the snippets that cannot import the separator still spell it the same way', () => {
+  // runtime/tmux-session-control.ts builds `node -e` scripts that run in their own
+  // process, so they repeat the literal. A drift there would split rows on a token
+  // tmux never printed, which is the defect this contract exists to prevent.
+  const snippets = readFileSync(
+    new URL('../runtime/tmux-session-control.ts', import.meta.url),
+    'utf8',
+  );
+  const literals = snippets.match(/'<<[A-Z_]+>>'/g) ?? [];
+  assert.ok(literals.length >= 2, 'expected the snippet separator literals to be found');
+  for (const literal of literals) assert.equal(literal, `'${TMUX_FIELD_SEPARATOR}'`);
+});
 
 test('the separator cannot be produced by a tmux name, path or command', () => {
   // tmux rejects '.' and ':' in session names and nothing else is excluded, so
