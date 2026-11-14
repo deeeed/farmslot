@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
 
+import { Events } from '@farmslot/protocol';
+
 process.env.FARMSLOT_RUNS_DIR = mkdtempSync(path.join(os.tmpdir(), 'farmslot-ci-merge-test-'));
 
 const prStatusCalls: number[] = [];
@@ -47,8 +49,9 @@ mock.module('../methods/pr.js', {
 // it, and half the gateway imports something from there. The CI config it feeds
 // only sets poll timings, which a merged-on-first-poll PR never reaches.
 
-const { monitorCI } = await import('./service.js');
-const { createRun, getRun, loadAllRuns, updateRun } = await import('../runs/store.js');
+const { initCIMonitor, monitorCI } = await import('./service.js');
+const { createRun, discardUndurableRun, getRun, loadAllRuns, updateRun } =
+  await import('../runs/store.js');
 
 test('ci-watch records the merge it observes so downstream gates can see it', async () => {
   // The gateway learns a PR merged in exactly one place: this poll. It used to
@@ -142,4 +145,63 @@ test('a watch stopped mid-read still records the merge of the PR the run links',
   }
   assert.equal(getRun(run.id)?.prState, 'MERGED');
   assert.equal(getRun(run.id)?.mergedAt, '2026-07-27T12:50:12Z');
+});
+
+function dropLine(lines: string[], prNumber: number): string {
+  const line = lines.find((entry) => entry.includes(`dropped PR #${prNumber}`));
+  assert.ok(line, `expected a drop log for PR #${prNumber}`);
+  return line;
+}
+
+test('a merge response for a run with no PR does not say it links PR #none', async () => {
+  await loadAllRuns();
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000051',
+    prNumber: 411,
+  });
+  const lines: string[] = [];
+  const log = mock.method(console, 'log', (...args: unknown[]) => {
+    lines.push(args.map(String).join(' '));
+  });
+  whileReading = () => updateRun(run.id, { prNumber: undefined });
+  try {
+    const outcome = await monitorCI(run.id, 411, 'deeeed/farmslot', new AbortController().signal);
+    assert.equal(outcome.result, 'aborted');
+  } finally {
+    whileReading = undefined;
+    log.mock.restore();
+  }
+  const line = dropLine(lines, 411);
+  assert.match(line, /the run no longer links a PR/);
+  assert.doesNotMatch(line, /#none/);
+  assert.equal(getRun(run.id)?.prState, undefined);
+});
+
+test('a merge response for a run that is gone says the run is gone', async () => {
+  await loadAllRuns();
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000052',
+    prNumber: 412,
+  });
+  const lines: string[] = [];
+  const log = mock.method(console, 'log', (...args: unknown[]) => {
+    lines.push(args.map(String).join(' '));
+  });
+  // Persist has already written the check. The drop reads the run after this broadcast.
+  initCIMonitor((event) => {
+    if (event === Events.CI_CHECK_UPDATED) void discardUndurableRun(run.id);
+  });
+  try {
+    const outcome = await monitorCI(run.id, 412, 'deeeed/farmslot', new AbortController().signal);
+    assert.equal(outcome.result, 'aborted');
+  } finally {
+    initCIMonitor(() => {});
+    log.mock.restore();
+  }
+  assert.match(dropLine(lines, 412), /the run is gone/);
+  assert.equal(getRun(run.id), undefined);
 });
