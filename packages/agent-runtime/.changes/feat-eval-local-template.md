@@ -1,1 +1,0 @@
-- Parse and validate a trial-owned execution-template snapshot without adding a catalog source.

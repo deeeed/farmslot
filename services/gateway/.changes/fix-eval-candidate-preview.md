@@ -1,1 +1,0 @@
-- Reuse frozen trial-local templates during slot-selection preview for fresh and replayed eval runs.

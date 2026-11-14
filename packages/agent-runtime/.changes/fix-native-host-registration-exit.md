@@ -1,1 +1,0 @@
-- Report early supervisor loss during native host startup and stop detached runner descendants after a host crash.

@@ -1,1 +1,0 @@
-- Record the adapter's effective reasoning request for each worker attempt so default reasoning is no longer labeled off.

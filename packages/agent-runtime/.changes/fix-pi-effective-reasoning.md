@@ -1,1 +1,0 @@
-- Retain the saved transcript path reported by native workers so request settings can be attributed to their conversation.

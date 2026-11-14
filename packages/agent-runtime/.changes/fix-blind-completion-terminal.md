@@ -1,1 +1,0 @@
-- A refused `mark complete` in an autonomous run (every blind eval trial) now says no operator will review it: fix the refusal and mark complete again, or end the run with `mark blocked --reason "<the refusal>"`.

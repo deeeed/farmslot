@@ -1,1 +1,0 @@
-- File listings survive early Git exits. Parked-work failures identify the failed command or receipt, preserving bounded, redacted diagnostics.
