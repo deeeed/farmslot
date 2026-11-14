@@ -177,13 +177,20 @@ isolate, moves each path back; finished-trial cleanup with no Git marker still f
 to the capsule's `trial-ignored/` before the original returns, so nothing is
 deleted.
 
-Some paths stay in place: the project's `blind_keep_ignored` caches (default:
-`node_modules`, `.yarn/*`, `ios/Pods`, `ios/build`, `android/.gradle`,
-`android/build`, `android/app/build`, `build`, `dist`), plus the run's own task
-folder. Each pattern also matches below any directory, so
+Some paths stay in place: the project's `blind_keep_ignored` list, plus the
+run's own task folder. The default list (`DEFAULT_BLIND_KEEP_IGNORED` in
+`blind-trial.ts`) keeps dependency and build caches (`node_modules`, `.yarn/*`,
+iOS Pods and build, Android build and Gradle, `build`, `dist`), the farm-installed
+agent tooling (`.agents/skills`, `.claude/skills`, `.skills-cache`,
+`.cursor/rules`, `.skills.local`, `.tool-versions`), Mobile's deps-setup stamp
+(`temp/farmslot`), generated sources and local build config, and Extension's
+generated `development/` build sources, `shared/lib/manifestFlags.*`,
+`development/.webpack` and `.metamask/cache`. None of these is an earlier run's
+output. Each pattern also matches below any directory, so
 `temp/generated-app/node_modules` and `packages/a/.yarn/cache` stay; isolation
 enters an ignored directory that holds a kept path and moves only its other
-entries. Prepare writes everything else this run uses (runtime
+entries. Git lists a folder that ignores itself together with each entry in it;
+isolation moves the folder once. Prepare writes everything else this run uses (runtime
 context, `prepare.json`, fixtures, readiness) after isolation, in the fixtures
 phase and later. Before isolation it writes the node-support selection outside
 the checkout (`.farmslot-runtime`) and, on a local slot, the signing log under

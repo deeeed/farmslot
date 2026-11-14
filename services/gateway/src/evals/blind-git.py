@@ -1082,9 +1082,15 @@ def ignored_moves(repo, keep):
                 return True
         return False
     moves = []
+    seen = set()
     def visit(rel):
-        if kept(rel):
+        # Git lists a self-ignoring directory and each entry in it: an entry under a
+        # moved, kept or already visited path is settled by that path.
+        parts = rel.split('/')
+        ancestors = ['/'.join(parts[:index]) for index in range(1, len(parts))]
+        if rel in seen or kept(rel) or any(a in moves or kept(a) for a in ancestors):
             return
+        seen.add(rel)
         entry = repo / rel
         if entry.is_dir() and not entry.is_symlink() and holds_kept(rel):
             for child in sorted(entry.iterdir()):

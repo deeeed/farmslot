@@ -483,3 +483,29 @@ test('proof dispatch preserves the sibling restrictions installed during prepare
     assert.deepEqual(boundary.farmConfigRoots, ['/farm/pool', '/farm/.runs', '/farm/projects']);
   }
 });
+
+test('blind isolation keeps farm tooling and the Mobile and Extension runtime files', () => {
+  for (const entry of [
+    '.agents/skills',
+    '.claude/skills',
+    '.skills-cache',
+    '.cursor/rules',
+    '.skills.local',
+    '.tool-versions',
+    'temp/farmslot',
+    'app/core/InpageBridgeWeb3.js',
+    'app/util/termsOfUse/termsOfUseContent.ts',
+    'scripts/inpage-bridge/dist',
+    'ios/debug.xcconfig',
+    'ios/release.xcconfig',
+    'ios/.xcode.env.local',
+    '.yalc',
+    'yalc.lock',
+    'development/**/*.js',
+    'development/**/*.d.ts',
+    'shared/lib/manifestFlags.*',
+    'development/.webpack',
+    '.metamask/cache',
+  ])
+    assert.ok(DEFAULT_BLIND_KEEP_IGNORED.includes(entry), entry);
+});
