@@ -19,7 +19,7 @@ export function NativeConversationRoute() {
   const gatewayUrl = useConnectionStore((state) => state.gatewayUrl);
   const params: NativeConversationParams = {
     sessionId: routeParamString(route.sessionId),
-    executionNodeId: routeParamString(route.executionNodeId),
+    executionNodeId: routeParamString(route.executionNodeId) || 'local',
     runId: routeParamString(route.runId),
     contextId: routeParamString(route.contextId),
     leaseId: routeParamString(route.leaseId),

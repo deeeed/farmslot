@@ -214,6 +214,23 @@ test('cold offline native route renders scoped saved history with stale controls
   }
 });
 
+test('bare native links default to the same local conversation before history registration', async () => {
+  const render = await load();
+  access = 'none';
+  remembered = 'native';
+  status = 'disconnected';
+  hasClient = false;
+  params = { sessionId: 'saved-session', executionNodeId: 'local' };
+  render();
+  const localKey = renderedConversationKey;
+  for (const executionNodeId of [undefined, '']) {
+    params = { sessionId: 'saved-session', executionNodeId };
+    const html = render();
+    assert.match(html, /saved complete answer/);
+    assert.equal(renderedConversationKey, localKey);
+  }
+});
+
 test('missing retained scope and a current live revocation still reject history', async () => {
   const render = await load();
   params = { sessionId: 'saved-session', executionNodeId: 'local' };
