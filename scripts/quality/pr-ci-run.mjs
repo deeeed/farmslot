@@ -36,13 +36,45 @@ function docs() {
   run(['yarn', 'quality:gateway-api-docs']);
 }
 
+export function ciModeCommands(mode) {
+  if (mode === 'acceptance')
+    return [
+      ['node', 'scripts/acceptance-evidence/check.mjs'],
+      ['node', '--test', 'scripts/acceptance-evidence/evaluate.test.mjs'],
+      [
+        'env',
+        `TSX_TSCONFIG_PATH=${path.resolve('services/gateway/tsconfig.json')}`,
+        'node',
+        '--import',
+        'tsx',
+        '--test',
+        'scripts/acceptance-evidence/gateway-parity.test.mts',
+      ],
+    ];
+  if (mode === 'transport')
+    return [
+      ['bash', '-e', '-o', 'pipefail', '-c', 'test "$(tmux -V)" = "tmux 3.4"'],
+      ...['orchestration', 'model-transport', 'model-startup-gate'].map((suite) => [
+        'yarn',
+        `test:${suite}`,
+      ]),
+    ];
+  if (mode === 'farm-proof')
+    return [
+      [
+        'node',
+        '--import',
+        'tsx',
+        '--experimental-test-module-mocks',
+        '--test',
+        'scripts/runner-validation/farm-paths-two-instance.test.mts',
+      ],
+    ];
+  throw new Error(`Unknown CI command mode: ${mode}`);
+}
+
 function acceptance(standalone = false) {
-  run(['node', 'scripts/acceptance-evidence/check.mjs']);
-  run(['node', '--test', 'scripts/acceptance-evidence/evaluate.test.mjs']);
-  run(
-    ['node', '--import', 'tsx', '--test', 'scripts/acceptance-evidence/gateway-parity.test.mts'],
-    { env: { ...process.env, TSX_TSCONFIG_PATH: 'services/gateway/tsconfig.json' } },
-  );
+  for (const args of ciModeCommands('acceptance')) run(args);
   // PR and full matrices already own these files in the gateway suite.
   if (standalone)
     run(
@@ -59,32 +91,20 @@ function acceptance(standalone = false) {
 }
 
 function transport() {
-  run(['bash', '-e', '-o', 'pipefail', '-c', 'test "$(tmux -V)" = "tmux 3.4"']);
-  for (const suite of ['orchestration', 'model-transport', 'model-startup-gate'])
-    run(['yarn', `test:${suite}`]);
+  for (const args of ciModeCommands('transport')) run(args);
 }
 
 function farmProof() {
   const home = mkdtempSync(path.join(tmpdir(), 'ci-farm-proof-'));
   try {
-    run(
-      [
-        'node',
-        '--import',
-        'tsx',
-        '--experimental-test-module-mocks',
-        '--test',
-        'scripts/runner-validation/farm-paths-two-instance.test.mts',
-      ],
-      {
-        env: {
-          ...process.env,
-          HOME: home,
-          TSX_TSCONFIG_PATH: 'services/gateway/tsconfig.json',
-          FARMSLOT_TEST_TMP: '1',
-        },
+    run(ciModeCommands('farm-proof')[0], {
+      env: {
+        ...process.env,
+        HOME: home,
+        TSX_TSCONFIG_PATH: 'services/gateway/tsconfig.json',
+        FARMSLOT_TEST_TMP: '1',
       },
-    );
+    });
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
