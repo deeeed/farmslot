@@ -233,7 +233,7 @@ export function NativeConversationScreen({
     <KeyboardAvoidingView
       testID="companion-screen-native"
       style={[styles.container, { paddingBottom: insets.bottom }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={100}
     >
       <Modal

@@ -65,6 +65,7 @@
     "release:cut": "node scripts/release/cut-release.mjs",
     "release:fold": "node scripts/release/changelog-fragments.mjs",
     "test:release": "node --test scripts/release/*.test.mjs",
+    "test:release-live": "yarn workspace @farmslot/gateway run test:task-runtime-parity-live && yarn workspace @farmslot/cli run test:paths-migrate-gateway-live",
     "prepush:quality": "node scripts/quality/prepush-quality.mjs",
     "smoke:framework-p1": "node scripts/quality/smoke-framework-p1.mjs",
     "check:node-support": "tsx scripts/check-node-support-bundles.ts",

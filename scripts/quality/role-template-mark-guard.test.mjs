@@ -18,7 +18,16 @@ function assertRoleTemplateUsesTaskDirMark(abs) {
     src,
     /node\s+\{\{farmslot_dir\}\}\/packages\/agent-runtime\/scripts\/mark-checklist-step\.cjs/,
   );
-  assert.match(src, /\{\{TASK_DIR\}\}\/mark/);
+  if (path.basename(abs) === 'review-pr.static.md') {
+    // Static review text is not rendered; the launch prompt supplies the task cwd.
+    assert.doesNotMatch(src, /\{\{/);
+    assert.match(
+      src,
+      /From the task directory supplied in the launch prompt, run `\.\/mark complete --mark-last`/,
+    );
+  } else {
+    assert.match(src, /\{\{TASK_DIR\}\}\/mark/);
+  }
 }
 
 const templates = existsSync(workerTemplateDir)
@@ -38,7 +47,7 @@ test('role-template mark guard is not vacuous — farmslot-farm worker templates
 });
 
 for (const { rel, abs } of templates) {
-  test(`${rel}: role templates use bare {{TASK_DIR}}/mark`, () => {
+  test(`${rel}: role templates mark the selected task`, () => {
     assertRoleTemplateUsesTaskDirMark(abs);
   });
 }

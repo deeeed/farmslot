@@ -14,7 +14,8 @@
     "lint": "eslint \"src/**/*.ts\"",
     "lint:fix": "eslint \"src/**/*.ts\" --fix",
     "quality": "prettier --check . && eslint \"src/**/*.ts\" && tsc --noEmit && yarn test",
-    "test": "node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src"
+    "test": "node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src",
+    "test:paths-migrate-gateway-live": "TSX_TSCONFIG_PATH=tsconfig.json node --import tsx --test src/commands/paths-migrate-gateway.live.ts"
   },
   "dependencies": {
     "@clack/prompts": "^1.7.0",

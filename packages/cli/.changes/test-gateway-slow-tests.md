@@ -1,0 +1,1 @@
+- The `farmslot paths migrate` check that reads and enqueues a migrated backlog spec through the gateway now runs as `yarn test:paths-migrate-gateway-live` before a release cut, not in the default suite.

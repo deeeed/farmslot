@@ -1,0 +1,1 @@
+- Keep the native conversation composer and its text visible above the Android keyboard while typing.

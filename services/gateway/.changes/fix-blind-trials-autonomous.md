@@ -1,0 +1,1 @@
+- Blind eval trials always run autonomous, so a template whose default mode is interactive no longer leaves a blind dev trial waiting for an operator.
