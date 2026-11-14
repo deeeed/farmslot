@@ -1309,6 +1309,131 @@ function placeAfter(order, name, anchor, field) {
  * @param {BridgeCliConfig} [config]
  * @returns {Promise<void>}
  */
+function selectedTargetPin(env = process.env) {
+  const platform = String(env.RECIPE_RN_EXPLICIT_PLATFORM || '').toLowerCase();
+  const androidPin = env.ANDROID_TARGET_DEVICE_NAME || env.ANDROID_DEVICE || '';
+  const iosPin = env.IOS_SIMULATOR || '';
+  return String(
+    platform === 'android' ? androidPin : platform === 'ios' ? iosPin : androidPin || iosPin,
+  ).trim();
+}
+
+function selectBrokerTarget(targets, env = process.env) {
+  const pin = selectedTargetPin(env);
+  const candidates = pin
+    ? targets.filter((target) => target.deviceName.toLowerCase().includes(pin.toLowerCase()))
+    : targets;
+  if (candidates.length !== 1) {
+    const error = new Error(
+      `Mobile CDP broker target selection requires one target; found ${candidates.length}${pin ? ` for ${JSON.stringify(pin)}` : ''}.`,
+    );
+    throw candidates.length === 0 ? coded(error, BRIDGE_ERROR_CODES.NO_TARGET) : error;
+  }
+  return candidates[0];
+}
+
+async function readBrokerTargets(
+  client,
+  timeout,
+  env = process.env,
+  { retainIdentity = false, includeGeneration = false } = {},
+) {
+  const targets = await client.control(
+    retainIdentity
+      ? 'resolve-targets'
+      : includeGeneration
+        ? 'list-target-identities'
+        : 'list-targets',
+    retainIdentity ? { nameIncludes: selectedTargetPin(env) } : {},
+    timeout,
+  );
+  return (Array.isArray(targets) ? targets : []).flatMap((target) => {
+    const deviceId = String(target?.deviceId || '');
+    return deviceId
+      ? [
+          {
+            wsUrl: deviceId,
+            deviceName: String(target?.name || ''),
+            generation: Number(target?.generation) || 0,
+          },
+        ]
+      : [];
+  });
+}
+
+/** Reuse broker sockets for deferred HUD updates; resolve the target for every update. */
+function createBrokerHudSession(socketPath, env = process.env) {
+  const commands = createBuiltinCommands({ routes: {}, perfMarkerPrefixes: [] });
+  let discovery;
+  let selected;
+  let identity;
+  let closed = false;
+  let tail = Promise.resolve();
+  function release() {
+    discovery?.close();
+    selected?.close();
+    discovery = selected = identity = undefined;
+  }
+  return {
+    send(command, args, timeoutMs = 5000) {
+      if (closed) return Promise.reject(new Error('CDP broker HUD session is closed'));
+      if (command !== 'show-step-json-deferred' && command !== 'hide-step-deferred') {
+        return Promise.reject(new Error(`Not a deferred HUD command: ${command}`));
+      }
+      const deadline = Date.now() + timeoutMs;
+      const remaining = () => {
+        const ms = deadline - Date.now();
+        if (ms <= 0)
+          throw coded(new Error('CDP broker HUD command timeout'), BRIDGE_ERROR_CODES.CDP_TIMEOUT);
+        return ms;
+      };
+      const result = tail.then(async () => {
+        try {
+          discovery ??= await createBrokerClient(socketPath, '', remaining());
+          const target = selectBrokerTarget(
+            await readBrokerTargets(discovery, remaining(), env, { retainIdentity: true }),
+            env,
+          );
+          const current = `${target.wsUrl}:${target.generation}`;
+          if (!selected || identity !== current) {
+            selected?.close();
+            selected = undefined;
+            selected = await createBrokerClient(
+              socketPath,
+              deviceIdFromUrl(target.wsUrl),
+              remaining(),
+            );
+            identity = current;
+          }
+          return await commands[command](
+            {
+              control(action, params) {
+                return selected.control(action, params, remaining());
+              },
+            },
+            args,
+          );
+        } catch (error) {
+          release();
+          const code = error?.code || classifyBridgeErrorMessage(error?.message);
+          throw code ? coded(error, code) : error;
+        }
+      });
+      // Keep admission available for the next independent update; the caller retains the rejection.
+      tail = result.then(
+        () => undefined,
+        () => undefined,
+      );
+      return result;
+    },
+    async close() {
+      closed = true;
+      await tail;
+      release();
+    },
+  };
+}
+
 function runBridgeCli(config = {}) {
   const hostCommands = config.commands || {};
   const commandDocs = config.commandDocs || {};
@@ -1431,56 +1556,13 @@ Environment:
     const brokerAvailable = fs.existsSync(brokerSocketFile);
     if (!brokerAvailable) acquireBridgeLock();
 
-    function selectedTargetPin() {
-      const platform = String(process.env.RECIPE_RN_EXPLICIT_PLATFORM || '').toLowerCase();
-      const androidPin = process.env.ANDROID_TARGET_DEVICE_NAME || process.env.ANDROID_DEVICE || '';
-      const iosPin = process.env.IOS_SIMULATOR || '';
-      return String(
-        platform === 'android' ? androidPin : platform === 'ios' ? iosPin : androidPin || iosPin,
-      ).trim();
-    }
-
-    async function brokerTargets({ retainIdentity = false, includeGeneration = false } = {}) {
+    async function brokerTargets(options = {}) {
       const discoveryClient = await createBrokerClient(brokerSocketFile, '', timeout);
       try {
-        const targets = await discoveryClient.control(
-          retainIdentity
-            ? 'resolve-targets'
-            : includeGeneration
-              ? 'list-target-identities'
-              : 'list-targets',
-          retainIdentity ? { nameIncludes: selectedTargetPin() } : {},
-          timeout,
-        );
-        return (Array.isArray(targets) ? targets : []).flatMap((target) => {
-          const deviceId = String(target?.deviceId || '');
-          return deviceId
-            ? [
-                {
-                  wsUrl: deviceId,
-                  deviceName: String(target?.name || ''),
-                  generation: Number(target?.generation) || 0,
-                },
-              ]
-            : [];
-        });
+        return await readBrokerTargets(discoveryClient, timeout, process.env, options);
       } finally {
         discoveryClient.close();
       }
-    }
-
-    function selectBrokerTarget(targets) {
-      const pin = selectedTargetPin();
-      const candidates = pin
-        ? targets.filter((target) => target.deviceName.toLowerCase().includes(pin.toLowerCase()))
-        : targets;
-      if (candidates.length !== 1) {
-        const error = new Error(
-          `Mobile CDP broker target selection requires one target; found ${candidates.length}${pin ? ` for ${JSON.stringify(pin)}` : ''}.`,
-        );
-        throw candidates.length === 0 ? coded(error, BRIDGE_ERROR_CODES.NO_TARGET) : error;
-      }
-      return candidates[0];
     }
 
     if (command === 'target-identity-selected') {
@@ -1581,4 +1663,4 @@ Environment:
   });
 }
 
-module.exports = { runBridgeCli };
+module.exports = { runBridgeCli, createBrokerHudSession };

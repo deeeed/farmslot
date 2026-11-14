@@ -4440,6 +4440,92 @@ describe('call', () => {
   });
 });
 
+describe('recipe prepared execution', () => {
+  async function preparedRun(selectedEngine = engine) {
+    const target = checkout();
+    const recipe = recipeFile(target, {
+      ping: { action: 'shop.ping', mode: 'fast', intent: 'Observe the shop', next: 'done' },
+      done: { action: 'end', status: 'pass' },
+    });
+    const artifacts = tempRoot('recipe-prepared-');
+    const result = await capture(() =>
+      handleRun(
+        [
+          recipe,
+          '--adapter',
+          'web',
+          '--target',
+          target,
+          '--heal',
+          'off',
+          '--record-video=off',
+          '--artifacts-dir',
+          artifacts,
+          '--json',
+        ],
+        { ...runOptions, engine: selectedEngine },
+      ),
+    );
+    return { result, artifacts };
+  }
+
+  test('retains one runner and all provenance moments when healing changes nothing', async () => {
+    const { result, artifacts } = await preparedRun();
+    assert.equal(result.value, 0, result.stdout.join('\n') + result.stderr.join('\n'));
+    assert.equal(calls.runners.length, 1);
+    const provenance = JSON.parse(
+      fs.readFileSync(path.join(artifacts, 'execution-provenance.json'), 'utf8'),
+    ) as {
+      snapshots: Array<{ phase: string }>;
+    };
+    assert.deepEqual(
+      provenance.snapshots.map((s) => s.phase),
+      ['start', 'pre-execute', 'end'],
+    );
+  });
+
+  test('rebuilds the recipe runner when healing recovered the runtime', async () => {
+    const adapter = webAdapter(calls);
+    const registry = createAdapterRegistry();
+    registry.register({
+      ...adapter,
+      run: {
+        ...adapter.run,
+        runtimeCheck:
+          ({ state }) =>
+          async () => {
+            state.recovered.push('shop-runtime');
+            return null;
+          },
+      },
+    });
+    configureHarnessAdapters(registry);
+    const { result } = await preparedRun();
+    assert.equal(result.value, 0, result.stdout.join('\n') + result.stderr.join('\n'));
+    assert.equal(calls.runners.length, 2);
+  });
+
+  test('refuses source drift after the retained recipe runner froze its inputs', async () => {
+    const editing: ShopEngine = {
+      ...engine,
+      async createRunner(adapter, manifest, options) {
+        const runner = await engine.createRunner(adapter, manifest, options);
+        fs.writeFileSync(path.join(library, 'notes.txt'), 'changed after recipe preparation\n');
+        return runner;
+      },
+    };
+    const { result } = await preparedRun(editing);
+    assert.notEqual(result.value, 0);
+    const error = lastJson(result.stdout).error;
+    assert.ok(error && typeof error === 'object' && 'code' in error);
+    assert.equal(error.code, 'PROVENANCE_DRIFT');
+    assert.equal(
+      calls.events.some((event) => event.action === 'shop.ping'),
+      false,
+    );
+  });
+});
+
 describe('call timings', () => {
   async function timedCall(...flags: string[]) {
     const target = checkout();
