@@ -1,5 +1,6 @@
 // @farmslot:serial — writes slot fixtures into the shared repo `pool/` directory.
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -592,6 +593,39 @@ test('fsList classifies local symlinked directories as directories', async (t) =
       result.entries.find((entry) => entry.name === '.observability'),
       { name: '.observability', type: 'directory', path: '.observability' },
     );
+  });
+});
+
+test('fsList survives Git exiting before it consumes a large stdin request', async (t) => {
+  await withLocalSlot(t, async ({ slotId, repoDir }) => {
+    const names = Array.from({ length: 2048 }, (_, i) => `entry-${i}-${'x'.repeat(200)}`);
+    // This is a non-Git directory. Git exits before reading the queued request.
+    for (let i = 0; i < names.length; i += 64) {
+      await Promise.all(names.slice(i, i + 64).map((name) => mkdir(path.join(repoDir, name))));
+    }
+    const result = await fsList({ slotId, path: '.', includeIgnored: true });
+    assert.equal(result.entries.length, names.length);
+    assert.ok(result.entries.every((entry) => entry.type === 'directory' && !entry.ignored));
+  });
+});
+
+test('fsList keeps Git ignore annotations and no-match results', async (t) => {
+  await withLocalSlot(t, async ({ slotId, repoDir }) => {
+    execFileSync('git', ['init', '-q', '-b', 'main', repoDir]);
+    await mkdir(path.join(repoDir, 'ignored'));
+    await mkdir(path.join(repoDir, 'visible'));
+    await writeFile(path.join(repoDir, '.gitignore'), 'ignored/\n');
+    const filtered = await fsList({ slotId, path: '.' });
+    assert.equal(
+      filtered.entries.some((entry) => entry.name === 'ignored'),
+      false,
+    );
+    const annotated = await fsList({ slotId, path: '.', includeIgnored: true });
+    assert.equal(annotated.entries.find((entry) => entry.name === 'ignored')?.ignored, true);
+    await writeFile(path.join(repoDir, '.gitignore'), '');
+    const unmatched = await fsList({ slotId, path: '.' });
+    assert.ok(unmatched.entries.some((entry) => entry.name === 'ignored'));
+    assert.ok(unmatched.entries.every((entry) => !entry.ignored));
   });
 });
 
