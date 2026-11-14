@@ -1051,3 +1051,42 @@ test('isolation moves ignored leftovers inside submodules and keeps nested cache
   for (const [name, text] of Object.entries(files))
     assert.equal(readFileSync(path.join(repo, name), 'utf8'), text, `${name} restored`);
 });
+
+test('a restore interrupted before the ignored files return finishes on retry without a marker', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'blind-ignored-restore-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const { repo, spec, files } = ignoredFixture(root);
+  assert.equal(command('isolate', spec).status, 'isolated');
+  const interrupted = spawnSync(
+    'python3',
+    [
+      '-c',
+      `
+import json, runpy, sys
+module = runpy.run_path(sys.argv[1], run_name='blind_git_fixture')
+def stop(*args, **kwargs):
+    raise RuntimeError('fixture interrupted restore')
+module['restore'].__globals__['restore_ignored'] = stop
+module['restore'](json.loads(sys.argv[2]))
+`,
+      new URL('./blind-git.py', import.meta.url).pathname,
+      JSON.stringify(spec),
+    ],
+    { env, encoding: 'utf8', timeout: 60_000 },
+  );
+  assert.notEqual(interrupted.status, 0);
+  assert.match(interrupted.stderr, /fixture interrupted restore/);
+  // The original Git is back, so the slot shows no blind marker, but the journal is unfinished.
+  assert.notEqual(
+    spawnSync('git', ['-C', repo, 'config', '--get', 'farmslot.blindRun'], { env }).status,
+    0,
+  );
+  assert.notEqual(
+    JSON.parse(readFileSync(path.join(spec.capsule, 'state.json'), 'utf8')).phase,
+    'restored',
+  );
+  assert.equal(existsSync(path.join(repo, '.env.local')), false);
+  assert.equal(command('restore', spec).status, 'restored');
+  for (const [name, text] of Object.entries(files))
+    assert.equal(readFileSync(path.join(repo, name), 'utf8'), text, `${name} restored`);
+});

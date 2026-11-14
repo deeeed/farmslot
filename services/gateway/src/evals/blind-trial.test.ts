@@ -400,16 +400,21 @@ test('a finished trial restores its own Git and reports why it could not', async
   slotCommands.length = 0;
   assert.equal(await restoreFinishedBlindTrialGit(run), null);
   assert.ok(slotCommands.some((command) => command.includes('"action":"restore"')));
+  // Without a marker the journal still decides: an isolate stopped before its Git
+  // swap, or a verified trial's restore stopped before its ignored files returned.
   marker = { exitCode: 1, stdout: '', stderr: '' };
-  slotCommands.length = 0;
-  assert.equal(await restoreFinishedBlindTrialGit(run), null, 'already restored');
-  assert.ok(!slotCommands.some((command) => command.includes('"action":"restore"')));
-  // An isolate stopped before its Git swap leaves no marker but may hold moved ignored files.
-  delete run.engineState!.evalExperiment!.blind!.isolation!.verifiedAt;
+  for (const verified of [false, true]) {
+    if (verified) run.engineState!.evalExperiment!.blind!.isolation!.verifiedAt = 'now';
+    else delete run.engineState!.evalExperiment!.blind!.isolation!.verifiedAt;
+    slotCommands.length = 0;
+    assert.equal(await restoreFinishedBlindTrialGit(run), null);
+    assert.ok(slotCommands.some((command) => command.includes('"action":"restore"')));
+  }
+  // Another trial's marker is never restored by this one.
+  marker = { exitCode: 0, stdout: 'other-trial\n', stderr: '' };
   slotCommands.length = 0;
   assert.equal(await restoreFinishedBlindTrialGit(run), null);
-  assert.ok(slotCommands.some((command) => command.includes('"action":"restore"')));
-  run.engineState!.evalExperiment!.blind!.isolation!.verifiedAt = 'now';
+  assert.ok(!slotCommands.some((command) => command.includes('"action":"restore"')));
   marker = { exitCode: 255, stdout: '', stderr: 'ssh: connect to host timed out' };
   assert.match(
     (await restoreFinishedBlindTrialGit(run)) ?? '',

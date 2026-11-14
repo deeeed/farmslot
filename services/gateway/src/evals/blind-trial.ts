@@ -526,10 +526,11 @@ export async function restoreFinishedBlindTrialGit(run: Run): Promise<string | n
   if (!isolation || isolation.slotId !== run.slotId) return null;
   try {
     const vars = await loadSlotVars(isolation.slotId);
-    // An isolate stopped before its Git swap leaves no marker, but its capsule
-    // may already hold the checkout's ignored files: restore that journal too.
+    // No marker can still leave an unfinished journal: an isolate stopped before
+    // its Git swap, or a restore stopped after the original Git returned but
+    // before the ignored files did. Restore finishes it; a finished journal is a no-op.
     const marker = await readBlindTrialMarker(vars);
-    if (marker !== run.id && (marker !== null || isolation.verifiedAt)) return null;
+    if (marker !== null && marker !== run.id) return null;
     const epoch = Number((await readSlotRow(isolation.slotId))?.slot_epoch);
     const assertOwnership = async () => {
       const row = await readSlotRow(isolation.slotId);

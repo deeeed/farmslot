@@ -173,8 +173,7 @@ show them. Isolation lists the ignored paths with `git ls-files --others --ignor
 and moves each one into the capsule (`original-ignored/`), which the worker cannot
 read. The journal records the list before the first move, and any failure before
 the Git swap moves the paths back. Restore, including restore after a killed
-isolate, moves each path back; finished-trial cleanup also restores an isolate
-that stopped before its swap left a Git marker. If the trial created a file at the same path, that file is moved
+isolate, moves each path back; finished-trial cleanup with no Git marker still finishes an unfinished journal (an isolate stopped before its swap, or a restore stopped before the ignored files returned). If the trial created a file at the same path, that file is moved
 to the capsule's `trial-ignored/` before the original returns, so nothing is
 deleted.
 
