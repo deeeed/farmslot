@@ -128,13 +128,17 @@ function worker(id) {
     const started = Date.now();
     const env = {
       ...process.env,
-      FARMSLOT_QUALITY_TIMINGS_DIR: directory,
       FARMSLOT_TSX_TEST_WORKERS: '2',
     };
     delete env.FARMSLOT_CI_TEST_SELECTION;
-    if (task.tests) env.FARMSLOT_CI_TEST_SELECTION = selection;
+    delete env.FARMSLOT_QUALITY_TIMINGS_DIR;
+    if (task.tests) {
+      env.FARMSLOT_CI_TEST_SELECTION = selection;
+      env.FARMSLOT_QUALITY_TIMINGS_DIR = directory;
+    }
     run(task.args, { cwd: path.join(root, task.cwd), env });
-    const reports = readdirSync(directory)
+    const reportNames = task.tests ? readdirSync(directory) : [];
+    const reports = reportNames
       .filter((name) => name.startsWith('tsx-tests-'))
       .map((name) => JSON.parse(readFileSync(path.join(directory, name), 'utf8')));
     const actual = reports.flatMap((report) => {

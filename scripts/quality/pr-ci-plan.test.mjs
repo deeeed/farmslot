@@ -203,7 +203,8 @@ test('worker scopes the selection filter to suite commands and clears it for CI 
       args: [
         process.execPath,
         '-e',
-        "require('node:assert/strict').equal(process.env.FARMSLOT_CI_TEST_SELECTION, undefined)",
+        "require('node:assert/strict').equal(process.env.FARMSLOT_CI_TEST_SELECTION, undefined); require('node:assert/strict').equal(process.env.FARMSLOT_QUALITY_TIMINGS_DIR, undefined); require('node:fs').writeFileSync(process.argv[1], JSON.stringify({ status: 'failed', files: [] }))",
+        path.join(root, '.cache/pr-ci/timings/contract/tsx-tests-fixture.json'),
       ],
     },
     {
@@ -213,7 +214,7 @@ test('worker scopes the selection filter to suite commands and clears it for CI 
       args: [
         process.execPath,
         '-e',
-        "require('node:assert/strict').ok(process.env.FARMSLOT_CI_TEST_SELECTION)",
+        "require('node:assert/strict').ok(process.env.FARMSLOT_CI_TEST_SELECTION); require('node:assert/strict').ok(process.env.FARMSLOT_QUALITY_TIMINGS_DIR)",
       ],
     },
   ];

@@ -329,6 +329,7 @@ function childEnvironment(tmuxDir) {
   const env = tmuxSandboxEnvironment({ ...process.env, NODE_TEST_CONTEXT: '1' }, tmuxDir);
   for (const key of GIT_LOCATION_ENV) delete env[key];
   delete env.FARMSLOT_CI_TEST_SELECTION;
+  delete env.FARMSLOT_QUALITY_TIMINGS_DIR;
   return env;
 }
 

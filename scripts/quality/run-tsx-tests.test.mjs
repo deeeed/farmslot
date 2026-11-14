@@ -1150,7 +1150,7 @@ test('CI selection runs the affected file and excludes an unrelated failing file
     const included = path.join(root, 'included.test.ts');
     writeFileSync(
       included,
-      "import assert from 'node:assert/strict'; import { test } from 'node:test'; test('selected', () => { assert.equal(process.env.FARMSLOT_CI_TEST_SELECTION, undefined); });\n",
+      "import assert from 'node:assert/strict'; import { test } from 'node:test'; test('selected', () => { assert.equal(process.env.FARMSLOT_CI_TEST_SELECTION, undefined); assert.equal(process.env.FARMSLOT_QUALITY_TIMINGS_DIR, undefined); });\n",
     );
     writeFileSync(path.join(root, 'excluded.test.ts'), "throw new Error('unrelated file ran');\n");
     const selection = path.join(root, 'selection.json');
