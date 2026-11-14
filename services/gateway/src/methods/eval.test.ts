@@ -11,6 +11,7 @@ import {
   type ResultPackageManifest,
 } from '@farmslot/protocol';
 
+import { farmslotRoot } from '../core/config.js';
 import {
   computeCandidateStrategyFingerprint,
   computeExperimentKey,
@@ -949,6 +950,37 @@ test('evalTrialStart automatically replays from the reference base commit when a
   try {
     await startCandidate('codex', 'gpt-5.5', 'codex-replay-candidate');
     await startCandidate('cursor', DEFAULT_CURSOR_MODEL, 'cursor-replay-candidate');
+    // An interactive template axis must not make a blind trial wait for an operator.
+    const workerDir = path.join(farmslotRoot(), 'projects', 'farmslot-farm', 'templates', 'worker');
+    const interactiveTemplate = path.join(workerDir, 'fix-bug-interactive.md');
+    // Restore any operator-owned copy of this supported template after the test.
+    const existing = await readFile(interactiveTemplate, 'utf-8').catch(() => undefined);
+    await writeFile(
+      interactiveTemplate,
+      await readFile(path.join(workerDir, 'fix-bug.md'), 'utf-8'),
+    );
+    t.after(() =>
+      existing === undefined
+        ? rm(interactiveTemplate, { force: true })
+        : writeFile(interactiveTemplate, existing, 'utf-8'),
+    );
+    const interactive = await evalTrialStart(
+      {
+        project: 'farmslot-farm',
+        experimentManifestPath,
+        axes: {
+          template: { path: 'templates/worker/fix-bug-interactive.md' },
+          model: { name: 'gpt-5.5' },
+        },
+        label: 'interactive template candidate',
+        variant: 'interactive-template-candidate',
+        runner: 'codex',
+        model: 'gpt-5.5',
+      },
+      () => {},
+    );
+    if (interactive.run) runIds.push(interactive.run.id);
+    assert.equal(interactive.run?.mode, 'autonomous');
   } finally {
     if (previousDisableEngine === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
     else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = previousDisableEngine;
@@ -960,6 +992,7 @@ test('evalTrialStart automatically replays from the reference base commit when a
     assert.equal(candidate.result.run?.metrics.model, candidate.model);
     assert.equal(candidate.result.run?.completionPolicy, 'artifact-only');
     assert.equal(candidate.result.run?.lane, 'comparison');
+    assert.equal(candidate.result.run?.mode, 'autonomous');
     assert.equal(candidate.result.run?.startRef?.requestedRef, baseSha);
     assert.deepEqual(candidate.result.candidatePackage.productRef, {
       requestedRef: baseSha,
