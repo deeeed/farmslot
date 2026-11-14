@@ -10,6 +10,7 @@ import {
   NATIVE_WORKER_CANCEL,
   NATIVE_WORKER_CANCEL_COMMAND,
   NATIVE_WORKER_CLOSE,
+  NATIVE_WORKER_COMPACT,
   NATIVE_WORKER_CONFIRM_STOPPED,
   NATIVE_WORKER_ENSURE,
   NATIVE_WORKER_INTERRUPT,
@@ -94,6 +95,16 @@ const server = createServer({ allowHalfOpen: true }, (socket) => {
         }
         let value: unknown;
         switch (p.method) {
+          case NATIVE_WORKER_COMPACT:
+            socket.setTimeout(185_000);
+            value = await manager.compactWorker(
+              p.owner,
+              p.id,
+              p.generation,
+              p.leaseId,
+              p.compaction,
+            );
+            break;
           case 'commandStatus':
             value = p.waitForAcceptance
               ? await manager.waitCommandStatus(

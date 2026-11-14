@@ -30,12 +30,14 @@ test('local parity scopes formatting without dropping global checks and stops at
   assert.equal(result.failure.status, 7);
 });
 
-test('CI uses the shared parity command and has no second list of those guards', () => {
+test('CI consumes the shared parity steps and has no second list of those guards', () => {
   const workflow = readFileSync(
     new URL('../../.github/workflows/farmslot-quality.yml', import.meta.url),
     'utf8',
   );
-  assert.match(workflow, /run: yarn ci:local/);
+  assert.match(workflow, /node scripts\/quality\/pr-ci-plan\.mjs/);
+  const planner = readFileSync(new URL('./pr-ci-plan.mjs', import.meta.url), 'utf8');
+  assert.match(planner, /const parity = ciParitySteps\(changed, root\)/);
   for (const name of [
     'format:check',
     'quality:authorization',

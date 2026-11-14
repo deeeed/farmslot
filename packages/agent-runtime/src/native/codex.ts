@@ -147,6 +147,7 @@ export const codexNativeAdapter: NativeAdapter = {
       : 'Read-only source review requires Codex 0.154.0 or newer';
   },
   capabilities: {
+    contextCompaction: false,
     modes: ['default', 'plan'],
     approvalModes: ['ask', 'bypass'],
     streaming: true,

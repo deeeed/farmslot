@@ -1,3 +1,0 @@
-- Start blind worker shells with an empty boundary `ZDOTDIR` and deny reads of operator shell startup files, their resolved dotfile targets, common credential stores and tmux launch scripts.
-- Remove registered Pi provider keys from the blind worker's environment after the provider extension captures them, so tool shells do not inherit them.
-- Store run step command outputs with credential names only; older records are redacted on load, and `scripts/scrub-run-credentials.mts` rewrites stored records in place.

@@ -1,11 +1,7 @@
 {
-  "version": "0.39.2",
-  "date": "2026-11-13",
+  "version": "0.39.3",
+  "date": "2026-11-14",
   "items": [
-    "Surface terminal Pi request aborts in static reviews and worker decisions; add opt-in streaming idle deadlines while preserving total deadlines by default",
-    "`run.adoptPublishedPr` adopts a same-repository PR on any branch when its change, between the SHAs read with the PR facts, matches byte for byte the gate's current package as certified by the gate's review policy. A mismatch refuses with the differing files and the attested command; an attested head stays the override. The receipt and the resolved gate record the match type, both branch names, the compared range and the reason; evidence refresh and chained CI work follow the adopted PR's branch",
-    "Include each checklist step’s instructions in task progress",
-    "Keep the farm's last 20 clips in memory, readable and pushable by admins, each with its source principal and session; text is redacted like logs, and admin clients are notified when one arrives",
-    "Resolve instance storage and execution paths at call time, export migrated instance shell roots without changing legacy command environments, and protect pool, runs and projects in blind trials while retaining legacy local checkout helpers and refusing slots claimed by another instance"
+    "WARM re-reviews reuse validated coverage and compact retained context before reviewing a new delta."
   ]
 }

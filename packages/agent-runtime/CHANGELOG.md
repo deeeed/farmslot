@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.47.0 - 2026-11-14
+
+- Compose complete review scope and criteria from validated prior rows plus current updates, and expose fenced same-session context compaction for review continuation.
+
 ## 0.46.0 - 2026-11-13
 
 - Keep remote task initialization on the gateway-shipped external template catalog while preserving source identity and digest checks.

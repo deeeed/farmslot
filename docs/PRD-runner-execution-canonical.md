@@ -55,6 +55,42 @@ the exact saved session through structured runner evidence.
 The gateway's existing launch and WARM review paths consume this private
 capability. No public command, flag, SDK export or app-harness extension is added.
 
+#### Continuation compaction
+
+Under proposed ADR-023 Amendment 3, adapters own compaction syntax and structured
+same-session evidence for each transport, or declare it unsupported. Only a new
+review continuing a validated verdict opts in. Worker launches and unfinished
+same-attempt recovery do not compact.
+
+Compaction runs inside an accepted saved-session continuation. Every existing
+identity, owner/generation/lease, runner, account/profile, model, effort, workspace,
+idle/busy and capacity fence applies. Before rebinding incoming task instructions,
+retain reviewed heads, findings and audit references while retiring obsolete task
+commands. Compaction cannot inspect source, produce a verdict or terminal mark,
+or add a reviewer round; existing usage accounting still applies.
+
+Before sending, persist a pending operation in the run snapshot's
+`ReviewSessionTrace.compaction`, keyed by lineage, exact provider session and frozen
+packet digest. Persist structured completion evidence there before delta delivery.
+Restart/reattach reconciles that operation, never blindly resends it. A timeout or
+TUI text is not completion. Recheck the continuation fences before delivery.
+
+Unsupported compaction records its reason and delivers the delta uncompacted to
+the same accepted session; it does not trigger COLD or alter accounting. Unconfirmed
+compaction stops delta delivery and follows ADR-063's uncertain-delivery path:
+reconcile the same reserved context/lease/operation once, without launching a
+replacement or settling a verdict. Continued uncertainty remains blocked. Only a
+confirmed stopped, unaccepted launch may use the existing infrastructure-fallback
+settlement and replacement policy.
+
+Gateway review continuation consumes this capability. Optional compaction methods
+on `NativeAdapterSession` and `NativeSessionClient` belong to
+`@farmslot/agent-runtime/native`; optional trace fields belong to
+`@farmslot/protocol`. These additive SDK changes require reviewed pre-1.0 minor
+publication and matching node capability negotiation. Internal node/native
+maintenance carries the operation; no public gateway method, CLI flag or harness
+extension is added.
+
 ### 3. Explicit safety tiers
 
 Dangerous or highly autonomous launch modes need a shared vocabulary and warning model across runners.

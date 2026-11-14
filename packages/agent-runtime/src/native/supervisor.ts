@@ -90,6 +90,7 @@ durableWrite(join(root, 'host.json'), {
   supportsEnsure: true,
   supportsWorkers: true,
   supportsWorkerResumeFence: true,
+  supportsWorkerCompaction: true,
   supportsWorkerStopAttestation: true,
   supportsStructuredResults: true,
   supportsWorkerRelocation: true,

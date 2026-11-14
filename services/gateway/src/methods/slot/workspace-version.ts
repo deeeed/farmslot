@@ -97,5 +97,14 @@ export async function localWorkspaceVersion(
       );
     });
   }
-  return { version, ancestryCacheable };
+  const alternatesIndex = policy.files.findIndex(
+    (file) => file.directory === 'common' && file.path === policy.alternates,
+  );
+  return {
+    version,
+    ancestryCacheable,
+    ...(metadata[alternatesIndex] !== null
+      ? { alternatesPath: path.posix.join(commonDir, policy.alternates) }
+      : {}),
+  };
 }

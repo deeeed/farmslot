@@ -6,6 +6,14 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.10 - 2026-11-14
+
+- Align published dependencies with the protocol 0.84 and runtime 0.47 release cohort.
+
+## 0.35.9 - 2026-11-14
+
+- Reuse a recipe's prepared runner when healing changed nothing, retaining provenance checks and rebuilding after recovery or environment changes.
+
 ## 0.35.8 - 2026-11-13
 
 - Use the runtime 0.46 catalog snapshot contract for hosted task initialization.

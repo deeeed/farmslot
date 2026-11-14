@@ -1,0 +1,71 @@
+name: Cached workspace setup
+description: Restore installed dependencies and validate the immutable Yarn install
+inputs:
+  lint-cache:
+    description: This job owns the repository lint cache
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v6
+      with:
+        node-version: '22.23.4'
+    - shell: bash
+      run: corepack enable
+    - id: cache-paths
+      shell: bash
+      run: |
+        cat >> "$GITHUB_OUTPUT" <<'PATHS'
+        dependencies<<CACHE_PATHS
+        ~/.yarn/berry/cache
+        ~/.yarn/berry/farmslot
+        node_modules
+        apps/*/node_modules
+        apps/command-center/ui/node_modules
+        packages/*/node_modules
+        services/*/node_modules
+        .yarn/install-state.gz
+        CACHE_PATHS
+        PATHS
+    - uses: actions/cache/restore@v4
+      id: dependencies
+      with:
+        path: ${{ steps.cache-paths.outputs.dependencies }}
+        key: install-v1-${{ runner.os }}-${{ runner.arch }}-node22.23.4-${{ hashFiles('yarn.lock', 'package.json', 'apps/*/package.json', 'apps/command-center/ui/package.json', 'packages/*/package.json', 'services/*/package.json', '.yarnrc.yml', 'scripts/yarn-*.cjs', 'services/gateway/scripts/fix-node-pty-spawn-helper.mjs') }}
+    - shell: bash
+      run: yarn install --immutable
+    # Publish prerequisites before long full-suite jobs, so other PRs can restore
+    # the default-branch cache as soon as setup passes.
+    - if: steps.dependencies.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ steps.cache-paths.outputs.dependencies }}
+        key: ${{ steps.dependencies.outputs.cache-primary-key }}
+    - uses: actions/cache@v4
+      with:
+        path: |
+          .cache/node-compile
+        key: compiler-v1-${{ runner.os }}-${{ runner.arch }}-node22.23.4-${{ hashFiles('yarn.lock', 'eslint.config.mjs') }}-${{ github.job }}-${{ strategy.job-index }}-${{ github.sha }}
+        restore-keys: compiler-v1-${{ runner.os }}-${{ runner.arch }}-node22.23.4-${{ hashFiles('yarn.lock', 'eslint.config.mjs') }}-
+    - if: inputs.lint-cache == 'true'
+      uses: actions/cache@v4
+      with:
+        path: .cache/eslint
+        key: eslint-v1-${{ runner.os }}-node22.23.4-${{ hashFiles('yarn.lock', 'eslint.config.mjs', '.tool-versions') }}-${{ github.sha }}
+        restore-keys: eslint-v1-${{ runner.os }}-node22.23.4-${{ hashFiles('yarn.lock', 'eslint.config.mjs', '.tool-versions') }}-
+    - shell: bash
+      run: echo "NODE_COMPILE_CACHE=$GITHUB_WORKSPACE/.cache/node-compile" >> "$GITHUB_ENV"
+    - uses: actions/cache/restore@v4
+      id: builds
+      with:
+        path: |
+          packages/*/dist
+        key: builds-v1-${{ runner.os }}-${{ runner.arch }}-node22.23.4-${{ hashFiles('yarn.lock', 'packages/*/src/**', 'packages/*/tsconfig*.json', 'packages/*/package.json', 'apps/command-center/tsconfig.base.json', 'scripts/quality/ci-build-prerequisites.mjs') }}
+    - if: steps.builds.outputs.cache-hit != 'true'
+      shell: bash
+      run: node scripts/quality/ci-build-prerequisites.mjs
+    - if: steps.builds.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: packages/*/dist
+        key: ${{ steps.builds.outputs.cache-primary-key }}

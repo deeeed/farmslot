@@ -60,6 +60,7 @@ import {
   fallbackMarker,
   healViolationError,
   preflightRecipe,
+  preparedExecutionCurrent,
   type PreparedRecipeExecution,
   prepareHeal,
   type RecipeEngine,
@@ -640,15 +641,17 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
         return prepared;
       }
       const { state } = prepared;
-      preflightedExecution = await preflightRecipe(
-        engine,
-        adapter,
-        validated.recipeFile,
-        artifactsDir,
-        target,
-        optionString(options, 'actionManifest'),
-        runtimeOptions,
-      );
+      if (!preparedExecutionCurrent(preflightedExecution, adapter, runtimeOptions, state)) {
+        preflightedExecution = await preflightRecipe(
+          engine,
+          adapter,
+          validated.recipeFile,
+          artifactsDir,
+          target,
+          optionString(options, 'actionManifest'),
+          runtimeOptions,
+        );
+      }
 
       const started = await startRunObservers(adapter, target, artifactsDir);
       observers = started;

@@ -933,8 +933,11 @@ async function executeOwnedReviewWorkspaceStep(
         throw error;
       };
       if (run.transport === 'tmux') {
-        const started = await launchReviewTmux(runId, task.prompt, () =>
-          admittedRun(runId, generation),
+        const started = await launchReviewTmux(
+          runId,
+          task.prompt,
+          () => admittedRun(runId, generation),
+          task.compaction,
         ).catch(settleFailedLaunch);
         return { outputs: { ...started, slotId: null, transport: 'tmux' } };
       }
@@ -943,6 +946,7 @@ async function executeOwnedReviewWorkspaceStep(
         project: project.projectJson,
         domain: run.domain,
         prompt: task.prompt,
+        compaction: task.compaction,
         deadline: Date.parse(started) + config.totalTimeoutMs,
         assertCurrent: async () => {
           await admittedRun(runId, generation);

@@ -1,1 +1,0 @@
-- Filter the pool directory listing once per listing in `readPoolFiles`, not on every call; a backup-heavy pool directory made that filter most of each call.

@@ -259,3 +259,29 @@ covered only some adapters. One continuation contract removes that mismatch.
 Identity, ownership, model, effort, workspace and busy-session fences still apply.
 The [runner execution specification](../PRD-runner-execution-canonical.md#saved-session-continuation)
 owns the contract. No public command, flag, SDK export or harness extension is added.
+
+## Amendment 3: continuation context compaction, 2026-11-13
+
+**Status:** Accepted, lead-approved scope, 2026-11-13.
+
+### Decision
+
+Runner adapters own same-session compaction and its structured completion
+evidence for each transport, or declare it unsupported. A new review prepares the
+retained conversation before binding its instructions. All saved-session
+continuation fences, including lease, account/profile and capacity, still apply.
+Pending operations and receipts persist in the review session trace; uncertain
+completion reconciles the same operation without a replacement.
+
+### Rationale and consequences
+
+Compaction removes obsolete task bookkeeping while retaining review knowledge.
+It is maintenance, never a review verdict or task completion signal.
+
+### Public surface
+
+Additive compaction methods in `@farmslot/agent-runtime/native` and optional
+`ReviewSessionTrace.compaction` fields in `@farmslot/protocol` serve gateway/node
+review continuation and require reviewed minor publication. The runner PRD owns
+ordering and recovery. No public gateway method, CLI flag or harness extension is
+added; worker launches do not opt in.

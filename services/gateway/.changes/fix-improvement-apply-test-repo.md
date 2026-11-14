@@ -1,1 +1,0 @@
-- Isolate improvement-apply tests in a temporary Git repository so parallel runs leave the checkout's index untouched.

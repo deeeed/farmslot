@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -327,6 +328,8 @@ export function openTmuxSandbox(uid = process.getuid?.() ?? 0) {
 function childEnvironment(tmuxDir) {
   const env = tmuxSandboxEnvironment({ ...process.env, NODE_TEST_CONTEXT: '1' }, tmuxDir);
   for (const key of GIT_LOCATION_ENV) delete env[key];
+  delete env.FARMSLOT_CI_TEST_SELECTION;
+  delete env.FARMSLOT_QUALITY_TIMINGS_DIR;
   return env;
 }
 
@@ -399,8 +402,8 @@ function runYarn(args, { cwd, env, buffered }) {
 /**
  * Command for one test file.
  *
- * Module-mock files need `--experimental-test-module-mocks`, which `tsx` does
- * not forward, so they run through `node --import tsx` instead.
+ * Load tsx through Node rather than a global CLI binary. runOne supplies the
+ * tsconfig through TSX_TSCONFIG_PATH; mock files add the experimental Node flag.
  *
  * They must NOT run under `--test`. These files call `test()` at the top level;
  * under the node test runner that becomes a recursive `run()`, and node responds
@@ -410,14 +413,10 @@ function runYarn(args, { cwd, env, buffered }) {
  * them could not even be imported. Executing the file directly is what makes its
  * assertions and its import errors real.
  */
-export function testCommand(file, { cwd, tsconfig, moduleMock = false }) {
-  const relativeFile = relative(cwd, file);
-  if (moduleMock) {
-    return ['exec', 'node', '--import', 'tsx', '--experimental-test-module-mocks', relativeFile];
-  }
-  const command = ['exec', 'tsx'];
-  if (tsconfig) command.push('--tsconfig', tsconfig);
-  command.push(relativeFile);
+export function testCommand(file, { cwd, moduleMock = false }) {
+  const command = ['exec', 'node', '--import', 'tsx'];
+  if (moduleMock) command.push('--experimental-test-module-mocks');
+  command.push(relative(cwd, file));
   return command;
 }
 
@@ -732,7 +731,19 @@ async function main() {
 
   normalizeTimingsDir();
   const workers = resolveWorkers(workersArg);
-  const tests = selectShard(discoverTests(roots, cwd), shard);
+  let tests = selectShard(discoverTests(roots, cwd), shard);
+  const selectionFile = process.env.FARMSLOT_CI_TEST_SELECTION;
+  if (selectionFile) {
+    const selection = JSON.parse(readFileSync(selectionFile, 'utf8'));
+    const selected = new Set(selection.files.map((file) => resolve(file)));
+    tests = tests.filter(
+      (file) => !file.startsWith(`${resolve(selection.root)}/`) || selected.has(file),
+    );
+    if (tests.length === 0) {
+      console.log('No dependency-affected tests in this invocation.');
+      return;
+    }
+  }
   if (tests.length === 0) {
     console.error(`No .test.ts files selected under: ${roots.join(', ')}`);
     process.exitCode = 1;
@@ -834,7 +845,7 @@ async function main() {
 
   for (const line of summaryLines(report)) console.log(line);
   const artifactPath = writeTimingArtifact(
-    `tsx-tests-${report.workspace}.json`,
+    `tsx-tests-${report.workspace}${selectionFile ? `-${createHash('sha256').update(roots.join('\0')).digest('hex').slice(0, 12)}` : ''}.json`,
     buildArtifact(report),
   );
   if (artifactPath) console.log(`[tsx-tests] timings artifact: ${artifactPath}`);
