@@ -432,8 +432,12 @@ and reparent between scans cannot be attributed reliably; full OS containment an
 node-loss survival remain outside this phase. Journals currently remain on disk for the
 session lifetime and load into host memory; archival/compaction is not implemented.
 
-See the staged live proof in the runner validation operations guide. Local
-regressions run with `node --import tsx --test
-packages/agent-runtime/src/native/durability.test.ts`. The host test needs permission
-to bind a local Unix socket. The same regression can run from the built output
-with `node --test packages/agent-runtime/dist/native/durability.test.js`.
+See the staged live proof in the runner validation operations guide. Run the local
+regression family from the package directory:
+
+```sh
+cd packages/agent-runtime
+node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json --workers 2 src/native/durability*.test.ts
+```
+
+The host tests need permission to bind local Unix sockets.

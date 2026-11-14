@@ -3,9 +3,12 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { runTimedSteps } from './lib/step-timing.mjs';
 import { ciParitySteps } from './ci-local.mjs';
+import { testFiles } from './full-ci-commands.mjs';
+import { workspaceSuiteFiles } from './workspace-test-targets.mjs';
 
 test('local parity scopes formatting without dropping global checks and stops at a failure', (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'ci-local-'));
@@ -81,6 +84,28 @@ test('review and receipt guards run only for their changed scope', () => {
     ),
   );
   assert.ok(!names(['docs/readme.md']).includes('deterministic receipt guard'));
+});
+
+test('the receipt guard retains the whole declared regression family after behavior splits', () => {
+  const root = fileURLToPath(new URL('../..', import.meta.url));
+  const dir = 'packages/agent-runtime';
+  const pkg = JSON.parse(readFileSync(path.join(root, dir, 'package.json'), 'utf8'));
+  const declared = [...workspaceSuiteFiles([{ dir, test: pkg.scripts.test }], root)]
+    .filter((file) => file.startsWith(`${dir}/test/deterministic-checks`))
+    .sort();
+  assert.ok(declared.length > 1, 'the package declares the split regression files');
+  for (const changed of [
+    `${dir}/scripts/worker-terminal-contract.cjs`,
+    `${dir}/test/deterministic-checks.test-support.cjs`,
+    `${dir}/test/git-fixtures.cjs`,
+    ...declared,
+  ]) {
+    const guard = ciParitySteps([changed], root).find(
+      ([name]) => name === 'deterministic receipt guard',
+    );
+    assert.ok(guard, changed);
+    assert.deepEqual(testFiles({ words: guard[1], cwd: '.', test: true }, root), declared);
+  }
 });
 
 test('local guards leave integration suites in their owning package jobs', () => {

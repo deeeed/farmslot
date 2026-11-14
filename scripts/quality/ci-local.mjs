@@ -91,7 +91,8 @@ export function ciParitySteps(files, cwd) {
     : [];
   const deterministic = affected([
     'packages/agent-runtime/scripts/worker-terminal-contract.cjs',
-    'packages/agent-runtime/test/deterministic-checks.test.cjs',
+    'packages/agent-runtime/test/deterministic-checks',
+    'packages/agent-runtime/test/git-fixtures',
     'services/gateway/src/tasks/worker-terminal-contract',
     'services/gateway/src/tasks/deterministic-checks',
     'services/gateway/src/tasks/acceptance-terminal-contract',
@@ -100,7 +101,12 @@ export function ciParitySteps(files, cwd) {
     ? [
         [
           'deterministic receipt guard',
-          ['node', '--test', 'packages/agent-runtime/test/deterministic-checks.test.cjs'],
+          [
+            'node',
+            '--test',
+            '--test-concurrency=2',
+            'packages/agent-runtime/test/deterministic-checks*.test.cjs',
+          ],
         ],
       ]
     : [];
