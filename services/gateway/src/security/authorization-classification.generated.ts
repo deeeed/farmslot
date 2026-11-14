@@ -102,6 +102,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'dispatch.queue.removeOrphan': { classification: 'admin' },
   'dispatch.queue.reorder': { classification: 'admin' },
   'dispatch.queue.update': { classification: 'admin' },
+  'eval.bench.get': { classification: 'admin' },
   'eval.experiment.create': { classification: 'admin' },
   'eval.suite.cap.get': { classification: 'admin' },
   'eval.suite.cap.update': { classification: 'admin' },

@@ -7,7 +7,7 @@ unlisted: true
 
 This advanced reference is generated from `@farmslot/protocol` capability metadata plus TSDoc comments on protocol interfaces. Do not edit it by hand. For public onboarding, start with [Gateway API capability surface](./gateway-api.md). This raw table is intentionally unlisted because some low-level methods still have generated summaries while public-safe capability grouping and TSDoc coverage mature.
 
-Protocol version: `0.84.0`
+Protocol version: `0.85.0`
 
 ## WebSocket frame shape
 
@@ -141,6 +141,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `dispatch.queue.removeOrphan`           | dispatch         | bounded-write | —      | —      | Dispatch Queue RemoveOrphan gateway method.           |
 | `dispatch.queue.reorder`                | dispatch         | bounded-write | —      | —      | Dispatch Queue Reorder gateway method.                |
 | `dispatch.queue.update`                 | dispatch         | bounded-write | —      | —      | Dispatch Queue Update gateway method.                 |
+| `eval.bench.get`                        | eval             | read-only     | —      | —      | Eval Bench Get gateway method.                        |
 | `eval.experiment.create`                | eval             | bounded-write | —      | —      | Eval Experiment Create gateway method.                |
 | `eval.suite.cap.get`                    | eval             | read-only     | —      | —      | Eval Suite Cap Get gateway method.                    |
 | `eval.suite.cap.update`                 | eval             | bounded-write | —      | —      | Eval Suite Cap Update gateway method.                 |

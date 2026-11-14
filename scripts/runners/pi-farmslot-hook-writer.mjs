@@ -94,6 +94,29 @@ function readSnapshot(directory, key) {
   }
 }
 
+/** Bounded request metadata beside the runner-owned transcript, for either transport. */
+export function writePiReasoningReceipt(sessionPath, configuration) {
+  if (!sessionPath || !configuration.effectiveReasoning) return;
+  const file = `${sessionPath}.reasoning-request.json`;
+  const pending = `${file}.${process.pid}.tmp`;
+  const receipt = {
+    sessionId: path.basename(sessionPath).replace(/\.jsonl?$/, ''),
+    provider: configuration.provider,
+    model: configuration.model,
+    observedAt: new Date().toISOString(),
+    reasoning: configuration.effectiveReasoning,
+  };
+  try {
+    fs.writeFileSync(pending, `${JSON.stringify(receipt)}\n`, { mode: 0o600 });
+    fs.renameSync(pending, file);
+  } catch (error) {
+    // A missing optional label receipt keeps the launch-effort fallback. It must not
+    // abort the model request or replace the runner's own transcript/error handling.
+    console.warn('[farmslot-pi] reasoning receipt unavailable; retaining the launch effort', error);
+    return;
+  }
+}
+
 /**
  * @param {{
  *   obsDir: string,

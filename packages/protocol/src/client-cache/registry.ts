@@ -1468,6 +1468,15 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     dependencies: () => [],
   },
   // Setting a cap publishes no key yet.
+  [Methods.EVAL_BENCH_GET]: {
+    timeoutMs: 30_000,
+    persisted: true,
+    maxBytes: 8 * mb,
+    retention: keptUpTo(16 * mb),
+    live: false,
+    normalizeParams: () => ({}),
+    dependencies: () => [],
+  },
   [Methods.EVAL_SUITE_CAP_GET]: {
     timeoutMs: 30_000,
     persisted: true,

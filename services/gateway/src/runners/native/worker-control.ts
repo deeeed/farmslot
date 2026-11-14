@@ -105,6 +105,22 @@ export async function readNativeWorkerSnapshot(
     { ...latest, generation: latest.generation ?? observedGeneration },
     snapshot,
   );
+  const sessionPath = snapshot.session.nativeSessionPath;
+  const current = getRun(runId)!;
+  const ownsBinding = (item: AgentContext) =>
+    item.nativeSession?.sessionId === latest.sessionId &&
+    item.nativeSession?.generation === latest.generation;
+  if (
+    sessionPath &&
+    current.agentContexts?.some(
+      (item) => ownsBinding(item) && item.runnerSessionPath !== sessionPath,
+    )
+  )
+    updateRun(runId, {
+      agentContexts: current.agentContexts?.map((item) =>
+        ownsBinding(item) ? { ...item, runnerSessionPath: sessionPath } : item,
+      ),
+    });
   if (
     history.failurePolicy !== 'observe' &&
     snapshot.session.state === 'failed' &&
@@ -131,6 +147,10 @@ export async function readNativeWorkerSnapshot(
         ),
       });
   }
+  const observedRun = getRun(runId)!;
+  const observedContext = selectAgentContext(observedRun, { role, contextId });
+  const { captureRunnerReasoningReceipt } = await import('../reasoning-receipt.js');
+  await captureRunnerReasoningReceipt(observedRun, observedContext);
   return snapshot;
 }
 

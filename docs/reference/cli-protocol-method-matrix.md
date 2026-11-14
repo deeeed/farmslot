@@ -171,6 +171,7 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `eval.experiment.create` | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `eval.trial.start`       | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `eval.trial.result.get`  | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `eval.bench.get`         | rpc-only |             |     | Read-only operator-configured benchmark results and rollups via farmslot rpc eval.bench.get.   |
 | `eval.suite.cap.get`     | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `eval.suite.cap.update`  | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 

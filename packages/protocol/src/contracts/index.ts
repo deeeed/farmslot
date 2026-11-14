@@ -12,6 +12,7 @@ export * from './config.js';
 export * from './device-inventory.js';
 export * from './diff-view.js';
 export * from './dispatch.js';
+export * from './eval-bench.js';
 export * from './evals.js';
 export * from './execution-templates.js';
 export * from './failure-triage.js';

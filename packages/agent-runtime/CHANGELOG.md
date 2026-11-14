@@ -4,6 +4,13 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.48.0 - 2026-11-15
+
+- Parse and validate a trial-owned execution-template snapshot without adding a catalog source.
+- A refused `mark complete` in an autonomous run (every blind eval trial) now says no operator will review it: fix the refusal and mark complete again, or end the run with `mark blocked --reason "<the refusal>"`.
+- Report early supervisor loss during native host startup and stop detached runner descendants after a host crash.
+- Retain the saved transcript path reported by native workers so request settings can be attributed to their conversation.
+
 ## 0.47.0 - 2026-11-14
 
 - Compose complete review scope and criteria from validated prior rows plus current updates, and expose fenced same-session context compaction for review continuation.

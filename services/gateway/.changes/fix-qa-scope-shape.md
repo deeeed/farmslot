@@ -1,1 +1,0 @@
-- The QA task contract and the farm QA template now name the scope artifact's top-level `baseSha` and `headSha` explicitly and point to the skill's scope resolver, and the completion gate's error names the expected fields.

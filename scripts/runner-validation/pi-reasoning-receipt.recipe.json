@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Pi reasoning labels follow the serialized request",
+  "description": "Real Pi processes use a loopback provider and an isolated gateway, run store, native host and tmux server. run.get must retain default for omitted effort and the explicit wire level for both transports and slotless native reviews. Failed optional receipt reads or writes must preserve completed model turns and the legacy label. No external model requests or operator sessions are used.",
+  "workflow": {
+    "entry": "receipts",
+    "nodes": {
+      "receipts": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --test scripts/runner-validation/pi-reasoning-receipt.live.mts",
+        "timeout_ms": 300000,
+        "intent": "Eight real requests prove exact-attempt labels for both transports and slotless reviews, plus completed native turns with the legacy label when receipt reads or writes fail.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

@@ -6,6 +6,11 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.46.17 - 2026-11-15
+
+- Blind trials now pass `{{prepare_base_sha}}` to the prepare `artifact_check` hook: the trial's full 40-character base SHA, empty for other runs. mm-harness 0.96.20 uses it to pick the Runway artifact for that commit (`runway-artifact-check.sh --base-commit`).
+- Reduce recording finalization time with parallel full-frame decoding, retaining the original probe on errors or diagnostics and preserving frame timestamps and evidence timing.
+
 ## 0.46.16 - 2026-11-14
 
 - Align published dependencies with the protocol 0.84 and runtime 0.47 release cohort.

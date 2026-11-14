@@ -1,1 +1,0 @@
-- Restoring a blind trial's Git (release, cancel or finished-trial cleanup) re-reads the slot's saved repo verdict, so slot selection no longer refuses the slot as still "isolated for blind trial" until the next fleet refresh.

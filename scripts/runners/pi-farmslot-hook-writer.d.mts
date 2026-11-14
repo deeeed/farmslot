@@ -1,4 +1,12 @@
 export function piFailureKind(failure: unknown): 'transport' | undefined;
+export function writePiReasoningReceipt(
+  sessionPath: string | null | undefined,
+  configuration: {
+    provider: string;
+    model: string;
+    effectiveReasoning?: import('@farmslot/protocol').EffectiveReasoning;
+  },
+): void;
 
 export interface PiHookParams {
   obsDir: string;

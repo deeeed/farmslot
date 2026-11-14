@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { mock, test } from 'node:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { mock, test, type TestContext } from 'node:test';
 import * as promiseTimers from 'node:timers/promises';
 
 import {
@@ -17,6 +20,8 @@ import {
   type NativeSessionSendResult,
   type NativeWorkerSessionBinding,
   type Run,
+  runEngineLabel,
+  runWorkerEffort,
 } from '@farmslot/protocol';
 import type { RawPoolJson } from '@farmslot/slot-config';
 
@@ -390,6 +395,98 @@ test('acceptedAt checkpoint recovery repairs native metrics exactly once', async
   assert.equal(run.metrics.runnerSessionId, 'saved-conversation');
   assert.equal(metricWrites, 1);
   assert.equal(run.agentContexts![0].nativeSession!.acceptedAt, acceptedAt);
+});
+
+async function retainedPiReview(t: TestContext) {
+  reset();
+  await launch();
+  const directory = mkdtempSync(path.join(tmpdir(), 'review-receipt-pool-'));
+  writeFileSync(path.join(directory, 'host.json'), JSON.stringify(configuredPool));
+  const previousPool = process.env.FARMSLOT_POOL_DIR;
+  process.env.FARMSLOT_POOL_DIR = directory;
+  t.after(() => {
+    if (previousPool === undefined) delete process.env.FARMSLOT_POOL_DIR;
+    else process.env.FARMSLOT_POOL_DIR = previousPool;
+    rmSync(directory, { recursive: true, force: true });
+  });
+  run.project = 'demo';
+  run.metrics.runner = 'pi';
+  run.metrics.model = 'litellm/synthetic-model';
+  run.effort = 'off';
+  run.createdAt = new Date().toISOString();
+  // Readback may run on a gateway whose local OS cannot launch a Pi source sandbox.
+  // Seed the retained host fixture; the live recipe covers actual Pi admission.
+  assert.ok(host);
+  host = {
+    ...host,
+    runner: 'pi',
+    model: run.metrics.model,
+    version: '1.4.0',
+    nativeSessionPath: '/private/pi/session.jsonl',
+  };
+  run.agentContexts = run.agentContexts?.map((context) => ({
+    ...context,
+    runner: 'pi',
+    model: run.metrics.model,
+    effort: 'off',
+  }));
+}
+
+test('slotless native review captures its request receipt without a terminal target', async (t) => {
+  await retainedPiReview(t);
+  const observer = registry.getRunnerObservability('pi');
+  assert.ok(observer);
+  const original = observer.getReasoningReceipt;
+  t.after(() => {
+    observer.getReasoningReceipt = original;
+  });
+  let reads = 0;
+  observer.getReasoningReceipt = async (vars, session) => {
+    reads++;
+    assert.equal(vars.session, '');
+    assert.equal(vars.remoteRepo, '/source');
+    assert.equal(session.sessionId, 'saved-conversation');
+    assert.equal(session.sessionPath, '/private/pi/session.jsonl');
+    return {
+      sessionId: session.sessionId,
+      provider: 'litellm',
+      model: 'synthetic-model',
+      selectedModel: session.model,
+      observedAt: new Date().toISOString(),
+      reasoning: { mode: 'omitted' },
+    };
+  };
+  await readReviewWorkspaceWorker(run.id);
+  await readReviewWorkspaceWorker(run.id);
+  assert.equal(run.slotId, null);
+  assert.ok(!run.agentContexts?.[0].target);
+  assert.equal(run.agentContexts?.[0].reasoningReceipt?.reasoning.mode, 'omitted');
+  assert.equal(reads, 1, 'the exact attempt caches its launch receipt');
+  assert.equal(
+    runEngineLabel({ runner: 'pi', model: run.metrics.model, effort: runWorkerEffort(run) }),
+    'pi/litellm/synthetic-model · default',
+  );
+});
+
+test('unavailable reasoning metadata preserves the native review snapshot and liveness', async (t) => {
+  await retainedPiReview(t);
+  const observer = registry.getRunnerObservability('pi');
+  assert.ok(observer);
+  const original = observer.getReasoningReceipt;
+  t.after(() => {
+    observer.getReasoningReceipt = original;
+  });
+  const warnings: unknown[][] = [];
+  t.mock.method(console, 'warn', (...args: unknown[]) => warnings.push(args));
+  observer.getReasoningReceipt = async () => {
+    throw new Error('receipt read unavailable');
+  };
+  const snapshot = await readReviewWorkspaceWorker(run.id);
+  assert.equal(snapshot.session.state, 'idle');
+  assert.equal(snapshot.session.nativeSessionId, 'saved-conversation');
+  assert.equal(run.agentContexts?.[0].reasoningReceipt, undefined);
+  assert.equal(warnings.length, 1);
+  assert.equal(run.effort, 'off');
 });
 
 for (const method of [NATIVE_WORKER_READ, NATIVE_WORKER_ENSURE, NATIVE_WORKER_SEND]) {

@@ -1,0 +1,1 @@
+- Blind workers get a boundary `mktemp` that writes its default file in the trial directory. Bare `mktemp`, `prepare-sandbox`, `-t`, combined flags such as `-dt`, and `--directory` use that directory. The seatbelt denies `/var/folders`. An explicit template stays where the caller put it, and a template after `--` stays too.

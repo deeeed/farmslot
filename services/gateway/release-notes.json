@@ -1,7 +1,10 @@
 {
-  "version": "0.39.3",
-  "date": "2026-11-14",
+  "version": "0.39.4",
+  "date": "2026-11-15",
   "items": [
-    "WARM re-reviews reuse validated coverage and compact retained context before reviewing a new delta."
+    "Reasoning labels follow the worker request while unavailable label metadata leaves workers running.",
+    "Blind trials retain their frozen templates, authored acceptance criteria and isolated files through cleanup and replay.",
+    "Parked-work retention stays local, and tmux restore failures show the transport error.",
+    "Unchanged PR-rule checks and settled node-intent cleanup use less gateway work."
   ]
 }
