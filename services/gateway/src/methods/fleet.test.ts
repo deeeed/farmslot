@@ -899,6 +899,45 @@ test('buildRefreshSlotRow records only the current probe repo blocker', () => {
   );
 });
 
+test('a fleet refresh that observed the slot before a restore re-probe keeps the newer verdict', () => {
+  const probe = {
+    slot: 'mini-core-3',
+    machine: 'mini',
+    platform: 'cli',
+    project: 'metamask-core-farm',
+    ssh: 'OK',
+    dev: '-',
+    devserver: '-',
+    device: '-',
+    cdp: '-',
+    fixtures: 'OK',
+    branch: 'eval/trial',
+    agent: 'idle',
+    enabled: true,
+    mode: 'dispatch',
+    dispatchable: false,
+    repoBlocker: 'isolated for blind trial trial-1',
+    // The refresh probed while the trial still held the slot ...
+    repoObservedAt: '2026-11-14T09:58:30.000Z',
+  };
+  // ... and the restore re-probed it clean afterwards.
+  const restored = { lifecycle: 'ready', repo_observed_at: '2026-11-14T09:58:35.000Z' };
+  const row = buildRefreshSlotRow(probe, restored);
+  assert.equal('repo_blocker' in row, false, 'the older isolated verdict is not published');
+  assert.equal(row.repo_observed_at, restored.repo_observed_at);
+  // A refresh that observed after the re-probe publishes its own verdict.
+  const later = { ...probe, repoObservedAt: '2026-11-14T09:59:00.000Z' };
+  assert.equal(buildRefreshSlotRow(later, restored).repo_blocker, probe.repoBlocker);
+  // A refresh without a readable repo probe keeps the saved verdict.
+  const unread = { ...probe, repoBlocker: undefined, repoObservedAt: undefined };
+  const kept = buildRefreshSlotRow(unread, {
+    lifecycle: 'ready',
+    repo_blocker: 'saved',
+    repo_observed_at: restored.repo_observed_at,
+  });
+  assert.equal(kept.repo_blocker, 'saved');
+});
+
 test('buildRefreshSlotRow carries the harness readiness record through a refresh', () => {
   const probe = {
     slot: 'macwork-mm-4',

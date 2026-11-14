@@ -366,15 +366,17 @@ mock.module('../methods/dispatch.js', {
 });
 const policy = await import('./dispatch-policy.js');
 const tracking = await import('../methods/slot/slot-tracking.js');
+const { updateSlotStatus: recordSlotStatus } = await import('../core/index.js');
 mock.module('../methods/slot/slot-tracking.js', {
   namedExports: {
     ...tracking,
-    probeDefaultBranch: async (vars: { slotId: string }, defaultBranch: string) => {
+    // The re-probe reads the default branch and saves the fresh verdict.
+    reprobeSlotRepoBlocker: async (vars: { slotId: string }) => {
       assert.ok(reclaims.includes(vars.slotId), 'probe must follow reclaim and Git restore');
       assert.equal(slots.find((slot) => slot.slot === vars.slotId)?.lifecycle, 'ready');
-      assert.equal(defaultBranch, 'main');
       repoProbes.push(vars.slotId);
       if (repoProbeError) return { readable: false, error: repoProbeError };
+      await recordSlotStatus(vars.slotId, { repo_blocker: repoAfterReclaim });
       return { readable: true, blocker: repoAfterReclaim };
     },
   },
