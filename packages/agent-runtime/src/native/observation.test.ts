@@ -115,22 +115,38 @@ test('source events keep their watchers; a created or replaced directory re-arms
   });
   syncBuiltinESMExports();
   const fixture = setup();
+  const ready = () => fixture.source.current().ready;
+  // Each separate atomic commit is published by its watcher event alone: no fence is called.
+  // The ceiling only reports a hang; watcher delivery is usually milliseconds.
+  const delivered = async (label: string) => {
+    const seen = fixture.notices.length;
+    fixture.commitMetadata();
+    for (let i = 0; i < 250 && (fixture.notices.length === seen || !ready()); i++) await delay(20);
+    assert.ok(fixture.notices.length > seen && ready(), label);
+  };
   try {
     await fixture.source.start();
     const started = armed;
     assert.ok(started > 0);
-    const before = await fixture.source.fence();
-    for (let i = 0; i < 5; i++) fixture.commitMetadata();
-    // The fence reads the commits; the delay lets their watcher events arrive.
-    await delay(200);
-    assert.ok((await fixture.source.fence()).revision > before.revision);
-    assert.equal(armed, started, 'events under an unchanged root reuse its watchers');
+    for (let i = 0; i < 3; i++) await delivered(`commit ${i} is delivered by the watcher`);
+    // Linux re-arms on every event, since Node's recursive watch there is inode-bound.
+    if (process.platform !== 'linux')
+      assert.equal(armed, started, 'events under an unchanged root reuse its watchers');
     rmSync(fixture.root, { recursive: true, force: true });
     mkdirSync(join(fixture.root, 'sessions'), { recursive: true, mode: 0o700 });
-    fixture.commitMetadata();
-    // The ceiling only reports a hang; watcher delivery is usually milliseconds.
-    for (let i = 0; i < 250 && armed === started; i++) await delay(20);
-    assert.ok(armed > started, 'a replaced root is armed again');
+    // The replacement's delete and create events can recover the source more than once, so wait
+    // until it is admitted and arming has been quiet for 200 ms.
+    let quiet = 0;
+    for (let i = 0, last = armed; i < 250 && !(armed > started && ready() && quiet >= 10); i++) {
+      fixture.commitMetadata();
+      await delay(20);
+      quiet = armed === last ? quiet + 1 : 0;
+      last = armed;
+    }
+    assert.ok(armed > started && ready(), 'a replaced root is armed again and admitted');
+    const rearmed = armed;
+    for (let i = 0; i < 2; i++) await delivered(`commit ${i} after replacement is delivered`);
+    if (process.platform !== 'linux') assert.equal(armed, rearmed, 'the new watchers are kept');
   } finally {
     fixture.close();
     t.mock.restoreAll();

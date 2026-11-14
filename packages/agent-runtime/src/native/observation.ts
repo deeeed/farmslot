@@ -72,6 +72,9 @@ export function assertNativeSourceCurrent(
   throw unavailable;
 }
 
+/** Recursive fs.watch is native on macOS and Windows; on Linux it is per-file and inode-bound. */
+const REARM_EVERY_EVENT = process.platform === 'linux';
+
 interface SourceSnapshot {
   digest: string;
   host: string;
@@ -321,7 +324,9 @@ export class NativeHostObservation {
   }
   /** Re-arms only when a watched directory moved, appeared or was replaced. Closing a
    * recursive watcher blocks the event loop for seconds on a large tree, so unchanged
-   * targets keep their watchers across events. */
+   * targets keep their watchers across events. Linux is the exception: Node emulates
+   * recursive watching there with per-file inotify watchers that stay on a replaced file's
+   * old inode, so every event re-arms to follow atomic metadata commits. */
   private arm(force = true): void {
     const targets = new Map<string, boolean>();
     const root = nearestDirectory(this.client.root);
@@ -334,7 +339,8 @@ export class NativeHostObservation {
         return `${path}\0${recursive}\0${stats.dev}:${stats.ino}`;
       })
       .join('\n');
-    if (!force && this.watchers.length > 0 && identity === this.armedIdentity) return;
+    if (!force && !REARM_EVERY_EVENT && this.watchers.length > 0 && identity === this.armedIdentity)
+      return;
     for (const watcher of this.watchers) watcher.close();
     this.watchers = [];
     this.armedIdentity = identity;
