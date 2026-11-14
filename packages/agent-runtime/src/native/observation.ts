@@ -3,7 +3,8 @@ import { existsSync, type FSWatcher, statSync, watch } from 'node:fs';
 import { lstat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import { Methods, type NativeProfileStatusResult } from '@farmslot/protocol';
+import type { NativeProfileStatusResult } from '@farmslot/protocol';
+import { Methods } from '@farmslot/protocol/rpc';
 
 import { listNativeProfilesAsync, providerAccountsConfigPath } from './account-profiles.js';
 import { type NativeSessionClient, observeExistingNativeHost } from './client.js';

@@ -1,17 +1,19 @@
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 
+import type {
+  NativeApprovalMode,
+  NativeContextCompactionEvidence,
+  NativeSessionResponse,
+  NativeSessionTool,
+  NativeStructuredResult,
+} from '@farmslot/protocol';
 import {
-  type NativeApprovalMode,
-  type NativeContextCompactionEvidence,
   nativeResultJsonSchema,
-  type NativeSessionResponse,
-  type NativeSessionTool,
-  type NativeStructuredResult,
   nativeStructuredResult,
   PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA,
   PIPELINE_VISUAL_RESULT_SCHEMA,
-} from '@farmslot/protocol';
+} from '@farmslot/protocol/recipe/pipeline-visual-judgments';
 
 import { claudeHeadlessDisallowedTools, claudeHeadlessEnvironment } from './claude-headless.js';
 import { JsonLineProcess } from './process.js';

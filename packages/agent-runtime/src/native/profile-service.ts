@@ -1,8 +1,5 @@
-import {
-  Methods,
-  type NativeProfileStatusResult,
-  type NativeSessionInfo,
-} from '@farmslot/protocol';
+import type { NativeProfileStatusResult, NativeSessionInfo } from '@farmslot/protocol';
+import { Methods } from '@farmslot/protocol/rpc';
 
 import {
   addNativeProfile,

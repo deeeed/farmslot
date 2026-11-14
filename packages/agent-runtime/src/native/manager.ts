@@ -14,24 +14,24 @@ import { homedir } from 'node:os';
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
-import {
-  type NativeApprovalMode,
-  type NativeCommandObservation,
-  type NativeCommandReceipt,
-  type NativeContextCompactionRecord,
-  type NativeContextCompactionRequest,
-  type NativeProfileInfo,
-  type NativeSessionCreateParams,
-  type NativeSessionEnsureParams,
-  type NativeSessionEvent,
-  type NativeSessionInfo,
-  type NativeSessionReadResult,
-  type NativeSessionRequester,
-  type NativeSessionResponse,
-  type NativeSessionSendResult,
-  nativeStructuredResult,
-  type NativeTurnChanges,
+import type {
+  NativeApprovalMode,
+  NativeCommandObservation,
+  NativeCommandReceipt,
+  NativeContextCompactionRecord,
+  NativeContextCompactionRequest,
+  NativeProfileInfo,
+  NativeSessionCreateParams,
+  NativeSessionEnsureParams,
+  NativeSessionEvent,
+  NativeSessionInfo,
+  NativeSessionReadResult,
+  NativeSessionRequester,
+  NativeSessionResponse,
+  NativeSessionSendResult,
+  NativeTurnChanges,
 } from '@farmslot/protocol';
+import { nativeStructuredResult } from '@farmslot/protocol/recipe/pipeline-visual-judgments';
 
 import {
   assertNativeProfileCurrent,

@@ -3,17 +3,21 @@ import { realpath } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 
+import type {
+  NativeSessionResponse,
+  NativeSessionTool,
+  NativeStructuredResult,
+} from '@farmslot/protocol';
 import {
   DEFAULT_CODEX_EFFORT,
+  resolveCodexReasoningEffort,
+} from '@farmslot/protocol/contracts/runs';
+import {
   nativeResultJsonSchema,
-  type NativeSessionResponse,
-  type NativeSessionTool,
-  type NativeStructuredResult,
   nativeStructuredResult,
   PIPELINE_REPAIR_VISUAL_RESULT_SCHEMA,
   PIPELINE_VISUAL_RESULT_SCHEMA,
-  resolveCodexReasoningEffort,
-} from '@farmslot/protocol';
+} from '@farmslot/protocol/recipe/pipeline-visual-judgments';
 
 import { modelQuestionsOffByRunner } from './model-questions.js';
 import { nativeChecklist } from './plan.js';

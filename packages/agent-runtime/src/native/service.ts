@@ -1,11 +1,11 @@
-import {
-  isNativeResultSchema,
-  Methods,
-  type NativeSessionCreateParams,
-  type NativeSessionInfo,
-  type NativeSessionRequester,
-  type NativeSessionResponse,
+import type {
+  NativeSessionCreateParams,
+  NativeSessionInfo,
+  NativeSessionRequester,
+  NativeSessionResponse,
 } from '@farmslot/protocol';
+import { isNativeResultSchema } from '@farmslot/protocol/recipe/pipeline-visual-judgments';
+import { Methods } from '@farmslot/protocol/rpc';
 
 import { nativeTurnDiff } from './checkpoint.js';
 import { type NativeSessionClient, observeExistingNativeHost } from './client.js';

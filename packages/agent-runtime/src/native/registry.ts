@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { DEFAULT_CODEX_EFFORT, DEFAULT_PI_THINKING } from '@farmslot/protocol';
+import { DEFAULT_CODEX_EFFORT, DEFAULT_PI_THINKING } from '@farmslot/protocol/contracts/runs';
 
 import { claudeProfileEnvironment, observeClaudeAccount } from './account-claude.js';
 import { observeCodexAccount } from './account-codex.js';

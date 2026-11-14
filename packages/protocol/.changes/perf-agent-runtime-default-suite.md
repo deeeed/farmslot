@@ -1,0 +1,1 @@
+- Expose the existing native-result validators through a focused import path so native hosts avoid unrelated recipe startup work.

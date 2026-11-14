@@ -184,8 +184,12 @@ export class NativeSessionClient {
     closeSync(log);
     child.unref();
     let spawnError: Error | undefined;
+    let exited = false;
     child.on('error', (error) => {
       spawnError = error;
+    });
+    child.once('exit', () => {
+      exited = true;
     });
     const deadline = Date.now() + 10_000;
     while (Date.now() < deadline) {
@@ -197,6 +201,9 @@ export class NativeSessionClient {
         if (alive(host.pid) && existsSync(join(this.root, 'ready.json')) && existsSync(host.socket))
           return host;
       }
+      // A clean exit can hand off to another supervisor still starting. An abnormal
+      // exit of our child cannot become ready; keep the live-start ceiling unchanged.
+      if (exited && child.exitCode !== 0) break;
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     throw new Error(

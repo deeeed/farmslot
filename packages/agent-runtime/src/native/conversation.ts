@@ -1,14 +1,14 @@
-import {
-  NATIVE_CONVERSATION_LIMITS,
-  type NativeConversationCursor,
-  type NativeConversationDeltaPage,
-  type NativeConversationOmission,
-  type NativeConversationPage,
-  type NativeConversationReset,
-  type NativeConversationUpdate,
-  type NativeSessionEvent,
-  type NativeSessionReadResult,
+import type {
+  NativeConversationCursor,
+  NativeConversationDeltaPage,
+  NativeConversationOmission,
+  NativeConversationPage,
+  NativeConversationReset,
+  NativeConversationUpdate,
+  NativeSessionEvent,
+  NativeSessionReadResult,
 } from '@farmslot/protocol';
+import { NATIVE_CONVERSATION_LIMITS } from '@farmslot/protocol/rpc';
 
 const MAX_FRAME = 1024 * 1024;
 const MAX_PROJECTION = NATIVE_CONVERSATION_LIMITS.projectionBytes;
