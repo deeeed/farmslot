@@ -17,10 +17,10 @@ import type {
 
 export interface ServeOptions {
   /**
-   * The pid each command's guard watches; this process by default. Tests point it at a process
-   * that outlives this one, to prove this process's own cleanup without the guards.
+   * False starts no command watchdog. Tests use it to prove this process's own cleanup without
+   * the watchdog.
    */
-  guardOwnerPid?: number;
+  commandWatchdog?: boolean;
 }
 
 /**
@@ -86,15 +86,15 @@ export function serveBackgroundRequests(
   // Every command this process starts runs in its own process group. However this process exits
   // (shutdown, a closed IPC channel, process.exit, an uncaught exception), the groups of commands
   // that have not exited are killed, through their handles: a command that has not emitted `exit`
-  // has not been reaped, so its pid still names its group. Each command also carries a guard that
-  // kills its group within about a second if this process dies outright (SIGKILL, a native crash).
+  // has not been reaped, so its pid still names its group. A watchdog kills the groups of running
+  // commands as soon as this process dies outright (SIGKILL, a native crash).
   const running = new Set<ChildProcess>();
   ownLocalCommands({
     started(command) {
       running.add(command);
       command.once('exit', () => running.delete(command));
     },
-    pid: options.guardOwnerPid ?? process.pid,
+    watchdog: options.commandWatchdog,
   });
   process.on('exit', () => {
     for (const command of running) if (command.pid) signalProcessGroup(command.pid, 'SIGKILL');

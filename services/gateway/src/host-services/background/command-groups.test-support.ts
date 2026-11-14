@@ -7,8 +7,8 @@
 //   untimed    the same command with no timeout
 //   resistant  a command that survives TERM (it records each one), with FIXTURE_TIMEOUT_MS
 //   results    each FIXTURE_COMMANDS entry with its timeout, the results written to FIXTURE_OUT
-// FIXTURE_CLOSEOUT_MS sets the TERM-to-KILL closeout; FIXTURE_GUARD_OWNER points the guards at
-// another process (serve.ts's guardOwnerPid).
+// FIXTURE_CLOSEOUT_MS sets the TERM-to-KILL closeout; FIXTURE_NO_WATCHDOG=1 starts no command
+// watchdog (serve.ts's commandWatchdog).
 import { writeFile } from 'node:fs/promises';
 
 import { execLocal } from '../../core/exec.js';
@@ -67,5 +67,5 @@ serveBackgroundRequests(
     'taskFiles.transfer': command,
   },
   new Set(['fleet.probeMachine']),
-  env.FIXTURE_GUARD_OWNER ? { guardOwnerPid: Number(env.FIXTURE_GUARD_OWNER) } : {},
+  env.FIXTURE_NO_WATCHDOG === '1' ? { commandWatchdog: false } : {},
 );

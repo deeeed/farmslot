@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import test from 'node:test';
 
-import { execFileArgv, execLocal } from './exec.js';
+import { COMMAND_WATCHDOG, execFileArgv, execLocal } from './exec.js';
 
 test('execLocal maxBuffer preserves bytes up to the limit and reports overflow', async () => {
   const result = await execLocal('printf abcdef; sleep 1', { maxBuffer: 4 });
@@ -78,3 +80,43 @@ test(
     assert.equal(skipped.exitCode, 130);
   },
 );
+
+test('the command watchdog kills only still-registered groups when its pipe closes, in sh and dash', async (t) => {
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+      throw error;
+    }
+  };
+  for (const shell of ['/bin/sh', '/bin/dash'].filter((file) => existsSync(file))) {
+    const groups = [0, 1, 2].map(() => spawn('sleep', ['30'], { detached: true, stdio: 'ignore' }));
+    t.after(() => {
+      for (const group of groups)
+        if (group.pid && alive(group.pid)) process.kill(-group.pid, 'SIGKILL');
+    });
+    const [kept, exited, other] = groups.map((group) => group.pid!);
+    const watchdog = spawn(shell, ['-c', COMMAND_WATCHDOG], { stdio: ['pipe', 'ignore', 'pipe'] });
+    let stderr = '';
+    watchdog.stderr.on('data', (chunk) => (stderr += chunk));
+    watchdog.stdin.end(`+${kept}\n+${exited}\n+${other}\n-${exited}\n`);
+    const code = await new Promise((resolve) => watchdog.once('exit', resolve));
+    assert.equal(code, 0, `${shell}: ${stderr}`);
+    // The kill is synchronous in the shell; the exit events follow.
+    await Promise.all(
+      [groups[0], groups[2]].map(
+        (group) =>
+          new Promise((resolve) =>
+            group.exitCode !== null || group.signalCode !== null
+              ? resolve(null)
+              : group.once('exit', resolve),
+          ),
+      ),
+    );
+    assert.equal(groups[0].signalCode, 'SIGKILL', `${shell} kills a registered group`);
+    assert.equal(groups[2].signalCode, 'SIGKILL', `${shell} kills every registered group`);
+    assert.equal(alive(exited), true, `${shell} leaves an unregistered group alone`);
+  }
+});
