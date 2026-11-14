@@ -484,7 +484,7 @@ test('proof dispatch preserves the sibling restrictions installed during prepare
   }
 });
 
-test('blind isolation keeps farm tooling and the Mobile and Extension runtime files', () => {
+test('blind isolation keeps farm tooling and toolchain state, never generated sources', () => {
   for (const entry of [
     '.agents/skills',
     '.claude/skills',
@@ -492,20 +492,21 @@ test('blind isolation keeps farm tooling and the Mobile and Extension runtime fi
     '.cursor/rules',
     '.skills.local',
     '.tool-versions',
-    'temp/farmslot',
-    'app/core/InpageBridgeWeb3.js',
-    'app/util/termsOfUse/termsOfUseContent.ts',
-    'scripts/inpage-bridge/dist',
-    'ios/debug.xcconfig',
-    'ios/release.xcconfig',
+    'temp/farmslot/deps-setup.stamp',
     'ios/.xcode.env.local',
     '.yalc',
     'yalc.lock',
-    'development/**/*.js',
-    'development/**/*.d.ts',
-    'shared/lib/manifestFlags.*',
-    'development/.webpack',
     '.metamask/cache',
   ])
     assert.ok(DEFAULT_BLIND_KEEP_IGNORED.includes(entry), entry);
+  // An earlier run can build these from its own fix; they move and are regenerated.
+  for (const entry of [
+    'temp/farmslot',
+    'app/core/InpageBridgeWeb3.js',
+    'scripts/inpage-bridge/dist',
+    'development/**/*.js',
+    'development/.webpack',
+    'shared/lib/manifestFlags.*',
+  ])
+    assert.ok(!DEFAULT_BLIND_KEEP_IGNORED.includes(entry), entry);
 });

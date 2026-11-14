@@ -170,21 +170,12 @@ export const DEFAULT_BLIND_KEEP_IGNORED = [
   '.cursor/rules',
   '.skills.local',
   '.tool-versions',
-  // Mobile: deps-setup stamp, generated sources and local build config.
-  'temp/farmslot',
-  'app/core/InpageBridgeWeb3.js',
-  'app/util/termsOfUse/termsOfUseContent.ts',
-  'scripts/inpage-bridge/dist',
-  'ios/debug.xcconfig',
-  'ios/release.xcconfig',
+  // Mobile: the deps-setup stamp and local toolchain config. Generated sources
+  // move; the stamp's readiness check then reruns yarn setup from the base.
+  'temp/farmslot/deps-setup.stamp',
   'ios/.xcode.env.local',
   '.yalc',
   'yalc.lock',
-  // Extension: generated build sources and caches.
-  'development/**/*.js',
-  'development/**/*.d.ts',
-  'shared/lib/manifestFlags.*',
-  'development/.webpack',
   '.metamask/cache',
 ];
 

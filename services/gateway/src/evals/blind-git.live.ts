@@ -1091,7 +1091,7 @@ module['restore'](json.loads(sys.argv[2]))
     assert.equal(readFileSync(path.join(repo, name), 'utf8'), text, `${name} restored`);
 });
 
-test('isolation keeps farm tooling and generated sources, and handles self-ignoring folders', async (t) => {
+test('isolation keeps farm tooling and the deps stamp, moves generated sources, and handles self-ignoring folders', async (t) => {
   const { DEFAULT_BLIND_KEEP_IGNORED } = await import('./blind-trial.js');
   const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'blind-ignored-tooling-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -1110,11 +1110,13 @@ test('isolation keeps farm tooling and generated sources, and handles self-ignor
   const kept: Record<string, string> = {
     '.agents/skills/proof/SKILL.md': 'skill\n',
     'temp/farmslot/deps-setup.stamp': 'stamp\n',
-    'development/build/constants.js': 'generated\n',
-    'shared/lib/manifestFlags.js': 'generated\n',
   };
   const moved: Record<string, string> = {
     'temp/recipe/runtime/status.json': '{"operations":["earlier"]}\n',
+    'temp/farmslot/ci-parity-selection.json': '{"selection":"earlier"}\n',
+    // Built by an earlier run, possibly from its own fix.
+    'development/build/constants.js': 'generated\n',
+    'shared/lib/manifestFlags.js': 'generated\n',
     '.agents/earlier-notes.md': 'FAKE_EARLIER_ANSWER\n',
     // A folder that ignores itself: Git lists it and every entry in it.
     'hooks/_/.gitignore': '*\n',

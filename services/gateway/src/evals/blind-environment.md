@@ -180,13 +180,19 @@ deleted.
 Some paths stay in place: the project's `blind_keep_ignored` list, plus the
 run's own task folder. The default list (`DEFAULT_BLIND_KEEP_IGNORED` in
 `blind-trial.ts`) keeps dependency and build caches (`node_modules`, `.yarn/*`,
-iOS Pods and build, Android build and Gradle, `build`, `dist`), the farm-installed
-agent tooling (`.agents/skills`, `.claude/skills`, `.skills-cache`,
-`.cursor/rules`, `.skills.local`, `.tool-versions`), Mobile's deps-setup stamp
-(`temp/farmslot`), generated sources and local build config, and Extension's
-generated `development/` build sources, `shared/lib/manifestFlags.*`,
-`development/.webpack` and `.metamask/cache`. None of these is an earlier run's
-output. Each pattern also matches below any directory, so
+iOS Pods and build, Android build and Gradle, `build`, `dist`, `.yalc`,
+`.metamask/cache`), the farm-installed agent tooling (`.agents/skills`,
+`.claude/skills`, `.skills-cache`, `.cursor/rules`, `.skills.local`,
+`.tool-versions`) and local toolchain state (Mobile's
+`temp/farmslot/deps-setup.stamp`, `ios/.xcode.env.local`). None of these is an
+earlier run's output.
+
+Generated sources move: an earlier run may have built them from its own fix.
+Mobile's deps step finds `app/core/InpageBridgeWeb3.js` and the terms-of-use
+files missing and reruns `yarn setup` from the base, which costs a setup per
+trial. Extension's generated `development/` build files,
+`shared/lib/manifestFlags.*` and `development/.webpack` have no prepare step
+that regenerates them yet: Extension blind trials need one before they run. Each pattern also matches below any directory, so
 `temp/generated-app/node_modules` and `packages/a/.yarn/cache` stay; isolation
 enters an ignored directory that holds a kept path and moves only its other
 entries. Git lists a folder that ignores itself together with each entry in it;
