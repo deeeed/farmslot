@@ -10,6 +10,7 @@ import {
 } from '@farmslot/protocol';
 
 import type { SlotVars } from '../core/config.js';
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux-fields.js';
 import { nodeModelCatalogs } from '../runners/model-catalog.js';
 import { runnerLaunchBlockerAutoActionKey } from '../runners/registry.js';
 
@@ -105,12 +106,15 @@ function makeSlot(overrides: Partial<SlotStatus> = {}): SlotStatus {
 }
 
 test('parseCapturedAgentPaneTarget prefers tmux window name over numeric index', () => {
-  assert.deepEqual(parseCapturedAgentPaneTarget('mme-4', 'mme-4:1.0|review'), {
-    session: 'mme-4',
-    window: 'review',
-    pane: '0',
-    target: 'mme-4:review',
-  });
+  assert.deepEqual(
+    parseCapturedAgentPaneTarget('mme-4', ['mme-4:1.0', 'review'].join(TMUX_FIELD_SEPARATOR)),
+    {
+      session: 'mme-4',
+      window: 'review',
+      pane: '0',
+      target: 'mme-4:review',
+    },
+  );
 });
 
 test('dispatch role shell command starts a real repo shell, not the prepare placeholder', () => {
@@ -193,7 +197,11 @@ function makeSlotVars(overrides: Partial<SlotVars> = {}): SlotVars {
 function runnerInputProbe(command: string): ExecResult | null {
   if (command.includes('send-keys')) return null;
   if (command.includes('#{pane_current_command}'))
-    return { exitCode: 0, stdout: '%1|123|cursor-agent', stderr: '' };
+    return {
+      exitCode: 0,
+      stdout: ['%1', '123', 'cursor-agent'].join(TMUX_FIELD_SEPARATOR),
+      stderr: '',
+    };
   if (command.includes('FARMSLOT_RUNNER_PATTERN='))
     return { exitCode: 0, stdout: '456', stderr: '' };
   return null;
@@ -307,7 +315,7 @@ test('initial launch-blocker keys refuse a shell even with the stale trust menu 
         return {
           exitCode: command.includes('FARMSLOT_RUNNER_PATTERN=') ? 1 : 0,
           stdout: command.includes('#{pane_current_command}')
-            ? '%1|123|zsh'
+            ? ['%1', '123', 'zsh'].join(TMUX_FIELD_SEPARATOR)
             : command.includes('FARMSLOT_RUNNER_PATTERN=')
               ? ''
               : cursorWorkspaceTrustPane,
@@ -716,22 +724,28 @@ test('canonicalAgentContextTarget prefers named role window over numeric target'
 });
 
 test('parseCapturedAgentPaneTarget falls back to numeric window when name is empty', () => {
-  assert.deepEqual(parseCapturedAgentPaneTarget('mme-4', 'mme-4:1.0|'), {
-    session: 'mme-4',
-    window: '1',
-    pane: '0',
-    target: 'mme-4:1.0',
-  });
+  assert.deepEqual(
+    parseCapturedAgentPaneTarget('mme-4', ['mme-4:1.0', ''].join(TMUX_FIELD_SEPARATOR)),
+    {
+      session: 'mme-4',
+      window: '1',
+      pane: '0',
+      target: 'mme-4:1.0',
+    },
+  );
 });
 
 test('parseCapturedAgentPaneTarget retains stable pane identity beside named window target', () => {
-  assert.deepEqual(parseCapturedAgentPaneTarget('ff-1', 'ff-1:2.1|dev|%42'), {
-    session: 'ff-1',
-    window: 'dev',
-    pane: '1',
-    paneId: '%42',
-    target: 'ff-1:dev',
-  });
+  assert.deepEqual(
+    parseCapturedAgentPaneTarget('ff-1', ['ff-1:2.1', 'dev', '%42'].join(TMUX_FIELD_SEPARATOR)),
+    {
+      session: 'ff-1',
+      window: 'dev',
+      pane: '1',
+      paneId: '%42',
+      target: 'ff-1:dev',
+    },
+  );
 });
 
 test('findAffinitySlot respects family/lane/variant identity when provided', () => {

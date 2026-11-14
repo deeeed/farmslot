@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux-fields.js';
+
 import {
   rediscoverRunnerSessionPane,
   type RunnerSessionRediscoveryDeps,
@@ -30,7 +32,10 @@ function deps(overrides: Partial<RunnerSessionRediscoveryDeps> = {}): RunnerSess
   return {
     exec: async () => ({
       exitCode: 0,
-      stdout: '%11|4001|worker\n%12|4002|dev-reopen\n',
+      stdout: `${[
+        ['%11', '4001', 'worker'].join(TMUX_FIELD_SEPARATOR),
+        ['%12', '4002', 'dev-reopen'].join(TMUX_FIELD_SEPARATOR),
+      ].join('\n')}\n`,
       stderr: '',
     }),
     probeRunnerPid: async () => ({ state: 'present', pid: '9000' }),
@@ -169,7 +174,11 @@ test('a resumed session is recognized even though its transcript predates the pa
   const result = await rediscoverRunnerSessionPane(
     { vars: VARS, session: 'ff-1', runner: 'codex', ...EXPECTED },
     deps({
-      exec: async () => ({ exitCode: 0, stdout: '%32|6601|\n', stderr: '' }),
+      exec: async () => ({
+        exitCode: 0,
+        stdout: `${['%32', '6601', ''].join(TMUX_FIELD_SEPARATOR)}\n`,
+        stderr: '',
+      }),
       probeRunnerPid: async () => ({ state: 'present', pid: '6892' }),
       verifyBinding: async (_vars, _runner, options) => {
         seen.push({

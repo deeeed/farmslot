@@ -11,7 +11,7 @@ import type { ExecResult, Run } from '@farmslot/protocol';
 
 import { testGatewayIdentity } from '../../../../scripts/lib/test-gateway-identity-source.mjs';
 import type { RawProjectJson, SlotVars } from '../core/config.js';
-import { TMUX_FIELD_SEPARATOR } from '../core/tmux.js';
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux-fields.js';
 import { seedRunnerObservabilityFixture } from '../node-support/support-test-fixtures.js';
 
 const executeFile = promisify(execFile);

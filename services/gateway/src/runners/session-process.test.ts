@@ -7,6 +7,7 @@ import test from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux-fields.js';
 import { NodeRpcTimeoutError } from '../fleet/node-rpc.js';
 
 import {
@@ -444,12 +445,14 @@ test('nudge target resolution skips shells and reviewer panes, then picks the ne
         return {
           exitCode: 0,
           stdout: [
-            '1|dev|0|300|100',
-            '2|rev-codex|0|200|500',
-            '3||0|400|400',
-            '4|review|0|100|600',
-            '5|ci-fix|0|500|700',
-          ].join('\n'),
+            ['1', 'dev', '0', '300', '100'],
+            ['2', 'rev-codex', '0', '200', '500'],
+            ['3', '', '0', '400', '400'],
+            ['4', 'review', '0', '100', '600'],
+            ['5', 'ci-fix', '0', '500', '700'],
+          ]
+            .map((fields) => fields.join(TMUX_FIELD_SEPARATOR))
+            .join('\n'),
           stderr: '',
         };
       }
@@ -472,7 +475,10 @@ test('nudge target resolution fails closed when runner liveness is unknown', asy
     resolveRetainedRunnerPane(makeVars(), 'mm-4', 'codex', null, {
       exec: async () => ({
         exitCode: 0,
-        stdout: '1|dev|0|300|100\n2|bugfix|0|400|200',
+        stdout: [
+          ['1', 'dev', '0', '300', '100'].join(TMUX_FIELD_SEPARATOR),
+          ['2', 'bugfix', '0', '400', '200'].join(TMUX_FIELD_SEPARATOR),
+        ].join('\n'),
         stderr: '',
       }),
       probe: async () => ({ state: 'unknown', code: 'probe-timeout', reason: 'ssh timeout' }),

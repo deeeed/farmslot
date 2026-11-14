@@ -6,6 +6,7 @@ import path from 'node:path';
 import { beforeEach, mock, test, type TestContext } from 'node:test';
 
 import type { SlotVars } from '../core/config.js';
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux-fields.js';
 
 import type {
   ObservabilityReading,
@@ -16,7 +17,15 @@ import { makeVars } from './test-fixtures.js';
 
 const vars = makeVars();
 const target = 'test-1:dev';
-let windowInventory = '1 rev-codex\n2 review\n3 dev\n';
+// `list-windows -F` rows: the gateway separates index from name with
+// TMUX_FIELD_SEPARATOR, so a window name holding a space stays one field.
+const windowRows = (rows: string[][]) =>
+  `${rows.map((fields) => fields.join(TMUX_FIELD_SEPARATOR)).join('\n')}\n`;
+let windowInventory = windowRows([
+  ['1', 'rev-codex'],
+  ['2', 'review'],
+  ['3', 'dev'],
+]);
 const message = 'Read and execute TASK.md in /tmp/repo/tasks/foo';
 
 let activityReading: ObservabilityReading<RunnerActivity> | null = {
@@ -285,7 +294,11 @@ mock.module('../core/exec.js', {
       }
       if (cmd.includes('#{pane_current_command}')) {
         callOrder.push('input:foreground');
-        return { exitCode: 0, stdout: `%1|123|${foregroundCommand}`, stderr: '' };
+        return {
+          exitCode: 0,
+          stdout: ['%1', '123', foregroundCommand].join(TMUX_FIELD_SEPARATOR),
+          stderr: '',
+        };
       }
       if (cmd.includes("'#{pane_id}'")) {
         return { exitCode: 0, stdout: '%1\n', stderr: '' };
@@ -629,12 +642,23 @@ test('resolvePrimaryWorkerTarget skips reviewer windows when falling back to ses
 
 test('primary worker discovery skips dev-server logs and fails when no worker window exists', async () => {
   try {
-    windowInventory = '1 devserver-log\n2 rev-codex\n3 dev\n';
+    windowInventory = windowRows([
+      ['1', 'devserver-log'],
+      ['2', 'rev-codex'],
+      ['3', 'dev'],
+    ]);
     assert.equal(await resolvePrimaryWorkerTarget(vars), 'test-1:3');
-    windowInventory = '1 devserver-log\n2 rev-codex\n';
+    windowInventory = windowRows([
+      ['1', 'devserver-log'],
+      ['2', 'rev-codex'],
+    ]);
     await assert.rejects(() => resolvePrimaryWorkerTarget(vars), /no worker window/);
   } finally {
-    windowInventory = '1 rev-codex\n2 review\n3 dev\n';
+    windowInventory = windowRows([
+      ['1', 'rev-codex'],
+      ['2', 'review'],
+      ['3', 'dev'],
+    ]);
   }
 });
 

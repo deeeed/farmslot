@@ -3,6 +3,8 @@ import { test } from 'node:test';
 
 import type { FleetStatus, NodeTmuxPane, PoolConfig, Run } from '@farmslot/protocol';
 
+import { TMUX_FIELD_SEPARATOR } from '../core/tmux-fields.js';
+
 import { parseCapturedAgentPaneTarget } from './dispatch/role-target.js';
 import {
   buildSessionCorrelation,
@@ -529,7 +531,10 @@ test('tmuxWorkerFromNodePane names the linked runner only on the worker pane', (
 test('a dispatched worker pane captured by dispatch names its linked runner', () => {
   // Dispatch captures `session:window.pane|window name|pane id`, so the %N lives in paneId and
   // pane holds the index.
-  const target = parseCapturedAgentPaneTarget('ff-1', 'ff-1:1.0|worker|%42');
+  const target = parseCapturedAgentPaneTarget(
+    'ff-1',
+    ['ff-1:1.0', 'worker', '%42'].join(TMUX_FIELD_SEPARATOR),
+  );
   const pools = [
     {
       machine: 'runner-local',
