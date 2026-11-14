@@ -88,3 +88,41 @@ test('the profile choice matches the runner and model the label shows', () => {
   assert.equal(runWorkerEffort(run), null);
   assert.equal(runWorkerEffort(run, { runner: 'grok', model: 'grok-4.7' }), 'minimal');
 });
+
+test('an exact worker request receipt names the wire decision; legacy rows keep their effort', () => {
+  const engine = { runner: 'pi', model: 'litellm/glm' };
+  const run: RunEffortSource = {
+    flowType: 'dev',
+    metrics: engine,
+    effort: 'off',
+    agentContexts: [{ role: 'dev', runner: 'pi', runnerSessionId: 'session', effort: 'off' }],
+  };
+  assert.equal(runWorkerEffort(run), 'off');
+  const worker = run.agentContexts![0];
+  for (const [reasoning, expected] of [
+    [{ mode: 'omitted' }, 'default'],
+    [{ mode: 'disabled' }, 'off'],
+    [{ mode: 'level', level: 'high' }, 'high'],
+  ] as const) {
+    worker.reasoningReceipt = {
+      sessionId: 'session',
+      provider: 'litellm',
+      model: 'glm',
+      selectedModel: 'litellm/glm',
+      observedAt: '2026-11-14T12:00:00Z',
+      reasoning,
+    };
+    assert.equal(
+      runEngineLabel({ ...engine, effort: runWorkerEffort(run) }),
+      `pi/litellm/glm · ${expected}`,
+    );
+  }
+  worker.runnerSessionId = 'successor';
+  assert.equal(runWorkerEffort(run), 'off');
+  worker.runnerSessionId = 'session';
+  assert.equal(runWorkerEffort(run, { runner: 'pi', model: 'litellm/other' }), 'off');
+  worker.attemptStartedAt = '2026-11-14T13:00:00Z';
+  assert.equal(runWorkerEffort(run), 'off');
+  worker.reasoningReceipt!.attemptStartedAt = worker.attemptStartedAt;
+  assert.equal(runWorkerEffort(run), 'high');
+});

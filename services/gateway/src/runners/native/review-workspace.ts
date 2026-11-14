@@ -554,12 +554,14 @@ export async function readReviewWorkspaceWorker(
     const run = ownedRun(runId);
     if (
       snapshot.session.nativeSessionId &&
-      contextFor(run)?.runnerSessionId !== snapshot.session.nativeSessionId
+      (contextFor(run)?.runnerSessionId !== snapshot.session.nativeSessionId ||
+        contextFor(run)?.runnerSessionPath !== (snapshot.session.nativeSessionPath ?? null))
     ) {
       await saveContext(
         runId,
         {
           runnerSessionId: snapshot.session.nativeSessionId,
+          runnerSessionPath: snapshot.session.nativeSessionPath ?? null,
           runnerSessionCapturedAt: new Date().toISOString(),
         },
         binding,
@@ -579,6 +581,9 @@ export async function readReviewWorkspaceWorker(
       );
     }
   }
+  const currentRun = ownedRun(runId);
+  const { captureRunnerReasoningReceipt } = await import('../reasoning-receipt.js');
+  await captureRunnerReasoningReceipt(currentRun, contextFor(currentRun));
   return snapshot;
 }
 

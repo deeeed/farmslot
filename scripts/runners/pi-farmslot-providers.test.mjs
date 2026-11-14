@@ -658,6 +658,7 @@ test('router wire guard permits absent thinking and refuses invalid explicit eff
       maxTokens: 32768,
       requestedMaxTokens: 32768,
       reasoning: true,
+      effectiveReasoning: { mode: 'level', level: 'medium' },
       effort: 'medium',
       cost: null,
     },
@@ -701,6 +702,26 @@ function guardedRequest({ provider = 'litellm', thinking = 'max', model = {} } =
     });
   return { fetch, request, sent, records };
 }
+
+test('request receipts distinguish omission, explicit disabling and the serialized level', async () => {
+  const omitted = guardedRequest({ thinking: 'off' });
+  await omitted.request({});
+  assert.equal(Object.hasOwn(JSON.parse(omitted.sent[0].options.body), 'reasoning_effort'), false);
+  assert.deepEqual(omitted.records[0].effectiveReasoning, { mode: 'omitted' });
+
+  const disabled = guardedRequest({
+    thinking: 'off',
+    model: { reasoning: false, thinkingLevelMap: { off: 'none' } },
+  });
+  await disabled.request({ reasoning_effort: 'none' });
+  assert.equal(JSON.parse(disabled.sent[0].options.body).reasoning_effort, 'none');
+  assert.deepEqual(disabled.records[0].effectiveReasoning, { mode: 'disabled' });
+
+  const level = guardedRequest({ model: { thinkingLevelMap: { max: 'high' } } });
+  await level.request({ reasoning_effort: 'high' });
+  assert.equal(JSON.parse(level.sent[0].options.body).reasoning_effort, 'high');
+  assert.deepEqual(level.records[0].effectiveReasoning, { mode: 'level', level: 'high' });
+});
 
 test('wire guard refuses an undeclared max-to-high clamp before sending or recording', async () => {
   for (const provider of ['router', 'litellm', 'ollama']) {

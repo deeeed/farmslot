@@ -6,7 +6,12 @@ import path from 'node:path';
 import type { Provider } from '@earendil-works/pi-ai';
 import { Type } from 'typebox';
 
-import { piMessageTokenUsage, piTurnFailure, writePiHook } from './pi-farmslot-hook-writer.mjs';
+import {
+  piMessageTokenUsage,
+  piTurnFailure,
+  writePiHook,
+  writePiReasoningReceipt,
+} from './pi-farmslot-hook-writer.mjs';
 import {
   assertPiModelThinking,
   deadlinePiFetch,
@@ -195,6 +200,7 @@ export default async function (pi: {
         };
         console.error('[farmslot-pi] request', JSON.stringify(record));
         pi.appendEntry?.('farmslot-model-request', record);
+        writePiReasoningReceipt(sessionFrom(shutdownContext ?? {}).transcriptPath, record);
       },
       process.env.FARMSLOT_THINKING,
       stopPiConfiguration,
