@@ -1,4 +1,4 @@
-import type { AgentContext, Run } from '@farmslot/protocol';
+import type { AgentContext, Run, RunnerReasoningReceipt } from '@farmslot/protocol';
 
 import type { loadSlotVars } from '../core/config.js';
 
@@ -96,6 +96,11 @@ export interface StatuslineRecord {
 }
 
 export interface RunnerObservability {
+  /** Adapter-owned serialized request receipt, fenced to this saved conversation. */
+  getReasoningReceipt?(
+    vars: SlotVars,
+    session: { sessionId: string; sessionPath: string; model: string; since: number },
+  ): Promise<RunnerReasoningReceipt | null>;
   /** Runner-owned questions only; a null value does not rule out other permission gates. Null reading means unknown. */
   getPendingQuestion?(
     vars: SlotVars,

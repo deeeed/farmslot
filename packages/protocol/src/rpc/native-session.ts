@@ -224,6 +224,8 @@ export interface NativeSessionInfo extends Partial<NativeProcessExitEvidence> {
   recovery?: string;
   runner: string;
   nativeSessionId: string;
+  /** Runner-reported saved transcript, when its transport exposes one. */
+  nativeSessionPath?: string;
   ownerPrincipalId: string;
   requestedByPrincipalId?: string;
   requestedByPrincipalGeneration?: number;

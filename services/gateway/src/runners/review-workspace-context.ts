@@ -6,9 +6,16 @@ import { getRunnerDefinition } from './registry.js';
 
 /** Execution metadata only. Callers retain authorization for worker control operations. */
 export async function reviewWorkspaceRunnerVars(run: Run): Promise<SlotVars | null> {
+  const context = run.agentContexts?.find((entry) => entry.id === 'review');
+  if (!context?.target?.session) return null;
+  return reviewWorkspaceExecutionVars(run);
+}
+
+/** File and execution metadata for either transport; an absent terminal session stays absent. */
+export async function reviewWorkspaceExecutionVars(run: Run): Promise<SlotVars | null> {
   const workspace = run.reviewWorkspace;
   const context = run.agentContexts?.find((entry) => entry.id === 'review');
-  if (!workspace || !context?.target?.session) return null;
+  if (!workspace || !context) return null;
   const pool = await loadMachinePool(workspace.machine);
   const runnerObservabilityDir = getRunnerDefinition(context.runner).reviewObservabilityDir?.(
     workspace.taskPath,
@@ -30,7 +37,7 @@ export async function reviewWorkspaceRunnerVars(run: Run): Promise<SlotVars | nu
     recycleCmd: '',
     repo: workspace.checkoutPath,
     remoteRepo: workspace.checkoutPath,
-    session: context.target.session,
+    session: context.target?.session ?? '',
     slotMode: 'dispatch',
     slotEnabled: true,
     sshTarget: `${pool.ssh_user}@${pool.host}`,

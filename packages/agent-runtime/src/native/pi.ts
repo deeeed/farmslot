@@ -200,7 +200,7 @@ export const piNativeAdapter: NativeAdapter = {
       publish({
         type: 'session.started',
         nativeId: nativeSessionId,
-        data: { identityConfirmed: true },
+        data: { identityConfirmed: true, sessionPath: piString(state.sessionFile) },
       });
     } catch (error) {
       await rpc.close();

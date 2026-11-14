@@ -1,3 +1,4 @@
+import type { RunnerReasoningReceipt } from './runner-reasoning.js';
 import type { RunnerSessionUsage, RunStatus } from './runs.js';
 
 export type SlotAgent = 'idle' | 'working' | 'no-tmux';
@@ -148,6 +149,8 @@ export interface AgentContext {
   model?: string | null;
   /** Reasoning / thinking level for this reviewer or worker attempt. */
   effort?: string | null;
+  /** Adapter-owned request decision, captured on this attempt's saved conversation. */
+  reasoningReceipt?: RunnerReasoningReceipt;
   target?: AgentContextTarget | null;
   /** Native sessions have no tmux target. */
   nativeSession?: NativeWorkerSessionBinding;

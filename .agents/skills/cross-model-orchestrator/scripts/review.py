@@ -85,7 +85,18 @@ def _save_text(path, text):
         handle.write(text)
 
 
-def _prompt(repo, pr, sha, base, number, mode, previous, diff_scope=""):
+def _frozen_review_rules(cwd, sha):
+    rules_path = "projects/farmslot-farm/fixtures/runtime/review-quality.md"
+    source = cwd
+    present = run(["git", "ls-tree", "--name-only", sha, "--", rules_path], cwd=cwd).stdout.strip()
+    if not present:
+        source = Path(__file__).resolve().parents[4]
+        sha = run(["git", "rev-parse", "HEAD"], cwd=source).stdout.strip()
+    rules = run(["git", "show", f"{sha}:{rules_path}"], cwd=source).stdout
+    return f"Rules source: {source}@{sha}:{rules_path}\n\n{rules}"
+
+
+def _prompt(repo, pr, sha, base, number, mode, previous, diff_scope, review_rules):
     scope = (
         "Review the complete PR diff for this first round."
         if number == 1
@@ -122,9 +133,8 @@ home or proof they are dead. Evidence must prove behavior; recipe captures need 
 New default tests must finish in 5 seconds each and the default suite in 5 minutes. No fixed waits
 of 1 second or more and no background processes without teardown. Require measured test durations.
 
-For a Farmslot contribution, read its canonical rules from the target commit:
-  git show {sha}:projects/farmslot-farm/fixtures/runtime/review-quality.md
-If that required file cannot be read, stop the review and report it incomplete; do not approve.
+The canonical Farmslot rules are retained below from their owning checkout.
+Use those retained bytes; do not look for Farmslot's rules in an unrelated target repository.
 Include the rules' criteria ledger in your verdict, with a row for every rule, including exclusions:
 Rule ID | Applies and why | Outcome | Frozen source/test evidence or gap
 Confirmed applicable rule violations require REQUEST_CHANGES; missing proof remains NOT_CHECKED.
@@ -133,6 +143,8 @@ Earlier independent reviews, supplied only to verify fixes and preserve settled 
 {previous or 'None, this is the first round.'}
 
 {diff_scope}
+
+{review_rules}
 """
 
 
@@ -408,12 +420,13 @@ def _locked_review(config, args, directory):
         if not run(["git", "diff", "--name-only", "-z", base, sha], cwd=cwd).stdout:
             raise RuntimeError("approved-delta requires changed review inputs")
         _require_retained_reviewers(config, state, cwd, fields)
+    review_rules = _frozen_review_rules(cwd, sha)
     round_dir = directory / f"r{number}"
     round_dir.mkdir()
     scope_script = Path(__file__).resolve().parents[4] / "packages/agent-runtime/scripts/review-diff-scope.cjs"
     approval_policy = config.get("projects", {}).get(args.repo, {}).get("approvalPolicy", {})
     diff_scope = run(["node", str(scope_script), "packet", str(cwd), args.base, sha, json.dumps(approval_policy)], cwd=cwd).stdout
-    prompt = _prompt(args.repo, args.pr, sha, base, number, mode, _previous(directory, state["rounds"]), diff_scope)
+    prompt = _prompt(args.repo, args.pr, sha, base, number, mode, _previous(directory, state["rounds"]), diff_scope, review_rules)
     prompt_file = round_dir / "prompt.md"
     _save_text(prompt_file, prompt)
     item = {"number": number, "head": sha, "base": base, "mode": mode, "started_at": time.time()}
