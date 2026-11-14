@@ -13,7 +13,8 @@ on:
 
 concurrency:
   group: full-quality-${{ github.event_name == 'push' && 'main' || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: read

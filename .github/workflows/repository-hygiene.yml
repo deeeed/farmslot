@@ -8,12 +8,11 @@ on:
     branches:
       - main
 
-# Cancel superseded runs for the same pull request (or ref, for pushes). See
-# farmslot-quality.yml — same rationale, kept identical so the two workflows do
-# not drift apart.
+# Cancel superseded PR checks; queue every main push without replacing pending runs.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  queue: ${{ github.event_name == 'pull_request' && 'single' || 'max' }}
 
 jobs:
   hygiene:
