@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { mock, test } from 'node:test';
 
-import type { SlotStatus } from '@farmslot/protocol';
+import { candidateExecutionTemplate } from '@farmslot/agent-runtime';
+import type { RecipeProjectCompatibility, SlotStatus } from '@farmslot/protocol';
 import { currentProjectSources } from '@farmslot/slot-config';
 
+import type { ProjectVars } from '../../core/config.js';
 import { makeRun } from '../../run-engine/test-fixtures.js';
 import type {
   ProspectiveSlotSourcePlans,
@@ -26,6 +31,7 @@ const target = await import('./target-branch.js');
 const runtime = await import('../../sources/runtime.js');
 const intake = await import('../../tasks/completion-intake.js');
 let prospective: SourceSlotPlans | undefined;
+let templateProject: ProjectVars | undefined;
 mock.module('../../sources/runtime.js', {
   namedExports: { ...runtime, planSourceRequestSlots: async () => prospective },
 });
@@ -53,7 +59,7 @@ mock.module('../../core/index.js', {
     ...core,
     loadProjectVars: async () => {
       observe('project-vars');
-      return { projectName: 'demo', projectJson: {} };
+      return templateProject ?? { projectName: 'demo', projectJson: {} };
     },
     loadSlotVars: async () => {
       observe('slot-vars');
@@ -67,7 +73,10 @@ mock.module('../../fleet/state.js', {
     loadFleetStatus: async () => ({ slots }),
     loadProjectConfig: async () => {
       observe('project-config');
-      return { name: 'demo' };
+      return {
+        name: 'demo',
+        ...(templateProject ? { executionTemplates: { configured: true } } : {}),
+      };
     },
     loadProjectConfigs: async () => {
       throw new Error('Floating project configs must not be loaded');
@@ -77,9 +86,15 @@ mock.module('../../fleet/state.js', {
 mock.module('../../tasks/recipe-dispatch-check.js', {
   namedExports: {
     ...recipe,
-    checkRecipeDispatchRequirements: async () => {
+    checkRecipeDispatchRequirements: async (): Promise<RecipeProjectCompatibility> => {
       observe('recipe');
-      return { status: 'compatible' };
+      return {
+        scope: { project: 'demo', app: null, domain: null, adapter: 'fixture', target: 'b' },
+        registered: true,
+        recipeVerified: true,
+        requirements: [],
+        missingRequirements: [],
+      };
     },
   },
 });
@@ -275,3 +290,86 @@ test('an artifact-only dispatch that turns the pipeline review off sees it on th
   );
   assert.equal(plain.preview.pipelineReview, undefined);
 });
+
+for (const state of ['fresh', 'replayed'] as const) {
+  test(`${state} candidate FIND_SLOT preview uses its frozen local template`, async (t) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'candidate-preview-'));
+    t.after(async () => {
+      templateProject = undefined;
+      await rm(root, { recursive: true, force: true });
+    });
+    await mkdir(path.join(root, 'templates/worker'), { recursive: true });
+    await writeFile(
+      path.join(root, 'templates/worker/dev.md'),
+      '# Live default\n\n- [ ] Keep the configured path.\n',
+    );
+    templateProject = {
+      projectName: 'demo',
+      projectConfig: path.join(root, 'project.json'),
+      projectTemplatesDir: path.join(root, 'templates'),
+      projectFixturesDir: path.join(root, 'fixtures'),
+      projectJson: { name: 'demo', execution_templates: { sources: [] } },
+      runtimeDir: '.agent',
+      artifactDir: 'artifacts',
+    };
+    await writeFile(templateProject.projectConfig, JSON.stringify(templateProject.projectJson));
+    const markdown = '# B1\n\n- [ ] Use the unpublished candidate.\n';
+    const snapshotPath = path.join(root, 'candidate-template.md');
+    await writeFile(snapshotPath, markdown);
+    const selected = candidateExecutionTemplate({
+      path: snapshotPath,
+      relativePath: 'dev/B1.md',
+      markdown,
+      flow: 'dev',
+    });
+    const snapshot = { path: snapshotPath, reference: selected.reference };
+    const run = makeRun({
+      project: 'demo',
+      flowType: 'dev',
+      mode: 'autonomous',
+      executionTemplateId: selected.reference.id,
+      ...(state === 'fresh' ? { executionTemplate: selected.reference } : {}),
+      engineState: {
+        evalExperiment: {
+          experimentId: 'local',
+          experimentKey: 'local',
+          experimentManifestPath: 'experiment.json',
+          packagePath: 'candidate.json',
+          candidateStrategyFingerprint: selected.reference.sha256,
+          trialId: 'B1',
+          candidateTemplate: snapshot,
+        },
+      },
+    });
+    const plans = readyPlans();
+    for (const plan of plans.values()) {
+      assert('params' in plan);
+      plan.params.executionTemplateId = run.executionTemplateId ?? undefined;
+    }
+    const options = {
+      sourcePlans: plans,
+      includeProfileFit: false,
+      candidateTemplate: run.engineState?.evalExperiment?.candidateTemplate,
+    };
+    const result = await dispatchPreview(
+      {
+        project: 'demo',
+        flowType: 'dev',
+        ticketOrPr: 'TAT-1',
+        mode: 'autonomous',
+        executionTemplateId: run.executionTemplateId ?? undefined,
+      },
+      options,
+    );
+    assert.equal(result.preview.executionTemplate?.sourceId, 'eval-candidate');
+    assert.equal(result.preview.executionTemplate?.sha256, selected.reference.sha256);
+    assert.equal(result.preview.recipeCompatibility?.recipeVerified, true);
+    const normal = await dispatchPreview(
+      { project: 'demo', flowType: 'dev', ticketOrPr: 'TAT-1', mode: 'autonomous' },
+      { sourcePlans: readyPlans(), includeProfileFit: false },
+    );
+    assert.equal(normal.preview.executionTemplate?.id, 'dev/default');
+    assert.equal(normal.preview.executionTemplate?.sourceId, 'project:demo');
+    assert.notEqual(normal.preview.executionTemplate?.sha256, selected.reference.sha256);
+  });
+}
