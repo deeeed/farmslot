@@ -136,15 +136,27 @@ let commandWatchdog: ChildProcess | undefined;
  * - Like the per-command guard it replaces, it kills only groups whose leader is still running;
  *   descendants left by a command that already exited are not its concern.
  * - Its cwd is /, its stdout and stderr are /dev/null, and group signals to commands never reach it.
+ * - Residual windows, both microseconds wide: a command runs between its spawn and its `+<pid>`
+ *   write (registerCommand), and after the owner dies a leader that exits and is reaped could in
+ *   principle have its pid reused before the kill loop runs. The per-command guard it replaces
+ *   had the matching caveat for a reused owner pid.
  */
 export const COMMAND_WATCHDOG =
   's=" "; while IFS= read -r l; do case $l in +*) s="$s${l#+} ";; -*) p=${l#-}; case $s in *" $p "*) s="${s%% $p *} ${s#* $p }";; esac;; esac; done; for p in $s; do kill -0 "$p" 2>/dev/null && kill -s KILL -- "-$p" 2>/dev/null; done; exit 0';
 
+/** Pids of running owned commands; re-registered with a replacement watchdog. */
+const watchedCommands = new Set<number>();
+
 export function ownLocalCommands(owner: LocalCommandOwner | undefined): void {
   localCommandOwner = owner;
-  commandWatchdog?.stdin?.end();
+  const previous = commandWatchdog;
   commandWatchdog = undefined;
-  if (!owner || owner.watchdog === false) return;
+  previous?.stdin?.end();
+  watchedCommands.clear();
+  if (owner && owner.watchdog !== false) startCommandWatchdog();
+}
+
+function startCommandWatchdog(): void {
   const watchdog = spawn('/bin/sh', ['-c', COMMAND_WATCHDOG], {
     cwd: '/',
     stdio: ['pipe', 'ignore', 'ignore'],
@@ -153,23 +165,44 @@ export function ownLocalCommands(owner: LocalCommandOwner | undefined): void {
   watchdog.unref();
   // The pipe must not keep the owner's event loop alive; its write end closes when the owner exits.
   if (watchdog.stdin instanceof Socket) watchdog.stdin.unref();
-  // A failed write means the watchdog is gone; the owner's own exit cleanup still kills its
-  // commands, so a lost registration only loses the outright-death guarantee.
+  // A write to a watchdog that has died fails with EPIPE; its exit below replaces it.
   watchdog.stdin?.on('error', (error: NodeJS.ErrnoException) => {
     if (error.code !== 'EPIPE') throw error;
-    console.warn('[exec] command watchdog exited early; outright-death cleanup is off');
+  });
+  // A watchdog that dies while its owner runs is replaced, and every running command is
+  // registered again: outright-death cleanup never silently lapses.
+  watchdog.once('exit', (code, signal) => {
+    if (commandWatchdog !== watchdog) return;
+    console.warn(`[exec] command watchdog exited (${signal ?? code}); starting a new one`);
+    startCommandWatchdog();
+    for (const pid of watchedCommands) registerCommand(`+${pid}`);
   });
   commandWatchdog = watchdog;
 }
 
+/**
+ * One line to the watchdog. With nothing queued, a pipe write reaches the kernel within this
+ * call, so a command is registered before the owner runs anything else. A queued line would live
+ * only in the owner's memory until the pipe drains; that is reported, as it reopens the window in
+ * which an outright death could leak the command.
+ */
+function registerCommand(line: string): void {
+  const stdin = commandWatchdog?.stdin;
+  if (!stdin?.writable) return;
+  stdin.write(`${line}\n`);
+  if (stdin.writableLength > 0)
+    console.warn('[exec] command watchdog registration is queued behind a full pipe');
+}
+
 /** Registers a started command with the watchdog until it exits. */
 function watchCommand(command: ChildProcess): void {
-  const watchdog = commandWatchdog;
   const pid = command.pid;
-  if (!watchdog?.stdin || pid === undefined) return;
-  watchdog.stdin.write(`+${pid}\n`);
+  if (!commandWatchdog || pid === undefined) return;
+  watchedCommands.add(pid);
+  registerCommand(`+${pid}`);
   command.once('exit', () => {
-    if (watchdog.stdin?.writable) watchdog.stdin.write(`-${pid}\n`);
+    watchedCommands.delete(pid);
+    registerCommand(`-${pid}`);
   });
 }
 

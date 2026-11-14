@@ -236,6 +236,34 @@ test('an untimed command and its descendant die with a SIGKILLed child', async (
   groupSignals();
 });
 
+test('a watchdog that dies is replaced, and the replacement still kills the commands', async (t) => {
+  const groupSignals = watchGroupSignals(t);
+  const { env, pidFile } = fixtureEnv('untimed');
+  const background = host(env);
+  background.start();
+  const pending = background.request('fleet.probeMachine', probe, { deadlineMs: 120_000 });
+  const found = await pids(pidFile);
+  const child = background.status().pid;
+  assert.ok(child);
+  const [first] = watchdogs(child);
+  assert.ok(first, 'the child runs one command watchdog');
+  process.kill(first, 'SIGKILL');
+  let replacement: number | undefined;
+  await until(() => {
+    replacement = watchdogs(child).find((pid) => pid !== first);
+    return replacement !== undefined;
+  }, 'a replacement watchdog');
+  assert.ok(replacement);
+  // The replacement learns the running command before it is needed.
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  process.kill(child, 'SIGKILL');
+  await assert.rejects(pending, /signal SIGKILL/);
+  for (const pid of found)
+    await until(() => !alive(pid), `${pid} to die by the replacement`, 5_000);
+  await until(() => !alive(replacement!), 'the replacement watchdog to exit', 5_000);
+  groupSignals();
+});
+
 test('stopping the child kills the commands it is running at once', async (t) => {
   const groupSignals = watchGroupSignals(t);
   const { env, pidFile } = fixtureEnv('hang', ownCleanup);
