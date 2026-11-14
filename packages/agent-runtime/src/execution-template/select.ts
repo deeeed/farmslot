@@ -43,9 +43,9 @@ export function executionTemplateEntryParticipates(
   );
 }
 
-function isCompatible(
+export function executionTemplateEntryCompatible(
   entry: ExecutionTemplateEntry,
-  options: SelectExecutionTemplateOptions,
+  options: Pick<SelectExecutionTemplateOptions, 'flow' | 'platform' | 'domain'>,
 ): boolean {
   if (entry.shadowedBy) return false;
   if (entry.flow !== options.flow) return false;
@@ -91,7 +91,7 @@ export function listCompatibleExecutionTemplates(
   return listExecutionTemplates({
     sources: participatingSources,
     includeShadowed: true,
-  }).filter((entry) => isCompatible(entry, options));
+  }).filter((entry) => executionTemplateEntryCompatible(entry, options));
 }
 
 /**

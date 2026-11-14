@@ -1,6 +1,6 @@
 // Opt-in protocol proof. All projects, credentials and runs live in a disposable root.
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -166,6 +166,51 @@ test('eval RPC freezes the configured default and rejects a stale repeated strat
     repeat: true,
   });
   assert.equal(repeated.candidatePackage.axes.template?.hash, frozen?.sha256);
+  // An experiment-local file is admitted without becoming a project catalog entry.
+  const localFile = path.join(artifacts, 'B1.core.md');
+  const candidateMarkdown = '# Local B1\n\n- [ ] Use only the admitted experiment bytes.\n';
+  await writeFile(localFile, candidateMarkdown);
+  const local = await client.call<EvalTrialStartResult>('eval.trial.start', {
+    ...params,
+    candidateTemplatePath: 'B1.core.md',
+    trialId: 'local-B1',
+    review: false,
+  });
+  assert.ok(local.run?.engineState?.evalExperiment?.candidateTemplate);
+  const snapshot = local.run.engineState.evalExperiment.candidateTemplate;
+  assert.equal(local.candidatePackage.axes.template?.hash, snapshot.reference.sha256);
+  assert.equal(local.candidatePackage.templateProvenance?.contentHash, snapshot.reference.sha256);
+  assert.equal(await readFile(snapshot.path, 'utf8'), candidateMarkdown);
+  await unlink(localFile);
+  const { loadProjectVars } = await import('../../core/config.js');
+  const { resolveConfiguredExecutionTemplateForSlot } =
+    await import('../../tasks/execution-template-catalog.js');
+  const vars = await loadProjectVars('proof');
+  const slotQuery = { flow: 'fix-bug', platform: 'core', runMode: 'autonomous' as const };
+  const selected = await resolveConfiguredExecutionTemplateForSlot(vars, {
+    ...slotQuery,
+    candidateTemplate: snapshot,
+  });
+  assert.equal(selected.markdown, candidateMarkdown);
+  assert.deepEqual(selected.reference.platforms, ['core']);
+  await assert.rejects(
+    resolveConfiguredExecutionTemplateForSlot(vars, {
+      ...slotQuery,
+      platform: 'ios',
+      candidateTemplate: snapshot,
+    }),
+    /incompatible/,
+  );
+  assert.equal(selected.reference.sha256, local.candidatePackage.axes.template?.hash);
+  assert.equal(
+    (await resolveConfiguredExecutionTemplateForSlot(vars, slotQuery)).reference.sha256,
+    frozen?.sha256,
+  );
+  const result = await client.call<{ candidatePackage: EvalTrialStartResult['candidatePackage'] }>(
+    'eval.trial.result.get',
+    { runId: local.run.id },
+  );
+  assert.equal(result.candidatePackage.axes.template?.hash, snapshot.reference.sha256);
   const before = await readFile(experimentManifestPath, 'utf8');
   await writeFile(templateFile, markdown + '\nChanged package bytes.\n');
   await assert.rejects(

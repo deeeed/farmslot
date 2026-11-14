@@ -46,6 +46,7 @@ export {
   selectExecutionTemplate,
 } from './select.js';
 export {
+  candidateExecutionTemplate,
   executionTemplateReference,
   materializeExecutionTemplate,
   readExecutionTemplateSnapshot,

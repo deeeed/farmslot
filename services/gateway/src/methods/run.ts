@@ -656,6 +656,7 @@ export async function planRunCreation(
     executionTemplateSnapshot = (
       await resolveConfiguredExecutionTemplateForSlot(projectVars, {
         flow: params.flowType,
+        candidateTemplate: params.engineState?.evalExperiment?.candidateTemplate,
         platform: slotVars.platform,
         runMode: params.mode,
         ...(params.domain ? { explicitDomain: params.domain } : {}),

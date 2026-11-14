@@ -495,6 +495,7 @@ async function claimAdmittedSlot(
     }
     const selected = await resolveConfiguredExecutionTemplateForSlot(projectVars, {
       flow: run.flowType,
+      candidateTemplate: run.engineState?.evalExperiment?.candidateTemplate,
       platform: slotVars.platform,
       runMode: run.mode,
       ...(run.domain ? { explicitDomain: run.domain } : {}),

@@ -77,7 +77,9 @@ Write \`artifacts/qa-result.json\` with \`version: 1\`, this \`runId\`,
 \`qa: { profile, inputs }\` copied from the input, resolved \`source: { baseSha, headSha }\`,
 \`suitePath\` relative to artifacts, \`packages\` mapping case IDs to complete package directories
 relative to artifacts, and \`smoke: { caseId, proofTarget }\` naming the executed smoke.
-Also retain the skill-resolved change scope as an artifact with its \`baseSha\` and \`headSha\`.
+Also retain the skill-resolved change scope as an artifact whose top level carries \`baseSha\` and \`headSha\`
+(not nested under \`source\`), equal to \`qa-result.json\` \`source\`.
+When the selected skill ships a scope resolver, write the artifact with it instead of by hand.
 Include \`scope: { path, digest, suiteDigest }\`: the scope artifact path relative to artifacts,
 its canonical JSON digest and the canonical JSON digest of the declared suite-scope document.
 Use the installed protocol's \`digestRecipeDocument\` helper for both \`sha256:...\` values.
