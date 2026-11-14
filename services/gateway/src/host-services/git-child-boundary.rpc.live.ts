@@ -100,17 +100,6 @@ test('authenticated Git child boundary RPC proof', async (t) => {
   const fixture = await helpers.createNativeProofFixture(t, root);
   const completed: string[] = [];
 
-  await t.test('early Git stdin closure leaves the authenticated gateway usable', async () => {
-    const listed = await fixture.client.call('fs.list', {
-      slotId: 'proof-files',
-      path: '.',
-      includeIgnored: true,
-    });
-    assert.ok(isRecord(listed) && Array.isArray(listed.entries));
-    assert.equal(listed.entries.length, names.length);
-    await fixture.client.call('gateway.status', {});
-    completed.push('git-input-closed');
-  });
   await t.test('a child that exits before producing JSON reports its actual failure', async () => {
     const retained = repo + '-retained';
     await rename(repo, retained);
@@ -144,17 +133,28 @@ test('authenticated Git child boundary RPC proof', async (t) => {
     );
     completed.push('stored-receipt-context');
   });
+  await t.test('early Git stdin closure leaves the authenticated gateway usable', async () => {
+    const listed = await fixture.client.call('fs.list', {
+      slotId: 'proof-files',
+      path: '.',
+      includeIgnored: true,
+    });
+    assert.ok(isRecord(listed) && Array.isArray(listed.entries));
+    assert.equal(listed.entries.length, names.length);
+    await fixture.client.call('gateway.status', {});
+    completed.push('git-input-closed');
+  });
   assert.deepEqual(completed, [
-    'git-input-closed',
     'child-failed-before-json',
     'stored-receipt-context',
+    'git-input-closed',
   ]);
   assert.ok(isRecord(await fixture.client.call('gateway.status', {})));
   console.log(
     JSON.stringify({
       source,
       rpcProofPassed: true,
-      recipeNodes: ['git-input-closed', 'child-failed-before-json', 'stored-receipt-context'],
+      recipeNodes: ['child-failed-before-json', 'stored-receipt-context', 'git-input-closed'],
     }),
   );
 });
