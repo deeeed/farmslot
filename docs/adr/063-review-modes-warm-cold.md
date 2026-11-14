@@ -682,3 +682,26 @@ Valid retained conversations must not depend on a workflow's runner allowlist.
 The [review specification](../reference/review-modes-warm-cold.md#adapter-owned-continuation)
 owns selection and fallback evidence. No public command, flag, SDK export or
 harness extension is added; existing review consumers inherit the behavior.
+
+## Amendment 14: compact WARM delta packets, 2026-11-13
+
+**Status:** Accepted, lead-approved scope, 2026-11-13.
+**Specification:** [WARM delta packets](../reference/review-modes-warm-cold.md#warm-delta-packets).
+
+### Decision
+
+WARM receives a frozen delta/findings packet and reuses validated scope and
+reviewer coverage rows when their inputs still match. These come from
+`artifacts/review-ledger.md` and review scope tables, never the engine acceptance
+ledger. The complete current scope audit remains required. Supported runner-owned compaction precedes the
+new task instructions, preserving the same conversation and all continuation fences.
+
+### Rationale and consequences
+
+Avoid replaying stale task context and rewriting unchanged audit rows. Reuse
+does not carry an earlier verdict forward or create acceptance proof.
+
+### Public surface
+
+Existing review consumers inherit this behavior. No new review selection,
+command or harness extension is introduced.

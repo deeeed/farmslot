@@ -413,6 +413,66 @@ The shared minimal-diff policy is owned by `@farmslot/agent-runtime/scripts/revi
 The public read-only script prints the policy with `instructions`, or the policy plus changed paths and sensitive-path candidates with `packet <repository> <publication-base> <head>`. Candidates require review against the frozen ticket; the scanner neither grants an exception nor detects semantic refactors or formatting churn. It does not change source, review results or publication authority.
 Grant-time head records provenance. Later fix heads on the same owned branch use current-head review rules and the recorded scope. An extension survives retirement of its granting run within the same PR scope. The command requires `--request-id` and accepts `--expected-limit` for a compare-and-set grant.
 
+## WARM delta packets
+
+Under ADR-063 Amendment 14, the gateway freezes `inputs/warm-delta.json`
+with lineage and validated baseline identity, prior/current heads, compared
+ranges, unresolved findings, changed audit rows and required completion actions.
+Existing delta/range-diff rules apply; merge-resolution changes remain visible.
+The packet is data, not task authority. Full baseline material remains available
+by frozen artifact reference outside the default prompt.
+
+### Reviewer coverage reuse
+
+`artifacts/review-ledger.md` is reviewer-authored checklist coverage, including
+registered child checklists. Scope rows are the `## Diff scope` table in
+`artifacts/review.md`. The shared runtime's review-report composer retains their
+version-1 derived row index at `artifacts/review-coverage.json`. It runs in the
+existing mark completion path before artifact verification/hashing; the existing
+accepted-review-result path validates and retains the index with its report.
+This index is not another verdict authority. The engine's
+`artifacts/acceptance-status.json` is neither a reuse source nor a reuse target.
+
+A checklist row key is its frozen checklist/unit identity, checkbox step index
+and rule-source digest; a scope row key is the canonical contribution-relative
+path. The index records row content and its reviewer outcome/gap, source report
+hash, validated baseline/head, authorization and rule/template hashes, plus cited
+source/evidence hashes. Missing or ambiguous row bindings are not reusable.
+Current row updates travel with the existing structured review result; no new
+operator command is required.
+
+Rows may be reused only while all those inputs match. Missing, changed or
+unverified inputs require current evaluation. Gaps and unresolved findings
+survive reuse. The reviewer rechecks each rule's applicability against the current
+delta and invalidates assumptions it changes, including newly added paths.
+Absent legacy indexes mean no row reuse; they never widen the correctness range
+or change session fallback. Reuse cannot supply engine acceptance verdicts or a
+current-head review result, or bypass checklist/terminal validation.
+
+The shared composer combines validated reused rows with current updates and
+renders complete current scope and criteria tables with provenance. The reviewer
+authors current findings and changed rows rather than regenerating unchanged
+tables. Existing scope requirements remain in force on every contribution file.
+
+### Compaction and validation
+
+ADR-023's runner capability compacts only inside a fully fenced continuation of
+a validated review, before incoming task instructions bind. The run snapshot's
+`ReviewSessionTrace.compaction` persists pending intent before send and the exact
+session/packet receipt before delivery. Restart reconciles the same operation.
+Unsupported compaction delivers uncompacted in that session, with an explicit
+reason, without COLD or budget changes. Unconfirmed compaction follows the
+uncertain-delivery reconciliation path, not an automatic replacement. Unfinished
+same-attempt recovery skips compaction and preserves its in-progress work.
+
+Validation covers stale hashes, missing evidence, new scope paths, rule changes,
+merge resolutions, pending/confirmed restart recovery and controlled WARM cost.
+Report delta calls/output and compaction separately, under normal accounting.
+Use `scripts/runner-validation/warm-delta-packet.recipe.json` for the opt-in
+coverage-integrity and controlled gateway proof.
+The measured target is 8–12 delta calls and under 10,000 output tokens, not a quota
+or a reason to omit required inspection. Billing changes remain separate.
+
 ## Slotless retention
 
 `static_review.workspace.retention_days` is a positive integer, default `7`.

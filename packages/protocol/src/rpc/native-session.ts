@@ -11,6 +11,36 @@ export interface NativeSessionRequester {
 
 export type NativeApprovalMode = 'ask' | 'bypass';
 
+/** Maintenance of an exact retained conversation, independent of task commands/verdicts. */
+export interface NativeContextCompactionRequest {
+  operationId: string;
+  lineageId: string;
+  packetDigest: string;
+  nativeSessionId: string;
+  focus: string;
+}
+
+export interface NativeContextCompactionEvidence {
+  nativeSessionId: string;
+  boundaryId: string;
+  completedAt: string;
+  preTokens?: number;
+  postTokens?: number;
+  durationMs?: number;
+}
+
+export interface NativeContextCompactionRecord {
+  operationId: string;
+  lineageId: string;
+  packetDigest: string;
+  nativeSessionId: string;
+  focusSha256: string;
+  status: 'pending' | 'confirmed' | 'unsupported' | 'unconfirmed';
+  requestedAt: string;
+  reason?: string;
+  evidence?: NativeContextCompactionEvidence;
+}
+
 /** Native sessions are opt-in. Authentication and agent execution remain runner-owned. */
 export interface NativeSessionCapabilities {
   modes: Array<'default' | 'plan'>;
@@ -22,6 +52,8 @@ export interface NativeSessionCapabilities {
   questions: boolean;
   interrupt: boolean;
   resume: boolean;
+  /** Absent/false is unsupported; compaction never implies a new conversation. */
+  contextCompaction?: boolean;
   /** Saved conversation may resume in a sibling worktree on the same execution host. */
   resumeAcrossWorkspaces?: boolean;
   resumeUnavailableReason?: string;
@@ -175,6 +207,8 @@ export interface NativeProcessExitEvidence {
 }
 
 export interface NativeSessionInfo extends Partial<NativeProcessExitEvidence> {
+  /** Durable maintenance receipts. Pending operations are reconciled, never replayed. */
+  contextCompactions?: NativeContextCompactionRecord[];
   id: string;
   /** Host generation, distinct from the native conversation identity. */
   generation: string;

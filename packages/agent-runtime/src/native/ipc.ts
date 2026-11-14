@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   isNativeResultSchema,
   type NativeApprovalMode,
+  type NativeContextCompactionRequest,
   type NativeConversationCursor,
   type NativeSessionCreateParams,
   type NativeSessionEnsureParams,
@@ -18,6 +19,7 @@ import {
   NATIVE_WORKER_CANCEL,
   NATIVE_WORKER_CANCEL_COMMAND,
   NATIVE_WORKER_CLOSE,
+  NATIVE_WORKER_COMPACT,
   NATIVE_WORKER_CONFIRM_STOPPED,
   NATIVE_WORKER_ENSURE,
   NATIVE_WORKER_INTERRUPT,
@@ -39,6 +41,7 @@ export interface HostIdentity {
   supportsEnsure?: boolean;
   supportsWorkers?: boolean;
   supportsWorkerResumeFence?: boolean;
+  supportsWorkerCompaction?: boolean;
   supportsWorkerStopAttestation?: boolean;
   supportsStructuredResults?: boolean;
   supportsWorkerRelocation?: boolean;
@@ -48,6 +51,14 @@ export interface HostIdentity {
   socket: string;
 }
 export type HostRequest =
+  | {
+      method: typeof NATIVE_WORKER_COMPACT;
+      owner: string;
+      id: string;
+      generation: string;
+      leaseId: string;
+      compaction: NativeContextCompactionRequest;
+    }
   | { method: 'setApprovalMode'; owner: string; id: string; approvalMode: NativeApprovalMode }
   | {
       method: 'subscribe';
@@ -305,6 +316,26 @@ export function decodeRequest(value: unknown): HostRequest {
       ...(p.sourceLeaseId !== undefined ? { sourceLeaseId: string(p, 'sourceLeaseId') } : {}),
       ...(p.resumeCommandId !== undefined ? { resumeCommandId: string(p, 'resumeCommandId') } : {}),
     };
+  if (method === NATIVE_WORKER_COMPACT) {
+    const value = object(p.compaction);
+    const compaction = {
+      operationId: string(value, 'operationId'),
+      lineageId: string(value, 'lineageId'),
+      packetDigest: string(value, 'packetDigest'),
+      nativeSessionId: string(value, 'nativeSessionId'),
+      focus: string(value, 'focus'),
+    };
+    if (!/^[a-f0-9]{64}$/.test(compaction.packetDigest) || compaction.focus.length > 16000)
+      throw new Error('Invalid context compaction packet/focus');
+    return {
+      method,
+      owner,
+      id,
+      generation: string(p, 'generation'),
+      leaseId: string(p, 'leaseId'),
+      compaction,
+    };
+  }
   if (
     [
       NATIVE_WORKER_SEND,
@@ -395,7 +426,7 @@ export function requestHost<T>(host: HostIdentity, request: HostRequest): Promis
     const socket = connect(host.socket);
     let received = '';
     socket.setEncoding('utf8');
-    socket.setTimeout(45_000, () =>
+    socket.setTimeout(request.method === NATIVE_WORKER_COMPACT ? 180_000 : 45_000, () =>
       socket.destroy(new Error('Native host reply timed out; mutation outcome is unknown')),
     );
     socket.on('error', reject);

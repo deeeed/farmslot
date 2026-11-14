@@ -164,6 +164,22 @@ export async function readClaudeProcessBinding(
 }
 
 /** A waiting registration establishes identity, not an active or idle turn. */
+export async function readClaudeSessionBinding(
+  vars: SlotVars,
+  target: string,
+  observedNotBeforeMs = 0,
+  overrides: Partial<ProcessReaders> = {},
+) {
+  const binding = await readClaudeProcessBinding(vars, target, overrides);
+  if (!binding || binding.observedAt < observedNotBeforeMs) return null;
+  return {
+    sessionId: binding.sessionId,
+    sessionPath: binding.sessionPath,
+    observedAt: binding.observedAt,
+  };
+}
+
+/** A waiting registration establishes identity, not an active or idle turn. */
 export async function readClaudeProcessState(
   vars: SlotVars,
   target: string,

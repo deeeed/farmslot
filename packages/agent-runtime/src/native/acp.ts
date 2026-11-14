@@ -122,6 +122,7 @@ export function acpRunsToolsUnasked(options: NativeAdapterOptions): boolean {
 /** Common ACP v1 flow, confirmed against the installed Cursor and Grok servers. */
 export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
   const capabilities: NativeSessionCapabilities = {
+    contextCompaction: false,
     modes: config.modes,
     approvalModes: ['ask', 'bypass'],
     streaming: true,
