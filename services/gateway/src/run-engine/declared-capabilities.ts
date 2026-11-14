@@ -171,6 +171,7 @@ export async function prepareDispatchRunCapabilities(
         ? (
             await readConfiguredExecutionTemplateSnapshot(project, {
               ...run.executionTemplate,
+              candidateTemplate: run.engineState?.evalExperiment?.candidateTemplate,
               flow,
             })
           ).entry

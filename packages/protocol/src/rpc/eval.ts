@@ -64,6 +64,8 @@ export interface EvalTrialStartParams {
   experimentManifestPath: string;
   /** Candidate axes identify the package variant being tested: template, prompt, harness, base recipe, runner, and model. */
   axes: EvalPackageAxes;
+  /** Trial-only Markdown file, absolute or relative to the experiment manifest directory. */
+  candidateTemplatePath?: string;
   source?: EvalExperimentSource;
   /** Human-readable package label shown in eval tables. */
   label?: string;

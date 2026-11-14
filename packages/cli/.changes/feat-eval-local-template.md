@@ -1,0 +1,1 @@
+- Initialize blind trial tasks from the gateway-frozen candidate template without registering it in the node catalog.

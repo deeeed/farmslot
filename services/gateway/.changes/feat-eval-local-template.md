@@ -1,0 +1,1 @@
+- Allow blind trials to freeze an experiment-local candidate template without changing live template selection.
