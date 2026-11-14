@@ -173,7 +173,7 @@ export function validateQaScope(result: QaResult, sourceScope: unknown, suiteSco
     record(sourceScope) &&
       sourceScope.baseSha === result.source.baseSha &&
       sourceScope.headSha === result.source.headSha,
-    'resolved change scope differs from the reported source',
+    'resolved change scope differs from the reported source: the scope artifact needs top-level baseSha and headSha equal to qa-result source',
   );
   requireProof(
     digestRecipeDocument(sourceScope) === result.scope.digest,

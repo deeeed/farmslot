@@ -16,7 +16,7 @@ failed smoke must remain a failure with retained evidence.
 
 ### Scope
 
-- [ ] Read TASK.md, `inputs/qa.json`, root CLAUDE.md and the project quality contracts at `{{recipe_quality_path}}` and `{{review_quality_path}}`. Freeze base/head SHAs, requested criteria and included/excluded changes in `artifacts/qa-scope.json`. Verify the prepared HEAD matches the admitted source; refuse drift. Start this task with `{{TASK_DIR}}/mark start`.
+- [ ] Read TASK.md, `inputs/qa.json`, root CLAUDE.md and the project quality contracts at `{{recipe_quality_path}}` and `{{review_quality_path}}`. Freeze top-level `baseSha` and `headSha`, requested criteria and included/excluded changes in `artifacts/qa-scope.json`. Verify the prepared HEAD matches the admitted source; refuse drift. Start this task with `{{TASK_DIR}}/mark start`.
 - [ ] Map each criterion to a CLI/RPC, Command Center or Companion recipe assertion. Select only the required surfaces and record their allocated ports and borrowed/run-owned resources. Health-check them using the declared project hooks. Acquire required runtime capabilities through the public gateway before starting them; missing authority or unhealthy prerequisites block QA. Never copy operator credentials or reset borrowed state.
 
 ### Runtime proof
