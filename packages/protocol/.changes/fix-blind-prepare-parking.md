@@ -1,1 +1,0 @@
-- Retain the original repository identity in blind isolation provenance so parking does not trust worker-editable Git metadata.

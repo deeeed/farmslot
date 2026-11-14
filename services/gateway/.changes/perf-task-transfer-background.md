@@ -1,1 +1,0 @@
-- Run gateway-owned task SSH/SCP/rsync transfers in the existing background child while preserving transfer ordering and cancellation.

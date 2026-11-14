@@ -6,6 +6,10 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.20.3 - 2026-11-14
+
+- Configuration proof scripts expect pool and project.json backups under `<home>/state/config-backups/`.
+
 ## 0.20.2 - 2026-11-13
 
 - Add a live-run browser proof for checklist step detail.

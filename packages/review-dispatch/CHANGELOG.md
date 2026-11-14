@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.25.3 - 2026-11-14
+
+- Align published dependencies with the protocol 0.84 and runtime 0.47 release cohort.
+
 ## 0.25.2 - 2026-11-13
 
 - Park local commits and dirty work before slot resets, with scoped list/restore and a bounded fleet summary.

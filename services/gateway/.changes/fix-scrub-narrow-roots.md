@@ -1,2 +1,0 @@
-- Redact only real credential values in run records and the credential scrub: values of `_KEY`/`_TOKEN`/`_SECRET`/`_PASSWORD`/`_PAT`/`_CREDENTIALS` names that mix letter cases or digits, and known provider token shapes. Index, count and repo-slug settings, `$NAME` references, placeholders and prose stay unchanged.
-- `scripts/scrub-run-credentials.mts` finds the gateway's real run stores the way `farmslot paths` does (configured run bundle store and its data directory's `run-archive/` and `archive/`) and lists every root it scans.
