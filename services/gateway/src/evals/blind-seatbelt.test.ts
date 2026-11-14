@@ -744,14 +744,26 @@ test('boundary mktemp writes a default macOS temp file in the trial directory', 
   assert.equal(dashedName.includes('/should-not-appear'), false);
   assert.equal(statSync(path.join(root, dashedName)).isFile(), true);
   const multi = run(["a b'$HOME'.XXXXXX", 'c"d.XXXXXX']);
-  assert.equal(multi.status, 0, multi.stderr);
-  const names = multi.stdout.trim().split('\n');
-  assert.equal(names.length, 2);
-  assert.ok(names[0].startsWith("a b'$HOME'."), names[0]);
-  assert.ok(names[1].startsWith('c"d.'), names[1]);
-  for (const name of names) {
-    assert.equal(name.includes('/should-not-appear'), false);
-    assert.equal(statSync(path.join(root, name)).isFile(), true);
+  const multiNames = ["a b'$HOME'", 'c"d'];
+  if (process.platform === 'darwin') {
+    assert.equal(multi.status, 0, multi.stderr);
+    const names = multi.stdout.trim().split('\n');
+    assert.equal(names.length, 2);
+    assert.ok(names[0].startsWith(`${multiNames[0]}.`), names[0]);
+    assert.ok(names[1].startsWith(`${multiNames[1]}.`), names[1]);
+    for (const name of names) {
+      assert.equal(name.includes('/should-not-appear'), false);
+      assert.equal(statSync(path.join(root, name)).isFile(), true);
+    }
+  } else {
+    // GNU mktemp accepts one template. Both arguments must still reach it unchanged.
+    assert.notEqual(multi.status, 0);
+    assert.match(multi.stderr, /too many templates/u);
+    assert.equal(multi.stdout, '');
+    assert.equal(
+      readdirSync(root).some((name) => multiNames.some((prefix) => name.startsWith(prefix))),
+      false,
+    );
   }
   if (process.platform === 'darwin') {
     const bare = spawnSync('/usr/bin/mktemp', [], {
