@@ -56,6 +56,7 @@ import {
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
+import { readEvalBench } from '../evals/bench-store.js';
 import {
   evalExperimentCreate,
   evalSuiteCapGet,
@@ -343,6 +344,8 @@ export async function routeRunMethod(
       return handled(evalExperimentCreate(p as EvalExperimentCreateParams));
     case Methods.EVAL_TRIAL_START:
       return handled(evalTrialStart(p as EvalTrialStartParams, emit));
+    case Methods.EVAL_BENCH_GET:
+      return handled(readEvalBench());
     case Methods.EVAL_TRIAL_RESULT_GET:
       return handled(evalTrialResultGet(p as EvalTrialResultGetParams));
     case Methods.EVAL_SUITE_CAP_GET:

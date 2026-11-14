@@ -1,0 +1,1 @@
+- Document the read-only benchmark results gateway method.

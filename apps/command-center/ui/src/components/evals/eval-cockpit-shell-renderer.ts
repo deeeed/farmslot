@@ -1,6 +1,9 @@
 import { html, nothing } from 'lit';
 
 import type { EvalExperimentCreateResult } from '@farmslot/protocol';
+import { EVAL_BENCH_VIEW } from '@farmslot/protocol';
+
+import { browserViewState } from '../../utils/view-state.js';
 
 export interface EvalCockpitShellRenderOptions {
   evalResult: EvalExperimentCreateResult | null;
@@ -23,6 +26,7 @@ export function renderEvalCockpitShell(options: EvalCockpitShellRenderOptions) {
       <div class="eval-hero">
         <div>
           <div class="eyebrow">Eval cockpit</div>
+          <button @click=${() => browserViewState.set(EVAL_BENCH_VIEW, 'results')}>Results</button>
           <h2>Many cases, artifact-only strategy trials</h2>
           <p>
             Select prior cases into a local basket, apply candidate strategies, then queue
