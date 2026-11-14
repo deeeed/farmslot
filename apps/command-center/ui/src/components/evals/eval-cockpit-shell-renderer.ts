@@ -23,6 +23,16 @@ export function renderEvalCockpitShell(options: EvalCockpitShellRenderOptions) {
       <div class="eval-hero">
         <div>
           <div class="eyebrow">Eval cockpit</div>
+          <button
+            @click=${() => {
+              const [route, query] = location.hash.split('?');
+              const params = new URLSearchParams(query);
+              params.delete('view');
+              location.hash = route + (params.size ? '?' + params.toString() : '');
+            }}
+          >
+            Results
+          </button>
           <h2>Many cases, artifact-only strategy trials</h2>
           <p>
             Select prior cases into a local basket, apply candidate strategies, then queue

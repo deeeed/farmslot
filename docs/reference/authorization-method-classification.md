@@ -95,6 +95,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `dispatch.queue.removeOrphan`           | admin                |                                                                                    |
 | `dispatch.queue.reorder`                | admin                |                                                                                    |
 | `dispatch.queue.update`                 | admin                |                                                                                    |
+| `eval.bench.get`                        | admin                |                                                                                    |
 | `eval.experiment.create`                | admin                |                                                                                    |
 | `eval.suite.cap.get`                    | admin                |                                                                                    |
 | `eval.suite.cap.update`                 | admin                |                                                                                    |
