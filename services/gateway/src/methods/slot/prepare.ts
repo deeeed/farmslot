@@ -786,6 +786,7 @@ async function slotPrepareInner(
   };
   if (branch) await opts?.beforeBranchSetup?.();
   if (branch && opts?.preserveBranch) {
+    if (current !== branch) await waitForSlotGitIndex(vars, execOnSlot);
     let localExists =
       (
         await execOnSlot(
@@ -841,7 +842,6 @@ async function slotPrepareInner(
         throw new Error(`Replay branch creation failed: ${create.stderr || create.stdout}`);
       step('branch', `Created ${branch} after prepare failed before branch setup`);
     } else if (current !== branch) {
-      await waitForSlotGitIndex(vars, execOnSlot);
       const checkoutR = await mutateGit(
         `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)}`,
       );
