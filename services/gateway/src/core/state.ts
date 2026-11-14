@@ -8,7 +8,7 @@ import { type FileHandle, open, readFile, rename, rm } from 'node:fs/promises';
 import { assertStatusFileWritable, resolveStatusFilePath } from '../projects/repo-root.js';
 
 import { assertCleanupCurrent, withoutCleanupSignal } from './cleanup-scope.js';
-import { farmslotRoot, readJsonFile, rememberJsonFile } from './config.js';
+import { farmslotRoot, readJsonFile } from './config.js';
 
 const statusFile = resolveStatusFilePath(farmslotRoot());
 
@@ -67,7 +67,6 @@ async function atomicWriteStatus(data: unknown): Promise<void> {
     handle = await open(tmp, 'w');
     await handle.writeFile(text);
     const written = await handle.stat();
-    const writtenNs = await handle.stat({ bigint: true });
     assertCleanupCurrent();
     await rename(tmp, statusFile);
     // Stat the inode this write renamed into place, not the path, so an outside replace after the
@@ -78,11 +77,6 @@ async function atomicWriteStatus(data: unknown): Promise<void> {
       committed.size === written.size && committed.mtimeMs === written.mtimeMs
         ? { text, stamp: statusFileStamp(committed) }
         : undefined;
-    // Row reads parse this commit at most once, without reading the file back. The same check, in
-    // nanoseconds, guards that nobody edited the inode after this write.
-    const committedNs = await handle.stat({ bigint: true });
-    if (committedNs.size === writtenNs.size && committedNs.mtimeNs === writtenNs.mtimeNs)
-      rememberJsonFile(statusFile, committedNs, text);
   } catch (error) {
     try {
       await handle?.close();
@@ -473,8 +467,16 @@ export async function readSlotRow(
   if (!existsSync(statusFile)) return null;
   // One parse of each file version, frozen and shared by every reader until the file changes.
   const data = await readJsonFile(statusFile);
-  const slots = isStatusRecord(data) && Array.isArray(data.slots) ? data.slots : [];
-  for (const row of slots) if (isStatusRecord(row) && row.slot === slotId) return row;
+  // A corrupt status file throws, as JSON.parse's untyped reads did: ownership checks must not
+  // mistake it for an absent row.
+  if (!isStatusRecord(data)) throw new TypeError(`${statusFile} is not a status object`);
+  const slots = data.slots ?? [];
+  if (!Array.isArray(slots)) throw new TypeError(`${statusFile} slots is not a list`);
+  for (const row of slots) {
+    if (!isStatusRecord(row))
+      throw new TypeError(`${statusFile} has a slot row that is not an object`);
+    if (row.slot === slotId) return row;
+  }
   return null;
 }
 

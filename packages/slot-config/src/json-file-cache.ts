@@ -15,13 +15,13 @@ interface CachedJsonFile {
   stamp: JsonFileStamp;
   /** The file had settled when it was stamped, so an equal stamp later means equal content. */
   trusted: boolean;
-  /** Text this process wrote, parsed on the first read that needs it. */
-  text?: string;
-  value?: unknown;
+  value: unknown;
 }
 
-/** Parsed config documents by path: a fixed set of project, settings and status files. */
+/** Parsed config documents by path, least recently read first. Bounded because pack paths are
+ * revision-specific and an old revision's files are never read again. */
 const files = new Map<string, CachedJsonFile>();
+const MAX_FILES = 256;
 
 const stampOf = (stats: BigIntStats): JsonFileStamp => ({
   ino: stats.ino,
@@ -57,26 +57,17 @@ export async function readJsonFile(file: string): Promise<unknown> {
   }
   const stamp = stampOf(stats);
   const cached = files.get(file);
+  files.delete(file);
   if (cached?.trusted && sameStamp(cached.stamp, stamp)) {
-    if (cached.text !== undefined) {
-      cached.value = deepFreeze(JSON.parse(cached.text));
-      delete cached.text;
-    }
+    files.set(file, cached);
     return cached.value;
   }
-  // Stamp before reading: content that changes during the read is stored under the older stamp,
-  // so the next call sees a new stamp and reads it again.
-  files.delete(file);
+  // Stamp and judge it before reading: content that changes during the read is stored under the
+  // older stamp, so the next call sees a new stamp; a stalled read cannot make a racy stamp settle.
+  const trusted = settled(stamp, Date.now());
   const value = deepFreeze(JSON.parse(await readFile(file, 'utf8')));
-  files.set(file, { stamp, trusted: settled(stamp, Date.now()), value });
+  files.delete(file);
+  files.set(file, { stamp, trusted, value });
+  if (files.size > MAX_FILES) files.delete(files.keys().next().value!);
   return value;
-}
-
-/**
- * Record text this process just committed to `file`, with the stat of the inode it renamed into
- * place, so the next read parses it without reading the file. The writer must have checked that
- * nobody changed that inode between its write and `stats`.
- */
-export function rememberJsonFile(file: string, stats: BigIntStats, text: string): void {
-  files.set(file, { stamp: stampOf(stats), trusted: true, text });
 }

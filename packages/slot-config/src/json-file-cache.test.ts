@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdtempSync, rmSync, statSync } from 'node:fs';
+import fsPromises, { readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, test, type TestContext } from 'node:test';
 
 import { RACY_STAMP_MS } from '@farmslot/protocol';
 
-import { readJsonFile, rememberJsonFile } from './json-file-cache.js';
+import { readJsonFile } from './json-file-cache.js';
 
 const dir = mkdtempSync(path.join(tmpdir(), 'json-file-cache-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -98,12 +99,23 @@ test('a file changed within the racy window is read again even with an equal sta
   assert.notEqual(await readJsonFile(file), first, 'a fresh stamp is not trusted');
 });
 
-test('text this process committed is served from memory for that file version', async (t) => {
-  settledClock(t);
-  const file = path.join(dir, 'committed.json');
-  writeFileSync(file, '{"on":"disk"}');
-  rememberJsonFile(file, statSync(file, { bigint: true }), '{"in":"memory"}');
-  assert.deepEqual(await readJsonFile(file), { in: 'memory' }, 'the file is not read back');
-  await writeFile(file, '{"by":"other"}');
-  assert.deepEqual(await readJsonFile(file), { by: 'other' }, 'an outside write replaces it');
+test('trust is judged when the file is stamped, not after a slow read', async (t) => {
+  const file = path.join(dir, 'slow.json');
+  await writeFile(file, '{"v":1}');
+  const read = fsPromises.readFile;
+  // The read completes long after the stamp: the stamp was racy when taken, so it stays untrusted.
+  t.mock.method(fsPromises, 'readFile', async (...args: Parameters<typeof read>) => {
+    const text = await read(...args);
+    t.mock.timers.tick(60_000);
+    return text;
+  });
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  syncBuiltinESMExports();
+  try {
+    const first = await readJsonFile(file);
+    assert.notEqual(await readJsonFile(file), first, 'a racy stamp is read again');
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
 });

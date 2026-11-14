@@ -890,6 +890,8 @@ function validateMachineEnv(raw: unknown, machine: string): Record<string, strin
 
 /** The vars built from one version of a project's project.json and runtime settings. */
 interface CachedProjectVars {
+  /** The pack version the vars came from; a new materialization replaces the entry. */
+  source: string;
   document: unknown;
   settings: SourceRuntimeSettings | undefined;
   value: ProjectVars;
@@ -897,14 +899,13 @@ interface CachedProjectVars {
 
 // Hot paths (live-recipe context, task-dir resolution, timers) load project vars many times a
 // second. The vars are rebuilt and revalidated only when readJsonFile hands back another version
-// of project.json or of its runtime settings, so an edit is seen by the next call.
+// of project.json or of its runtime settings, so an edit is seen by the next call. One entry per
+// project, so retired pack materializations are not retained.
 const projectVarsCache = new Map<string, CachedProjectVars>();
 
 export function invalidateProjectVarsCache(projectName?: string): void {
   if (!projectName) projectVarsCache.clear();
-  else
-    for (const key of projectVarsCache.keys())
-      if (key.startsWith(`${projectName}\0`)) projectVarsCache.delete(key);
+  else projectVarsCache.delete(projectName);
 }
 
 export async function loadProjectVars(projectName: string): Promise<ProjectVars> {
@@ -912,7 +913,7 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   const packRoot = sourceContext
     ? resolveSourceBinding(sourceContext.pack, sourceContext.materialization).root
     : path.join(currentProjectsDir(), projectName);
-  const cacheKey = `${projectName}\0${packRoot}\0${sourceContext?.materialization.lock.digest ?? 'legacy'}`;
+  const source = `${packRoot}\0${sourceContext?.materialization.lock.digest ?? 'legacy'}`;
   const projectConfig = path.join(packRoot, 'project.json');
   const projectFixturesDir = path.join(packRoot, 'fixtures');
   const projectTemplatesDir = path.join(packRoot, 'templates');
@@ -925,8 +926,13 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
     settings = (await usesRuntimeSettings(projectName))
       ? await readSourceRuntimeSettings(projectName)
       : undefined;
-    const cached = projectVarsCache.get(cacheKey);
-    if (cached && cached.document === document && cached.settings === settings)
+    const cached = projectVarsCache.get(projectName);
+    if (
+      cached &&
+      cached.source === source &&
+      cached.document === document &&
+      cached.settings === settings
+    )
       return { ...cached.value, sourceContext };
     // The cached document is shared and frozen: settings merge into a shallow copy of it.
     // As JSON.parse's result was before: the validators below check its fields.
@@ -998,7 +1004,7 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
     artifactDir,
     recipeDir,
   };
-  projectVarsCache.set(cacheKey, { document, settings, value });
+  projectVarsCache.set(projectName, { source, document, settings, value });
   return value;
 }
 

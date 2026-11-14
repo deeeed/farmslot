@@ -66,6 +66,14 @@ test('a gateway write is seen by the next read', async (t) => {
   assert.equal((await readSlotRow('b'))?.current_run_id, null);
 });
 
+test('a corrupt status shape throws instead of reading as no row', async (t) => {
+  settledClock(t);
+  for (const corrupt of ['null', '{"slots":{}}', '{"slots":[null]}']) {
+    await writeFile(statusFile, corrupt);
+    await assert.rejects(() => readSlotRow('a'), TypeError, corrupt);
+  }
+});
+
 test('a deleted status file reads as no row, as before', async (t) => {
   settledClock(t);
   await writeFile(statusFile, status('run-1'));
