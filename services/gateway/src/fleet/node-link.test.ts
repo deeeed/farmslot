@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { existsSync, watch } from 'node:fs';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, test, type TestContext } from 'node:test';
@@ -138,6 +139,10 @@ async function linkedNode(
   const delayedReplyReady = new Promise<void>((resolve) => {
     markDelayedReplyReady = resolve;
   });
+  let markCommandHandled!: () => void;
+  const commandHandled = new Promise<void>((resolve) => {
+    markCommandHandled = resolve;
+  });
   nodeSocket.on('message', async (raw) => {
     const frame = JSON.parse(raw.toString());
     calls.push({ method: frame.method, params: frame.params });
@@ -146,6 +151,7 @@ async function linkedNode(
         frame.method === 'fs.read' && fileReadFixture !== undefined
           ? { content: fileReadFixture }
           : await agent.handle(frame.method, frame.params);
+      if (frame.method === 'node.link.command') markCommandHandled();
       if (replyDelayMs && frame.method === 'node.link.command') {
         const delay = new Promise<void>((resolve) => setTimeout(resolve, replyDelayMs));
         markDelayedReplyReady();
@@ -200,7 +206,7 @@ async function linkedNode(
       nodePrincipal: principal,
     },
   );
-  return { agent, principal, calls, delayedReplyReady };
+  return { agent, principal, calls, delayedReplyReady, commandHandled };
 }
 
 test('flagged task staging uses node commands, preserves existing artifacts and publishes executable marker last', async (t) => {
@@ -397,7 +403,7 @@ test(
     const previousHome = process.env.FARMSLOT_HOME;
     process.env.FARMSLOT_HOME = root;
     const machine = 'node-link-lost-reply-fixture';
-    const { principal } = await linkedNode(t, root, machine, true);
+    const { principal, commandHandled } = await linkedNode(t, root, machine, true);
     t.after(async () => {
       if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
       else process.env.FARMSLOT_HOME = previousHome;
@@ -422,7 +428,12 @@ test(
       timeoutMs: 1000,
       assertCurrent: () => undefined,
     };
-    await assert.rejects(invokeNodeLink(request, invocation), NodeExecUnconfirmedError);
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+    const lost = assert.rejects(invokeNodeLink(request, invocation), NodeExecUnconfirmedError);
+    // The node applied the write and dropped its reply. Expire the 1 s + 5 s transport budget.
+    await commandHandled;
+    t.mock.timers.tick(6000);
+    await lost;
     assert.equal(await readFile(path.join(root, 'once.txt'), 'utf8'), 'once');
     const receipt = await invokeNodeLink(request, invocation);
     assert.equal(receipt.state, 'completed');
@@ -844,15 +855,31 @@ test(
       await rm(root, { recursive: true, force: true });
     });
     const cleanup = path.join(root, 'cleanup-complete');
-    const receipt = await invokeNodeLink(
+    const terminated = path.join(root, 'sigterm-received');
+    const release = path.join(root, 'cleanup-release');
+    // The child's cleanup outlives the 5 s default closeout: it starts on SIGTERM and only ends when
+    // the test releases it, after the gateway clock has moved 6 s past the SIGTERM. If the test
+    // fails first, removing the root ends the cleanup too (its marker vanishes, the write throws).
+    const sigterm = new Promise<void>((resolve) => {
+      const watcher = watch(root, () => {
+        if (!existsSync(terminated)) return;
+        watcher.close();
+        resolve();
+      });
+      t.after(() => watcher.close());
+    });
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+    const pending = invokeNodeLink(
       {
         operation: 'process.run',
         input: {
           argv: [
             process.execPath,
             '-e',
-            'const fs=require("node:fs");process.on("SIGTERM",()=>setTimeout(()=>{fs.writeFileSync(process.argv[1],"closed");process.exit(0)},6000));process.stdout.write("READY");setInterval(()=>{},1000)',
+            'const fs=require("node:fs");const [cleanup,terminated,release]=process.argv.slice(1);process.on("SIGTERM",()=>{fs.writeFileSync(terminated,"term");setInterval(()=>{if(!fs.existsSync(release)&&fs.existsSync(terminated))return;fs.writeFileSync(cleanup,"closed");process.exit(0)},10)});process.stdout.write("READY");setInterval(()=>{},1000)',
             cleanup,
+            terminated,
+            release,
           ],
           cwd: root,
           timeoutMs: 10000,
@@ -876,6 +903,10 @@ test(
         onOutput: () => controller.abort(),
       },
     );
+    await sigterm;
+    t.mock.timers.tick(6000);
+    await writeFile(release, '');
+    const receipt = await pending;
     assert.equal(receipt.state, 'cancelled');
     assert.equal(receipt.closeoutConfirmed, true);
     assert.equal(await readFile(cleanup, 'utf8'), 'closed');
@@ -1054,3 +1085,83 @@ test(
     await assert.rejects(readFile(path.join(root, 'never-admitted')), { code: 'ENOENT' });
   },
 );
+
+test('a corrupt intent mid-prune fails admission after its batch settles and stops later batches', async (t) => {
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), 'node-link-corrupt-prune-')));
+  const previousHome = process.env.FARMSLOT_HOME;
+  process.env.FARMSLOT_HOME = root;
+  const machine = 'node-link-corrupt-prune';
+  const { principal } = await linkedNode(t, root, machine);
+  t.after(async () => {
+    if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = previousHome;
+    await rm(root, { recursive: true, force: true });
+  });
+  const { createHash } = await import('node:crypto');
+  const { createNodeLinkCommandId } = await import('./node-link.js');
+  const directory = path.join(root, 'node-link-intents', machine);
+  await mkdir(directory, { recursive: true });
+  const expiresAt = Date.now() - 10 * 60_000;
+  const authority = {
+    requester: { principalId: 'operator', generation: 1 },
+    executor: principal,
+    grantId: 'corrupt-prune',
+    approvalId: 'corrupt-prune',
+    approval: 'framework' as const,
+  };
+  const target = { nodeId: machine, resourceId: 'workspace' };
+  // Three prune batches of 32 settled (expired, never sent) intents.
+  await Promise.all(
+    Array.from({ length: 96 }, (_, index) => {
+      const commandId = `nl1:${expiresAt}:settled-${index}`;
+      return writeFile(
+        path.join(directory, createHash('sha256').update(commandId).digest('hex') + '.json'),
+        JSON.stringify({
+          command: {
+            commandId,
+            operation: 'file.write',
+            input: { root, relPath: 'never-admitted', content: 'no' },
+            target,
+            authority,
+            expiresAt,
+          },
+          grant: { target, authority, expiresAt, operations: ['file.write'], root },
+          sent: false,
+        }),
+      );
+    }),
+  );
+  // The prune walks the directory in this order; corrupt the ninth entry of the second batch.
+  const order = await readdir(directory);
+  assert.equal(order.length, 96);
+  await writeFile(path.join(directory, order[40]!), JSON.stringify({ not: 'an intent' }));
+  await assert.rejects(
+    invokeNodeLink(
+      {
+        operation: 'file.write',
+        input: { root, relPath: 'after-corrupt', content: 'no', expectedHash: null },
+      },
+      {
+        commandId: createNodeLinkCommandId(),
+        target,
+        authority,
+        root,
+        assertCurrent: () => undefined,
+      },
+    ),
+    { code: 'INTENT_CORRUPT', message: 'Cannot prune an invalid intent.' },
+  );
+  const remaining = new Set(await readdir(directory));
+  assert.deepEqual(
+    order.slice(0, 32).filter((entry) => remaining.has(entry)),
+    [],
+    'settled intents in the batch before the corrupt one are pruned',
+  );
+  assert.ok(remaining.has(order[40]!), 'the corrupt intent is retained for reconciliation');
+  assert.deepEqual(
+    order.slice(64).filter((entry) => !remaining.has(entry)),
+    [],
+    'no batch starts after the corrupt one',
+  );
+  await assert.rejects(readFile(path.join(root, 'after-corrupt')), { code: 'ENOENT' });
+});

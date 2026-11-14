@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { beforeEach, mock, test } from 'node:test';
+import { beforeEach, mock, test, type TestContext } from 'node:test';
 
 import type { SlotVars } from '../core/config.js';
 
@@ -71,6 +71,33 @@ let sendDelayMs = 0;
 // spend 100 ms on one send, which ends the loop before the retry a test is about. Tests whose
 // outcome is not the deadline get a budget they never reach; the two that wait it out keep theirs.
 const deliveryBudgetMs = 10_000;
+
+/**
+ * Runs a send on a virtual clock. The send's real-time sleeps (1.5 s busy polls, 500 ms receipt
+ * probes) are the only timers on this path, so each one is fired as soon as the event loop turns,
+ * and Date.now() jumps with it. Deadlines and retry counts behave exactly as in wall-clock time.
+ */
+async function withVirtualTime<Result>(
+  t: TestContext,
+  send: () => Promise<Result>,
+): Promise<Result> {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() });
+  let settled = false;
+  const pump = (async () => {
+    while (!settled) {
+      await new Promise((resolve) => setImmediate(resolve));
+      t.mock.timers.runAll();
+    }
+  })();
+  try {
+    return await send();
+  } finally {
+    settled = true;
+    await pump;
+    t.mock.timers.reset();
+  }
+}
+
 beforeEach(() => {
   sendDelayMs = 0;
   paneCaptureCommands.length = 0;
@@ -1196,7 +1223,7 @@ test('sendRunnerInstructionSafely uses the remote Grok clock baseline', async ()
   grokPromptAcceptanceBaselineMs = Date.now();
 });
 
-test('sendRunnerInstructionSafely bounds native Grok probes while the composer stays busy', async () => {
+test('sendRunnerInstructionSafely bounds native Grok probes while the composer stays busy', async (t) => {
   callOrder.length = 0;
   paneCaptureCount = 0;
   paneTextByCapture = null;
@@ -1208,7 +1235,9 @@ test('sendRunnerInstructionSafely bounds native Grok probes while the composer s
   grokActivityReads = 0;
   grokActivitySequence = ['tool-running'];
 
-  const delivered = await sendRunnerInstructionSafely(vars, target, 'grok', message, '[test]', 50);
+  const delivered = await withVirtualTime(t, () =>
+    sendRunnerInstructionSafely(vars, target, 'grok', message, '[test]', 50),
+  );
 
   assert.equal(delivered, false);
   assert.equal(grokPromptAcceptedCalls, 1, 'busy polling must not repeatedly scan Grok history');
@@ -1216,7 +1245,7 @@ test('sendRunnerInstructionSafely bounds native Grok probes while the composer s
   grokPromptAcceptanceBaselineMs = Date.now();
 });
 
-test('sendRunnerInstructionSafely honors native Grok acceptance after a busy wait', async () => {
+test('sendRunnerInstructionSafely honors native Grok acceptance after a busy wait', async (t) => {
   callOrder.length = 0;
   paneCaptureCount = 0;
   paneTextByCapture = null;
@@ -1228,13 +1257,8 @@ test('sendRunnerInstructionSafely honors native Grok acceptance after a busy wai
   grokActivityReads = 0;
   grokActivitySequence = ['tool-running', 'idle'];
 
-  const delivered = await sendRunnerInstructionSafely(
-    vars,
-    target,
-    'grok',
-    message,
-    '[test]',
-    2_000,
+  const delivered = await withVirtualTime(t, () =>
+    sendRunnerInstructionSafely(vars, target, 'grok', message, '[test]', 2_000),
   );
 
   assert.equal(delivered, true);
@@ -1250,21 +1274,17 @@ test('sendRunnerInstructionSafely honors native Grok acceptance after a busy wai
   grokPromptAcceptanceBaselineMs = Date.now();
 });
 
-test('buffered Cursor input remains unconfirmed without native prompt evidence', async () => {
+test('buffered Cursor input remains unconfirmed without native prompt evidence', async (t) => {
   acknowledgePromptInput = true;
   callOrder.length = 0;
   paneCaptureCount = 0;
   paneTextByCapture = null;
   paneText = `❯ ${message}`;
 
-  const delivered = await sendRunnerInstructionSafely(
-    vars,
-    target,
-    'cursor',
-    message,
-    '[test]',
-    50,
-    { forceBusyPoll: true },
+  const delivered = await withVirtualTime(t, () =>
+    sendRunnerInstructionSafely(vars, target, 'cursor', message, '[test]', 50, {
+      forceBusyPoll: true,
+    }),
   );
 
   assert.equal(delivered, false);
@@ -1313,7 +1333,7 @@ test('digest-required recovery rejects hook activity without an exact digest', a
   assert.deepEqual(handoffRequirePromptDigestValues, [true]);
 });
 
-test('sendRunnerInstructionSafely skips pane busy scrape when hook reports composing', async () => {
+test('sendRunnerInstructionSafely skips pane busy scrape when hook reports composing', async (t) => {
   callOrder.length = 0;
   paneCaptureCount = 0;
   activityReading = {
@@ -1329,9 +1349,11 @@ test('sendRunnerInstructionSafely skips pane busy scrape when hook reports compo
     observedAt: Date.now(),
   };
 
-  const sent = await sendRunnerInstructionSafely(vars, target, 'codex', message, '[test]', 50, {
-    forceBusyPoll: true,
-  });
+  const sent = await withVirtualTime(t, () =>
+    sendRunnerInstructionSafely(vars, target, 'codex', message, '[test]', 50, {
+      forceBusyPoll: true,
+    }),
+  );
 
   assert.equal(sent, false);
   assert.ok(callOrder.includes('obs:promptAccepted'));
@@ -1753,7 +1775,7 @@ test('historical Grok progress does not suppress an identical new fix-pass promp
   grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
 });
 
-test('a persistently buffered composer fails loudly instead of concatenating a retype', async () => {
+test('a persistently buffered composer fails loudly instead of concatenating a retype', async (t) => {
   callOrder.length = 0;
   paneCaptureCount = 0;
   paneClearsAfterSubmit = false; // submit keys never clear the buffer
@@ -1765,7 +1787,9 @@ test('a persistently buffered composer fails loudly instead of concatenating a r
   promptAcceptedReading = null;
   paneText = `❯ ${message.slice(0, 80)}\nctx:12%\n`;
 
-  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]');
+  const sent = await withVirtualTime(t, () =>
+    sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]'),
+  );
 
   paneClearsAfterSubmit = true;
   assert.equal(sent, false, 'a stuck buffer is a delivery failure, not a success');
@@ -1870,7 +1894,7 @@ test('claude (hook-only) hook-idle with a BUFFERED composer submits it without r
   );
 });
 
-test('claude (hook-only) hook-idle fails loudly on a stuck buffer instead of retyping', async () => {
+test('claude (hook-only) hook-idle fails loudly on a stuck buffer instead of retyping', async (t) => {
   callOrder.length = 0;
   paneCaptureCount = 0;
   paneClearsAfterSubmit = false; // submit keys never clear the buffer → stuck
@@ -1883,16 +1907,10 @@ test('claude (hook-only) hook-idle fails loudly on a stuck buffer instead of ret
   };
   paneText = `❯ ${message.slice(0, 80)}\nctx:12%\n`;
   try {
-    const sent = await sendRunnerInstructionSafely(
-      vars,
-      target,
-      'claude',
-      message,
-      '[test]',
-      5000,
-      {
+    const sent = await withVirtualTime(t, () =>
+      sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 5000, {
         forceBusyPoll: true,
-      },
+      }),
     );
     assert.equal(sent, false, 'a stuck buffer is a delivery failure, not a success');
     assert.equal(
@@ -1905,7 +1923,7 @@ test('claude (hook-only) hook-idle fails loudly on a stuck buffer instead of ret
   }
 });
 
-test('claude (hook-only) degraded (hook unknown) holds the send instead of pane fallback', async () => {
+test('claude (hook-only) degraded (hook unknown) holds the send instead of pane fallback', async (t) => {
   callOrder.length = 0;
   paneCaptureCount = 0;
   activityReading = {
@@ -1917,9 +1935,11 @@ test('claude (hook-only) degraded (hook unknown) holds the send instead of pane 
   promptAcceptedReading = null;
   paneText = '❯\nctx:12%\n';
   // Small timeout so the degraded hold resolves fast.
-  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
-    forceBusyPoll: true,
-  });
+  const sent = await withVirtualTime(t, () =>
+    sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+      forceBusyPoll: true,
+    }),
+  );
   assert.equal(sent, false);
   assert.equal(
     callOrder.indexOf('tmux:send'),
@@ -2000,7 +2020,7 @@ test('claude (hook-only) uses fresh matching activity when retained session stat
   assert.ok(callOrder.includes('tmux:send-literal'));
 });
 
-test('claude (hook-only) rejects fresh activity from a different retained session', async () => {
+test('claude (hook-only) rejects fresh activity from a different retained session', async (t) => {
   callOrder.length = 0;
   paneCaptureCount = 0;
   activityReading = {
@@ -2018,18 +2038,20 @@ test('claude (hook-only) rejects fresh activity from a different retained sessio
   };
   sessionDeliveryReading = null;
   paneText = '❯\nctx:12%\n';
-  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
-    retainedSession: {
-      sessionId: 'session-dev',
-      sessionPath: '/sessions/session-dev.jsonl',
-    },
-  });
+  const sent = await withVirtualTime(t, () =>
+    sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+      retainedSession: {
+        sessionId: 'session-dev',
+        sessionPath: '/sessions/session-dev.jsonl',
+      },
+    }),
+  );
   assert.equal(sent, false);
   assert.equal(callOrder.includes('obs:getSessionDeliveryState'), true);
   assert.equal(callOrder.includes('tmux:send-literal'), false);
 });
 
-test('claude (hook-only) does not let sessionless statusline activity bypass retained binding', async () => {
+test('claude (hook-only) does not let sessionless statusline activity bypass retained binding', async (t) => {
   callOrder.length = 0;
   paneCaptureCount = 0;
   activityReading = {
@@ -2046,18 +2068,20 @@ test('claude (hook-only) does not let sessionless statusline activity bypass ret
   };
   sessionDeliveryReading = null;
   paneText = '❯\nctx:12%\n';
-  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
-    retainedSession: {
-      sessionId: 'session-dev',
-      sessionPath: '/sessions/session-dev.jsonl',
-    },
-  });
+  const sent = await withVirtualTime(t, () =>
+    sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+      retainedSession: {
+        sessionId: 'session-dev',
+        sessionPath: '/sessions/session-dev.jsonl',
+      },
+    }),
+  );
   assert.equal(sent, false);
   assert.equal(callOrder.includes('obs:getSessionDeliveryState'), true);
   assert.equal(callOrder.includes('tmux:send-literal'), false);
 });
 
-test('claude (hook-only) does not use retained idle without an exact session binding', async () => {
+test('claude (hook-only) does not use retained idle without an exact session binding', async (t) => {
   callOrder.length = 0;
   paneCaptureCount = 0;
   activityReading = null;
@@ -2075,7 +2099,9 @@ test('claude (hook-only) does not use retained idle without an exact session bin
   };
   paneText = '❯\nctx:12%\n';
   try {
-    const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20);
+    const sent = await withVirtualTime(t, () =>
+      sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20),
+    );
     assert.equal(sent, false);
     assert.equal(callOrder.includes('obs:getSessionDeliveryState'), false);
     assert.equal(callOrder.includes('tmux:send-literal'), false);
@@ -2084,7 +2110,7 @@ test('claude (hook-only) does not use retained idle without an exact session bin
   }
 });
 
-test('claude (hook-only) holds instead of concatenating onto FOREIGN composer draft', async () => {
+test('claude (hook-only) holds instead of concatenating onto FOREIGN composer draft', async (t) => {
   // Finding #1: the pending selector only knows whether OUR message is buffered. An operator draft
   // (foreign text the hook signal cannot see) sitting in the composer returns not-buffered, and the
   // pre-fix loop would type the message straight into the occupied composer → concatenation. The
@@ -2102,9 +2128,11 @@ test('claude (hook-only) holds instead of concatenating onto FOREIGN composer dr
   // Draft text that is NOT our instruction and NOT an idle/busy marker.
   paneText = '❯ wait, let me double check the deploy first\nctx:12%\n';
   try {
-    const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
-      forceBusyPoll: true,
-    });
+    const sent = await withVirtualTime(t, () =>
+      sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+        forceBusyPoll: true,
+      }),
+    );
     assert.equal(sent, false, 'foreign composer draft must hold the send, not concatenate');
     assert.equal(
       callOrder.indexOf('tmux:send-literal'),
@@ -2138,10 +2166,12 @@ test('claude (hook-only) degraded hold with a run context persists an ADR-031 au
   };
   promptAcceptedReading = null;
   paneText = '❯\nctx:12%\n';
-  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
-    forceBusyPoll: true,
-    recovery: { runId: 'run-audit-xyz' },
-  });
+  const sent = await withVirtualTime(t, () =>
+    sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+      forceBusyPoll: true,
+      recovery: { runId: 'run-audit-xyz' },
+    }),
+  );
   assert.equal(sent, false);
   // Compute the audit path directly (do NOT import audit-writer at module scope — that would
   // transitively load the real gateway modules before mock.module() applies and poison the mocks).
@@ -2158,7 +2188,7 @@ test('claude (hook-only) degraded hold with a run context persists an ADR-031 au
   assert.equal(record.tier, 'deterministic');
 });
 
-test('claude (hook-only) holds when the composer state is UNKNOWN (no prompt marker), never fresh-sends', async () => {
+test('claude (hook-only) holds when the composer state is UNKNOWN (no prompt marker), never fresh-sends', async (t) => {
   // Finding #1: a pane with no prompt marker cannot be POSITIVELY confirmed empty. The pre-fix
   // `runnerPaneComposerHasDraft` returned false (= no draft = safe) for a missing marker, so the
   // loop would fresh-type into an unseen buffer. The three-state read must hold instead.
@@ -2174,9 +2204,11 @@ test('claude (hook-only) holds when the composer state is UNKNOWN (no prompt mar
   };
   paneText = 'scrollback with no prompt line\nstill no marker here\n';
   try {
-    const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
-      forceBusyPoll: true,
-    });
+    const sent = await withVirtualTime(t, () =>
+      sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+        forceBusyPoll: true,
+      }),
+    );
     assert.equal(sent, false, 'an unknown composer state must hold, not fresh-send');
     assert.equal(
       callOrder.indexOf('tmux:send-literal'),
@@ -2212,10 +2244,12 @@ test('claude (hook-only) foreign-draft hold records a composer-draft audit cause
   };
   paneText = '❯ wait, let me double check the deploy first\nctx:12%\n';
   try {
-    const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
-      forceBusyPoll: true,
-      recovery: { runId: 'run-composer-draft' },
-    });
+    const sent = await withVirtualTime(t, () =>
+      sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+        forceBusyPoll: true,
+        recovery: { runId: 'run-composer-draft' },
+      }),
+    );
     assert.equal(sent, false);
     const day = new Date().toISOString().slice(0, 10);
     const auditPath = path.join(auditDir, `${day}.ndjson`);

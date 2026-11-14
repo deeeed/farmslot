@@ -438,6 +438,9 @@ test('family report generation reuses cache until forceRefresh is requested', as
     },
   };
 
+  const liveTimers = () =>
+    process.getActiveResourcesInfo().filter((resource) => resource === 'Timeout').length;
+  const timersBefore = liveTimers();
   const cached = await generateFamilyReport(snapshot, false, reportDeps);
   const reused = await generateFamilyReport(snapshot, false, reportDeps);
 
@@ -449,6 +452,8 @@ test('family report generation reuses cache until forceRefresh is requested', as
   assert.equal(reportCalls, 2);
   assert.notStrictEqual(refreshed, cached);
   assert.equal(refreshed.status, 'generated');
+  // A settled report must release its generation deadline instead of holding the loop open.
+  assert.equal(liveTimers(), timersBefore);
 });
 
 test('snapshot honors FLOW_WORKER_REPORT_ARTIFACTS for pr-complete (comments-report.md, not report.md)', async () => {
