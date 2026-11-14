@@ -106,6 +106,38 @@ test('armed source sees real journal appends before fs.watch callback; no comman
   }
 });
 
+test('source events keep their watchers; a created or replaced directory re-arms', async (t) => {
+  const watch = fs.watch;
+  let armed = 0;
+  t.mock.method(fs, 'watch', (...args: Parameters<typeof watch>) => {
+    armed++;
+    return watch(...args);
+  });
+  syncBuiltinESMExports();
+  const fixture = setup();
+  try {
+    await fixture.source.start();
+    const started = armed;
+    assert.ok(started > 0);
+    const before = await fixture.source.fence();
+    for (let i = 0; i < 5; i++) fixture.commitMetadata();
+    // The fence reads the commits; the delay lets their watcher events arrive.
+    await delay(200);
+    assert.ok((await fixture.source.fence()).revision > before.revision);
+    assert.equal(armed, started, 'events under an unchanged root reuse its watchers');
+    rmSync(fixture.root, { recursive: true, force: true });
+    mkdirSync(join(fixture.root, 'sessions'), { recursive: true, mode: 0o700 });
+    fixture.commitMetadata();
+    // The ceiling only reports a hang; watcher delivery is usually milliseconds.
+    for (let i = 0; i < 250 && armed === started; i++) await delay(20);
+    assert.ok(armed > started, 'a replaced root is armed again');
+  } finally {
+    fixture.close();
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+});
+
 test('healthy journal append supersedes a held read without revoking source admission', async (t) => {
   const fixture = setup();
   const notices: unknown[][] = [];
