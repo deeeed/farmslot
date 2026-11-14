@@ -34,6 +34,7 @@ import {
   processStartIdentity,
   readJson,
   type RecordedProcess,
+  recordedProcessAlive,
 } from './storage.js';
 import {
   decodeNativeWorkerLaunch,
@@ -67,6 +68,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
   if(text==='approval') {send({id:7,method:'item/commandExecution/requestApproval',params:{threadId:thread,command:'fixture tool'}});return;}
   if(text==='self-resolved') {send({id:8,method:'item/commandExecution/requestApproval',params:{threadId:thread,command:'fixture tool'}});send({method:'serverRequest/resolved',params:{threadId:thread,requestId:8}});send({method:'turn/completed',params:{threadId:thread,turn:{id:turn,status:'completed'}}});return;}
   send({method:'item/started',params:{threadId:thread,item:{id:'tool',type:'commandExecution',command:'fixture tool'}}});
+  if(text==='crash' && fs.existsSync('gate-crash-descendant')) while(!fs.existsSync('release-crash-descendant')) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,5);
   const child = require('node:child_process').spawn(process.execPath,['-e',"setInterval(()=>{},1000)"],{stdio:'ignore',detached:true});
   fs.writeFileSync('descendant',String(child.pid));
   timer=setTimeout(()=>{
@@ -1399,6 +1401,10 @@ test('local host survives caller exit, authenticates IPC, replays once and clean
       undefined,
     ]);
     const host = readJson<HostIdentity>(join(root, 'host.json'));
+    // Cleanup must work even when periodic observation misses the runner's descendants.
+    process.kill(-host.pid, 'SIGSTOP');
+    const worker = readJson<RecordedProcess>(join(root, 'worker.json'));
+    process.kill(worker.pid, 'SIGCONT');
     assert.ok(Buffer.byteLength(host.socket) < 104);
     assert.equal(statSync(host.socket).mode & 0o777, 0o600);
     assert.equal(statSync(root).mode & 0o777, 0o700);
@@ -1474,13 +1480,25 @@ test('local host survives caller exit, authenticates IPC, replays once and clean
     await reconnected.respond('owner', session.id, pending.request!.id, { decision: 'deny' });
     await until(async () => (await client.read('owner', session.id)).session.state === 'idle');
     rmSync(join(cwd, 'descendant'));
+    writeFileSync(join(cwd, 'gate-crash-descendant'), '');
     await reconnected.send('owner', session.id, 'crash', 'crash');
+    // Neither observer can see this child before its parent host is killed.
+    process.kill(session.hostPid, 'SIGSTOP');
+    writeFileSync(join(cwd, 'release-crash-descendant'), '');
     await until(() => existsSync(join(cwd, 'descendant')));
     const descendant = Number(readFileSync(join(cwd, 'descendant'), 'utf8'));
-    // Freeze the only journal writer to reproduce a crash midway through its last append.
-    process.kill(session.hostPid, 'SIGSTOP');
+    // Stop the fixture's timer from cleaning up the child instead of the runtime.
+    process.kill(-session.processPid, 'SIGSTOP');
     appendFileSync(join(root, 'sessions', `${session.id}.journal`), '{"event":');
     process.kill(session.hostPid, 'SIGKILL');
+    await until(() => {
+      const observation = spawnSync('ps', ['-p', String(session.hostPid), '-o', 'stat='], {
+        encoding: 'utf8',
+      });
+      assert.equal(observation.status, 0, observation.stderr);
+      return observation.stdout.trim().startsWith('Z');
+    });
+    process.kill(-host.pid, 'SIGCONT');
     await until(() => !alive(session.processPid) && !alive(descendant) && !alive(host.pid));
     const failed = await new NativeSessionClient(root).read('owner', session.id);
     assert.equal(failed.session.state, 'failed');
@@ -1515,6 +1533,9 @@ test('local host survives caller exit, authenticates IPC, replays once and clean
     if (existsSync(path)) {
       const host = readJson<HostIdentity>(path);
       if (alive(host.pid)) {
+        process.kill(-host.pid, 'SIGCONT');
+        const child = readJson<RecordedProcess>(join(root, 'worker.json'));
+        if (recordedProcessAlive(child)) process.kill(child.pid, 'SIGCONT');
         process.kill(host.pid, 'SIGTERM');
         await until(() => !alive(host.pid));
       }
@@ -1608,6 +1629,45 @@ test('unregistered host cannot bind and exits if its supervisor disappears', asy
     const [code] = await exited;
     assert.notEqual(code, 0);
     assert.match(stderr, /before host registration/);
+  } finally {
+    if (child.exitCode === null) child.kill('SIGKILL');
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('unregistered host rejects a supervisor disconnect before module evaluation', async () => {
+  const { fork } = await import('node:child_process');
+  const root = mkdtempSync(join(tmpdir(), 'native-disconnected-host-'));
+  const extension = import.meta.url.endsWith('.ts') ? 'ts' : 'js';
+  const host = new URL(`./host.${extension}`, import.meta.url).href;
+  const entry = join(root, 'deferred-host.mjs');
+  writeFileSync(
+    entry,
+    `process.channel.ref();
+const disconnected = new Promise(resolve => process.once('disconnect', resolve));
+process.send('waiting-for-disconnect');
+await disconnected;
+await import(${JSON.stringify(host)});
+`,
+  );
+  const child = fork(entry, [root], {
+    execArgv: extension === 'ts' ? ['--import', import.meta.resolve('tsx')] : [],
+    stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+  });
+  let stderr = '';
+  child.stderr!.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString();
+  });
+  const exited = once(child, 'exit');
+  try {
+    const [message] = await once(child, 'message');
+    assert.equal(message, 'waiting-for-disconnect');
+    child.disconnect();
+    const [code] = await exited;
+    assert.notEqual(code, 0);
+    assert.match(stderr, /before host registration/);
+    assert.equal(existsSync(join(root, 'sessions')), false);
+    assert.equal(existsSync(join(socketDirectory(root), 's')), false);
   } finally {
     if (child.exitCode === null) child.kill('SIGKILL');
     rmSync(root, { recursive: true, force: true });
