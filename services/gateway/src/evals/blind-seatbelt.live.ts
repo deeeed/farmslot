@@ -1534,7 +1534,8 @@ test(
         ...[
           'src/index.ts',
           'scripts/dev-stack/start.sh',
-          'pool/fixture.json',
+          // Pool *.json is readable for core setup (see the core setup test); nothing else there.
+          'pool/fixture.json.bak',
           'projects/fixture/private.txt',
         ].map((file) => `${installation}/${file}`),
       );
@@ -2552,6 +2553,10 @@ test(
     const home = path.join(root, 'home');
     mkdirSync(home);
     const launchEnv = { ...env, HOME: home, CORE_NODE_BIN: path.dirname(process.execPath) };
+    const pool = path.join(home, 'farmslot-node-dev/pool');
+    mkdirSync(pool, { recursive: true });
+    writeFileSync(path.join(pool, 'node.json'), '{"slots":[]}');
+    writeFileSync(path.join(pool, 'node.json.bak'), 'FAKE_SECRET synthetic backup');
     profile(root, launchEnv);
     const yarnrc = path.join(home, '.yarnrc.yml');
     const probe = (contents: string) =>
@@ -2561,6 +2566,10 @@ test(
           `node -e ${q(`try { require('node:fs').readFileSync(${JSON.stringify(yarnrc)}); console.log('READ ${contents}') } catch (e) { console.log('READ ' + e.code) }`)}`,
           `if (printf x >> ${q(yarnrc)}) 2>/dev/null; then echo WRITE ok; else echo WRITE denied; fi`,
           '"$CORE_NODE_BIN/node" -e "console.log(\'NODE ok\')"',
+          `cat ${q(path.join(pool, 'node.json'))} >/dev/null && echo POOL read`,
+          `ls ${q(pool)} >/dev/null && echo POOL listed`,
+          `if cat ${q(path.join(pool, 'node.json.bak'))} >/dev/null 2>&1; then echo BACKUP read; else echo BACKUP denied; fi`,
+          `if (printf x >> ${q(path.join(pool, 'node.json'))}) 2>/dev/null; then echo POOL written; else echo POOL write denied; fi`,
         ].join('; '),
         launchEnv,
       );
@@ -2569,6 +2578,8 @@ test(
     assert.match(absent.stdout, /^READ ENOENT$/mu);
     assert.match(absent.stdout, /^WRITE denied$/mu);
     assert.match(absent.stdout, /^NODE ok$/mu);
+    for (const line of ['POOL read', 'POOL listed', 'BACKUP denied', 'POOL write denied'])
+      assert.match(absent.stdout, new RegExp(`^${line}$`, 'mu'), line);
     writeFileSync(yarnrc, 'nodeLinker: node-modules\n');
     const present = probe('present');
     assert.match(present.stdout, /^READ present$/mu);

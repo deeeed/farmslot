@@ -1137,3 +1137,16 @@ test('blind workers receive the core project Node location and no unlisted pool 
   assert.match(command, /CORE_NODE_BIN=/u);
   assert.doesNotMatch(command, /UNLISTED_POOL_SETTING/u);
 });
+
+test('blind profile lets core setup read the node pool JSON, nothing else there, and never write it', (t) => {
+  const { home, profile } = generatedProfile(t);
+  for (const name of ['farmslot-node', 'farmslot-node-dev']) {
+    const pool = path.join(home, name, 'pool');
+    const read = `(allow file-read* (literal ${JSON.stringify(pool)}))`;
+    assert.ok(profile.includes(read), name);
+    assert.ok(profile.includes('(allow file-read* (regex "^'), name);
+    assert.ok(profile.includes(`(deny file-link (subpath ${JSON.stringify(pool)}))`), name);
+    // The installation's write denial is never reopened.
+    assert.ok(!profile.includes(`(allow file-write* (subpath ${JSON.stringify(pool)}))`), name);
+  }
+});

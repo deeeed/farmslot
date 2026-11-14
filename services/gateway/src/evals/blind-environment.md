@@ -153,6 +153,16 @@ model adapter. Custom providers that require another environment name must add
 an exact capability entry and a regression test. Prefer the runner's own config
 for custom provider authentication.
 
+## Node pool
+
+Core setup resolves its slot with `farmslot internal resolve-slot`, which reads the
+node pool. The worker can list the node installation's `pool/` directory and read
+its `*.json` files (`~/farmslot-node/pool`, `~/farmslot-node-dev/pool`); it cannot
+write or link them, and backups and other files there stay denied. A pool JSON's
+`env` section is therefore visible to blind workers: real credentials must not live
+in node pool JSON. Today the only credential-named entry there,
+`FARMSLOT_PI_ROUTER_KEY`, holds the placeholder `local`.
+
 ## Base ref
 
 The isolated repository has no remotes. Isolation records

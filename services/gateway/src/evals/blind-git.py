@@ -183,6 +183,13 @@ def worker_access_rules(repo):
                   for value in readable for p in path_aliases(value)]
         rules += ['(allow file-read* (literal %s))' % quote(p)
                   for p in path_aliases(installation / 'package.json')]
+        # Core setup resolves its slot from the node pool (farmslot internal resolve-slot):
+        # the directory and its *.json files are readable, never writable or linkable.
+        pool = installation / 'pool'
+        rules += ['(allow file-read* (literal %s))' % quote(p) for p in path_aliases(pool)]
+        rules += ['(allow file-read* (regex %s))' % quote('^' + re.escape(p) + '/[^/]+[.]json$')
+                  for p in path_aliases(pool)]
+        rules += ['(deny file-link (subpath %s))' % quote(p) for p in path_aliases(pool)]
     rules += rename_guard_rules([Path.home() / name for name in NODE_INSTALLATIONS])
     return rules
 
