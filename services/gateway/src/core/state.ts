@@ -8,7 +8,7 @@ import { type FileHandle, open, readFile, rename, rm } from 'node:fs/promises';
 import { assertStatusFileWritable, resolveStatusFilePath } from '../projects/repo-root.js';
 
 import { assertCleanupCurrent, withoutCleanupSignal } from './cleanup-scope.js';
-import { farmslotRoot } from './config.js';
+import { farmslotRoot, readJsonFile, rememberJsonFile } from './config.js';
 
 const statusFile = resolveStatusFilePath(farmslotRoot());
 
@@ -67,6 +67,7 @@ async function atomicWriteStatus(data: unknown): Promise<void> {
     handle = await open(tmp, 'w');
     await handle.writeFile(text);
     const written = await handle.stat();
+    const writtenNs = await handle.stat({ bigint: true });
     assertCleanupCurrent();
     await rename(tmp, statusFile);
     // Stat the inode this write renamed into place, not the path, so an outside replace after the
@@ -77,6 +78,11 @@ async function atomicWriteStatus(data: unknown): Promise<void> {
       committed.size === written.size && committed.mtimeMs === written.mtimeMs
         ? { text, stamp: statusFileStamp(committed) }
         : undefined;
+    // Row reads parse this commit at most once, without reading the file back. The same check, in
+    // nanoseconds, guards that nobody edited the inode after this write.
+    const committedNs = await handle.stat({ bigint: true });
+    if (committedNs.size === writtenNs.size && committedNs.mtimeNs === writtenNs.mtimeNs)
+      rememberJsonFile(statusFile, committedNs, text);
   } catch (error) {
     try {
       await handle?.close();
@@ -344,14 +350,7 @@ export async function rewriteStatusFile(
 // Read a single field from a slot in .farm-status.json.
 
 export async function readSlotField(slotId: string, field: string): Promise<unknown> {
-  if (!existsSync(statusFile)) return undefined;
-
-  const content = await readFile(statusFile, 'utf-8');
-  const data = JSON.parse(content);
-
-  const slots: Array<Record<string, unknown>> = data.slots ?? [];
-  const slot = slots.find((s) => s.slot === slotId);
-  return slot?.[field];
+  return (await readSlotRow(slotId))?.[field];
 }
 
 // ─── Typed transition helpers ───
@@ -472,10 +471,15 @@ export async function readSlotRow(
   slotId: string,
 ): Promise<Readonly<Record<string, unknown>> | null> {
   if (!existsSync(statusFile)) return null;
-  const content = await readFile(statusFile, 'utf-8');
-  const data = JSON.parse(content);
-  const slots: Array<Record<string, unknown>> = data.slots ?? [];
-  return slots.find((s) => s.slot === slotId) ?? null;
+  // One parse of each file version, frozen and shared by every reader until the file changes.
+  const data = await readJsonFile(statusFile);
+  const slots = isStatusRecord(data) && Array.isArray(data.slots) ? data.slots : [];
+  for (const row of slots) if (isStatusRecord(row) && row.slot === slotId) return row;
+  return null;
+}
+
+function isStatusRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** A reserved successor may write its task before worker ownership transfers. */

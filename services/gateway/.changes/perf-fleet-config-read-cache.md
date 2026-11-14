@@ -1,0 +1,1 @@
+- Parse project, runtime-settings and status files once per file version: project configs, project vars, pool configs and slot-row reads reuse frozen results until the file's stat changes, instead of re-reading and re-normalizing them on every call.
