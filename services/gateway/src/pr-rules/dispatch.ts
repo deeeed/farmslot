@@ -177,15 +177,16 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
     for (const snapshot of this.store.snapshot().intents) {
       // The committed intent, frozen and shared: this loop only reads it, and every change goes
       // through the store's write path. Copying each one per turn stalled the gateway.
-      let intent = this.store.snapshot((data) =>
-        data.intents.find((item) => item.id === snapshot.id),
-      );
+      let intent = this.store.committedIntent(snapshot.id);
       if (!intent) continue;
-      const run = getAllRuns().find((item) => item.prWork?.id === workId(intent!));
+      // Runs and queue items can change across this loop's awaits: each lookup reads the current
+      // lists, comparing against the intent's work id computed once.
+      const work = workId(intent);
+      const run = getAllRuns().find((item) => item.prWork?.id === work);
       if (run) {
         if (existsSync(runRecordPath(run.id))) {
           await this.observeRun(intent, run);
-          const orphan = getQueueSnapshot().find((item) => item.prWork?.id === workId(intent!));
+          const orphan = getQueueSnapshot().find((item) => item.prWork?.id === work);
           if (orphan) await removeQueueItemInternalNow(orphan.id, 'pr-review-run-recovered');
         }
         continue;
@@ -196,7 +197,7 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
         intent.status === 'running'
       )
         continue;
-      let queued = getQueueSnapshot().find((item) => item.prWork?.id === workId(intent!));
+      let queued = getQueueSnapshot().find((item) => item.prWork?.id === work);
       if (queued?.status === 'cancelled') {
         await removeQueueItemInternalNow(queued.id, 'pr-review-cancelled');
         await this.store.updateDispatch(intent.id, {
@@ -353,7 +354,7 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       }
       if (flowType === 'review-pr')
         review.options = { ...review.options, mode: resolved.choices[0].mode };
-      if (getAllRuns().some((run) => run.prWork?.id === workId(intent!))) continue;
+      if (getAllRuns().some((run) => run.prWork?.id === work)) continue;
       const originator = queued ? queueRecordOriginator(queued.id) : undefined;
       if (
         queued &&
