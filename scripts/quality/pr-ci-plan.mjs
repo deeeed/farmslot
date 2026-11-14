@@ -299,24 +299,30 @@ export function createPrPlan({ root, changed, workspaces, selected, durations = 
   for (const task of tasks)
     for (const arg of task.args) if (selected.includes(arg)) assigned.add(arg);
   const remaining = selected.filter((file) => !assigned.has(file));
-  for (const [index, chunk] of balance(remaining, Math.min(4, remaining.length)).entries()) {
-    tasks.push(
-      command(
-        `other-selected-tests-${index + 1}`,
-        [
-          'env',
-          'TSX_TSCONFIG_PATH=services/gateway/tsconfig.json',
-          'node',
-          '--import',
-          'tsx',
-          '--experimental-test-module-mocks',
-          '--test',
-          ...chunk,
-        ],
-        30,
-      ),
-    );
-    chunk.forEach((file) => assigned.add(file));
+  const native = [];
+  const typed = [];
+  for (const file of remaining) (/\.[cm]?js$/.test(file) ? native : typed).push(file);
+  const scriptGroups = [
+    [native, ['node', '--experimental-test-module-mocks', '--test']],
+    [
+      typed,
+      [
+        'env',
+        `TSX_TSCONFIG_PATH=${path.resolve(root, 'services/gateway/tsconfig.json')}`,
+        'node',
+        '--import',
+        'tsx',
+        '--experimental-test-module-mocks',
+        '--test',
+      ],
+    ],
+  ];
+  let scriptIndex = 0;
+  for (const [files, args] of scriptGroups) {
+    for (const chunk of balance(files, Math.min(4, files.length))) {
+      tasks.push(command(`other-selected-tests-${++scriptIndex}`, [...args, ...chunk], 30));
+      chunk.forEach((file) => assigned.add(file));
+    }
   }
   if (selected.some((file) => !assigned.has(file)))
     throw new Error('Selected tests lack a CI owner');
