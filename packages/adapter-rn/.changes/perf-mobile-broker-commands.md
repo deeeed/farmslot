@@ -1,0 +1,1 @@
+- Reuse broker connections for built-in Mobile evaluations and HUD commands while resolving the target for each command, preserving deadlines and refusing to replay interrupted work.

@@ -310,10 +310,15 @@ function parseHudStep(args) {
 /**
  * The generic command table, bound to the host's route table, perf markers and
  * readiness expression.
- * @param {Required<Pick<BridgeCliConfig, 'routes' | 'perfMarkerPrefixes'>> & Pick<BridgeCliConfig, 'readyExpression'>} options
+ * @param {Required<Pick<BridgeCliConfig, 'routes' | 'perfMarkerPrefixes'>> & Pick<BridgeCliConfig, 'readyExpression'> & { evaluationTimeoutMs?: number }} options
  * @returns {Record<string, BridgeCommand>}
  */
-function createBuiltinCommands({ routes, perfMarkerPrefixes, readyExpression }) {
+function createBuiltinCommands({
+  routes,
+  perfMarkerPrefixes,
+  readyExpression,
+  evaluationTimeoutMs,
+}) {
   const routeAliases = routes.aliases || {};
   const nestedRouteParents = routes.nestedParents || {};
   return {
@@ -413,7 +418,7 @@ function createBuiltinCommands({ routes, perfMarkerPrefixes, readyExpression }) 
       if (!expression) {
         throw new Error('Usage: eval-async <expression>');
       }
-      return await cdpEvalAsync(client, expression);
+      return await cdpEvalAsync(client, expression, evaluationTimeoutMs);
     },
 
     async 'can-go-back'(client) {
@@ -1356,7 +1361,42 @@ async function readBrokerTargets(
 
 /** Reuse broker sockets for deferred HUD updates; resolve the target for every update. */
 function createBrokerHudSession(socketPath, env = process.env) {
-  const commands = createBuiltinCommands({ routes: {}, perfMarkerPrefixes: [] });
+  return createBrokerSession(
+    socketPath,
+    env,
+    new Set(['show-step-json-deferred', 'hide-step-deferred']),
+    true,
+  );
+}
+
+/** Reuse broker sockets for built-in evaluations and HUD commands without replaying failures. */
+function createBrokerCommandSession(socketPath, env = process.env) {
+  return createBrokerSession(
+    socketPath,
+    env,
+    new Set([
+      'get-route',
+      'eval',
+      'eval-async',
+      'show-step-json',
+      'hide-step',
+      'show-step-json-deferred',
+      'hide-step-deferred',
+    ]),
+    false,
+  );
+}
+
+function createBrokerSession(socketPath, env, allowedCommands, deferredOnly) {
+  const label = deferredOnly ? 'CDP broker HUD' : 'CDP broker';
+  const configuredTimeout = Number.parseInt(env.CDP_TIMEOUT, 10);
+  const validTimeout = Number.isFinite(configuredTimeout) && configuredTimeout > 0;
+  const messageTimeoutMs = validTimeout ? configuredTimeout : 5000;
+  const commands = createBuiltinCommands({
+    routes: {},
+    perfMarkerPrefixes: [],
+    evaluationTimeoutMs: validTimeout ? configuredTimeout : 30000,
+  });
   let discovery;
   let selected;
   let identity;
@@ -1371,17 +1411,23 @@ function createBrokerHudSession(socketPath, env = process.env) {
   }
   return {
     send(command, args, timeoutMs = 5000) {
-      if (closed) return Promise.reject(new Error('CDP broker HUD session is closed'));
-      if (command !== 'show-step-json-deferred' && command !== 'hide-step-deferred') {
-        return Promise.reject(new Error(`Not a deferred HUD command: ${command}`));
+      if (closed) return Promise.reject(new Error(`${label} session is closed`));
+      if (!allowedCommands.has(command)) {
+        return Promise.reject(
+          new Error(
+            `${deferredOnly ? 'Not a deferred HUD command' : 'Unsupported broker session command'}: ${command}`,
+          ),
+        );
       }
       const deadline = Date.now() + timeoutMs;
       const remaining = () => {
         const ms = deadline - Date.now();
         if (ms <= 0)
-          throw coded(new Error('CDP broker HUD command timeout'), BRIDGE_ERROR_CODES.CDP_TIMEOUT);
+          throw coded(new Error(`${label} command timeout`), BRIDGE_ERROR_CODES.CDP_TIMEOUT);
         return ms;
       };
+      const requestTimeout = (limit = messageTimeoutMs) =>
+        Math.min(remaining(), command.endsWith('-deferred') ? Infinity : limit);
       const result = tail.then(async () => {
         try {
           const socket = fs.statSync(socketPath, { bigint: true });
@@ -1390,9 +1436,9 @@ function createBrokerHudSession(socketPath, env = process.env) {
             release();
             brokerIdentity = currentBroker;
           }
-          discovery ??= await createBrokerClient(socketPath, '', remaining());
+          discovery ??= await createBrokerClient(socketPath, '', requestTimeout());
           const target = selectBrokerTarget(
-            await readBrokerTargets(discovery, remaining(), env, { retainIdentity: true }),
+            await readBrokerTargets(discovery, requestTimeout(), env, { retainIdentity: true }),
             env,
           );
           const current = `${target.wsUrl}:${target.generation}`;
@@ -1402,18 +1448,23 @@ function createBrokerHudSession(socketPath, env = process.env) {
             selected = await createBrokerClient(
               socketPath,
               deviceIdFromUrl(target.wsUrl),
-              remaining(),
+              requestTimeout(),
             );
             identity = current;
           }
-          return await commands[command](
-            {
-              control(action, params) {
-                return selected.control(action, params, remaining());
-              },
+          const client = {
+            send(method, params, timeout) {
+              return selected.send(method, params, requestTimeout(timeout));
             },
-            args,
-          );
+            control(action, params) {
+              return selected.control(action, params, remaining());
+            },
+          };
+          // Match the CLI's observation before each synchronous command.
+          if (!command.endsWith('-deferred')) {
+            await cdpEval(client, 'globalThis.__AGENTIC__?.platform');
+          }
+          return await commands[command](client, args);
         } catch (error) {
           release();
           const code =
@@ -1431,9 +1482,7 @@ function createBrokerHudSession(socketPath, env = process.env) {
       return new Promise((resolve, reject) => {
         const timer = setTimeout(
           () => {
-            reject(
-              coded(new Error('CDP broker HUD command timeout'), BRIDGE_ERROR_CODES.CDP_TIMEOUT),
-            );
+            reject(coded(new Error(`${label} command timeout`), BRIDGE_ERROR_CODES.CDP_TIMEOUT));
           },
           Math.max(0, deadline - Date.now()),
         );
@@ -1693,4 +1742,4 @@ Environment:
   });
 }
 
-module.exports = { runBridgeCli, createBrokerHudSession };
+module.exports = { runBridgeCli, createBrokerHudSession, createBrokerCommandSession };
