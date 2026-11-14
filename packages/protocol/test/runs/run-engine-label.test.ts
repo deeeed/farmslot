@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  reasoningEffortLabel,
   type RunEffortSource,
   runEngineLabel,
+  runnerModelEffortParts,
   runWorkerEffort,
 } from '../../src/runs/run-engine-label.js';
 
@@ -61,16 +63,44 @@ test('a reviewer context or another profile choice never stands in for the worke
   );
 });
 
-test('the label adds the effort only when known', () => {
+test('the label says default when no reasoning effort was sent', () => {
   assert.equal(
     runEngineLabel({ runner: 'grok', model: 'grok-4.7', effort: 'medium' }),
     'grok/grok-4.7 · medium',
   );
   assert.equal(
     runEngineLabel({ runner: 'grok', model: 'grok-4.7', effort: null }),
-    'grok/grok-4.7',
+    'grok/grok-4.7 · default',
   );
-  assert.equal(runEngineLabel({ runner: null, model: 'opus' }), 'runner/opus');
+  assert.equal(
+    runEngineLabel({ runner: 'pi', model: 'litellm/glm-5p3-flash', effort: 'off' }),
+    'pi/litellm/glm-5p3-flash · off',
+  );
+  assert.equal(
+    runEngineLabel({ runner: 'pi', model: 'openai/gpt-5.1', effort: 'off' }),
+    'pi/openai/gpt-5.1 · off',
+  );
+  assert.equal(reasoningEffortLabel(' OFF '), 'off');
+  assert.equal(reasoningEffortLabel('off'), 'off');
+  assert.equal(reasoningEffortLabel(null), 'default');
+  assert.equal(reasoningEffortLabel('none'), 'none');
+  assert.deepEqual(runnerModelEffortParts('pi', 'litellm/glm-5p3-flash', 'off'), [
+    'pi',
+    'litellm/glm-5p3-flash',
+    'off',
+  ]);
+  assert.deepEqual(runnerModelEffortParts('pi', 'openai/gpt-5.1', 'off'), [
+    'pi',
+    'openai/gpt-5.1',
+    'off',
+  ]);
+  assert.deepEqual(runnerModelEffortParts('pi', 'openai/gpt-5.1', '  '), [
+    'pi',
+    'openai/gpt-5.1',
+    'default',
+  ]);
+  assert.deepEqual(runnerModelEffortParts(undefined, undefined, '  '), []);
+  assert.equal(runEngineLabel({ runner: null, model: 'opus' }), 'runner/opus · default');
   assert.equal(runEngineLabel({ runner: 'codex', model: null, effort: 'high' }), 'codex · high');
   assert.equal(runEngineLabel({ runner: null, model: null, effort: 'high' }), null);
 });

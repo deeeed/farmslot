@@ -63,6 +63,7 @@ import {
 } from '../../sources/runtime.js';
 import { isProspectiveSlotSourcePlan, type SourceSlotPlans } from '../../sources/slot-planning.js';
 import { inheritedPRCompletionAcceptance } from '../../tasks/completion-intake.js';
+import type { EvalCandidateTemplate } from '../../tasks/eval-candidate-template.js';
 import {
   projectUsesExecutionTemplateCatalog,
   resolveConfiguredExecutionTemplateForSlot,
@@ -1022,6 +1023,8 @@ async function previewDispatch(
     overridePrincipalId?: string;
     /** FIND_SLOT presents no operator advice (profile fit, inherited acceptance); skip their lookups. */
     includeProfileFit?: boolean;
+    /** Frozen trial snapshot from FIND_SLOT; never a public preview parameter. */
+    candidateTemplate?: EvalCandidateTemplate;
     /** Original caller intent, before gateway candidate narrowing. */
     automaticLoadPinned?: boolean;
     /** Trusted gateway plans; never accepted from RPC parameters. */
@@ -1311,6 +1314,7 @@ async function previewDispatch(
       const slotVars = await loadSlotVars(slotInfo.slot);
       const selected = await resolveConfiguredExecutionTemplateForSlot(projectVars, {
         flow: params.flowType,
+        candidateTemplate: internalOptions.candidateTemplate,
         platform: slotVars.platform,
         runMode: params.mode,
         ...(params.domain ? { explicitDomain: params.domain } : {}),
