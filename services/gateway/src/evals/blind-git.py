@@ -1,4 +1,5 @@
 """Gateway-owned Git isolation for one blind trial; sent to the node on stdin."""
+import fcntl
 import hashlib
 import json
 import os
@@ -10,6 +11,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 from urllib.parse import urlsplit
 
 os.umask(0o077)
@@ -1063,13 +1065,76 @@ def restore_submodule_entries(state):
             entry.unlink(missing_ok=True)
 
 
+# A partial clone fetches each missing object on demand, one request per object:
+# a Mobile base exceeded the isolate budget that way. Fetch them in one batch first,
+# within one deadline for every snapshot, well inside the gateway's 900 s isolate budget.
+PREFETCH_TIMEOUT_S = 600
+
+
+def prefetch_partial_clone(repo, snapshots, scratch_root):
+    listed = git(repo, 'rev-list', '--objects', '--no-object-names', '--no-walk', '--missing=print', *snapshots)
+    if b'\n?' not in b'\n' + listed.stdout:
+        return
+    scratch = Path(tempfile.mkdtemp(prefix='.blind-prefetch-', dir=scratch_root))
+    try:
+        # A checkout into scratch batches the fetch; the slot's index and files are untouched.
+        (scratch / 'tree').mkdir()
+        env = {**os.environ, 'GIT_INDEX_FILE': str(scratch / 'index')}
+        deadline = time.monotonic() + PREFETCH_TIMEOUT_S
+        for sha in snapshots:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired('read-tree', PREFETCH_TIMEOUT_S)
+            subprocess.run(GIT + ['-C', str(repo), '--work-tree=' + str(scratch / 'tree'), 'read-tree',
+                                  '-u', '--reset', sha], env=env, capture_output=True, check=True,
+                           timeout=remaining)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        raise RuntimeError('Blind trial base objects are missing from this partial clone and could not be '
+                           'fetched; fetch the base on the slot and retry') from None
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
 def isolate(spec):
+    # One isolation per capsule at a time: a timed-out caller can leave one running.
+    capsule = Path(spec['capsule'])
+    capsule.parent.mkdir(parents=True, exist_ok=True)
+    with open(capsule.parent / (capsule.name + '.lock'), 'a') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError('Blind trial isolation is already running for this capsule') from None
+        return isolate_locked(spec)
+
+
+def isolate_locked(spec):
     repo, capsule = Path(spec['repo']), Path(spec['capsule'])
     journal = capsule / 'state.json'
     if journal.exists():
         state = json.loads(journal.read_text())
         if any(state.get(key) != spec.get(key) for key in ['runId', 'repo', 'baseSha', 'branch', 'slotId', 'slotEpoch', 'referenceCommits', 'proof']):
             raise RuntimeError('Blind trial capsule belongs to another execution')
+        if state['phase'] in ('preparing', 'restored'):
+            # An interrupted isolate left the swap half done, or its capsule was restored:
+            # finish the restoration, keep that capsule aside and isolate afresh.
+            restore(spec)
+            repo = Path(spec['repo'])
+            branch = 'refs/heads/' + spec['branch']
+            kept = git(repo, 'rev-parse', '--verify', '--quiet', branch, check=False).stdout.decode().strip()
+            if kept and kept != spec['baseSha']:
+                raise RuntimeError('Blind trial branch %s holds candidate commits from an earlier attempt; '
+                                   'keep or release them before retrying this trial' % spec['branch'])
+            if kept:
+                # Restoration left the unchanged trial branch checked out: drop only that ref.
+                git(repo, 'checkout', '-q', '--detach', spec['baseSha'])
+                git(repo, 'update-ref', '-d', branch, spec['baseSha'])
+            aside = capsule.with_name(capsule.name + '.interrupted-' + os.urandom(4).hex())
+            capsule.rename(aside)
+            # Restored: no store there is referenced any more. Keep only its journal and receipts.
+            for entry in aside.iterdir():
+                if entry.suffix != '.json':
+                    shutil.rmtree(entry) if entry.is_dir() and not entry.is_symlink() else entry.unlink()
+            return isolate_locked(spec)
         if state['phase'] != 'isolated':
             raise RuntimeError('Blind trial capsule requires restoration before preparation')
         source = capsule / 'original.entry' if state['originalIsDirectory'] else Path(state['originalDirectory'])
@@ -1089,6 +1154,8 @@ def isolate(spec):
         if not spec.get('proof') and (commit == spec['baseSha'] or git(repo, 'merge-base', '--is-ancestor', commit,
                                            spec['baseSha'], check=False).returncode == 0):
             raise RuntimeError('Blind trial base contains the reference answer')
+    prefetch_partial_clone(repo, [spec['baseSha']] + ([spec['proof']['baseSha']] if spec.get('proof') else []),
+                           capsule.parent)
     capsule.mkdir(parents=True, mode=0o700)
     prepared, original = capsule / 'prepared.git', capsule / 'original.entry'
     original_directory = Path(git(repo, 'rev-parse', '--absolute-git-dir').stdout.decode().strip())

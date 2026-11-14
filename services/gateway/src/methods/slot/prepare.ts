@@ -507,6 +507,7 @@ async function slotPrepareInner(
       runtimeDir,
       prepareRef: branch,
       prepareDefaultRef: defaultBranch,
+      prepareBaseSha: opts?.blindBaseSha,
     },
     params.prepareProfile,
     (candidate, result) =>
