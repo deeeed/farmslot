@@ -40,8 +40,8 @@ All readers, capture writers and GC resolve that same binding, keyed by the
 canonical Run store, including when `FARMSLOT_RUNS_DIR` is shared. A sandbox's
 isolated authentication home MUST NOT establish or replace that binding. A
 missing or mismatched store pairing refuses capture, reference writes and GC,
-leaving the owner's history untouched. Read-only sharing uses the owner's bound store;
-private validation uses an isolated Run store and imported references.
+leaving the owner's history untouched. Read-only sharing uses the owner's bound
+store; private validation uses an isolated Run store and imported references.
 
 The digest is SHA-256 of the exact stored `manifest.json` bytes. Existing manifest
 entries bind each relative payload path, SHA-256 and byte size. The digest names

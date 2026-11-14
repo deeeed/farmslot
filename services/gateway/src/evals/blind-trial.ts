@@ -14,6 +14,7 @@ import { reportedFarmPaths } from '@farmslot/slot-config';
 import { shSingleQuote } from '../../../../scripts/lib/shell-quote.mjs';
 import {
   getOrchestratorTaskRoot,
+  getProjectFieldRaw,
   loadMachineSlots,
   loadProjectVars,
   loadSlotVars,
@@ -26,6 +27,7 @@ import { withMachineEnv } from '../core/project-env.js';
 import { ownsRunSlotCleanup, readSlotRow } from '../core/state.js';
 import { atomicWriteTextFile } from '../run-engine/diff-artifact-utils.js';
 import { captureRunDiffSnapshot } from '../run-engine/diff-artifacts.js';
+import { workerTaskDirectory } from '../run-engine/worker-task-dir.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { farmslotDirectoryForSlot } from '../tasks/agent-runtime-script.js';
 
@@ -149,6 +151,40 @@ async function resolvedSiblingRepos(vars: SlotVars): Promise<string[]> {
   );
 }
 
+/** Ignored caches a blind trial keeps in place when isolation moves earlier runs' leftovers aside. */
+export const DEFAULT_BLIND_KEEP_IGNORED = [
+  'node_modules',
+  '.yarn/*',
+  'ios/Pods',
+  'ios/build',
+  'android/.gradle',
+  'android/build',
+  'android/app/build',
+  'build',
+  'dist',
+];
+
+/** The project's cache list, plus this run's own task folder when it already exists. */
+async function keptIgnoredPaths(run: Run, vars: SlotVars): Promise<string[]> {
+  const project = await loadProjectVars(run.project);
+  const configured = getProjectFieldRaw(project.projectJson, 'blind_keep_ignored');
+  return [
+    ...(Array.isArray(configured) ? configured.map(String) : DEFAULT_BLIND_KEEP_IGNORED),
+    ...(run.taskFile
+      ? [
+          path.posix.relative(
+            vars.remoteRepo,
+            workerTaskDirectory(
+              run.taskFile,
+              vars.remoteRepo,
+              resolveProjectTaskDirName(project.projectJson),
+            ),
+          ),
+        ]
+      : []),
+  ];
+}
+
 export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal): Promise<void> {
   const run = getRun(runId);
   if (!run?.engineState?.evalExperiment) return;
@@ -181,7 +217,10 @@ export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal):
     throw new Error(
       'Blind trial trusted repository identity is missing. Restore this trial and create a new blind run.',
     );
-  const spec = gitSpec(run, vars, blind, isolation.slotEpoch, isolation.capsulePath);
+  const spec = {
+    ...gitSpec(run, vars, blind, isolation.slotEpoch, isolation.capsulePath),
+    keepIgnored: await keptIgnoredPaths(run, vars),
+  };
   await executeGit('isolate', vars, spec, signal);
   // The worker sandbox denies the node's other slot checkouts, resolved as each slot's own launch resolves them.
   const siblingRepos = await resolvedSiblingRepos(vars);
@@ -497,7 +536,11 @@ export async function restoreFinishedBlindTrialGit(run: Run): Promise<string | n
   if (!isolation || isolation.slotId !== run.slotId) return null;
   try {
     const vars = await loadSlotVars(isolation.slotId);
-    if ((await readBlindTrialMarker(vars)) !== run.id) return null;
+    // No marker can still leave an unfinished journal: an isolate stopped before
+    // its Git swap, or a restore stopped after the original Git returned but
+    // before the ignored files did. Restore finishes it; a finished journal is a no-op.
+    const marker = await readBlindTrialMarker(vars);
+    if (marker !== null && marker !== run.id) return null;
     const epoch = Number((await readSlotRow(isolation.slotId))?.slot_epoch);
     const assertOwnership = async () => {
       const row = await readSlotRow(isolation.slotId);
