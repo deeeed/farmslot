@@ -1,0 +1,1 @@
+- Run credential-store tests in the package quality gate and dependency-affected CI coverage.
