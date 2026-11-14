@@ -1,0 +1,1 @@
+- Keep candidate template sources outside excluded task outputs while initializing their retained tooling pin.

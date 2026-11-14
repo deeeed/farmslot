@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Remote candidate task initialization",
+  "description": "Requires FARMSLOT_CANDIDATE_REMOTE_HOST. Sends the production gateway request to a different execution node, using an owned temporary CLI copy and fixture pool. Starts no farm run, model, device or service.",
+  "workflow": {
+    "entry": "remote-init",
+    "nodes": {
+      "remote-init": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --test services/gateway/src/tasks/candidate-task-init.remote.live.ts",
+        "timeout_ms": 600000,
+        "intent": "After deleting the gateway candidate source, initialize and verify project-bound and static tasks on the remote node. Retained candidate bytes and hashes must match, staging must be removed on success and provider refusal, and ordinary project/static catalog tasks must still initialize.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
