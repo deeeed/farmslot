@@ -189,6 +189,7 @@ for (const [name, actual, expected] of [
     'EvalMethods',
     EvalMethods,
     {
+      benchGet: Methods.EVAL_BENCH_GET,
       experimentCreate: Methods.EVAL_EXPERIMENT_CREATE,
       trialStart: Methods.EVAL_TRIAL_START,
       trialResultGet: Methods.EVAL_TRIAL_RESULT_GET,

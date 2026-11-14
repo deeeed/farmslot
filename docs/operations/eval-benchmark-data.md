@@ -36,3 +36,7 @@ An optional `reference-usage.json` supplies measured original-run usage:
 ```
 
 Capture these values with the existing `@farmslot/slot-config` `runSessionUsage` timestamp-window reader and the original run's worker context. Exclude review/review-fix from the initial-output comparison, deduplicate resumed sessions, and retain the interval, transcript hash and accounting receipt. Do not substitute whole-run totals when the same session later did review fixes. The receipt matches the original's exact repository/head; duplicate matches are rejected. A missing receipt stays missing. A measured saving requires known, positive original cost and known candidate cost.
+
+## Validation recipe
+
+`scripts/runner-validation/eval-benchmark-read.recipe.json` reads the configured gateway through an explicit `FARMSLOT_GATEWAY_PROFILE`. It takes no mutation action. Optional `FARMSLOT_EVAL_PROOF_ITEM`, `FARMSLOT_EVAL_EXPECT_PRIMARY`, `FARMSLOT_EVAL_EXPECT_MERGED` and `FARMSLOT_EVAL_REQUIRE_ORIGINAL=1` bind the expected live claim. `FARMSLOT_EVAL_PROOF_OUTPUT` retains the JSON receipt. Run with the repository recipe runner and `scripts/runner-validation/acceptance-evidence.action-manifest.json`; browser rendering is checked separately in Command Center.

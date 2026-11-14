@@ -11,7 +11,7 @@ import type {
   ResultPackageManifest,
   RunListRow,
 } from '@farmslot/protocol';
-import { evalTaskProfileFlow, Methods } from '@farmslot/protocol';
+import { EVAL_BENCH_VIEW, evalTaskProfileFlow, Methods } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 import { defaultModelForRunner } from '@farmslot/review-dispatch';
 
@@ -26,6 +26,7 @@ import {
   visibleReviewDispatchCatalog,
 } from '../../utils/runner-visible-models.js';
 import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
+import { ViewStateController } from '../../utils/view-state.js';
 import { readFresh, readStored } from '../shared/read-current.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import { RetainedNotice } from '../shared/retained-notice.js';
@@ -96,6 +97,7 @@ import { type EvalLaunchCell, patchCell } from './eval-suite-launch-model.js';
 
 @customElement('eval-cockpit')
 export class EvalCockpit extends EvalCockpitState {
+  private readonly _benchView = new ViewStateController(this);
   private _unsubVisibleModels?: () => void;
   private _initialModelsPending = true;
 
@@ -918,7 +920,7 @@ export class EvalCockpit extends EvalCockpitState {
   }
 
   override render() {
-    if (!this.mock && new URLSearchParams(location.hash.split('?')[1]).get('view') !== 'plan')
+    if (!this.mock && this._benchView.state.get(EVAL_BENCH_VIEW) !== 'plan')
       return html`<eval-bench-view></eval-bench-view>`;
     const selectedCaseCount = this._selectedCases.length;
     const enabledCandidateCount = this._enabledCandidates().length;

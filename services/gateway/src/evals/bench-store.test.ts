@@ -101,3 +101,21 @@ test('original usage joins only the pinned repository/head and supplies measured
   );
   assert.throws(() => parseBenchTrial(fixture(), 'hash', [receipt, receipt]), /Ambiguous/);
 });
+
+test('missing and malformed sources do not expose root paths or private JSON fragments', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'bench-private-root-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, 'trial-records'));
+  const privateMarker = 'private-record-fixture';
+  const hidden = (error: unknown) =>
+    error instanceof Error &&
+    !error.message.includes(root) &&
+    !error.message.includes(privateMarker);
+  await assert.rejects(readEvalBench(root), hidden);
+  await writeFile(
+    path.join(root, 'trial-records/index.json'),
+    '{"private-record-fixture": invalid',
+  );
+  await assert.rejects(readEvalBench(root), hidden);
+  await assert.rejects(readEvalBench(path.join(root, 'missing-directory')), hidden);
+});

@@ -85,10 +85,7 @@ export abstract class EvalCockpitState extends LitElement {
   _loadedSlotCapGroupId = '';
   _urlRestoring = false;
   _lastUrlState = '';
-  readonly _onHashChange = () => {
-    this._restoreUrlState();
-    this.requestUpdate();
-  };
+  readonly _onHashChange = () => this._restoreUrlState();
   _unsub?: () => void;
   @state() _visibleModelsError = '';
   _catalogCache: {

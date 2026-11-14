@@ -63,6 +63,7 @@ export * from './sources/status-view.js';
 export * from './sources/validation.js';
 export * from './surfaces/account-session.js';
 export * from './surfaces/command-center.js';
+export * from './surfaces/eval-view-state.js';
 export * from './surfaces/run-view-state.js';
 export * from './surfaces/view-state.js';
 export * from './text-order.js';

@@ -8,9 +8,10 @@ import {
   type EvalBenchTrial,
   Methods,
 } from '@farmslot/protocol';
+import { EVAL_BENCH_FILTERS, EVAL_BENCH_VIEW, type EvalBenchFilter } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
-import { buildHash, parseHashRoute } from '../../utils/url-state.js';
+import { browserViewState, ViewStateController } from '../../utils/view-state.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import { evalCockpitStyles } from './eval-cockpit-styles.js';
@@ -27,27 +28,19 @@ function cost(value: number | null | undefined): string {
 @customElement('eval-bench-view')
 export class EvalBenchView extends LitElement {
   private readonly data = new ResourceQueryController<EvalBenchResult>(this);
-  private readonly hashChanged = () => this.requestUpdate();
+  private readonly view = new ViewStateController(this);
 
   connectedCallback(): void {
     super.connectedCallback();
     this.data.setQuery(resourceQuery<EvalBenchResult>(Methods.EVAL_BENCH_GET, {}));
-    window.addEventListener('hashchange', this.hashChanged);
   }
-  disconnectedCallback(): void {
-    window.removeEventListener('hashchange', this.hashChanged);
-    super.disconnectedCallback();
+  private setFilter(key: EvalBenchFilter, value: string): void {
+    this.view.state.set(EVAL_BENCH_FILTERS[key], value);
   }
-  private setFilter(key: string, value: string): void {
-    const { route, params } = parseHashRoute(location.hash);
-    if (value) params.set(key, value);
-    else params.delete(key);
-    location.hash = buildHash(route, params);
+  private filter(key: EvalBenchFilter): string {
+    return this.view.state.get(EVAL_BENCH_FILTERS[key]);
   }
-  private filter(key: string): string {
-    return parseHashRoute(location.hash).params.get(key) ?? '';
-  }
-  private select(key: string, label: string, values: string[]) {
+  private select(key: EvalBenchFilter, label: string, values: string[]) {
     return html`<label
       >${label}
       <select
@@ -79,7 +72,9 @@ export class EvalBenchView extends LitElement {
                 ><br />`}
           <small
             >${o.scope}<br />${o.startedAt} to ${o.completedAt}<br />
-            <a href=${`#run/${o.runId}`}>Original run ${o.runId.slice(0, 8)}</a></small
+            <a href=${`#run/${encodeURIComponent(o.runId)}`}
+              >Original run ${o.runId.slice(0, 8)}</a
+            ></small
           >`
       : html`<span
           >${trial.reference.head ? 'Original usage not captured' : 'Original unavailable'}</span
@@ -91,7 +86,7 @@ export class EvalBenchView extends LitElement {
       return html`<div class="eval-cockpit">
         <p role="status">${this.data.state.error?.message ?? 'Reading benchmark records…'}</p>
         <button @click=${() => void this.data.retry()}>Refresh</button>
-        <button @click=${() => this.setFilter('view', 'plan')}>Plan trials</button>
+        <button @click=${() => browserViewState.set(EVAL_BENCH_VIEW, 'plan')}>Plan trials</button>
       </div>`;
     const trials = data.trials.filter(
       (t) =>
@@ -111,7 +106,7 @@ export class EvalBenchView extends LitElement {
         </div>
         <div>
           <button @click=${() => void this.data.retry()}>Refresh</button>
-          <button @click=${() => this.setFilter('view', 'plan')}>Plan trials</button>
+          <button @click=${() => browserViewState.set(EVAL_BENCH_VIEW, 'plan')}>Plan trials</button>
         </div>
       </section>
       ${!data.configured
@@ -177,7 +172,7 @@ export class EvalBenchView extends LitElement {
                             >
                           </td>
                           <td>
-                            ${display(r.turns)}<br /><small
+                            ${r.measuredTurnTrials ? display(r.turns) : 'Not captured'}<br /><small
                               >${r.measuredTurnTrials}/${r.trials} measured</small
                             >
                           </td>
@@ -213,7 +208,8 @@ export class EvalBenchView extends LitElement {
                           <td>
                             <strong>${t.item} · ${t.model}</strong><br /><small
                               >${t.area} · ${t.sizeClass} · ${t.route} · ${t.effort}</small
-                            ><br /><a href=${`#run/${t.runId}`}>${t.runId.slice(0, 8)}</a
+                            ><br /><a href=${`#run/${encodeURIComponent(t.runId)}`}
+                              >${t.runId.slice(0, 8)}</a
                             ><br /><small
                               >${t.reference.base || 'Base unavailable'} →
                               ${t.reference.head || 'Original unavailable'}</small

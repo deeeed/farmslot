@@ -11,6 +11,8 @@ import {
   isRecord,
 } from '@farmslot/protocol';
 
+import { GatewayMethodError } from '../core/method-error.js';
+
 function record(value: unknown, label: string): Record<string, unknown> {
   if (!isRecord(value)) throw new Error(`Invalid benchmark ${label}`);
   return value;
@@ -45,15 +47,34 @@ function usage(value: unknown): EvalBenchUsage {
 
 /** The operator selects one root; callers cannot supply a filesystem path. */
 async function source(root: string, file: string) {
-  const resolved = await realpath(path.resolve(root, file));
-  const relative = path.relative(root, resolved);
-  if (!relative || relative.startsWith('..') || path.isAbsolute(relative))
-    throw new Error('Benchmark source escapes the configured dataset');
-  if ((await stat(resolved)).size > 4 * 1024 * 1024)
-    throw new Error('Benchmark record exceeds 4 MiB');
-  const text = await readFile(resolved, 'utf8');
-  const value: unknown = JSON.parse(text);
-  return { value, sha256: createHash('sha256').update(text).digest('hex') };
+  const requested = path.relative(root, path.resolve(root, file));
+  const label =
+    requested && !requested.startsWith('..') && !path.isAbsolute(requested)
+      ? requested
+      : 'source outside configured dataset';
+  try {
+    const resolved = await realpath(path.resolve(root, file));
+    const relative = path.relative(root, resolved);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative))
+      throw new GatewayMethodError(
+        'BENCHMARK_SOURCE_INVALID',
+        'Benchmark source escapes the configured dataset',
+      );
+    if ((await stat(resolved)).size > 4 * 1024 * 1024)
+      throw new GatewayMethodError('BENCHMARK_SOURCE_INVALID', 'Benchmark record exceeds 4 MiB');
+    const text = await readFile(resolved, 'utf8');
+    const value: unknown = JSON.parse(text);
+    return { value, sha256: createHash('sha256').update(text).digest('hex') };
+  } catch (error) {
+    if (error instanceof GatewayMethodError) throw error;
+    if (error instanceof SyntaxError)
+      throw new GatewayMethodError('BENCHMARK_SOURCE_INVALID', `Invalid benchmark JSON: ${label}`);
+    const missing = error instanceof Error && 'code' in error && error.code === 'ENOENT';
+    throw new GatewayMethodError(
+      missing ? 'ENOENT' : 'BENCHMARK_SOURCE_UNREADABLE',
+      `Benchmark source unreadable: ${label}`,
+    );
+  }
 }
 
 function original(value: unknown): EvalBenchOriginal {
@@ -121,7 +142,15 @@ export async function readEvalBench(
 ): Promise<EvalBenchResult> {
   if (!rootPath)
     return { configured: false, dataset: null, trials: [], rollups: [], infraFailures: [] };
-  const root = await realpath(rootPath);
+  let root: string;
+  try {
+    root = await realpath(rootPath);
+  } catch {
+    throw new GatewayMethodError(
+      'BENCHMARK_SOURCE_UNREADABLE',
+      'Configured benchmark dataset is unavailable',
+    );
+  }
   const index = record((await source(root, 'trial-records/index.json')).value, 'index');
   if (
     index.schema !== 'bench-trial-index/1' ||

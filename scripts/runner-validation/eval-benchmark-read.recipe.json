@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Read-only benchmark rollup and original usage",
+  "description": "Read actual configured benchmark records through an explicit authenticated gateway profile. Optional FARMSLOT_EVAL_PROOF_ITEM and expected verdict/usage variables select the live claim; no trial or source is changed.",
+  "workflow": {
+    "entry": "benchmark",
+    "nodes": {
+      "benchmark": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/eval-benchmark-read.mts",
+        "timeout_ms": 120000,
+        "intent": "Read configured real benchmark trials, distinct original and merged verdicts, and measured original usage over the authenticated gateway RPC.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

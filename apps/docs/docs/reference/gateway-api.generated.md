@@ -141,6 +141,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `dispatch.queue.removeOrphan`           | dispatch         | bounded-write | —      | —      | Dispatch Queue RemoveOrphan gateway method.           |
 | `dispatch.queue.reorder`                | dispatch         | bounded-write | —      | —      | Dispatch Queue Reorder gateway method.                |
 | `dispatch.queue.update`                 | dispatch         | bounded-write | —      | —      | Dispatch Queue Update gateway method.                 |
+| `eval.bench.get`                        | eval             | read-only     | —      | —      | Eval Bench Get gateway method.                        |
 | `eval.experiment.create`                | eval             | bounded-write | —      | —      | Eval Experiment Create gateway method.                |
 | `eval.suite.cap.get`                    | eval             | read-only     | —      | —      | Eval Suite Cap Get gateway method.                    |
 | `eval.suite.cap.update`                 | eval             | bounded-write | —      | —      | Eval Suite Cap Update gateway method.                 |
