@@ -230,7 +230,7 @@ export interface SlotVars {
   projectName: string;
   /** Owned runner hook directory when execution keeps observations outside the checkout. */
   runnerObservabilityDir?: string;
-  /** Pool-level domain default (slot.domain ?? pool.domain); task-level domain overrides. */
+  /** Default task domain: slot.domain ?? pool.domain ?? the pack's default_domain; a task-level domain overrides. */
   domain?: string;
   /** Validated `pool.env`: exported into every shell the gateway runs on this machine. */
   machineEnv?: Record<string, string>;
@@ -305,6 +305,8 @@ export interface RawProjectJson {
   };
   /** ADR-049 Amendment 3: pack rules selecting the one required skill set for dev and review. */
   required_skills?: RequiredSkillsConfig;
+  /** Task domain when neither the run, the slot nor the pool names one. */
+  default_domain?: string;
   static_review?: {
     workspace?: { retention_days?: number; root?: string };
     domain?: string;
@@ -764,6 +766,32 @@ export function resolveRemoteRepo(repo: string, osType: string, sshUser: string)
 
 // ─── loadSlotVars ───
 
+// The pack's `default_domain` is the last domain fallback (after slot and pool), so a
+// pack whose work is one domain freezes that domain without every caller passing it.
+// Any project load failure leaves it unset instead of failing slot resolution: release,
+// cleanup, attach and fleet probes must keep working on a pack whose project.json is
+// missing or invalid, and every domain-dependent path loads the project itself and
+// fails there with the real error.
+async function packDefaultDomain(projectName: string): Promise<string | undefined> {
+  if (!projectName) return undefined;
+  try {
+    return (await loadProjectVars(projectName)).projectJson.default_domain;
+  } catch (error) {
+    // A missing pack is normal here; anything else silently drops the pack domain, so
+    // say so once per pack and reason.
+    const message = error instanceof Error ? error.message : String(error);
+    if (
+      !isMissingProjectConfigError(error) &&
+      !warnedPackDomain.has(`${projectName}\0${message}`)
+    ) {
+      warnedPackDomain.add(`${projectName}\0${message}`);
+      console.warn(`[slot-config] ${projectName}: default_domain unavailable (${message})`);
+    }
+    return undefined;
+  }
+}
+const warnedPackDomain = new Set<string>();
+
 /** `pools`: one readSlotPools() shared by the lookups of one operation; read now when omitted. */
 export async function loadSlotVars(slotId: string, pools?: SlotPools): Promise<SlotVars> {
   const { pool, slot } = await resolveSlot(slotId, pools);
@@ -859,7 +887,7 @@ export async function loadSlotVars(slotId: string, pools?: SlotPools): Promise<S
     sshTarget,
     remoteRepo,
     projectName,
-    domain: slot.domain ?? pool.domain,
+    domain: slot.domain ?? pool.domain ?? (await packDefaultDomain(projectName)),
     machineEnv,
     resourceVars,
   };
@@ -964,6 +992,12 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   validateCommandEnvConfig(projectJson, projectConfig);
   validateExecutionTemplatesConfig(projectJson, projectConfig);
   validateRequiredSkillsConfig(projectJson, projectConfig);
+  if (
+    projectJson.default_domain !== undefined &&
+    (typeof projectJson.default_domain !== 'string' ||
+      !isValidDomainName(projectJson.default_domain))
+  )
+    throw new Error(`${projectConfig}: default_domain must be a valid domain`);
   normalizeRawStaticReview(projectJson.static_review, projectConfig, projectJson.reference_repos);
   normalizeProjectWorkflowDefaults(projectJson.workflow_defaults);
   if (projectJson.qa !== undefined) validateQaConfig(projectJson.qa);

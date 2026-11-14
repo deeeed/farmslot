@@ -341,6 +341,32 @@ test('default rules match the run mode of the run, not any property of a templat
   });
 });
 
+test('a configured default still wins when a domain is set and a domain candidate exists', () => {
+  // A pack default domain (or any slot domain) must not move a flow off its configured template.
+  withTemp((root) => {
+    const generalRoot = join(root, 'general');
+    const tradingRoot = join(root, 'trading');
+    mkdirSync(join(generalRoot, 'fix-bug'), { recursive: true });
+    mkdirSync(join(tradingRoot, 'fix-bug'), { recursive: true });
+    writeFileSync(join(generalRoot, 'fix-bug', 'mobile.md'), '# General\n\n- [ ] Run\n');
+    writeFileSync(join(tradingRoot, 'fix-bug', 'trading-proof.md'), '# Trading\n\n- [ ] Run\n');
+    const tradingSource = packageFlowTreeTemplateSource('trading', tradingRoot);
+    tradingSource.kind = 'workspace';
+    tradingSource.domains = ['trading'];
+    const selected = selectExecutionTemplate({
+      sources: [packageFlowTreeTemplateSource('canonical', generalRoot), tradingSource],
+      flow: 'fix-bug',
+      platform: 'mobile',
+      runMode: 'autonomous',
+      domain: 'trading',
+      defaults: [{ when: { flow: 'fix-bug' }, templateId: 'fix-bug/mobile' }],
+    });
+    assert.equal(selected.entry.sourceId, 'package:canonical');
+    assert.equal(selected.entry.id, 'fix-bug/mobile');
+    assert.equal(selected.reason, 'configured-default');
+  });
+});
+
 test('configured selection prefers one exact-domain candidate before a general candidate', () => {
   withTemp((root) => {
     const generalRoot = join(root, 'general');
