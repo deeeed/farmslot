@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, watch } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -846,6 +846,16 @@ test(
     const previousHome = process.env.FARMSLOT_HOME;
     process.env.FARMSLOT_HOME = root;
     const machine = 'node-link-long-closeout';
+    const cleanup = path.join(root, 'cleanup-complete');
+    const terminated = path.join(root, 'sigterm-received');
+    const release = path.join(root, 'cleanup-release');
+    // After hooks run in registration order, so this one runs before linkedNode's retire, which
+    // waits for the child. Restoring real timers and releasing the child lets teardown finish
+    // when the test fails before it writes the release itself.
+    t.after(async () => {
+      t.mock.timers.reset();
+      await writeFile(release, '');
+    });
     const { principal } = await linkedNode(t, root, machine);
     const controller = new AbortController();
     t.after(() => controller.abort());
@@ -854,19 +864,22 @@ test(
       else process.env.FARMSLOT_HOME = previousHome;
       await rm(root, { recursive: true, force: true });
     });
-    const cleanup = path.join(root, 'cleanup-complete');
-    const terminated = path.join(root, 'sigterm-received');
-    const release = path.join(root, 'cleanup-release');
     // The child's cleanup outlives the 5 s default closeout: it starts on SIGTERM and only ends when
-    // the test releases it, after the gateway clock has moved 6 s past the SIGTERM. If the test
-    // fails first, removing the root ends the cleanup too (its marker vanishes, the write throws).
-    const sigterm = new Promise<void>((resolve) => {
-      const watcher = watch(root, () => {
-        if (!existsSync(terminated)) return;
-        watcher.close();
-        resolve();
-      });
-      t.after(() => watcher.close());
+    // the test releases it, after the gateway clock has moved 6 s past the SIGTERM. Its own real
+    // 20 s ceiling ends it if nothing releases it.
+    // Polls on a real interval and clock (neither is mocked) rather than a native fs watch.
+    const sigterm = new Promise<void>((resolve, reject) => {
+      const deadline = performance.now() + 10_000;
+      const poll = setInterval(() => {
+        if (existsSync(terminated)) {
+          clearInterval(poll);
+          resolve();
+        } else if (performance.now() > deadline) {
+          clearInterval(poll);
+          reject(new Error('the child never received SIGTERM'));
+        }
+      }, 10);
+      t.after(() => clearInterval(poll));
     });
     t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
     const pending = invokeNodeLink(
@@ -876,7 +889,7 @@ test(
           argv: [
             process.execPath,
             '-e',
-            'const fs=require("node:fs");const [cleanup,terminated,release]=process.argv.slice(1);process.on("SIGTERM",()=>{fs.writeFileSync(terminated,"term");setInterval(()=>{if(!fs.existsSync(release)&&fs.existsSync(terminated))return;fs.writeFileSync(cleanup,"closed");process.exit(0)},10)});process.stdout.write("READY");setInterval(()=>{},1000)',
+            'const fs=require("node:fs");const [cleanup,terminated,release]=process.argv.slice(1);process.on("SIGTERM",()=>{fs.writeFileSync(terminated,"term");setTimeout(()=>process.exit(1),20000);setInterval(()=>{if(!fs.existsSync(release)&&fs.existsSync(terminated))return;fs.writeFileSync(cleanup,"closed");process.exit(0)},10)});process.stdout.write("READY");setInterval(()=>{},1000)',
             cleanup,
             terminated,
             release,
@@ -1134,7 +1147,13 @@ test('a corrupt intent mid-prune fails admission after its batch settles and sto
   // The prune walks the directory in this order; corrupt the ninth entry of the second batch.
   const order = await readdir(directory);
   assert.equal(order.length, 96);
-  await writeFile(path.join(directory, order[40]!), JSON.stringify({ not: 'an intent' }));
+  // Padding makes the corrupt intent's read finish after the later malformed entry's, so its
+  // failure is first in file order but not in completion order.
+  await writeFile(
+    path.join(directory, order[40]!),
+    JSON.stringify({ not: 'an intent', padding: 'x'.repeat(4 * 1024 * 1024) }),
+  );
+  await writeFile(path.join(directory, order[50]!), '{ not json');
   await assert.rejects(
     invokeNodeLink(
       {
@@ -1158,6 +1177,15 @@ test('a corrupt intent mid-prune fails admission after its batch settles and sto
     'settled intents in the batch before the corrupt one are pruned',
   );
   assert.ok(remaining.has(order[40]!), 'the corrupt intent is retained for reconciliation');
+  assert.ok(remaining.has(order[50]!), 'the malformed intent is retained for reconciliation');
+  assert.deepEqual(
+    order
+      .slice(41, 64)
+      .filter((entry) => entry !== order[50])
+      .filter((entry) => remaining.has(entry)),
+    [],
+    'settled intents after the corrupt one in its batch are pruned before the rejection',
+  );
   assert.deepEqual(
     order.slice(64).filter((entry) => !remaining.has(entry)),
     [],

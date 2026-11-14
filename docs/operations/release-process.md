@@ -26,6 +26,10 @@ Or invoke the **`fs-release-cut`** agent skill for a succinct NO / SOON / YES si
 | `companion` | `companion`                                                                                                       | EAS update / build via `apps/companion/scripts/release/release.sh` |
 | `npm`       | `protocol`, `agent-runtime`, `recipe-runner`, `recipe-cli`, `adapter-sdk`, `adapter-node`, `adapter-rn`, `skills` | Manual `yarn npm publish` after strict checks                      |
 
+## Release test suites
+
+Run `yarn test:release-live` on the release commit before cutting. Don't cut if it fails. It runs the slow suites that the 5 s test rule moved out of the default and CI suites. Add each new `*.live` file to that script.
+
 ## Cut workflow
 
 ### 1. Propose
