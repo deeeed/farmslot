@@ -1,1 +1,0 @@
-- Reduce default suite startup and fixture costs while retaining its cases, assertions and cleanup deadlines; stop an owned native host promptly when its home is removed.

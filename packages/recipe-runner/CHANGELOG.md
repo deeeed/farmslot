@@ -4,8 +4,13 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
 - Consumer note for the planned mm-harness 0.96.23 cut: browser-timeout quarantine recovery comes from `@farmslot/adapter-web` 0.19.15. Keep recipe-runner 0.46.17 and protocol 0.85.0 unchanged.
+
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.46.18 - 2026-11-15
+
+- Align exact package dependencies with the protocol 0.86.0 and runtime 0.48.1 release cohort.
 
 ## 0.46.17 - 2026-11-15
 

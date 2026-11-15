@@ -1,1 +1,0 @@
-- Define read-only benchmark summaries and preserve score, cost and original-usage provenance when aggregating trials.

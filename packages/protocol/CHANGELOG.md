@@ -6,8 +6,15 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.86.0 - 2026-11-15
+
+- Define read-only detailed benchmark comparisons and preserve patch provenance and acceptance evidence separately from judge claims.
+- Expose the existing native-result validators through a focused import path so native hosts avoid unrelated recipe startup work.
+- PR rule scan subjects may leave out `matched` and `admitted` (absent means false), as they may their action lists; the gateway stores scanned PRs that matched nothing as their revision only.
+
 ## 0.85.0 - 2026-11-15
 
+- Define read-only benchmark summaries and preserve score, cost and original-usage provenance when aggregating trials.
 - The run list says "default" when no reasoning effort is stored. A stored level is shown as stored, so "off" stays "off" and "none" stays "none". A blank effort in the runner and model parts also reads "default".
 - Allow blind trials to freeze an experiment-local candidate template without changing live template selection.
 - Show the worker's recorded reasoning request as default, off or its effective level, preserving labels on older runs.
