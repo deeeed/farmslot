@@ -1,5 +1,7 @@
 import type { Run } from '@farmslot/protocol';
 
+import { contextLaunched } from '../agents/contexts.js';
+
 export const BEFORE_WORKER_LAUNCH = 'before-worker-launch';
 export const WORKER_LAUNCH = 'worker-launch';
 
@@ -10,11 +12,9 @@ export function workerMayHaveStarted(run: Run): boolean {
     run.metrics.runnerSessionPath ||
     run.agentContexts?.some(
       (context) =>
-        context.startedAt ||
+        contextLaunched(context) ||
         context.promptDeliveryStartedAt ||
-        context.runnerSessionId ||
         context.runnerSessionPath ||
-        context.nativeSession ||
         context.nativeSessionOwner,
     ),
   );

@@ -448,9 +448,16 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
           ownsRunSlotCleanup(row, run.id) &&
           row.slot_epoch === before?.slot_epoch &&
           row.phase !== 'releasing' &&
-          !row.cleanup_run_id &&
+          (!row.cleanup_run_id || (preWorkerFailure && row.cleanup_run_id === run.id)) &&
           !row.handoff_run_id,
-        { agent: 'idle' },
+        {
+          agent: 'idle',
+          // Re-enter safe recovery under the same terminal owner and epoch.
+          // A held cleanup retry must not publish ready before Git returns.
+          ...(preWorkerFailure && before?.cleanup_run_id === run.id
+            ? { current_run_id: run.id, cleanup_run_id: null }
+            : {}),
+        },
       );
       if (idle) {
         const result = await reuseSafeIdleSlot(

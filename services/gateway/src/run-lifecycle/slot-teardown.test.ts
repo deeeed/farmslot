@@ -1916,6 +1916,18 @@ test('a pre-worker idle-return failure stays held instead of publishing a ready 
   assert.equal(slotRow?.lifecycle, 'held');
   assert.equal(slotRow?.cleanup_run_id, RUN_ID);
   assert.ok(slotWrites.every((write) => write.lifecycle !== 'ready'));
+  slotWrites = [];
+  assert.equal(await retryOccupiedRunSlot(SLOT_ID), false);
+  assert.equal(slotRow?.lifecycle, 'held');
+  assert.equal(slotRow?.cleanup_run_id, RUN_ID);
+  assert.ok(slotWrites.every((write) => write.lifecycle !== 'ready'));
+  idleReturnResult = { kind: 'ready' };
+  onIdleReturn = () => {
+    assert.equal(slotRow?.current_run_id, RUN_ID);
+    assert.equal(slotRow?.cleanup_run_id, null);
+    assert.notEqual(slotRow?.lifecycle, 'ready');
+  };
+  assert.equal(await retryOccupiedRunSlot(SLOT_ID), true);
 });
 
 test('pre-worker cleanup cannot return a foreign owner to idle', async () => {

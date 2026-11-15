@@ -72,3 +72,39 @@ test('creating the current launching context is not a worker launch', () => {
     'uncertain prompt delivery retains the checkout',
   );
 });
+
+test('native restart history survives cleared live session and metrics fields', () => {
+  const run = makeRun({
+    transport: 'native',
+    status: 'failed',
+    steps: [{ name: 'prepare', status: 'failed' }],
+  });
+  // The shape retained by restartNativeWorkerContexts after its confirmed stop.
+  run.agentContexts = [
+    {
+      id: 'dev',
+      role: 'dev',
+      label: 'Dev',
+      status: 'idle',
+      slotId: run.slotId,
+      runId: run.id,
+      nativeSession: undefined,
+      startedAt: undefined,
+      promptDeliveryStartedAt: undefined,
+      runnerSessionId: null,
+      runnerSessionPath: null,
+      nativeSessionHistory: [
+        {
+          sessionId: 'prior-session',
+          executionNodeId: 'fixture',
+          ownerPrincipalId: 'owner',
+          leaseId: 'prior-lease',
+          commandId: 'prior-command',
+          releasedAt: run.createdAt,
+        },
+      ],
+    },
+  ];
+  assert.equal(workerMayHaveStarted(run), true);
+  assert.equal(failedBeforeWorkerLaunch(run), false);
+});
