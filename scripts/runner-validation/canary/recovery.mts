@@ -10,7 +10,7 @@ import type { Run } from '../../../packages/protocol/src/index.js';
 import type { Reaper } from '../lib/isolated-stack.mjs';
 import { writeJson } from '../lib/isolated-stack.mjs';
 import { startRemoteNodeStack } from '../lib/remote-node-stack.mjs';
-import { recoveryGithub } from './recovery-github.mjs';
+import { startRecoveryGithub } from './recovery-github.mjs';
 import { requireRecoveryFaultSupport } from './recovery-prerequisites.mjs';
 import { canaryPack, canaryRunParams, SEED } from './fixtures.mjs';
 import type { CheckResult } from './outcome.mjs';
@@ -54,6 +54,12 @@ export async function runRecoveryMatrix(options: {
   });
   const startStack = async (names: readonly RecoveryCase[], evidence: string) => {
     await mkdir(evidence, { recursive: true });
+    let githubHolds = '';
+    const github = await startRecoveryGithub(() => githubHolds);
+    stops.push(async () => {
+      await github.close();
+      return [];
+    });
     const stack = await startRemoteNodeStack({
       ...options,
       evidence,
@@ -104,11 +110,13 @@ export async function runRecoveryMatrix(options: {
           };
         }),
       gatewayEnv: {
+        FARMSLOT_GITHUB_API_URL: github.origin,
         NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import ${path.join(options.root, 'scripts/runner-validation/canary/recovery-faults.mjs')}`,
       },
       binFiles: (holds) => {
+        githubHolds = holds;
         writeFileSync(path.join(holds, 'recovery-fixture'), 'isolated');
-        return { gh: recoveryGithub(holds) };
+        return {};
       },
       seeds: Object.fromEntries(names.map((name) => [`recovery-${name}`, SEED])),
       slotFiles: (_slot, fixture) => ({
