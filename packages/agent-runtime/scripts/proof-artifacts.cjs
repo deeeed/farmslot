@@ -203,12 +203,7 @@ function proofArtifactIssues(taskDir, checklist, contract, signalFile) {
   // only where the frozen template granted the skip. A `skipped: true` ledger
   // row on a step the contract never declared optional waives nothing, and the
   // order check refuses it separately.
-  const optional = checklistOrder.declared(taskDir, checklist, contract);
-  const skipped = new Map(
-    [...checklistOrder.skipped(taskDir, checklist, signalFile)].filter(([step]) =>
-      optional.has(step),
-    ),
-  );
+  const skipped = checklistOrder.authorizedSkips(taskDir, checklist, contract, signalFile);
   const issues = [];
   for (const step of declaredProofArtifacts(taskDir, checklist, contract)) {
     if (!ticked.has(step.stepNumber) || skipped.has(step.stepNumber)) continue;

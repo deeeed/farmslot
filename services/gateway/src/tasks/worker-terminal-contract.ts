@@ -401,6 +401,27 @@ export function localCheckWithBaseRef(command: string, ciBaseRef?: string | null
     : command;
 }
 
+/**
+ * The optional steps a previous sync already froze for this checklist, or
+ * undefined when it has no contract yet. An existing contract is the grant of
+ * record: a later sync keeps it rather than re-reading a file the agent owns.
+ */
+async function retainedOptionalSteps(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  fullTaskDir: string,
+  checklist: string,
+): Promise<NonNullable<WorkerTerminalContractDocument['optionalSteps']> | undefined> {
+  const input = `${fullTaskDir}/${terminalContractInputForChecklist(checklist)}`;
+  if (!(await slotFileExists(vars, input))) return undefined;
+  try {
+    const existing: WorkerTerminalContractDocument = JSON.parse(await slotReadFile(vars, input));
+    return (existing.optionalSteps ?? []).filter((step) => step.checklist === checklist);
+  } catch {
+    // An unreadable contract grants nothing; the checks below report it.
+    return [];
+  }
+}
+
 export async function syncTerminalContractForFlowOnSlot(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   taskDir: string,
@@ -410,6 +431,14 @@ export async function syncTerminalContractForFlowOnSlot(
   checklistBasename?: string,
   additionalArtifactPaths: readonly string[] = [],
   ciBaseRef?: string | null,
+  /**
+   * Set only by a caller that just rendered this checklist from its template.
+   * `[OPTIONAL: ...]` is a privilege, and after dispatch the file on the slot is
+   * the agent's to edit, so a later sync must not adopt a marker from it: the
+   * reviewer or fix worker would otherwise grant itself the skip the mark
+   * refused (ADR-064 Amendment 7).
+   */
+  options: { templateJustWritten?: boolean } = {},
 ): Promise<void> {
   const fullTaskDir = `${vars.remoteRepo}/${taskDirRelPath(taskDir, '')}`;
   const parentContractPath = `${fullTaskDir}/${WORKER_TERMINAL_CONTRACT_INPUT}`;
@@ -455,11 +484,11 @@ export async function syncTerminalContractForFlowOnSlot(
       contract = deterministicChecks.freeze(contract, markdown, checklist, {
         'ci.local_check': localCheckWithBaseRef(localCheck, ciBaseRef),
       });
-    contract = checklistOrder.freeze(
-      proofArtifacts.freeze(contract, markdown, checklist),
-      markdown,
-      checklist,
-    );
+    contract = proofArtifacts.freeze(contract, markdown, checklist);
+    const retained = await retainedOptionalSteps(vars, fullTaskDir, checklist);
+    if (options.templateJustWritten || retained === undefined)
+      contract = checklistOrder.freeze(contract, markdown, checklist);
+    else if (retained.length) contract = { ...contract, optionalSteps: retained };
   }
   await writeTextFileOnSlot(
     vars,
@@ -661,9 +690,18 @@ export async function validateDeterministicChecksForRun(
   // would incorrectly demand a second task-bound acceptance ledger.
   const checker = await agentRuntimeScriptForSlot(vars, 'worker-terminal-contract.cjs');
   const checklists = [...new Set(declaredChecks.map((check) => check.checklist))];
+  // A step the template declared optional and the worker skipped with a recorded
+  // reason ran no command by design, so this gate must not demand its receipt:
+  // accepting the skip at the mark and refusing it here is the stall the skip
+  // contract exists to avoid (ADR-064 Amendment 7).
   const evaluate = [
+    'const path=require("path");',
     'const {deterministicChecks}=require(process.argv[1]);',
-    'const results=JSON.parse(process.argv[3]).map(c=>deterministicChecks.evaluate(process.argv[2],c));',
+    'const order=require(path.join(path.dirname(process.argv[1]),"checklist-order.cjs"));',
+    'const results=JSON.parse(process.argv[3]).map(c=>{',
+    'const skipped=order.authorizedSkips(process.argv[2],c);',
+    'return {...deterministicChecks.evaluate(process.argv[2],c,{skipped}),checklist:c,skipped:[...skipped]};',
+    '});',
     'process.stdout.write(JSON.stringify(results));',
     'process.exitCode=results.some(r=>r.issues.length)?1:0;',
   ].join('');
@@ -681,15 +719,27 @@ export async function validateDeterministicChecksForRun(
   );
   if (result.exitCode !== 0)
     throw new Error(`Deterministic CI gate blocked: ${result.stderr || result.stdout}`);
-  const evaluated: Array<{ checks: DeterministicChecklistCheck[]; issues: string[] }> = JSON.parse(
-    result.stdout,
-  );
+  const evaluated: Array<{
+    checks: DeterministicChecklistCheck[];
+    issues: string[];
+    checklist?: string;
+    skipped?: number[];
+  }> = JSON.parse(result.stdout);
   const checks = evaluated.flatMap((item) => item.checks);
+  // The declared checks this run still owes: an authorized skip removes its own
+  // row, so a contract whose only deterministic step was skipped owes nothing.
+  const skippedByChecklist = new Map(
+    evaluated.map((item) => [item.checklist, new Set(item.skipped ?? [])] as const),
+  );
+  const owed = declaredChecks.filter(
+    (check) => !skippedByChecklist.get(check.checklist)?.has(check.stepNumber),
+  );
+  if (!owed.length) return checks;
   if (
     !checks.length ||
     evaluated.some((item) => item.issues.length > 0) ||
     checks.some((check) => check.status !== 'passed') ||
-    declaredChecks.some(
+    owed.some(
       (expected) =>
         !checks.some(
           (check) =>
@@ -702,7 +752,7 @@ export async function validateDeterministicChecksForRun(
   ) {
     throw new Error(
       `Deterministic CI gate blocked: no verified receipts were returned for ${taskDir}/${input}, ` +
-        `which declares ${declaredChecks.length} check(s). Verify the selected task/checklist contract and rerun its CI mark step.`,
+        `which declares ${owed.length} check(s) this run still owes. Verify the selected task/checklist contract and rerun its CI mark step.`,
     );
   }
   return checks;

@@ -324,6 +324,64 @@ test('a role checklist freezes its declared proof artifacts, with or without a C
   assert.equal('proofArtifacts' in plain, false);
 });
 
+test('a later role sync keeps the optional steps the template granted, not the ones in the file', async (t) => {
+  const { root } = await task(t);
+  await writeFile(
+    path.join(root, 'inputs', 'worker-terminal-contract.json'),
+    JSON.stringify(resolveWorkerTerminalContract(null, 'dev')),
+  );
+  const vars = {
+    projectName: 'farmslot-farm',
+    remoteRepo: path.dirname(root),
+    host: 'localhost',
+    machine: 'local',
+  } as Parameters<typeof syncTerminalContractForFlowOnSlot>[0];
+  const roleContract = path.join(root, 'inputs/worker-terminal-contract.REVIEW.json');
+  const sync = (templateJustWritten: boolean) =>
+    syncTerminalContractForFlowOnSlot(
+      vars,
+      path.basename(root),
+      'review',
+      undefined,
+      'artifacts/role-report.md',
+      'REVIEW.md',
+      [],
+      null,
+      { templateJustWritten },
+    );
+
+  // The gateway renders the template, then syncs: that first sync is the grant.
+  await writeFile(
+    path.join(root, 'REVIEW.md'),
+    '- [ ] 1. Read the diff\n- [ ] 2. Smoke the domain [OPTIONAL: the project declares no smoke]\n',
+  );
+  await sync(true);
+  assert.deepEqual(JSON.parse(await readFile(roleContract, 'utf8')).optionalSteps, [
+    { checklist: 'REVIEW.md', stepNumber: 2, when: 'the project declares no smoke' },
+  ]);
+
+  // The reviewer then marks its own row optional and a recovery re-syncs. The
+  // file is the agent's to edit after dispatch, so it grants nothing.
+  await writeFile(
+    path.join(root, 'REVIEW.md'),
+    '- [ ] 1. Read the diff [OPTIONAL: I would rather not]\n' +
+      '- [ ] 2. Smoke the domain [OPTIONAL: the project declares no smoke]\n',
+  );
+  await sync(false);
+  assert.deepEqual(
+    JSON.parse(await readFile(roleContract, 'utf8')).optionalSteps,
+    [{ checklist: 'REVIEW.md', stepNumber: 2, when: 'the project declares no smoke' }],
+    'a later sync must not adopt a marker the worker wrote',
+  );
+
+  // A genuine template rewrite says so, and only then are the declarations reread.
+  await sync(true);
+  assert.deepEqual(JSON.parse(await readFile(roleContract, 'utf8')).optionalSteps, [
+    { checklist: 'REVIEW.md', stepNumber: 1, when: 'I would rather not' },
+    { checklist: 'REVIEW.md', stepNumber: 2, when: 'the project declares no smoke' },
+  ]);
+});
+
 test('retained replay reads only the matching frozen dispatch contract', async (t) => {
   const { root } = await task(t);
   const run = {

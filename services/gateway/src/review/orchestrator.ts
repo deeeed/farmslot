@@ -2981,7 +2981,12 @@ async function sendOwnedFeedbackToWorker(
     taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.checklist),
     expanded,
   );
-  await syncChecklistTargetForRole(vars, taskDir, 'review-fix', { ciBaseRef: fixBaseSha });
+  // Freshly expanded from the template just above: the one place a review-fix
+  // checklist's optional declarations may be (re)frozen.
+  await syncChecklistTargetForRole(vars, taskDir, 'review-fix', {
+    ciBaseRef: fixBaseSha,
+    templateJustWritten: true,
+  });
   assertNativeReviewOperationCurrent();
 
   const fixTaskRel = taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.checklist);

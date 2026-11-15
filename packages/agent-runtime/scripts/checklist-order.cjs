@@ -17,7 +17,11 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { enumerateChecklistCheckboxes, signalFileForChecklist } = require('./checklist-target.cjs');
+const {
+  enumerateChecklistCheckboxes,
+  signalFileForChecklist,
+  terminalContractInputForChecklist,
+} = require('./checklist-target.cjs');
 const { readJson } = require('./mark-io.cjs');
 
 const OPTIONAL_REFERENCE = /\[OPTIONAL:\s*([^\]]+?)\s*\]/;
@@ -72,6 +76,38 @@ function skippedSteps(taskDir, checklist, signalFile) {
   return skipped;
 }
 
+/** The frozen contract for a checklist, falling back to the task's root contract. */
+function frozenContractFor(taskDir, checklist) {
+  for (const input of [
+    terminalContractInputForChecklist(checklist),
+    'inputs/worker-terminal-contract.json',
+  ]) {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(taskDir, input), 'utf8'));
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+  }
+  return null;
+}
+
+/**
+ * Steps whose skip the template authorized and the worker recorded: the one
+ * definition of "this step is settled by its skip". Every gate that would
+ * otherwise demand the step's work asks here, so a skip cannot be accepted at
+ * the mark and refused at a later gate.
+ */
+function authorizedSkips(taskDir, checklist, contract, signalFile) {
+  const optional = declaredOptionalSteps(
+    taskDir,
+    checklist,
+    contract ?? frozenContractFor(taskDir, checklist),
+  );
+  return new Set(
+    [...skippedSteps(taskDir, checklist, signalFile).keys()].filter((step) => optional.has(step)),
+  );
+}
+
 function checklistItems(taskDir, checklist) {
   const file = path.join(taskDir, checklist);
   if (!fs.existsSync(file)) return [];
@@ -118,6 +154,8 @@ function orderIssues(taskDir, checklist, contract, signalFile) {
 
 module.exports = {
   OPTIONAL_REFERENCE,
+  authorizedSkips,
+  frozenContractFor,
   declarations: optionalDeclarations,
   freeze: freezeOptionalSteps,
   declared: declaredOptionalSteps,
