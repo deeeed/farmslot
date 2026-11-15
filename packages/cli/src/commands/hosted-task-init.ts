@@ -306,6 +306,11 @@ export function hostedTerminalPolicy(
     publicationReview: _review,
     recordedEvidenceContractVersion: _version,
     acceptanceContractVersion: _acceptanceVersion,
+    // Whether anyone attends the run is a property of the run, not of this
+    // node's gates: the gateway stamps it from the trial's `review: false`, so
+    // it can never be in the configured contract and comparing it as policy
+    // refuses every unattended run at prepare.
+    unattendedCompletion: _unattended,
     ...policy
   }: WorkerTerminalContractDocument): unknown => JSON.parse(JSON.stringify(policy));
   if (
@@ -322,6 +327,11 @@ export function hostedTerminalPolicy(
     publicationReview: task.terminalContract?.publicationReview,
     recordedEvidenceContractVersion: task.terminalContract?.recordedEvidenceContractVersion,
     acceptanceContractVersion: task.terminalContract?.acceptanceContractVersion,
+    // Carried, not dropped: without the stamp the worker prints completion
+    // advice no operator will read instead of ending the run with the refusal.
+    ...(task.terminalContract?.unattendedCompletion === undefined
+      ? {}
+      : { unattendedCompletion: task.terminalContract.unattendedCompletion }),
   };
 }
 

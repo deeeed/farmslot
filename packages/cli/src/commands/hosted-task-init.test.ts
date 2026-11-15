@@ -390,6 +390,51 @@ test('hosted tasks without derived acceptance keep their configured policies', a
   }
 });
 
+// Live blocker on run b7acd46b (TAT-4277, fix-bug/core, normal slot): prepare
+// refused with TASK_INIT_POLICY_CHANGED. `unattendedCompletion` is stamped by
+// the gateway from `engineState.evalExperiment.review === false`, so it can
+// never appear in the node's configured contract; comparing it as policy makes
+// every unattended run unlaunchable. It is a run projection like the gates
+// beside it, and it has to survive the projection or the node writes a contract
+// without the stamp and the refusal-ends-the-run behaviour silently disappears.
+test('an unattended run projection launches and keeps its stamp', async () => {
+  const { builtinTerminalContract } = await import('@farmslot/agent-runtime');
+  const { hostedTerminalPolicy } = await import('./hosted-task-init.js');
+  for (const flow of ['dev', 'fix-bug', 'review', 'ci-fix', 'pr-complete']) {
+    const configured = builtinTerminalContract(flow);
+    const task = {
+      ...request().task,
+      flow,
+      terminalContract: { ...configured, unattendedCompletion: true },
+    };
+    const projected = hostedTerminalPolicy(task, configured);
+    assert.equal(projected.unattendedCompletion, true, `${flow}: the stamp must survive`);
+    assert.equal(projected.requireSignal, configured.requireSignal);
+    assert.deepEqual(projected.commands, configured.commands);
+  }
+  // An attended run is unchanged: absent stays absent rather than becoming false.
+  const configured = builtinTerminalContract('fix-bug');
+  const attended = hostedTerminalPolicy(
+    { ...request().task, flow: 'fix-bug', terminalContract: configured },
+    configured,
+  );
+  assert.equal('unattendedCompletion' in attended, false);
+  // The field is still not a door into the node's gates: a weakened policy
+  // alongside the stamp is refused exactly as before.
+  assert.throws(
+    () =>
+      hostedTerminalPolicy(
+        {
+          ...request().task,
+          flow: 'fix-bug',
+          terminalContract: { ...configured, unattendedCompletion: true, requireSignal: false },
+        },
+        configured,
+      ),
+    /differs from the node configuration/,
+  );
+});
+
 test('hosted PR completion preserves run acceptance projections without weakening policy', async () => {
   const { builtinTerminalContract } = await import('@farmslot/agent-runtime');
   const { hostedTerminalPolicy } = await import('./hosted-task-init.js');

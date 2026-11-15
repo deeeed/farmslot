@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Node task initialization no longer refuses an unattended run. `unattendedCompletion` is stamped per run by the gateway from the trial's `review: false`, so it can never appear in a node's configured contract; comparing it as terminal policy refused every such run at prepare with `TASK_INIT_POLICY_CHANGED` (run b7acd46b, a real fix-bug/core run on a normal slot). It is treated as the run projection it is, and carried into the written contract so the worker still ends an unattended run with its refusal instead of printing advice no operator reads.
 - `farmslot slot release --skip-artifacts` is removed: a slot release no longer copies artifacts, so there is nothing to skip (F313).
 - Farm commands wait out a gateway reload instead of failing at once. When the gateway refuses the connection, drops the upgrade or answers it with 503 before the socket opens, a `farmslot` command reconnects for up to 90 s (`FARMSLOT_GATEWAY_RECONNECT_MS`; `0` fails at once). A failure after the socket opened is never retried. A `GatewayClient` built without `reconnectWindowMs`, as probes and scripts build it, still fails at once.
 - `farmslot dispatch preview` prints the criteria a pr-complete run inherits from its parent run, and that criteria given with the run are not used.
