@@ -15,7 +15,10 @@ test('normal-slot prepare parks earlier answer files while retaining this task a
   const git = (...args: string[]) =>
     execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
   git('init', '-q', '-b', 'main');
-  writeFileSync(path.join(repo, '.gitignore'), 'temp/\nnode_modules/\n');
+  writeFileSync(
+    path.join(repo, '.gitignore'),
+    'temp/\nnode_modules/\n.env.local\n.farmslot-instance/\n',
+  );
   writeFileSync(path.join(repo, 'source.txt'), 'before fix\n');
   git('add', '.');
   git(
@@ -37,6 +40,9 @@ test('normal-slot prepare parks earlier answer files while retaining this task a
     'temp/tasks/fix/current/inputs/candidate-template.md': 'frozen candidate bytes\n',
     'temp/tasks/fix/current/TASK.md': 'neutral problem\n',
     'node_modules/tool/index.js': 'cached dependency\n',
+    '.env.local': 'local setup\n',
+    '.farmslot-instance/owner': 'current farm\n',
+    'temp/recipe/runtime/.preparing.lock/owner': 'current prepare\n',
   };
   for (const [name, content] of Object.entries(inputs)) {
     const file = path.join(repo, name);
@@ -52,7 +58,8 @@ test('normal-slot prepare parks earlier answer files while retaining this task a
     baseSha,
     referenceCommits: [],
     capsule: path.join(root, 'must-not-exist'),
-    keepIgnored: ['node_modules', 'temp/tasks/fix/current'],
+    keepIgnored: ['node_modules', 'temp/tasks/fix/current', 'temp/recipe/runtime/.preparing.lock'],
+    cleanupRoots: ['temp/tasks', 'temp/recipe/runtime'],
   };
   const receipt = JSON.parse(
     execFileSync('bash', ['-c', buildBlindGitCommand('park-ignored', spec)], { encoding: 'utf8' }),

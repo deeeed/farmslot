@@ -29,8 +29,10 @@ export interface BlindGitSpec {
   branch: string;
   baseSha: string;
   referenceCommits: string[];
-  /** Gitignored paths isolation leaves in place (patterns relative to the checkout); every other ignored path moves into the capsule. */
+  /** Ignored paths eval preparation keeps in place, relative to the checkout. */
   keepIgnored?: string[];
+  /** Normal-slot parking is limited to declared task/runtime/artifact roots. */
+  cleanupRoots?: string[];
   proof?: EvalProofSource;
   /** Captured from the admitted project/task, never from worker arguments. */
   proofBoundary?: {

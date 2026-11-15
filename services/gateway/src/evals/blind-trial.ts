@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  DEFAULT_TASK_DIR,
   type EvalBlindTrial,
   isFamilyDiffProvenance,
   isRecord,
@@ -18,6 +19,7 @@ import {
   loadMachineSlots,
   loadProjectVars,
   loadSlotVars,
+  type ProjectVars,
   resolveProjectRuntimeDir,
   resolveProjectTaskDirName,
   type SlotVars,
@@ -181,9 +183,15 @@ export const DEFAULT_BLIND_KEEP_IGNORED = [
 ];
 
 /** The project's cache list, plus this run's own task folder when it already exists. */
-async function keptIgnoredPaths(run: Run, vars: SlotVars): Promise<string[]> {
-  const project = await loadProjectVars(run.project);
-  const configured = getProjectFieldRaw(project.projectJson, 'blind_keep_ignored');
+async function keptIgnoredPaths(
+  run: Run,
+  vars: SlotVars,
+  retainedProject?: ProjectVars,
+): Promise<string[]> {
+  const project = retainedProject ?? (await loadProjectVars(run.project));
+  const configured = usesEvalTrialCapsule(run.engineState?.evalExperiment?.blind)
+    ? getProjectFieldRaw(project.projectJson, 'blind_keep_ignored')
+    : undefined;
   return [
     ...(Array.isArray(configured) ? configured.map(String) : DEFAULT_BLIND_KEEP_IGNORED),
     ...(run.taskFile
@@ -214,10 +222,27 @@ export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal):
         throw new Error('Normal-slot trial workspace belongs to a different slot.');
       return;
     }
+    const project = await loadProjectVars(run.project);
+    const runtime = project.runtimeDir || '.agent';
+    const artifacts = getProjectFieldRaw(project.projectJson, 'paths.artifact_dir');
     const receipt = await executeGit(
       'park-ignored',
       vars,
-      { ...gitSpec(run, vars, blind, epoch, ''), keepIgnored: await keptIgnoredPaths(run, vars) },
+      {
+        ...gitSpec(run, vars, blind, epoch, ''),
+        keepIgnored: [
+          ...(await keptIgnoredPaths(run, vars, project)),
+          `${runtime}/.preparing.lock`,
+        ],
+        cleanupRoots: [
+          ...new Set([
+            resolveProjectTaskDirName(project.projectJson),
+            DEFAULT_TASK_DIR,
+            runtime,
+            ...(typeof artifacts === 'string' && artifacts ? [artifacts] : []),
+          ]),
+        ],
+      },
       signal,
     );
     if (receipt.status !== 'parked-ignored' || receipt.runId !== run.id)
