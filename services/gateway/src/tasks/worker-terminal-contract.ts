@@ -465,6 +465,15 @@ export async function syncTerminalContractForFlowOnSlot(
       claimReviewGate: parent.claimReviewGate,
       publicationReview: parent.publicationReview,
       recordedEvidenceContractVersion: parent.recordedEvidenceContractVersion,
+      // Whether anyone attends the run is a property of the run, like the gates
+      // above it: a role checklist on an unattended trial has no reviewer
+      // either. Without this the scoped contract lost the stamp, and because
+      // `loadTerminalContract` prefers that file, a refused completion on a
+      // review, review-fix or ci-fix checklist printed advice nobody reads
+      // instead of ending the run. Spread conditionally so an attended parent
+      // hands down nothing: the worker tests `=== true`, and writing `false`
+      // would be a claim the parent never made.
+      ...(parent.unattendedCompletion === true ? { unattendedCompletion: true } : {}),
       ...(parent.acceptanceContractVersion === 1
         ? {
             acceptanceContractVersion: 1,

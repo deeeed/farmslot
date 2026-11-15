@@ -324,6 +324,54 @@ test('a role checklist freezes its declared proof artifacts, with or without a C
   assert.equal('proofArtifacts' in plain, false);
 });
 
+// Grok found this in #2208 r7 and the lead parked it: a role checklist's own
+// contract inherits the run's frozen authority from the parent, but not the
+// unattended stamp. `loadTerminalContract` prefers the scoped role file where
+// one exists, so on an unattended run a review, review-fix or ci-fix checklist
+// lost it — and a refused completion there printed advice no operator will read
+// instead of ending the run, which is the stall #2208 exists to prevent.
+test('a role checklist inherits whether anyone attends the run', async (t) => {
+  const { root } = await task(t);
+  const vars = {
+    projectName: 'farmslot-farm',
+    remoteRepo: path.dirname(root),
+    host: 'localhost',
+    machine: 'local',
+  } as Parameters<typeof syncTerminalContractForFlowOnSlot>[0];
+  const sync = async () => {
+    await writeFile(path.join(root, 'REVIEW.md'), '- [ ] 1. Read the diff\n');
+    await syncTerminalContractForFlowOnSlot(
+      vars,
+      path.basename(root),
+      'review',
+      undefined,
+      'artifacts/role-report.md',
+      'REVIEW.md',
+      [],
+      null,
+      { templateJustWritten: true },
+    );
+    return JSON.parse(
+      await readFile(path.join(root, 'inputs/worker-terminal-contract.REVIEW.json'), 'utf8'),
+    );
+  };
+
+  // The gateway stamps the parent from the trial's `review: false`.
+  await writeFile(
+    path.join(root, 'inputs', 'worker-terminal-contract.json'),
+    JSON.stringify({ ...resolveWorkerTerminalContract(null, 'dev'), unattendedCompletion: true }),
+  );
+  assert.equal((await sync()).unattendedCompletion, true, 'the role inherits the stamp');
+
+  // An attended run must not gain one: absent stays absent, never false, since
+  // the worker tests `=== true`.
+  await writeFile(
+    path.join(root, 'inputs', 'worker-terminal-contract.json'),
+    JSON.stringify(resolveWorkerTerminalContract(null, 'dev')),
+  );
+  assert.equal('unattendedCompletion' in (await sync()), false, 'an attended run stays attended');
+});
+
 test('a later role sync keeps the optional steps the template granted, not the ones in the file', async (t) => {
   const { root } = await task(t);
   await writeFile(

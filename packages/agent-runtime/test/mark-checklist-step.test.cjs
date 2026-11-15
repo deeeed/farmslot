@@ -807,3 +807,56 @@ console.log(
   }
   console.log('Premature complete and start re-open are refused');
 }
+
+// #2234 r1, found by both reviewers: inheriting the stamp was not enough. The
+// exit hook that ends an unattended run was gated on `mode === 'autonomous'`
+// too, and a role contract carries no mode — the gateway syncs it without one —
+// so the stamp the role inherits could never be consulted and the stall stayed
+// exactly where it was. This drives the shape the gateway actually writes: a
+// scoped role contract with the stamp and no mode.
+{
+  const roleDir = mkdtempSync(path.join(tmpdir(), 'farmslot-role-unattended-'));
+  try {
+    mkdirSync(path.join(roleDir, 'inputs'), { recursive: true });
+    mkdirSync(path.join(roleDir, 'artifacts'), { recursive: true });
+    // The manifest points the mark engine at the role checklist, as a role
+    // dispatch does, so `complete` resolves to REVIEW.md and its scoped
+    // contract rather than the worker's own.
+    writeManifest(roleDir, 'REVIEW.md');
+    writeFileSync(path.join(roleDir, 'REVIEW.md'), '- [ ] 1. Read the diff\n');
+    writeFileSync(
+      path.join(roleDir, terminalContractInputForChecklist('REVIEW.md')),
+      JSON.stringify({
+        schemaVersion: 1,
+        flowType: 'review',
+        requireSignal: true,
+        // No `mode`: this is what syncTerminalContractForFlowOnSlot writes.
+        unattendedCompletion: true,
+        commands: {
+          complete: {
+            report: 'artifacts/review-feedback.md',
+            artifacts: ['artifacts/review-feedback.md'],
+          },
+          'no-change': { artifacts: [] },
+          blocked: { artifacts: [] },
+        },
+        whenPresent: [],
+      }),
+    );
+
+    const mark = (...args) =>
+      spawnSync(process.execPath, [helper, roleDir, ...args], { encoding: 'utf8' });
+    assert.equal(mark('1').status, 0);
+    // Its required artifact is missing, so completion refuses. With every row
+    // marked and nobody attending, that refusal has to end the run.
+    const refused = mark('complete');
+    assert.equal(refused.status, 1, refused.stdout + refused.stderr);
+    assert.match(refused.stderr, /missing required artifact: artifacts\/review-feedback\.md/);
+    const signal = JSON.parse(readFileSync(path.join(roleDir, 'REVIEW-SIGNAL.json'), 'utf8'));
+    assert.equal(signal.status, 'blocked', 'the role refusal ends the run');
+    assert.match(String(signal.reason), /review-feedback\.md/);
+  } finally {
+    rmSync(roleDir, { recursive: true, force: true });
+  }
+  console.log('A role checklist on an unattended run ends it');
+}
