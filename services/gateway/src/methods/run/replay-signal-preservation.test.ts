@@ -149,13 +149,76 @@ test('dispatch replay preserves the idle worker signal until replacement admissi
   assert.equal(await readFile(signalFile, 'utf8'), signal);
 });
 
-// A terminal signal is the opposite case: nothing is still running, and
-// `mark start` refuses to re-open a `complete` or `no-change` signal
-// (agent-runtime/scripts/mark-checklist-step.cjs). The clearing that makes a
-// re-dispatch legitimate ran only for a native fresh restart, so on tmux the
-// replayed worker met its own finished signal and had no way past it.
-for (const status of ['complete', 'no-change']) {
-  test(`dispatch replay clears a terminal ${status} signal on tmux transport`, async (t) => {
+// A finished signal is the opposite case: nothing is still running, and
+// `mark start` refuses to re-open it (agent-runtime/scripts/mark-checklist-step.cjs).
+// The clearing that makes a re-dispatch legitimate ran only for a native fresh
+// restart, so on tmux the replayed worker met its own finished signal and had
+// no way past it.
+//
+// `mark no-change` writes status `complete` with a disposition rather than a
+// status of its own (resolveTerminalPreset), so that is the shape tested here,
+// not an invented `no-change` status no worker writes.
+const finishedSignals = [
+  { name: 'complete', body: { attemptId: 'finished-attempt', status: 'complete' } },
+  {
+    name: 'no-change',
+    body: {
+      attemptId: 'finished-attempt',
+      status: 'complete',
+      outcome: 'success',
+      disposition: 'not_reproducible',
+    },
+  },
+];
+const finishedRun = (run, overrides = {}) => ({
+  status: 'done',
+  slotId,
+  taskFile,
+  transport: 'tmux',
+  engineState: { taskInit: { taskFile, status: 'initialized' } },
+  agentContexts: [
+    {
+      id: 'dev',
+      role: 'dev',
+      label: 'Worker',
+      runId: run.id,
+      slotId,
+      status: 'done',
+      taskFile: '.task/probe/TASK.md',
+      signalFile: '.task/probe/SIGNAL.json',
+      signalAttemptId: 'finished-attempt',
+      attemptStartedAt: '2026-11-12T00:00:00.000Z',
+    },
+  ],
+  steps: run.steps.map((step) => ({
+    ...step,
+    status: ['find-slot', 'write-task', 'prepare', 'dispatch', 'monitor'].includes(step.name)
+      ? 'done'
+      : 'pending',
+  })),
+  ...overrides,
+});
+const heldSlotStatus = (run) =>
+  JSON.stringify({
+    slots: [{ slot: slotId, lifecycle: 'held', phase: 'idle', current_run_id: run.id }],
+  });
+/** The signal as the replay left it, read at the engine handoff. */
+const replayAndReadSignal = async (run, stepName, file = signalFile) => {
+  let observe;
+  const observed = new Promise((resolve) => {
+    observe = resolve;
+  });
+  await runReplayStep({ runId: run.id, stepName, triggeredBy: 'operator' }, () => {}, {
+    probeTaskSignal: async () => null,
+    startEngine: async () => {
+      observe(await readFile(file, 'utf8').catch(() => null));
+    },
+  });
+  return observed;
+};
+
+for (const finished of finishedSignals) {
+  test(`dispatch replay clears a ${finished.name} signal on tmux transport`, async (t) => {
     const run = createRun({ project, flowType: 'dev', ticketOrPr: 'example/fixture#2' });
     t.after(async () => {
       if (!getRun(run.id)) return;
@@ -164,64 +227,110 @@ for (const status of ['complete', 'no-change']) {
     });
     await writeFile(
       signalFile,
-      JSON.stringify({
-        attemptId: 'finished-attempt',
-        status,
-        timestamp: '2026-11-12T00:00:00.000Z',
-      }),
+      JSON.stringify({ ...finished.body, timestamp: '2026-11-12T00:00:00.000Z' }),
     );
-    updateRun(run.id, {
-      status: 'done',
-      slotId,
-      taskFile,
-      transport: 'tmux',
-      engineState: { taskInit: { taskFile, status: 'initialized' } },
-      agentContexts: [
-        {
-          id: 'dev',
-          role: 'dev',
-          label: 'Worker',
-          runId: run.id,
-          slotId,
-          status: 'done',
-          taskFile: '.task/probe/TASK.md',
-          signalFile: '.task/probe/SIGNAL.json',
-          signalAttemptId: 'finished-attempt',
-          attemptStartedAt: '2026-11-12T00:00:00.000Z',
-        },
-      ],
-      steps: run.steps.map((step) => ({
-        ...step,
-        status: ['find-slot', 'write-task', 'prepare', 'dispatch', 'monitor'].includes(step.name)
-          ? 'done'
-          : 'pending',
-      })),
-    });
-    await writeFile(
-      statusFile,
-      JSON.stringify({
-        slots: [{ slot: slotId, lifecycle: 'held', phase: 'idle', current_run_id: run.id }],
-      }),
-    );
+    updateRun(run.id, finishedRun(run));
+    await writeFile(statusFile, heldSlotStatus(run));
 
-    let observe!: (value: string | null) => void;
-    const observed = new Promise<string | null>((resolve) => {
-      observe = resolve;
-    });
-    await runReplayStep(
-      { runId: run.id, stepName: 'dispatch', triggeredBy: 'operator' },
-      () => {},
-      {
-        probeTaskSignal: async () => null,
-        startEngine: async () => {
-          observe(await readFile(signalFile, 'utf8').catch(() => null));
-        },
-      },
-    );
     assert.equal(
-      await observed,
+      await replayAndReadSignal(run, 'dispatch'),
       null,
       'a replayed worker must not meet the finished signal its own start refuses',
     );
   });
 }
+
+// `start` resumes a blocked signal and keeps the checked boxes, so removing it
+// would throw away the work the resumed worker is supposed to continue.
+test('dispatch replay keeps a blocked signal', async (t) => {
+  const run = createRun({ project, flowType: 'dev', ticketOrPr: 'example/fixture#3' });
+  t.after(async () => {
+    if (!getRun(run.id)) return;
+    updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+  const blocked = JSON.stringify({
+    attemptId: 'blocked-attempt',
+    status: 'blocked',
+    disposition: 'blocked',
+    reason: 'waiting on an operator',
+    timestamp: '2026-11-12T00:00:00.000Z',
+  });
+  await writeFile(signalFile, blocked);
+  updateRun(run.id, finishedRun(run, { status: 'blocked' }));
+  await writeFile(statusFile, heldSlotStatus(run));
+
+  assert.equal(
+    await replayAndReadSignal(run, 'dispatch'),
+    blocked,
+    'a blocked signal is resumable and must survive the replay',
+  );
+});
+
+// `update-branch` has no prepare step, and the old gate demanded one, so a
+// dispatch replay of that flow skipped the clear entirely — the same strand on
+// a flow whose worker is required to call `mark start`.
+test('update-branch dispatch replay clears a finished signal with no prepare step', async (t) => {
+  const run = createRun({
+    project,
+    flowType: 'update-branch',
+    ticketOrPr: 'example/fixture#4',
+  });
+  t.after(async () => {
+    if (!getRun(run.id)) return;
+    updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+  assert.equal(
+    run.steps.some((step) => step.name === 'prepare'),
+    false,
+    'this flow is only interesting because it has no prepare step',
+  );
+  await writeFile(
+    signalFile,
+    JSON.stringify({
+      attemptId: 'finished-attempt',
+      status: 'complete',
+      timestamp: '2026-11-12T00:00:00.000Z',
+    }),
+  );
+  updateRun(run.id, finishedRun(run));
+  await writeFile(statusFile, heldSlotStatus(run));
+
+  assert.equal(
+    await replayAndReadSignal(run, 'dispatch'),
+    null,
+    'a flow without prepare still launches a worker, so the finished signal must go',
+  );
+});
+
+// A replay at or before write-task is safe for a different reason, and it is
+// worth pinning: the task is regenerated into its own timestamped directory
+// (tasks/writer.ts), so the replayed worker never sees the old signal whatever
+// this clear does.
+test('write-task replay regenerates the task rather than reusing the old one', async (t) => {
+  const run = createRun({ project, flowType: 'dev', ticketOrPr: 'example/fixture#5' });
+  t.after(async () => {
+    if (!getRun(run.id)) return;
+    updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+  await writeFile(
+    signalFile,
+    JSON.stringify({
+      attemptId: 'finished-attempt',
+      status: 'complete',
+      timestamp: '2026-11-12T00:00:00.000Z',
+    }),
+  );
+  updateRun(run.id, finishedRun(run));
+  await writeFile(statusFile, heldSlotStatus(run));
+
+  await replayAndReadSignal(run, 'write-task');
+
+  assert.equal(
+    getRun(run.id)?.taskFile ?? null,
+    null,
+    'the replay clears the task file so write-task regenerates it in a new directory',
+  );
+});

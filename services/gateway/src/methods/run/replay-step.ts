@@ -12,6 +12,7 @@ import {
   type FlowType,
   isCompletionPrerequisiteFailure,
   isInteractiveDevRun,
+  isStartRefusedWorkerSignalStatus,
   isTerminalRunStatus,
   PipelineSteps as PS,
   pipelineStepsForRun,
@@ -52,6 +53,7 @@ import { readSlotRow, SLOT_PHASE_RELEASING } from '../../core/index.js';
 import { GatewayMethodError } from '../../core/method-error.js';
 import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
+import slotFiles from '../../host-services/slot-files.js';
 import { pipelineReviewSelection, resolveReviewRunnerModel } from '../../review/orchestrator.js';
 import { getReviewConfig } from '../../review/templates.js';
 import { useReviewWorkspaceStorage } from '../../review-workspaces/storage-use.js';
@@ -440,34 +442,65 @@ export function canAdoptTaskSignalAfterUncertainDispatch(
 }
 
 /**
- * Which of `files` in the worker task directory hold a signal whose run ended.
- * `complete` and `no-change` are the two a `mark start` refuses to re-open; a
- * `running` or `blocked` signal is left in place.
+ * Which of `files` in the worker task directory hold a signal whose run
+ * finished, so a replayed worker's `mark start` would be refused. Reads go
+ * through the slot-files service, which already reads a missing, unreadable or
+ * directory path as empty.
+ *
+ * This is the decision, not the deletion. A numbered `./mark N` can rewrite a
+ * `complete` signal back to `running` between the two, so the delete re-reads
+ * each file and is the authority on what goes.
  */
-async function terminalSignalFiles(
+async function startRefusedSignalFiles(
   vars: SlotVars,
   workerTaskDir: string,
   files: readonly string[],
 ): Promise<string[]> {
-  const terminal: string[] = [];
+  const refused: string[] = [];
   for (const file of files) {
-    const read = await execOnSlot(
+    const body = await slotFiles.read(
       vars,
-      `cat ${shellQuote(`${workerTaskDir}/${file}`)} 2>/dev/null`,
-      vars.remoteRepo,
+      `${workerTaskDir}/${file}`,
+      'replay-worker-signal-status',
     );
-    // No signal, or one too broken to read, is nothing to clear: a worker that
-    // cannot read it will write its own.
-    if (read.exitCode !== 0 || !read.stdout.trim()) continue;
+    if (!body.trim()) continue;
     let status: unknown;
     try {
-      status = (JSON.parse(read.stdout) as { status?: unknown }).status;
+      status = (JSON.parse(body) as { status?: unknown }).status;
     } catch {
+      // A signal too broken to parse is nothing to clear: the worker that
+      // cannot read it writes its own over the top.
       continue;
     }
-    if (status === 'complete' || status === 'no-change') terminal.push(file);
+    if (typeof status === 'string' && isStartRefusedWorkerSignalStatus(status)) refused.push(file);
   }
-  return terminal;
+  return refused;
+}
+
+/**
+ * Delete each named signal that still holds a start-refused status, in one
+ * round trip that re-reads it. A separate read and `rm` can delete the
+ * `running` signal of a worker that marked a step in between.
+ */
+async function deleteStartRefusedSignals(
+  vars: SlotVars,
+  workerTaskDir: string,
+  files: readonly string[],
+): Promise<void> {
+  const script =
+    'for (const file of process.argv.slice(1)) {' +
+    'try {' +
+    "const parsed = JSON.parse(require('node:fs').readFileSync(file, 'utf8'));" +
+    "if (parsed && parsed.status === 'complete') require('node:fs').rmSync(file);" +
+    '} catch {}' +
+    '}';
+  await execOnSlot(
+    vars,
+    `node -e ${shellQuote(script)} ${files
+      .map((file) => shellQuote(`${workerTaskDir}/${file}`))
+      .join(' ')}`,
+    vars.remoteRepo,
+  );
 }
 
 /** The `blocked` signal a blocked run's monitor stopped on, or null. */
@@ -2290,22 +2323,27 @@ async function replayRunStep(
       targetIdx >= prepareIdx &&
       targetIdx <= dispatchIdx;
 
-    // A replayed worker calls `mark start`, which refuses to re-open a
-    // `complete` or `no-change` signal. Clearing ran only for a native fresh
-    // restart, so on tmux the new worker met the finished signal of the attempt
-    // it replaces and had no way past it. Every worker-launch replay clears it.
+    // A replayed worker calls `mark start`, which refuses to re-open a finished
+    // signal. Clearing ran only for a native fresh restart, so on tmux the new
+    // worker met the finished signal of the attempt it replaces and had no way
+    // past it.
     //
-    // Only a terminal signal goes. A `running` one belongs to a worker that may
+    // The rule is any replay that ends in a worker launch: a target at or
+    // before dispatch. `replaysWorkerLaunch` is not that rule - it also demands
+    // a prepare step, so an `update-branch` run (which has none) and a replay
+    // of find-slot or write-task dispatched a worker onto the old signal. It
+    // keeps its own meaning for the metrics reset below.
+    //
+    // Only a finished signal goes. A `running` one belongs to a worker that may
     // still be alive and is preserved until admission replaces it, and `blocked`
     // stays because `start` resumes it and keeps the checked boxes.
+    const relaunchesWorker = targetIdx >= 0 && dispatchIdx >= 0 && targetIdx <= dispatchIdx;
     const clearsWorkerSignal =
-      replaysWorkerLaunch &&
+      relaunchesWorker &&
       Boolean(effectiveSlotId) &&
       Boolean(existing.taskFile) &&
       (existing.transport === 'native' ? nativeFreshRestart : true);
     if (clearsWorkerSignal) {
-      assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
-      assertNativeReplayCurrent();
       try {
         const {
           loadSlotVars,
@@ -2328,8 +2366,6 @@ async function replayRunStep(
           const reviewTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['review'];
           const reviewFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['review-fix'];
           const ciFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['ci-fix'];
-          assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
-          assertNativeReplayCurrent();
           const signalFiles = [
             WORKER_SIGNAL_FILE,
             reviewTarget.signal,
@@ -2340,21 +2376,34 @@ async function replayRunStep(
           // the previous attempt survives, so it clears whatever is there. Any
           // other transport reads each signal first and removes only the ones
           // that ended, so a live attempt's running signal is left alone.
-          const removable =
-            existing.transport === 'native'
-              ? signalFiles
-              : await terminalSignalFiles(vars, workerTaskDir, signalFiles);
-          if (removable.length > 0) {
+          // Nothing is deleted until the replay is certainly ours: an `rm`
+          // that lands and is then followed by a thrown ownership assertion
+          // leaves a run short of a signal with no step reset behind it.
+          assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+          assertNativeReplayCurrent();
+          if (existing.transport === 'native') {
+            // A native fresh restart has already established that no worker of
+            // the previous attempt survives, so every listed signal goes.
             await execOnSlot(
               vars,
-              `rm -f ${removable
+              `rm -f ${signalFiles
                 .map((file) => shellQuote(`${workerTaskDir}/${file}`))
                 .join(' ')} 2>/dev/null`,
               vars.remoteRepo,
             );
             console.log(
-              `[run] replay from ${replayStepName} — cleared worker terminal signals in ${workerTaskDir} (${removable.join(', ')})`,
+              `[run] replay from ${replayStepName} — cleared worker signals in ${workerTaskDir}`,
             );
+          } else {
+            const refused = await startRefusedSignalFiles(vars, workerTaskDir, signalFiles);
+            if (refused.length > 0) {
+              assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+              assertNativeReplayCurrent();
+              await deleteStartRefusedSignals(vars, workerTaskDir, refused);
+              console.log(
+                `[run] replay from ${replayStepName} — cleared finished worker signals in ${workerTaskDir} (${refused.join(', ')})`,
+              );
+            }
           }
         }
       } catch (err) {

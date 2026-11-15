@@ -884,9 +884,14 @@ if (isStartCommand) {
   // never exists. A successful verdict is different: nothing resumes a run that
   // finished, and before this a start on `complete` fell straight through and
   // destroyed the record of a run parked at its human gate.
-  if (existing && ['complete', 'no-change'].includes(existing.status)) {
+  // `complete` covers a no-change run too: that command writes status
+  // 'complete' with disposition already_fixed or not_reproducible
+  // (resolveTerminalPreset above), so there is no 'no-change' status to test.
+  if (existing && existing.status === 'complete') {
     console.error(
-      `signal already terminal: status=${existing.status}; start does not re-open it. ` +
+      `signal already terminal: status=${existing.status}` +
+        (existing.disposition ? ` (${existing.disposition})` : '') +
+        '; start does not re-open it. ' +
         'This run finished; a re-dispatch clears the signal first. ' +
         `Fix what the refusal reported and mark the run again, or stop with ${path.join(taskDir, 'mark')} blocked --reason "<why>".`,
     );
