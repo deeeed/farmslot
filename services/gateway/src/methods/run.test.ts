@@ -219,6 +219,7 @@ test('run creation holds its task directory against retention until it registers
   const taskDir = mkdtempSync(path.join(tmpdir(), 'farmslot-admission-'));
   t.after(() => rmSync(taskDir, { recursive: true, force: true }));
   writeFileSync(path.join(taskDir, 'TASK.md'), 'task', 'utf-8');
+  writeFileSync(path.join(taskDir, 'CHECKLIST.md'), '- [ ] one\n', 'utf-8');
   const tatKey = `TAT-${Date.now()}`;
   let heldAtRegistration = false;
   await assert.rejects(

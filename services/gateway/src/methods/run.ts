@@ -19,6 +19,7 @@ import {
   evidenceAttestationAvailable,
   evidenceAttestationReason,
   type EvidencePolicyAttestation,
+  EXECUTION_CHECKLIST_DOCUMENT,
   type ExecutionTemplateReference,
   failedRunCancelEffects,
   failureTriageCause,
@@ -472,6 +473,24 @@ export interface RunCreationPlan {
   staticReviewOwner: StaticReviewOwner | undefined;
 }
 
+/**
+ * An existing task file skips write-task, so create never renders CHECKLIST.md.
+ * Refuse before the run is stored. Find-slot and prepare have not started.
+ */
+async function assertTaskChecklist(taskFile: string): Promise<void> {
+  const checklist = path.join(path.dirname(taskFile), EXECUTION_CHECKLIST_DOCUMENT);
+  try {
+    await access(checklist, constants.R_OK);
+    if ((await stat(checklist)).isFile()) return;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT' && code !== 'ENOTDIR' && code !== 'EACCES') throw error;
+  }
+  throw new Error(
+    `Task dir has no CHECKLIST.md: ${checklist}. Use --ticket with --execution-template, or provide CHECKLIST.md.`,
+  );
+}
+
 /** One config-derived planner serves creation and queued source revalidation. */
 export async function planRunCreation(
   params: RunCreateParams,
@@ -492,6 +511,7 @@ export async function planRunCreation(
         { cause: error },
       );
     }
+    await assertTaskChecklist(params.taskFile);
   }
   const proof = params.engineState?.evalExperiment?.blind?.proof;
   if (
