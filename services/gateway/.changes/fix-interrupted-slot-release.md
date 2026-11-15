@@ -1,0 +1,1 @@
+- Recover interrupted slot releases through a verified owner retry, and keep unverified checkouts held after the release timeout.

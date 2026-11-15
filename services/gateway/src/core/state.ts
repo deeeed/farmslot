@@ -372,6 +372,13 @@ type HeldPhase = 'ci-watch' | 'pr-watch' | 'occupied';
  * teardown in progress from one that died.
  */
 export const SLOT_RELEASING_SINCE = 'releasing_since';
+export const SLOT_RELEASE_GATEWAY_INSTANCE = 'release_gateway_instance';
+const releaseGatewayInstance = randomBytes(16).toString('hex');
+
+/** A live process keeps its fences; a restarted gateway can prove its predecessor's identity. */
+export function currentReleaseGatewayInstance(): string {
+  return releaseGatewayInstance;
+}
 
 /** Automatic retries cannot confirm a command whose stop was not observed. */
 export const SLOT_CLEANUP_STOP_UNCONFIRMED = 'cleanup_stop_unconfirmed';
@@ -382,6 +389,7 @@ export function slotReleasingFenceFields(now = new Date()): Record<string, unkno
     lifecycle: 'busy',
     phase: SLOT_PHASE_RELEASING,
     [SLOT_RELEASING_SINCE]: now.toISOString(),
+    [SLOT_RELEASE_GATEWAY_INSTANCE]: releaseGatewayInstance,
   };
 }
 
@@ -393,6 +401,7 @@ function slotResetFields(warm: boolean): Record<string, unknown> {
     cleanup_release_token: null,
     cleanup_run_id: null,
     [SLOT_CLEANUP_STOP_UNCONFIRMED]: null,
+    [SLOT_RELEASE_GATEWAY_INSTANCE]: null,
     [SLOT_RELEASING_SINCE]: null,
     agent: 'idle',
     warm,

@@ -1069,10 +1069,16 @@ test('buildRefreshSlotRow carries teardown bookkeeping while its phase survives'
     current_run_id: 'run-tearing-down',
     releasing_since: since,
     cleanup_release_token: 'token-1',
+    release_gateway_instance: 'gateway-instance',
   });
   assert.equal(fenced.phase, 'releasing');
   assert.equal(fenced.releasing_since, since, 'stamp survives refresh');
   assert.equal(fenced.cleanup_release_token, 'token-1', 'finalize token survives refresh');
+  assert.equal(
+    fenced.release_gateway_instance,
+    'gateway-instance',
+    'restart identity survives refresh',
+  );
 
   const disabled = buildRefreshSlotRow(
     { ...probe, mode: 'disabled' },
