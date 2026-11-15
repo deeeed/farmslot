@@ -1,10 +1,11 @@
 {
-  "version": "0.11.0",
-  "date": "2026-11-05",
+  "version": "0.12.0",
+  "date": "2026-11-15",
   "items": [
-    "Share runs, slots and other views through Companion links without configuring a Command Center URL. Links restore display choices and recorded review rounds.",
-    "Recover gateway connections without hiding saved views, with device reachability driving retries.",
-    "Start native conversations from a prompt, a filtered workspace or a custom directory on a catalogued machine.",
-    "Keep review evidence and recorded media available offline, and preserve saved views when the app is updated."
+    "Native conversations render Markdown, highlighted code, file links and diffs with the T3 Code renderer.",
+    "Copy conversation text, open web links and receive links or text in the new Clipboard under Advanced.",
+    "Keep the Android composer above the keyboard and restore shared History and local conversation links.",
+    "Open Advanced workspaces reliably and show sync progress while fleet and PR data catch up.",
+    "Expand checklist instructions on demand and follow long conversations with incremental, virtualized rendering."
   ]
 }

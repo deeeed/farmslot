@@ -1,1 +1,0 @@
-- Show sync progress ("Syncing fleet · 20 of 107") while a fleet or PR list catches up after a reconnect.

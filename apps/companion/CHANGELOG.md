@@ -5,7 +5,32 @@ All notable changes to `@farmslot/mobile` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.12.0 - 2026-11-15
+
 - An assigned review card uses the same reasoning-effort label as Command Center. A blank effort reads "default". A stored "off" stays "off".
+- Workspace installs leave Sherpa downloads to Companion's native build hooks. Prebuild, local Android/iOS builds and EAS fetch and validate the native libraries before compilation.
+- Tap checklist step titles to show or hide their instructions, collapsed by default.
+- Add Clipboard under Advanced: tappable Links and copy-ready text agents sent you, one-tap Copy, and a banner when a new clip arrives.
+- Follow native and Co-Pilot conversations through the shared incremental stream, preserving saved history and draft handoffs.
+- Render native ACP tool edits with the shared diff formatter and persistent tool disclosure.
+- Native conversations draw assistant replies and proposed plans as native markdown with highlighted code blocks, adopted from T3 Code's mobile renderer.
+- File links in a reply (`path:line`, `#L12`, file-named inline code) show as chips; tapping one opens the session's file at that line in a native, highlighted viewer, and markdown files open rendered with a Raw toggle.
+- Tool edits and each turn's changed files open in T3 Code's native diff view with syntax highlighting.
+- Native conversations: every message, tool command, raw tool output and plan has a Copy action that copies its exact text, and http(s) addresses in message text open in the browser. Other schemes stay plain text.
+- Keep the native conversation composer and its text visible above the Android keyboard while typing.
+- Restore the Review History choice from shared links and retain it across native tab navigation.
+- Restore local native conversations from links that omit the execution node instead of showing a blank screen.
+- Run Detail no longer logs a duplicate-key warning on every open: the title stopped sharing the linked-tickets control's key, which still resets the ticket draft per run.
+- Fleet, Decision inbox, PR dashboard, Backlog, Roadmap and Co-Pilot open again from Advanced, links and the inbox notification instead of landing on Review, and pairing or a deep link no longer stacks a second copy of the tabs.
+- Keep review refresh pending until the gateway responds or disconnects.
+- Offer the shared fresh-chain choice when requesting a PR review.
+- Show sync progress ("Syncing fleet · 20 of 107") while a fleet or PR list catches up after a reconnect.
+- Reuse held review source and request missing files through batched reads.
+- The native stream stack proof script waits for the gateway's now-asynchronous sign-in checks.
+- The review-curation proof script reads GitHub through a local HTTP fixture instead of a fake `gh`.
+- Keep long native conversations smooth while they stream and while you type: the transcript renders only the messages on screen, and a message that did not change is not drawn again.
+- Lists read the smaller `run.list` rows. Evidence chips, the evidence count and the recent-family Diff button use the gateway's evidence summary. Run detail paints its header card (status, ref, tickets, title, terminal tile, slot line) from the list row while `run.get` loads, in the same layout as the loaded screen, so nothing in it moves when the detail lands. Run detail, gate review and the artifact viewer read `run.get` for everything else: when a newer list row arrives first, the header shows its status while the package and evidence stay on screen until the reread lands. Run QA from a finished review reads the review from `run.get`, whether or not the run is in the loaded list, before it opens the request, and says so when that read fails.
 
 ## 0.11.0 - 2026-11-05
 
