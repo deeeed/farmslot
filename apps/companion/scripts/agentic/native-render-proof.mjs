@@ -125,9 +125,10 @@ if (phase === 'pair') {
   let outcome = '';
   for (let attempt = 0; outcome !== 'Companion paired'; attempt++) {
     assert(attempt < 3, 'Pairing failed three times');
+    // Open the device session first: opening the app after the link can deliver the link again.
+    device('open', 'net.siteed.farmslot.development');
     const { link } = await call('POST', '/pair');
     execFileSync('xcrun', ['simctl', 'openurl', simulator, link]);
-    device('open', 'net.siteed.farmslot.development');
     const deadline = Date.now() + 120000;
     for (outcome = ''; outcome !== 'Companion paired' && outcome !== 'Pairing failed'; ) {
       assert(Date.now() < deadline, 'Pairing did not finish');
