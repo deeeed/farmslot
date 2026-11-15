@@ -80,6 +80,7 @@ import {
   runDetailHeaderModel,
 } from './run-detail-model.js';
 import type { RunDetailPanelId } from './run-detail-panels.js';
+import { renderToolUsagePanel } from './run-detail-tool-usage.js';
 import { runInventoryHashFromDetail } from './run-detail-url-state.js';
 import { stepInspectorTaskProgress } from './run-pipeline-model.js';
 import { renderReviewProcess, renderRunReviewResult } from './run-review-result-renderer.js';
@@ -998,6 +999,18 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             <div class="meta-value">${r.metrics.sessionTurns.toLocaleString()}</div>
           </div>`
         : nothing}
+      ${r.metrics.sessionToolCalls != null
+        ? html`<div class="meta-item" data-testid="run-tool-calls">
+            <div class="meta-label">Tool calls</div>
+            <div class="meta-value">
+              ${r.metrics.sessionToolCalls.toLocaleString()}${r.metrics
+                .sessionToolCallsBeforeFirstMark != null
+                ? html` · ${r.metrics.sessionToolCallsBeforeFirstMark.toLocaleString()} before mark
+                  1`
+                : nothing}
+            </div>
+          </div>`
+        : nothing}
       ${r.metrics.costEstimate
         ? html`<div class="meta-item">
             <div class="meta-label">Cost</div>
@@ -1096,6 +1109,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         @step-select=${(e: CustomEvent) => ctx.onStepSelect(e.detail.step)}
       >
         <div slot="canvas-detail">
+          ${renderToolUsagePanel(r, ctx)}
           ${history.roundCount || history.segments.length || history.chain.length
             ? renderCollapsiblePanel({
                 id: 'run-review-history',

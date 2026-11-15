@@ -1,3 +1,4 @@
+import type { ChecklistMark } from '@farmslot/agent-runtime/tool-usage';
 import type { NativeWorkerSessionBinding } from '@farmslot/protocol';
 import type { PiModelCostMetadata, SessionUsageWindow } from '@farmslot/slot-config';
 
@@ -20,6 +21,8 @@ export interface NativeSessionUsageRequest {
   /** Explicit pool node for terminal sessions, which have no native host binding. */
   executionNodeId?: string;
   usageWindow?: SessionUsageWindow;
+  /** The run attempt's checklist marks, so tool calls split at the same steps. */
+  checklistMarks?: ChecklistMark[];
 }
 
 const SESSION_USAGE_MODULE = String.raw`
@@ -172,10 +175,10 @@ for (const request of input) {
     const context = await contextFor(request);
     usageWindow = context.usageWindow || request.usageWindow;
     const file = await locate(request, context);
-    const key = JSON.stringify([request.provider, request.runnerSessionId, file, request.liteLlmPrices, usageWindow]);
+    const key = JSON.stringify([request.provider, request.runnerSessionId, file, request.liteLlmPrices, usageWindow, request.checklistMarks]);
     let output = measured.get(key);
     if (!output) {
-      output = await runSessionUsage({ repo: '', slotId: request.slotId, action: 'total', forcedPath: file, forcedRunner: request.runner, usageWindow, ...(request.liteLlmPrices ? { liteLlmPrices: new Map(request.liteLlmPrices) } : {}) });
+      output = await runSessionUsage({ repo: '', slotId: request.slotId, action: 'total', forcedPath: file, forcedRunner: request.runner, usageWindow, checklistMarks: request.checklistMarks, ...(request.liteLlmPrices ? { liteLlmPrices: new Map(request.liteLlmPrices) } : {}) });
       if (usageWindow && !output.split('\n').includes('usage_window=' + JSON.stringify(usageWindow)))
         throw Error('Installed accounting module did not apply the requested run usage window');
       measured.set(key, output);
@@ -208,13 +211,14 @@ export function forcedSessionUsageArgv(
   runner: string | null | undefined,
   sessionPath: string,
   modulePath?: string,
+  checklistMarks?: ChecklistMark[],
 ): string[] {
   const program =
     SESSION_USAGE_MODULE +
     String.raw`
 const input = JSON.parse(process.argv[1]);
 try {
-  process.stdout.write(await runSessionUsage({ repo: '', slotId: input.slotId, action: 'total', forcedPath: input.sessionPath, forcedRunner: input.runner }));
+  process.stdout.write(await runSessionUsage({ repo: '', slotId: input.slotId, action: 'total', forcedPath: input.sessionPath, forcedRunner: input.runner, checklistMarks: input.checklistMarks }));
 } catch (error) {
   process.stderr.write(error instanceof SyntaxError ? 'Session accounting source contains invalid structured data' : error instanceof Error ? error.message : 'Session accounting failed');
   process.exitCode = 1;
@@ -227,7 +231,7 @@ try {
     '--input-type=module',
     '-e',
     program,
-    JSON.stringify({ slotId, runner, sessionPath }),
+    JSON.stringify({ slotId, runner, sessionPath, checklistMarks }),
     modulePath ?? '',
   ];
 }

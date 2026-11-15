@@ -1,0 +1,1 @@
+- Session usage receipts carry `toolUsage`: tool calls in total and by name, the count before the first checklist mark, and tool calls, tokens and wall time for each stretch between checklist marks. Run metrics add `sessionToolCalls` and `sessionToolCallsBeforeFirstMark`.

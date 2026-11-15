@@ -1,0 +1,1 @@
+- Worker session accounting counts tool calls from the same transcript as turns and tokens, for every runner, and splits calls, tokens and wall time at the run's checklist marks. The run record keeps the totals; each session receipt keeps the per-step table.

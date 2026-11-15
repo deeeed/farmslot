@@ -1,0 +1,1 @@
+- Session usage `total` prints a `tool_usage=` line counted by the runner's tool-usage adapter, split at the checklist marks passed in.

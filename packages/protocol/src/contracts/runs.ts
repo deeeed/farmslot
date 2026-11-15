@@ -725,6 +725,41 @@ export interface RunnerSessionUsage {
   /** Transcript total at measurement time, or usage first observed within the owning run. */
   scope?: 'session-total' | 'run-delta';
   error?: string;
+  /** Tool calls from the same transcript, split at the checklist marks. Absent for older receipts. */
+  toolUsage?: SessionToolUsage;
+  /** Why tool calls could not be counted while the token totals could. */
+  toolUsageError?: string;
+}
+
+/** One stretch of a session between checklist marks. */
+export interface SessionToolUsageSegment {
+  /** `before-first-mark` ends at the first mark, `step` at a later mark, `after-last-mark` at the end. */
+  segment: 'before-first-mark' | 'step' | 'after-last-mark';
+  /** The step whose mark closes the segment. Absent after the last mark. */
+  stepNumber?: number;
+  title?: string;
+  startedAt: string;
+  endedAt: string;
+  wallMs: number;
+  toolCalls: number;
+  toolCallsByName: Record<string, number>;
+  /** Null when the runner records no timed token usage. */
+  totalTokens: number | null;
+}
+
+/** Tool calls of one agent session (or the sum of a run's sessions). */
+export interface SessionToolUsage {
+  /** Calls are attributed to the segment in which the model issued them. */
+  attribution: 'issuedAt';
+  toolCalls: number;
+  toolCallsByName: Record<string, number>;
+  /** Null when the session has no checklist marks. */
+  toolCallsBeforeFirstMark: number | null;
+  /** Calls whose transcript records no time; counted in totals, not in any segment. */
+  untimedToolCalls: number;
+  steps: SessionToolUsageSegment[];
+  /** Why `steps` is empty: no checklist marks, or a transcript that records no call times. */
+  stepsUnavailable?: string;
 }
 
 export type ReviewLoopTimelineSegmentKind = 'review' | 'worker-fix' | 're-review';
@@ -1966,6 +2001,9 @@ export interface RunMetrics {
   // Session-truth fields populated from the worker's transcript via session-usage.sh.
   // Help diagnose cost anomalies (e.g. dispatched sonnet but fast-mode forced opus).
   sessionTurns?: number;
+  /** Worker tool calls, all sessions; see `sessionUsage[].toolUsage` for the per-step split. */
+  sessionToolCalls?: number;
+  sessionToolCallsBeforeFirstMark?: number;
   /** Native usage capture failure, retained rather than displayed as observed zero. */
   sessionUsageError?: string;
   sessionInputTokens?: number;
