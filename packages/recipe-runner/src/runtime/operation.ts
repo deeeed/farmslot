@@ -93,6 +93,15 @@ export function processStillRunning(pid: number, startedAt: string | undefined):
   return identity === null || identity === startedAt;
 }
 
+/**
+ * One operation's log stops here. Teeing a command's own output into the log
+ * means a long verbose run writes everything it prints, where it used to write
+ * nothing, and a farm node can be down to its last couple of GiB. The marker
+ * reports what was dropped, so a reader is never left guessing whether the log
+ * simply ended.
+ */
+const MAX_OPERATION_LOG_BYTES = 2 * 1024 * 1024;
+
 export class OperationRecord {
   readonly file: string;
   readonly value: TaskOperation;
@@ -100,6 +109,8 @@ export class OperationRecord {
   private readonly timer: ReturnType<typeof setInterval>;
   private lastFlush = 0;
   private disabled = false;
+  private logBytes = 0;
+  private droppedBytes = 0;
   private readonly notification?: string;
 
   constructor(
@@ -152,8 +163,17 @@ export class OperationRecord {
 
   output(chunk: string | Uint8Array): void {
     if (chunk.length === 0) return;
+    const bytes = typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.byteLength;
+    // A chunk that would cross the cap is dropped whole rather than split, so
+    // the log never ends mid-line and the file stays under the limit.
+    if (this.logBytes + bytes > MAX_OPERATION_LOG_BYTES) {
+      this.droppedBytes += bytes;
+      this.value.lastOutputAt = new Date().toISOString();
+      return;
+    }
     this.observe(() => {
       fs.appendFileSync(this.value.logPath, chunk);
+      this.logBytes += bytes;
       this.value.lastOutputAt = new Date().toISOString();
       if (Date.now() - this.lastFlush >= 1000) this.flush();
     });
@@ -161,6 +181,14 @@ export class OperationRecord {
 
   finish(exitCode: number): void {
     clearInterval(this.timer);
+    // One line, once, after the last output: the total is only known now.
+    if (this.droppedBytes > 0)
+      this.observe(() =>
+        fs.appendFileSync(
+          this.value.logPath,
+          `\n[log truncated at ${MAX_OPERATION_LOG_BYTES} bytes; ${this.droppedBytes} further bytes dropped]\n`,
+        ),
+      );
     this.value.exitCode = exitCode;
     this.value.status = exitCode === 0 ? 'pass' : 'fail';
     this.value.finishedAt = new Date().toISOString();

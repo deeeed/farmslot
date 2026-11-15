@@ -1,0 +1,1 @@
+- An operation log stops at 2 MiB, with one truncation line naming the bytes dropped. A chunk that would cross the cap is dropped whole, so the file never ends mid-line.
