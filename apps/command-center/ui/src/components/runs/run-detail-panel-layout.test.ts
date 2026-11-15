@@ -527,6 +527,58 @@ test('the parent acceptance panel owns the only collapse header', () => {
   assert.match(plain, /class="ac-summary"/);
 });
 
+test('write-task shows registered criteria without an absent-task ledger failure or zero tally', () => {
+  const element = pipeline();
+  element.run = {
+    ...run,
+    taskFile: null,
+    status: 'preparing',
+    steps: [{ name: 'write-task', status: 'running' }],
+  };
+  element.acceptanceStatus = null;
+  element.acceptanceCriteria = [
+    { id: 'AC-1', text: 'Retained criteria from an unrelated previous read' },
+  ];
+  element.acceptanceStatusError = 'No task file exists';
+  element.acceptanceRowHeld = true;
+  const waiting = litText(element.render());
+  assert.match(waiting, /Criteria will appear when the task is written/);
+  assert.doesNotMatch(
+    waiting,
+    /0\/0|ledger unreadable|No task file exists|unrelated previous read/,
+  );
+  element.run = {
+    ...element.run,
+    acceptanceRegistration: {
+      schemaVersion: 1,
+      runId: run.id,
+      revision: 1,
+      intake: {
+        provider: 'github',
+        repository: 'example/app',
+        prNumber: 1,
+        headSha: 'a'.repeat(40),
+        capturedAt: run.createdAt,
+      },
+      original: [{ id: 'AC-1', text: 'Registered for this task' }],
+      derived: [],
+      units: [],
+    },
+  };
+  const registered = litText(element.render());
+  assert.match(registered, /Registered for this task/);
+  assert.doesNotMatch(registered, /0\/0|ledger unreadable|unrelated previous read/);
+});
+
+test('diagnostic-only evidence never claims a zero acceptance tally', () => {
+  const element = pipeline();
+  element.acceptanceStatus = { schemaVersion: 1, criteria: [] };
+  element.acceptanceStatusError = 'Recorded task ledger is malformed';
+  const text = litText(element.render());
+  assert.doesNotMatch(text, /0\/0/);
+  assert.match(text, /Recorded task ledger is malformed/);
+});
+
 test('static review header keeps the machine, workspace and checkout visible after cleanup', () => {
   const ctx = context();
   ctx.run = {
