@@ -85,7 +85,7 @@ import {
 
 import '../shared/review-dispatch-picker.js';
 import './chat-message.js';
-// Also registers <diff-review>, which shows a turn's file diffs.
+import '../diff-viewer/pierre-views.js';
 import './native-workspace.js';
 import './native-profiles.js';
 
@@ -100,12 +100,15 @@ import {
 import { getState, subscribe } from '../../state.js';
 import { copyTextToClipboard } from '../../utils/clipboard.js';
 import { safeLsGet, safeLsRemove, safeLsSet } from '../../utils/storage.js';
+import { resolvePathLinkTarget, splitFilePathPosition } from '../../utils/t3/fileLinks.js';
+import { isAbsolutePath, workspaceRelativeFilePath } from '../../utils/t3/path.js';
 import { buildHash, hashParams, navigateHash, parseHashRoute } from '../../utils/url-state.js';
 import { browserViewState, viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 import { readStored } from '../shared/read-current.js';
 import { heldDataIsSaved, isSupersededRead } from '../shared/resource-query-controller.js';
 
+import type { ChatOpenFileDetail } from './chat-message.js';
 import { draftWithContext, takeNativeChatContext } from './native-chat-context.js';
 import type { NativeProfileSelection } from './native-profiles.js';
 import { renderNativeSessionHeader } from './native-session-header.js';
@@ -760,7 +763,10 @@ export class NativeSessionView extends LitElement {
       };
       this.chatMessages.set(entry, message);
     }
-    return html`<chat-message .message=${message}></chat-message>`;
+    return html`<chat-message
+      .message=${message}
+      ?fileLinks=${this.workspaceAllowed}
+    ></chat-message>`;
   }
 
   /**
@@ -860,7 +866,10 @@ export class NativeSessionView extends LitElement {
             ${!opened
               ? nothing
               : fetched?.diff
-                ? html`<diff-review .filename=${file.path} .diff=${fetched.diff}></diff-review>`
+                ? html`<pierre-diff-view
+                    .filename=${file.path}
+                    .diff=${fetched.diff}
+                  ></pierre-diff-view>`
                 : html`<p class="meta">
                     ${fetched?.error ??
                     (fetched?.diff === ''
@@ -924,11 +933,10 @@ ${JSON.stringify(
           ${this.testFilter.renderControls(diffs.summary)}
           ${diffs.visible.map(
             ({ diff }) =>
-              html`<diff-review
+              html`<pierre-diff-view
                 .filename=${diff.path}
                 .diff=${nativeToolDiffText(diff)}
-                .newFile=${diff.oldText === null}
-              ></diff-review>`,
+              ></pierre-diff-view>`,
           )}
         </section>`
       : nothing;
@@ -1003,8 +1011,35 @@ ${JSON.stringify(
     return !this.worker || (!this.taskHistory && Boolean(this.workerControl));
   }
 
+  /**
+   * A file chip in the conversation opens that file in the session's workspace panel, at its line.
+   * A path outside the session's directory cannot be read there, and says so.
+   */
+  private readonly openFile = (event: CustomEvent<ChatOpenFileDetail>) => {
+    const cwd = this.session?.cwd;
+    if (!cwd || !this.workspaceAllowed) return;
+    const { path, line } = event.detail;
+    const relative = isAbsolutePath(path)
+      ? workspaceRelativeFilePath(path, cwd)
+      : path.startsWith('~/')
+        ? workspaceRelativeFilePath(
+            splitFilePathPosition(resolvePathLinkTarget(path, cwd)).path,
+            cwd,
+          )
+        : path.replace(/^(?:\.\/)+/, '');
+    if (!relative || relative === '.' || relative.split('/').includes('..')) {
+      this.error = `${path} is outside this conversation's workspace (${cwd}).`;
+      return;
+    }
+    this.workspace = true;
+    void this.updateComplete.then(() =>
+      this.renderRoot.querySelector('native-workspace')?.openPath(relative, line ?? 0),
+    );
+  };
+
   connectedCallback() {
     super.connectedCallback();
+    this.addEventListener('chat-open-file', this.openFile);
     this.globalStop = subscribe(() => this.requestUpdate());
     const params = hashParams();
     if (this.initialExecutionNodeId) this.executionNodeId = this.initialExecutionNodeId;
@@ -1038,6 +1073,7 @@ ${JSON.stringify(
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    this.removeEventListener('chat-open-file', this.openFile);
     clearTimeout(this.savedHistoryBoundary);
     document.removeEventListener('fullscreenchange', this.fullscreenChanged);
     this.revision++;

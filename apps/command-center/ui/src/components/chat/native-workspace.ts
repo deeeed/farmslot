@@ -12,12 +12,12 @@ import {
   viewTextField,
 } from '@farmslot/protocol';
 
-import '../diff-viewer/code-viewer.js';
-import '../diff-viewer/diff-review.js';
+import '../diff-viewer/pierre-views.js';
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { diffSelectionHandOff } from '../../utils/diff-test-filter.js';
+import { renderChatMarkdown } from '../../utils/markdown.js';
 import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 import { WorkspaceReads } from '../workspace/workspace-reads.js';
@@ -39,6 +39,9 @@ export interface NativeSessionApi {
   request<T = unknown>(method: NativeSessionCommand, params?: unknown): Promise<T>;
 }
 
+/** Extensions T3 Code previews as rendered Markdown. */
+const isMarkdownPath = (path: string) => /\.(?:md|mdx|markdown|mdown|mkd)$/i.test(path);
+
 @customElement('native-workspace')
 export class NativeWorkspace extends LitElement {
   @property() sessionId = '';
@@ -53,6 +56,10 @@ export class NativeWorkspace extends LitElement {
   @state() private source?: NativeWorkspaceReadResult;
   @state() private diff?: NativeWorkspaceDiffResult;
   @state() private display: 'source' | 'diff' = 'diff';
+  /** Line a file link asked to reveal in the source view; 0 for none. */
+  @state() private line = 0;
+  /** A Markdown file shows rendered unless the reader chose its source. */
+  @state() private markdownView: 'rendered' | 'raw' = 'rendered';
   @state() private error = '';
   @state() private loading = false;
   private revision = 0;
@@ -104,6 +111,13 @@ export class NativeWorkspace extends LitElement {
           this.display = value;
         },
       ),
+      viewBinding(
+        viewChoiceField<'rendered' | 'raw'>('nativeMarkdownView', 'rendered', ['rendered', 'raw']),
+        () => this.markdownView,
+        (value) => {
+          this.markdownView = value;
+        },
+      ),
     ],
     () => {
       if (this.hasUpdated && this.sessionId) void this.refresh();
@@ -132,7 +146,8 @@ export class NativeWorkspace extends LitElement {
     button:focus-visible {
       outline: 2px solid ${unsafeCSS(colors.accent)};
     }
-    button[aria-selected='true'] {
+    button[aria-selected='true'],
+    button[aria-pressed='true'] {
       border-color: ${unsafeCSS(colors.accent)};
       color: ${unsafeCSS(colors.accent)};
     }
@@ -178,10 +193,48 @@ export class NativeWorkspace extends LitElement {
       display: flex;
       flex-direction: column;
     }
-    .viewer code-viewer,
-    .viewer diff-review {
+    .viewer pierre-file-view,
+    .viewer pierre-diff-view,
+    .viewer .markdown {
       flex: 1;
       min-height: 0;
+    }
+    .markdown {
+      overflow: auto;
+      padding: 8px 12px;
+      font-family: system-ui, sans-serif;
+      font-size: ${unsafeCSS(fonts.sizeMd)};
+      line-height: 1.5;
+    }
+    .markdown a {
+      color: ${unsafeCSS(colors.accent)};
+    }
+    .markdown code {
+      font-family: ${unsafeCSS(fonts.mono)};
+      background: ${unsafeCSS(colors.bgSidebar)};
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+    .markdown pre {
+      background: ${unsafeCSS(colors.bgSidebar)};
+      padding: 8px;
+      border-radius: 4px;
+      overflow: auto;
+    }
+    .markdown pre code {
+      background: none;
+      padding: 0;
+    }
+    .markdown .cm-code-head {
+      display: none;
+    }
+    .markdown table {
+      border-collapse: collapse;
+    }
+    .markdown th,
+    .markdown td {
+      border: 1px solid ${unsafeCSS(colors.bgCardHover)};
+      padding: 2px 6px;
     }
     .error {
       color: ${unsafeCSS(colors.statusFail)};
@@ -269,13 +322,33 @@ export class NativeWorkspace extends LitElement {
     }
   }
 
+  /**
+   * Opens `path` (relative to the workspace) in the Files tab at `line`, as a file link in the
+   * conversation asks. Its directory is listed so the file shows selected in the list.
+   */
+  async openPath(path: string, line = 0) {
+    const directory = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '.';
+    if (this.tab !== 'files' || this.directory !== directory) {
+      this.reads.clear();
+      this.tab = 'files';
+      this.directory = directory;
+      this.selected = '';
+      this.source = undefined;
+      this.diff = undefined;
+      await this.refresh();
+    }
+    await this.openFile(path, 'source', this.sessionId, this.executionNodeId, line);
+  }
+
   private async openFile(
     path: string,
     display: 'source' | 'diff',
     sessionId = this.sessionId,
     executionNodeId = this.executionNodeId,
+    line = 0,
   ) {
     const revision = ++this.revision;
+    this.line = line;
     this.reads.releaseMethods([
       Methods.NATIVE_SESSION_WORKSPACE_READ,
       Methods.NATIVE_SESSION_WORKSPACE_DIFF,
@@ -363,7 +436,7 @@ export class NativeWorkspace extends LitElement {
    */
   private renderDiff(diff: NativeWorkspaceDiffResult) {
     const review = () =>
-      html`<diff-review .filename=${diff.path} .diff=${diff.diff}></diff-review>`;
+      html`<pierre-diff-view .filename=${diff.path} .diff=${diff.diff}></pierre-diff-view>`;
     return this.tab === 'files' || this.testFilter.hides(diff.path)
       ? this.testFilter.renderFileDiff(diff.path, review)
       : review();
@@ -495,12 +568,7 @@ export class NativeWorkspace extends LitElement {
               </header>`
             : nothing}
           ${this.source
-            ? html`<code-viewer
-                .readOnly=${true}
-                .filename=${this.source.path}
-                .content=${this.source.content}
-                .language=${this.language(this.source.path)}
-              ></code-viewer>`
+            ? this.renderSource(this.source)
             : this.diff
               ? this.diff.diff
                 ? this.renderDiff(this.diff)
@@ -512,27 +580,49 @@ export class NativeWorkspace extends LitElement {
       </div>`;
   }
 
-  private language(path: string): string {
-    const extension = path.split('.').at(-1) ?? '';
-    return (
-      (
-        {
-          ts: 'typescript',
-          tsx: 'typescript',
-          js: 'javascript',
-          jsx: 'javascript',
-          json: 'json',
-          md: 'markdown',
-          py: 'python',
-          sh: 'shell',
-          css: 'css',
-          html: 'html',
-          yml: 'yaml',
-          yaml: 'yaml',
-          rs: 'rust',
-          go: 'go',
-        } as Record<string, string>
-      )[extension] ?? 'plaintext'
-    );
+  /** A Markdown file shows rendered (or its source, by choice); any other file, highlighted. */
+  private renderSource(source: NativeWorkspaceReadResult) {
+    if (!isMarkdownPath(source.path) || this.line > 0)
+      return html`<pierre-file-view
+        .path=${source.path}
+        .content=${source.content}
+        .line=${this.line}
+      ></pierre-file-view>`;
+    return html`<header>
+        <button
+          aria-pressed=${this.markdownView === 'rendered'}
+          data-testid="workspace-markdown-rendered"
+          @click=${() => {
+            this.markdownView = 'rendered';
+          }}
+        >
+          Rendered
+        </button>
+        <button
+          aria-pressed=${this.markdownView === 'raw'}
+          data-testid="workspace-markdown-raw"
+          @click=${() => {
+            this.markdownView = 'raw';
+          }}
+        >
+          Raw
+        </button>
+      </header>
+      ${this.markdownView === 'rendered'
+        ? html`<div
+            class="markdown"
+            data-testid="workspace-markdown"
+            .innerHTML=${renderChatMarkdown(source.content)}
+          ></div>`
+        : html`<pierre-file-view
+            .path=${source.path}
+            .content=${source.content}
+          ></pierre-file-view>`}`;
+  }
+}
+
+declare global {
+  interface HTMLElementTagNameMap {
+    'native-workspace': NativeWorkspace;
   }
 }

@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import DOMPurify from 'dompurify';
 
+import { preloadCodeLanguage } from './code-highlight.js';
 import { chatMarkdownHtml, renderChatMarkdown } from './markdown.js';
 
 const NEW_TAB = ' target="_blank" rel="noopener noreferrer"';
@@ -46,7 +47,12 @@ test('chat markdown renders lists, links, code and tables, and shows raw HTML as
   const html = rendered.replaceAll(NEW_TAB, '');
   assert.match(html, /<ul>\s*<li>fixed the <strong>test<\/strong><\/li>/);
   assert.match(html, /<a href="https:\/\/example.com\/pr\/1">the PR<\/a>/);
-  assert.match(html, /<pre><code class="language-ts">const a = `\*\*not bold\*\*`;/);
+  // A fenced block sits in T3 Code's frame: its language, then wrap and copy controls.
+  assert.match(
+    html,
+    /<div class="cm-code" data-wrap="true"><div class="cm-code-head"><span class="cm-code-lang">ts<\/span>.*data-code-action="wrap".*data-code-action="copy"/,
+  );
+  assert.match(html, /<pre><code>const a = `\*\*not bold\*\*`;/);
   assert.match(html, /<td>lint<\/td>/);
   assert.match(
     html,
@@ -139,4 +145,50 @@ test('unchanged blocks come from the cache; a streamed delta renders only the ta
   sanitize.mock.resetCalls();
   renderChatMarkdown(closed);
   assert.equal(sanitize.mock.callCount(), 1, 'the finished tail is now cached');
+});
+
+test('a code block renders highlighted once its language has loaded', async () => {
+  const md = '```ts\nconst answer: number = 42;\n```';
+  await preloadCodeLanguage('ts');
+  const html = renderChatMarkdown(md);
+  assert.match(html, /<pre[^>]*style=/, 'the highlighter themes the block');
+  assert.match(html, /<span[^>]*style="[^"]*color/, 'tokens are coloured');
+  assert.equal(
+    html.replace(/<[^>]+>/g, '').replace('tsWrapCopy', ''),
+    'const answer: number = 42;',
+    'the code text is unchanged',
+  );
+  // An unknown language falls back to plain text rather than failing.
+  await preloadCodeLanguage('not-a-language-9c1');
+  assert.match(renderChatMarkdown('```not-a-language-9c1\nplain\n```'), /plain/);
+});
+
+test('with file links on, paths become workspace chips and other links stay links', () => {
+  const md = [
+    'See [src/a.ts:12](src/a.ts:12), [the store](services/gateway/src/store.ts#L40),',
+    '`packages/x/src/y.ts:3`, [docs](https://example.com/docs), `node.js` and `npm test`.',
+  ].join('\n');
+  const html = renderChatMarkdown(md, { fileLinks: true });
+  assert.match(
+    html,
+    /<a href="#" class="cm-file" data-file-path="src\/a.ts" data-file-line="12" title="src\/a.ts:12">a.ts · L12<\/a>/,
+  );
+  assert.match(
+    html,
+    /data-file-path="services\/gateway\/src\/store.ts" data-file-line="40"[^>]*>the store<\/a>/,
+    'a link with its own text keeps it',
+  );
+  assert.match(
+    html,
+    /data-file-path="packages\/x\/src\/y.ts" data-file-line="3"[^>]*><code>packages\/x\/src\/y.ts:3<\/code><\/a>/,
+  );
+  assert.match(
+    html,
+    /<a target="_blank" rel="noopener noreferrer" href="https:\/\/example.com\/docs">docs<\/a>/,
+  );
+  assert.match(html, /<code>node.js<\/code>/);
+  assert.match(html, /<code>npm test<\/code>/);
+  assert.equal(html.split('cm-file').length - 1, 3, 'exactly the three paths');
+  // Off by default: hosts without a workspace keep plain links and code.
+  assert.doesNotMatch(renderChatMarkdown(md), /cm-file/);
 });

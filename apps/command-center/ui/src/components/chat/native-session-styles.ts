@@ -295,7 +295,7 @@ export const nativeSessionStyles = css`
     width: 100%;
     text-align: left;
   }
-  .turn-files diff-review {
+  .turn-files pierre-diff-view {
     display: block;
     max-height: 480px;
     overflow: auto;

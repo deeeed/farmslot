@@ -1,0 +1,28 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Native chat rendering in Command Center",
+  "description": "Isolated: a synthetic Claude peer answers through the real native host and an in-process gateway (temp FARMSLOT_HOME/root, own ports, never the operator gateway) with a markdown reply and one changed workspace file. Command Center from this checkout, driven through CDP with real clicks (Agent Chrome on FARMSLOT_CDP_PORT), must render the code block highlighted with wrap and copy, open file links in the workspace at their line, show a .md rendered with a raw toggle, render the turn diff, and offer a message copy. Each node fails when its code path is removed. Evidence goes to FARMSLOT_RENDERING_PROOF_OUTPUT.",
+  "workflow": {
+    "entry": "message",
+    "nodes": {
+      "message": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/native-chat-rendering.mts --out \"${FARMSLOT_RENDERING_PROOF_OUTPUT:-${TMPDIR:-/tmp}/native-chat-rendering-proof}/message\" --only code,copy,wrap,message",
+        "intent": "The fenced block is highlighted in its frame; copy says Copied; wrap turns off; the message has a copy button.",
+        "timeout_ms": 600000,
+        "next": "workspace"
+      },
+      "workspace": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/native-chat-rendering.mts --out \"${FARMSLOT_RENDERING_PROOF_OUTPUT:-${TMPDIR:-/tmp}/native-chat-rendering-proof}/workspace\" --only file-link,markdown,turn-diff",
+        "intent": "A file chip opens src/app.ts at line 42, selected and in view; docs/GUIDE.md opens rendered and then raw; the turn's diff renders its added lines.",
+        "timeout_ms": 600000,
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

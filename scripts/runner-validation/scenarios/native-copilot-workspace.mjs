@@ -528,7 +528,7 @@ export async function runScenario({ runnerAdapter, timeoutMs = 180000, outDir, m
         await until(
           () =>
             evaluate(
-              `return Boolean(${viewRoot}?.querySelector('native-workspace')?.shadowRoot?.querySelector('diff-review')?.textContent.includes('Hello from Farmslot'));`,
+              `return Boolean(${viewRoot}?.querySelector('native-workspace')?.shadowRoot?.querySelector('pierre-diff-view')?.renderedText.includes('Hello from Farmslot'));`,
             ),
           'rendered diff',
         );
@@ -543,9 +543,9 @@ export async function runScenario({ runnerAdapter, timeoutMs = 180000, outDir, m
         await until(
           () =>
             evaluate(
-              `return Boolean(${viewRoot}?.querySelector('native-workspace')?.shadowRoot?.querySelector('code-viewer .view-lines')?.textContent.replace(/\\s+/g,' ').includes('Hello from Farmslot'));`,
+              `return Boolean(${viewRoot}?.querySelector('native-workspace')?.shadowRoot?.querySelector('pierre-file-view')?.renderedText.includes('Hello from Farmslot'));`,
             ),
-          'rendered Monaco source',
+          'rendered source',
         );
         const geometry = await evaluate(
           `const rect=${viewRoot}?.querySelector('[data-testid="native-send"]')?.getBoundingClientRect();return rect?{top:rect.top,bottom:rect.bottom,width:rect.width,height:rect.height,viewport:innerHeight}:null;`,
@@ -574,14 +574,18 @@ export async function runScenario({ runnerAdapter, timeoutMs = 180000, outDir, m
         await evaluate(
           `${workspaceRoot}.querySelector('[data-path="README.md"]').click();return true;`,
         );
-        const readme = fs
+        // A Markdown file opens rendered: its first line's words, without markdown syntax.
+        const readmeText = fs
           .readFileSync(path.join(fixture, 'README.md'), 'utf8')
+          .split('\n')
+          .find((line) => line.trim())
+          .replace(/^#+\s*|[*_`]/g, '')
           .replace(/\s+/g, ' ')
           .trim();
         await until(
           () =>
             evaluate(
-              `return Array.from(${workspaceRoot}?.querySelectorAll('code-viewer .view-line')??[]).map(line=>line.textContent).join(' ').replace(/\\s+/g,' ').trim().includes(${JSON.stringify(readme)});`,
+              `return (${workspaceRoot}?.querySelector('[data-testid="workspace-markdown"]')?.textContent??'').replace(/\\s+/g,' ').trim().includes(${JSON.stringify(readmeText)});`,
             ),
           'root file preview',
         );
@@ -595,7 +599,7 @@ export async function runScenario({ runnerAdapter, timeoutMs = 180000, outDir, m
         );
         assert.equal(
           await evaluate(
-            `return Boolean(${workspaceRoot}?.querySelector('.viewer code-viewer, .viewer diff-review'));`,
+            `return Boolean(${workspaceRoot}?.querySelector('.viewer pierre-file-view, .viewer pierre-diff-view, .viewer .markdown'));`,
           ),
           false,
           'Directory descent retained the previous file preview',
@@ -606,7 +610,7 @@ export async function runScenario({ runnerAdapter, timeoutMs = 180000, outDir, m
         await until(
           () =>
             evaluate(
-              `return ${workspaceRoot}?.querySelector('code-viewer .view-lines')?.textContent.replace(/\\s+/g,' ').includes('Hello from Farmslot')??false;`,
+              `return ${workspaceRoot}?.querySelector('pierre-file-view')?.renderedText.includes('Hello from Farmslot')??false;`,
             ),
           'child file preview',
         );

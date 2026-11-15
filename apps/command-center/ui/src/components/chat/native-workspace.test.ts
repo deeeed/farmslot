@@ -7,9 +7,8 @@ import { FakeControllerHost } from '../../testing/fake-controller-host.js';
 import { litText } from '../../testing/lit-text.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 
-// The viewers pull CSS and Monaco that node can't load; the gateway client opens sockets.
-mock.module('../diff-viewer/diff-review.js', { namedExports: {} });
-mock.module('../diff-viewer/code-viewer.js', { namedExports: {} });
+// The viewers load @pierre/diffs, which needs a DOM; the gateway client opens sockets.
+mock.module('../diff-viewer/pierre-views.js', { namedExports: {} });
 mock.module('../../gateway-client.js', { namedExports: { gateway: {} } });
 
 const { NativeWorkspace } = await import('./native-workspace.js');
@@ -24,6 +23,9 @@ interface Workspace {
   testFilter: DiffTestFilterController;
   api: { request: (method: string, params?: unknown) => Promise<unknown> };
   openFile(path: string, display: 'source' | 'diff'): Promise<void>;
+  openPath(path: string, line?: number): Promise<void>;
+  directory: string;
+  line: number;
   leaveHiddenFile(): void;
   render(): unknown;
 }
@@ -106,4 +108,31 @@ test('non-git Changes is a quiet empty state and Files remains a selectable view
   assert.match(text, /Not a git repository: no file changes to show/);
   assert.match(text, /Files/);
   assert.doesNotMatch(text, /No workspace changes/);
+});
+
+test('a file link opens its file in the Files tab at its line, listing its directory', async () => {
+  const requests: { method: string; params: unknown }[] = [];
+  const view = makeWorkspace(async (method, params) => {
+    requests.push({ method, params });
+    return method === 'native.session.workspace.list'
+      ? { path: 'src/lib', entries: [{ name: 'app.ts', path: 'src/lib/app.ts', directory: false }] }
+      : { path: 'src/lib/app.ts', content: 'line\n'.repeat(50) };
+  });
+
+  await view.openPath('src/lib/app.ts', 42);
+
+  assert.equal(view.tab, 'files');
+  assert.equal(view.directory, 'src/lib');
+  assert.equal(view.selected, 'src/lib/app.ts');
+  assert.equal(view.line, 42);
+  assert.deepEqual(
+    requests.map(({ method, params }) => [method, (params as { path: string }).path]),
+    [
+      ['native.session.workspace.list', 'src/lib'],
+      ['native.session.workspace.read', 'src/lib/app.ts'],
+    ],
+  );
+  // Choosing another file from the list drops the link's line.
+  await view.openFile('src/lib/other.ts', 'source');
+  assert.equal(view.line, 0);
 });

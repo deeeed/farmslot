@@ -15,6 +15,7 @@
     "@farmslot/protocol": "workspace:*",
     "@farmslot/review-dispatch": "workspace:*",
     "@farmslot/theme": "workspace:*",
+    "@pierre/diffs": "1.6.2",
     "@types/qrcode": "^1.5.6",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
