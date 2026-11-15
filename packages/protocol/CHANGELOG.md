@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `WorkerSignalChecklistEvent` declares the fields the mark engine already writes: `skipped`, `reason` and `remarkedAt`, plus `outOfOrder` on the timing. These shipped as undeclared JSON; the shape is unchanged, and `reason` now also carries a note on a step that was done rather than skipped.
 - `WorkerTerminalContractDocument` carries `proofArtifacts`, the evidence each declaring checklist step claims, and `unattendedCompletion`, the gateway's statement that no person answers a refusal on this run.
 
 ## 0.86.0 - 2026-11-15

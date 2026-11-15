@@ -155,6 +155,13 @@ export interface WorkerSignalChecklistTiming {
    * Consumers derive deltas from the event order and timestamps.
    */
   events: WorkerSignalChecklistEvent[];
+  /**
+   * Marks recorded after a later-numbered step, for a ledger written before the
+   * order rule existed. The mark engine now refuses a step whose earlier rows
+   * are unchecked (ADR-064 Amendment 7), so a current run records none; these
+   * read back the anomalies of an older one.
+   */
+  outOfOrder?: Array<{ stepNumber: number; checkedAt: string; after: number }>;
 }
 
 export interface WorkerSignalChecklistEvent {
@@ -164,6 +171,24 @@ export interface WorkerSignalChecklistEvent {
   label: string;
   /** UTC ISO8601 timestamp when the item changed from unchecked to checked. */
   checkedAt: string;
+  /**
+   * Set when the step was waived rather than done: `mark N --skip "<reason>"`
+   * on a step the frozen template declared `[OPTIONAL: <when>]` (ADR-064
+   * Amendment 7). Absent means the work was performed; it is never `false`.
+   */
+  skipped?: boolean;
+  /**
+   * Why, in the worker's words. On a skipped step it is the waiver the template
+   * granted. On a step that was done it is a note the worker recorded about how
+   * it judged the step, which no gate reads.
+   */
+  reason?: string;
+  /**
+   * UTC ISO8601 timestamp of a re-mark that restated an existing claim, written
+   * when a declared proof artifact changed after the first tick (ADR-064
+   * Amendment 5). The original `checkedAt` is retained.
+   */
+  remarkedAt?: string;
 }
 
 export interface WorkerSignalChecklistStepDuration {
