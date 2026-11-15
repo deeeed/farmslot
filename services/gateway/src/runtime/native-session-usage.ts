@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import os from 'node:os';
 import { promisify } from 'node:util';
 
+import type { ChecklistMark } from '@farmslot/agent-runtime/tool-usage';
 import {
   collectPlaceholderTokens,
   type NativeWorkerSessionBinding,
@@ -89,6 +90,7 @@ export interface NativeAgentUsageInput {
   runnerSessionPath?: string | null;
   nativeSession?: NativeSessionUsageIdentity & Partial<NativeWorkerSessionBinding>;
   usageWindow?: SessionUsageWindow;
+  checklistMarks?: ChecklistMark[];
 }
 
 interface NativeAgentUsageResolution {
@@ -125,6 +127,7 @@ export async function resolveNativeAgentSessionUsage(
     slotId: vars.slotId,
     sessionPath: input.runnerSessionPath,
     usageWindow: input.usageWindow,
+    checklistMarks: input.checklistMarks,
     nativeSession: {
       sessionId: nativeSession.sessionId,
       ownerPrincipalId: nativeSession.ownerPrincipalId,

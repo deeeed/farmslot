@@ -1,0 +1,1 @@
+- Run detail shows the worker's tool calls next to Turns, and a "Cost per checklist step" panel with tool calls, tokens and wall time for each step.

@@ -1,4 +1,10 @@
-import type { Run, RunnerSessionUsage } from '@farmslot/protocol';
+import {
+  type ChecklistMark,
+  checklistMarks,
+  mergeToolUsage,
+  type ToolUsage,
+} from '@farmslot/agent-runtime/tool-usage';
+import type { AgentContext, Run, RunnerSessionUsage } from '@farmslot/protocol';
 import { runSessionUsage, type SessionUsageWindow } from '@farmslot/slot-config';
 
 import { loadSlotVars, type SlotVars } from '../core/config.js';
@@ -7,6 +13,7 @@ import { shellQuote } from '../core/tmux.js';
 import { forcedSessionUsageArgv } from '../runners/native-session-usage-command.js';
 import { getRunnerSessionUsageProvider } from '../runners/registry.js';
 import { verifiedRunnerSessionArchivePath } from '../runners/session-archive.js';
+import { checklistTimingContext, checklistTimingForAttempt } from '../tasks/checklist-timing.js';
 
 import {
   recoveredWorkerSessionReceipt,
@@ -33,12 +40,15 @@ export async function extractRunnerSessionUsage({
   runner,
   runnerSessionId,
   runnerSessionPath,
+  checklistMarks,
 }: {
   slotId: string;
   vars?: SlotVars;
   runner?: string | null;
   runnerSessionId?: string | null;
   runnerSessionPath?: string | null;
+  /** The attempt's checklist marks; tool calls, tokens and time are split at them. */
+  checklistMarks?: ChecklistMark[];
 }): Promise<RunnerSessionUsage> {
   if (!runnerSessionPath) {
     return unavailableRunnerSessionUsage({
@@ -50,7 +60,13 @@ export async function extractRunnerSessionUsage({
   }
   try {
     if (vars && !isLocal(vars.host, vars.machine)) {
-      const argv = forcedSessionUsageArgv(slotId, runner, runnerSessionPath);
+      const argv = forcedSessionUsageArgv(
+        slotId,
+        runner,
+        runnerSessionPath,
+        undefined,
+        checklistMarks,
+      );
       const result = await execOnSlot(vars, argv.map(shellQuote).join(' '), {
         timeout: 30_000,
         maxBuffer: 64 * 1024,
@@ -68,6 +84,7 @@ export async function extractRunnerSessionUsage({
       forcedPath: runnerSessionPath,
       forcedRunner: runner ?? null,
       environment: { ...process.env, ...vars?.machineEnv },
+      checklistMarks,
     });
     return parseSessionUsageOutput(output, {
       runner: runner ?? null,
@@ -90,6 +107,7 @@ async function archivedSessionUsage(
   session: Pick<RunnerSessionUsage, 'runnerSessionId' | 'runnerSessionPath'> = {},
   vars?: SlotVars,
   usageWindow?: SessionUsageWindow,
+  marks?: ChecklistMark[],
 ): Promise<RunnerSessionUsage> {
   return parseSessionUsageOutput(
     await runSessionUsage({
@@ -100,9 +118,29 @@ async function archivedSessionUsage(
       forcedRunner: run.metrics.runner,
       environment: { ...process.env, ...vars?.machineEnv },
       usageWindow,
+      checklistMarks: marks,
     }),
     { runner: run.metrics.runner, ...session },
   );
+}
+
+/** The worker checklist's marks from this context's attempt onward (the worker's by default). */
+export function contextChecklistMarks(
+  run: Run,
+  context: AgentContext | undefined = checklistTimingContext(run, 'CHECKLIST.md'),
+): ChecklistMark[] {
+  return checklistMarks(
+    checklistTimingForAttempt(
+      run.metrics.checklistTiming,
+      context?.attemptStartedAt ?? context?.startedAt,
+    ),
+  );
+}
+
+/** Sums the sessions' tool usage only when every session reported it. */
+function totalToolUsage(usages: RunnerSessionUsage[]): ToolUsage | null {
+  const counted = usages.map((usage) => usage.toolUsage);
+  return counted.every((usage) => usage !== undefined) ? mergeToolUsage(counted) : null;
 }
 
 /** Completion and family reads share the same worker-only multi-session accounting. */
@@ -131,6 +169,7 @@ export async function extractRunWorkerSessionUsage(
           row.runner === run.metrics.runner && row.runnerSessionId === session.runnerSessionId,
       );
       const nativeSession = receipt?.nativeSession ?? context?.nativeSession;
+      const marks = contextChecklistMarks(run, context);
       let usageWindow: SessionUsageWindow | undefined;
       if (nativeSession) {
         try {
@@ -155,6 +194,7 @@ export async function extractRunWorkerSessionUsage(
         vars: slotVars,
         runner: run.metrics.runner,
         ...session,
+        checklistMarks: marks,
       };
       let usage: RunnerSessionUsage;
       if (nativeSession) {
@@ -175,7 +215,14 @@ export async function extractRunWorkerSessionUsage(
       try {
         const archived = await provider?.recoverArchive?.(run, session);
         if (!archived) return usage;
-        const recovered = await archivedSessionUsage(run, archived, session, slotVars, usageWindow);
+        const recovered = await archivedSessionUsage(
+          run,
+          archived,
+          session,
+          slotVars,
+          usageWindow,
+          marks,
+        );
         return { ...recovered, scope: usageWindow ? 'run-delta' : recovered.scope };
       } catch (error) {
         // Failed archive verification/accounting must not discard successful siblings.
@@ -201,8 +248,13 @@ export async function extractRunWorkerSessionUsage(
       : null;
   };
   const cost = total('costUsd');
+  const toolUsage = totalToolUsage(usages);
   return {
     ...usages[0],
+    toolUsage: toolUsage ?? undefined,
+    toolUsageError: toolUsage
+      ? undefined
+      : usages.find((usage) => usage.toolUsageError)?.toolUsageError,
     turns: total('turns'),
     inputTokens: total('inputTokens'),
     outputTokens: total('outputTokens'),
@@ -278,7 +330,14 @@ export async function projectArchivedRunnerUsage(storedRun: Run): Promise<Run> {
         'runner did not report usage and no verified transcript was retained';
       return { ...run, metrics: { ...run.metrics, sessionUsageError: reason } };
     }
-    const usage = await archivedSessionUsage(run, archived);
+    const usage = await archivedSessionUsage(
+      run,
+      archived,
+      {},
+      undefined,
+      undefined,
+      contextChecklistMarks(run),
+    );
     // A resumed review transcript is a chain total, not this generation's usage.
     if (usesReviewChainSessionTotal(run)) return run;
     return {

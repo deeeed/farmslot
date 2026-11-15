@@ -19,6 +19,7 @@
     "test": "node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src"
   },
   "dependencies": {
+    "@farmslot/agent-runtime": "workspace:*",
     "@farmslot/protocol": "workspace:*"
   },
   "devDependencies": {

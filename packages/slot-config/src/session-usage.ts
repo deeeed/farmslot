@@ -20,6 +20,12 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  type ChecklistMark,
+  measureToolUsage,
+  toolUsageAdapter,
+} from '@farmslot/agent-runtime/tool-usage';
+
+import {
   isLiteLlmPriceField,
   normalizeLiteLlmModelInfo,
   type PiModelCostMetadata,
@@ -1559,6 +1565,33 @@ export async function sampleSessionUsageIncremental(params: {
   }
 }
 
+// ─── Tool calls ──────────────────────────────────────────────────────────────
+
+/** One `tool_usage=` line from the runner's adapter over the same transcript and window. */
+async function toolUsageLines(
+  runner: string,
+  sessionFile: string,
+  home: string,
+  window: SessionUsageWindow | undefined,
+  marks: ChecklistMark[] | undefined,
+): Promise<string[]> {
+  if (!toolUsageAdapter(runner)) return [];
+  try {
+    const usage = await measureToolUsage({
+      runner,
+      sessionPath: sessionFile,
+      marks,
+      home,
+      window: window ? { startedAt: window.startedAt, completedAt: window.completedAt } : undefined,
+    });
+    return [`tool_usage=${JSON.stringify(usage)}`];
+  } catch (error) {
+    // Token totals above are complete without tool counts; the receipt names the gap instead.
+    const reason = error instanceof Error ? error.message : String(error);
+    return [`tool_usage_error=${reason.replace(/\s+/g, ' ')}`];
+  }
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -1583,6 +1616,8 @@ export async function runSessionUsage(params: {
   liteLlmPrices?: Map<string, PiModelCostMetadata>;
   /** Attribute only usage first recorded during this run. No shared snapshot files. */
   usageWindow?: SessionUsageWindow;
+  /** Checklist marks of the run's attempt; `total` splits tool calls, tokens and time at them. */
+  checklistMarks?: ChecklistMark[];
 }): Promise<string> {
   const { repo, slotId, action, forcedPath, forcedRunner, environment = process.env } = params;
 
@@ -1680,6 +1715,7 @@ export async function runSessionUsage(params: {
         ...header,
         ...(window ? [`usage_window=${JSON.stringify(window)}`] : []),
         ...formatTotals(current),
+        ...(await toolUsageLines(runner, sessionFile, home, window, params.checklistMarks)),
       ].join('\n') + '\n'
     );
   }

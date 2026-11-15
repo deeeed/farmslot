@@ -1,0 +1,1 @@
+- `farmslot internal session-usage <slot> total --signal <SIGNAL.json>` also reports tool calls, split at that signal's checklist marks.
