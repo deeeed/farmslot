@@ -4,9 +4,11 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
-- Consumer note for the planned mm-harness 0.96.23 cut: browser-timeout quarantine recovery comes from `@farmslot/adapter-web` 0.19.15. Keep recipe-runner 0.46.17 and protocol 0.85.0 unchanged.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.46.19 - 2026-11-15
+
+- An operation log stops at 2 MiB and ends with one line naming the bytes it kept, the limit, and the bytes dropped. A write that crosses the cap keeps the part that fits, cut back to a line break, because a command hands a whole leaf's output over in one call and dropping it would store none of a failed step.
 
 ## 0.46.18 - 2026-11-15
 

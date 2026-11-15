@@ -1,1 +1,0 @@
-- Compare trial output, evidence and findings against the pre-review original, and export a self-contained HTML snapshot.

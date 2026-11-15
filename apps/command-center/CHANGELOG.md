@@ -6,6 +6,15 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.20.4 - 2026-11-15
+
+- Extend the acceptance-panel proof to distinguish live preparation without a watch from a genuine red ledger read failure.
+- Keep a live HTTP and browser recipe for empty, missing and populated operation logs.
+- Add a read-only live recipe for acceptance criteria during task preparation and after task creation.
+- Add a connected-browser recipe for publication errors, saved-review retry and fresh Post recovery through a private gateway and loopback provider.
+- The type-escape baseline records the gateway project-config merge as an explicit untyped value, the same value `JSON.parse` returned there before.
+- Add a live proof recipe for folder browsing, type filters, search and previews on real runs with 100 or more retained artifacts.
+
 ## 0.20.3 - 2026-11-14
 
 - Configuration proof scripts expect pool and project.json backups under `<home>/state/config-backups/`.

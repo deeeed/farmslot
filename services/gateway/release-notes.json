@@ -1,10 +1,11 @@
 {
-  "version": "0.39.4",
+  "version": "0.39.5",
   "date": "2026-11-15",
   "items": [
-    "Reasoning labels follow the worker request while unavailable label metadata leaves workers running.",
-    "Blind trials retain their frozen templates, authored acceptance criteria and isolated files through cleanup and replay.",
-    "Parked-work retention stays local, and tmux restore failures show the transport error.",
-    "Unchanged PR-rule checks and settled node-intent cleanup use less gateway work."
+    "Concurrent terminal cleanup and operator release serialize blind Git restoration through the capsule lock, preserving the candidate and allowing reset to finish",
+    "Read retained comparison patches, proof and findings with explicit missing-data and base-compatibility checks",
+    "Read an operator-configured benchmark dataset and original-usage receipts without exposing arbitrary filesystem paths",
+    "Worker session accounting counts tool calls from the same transcript as turns and tokens, for every runner, and splits calls, tokens and wall time at the run's checklist marks. The run record keeps the totals; each session receipt keeps the per-step table",
+    "Blind workers get a boundary `mktemp` that writes its default file in the trial directory. Bare `mktemp`, `prepare-sandbox`, `-t`, combined flags such as `-dt`, and `--directory` use that directory. The seatbelt denies `/var/folders`. An explicit template stays where the caller put it, and a template after `--` stays too"
   ]
 }

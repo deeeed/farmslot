@@ -1,1 +1,0 @@
-- `run create --task` now refuses a task directory that has no CHECKLIST.md, before find-slot or prepare. Use `--ticket` with `--execution-template`, or provide CHECKLIST.md. A task directory that already has CHECKLIST.md still creates.

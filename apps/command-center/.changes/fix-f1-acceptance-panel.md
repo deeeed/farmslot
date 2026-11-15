@@ -1,1 +1,0 @@
-- Add a read-only live recipe for acceptance criteria during task preparation and after task creation.

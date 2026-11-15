@@ -1,1 +1,0 @@
-- Keep acceptance criteria readable in one list, show a quiet preparation state before the task exists, and omit empty assessment tallies.

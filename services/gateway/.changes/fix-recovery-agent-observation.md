@@ -1,1 +1,0 @@
-- Keep late fleet observations from holding a slot after recovery has stopped its worker.
