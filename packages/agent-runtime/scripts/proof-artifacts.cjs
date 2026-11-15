@@ -16,6 +16,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { enumerateChecklistCheckboxes, signalFileForChecklist } = require('./checklist-target.cjs');
+const { readJson } = require('./mark-io.cjs');
+
+/** How an absent declared path reads in a refusal. */
+const EVIDENCE_ABSENCE = {
+  empty: 'empty',
+  outside: 'outside the task directory',
+  missing: 'missing',
+};
 
 const PROOF_REFERENCE = /\[PROOF:\s*([^\]]+?)\s*\]/;
 
@@ -62,15 +70,6 @@ function freezeProofArtifacts(contract, markdown, checklist) {
   return steps.length ? { ...contract, proofArtifacts: steps } : contract;
 }
 
-function readOptionalJson(file) {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch (error) {
-    if (error.code === 'ENOENT') return null;
-    throw error;
-  }
-}
-
 /**
  * The frozen declarations plus any the live checklist carries. A row added after
  * init still gates: the contract is the record, never the waiver.
@@ -96,7 +95,14 @@ function proofEvidence(taskDir, relPath) {
   const target = path.join(taskDir, relPath);
   let stat;
   try {
-    stat = fs.statSync(target);
+    // A declared path is evidence only where the task says it is: a symlink can
+    // point the gate at a populated directory the run never produced, so the
+    // resolved path has to stay inside the task directory.
+    const resolved = fs.realpathSync(target);
+    const root = fs.realpathSync(taskDir);
+    if (resolved !== root && !resolved.startsWith(root + path.sep))
+      return { present: false, reason: 'outside', mtimeMs: null };
+    stat = fs.statSync(resolved);
   } catch (error) {
     if (error.code === 'ENOENT') return { present: false, reason: 'missing', mtimeMs: null };
     throw error;
@@ -119,7 +125,7 @@ function proofEvidence(taskDir, relPath) {
 
 /** When each step was last marked, from the signal the mark engine writes. */
 function stepMarkTimes(taskDir, checklist) {
-  const signal = readOptionalJson(path.join(taskDir, signalFileForChecklist(checklist)));
+  const signal = readJson(path.join(taskDir, signalFileForChecklist(checklist)));
   const events = Array.isArray(signal?.checklistTiming?.events)
     ? signal.checklistTiming.events
     : [];
@@ -162,13 +168,28 @@ function pendingProofArtifact(taskDir, checklist, stepNumber, contract) {
 }
 
 /**
+ * The one definition of "the evidence is newer than the claim". A mark and a
+ * completion must not decide this differently, so both callers come here. Null
+ * when the step declares nothing, has no evidence, or was never marked.
+ */
+function claimOlderThanEvidence(taskDir, checklist, stepNumber, contract) {
+  const step = declaredProofArtifacts(taskDir, checklist, contract).find(
+    (candidate) => candidate.stepNumber === stepNumber,
+  );
+  if (!step) return null;
+  const evidence = proofEvidence(taskDir, step.path);
+  const markedAt = stepMarkTimes(taskDir, checklist).get(stepNumber);
+  if (!evidence.present || evidence.mtimeMs == null || markedAt == null) return null;
+  return evidence.mtimeMs > markedAt ? { step, evidence, markedAt } : null;
+}
+
+/**
  * Completion issues for declared steps: a ticked step needs its evidence, and
  * evidence written after the step's last mark means the claim came first. An
  * unticked step is simply unfinished work and not an issue here.
  */
 function proofArtifactIssues(taskDir, checklist, contract) {
   const ticked = checkedSteps(taskDir, checklist);
-  const marks = stepMarkTimes(taskDir, checklist);
   const issues = [];
   for (const step of declaredProofArtifacts(taskDir, checklist, contract)) {
     if (!ticked.has(step.stepNumber)) continue;
@@ -176,16 +197,16 @@ function proofArtifactIssues(taskDir, checklist, contract) {
     if (!evidence.present) {
       issues.push(
         `${checklist} step ${step.stepNumber} is checked but its declared proof ${step.path} is ` +
-          `${evidence.reason === 'empty' ? 'empty' : 'missing'}`,
+          `${EVIDENCE_ABSENCE[evidence.reason] ?? 'missing'}`,
       );
       continue;
     }
-    const markedAt = marks.get(step.stepNumber);
-    if (markedAt != null && evidence.mtimeMs != null && evidence.mtimeMs > markedAt) {
+    const late = claimOlderThanEvidence(taskDir, checklist, step.stepNumber, contract);
+    if (late) {
       issues.push(
         `${checklist} step ${step.stepNumber}: its declared proof ${step.path} was written ` +
-          `${new Date(evidence.mtimeMs).toISOString()}, after the step was marked ` +
-          `${new Date(markedAt).toISOString()}; mark the step again now the evidence is current`,
+          `${new Date(late.evidence.mtimeMs).toISOString()}, after the step was marked ` +
+          `${new Date(late.markedAt).toISOString()}; mark the step again now the evidence is current`,
       );
     }
   }
@@ -218,5 +239,6 @@ module.exports = {
   evidence: proofEvidence,
   pending: pendingProofArtifact,
   issues: proofArtifactIssues,
+  claimOlderThanEvidence,
   outOfOrderMarks,
 };

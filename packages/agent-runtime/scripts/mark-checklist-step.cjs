@@ -794,16 +794,12 @@ if (!isStartCommand && target.stepNumber != null && recordedEvent === -1) {
   // tick. Completion refuses evidence newer than the claim, and this is how the
   // worker re-states the claim over the repaired proof — the sanctioned repair
   // path, not a second tick.
-  const stale = proofArtifacts
-    .declared(taskDir, path.basename(taskPath), loadTerminalContract(taskDir, taskPath))
-    .filter((step) => step.stepNumber === target.stepNumber)
-    .some((step) => {
-      const evidence = proofArtifacts.evidence(taskDir, step.path);
-      const marked = Date.parse(
-        events[recordedEvent].remarkedAt ?? events[recordedEvent].checkedAt ?? '',
-      );
-      return evidence.present && !Number.isNaN(marked) && evidence.mtimeMs > marked;
-    });
+  const stale = proofArtifacts.claimOlderThanEvidence(
+    taskDir,
+    path.basename(taskPath),
+    target.stepNumber,
+    loadTerminalContract(taskDir, taskPath),
+  );
   if (stale) events[recordedEvent] = { ...events[recordedEvent], remarkedAt: now };
 }
 

@@ -15,6 +15,7 @@ const {
 } = require('./worker-terminal-contract.cjs');
 const { SUBTASK_INDEX_REL, openSubtaskUnits } = require('./subtask-unit.cjs');
 const proofArtifacts = require('./proof-artifacts.cjs');
+const { resolveChecklistTarget } = require('./checklist-target.cjs');
 const { acceptanceContractIssues, readAcceptanceLedger } = require('./acceptance-ledger.cjs');
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const workspaceProtocolRoot = path.resolve(packageRoot, '../protocol');
@@ -679,16 +680,14 @@ if (contractPath && terminalCommand && !existsSync(contractPath)) {
 // the claim (proof-artifacts.cjs). A step that declares nothing is not inspected
 // here, so a checklist without the marker reaches completion exactly as before.
 if (terminalCommand !== 'blocked' && !proofMeasurement) {
-  const checklists = new Set(
-    (terminalContract?.proofArtifacts ?? []).map((step) => step.checklist),
-  );
-  checklists.add('CHECKLIST.md');
-  for (const checklist of checklists) {
-    try {
-      issues.push(...proofArtifacts.issues(taskDir, checklist, terminalContract));
-    } catch (error) {
-      issues.push(`Proof declarations cannot be validated: ${error.message}`);
-    }
+  try {
+    // Only the checklist that is completing: a reviewer finishing REVIEW.md
+    // answers for its own declarations, never for the worker's CHECKLIST.md,
+    // whose unproven steps are what the reviewer is reporting on.
+    const checklist = resolveChecklistTarget(taskDir).checklist;
+    issues.push(...proofArtifacts.issues(taskDir, checklist, terminalContract));
+  } catch (error) {
+    issues.push(`Proof declarations cannot be validated: ${error.message}`);
   }
 }
 

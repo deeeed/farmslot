@@ -147,6 +147,15 @@ Marks recorded after a later-numbered step are kept in the signal as
 `checklistTiming.outOfOrder`. Order alone says nothing about the work, so it
 refuses nothing.
 
+A declared path is evidence only inside the task directory: it is resolved, and a
+path that lands elsewhere through a symlink is refused, so a populated directory
+the run never produced cannot stand in for the proof.
+
+Completion inspects the declarations of the checklist that is completing, the one
+`resolveChecklistTarget` names. A reviewer finishing its own checklist answers for
+its own declarations; the worker's unproven step is the thing the reviewer reports
+on, not a reason to refuse its report.
+
 No new flag, command or receipt format is introduced: the declaration travels in
 the existing contract and the refusals use the existing mark and completion
 paths.

@@ -251,8 +251,11 @@ A step that produces proof MAY declare the artifact it writes on its own row, as
 The path MUST be inside the task directory. `./mark N` MUST refuse the tick while
 that path is absent or empty, and completion MUST refuse a checked step whose
 declared proof is missing or was written after the step's last mark; the worker
-MUST re-mark the step to restate the claim over repaired evidence. A step without
-a declaration keeps its existing behaviour (ADR-064 Amendment 5).
+MUST re-mark the step to restate the claim over repaired evidence. A declared path
+MUST resolve inside the task directory; one that resolves elsewhere through a
+symlink MUST be refused. Completion MUST inspect only the declarations of the
+checklist that is completing. A step without a declaration keeps its existing
+behaviour (ADR-064 Amendment 5).
 
 ### Mark and receipt rules
 

@@ -5,6 +5,7 @@ const {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } = require('node:fs');
@@ -165,7 +166,9 @@ const DECLARED = `- [ ] 1. Retain the failing baseline run [PROOF: ${BASELINE}]`
   utimesSync(path.join(dir, BASELINE), after, after);
   const late = proofArtifacts.issues(dir, 'CHECKLIST.md', contract);
   assert.equal(late.length, 1);
-  assert.match(late[0], /was written 2026-11-13T20:05:05\.971Z, after the step was marked/);
+  // ext4 and APFS round utimes differently, so this pins the second rather than
+  // the exact millisecond the fixture asked for.
+  assert.match(late[0], /was written 2026-11-13T20:05:05\.\d{3}Z, after the step was marked/);
 
   // Evidence older than the tick is what the step claimed.
   const before = new Date('2026-11-13T19:20:00.000Z');
@@ -274,6 +277,90 @@ const DECLARED = `- [ ] 1. Retain the failing baseline run [PROOF: ${BASELINE}]`
   // Nothing terminal was written: the refusal left the run as it was, for its
   // operator to resolve.
   assert.equal(existsSync(path.join(dir, 'SIGNAL.json')), false);
+}
+
+// A reviewer answers for its own checklist only. Completing REVIEW.md must not
+// refuse because the worker's CHECKLIST.md has an unproven proof step: that is
+// the thing the reviewer is reporting on.
+{
+  const dir = task('reviewer');
+  const contract = {
+    schemaVersion: 1,
+    proofArtifacts: [{ checklist: 'CHECKLIST.md', stepNumber: 1, path: BASELINE }],
+  };
+  writeChecklist(dir, [`- [x] 1. Retain the failing baseline run [PROOF: ${BASELINE}]`]);
+  writeFileSync(path.join(dir, 'REVIEW.md'), '# Reviewer\n\n- [x] 1. Report findings\n');
+  assert.equal(proofArtifacts.issues(dir, 'CHECKLIST.md', contract).length, 1);
+  assert.deepEqual(proofArtifacts.issues(dir, 'REVIEW.md', contract), []);
+}
+
+// Evidence reached through a symlink out of the task directory is not evidence:
+// a populated directory the run never produced cannot stand in for the proof.
+{
+  const dir = task('symlink');
+  const outside = mkdtempSync(path.join(tmpdir(), 'farmslot-proof-outside-'));
+  mkdirSync(path.join(outside, 'run'), { recursive: true });
+  writeFileSync(path.join(outside, 'run', 'trace.json'), '{"entries":[]}\n');
+  symlinkSync(path.join(outside, 'run'), path.join(dir, BASELINE));
+  const evidence = proofArtifacts.evidence(dir, BASELINE);
+  assert.equal(evidence.present, false);
+  assert.equal(evidence.reason, 'outside');
+  writeChecklist(dir, [`- [x] 1. Retain the failing baseline run [PROOF: ${BASELINE}]`]);
+  const issues = proofArtifacts.issues(dir, 'CHECKLIST.md', {
+    schemaVersion: 1,
+    proofArtifacts: [{ checklist: 'CHECKLIST.md', stepNumber: 1, path: BASELINE }],
+  });
+  assert.equal(issues.length, 1);
+  assert.match(issues[0], /outside the task directory/);
+}
+
+// Repairing the proof after the claim: completion refuses until the step is
+// marked again, and the re-mark restates it. One helper decides that for both
+// the mark path and completion.
+{
+  const dir = task('remark');
+  const contract = {
+    schemaVersion: 1,
+    flowType: 'fix-bug',
+    requireSignal: true,
+    proofArtifacts: [{ checklist: 'CHECKLIST.md', stepNumber: 1, path: BASELINE }],
+  };
+  writeChecklist(dir, [DECLARED]);
+  writeContract(dir, contract);
+  mkdirSync(path.join(dir, BASELINE), { recursive: true });
+  writeFileSync(path.join(dir, BASELINE, 'trace.json'), '{"entries":[]}\n');
+  assert.equal(spawnSync(process.execPath, [helper, dir, '1'], { encoding: 'utf8' }).status, 0);
+  const signalPath = path.join(dir, 'SIGNAL.json');
+  const first = JSON.parse(readFileSync(signalPath, 'utf8'));
+  assert.equal(first.checklistTiming.events[0].remarkedAt, undefined);
+  assert.deepEqual(proofArtifacts.issues(dir, 'CHECKLIST.md', contract), []);
+
+  // Rewind the recorded claim so the evidence on disk is the newer of the two,
+  // which is the shape of a proof rebuilt after its step was checked.
+  // Relative to the evidence, not to the clock: a cold `mark` can take over a
+  // second, which would leave the rewound claim still newer than the proof.
+  const claimedAt = new Date(proofArtifacts.evidence(dir, BASELINE).mtimeMs - 1000);
+  writeFileSync(
+    signalPath,
+    `${JSON.stringify(
+      {
+        ...first,
+        checklistTiming: {
+          ...first.checklistTiming,
+          events: [{ ...first.checklistTiming.events[0], checkedAt: claimedAt.toISOString() }],
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  assert.equal(proofArtifacts.issues(dir, 'CHECKLIST.md', contract).length, 1);
+
+  const again = spawnSync(process.execPath, [helper, dir, '1'], { encoding: 'utf8' });
+  assert.equal(again.status, 0, again.stderr);
+  const refreshed = JSON.parse(readFileSync(signalPath, 'utf8'));
+  assert.equal(typeof refreshed.checklistTiming.events[0].remarkedAt, 'string');
+  assert.deepEqual(proofArtifacts.issues(dir, 'CHECKLIST.md', contract), []);
 }
 
 console.log('proof-artifacts tests passed');
