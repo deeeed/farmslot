@@ -385,7 +385,13 @@ export async function executePrepareStep(
   const branchIdentity = current.branch
     ? { slotId: current.slotId, branch: current.branch }
     : undefined;
-  if (!isPrepareReplay && branchIdentity && !current.engineState?.prepareBranch) {
+  const normalSlotTrial =
+    current.engineState?.evalExperiment?.blind?.executionPolicy === 'normal-slot';
+  if (
+    (!isPrepareReplay || normalSlotTrial) &&
+    branchIdentity &&
+    !current.engineState?.prepareBranch
+  ) {
     await persistRunNow(
       updateRun(runId, {
         engineState: {
@@ -399,9 +405,9 @@ export async function executePrepareStep(
       'prepare branch intent',
     );
   }
-  const branchState = current.engineState?.prepareBranch;
+  const branchState = getRun(runId)?.engineState?.prepareBranch;
   const allowMissingReplayBranch =
-    isPrepareReplay &&
+    (isPrepareReplay || normalSlotTrial) &&
     branchState?.slotId === current.slotId &&
     branchState.branch === current.branch &&
     branchState.started === false;

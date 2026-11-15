@@ -9,7 +9,11 @@ import {
   isTerminalRunStatus,
   type Run,
 } from '@farmslot/protocol';
-import { currentFarmPaths, legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
+import {
+  currentFarmPaths,
+  EVAL_PRIOR_WORK_DIRECTORY,
+  legacyRemoteFarmPaths,
+} from '@farmslot/protocol/node/farm-paths';
 import { reportedFarmPaths } from '@farmslot/slot-config';
 
 import { shSingleQuote } from '../../../../scripts/lib/shell-quote.mjs';
@@ -230,6 +234,7 @@ export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal):
       vars,
       {
         ...gitSpec(run, vars, blind, epoch, ''),
+        priorWorkDirectory: EVAL_PRIOR_WORK_DIRECTORY,
         keepIgnored: [
           ...(await keptIgnoredPaths(run, vars, project)),
           `${runtime}/.preparing.lock`,

@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { EVAL_PRIOR_WORK_DIRECTORY } from '@farmslot/protocol/node/farm-paths';
+
 import { type BlindGitSpec, buildBlindGitCommand } from './blind-git.js';
 
 test('normal-slot prepare parks earlier answer files while retaining this task and caches', (t) => {
@@ -60,6 +62,7 @@ test('normal-slot prepare parks earlier answer files while retaining this task a
     capsule: path.join(root, 'must-not-exist'),
     keepIgnored: ['node_modules', 'temp/tasks/fix/current', 'temp/recipe/runtime/.preparing.lock'],
     cleanupRoots: ['temp/tasks', 'temp/recipe/runtime'],
+    priorWorkDirectory: EVAL_PRIOR_WORK_DIRECTORY,
   };
   const receipt = JSON.parse(
     execFileSync('bash', ['-c', buildBlindGitCommand('park-ignored', spec)], { encoding: 'utf8' }),

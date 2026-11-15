@@ -1210,7 +1210,7 @@ def park_ignored(spec):
     # Normal-slot replays keep Git untouched. Prior task/runtime/artifact inputs
     # leave the checkout permanently; no capsule or restoration is involved.
     repo = Path(spec['repo']).resolve()
-    parking = repo.parent / '.farmslot-eval-prior-work' / spec['slotId'] / spec['runId'] / str(time.time_ns())
+    parking = repo.parent / spec['priorWorkDirectory'] / spec['slotId'] / spec['runId'] / str(time.time_ns())
     moved = ignored_moves(repo, spec.get('keepIgnored', []), spec['cleanupRoots'])
     for rel in moved:
         target = parking / rel

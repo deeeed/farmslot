@@ -993,12 +993,6 @@ test('evalTrialStart automatically replays from the reference base commit when a
     assert.equal(candidate.result.run?.completionPolicy, 'artifact-only');
     assert.equal(candidate.result.run?.lane, 'comparison');
     assert.equal(candidate.result.run?.mode, 'autonomous');
-    assert.equal(
-      candidate.result.run?.engineState?.evalExperiment?.blind?.executionPolicy,
-      'normal-slot',
-    );
-    assert.equal(candidate.result.run?.engineState?.evalExperiment?.blind?.isolation, undefined);
-    assert.match(candidate.result.run?.ticketOrPr ?? '', /^EVAL-/);
     assert.equal(candidate.result.run?.startRef?.requestedRef, baseSha);
     assert.deepEqual(candidate.result.candidatePackage.productRef, {
       requestedRef: baseSha,

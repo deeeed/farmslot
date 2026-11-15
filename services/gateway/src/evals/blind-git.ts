@@ -33,6 +33,8 @@ export interface BlindGitSpec {
   keepIgnored?: string[];
   /** Normal-slot parking is limited to declared task/runtime/artifact roots. */
   cleanupRoots?: string[];
+  /** Protocol-owned directory name, resolved beside the real checkout on the node. */
+  priorWorkDirectory?: string;
   proof?: EvalProofSource;
   /** Captured from the admitted project/task, never from worker arguments. */
   proofBoundary?: {
