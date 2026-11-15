@@ -172,7 +172,10 @@ test('the task section lists every frozen file to load', () => {
       [
         '## Required skills',
         '',
-        'Frozen for this task in `inputs/handoff.json` (`requiredSkills`); its review checks against the same set. Load every file below before the first checklist step. Do not substitute repository docs.',
+        // Pinned byte for byte: this sentence is what MICRO3 (run 1c23feac) obeyed
+        // when it read every required file before marking step 1. It names the
+        // frozen set and defers to the checklist; it must not instruct a read.
+        'Frozen for this task in `inputs/handoff.json` (`requiredSkills`); its review checks against the same set. The checklist steps that need these files say so; read them when a step asks, and do not substitute repository docs.',
         '',
         '- `mms-mobile-testing` (rule `mobile-testing`): `.agents/skills/mms-mobile-testing/SKILL.md`, `.agents/skills/mms-mobile-testing/references/layers.md`',
         '',

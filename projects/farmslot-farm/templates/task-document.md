@@ -1,6 +1,6 @@
 ## Recipe tooling
 
-Resolve once, then reuse:
+Reference for the checklist steps that write or run a recipe. Resolve once, then reuse:
 
 ```bash
 cd {{REPO}}
@@ -9,4 +9,4 @@ MANIFEST="{{recipe_manifest_path}}"
 WRAPPER="{{recipe_validate_wrapper}}"
 ```
 
-Read `{{recipe_quality_path}}` before writing any recipe.
+The step that writes a recipe draws on `{{recipe_quality_path}}`.
