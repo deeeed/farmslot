@@ -30,6 +30,7 @@ import {
 } from '@farmslot/protocol';
 
 import { type SlotLocality, slotReadFileIfExists } from '../core/slot-io.js';
+import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
 
 import { parseChecklistTiming } from './checklist-timing.js';
 
@@ -195,6 +196,8 @@ export async function readSubtaskIndex(
   try {
     text = await slotReadFileIfExists(ctx, indexPath);
   } catch (err) {
+    // An unreachable node is not a corrupt registry: the caller retries or reports it as such.
+    if (isNodeTransportUnavailableError(err)) throw err;
     // Absence is null above, so this is a read fault. Reported as a registry error so
     // callers treat it like a corrupt registry rather than "this run has no child units".
     throw new SubtaskRegistryError(`cannot read ${indexPath}: ${(err as Error).message}`);

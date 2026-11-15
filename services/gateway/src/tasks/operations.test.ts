@@ -168,3 +168,31 @@ test('a poll reads only operation records that are new or changed since the last
   files.delete(`${id(1)}.json`);
   assert.deepEqual(await poll(), { calls: ['fs.list'], statuses: ['pass'] });
 });
+
+test('absence and faults read as they did with an existence check first', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'operation-absence-'));
+  try {
+    // artifacts is a file: the operations directory is absent, not a fault.
+    mkdirSync(path.join(root, 'a'));
+    writeFileSync(path.join(root, 'a/artifacts'), 'not a directory');
+    const absent = progress();
+    await attachOperations(local, path.join(root, 'a/CHECKLIST.md'), absent);
+    assert.equal(absent.operations, undefined);
+    assert.equal(absent.operationsError, undefined);
+    // operations is a file: listing it is a fault.
+    mkdirSync(path.join(root, 'b/artifacts'), { recursive: true });
+    writeFileSync(path.join(root, 'b/artifacts/operations'), 'not a directory');
+    const file = progress();
+    await attachOperations(local, path.join(root, 'b/CHECKLIST.md'), file);
+    assert.match(file.operationsError ?? '', /Operation progress unavailable/);
+    // A directory named like a record is still reported, not skipped.
+    mkdirSync(path.join(root, 'c/artifacts/operations/00000000-0000-0000-0000-000000000000.json'), {
+      recursive: true,
+    });
+    const directory = progress();
+    await attachOperations(local, path.join(root, 'c/CHECKLIST.md'), directory);
+    assert.match(directory.operationsError ?? '', /Operation progress unavailable/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
