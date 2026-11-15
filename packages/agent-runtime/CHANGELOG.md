@@ -4,6 +4,13 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.48.1 - 2026-11-15
+
+- Reduce default suite startup and fixture costs while retaining its cases, assertions and cleanup deadlines; stop an owned native host promptly when its home is removed.
+- From a prebuilt CLI snapshot, the native client and supervisor start their host processes from source, as when they run from source themselves.
+- Native host observation keeps its file watchers across source events and re-arms only when a watched directory appears, moves or is replaced. It no longer closes and recreates its recursive watchers on every event, a close that blocked the gateway for up to 3.7 s.
+- Align exact package dependencies with the protocol 0.86.0 and runtime 0.48.1 release cohort.
+
 ## 0.48.0 - 2026-11-15
 
 - Parse and validate a trial-owned execution-template snapshot without adding a catalog source.

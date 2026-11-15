@@ -1,1 +1,0 @@
-- Native host observation keeps its file watchers across source events and re-arms only when a watched directory appears, moves or is replaced. It no longer closes and recreates its recursive watchers on every event, a close that blocked the gateway for up to 3.7 s.

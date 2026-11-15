@@ -1,1 +1,0 @@
-- PR rule scan subjects may leave out `matched` and `admitted` (absent means false), as they may their action lists; the gateway stores scanned PRs that matched nothing as their revision only.

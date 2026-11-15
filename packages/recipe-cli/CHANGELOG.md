@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.12 - 2026-11-15
+
+- Align exact package dependencies with the protocol 0.86.0 and runtime 0.48.1 release cohort.
+
 ## 0.35.11 - 2026-11-15
 
 - Align exact package dependencies with the protocol 0.85.0 and runtime 0.48.0 release cohort.

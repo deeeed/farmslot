@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.31.20 - 2026-11-15
+
+- Align exact package dependencies with the protocol 0.86.0 and runtime 0.48.1 release cohort.
+
 ## 0.31.19 - 2026-11-15
 
 - Reuse broker connections for built-in Mobile evaluations and HUD commands, and collect already resolved async results without an initial polling delay, while preserving target checks, deadlines and single execution.

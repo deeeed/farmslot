@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.25.5 - 2026-11-15
+
+- Align exact package dependencies with the protocol 0.86.0 and runtime 0.48.1 release cohort.
+
 ## 0.25.4 - 2026-11-15
 
 - Align exact package dependencies with the protocol 0.85.0 and runtime 0.48.0 release cohort.

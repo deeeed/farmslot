@@ -6,6 +6,11 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.27.9 - 2026-11-15
+
+- The default recipe engine records its runner identity from its sources when it runs as the JavaScript a prebuilt CLI snapshot built beside them, as a checkout of the same revision does.
+- Align exact package dependencies with the protocol 0.86.0 and runtime 0.48.1 release cohort.
+
 ## 0.27.8 - 2026-11-15
 
 - Align exact package dependencies with the protocol 0.85.0 and runtime 0.48.0 release cohort.
