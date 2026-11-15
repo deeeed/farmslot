@@ -1,0 +1,1 @@
+- Read capture commit and tracked dirty state in one fresh Git status command per observation, preserving evidence timing and source-change detection.

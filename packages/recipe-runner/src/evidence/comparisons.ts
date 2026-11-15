@@ -21,13 +21,26 @@ export async function observeRecipeCaptureSource(projectRoot: string): Promise<{
   sourceDirty?: boolean;
 }> {
   try {
-    const head = await execute('git', ['rev-parse', 'HEAD'], { cwd: projectRoot });
-    const status = await execute(
+    const { stdout } = await execute(
       'git',
-      ['status', '--porcelain=v1', '--untracked-files=no', '--ignore-submodules=none'],
-      { cwd: projectRoot },
+      [
+        'status',
+        '--porcelain=v2',
+        '--branch',
+        '--no-ahead-behind',
+        '-z',
+        '--untracked-files=no',
+        '--ignore-submodules=none',
+      ],
+      { cwd: projectRoot, maxBuffer: 128 * 1024 * 1024 },
     );
-    return { sourceCommit: head.stdout.trim(), sourceDirty: Boolean(status.stdout.trim()) };
+    const records = stdout.split('\0').filter(Boolean);
+    const sourceCommit = records.find((record) => record.startsWith('# branch.oid '))?.slice(13);
+    // An unborn checkout has no source commit, just as rev-parse HEAD reports.
+    if (sourceCommit === '(initial)') return {};
+    if (!sourceCommit || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(sourceCommit))
+      throw new Error('Git status did not report the capture source commit.');
+    return { sourceCommit, sourceDirty: records.some((record) => !record.startsWith('# ')) };
   } catch (error) {
     // Standalone captures outside a checkout remain viewable with unknown source.
     if (isRecord(error) && error.code === 128) return {};
