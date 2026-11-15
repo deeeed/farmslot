@@ -6,7 +6,12 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { commandCatalog, shellCommands } from './full-ci-commands.mjs';
+import {
+  commandCatalog,
+  commandKey,
+  monolithicCommands,
+  shellCommands,
+} from './full-ci-commands.mjs';
 import { assertCoverage, createFullPlan } from './full-ci-plan.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -14,7 +19,8 @@ const plan = createFullPlan(root);
 
 test('complete matrix retains every monolithic test/configuration and guard', () => {
   assert.equal(plan.jobs.filter((job) => job.id.startsWith('gateway-')).length, 8);
-  assert.equal(plan.jobs.filter((job) => job.id.startsWith('workspaces-')).length, 4);
+  assert.equal(plan.jobs.filter((job) => job.id.startsWith('pipeline-')).length, 7);
+  assert.equal(plan.jobs.length, 15);
   assert(plan.coverage.baseline.files.length > 2000);
   assert(plan.coverage.baseline.guards.length > 100);
   assert(
@@ -30,6 +36,42 @@ test('complete matrix retains every monolithic test/configuration and guard', ()
   assert(plan.desktop.tasks.every((task) => task.platform === 'darwin'));
 });
 
+test('shared pipeline buckets preserve package command order and all coverage with unknown timings', () => {
+  const pooled = plan.jobs.filter((job) => job.id.startsWith('pipeline-'));
+  assert(
+    pooled.some(
+      (job) =>
+        job.tasks.some((task) => task.workspace) && job.tasks.some((task) => !task.workspace),
+    ),
+  );
+  const baseline = [
+    ...new Map(monolithicCommands(root).map((task) => [commandKey(task), task])).values(),
+  ];
+  const workspaceNames = new Set(
+    pooled.flatMap((job) => job.tasks.map((task) => task.workspace)).filter(Boolean),
+  );
+  for (const name of workspaceNames) {
+    const owners = pooled.filter((job) =>
+      job.tasks.some((task) => task.workspace === name && task.node === 22),
+    );
+    assert.equal(owners.length, 1, name);
+    const actual = owners[0].tasks.filter((task) => task.workspace === name && task.node === 22);
+    const expected = baseline.filter(
+      (task) =>
+        task.workspace === name &&
+        task.node === 22 &&
+        task.platform === 'linux' &&
+        !task.buildOwner &&
+        !(name === '@farmslot/gateway' && task.command.includes('run-tsx-tests.mjs')),
+    );
+    assert.deepEqual(actual.map(commandKey), expected.map(commandKey), name);
+  }
+  const fallback = createFullPlan(root, {}, {});
+  assert.equal(fallback.jobs.length, 15);
+  assert.deepEqual(fallback.coverage.baseline, plan.coverage.baseline);
+  assert.equal(plan.jobs.filter((job) => job.node24).length, 1);
+});
+
 test('generated docs cannot pass a clean-tree guard in a different or earlier checkout stage', () => {
   const moved = structuredClone(plan);
   const owner = moved.jobs.find((job) =>
@@ -37,7 +79,7 @@ test('generated docs cannot pass a clean-tree guard in a different or earlier ch
   );
   const index = owner.tasks.findIndex((task) => task.command.includes('apps/docs/docs'));
   const [clean] = owner.tasks.splice(index, 1);
-  moved.jobs.find((job) => job.id.startsWith('guards-') && job !== owner).tasks.push(clean);
+  moved.jobs.find((job) => job.id.startsWith('pipeline-') && job !== owner).tasks.push(clean);
   assert.throws(() => assertCoverage(moved, root), /share a checkout/);
   const reordered = structuredClone(plan);
   const pipeline = reordered.jobs.find((job) =>
@@ -53,14 +95,25 @@ test('generated docs cannot pass a clean-tree guard in a different or earlier ch
   const pageIndex = docsJob.tasks.findIndex((task) => task.label === 'pages build');
   const [pages] = docsJob.tasks.splice(pageIndex, 1);
   separatedPages.jobs
-    .find((job) => job.id.startsWith('guards-') && job !== docsJob)
+    .find((job) => job.id.startsWith('pipeline-') && job !== docsJob)
     .tasks.push(pages);
   assert.throws(() => assertCoverage(separatedPages, root), /share a checkout/);
 });
 
 for (const [label, mutate] of [
   ['gateway shard', (copy) => copy.jobs.shift()],
-  ['guard', (copy) => copy.jobs.find((entry) => entry.id.startsWith('guards-')).tasks.shift()],
+  [
+    'guard',
+    (copy) => {
+      const job = copy.jobs.find(
+        (entry) => entry.id.startsWith('pipeline-') && entry.tasks.some((task) => !task.workspace),
+      );
+      job.tasks.splice(
+        job.tasks.findIndex((task) => !task.workspace),
+        1,
+      );
+    },
+  ],
   [
     'Node24 gate',
     (copy) => {
@@ -131,7 +184,7 @@ test('main matrix and nightly audit are separate; nightly failures have a visibl
     path.join(root, '.github/workflows/farmslot-nightly-parity.yml'),
     'utf8',
   );
-  assert.match(main, /max-parallel: 8/);
+  assert.match(main, /max-parallel: 15/);
   assert.doesNotMatch(main, /continue-on-error: true|schedule:/);
   assert.match(nightly, /schedule:/);
   for (const command of [
