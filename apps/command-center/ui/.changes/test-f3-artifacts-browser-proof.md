@@ -1,0 +1,1 @@
+- Keep saved artifact filters editable on small inventories and keep selected zero-count type chips visible so empty results can be reset.

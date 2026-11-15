@@ -91,14 +91,23 @@ try {
       mode: 0o600,
     });
   };
-  const onlyType = async (type: 'image' | 'markdown') => {
-    const label = workspaceArtifactTypeLabel(type);
+  const clearTypes = async () => {
     let current = await inspect();
-    for (let index = 0; index < current.chips.length; index++) {
-      const chip = current.chips[index];
-      if (chip.pressed !== chip.text.startsWith(label))
-        await cdp('click', tab, selector + `.chips .chip:nth-child(${index + 1})`);
+    while (current.types.length > 0) {
+      const count = current.types.length;
+      const index = current.chips.findIndex((chip: { pressed: boolean }) => chip.pressed);
+      assert(index >= 0, 'Every saved type filter must have an editable control');
+      await cdp('click', tab, selector + `.chips .chip:nth-child(${index + 1})`);
+      current = await until((value) => value.types.length < count, 'The selected type must clear');
     }
+    return current;
+  };
+  const onlyType = async (type: 'image' | 'markdown') => {
+    const current = await clearTypes();
+    const label = workspaceArtifactTypeLabel(type);
+    const index = current.chips.findIndex((chip: { text: string }) => chip.text.startsWith(label));
+    assert(index >= 0, 'The requested type must have a control');
+    await cdp('click', tab, selector + `.chips .chip:nth-child(${index + 1})`);
     return until(
       (value) => value.types.length === 1 && value.types[0] === type,
       'Type filter must select only the requested type',
@@ -119,14 +128,29 @@ try {
     }
     return current;
   };
-  assert(state.folders.length > 0, 'Select a real run with folder grouping');
-  if (state.folders[0].expanded) await cdp('click', tab, selector + 'button.toggle');
-  state = await until(
-    (value) => value.folders[0]?.expanded === false,
-    'Start with a collapsed group',
-  );
-  await save('initial-collapsed', state);
   await cdp('fill', tab, selector + 'input.search', '');
+  await clearTypes();
+  await until(
+    (value) => value.query === '' && value.types.length === 0 && value.folders.length > 0,
+    'Cleared filters must expose the real folder groups',
+  );
+  state = await expandGroups();
+  assert.deepEqual(
+    [...state.files].sort(),
+    artifacts.map((file) => file.path).sort(),
+    'The expanded tree must expose every retained file',
+  );
+  const visibleBeforeCollapse: string[] = [...state.files];
+  await cdp('click', tab, selector + 'button.toggle');
+  state = await until(
+    (value) =>
+      value.folders[0]?.expanded === false && value.files.length < visibleBeforeCollapse.length,
+    'Collapsing a group hides its rows',
+  );
+  await save('folder-collapsed', state);
+  state = await expandGroups();
+  assert.deepEqual(state.files, visibleBeforeCollapse);
+  await save('folder-restored', state);
   state = await onlyType('image');
   state = await expandGroups();
   assert.equal(
@@ -159,23 +183,6 @@ try {
   );
   await save('image-preview', state);
   await cdp('screenshot', tab, path.join(output, 'image-preview.png'));
-  assert(state.folders.length > 0, 'The real run must have folder grouping');
-  if (!state.folders[0].expanded) await cdp('click', tab, selector + 'button.toggle');
-  const visibleBeforeCollapse: string[] = [...state.files];
-  await cdp('click', tab, selector + 'button.toggle');
-  state = await until(
-    (value) =>
-      value.folders[0]?.expanded === false && value.files.length < visibleBeforeCollapse.length,
-    'Collapsing a group hides its rows',
-  );
-  await save('folder-collapsed', state);
-  await cdp('click', tab, selector + 'button.toggle');
-  state = await until(
-    (value) =>
-      value.folders[0]?.expanded === true && value.files.length === visibleBeforeCollapse.length,
-    'Expanding the group restores matching files',
-  );
-  assert.deepEqual(state.files, visibleBeforeCollapse);
   await onlyType('markdown');
   await cdp('fill', tab, selector + 'input.search', workspaceArtifactBasename(document.path));
   state = await until(
