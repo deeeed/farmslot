@@ -93,6 +93,15 @@ export function processStillRunning(pid: number, startedAt: string | undefined):
   return identity === null || identity === startedAt;
 }
 
+/**
+ * One operation's log stops here. Teeing a command's own output into the log
+ * means a long verbose run writes everything it prints, where it used to write
+ * nothing, and a farm node can be down to its last couple of GiB. The marker
+ * reports what was dropped, so a reader is never left guessing whether the log
+ * simply ended.
+ */
+const MAX_OPERATION_LOG_BYTES = 2 * 1024 * 1024;
+
 export class OperationRecord {
   readonly file: string;
   readonly value: TaskOperation;
@@ -100,6 +109,8 @@ export class OperationRecord {
   private readonly timer: ReturnType<typeof setInterval>;
   private lastFlush = 0;
   private disabled = false;
+  private logBytes = 0;
+  private droppedBytes = 0;
   private readonly notification?: string;
 
   constructor(
@@ -152,8 +163,45 @@ export class OperationRecord {
 
   output(chunk: string | Uint8Array): void {
     if (chunk.length === 0) return;
+    const bytes = typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.byteLength;
+    const room = MAX_OPERATION_LOG_BYTES - this.logBytes;
+    if (room <= 0) {
+      this.droppedBytes += bytes;
+      this.value.lastOutputAt = new Date().toISOString();
+      return;
+    }
+    // A write that crosses the cap keeps the part that fits. Dropping it whole
+    // would lose an entire leaf: `spawnScript` hands a command's complete
+    // output over in one call, up to its 64 MiB buffer, so a failed step's
+    // stderr arrives as a single write and whole-chunk dropping would store
+    // none of it. The kept part ends on a line break when there is one in
+    // range, so the log does not stop mid-line.
+    if (bytes > room) {
+      const buffer = Buffer.from(chunk as Uint8Array | string);
+      const lastBreak = buffer.subarray(0, room).lastIndexOf(0x0a);
+      // Whole lines only. A byte-prefix would leave a partial line in the log
+      // and could cut a multi-byte character in half, writing bytes that are
+      // not valid UTF-8. When the room left cannot hold a complete line, the
+      // write is withheld entirely and counted as dropped — that costs at most
+      // the tail of one line, where keeping the prefix would corrupt the file.
+      if (lastBreak < 0) {
+        this.droppedBytes += bytes;
+        this.value.lastOutputAt = new Date().toISOString();
+        return;
+      }
+      const kept = buffer.subarray(0, lastBreak + 1);
+      this.observe(() => {
+        fs.appendFileSync(this.value.logPath, kept);
+        this.logBytes += kept.length;
+        this.droppedBytes += bytes - kept.length;
+        this.value.lastOutputAt = new Date().toISOString();
+        this.flush();
+      });
+      return;
+    }
     this.observe(() => {
       fs.appendFileSync(this.value.logPath, chunk);
+      this.logBytes += bytes;
       this.value.lastOutputAt = new Date().toISOString();
       if (Date.now() - this.lastFlush >= 1000) this.flush();
     });
@@ -161,10 +209,58 @@ export class OperationRecord {
 
   finish(exitCode: number): void {
     clearInterval(this.timer);
+    // One line, once, after the last output: the total is only known now.
+    // Order matters: end the payload at a line break first, so the count the
+    // marker reports is the count a reader can verify.
+    if (this.droppedBytes > 0) this.observe(() => this.endAtLastLine());
+    if (this.droppedBytes > 0)
+      this.observe(() =>
+        fs.appendFileSync(
+          this.value.logPath,
+          `\n[log truncated: kept ${this.logBytes} bytes of a ${MAX_OPERATION_LOG_BYTES} byte limit; ${this.droppedBytes} further bytes dropped]\n`,
+        ),
+      );
     this.value.exitCode = exitCode;
     this.value.status = exitCode === 0 ? 'pass' : 'fail';
     this.value.finishedAt = new Date().toISOString();
     this.observe(() => this.flush());
+  }
+
+  /**
+   * End a truncated log at its last line break.
+   *
+   * Adapters forward raw pipe buffers, so a write that fits can end in the
+   * middle of a multi-byte character, with the bytes completing it in the next
+   * write. While everything is appended that resolves itself; once a write is
+   * withheld at the cap it never does, and the log would end in bytes that are
+   * not valid UTF-8. Cutting back to the last newline covers that and any
+   * partial last line in one rule, with no need to reason about byte classes.
+   *
+   * A log with no line break at all is left alone: it is one unterminated line,
+   * and discarding all of it to tidy a few bytes would lose more than it fixes.
+   */
+  private endAtLastLine(): void {
+    if (this.logBytes === 0) return;
+    const window = 64 * 1024;
+    const handle = fs.openSync(this.value.logPath, 'r');
+    let lastBreak = -1;
+    try {
+      for (let end = this.logBytes; end > 0 && lastBreak < 0; end -= window) {
+        const size = Math.min(window, end);
+        const buffer = Buffer.alloc(size);
+        fs.readSync(handle, buffer, 0, size, end - size);
+        const index = buffer.lastIndexOf(0x0a);
+        if (index >= 0) lastBreak = end - size + index;
+      }
+    } finally {
+      fs.closeSync(handle);
+    }
+    if (lastBreak < 0) return;
+    const keep = lastBreak + 1;
+    if (keep === this.logBytes) return;
+    fs.truncateSync(this.value.logPath, keep);
+    this.droppedBytes += this.logBytes - keep;
+    this.logBytes = keep;
   }
 
   private observe(write: () => void): void {
