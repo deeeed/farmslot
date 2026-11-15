@@ -114,29 +114,36 @@ const nativeDiff = (diff) =>
 if (phase === 'pair') {
   // Setup: pair through the app's own link and native alerts. Opening the app can deliver the link
   // twice; the second shows "Pairing already running", which is dismissed while the first goes on.
-  const { link } = await call('POST', '/pair');
-  execFileSync('xcrun', ['simctl', 'openurl', simulator, link]);
-  device('open', 'net.siteed.farmslot.development');
+  // A saved profile for the previous stack can fail the first exchange; a fresh link then pairs.
   const answers = [
     ['Open in', 'Open'],
     ['Pairing already running', 'OK'],
     ['Pair with this gateway?', 'Pair'],
+    ['Pairing failed', 'OK'],
     ['Companion paired', 'OK'],
   ];
-  const deadline = Date.now() + 180000;
-  for (let paired = false; !paired; ) {
-    assert(Date.now() < deadline, 'Pairing did not finish');
-    const alert = device('alert', 'get');
-    const text = alert.success ? JSON.stringify(alert.data) : '';
-    if (!alert.success)
-      assert.equal(alert.error?.message, 'alert not found', JSON.stringify(alert.error));
-    assert(!text.includes('Pairing failed'), `Pairing failed: ${text}`);
-    const answer = answers.find(([title]) => text.includes(title));
-    if (answer) {
+  let outcome = '';
+  for (let attempt = 0; outcome !== 'Companion paired'; attempt++) {
+    assert(attempt < 3, 'Pairing failed three times');
+    const { link } = await call('POST', '/pair');
+    execFileSync('xcrun', ['simctl', 'openurl', simulator, link]);
+    device('open', 'net.siteed.farmslot.development');
+    const deadline = Date.now() + 120000;
+    for (outcome = ''; outcome !== 'Companion paired' && outcome !== 'Pairing failed'; ) {
+      assert(Date.now() < deadline, 'Pairing did not finish');
+      const alert = device('alert', 'get');
+      if (!alert.success)
+        assert.equal(alert.error?.message, 'alert not found', JSON.stringify(alert.error));
+      const text = alert.success ? JSON.stringify(alert.data) : '';
+      const answer = answers.find(([title]) => text.includes(title));
+      if (!answer) {
+        await delay(500);
+        continue;
+      }
       const pressed = device('press', `label="${answer[1]}"`);
       assert(pressed.success, JSON.stringify(pressed.error));
-      paired = answer[0] === 'Companion paired';
-    } else await delay(500);
+      outcome = answer[0];
+    }
   }
   assert(device('close').success, 'Could not release the device');
   report({ paired: true });
