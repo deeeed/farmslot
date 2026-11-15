@@ -1,10 +1,11 @@
 // Loopback-only GitHub for the recovery matrix. Unknown operations fail closed.
 import { execFileSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
-import { createServer } from 'node:http';
 import path from 'node:path';
 
 import { isRecord } from '@farmslot/protocol/recipe';
+
+import { startGitHubFixture } from '../../../services/gateway/src/integrations/github-test-fixtures.js';
 
 const DATE = '2026-11-05T00:00:00Z';
 
@@ -135,40 +136,14 @@ function answer(holds: string, method: string, pathname: string, payload: unknow
   throw new Error(`Unsupported recovery GitHub operation: ${method} ${pathname}`);
 }
 
-/** One server per owned recovery stack; the gateway uses its existing fixture-origin contract. */
-export async function startRecoveryGithub(holds: () => string) {
-  const server = createServer(async (req, res) => {
-    try {
-      const chunks: Buffer[] = [];
-      for await (const chunk of req) chunks.push(Buffer.from(chunk));
-      const raw = Buffer.concat(chunks).toString('utf8');
-      const payload: unknown = raw ? JSON.parse(raw) : {};
-      const pathname = new URL(req.url ?? '/', 'http://fixture').pathname;
-      appendFileSync(
-        path.join(holds(), 'github-http.jsonl'),
-        JSON.stringify({ method: req.method, pathname }) + '\n',
-      );
-      const result = answer(holds(), req.method ?? 'GET', pathname, payload);
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify(result));
-    } catch (error) {
-      // A rejected fixture request must fail the caller, never reach real GitHub.
-      res.writeHead(500, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ message: (error as Error).message }));
-    }
+/** One server per owned recovery stack, using the shared GitHub fixture transport. */
+export function startRecoveryGithub(holds: () => string) {
+  // Async keeps handler failures on the shared transport's rejected-response path.
+  return startGitHubFixture(async ({ method, path: pathname, json }) => {
+    appendFileSync(
+      path.join(holds(), 'github-http.jsonl'),
+      JSON.stringify({ method, pathname }) + '\n',
+    );
+    return { body: answer(holds(), method, pathname, json) };
   });
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('Recovery GitHub did not bind');
-  return {
-    origin: `http://127.0.0.1:${address.port}`,
-    close: () =>
-      new Promise<void>((resolve, reject) => {
-        server.closeAllConnections();
-        server.close((error) => (error ? reject(error) : resolve()));
-      }),
-  };
 }
