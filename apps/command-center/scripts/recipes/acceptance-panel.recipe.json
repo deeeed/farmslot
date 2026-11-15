@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Read live acceptance criteria during and after task preparation",
+  "description": "Read-only. Select an authenticated gateway profile, owned FARMSLOT_AC_PROOF_TAB, FARMSLOT_AC_PROOF_RUN_ID, FARMSLOT_AC_PROOF_OUTPUT and FARMSLOT_AC_PROOF_PHASE=pre-task or task. Run once while a naturally scheduled run is writing its task and again after. Never changes run or UI state.",
+  "workflow": {
+    "entry": "read-criteria",
+    "nodes": {
+      "read-criteria": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-acceptance-panel.mjs",
+        "timeout_ms": 90000,
+        "intent": "Read the actual run through authenticated RPC and its connected Command Center panel. Prove one-level criterion text and no false zero tally; before the task, show registered criteria or quiet preparation without a ledger error.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

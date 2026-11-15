@@ -62,6 +62,7 @@ import {
   NODE_H,
   pipelineDetachedProgressVisible,
   type PipelineLayout,
+  runAwaitsTaskSource,
   runHasTaskSource,
 } from './run-pipeline-model.js';
 import {
@@ -296,6 +297,14 @@ export class RunPipeline extends LitElement {
       : html`<div class="acceptance-slot" ?data-held=${this.acceptanceRowHeld}>${panel}</div>`;
   }
 
+  private acceptanceInputs() {
+    // No task read is meaningful until write-task records its source. Registered criteria
+    // still belong to this run and can be shown while the task is being prepared.
+    return this.run && runAwaitsTaskSource(this.run)
+      ? acceptancePanelInputs({ run: this.run })
+      : acceptancePanelInputs(this);
+  }
+
   /** Run detail's order: canvas detail, step progress, the host's artifacts, criteria. */
   private renderPanels() {
     const checklist =
@@ -304,7 +313,11 @@ export class RunPipeline extends LitElement {
     const hasProgress = Boolean(checklist);
     const progressSummary = checklist ? `${checklist.counts} · ${checklist.label}` : '';
     const acceptance = this.renderAcceptancePanel();
-    const inputs = acceptance === nothing ? null : acceptancePanelInputs(this);
+    const inputs = acceptance === nothing ? null : this.acceptanceInputs();
+    const awaitingTask = Boolean(this.run && runAwaitsTaskSource(this.run));
+    const criteriaCount = inputs
+      ? (inputs.criteria ?? inputs.ledger.criteria).length || inputs.evidenceModel?.claims.length
+      : 0;
     const progressOpen = runDetailPanelOpen('run-step-progress');
     const detachedInspector = Boolean(this.selectedStepName) && !progressOpen;
     return html`
@@ -322,18 +335,23 @@ export class RunPipeline extends LitElement {
         : nothing}
       ${detachedInspector || !hasProgress ? html`<slot name="canvas-detail"></slot>` : nothing}
       <slot name="artifacts"></slot>
-      ${inputs || this.acceptanceRowHeld
+      ${inputs || this.acceptanceRowHeld || awaitingTask
         ? renderCollapsiblePanel({
             id: 'run-acceptance',
             label: 'Acceptance criteria',
-            summary: inputs
-              ? acceptancePanelPresentation(
-                  inputs.ledger,
-                  inputs.criteria ?? inputs.ledger.criteria,
-                  inputs.evidenceModel,
-                  inputs.registration,
-                ).counts
-              : 'loading',
+            summary:
+              inputs && criteriaCount
+                ? acceptancePanelPresentation(
+                    inputs.ledger,
+                    inputs.criteria ?? inputs.ledger.criteria,
+                    inputs.evidenceModel,
+                    inputs.registration,
+                  ).counts
+                : awaitingTask
+                  ? 'Preparing task'
+                  : inputs
+                    ? ''
+                    : 'Reading criteria',
             open: runDetailPanelOpen('run-acceptance'),
             onToggle: () => this.togglePanel('run-acceptance'),
             body: () => this.renderAcceptanceSection(acceptance),
@@ -450,8 +468,12 @@ export class RunPipeline extends LitElement {
    * operator opens run detail to answer.
    */
   private renderAcceptancePanel() {
-    if (!runHasTaskSource(this.run)) return nothing;
-    const inputs = acceptancePanelInputs(this);
+    if (this.run && runAwaitsTaskSource(this.run) && !this.acceptanceInputs())
+      return html`<p role="status" data-testid="acceptance-awaiting-task">
+        Criteria will appear when the task is written.
+      </p>`;
+    if (!runHasTaskSource(this.run) && !(this.run && runAwaitsTaskSource(this.run))) return nothing;
+    const inputs = this.acceptanceInputs();
     if (!inputs) return nothing;
     const { ledger, ...options } = inputs;
     return renderAcceptancePanel(ledger, {
