@@ -50,6 +50,16 @@ test('a missing ledger has a diagnostic, never a zero acceptance tally', () => {
   assert.doesNotMatch(text, /0\/0|acceptance-counts/);
 });
 
+test('criterion text can quote a zero tally without becoming the assessment count', () => {
+  const text = litText(
+    renderAcceptancePanel(
+      ledger([criterion({ text: 'Never show 0/0 assessed', verdict: 'missing' })]),
+    ),
+  );
+  assert.match(text, /Never show 0\/0 assessed/);
+  assert.match(text, /data-testid="acceptance-counts"[^>]*>1\/1 assessed/);
+});
+
 test('a package without criteria shows evidence diagnostics without a zero assessment count', () => {
   const model = createEvidenceReviewModel({
     context: 'run-detail',

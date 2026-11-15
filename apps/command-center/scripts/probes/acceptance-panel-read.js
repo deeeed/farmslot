@@ -14,6 +14,7 @@ return {
   taskFile: run?.taskFile ?? null,
   writeTask: run?.steps.find((step) => step.name === 'write-task')?.status,
   heading: panel?.querySelector('button')?.textContent.trim().replace(/\s+/g, ' '),
+  tally: panel?.querySelector('[data-testid="run-acceptance-toggle-summary"]')?.textContent.trim(),
   text: panel?.textContent.trim().replace(/\s+/g, ' '),
   rows: rows.map((row) => ({
     id: row.dataset.acId,
