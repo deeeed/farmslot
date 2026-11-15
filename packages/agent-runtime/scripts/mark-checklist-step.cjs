@@ -18,6 +18,7 @@ const {
   terminalContractInputForChecklist,
 } = require('./checklist-target.cjs');
 const proofArtifacts = require('./proof-artifacts.cjs');
+const checklistOrder = require('./checklist-order.cjs');
 const {
   atomicWrite,
   markStepInLines,
@@ -77,6 +78,9 @@ function printHelp() {
       'Override: farmslot-agent mark <task-dir> --checklist REVIEW.md <step> — optional --signal; signal defaults from checklist name.',
       'Bootstrap: ./mark start — role-owned signal with status running (no checklist box).',
       'Progress: ./mark 1, ./mark 2, ... — checks the box and appends checklistTiming.',
+      '  Steps are claimed in order: ./mark N is refused while an earlier step is unchecked.',
+      '  A step whose title carries [OPTIONAL: <when>] can be skipped with ./mark N --skip "<reason>";',
+      '  the reason is recorded in the ledger. Any other step must be done.',
       'Existing evidence manifests are validated before progress or success marks, with field errors on refusal.',
       'Operator: ./mark wait --who "name" --reason "..."; ./mark resume clears the wait without marking a row.',
       'Child units: ./mark sub start <id> --step N --from <path|inline:text>, then ./mark sub <id> <n> | complete [--report PATH] [--mark-last] | blocked --reason "..." | status.',
@@ -160,6 +164,16 @@ for (let i = 0; i < rest.length; i += 1) {
   i += 1;
 }
 
+/**
+ * `--skip "<reason>"`: the worker's statement that a step the template declared
+ * optional does not apply to this run. Null when not skipping.
+ */
+const skipReason = typeof opts.skip === 'string' && opts.skip.trim() ? opts.skip.trim() : null;
+if (opts.skip !== undefined && skipReason === null) {
+  console.error('--skip needs a reason: ./mark N --skip "<why this step does not apply>"');
+  process.exit(2);
+}
+
 const stepToken = String(stepRaw).toLowerCase();
 const isStartCommand = START_COMMANDS.has(stepToken);
 const isOperatorCommand = OPERATOR_COMMANDS.has(stepToken);
@@ -172,6 +186,10 @@ if (!isStartCommand && !isOperatorCommand && !terminalCommand) {
 
 if (isStartCommand && Object.keys(opts).length > 0) usage();
 if (stepToken === 'resume' && Object.keys(opts).length > 0) usage();
+if (skipReason !== null && stepNumber === null) {
+  console.error('--skip applies to a numbered step: ./mark N --skip "<reason>"');
+  process.exit(2);
+}
 if (stepToken === 'wait') {
   if (
     Object.keys(opts).some((key) => !['who', 'reason'].includes(key)) ||
@@ -520,24 +538,55 @@ function resolveTarget(taskPath, stepNumber, markLast) {
     // Also covers `--mark-last`: the parent must not tick a box whose child is
     // still open, whichever way the row was chosen.
     assertStepNotOwnedBySubtask(item.stepNumber);
-    // A tick is the claim, so a step that declares its proof cannot be checked
-    // before that evidence exists. Re-marking an already-checked row stays
-    // idempotent: completion, not this path, judges evidence that went away.
+    const dir = path.dirname(taskPath);
+    const checklist = path.basename(taskPath);
+    const contract = loadTerminalContract(dir, taskPath);
     if (!item.checked) {
-      const dir = path.dirname(taskPath);
-      const pending = proofArtifacts.pending(
-        dir,
-        path.basename(taskPath),
-        item.stepNumber,
-        loadTerminalContract(dir, taskPath),
-      );
-      if (pending) {
-        console.error(pending);
+      // Steps are claimed in order. An earlier step still open means this claim
+      // would stand on work that has not been done, which is how a trial ends up
+      // running changed-file CI before it has a baseline.
+      const earlier = checklistOrder.firstUnmarkedEarlierStep(parsed.items, item.stepNumber);
+      if (earlier) {
+        const optional = checklistOrder.declared(dir, checklist, contract);
+        const when = optional.get(earlier.stepNumber);
+        console.error(
+          `step ${item.stepNumber} cannot be marked while step ${earlier.stepNumber} ` +
+            `(${earlier.label}) is unchecked. ` +
+            (when
+              ? `That step is optional (${when}); skip it with ` +
+                `${path.join(dir, 'mark')} ${earlier.stepNumber} --skip "<reason>"`
+              : 'Do that step first.'),
+        );
         process.exit(1);
+      }
+      if (skipReason !== null) {
+        // Only the template grants a skip, and only with a reason on the record.
+        const when = checklistOrder.declared(dir, checklist, contract).get(item.stepNumber);
+        if (!when) {
+          console.error(
+            `step ${item.stepNumber} is not declared optional, so it cannot be skipped. ` +
+              'Do the step, or stop with ' +
+              `${path.join(dir, 'mark')} blocked --reason "<why>".`,
+          );
+          process.exit(1);
+        }
+      }
+      // A tick is the claim, so a step that declares its proof cannot be checked
+      // before that evidence exists. A skipped step claims nothing, so it needs
+      // none. Re-marking an already-checked row stays idempotent: completion,
+      // not this path, judges evidence that went away.
+      if (skipReason === null) {
+        const pending = proofArtifacts.pending(dir, checklist, item.stepNumber, contract);
+        if (pending) {
+          console.error(pending);
+          process.exit(1);
+        }
       }
     }
     try {
-      deterministicChecks.execute(path.dirname(taskPath), path.basename(taskPath), item.stepNumber);
+      // A skipped step runs nothing: its declared command belongs to the work
+      // the template says does not apply here.
+      if (skipReason === null) deterministicChecks.execute(dir, checklist, item.stepNumber);
     } catch (error) {
       console.error(error.message);
       process.exit(1);
@@ -795,7 +844,14 @@ const recordedEvent = events.findIndex(
     event && (event.stepNumber === target.stepNumber || event.index === target.stepNumber - 1),
 );
 if (!isStartCommand && target.stepNumber != null && recordedEvent === -1) {
-  events.push({ stepNumber: target.stepNumber, label: target.label, checkedAt: now });
+  events.push({
+    stepNumber: target.stepNumber,
+    label: target.label,
+    checkedAt: now,
+    // A skip is a claim about the work not applying, so the reason it was
+    // granted on stays with the step in the ledger.
+    ...(skipReason !== null ? { skipped: true, reason: skipReason } : {}),
+  });
 } else if (!isStartCommand && target.stepNumber != null) {
   // Re-marking stays the no-op it has always been, with one exception: a step
   // that declares its proof and whose evidence was rewritten after the first

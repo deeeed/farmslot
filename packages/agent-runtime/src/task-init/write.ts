@@ -48,10 +48,18 @@ const proofArtifacts = require('../../scripts/proof-artifacts.cjs') as {
     checklist: string,
   ) => WorkerTerminalContractDocument;
 };
+const checklistOrder = require('../../scripts/checklist-order.cjs') as {
+  freeze: (
+    contract: WorkerTerminalContractDocument,
+    markdown: string,
+    checklist: string,
+  ) => WorkerTerminalContractDocument;
+};
 
 /**
- * Freeze both step-level declarations from one checklist read: the commands a
- * step must execute (ADR-064) and the artifact a proof step must produce.
+ * Freeze every step-level declaration from one checklist read: the commands a
+ * step must execute (ADR-064), the artifact a proof step must produce, and the
+ * steps the template declared optional.
  */
 function freezeChecklistDeclarations(
   contract: WorkerTerminalContractDocument,
@@ -59,8 +67,12 @@ function freezeChecklistDeclarations(
   checklist: string,
   commands?: Record<string, string>,
 ): WorkerTerminalContractDocument {
-  return proofArtifacts.freeze(
-    deterministicChecks.freeze(contract, markdown, checklist, commands),
+  return checklistOrder.freeze(
+    proofArtifacts.freeze(
+      deterministicChecks.freeze(contract, markdown, checklist, commands),
+      markdown,
+      checklist,
+    ),
     markdown,
     checklist,
   );

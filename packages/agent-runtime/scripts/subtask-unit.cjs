@@ -5,6 +5,7 @@ const { isDeepStrictEqual } = require('node:util');
 const { ACCEPTANCE_REGISTRATION_INPUT } = require('@farmslot/protocol/scripts/acceptance.mjs');
 const { literalReplacement } = require('@farmslot/protocol/scripts/literal-replacement.mjs');
 const { pendingInitialAcceptanceDerivation } = require('./acceptance-ledger.cjs');
+const checklistOrder = require('./checklist-order.cjs');
 
 const {
   checklistNumberingMismatches,
@@ -17,6 +18,7 @@ const {
   SUBTASKS_DIR,
   subtaskPaths,
   targetForChecklistBasename,
+  terminalContractInputForChecklist,
 } = require('./checklist-target.cjs');
 const {
   atomicWrite,
@@ -41,6 +43,21 @@ const {
 // never changes the run's active task file.
 
 const HANDOFF_INPUT = path.join('inputs', 'handoff.json');
+
+/** The checklist's frozen terminal contract, or null when it has none yet. */
+function frozenContract(taskDir, checklist) {
+  for (const input of [
+    terminalContractInputForChecklist(checklist),
+    'inputs/worker-terminal-contract.json',
+  ]) {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(taskDir, input), 'utf8'));
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+  }
+  return null;
+}
 const SUBTASK_INDEX_REL = `${SUBTASKS_DIR}/${SUBTASK_INDEX_FILE}`;
 
 /** A refused command: the message is worker-facing, the code is the exit code. */
@@ -462,7 +479,6 @@ function subStart(taskDir, rest) {
   if (!parentRow) {
     throw new SubtaskRefusal(`checklist step ${stepNumber} not found in ${target.checklist}`);
   }
-
   const index = readSubtaskIndex(taskDir) ?? { schemaVersion: 1, units: [] };
   // One child per step for the LIFE of the task directory: a settled child has
   // already ticked the box, so a second registration would reopen finished work.
@@ -479,6 +495,25 @@ function subStart(taskDir, rest) {
     throw new SubtaskRefusal(
       `step ${stepNumber} is already checked; a subtask cannot be registered on a completed step`,
     );
+  }
+
+  // Registering a child on a step claims the work has reached it, and the child's
+  // own completion ticks that box. Order is therefore enforced here rather than at
+  // the child's tick (ADR-064 Amendment 7).
+  if (!parentRow.checked) {
+    const earlier = checklistOrder.firstUnmarkedEarlierStep(parent.items, stepNumber);
+    if (earlier) {
+      const when = checklistOrder
+        .declared(taskDir, target.checklist, frozenContract(taskDir, target.checklist))
+        .get(earlier.stepNumber);
+      throw new SubtaskRefusal(
+        `step ${stepNumber} cannot take a child while step ${earlier.stepNumber} ` +
+          `(${earlier.label}) is unchecked. ` +
+          (when
+            ? `That step is optional (${when}); skip it with ./mark ${earlier.stepNumber} --skip "<reason>"`
+            : 'Do that step first.'),
+      );
+    }
   }
 
   const source = readSubtaskSource(flags.from, taskDir);

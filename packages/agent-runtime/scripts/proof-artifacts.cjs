@@ -17,6 +17,7 @@ const path = require('node:path');
 
 const { enumerateChecklistCheckboxes, signalFileForChecklist } = require('./checklist-target.cjs');
 const { readJson } = require('./mark-io.cjs');
+const checklistOrder = require('./checklist-order.cjs');
 
 /** How an absent declared path reads in a refusal. */
 const EVIDENCE_ABSENCE = {
@@ -198,9 +199,13 @@ function claimOlderThanEvidence(taskDir, checklist, stepNumber, contract, signal
  */
 function proofArtifactIssues(taskDir, checklist, contract, signalFile) {
   const ticked = checkedSteps(taskDir, checklist);
+  // A skipped step claims the work did not apply, so it owes no evidence. The
+  // skip itself is only granted on a template-declared optional step, and the
+  // order check refuses one that was not.
+  const skipped = checklistOrder.skipped(taskDir, checklist, signalFile);
   const issues = [];
   for (const step of declaredProofArtifacts(taskDir, checklist, contract)) {
-    if (!ticked.has(step.stepNumber)) continue;
+    if (!ticked.has(step.stepNumber) || skipped.has(step.stepNumber)) continue;
     const evidence = proofEvidence(taskDir, step.path);
     if (!evidence.present) {
       issues.push(

@@ -260,6 +260,16 @@ symlink MUST be refused. Completion MUST inspect only the declarations of the
 checklist that is completing. A step without a declaration keeps its existing
 behaviour (ADR-064 Amendment 5).
 
+Steps MUST be claimed in order: `./mark N` MUST be refused while any earlier step
+is unchecked, deterministic steps included, and completion MUST refuse a checklist
+whose checked steps have an unchecked step behind them. A step title MAY carry
+`[OPTIONAL: <when it does not apply>]`; only such a step MAY be skipped, and only
+through `./mark N --skip "<reason>"`, which MUST record the reason in the ledger.
+A skipped step MUST NOT run its deterministic command and MUST NOT be required to
+produce its declared proof. A step without the marker MUST NOT be skipped, and
+completion MUST refuse a recorded skip on a step the template does not declare
+optional (ADR-064 Amendment 7).
+
 ### Mark and receipt rules
 
 1. `./mark N` MUST reuse a receipt only when the frozen command, current publishable-input hash, successful completion and recorded log integrity still validate. Reuse MUST leave the receipt and log unchanged. Otherwise mark MUST execute the declared command itself before checking the box. This also applies after a complete signal. Execution uses the Git checkout containing the task, or the caller's target checkout when a standalone task is outside Git. The process inherits the configured environment and runs without a login shell.

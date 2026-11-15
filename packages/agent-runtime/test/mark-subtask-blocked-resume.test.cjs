@@ -14,6 +14,9 @@ const {
 {
   const dir = makeTask();
   assert.equal(mark(dir, 'start').status, 0);
+  // A child on step 2 claims the work reached it, so step 1 is done first
+  // (ADR-064 Amendment 7).
+  assert.equal(mark(dir, '1').status, 0);
   assert.equal(
     mark(dir, 'sub', 'start', 'perps-review', '--step', '2', '--from', 'skill.md').status,
     0,

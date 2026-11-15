@@ -13,6 +13,10 @@ const {
 {
   const dir = makeTask();
   assert.equal(mark(dir, 'start').status, 0);
+  // Steps are claimed in order (ADR-064 Amendment 7), and registering a child on
+  // step 3 claims the work reached it, so the rows before it are done first.
+  assert.equal(mark(dir, '1').status, 0);
+  assert.equal(mark(dir, '2').status, 0);
   const started = mark(
     dir,
     'sub',

@@ -30,6 +30,7 @@
     "./scripts/subtask-unit.cjs": "./scripts/subtask-unit.cjs",
     "./scripts/worker-terminal-contract.cjs": "./scripts/worker-terminal-contract.cjs",
     "./scripts/proof-artifacts.cjs": "./scripts/proof-artifacts.cjs",
+    "./scripts/checklist-order.cjs": "./scripts/checklist-order.cjs",
     "./scripts/check-task-artifact-contract.mjs": "./scripts/check-task-artifact-contract.mjs",
     "./scripts/retained-recipe-attempt.cjs": {
       "types": "./scripts/retained-recipe-attempt.d.cts",

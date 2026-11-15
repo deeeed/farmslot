@@ -15,6 +15,7 @@ const {
 } = require('./worker-terminal-contract.cjs');
 const { SUBTASK_INDEX_REL, openSubtaskUnits } = require('./subtask-unit.cjs');
 const proofArtifacts = require('./proof-artifacts.cjs');
+const checklistOrder = require('./checklist-order.cjs');
 const { resolveChecklistTarget } = require('./checklist-target.cjs');
 const { acceptanceContractIssues, readAcceptanceLedger } = require('./acceptance-ledger.cjs');
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -701,6 +702,9 @@ if (terminalCommand !== 'blocked' && !proofMeasurement) {
     // own selection wins over the manifest, which it may not have written.
     const checklist = proofChecklist ?? resolveChecklistTarget(taskDir).checklist;
     issues.push(...proofArtifacts.issues(taskDir, checklist, terminalContract, proofSignal));
+    // Steps are claimed in order, and only a step the template declared optional
+    // may be skipped. A checklist edited around the mark engine shows up here.
+    issues.push(...checklistOrder.issues(taskDir, checklist, terminalContract, proofSignal));
   } catch (error) {
     issues.push(`Proof declarations cannot be validated: ${error.message}`);
   }

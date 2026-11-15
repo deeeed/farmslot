@@ -15,6 +15,7 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const helper = path.join(root, 'scripts', 'mark-checklist-step.cjs');
 const proofArtifacts = require('../scripts/proof-artifacts.cjs');
+const checklistOrder = require('../scripts/checklist-order.cjs');
 const { CHECKLIST_TARGET_MANIFEST } = require('../scripts/checklist-target.cjs');
 
 function task(name) {
@@ -203,17 +204,42 @@ const DECLARED = `- [ ] 1. Retain the failing baseline run [PROOF: ${BASELINE}]`
   ]);
 }
 
-// The signal records the out-of-order marks and refuses nothing for them.
+// Marking out of order is refused at the mark, so the engine cannot record an
+// out-of-order claim at all. The recorded anomalies above remain the reading of
+// a ledger written before this rule, or of a checklist edited by hand.
 {
   const dir = task('order');
   writeChecklist(dir, ['- [ ] 1. First', '- [ ] 2. Second']);
   writeContract(dir, { schemaVersion: 1, flowType: 'fix-bug', requireSignal: true });
-  assert.equal(spawnSync(process.execPath, [helper, dir, '2'], { encoding: 'utf8' }).status, 0);
-  const second = spawnSync(process.execPath, [helper, dir, '1'], { encoding: 'utf8' });
-  assert.equal(second.status, 0, second.stderr);
+  const ahead = spawnSync(process.execPath, [helper, dir, '2'], { encoding: 'utf8' });
+  assert.equal(ahead.status, 1, ahead.stdout);
+  assert.match(ahead.stderr, /step 2 cannot be marked while step 1 \(1\. First\) is unchecked/);
+  assert.equal(existsSync(path.join(dir, 'SIGNAL.json')), false);
+  assert.match(readFileSync(path.join(dir, 'CHECKLIST.md'), 'utf8'), /- \[ \] 2\. Second/);
+}
+
+// A ledger written before the order rule still reads back its anomalies.
+{
+  const dir = task('order-legacy');
+  writeChecklist(dir, ['- [x] 1. First', '- [x] 2. Second']);
+  writeFileSync(
+    path.join(dir, 'SIGNAL.json'),
+    `${JSON.stringify({
+      checklistTiming: {
+        schemaVersion: 1,
+        source: 'CHECKLIST.md',
+        events: [
+          { stepNumber: 2, label: '2. Second', checkedAt: '2026-11-13T19:00:00.000Z' },
+          { stepNumber: 1, label: '1. First', checkedAt: '2026-11-13T19:01:00.000Z' },
+        ],
+      },
+    })}\n`,
+  );
   const signal = JSON.parse(readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8'));
   assert.deepEqual(
-    signal.checklistTiming.outOfOrder.map(({ stepNumber, after }) => ({ stepNumber, after })),
+    proofArtifacts
+      .outOfOrderMarks(signal.checklistTiming.events)
+      .map(({ stepNumber, after }) => ({ stepNumber, after })),
     [{ stepNumber: 1, after: 2 }],
   );
 }
@@ -492,6 +518,83 @@ const DECLARED = `- [ ] 1. Retain the failing baseline run [PROOF: ${BASELINE}]`
   const evidence = proofArtifacts.evidence(dir, BASELINE);
   assert.equal(evidence.present, false);
   assert.equal(evidence.reason, 'empty');
+}
+
+// Blind trial 40d98f79's real mark sequence on its real checklist: it marked
+// step 2 and then step 13, the changed-file CI gate, with steps 1 and 3-6
+// unchecked. Step 13 must be refused at the mark.
+{
+  const recorded = path.join(__dirname, 'fixtures', 'checklist-order', 'fix-bug-core-21-steps.md');
+  const checklist = readFileSync(recorded, 'utf8');
+
+  const dir = task('order-40d98f79');
+  writeFileSync(path.join(dir, 'CHECKLIST.md'), checklist);
+  writeContract(dir, { schemaVersion: 1, flowType: 'fix-bug', requireSignal: true });
+
+  const second = spawnSync(process.execPath, [helper, dir, '2'], { encoding: 'utf8' });
+  assert.equal(second.status, 1, second.stdout);
+  assert.match(second.stderr, /step 2 cannot be marked while step 1 .* is unchecked/);
+
+  // Even granting it step 2, the jump to 13 is refused and names what is open.
+  assert.equal(spawnSync(process.execPath, [helper, dir, '1'], { encoding: 'utf8' }).status, 0);
+  assert.equal(spawnSync(process.execPath, [helper, dir, '2'], { encoding: 'utf8' }).status, 0);
+  const jump = spawnSync(process.execPath, [helper, dir, '13'], { encoding: 'utf8' });
+  assert.equal(jump.status, 1, jump.stdout);
+  assert.match(jump.stderr, /step 13 cannot be marked while step 3 .* is unchecked/);
+  assert.match(jump.stderr, /Do that step first/);
+}
+
+// The same checklist worked in order, which is what a run that follows the
+// template does: every mark is accepted and completion finds no order issue.
+{
+  const recorded = path.join(__dirname, 'fixtures', 'checklist-order', 'fix-bug-core-21-steps.md');
+  const dir = task('order-sequential');
+  writeFileSync(path.join(dir, 'CHECKLIST.md'), readFileSync(recorded, 'utf8'));
+  const contract = { schemaVersion: 1, flowType: 'fix-bug', requireSignal: true };
+  writeContract(dir, contract);
+  for (let step = 1; step <= 21; step += 1) {
+    const marked = spawnSync(process.execPath, [helper, dir, String(step)], { encoding: 'utf8' });
+    assert.equal(marked.status, 0, `step ${step}: ${marked.stderr}`);
+  }
+  assert.deepEqual(checklistOrder.issues(dir, 'CHECKLIST.md', contract), []);
+  const signal = JSON.parse(readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8'));
+  assert.equal(signal.checklistTiming.events.length, 21);
+  assert.equal(signal.checklistTiming.outOfOrder, undefined);
+}
+
+// A gap left by a hand-edited checklist is refused at completion, and a skip the
+// template never declared is refused with it.
+{
+  const dir = task('order-completion');
+  writeChecklist(dir, ['- [x] 1. First', '- [ ] 2. Second', '- [x] 3. Third']);
+  const contract = { schemaVersion: 1, flowType: 'fix-bug', requireSignal: true };
+  const issues = checklistOrder.issues(dir, 'CHECKLIST.md', contract);
+  assert.equal(issues.length, 1);
+  assert.match(issues[0], /step 2 is unchecked while step 3 is checked/);
+
+  writeFileSync(
+    path.join(dir, 'SIGNAL.json'),
+    `${JSON.stringify({
+      checklistTiming: {
+        schemaVersion: 1,
+        source: 'CHECKLIST.md',
+        events: [
+          {
+            stepNumber: 2,
+            label: '2. Second',
+            checkedAt: '2026-11-15T00:00:00.000Z',
+            skipped: true,
+            reason: 'felt optional',
+          },
+        ],
+      },
+    })}\n`,
+  );
+  const undeclared = checklistOrder.issues(dir, 'CHECKLIST.md', contract);
+  assert.ok(
+    undeclared.some((issue) => /step 2 was skipped \(felt optional\) but the template/.test(issue)),
+    `expected an undeclared-skip issue, got ${JSON.stringify(undeclared)}`,
+  );
 }
 
 console.log('proof-artifacts tests passed');

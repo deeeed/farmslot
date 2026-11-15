@@ -86,6 +86,13 @@ const proofArtifacts = require('@farmslot/agent-runtime/scripts/proof-artifacts.
     checklist: string,
   ) => WorkerTerminalContractDocument;
 };
+const checklistOrder = require('@farmslot/agent-runtime/scripts/checklist-order.cjs') as {
+  freeze: (
+    contract: WorkerTerminalContractDocument,
+    markdown: string,
+    checklist: string,
+  ) => WorkerTerminalContractDocument;
+};
 
 export {
   lintWorkerTemplateAgainstContract,
@@ -195,6 +202,14 @@ export async function validateTerminalSignalArtifacts(
   const taskDir = path.posix.dirname(signalJsonPath);
 
   const checklistBasename = checklistBasenameFromTaskPath(checklistTaskFile);
+  // A cold dispatch records the task document, not the checklist: TASK.md sits
+  // beside CHECKLIST.md, which is where a split run's declarations are frozen.
+  // Only a role checklist is a selection worth passing; for anything else the
+  // slot resolves its own target, the same way the worker's mark does.
+  const roleChecklistBasename =
+    checklistBasename && checklistBasename !== 'TASK.md' && checklistBasename !== 'CHECKLIST.md'
+      ? checklistBasename
+      : undefined;
   const contractInput = checklistBasename
     ? terminalContractInputForChecklist(checklistBasename)
     : WORKER_TERMINAL_CONTRACT_INPUT;
@@ -294,7 +309,7 @@ export async function validateTerminalSignalArtifacts(
     // The same selection the worker completed with: the checklist this signal
     // belongs to, and the signal file itself. Without them the checker would
     // re-derive both and could judge another checklist's declarations.
-    ...(checklistBasename ? ['--proof-checklist', shellQuote(checklistBasename)] : []),
+    ...(roleChecklistBasename ? ['--proof-checklist', shellQuote(roleChecklistBasename)] : []),
     '--proof-signal',
     shellQuote(path.posix.basename(signalJsonPath)),
     ...(requiresAcceptanceLedger ? ['--require-acceptance-status'] : []),
@@ -440,7 +455,11 @@ export async function syncTerminalContractForFlowOnSlot(
       contract = deterministicChecks.freeze(contract, markdown, checklist, {
         'ci.local_check': localCheckWithBaseRef(localCheck, ciBaseRef),
       });
-    contract = proofArtifacts.freeze(contract, markdown, checklist);
+    contract = checklistOrder.freeze(
+      proofArtifacts.freeze(contract, markdown, checklist),
+      markdown,
+      checklist,
+    );
   }
   await writeTextFileOnSlot(
     vars,

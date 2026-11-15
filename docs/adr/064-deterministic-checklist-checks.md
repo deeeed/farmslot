@@ -174,3 +174,41 @@ run's `engineState.evalExperiment.review === false`. On such a run a refused
 `mark complete` ends the run with the refusal as its reason, so the trial is
 scored as a refusal naming its cause. Runs with a human gate keep today's
 behaviour, including the untestable override recorded by an authorized person.
+
+## Amendment 7 (2026-11-15): Checklist order, and optional steps
+
+**Status:** Accepted, directed by Arthur on 2026-11-15 after blind trial 40d98f79.
+
+Amendment 5 refuses a claim whose evidence is absent. It does not refuse a claim
+made in the wrong place: in trial 40d98f79 the worker applied a fix with no
+baseline behind it and then ran `mark 13`, the changed-file CI gate, while it was
+still on step 1 ("let me not overthink the checklist marks"). The mark engine
+accepted a step twelve places ahead of the work.
+
+Steps are claimed in order. `./mark N` is refused while any earlier step is
+unchecked, deterministic steps included, and completion refuses a checklist whose
+checked steps have a gap behind them.
+
+The exception is declared by the template, never by the worker. A step title may
+carry a condition:
+
+```
+- [ ] 11. Exit early if already fixed or not reproduced [OPTIONAL: the bug still reproduces]
+```
+
+Such a step may be skipped with `./mark 11 --skip "<reason>"`. The reason is
+recorded in the ledger beside the step (`skipped: true` with the reason in
+`checklistTiming`), the step's deterministic command does not run, and a declared
+proof artifact is not required of it, because the skip claims the work did not
+apply. A step without the marker can never be skipped: the worker does it, or
+stops the run with `mark blocked`. Completion refuses a recorded skip on a step
+the template never declared optional.
+
+The marker is frozen into the task's terminal contract at init beside the
+deterministic commands and the proof declarations, and it is one spec across every
+project: the same `[OPTIONAL: <when>]` in a pack template, a recipe-cook template
+or a role checklist.
+
+Good models already work in order, so nothing changes for them. What changes is
+that skipping ahead now fails loudly at the mark, where the worker can still fix
+it, instead of silently producing a finished-looking run with no baseline.

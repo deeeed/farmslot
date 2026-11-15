@@ -4,7 +4,7 @@
 
 - A checklist step can declare the evidence it claims with `[PROOF: artifacts/...]`. `./mark N` refuses the tick while that path is absent or empty, and `mark complete` refuses a checked step whose evidence is missing or was written after the claim; re-marking such a step restates the claim over repaired evidence. Steps without a declaration are unaffected.
 - A refused `mark complete` on a run whose contract is marked unattended now ends the run with the refusal as its reason, instead of printing advice no operator will read.
-- Marks recorded after a later-numbered step are kept in the signal as `checklistTiming.outOfOrder`; they refuse nothing.
+- Checklist steps are claimed in order: `./mark N` is refused while an earlier step is unchecked, deterministic steps included, and registering a child unit on a step is refused the same way. A step whose title carries `[OPTIONAL: <when>]` may be skipped with `./mark N --skip "<reason>"`, which records the reason in the ledger, runs no deterministic command and requires no declared proof. A step without that marker can never be skipped, and completion refuses a checklist with a gap or a skip the template never declared (ADR-064 Amendment 7).
 - A declared proof path is evidence only inside the task directory: one that resolves outside it through a symlink is refused, and a symlinked child does not count towards a declared directory. Completion inspects the declarations of the checklist that is completing, so a reviewer answers for its own checklist and not for the worker's: `check-task-artifact-contract.mjs` takes `--proof-checklist` and `--proof-signal` for the selection the terminal mark made, rather than re-deriving either.
 
 ## 0.48.0 - 2026-11-15
