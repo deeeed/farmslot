@@ -268,7 +268,9 @@ through `./mark N --skip "<reason>"`, which MUST record the reason in the ledger
 A skipped step MUST NOT run its deterministic command and MUST NOT be required to
 produce its declared proof. A step without the marker MUST NOT be skipped, and
 completion MUST refuse a recorded skip on a step the template does not declare
-optional (ADR-064 Amendment 7).
+optional. The declaration MUST come from the frozen terminal contract: a marker
+present only in the checklist file MUST NOT grant a skip or waive a declared
+proof (ADR-064 Amendment 7).
 
 ### Mark and receipt rules
 

@@ -41,20 +41,19 @@ function freezeOptionalSteps(contract, markdown, checklist) {
 }
 
 /**
- * The frozen optional steps plus any the live checklist carries, by step number.
- * The frozen contract is the record; a row added later still reads as optional,
- * because the worker cannot award itself a skip without the marker anyway.
+ * The optional steps the template granted, from the frozen contract only.
+ *
+ * Unlike a proof declaration, which a later row can only add to, optional is a
+ * privilege: honouring a marker found in the live checklist would let a worker
+ * refused at a step write `[OPTIONAL: ...]` on that row and skip it. The
+ * template declares the exception at init, never the worker (ADR-064
+ * Amendment 7), so a task whose contract predates the marker has no optional
+ * steps: it does the step, or stops with `mark blocked`.
  */
 function declaredOptionalSteps(taskDir, checklist, contract) {
   const steps = new Map();
   for (const step of contract?.optionalSteps ?? []) {
     if (step.checklist === checklist) steps.set(step.stepNumber, step.when);
-  }
-  const file = path.join(taskDir, checklist);
-  if (fs.existsSync(file)) {
-    for (const step of optionalDeclarations(fs.readFileSync(file, 'utf8'), checklist)) {
-      if (!steps.has(step.stepNumber)) steps.set(step.stepNumber, step.when);
-    }
   }
   return steps;
 }

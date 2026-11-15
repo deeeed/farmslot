@@ -800,8 +800,17 @@ function readDeterministicChecks(taskDir, checklist, options = {}) {
   });
 }
 
-function evaluateDeterministicChecks(taskDir, checklist) {
-  const checks = readDeterministicChecks(taskDir, checklist);
+/**
+ * `options.skipped`: step numbers the template declared optional and the worker
+ * skipped with a recorded reason (ADR-064 Amendment 7). A skipped step runs no
+ * command, so demanding its receipt would accept the skip at the mark and then
+ * refuse the completion. The skip itself is the record, in the ledger.
+ */
+function evaluateDeterministicChecks(taskDir, checklist, options = {}) {
+  const skipped = options.skipped ?? new Set();
+  const checks = readDeterministicChecks(taskDir, checklist).filter(
+    (step) => !skipped.has(step.stepNumber),
+  );
   const issues = checks
     .filter((step) => step.status !== 'passed')
     .map(

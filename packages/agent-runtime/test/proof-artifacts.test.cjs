@@ -597,4 +597,153 @@ const DECLARED = `- [ ] 1. Retain the failing baseline run [PROOF: ${BASELINE}]`
   );
 }
 
+// Optional is a privilege the template grants at init, so a marker the worker
+// writes into the live checklist grants nothing: it cannot skip a step, and it
+// cannot waive that step's declared proof.
+{
+  const dir = task('optional-live-marker');
+  const frozen = {
+    schemaVersion: 1,
+    flowType: 'fix-bug',
+    requireSignal: true,
+    proofArtifacts: [{ checklist: 'CHECKLIST.md', stepNumber: 1, path: BASELINE }],
+  };
+  writeContract(dir, frozen);
+  // The row the worker could not mark, now wearing a marker it added itself.
+  writeChecklist(dir, [
+    `- [ ] 1. Retain the failing baseline run [PROOF: ${BASELINE}] [OPTIONAL: baseline not retained]`,
+  ]);
+  const refused = spawnSync(process.execPath, [helper, dir, '1', '--skip', 'not retained'], {
+    encoding: 'utf8',
+  });
+  assert.equal(refused.status, 1, refused.stdout);
+  assert.match(refused.stderr, /step 1 is not declared optional, so it cannot be skipped/);
+  assert.equal(existsSync(path.join(dir, 'SIGNAL.json')), false);
+
+  // And a ledger that claims the skip anyway waives neither the order rule nor
+  // the evidence: the step still owes its declared proof.
+  writeChecklist(dir, [
+    `- [x] 1. Retain the failing baseline run [PROOF: ${BASELINE}] [OPTIONAL: baseline not retained]`,
+  ]);
+  writeFileSync(
+    path.join(dir, 'SIGNAL.json'),
+    `${JSON.stringify({
+      checklistTiming: {
+        schemaVersion: 1,
+        source: 'CHECKLIST.md',
+        events: [
+          {
+            stepNumber: 1,
+            label: '1. Retain the failing baseline run',
+            checkedAt: '2026-11-15T00:00:00.000Z',
+            skipped: true,
+            reason: 'not retained',
+          },
+        ],
+      },
+    })}\n`,
+  );
+  const proofIssues = proofArtifacts.issues(dir, 'CHECKLIST.md', frozen);
+  assert.equal(proofIssues.length, 1, JSON.stringify(proofIssues));
+  assert.match(proofIssues[0], /step 1 is checked but its declared proof .* is missing/);
+  const orderIssues = checklistOrder.issues(dir, 'CHECKLIST.md', frozen);
+  assert.ok(
+    orderIssues.some((issue) => /step 1 was skipped \(not retained\) but the template/.test(issue)),
+    `expected the undeclared skip to be refused, got ${JSON.stringify(orderIssues)}`,
+  );
+}
+
+// A step the frozen contract does declare optional can be skipped, records its
+// reason, runs no deterministic command, and owes no declared proof.
+{
+  const dir = task('optional-frozen');
+  const frozen = {
+    schemaVersion: 1,
+    flowType: 'fix-bug',
+    requireSignal: true,
+    proofArtifacts: [{ checklist: 'CHECKLIST.md', stepNumber: 1, path: BASELINE }],
+    optionalSteps: [{ checklist: 'CHECKLIST.md', stepNumber: 1, when: 'the bug still reproduces' }],
+  };
+  writeContract(dir, frozen);
+  writeChecklist(dir, [
+    `- [ ] 1. Retain the failing baseline run [PROOF: ${BASELINE}] [OPTIONAL: the bug still reproduces]`,
+    '- [ ] 2. Fix it',
+  ]);
+  const skipped = spawnSync(
+    process.execPath,
+    [helper, dir, '1', '--skip', 'the bug still reproduces on this base'],
+    { encoding: 'utf8' },
+  );
+  assert.equal(skipped.status, 0, skipped.stderr);
+  const event = JSON.parse(readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8')).checklistTiming
+    .events[0];
+  assert.equal(event.skipped, true);
+  assert.equal(event.reason, 'the bug still reproduces on this base');
+  assert.deepEqual(proofArtifacts.issues(dir, 'CHECKLIST.md', frozen), []);
+  assert.deepEqual(checklistOrder.issues(dir, 'CHECKLIST.md', frozen), []);
+  // The skip unblocks the next step, which is the whole point of declaring it.
+  assert.equal(spawnSync(process.execPath, [helper, dir, '2'], { encoding: 'utf8' }).status, 0);
+}
+
+// A step declared both optional and deterministic: the skip runs no command, so
+// completion must not then demand its receipt. Accepting a skip at the mark and
+// refusing it at completion is the stall this whole gate exists to avoid.
+{
+  const checker = path.join(root, 'scripts', 'check-task-artifact-contract.mjs');
+  const dir = task('optional-deterministic');
+  const frozen = {
+    schemaVersion: 1,
+    flowType: 'fix-bug',
+    requireSignal: true,
+    commands: {
+      complete: { report: 'artifacts/report.md', artifacts: ['artifacts/report.md'] },
+      'no-change': { artifacts: [] },
+      blocked: { artifacts: [] },
+    },
+    whenPresent: [],
+    deterministicChecks: [
+      {
+        checklist: 'CHECKLIST.md',
+        stepNumber: 1,
+        reference: 'checks.unit',
+        command: 'printf frozen',
+      },
+    ],
+    optionalSteps: [
+      { checklist: 'CHECKLIST.md', stepNumber: 1, when: 'the project runs no unit checks' },
+    ],
+  };
+  writeContract(dir, frozen);
+  writeChecklist(dir, [
+    '- [ ] 1. Unit checks [DETERMINISTIC: checks.unit] [OPTIONAL: the project runs no unit checks]',
+  ]);
+  writeFileSync(path.join(dir, 'artifacts', 'report.md'), '# Report\n\nDone.\n');
+
+  const skipped = spawnSync(
+    process.execPath,
+    [helper, dir, '1', '--skip', 'this project declares no unit checks'],
+    { encoding: 'utf8' },
+  );
+  assert.equal(skipped.status, 0, skipped.stderr);
+  // No receipt was written, because no command ran.
+  assert.equal(existsSync(path.join(dir, 'artifacts', 'deterministic-checks')), false);
+
+  const completion = spawnSync(
+    process.execPath,
+    [
+      checker,
+      dir,
+      '--contract',
+      path.join(dir, 'inputs', 'worker-terminal-contract.json'),
+      '--terminal',
+      'complete',
+      '--proof-checklist',
+      'CHECKLIST.md',
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(completion.status, 0, completion.stdout + completion.stderr);
+  assert.doesNotMatch(completion.stderr, /Execution receipt is missing/);
+}
+
 console.log('proof-artifacts tests passed');

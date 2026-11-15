@@ -718,7 +718,16 @@ if (terminalCommand !== 'blocked') {
   if (checklists.size === 0) checklists.add(undefined);
   for (const checklist of checklists) {
     try {
-      const result = deterministicChecks.evaluate(taskDir, checklist);
+      // An authorized skip carries through the receipt evaluator too: the step
+      // the template declared optional ran no command by design.
+      const selected = checklist ?? resolveChecklistTarget(taskDir).checklist;
+      const optional = checklistOrder.declared(taskDir, selected, terminalContract);
+      const skipped = new Set(
+        [...checklistOrder.skipped(taskDir, selected, proofSignal).keys()].filter((step) =>
+          optional.has(step),
+        ),
+      );
+      const result = deterministicChecks.evaluate(taskDir, checklist, { skipped });
       if (!proofMeasurement) issues.push(...result.issues);
       deterministicResults.push(...result.checks);
     } catch (error) {

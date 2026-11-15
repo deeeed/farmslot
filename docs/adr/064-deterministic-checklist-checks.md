@@ -201,7 +201,10 @@ recorded in the ledger beside the step (`skipped: true` with the reason in
 `checklistTiming`), the step's deterministic command does not run, and a declared
 proof artifact is not required of it, because the skip claims the work did not
 apply. A step without the marker can never be skipped: the worker does it, or
-stops the run with `mark blocked`. Completion refuses a recorded skip on a step
+stops the run with `mark blocked`. The grant is the frozen contract, not the file
+on disk: a marker a worker writes into its own checklist grants nothing, so a
+step it was refused cannot be waived by marking that row optional. A task whose
+contract predates the marker therefore has no optional steps at all. Completion refuses a recorded skip on a step
 the template never declared optional.
 
 The marker is frozen into the task's terminal contract at init beside the
