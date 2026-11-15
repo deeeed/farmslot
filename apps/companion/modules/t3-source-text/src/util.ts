@@ -1,6 +1,5 @@
-import { I18nManager, type StyleProp, StyleSheet, type TextStyle } from 'react-native';
-
-import type { NativeFontWeight } from './T3SourceTextRunNativeComponent';
+import { I18nManager, type StyleProp, StyleSheet, type TextStyle } from "react-native";
+import type { NativeFontWeight } from "./T3SourceTextRunNativeComponent";
 
 export function flattenStyles(rootStyle: TextStyle, style: StyleProp<TextStyle>) {
   const flattenedStyle = StyleSheet.flatten([rootStyle, style]) as TextStyle;
@@ -8,25 +7,25 @@ export function flattenStyles(rootStyle: TextStyle, style: StyleProp<TextStyle>)
   return {
     ...flattenedStyle,
     textAlign:
-      flattenedStyle.textAlign === 'start'
+      flattenedStyle.textAlign === "start"
         ? I18nManager.isRTL
-          ? ('right' as const)
-          : ('left' as const)
-        : flattenedStyle.textAlign === 'end'
+          ? ("right" as const)
+          : ("left" as const)
+        : flattenedStyle.textAlign === "end"
           ? I18nManager.isRTL
-            ? ('left' as const)
-            : ('right' as const)
+            ? ("left" as const)
+            : ("right" as const)
           : flattenedStyle.textAlign,
     textDecorationStyle:
-      flattenedStyle.textDecorationStyle === 'wavy' ? 'solid' : flattenedStyle.textDecorationStyle,
+      flattenedStyle.textDecorationStyle === "wavy" ? "solid" : flattenedStyle.textDecorationStyle,
     textDecorationLine:
-      textDecorationLine === 'underline' || textDecorationLine === 'line-through'
+      textDecorationLine === "underline" || textDecorationLine === "line-through"
         ? textDecorationLine
-        : ('none' as const),
-    fontWeight: fontWeightToNativeProp(flattenedStyle.fontWeight ?? 'normal'),
+        : ("none" as const),
+    fontWeight: fontWeightToNativeProp(flattenedStyle.fontWeight ?? "normal"),
     backgroundColor: flattenedStyle.backgroundColor
       ? flattenedStyle.backgroundColor
-      : 'transparent',
+      : "transparent",
     shadowOffset: flattenedStyle.shadowOffset
       ? flattenedStyle.shadowOffset
       : { width: 0, height: 0 },
@@ -34,46 +33,46 @@ export function flattenStyles(rootStyle: TextStyle, style: StyleProp<TextStyle>)
 }
 
 // Codegen cannot use integer enums; convert font weights to native props.
-function fontWeightToNativeProp(fontWeight: TextStyle['fontWeight']): NativeFontWeight {
+function fontWeightToNativeProp(fontWeight: TextStyle["fontWeight"]): NativeFontWeight {
   switch (fontWeight) {
-    case 'normal':
-      return 'normal';
-    case 'bold':
-      return 'bold';
+    case "normal":
+      return "normal";
+    case "bold":
+      return "bold";
     case 100:
-    case '100':
-    case 'ultralight':
-      return 'ultraLight';
+    case "100":
+    case "ultralight":
+      return "ultraLight";
     case 200:
-    case '200':
-      return 'ultraLight';
+    case "200":
+      return "ultraLight";
     case 300:
-    case '300':
-    case 'light':
-      return 'light';
+    case "300":
+    case "light":
+      return "light";
     case 400:
-    case '400':
-    case 'regular':
-      return 'normal';
+    case "400":
+    case "regular":
+      return "normal";
     case 500:
-    case '500':
-    case 'medium':
-      return 'medium';
+    case "500":
+    case "medium":
+      return "medium";
     case 600:
-    case '600':
-    case 'semibold':
-      return 'semibold';
+    case "600":
+    case "semibold":
+      return "semibold";
     case 700:
-    case '700':
-      return 'bold';
+    case "700":
+      return "bold";
     case 800:
-    case '800':
-      return 'bold';
+    case "800":
+      return "bold";
     case 900:
-    case '900':
-    case 'heavy':
-      return 'heavy';
+    case "900":
+    case "heavy":
+      return "heavy";
     default:
-      return 'normal';
+      return "normal";
   }
 }

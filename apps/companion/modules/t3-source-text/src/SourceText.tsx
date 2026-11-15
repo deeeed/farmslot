@@ -1,13 +1,12 @@
-import React, { type ComponentRef, type Ref } from 'react';
-import { Platform, StyleSheet, Text, type TextProps, type TextStyle } from 'react-native';
-
-import T3SourceTextNativeComponent from './T3SourceTextNativeComponent';
-import T3SourceTextRunNativeComponent from './T3SourceTextRunNativeComponent';
-import { flattenStyles } from './util';
+import React, { type ComponentRef, type Ref } from "react";
+import { Platform, StyleSheet, Text, type TextProps, type TextStyle } from "react-native";
+import T3SourceTextRunNativeComponent from "./T3SourceTextRunNativeComponent";
+import T3SourceTextNativeComponent from "./T3SourceTextNativeComponent";
+import { flattenStyles } from "./util";
 
 const TextAncestorContext = React.createContext<[boolean, TextStyle]>([false, {}]);
 
-export type SourceTextProps = Omit<TextProps, 'onTextLayout' | 'onPress' | 'onLongPress'> & {
+export type SourceTextProps = Omit<TextProps, "onTextLayout" | "onPress" | "onLongPress"> & {
   nativeTextRef?: Ref<ComponentRef<typeof Text>>;
   onSelectionChange?: (event: {
     nativeEvent: { target: number; start: number; end: number };
@@ -21,7 +20,7 @@ export function SourceText({ style, children, nativeTextRef, ...props }: SourceT
     () => [true, StyleSheet.flatten([rootStyle, style]) ?? {}],
     [rootStyle, style],
   );
-  if (Platform.OS !== 'ios') {
+  if (Platform.OS !== "ios") {
     const { onSelectionChange: _onSelectionChange, ...textProps } = props;
     return (
       <Text ref={nativeTextRef} style={style} {...textProps}>
@@ -34,17 +33,17 @@ export function SourceText({ style, children, nativeTextRef, ...props }: SourceT
       child,
       index,
     ) => /* oxlint-disable react/no-array-index-key -- Native text runs are stateless positions within the supplied text. */ {
-      if (React.isValidElement(child)) return child;
-      if (typeof child !== 'string' && typeof child !== 'number') return null;
-      return (
-        <T3SourceTextRunNativeComponent
-          key={index}
-          style={flattenedStyle}
-          {...flattenedStyle}
-          text={String(child)}
-        />
-      );
-    } /* oxlint-enable react/no-array-index-key */,
+        if (React.isValidElement(child)) return child;
+        if (typeof child !== "string" && typeof child !== "number") return null;
+        return (
+          <T3SourceTextRunNativeComponent
+            key={index}
+            style={flattenedStyle}
+            {...flattenedStyle}
+            text={String(child)}
+          />
+        );
+      } /* oxlint-enable react/no-array-index-key */,
   );
   if (isAncestor) {
     return <TextAncestorContext.Provider value={contextValue}>{runs}</TextAncestorContext.Provider>;
