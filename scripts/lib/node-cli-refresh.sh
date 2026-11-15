@@ -172,6 +172,14 @@ if [ ! -f "$snapshot/DEPLOYED-REVISION.json" ]; then
     echo "  fix: resolve the error in that log, then redeploy" >&2
     exit 1
   fi
+  # Each CLI call then loads JavaScript built once here instead of transforming its TypeScript
+  # (packages/cli/bin/build-prebuilt.mjs); the launcher uses it only for this revision.
+  if ! (cd "$partial" && node packages/cli/bin/build-prebuilt.mjs "$sha") >> "$log" 2>&1; then
+    tail -20 "$log" >&2
+    echo "[deploy] ERROR: prebuilding the node CLI failed; full log: $log" >&2
+    echo "  fix: resolve the error in that log, then redeploy" >&2
+    exit 1
+  fi
   rm -f "$log" "$partial/.yarn.lock.deployed"
   printf '{\n  "sha": "%s",\n  "sha256": "%s"\n}\n' "$sha" "$sha256" > "$partial/DEPLOYED-REVISION.json"
   # Without the marker, a directory here is an install that never finished.

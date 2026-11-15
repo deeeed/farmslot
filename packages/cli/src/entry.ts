@@ -2,6 +2,7 @@ import { Command } from 'commander';
 
 import { loadCheckoutEnv } from './onboarding/env-file.js';
 import { bootstrapFarmslotHome, repoRoot } from './onboarding/workspace.js';
+import { LAZY_COMMANDS } from './entry-lazy-commands.js';
 import { errorEnvelope } from './envelope.js';
 import { DEFAULT_GATEWAY_URL } from './gateway-profiles.js';
 import { OutputContext } from './output.js';
@@ -29,7 +30,7 @@ program
 // inherited settings at .command() time, so a late override never reaches them.
 program.exitOverride();
 
-// Task markers and node plumbing do not need the unrelated command graph.
+// The commands agents call most do not need the unrelated command graph (entry-lazy-commands).
 const valueFlags = new Set(['--url', '--gateway', '--timeout']);
 const invocation = process.argv.slice(2);
 let commandName: string | undefined;
@@ -44,13 +45,9 @@ for (let index = 0; index < invocation.length; index++) {
     break;
   }
 }
-if (commandName === 'internal') {
-  (await import('./commands/internal.js')).registerInternalCommand(program);
-} else if (commandName === 'task') {
-  (await import('./commands/task.js')).registerTaskCommand(program);
-} else {
-  (await import('./entry-commands.js')).registerCommands(program);
-}
+const lazyCommand = commandName ? LAZY_COMMANDS[commandName] : undefined;
+if (lazyCommand) await lazyCommand(program);
+else (await import('./entry-commands.js')).registerCommands(program);
 
 // parseAsync: async command actions (update) must reject through commander,
 // not become unhandled rejections. exitOverride (set above) lets usage errors
