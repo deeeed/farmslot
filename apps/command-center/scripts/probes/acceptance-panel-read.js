@@ -11,6 +11,19 @@ return {
   ),
   runId: run?.id,
   status: run?.status,
+  ledgerReadCode: detail?.progressQuery?.state?.error?.code,
+  hasProgressData: detail?.progressQuery?.state?.data !== undefined,
+  ledgerDataError: detail?.progressQuery?.state?.data?.acceptanceStatusError,
+  panelOpen: panel
+    ? panel.querySelector('button')?.getAttribute('aria-expanded') === 'true'
+    : undefined,
+  errorStyles: [...(panel?.querySelectorAll('[data-testid="acceptance-error"]') ?? [])].map((e) => {
+    const rect = e.getBoundingClientRect();
+    return {
+      color: getComputedStyle(e).color,
+      visible: rect.height > 0 && rect.top >= 0 && rect.bottom <= innerHeight,
+    };
+  }),
   taskFile: run?.taskFile ?? null,
   writeTask: run?.steps.find((step) => step.name === 'write-task')?.status,
   heading: panel?.querySelector('button')?.textContent.trim().replace(/\s+/g, ' '),

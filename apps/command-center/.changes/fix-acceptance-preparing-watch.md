@@ -1,0 +1,1 @@
+- Extend the acceptance-panel proof to distinguish live preparation without a watch from a genuine red ledger read failure.

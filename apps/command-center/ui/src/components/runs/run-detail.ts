@@ -1250,7 +1250,7 @@ export class RunDetail extends RunDetailState {
     if (this.mockData) return;
     const query = this.progressQuery.belongsToWorkspace ? this.progressQuery : undefined;
     const data = query?.state.data;
-    const ledger = acceptanceLedgerRead(query, this._now);
+    const ledger = acceptanceLedgerRead(query, this._now, this.run);
     this.taskProgress = taskProgressWithStepDetails(data?.structured, data?.markdown) ?? null;
     this.acceptanceStatus = data?.acceptanceStatus ?? null;
     this.acceptanceCriteria = data?.acceptanceCriteria ?? null;

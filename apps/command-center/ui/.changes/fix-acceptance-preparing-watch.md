@@ -1,0 +1,1 @@
+- Keep the acceptance panel neutral before a worker watch exists during preparation; retain genuine ledger errors and missing-watch failures after dispatch.
