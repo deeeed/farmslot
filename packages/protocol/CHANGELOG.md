@@ -4,7 +4,14 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.86.1 - 2026-11-15
+
 - `WorkerTerminalContractDocument` carries `proofArtifacts`, the evidence each declaring checklist step claims, and `unattendedCompletion`, the gateway's statement that no person answers a refusal on this run.
+- Session usage receipts carry `toolUsage`: tool calls in total and by name, the count before the first checklist mark, and tool calls, tokens and wall time for each stretch between checklist marks. Run metrics add `sessionToolCalls` and `sessionToolCallsBeforeFirstMark`.
+- Run new before-fix eval trials on normal slots at the frozen base, with prior ignored inputs parked and candidate/first-output provenance preserved. Existing capsule trials retain their lifecycle.
+- `WorkerSignalChecklistEvent` declares the fields the mark engine already writes — `skipped`, `reason` and `remarkedAt`, plus `outOfOrder` on the timing — and adds `note` for what a worker observed doing a step. Shapes are unchanged; those four shipped as undeclared JSON.
 
 ## 0.86.0 - 2026-11-15
 

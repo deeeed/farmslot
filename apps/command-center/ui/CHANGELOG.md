@@ -6,6 +6,18 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.36.5 - 2026-11-15
+
+- Compare trial output, evidence and findings against the pre-review original, and export a self-contained HTML snapshot.
+- Show benchmark results by problem type and model with separate original/merged verdicts and measured original-run usage.
+- Native conversations render like T3 Code: fenced code is syntax-highlighted in a frame with its language, a wrap toggle and a copy button; each answer has a copy button; file paths in answers (`src/app.ts:42`, markdown links to files) are chips that open the file in the workspace panel at that line; Markdown files open rendered, with a raw toggle; workspace files, workspace diffs, turn diffs and tool diffs use the same highlighted viewer.
+- Run detail shows the worker's tool calls next to Turns, and a "Cost per checklist step" panel with tool calls, tokens and wall time for each step.
+- Keep the acceptance panel neutral before a worker watch exists during preparation; retain genuine ledger errors and missing-watch failures after dispatch.
+- Distinguish an empty operation log from an unavailable file and avoid showing an empty-output message alongside a read error.
+- Keep acceptance criteria readable in one list, show a quiet preparation state before the task exists, and omit empty assessment tallies.
+- Show retained publication errors in the review gate and saved review, and clear the notice when publication succeeds.
+- Keep saved artifact filters editable on small inventories and keep selected zero-count type chips visible so empty results can be reset.
+
 ## 0.36.4 - 2026-11-15
 
 - Work-graph details, the dispatch queue, the review sequence, and assigned and selected queue cards use the same reasoning-effort label as the run list. A blank effort reads "default".

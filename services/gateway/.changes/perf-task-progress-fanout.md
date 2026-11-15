@@ -1,1 +1,0 @@
-- Task progress polls cost about 8 node requests instead of one per operation record plus two per optional file: optional task files are read in one request, and operation records are re-read only when their size or modification time changes.

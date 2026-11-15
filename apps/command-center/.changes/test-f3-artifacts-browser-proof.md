@@ -1,1 +1,0 @@
-- Add a live proof recipe for folder browsing, type filters, search and previews on real runs with 100 or more retained artifacts.

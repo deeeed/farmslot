@@ -6,6 +6,12 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.13 - 2026-11-15
+
+- An operation log now holds what its command printed, not only what it spawned. `recordCommandOutput` was reached from the spawned-leaf and live-adapter paths alone, so a command doing its work in process — a `run` walking recipe nodes, `doctor`, `prepare` — left the empty log the operation created: one live task had 14 of 15 logs at 0 bytes, including both failed runs. The command journal now tees the process stdout/stderr into the active operation for its lifetime. A leaf whose output is captured but never printed is still recorded explicitly, so nothing is logged twice. `spawnInherit` hands the terminal to its child, so interactive and follow leaves remain unlogged.
+- An operation log stops at 2 MiB and ends with one line naming the bytes it kept, the limit, and the bytes dropped, so a verbose run cannot fill a farm node's disk and a reader is never left guessing whether the log simply ended. A write that crosses the cap keeps the whole lines that fit; one that cannot end at a line break is withheld, and a truncated log is cut back to its last newline, so it ends on a whole line. A log with no newline at all is left as written, since there is nothing to cut back to.
+- The `farmslot_mark` tool schema leads with a checklist step number as the normal value and marks `complete`, `blocked` and `no-change` as ending the run. Its exemplar values were lifecycle words with no step number in sight, which is what GLM eval ee2a98b8 said made `complete` look like a mid-run step.
+
 ## 0.35.12 - 2026-11-15
 
 - Align exact package dependencies with the protocol 0.86.0 and runtime 0.48.1 release cohort.

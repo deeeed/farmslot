@@ -1,1 +1,0 @@
-- Keep blind-trial slot ownership through completion so terminal cleanup can park its output and return the checkout to main.

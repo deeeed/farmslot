@@ -1,1 +1,0 @@
-- Find-slot no longer treats a run's own `--task` directory as a collision. A directory that belongs to another run still asks the operator and can refuse the run.

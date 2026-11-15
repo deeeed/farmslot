@@ -1,1 +1,0 @@
-- The hourly run-retention pass indexes the paths archived runs reference once per pass and lists task pins once, instead of recomputing every run's paths and rereading every pin for each removable run. It keeps and removes exactly the same storage; its main-thread work drops from seconds to a few hundred milliseconds with about 1,100 runs.
