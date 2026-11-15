@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.19.15 - 2026-11-15
+
+- Release provisional browser quarantine after a launch with the exact nonce times out and its profile processes are confirmed stopped, so a temporary CDP readiness failure does not permanently block later launches. Unseen detached submissions remain quarantined.
+
 ## 0.19.14 - 2026-11-15
 
 - Align exact package dependencies with the protocol 0.85.0 and runtime 0.48.0 release cohort.
