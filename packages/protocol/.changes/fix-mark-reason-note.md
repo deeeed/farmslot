@@ -1,0 +1,1 @@
+- `WorkerSignalChecklistEvent` declares the fields the mark engine already writes — `skipped`, `reason` and `remarkedAt`, plus `outOfOrder` on the timing — and adds `note` for what a worker observed doing a step. Shapes are unchanged; those four shipped as undeclared JSON.
