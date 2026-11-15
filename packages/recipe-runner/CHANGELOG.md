@@ -10,6 +10,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## 0.46.18 - 2026-11-15
 
+- Read capture commit and tracked dirty state in one fresh Git status command per observation, preserving evidence timing and source-change detection.
 - Align exact package dependencies with the protocol 0.86.0 and runtime 0.48.1 release cohort.
 
 ## 0.46.17 - 2026-11-15
