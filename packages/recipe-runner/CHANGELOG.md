@@ -8,6 +8,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## 0.46.19 - 2026-11-15
 
+- mm-harness 0.96.25 consumes this cohort for capped operation logs and corrected checklist/mark contracts.
 - An operation log stops at 2 MiB and ends with one line naming the bytes it kept, the limit, and the bytes dropped. A write that crosses the cap keeps the part that fits, cut back to a line break, because a command hands a whole leaf's output over in one call and dropping it would store none of a failed step.
 
 ## 0.46.18 - 2026-11-15
