@@ -1930,7 +1930,7 @@ test('a pre-worker idle-return failure stays held instead of publishing a ready 
     const lifecycle = slotRow?.lifecycle;
     const phase = slotRow?.phase;
     assert.ok(lifecycle === 'busy' || lifecycle === 'held');
-    assert.ok(phase === 'occupied');
+    assert.equal(phase, null, 'the production recovery mutation guard refuses occupied');
     const eligibility = slotRecoveryEligibility({
       slot: SLOT_ID,
       machine: 'fixture',
@@ -1941,7 +1941,7 @@ test('a pre-worker idle-return failure stays held instead of publishing a ready 
       enabled: true,
       dispatchable: false,
       lifecycle,
-      phase,
+      phase: null,
       warm: false,
       heldReason: typeof slotRow?.held_reason === 'string' ? slotRow.held_reason : undefined,
       cleanupRunId: null,

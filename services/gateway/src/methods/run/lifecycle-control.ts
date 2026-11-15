@@ -459,7 +459,7 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
                 current_run_id: run.id,
                 cleanup_run_id: null,
                 lifecycle: 'busy',
-                phase: 'occupied',
+                phase: null,
                 held_reason: null,
               }
             : {}),
