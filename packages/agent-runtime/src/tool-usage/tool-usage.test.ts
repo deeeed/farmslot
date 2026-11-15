@@ -179,6 +179,62 @@ test('counter: no marks means no segments; tokenless runners report null', () =>
   assert.equal(tokenless.steps[0].totalTokens, null);
 });
 
+test('merge: a session that ends between marks keeps its tail in that step', () => {
+  const first = countToolUsage(
+    {
+      tools: [
+        { name: 'a', issuedAt: t(5) },
+        { name: 'a', issuedAt: t(11) },
+      ],
+      tokens: [],
+    },
+    marks,
+    { startedAt: t(0), completedAt: t(12) },
+  );
+  assert.deepEqual(
+    first.steps.map((s) => [s.segment, s.stepNumber, s.toolCalls, s.endedAt]),
+    [
+      ['before-first-mark', 1, 1, t(10)],
+      ['step', 2, 1, t(12)],
+    ],
+  );
+  const second = countToolUsage({ tools: [{ name: 'b', issuedAt: t(15) }], tokens: [] }, marks, {
+    startedAt: t(12),
+    completedAt: t(30),
+  });
+  const merged = mergeToolUsage([first, second]);
+  assert.equal(merged?.toolCalls, 3);
+  assert.equal(merged?.toolCallsBeforeFirstMark, 1);
+  assert.deepEqual(
+    merged?.steps.map((s) => [s.segment, s.stepNumber, s.toolCalls, s.startedAt, s.endedAt]),
+    [
+      ['before-first-mark', 1, 1, t(5), t(10)],
+      ['step', 2, 2, t(10), t(20)],
+      ['after-last-mark', undefined, 0, t(20), t(30)],
+    ],
+  );
+});
+
+test('codex: an item starts at its recorded start time', async () => {
+  const file = await jsonl('codex-start.jsonl', [
+    {
+      type: 'event_msg',
+      timestamp: t(30),
+      payload: {
+        type: 'item_completed',
+        started_at_ms: Date.parse(t(2)),
+        item: { type: 'Extension', id: 'x1' },
+      },
+    },
+  ]);
+  const usage = await measureToolUsage({
+    runner: 'codex',
+    sessionPath: file,
+    marks: [{ stepNumber: 1, label: '1. Read', checkedAt: t(10) }],
+  });
+  assert.equal(usage.toolCallsBeforeFirstMark, 1);
+});
+
 test('merge: a later session starts mid-run', () => {
   const first = countToolUsage({ tools: [{ name: 'a', issuedAt: t(5) }], tokens: [] }, marks, {
     startedAt: t(0),

@@ -1,4 +1,4 @@
-import type { Run, RunnerSessionUsage } from '@farmslot/protocol';
+import { primaryRoleForFlow, type Run, type RunnerSessionUsage } from '@farmslot/protocol';
 
 import { loadSlotVars } from '../core/config.js';
 import { reviewWorkspaceCommandEnvOptions } from '../review-workspaces/skills.js';
@@ -8,7 +8,11 @@ import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 
 import { recoveredWorkerSessionReceipt, upsertSessionUsage } from './agent-session-rows.js';
 import { extractNativeAgentSessionUsage, nativeRunUsageWindow } from './native-session-usage.js';
-import { extractRunnerSessionUsage, unavailableRunnerSessionUsage } from './session-usage.js';
+import {
+  contextChecklistMarks,
+  extractRunnerSessionUsage,
+  unavailableRunnerSessionUsage,
+} from './session-usage.js';
 import { workspaceUsageMetrics } from './session-usage-result.js';
 
 export function recordRunSessionUsage(runId: string, receipt: RunnerSessionUsage): void {
@@ -67,9 +71,17 @@ function completedMeasurement(
   };
 }
 
+/** Run metrics hold the worker checklist's marks; other roles' sessions are not split by them. */
+function workerChecklistMarks(run: Run, row: RunnerSessionUsage) {
+  if (row.role !== primaryRoleForFlow(run.flowType)) return undefined;
+  const context = run.agentContexts?.find((item) => row.contextIds?.includes(item.id));
+  return contextChecklistMarks(run, context);
+}
+
 async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSessionUsage> {
   try {
     const slotId = row.slotId ?? run.slotId ?? run.id;
+    const checklistMarks = workerChecklistMarks(run, row);
     if (row.nativeSession) {
       const workspace = row.role === 'review' ? run.reviewWorkspace : undefined;
       return completedMeasurement(
@@ -89,6 +101,7 @@ async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSession
           runnerSessionPath: row.runnerSessionPath,
           nativeSession: row.nativeSession,
           usageWindow: nativeRunUsageWindow(run, row),
+          checklistMarks,
         }),
       );
     }
@@ -105,6 +118,7 @@ async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSession
         runner: row.runner,
         runnerSessionId: row.runnerSessionId,
         runnerSessionPath: row.runnerSessionPath,
+        checklistMarks,
       }),
     );
   } catch {

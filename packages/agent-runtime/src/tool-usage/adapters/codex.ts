@@ -6,7 +6,7 @@
 // so each sample is the increase.
 import { pairToolEvents, type ToolCallEvent, type ToolUsageAdapter } from '../stream.js';
 
-import { count, isRecord, readJsonLines, text } from './jsonl.js';
+import { count, isoTime, isRecord, readJsonLines, text } from './jsonl.js';
 
 /** Item types native Codex does not publish as tools (agent-runtime/src/native/codex.ts). */
 const NOT_TOOLS = new Set(['userMessage', 'agentMessage', 'reasoning', 'plan']);
@@ -22,8 +22,11 @@ function itemName(type: string): string {
   return type.charAt(0).toLowerCase() + type.slice(1);
 }
 
-/** Start of an item from its completion time and recorded duration. */
-function itemStart(completedAt: string, duration: unknown): string {
+/** The item's recorded start; older rollouts give only a duration, or nothing. */
+function itemStart(payload: Record<string, unknown>, completedAt: string): string {
+  const startedAt = isoTime(payload.started_at_ms);
+  if (startedAt) return startedAt;
+  const duration = isRecord(payload.item) ? payload.item.duration : undefined;
   if (!isRecord(duration)) return completedAt;
   const ms = count(duration.secs) * 1000 + count(duration.nanos) / 1e6;
   return new Date(Date.parse(completedAt) - ms).toISOString();
@@ -48,7 +51,7 @@ export const codexToolUsage: ToolUsageAdapter = {
           items.push({
             id: text(payload.item.id),
             name,
-            issuedAt: itemStart(at, payload.item.duration),
+            issuedAt: itemStart(payload, at),
             completedAt: at,
           });
       } else if (record.type === 'response_item' && type.endsWith('_call_output')) {

@@ -64,7 +64,7 @@ export function countToolUsage(
 
   const boundaries = marks
     .map((mark) => ({ mark, at: Date.parse(mark.checkedAt) }))
-    .filter(({ at }) => Number.isFinite(at) && inWindow(at, start, end))
+    .filter(({ at }) => Number.isFinite(at))
     .sort((a, b) => a.at - b.at);
   if (!boundaries.length || !Number.isFinite(start) || !Number.isFinite(end)) {
     usage.stepsUnavailable =
@@ -74,27 +74,38 @@ export function countToolUsage(
     return usage;
   }
 
+  // Segments are the run's checklist intervals, the same for every session of the run; each
+  // session reports the part it overlaps, from its first activity to its end.
+  const active = times.filter((at) => inWindow(at, start, end));
+  const sessionStart = active.length ? Math.min(...active) : start;
   const edges = [
     ...boundaries.map(({ mark, at }, index) => ({
       segment: index === 0 ? ('before-first-mark' as const) : ('step' as const),
       mark,
       at,
     })),
-    { segment: 'after-last-mark' as const, mark: undefined, at: end },
+    { segment: 'after-last-mark' as const, mark: undefined, at: Infinity },
   ];
-  // The first segment starts at the session's first activity, not at the run's dispatch.
-  const active = times.filter((at) => inWindow(at, start, end));
-  let from = active.length ? Math.min(...active) : start;
-  for (const [index, edge] of edges.entries()) {
-    const last = index === edges.length - 1;
-    // A segment holds [from, edge.at); the last one also holds the end instant.
-    const inside = (at: number) => at >= from && (last ? at <= edge.at : at < edge.at);
+  let previous = -Infinity;
+  for (const edge of edges) {
+    const lower = previous;
+    previous = edge.at;
+    const from = Math.max(lower, sessionStart);
+    const to = Math.min(edge.at, end);
+    if (from > to) continue;
+    const inside = (at: number) => at >= lower && at < edge.at;
     const segment: ToolUsageSegment = {
       segment: edge.segment,
-      ...(edge.mark ? { stepNumber: edge.mark.stepNumber, title: edge.mark.label } : {}),
+      ...(edge.mark
+        ? {
+            stepNumber: edge.mark.stepNumber,
+            title: edge.mark.label,
+            markedAt: edge.mark.checkedAt,
+          }
+        : {}),
       startedAt: new Date(from).toISOString(),
-      endedAt: new Date(edge.at).toISOString(),
-      wallMs: Math.max(0, edge.at - from),
+      endedAt: new Date(to).toISOString(),
+      wallMs: to - from,
       toolCalls: 0,
       toolCallsByName: {},
       totalTokens: stream.tokens ? 0 : null,
@@ -107,9 +118,8 @@ export function countToolUsage(
     for (const sample of tokens)
       if (inside(sample.at)) segment.totalTokens = (segment.totalTokens ?? 0) + sample.tokens;
     usage.steps.push(segment);
-    from = edge.at;
   }
-  usage.toolCallsBeforeFirstMark = usage.steps[0].toolCalls;
+  usage.toolCallsBeforeFirstMark = timed.filter((tool) => tool.at < boundaries[0].at).length;
   return usage;
 }
 
@@ -130,10 +140,12 @@ export function mergeToolUsage(usages: ToolUsage[]): ToolUsage | null {
     merged.untimedToolCalls += usage.untimedToolCalls;
     for (const [name, n] of Object.entries(usage.toolCallsByName))
       add(merged.toolCallsByName, name, n);
+    if (usage.toolCallsBeforeFirstMark !== null)
+      merged.toolCallsBeforeFirstMark =
+        (merged.toolCallsBeforeFirstMark ?? 0) + usage.toolCallsBeforeFirstMark;
     for (const step of usage.steps) {
-      // Marks end every segment but the last, whose end is each session's own end.
-      const key =
-        step.segment === 'after-last-mark' ? 'end' : `mark:${step.endedAt}:${step.stepNumber}`;
+      // The same checklist interval in every session: keyed by the mark that closes it.
+      const key = step.markedAt ? `${step.markedAt}:${step.stepNumber}` : 'end';
       const known = steps.get(key);
       if (!known) {
         steps.set(key, { ...step, toolCallsByName: { ...step.toolCallsByName } });
@@ -151,15 +163,8 @@ export function mergeToolUsage(usages: ToolUsage[]): ToolUsage | null {
       known.wallMs = Date.parse(known.endedAt) - Date.parse(known.startedAt);
     }
   }
-  const ordered = [...steps.values()].filter((step) => step.segment !== 'after-last-mark');
-  ordered.sort((a, b) => a.endedAt.localeCompare(b.endedAt));
-  // A later session's first segment is a middle step of the run.
-  ordered.forEach((step, index) => (step.segment = index ? 'step' : 'before-first-mark'));
-  merged.steps = [
-    ...ordered,
-    ...[...steps.values()].filter((s) => s.segment === 'after-last-mark'),
-  ];
-  merged.toolCallsBeforeFirstMark = ordered[0]?.toolCalls ?? null;
+  const order = (step: ToolUsageSegment) => step.markedAt ?? '\uffff';
+  merged.steps = [...steps.values()].sort((a, b) => order(a).localeCompare(order(b)));
   if (!merged.steps.length)
     merged.stepsUnavailable = usages.find((usage) => usage.stepsUnavailable)?.stepsUnavailable;
   return merged;

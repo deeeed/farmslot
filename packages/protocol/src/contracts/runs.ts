@@ -738,6 +738,9 @@ export interface SessionToolUsageSegment {
   /** The step whose mark closes the segment. Absent after the last mark. */
   stepNumber?: number;
   title?: string;
+  /** The checklist mark that closes the segment; the same in every session of the run. */
+  markedAt?: string;
+  /** This session's part of the segment: from its first activity, to its end. */
   startedAt: string;
   endedAt: string;
   wallMs: number;
