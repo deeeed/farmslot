@@ -96,6 +96,8 @@ const rawArgs = process.argv.slice(3);
 const flags = new Set();
 let contractPath;
 let terminalCommand;
+let proofChecklist;
+let proofSignal;
 for (let i = 0; i < rawArgs.length; i += 1) {
   const arg = rawArgs[i];
   if (arg === '--contract') {
@@ -105,6 +107,18 @@ for (let i = 0; i < rawArgs.length; i += 1) {
   }
   if (arg === '--terminal') {
     terminalCommand = rawArgs[i + 1];
+    i += 1;
+    continue;
+  }
+  // The caller's selection, when it has one: `mark --checklist X --signal Y`
+  // completes X and keeps its claims in Y, which the manifest need not name.
+  if (arg === '--proof-checklist') {
+    proofChecklist = rawArgs[i + 1];
+    i += 1;
+    continue;
+  }
+  if (arg === '--proof-signal') {
+    proofSignal = rawArgs[i + 1];
     i += 1;
     continue;
   }
@@ -683,9 +697,10 @@ if (terminalCommand !== 'blocked' && !proofMeasurement) {
   try {
     // Only the checklist that is completing: a reviewer finishing REVIEW.md
     // answers for its own declarations, never for the worker's CHECKLIST.md,
-    // whose unproven steps are what the reviewer is reporting on.
-    const checklist = resolveChecklistTarget(taskDir).checklist;
-    issues.push(...proofArtifacts.issues(taskDir, checklist, terminalContract));
+    // whose unproven steps are what the reviewer is reporting on. The caller's
+    // own selection wins over the manifest, which it may not have written.
+    const checklist = proofChecklist ?? resolveChecklistTarget(taskDir).checklist;
+    issues.push(...proofArtifacts.issues(taskDir, checklist, terminalContract, proofSignal));
   } catch (error) {
     issues.push(`Proof declarations cannot be validated: ${error.message}`);
   }

@@ -94,11 +94,12 @@ function declaredProofArtifacts(taskDir, checklist, contract) {
 function proofEvidence(taskDir, relPath) {
   const target = path.join(taskDir, relPath);
   let stat;
+  let resolved;
   try {
     // A declared path is evidence only where the task says it is: a symlink can
     // point the gate at a populated directory the run never produced, so the
     // resolved path has to stay inside the task directory.
-    const resolved = fs.realpathSync(target);
+    resolved = fs.realpathSync(target);
     const root = fs.realpathSync(taskDir);
     if (resolved !== root && !resolved.startsWith(root + path.sep))
       return { present: false, reason: 'outside', mtimeMs: null };
@@ -108,11 +109,14 @@ function proofEvidence(taskDir, relPath) {
     throw error;
   }
   if (stat.isDirectory()) {
-    const entries = fs.readdirSync(target);
-    if (entries.length === 0) return { present: false, reason: 'empty', mtimeMs: null };
-    const newest = entries.reduce((latest, entry) => {
+    // Read the resolved directory and never follow a child link: an inside
+    // directory of symlinks must not stand in for files the run never wrote.
+    const entries = fs.readdirSync(resolved, { withFileTypes: true });
+    const own = entries.filter((entry) => !entry.isSymbolicLink());
+    if (own.length === 0) return { present: false, reason: 'empty', mtimeMs: null };
+    const newest = own.reduce((latest, entry) => {
       try {
-        return Math.max(latest, fs.statSync(path.join(target, entry)).mtimeMs);
+        return Math.max(latest, fs.lstatSync(path.join(resolved, entry.name)).mtimeMs);
       } catch {
         return latest;
       }
@@ -123,9 +127,13 @@ function proofEvidence(taskDir, relPath) {
   return { present: true, reason: null, mtimeMs: stat.mtimeMs };
 }
 
-/** When each step was last marked, from the signal the mark engine writes. */
-function stepMarkTimes(taskDir, checklist) {
-  const signal = readJson(path.join(taskDir, signalFileForChecklist(checklist)));
+/**
+ * When each step was last marked, from the signal the mark engine writes. The
+ * caller passes the signal it selected (`mark --signal`), because a run using
+ * that escape hatch keeps its claims there and not in the derived name.
+ */
+function stepMarkTimes(taskDir, checklist, signalFile) {
+  const signal = readJson(path.join(taskDir, signalFile ?? signalFileForChecklist(checklist)));
   const events = Array.isArray(signal?.checklistTiming?.events)
     ? signal.checklistTiming.events
     : [];
@@ -162,7 +170,7 @@ function pendingProofArtifact(taskDir, checklist, stepNumber, contract) {
   if (evidence.present) return null;
   return (
     `step ${stepNumber} declares its proof at ${step.path}, which is ` +
-    `${evidence.reason === 'empty' ? 'empty' : 'not there'}. ` +
+    `${EVIDENCE_ABSENCE[evidence.reason] ?? 'missing'}. ` +
     'Produce the evidence, then mark the step.'
   );
 }
@@ -172,13 +180,13 @@ function pendingProofArtifact(taskDir, checklist, stepNumber, contract) {
  * completion must not decide this differently, so both callers come here. Null
  * when the step declares nothing, has no evidence, or was never marked.
  */
-function claimOlderThanEvidence(taskDir, checklist, stepNumber, contract) {
+function claimOlderThanEvidence(taskDir, checklist, stepNumber, contract, signalFile) {
   const step = declaredProofArtifacts(taskDir, checklist, contract).find(
     (candidate) => candidate.stepNumber === stepNumber,
   );
   if (!step) return null;
   const evidence = proofEvidence(taskDir, step.path);
-  const markedAt = stepMarkTimes(taskDir, checklist).get(stepNumber);
+  const markedAt = stepMarkTimes(taskDir, checklist, signalFile).get(stepNumber);
   if (!evidence.present || evidence.mtimeMs == null || markedAt == null) return null;
   return evidence.mtimeMs > markedAt ? { step, evidence, markedAt } : null;
 }
@@ -188,7 +196,7 @@ function claimOlderThanEvidence(taskDir, checklist, stepNumber, contract) {
  * evidence written after the step's last mark means the claim came first. An
  * unticked step is simply unfinished work and not an issue here.
  */
-function proofArtifactIssues(taskDir, checklist, contract) {
+function proofArtifactIssues(taskDir, checklist, contract, signalFile) {
   const ticked = checkedSteps(taskDir, checklist);
   const issues = [];
   for (const step of declaredProofArtifacts(taskDir, checklist, contract)) {
@@ -201,7 +209,7 @@ function proofArtifactIssues(taskDir, checklist, contract) {
       );
       continue;
     }
-    const late = claimOlderThanEvidence(taskDir, checklist, step.stepNumber, contract);
+    const late = claimOlderThanEvidence(taskDir, checklist, step.stepNumber, contract, signalFile);
     if (late) {
       issues.push(
         `${checklist} step ${step.stepNumber}: its declared proof ${step.path} was written ` +

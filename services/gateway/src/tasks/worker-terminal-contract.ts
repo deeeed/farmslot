@@ -291,6 +291,12 @@ export async function validateTerminalSignalArtifacts(
     shellQuote(contractPath),
     '--terminal',
     terminalCommand,
+    // The same selection the worker completed with: the checklist this signal
+    // belongs to, and the signal file itself. Without them the checker would
+    // re-derive both and could judge another checklist's declarations.
+    ...(checklistBasename ? ['--proof-checklist', shellQuote(checklistBasename)] : []),
+    '--proof-signal',
+    shellQuote(path.posix.basename(signalJsonPath)),
     ...(requiresAcceptanceLedger ? ['--require-acceptance-status'] : []),
     ...artifactContractWaiverArgs(signal),
   ];

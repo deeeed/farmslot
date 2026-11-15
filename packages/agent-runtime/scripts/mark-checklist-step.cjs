@@ -358,6 +358,14 @@ function assertArtifactContract(taskDir, taskPath, contract, terminalCommand) {
   const contractPath = terminalContractPath(taskDir, taskPath);
   const args = [ARTIFACT_CONTRACT_SCRIPT, taskDir];
   if (terminalCommand) args.push('--terminal', terminalCommand);
+  // The checker must judge the checklist this mark is completing, and read the
+  // claims from the signal this mark writes, not from names it re-derives.
+  args.push(
+    '--proof-checklist',
+    path.basename(taskPath),
+    '--proof-signal',
+    path.basename(signalPath),
+  );
   // This explicit flag keeps project opt-ins compatible with older checkers.
   // Current checkers also enforce registered verdicts on terminal complete.
   if (terminalCommand === 'complete' && contract?.acceptance?.require === true) {
@@ -799,6 +807,7 @@ if (!isStartCommand && target.stepNumber != null && recordedEvent === -1) {
     path.basename(taskPath),
     target.stepNumber,
     loadTerminalContract(taskDir, taskPath),
+    path.basename(signalPath),
   );
   if (stale) events[recordedEvent] = { ...events[recordedEvent], remarkedAt: now };
 }

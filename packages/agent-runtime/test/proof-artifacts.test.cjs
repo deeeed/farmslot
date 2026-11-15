@@ -363,4 +363,135 @@ const DECLARED = `- [ ] 1. Retain the failing baseline run [PROOF: ${BASELINE}]`
   assert.deepEqual(proofArtifacts.issues(dir, 'CHECKLIST.md', contract), []);
 }
 
+// The same rule through the completion checker, which is the path a terminal
+// mark actually takes. A reviewer completing REVIEW.md passes while the worker's
+// CHECKLIST.md carries a checked, unproven declaration, and the reviewer's own
+// declaration still refuses it.
+{
+  const checker = path.join(root, 'scripts', 'check-task-artifact-contract.mjs');
+  const run = (dir, checklist) =>
+    spawnSync(
+      process.execPath,
+      [
+        checker,
+        dir,
+        '--contract',
+        path.join(dir, 'inputs', 'worker-terminal-contract.json'),
+        '--terminal',
+        'complete',
+        '--proof-checklist',
+        checklist,
+      ],
+      { encoding: 'utf8' },
+    );
+
+  const dir = task('checker-reviewer');
+  // The manifest deliberately names the worker checklist: the caller's own
+  // selection has to win, because a role completion may not have written one.
+  writeFileSync(
+    path.join(dir, CHECKLIST_TARGET_MANIFEST),
+    `${JSON.stringify({ checklist: 'CHECKLIST.md' }, null, 2)}\n`,
+  );
+  writeChecklist(dir, [`- [x] 1. Retain the failing baseline run [PROOF: ${BASELINE}]`]);
+  writeFileSync(path.join(dir, 'REVIEW.md'), '# Reviewer\n\n- [x] 1. Report findings\n');
+  writeFileSync(path.join(dir, 'artifacts', 'report.md'), '# Report\n\nREQUEST_CHANGES.\n');
+  writeContract(dir, {
+    schemaVersion: 1,
+    flowType: 'review',
+    requireSignal: true,
+    commands: {
+      complete: { report: 'artifacts/report.md', artifacts: ['artifacts/report.md'] },
+      'no-change': { artifacts: [] },
+      blocked: { artifacts: [] },
+    },
+    whenPresent: [],
+    proofArtifacts: [{ checklist: 'CHECKLIST.md', stepNumber: 1, path: BASELINE }],
+  });
+
+  const reviewer = run(dir, 'REVIEW.md');
+  assert.equal(reviewer.status, 0, reviewer.stdout + reviewer.stderr);
+  assert.match(reviewer.stdout, /TASK_ARTIFACT_CONTRACT_PASS/);
+
+  const worker = run(dir, 'CHECKLIST.md');
+  assert.equal(worker.status, 1);
+  assert.match(worker.stderr, /CHECKLIST\.md step 1 is checked but its declared proof/);
+
+  // A declaration on the reviewer's own checklist still binds its completion.
+  writeFileSync(
+    path.join(dir, 'REVIEW.md'),
+    `# Reviewer\n\n- [x] 1. Rerun the proof [PROOF: ${BASELINE}]\n`,
+  );
+  const ownDeclaration = run(dir, 'REVIEW.md');
+  assert.equal(ownDeclaration.status, 1);
+  assert.match(ownDeclaration.stderr, /REVIEW\.md step 1 is checked but its declared proof/);
+}
+
+// A run using the documented `--signal` escape hatch keeps its claims there, so
+// the freshness decision has to read that file and not a derived name.
+{
+  const dir = task('custom-signal');
+  const contract = {
+    schemaVersion: 1,
+    flowType: 'fix-bug',
+    requireSignal: true,
+    proofArtifacts: [{ checklist: 'CHECKLIST.md', stepNumber: 1, path: BASELINE }],
+  };
+  writeChecklist(dir, [DECLARED]);
+  writeContract(dir, contract);
+  mkdirSync(path.join(dir, BASELINE), { recursive: true });
+  writeFileSync(path.join(dir, BASELINE, 'trace.json'), '{"entries":[]}\n');
+  const marked = spawnSync(
+    process.execPath,
+    [helper, dir, '--checklist', 'CHECKLIST.md', '--signal', 'custom.json', '1'],
+    { encoding: 'utf8' },
+  );
+  assert.equal(marked.status, 0, marked.stderr);
+  const custom = path.join(dir, 'custom.json');
+  const first = JSON.parse(readFileSync(custom, 'utf8'));
+  assert.equal(existsSync(path.join(dir, 'SIGNAL.json')), false);
+
+  const claimedAt = new Date(proofArtifacts.evidence(dir, BASELINE).mtimeMs - 1000);
+  writeFileSync(
+    custom,
+    `${JSON.stringify(
+      {
+        ...first,
+        checklistTiming: {
+          ...first.checklistTiming,
+          events: [{ ...first.checklistTiming.events[0], checkedAt: claimedAt.toISOString() }],
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  // Reading the selected signal finds the claim; the derived name has none.
+  assert.equal(
+    proofArtifacts.issues(dir, 'CHECKLIST.md', contract, 'custom.json').length,
+    1,
+    'the selected signal holds the claim this step was marked with',
+  );
+  const again = spawnSync(
+    process.execPath,
+    [helper, dir, '--checklist', 'CHECKLIST.md', '--signal', 'custom.json', '1'],
+    { encoding: 'utf8' },
+  );
+  assert.equal(again.status, 0, again.stderr);
+  const refreshed = JSON.parse(readFileSync(custom, 'utf8'));
+  assert.equal(typeof refreshed.checklistTiming.events[0].remarkedAt, 'string');
+  assert.deepEqual(proofArtifacts.issues(dir, 'CHECKLIST.md', contract, 'custom.json'), []);
+}
+
+// A directory of symlinks is not proof: the files have to be the run's own.
+{
+  const dir = task('child-symlink');
+  const outside = mkdtempSync(path.join(tmpdir(), 'farmslot-proof-child-'));
+  writeFileSync(path.join(outside, 'trace.json'), '{"entries":[]}\n');
+  mkdirSync(path.join(dir, BASELINE), { recursive: true });
+  symlinkSync(path.join(outside, 'trace.json'), path.join(dir, BASELINE, 'trace.json'));
+  const evidence = proofArtifacts.evidence(dir, BASELINE);
+  assert.equal(evidence.present, false);
+  assert.equal(evidence.reason, 'empty');
+}
+
 console.log('proof-artifacts tests passed');
