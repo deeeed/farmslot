@@ -104,8 +104,31 @@ try {
       'Type filter must select only the requested type',
     );
   };
+  const expandGroups = async () => {
+    let current = await inspect();
+    // Filtering leaves explicit folder choices intact. Expand each closed group in
+    // the finite retained tree through its real control before selecting a file.
+    while (current.folders.some((folder: { expanded: boolean }) => !folder.expanded)) {
+      const key = current.folders.find((folder: { expanded: boolean }) => !folder.expanded).key;
+      await cdp('click', tab, selector + '.tree [aria-expanded="false"] button.toggle');
+      current = await until(
+        (value) =>
+          value.folders.find((folder: { key: string }) => folder.key === key)?.expanded !== false,
+        'The selected folder must expand',
+      );
+    }
+    return current;
+  };
+  assert(state.folders.length > 0, 'Select a real run with folder grouping');
+  if (state.folders[0].expanded) await cdp('click', tab, selector + 'button.toggle');
+  state = await until(
+    (value) => value.folders[0]?.expanded === false,
+    'Start with a collapsed group',
+  );
+  await save('initial-collapsed', state);
   await cdp('fill', tab, selector + 'input.search', '');
   state = await onlyType('image');
+  state = await expandGroups();
   assert.equal(
     Number(state.match?.split(' ')[0]),
     artifacts.filter((file) => workspaceArtifactType(file) === 'image').length,
@@ -113,10 +136,9 @@ try {
   await save('type-filter', state);
   const needle = workspaceArtifactBasename(image.path);
   await cdp('fill', tab, selector + 'input.search', needle);
-  state = await until(
-    (value) => value.query === needle && value.files.length > 0,
-    'Search must find a retained image',
-  );
+  state = await until((value) => value.query === needle, 'Search must find a retained image');
+  state = await expandGroups();
+  assert(state.files.length > 0, 'Search must expose a retained image');
   assert(state.files.every((file: string) => file.toLowerCase().includes(needle.toLowerCase())));
   await save('search', state);
   await cdp('click', tab, selector + 'a.file');
@@ -145,9 +167,11 @@ try {
   await onlyType('markdown');
   await cdp('fill', tab, selector + 'input.search', workspaceArtifactBasename(document.path));
   state = await until(
-    (value) => value.files.length > 0 && value.query === workspaceArtifactBasename(document.path),
+    (value) => value.query === workspaceArtifactBasename(document.path),
     'Search must find the retained document',
   );
+  state = await expandGroups();
+  assert(state.files.length > 0, 'Search must expose the retained document');
   await cdp('click', tab, selector + 'a.file');
   state = await until(
     (value) =>
