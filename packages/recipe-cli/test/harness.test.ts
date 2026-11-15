@@ -324,7 +324,7 @@ function killIfAlive(pid: number): void {
 describe('checkout lock ownership across processes', () => {
   test('keeps an orphaned child reservation after its owner dies, then reclaims it', async () => {
     const target = tempRoot();
-    const harnessModule = new URL('../src/harness/index.ts', import.meta.url).href;
+    const harnessModule = new URL('../src/harness/checkout-lock.ts', import.meta.url).href;
     const childPidFile = path.join(target, 'child.pid');
     const owner = spawn(
       process.execPath,

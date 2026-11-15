@@ -1,0 +1,1 @@
+- Reduce checkout-lock test startup overhead while retaining orphaned-child reservation checks.
