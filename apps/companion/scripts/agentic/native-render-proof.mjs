@@ -52,22 +52,6 @@ const device = (...args) => {
   assert(result.stdout?.trim(), `agent-device ${args[0]} printed nothing: ${result.stderr}`);
   return JSON.parse(result.stdout);
 };
-async function answerAlert(title, button, timeout = 90000) {
-  device('open', 'net.siteed.farmslot.development');
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    const alert = device('alert', 'get');
-    if (alert.success && JSON.stringify(alert.data).includes(title)) {
-      const pressed = device('press', `label="${button}"`);
-      assert(pressed.success, JSON.stringify(pressed.error));
-      return true;
-    }
-    if (!alert.success)
-      assert.equal(alert.error?.message, 'alert not found', JSON.stringify(alert.error));
-    await delay(500);
-  }
-  return false;
-}
 
 const call = async (method, route) => {
   const response = await fetch(`${control}${route}`, { method });
@@ -128,11 +112,32 @@ const nativeDiff = (diff) =>
             : null;
 
 if (phase === 'pair') {
+  // Setup: pair through the app's own link and native alerts. Opening the app can deliver the link
+  // twice; the second shows "Pairing already running", which is dismissed while the first goes on.
   const { link } = await call('POST', '/pair');
   execFileSync('xcrun', ['simctl', 'openurl', simulator, link]);
-  await answerAlert('Open in', 'Open', 5000);
-  assert(await answerAlert('Pair with this gateway?', 'Pair'), 'No pairing Alert');
-  assert(await answerAlert('Companion paired', 'OK'), 'Pairing did not finish');
+  device('open', 'net.siteed.farmslot.development');
+  const answers = [
+    ['Open in', 'Open'],
+    ['Pairing already running', 'OK'],
+    ['Pair with this gateway?', 'Pair'],
+    ['Companion paired', 'OK'],
+  ];
+  const deadline = Date.now() + 180000;
+  for (let paired = false; !paired; ) {
+    assert(Date.now() < deadline, 'Pairing did not finish');
+    const alert = device('alert', 'get');
+    const text = alert.success ? JSON.stringify(alert.data) : '';
+    if (!alert.success)
+      assert.equal(alert.error?.message, 'alert not found', JSON.stringify(alert.error));
+    assert(!text.includes('Pairing failed'), `Pairing failed: ${text}`);
+    const answer = answers.find(([title]) => text.includes(title));
+    if (answer) {
+      const pressed = device('press', `label="${answer[1]}"`);
+      assert(pressed.success, JSON.stringify(pressed.error));
+      paired = answer[0] === 'Companion paired';
+    } else await delay(500);
+  }
   assert(device('close').success, 'Could not release the device');
   report({ paired: true });
 } else if (phase === 'setup') {
