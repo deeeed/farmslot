@@ -8,6 +8,7 @@ import {
   DEFAULT_CURSOR_MODEL,
   type EvalExperimentManifest,
   type EvalTrialStartParams,
+  type Principal,
   type ResultPackageManifest,
 } from '@farmslot/protocol';
 
@@ -30,6 +31,7 @@ import {
   runRecordPath,
   updateRun,
 } from '../runs/store.js';
+import { runWithSessionOriginator } from '../security/work-originator.js';
 import { writeTaskFixture } from '../tasks/writer.test-support.js';
 
 import {
@@ -367,6 +369,44 @@ test('evalTrialStart rejects malformed axes before dispatch', async () => {
         () => {},
       ),
     /Invalid candidate axes/,
+  );
+});
+
+test('evalTrialStart rejects a transport that is not tmux or native', async () => {
+  await assert.rejects(
+    () =>
+      evalTrialStart(
+        {
+          project: 'farmslot-farm',
+          experimentManifestPath: '/tmp/missing-eval.json',
+          axes: {},
+          // @ts-expect-error negative runtime validation: transport is only tmux or native.
+          transport: 'ssh',
+        },
+        () => {},
+      ),
+    /transport must be tmux or native/,
+  );
+});
+
+test('evalTrialStart rejects a native profile without native transport', async () => {
+  await assert.rejects(
+    () =>
+      evalTrialStart(
+        {
+          project: 'farmslot-farm',
+          experimentManifestPath: '/tmp/missing-eval.json',
+          axes: {},
+          nativeProfile: {
+            executionNodeId: 'local',
+            runner: 'pi',
+            profileId: 'sparks',
+            accountContextId: '00000000-0000-4000-8000-000000000001',
+          },
+        },
+        () => {},
+      ),
+    /Native profile selection requires native worker transport/,
   );
 });
 
@@ -1012,6 +1052,163 @@ test('evalTrialStart automatically replays from the reference base commit when a
     await readFile(path.join(candidateDir, 'inputs', 'candidate-start-ref.json'), 'utf-8'),
   ) as Record<string, unknown>;
   assert.deepEqual(startRefInput, { requestedRef: baseSha, source: 'eval-reference' });
+});
+
+test('evalTrialStart keeps a native transport distinct from the tmux default', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-eval-trial-native-'));
+  const runIds: string[] = [];
+  t.after(async () => {
+    for (const runId of runIds.reverse()) {
+      if (getRun(runId)) {
+        updateRun(runId, { status: 'done', completedAt: new Date().toISOString() });
+        await deleteRun(runId);
+      }
+    }
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const baseSha = 'dddddddddddddddddddddddddddddddddddddddd';
+  const headSha = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+  const referencePackagePath = path.join(root, 'reference.result-package.json');
+  const referencePackage = await writeResultPackageManifest(referencePackagePath, {
+    ...makeReferencePackage(),
+    source: {
+      kind: 'merged-pr',
+      repo: 'owner/repo',
+      prNumber: 123,
+      baseSha,
+      headSha,
+      baseRef: 'main',
+      headRef: 'fix/perps',
+    },
+    diff: {
+      source: 'artifact',
+      available: true,
+      files: 1,
+      additions: 2,
+      deletions: 1,
+      kind: 'contribution',
+      baseRef: 'main',
+      baseSha,
+      headRef: 'fix/perps',
+      headSha,
+      capturedAt: '2026-05-09T00:00:01.000Z',
+      artifactPath: path.basename(root) + '/reference.diff',
+      repository: 'owner/repo',
+      prNumber: 123,
+    },
+  });
+  await writeEvalTestFile(root, 'reference.diff', REFERENCE_DIFF);
+  const experimentManifestPath = path.join(root, 'experiment-manifest.json');
+  const experimentManifest: EvalExperimentManifest = {
+    version: 1,
+    kind: 'eval-experiment',
+    experimentId: 'experiment-native-transport',
+    experimentKey: `experiment-key-native-transport-${Date.now()}`,
+    createdAt: '2026-05-09T00:00:00.000Z',
+    updatedAt: '2026-05-09T00:00:01.000Z',
+    project: 'farmslot-farm',
+    familyId: 'eval-family-native-transport',
+    case: {
+      caseId: 'case-merged-pr',
+      source: referencePackage.source,
+      taskProfile: 'fix-bug',
+      objectiveHash: 'objective-1',
+      problemStatement: 'Show the latest payment in Activity.',
+      referencePackageId: referencePackage.packageId,
+      referencePackageHash: referencePackage.packageHash,
+      referencePackagePath,
+    },
+    rubric: {
+      taskProfile: 'fix-bug',
+      rubricId: 'eval-default',
+      rubricVersion: '1',
+      requiredEvidence: [],
+    },
+    candidateStrategies: [],
+    trials: [],
+    missingData: [],
+  };
+  await writeEvalExperimentManifest(experimentManifestPath, experimentManifest);
+  await writeEvalTestFile(
+    root,
+    'inputs/reference-pr.json',
+    JSON.stringify({
+      title: 'Show the latest payment in Activity.',
+      url: 'https://github.com/owner/repo/pull/123',
+      body: 'Manual testing steps: Activity shows most recent funding payments.',
+    }),
+  );
+
+  const nativeProfile = {
+    executionNodeId: 'local',
+    runner: 'pi',
+    profileId: 'sparks',
+    accountContextId: '00000000-0000-4000-8000-000000000001',
+  };
+  const owner: Principal = {
+    id: 'eval-native-transport-owner',
+    subject: { type: 'person', displayName: 'Owner' },
+    roles: [{ role: 'admin', scope: { kind: 'global' } }],
+  };
+  const trialBase: EvalTrialStartParams = {
+    project: 'farmslot-farm',
+    experimentManifestPath,
+    axes: {
+      template: { path: 'templates/fix-bug.md' },
+      model: { name: 'gpt-5.5' },
+    },
+    label: 'native transport candidate',
+    variant: 'native-transport-candidate',
+    runner: 'pi',
+    model: 'gpt-5.5',
+  };
+  const previousDisableEngine = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+  const previousOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+  process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = owner.id;
+  try {
+    const tmux = await evalTrialStart(trialBase, () => {});
+    if (tmux.run) runIds.push(tmux.run.id);
+    const explicitTmux = await evalTrialStart({ ...trialBase, transport: 'tmux' }, () => {});
+    assert.equal(explicitTmux.deduped, true);
+    assert.equal(explicitTmux.run?.id, tmux.run?.id);
+    assert.equal(tmux.run?.transport, undefined);
+    assert.equal(tmux.candidatePackage.axes.transport, undefined);
+
+    const native = await runWithSessionOriginator(owner, () =>
+      evalTrialStart({ ...trialBase, transport: 'native', nativeProfile }, () => {}),
+    );
+    if (native.run) runIds.push(native.run.id);
+    assert.equal(native.deduped, false);
+    assert.notEqual(native.run?.id, tmux.run?.id);
+    assert.equal(native.run?.transport, 'native');
+    assert.equal(native.run?.metrics.runner, 'pi');
+    assert.deepEqual(native.run?.nativeProfile, nativeProfile);
+    assert.equal(native.candidatePackage.axes.transport, 'native');
+    const axesInput = JSON.parse(
+      await readFile(
+        path.join(
+          path.dirname(path.dirname(path.dirname(native.candidatePackagePath))),
+          'inputs',
+          'candidate-axes.json',
+        ),
+        'utf8',
+      ),
+    ) as { transport?: string };
+    assert.equal(axesInput.transport, 'native');
+
+    const again = await runWithSessionOriginator(owner, () =>
+      evalTrialStart({ ...trialBase, transport: 'native', nativeProfile }, () => {}),
+    );
+    assert.equal(again.deduped, true);
+    assert.equal(again.run?.id, native.run?.id);
+  } finally {
+    if (previousDisableEngine === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+    else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = previousDisableEngine;
+    if (previousOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = previousOwner;
+  }
 });
 
 test('candidateVariant always preserves the axis fingerprint suffix', () => {
