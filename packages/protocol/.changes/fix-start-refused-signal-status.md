@@ -1,0 +1,1 @@
+- `isStartRefusedWorkerSignalStatus` names the one finished status a worker`s `mark start`refuses to re-open, so the gateway and the mark engine cannot drift apart about which signal a re-dispatch must clear. Deliberately narrower than`isTerminalWorkerSignalStatus`: `blocked` is terminal for the run but resumable for the worker.

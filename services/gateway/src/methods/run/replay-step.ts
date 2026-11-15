@@ -506,8 +506,42 @@ async function deleteStartRefusedSignals(
 ): Promise<string[]> {
   const script = `
 const fs = require('node:fs');
+const path = require('node:path');
 const [refusedStatus, ...files] = process.argv.slice(1);
 const removed = [];
+const failed = [];
+
+// Put a snapshot back without overwriting anything: link refuses an existing
+// destination, where rename would replace a signal the worker wrote while this
+// script was deciding. On a collision the worker's newer file wins and the
+// snapshot is dropped.
+const restore = (aside, file) => {
+  try {
+    fs.linkSync(aside, file);
+  } catch (error) {
+    if (error.code !== 'EEXIST') {
+      failed.push(file);
+      return;
+    }
+  }
+  try {
+    fs.rmSync(aside);
+  } catch {}
+};
+
+// A previous run of this script that died between moving a signal aside and
+// deciding on it left the only copy under that name. Recover it before doing
+// anything else: the worker reads the original path and would never find it.
+for (const file of files) {
+  const directory = path.dirname(file);
+  const prefix = path.basename(file) + '.replay-clear.';
+  let entries = [];
+  try {
+    entries = fs.readdirSync(directory).filter((entry) => entry.startsWith(prefix));
+  } catch {}
+  for (const entry of entries) restore(path.join(directory, entry), file);
+}
+
 for (const file of files) {
   const aside = file + '.replay-clear.' + process.pid;
   try {
@@ -523,17 +557,15 @@ for (const file of files) {
     try {
       fs.rmSync(aside);
       removed.push(file);
-    } catch {}
+    } catch {
+      failed.push(file);
+    }
     continue;
   }
-  // Live after all, or unreadable: put it back unless the worker has already
-  // written its own over the path, in which case that newer file wins.
-  try {
-    if (fs.existsSync(file)) fs.rmSync(aside);
-    else fs.renameSync(aside, file);
-  } catch {}
+  // Live after all, or unreadable: it goes back.
+  restore(aside, file);
 }
-process.stdout.write(JSON.stringify(removed));
+process.stdout.write(JSON.stringify({ removed, failed }));
 `;
   const result = await execOnSlot(
     vars,
@@ -542,14 +574,28 @@ process.stdout.write(JSON.stringify(removed));
       .join(' ')}`,
     vars.remoteRepo,
   );
-  if (result.exitCode !== 0) return [];
-  try {
-    const removed: unknown = JSON.parse(result.stdout.trim() || '[]');
-    if (!Array.isArray(removed)) return [];
-    return removed.map((file) => String(file).slice(`${workerTaskDir}/`.length));
-  } catch {
+  const relative = (file: unknown): string => String(file).slice(`${workerTaskDir}/`.length);
+  if (result.exitCode !== 0) {
+    console.warn(
+      `[run] worker signal cleanup command failed in ${workerTaskDir} (exit ${result.exitCode}: ${result.stderr.trim() || result.stdout.trim() || 'no output'})`,
+    );
     return [];
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.stdout.trim() || '{}');
+  } catch {
+    console.warn(`[run] worker signal cleanup returned no readable result in ${workerTaskDir}`);
+    return [];
+  }
+  const { removed, failed } = (parsed ?? {}) as { removed?: unknown; failed?: unknown };
+  // A signal that could not be put back is the one state worth shouting about:
+  // the worker reads the original path and will not find its own progress.
+  if (Array.isArray(failed) && failed.length > 0)
+    console.warn(
+      `[run] worker signal cleanup could not restore ${failed.map(relative).join(', ')} in ${workerTaskDir}; a worker may have lost its signal`,
+    );
+  return Array.isArray(removed) ? removed.map(relative) : [];
 }
 
 /** The `blocked` signal a blocked run's monitor stopped on, or null. */
@@ -2385,11 +2431,12 @@ async function replayRunStep(
     // the task regenerates into a new directory, so the old signal is
     // unreachable whatever this does.
     //
-    // Only the status `start` refuses goes, and on native only as part of a
-    // fresh restart, which is the one case that has established that no worker
-    // of the previous attempt survives. A `running` signal belongs to a worker
-    // that may still be alive and is preserved until admission replaces it, and
-    // `blocked` stays because `start` resumes it and keeps the checked boxes.
+    // On every transport but native, only the status `start` refuses goes: a
+    // `running` signal belongs to a worker that may still be alive and is
+    // preserved until admission replaces it, and `blocked` stays because
+    // `start` resumes it and keeps the checked boxes. A native fresh restart
+    // removes all of them, because it has already established that no worker of
+    // the previous attempt survives.
     const relaunchesWorker = targetIdx >= 0 && dispatchIdx >= 0 && targetIdx <= dispatchIdx;
     // One narrowed value, so the block below does not re-derive either half:
     // the slot to clear on, and the task file whose directory names the signals.
