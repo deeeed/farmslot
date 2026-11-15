@@ -48,6 +48,40 @@ export interface CommandJournalContext {
 
 let activeCommandJournal: CommandJournalHandle | undefined;
 
+/**
+ * Send the command's own output to its operation log for as long as the
+ * operation runs, and return the undo.
+ *
+ * Without this an operation logs only what the harness hands it, which happens
+ * where it spawns a child leaf or runs the live adapter contract. Work done in
+ * process — a `run` walking its recipe nodes, `doctor`, `prepare` — printed to
+ * its own stdout and reached nothing, so run c45c0781 left 14 of 15 logs empty,
+ * including both failed runs. The log should hold what an operator watching the
+ * terminal would have seen.
+ */
+function teeOutputToOperation(handle: CommandJournalHandle): () => void {
+  const streams = [process.stdout, process.stderr];
+  const originals = streams.map((stream) => stream.write);
+  streams.forEach((stream, index) => {
+    const original = originals[index]!;
+    const tee = (chunk: unknown, encoding?: unknown, callback?: unknown): boolean => {
+      // The command's own output must survive a failing journal, so recording
+      // never throws into the write it is observing.
+      if (typeof chunk === 'string' || chunk instanceof Uint8Array) {
+        try {
+          handle.operation.output(chunk);
+        } catch {
+          /* the operation record reports its own write failures */
+        }
+      }
+      return (original as (...args: unknown[]) => boolean).call(stream, chunk, encoding, callback);
+    };
+    stream.write = tee as typeof stream.write;
+  });
+  // Restores the exact original property, not a wrapper or a bound copy.
+  return () => streams.forEach((stream, index) => (stream.write = originals[index]!));
+}
+
 export async function withCommandJournal(
   command: string,
   argv: readonly string[],
@@ -62,6 +96,9 @@ export async function withCommandJournal(
   const parentId = process.env[operationEnv];
   if (handle) process.env[operationEnv] = handle.operation.value.id;
   activeCommandJournal = handle;
+  // A nested operation tees to itself; the outer one keeps its own writer, so
+  // restoring is ordered by the same try/finally nesting as the handles.
+  const untee = handle ? teeOutputToOperation(handle) : undefined;
   try {
     const exitCode = await execute();
     tryFinishCommandJournal(handle, exitCode);
@@ -70,6 +107,7 @@ export async function withCommandJournal(
     tryFinishCommandJournal(handle, 1);
     throw error;
   } finally {
+    untee?.();
     activeCommandJournal = previous;
     if (parentId) process.env[operationEnv] = parentId;
     else delete process.env[operationEnv];

@@ -192,7 +192,10 @@ export function spawnScript(
     return { status: 1, output: message };
   }
   const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
-  recordCommandOutput(output);
+  // Record only what the terminal will not show: anything written to our own
+  // streams is already teed into the operation log by the command journal, so
+  // recording it here as well would double it.
+  if (json) recordCommandOutput(output);
   if (!json && output) process.stderr.write(output);
   return { status: result.status ?? 1, output };
 }
@@ -295,7 +298,9 @@ export function spawnScriptStreaming(
         },
         onOutput: (chunk, stream) => {
           if (spawnOptions.capture !== false) captured.append(decoders[stream].write(chunk));
-          recordCommandOutput(chunk);
+          // Forwarded output reaches the operation log through our own streams;
+          // only a leaf whose output is captured and never printed needs this.
+          if (spawnOptions.forward === 'none') recordCommandOutput(chunk);
           if (spawnOptions.forward !== 'none') {
             (stream === 'stdout' && spawnOptions.forward === 'original'
               ? process.stdout
