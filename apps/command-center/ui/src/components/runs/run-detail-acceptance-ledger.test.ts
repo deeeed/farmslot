@@ -120,6 +120,50 @@ test('the acceptance panel names no superseded ledger read for the grace period'
     pending: false,
   });
 
+  // Preparing has no watch until the worker starts. That absence is neutral,
+  // while a real refusal and a missing watch after dispatch remain visible.
+  const workerRun = view.run;
+  assert.ok(workerRun);
+  const noWatch = {
+    code: 'RESOURCE_OBSERVATION_UNSUPPORTED',
+    message: 'The requested progress source has no active verified watch.',
+  };
+  view.run = { ...workerRun, status: 'preparing', steps: [{ name: 'prepare', status: 'running' }] };
+  void progress.retry();
+  await flush();
+  socket.failure(lastRead().id, noWatch);
+  await flush();
+  view._acceptProgressObservation();
+  assert.equal(view.acceptanceStatusError, null);
+  assert.equal(view._taskProgressLoading, true);
+  for (const status of ['created', 'slot-finding', 'grading', 'writing-task'] as const) {
+    view.run = { ...workerRun, status };
+    view._acceptProgressObservation();
+    assert.equal(view.acceptanceStatusError, null, status);
+  }
+  view.run = { ...workerRun, status: 'preparing' };
+  void progress.retry();
+  await flush();
+  socket.failure(lastRead().id, {
+    code: 'RESOURCE_OBSERVATION_UNAVAILABLE',
+    message: 'Ledger read failed: EACCES',
+  });
+  await flush();
+  view._acceptProgressObservation();
+  assert.equal(view.acceptanceStatusError, 'Ledger read failed: EACCES');
+  view.run = {
+    ...workerRun,
+    status: 'dispatching',
+    steps: [{ name: 'dispatch', status: 'running' }],
+  };
+  void progress.retry();
+  await flush();
+  socket.failure(lastRead().id, noWatch);
+  await flush();
+  view._acceptProgressObservation();
+  assert.equal(view.acceptanceStatusError, noWatch.message);
+  view.run = workerRun;
+
   // Held data: a superseded reread names nothing, and the ledger's own error still shows.
   void progress.retry();
   await flush();
@@ -160,5 +204,13 @@ test('the acceptance panel names no superseded ledger read for the grace period'
     error: 'Request task.progress timed out',
     pending: false,
   });
+  // A ledger that was already read never becomes pre-worker preparation again.
+  view.run = { ...workerRun, status: 'preparing' };
+  void progress.retry();
+  await flush();
+  socket.failure(lastRead().id, noWatch);
+  await flush();
+  view._acceptProgressObservation();
+  assert.equal(view.acceptanceStatusError, noWatch.message);
   progress.hostDisconnected();
 });

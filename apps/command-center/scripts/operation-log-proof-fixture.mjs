@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const output = process.env.OPERATION_LOG_PROOF_OUTPUT;
+const ledgerFailure = process.env.ACCEPTANCE_LEDGER_ERROR_PROOF === '1';
 const port = Number(process.env.GATEWAY_PORT);
 assert(output && Number.isSafeInteger(port) && port > 0);
 const source = fileURLToPath(new URL('../../../', import.meta.url));
@@ -77,11 +78,11 @@ await writeFile(path.join(taskDir, 'TASK.md'), '# Operation log proof\n');
 await writeFile(path.join(taskDir, paths[0]), '');
 await writeFile(path.join(taskDir, paths[1]), 'Recorded operation output\n');
 updateRun(run.id, {
-  status: 'monitoring',
+  status: ledgerFailure ? 'done' : 'monitoring',
   taskFile: path.join(config.getOrchestratorTaskRoot('log-proof'), 'proof/TASK.md'),
   steps: run.steps.map((step) => ({
     ...step,
-    status: step.name === 'monitor' ? 'running' : 'done',
+    status: !ledgerFailure && step.name === 'monitor' ? 'running' : 'done',
     outputs:
       step.name === 'monitor'
         ? { artifacts: paths.map((file) => ({ path: file, purpose: 'other' })) }
@@ -96,6 +97,11 @@ await writeFile(path.join(recorded, 'TASK.md'), '# Operation log proof\n');
 const checklist = '# Worker\n\n- [x] **1. Inspect operation logs**\n';
 await writeFile(path.join(recorded, 'CHECKLIST.md'), checklist);
 await writeFile(path.join(recorded, 'CHECKLIST.md.worker'), checklist);
+if (ledgerFailure)
+  await writeFile(
+    path.join(recorded, 'artifacts/acceptance-status.json'),
+    '{ malformed ledger JSON',
+  );
 for (const id of ids) {
   await writeFile(
     path.join(recorded, 'artifacts/operations', `${id}.json`),
@@ -146,11 +152,22 @@ const server = createServer((request, response) => {
 const wss = createWebSocketServer(server, auth);
 await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
 const url = `ws://127.0.0.1:${port}/ws`;
+const cliSession = ledgerFailure
+  ? await auth.writer.exchangePersonCredential(credential.secret, {
+      deviceName: 'Ledger failure proof',
+      deviceKind: 'cli',
+    })
+  : undefined;
 await writeFile(
   path.join(root, 'client/gateways.json'),
   JSON.stringify({
     active: 'operation-log-proof',
-    gateways: { 'operation-log-proof': { url, authMode: 'token', secret: credential.secret } },
+    gateways: {
+      'operation-log-proof': { url, authMode: 'token', secret: credential.secret },
+      ...(cliSession
+        ? { 'ledger-error-cli': { url, authMode: 'token', secret: cliSession.accessToken } }
+        : {}),
+    },
   }),
   { mode: 0o600 },
 );
