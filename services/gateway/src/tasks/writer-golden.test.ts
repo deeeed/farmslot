@@ -101,6 +101,44 @@ for (const flowType of ['dev', 'fix-bug', 'review-pr', 'pr-complete'] as const) 
   });
 }
 
+// TASK.md describes what the checklist will ask for. It must never instruct work
+// before the first checklist step, because the worker obeys it: MICRO3 (run
+// 1c23feac) read "Load every file below before the first checklist step" and did
+// exactly that, so its first mark came after the reads, contradicting step 1.
+// The document is the earliest thing a worker reads, so wording that competes
+// with the checklist is a defect in the document, not in the model.
+const PRE_STEP_1_INSTRUCTIONS = [
+  'before the first checklist step',
+  'before step 1',
+  'before writing any',
+  'before the first mark',
+];
+
+for (const flowType of ['dev', 'fix-bug', 'review-pr', 'pr-complete'] as const) {
+  test(`TASK.md for a ${flowType} run instructs no work before the first checklist step`, async (t) => {
+    let taskPath = '';
+    t.after(async () => {
+      if (taskPath) await rm(path.dirname(taskPath), { recursive: true, force: true });
+    });
+    taskPath = await writeTaskFixture(goldenRun(flowType), { skipCollisionCheck: true });
+    const document = normalize(await readFile(taskPath, 'utf-8'), path.dirname(taskPath));
+    // The guard is only worth anything over a document that carries the blocks
+    // that used to give those instructions.
+    assert.match(document, /## Recipe tooling/);
+    assert.match(document, /## Recipe proof \+ acceptance review/);
+    for (const phrase of PRE_STEP_1_INSTRUCTIONS) {
+      const line = document
+        .split('\n')
+        .find((candidate) => candidate.toLowerCase().includes(phrase));
+      assert.equal(
+        line,
+        undefined,
+        `TASK.md tells the worker to act before its first checklist step: ${line}`,
+      );
+    }
+  });
+}
+
 test('a stacked dev run gets the golden document plus only a Stack section', async (t) => {
   let taskPath = '';
   t.after(async () => {

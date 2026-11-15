@@ -247,6 +247,9 @@ export function registerTaskCommand(program: Command): void {
     '--signal <path>',
     '--who <name>',
     '--report <path>',
+    // The engine's own order refusal tells the worker to run
+    // `./mark N --skip "<reason>"`, and that wrapper comes through here.
+    '--skip <reason>',
   ])
     mark.option(flag);
   for (const flag of [

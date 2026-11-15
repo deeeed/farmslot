@@ -136,7 +136,7 @@ export function requiredSkillsTaskSection(set: RequiredSkillSet): string {
   return [
     '## Required skills',
     '',
-    'Frozen for this task in `inputs/handoff.json` (`requiredSkills`); its review checks against the same set. Load every file below before the first checklist step. Do not substitute repository docs.',
+    'Frozen for this task in `inputs/handoff.json` (`requiredSkills`); its review checks against the same set. Read every file below after marking step 1, and before the work it governs. Do not substitute repository docs.',
     '',
     ...set.skills.map(
       (skill) =>

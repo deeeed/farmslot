@@ -81,6 +81,9 @@ function printHelp() {
       '  Steps are claimed in order: ./mark N is refused while an earlier step is unchecked.',
       '  A step whose title carries [OPTIONAL: <when>] can be skipped with ./mark N --skip "<reason>";',
       '  the reason is recorded in the ledger. Any other step must be done.',
+      '  ./mark N --reason "<what you found>" records a note on a step you did do — a judgement call',
+      '  worth keeping, such as an exit-early step whose check found the bug still reproduces. The step',
+      '  stays done; only --skip waives one, and the two cannot be given together.',
       'Existing evidence manifests are validated before progress or success marks, with field errors on refusal.',
       'Operator: ./mark wait --who "name" --reason "..."; ./mark resume clears the wait without marking a row.',
       'Child units: ./mark sub start <id> --step N --from <path|inline:text>, then ./mark sub <id> <n> | complete [--report PATH] [--mark-last] | blocked --reason "..." | status.',
@@ -189,6 +192,29 @@ if (stepToken === 'resume' && Object.keys(opts).length > 0) usage();
 if (skipReason !== null && stepNumber === null) {
   console.error('--skip applies to a numbered step: ./mark N --skip "<reason>"');
   process.exit(2);
+}
+
+/**
+ * `--reason "<text>"` on a numbered step: a note on the mark, not a skip. The
+ * step was done, and this records the judgement behind it — an exit-early step
+ * whose check found the bug still reproduces is done by recording that. The
+ * terminal and wait commands keep their own `--reason`, which is their
+ * disposition rather than a note on a row.
+ */
+let noteReason = null;
+if (stepNumber !== null && opts.reason !== undefined) {
+  if (skipReason !== null) {
+    console.error(
+      '--reason and --skip cannot both be given: a skip already records its reason. ' +
+        'Use --skip "<why it does not apply>" to waive the step, or --reason "<what you found>" to note how you did it.',
+    );
+    process.exit(2);
+  }
+  noteReason = typeof opts.reason === 'string' ? opts.reason.trim() : '';
+  if (!noteReason || noteReason.length > 2048) {
+    console.error('--reason needs text (1-2048 characters): ./mark N --reason "<what you found>"');
+    process.exit(2);
+  }
 }
 if (stepToken === 'wait') {
   if (
@@ -848,9 +874,12 @@ if (!isStartCommand && target.stepNumber != null && recordedEvent === -1) {
     stepNumber: target.stepNumber,
     label: target.label,
     checkedAt: now,
-    // A skip is a claim about the work not applying, so the reason it was
-    // granted on stays with the step in the ledger.
+    // Two different claims, two fields. `reason` is why a step was waived and
+    // is what the order check quotes back when a skip was not declared; `note`
+    // is what the worker observed doing a step it did perform. Sharing one key
+    // would let a later note overwrite a waiver's rationale.
     ...(skipReason !== null ? { skipped: true, reason: skipReason } : {}),
+    ...(noteReason !== null ? { note: noteReason } : {}),
   });
 } else if (!isStartCommand && target.stepNumber != null) {
   // Re-marking stays the no-op it has always been, with one exception: a step
@@ -865,6 +894,11 @@ if (!isStartCommand && target.stepNumber != null && recordedEvent === -1) {
     loadTerminalContract(taskDir, taskPath),
     path.basename(signalPath),
   );
+  // A re-mark restates the claim, so a new note replaces the old one rather
+  // than leaving rationale from a statement the worker has moved past. A
+  // waiver's own reason is never touched: a step skipped and then rechecked
+  // after a rebase keeps why it was waived and gains what the recheck found.
+  if (noteReason !== null) events[recordedEvent] = { ...events[recordedEvent], note: noteReason };
   if (stale) events[recordedEvent] = { ...events[recordedEvent], remarkedAt: now };
 }
 

@@ -793,6 +793,7 @@ Options:
   --signal <path>
   --who <name>
   --report <path>
+  --skip <reason>
   --skip-learnings
   --mark-last
   --already-fixed
