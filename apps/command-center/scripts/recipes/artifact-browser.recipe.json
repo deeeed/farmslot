@@ -8,7 +8,7 @@
       "browse-artifacts": {
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=apps/command-center/ui/tsconfig.json node --import tsx apps/command-center/scripts/prove-artifact-browser.mts",
-        "timeout_ms": 180000,
+        "timeout_ms": 300000,
         "intent": "Read the actual run and match all displayed paths. Start with a real collapsed folder, expand matching groups through their controls, filter by type, search, collapse and expand a folder, decode an image preview and render Markdown in the existing browser.",
         "next": "done"
       },

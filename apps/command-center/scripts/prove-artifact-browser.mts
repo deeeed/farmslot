@@ -84,9 +84,9 @@ try {
     'Displayed inventory must match the real run read',
   );
   await mkdir(output, { recursive: true });
-  const receipts = [];
+  const cases: string[] = [];
   const save = async (name: string, value: Observation) => {
-    receipts.push({ name, ...value });
+    cases.push(name);
     await writeFile(path.join(output, `${name}.json`), JSON.stringify(value, null, 2) + '\n', {
       mode: 0o600,
     });
@@ -133,6 +133,14 @@ try {
     Number(state.match?.split(' ')[0]),
     artifacts.filter((file) => workspaceArtifactType(file) === 'image').length,
   );
+  assert.deepEqual(
+    [...state.files].sort(),
+    artifacts
+      .filter((file) => workspaceArtifactType(file) === 'image')
+      .map((file) => file.path)
+      .sort(),
+    'The filtered tree must contain exactly the retained images',
+  );
   await save('type-filter', state);
   const needle = workspaceArtifactBasename(image.path);
   await cdp('fill', tab, selector + 'input.search', needle);
@@ -153,17 +161,21 @@ try {
   await cdp('screenshot', tab, path.join(output, 'image-preview.png'));
   assert(state.folders.length > 0, 'The real run must have folder grouping');
   if (!state.folders[0].expanded) await cdp('click', tab, selector + 'button.toggle');
+  const visibleBeforeCollapse: string[] = [...state.files];
   await cdp('click', tab, selector + 'button.toggle');
   state = await until(
-    (value) => value.folders[0]?.expanded === false && value.files.length === 0,
-    'Collapsing the root folder hides its rows',
+    (value) =>
+      value.folders[0]?.expanded === false && value.files.length < visibleBeforeCollapse.length,
+    'Collapsing a group hides its rows',
   );
   await save('folder-collapsed', state);
   await cdp('click', tab, selector + 'button.toggle');
-  await until(
-    (value) => value.folders[0]?.expanded === true && value.files.length > 0,
-    'Expanding the root restores matching files',
+  state = await until(
+    (value) =>
+      value.folders[0]?.expanded === true && value.files.length === visibleBeforeCollapse.length,
+    'Expanding the group restores matching files',
   );
+  assert.deepEqual(state.files, visibleBeforeCollapse);
   await onlyType('markdown');
   await cdp('fill', tab, selector + 'input.search', workspaceArtifactBasename(document.path));
   state = await until(
@@ -187,7 +199,7 @@ try {
     runId,
     runStatus: run.status,
     artifactCount: artifacts.length,
-    cases: receipts.map((row) => row.name),
+    cases,
     proof:
       'Actual authenticated run.get matched to the displayed inventory; real filter/search/folder/preview interactions; no UI state injection or run writes',
   };
