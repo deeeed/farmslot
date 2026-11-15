@@ -483,12 +483,13 @@ const { reclaimCancelledSlot, cancelledSlotReplayRefusal } =
   await import('./cancelled-slot-reclaim.js');
 const { releaseCompletedRunSlot } = await import('../methods/run/lifecycle-control.js');
 
-const run = {
+const { makeRun: makeCleanupRun } = await import('../run-engine/test-fixtures.js');
+const run = makeCleanupRun({
   id: RUN_ID,
   slotId: SLOT_ID,
   status: 'cancelled',
   agentContexts: [],
-} as unknown as Run;
+});
 const reaps = () => commands.filter((cmd) => cmd.includes(`identityfile='${IDENTITY}'`));
 
 beforeEach(() => {
@@ -1878,6 +1879,55 @@ test('failed cleanup retains its checkout until archive rather than resetting it
   run.status = 'failed';
   await releaseCompletedRunSlot(run);
   assert.equal(idleReturnCalls, 0);
+});
+
+test('a confirmed pre-worker failure returns its parked checkout before publishing ready', async () => {
+  run.status = 'failed';
+  run.steps = [
+    { name: 'dispatch', status: 'failed', outputs: { failedPhase: 'before-worker-launch' } },
+  ];
+  configuredResources = slotRuntimeResources();
+  idleReturnResult = { kind: 'ready' };
+  onIdleReturn = () => {
+    assert.equal(slotRow?.current_run_id, RUN_ID);
+    assert.notEqual(slotRow?.lifecycle, 'ready');
+    assert.deepEqual(stoppedResources, ['ios-sim', 'browser', 'dev-server']);
+  };
+  assert.equal((await releaseCompletedRunSlot(run)).released, true);
+  assert.equal(idleReturnCalls, 1);
+  assert.equal(run.status, 'failed');
+});
+
+test('a dispatch failure after a launch attempt retains the checkout for replay', async () => {
+  run.status = 'failed';
+  run.steps = [{ name: 'dispatch', status: 'failed', outputs: { failedPhase: 'worker-launch' } }];
+  await releaseCompletedRunSlot(run);
+  assert.equal(idleReturnCalls, 0);
+});
+
+test('a pre-worker idle-return failure stays held instead of publishing a ready task branch', async () => {
+  run.status = 'failed';
+  run.steps = [
+    { name: 'dispatch', status: 'failed', outputs: { failedPhase: 'before-worker-launch' } },
+  ];
+  idleReturnResult = { kind: 'unavailable', reason: 'default branch unavailable' };
+  assert.equal((await releaseCompletedRunSlot(run)).released, false);
+  assert.equal(idleReturnCalls, 1);
+  assert.equal(slotRow?.lifecycle, 'held');
+  assert.equal(slotRow?.cleanup_run_id, RUN_ID);
+  assert.ok(slotWrites.every((write) => write.lifecycle !== 'ready'));
+});
+
+test('pre-worker cleanup cannot return a foreign owner to idle', async () => {
+  run.status = 'failed';
+  run.steps = [
+    { name: 'dispatch', status: 'failed', outputs: { failedPhase: 'before-worker-launch' } },
+  ];
+  slotRow = { current_run_id: 'foreign-run', slot_epoch: 2, lifecycle: 'busy' };
+  const before = structuredClone(slotRow);
+  assert.equal((await releaseCompletedRunSlot(run)).released, false);
+  assert.equal(idleReturnCalls, 0);
+  assert.deepEqual(slotRow, before);
 });
 
 for (const reason of ['dirty files', 'unpushed commits'])

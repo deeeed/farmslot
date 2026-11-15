@@ -32,6 +32,7 @@ import {
   defaultCancelCollaborators,
 } from '../../run-lifecycle/cancel-transition.js';
 import { captureEpisodeAfterRelease } from '../../run-lifecycle/episode-capture-effect.js';
+import { failedBeforeWorkerLaunch } from '../../run-lifecycle/pre-worker-failure.js';
 import {
   operatorCompletionCollaborators,
   terminalTransitionDeps,
@@ -399,9 +400,12 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
   let blocker: string | null = workerBlocker;
   const { readSlotRow } = await import('../../core/index.js');
   // A finished artifact-only run's checkout returns to idle with its own commits parked. A
-  // failed run keeps it for "replay the failed step" until it is closed or archived.
+  // failure after a launch keeps it for replay until it is closed or archived.
+  const preWorkerFailure = failedBeforeWorkerLaunch(run);
   const parksOnRelease =
-    isTerminalRunStatus(run.status) && run.status !== 'failed' && parksBranchCommits(run);
+    isTerminalRunStatus(run.status) &&
+    (run.status !== 'failed' || preWorkerFailure) &&
+    parksBranchCommits(run);
   let fence = { before: await readSlotRow(slotId) };
   let checkoutHasLocalWork = false;
   const unconfirmedStops: string[] = [];
@@ -431,7 +435,8 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
       if (blocker) await recordSlotTeardownSkipped(run, blocker);
     }
     const retainedCandidate = Boolean(run.engineState?.evalExperiment?.blind?.firstOutput);
-    const returnsToIdle = run.status === 'done' || retainedCandidate || parksOnRelease;
+    const returnsToIdle =
+      run.status === 'done' || retainedCandidate || parksOnRelease || preWorkerFailure;
     if (!blocker && returnsToIdle) {
       const before = await readSlotRow(slotId);
       const { ownsRunSlotCleanup, updateSlotStatusIf } = await import('../../core/index.js');
@@ -463,6 +468,7 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
         await recordSlotTeardownSkipped(run, `Checkout retained: ${result.reason}`);
         if ((await readSlotRow(slotId))?.workspace_recovery)
           return { released: false, skipped: result.reason };
+        if (preWorkerFailure) blocker = `Pre-worker checkout return failed: ${result.reason}`;
       }
     }
     fence = await fenceRunSlotCleanup(run, blocker);

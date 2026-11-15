@@ -19,6 +19,8 @@ let attempts = 0;
 let outcomes: Error[] = [];
 /** When set, the attempt after the scripted refusals launches. */
 let launches = false;
+let launchAttempted = false;
+const partialIO: Parameters<typeof executeDispatchStep>[1]['stepPartialIO'] = new Map();
 const stop = new Error('Stop after the dispatch attempt');
 const vars: SlotVars = {
   slotId: 'fixture',
@@ -50,8 +52,9 @@ mock.module('../runs/slot-binding.js', {
 mock.module('../methods/dispatch.js', {
   namedExports: {
     ...dispatch,
-    dispatchExecute: async () => {
+    dispatchExecute: async (...args: Parameters<typeof dispatch.dispatchExecute>) => {
       attempts++;
+      if (launchAttempted) args[2]?.onLaunchAttempt?.();
       const refusal = outcomes.shift();
       if (refusal || !launches) throw refusal ?? stop;
       return { launchCommand: 'fixture-launch' };
@@ -70,6 +73,7 @@ const { executeDispatchStep } = (await import(
 )) as typeof import('./dispatch-lifecycle-steps.js');
 
 const dispatchOnce = () => {
+  partialIO.clear();
   current = makeRun({
     id: `launch-inputs-${attempts}`,
     flowType: 'dev',
@@ -78,7 +82,7 @@ const dispatchOnce = () => {
     engineState: { flags: { skipPrepare: true } },
   });
   return executeDispatchStep(current.id, {
-    stepPartialIO: new Map(),
+    stepPartialIO: partialIO,
     blockedRunError: (message) => new Error(message),
   });
 };
@@ -90,6 +94,25 @@ test('a launch whose configured inputs changed during preflight is dispatched on
   outcomes = [new WorkerLaunchInputsChangedError('Worker launch inputs changed during preflight')];
   await assert.rejects(dispatchOnce(), (error) => error === stop);
   assert.equal(attempts, 2, 'the second attempt re-reads and dispatches');
+});
+
+test('pre-launch failures retain their explicit phase through partial dispatch output', async () => {
+  attempts = 0;
+  outcomes = [];
+  await assert.rejects(dispatchOnce(), (error) => error === stop);
+  assert.equal(partialIO.get(current.id)?.outputs?.failedPhase, 'before-worker-launch');
+});
+
+test('an attempted launch clears pre-worker classification before a later failure', async () => {
+  attempts = 0;
+  outcomes = [];
+  launchAttempted = true;
+  try {
+    await assert.rejects(dispatchOnce(), (error) => error === stop);
+    assert.equal(partialIO.get(current.id)?.outputs?.failedPhase, 'worker-launch');
+  } finally {
+    launchAttempted = false;
+  }
 });
 
 test('the retried dispatch launches and its sub-steps record the retry', async () => {
