@@ -2,7 +2,6 @@
 import { randomUUID } from 'node:crypto';
 
 import {
-  type AgentContext,
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   type DecisionAction,
   Events,
@@ -26,6 +25,7 @@ import {
 } from '@farmslot/protocol';
 import { resolveReviewMode } from '@farmslot/review-dispatch';
 
+import { contextLaunched } from '../agents/contexts.js';
 import { isGitHubAncestor } from '../external/github.js';
 import { reviewChainWithMetrics } from '../review/chain-metadata.js';
 import { runReviewRoundBudget } from '../review/review-round-budget.js';
@@ -650,17 +650,6 @@ export function buildCollisionSuccessorParams(
         ? [...current.allowedSlots]
         : undefined,
   };
-}
-
-/** A worker context that ever launched; a native restart keeps only its session history. */
-function contextLaunched(context: AgentContext): boolean {
-  return Boolean(
-    context.startedAt ||
-    context.runnerSessionId ||
-    context.runnerSessionArchive ||
-    context.nativeSession ||
-    context.nativeSessionHistory?.length,
-  );
 }
 
 /**

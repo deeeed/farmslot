@@ -522,3 +522,14 @@ async function findActiveRunForSlot(slotId: string): Promise<Run | null> {
   });
   return result === SKIP_ACTIVE_RUN_SELECTION ? null : result;
 }
+
+/** A worker context that ever launched; a native restart keeps only its session history. */
+export function contextLaunched(context: AgentContext): boolean {
+  return Boolean(
+    context.startedAt ||
+    context.runnerSessionId ||
+    context.runnerSessionArchive ||
+    context.nativeSession ||
+    context.nativeSessionHistory?.length,
+  );
+}

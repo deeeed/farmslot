@@ -1,0 +1,1 @@
+- Failures confirmed before worker launch park the prepared checkout and return the slot to main before publishing it ready. Failures after a launch attempt retain their checkout for replay.
