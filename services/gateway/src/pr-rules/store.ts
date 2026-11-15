@@ -65,6 +65,27 @@ type PRReloadResult =
   | { kind: 'published'; changed: boolean }
   | { kind: 'deferred'; prs: MonitoredPRIdentity[] };
 
+type ScanSubjects = PRTriggerRule['scan']['subjects'];
+
+/**
+ * Subjects as the store keeps them: false flags and empty lists are left out, so the thousands
+ * of scanned PRs that matched nothing cost only their revision in every store transaction.
+ */
+function compactScanSubjects(subjects: ScanSubjects): ScanSubjects {
+  const compact: ScanSubjects = {};
+  for (const [key, subject] of Object.entries(subjects)) {
+    const entry: ScanSubjects[string] = { revision: subject.revision };
+    if (subject.matched) entry.matched = true;
+    if (subject.admitted) entry.admitted = true;
+    if (subject.admittedActions?.length) entry.admittedActions = subject.admittedActions;
+    if (subject.actionIds && Object.keys(subject.actionIds).length)
+      entry.actionIds = subject.actionIds;
+    if (subject.deferredActions?.length) entry.deferredActions = subject.deferredActions;
+    compact[key] = entry;
+  }
+  return compact;
+}
+
 export class PRRuleStore {
   async scheduleWebhookRefresh(
     expected: Pick<PRRuleStoreData, 'teams' | 'rules'>,
@@ -700,18 +721,13 @@ export class PRRuleStore {
         throw new Error('Activation preview changed; preview again');
       const wasEnabled = rule.enabled;
       if (enabled && !wasEnabled && baseline && !backfill) {
-        rule.scan.subjects = Object.fromEntries(
-          baseline.items.map((item) => [
-            monitoredPRKey(item.subject.pr),
-            {
-              revision: reviewSubjectRevision(item),
-              matched: item.match.state === 'match',
-              admitted: false,
-              admittedActions: [],
-              actionIds: {},
-              deferredActions: [],
-            },
-          ]),
+        rule.scan.subjects = compactScanSubjects(
+          Object.fromEntries(
+            baseline.items.map((item) => [
+              monitoredPRKey(item.subject.pr),
+              { revision: reviewSubjectRevision(item), matched: item.match.state === 'match' },
+            ]),
+          ),
         );
         rule.scan.rebasePending = false;
       }
@@ -989,7 +1005,7 @@ export class PRRuleStore {
         await reconcileReviewIntent(intent, data.teams);
       }
       if (targetPRKey) return true;
-      rule.scan.subjects = subjects;
+      rule.scan.subjects = compactScanSubjects(subjects);
       if (Object.values(subjects).some((subject) => subject.deferredActions?.length))
         rule.scan.admissionWarning =
           'Admission limit reached; preview and request backfill for remaining matches';

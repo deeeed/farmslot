@@ -248,13 +248,17 @@ export interface PRRuleScanState {
   nextScanAt?: string;
   error?: string;
   admissionWarning?: string;
-  /** Baseline revisions prevent enabling/editing a rule from silently backfilling old matches. */
+  /**
+   * Baseline revisions prevent enabling/editing a rule from silently backfilling old matches.
+   * The store writes each subject compactly: an absent `matched` or `admitted` is false, and an
+   * absent list or map is empty.
+   */
   subjects: Record<
     string,
     {
       revision: string;
-      matched: boolean;
-      admitted: boolean;
+      matched?: boolean;
+      admitted?: boolean;
       admittedActions?: Array<PRRuleAction['kind']>;
       actionIds?: Partial<Record<'notify' | 'monitor', string>>;
       deferredActions?: Array<PRRuleAction['kind']>;
