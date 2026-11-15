@@ -198,6 +198,12 @@
         "action": "ui.screenshot",
         "path": "native-render-turn-diff.png",
         "intent": "Record the native turn diff.",
+        "next": "reveal-tool"
+      },
+      "reveal-tool": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-render-proof.mjs reveal 'Change demo.ts · completed · Details'",
+        "intent": "Bring the edit tool's row into view.",
         "next": "press-tool"
       },
       "press-tool": {
