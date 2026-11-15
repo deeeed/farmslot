@@ -74,7 +74,7 @@ test('full workspace inventory has one test owner and splits the critical app su
     durations: JSON.parse(readFileSync('scripts/quality/ci-test-durations.json', 'utf8')),
   });
   const tasks = plan.jobs.flatMap(({ tasks }) => tasks);
-  assert.equal(plan.jobs.filter(({ id }) => id.startsWith('gateway-')).length, 12);
+  assert.equal(plan.jobs.filter(({ id }) => id.startsWith('gateway-')).length, 16);
   assert.equal(plan.jobs.filter(({ id }) => id.startsWith('command-center-ui-')).length, 4);
   const assigned = tasks.flatMap((task) => task.tests ?? []);
   assert.deepEqual(Object.keys(plan.testOwners).sort(), [...plan.selected].sort());

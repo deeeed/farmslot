@@ -129,9 +129,10 @@ export function createPrPlan({
     if (id === 'gateway') {
       const full =
         suite.length === [...eligible].filter((file) => file.startsWith(`${dir}/`)).length;
+      const limit = full ? count : Math.min(count, 12);
       let shards = full ? Math.min(count, suite.length) : 1;
       chunks = balanceTestShards(suite, shards, workers, durations, lanes);
-      while (shards < Math.min(count, suite.length) && chunks.some(({ ms }) => ms > 120_000))
+      while (shards < Math.min(limit, suite.length) && chunks.some(({ ms }) => ms > 120_000))
         chunks = balanceTestShards(suite, ++shards, workers, durations, lanes);
     } else
       chunks = balance(suite, count, (file) => durations[file] ?? 1500).map((files) => ({
@@ -159,7 +160,7 @@ export function createPrPlan({
       chunk.forEach((file) => assigned.add(file));
     }
   }
-  splitTests('gateway', 'services/gateway', ciOnly ? 1 : 12, 'tsconfig.json', 4);
+  splitTests('gateway', 'services/gateway', ciOnly ? 1 : 16, 'tsconfig.json', 4);
   splitTests(
     'command-center-ui',
     'apps/command-center/ui',
