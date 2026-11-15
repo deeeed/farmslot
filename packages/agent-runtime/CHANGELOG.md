@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `@farmslot/agent-runtime/tool-usage` counts an agent session's tool calls from one normalized stream (name, issued and completed time). Per-runner adapters translate Pi, Claude, Codex, Grok and Cursor transcripts and native session journals into it, and one counter splits calls, tokens and wall time at the checklist marks. Calls are attributed to the step in which they were issued; Cursor transcripts record no times, so they report totals only.
 - TASK.md no longer tells a worker to act before its first checklist step. The "Required skills" line still requires every frozen file to be read, but after marking step 1 and before the work each file governs, instead of before the first step; the recipe tooling block requires its quality reference as part of the step that writes a recipe. A worker that obeyed the old wording marked step 1 only after doing the reads. Commands, paths and operational constraints are unchanged.
 - A checklist step can declare the evidence it claims with `[PROOF: artifacts/...]`. `./mark N` refuses the tick while that path is absent or empty, and `mark complete` refuses a checked step whose evidence is missing or was written after the claim; re-marking such a step restates the claim over repaired evidence. Steps without a declaration are unaffected.
 - A refused `mark complete` on a run whose contract is marked unattended now ends the run with the refusal as its reason, instead of printing advice no operator will read.

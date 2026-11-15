@@ -4,6 +4,7 @@ import { viewListField, viewTextField, viewToggleField } from './view-state.js';
 export const RUN_DETAIL_PANEL_DEFAULTS = {
   'run-step-progress': true,
   'run-review-history': false,
+  'run-step-cost': true,
   'run-artifacts': false,
   'run-acceptance': true,
   'run-results': true,

@@ -1,4 +1,9 @@
-import { primaryRoleForFlow, type Run, type RunnerSessionUsage } from '@farmslot/protocol';
+import {
+  primaryRoleForFlow,
+  type Run,
+  type RunnerSessionUsage,
+  type SessionToolUsage,
+} from '@farmslot/protocol';
 
 function parseNumberLine(lines: string[], prefix: string): number | null {
   const line = lines.find((candidate) => candidate.startsWith(prefix));
@@ -12,6 +17,25 @@ function parseStringLine(lines: string[], prefix: string): string | null {
   if (!line) return null;
   const value = line.slice(prefix.length).trim();
   return value && value !== 'unknown' ? value : null;
+}
+
+/** The accounting module's `tool_usage=` JSON line; absent from older node modules. */
+function parseToolUsage(lines: string[]): Pick<RunnerSessionUsage, 'toolUsage' | 'toolUsageError'> {
+  const error = parseStringLine(lines, 'tool_usage_error=');
+  if (error) return { toolUsageError: error };
+  const line = lines.find((candidate) => candidate.startsWith('tool_usage='));
+  if (!line) return {};
+  const value: unknown = JSON.parse(line.slice('tool_usage='.length));
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    !('toolCalls' in value) ||
+    typeof value.toolCalls !== 'number' ||
+    !('steps' in value) ||
+    !Array.isArray(value.steps)
+  )
+    return { toolUsageError: 'Accounting returned malformed tool usage' };
+  return { toolUsage: value as SessionToolUsage };
 }
 
 export function parseSessionUsageOutput(
@@ -33,6 +57,7 @@ export function parseSessionUsageOutput(
     ...(parseStringLine(lines, 'cost_reason=')
       ? { costStatus: 'unpriced', costReason: parseStringLine(lines, 'cost_reason=') ?? undefined }
       : {}),
+    ...parseToolUsage(lines),
     measuredAt: new Date().toISOString(),
     source: 'runner-transcript',
     scope: 'session-total',
@@ -71,6 +96,10 @@ export function runnerUsageMetrics(usage: RunnerSessionUsage): Partial<Run['metr
     ...(usage.cacheCreation != null ? { sessionCacheCreation: usage.cacheCreation } : {}),
     ...(usage.cacheRead != null ? { sessionCacheRead: usage.cacheRead } : {}),
     ...(usage.costUsd != null ? { costEstimate: usage.costUsd } : {}),
+    ...(usage.toolUsage ? { sessionToolCalls: usage.toolUsage.toolCalls } : {}),
+    ...(usage.toolUsage?.toolCallsBeforeFirstMark != null
+      ? { sessionToolCallsBeforeFirstMark: usage.toolUsage.toolCallsBeforeFirstMark }
+      : {}),
   };
 }
 

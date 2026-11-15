@@ -15,6 +15,15 @@ import { assertCoverage, inDocsPipeline, wordsOf, wrapper } from './full-ci-cove
 import { balance } from './pr-ci-plan.mjs';
 export { assertCoverage } from './full-ci-coverage.mjs';
 
+const pipelineDurations = JSON.parse(
+  readFileSync(new URL('./full-ci-pipeline-durations.json', import.meta.url), 'utf8'),
+).pipelines;
+
+export function pipelineKey(task) {
+  if (task.workspace) return `workspace:${task.workspace}`;
+  return inDocsPipeline(task) ? 'generated docs' : (task.label ?? task.command);
+}
+
 function taskSeconds(task) {
   if (task.label === 'companion tests') return 72;
   if (task.label === 'recipe operational gates') return 106;
@@ -30,7 +39,7 @@ function taskSeconds(task) {
   return 12;
 }
 
-export function createFullPlan(root, durations = {}) {
+export function createFullPlan(root, durations = {}, measuredPipelines = pipelineDurations) {
   const baseline = monolithicCommands(root);
   const unique = [...new Map(baseline.map((task) => [commandKey(task), task])).values()];
   const desktop = unique.filter((task) => task.platform === 'darwin');
@@ -83,42 +92,25 @@ export function createFullPlan(root, durations = {}) {
         ? { ...task, command: `${task.command} --prebuilt` }
         : task,
     );
-  const packages = new Map();
-  for (const task of remaining.filter((entry) => entry.workspace)) {
-    const list = packages.get(task.workspace) ?? [];
-    list.push(task);
-    packages.set(task.workspace, list);
-  }
-  const packageWeights = {
-    '@farmslot/adapter-web': 141,
-    '@farmslot/cli': 110,
-    '@farmslot/agent-runtime': 96,
-    '@farmslot/node': 76,
-    '@farmslot/protocol': 76,
-    '@farmslot/recipe-cli': 74,
-    '@farmslot/recipe-runner': 70,
-    '@farmslot/adapter-rn': 42,
-  };
-  for (const [index, group] of balance(
-    [...packages],
-    4,
-    ([name]) => packageWeights[name] ?? 20,
-  ).entries())
-    jobs.push({ id: `workspaces-${index + 1}`, tasks: group.flatMap(([, tasks]) => tasks) });
-  const guards = remaining.filter((task) => !task.workspace);
   const pipelines = new Map();
-  for (const task of guards) {
-    const key = inDocsPipeline(task) ? 'generated docs' : (task.label ?? task.command);
+  for (const task of remaining) {
+    const key = pipelineKey(task);
     const pipeline = pipelines.get(key) ?? [];
     pipeline.push(task);
     pipelines.set(key, pipeline);
   }
-  for (const [index, groups] of balance([...pipelines.values()], 3, (tasks) =>
-    tasks.reduce((sum, task) => sum + taskSeconds(task), 0),
+  // Package and generated-doc pipelines retain their command order and checkout.
+  // Share the seven existing buckets so slow guards cannot form a second tail.
+  for (const [index, groups] of balance(
+    [...pipelines.values()],
+    7,
+    (tasks) =>
+      measuredPipelines[pipelineKey(tasks[0])] / 1000 ||
+      tasks.reduce((sum, task) => sum + taskSeconds(task), 0),
   ).entries()) {
     const tasks = groups.flat();
     jobs.push({
-      id: `guards-${index + 1}`,
+      id: `pipeline-${index + 1}`,
       lint: tasks.some((task) => task.command.includes('check-eslint-ratchet')),
       tasks,
     });
@@ -145,7 +137,7 @@ export function createFullPlan(root, durations = {}) {
     jobs: jobs.map((job) => ({ ...job, tasks: withIds(job.tasks) })),
     desktop: { id: 'desktop', tasks: withIds(desktop) },
   };
-  const compatibilityOwner = plan.jobs.find((job) => job.id === 'guards-3');
+  const compatibilityOwner = plan.jobs.find((job) => job.id === 'pipeline-7');
   compatibilityOwner.tasks.push(...withIds(node24));
   compatibilityOwner.node24 = true;
   plan.coverage = assertCoverage(plan, root);

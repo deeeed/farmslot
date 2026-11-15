@@ -19,6 +19,8 @@ import type {
   TaskStepSubtaskProgress,
 } from '@farmslot/protocol';
 
+import { MOCK_TOOL_USAGE } from './mock-tool-usage.js';
+
 export interface RecipeProvenanceScenario {
   id: string;
   label: string;
@@ -1781,7 +1783,23 @@ export function mockPipelineRuns(): Run[] {
           },
         },
       ],
-      metrics: { nudgeCount: 1, model: 'sonnet', runner: 'claude' },
+      metrics: {
+        nudgeCount: 1,
+        model: 'sonnet',
+        runner: 'claude',
+        sessionToolCalls: MOCK_TOOL_USAGE.toolCalls,
+        sessionToolCallsBeforeFirstMark: MOCK_TOOL_USAGE.toolCallsBeforeFirstMark ?? undefined,
+      },
+      sessionUsage: [
+        {
+          runner: 'pi',
+          role: 'fix-bug',
+          runnerSessionId: 'mock-tool-usage',
+          measuredAt: '2026-11-15T13:26:41.797Z',
+          source: 'runner-transcript',
+          toolUsage: MOCK_TOOL_USAGE,
+        },
+      ],
       agentContexts: [
         {
           id: 'fix-bug',

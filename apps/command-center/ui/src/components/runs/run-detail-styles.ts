@@ -3,8 +3,11 @@ import { css, unsafeCSS } from 'lit';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { visualClaimJudgmentStyles } from '../workspace/visual-claim-judgment.js';
 
+import { toolUsageStyles } from './run-detail-tool-usage.js';
+
 export const runDetailStyles = css`
   ${unsafeCSS(visualClaimJudgmentStyles())}
+  ${toolUsageStyles}
   :host {
     display: flex;
     flex-direction: column;

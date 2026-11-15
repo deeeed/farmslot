@@ -1,0 +1,1 @@
+- Distinguish an empty operation log from an unavailable file and avoid showing an empty-output message alongside a read error.

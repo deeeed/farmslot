@@ -53,6 +53,7 @@ import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import {
+  contextChecklistMarks,
   extractRunnerSessionUsage,
   extractRunWorkerSessionUsage,
   runnerUsageMetrics,
@@ -332,6 +333,7 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
         runner: run.metrics.runner,
         runnerSessionId,
         runnerSessionPath,
+        checklistMarks: contextChecklistMarks(run),
       }));
     const costUsd = usage.costUsd ?? null;
     const inputTokens = usage.inputTokens ?? null;
@@ -377,7 +379,16 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
       metricsPatch.sessionUsageScope = 'session-total';
     }
     if (!chainSessionTotal || metricsPatch.sessionUsageScope === 'review-generation-delta') {
-      Object.assign(metricsPatch, runnerUsageMetrics({ ...usage, ...accounted }));
+      // A resumed review transcript counts every generation's calls; only turns and tokens
+      // have a prior total to subtract, so its tool calls stay off this generation's metrics.
+      Object.assign(
+        metricsPatch,
+        runnerUsageMetrics({
+          ...usage,
+          ...accounted,
+          ...(chainSessionTotal ? { toolUsage: undefined } : {}),
+        }),
+      );
     }
     if (actualModel) metricsPatch.actualModel = actualModel;
     if (actualModel && run.metrics.model && !modelsMatch(run.metrics.model, actualModel)) {

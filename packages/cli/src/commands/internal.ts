@@ -4,11 +4,12 @@
 // implementation (@farmslot/slot-config, shared with the gateway) and works
 // even when the gateway is down (teardown-slot.sh contract).
 
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { Command } from 'commander';
 
+import { checklistMarksFromSignal } from '@farmslot/agent-runtime/tool-usage';
 import {
   computePRRecommendation,
   deriveScoreKey,
@@ -520,8 +521,15 @@ export function registerInternalCommand(program: Command): void {
   internal
     .command('session-usage <slotId> <action>')
     .description('Extract runner session token usage (snapshot / report / total)')
-    .action(async (slotId: string, action: string, _opts: unknown, _cmd: Command) => {
+    .option(
+      '--signal <path>',
+      "With total: split tool calls, tokens and time at this SIGNAL.json's checklist marks",
+    )
+    .action(async (slotId: string, action: string, opts: { signal?: string }, _cmd: Command) => {
       try {
+        const checklistMarks = opts.signal
+          ? checklistMarksFromSignal(JSON.parse(await readFile(opts.signal, 'utf8')))
+          : undefined;
         const forcedPath = process.env.RUNNER_SESSION_PATH || undefined;
         // A forced transcript is self-contained; installed CLIs need no private pool.
         const repo = forcedPath ? '' : (await loadSlotVars(slotId)).remoteRepo;
@@ -533,6 +541,7 @@ export function registerInternalCommand(program: Command): void {
           // the thin bash wrapper; treat empty string the same as unset.
           forcedPath,
           forcedRunner: process.env.RUNNER_SESSION_RUNNER || undefined,
+          checklistMarks,
         });
         // Raw plumbing output — consumed by scripts and the gateway, never enveloped.
         process.stdout.write(result);

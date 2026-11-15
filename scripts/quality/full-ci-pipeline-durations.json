@@ -1,0 +1,106 @@
+{
+  "runs": [
+    {
+      "run": 43694211629,
+      "sha": "4ce9b99a2a460003d3e1522b6f3b5e97bd4f4e0d"
+    },
+    {
+      "run": 43695452271,
+      "sha": "fef4e98b62c20eb7c8e1f4ad4ffbe7f915612d78"
+    },
+    {
+      "run": 43698053164,
+      "sha": "f0893bcd83b4439540a3ff71c1be0d74418b9b34"
+    },
+    {
+      "run": 43709855323,
+      "sha": "e9a91b3188e7abf5018a0d74780b079047a92ee9"
+    },
+    {
+      "run": 43714242277,
+      "sha": "a7970f1b244bd4578ad439efca8cf8f916403fa9"
+    },
+    {
+      "run": 43716233116,
+      "sha": "5d136f8b5387b8b69de45d067350d63c1b9b57b6"
+    },
+    {
+      "run": 43720861679,
+      "sha": "361fb2a8d019a842e58bb22fbab4204ac2a72667"
+    },
+    {
+      "run": 43723543231,
+      "sha": "37d80cb2cc1f343714fda5858ac243521013628e"
+    }
+  ],
+  "pipelines": {
+    "CommonJS/ESM export guard tests": 1414,
+    "ESLint cache guard tests": 1203,
+    "acceptance": 5828,
+    "authorization": 18076,
+    "cached panel read guard tests": 21156,
+    "cached panel reads": 179812,
+    "canary outcome tests": 3462,
+    "companion structure": 561,
+    "companion tests": 108161,
+    "conventional commit guard tests": 1169,
+    "deterministic receipt guard": 1779,
+    "farm-proof": 11414,
+    "format": 21470,
+    "full main CI contracts": 2200,
+    "generated docs": 116955,
+    "generated gateway API docs": 11161,
+    "import boundaries": 851,
+    "large-file warning": 751,
+    "lint": 83709,
+    "method matrix": 837,
+    "model transport module load": 1876,
+    "no real tmux in tests": 761,
+    "package publisher guard tests": 842,
+    "package readiness": 215025,
+    "pre-push path filter tests": 605,
+    "project hook conformance tests": 25779,
+    "quality gate instrumentation tests": 650,
+    "recipe operational gates": 175391,
+    "retired scripts": 1302,
+    "review artifact migration tests": 709,
+    "review-loop validation contract": 533,
+    "role template mark guard": 588,
+    "runner observability installer tests": 10032,
+    "selection contracts": 1820,
+    "shell script tests": 78042,
+    "single-canonical worker scripts": 644,
+    "step timing lib tests": 671,
+    "template variable docs": 609,
+    "transport": 23917,
+    "tsx test partition tests": 13068,
+    "type-escape lint": 752,
+    "typecheck": 56292,
+    "ui tests": 209771,
+    "worker template contract": 561,
+    "worker template lint": 545,
+    "workspace changelogs": 554,
+    "workspace quality instrumentation tests": 605,
+    "workspace structure": 757,
+    "workspace:@farmslot/adapter-node": 13581,
+    "workspace:@farmslot/adapter-rn": 35696,
+    "workspace:@farmslot/adapter-sdk": 16553,
+    "workspace:@farmslot/adapter-web": 141136,
+    "workspace:@farmslot/agent-runtime": 131626,
+    "workspace:@farmslot/capabilities": 6595,
+    "workspace:@farmslot/cli": 153702,
+    "workspace:@farmslot/credential-store": 9811,
+    "workspace:@farmslot/gateway": 42125,
+    "workspace:@farmslot/handoff": 20798,
+    "workspace:@farmslot/local-store": 16400,
+    "workspace:@farmslot/node": 98579,
+    "workspace:@farmslot/protocol": 108131,
+    "workspace:@farmslot/recipe-cli": 74491,
+    "workspace:@farmslot/recipe-runner": 81040,
+    "workspace:@farmslot/review-dispatch": 22158,
+    "workspace:@farmslot/run-bundle": 29720,
+    "workspace:@farmslot/skills": 10190,
+    "workspace:@farmslot/slot-config": 23694,
+    "workspace:@farmslot/theme": 3349
+  }
+}
