@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 
 import type {
@@ -712,4 +712,56 @@ test('committed intent lookups equal a scan of the committed intents at every ve
   assert.notEqual(store.committedIntent(first.id), before);
   assert.equal(store.committedIntent(first.id)?.waitingReason, 'A new blocker');
   assert.ok(Object.isFrozen(store.committedIntent(first.id)));
+});
+
+test('scan subjects are stored compactly, and a full-form store decides the same', async (t) => {
+  const { store, file } = await fixture(t);
+  const { team, rule } = await ruleFor(store, 'owner', true);
+  const twoPrs = (head: string): PRRulePreview => {
+    const live = preview(team, rule, head);
+    const other = structuredClone(live.items[0]);
+    other.subject.pr = { ...other.subject.pr, number: 2 };
+    other.match = { state: 'no-match', reasons: ['Not on the team'] };
+    live.items.push(other);
+    return live;
+  };
+  await store.applyPreview('owner', twoPrs('head-a'));
+  const written = JSON.parse(await readFile(file, 'utf8'));
+  const subjects = written.rules[0].scan.subjects;
+  assert.deepEqual(Object.keys(subjects['github.com/owner/repo#2']), ['revision']);
+  assert.equal(subjects['github.com/owner/repo#1'].matched, true);
+  assert.ok(subjects['github.com/owner/repo#1'].admittedActions.length > 0);
+  // The same state in the form stores used to write: every flag and list spelled out.
+  for (const subject of Object.values<Record<string, unknown>>(subjects)) {
+    subject.matched ??= false;
+    subject.admitted ??= false;
+    subject.admittedActions ??= [];
+    subject.actionIds ??= {};
+    subject.deferredActions ??= [];
+  }
+  const fullFile = join(dirname(file), 'full.json');
+  await writeFile(fullFile, JSON.stringify(written));
+  const full = await PRRuleStore.load(fullFile);
+  for (const head of ['head-b', 'head-c']) {
+    await store.applyPreview('owner', twoPrs(head));
+    await full.applyPreview('owner', twoPrs(head));
+  }
+  const decisions = (target: PRRuleStore) => {
+    const { intents, rules } = target.snapshot();
+    return {
+      intents: intents.map(({ id, status, headSha, waitingReason }) => ({
+        id,
+        status,
+        headSha,
+        waitingReason,
+      })),
+      subjects: rules[0].scan.subjects,
+    };
+  };
+  assert.deepEqual(decisions(full), decisions(store));
+  // The full-form store wrote compact subjects on its next commit.
+  const rewritten = JSON.parse(await readFile(fullFile, 'utf8'));
+  assert.deepEqual(Object.keys(rewritten.rules[0].scan.subjects['github.com/owner/repo#2']), [
+    'revision',
+  ]);
 });

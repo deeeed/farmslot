@@ -1,0 +1,1 @@
+- The PR-rules store keeps scanned PRs that matched nothing as their revision only, about a quarter of the file and over half of its objects with the live store, so every rule transaction parses, validates, freezes and writes less. Existing stores load as before and are rewritten compactly on their next change.
