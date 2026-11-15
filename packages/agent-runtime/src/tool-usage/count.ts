@@ -66,11 +66,14 @@ export function countToolUsage(
     .map((mark) => ({ mark, at: Date.parse(mark.checkedAt) }))
     .filter(({ at }) => Number.isFinite(at))
     .sort((a, b) => a.at - b.at);
-  if (!boundaries.length || !Number.isFinite(start) || !Number.isFinite(end)) {
+  // Untimed calls cannot be placed between marks; empty zero-call steps would misreport them.
+  if (usage.untimedToolCalls && !timed.length) {
     usage.stepsUnavailable =
-      usage.untimedToolCalls && !timed.length
-        ? 'The transcript records no call times, so calls cannot be placed in steps'
-        : 'The session has no checklist marks';
+      'The transcript records no call times, so calls cannot be placed in steps';
+    return usage;
+  }
+  if (!boundaries.length || !Number.isFinite(start) || !Number.isFinite(end)) {
+    usage.stepsUnavailable = 'The session has no checklist marks';
     return usage;
   }
 
