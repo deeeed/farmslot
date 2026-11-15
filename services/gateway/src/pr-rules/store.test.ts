@@ -765,3 +765,46 @@ test('scan subjects are stored compactly, and a full-form store decides the same
     'revision',
   ]);
 });
+
+test('a full-form store is compacted on load, including rules no scan rewrites', async (t) => {
+  const { store, file } = await fixture(t);
+  const { team, rule } = await ruleFor(store, 'owner', true);
+  await store.applyPreview('owner', preview(team, rule));
+  const written = JSON.parse(await readFile(file, 'utf8'));
+  // A second, disabled rule whose last scan saw a PR that matched nothing, in the old full form.
+  const disabled = structuredClone(written.rules[0]);
+  disabled.id = 'disabled-rule';
+  disabled.enabled = false;
+  disabled.scan.subjects = {
+    'github.com/owner/repo#9': {
+      revision: 'old',
+      matched: false,
+      admitted: false,
+      admittedActions: [],
+      actionIds: {},
+      deferredActions: [],
+    },
+  };
+  written.rules.push(disabled);
+  const fullFile = join(dirname(file), 'full.json');
+  const fullText = JSON.stringify(written);
+  await writeFile(fullFile, fullText);
+  const loaded = await PRRuleStore.load(fullFile);
+  const subjectOf = (target: PRRuleStore) =>
+    target.snapshot().rules.find((item) => item.id === 'disabled-rule')!.scan.subjects[
+      'github.com/owner/repo#9'
+    ];
+  assert.deepEqual(subjectOf(loaded), { revision: 'old' });
+  // Rereading the unchanged full-form file is the same state, not a change.
+  const before = loaded.snapshot();
+  await loaded.reloadFromFile();
+  assert.equal(loaded.snapshot(), before);
+  assert.equal(await readFile(fullFile, 'utf8'), fullText, 'loading alone writes nothing');
+  // The next real commit writes every rule compactly, the disabled one included.
+  await loaded.saveTeam('owner', { ...teamConfig, name: 'Renamed team' });
+  const rewritten = JSON.parse(await readFile(fullFile, 'utf8'));
+  assert.deepEqual(
+    rewritten.rules.find((item: { id: string }) => item.id === 'disabled-rule').scan.subjects,
+    { 'github.com/owner/repo#9': { revision: 'old' } },
+  );
+});
