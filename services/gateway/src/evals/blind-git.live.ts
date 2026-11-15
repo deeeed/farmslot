@@ -708,6 +708,79 @@ const movedLeftovers = [
   '.agent/old.log',
 ];
 
+test('overlapping terminal and operator restores preserve the candidate and original ignored files', (t) => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'blind-restore-overlap-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const { repo, spec, files } = ignoredFixture(root);
+  assert.equal(command('isolate', spec).status, 'isolated');
+  writeFileSync(path.join(repo, 'packages/a/index.js'), 'candidate\n');
+  const head = commit(repo, 'candidate');
+  writeFileSync(path.join(repo, 'packages/a/index.js'), 'uncommitted candidate\n');
+  const result = execFileSync(
+    'python3',
+    [
+      '-c',
+      `import json, runpy, sys, threading
+module = runpy.run_path(sys.argv[1], run_name='fixture')
+spec = json.loads(sys.argv[2])
+globals = module['restore'].__globals__
+first_read = threading.Event()
+resume_first = threading.Event()
+second_contended = threading.Event()
+original_git = globals['git']
+original_flock = globals['fcntl'].flock
+outcomes = {}
+def git(*args, **kwargs):
+    result = original_git(*args, **kwargs)
+    if threading.current_thread().name == 'operator' and args[1:] == ('config', '--get', 'farmslot.blindRun'):
+        first_read.set()
+        if not resume_first.wait(10): raise RuntimeError('first restore was not resumed')
+    return result
+def flock(*args):
+    if threading.current_thread().name == 'terminal': second_contended.set()
+    return original_flock(*args)
+globals['git'] = git
+globals['fcntl'].flock = flock
+def restore():
+    name = threading.current_thread().name
+    try: outcomes[name] = module['restore'](spec)
+    except Exception as error: outcomes[name] = {'error': str(error)}
+    finally:
+        if name == 'terminal': second_contended.set()
+first = threading.Thread(target=restore, name='operator', daemon=True)
+second = threading.Thread(target=restore, name='terminal', daemon=True)
+first.start()
+assert first_read.wait(10), 'operator restore did not read its ownership'
+second.start()
+# With the lock terminal cleanup waits; without it terminal cleanup finishes the swap first.
+assert second_contended.wait(10), 'terminal restore did not start'
+resume_first.set()
+first.join(10); second.join(10)
+assert not first.is_alive() and not second.is_alive(), 'restore deadlocked'
+print(json.dumps(outcomes))`,
+      new URL('./blind-git.py', import.meta.url).pathname,
+      JSON.stringify(spec),
+    ],
+    { env, encoding: 'utf8', timeout: 40_000 },
+  );
+  const outcomes = JSON.parse(result);
+  for (const name of ['terminal', 'operator'])
+    assert.equal(outcomes[name].status, 'restored', JSON.stringify(outcomes));
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+  assert.equal(git(repo, 'symbolic-ref', '--short', 'HEAD'), spec.branch);
+  assert.doesNotMatch(git(repo, 'config', '--local', '--list'), /farmslot\.blindrun=/);
+  assert.equal(
+    readFileSync(path.join(repo, 'packages/a/index.js'), 'utf8'),
+    'uncommitted candidate\n',
+  );
+  for (const [name, text] of Object.entries(files))
+    assert.equal(readFileSync(path.join(repo, name), 'utf8'), text, name);
+  assert.equal(
+    JSON.parse(readFileSync(path.join(spec.capsule, 'state.json'), 'utf8')).phase,
+    'restored',
+  );
+});
+
 test('blind isolation moves earlier ignored leftovers aside and restores them byte-identical', (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'blind-ignored-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
