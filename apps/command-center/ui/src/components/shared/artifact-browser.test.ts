@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { after, mock, test } from 'node:test';
 
 import { litBinding, litBindings, litText } from '../../testing/lit-text.js';
+import type { ArtifactType } from '../workspace/workspace-artifacts.js';
 
 mock.module('./media-lightbox.js', { namedExports: {} });
 
@@ -60,6 +61,41 @@ function fixture(width: number) {
   observer.deliver(element, width);
   return { element, observer };
 }
+
+test('small filtered inventories keep their controls and selected zero-count type visible', () => {
+  const { element } = fixture(1000);
+  element.artifacts = [
+    { path: 'notes/one.md', purpose: 'report' },
+    { path: 'notes/two.md', purpose: 'report' },
+  ];
+  element.viewState = {
+    query: '',
+    types: new Set<ArtifactType>(['video']),
+    path: null,
+    preview: false,
+  };
+  const filtered = litText(element.render());
+  assert.match(filtered, /placeholder="Filter files"/);
+  assert.match(filtered, /Videos<span>0<\/span>/);
+  assert.match(filtered, /No files match/);
+  element.viewState = { ...element.viewState, types: new Set<ArtifactType>() };
+  const cleared = litText(element.render());
+  assert.doesNotMatch(cleared, /placeholder="Filter files"|Videos<span>/);
+  assert.match(cleared, /one\.md/);
+});
+
+test('a saved search stays editable when a small run has no matching files', () => {
+  const { element } = fixture(1000);
+  element.viewState = {
+    query: 'missing-file',
+    types: new Set<ArtifactType>(),
+    path: null,
+    preview: false,
+  };
+  const text = litText(element.render());
+  assert.match(text, /placeholder="Filter files"/);
+  assert.match(text, /No files match/);
+});
 
 function clickLastFile(element: InstanceType<typeof ArtifactBrowser>) {
   const click = litBindings(element.render(), '@click=').at(-1);
