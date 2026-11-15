@@ -221,6 +221,28 @@ export async function slotFileExists(ctx: SlotLocality, filePath: string): Promi
   return result.exists;
 }
 
+/** Absence as `slotFileExists` reports it: no entry, or a parent that is not a directory. */
+function isMissingPath(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === 'ENOENT' || code === 'ENOTDIR';
+}
+
+/**
+ * An optional file in one request instead of an existence check and a read: null when the
+ * file is absent. Any other failure (a directory, a refused symlink, a node fault) throws.
+ */
+export async function slotReadFileIfExists(
+  ctx: SlotLocality,
+  filePath: string,
+): Promise<string | null> {
+  try {
+    return await slotReadFile(ctx, filePath);
+  } catch (error) {
+    if (isMissingPath(error)) return null;
+    throw error;
+  }
+}
+
 // ─── slotListDir ───
 
 export async function slotListDir(ctx: SlotLocality, dirPath: string): Promise<string[]> {
@@ -231,6 +253,52 @@ export async function slotListDir(ctx: SlotLocality, dirPath: string): Promise<s
     ...nodePathParams(dirPath),
   })) as { entries: Array<{ name: string }> };
   return result.entries.map((e) => e.name);
+}
+
+export interface SlotFileEntry {
+  name: string;
+  size?: number;
+  /** Absent from nodes that predate it; callers then cannot tell an unchanged file. */
+  mtimeMs?: number;
+}
+
+/**
+ * The files directly in a directory with their size and modification time, in one request.
+ * Null when the directory is absent.
+ */
+export async function slotListFiles(
+  ctx: SlotLocality,
+  dirPath: string,
+): Promise<SlotFileEntry[] | null> {
+  try {
+    if (local(ctx)) {
+      const entries = await readdir(dirPath, { withFileTypes: true });
+      const files: SlotFileEntry[] = [];
+      for (const entry of entries) {
+        if (entry.isDirectory()) continue;
+        try {
+          // stat follows a symlink, as the node's listing and a file read do.
+          const info = await stat(path.join(dirPath, entry.name));
+          if (info.isFile())
+            files.push({ name: entry.name, size: info.size, mtimeMs: info.mtimeMs });
+        } catch (error) {
+          // A file removed between the listing and its stat is no longer in the directory.
+          if (!isMissingPath(error)) throw error;
+        }
+      }
+      return files;
+    }
+    const result = (await requestFor(ctx)('fs.list', nodePathParams(dirPath))) as {
+      entries: Array<{ name: string; type: string; size?: number; mtimeMs?: number }>;
+    };
+    return result.entries
+      .filter((entry) => entry.type === 'file')
+      .map(({ name, size, mtimeMs }) => ({ name, size, mtimeMs }));
+  } catch (error) {
+    // Only absence: a path that is a file is a fault the caller reports, as a listing of it would.
+    if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return null;
+    throw error;
+  }
 }
 
 // ─── slotWriteFile ───

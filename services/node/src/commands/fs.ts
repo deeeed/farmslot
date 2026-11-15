@@ -33,6 +33,8 @@ export interface FsEntry {
   name: string;
   type: 'file' | 'directory';
   size?: number;
+  /** Lets a reader skip a file that has not changed since it last read it. */
+  mtimeMs?: number;
 }
 
 function accessError(message: string): NodeJS.ErrnoException {
@@ -132,7 +134,7 @@ export async function fsList(params: NodeFsPathParams): Promise<{ entries: FsEnt
     } else if (entry.isFile()) {
       try {
         const s = await stat(fullPath);
-        entries.push({ name: entry.name, type: 'file', size: s.size });
+        entries.push({ name: entry.name, type: 'file', size: s.size, mtimeMs: s.mtimeMs });
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
         // Disappearing entries are expected while workers rewrite temp files.
@@ -144,7 +146,7 @@ export async function fsList(params: NodeFsPathParams): Promise<{ entries: FsEnt
         if (s.isDirectory()) {
           entries.push({ name: entry.name, type: 'directory' });
         } else if (s.isFile()) {
-          entries.push({ name: entry.name, type: 'file', size: s.size });
+          entries.push({ name: entry.name, type: 'file', size: s.size, mtimeMs: s.mtimeMs });
         }
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;

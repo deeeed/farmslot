@@ -1,0 +1,1 @@
+- `fs.list` file entries carry `mtimeMs`, so the gateway can skip files that have not changed since its last read.
