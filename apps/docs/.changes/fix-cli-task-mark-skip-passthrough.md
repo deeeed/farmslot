@@ -1,0 +1,1 @@
+- Regenerate the recipe CLI reference for the `task mark --skip <reason>` option.

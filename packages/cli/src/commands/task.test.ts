@@ -94,6 +94,30 @@ test('mark forwarding preserves explicit negation and consumes binding controls'
   }
 });
 
+// Live run 6ff29609: the engine refused `mark 11` out of order and told the
+// worker to run `<task>/mark 11 --skip "<reason>"`, exactly as designed. The
+// wrapper runs `farmslot task mark <dir> "$@"`, and this command had no --skip,
+// so the CLI answered `unknown option --skip (Did you mean --step?)`. The run
+// only continued because the worker bypassed the wrapper and called the
+// agent-runtime script directly. The advice the engine gives has to work
+// through the path it names.
+test('mark forwards a skip reason, as the order refusal instructs', async () => {
+  const program = cli();
+  const mark = program.commands
+    .find((entry) => entry.name() === 'task')!
+    .commands.find((entry) => entry.name() === 'mark')!;
+  let forwarded: string[] = [];
+  mark.action(() => {
+    forwarded = taskHelperArgv(mark);
+  });
+  await program.parseAsync(
+    ['task', 'mark', 'task-dir', '11', '--skip', 'the bug still reproduces'],
+    { from: 'user' },
+  );
+  // The reason reaches the mark script as one argument, spaces and all.
+  assert.deepEqual(forwarded, ['task-dir', '11', '--skip', 'the bug still reproduces']);
+});
+
 test('a missing explicit project refuses before creating an unbound task', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'task-project-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

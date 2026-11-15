@@ -54,6 +54,38 @@ test('explicit reviewer checklist bypasses the completed worker signal and prese
   assert.equal(readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8'), worker);
 });
 
+// The whole path the engine's order refusal names: `./mark N --skip "<reason>"`
+// goes through this handler to the mark script. Live run 6ff29609 got
+// `unknown option --skip` from the CLI in front of it.
+test('a skip reason reaches the mark script through the checklist handler', async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'host-skip-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, 'inputs'), { recursive: true });
+  writeFileSync(
+    path.join(dir, 'CHECKLIST.md'),
+    '## Steps\n- [ ] 1. Reproduce [OPTIONAL: the bug still reproduces]\n- [ ] 2. Fix it\n',
+  );
+  writeFileSync(
+    path.join(dir, 'inputs', 'worker-terminal-contract.json'),
+    JSON.stringify({
+      optionalSteps: [
+        { checklist: 'CHECKLIST.md', stepNumber: 1, when: 'the bug still reproduces' },
+      ],
+    }),
+  );
+
+  assert.equal(await handleChecklist(['mark', dir, '1', '--skip', 'already fixed upstream']), 0);
+  const checklist = readFileSync(path.join(dir, 'CHECKLIST.md'), 'utf8');
+  assert.match(checklist, /\[x\] 1\. Reproduce/);
+  assert.match(checklist, /\[ \] 2\. Fix it/, 'only the named step is marked');
+  const event = JSON.parse(
+    readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8'),
+  ).checklistTiming.events.at(-1);
+  assert.equal(event.stepNumber, 1);
+  assert.equal(event.skipped, true);
+  assert.equal(event.reason, 'already fixed upstream');
+});
+
 test('blocked start resumes progress while retaining checked boxes and timing', async (t) => {
   const dir = task(t);
   writeFileSync(
