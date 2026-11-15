@@ -1,0 +1,1 @@
+- Concurrent terminal cleanup and operator release serialize blind Git restoration through the capsule lock, preserving the candidate and allowing reset to finish.

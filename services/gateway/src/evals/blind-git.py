@@ -1276,7 +1276,7 @@ def isolate_locked(spec):
         if state['phase'] in ('preparing', 'restored'):
             # An interrupted isolate left the swap half done, or its capsule was restored:
             # finish the restoration, keep that capsule aside and isolate afresh.
-            restore(spec)
+            restore_locked(spec)
             repo = Path(spec['repo'])
             branch = 'refs/heads/' + spec['branch']
             kept = git(repo, 'rev-parse', '--verify', '--quiet', branch, check=False).stdout.decode().strip()
@@ -1408,6 +1408,16 @@ def preserve_parked_work(repo, capsule, source, destination):
 
 
 def restore(spec):
+    # Terminal cleanup and an operator release may restore the same capsule.
+    # Share isolation's lock before reading the journal or moving Git metadata.
+    capsule = Path(spec['capsule'])
+    capsule.parent.mkdir(parents=True, exist_ok=True)
+    with open(capsule.parent / (capsule.name + '.lock'), 'a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return restore_locked(spec)
+
+
+def restore_locked(spec):
     repo, capsule = Path(spec['repo']), Path(spec['capsule'])
     journal = capsule / 'state.json'
     if not journal.exists():
