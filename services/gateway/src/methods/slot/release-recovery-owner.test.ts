@@ -51,10 +51,24 @@ await writeFile(
 );
 await import('../../runtime/mock-pty.test-support.js');
 const core = await import('../../core/index.js');
+const releaseState = await import('../../core/state.js');
 let afterMarker = async (): Promise<void> => {};
+let probeCalls = 0;
+let retryProbe: () => Promise<string | null> = async () => null;
 mock.module('../../core/index.js', {
   namedExports: {
     ...core,
+    execOnSlot: async (...args: Parameters<typeof core.execOnSlot>) => {
+      const command = args[1];
+      if (command.includes('list-panes -a')) {
+        probeCalls++;
+        const blocker = await retryProbe();
+        return { stdout: '', stderr: blocker ?? '', exitCode: blocker ? 2 : 0 };
+      }
+      if (command.startsWith('ps -axo') || command.startsWith('lsof -a -d cwd'))
+        return { stdout: '', stderr: '', exitCode: 0 };
+      return core.execOnSlot(...args);
+    },
     markSlotStatusIf: async (...args: Parameters<typeof core.markSlotStatusIf>) => {
       const result = await core.markSlotStatusIf(...args);
       if (result.applied) await afterMarker();
@@ -103,7 +117,7 @@ const row = {
   workspace_recovery: recovery,
 };
 await writeFile(path.join(root, 'status.json'), JSON.stringify({ slots: [row] }));
-const { slotRelease } = await import('./release.js');
+const { slotRelease, slotReleasePreflight } = await import('./release.js');
 
 test('a recovery continuation keeps the terminal owner of its borrowed release fence', async () => {
   await assert.rejects(
@@ -360,3 +374,153 @@ for (const advanceEpoch of [false, true]) {
     },
   );
 }
+
+async function seedInterruptedRelease() {
+  await seedDeadline();
+  store.updateRun(owner.id, { status: 'cancelled', slotId: 'owned-recovery' });
+  probeCalls = 0;
+  retryProbe = async () => null;
+  await core.updateSlotStatus('owned-recovery', {
+    lifecycle: 'busy',
+    phase: 'releasing',
+    held_reason: null,
+    release_gateway_instance: 'previous-gateway',
+    releasing_since: '2026-11-15T19:42:50.605Z',
+    cleanup_release_token: 'previous-cleanup-token',
+  });
+}
+
+test('same-owner retry may inspect a restart-interrupted release without waiting thirty minutes', async () => {
+  await seedInterruptedRelease();
+  const before = await readRow();
+  const preflight = await slotReleasePreflight({
+    slotId: 'owned-recovery',
+    expectedRunId: owner.id,
+    forceReset: true,
+  });
+  assert.ok(preflight, 'A previous gateway fence must not permanently refuse its owner retry');
+  assert.equal(preflight.boundOwner, owner.id);
+  assert.equal(probeCalls, 1);
+  assert.deepEqual(await readRow(), before, 'Read-only preflight never clears the fence');
+});
+
+test('current-gateway release and a foreign owner retain their fence', async () => {
+  await seedInterruptedRelease();
+  await core.updateSlotStatus('owned-recovery', core.slotReleasingFenceFields());
+  const before = await readRow();
+  assert.equal(
+    await slotReleasePreflight({
+      slotId: 'owned-recovery',
+      expectedRunId: owner.id,
+      forceReset: true,
+    }),
+    null,
+  );
+  assert.equal(probeCalls, 0);
+  assert.deepEqual(await readRow(), before);
+  await seedInterruptedRelease();
+  await core.updateSlotStatus('owned-recovery', { current_run_id: 'foreign-owner' });
+  const foreign = await readRow();
+  assert.equal(
+    await slotReleasePreflight({
+      slotId: 'owned-recovery',
+      expectedRunId: owner.id,
+      forceReset: true,
+    }),
+    null,
+  );
+  assert.equal(probeCalls, 0);
+  assert.deepEqual(await readRow(), foreign);
+});
+
+test('unknown process occupancy prevents reclaiming an interrupted release', async () => {
+  await seedInterruptedRelease();
+  retryProbe = async () => 'Workspace process identity is unavailable';
+  const before = await readRow();
+  assert.equal(
+    await slotReleasePreflight({
+      slotId: 'owned-recovery',
+      expectedRunId: owner.id,
+      forceReset: true,
+    }),
+    null,
+  );
+  assert.equal(probeCalls, 1);
+  assert.deepEqual(await readRow(), before);
+});
+
+for (const change of [
+  { slot_epoch: 8 },
+  { current_run_id: 'successor' },
+  { releasing_since: '2026-11-15T19:42:51.605Z' },
+  { release_gateway_instance: 'other-gateway' },
+]) {
+  test(`interrupted retry preserves a changed ${Object.keys(change)[0]}`, async () => {
+    await seedInterruptedRelease();
+    retryProbe = async () => {
+      await core.updateSlotStatus('owned-recovery', change);
+      return null;
+    };
+    afterMarker = async () => {
+      throw new Error('Stale retry must not acquire the changed marker');
+    };
+    const result = await slotRelease(
+      { slotId: 'owned-recovery', expectedRunId: owner.id, forceReset: true },
+      () => {},
+    );
+    assert.equal(probeCalls, 1);
+    assert.equal(result.released, false);
+    const current = await readRow();
+    for (const [key, value] of Object.entries(change)) assert.equal(current[key], value);
+  });
+}
+
+test('owner retry atomically rotates a dead fence before any cleanup', async () => {
+  await seedInterruptedRelease();
+  const before = await readRow();
+  let claimed: Record<string, unknown> | undefined;
+  afterMarker = async () => {
+    claimed = await readRow();
+    throw new Error('RETRY_FENCE_CLAIMED');
+  };
+  await assert.rejects(
+    slotRelease({ slotId: 'owned-recovery', expectedRunId: owner.id, forceReset: true }, () => {}),
+    /RETRY_FENCE_CLAIMED/,
+  );
+  assert.ok(claimed);
+  assert.equal(claimed.current_run_id, owner.id);
+  assert.equal(
+    claimed.slot_epoch,
+    before.slot_epoch,
+    'retry retains the exact observed claim epoch',
+  );
+  assert.equal(claimed.release_gateway_instance, releaseState.currentReleaseGatewayInstance());
+  assert.notEqual(claimed.cleanup_release_token, before.cleanup_release_token);
+  assert.equal(typeof claimed.cleanup_release_token, 'string');
+});
+
+test('a live teardown prevents both inspection and acquisition of an old fence', async () => {
+  await seedInterruptedRelease();
+  const before = await readRow();
+  await withTerminalTeardown('owned-recovery', async () => {
+    assert.equal(
+      await slotReleasePreflight({
+        slotId: 'owned-recovery',
+        expectedRunId: owner.id,
+        forceReset: true,
+      }),
+      null,
+    );
+    assert.equal(
+      (
+        await slotRelease(
+          { slotId: 'owned-recovery', expectedRunId: owner.id, forceReset: true },
+          () => {},
+        )
+      ).released,
+      false,
+    );
+  });
+  assert.equal(probeCalls, 0);
+  assert.deepEqual(await readRow(), before);
+});

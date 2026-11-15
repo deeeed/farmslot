@@ -158,29 +158,32 @@ test('restart cleanup retains a detached stored pin for replay', { timeout: 2000
   await reconcileOrphanedSlots({
     listRuns: () => ({ runs: [run] }),
     loadFleetStatus: async () => ({
-      slots: [{ slot: 'mini-example-3', lifecycle: 'busy', phase: 'releasing' }],
+      slots: [
+        { slot: 'mini-example-3', lifecycle: 'busy', phase: 'releasing', currentRunId: run.id },
+      ],
     }),
     isTerminalTeardownInFlight: () => false,
-    readSlotField: async (_slot, field) => (field === 'current_run_id' ? run.id : stale),
+    readSlotField: async (_slot, field) =>
+      field === 'current_run_id' ? run.id : field === 'releasing_since' ? stale : undefined,
     getRun: () => run,
     updateRun: (_id, patch) => {
       Object.assign(run, patch);
     },
-    stopRunOwnedWorkers: async () => null,
     resetSlot: unexpected,
-    resetSlotIf: async (_slot, predicate) => {
+    resetSlotIf: unexpected,
+    updateSlotStatusIf: async (_slot, predicate, fields) => {
       assert.equal(
         predicate({ phase: 'releasing', releasing_since: stale, current_run_id: run.id }),
         true,
       );
+      assert.equal(fields.lifecycle, 'held');
       return true;
     },
-    updateSlotStatusIf: unexpected,
     broadcast: () => {},
     retryOccupiedRunSlot: unexpected,
     resumeInterruptedRecovery: unexpected,
   });
-  assert.equal(run.slotId, null);
+  assert.equal(run.slotId, 'mini-example-3', 'interrupted release retains its owner');
   assert.equal(run.requestedSlotId, 'mini-example-3');
   await runReplayStep({ runId: run.id, stepName: 'find-slot' }, () => {}, {
     startEngine: async () => {},

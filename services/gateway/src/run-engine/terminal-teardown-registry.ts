@@ -20,8 +20,8 @@ import {
  * teardown is running right now", which a restart ends: a durable marker would
  * survive the crash that ended the teardown and fence the slot from
  * reclamation forever, turning a transient race into a permanently stranded
- * slot. After a restart the reconciler SHOULD reclaim these slots, and with an
- * empty registry it does.
+ * slot. After a restart the empty registry grants no cleanup proof: interrupted
+ * releases stay held until a verified retry completes their work.
  *
  * Counted rather than a plain set so two overlapping teardowns on one slot
  * cannot have the first to finish clear the second's protection.
@@ -43,7 +43,12 @@ export function endTerminalTeardown(slotId: string): void {
 
 /** Whether a terminal teardown currently owns this slot's lifecycle. */
 export function isTerminalTeardownInFlight(slotId: string): boolean {
-  return (teardownsBySlot.get(slotId) ?? 0) > 0;
+  return terminalTeardownCount(slotId) > 0;
+}
+
+/** Includes nested scopes, so an owner retry cannot mistake another teardown for its own. */
+export function terminalTeardownCount(slotId: string): number {
+  return teardownsBySlot.get(slotId) ?? 0;
 }
 
 /** Slots currently protected, for diagnostics and tests. */

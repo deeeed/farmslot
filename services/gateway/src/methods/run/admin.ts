@@ -38,7 +38,6 @@ import {
   SLOT_PHASE_RELEASING,
 } from '../../core/index.js';
 import { cleanupReviewWorkspaceCaches } from '../../review-workspaces/cache-cleanup.js';
-import { STALE_RELEASE_RECLAIM_MS } from '../../run-engine/recovery.js';
 import { isTerminalTeardownInFlight } from '../../run-engine/terminal-teardown-registry.js';
 import {
   assertRunNotArchiving,
@@ -336,12 +335,11 @@ async function slotStillHeldError(runId: string, slotId: string): Promise<Error>
     return new Error(
       `Cannot archive blocked run ${runId}: slot ${slotId} was left held: ${row.held_reason}`,
     );
-  // A fence no teardown in this process owns was left by a release a restart
-  // cut short; retrying cannot clear it, only the orphan reconciler does.
+  // A restart-interrupted release requires verified checkout cleanup, not a metadata reset.
   const interrupted = row?.phase === SLOT_PHASE_RELEASING && !isTerminalTeardownInFlight(slotId);
   return new Error(
     interrupted
-      ? `Cannot archive blocked run ${runId}: slot ${slotId} is still fenced by a release that did not finish (a gateway restart interrupts one). Recovery reclaims it within ${STALE_RELEASE_RECLAIM_MS / 60_000} minutes of it being noticed, once its worker is stopped; archive again after that.`
+      ? `Cannot archive blocked run ${runId}: slot ${slotId} is still fenced by a release that did not finish (a gateway restart interrupts one). Retry the owner-bound slot release to finish verified checkout cleanup, then archive again.`
       : `Cannot archive blocked run ${runId}: another release or a handoff is in progress on slot ${slotId}; retry`,
   );
 }

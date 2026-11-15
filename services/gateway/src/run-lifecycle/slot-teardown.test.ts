@@ -2039,3 +2039,37 @@ test('a normal-slot first output releases through ordinary cleanup without capsu
   assert.deepEqual(blindRestores, []);
   assert.deepEqual(idleReturnRetained, [true]);
 });
+
+test('interrupted-release inspection never exits an unrecorded worker', async () => {
+  slotRow = { ...slotRow, phase: 'releasing' };
+  tmuxInventory = `mmt-1${TMUX_FIELD_SEPARATOR}%3${TMUX_FIELD_SEPARATOR}111${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}$2${TMUX_FIELD_SEPARATOR}1791363049\n`;
+  runnerProbe = { state: 'present', pid: '222' };
+  assert.match(
+    (await slotTeardownBlocker(run, { inspectReleaseFence: true })) ?? '',
+    /not quiescent/,
+  );
+  assert.equal(
+    commands.some((cmd) => cmd.includes('send-keys') || cmd.includes('kill')),
+    false,
+  );
+  assert.equal(providerCleanups, 0);
+});
+
+test('interrupted-release inspection leaves managed daemons and browser sessions untouched', async () => {
+  slotRow = { ...slotRow, phase: 'releasing' };
+  slotProcesses = leftDiagnosticBrowser();
+  assert.match(
+    (await slotTeardownBlocker(run, { inspectReleaseFence: true })) ?? '',
+    /still uses the slot/,
+  );
+  assert.deepEqual(alivePids(), [60370, 60371]);
+  assert.equal(
+    commands.some(
+      (cmd) =>
+        cmd.startsWith(': farmslot-owned-process-reap') ||
+        cmd.startsWith(': farmslot-runner-daemon-census'),
+    ),
+    false,
+  );
+  assert.equal(providerCleanups, 0);
+});
