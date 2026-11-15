@@ -12,7 +12,6 @@ import {
   type FlowType,
   isCompletionPrerequisiteFailure,
   isInteractiveDevRun,
-  isStartRefusedWorkerSignalStatus,
   isTerminalRunStatus,
   PipelineSteps as PS,
   pipelineStepsForRun,
@@ -54,7 +53,6 @@ import { readSlotRow, SLOT_PHASE_RELEASING } from '../../core/index.js';
 import { GatewayMethodError } from '../../core/method-error.js';
 import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
-import slotFiles from '../../host-services/slot-files.js';
 import { pipelineReviewSelection, resolveReviewRunnerModel } from '../../review/orchestrator.js';
 import { getReviewConfig } from '../../review/templates.js';
 import { useReviewWorkspaceStorage } from '../../review-workspaces/storage-use.js';
@@ -448,98 +446,62 @@ export function canAdoptTaskSignalAfterUncertainDispatch(
 }
 
 /**
- * Which of `files` in the worker task directory hold a signal whose run
- * finished, so a replayed worker's `mark start` would be refused. Reads go
- * through the slot-files service, which already reads a missing, unreadable or
- * directory path as empty.
+ * Clear the worker signals in `files` whose run finished, and leave every other
+ * one exactly as it was.
  *
- * This is the decision, not the deletion. A numbered `./mark N` can rewrite a
- * `complete` signal back to `running` between the two, so the delete re-reads
- * each file and is the authority on what goes.
+ * One remote script owns the whole decision, because every split between
+ * deciding and acting is a window a worker can write into: `mark` publishes a
+ * signal by renaming over the path (mark-io.cjs), so a name read as finished
+ * can be live by the time anything acts on it.
+ *
+ * Per file: move it aside with one rename, judge only the bytes that moved, and
+ * either remove that snapshot or put it back. Putting back uses `link`, which
+ * refuses an existing destination, so a worker that wrote while this was
+ * deciding keeps its newer file and the snapshot is dropped.
+ *
+ * A clear that dies between the rename and the decision leaves the only copy
+ * under the aside name, where the worker never looks. Every candidate name is
+ * swept for such leftovers first - including names whose original is absent,
+ * which is exactly the state that interruption leaves behind.
+ *
+ * Returns the files it removed, and the files whose original is still missing
+ * afterwards: a failure that ends with the signal back in place is not a loss
+ * and is not reported as one.
  */
-async function startRefusedSignalFiles(
-  vars: Awaited<ReturnType<typeof import('../../core/config.js').loadSlotVars>>,
-  workerTaskDir: string,
-  files: readonly string[],
-): Promise<string[]> {
-  const refused: string[] = [];
-  for (const file of files) {
-    const body = await slotFiles.read(
-      vars,
-      `${workerTaskDir}/${file}`,
-      'replay-worker-signal-status',
-    );
-    if (!body.trim()) continue;
-    let status: unknown;
-    try {
-      status = (JSON.parse(body) as { status?: unknown }).status;
-    } catch {
-      // A signal too broken to parse is nothing to clear: the worker that
-      // cannot read it writes its own over the top.
-      continue;
-    }
-    if (typeof status === 'string' && isStartRefusedWorkerSignalStatus(status)) refused.push(file);
-  }
-  return refused;
-}
-
-/**
- * Delete each named signal that still holds the start-refused status, and leave
- * every other one exactly where it was.
- *
- * Reading a file and then unlinking its path are two acts, and `mark` can
- * publish a fresh signal over the path in between (it renames into place,
- * mark-io.cjs), so an unlink by name can remove the `running` signal of a
- * worker that marked a step. Rename is the one atomic step available: the
- * candidate is moved aside, and only the bytes that moved are judged. A
- * snapshot that turns out to be live is put back, or dropped when the worker
- * has already written a new signal over the original path.
- *
- * Returns the files it actually removed, so the log cannot claim a failed
- * unlink as cleared.
- */
-async function deleteStartRefusedSignals(
+async function clearStartRefusedSignals(
   vars: Awaited<ReturnType<typeof import('../../core/config.js').loadSlotVars>>,
   workerTaskDir: string,
   files: readonly string[],
   refusedStatus: string,
-): Promise<string[]> {
+): Promise<{ removed: string[]; lost: string[] }> {
   const script = `
 const fs = require('node:fs');
 const path = require('node:path');
 const [refusedStatus, ...files] = process.argv.slice(1);
 const removed = [];
-const failed = [];
 
 // Put a snapshot back without overwriting anything: link refuses an existing
-// destination, where rename would replace a signal the worker wrote while this
-// script was deciding. On a collision the worker's newer file wins and the
-// snapshot is dropped.
+// destination, where rename would replace a signal written since.
 const restore = (aside, file) => {
   try {
     fs.linkSync(aside, file);
   } catch (error) {
-    if (error.code !== 'EEXIST') {
-      failed.push(file);
-      return;
-    }
+    if (error.code !== 'EEXIST') return;
   }
   try {
     fs.rmSync(aside);
   } catch {}
 };
 
-// A previous run of this script that died between moving a signal aside and
-// deciding on it left the only copy under that name. Recover it before doing
-// anything else: the worker reads the original path and would never find it.
+// Recover what an interrupted clear left behind, before anything else and for
+// every name, not only the ones whose original is still there.
 for (const file of files) {
-  const directory = path.dirname(file);
   const prefix = path.basename(file) + '.replay-clear.';
   let entries = [];
   try {
-    entries = fs.readdirSync(directory).filter((entry) => entry.startsWith(prefix));
+    entries = fs.readdirSync(path.dirname(file)).filter((entry) => entry.startsWith(prefix));
   } catch {}
-  for (const entry of entries) restore(path.join(directory, entry), file);
+  for (const entry of entries) restore(path.join(path.dirname(file), entry), file);
 }
 
 for (const file of files) {
@@ -557,15 +519,16 @@ for (const file of files) {
     try {
       fs.rmSync(aside);
       removed.push(file);
-    } catch {
-      failed.push(file);
-    }
+    } catch {}
     continue;
   }
-  // Live after all, or unreadable: it goes back.
   restore(aside, file);
 }
-process.stdout.write(JSON.stringify({ removed, failed }));
+
+// Final state, not a tally of failed calls: a file is lost only if neither this
+// script nor the worker left a signal at the original path.
+const lost = files.filter((file) => !removed.includes(file) && !fs.existsSync(file));
+process.stdout.write(JSON.stringify({ removed, lost }));
 `;
   const result = await execOnSlot(
     vars,
@@ -577,25 +540,23 @@ process.stdout.write(JSON.stringify({ removed, failed }));
   const relative = (file: unknown): string => String(file).slice(`${workerTaskDir}/`.length);
   if (result.exitCode !== 0) {
     console.warn(
-      `[run] worker signal cleanup command failed in ${workerTaskDir} (exit ${result.exitCode}: ${result.stderr.trim() || result.stdout.trim() || 'no output'})`,
+      `[run] worker signal cleanup failed in ${workerTaskDir} (exit ${result.exitCode}: ${result.stderr.trim() || result.stdout.trim() || 'no output'})`,
     );
-    return [];
+    return { removed: [], lost: [] };
   }
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(result.stdout.trim() || '{}');
+    const parsed = JSON.parse(result.stdout.trim() || '{}') as {
+      removed?: unknown;
+      lost?: unknown;
+    };
+    return {
+      removed: Array.isArray(parsed.removed) ? parsed.removed.map(relative) : [],
+      lost: Array.isArray(parsed.lost) ? parsed.lost.map(relative) : [],
+    };
   } catch {
     console.warn(`[run] worker signal cleanup returned no readable result in ${workerTaskDir}`);
-    return [];
+    return { removed: [], lost: [] };
   }
-  const { removed, failed } = (parsed ?? {}) as { removed?: unknown; failed?: unknown };
-  // A signal that could not be put back is the one state worth shouting about:
-  // the worker reads the original path and will not find its own progress.
-  if (Array.isArray(failed) && failed.length > 0)
-    console.warn(
-      `[run] worker signal cleanup could not restore ${failed.map(relative).join(', ')} in ${workerTaskDir}; a worker may have lost its signal`,
-    );
-  return Array.isArray(removed) ? removed.map(relative) : [];
 }
 
 /** The `blocked` signal a blocked run's monitor stopped on, or null. */
@@ -2500,22 +2461,23 @@ async function replayRunStep(
               `[run] replay from ${replayStepName} — cleared worker signals in ${workerTaskDir}`,
             );
           } else {
-            const refused = await startRefusedSignalFiles(vars, workerTaskDir, signalFiles);
-            if (refused.length > 0) {
-              assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
-              assertNativeReplayCurrent();
-              if (hooks.beforeWorkerSignalDelete) await hooks.beforeWorkerSignalDelete();
-              const removed = await deleteStartRefusedSignals(
-                vars,
-                workerTaskDir,
-                refused,
-                START_REFUSED_WORKER_SIGNAL_STATUS,
+            assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+            assertNativeReplayCurrent();
+            if (hooks.beforeWorkerSignalDelete) await hooks.beforeWorkerSignalDelete();
+            const { removed, lost } = await clearStartRefusedSignals(
+              vars,
+              workerTaskDir,
+              signalFiles,
+              START_REFUSED_WORKER_SIGNAL_STATUS,
+            );
+            if (removed.length > 0)
+              console.log(
+                `[run] replay from ${replayStepName} — cleared finished worker signals in ${workerTaskDir} (${removed.join(', ')})`,
               );
-              if (removed.length > 0)
-                console.log(
-                  `[run] replay from ${replayStepName} — cleared finished worker signals in ${workerTaskDir} (${removed.join(', ')})`,
-                );
-            }
+            if (lost.length > 0)
+              console.warn(
+                `[run] replay from ${replayStepName} — ${lost.join(', ')} is missing from ${workerTaskDir}; a worker may have lost its signal`,
+              );
           }
         }
       } catch (err) {

@@ -384,3 +384,32 @@ test('a signal that goes live between the decision and the delete survives', asy
 
   assert.equal(observed, live, 'the live signal must be the one the worker finds');
 });
+
+// A clear that died between moving a signal aside and deciding on it leaves the
+// only copy under the aside name, where the worker never looks: it reads the
+// original path. The sweep has to cover a name whose original is absent, which
+// is the whole point of that state, and the first version of it only swept
+// names it had already read as finished.
+test('an aside left by an interrupted clear is restored even with no original', async (t) => {
+  const run = createRun({ project, flowType: 'dev', ticketOrPr: 'example/fixture#7' });
+  t.after(async () => {
+    if (!getRun(run.id)) return;
+    updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+  const stranded = JSON.stringify({
+    attemptId: 'interrupted-attempt',
+    status: 'running',
+    timestamp: '2026-11-12T00:00:00.000Z',
+  });
+  await rm(signalFile, { force: true });
+  await writeFile(`${signalFile}.replay-clear.99999`, stranded);
+  updateRun(run.id, finishedRun(run));
+  await writeFile(statusFile, heldSlotStatus(run));
+
+  assert.equal(
+    await replayAndReadSignal(run, 'dispatch'),
+    stranded,
+    'the only copy of that signal must come back to the path the worker reads',
+  );
+});
