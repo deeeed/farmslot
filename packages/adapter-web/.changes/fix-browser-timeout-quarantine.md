@@ -1,0 +1,1 @@
+- Release provisional browser quarantine after a launch with the exact nonce times out and its profile processes are confirmed stopped, so a temporary CDP readiness failure does not permanently block later launches. Unseen detached submissions remain quarantined.

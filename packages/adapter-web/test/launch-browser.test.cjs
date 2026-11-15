@@ -328,6 +328,73 @@ describe('launchBrowser', () => {
     assert.equal(hasDetachedLaunchUnproven(path.join(dir, 'profile')), true);
   });
 
+  for (const scenario of ['owned-stopped', 'wrong-nonce', 'stop-failed']) {
+    it(`listener timeout preserves quarantine unless its nonce-bound browser stops: ${scenario}`, async (t) => {
+      const dir = runtime(`timeout-${scenario}`);
+      const port = await freePort();
+      const profile = path.join(dir, 'profile');
+      const childProcess = require('node:child_process');
+      const browserCdp = require('../src/browser-cdp.cjs');
+      const ownership = require('../src/validation-process-ownership.cjs');
+      const modulePath = require.resolve('../src/launch-browser.cjs');
+      const original = require.cache[modulePath];
+      let alive = false;
+      let retry = false;
+      let argv = [];
+      let clock = 0;
+      const pid = 12345;
+      const resolution = path.join(dir, 'browser.json');
+      fs.writeFileSync(
+        resolution,
+        JSON.stringify({ bin: chromeBin, extensionLoading: 'load-extension' }),
+      );
+      t.mock.method(Date, 'now', () => 1700000000000 + (clock += 500));
+      t.mock.method(browserCdp, 'cdpListenerPids', () => []);
+      t.mock.method(childProcess, 'spawnSync', () => ({ status: 0 }));
+      t.mock.method(childProcess, 'execFileSync', (_file, args) => {
+        assert.equal(args[0], '-ww');
+        return argv.join(' ');
+      });
+      t.mock.method(ownership, 'profileProcessPids', () => (alive ? [pid] : []));
+      t.mock.method(ownership, 'stopProfileProcessesSync', () => {
+        if (alive && scenario === 'stop-failed') throw new Error('owned browser survived');
+        alive = false;
+      });
+      t.mock.method(childProcess, 'spawn', (_file, args) => {
+        if (retry) throw new Error('next launch admitted');
+        alive = true;
+        argv =
+          scenario === 'wrong-nonce'
+            ? args.filter((arg) => !arg.startsWith('--farmslot-runtime-nonce='))
+            : args;
+        return { pid, unref() {} };
+      });
+      delete require.cache[modulePath];
+      try {
+        const launcher = require(modulePath).launchBrowser;
+        assert.throws(
+          () => launcher(options(dir, port, { browserResolution: resolution })),
+          scenario === 'stop-failed'
+            ? /owned browser survived/
+            : /did not expose an owned CDP listener/,
+        );
+        const quarantined = scenario !== 'owned-stopped';
+        assert.equal(hasDetachedLaunchUnproven(profile), quarantined);
+        assert.equal(fs.existsSync(validationPortQuarantinePath(port)), quarantined);
+        if (!quarantined) {
+          retry = true;
+          assert.throws(
+            () => launcher(options(dir, port, { browserResolution: resolution })),
+            /next launch admitted/,
+          );
+        }
+      } finally {
+        require.cache[modulePath] = original;
+        t.mock.restoreAll();
+      }
+    });
+  }
+
   it('refuses once a process it did not launch takes the port during the wait', async () => {
     const dir = runtime('foreign-late');
     const port = await freePort();
