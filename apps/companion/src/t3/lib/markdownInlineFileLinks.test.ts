@@ -21,3 +21,21 @@ test('other code, fenced code and code inside a link label stay as written', () 
   );
   assert.equal(link('[`src/demo.ts`](src/demo.ts)'), '[`src/demo.ts`](src/demo.ts)');
 });
+
+test('indented code, a fence in a blockquote and a mixed link label stay as written', () => {
+  const indented = 'Paths:\n\n    const path = `src/demo.ts`;\n\nthen `src/demo.ts`';
+  assert.equal(
+    link(indented),
+    'Paths:\n\n    const path = `src/demo.ts`;\n\nthen [src/demo.ts](<src/demo.ts>)',
+  );
+  const quoted = '> ```ts\n> const p = `src/demo.ts:3`;\n> ```\n> see `src/demo.ts:3`';
+  assert.equal(
+    link(quoted),
+    '> ```ts\n> const p = `src/demo.ts:3`;\n> ```\n> see [src/demo.ts:3](<src/demo.ts:3>)',
+  );
+  const label = '[the `src/demo.ts` greeting](src/demo.ts:32) and `notes/plan.md`';
+  assert.equal(
+    link(label),
+    '[the `src/demo.ts` greeting](src/demo.ts:32) and [notes/plan.md](<notes/plan.md>)',
+  );
+});

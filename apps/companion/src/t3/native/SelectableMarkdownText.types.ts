@@ -59,6 +59,8 @@ export interface SelectableMarkdownTextProps {
   readonly onRendered?: (rendered: {
     readonly links: ReadonlyArray<string>;
     readonly codeBlocks: ReadonlyArray<MarkdownCodeBlockSeen>;
+    /** The markdown handed to the native renderer, after file links were added. */
+    readonly markdown: string;
   }) => void;
   readonly marginTop?: number;
   readonly marginBottom?: number;

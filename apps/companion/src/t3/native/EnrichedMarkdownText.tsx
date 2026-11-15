@@ -172,7 +172,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
         ? previous
         : urls,
     );
-    onRendered?.({ links: urls, codeBlocks: [...codeBlocks.current.values()] });
+    onRendered?.({ links: urls, codeBlocks: [...codeBlocks.current.values()], markdown });
   };
   const { linkVariants, linkPillContent } = useEnrichedLinkVariants(linkUrls, props);
   const { fileContextMenu, onFileContextMenuAction, onLinkPress } = props;

@@ -181,6 +181,9 @@ if (phase === 'pair') {
       if (!message.links.includes(`${DEMO}:${LINE}`)) return `links ${message.links}`;
       if (!message.links.includes('notes/plan.md'))
         return `inline file chip missing: ${message.links}`;
+      // Code in an indented block or a quoted fence reaches the renderer as written.
+      for (const code of ['    const path = `src/demo.ts`;', '> const quoted = `src/demo.ts:33`;'])
+        if (!message.markdown.includes(code)) return `code rewritten; missing: ${code}`;
       return null;
     },
     'the markdown reply',
@@ -235,10 +238,24 @@ if (phase === 'pair') {
           ? `mode ${file.mode}`
           : !file.markdown?.codeBlocks.some((block) => block.language === 'ts')
             ? `rendered blocks ${JSON.stringify(file.markdown)}`
-            : !file.markdown.links.includes('../src/demo.ts:32')
+            : !file.markdown.links.includes('../src/demo.ts:32') ||
+                !file.markdown.links.some((link) => link.endsWith(`/${DEMO}:31`))
               ? `links ${file.markdown.links}`
               : null,
     'the rendered markdown file',
+  );
+  report({ file: value.file });
+} else if (phase === 'markdown-link') {
+  // The plan's absolute link, inside the session folder, opened the source at its line.
+  const value = await until(
+    render,
+    ({ file }) =>
+      file?.path !== DEMO || file.line !== 31
+        ? `opened ${file?.path}:${file?.line}`
+        : file.surface !== 'native'
+          ? `surface ${file.surface}`
+          : null,
+    'the file the markdown linked',
   );
   report({ file: value.file });
 } else if (phase === 'markdown-raw') {

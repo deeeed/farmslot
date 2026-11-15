@@ -12,6 +12,7 @@ export function NativeFileRoute() {
     executionNodeId: routeParamString(route.executionNodeId),
     path: routeParamString(route.path),
     line: routeParamString(route.line),
+    cwd: routeParamString(route.cwd),
     runId: routeParamString(route.runId),
     contextId: routeParamString(route.contextId),
     generation: routeParamString(route.generation),

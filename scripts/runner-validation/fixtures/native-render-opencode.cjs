@@ -32,9 +32,18 @@ export function greet(input: Greeting): string {
   return \`Hello, \${input.name}! (\${count})\`;
 }
 \`\`\`
+
+Indented example:
+
+    const path = \`src/demo.ts\`;
+
+> \`\`\`ts
+> const quoted = \`src/demo.ts:33\`;
+> \`\`\`
 `;
 
-const PLAN = `# Plan
+// The plan links back to the source twice: relative to its own folder, and by absolute path.
+const plan = () => `# Plan
 
 1. Bump the greeting count.
 2. Keep the filler steps.
@@ -43,7 +52,7 @@ const PLAN = `# Plan
 const count = 2;
 \`\`\`
 
-See [the greeting](../src/demo.ts:32).
+See [the greeting](../src/demo.ts:32) and [the absolute greeting](${cwd}/src/demo.ts:31).
 `;
 
 function edit() {
@@ -51,7 +60,7 @@ function edit() {
   const oldText = fs.readFileSync(file, 'utf8');
   const newText = oldText.replace('const count = 1;', 'const count = 2;');
   fs.writeFileSync(file, newText);
-  fs.writeFileSync(path.join(cwd, 'notes/plan.md'), PLAN);
+  fs.writeFileSync(path.join(cwd, 'notes/plan.md'), plan());
   return { file, oldText, newText };
 }
 
