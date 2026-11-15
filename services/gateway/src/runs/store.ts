@@ -2451,6 +2451,10 @@ export async function withTaskAdmission<T>(
   }
 }
 
+export function hasTaskAdmissions(): boolean {
+  return admittingTaskDirectories.size > 0;
+}
+
 export function isTaskDirectoryAdmitting(dir: string): boolean {
   return admittingTaskDirectories.has(path.resolve(dir));
 }

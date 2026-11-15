@@ -14,6 +14,7 @@ export const BACKGROUND_OPERATIONS = {
   decisionsScan: 'decisions.scan',
   readCommand: 'commands.read',
   taskTransfer: 'taskFiles.transfer',
+  taskPins: 'taskPins.retain',
 } as const;
 
 export interface BackgroundCommandParams {
@@ -42,6 +43,7 @@ export interface BackgroundOperationContract {
     result: ExecResult;
   };
   /** Existing gateway-owned SSH/SCP/rsync task staging, including marker publication. */
+  'taskPins.retain': { params: BackgroundCommandParams; result: ExecResult };
   'taskFiles.transfer': {
     params: BackgroundCommandParams;
     result: ExecResult;
