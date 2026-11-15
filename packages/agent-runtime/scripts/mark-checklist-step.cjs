@@ -660,7 +660,13 @@ function refusalReason(captured) {
 
 // No operator answers a refused completion in an autonomous run (every blind
 // eval trial): the worker must end it, not wait for a review that never comes.
-if (terminalCommand === 'complete' && autonomousContract()) {
+//
+// The stamp is sufficient by itself. It is written only where the run declares
+// `review: false`, which already says nobody attends, and a role checklist's
+// contract carries no `mode` at all — the gateway syncs it without one — so
+// requiring autonomous mode as well meant the stamp it inherits could never be
+// consulted and the stall stayed exactly where it was.
+if (terminalCommand === 'complete' && (autonomousContract() || unattendedContract())) {
   // On an unattended run the gateway stamped `unattendedCompletion`: nobody will
   // read the advice below, so the refusal itself ends the run. The trial is then
   // scored as a refusal with its cause, instead of parking until a human aborts
