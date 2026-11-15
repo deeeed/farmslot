@@ -625,11 +625,29 @@ export async function readTaskDirOwners(
   );
 }
 
+/** The flow task folder that already holds this run's task file, when it has one. */
+function ownTaskDirName(taskFile: string | null, tasksBaseDir: string): string | null {
+  if (!taskFile) return null;
+  const relative = path.relative(path.resolve(tasksBaseDir), path.resolve(path.dirname(taskFile)));
+  if (
+    !relative ||
+    relative === '..' ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative) ||
+    relative.includes(path.sep)
+  ) {
+    return null;
+  }
+  return relative;
+}
+
 /**
  * Slot-less collision precheck used before GRADE so the engine can short-circuit
  * the LLM-bound grading step when a colliding task dir already exists. Returns
  * the colliding folder names + the canonical ticket slug used to build them.
  * Does NOT throw — caller decides how to surface.
+ * A run created with --task already owns its task file's directory. That folder
+ * is not a collision with another run.
  */
 export async function precheckTaskDirCollision(
   run: Run,
@@ -640,12 +658,13 @@ export async function precheckTaskDirCollision(
   if (!existsSync(tasksBaseDir)) return { existingDirs: [], ticketSlug };
   try {
     const entries = await readdir(tasksBaseDir);
+    const ownDir = ownTaskDirName(run.taskFile, tasksBaseDir);
     const existingDirs = findTaskDirCollisions(
       entries,
       run.ticketOrPr,
       run.lane === 'comparison' ? run.variant : null,
       run.flowType,
-    );
+    ).filter((dir) => dir !== ownDir);
     return { existingDirs, ticketSlug };
   } catch (err) {
     // readdir failure here is a transient FS error (dir removed mid-check, perms, etc.).
