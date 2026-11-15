@@ -141,8 +141,8 @@ if (phase === 'pair') {
         continue;
       }
       const pressed = device('press', `label="${answer[1]}"`);
-      assert(pressed.success, JSON.stringify(pressed.error));
-      outcome = answer[0];
+      // The alert can close between reading and pressing it; the next read sees what replaced it.
+      if (pressed.success) outcome = answer[0];
     }
   }
   assert(device('close').success, 'Could not release the device');
