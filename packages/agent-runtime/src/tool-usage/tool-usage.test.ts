@@ -128,6 +128,13 @@ test('cursor: tool_use without times counts as untimed', async () => {
   assert.deepEqual(marked.steps, []);
   assert.equal(marked.toolCallsBeforeFirstMark, null);
   assert.match(marked.stepsUnavailable ?? '', /no call times/);
+  const windowed = countToolUsage({ tools: [{ name: 'Read' }], tokens: null }, marks, {
+    startedAt: t(0),
+    completedAt: t(5),
+  });
+  assert.deepEqual(windowed.steps, []);
+  assert.equal(windowed.toolCallsBeforeFirstMark, null);
+  assert.match(windowed.stepsUnavailable ?? '', /no call times/);
 });
 
 test('native: tool.started paired by nativeId', async () => {

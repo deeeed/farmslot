@@ -67,7 +67,8 @@ export function countToolUsage(
     .filter(({ at }) => Number.isFinite(at))
     .sort((a, b) => a.at - b.at);
   // Untimed calls cannot be placed between marks; empty zero-call steps would misreport them.
-  if (usage.untimedToolCalls && !timed.length) {
+  // A window drops them from the totals, so this asks the stream itself.
+  if (!timed.length && stream.tools.some((tool) => !tool.issuedAt)) {
     usage.stepsUnavailable =
       'The transcript records no call times, so calls cannot be placed in steps';
     return usage;
