@@ -1,8 +1,8 @@
 import { Stack, useRouter } from 'expo-router';
 import { Alert, Linking, Pressable, Text, View } from 'react-native';
 
+import { nativeLinkedFileLocation } from '../../lib/native-workspace-target';
 import { FileMarkdownPreview } from '../../t3/features/files/FileMarkdownPreview';
-import { resolveFileLinkPath } from '../../t3/features/files/filePath';
 import { SourceFileSurface } from '../../t3/features/files/SourceFileSurface';
 import { resolveMarkdownLinkPresentation } from '../../t3/lib/markdownLinks';
 import { fileLinkLabel } from '../../t3/shared/fileLinks';
@@ -17,33 +17,30 @@ type Screen = ReturnType<typeof useNativeFileController>;
 export function NativeFileScreen({ viewModel: vm, actions }: Screen) {
   const router = useRouter();
   const title = vm.path ? fileLinkLabel({ path: vm.path, line: vm.line }, new Map()) : 'File';
-  // Links in a markdown file resolve against that file's folder.
+  // Links in a markdown file resolve against that file's folder, or the session folder.
   const openLink = (href: string) => {
     const link = resolveMarkdownLinkPresentation(href);
-    if (link.kind === 'file' && vm.route && vm.path) {
-      const folder = vm.path.includes('/') ? vm.path.slice(0, vm.path.lastIndexOf('/') + 1) : '';
-      const path = resolveFileLinkPath(
-        null,
-        link.path.startsWith('/') ? link.path : `${folder}${link.path}`,
-      );
-      if (!path || path.startsWith('/')) {
-        Alert.alert('Cannot open this file', 'It is outside the session folder.');
-        return;
-      }
-      router.push({
-        pathname: '/native-file',
-        params: {
-          sessionId: vm.route.target.sessionId,
-          executionNodeId: vm.route.target.executionNodeId,
-          path,
-          ...(link.line ? { line: String(link.line) } : {}),
-          ...(vm.route.target.worker ?? {}),
-        },
-      });
-    } else if (link.kind === 'external')
+    if (link.kind === 'external')
       Linking.openURL(link.href).catch((error: Error) =>
         Alert.alert('Could not open link', error.message),
       );
+    if (link.kind !== 'file' || !vm.route || !vm.path) return;
+    const location = nativeLinkedFileLocation(href, vm.path, vm.route.cwd);
+    if (!location) {
+      Alert.alert('Cannot open this file', 'It is outside the session folder.');
+      return;
+    }
+    router.push({
+      pathname: '/native-file',
+      params: {
+        sessionId: vm.route.target.sessionId,
+        executionNodeId: vm.route.target.executionNodeId,
+        path: location.path,
+        ...(location.line ? { line: String(location.line) } : {}),
+        ...(vm.route.cwd ? { cwd: vm.route.cwd } : {}),
+        ...(vm.route.target.worker ?? {}),
+      },
+    });
   };
   return (
     <View testID="companion-screen-native-file" style={styles.container}>

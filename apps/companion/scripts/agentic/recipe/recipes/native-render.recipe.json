@@ -5,7 +5,7 @@
   "proofTargets": [
     {
       "id": "markdown-reply",
-      "claim": "The assistant reply renders as native markdown: a list, a complete TypeScript fence and two file links.",
+      "claim": "The assistant reply renders as native markdown: a list, a complete TypeScript fence and two file links, while paths in indented code and a quoted fence stay code.",
       "proofMode": "state"
     },
     {
@@ -21,6 +21,11 @@
     {
       "id": "native-diffs",
       "claim": "The tool diff and the turn diff render in the native diff view with highlighted rows.",
+      "proofMode": "state"
+    },
+    {
+      "id": "markdown-file-links",
+      "claim": "An absolute file link inside the session folder, in an opened markdown file, opens that file at its line.",
       "proofMode": "state"
     }
   ],
@@ -147,6 +152,33 @@
         "action": "ui.screenshot",
         "path": "native-render-markdown.png",
         "intent": "Record the rendered markdown file.",
+        "next": "press-absolute-link"
+      },
+      "press-absolute-link": {
+        "action": "ui.press",
+        "text": "demo.ts · L31, the absolute greeting",
+        "intent": "Open the plan's absolute link to the source.",
+        "next": "markdown-link"
+      },
+      "markdown-link": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-render-proof.mjs markdown-link",
+        "intent": "The absolute link opened src/demo.ts at line 31 in the native viewer.",
+        "next": "assert-markdown-link"
+      },
+      "assert-markdown-link": {
+        "action": "assert_output",
+        "source": "markdown-link",
+        "stream": "stdout",
+        "match": "\"phase\":\"markdown-link\"",
+        "proves": ["markdown-file-links"],
+        "intent": "The markdown-link phase passed its checks.",
+        "next": "back-to-plan"
+      },
+      "back-to-plan": {
+        "action": "ui.press",
+        "text": "plan.md",
+        "intent": "Go back to the plan.",
         "next": "press-raw"
       },
       "press-raw": {

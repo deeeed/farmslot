@@ -4,6 +4,8 @@ import type { FarmslotRecipeUiObserver } from './RecipeBridgeProvider';
 export interface NativeMarkdownRender {
   readonly links: readonly string[];
   readonly codeBlocks: ReadonlyArray<{ readonly language: string; readonly lines: number }>;
+  /** The markdown the native renderer was given. */
+  readonly markdown: string;
 }
 
 export interface NativeDiffRender {

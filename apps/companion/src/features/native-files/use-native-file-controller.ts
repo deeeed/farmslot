@@ -30,6 +30,7 @@ export function useNativeFileController(
     executionNodeId,
     path: file,
     line: at,
+    cwd,
     runId,
     contextId,
     generation,
@@ -42,12 +43,13 @@ export function useNativeFileController(
         executionNodeId,
         path: file,
         line: at,
+        cwd,
         runId,
         contextId,
         generation,
         leaseId,
       }),
-    [id, executionNodeId, file, at, runId, contextId, generation, leaseId],
+    [id, executionNodeId, file, at, cwd, runId, contextId, generation, leaseId],
   );
   const owner = getResourceNativeOwnerId();
   const query = useMemo(

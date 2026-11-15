@@ -1,37 +1,63 @@
-// T3 Code's markdownWithInlineFileLinks (apps/mobile/src/lib/markdownDocument.ts, b8c2cfad) turns
-// inline code that names a file, such as `src/app.ts:12`, into a link the renderer draws as a file
-// chip. T3 walks a remark AST; this scans lines instead, so Companion does not ship unified and
-// remark. Fenced code, and code already inside a link label, stays as written.
+// From T3 Code apps/mobile/src/lib/markdownDocument.ts (b8c2cfad): markdownWithInlineFileLinks,
+// which turns inline code that names a file, such as `src/app.ts:12`, into a link the renderer draws
+// as a file chip. The parse and traversal are T3's; Companion keeps only the file-link rewrite (not
+// T3's HTML, table-break and Windows-path passes).
+import type { Root, RootContent } from 'mdast';
+import remarkGfm from 'remark-gfm';
+import remarkParse from 'remark-parse';
+import { unified } from 'unified';
 
-const FENCE = /^ {0,3}(`{3,}|~{3,})/;
-const INLINE_CODE_SPAN = /(?<!`)(`+)([^`\r\n]+?)\1(?!`)/g;
+const parser = unified().use(remarkParse).use(remarkGfm);
+type MarkdownNode = Root | RootContent;
 
-function linkedSpans(line: string, fileLink: RegExp): string {
-  return line.replace(INLINE_CODE_SPAN, (span, _ticks: string, code: string, offset: number) => {
-    const value = code.trim();
-    const inLabel = line[offset - 1] === '[' && line.startsWith('](', offset + span.length);
-    if (inLabel || /[<>]/.test(value) || !fileLink.test(value)) return span;
-    const escaped = value.replace(/[\\[\]&]/g, '\\$&');
-    return `[${escaped}](<${escaped}>)`;
-  });
+interface MarkdownEdit {
+  readonly start: number;
+  readonly end: number;
+  readonly content: string;
 }
 
+function applyMarkdownEdits(markdown: string, edits: MarkdownEdit[]): string {
+  if (edits.length === 0) return markdown;
+  const parts: string[] = [];
+  let offset = 0;
+  // AST traversal emits disjoint edits in source order.
+  for (const edit of edits) {
+    parts.push(markdown.slice(offset, edit.start), edit.content);
+    offset = edit.end;
+  }
+  parts.push(markdown.slice(offset));
+  return parts.join('');
+}
+
+// Start only at the beginning of a backtick run to avoid retrying every suffix.
+const INLINE_CODE_SPAN = /(?<!`)`+([^`\r\n]+)`+/g;
+
 export function markdownWithInlineFileLinks(markdown: string, fileLink: RegExp): string {
-  if (!markdown.includes('`')) return markdown;
-  let fence: string | null = null;
-  return markdown
-    .split('\n')
-    .map((line) => {
-      const marker = FENCE.exec(line)?.[1];
-      if (fence) {
-        if (marker && marker[0] === fence[0] && marker.length >= fence.length) fence = null;
-        return line;
-      }
-      if (marker) {
-        fence = marker;
-        return line;
-      }
-      return linkedSpans(line, fileLink);
-    })
-    .join('\n');
+  let linkFiles = false;
+  for (const [, code] of markdown.matchAll(INLINE_CODE_SPAN)) {
+    if (fileLink.test(code!.trim())) {
+      linkFiles = true;
+      break;
+    }
+  }
+  if (!linkFiles) return markdown;
+  const edits: MarkdownEdit[] = [];
+  // Code blocks have no children and link labels are skipped, so only prose code spans change.
+  const visit = (node: MarkdownNode) => {
+    if (node.type === 'inlineCode') {
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      const escaped = node.value.replace(/[\\[\]&]/g, '\\$&');
+      if (
+        start !== undefined &&
+        end !== undefined &&
+        fileLink.test(node.value) &&
+        !/[<>]/.test(node.value)
+      )
+        edits.push({ start, end, content: `[${escaped}](<${escaped}>)` });
+    } else if (node.type !== 'link' && node.type !== 'linkReference' && 'children' in node)
+      node.children.forEach(visit);
+  };
+  visit(parser.parse(markdown));
+  return applyMarkdownEdits(markdown, edits);
 }

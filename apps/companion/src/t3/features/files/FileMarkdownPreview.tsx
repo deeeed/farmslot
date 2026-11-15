@@ -29,6 +29,7 @@ export function FileMarkdownPreview(props: {
   readonly onRendered?: (rendered: {
     readonly links: ReadonlyArray<string>;
     readonly codeBlocks: ReadonlyArray<MarkdownCodeBlockSeen>;
+    readonly markdown: string;
   }) => void;
 }) {
   return (
