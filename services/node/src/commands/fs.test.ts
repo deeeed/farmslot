@@ -33,11 +33,12 @@ test('fsList classifies symlinked directories as directories', async (t) => {
     await rm(linkedDir, { recursive: true, force: true });
   });
 
+  const { mtimeMs } = await stat(path.join(root, 'file.txt'));
   const result = await fsList({ root, relPath: '.' });
   assert.deepEqual(result.entries, [
     { name: 'dir', type: 'directory' },
     { name: 'linked-dir', type: 'directory' },
-    { name: 'file.txt', type: 'file', size: 2 },
+    { name: 'file.txt', type: 'file', size: 2, mtimeMs },
   ]);
 });
 

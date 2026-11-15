@@ -38,6 +38,7 @@ import {
   slotCopyFile,
   slotFileExists,
   slotReadFileBuffer,
+  slotReadFileIfExists,
   slotRenameFile,
   slotWriteFileBuffer,
   slotWriteFiles,
@@ -1375,4 +1376,40 @@ test('a slot copy below the free-space floor writes nothing', async (t) => {
   );
   assert.equal(existsSync(path.join(root, 'mirror')), false);
   assert.equal(existsSync(path.join(root, 'archive')), false);
+});
+
+test('an optional remote read is absent exactly when the existence check would be false', async () => {
+  const fault = (code: string) => Object.assign(new Error(code), { code });
+  const calls: string[] = [];
+  const remote = (read: () => unknown, exists: boolean) => ({
+    host: 'optional-read.invalid',
+    machine: 'optional-read-fixture',
+    sshTarget: '',
+    nodeRequest: async (method: string) => {
+      calls.push(method);
+      if (method === 'fs.read') return read();
+      if (method === 'fs.exists') return { exists };
+      throw new Error(`unexpected ${method}`);
+    },
+  });
+  const content = remote(() => ({ content: 'ok' }), true);
+  assert.equal(await slotReadFileIfExists(content, '/t/f.json'), 'ok');
+  assert.deepEqual(calls.splice(0), ['fs.read']);
+  const missing = remote(() => Promise.reject(fault('ENOENT')), false);
+  assert.equal(await slotReadFileIfExists(missing, '/t/f.json'), null);
+  assert.deepEqual(calls.splice(0), ['fs.read']);
+  // fs.read refuses a dangling final symlink (EACCES) that fs.exists reports absent.
+  const dangling = remote(() => Promise.reject(fault('EACCES')), false);
+  assert.equal(await slotReadFileIfExists(dangling, '/t/f.json'), null);
+  assert.deepEqual(calls.splice(0), ['fs.read', 'fs.exists']);
+  const refused = remote(() => Promise.reject(fault('EACCES')), true);
+  await assert.rejects(slotReadFileIfExists(refused, '/t/f.json'), /EACCES/);
+  const down = remote(
+    () =>
+      Promise.reject(
+        new NodeTransportUnavailableError('optional-read-fixture', 'disconnected', 'node gone'),
+      ),
+    true,
+  );
+  await assert.rejects(slotReadFileIfExists(down, '/t/f.json'), NodeTransportUnavailableError);
 });

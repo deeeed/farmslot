@@ -112,23 +112,30 @@ mock.module('../fleet/state.js', {
 // The subject is the WATCH transport (fs.watch / fs.watch.stop request-id
 // bookkeeping), not slot-io. Serving slot-io's file reads from the local temp
 // directory keeps this test on the watcher and off the byte-transfer layer.
+const localCtx = { host: 'localhost', machine: 'local', sshTarget: '' };
+
+async function readMockedFile(filePath: string): Promise<string> {
+  if (filePath.endsWith('CHECKLIST.md')) checklistReadStarts += 1;
+  if (checklistReadGate && filePath.endsWith('CHECKLIST.md')) {
+    checklistReadsInFlight += 1;
+    maxChecklistReadsInFlight = Math.max(maxChecklistReadsInFlight, checklistReadsInFlight);
+    try {
+      await checklistReadGate;
+    } finally {
+      checklistReadsInFlight -= 1;
+    }
+  }
+  return readFileSync(filePath, 'utf-8');
+}
+
 mock.module('../core/slot-io.js', {
   namedExports: {
     ...realSlotIo,
     slotFileExists: async (_ctx: unknown, filePath: string) => existsSync(filePath),
-    slotReadFile: async (_ctx: unknown, filePath: string) => {
-      if (filePath.endsWith('CHECKLIST.md')) checklistReadStarts += 1;
-      if (checklistReadGate && filePath.endsWith('CHECKLIST.md')) {
-        checklistReadsInFlight += 1;
-        maxChecklistReadsInFlight = Math.max(maxChecklistReadsInFlight, checklistReadsInFlight);
-        try {
-          await checklistReadGate;
-        } finally {
-          checklistReadsInFlight -= 1;
-        }
-      }
-      return readFileSync(filePath, 'utf-8');
-    },
+    slotReadFileIfExists: async (_ctx: unknown, filePath: string) =>
+      existsSync(filePath) ? readMockedFile(filePath) : null,
+    slotListFiles: (_ctx: unknown, dirPath: string) => realSlotIo.slotListFiles(localCtx, dirPath),
+    slotReadFile: async (_ctx: unknown, filePath: string) => readMockedFile(filePath),
     slotMkdir: async (_ctx: unknown, dirPath: string) => {
       mkdirSync(dirPath, { recursive: true });
     },

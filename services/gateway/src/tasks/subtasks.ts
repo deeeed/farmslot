@@ -29,7 +29,8 @@ import {
   type WorkerSignalStatus,
 } from '@farmslot/protocol';
 
-import { slotFileExists, type SlotLocality, slotReadFile } from '../core/slot-io.js';
+import { type SlotLocality, slotReadFileIfExists } from '../core/slot-io.js';
+import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
 
 import { parseChecklistTiming } from './checklist-timing.js';
 
@@ -191,16 +192,17 @@ export async function readSubtaskIndex(
   suffix = '',
 ): Promise<SubtaskIndex | null> {
   const indexPath = `${subtaskIndexPathFor(taskDir)}${suffix}`;
-  if (!(await slotFileExists(ctx, indexPath))) return null;
-  let text: string;
+  let text: string | null;
   try {
-    text = await slotReadFile(ctx, indexPath);
+    text = await slotReadFileIfExists(ctx, indexPath);
   } catch (err) {
-    // The file existed a moment ago, so this is a read fault, not absence.
-    // Reported as a registry error so callers treat it like a corrupt registry
-    // rather than "this run has no child units".
+    // An unreachable node is not a corrupt registry: the caller retries or reports it as such.
+    if (isNodeTransportUnavailableError(err)) throw err;
+    // Absence is null above, so this is a read fault. Reported as a registry error so
+    // callers treat it like a corrupt registry rather than "this run has no child units".
     throw new SubtaskRegistryError(`cannot read ${indexPath}: ${(err as Error).message}`);
   }
+  if (text === null) return null;
   return parseSubtaskIndex(text, indexPath);
 }
 
@@ -253,8 +255,8 @@ async function readChildSignal(
   suffix = '',
 ): Promise<SubtaskSignalRead | null> {
   const signalPath = path.join(taskDir, `${unit.signal}${suffix}`);
-  if (!(await slotFileExists(ctx, signalPath))) return null;
-  const text = await slotReadFile(ctx, signalPath);
+  const text = await slotReadFileIfExists(ctx, signalPath);
+  if (text === null) return null;
   try {
     return parseSubtaskSignal(JSON.parse(text));
   } catch (err) {
@@ -365,13 +367,14 @@ export async function readSubtaskUnits(
   const reads: SubtaskUnitRead[] = [];
   for (const unit of units) {
     const checklistPath = path.join(taskDir, `${unit.checklist}${suffix}`);
-    if (!(await slotFileExists(ctx, checklistPath))) {
+    const markdown = await slotReadFileIfExists(ctx, checklistPath);
+    if (markdown === null) {
       console.warn(`[subtasks] registered unit ${unit.id} has no checklist at ${unit.checklist}`);
       continue;
     }
     reads.push({
       unit,
-      markdown: await slotReadFile(ctx, checklistPath),
+      markdown,
       signal: await readChildSignal(ctx, taskDir, unit, suffix),
     });
   }

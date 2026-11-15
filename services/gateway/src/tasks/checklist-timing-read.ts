@@ -10,7 +10,7 @@ import {
 } from '@farmslot/protocol';
 import { signalFileForChecklist } from '@farmslot/protocol/checklist-target';
 
-import { slotFileExists, type SlotLocality, slotReadFile } from '../core/slot-io.js';
+import { type SlotLocality, slotReadFileIfExists } from '../core/slot-io.js';
 
 import {
   checklistName,
@@ -36,8 +36,8 @@ export async function attachChecklistTiming(
     `${signalFileForChecklist(path.basename(checklist))}${signalSuffix}`,
   );
   let raw: unknown;
-  if (await slotFileExists(io, signalPath)) {
-    const text = await slotReadFile(io, signalPath);
+  const text = await slotReadFileIfExists(io, signalPath);
+  if (text !== null) {
     try {
       raw = JSON.parse(text);
     } catch (err) {

@@ -24,7 +24,7 @@ import {
 import { registeredAcceptanceCriteria as projectCriteria } from '@farmslot/protocol/scripts/acceptance.mjs';
 
 import { isLocal } from '../core/exec.js';
-import { slotFileExists, type SlotLocality, slotReadFile } from '../core/slot-io.js';
+import { type SlotLocality, slotReadFileIfExists } from '../core/slot-io.js';
 
 import { readRetainedAcceptanceLinks } from './retained-acceptance-links.js';
 
@@ -63,8 +63,8 @@ export async function readAcceptanceStatusLedger(
   taskDir: string,
 ): Promise<AcceptanceStatusLedger | null> {
   const ledgerPath = acceptanceStatusPathFor(taskDir);
-  if (!(await slotFileExists(ctx, ledgerPath))) return null;
-  return parseAcceptanceStatusLedger(await slotReadFile(ctx, ledgerPath), ledgerPath);
+  const text = await slotReadFileIfExists(ctx, ledgerPath);
+  return text === null ? null : parseAcceptanceStatusLedger(text, ledgerPath);
 }
 
 /**
@@ -100,16 +100,16 @@ export async function readHandoffAcceptanceCriteria(
   taskDir: string,
 ): Promise<AcceptanceCriterionRef[]> {
   const handoffPath = handoffPathFor(taskDir);
-  let text: string;
+  let text: string | null;
   try {
-    if (!(await slotFileExists(ctx, handoffPath))) return [];
-    text = await slotReadFile(ctx, handoffPath);
+    text = await slotReadFileIfExists(ctx, handoffPath);
   } catch (err) {
     throw new AcceptanceReadError(
       handoffPath,
       `cannot read ${handoffPath}: ${(err as Error).message}`,
     );
   }
+  if (text === null) return [];
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -130,7 +130,8 @@ export async function readHandoffAcceptanceCriteria(
     );
   }
   const projectionPath = path.posix.join(taskDir, ACCEPTANCE_REGISTRATION_INPUT);
-  if (!(await slotFileExists(ctx, projectionPath))) {
+  const projectionText = await slotReadFileIfExists(ctx, projectionPath);
+  if (projectionText === null) {
     if (
       'executionTemplate' in parsed &&
       parsed.executionTemplate &&
@@ -141,7 +142,7 @@ export async function readHandoffAcceptanceCriteria(
       throw new AcceptanceReadError(projectionPath, 'Acceptance registration transport is missing');
     return registeredAcceptanceCriteria(criteria);
   }
-  const projection: unknown = JSON.parse(await slotReadFile(ctx, projectionPath));
+  const projection: unknown = JSON.parse(projectionText);
   if (!projection || typeof projection !== 'object' || !('registration' in projection))
     throw new AcceptanceReadError(projectionPath, 'Invalid acceptance registration transport');
   if (

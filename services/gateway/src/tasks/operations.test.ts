@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
-import fs, { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import fs, {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test, { mock } from 'node:test';
@@ -108,4 +115,103 @@ test('captured output retains the tail across chunk boundaries', () => {
   tail.append('gh');
   tail.append('');
   assert.equal(tail.toString(), 'defgh');
+});
+
+test('a poll reads only operation records that are new or changed since the last poll', async () => {
+  const id = (n: number) => `00000000-0000-0000-0000-00000000000${n}`;
+  const record = (n: number, status: string) =>
+    JSON.stringify({
+      schemaVersion: 1,
+      id: id(n),
+      command: 'run',
+      target: '/proof',
+      pid: 100 + n,
+      status,
+      startedAt: `2026-11-15T00:00:0${n}.000Z`,
+      updatedAt: `2026-11-15T00:00:0${n}.000Z`,
+      logPath: `/proof/task/artifacts/operations/${id(n)}.log`,
+      ...(status === 'running' ? {} : { exitCode: 0, finishedAt: `2026-11-15T00:00:0${n}.500Z` }),
+    });
+  const files = new Map([
+    [`${id(1)}.json`, { mtimeMs: 1, content: record(1, 'pass') }],
+    [`${id(2)}.json`, { mtimeMs: 1, content: record(2, 'running') }],
+  ]);
+  const calls: string[] = [];
+  const remote = {
+    host: 'operations-proof.invalid',
+    machine: 'operations-proof',
+    sshTarget: '',
+    nodeRequest: async (method: string, params: unknown) => {
+      calls.push(method);
+      const relPath = (params as { relPath: string }).relPath;
+      if (method === 'fs.list')
+        return {
+          entries: [...files].map(([name, file]) => ({
+            name,
+            type: 'file',
+            size: file.content.length,
+            mtimeMs: file.mtimeMs,
+          })),
+        };
+      if (method === 'fs.read') return { content: files.get(path.basename(relPath))?.content };
+      throw new Error(`unexpected ${method}`);
+    },
+  };
+  const checklist = '/proof/task/CHECKLIST.md';
+  const poll = async () => {
+    calls.length = 0;
+    const result = progress();
+    await attachOperations(remote, checklist, result);
+    assert.equal(result.operationsError, undefined);
+    return { calls: [...calls], statuses: result.operations?.map((op) => op.status) };
+  };
+  assert.deepEqual(await poll(), {
+    calls: ['fs.list', 'fs.read', 'fs.read'],
+    statuses: ['pass', 'running'],
+  });
+  assert.deepEqual(await poll(), { calls: ['fs.list'], statuses: ['pass', 'running'] });
+  files.set(`${id(2)}.json`, { mtimeMs: 2, content: record(2, 'pass') });
+  assert.deepEqual(await poll(), { calls: ['fs.list', 'fs.read'], statuses: ['pass', 'pass'] });
+  files.delete(`${id(1)}.json`);
+  assert.deepEqual(await poll(), { calls: ['fs.list'], statuses: ['pass'] });
+});
+
+test('absence and faults read as they did with an existence check first', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'operation-absence-'));
+  try {
+    // artifacts is a file: the operations directory is absent, not a fault.
+    mkdirSync(path.join(root, 'a'));
+    writeFileSync(path.join(root, 'a/artifacts'), 'not a directory');
+    const absent = progress();
+    await attachOperations(local, path.join(root, 'a/CHECKLIST.md'), absent);
+    assert.equal(absent.operations, undefined);
+    assert.equal(absent.operationsError, undefined);
+    // operations is a file: listing it is a fault.
+    mkdirSync(path.join(root, 'b/artifacts'), { recursive: true });
+    writeFileSync(path.join(root, 'b/artifacts/operations'), 'not a directory');
+    const file = progress();
+    await attachOperations(local, path.join(root, 'b/CHECKLIST.md'), file);
+    assert.match(file.operationsError ?? '', /Operation progress unavailable/);
+    // A directory named like a record is still reported, not skipped.
+    mkdirSync(path.join(root, 'c/artifacts/operations/00000000-0000-0000-0000-000000000000.json'), {
+      recursive: true,
+    });
+    const directory = progress();
+    await attachOperations(local, path.join(root, 'c/CHECKLIST.md'), directory);
+    assert.match(directory.operationsError ?? '', /Operation progress unavailable/);
+    // An unrelated entry that cannot be statted does not affect the records.
+    const operations = path.join(root, 'd/artifacts/operations');
+    mkdirSync(path.join(operations, 'archive'), { recursive: true });
+    chmodSync(operations, 0o644);
+    const unsearchable = progress();
+    try {
+      await attachOperations(local, path.join(root, 'd/CHECKLIST.md'), unsearchable);
+    } finally {
+      chmodSync(operations, 0o755);
+    }
+    assert.equal(unsearchable.operationsError, undefined);
+    assert.deepEqual(unsearchable.operations, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
