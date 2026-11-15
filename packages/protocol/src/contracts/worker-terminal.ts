@@ -79,6 +79,20 @@ export interface WorkerTerminalContractDocument {
     reference: string;
     command: string;
   }>;
+  /**
+   * Proof artifacts frozen when this execution checklist is initialized: the
+   * evidence a step claims, declared on its row as `[PROOF: artifacts/...]`.
+   * A step without a declaration keeps its prior behaviour, so a template that
+   * has not adopted the marker is unaffected.
+   */
+  proofArtifacts?: Array<{ checklist: string; stepNumber: number; path: string }>;
+  /**
+   * Gateway-derived: no person answers a refusal on this run, so a refused
+   * completion must end it rather than wait. Set for a blind eval trial with
+   * review disabled (`engineState.evalExperiment.review === false`), where the
+   * batch is unattended and a parked refusal is a lost trial.
+   */
+  unattendedCompletion?: boolean;
 }
 
 /** Shared gate projection of a task-owned command execution receipt. */

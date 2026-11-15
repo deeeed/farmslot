@@ -17,6 +17,7 @@ const {
   parseTaskDirMarkArgs,
   terminalContractInputForChecklist,
 } = require('./checklist-target.cjs');
+const proofArtifacts = require('./proof-artifacts.cjs');
 const {
   atomicWrite,
   markStepInLines,
@@ -423,7 +424,17 @@ function assertTerminalPackagedEvidence(taskPath, taskDir, terminalCommand) {
   }
 }
 
-function buildSignalUpdate(signal, terminal, target, timing, events, now, taskPath, _taskDir) {
+function buildSignalUpdate(
+  signal,
+  terminal,
+  target,
+  timing,
+  events,
+  now,
+  taskPath,
+  _taskDir,
+  outOfOrder = [],
+) {
   const sameAttempt =
     !isStartCommand ||
     (signal.waitingForOperator && !process.env.FARMSLOT_SIGNAL_ATTEMPT_ID) ||
@@ -439,6 +450,7 @@ function buildSignalUpdate(signal, terminal, target, timing, events, now, taskPa
       schemaVersion: 1,
       source: timing.source || path.basename(taskPath),
       events,
+      ...(outOfOrder.length ? { outOfOrder } : {}),
     },
     timestamp: now,
     ...operatorWaitHistory(signal, now, { reset: !sameAttempt, closeWait: stepToken !== 'wait' }),
@@ -500,6 +512,22 @@ function resolveTarget(taskPath, stepNumber, markLast) {
     // Also covers `--mark-last`: the parent must not tick a box whose child is
     // still open, whichever way the row was chosen.
     assertStepNotOwnedBySubtask(item.stepNumber);
+    // A tick is the claim, so a step that declares its proof cannot be checked
+    // before that evidence exists. Re-marking an already-checked row stays
+    // idempotent: completion, not this path, judges evidence that went away.
+    if (!item.checked) {
+      const dir = path.dirname(taskPath);
+      const pending = proofArtifacts.pending(
+        dir,
+        path.basename(taskPath),
+        item.stepNumber,
+        loadTerminalContract(dir, taskPath),
+      );
+      if (pending) {
+        console.error(pending);
+        process.exit(1);
+      }
+    }
     try {
       deterministicChecks.execute(path.dirname(taskPath), path.basename(taskPath), item.stepNumber);
     } catch (error) {
@@ -524,17 +552,69 @@ function autonomousContract() {
     return false; // The contract check below reports an unreadable contract.
   }
 }
+function unattendedContract() {
+  try {
+    return loadTerminalContract(taskDir, taskPath)?.unattendedCompletion === true;
+  } catch {
+    return false; // The contract check below reports an unreadable contract.
+  }
+}
+
+/** The refusal text, trimmed to what fits a signal reason. */
+function refusalReason(captured) {
+  const text = captured.join('').trim();
+  return text.length > 1500 ? `${text.slice(0, 1500)}…` : text;
+}
+
 // No operator answers a refused completion in an autonomous run (every blind
 // eval trial): the worker must end it, not wait for a review that never comes.
 if (terminalCommand === 'complete' && autonomousContract()) {
-  process.on('exit', (code) => {
-    if (code !== 0)
-      console.error(
-        'This autonomous run has no operator: a refused completion reaches no gate or reviewer. ' +
-          'Fix the refusal above and mark complete again, or end the run with it: ' +
-          `${path.join(taskDir, 'mark')} blocked --reason "<the refusal>"`,
+  // On an unattended run the gateway stamped `unattendedCompletion`: nobody will
+  // read the advice below, so the refusal itself ends the run. The trial is then
+  // scored as a refusal with its cause, instead of parking until a human aborts
+  // it hours later.
+  if (unattendedContract()) {
+    const captured = [];
+    const inherited = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk, ...rest) => {
+      captured.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+      return inherited(chunk, ...rest);
+    };
+    process.on('exit', (code) => {
+      if (code === 0) return;
+      const reason = refusalReason(captured);
+      const ended = spawnSync(
+        process.execPath,
+        [
+          __filename,
+          taskDir,
+          '--checklist',
+          path.basename(taskPath),
+          'blocked',
+          '--reason',
+          reason || 'completion was refused and this run has no operator',
+        ],
+        { encoding: 'utf8' },
       );
-  });
+      inherited(
+        ended.status === 0
+          ? 'This run has no operator, so the refusal above ended it: the signal is blocked with ' +
+              'that reason.\n'
+          : `This run has no operator and ending it failed: ${
+              ended.stderr || ended.error?.message || `exit ${ended.status}`
+            }\n`,
+      );
+    });
+  } else {
+    process.on('exit', (code) => {
+      if (code !== 0)
+        console.error(
+          'This autonomous run has no operator: a refused completion reaches no gate or reviewer. ' +
+            'Fix the refusal above and mark complete again, or end the run with it: ' +
+            `${path.join(taskDir, 'mark')} blocked --reason "<the refusal>"`,
+        );
+    });
+  }
 }
 if (terminalCommand === 'complete') materializeReviewCoverage(taskDir);
 
@@ -702,16 +782,34 @@ const timing =
     : { schemaVersion: 1, source: path.basename(taskPath), events: [] };
 const events = Array.isArray(timing.events) ? [...timing.events] : [];
 
-if (
-  !isStartCommand &&
-  target.stepNumber != null &&
-  !events.some(
-    (event) =>
-      event && (event.stepNumber === target.stepNumber || event.index === target.stepNumber - 1),
-  )
-) {
+const recordedEvent = events.findIndex(
+  (event) =>
+    event && (event.stepNumber === target.stepNumber || event.index === target.stepNumber - 1),
+);
+if (!isStartCommand && target.stepNumber != null && recordedEvent === -1) {
   events.push({ stepNumber: target.stepNumber, label: target.label, checkedAt: now });
+} else if (!isStartCommand && target.stepNumber != null) {
+  // Re-marking stays the no-op it has always been, with one exception: a step
+  // that declares its proof and whose evidence was rewritten after the first
+  // tick. Completion refuses evidence newer than the claim, and this is how the
+  // worker re-states the claim over the repaired proof — the sanctioned repair
+  // path, not a second tick.
+  const stale = proofArtifacts
+    .declared(taskDir, path.basename(taskPath), loadTerminalContract(taskDir, taskPath))
+    .filter((step) => step.stepNumber === target.stepNumber)
+    .some((step) => {
+      const evidence = proofArtifacts.evidence(taskDir, step.path);
+      const marked = Date.parse(
+        events[recordedEvent].remarkedAt ?? events[recordedEvent].checkedAt ?? '',
+      );
+      return evidence.present && !Number.isNaN(marked) && evidence.mtimeMs > marked;
+    });
+  if (stale) events[recordedEvent] = { ...events[recordedEvent], remarkedAt: now };
 }
+
+// Ticks recorded after a later-numbered step. Order alone says nothing about the
+// work, so it is kept with the run record and never refuses a mark.
+const outOfOrder = proofArtifacts.outOfOrderMarks(events);
 
 if (terminalCommand) {
   assertTerminalPackagedEvidence(taskPath, taskDir, terminalCommand);
@@ -726,6 +824,7 @@ const next = buildSignalUpdate(
   now,
   taskPath,
   taskDir,
+  outOfOrder,
 );
 // Re-marking a step that is already done changes nothing: the box was checked
 // and its timing event already exists, so the only difference from the stored

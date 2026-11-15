@@ -117,3 +117,51 @@ The existing frozen command, source hash, receipt reuse and completion/publicati
 enforcement apply to `ci.local_check` again, including retained declarations.
 No new command, flag, export or receipt format is introduced. The obsolete
 `CI_PARITY_STEP` placeholder stays retired; templates declare the step literally.
+
+## Amendment 5 (2026-11-15): Declared proof artifacts
+
+**Status:** Accepted, directed by the lead for F6 on 2026-11-15.
+
+A checked box records a claim; Amendment 4 covers the claim that a command ran.
+A proof step's claim is that evidence exists, and nothing checked it: in blind
+trial 9b117108 the worker checked "draft the recipe", "retain the failing
+baseline run" and "run the required recipe" between 19:18Z and 19:30Z, the only
+retained run was written at 20:05Z, no failing baseline run was ever retained,
+and the run still finished.
+
+A step may declare the artifact it produces on its own row:
+
+```
+- [ ] 9. Retain the failing baseline run [PROOF: artifacts/recipe-baseline-run]
+```
+
+The declaration is frozen into the task's terminal contract at init, beside the
+deterministic commands. `./mark N` refuses the tick while that path is absent or
+empty, and completion refuses a checked step whose evidence is missing or was
+written after the step's last mark; re-marking such a step restates the claim
+over repaired evidence, which is the sanctioned repair path. A step that declares
+nothing keeps its prior behaviour exactly, so a template that has not adopted the
+marker is unaffected.
+
+Marks recorded after a later-numbered step are kept in the signal as
+`checklistTiming.outOfOrder`. Order alone says nothing about the work, so it
+refuses nothing.
+
+No new flag, command or receipt format is introduced: the declaration travels in
+the existing contract and the refusals use the existing mark and completion
+paths.
+
+## Amendment 6 (2026-11-15): Unattended completion
+
+**Status:** Accepted, directed by the lead for F6 on 2026-11-15.
+
+A refused completion assumes somebody answers it. A blind eval trial that runs
+with `review: false` has nobody: in trial 8cb5aea2 an acceptance refusal parked
+the run at a gate in an unattended batch until an operator aborted it 18 minutes
+later, and the trial was lost rather than scored.
+
+The gateway stamps `unattendedCompletion` on the worker terminal contract when a
+run's `engineState.evalExperiment.review === false`. On such a run a refused
+`mark complete` ends the run with the refusal as its reason, so the trial is
+scored as a refusal naming its cause. Runs with a human gate keep today's
+behaviour, including the untestable override recorded by an authorized person.

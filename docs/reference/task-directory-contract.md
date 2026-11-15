@@ -246,6 +246,14 @@ commands. The frozen script MUST select changed files and affected tests rather
 than a full suite. Reviewers MUST only read existing CI results, receipts and logs.
 The retired `CI_PARITY_STEP` placeholder MUST NOT be used.
 
+A step that produces proof MAY declare the artifact it writes on its own row, as
+`- [ ] 9. Retain the failing baseline run [PROOF: artifacts/recipe-baseline-run]`.
+The path MUST be inside the task directory. `./mark N` MUST refuse the tick while
+that path is absent or empty, and completion MUST refuse a checked step whose
+declared proof is missing or was written after the step's last mark; the worker
+MUST re-mark the step to restate the claim over repaired evidence. A step without
+a declaration keeps its existing behaviour (ADR-064 Amendment 5).
+
 ### Mark and receipt rules
 
 1. `./mark N` MUST reuse a receipt only when the frozen command, current publishable-input hash, successful completion and recorded log integrity still validate. Reuse MUST leave the receipt and log unchanged. Otherwise mark MUST execute the declared command itself before checking the box. This also applies after a complete signal. Execution uses the Git checkout containing the task, or the caller's target checkout when a standalone task is outside Git. The process inherits the configured environment and runs without a login shell.

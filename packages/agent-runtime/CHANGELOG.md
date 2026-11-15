@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- A checklist step can declare the evidence it claims with `[PROOF: artifacts/...]`. `./mark N` refuses the tick while that path is absent or empty, and `mark complete` refuses a checked step whose evidence is missing or was written after the claim; re-marking such a step restates the claim over repaired evidence. Steps without a declaration are unaffected.
+- A refused `mark complete` on a run whose contract is marked unattended now ends the run with the refusal as its reason, instead of printing advice no operator will read.
+- Marks recorded after a later-numbered step are kept in the signal as `checklistTiming.outOfOrder`; they refuse nothing.
 
 ## 0.48.0 - 2026-11-15
 

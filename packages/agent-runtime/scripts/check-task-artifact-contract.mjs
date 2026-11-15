@@ -14,6 +14,7 @@ const {
   deterministicChecks,
 } = require('./worker-terminal-contract.cjs');
 const { SUBTASK_INDEX_REL, openSubtaskUnits } = require('./subtask-unit.cjs');
+const proofArtifacts = require('./proof-artifacts.cjs');
 const { acceptanceContractIssues, readAcceptanceLedger } = require('./acceptance-ledger.cjs');
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const workspaceProtocolRoot = path.resolve(packageRoot, '../protocol');
@@ -671,6 +672,23 @@ if (contractPath && terminalCommand && !existsSync(contractPath)) {
   }
   if (expanded.requireRecipeCoverage && hasRecipe && !fileExists('artifacts/recipe-coverage.md')) {
     issues.push('recipe.json exists but artifacts/recipe-coverage.md is missing');
+  }
+}
+
+// A checked proof step must have the evidence it declared, written no later than
+// the claim (proof-artifacts.cjs). A step that declares nothing is not inspected
+// here, so a checklist without the marker reaches completion exactly as before.
+if (terminalCommand !== 'blocked' && !proofMeasurement) {
+  const checklists = new Set(
+    (terminalContract?.proofArtifacts ?? []).map((step) => step.checklist),
+  );
+  checklists.add('CHECKLIST.md');
+  for (const checklist of checklists) {
+    try {
+      issues.push(...proofArtifacts.issues(taskDir, checklist, terminalContract));
+    } catch (error) {
+      issues.push(`Proof declarations cannot be validated: ${error.message}`);
+    }
   }
 }
 

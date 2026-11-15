@@ -1392,6 +1392,12 @@ export async function writeTaskFile(
   // ADR-062 Amendment 18: only a publication code review can check a `review` claim.
   terminalContract.publicationReview =
     humanGate && run.steps.some((step) => step.name === 'review' && step.status !== 'skipped');
+  // An eval trial that declares `review: false` runs in an unattended batch: no
+  // reviewer reads its output and no operator watches its gate, so a refused
+  // completion would park until someone noticed. The worker ends the run with
+  // the refusal instead, and the trial stays scorable.
+  if (run.engineState?.evalExperiment?.review === false)
+    terminalContract.unattendedCompletion = true;
 
   const taskData: Omit<TaskInitSpec, 'execution' | 'markCommand' | 'template'> = {
     taskDir: path.posix.join(slotVars.remoteRepo, vars.TASK_DIR),

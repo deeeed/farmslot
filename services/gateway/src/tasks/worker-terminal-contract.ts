@@ -79,6 +79,14 @@ const {
   };
 };
 
+const proofArtifacts = require('@farmslot/agent-runtime/scripts/proof-artifacts.cjs') as {
+  freeze: (
+    contract: WorkerTerminalContractDocument,
+    markdown: string,
+    checklist: string,
+  ) => WorkerTerminalContractDocument;
+};
+
 export {
   lintWorkerTemplateAgainstContract,
   resolveWorkerTerminalContract,
@@ -414,12 +422,19 @@ export async function syncTerminalContractForFlowOnSlot(
   }
   if (reportPath) contract = withTerminalReportPath(contract, reportPath, additionalArtifactPaths);
   const localCheck = getProjectField(projectVars.projectJson, 'ci.local_check');
-  if (localCheck) {
-    const checklist = checklistBasename ?? 'CHECKLIST.md';
+  const checklist = checklistBasename ?? 'CHECKLIST.md';
+  // One checklist read freezes both step-level declarations: the deterministic
+  // command this project configures, and the proof artifact a step declares.
+  // Proof declarations are frozen for every project, so a role checklist that
+  // carries them is covered even where no CI command is configured; a checklist
+  // that declares none leaves the contract unchanged.
+  if (localCheck || (await slotFileExists(vars, `${fullTaskDir}/${checklist}`))) {
     const markdown = await slotReadFile(vars, `${fullTaskDir}/${checklist}`);
-    contract = deterministicChecks.freeze(contract, markdown, checklist, {
-      'ci.local_check': localCheckWithBaseRef(localCheck, ciBaseRef),
-    });
+    if (localCheck)
+      contract = deterministicChecks.freeze(contract, markdown, checklist, {
+        'ci.local_check': localCheckWithBaseRef(localCheck, ciBaseRef),
+      });
+    contract = proofArtifacts.freeze(contract, markdown, checklist);
   }
   await writeTextFileOnSlot(
     vars,
