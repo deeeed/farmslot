@@ -1740,7 +1740,10 @@ export class MediaLightbox extends MediaLightboxState {
           this._logError = '';
         }
       } else {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if (!response.ok)
+          throw new Error(
+            response.status === 404 ? 'File not found (HTTP 404)' : `HTTP ${response.status}`,
+          );
         const text = await response.text();
         if (this._logUrl === url) {
           this._logText = text;
@@ -1796,7 +1799,7 @@ export class MediaLightbox extends MediaLightboxState {
       <div class="ml-md-body">
         ${this._logError ? html`<p role="status">Log unavailable: ${this._logError}</p>` : nothing}
         <pre class="ml-json-content">
-${this._logText || (this._logLoading ? 'Loading…' : 'No output recorded yet.')}</pre
+${this._logText || (this._logError ? '' : this._logLoading ? 'Loading…' : 'Log is empty.')}</pre
         >
       </div>
     </div>`;

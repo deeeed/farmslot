@@ -26,6 +26,7 @@ import {
   type FsRevealParams,
   type FsWriteParams,
   type FsWriteResult,
+  isTerminalRunStatus,
   type OkResult,
   type Run,
   type RunArtifactBundleRef,
@@ -891,6 +892,38 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
     const { getRun } = await loadRunStore();
     const run = getRun(runId);
     if (!run) throw new Error('Run not found.');
+    // Operation logs are live task files, not publication evidence. Resolve only
+    // canonical logs of the run that still owns this slot; pinned snapshots keep
+    // using retained storage, including after the slot is released or reused.
+    if (
+      /^artifacts\/operations\/[a-f0-9-]{36}\.log$/.test(requested) &&
+      !['recipeRunId', 'decisionId', 'bundleDigest', 'v'].some((key) =>
+        url.searchParams.has(key),
+      ) &&
+      run.slotId &&
+      run.taskFile &&
+      !isTerminalRunStatus(run.status)
+    ) {
+      const config = await loadConfig();
+      const project = await config.loadProjectVars(run.project);
+      const taskRelative = config.resolveTaskRelDir(
+        run.taskFile,
+        config.getOrchestratorTaskRoot(run.project, project.projectJson),
+      );
+      if (taskRelative === null) throw new Error('Run task is outside its project task root.');
+      const { vars, taskDir } = await config.resolveTaskPaths(run.slotId, taskRelative);
+      if (vars.projectName !== run.project) throw new Error('Slot project no longer matches run.');
+      await assertSlotRun(run.slotId, run.id);
+      const relativePath = path.relative(vars.remoteRepo, path.join(taskDir, requested));
+      const originalUrl = req.url;
+      req.url = `/api/file?slotId=${encodeURIComponent(run.slotId)}&path=${encodeURIComponent(relativePath)}`;
+      try {
+        await serveFile(req, res);
+      } finally {
+        req.url = originalUrl;
+      }
+      return;
+    }
     const {
       retainedRunBundleRef,
       retainedRunTaskDirectory,

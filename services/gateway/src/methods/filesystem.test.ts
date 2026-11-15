@@ -11,8 +11,11 @@ import test, { type TestContext } from 'node:test';
 
 import { WebSocket } from 'ws';
 
+import { DEFAULT_TASK_DIR } from '@farmslot/protocol';
+
 import { retainFixtureTask } from '../../../../packages/run-bundle/src/retained.test-support.js';
-import { poolDirectory } from '../core/config.js';
+import { getOrchestratorTaskRoot, poolDirectory, projectsDirectory } from '../core/config.js';
+import { statusFile } from '../core/state.js';
 import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
 import { handleNodeResponse } from '../fleet/node-rpc.js';
 import { runBundleStore } from '../run-completion/retained-artifacts.js';
@@ -253,6 +256,7 @@ async function withRemoteRun(
   );
 
   t.after(async () => {
+    updateRun(run.id, { status: 'done' });
     await deleteRun(run.id);
     await rm(root, { recursive: true, force: true });
     await rm(poolFile, { force: true });
@@ -758,4 +762,80 @@ test('serveFile maps oversized remote reads to HTTP 413', async (t) => {
 
   assert.equal(res.statusCode, 413);
   assert.match(res.body, /too large to proxy/);
+});
+
+test('live operation logs distinguish empty files, missing files and a reused slot', async (t) => {
+  await withRemoteRun(t, async ({ runId, taskDir, poolFile }) => {
+    const repo = path.dirname(taskDir);
+    const liveTask = path.join(repo, DEFAULT_TASK_DIR, 'operation-log');
+    const log = 'artifacts/operations/8576ed9d-221c-4f85-89fb-90d5664c9df5.log';
+    await mkdir(path.join(liveTask, 'artifacts/operations'), { recursive: true });
+    await writeFile(path.join(liveTask, 'TASK.md'), '# task');
+    await writeFile(path.join(liveTask, log), '');
+    const pool = JSON.parse(await readFile(poolFile, 'utf8'));
+    const project = `operation-log-${runId}`;
+    const projectDirectory = path.join(projectsDirectory(), project);
+    await mkdir(projectDirectory, { recursive: true });
+    await writeFile(path.join(projectDirectory, 'project.json'), JSON.stringify({ name: project }));
+    t.after(() => rm(projectDirectory, { recursive: true, force: true }));
+    pool.host = 'localhost';
+    pool.project = project;
+    pool.slots[0].repo = repo;
+    await writeFile(poolFile, JSON.stringify(pool));
+    updateRun(runId, {
+      status: 'monitoring',
+      project,
+      taskFile: path.join(getOrchestratorTaskRoot(project), 'operation-log/TASK.md'),
+    });
+    const previousStatus = await readFile(statusFile, 'utf8').catch((error) => {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    });
+    t.after(async () => {
+      if (previousStatus === null) await rm(statusFile, { force: true });
+      else await writeFile(statusFile, previousStatus);
+    });
+    const claim = async (owner: string) => {
+      const status = previousStatus ? JSON.parse(previousStatus) : { slots: [] };
+      status.slots = [
+        ...status.slots.filter((row: { slot: string }) => row.slot !== 'remote-slot'),
+        { slot: 'remote-slot', current_run_id: owner, lifecycle: 'busy' },
+      ];
+      await mkdir(path.dirname(statusFile), { recursive: true });
+      await writeFile(statusFile, JSON.stringify(status));
+    };
+    await claim(runId);
+    const server = createServer((req, res) => void serveRunArtifact(req, res));
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    t.after(() => {
+      server.closeAllConnections();
+      return new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    });
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    const url = `http://127.0.0.1:${address.port}/api/run-artifact?runId=${runId}&path=${encodeURIComponent(log)}`;
+    const empty = await fetch(url);
+    assert.equal(empty.status, 200, await empty.text());
+    assert.equal(empty.headers.get('Content-Length'), '0');
+    const suffix = await fetch(url, { headers: { Range: 'bytes=-65536' } });
+    assert.equal(suffix.status, 416);
+    assert.equal(suffix.headers.get('Content-Range'), 'bytes */0');
+    await writeFile(path.join(liveTask, log), 'hello\n');
+    const content = await fetch(url, { headers: { Range: 'bytes=-65536' } });
+    assert.equal(content.status, 206);
+    assert.equal(await content.text(), 'hello\n');
+    const pinned = await fetch(url + '&bundleDigest=' + 'a'.repeat(64));
+    assert.equal(pinned.status, 404);
+    assert.doesNotMatch(await pinned.text(), /hello/);
+    await rm(path.join(liveTask, log));
+    const missing = await fetch(url);
+    assert.equal(missing.status, 404);
+    await writeFile(path.join(liveTask, log), 'new owner secret');
+    await claim('another-run');
+    const reused = await fetch(url);
+    assert.equal(reused.status, 404);
+    assert.doesNotMatch(await reused.text(), /new owner secret/);
+  });
 });
