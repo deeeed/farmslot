@@ -157,6 +157,50 @@ for (const [ticket, record, fields] of dispatchRecords) {
   });
 }
 
+test('a run created with its own task file is not a collision with that directory', async () => {
+  const ticket = 'OWN-TASK';
+  const dir = path.join(
+    getOrchestratorTaskRoot(project),
+    flowDir('dev'),
+    `${ticket.toLowerCase()}-1115-145500`,
+  );
+  await mkdir(dir, { recursive: true });
+  const taskFile = path.join(dir, 'TASK.md');
+  await writeFile(taskFile, '# owned\n');
+  const current = createRun({ flowType: 'dev', project, ticketOrPr: ticket });
+  created.push(current.id);
+  updateRun(current.id, { taskFile });
+  const { existingDirs } = await precheckTaskDirCollision(getRun(current.id)!);
+  assert.deepEqual(existingDirs, []);
+});
+
+test("another run's task dir still refuses when this run already has its own", async () => {
+  const ticket = 'OWN-AND-OTHER';
+  const own = path.join(
+    getOrchestratorTaskRoot(project),
+    flowDir('dev'),
+    `${ticket.toLowerCase()}-1115-145500`,
+  );
+  await mkdir(own, { recursive: true });
+  const taskFile = path.join(own, 'TASK.md');
+  await writeFile(taskFile, '# owned\n');
+  await taskDir(ticket, null);
+  const current = createRun({ flowType: 'dev', project, ticketOrPr: ticket });
+  created.push(current.id);
+  updateRun(current.id, { taskFile });
+  const run = getRun(current.id)!;
+  const { existingDirs, ticketSlug } = await precheckTaskDirCollision(run);
+  assert.equal(
+    existingDirs.some((dir) => dir.endsWith('145500')),
+    false,
+  );
+  assert.ok(existingDirs.length > 0);
+  const choice = handleCollisionDecision(run.id, run, existingDirs, ticketSlug);
+  const decision = await pendingCollision(run.id);
+  assert.equal(resolveEngineDecision(decision.id, 'abort'), true);
+  await assert.rejects(choice, /Aborted: task dir collision/);
+});
+
 test('a dir the redispatching run wrote itself keeps the collision decision', async () => {
   const current = createRun({ flowType: 'dev', project, ticketOrPr: 'KEEP-SELF' });
   created.push(current.id);

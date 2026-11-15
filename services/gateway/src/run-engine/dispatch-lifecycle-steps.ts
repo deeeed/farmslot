@@ -7,6 +7,11 @@ import { prepareBlindTrialGit } from '../evals/blind-trial.js';
 import { dispatchExecute, nudgeDispatch, warmSessionHandoffDispatch } from '../methods/dispatch.js';
 import { slotPrepare } from '../methods/slot.js';
 import { ensureFrozenQaSource } from '../qa/frozen-source.js';
+import {
+  BEFORE_WORKER_LAUNCH,
+  WORKER_LAUNCH,
+  workerMayHaveStarted,
+} from '../run-lifecycle/pre-worker-failure.js';
 import { assertRunnerLaunchPrerequisites } from '../runners/launch-command.js';
 import { nudgeNativeWorker } from '../runners/native/worker-nudge.js';
 import {
@@ -587,9 +592,16 @@ export async function executeDispatchStep(
   context: DispatchStepContext,
 ): Promise<StepIO> {
   const { blockedRunError, stepPartialIO } = context;
+  const entry = ensureRunSlotBinding(runId);
+  stepPartialIO.set(runId, {
+    outputs: { failedPhase: workerMayHaveStarted(entry) ? WORKER_LAUNCH : BEFORE_WORKER_LAUNCH },
+  });
+  const onLaunchAttempt = () => {
+    const io = stepPartialIO.get(runId);
+    stepPartialIO.set(runId, { ...io, outputs: { ...io?.outputs, failedPhase: WORKER_LAUNCH } });
+  };
   // Restore the slot binding first: update-branch has no PREPARE step, and restart
   // recovery can mark one done before its task initialized.
-  ensureRunSlotBinding(runId);
   await completeRunTaskInitialization(runId, { onlyPending: true });
   const bound = ensureRunSlotBinding(runId);
   const taskExecution = taskExecutionAtDispatch(bound);
@@ -627,6 +639,7 @@ export async function executeDispatchStep(
   // to fresh dispatchExecute when the process is dead, runner/model swapped, or
   // the runner cannot accept tmux instructions (MANUAL-000065 / MANUAL-000043).
   if (current.engineState?.flags?.warmSessionReuse) {
+    onLaunchAttempt(); // Reusing an existing worker retains its checkout on uncertainty.
     const baselineStatus = await prepareWarmBudgetBaselineForHandoff(runId, current.slotId);
     if (baselineStatus === 'unavailable') {
       console.warn(
@@ -724,6 +737,7 @@ export async function executeDispatchStep(
   // context. The runner / model recorded on the run is informational here — the actual
   // runner is whatever's already running in the slot's role window.
   if (current.engineState?.flags?.nudgeReuse) {
+    onLaunchAttempt();
     // Defensive narrow: nudgeDispatch's signature accepts only PR-bound flow types,
     // and runCreate already rejects nudgeReuse for any other flow — re-assert here so
     // a future code path that sets the flag without going through runCreate still
@@ -809,7 +823,10 @@ export async function executeDispatchStep(
   const cliCommand = cliCommandParts.join(' ');
 
   // Stash partial I/O before the potentially-failing call
-  stepPartialIO.set(runId, { inputs, outputs: { cliCommand } });
+  stepPartialIO.set(runId, {
+    inputs,
+    outputs: { ...stepPartialIO.get(runId)?.outputs, cliCommand },
+  });
 
   // Collect sub-step events instead of discarding them
   const collector = createSubStepCollector();
@@ -877,6 +894,7 @@ export async function executeDispatchStep(
         {
           preparationRan: current.engineState?.flags?.skipPrepare !== true,
           preserveDispatchBaseline,
+          onLaunchAttempt,
         },
       );
       if (forcedLabel && slotVars) {

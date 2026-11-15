@@ -1087,6 +1087,8 @@ export async function dispatchExecute(
     preparationRan?: boolean;
     /** Slot activation keeps its run's existing evidence baseline after preparation. */
     preserveDispatchBaseline?: boolean;
+    /** Synchronous notification before a launch can reach a worker. */
+    onLaunchAttempt?: () => void;
   } = {},
 ): Promise<{ dispatched: boolean; launchCommand?: string }> {
   options.assertCurrent?.();
@@ -1364,9 +1366,19 @@ export async function dispatchExecute(
       project: projectJson,
       projectVars,
       accountLabel: params.providerAccountLabel,
-      beforeInput: runPressureGate,
-      beforeFreshLaunch: () =>
-        ensureRunRuntimeReady(params.slotId, currentRun.id, runPressureGate, options.assertCurrent),
+      beforeInput: async () => {
+        await runPressureGate();
+        options.onLaunchAttempt?.();
+      },
+      beforeFreshLaunch: async () => {
+        await ensureRunRuntimeReady(
+          params.slotId,
+          currentRun.id,
+          runPressureGate,
+          options.assertCurrent,
+        );
+        options.onLaunchAttempt?.();
+      },
       assertCurrent: options.assertCurrent,
       emit,
     });
@@ -1976,6 +1988,7 @@ export async function dispatchExecute(
         'launch',
         `Resuming reviewer session ${binding.runnerSessionId} from run ${binding.priorRunId.slice(0, 8)}...`,
       );
+      options.onLaunchAttempt?.();
       const attempt = await attemptRepeatReviewResume(repeatReviewResumePlan, runner, {
         vars,
         target: workerTarget,
@@ -2039,6 +2052,7 @@ export async function dispatchExecute(
       const beforeRoleRespawn = async () => {
         await runPressureGate();
         if (launchCarriesPrompt) await markPromptDeliveryStarted();
+        options.onLaunchAttempt?.();
       };
       await respawnRoleWindowWithCommand(
         vars,
@@ -2073,6 +2087,7 @@ export async function dispatchExecute(
       const launchCommand = await writeTmuxLaunchScript(vars, workerTarget, agentLaunch);
       if (launchCarriesPrompt) await markPromptDeliveryStarted();
       await runPressureGate();
+      options.onLaunchAttempt?.();
       const launched = await runLaunchPreludeAndSend({
         runner,
         target: workerTarget,
