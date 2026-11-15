@@ -286,13 +286,20 @@ function runLaunch(opts, acquireLock) {
   };
   // Any outcome but an owned listener stops what this launch started, a ps or
   // lsof failure mid-wait included. The launch markers stay until ownership is
-  // proven, except when a foreign process took the port from a browser this
-  // launch saw start and has now stopped: then nothing is left to quarantine,
-  // and the refusal's hint (a free port) works as given.
+  // proven, except when the exact launch was seen and has now stopped, or a
+  // foreign process took the port from its stopped browser. Unseen submissions
+  // stay quarantined because Launch Services may still start them later.
   const awaitOwnedListener = (stopOptions, firstSightingMs) => {
     let waited;
     try {
-      waited = waitForOwnedCdpPid(cdpPort, ownedBrowser, profile, opts.progress, firstSightingMs);
+      waited = waitForOwnedCdpPid(
+        cdpPort,
+        ownedBrowser,
+        profile,
+        opts.progress,
+        firstSightingMs,
+        runtimeNonce,
+      );
     } catch (error) {
       try {
         stopProfileProcessesSync(profile, stopOptions);
@@ -309,7 +316,7 @@ function runLaunch(opts, acquireLock) {
     }
     if (waited.pid !== undefined) return waited.pid;
     stopProfileProcessesSync(profile, stopOptions);
-    if (waited.foreignPids && waited.seen) clearLaunchMarkers();
+    if ((waited.foreignPids && waited.seen) || waited.observedLaunch) clearLaunchMarkers();
     throw ownedListenerMissing(waited);
   };
   const logFd = fs.openSync(opts.chromeLog, 'a');
@@ -570,11 +577,12 @@ function foreignPortError(port, pids, next = 'pick a free --cdp-port, or stop th
 // profile. Either must hold for a second, so a brief ps/lsof gap is not taken
 // for a failure. "Exited" counts only once a profile process has been seen, or
 // after `firstSightingMs` with none. `seen` says whether one was.
-function waitForOwnedCdpPid(port, ownedBrowser, profile, progress, firstSightingMs) {
+function waitForOwnedCdpPid(port, ownedBrowser, profile, progress, firstSightingMs, runtimeNonce) {
   const budgetMs = 30_000;
   const confirmMs = 1000;
   const startedAt = Date.now();
   let seen = false;
+  let observedLaunch = false;
   let exitedSince = null;
   let foreignSince = null;
   let reportedAt = startedAt;
@@ -583,8 +591,13 @@ function waitForOwnedCdpPid(port, ownedBrowser, profile, progress, firstSighting
     const pid = listeners.find(ownedBrowser);
     if (pid !== undefined) return { pid };
     const now = Date.now();
-    if (profileProcessPids(profile).length > 0) {
+    const profilePids = profileProcessPids(profile);
+    if (profilePids.length > 0) {
       seen = true;
+      // A nonce binds this appearance to the submitted launch, not another profile owner.
+      observedLaunch ||= profilePids.some((pid) =>
+        processCommand(pid)?.includes(`--farmslot-runtime-nonce=${runtimeNonce}`),
+      );
       exitedSince = null;
     } else if (seen || now - startedAt >= firstSightingMs) {
       exitedSince ??= now;
@@ -605,7 +618,9 @@ function waitForOwnedCdpPid(port, ownedBrowser, profile, progress, firstSighting
     }
     spawnSync('sleep', ['0.1']);
   }
-  return { seen };
+  // A known-started launch can be released after its processes are confirmed stopped.
+  // Unseen Launch Services submissions retain their quarantine against delayed startup.
+  return { seen, observedLaunch };
 }
 
 function assertIsolatedProfile(profile) {
