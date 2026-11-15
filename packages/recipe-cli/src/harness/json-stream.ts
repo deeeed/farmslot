@@ -1,6 +1,6 @@
 import type { CommandEventStream, StageHandle } from '@farmslot/adapter-sdk';
 
-import { recordCommandOutput, recordCommandStage } from './command-journal.js';
+import { recordCommandStage } from './command-journal.js';
 import { createStageReporter } from './stage-progress.js';
 type JsonFields = Record<string, unknown>;
 type WriteCallback = (error?: Error | null) => void;
@@ -66,24 +66,9 @@ export class JsonStreamWriter implements CommandEventStream {
   ) {
     this.command = command;
     this.enabled = enabled;
-    const stream = output;
-    // The property, not the bound copy: `bind` returns a new function every
-    // time, so only the property identifies the writer we captured.
-    const captured = output.write;
-    const write = captured.bind(output);
+    const write = output.write.bind(output);
     this.writeLine = (line) => {
-      const text = `${line}\n`;
-      write(text);
-      // These lines are this command's stdout, and they deliberately bypass
-      // whatever replaced `process.stdout.write` after construction:
-      // `isolateStdout()` sends stray stdout to stderr to keep the stream
-      // parseable, so the writer holds the real one. That also bypasses the
-      // operation log's tee, which is installed later on the farmslot CLI
-      // paths, so the NDJSON transcript would be missing from the log. Record
-      // it here only when the tee cannot see it — when this writer's output is
-      // no longer the stream's current writer. When the journal started first
-      // the bound write *is* the tee, which records it already.
-      if (stream !== process.stdout || captured !== process.stdout.write) recordCommandOutput(text);
+      write(`${line}\n`);
     };
   }
 

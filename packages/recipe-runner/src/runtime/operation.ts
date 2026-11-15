@@ -164,11 +164,30 @@ export class OperationRecord {
   output(chunk: string | Uint8Array): void {
     if (chunk.length === 0) return;
     const bytes = typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.byteLength;
-    // A chunk that would cross the cap is dropped whole rather than split, so
-    // the log never ends mid-line and the file stays under the limit.
-    if (this.logBytes + bytes > MAX_OPERATION_LOG_BYTES) {
+    const room = MAX_OPERATION_LOG_BYTES - this.logBytes;
+    if (room <= 0) {
       this.droppedBytes += bytes;
       this.value.lastOutputAt = new Date().toISOString();
+      return;
+    }
+    // A write that crosses the cap keeps the part that fits. Dropping it whole
+    // would lose an entire leaf: `spawnScript` hands a command's complete
+    // output over in one call, up to its 64 MiB buffer, so a failed step's
+    // stderr arrives as a single write and whole-chunk dropping would store
+    // none of it. The kept part ends on a line break when there is one in
+    // range, so the log does not stop mid-line.
+    if (bytes > room) {
+      const buffer = typeof chunk === 'string' ? Buffer.from(chunk) : Buffer.from(chunk);
+      let kept = buffer.subarray(0, room);
+      const lastBreak = kept.lastIndexOf(0x0a);
+      if (lastBreak > 0) kept = kept.subarray(0, lastBreak + 1);
+      this.observe(() => {
+        fs.appendFileSync(this.value.logPath, kept);
+        this.logBytes += kept.length;
+        this.droppedBytes += bytes - kept.length;
+        this.value.lastOutputAt = new Date().toISOString();
+        this.flush();
+      });
       return;
     }
     this.observe(() => {
@@ -186,7 +205,7 @@ export class OperationRecord {
       this.observe(() =>
         fs.appendFileSync(
           this.value.logPath,
-          `\n[log truncated at ${MAX_OPERATION_LOG_BYTES} bytes; ${this.droppedBytes} further bytes dropped]\n`,
+          `\n[log truncated: kept ${this.logBytes} bytes of a ${MAX_OPERATION_LOG_BYTES} byte limit; ${this.droppedBytes} further bytes dropped]\n`,
         ),
       );
     this.value.exitCode = exitCode;

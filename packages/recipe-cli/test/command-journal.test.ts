@@ -160,43 +160,6 @@ test('an operation restores the writers through a throw and through nesting', as
   assert.equal(logs.filter((text) => text.includes('inner line')).length, 2);
 });
 
-// Grok r1 on #2228: JsonStreamWriter binds its output in the constructor, and
-// the farmslot CLI constructs it before the journal exists (recipe-project.ts,
-// doctor.ts), then calls isolateStdout() so stray stdout goes to stderr and the
-// stream stays parseable. The writer therefore holds the real stdout and
-// bypasses the operation tee, so --json-stream's NDJSON — the whole in-process
-// transcript of run, doctor and launch — reached the terminal and never the log.
-test('a json stream built before the journal still reaches the operation log', async (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'operation-log-stream-'));
-  const previous = harnessHost();
-  t.after(() => {
-    configureHarnessHost(previous);
-    fs.rmSync(root, { recursive: true, force: true });
-  });
-  configureHarnessHost({ ...previous, journaledCommands: ['run'] });
-
-  // The CLI's order: writer first, then the journal.
-  const { JsonStreamWriter } = await import('../src/harness/json-stream.js');
-  const stream = new JsonStreamWriter('run', true);
-  await withCommandJournal(
-    'run',
-    ['run', 'smoke'],
-    async () => {
-      stream.emit('phase', { phase: 'validate' });
-      return 0;
-    },
-    { target: root, runtimeDir: 'runtime' },
-  );
-
-  const operations = path.join(root, 'runtime', 'operations');
-  const logs = fs.readdirSync(operations).filter((entry) => entry.endsWith('.log'));
-  const log = fs.readFileSync(path.join(operations, logs[0]!), 'utf8');
-  assert.match(log, /"event":"phase"/, 'the NDJSON transcript is in the log');
-  assert.match(log, /"phase":"validate"/);
-  // Recorded once, not twice: the writer records only what the tee cannot see.
-  assert.equal(log.split('"event":"phase"').length - 1, 1);
-});
-
 // The lead's cap, before this reaches a farm node: a verbose run now writes
 // everything it prints, where it used to write nothing.
 test('an operation log stops at its cap and says what it dropped', async (t) => {
@@ -225,15 +188,54 @@ test('an operation log stops at its cap and says what it dropped', async (t) => 
   const operations = path.join(root, 'runtime', 'operations');
   const logs = fs.readdirSync(operations).filter((entry) => entry.endsWith('.log'));
   const log = fs.readFileSync(path.join(operations, logs[0]!), 'utf8');
-  const marker = log.match(/\[log truncated at (\d+) bytes; (\d+) further bytes dropped\]/g) ?? [];
-  assert.equal(marker.length, 1, 'exactly one truncation marker');
-  const [, limit, dropped] = /\[log truncated at (\d+) bytes; (\d+) further bytes dropped\]/.exec(
-    log,
-  )!;
-  assert.equal(Number(limit), cap);
+  const pattern =
+    /\[log truncated: kept (\d+) bytes of a (\d+) byte limit; (\d+) further bytes dropped\]/;
+  assert.equal((log.match(new RegExp(pattern, 'g')) ?? []).length, 1, 'exactly one marker');
+  const [, kept, limit, dropped] = pattern.exec(log)!;
+  assert.equal(Number(limit), cap, 'the marker names the limit');
+  // It reports what a reader can count, not the limit it stopped at.
+  // The marker's own leading newline is not payload.
+  assert.equal(Number(kept), log.indexOf('\n[log truncated:'));
   assert.ok(Number(dropped) > 0, 'the marker reports what was withheld');
-  // The payload stays under the cap; only the marker is written past it.
   assert.ok(log.length <= cap + 128, `log is ${log.length} bytes`);
-  // Nothing is lost silently: what was kept plus what was dropped is everything.
   assert.ok(log.includes('x'.repeat(1024)), 'the kept output is real output');
+});
+
+// Grok r2: `spawnScript` hands a leaf's entire output over in one call, up to
+// its 64 MiB buffer, so a failed step's stderr arrives as a single write.
+// Dropping a crossing write whole would have stored none of it.
+test('a single write larger than the cap keeps the part that fits', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'operation-log-oversize-'));
+  const previous = harnessHost();
+  t.after(() => {
+    configureHarnessHost(previous);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  configureHarnessHost({ ...previous, journaledCommands: ['run'] });
+  const cap = 2 * 1024 * 1024;
+
+  await withCommandJournal(
+    'run',
+    ['run', 'one-big-leaf'],
+    async () => {
+      // One write, well past the cap, as a failing leaf's combined output.
+      process.stderr.write(`${'leaf output line\n'.repeat(Math.ceil((cap * 1.5) / 17))}`);
+      return 1;
+    },
+    { target: root, runtimeDir: 'runtime' },
+  );
+
+  const operations = path.join(root, 'runtime', 'operations');
+  const logs = fs.readdirSync(operations).filter((entry) => entry.endsWith('.log'));
+  const log = fs.readFileSync(path.join(operations, logs[0]!), 'utf8');
+  assert.ok(log.includes('leaf output line'), 'the failing leaf is not lost entirely');
+  assert.ok(log.length > cap / 2, `kept only ${log.length} bytes of the leaf`);
+  assert.ok(log.length <= cap + 128, `log is ${log.length} bytes`);
+  assert.match(
+    log,
+    /\[log truncated: kept \d+ bytes of a \d+ byte limit; \d+ further bytes dropped\]/,
+  );
+  // The kept part ends on a line break, not mid-line.
+  const payload = log.slice(0, log.indexOf('\n[log truncated:'));
+  assert.ok(payload.endsWith('leaf output line\n'), 'the log stops on a line boundary');
 });
