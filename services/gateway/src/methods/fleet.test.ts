@@ -32,6 +32,59 @@ import {
   withFollowUpRefresh,
 } from './fleet.js';
 
+test('late agent observations respect the current recovery fence', async (t) => {
+  const cases = [
+    {
+      name: 'stale working cannot overwrite confirmed idle',
+      phase: 'releasing',
+      current: 'idle',
+      observed: 'working',
+      expected: 'idle',
+    },
+    {
+      name: 'stale idle cannot overwrite working during teardown',
+      phase: 'releasing',
+      current: 'working',
+      observed: 'idle',
+      expected: 'working',
+    },
+    {
+      name: 'unfenced working observations still apply',
+      phase: null,
+      current: 'idle',
+      observed: 'working',
+      expected: 'working',
+    },
+    {
+      name: 'unfenced idle observations still apply',
+      phase: null,
+      current: 'working',
+      observed: 'idle',
+      expected: 'idle',
+    },
+  ];
+  for (const scenario of cases) {
+    await t.test(scenario.name, () => {
+      const recovery = scenario.phase ? { id: 'recovery-46f923ba' } : undefined;
+      const before = makeRefreshRow({
+        lifecycle: scenario.phase ? 'busy' : 'ready',
+        phase: scenario.phase,
+        agent: scenario.current,
+        current_run_id: null,
+        slot_epoch: 70,
+        ...(recovery ? { workspace_recovery: recovery } : {}),
+      });
+      const observed = makeRefreshRow({ agent: scenario.observed });
+      const after = buildFleetRefreshSnapshot([before], [observed], [], 'now').slots[0]!;
+      assert.equal(after.agent, scenario.expected);
+      assert.equal(after.slot_epoch, 70);
+      assert.equal(after.phase, scenario.phase);
+      assert.equal(after.current_run_id, null);
+      assert.deepEqual(after.workspace_recovery, recovery);
+    });
+  }
+});
+
 test('refresh preserves the owner and epoch of a running review through idle probes', () => {
   const run = makeRun({
     id: 'review-run',

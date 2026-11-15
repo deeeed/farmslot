@@ -361,6 +361,7 @@ export interface SlotCheckResult {
 }
 
 interface PreviousSlotStatus {
+  agent?: string;
   repo_blocker?: string;
   repo_observed_at?: string;
   workspace_recovery?: unknown;
@@ -883,7 +884,8 @@ export function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus
     ...(r.session ? { session: r.session } : {}),
     ...(r.repo ? { repo: r.repo } : {}),
     linked_worktree: r.linkedWorktree ?? false,
-    agent: r.agent,
+    // Teardown owns this state until its fence ends; the probe may predate worker shutdown.
+    agent: phase === SLOT_PHASE_RELEASING ? (prev.agent ?? r.agent) : r.agent,
     enabled: r.enabled,
     mode: r.mode,
     dispatchable: r.dispatchable,
