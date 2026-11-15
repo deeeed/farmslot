@@ -239,3 +239,62 @@ test('a single write larger than the cap keeps the part that fits', async (t) =>
   const payload = log.slice(0, log.indexOf('\n[log truncated:'));
   assert.ok(payload.endsWith('leaf output line\n'), 'the log stops on a line boundary');
 });
+
+// Codex r3: the cap's edges. A byte prefix would leave a partial line in the
+// log, and with a byte or two of room it would cut a multi-byte character in
+// half and write bytes that are not valid UTF-8. Whole lines only, so a write
+// that cannot end at a newline is withheld.
+test('the cap keeps whole lines and never splits a character', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'operation-log-lines-'));
+  const previous = harnessHost();
+  t.after(() => {
+    configureHarnessHost(previous);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  configureHarnessHost({ ...previous, journaledCommands: ['run'] });
+  const cap = 2 * 1024 * 1024;
+
+  await withCommandJournal(
+    'run',
+    ['run', 'edges'],
+    async () => {
+      // Fill in whole lines, then trim the room down to 8 bytes exactly, so
+      // the writes that follow are larger than what is left.
+      const line = `${'y'.repeat(31)}\n`;
+      const fill = Math.floor(cap / line.length) - 1;
+      process.stdout.write(line.repeat(fill));
+      const gap = cap - fill * line.length - 8;
+      process.stdout.write(`${'z'.repeat(gap - 1)}\n`);
+      // Each of these crosses the cap, and no newline falls inside the 8 bytes
+      // of room, so each is withheld whole rather than cut to a fragment.
+      process.stdout.write('tail without a line break\n');
+      process.stdout.write(`${'é'.repeat(8)}\n`);
+      return 0;
+    },
+    { target: root, runtimeDir: 'runtime' },
+  );
+
+  const operations = path.join(root, 'runtime', 'operations');
+  const logs = fs.readdirSync(operations).filter((entry) => entry.endsWith('.log'));
+  const bytes = fs.readFileSync(path.join(operations, logs[0]!));
+  // The marker's own leading newline belongs to the marker, not the payload.
+  const payload = bytes.subarray(0, bytes.indexOf(Buffer.from('\n[log truncated:')));
+
+  // Nothing partial: the payload is whole lines of the filler and nothing else.
+  assert.ok(payload.length > 0);
+  assert.equal(payload.at(-1), 0x0a, 'the payload ends at a line break');
+  assert.ok(!payload.includes(Buffer.from('tail without a break')), 'no fragment was kept');
+  // Valid UTF-8 throughout: a round trip cannot introduce a replacement char.
+  const text = payload.toString('utf8');
+  assert.ok(!text.includes('\uFFFD'), 'no character was split');
+  assert.ok(Buffer.from(text, 'utf8').equals(payload), 'the log is byte-exact UTF-8');
+  assert.ok(payload.length <= cap);
+
+  // What was withheld is still accounted for.
+  const marker =
+    /\[log truncated: kept (\d+) bytes of a (\d+) byte limit; (\d+) further bytes dropped\]/.exec(
+      bytes.toString('utf8'),
+    )!;
+  assert.equal(Number(marker[1]), payload.length, 'the marker counts what is there');
+  assert.ok(Number(marker[3]) > 0, 'the withheld writes are reported');
+});

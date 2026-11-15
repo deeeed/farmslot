@@ -177,10 +177,19 @@ export class OperationRecord {
     // none of it. The kept part ends on a line break when there is one in
     // range, so the log does not stop mid-line.
     if (bytes > room) {
-      const buffer = typeof chunk === 'string' ? Buffer.from(chunk) : Buffer.from(chunk);
-      let kept = buffer.subarray(0, room);
-      const lastBreak = kept.lastIndexOf(0x0a);
-      if (lastBreak > 0) kept = kept.subarray(0, lastBreak + 1);
+      const buffer = Buffer.from(chunk as Uint8Array | string);
+      const lastBreak = buffer.subarray(0, room).lastIndexOf(0x0a);
+      // Whole lines only. A byte-prefix would leave a partial line in the log
+      // and could cut a multi-byte character in half, writing bytes that are
+      // not valid UTF-8. When the room left cannot hold a complete line, the
+      // write is withheld entirely and counted as dropped — that costs at most
+      // the tail of one line, where keeping the prefix would corrupt the file.
+      if (lastBreak < 0) {
+        this.droppedBytes += bytes;
+        this.value.lastOutputAt = new Date().toISOString();
+        return;
+      }
+      const kept = buffer.subarray(0, lastBreak + 1);
       this.observe(() => {
         fs.appendFileSync(this.value.logPath, kept);
         this.logBytes += kept.length;
