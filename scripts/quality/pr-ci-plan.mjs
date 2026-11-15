@@ -29,6 +29,44 @@ export function balance(items, count, weight = () => 1) {
   return bins.map(({ items: assigned }) => assigned);
 }
 
+/** Match the runner: mocks/serial first, then four sorted round-robin lanes. */
+export function estimateTestMs(files, workers, durations, lanes) {
+  let sequential = 0;
+  const parallel = Array(workers).fill(0);
+  let index = 0;
+  for (const file of [...files].sort()) {
+    const ms = durations[file] ?? 1500;
+    if ((lanes.get(file) ?? 'parallel') !== 'parallel') sequential += ms;
+    else parallel[index++ % workers] += ms;
+  }
+  return sequential + Math.max(0, ...parallel);
+}
+
+export function balanceTestShards(files, count, workers, durations, lanes) {
+  const bins = Array.from({ length: Math.min(count, files.length) }, () => ({ files: [], ms: 0 }));
+  const weight = (file) =>
+    (durations[file] ?? 1500) / ((lanes.get(file) ?? 'parallel') === 'parallel' ? workers : 1);
+  for (const file of [...files].sort((a, b) => weight(b) - weight(a) || a.localeCompare(b))) {
+    let best;
+    for (const [index, bin] of bins.entries()) {
+      const ms = estimateTestMs([...bin.files, file], workers, durations, lanes);
+      const other = Math.max(
+        0,
+        ...bins.filter((_, candidate) => candidate !== index).map((b) => b.ms),
+      );
+      // Minimize the critical path, then idle runner time. Packing available
+      // parallel lanes avoids paying twelve setups for twelve mostly idle jobs.
+      const score = [Math.max(ms, other), ms - bin.ms, ms, index];
+      const different = best && score.findIndex((value, i) => value !== best.score[i]);
+      if (!best || (different >= 0 && score[different] < best.score[different]))
+        best = { bin, ms, score };
+    }
+    best.bin.files.push(file);
+    best.bin.ms = best.ms;
+  }
+  return bins.filter((bin) => bin.files.length);
+}
+
 export function withoutBuilds(script) {
   return script
     .split('&&')
@@ -41,7 +79,15 @@ function command(id, args, seconds = 20, cwd = '.') {
   return { id, args, seconds, cwd };
 }
 
-export function createPrPlan({ root, changed, workspaces, selected, durations = {} }) {
+export function createPrPlan({
+  root,
+  changed,
+  workspaces,
+  selected,
+  durations = {},
+  lanes,
+  taskDurations = {},
+}) {
   const eligible = workspaceSuiteFiles(workspaces, root);
   selected = selected.filter((file) => !ownerOf(file, workspaces) || eligible.has(file));
   const impact = runtimeImpactFiles(changed);
@@ -69,6 +115,9 @@ export function createPrPlan({ root, changed, workspaces, selected, durations = 
       selected.push('packages/agent-runtime/test/deterministic-checks.test.cjs');
   }
   selected = [...new Set(selected)];
+  // The source graph already classified files. Without that metadata, estimate
+  // serial execution rather than rereading sources or assuming concurrency.
+  lanes ??= new Map(selected.map((file) => [file, 'serial']));
   const tasks = [];
   const jobs = [];
   const assigned = new Set();
@@ -76,11 +125,20 @@ export function createPrPlan({ root, changed, workspaces, selected, durations = 
     const suite = selected.filter(
       (file) => file.startsWith(`${dir}/`) && file.endsWith('.test.ts'),
     );
-    for (const [index, chunk] of balance(
-      suite,
-      count,
-      (file) => durations[file] ?? 1500,
-    ).entries()) {
+    let chunks;
+    if (id === 'gateway') {
+      const full =
+        suite.length === [...eligible].filter((file) => file.startsWith(`${dir}/`)).length;
+      let shards = full ? Math.min(count, suite.length) : 1;
+      chunks = balanceTestShards(suite, shards, workers, durations, lanes);
+      while (shards < Math.min(count, suite.length) && chunks.some(({ ms }) => ms > 120_000))
+        chunks = balanceTestShards(suite, ++shards, workers, durations, lanes);
+    } else
+      chunks = balance(suite, count, (file) => durations[file] ?? 1500).map((files) => ({
+        files,
+        ms: estimateTestMs(files, workers, durations, lanes),
+      }));
+    for (const [index, { files: chunk, ms }] of chunks.entries()) {
       const task = command(
         `${id}-${index + 1}`,
         [
@@ -94,14 +152,14 @@ export function createPrPlan({ root, changed, workspaces, selected, durations = 
           String(workers),
           ...chunk.map((file) => path.posix.relative(runnerDir, file)),
         ],
-        120,
+        Math.max(1, Math.ceil(ms / 1000)),
       );
       task.tests = chunk;
       jobs.push({ id: task.id, tasks: [task] });
       chunk.forEach((file) => assigned.add(file));
     }
   }
-  splitTests('gateway', 'services/gateway', ciOnly ? 1 : 8, 'tsconfig.json', 4);
+  splitTests('gateway', 'services/gateway', ciOnly ? 1 : 12, 'tsconfig.json', 4);
   splitTests(
     'command-center-ui',
     'apps/command-center/ui',
@@ -320,28 +378,57 @@ export function createPrPlan({ root, changed, workspaces, selected, durations = 
   let scriptIndex = 0;
   for (const [files, args] of scriptGroups) {
     for (const chunk of balance(files, Math.min(4, files.length))) {
-      tasks.push(command(`other-selected-tests-${++scriptIndex}`, [...args, ...chunk], 30));
+      const seconds =
+        2 + Math.ceil(chunk.reduce((ms, file) => ms + (durations[file] ?? 1500), 0) / 2000);
+      tasks.push(command(`other-selected-tests-${++scriptIndex}`, [...args, ...chunk], seconds));
       chunk.forEach((file) => assigned.add(file));
     }
   }
   if (selected.some((file) => !assigned.has(file)))
     throw new Error('Selected tests lack a CI owner');
+  for (const task of tasks) {
+    const sample = taskDurations[task.id];
+    if (!sample) continue;
+    let ms = sample.ms;
+    if (sample.referenceFiles && task.tests) {
+      const reference = estimateTestMs(sample.referenceFiles, sample.workers, durations, lanes);
+      const current = estimateTestMs(
+        task.tests.filter((file) => file.endsWith('.test.ts')),
+        sample.workers,
+        durations,
+        lanes,
+      );
+      ms = sample.fixedMs + (reference ? ((sample.ms - sample.fixedMs) * current) / reference : 0);
+    }
+    task.seconds = Math.max(1, Math.ceil(ms / 1000));
+  }
   // Keep the expensive whole-program analysis independent of cheap guards.
   // Adding even one small task to it spends the PR's remaining wall budget.
-  const isolated = tasks.filter((task) => task.seconds > 150);
+  const isolated = tasks.filter((task) => task.seconds > 120);
   for (const [index, task] of isolated.entries())
     jobs.push({ id: `checks-${index + 1}`, tasks: [task] });
-  const grouped = tasks.filter((task) => task.seconds <= 150);
+  const grouped = tasks.filter((task) => task.seconds <= 120);
   for (const [index, chunk] of balance(
     grouped,
     Math.min(
       8 - isolated.length,
-      Math.max(1, Math.ceil(grouped.reduce((total, task) => total + task.seconds, 0) / 150)),
+      Math.max(1, Math.ceil(grouped.reduce((total, task) => total + task.seconds, 0) / 120)),
     ),
     (task) => task.seconds,
   ).entries())
     jobs.push({ id: `checks-${isolated.length + index + 1}`, tasks: chunk });
-  return { schemaVersion: 1, changed, selected, jobs };
+  const owners = new Map(selected.map((file) => [file, new Set()]));
+  for (const task of jobs.flatMap((job) => job.tasks))
+    for (const file of [...(task.tests ?? []), ...task.args]) owners.get(file)?.add(task.id);
+  for (const [file, candidates] of owners) {
+    if (!candidates.size)
+      for (const [id, prefix] of specialOwners)
+        if (file.startsWith(prefix) && tasks.some((task) => task.id === id)) candidates.add(id);
+    if (candidates.size !== 1)
+      throw new Error(`Selected test ${file} requires one owner: ${[...candidates].join(', ')}`);
+  }
+  const testOwners = Object.fromEntries([...owners].map(([file, ids]) => [file, [...ids][0]]));
+  return { schemaVersion: 1, changed, selected, jobs, testOwners };
 }
 
 export function prChangedFiles(root, pullRequest) {
@@ -400,8 +487,18 @@ if (isMainModule(import.meta.url)) {
   const workspaces = workspaceTestCatalog(root);
   const graph = readGraph(root, files, workspaces);
   const selected = selectAffectedTests({ files, changed, workspaces, graph });
-  const durations = JSON.parse(readFileSync('scripts/quality/ci-test-durations.json', 'utf8'));
-  const plan = createPrPlan({ root, files, changed, workspaces, selected, durations });
+  const { files: durations, tasks: taskDurations } = JSON.parse(
+    readFileSync('scripts/quality/pr-ci-durations.json', 'utf8'),
+  );
+  const plan = createPrPlan({
+    root,
+    changed,
+    workspaces,
+    selected,
+    durations,
+    lanes: graph.lanes,
+    taskDurations,
+  });
   if (replay) plan.replayPr = Number(replay);
   mkdirSync('.cache/pr-ci', { recursive: true });
   writeFileSync('.cache/pr-ci/plan.json', `${JSON.stringify(plan, null, 2)}\n`);
