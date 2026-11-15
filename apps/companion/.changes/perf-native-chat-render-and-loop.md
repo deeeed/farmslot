@@ -1,1 +1,0 @@
-- Keep long native conversations smooth while they stream and while you type: the transcript renders only the messages on screen, and a message that did not change is not drawn again.

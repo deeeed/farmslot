@@ -1,1 +1,0 @@
-- The review-curation proof script reads GitHub through a local HTTP fixture instead of a fake `gh`.

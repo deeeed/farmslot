@@ -1,1 +1,0 @@
-- Restore local native conversations from links that omit the execution node instead of showing a blank screen.

@@ -1,1 +1,0 @@
-- Render native ACP tool edits with the shared diff formatter and persistent tool disclosure.
