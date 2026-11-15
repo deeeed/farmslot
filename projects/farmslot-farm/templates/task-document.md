@@ -9,4 +9,4 @@ MANIFEST="{{recipe_manifest_path}}"
 WRAPPER="{{recipe_validate_wrapper}}"
 ```
 
-The step that writes a recipe draws on `{{recipe_quality_path}}`.
+The step that writes a recipe requires `{{recipe_quality_path}}`: read it as part of that step.
