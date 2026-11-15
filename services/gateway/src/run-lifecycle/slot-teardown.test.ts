@@ -7,6 +7,7 @@ import {
   cancelledRunHoldReason,
   FLOW_STEPS,
   type Run,
+  slotRecoveryEligibility,
   type SlotResource,
 } from '@farmslot/protocol';
 
@@ -1926,6 +1927,60 @@ test('a pre-worker idle-return failure stays held instead of publishing a ready 
     assert.equal(slotRow?.current_run_id, RUN_ID);
     assert.equal(slotRow?.cleanup_run_id, null);
     assert.notEqual(slotRow?.lifecycle, 'ready');
+    const lifecycle = slotRow?.lifecycle;
+    const phase = slotRow?.phase;
+    assert.ok(lifecycle === 'busy' || lifecycle === 'held');
+    assert.ok(phase === 'occupied');
+    const eligibility = slotRecoveryEligibility({
+      slot: SLOT_ID,
+      machine: 'fixture',
+      project: 'fixture',
+      platform: 'cli',
+      branch: 'fix/retained',
+      agent: 'idle',
+      enabled: true,
+      dispatchable: false,
+      lifecycle,
+      phase,
+      warm: false,
+      heldReason: typeof slotRow?.held_reason === 'string' ? slotRow.held_reason : undefined,
+      cleanupRunId: null,
+      handoffRunId: null,
+      currentRunId: RUN_ID,
+      health: { ssh: 'OK', device: '-', devserver: 'OFF', cdp: 'OFF', fixtures: 'OK' },
+      taskId: null,
+      taskFile: null,
+      dispatchedAt: null,
+      completedAt: null,
+      runner: null,
+      model: null,
+      deviceName: null,
+      taskPhase: null,
+      taskStepProgress: null,
+      workspace: {
+        epoch: 1,
+        currentRunId: RUN_ID,
+        cleanupRunId: null,
+        handoffRunId: null,
+        branch: 'fix/retained',
+        headSha: '1'.repeat(40),
+        dirtyFingerprint: 'fixture',
+        recoveryId: null,
+        observedAt: new Date().toISOString(),
+        defaultBranch: 'main',
+        localDefaultSha: '1'.repeat(40),
+        defaultFetchedAt: null,
+        remoteDefaultSha: '1'.repeat(40),
+        remoteObservedAt: null,
+        behind: 0,
+        remoteAdvanced: false,
+        publication: 'baseline',
+        dirtyCount: 0,
+        unpublishedCount: 0,
+        terminalOwner: true,
+      },
+    });
+    assert.equal(eligibility.allowed, true, eligibility.detail);
   };
   assert.equal(await retryOccupiedRunSlot(SLOT_ID), true);
 });

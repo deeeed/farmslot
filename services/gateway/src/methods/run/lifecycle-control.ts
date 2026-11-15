@@ -455,7 +455,13 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
           // Re-enter safe recovery under the same terminal owner and epoch.
           // A held cleanup retry must not publish ready before Git returns.
           ...(preWorkerFailure && before?.cleanup_run_id === run.id
-            ? { current_run_id: run.id, cleanup_run_id: null }
+            ? {
+                current_run_id: run.id,
+                cleanup_run_id: null,
+                lifecycle: 'busy',
+                phase: 'occupied',
+                held_reason: null,
+              }
             : {}),
         },
       );
