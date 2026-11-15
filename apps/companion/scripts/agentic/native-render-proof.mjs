@@ -133,8 +133,9 @@ if (phase === 'pair') {
     for (outcome = ''; outcome !== 'Companion paired' && outcome !== 'Pairing failed'; ) {
       assert(Date.now() < deadline, 'Pairing did not finish');
       const alert = device('alert', 'get');
-      if (!alert.success)
-        assert.equal(alert.error?.message, 'alert not found', JSON.stringify(alert.error));
+      // A busy simulator runner (RUNNER_BUSY) asks for a retry; the deadline bounds it.
+      if (!alert.success && !['alert not found'].includes(alert.error?.message ?? ''))
+        assert.equal(alert.error?.code, 'RUNNER_BUSY', JSON.stringify(alert.error));
       const text = alert.success ? JSON.stringify(alert.data) : '';
       const answer = answers.find(([title]) => text.includes(title));
       if (!answer) {
