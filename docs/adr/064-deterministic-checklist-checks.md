@@ -117,3 +117,110 @@ The existing frozen command, source hash, receipt reuse and completion/publicati
 enforcement apply to `ci.local_check` again, including retained declarations.
 No new command, flag, export or receipt format is introduced. The obsolete
 `CI_PARITY_STEP` placeholder stays retired; templates declare the step literally.
+
+## Amendment 5 (2026-11-15): Declared proof artifacts
+
+**Status:** Accepted, directed by the lead for F6 on 2026-11-15.
+
+A checked box records a claim; Amendment 4 covers the claim that a command ran.
+A proof step's claim is that evidence exists, and nothing checked it: in blind
+trial 9b117108 the worker checked "draft the recipe", "retain the failing
+baseline run" and "run the required recipe" between 19:18Z and 19:30Z, the only
+retained run was written at 20:05Z, no failing baseline run was ever retained,
+and the run still finished.
+
+A step may declare the artifact it produces on its own row:
+
+```
+- [ ] 9. Retain the failing baseline run [PROOF: artifacts/recipe-baseline-run]
+```
+
+The declaration is frozen into the task's terminal contract at init, beside the
+deterministic commands. `./mark N` refuses the tick while that path is absent or
+empty, and completion refuses a checked step whose evidence is missing or was
+written after the step's last mark; re-marking such a step restates the claim
+over repaired evidence, which is the sanctioned repair path. A step that declares
+nothing keeps its prior behaviour exactly, so a template that has not adopted the
+marker is unaffected.
+
+Marks recorded after a later-numbered step are kept in the signal as
+`checklistTiming.outOfOrder`. Order alone says nothing about the work, so it
+refuses nothing.
+
+A declared path is evidence only inside the task directory: it is resolved, and a
+path that lands elsewhere through a symlink is refused, so a populated directory
+the run never produced cannot stand in for the proof.
+
+Completion inspects the declarations of the checklist that is completing, the one
+`resolveChecklistTarget` names. A reviewer finishing its own checklist answers for
+its own declarations; the worker's unproven step is the thing the reviewer reports
+on, not a reason to refuse its report.
+
+No new flag, command or receipt format is introduced: the declaration travels in
+the existing contract and the refusals use the existing mark and completion
+paths.
+
+## Amendment 6 (2026-11-15): Unattended completion
+
+**Status:** Accepted, directed by the lead for F6 on 2026-11-15.
+
+A refused completion assumes somebody answers it. A blind eval trial that runs
+with `review: false` has nobody: in trial 8cb5aea2 an acceptance refusal parked
+the run at a gate in an unattended batch until an operator aborted it 18 minutes
+later, and the trial was lost rather than scored.
+
+The gateway stamps `unattendedCompletion` on the worker terminal contract when a
+run's `engineState.evalExperiment.review === false`. On such a run a refused
+`mark complete` ends the run with the refusal as its reason, so the trial is
+scored as a refusal naming its cause. Runs with a human gate keep today's
+behaviour, including the untestable override recorded by an authorized person.
+
+## Amendment 7 (2026-11-15): Checklist order, and optional steps
+
+**Status:** Accepted, directed by Arthur on 2026-11-15 after blind trial 40d98f79.
+
+Amendment 5 refuses a claim whose evidence is absent. It does not refuse a claim
+made in the wrong place: in trial 40d98f79 the worker applied a fix with no
+baseline behind it and then ran `mark 13`, the changed-file CI gate, while it was
+still on step 1 ("let me not overthink the checklist marks"). The mark engine
+accepted a step twelve places ahead of the work.
+
+Steps are claimed in order. `./mark N` is refused while any earlier step is
+unchecked, deterministic steps included, and completion refuses a checklist whose
+checked steps have a gap behind them.
+
+The exception is declared by the template, never by the worker. A step title may
+carry a condition:
+
+```
+- [ ] 11. Exit early if already fixed or not reproduced [OPTIONAL: the bug still reproduces]
+```
+
+Such a step may be skipped with `./mark 11 --skip "<reason>"`. The reason is
+recorded in the ledger beside the step (`skipped: true` with the reason in
+`checklistTiming`), and a declared proof artifact is not required of it, because
+the skip claims the work did not apply. A step without the marker can never be skipped: the worker does it, or
+stops the run with `mark blocked`. The grant is the frozen contract, not the file
+on disk: a marker a worker writes into its own checklist grants nothing, so a
+step it was refused cannot be waived by marking that row optional. A task whose
+contract predates the marker therefore has no optional steps at all. Completion refuses a recorded skip on a step
+the template never declared optional.
+
+The marker is frozen into the task's terminal contract at init beside the
+deterministic commands and the proof declarations, and it is one spec across every
+project: the same `[OPTIONAL: <when>]` in a pack template, a recipe-cook template
+or a role checklist.
+
+One step cannot carry both `[OPTIONAL: <when>]` and `[DETERMINISTIC: <reference>]`.
+The two make contradictory claims about the same row: a deterministic step is
+settled by a command receipt, and an optional step is one the worker may declare
+inapplicable, leaving nothing for the gates that ask for that receipt — package
+preparation, the terminal signal probe and the artifact checker each ask
+separately. Carrying the skip to all of them is three places to keep in step, so
+freezing the declarations refuses the combination instead, naming the step. A
+template that wants both splits the row: the optional work, and the check that
+runs regardless. No pack, recipe-cook or role template declares both today.
+
+Good models already work in order, so nothing changes for them. What changes is
+that skipping ahead now fails loudly at the mark, where the worker can still fix
+it, instead of silently producing a finished-looking run with no baseline.

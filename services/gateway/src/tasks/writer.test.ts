@@ -756,6 +756,49 @@ test('writeTaskFile allows comparison siblings with different variants', async (
   assert.equal(handoff.task.sourceKind, 'text');
 });
 
+test('an eval trial with review disabled is written as unattended', async (t) => {
+  let attended = '';
+  let unattended = '';
+  t.after(async () => {
+    for (const file of [attended, unattended].filter(Boolean)) {
+      await rm(path.dirname(file), { recursive: true, force: true });
+    }
+  });
+
+  // Run 8cb5aea2 stalled because a refused completion waited for a human in a
+  // batch nobody was watching. `review: false` is the batch saying so.
+  const blind = makeRun(`UNATTENDED-${Date.now()}`, 'claude');
+  blind.engineState = {
+    evalExperiment: {
+      review: false,
+      experimentId: 'experiment-unattended',
+      experimentKey: 'experiment-key-unattended',
+      experimentManifestPath: '/tmp/experiment.json',
+      packagePath: '/tmp/candidate.result-package.json',
+      candidateStrategyFingerprint: 'abc123',
+      trialId: 'trial-unattended',
+    },
+  };
+  unattended = await writeTaskFixture(blind);
+  const blindContract = JSON.parse(
+    await readFile(
+      path.join(path.dirname(unattended), 'inputs', 'worker-terminal-contract.json'),
+      'utf-8',
+    ),
+  ) as { unattendedCompletion?: boolean };
+  assert.equal(blindContract.unattendedCompletion, true);
+
+  // Every other run keeps its gate, so its refusals reach the person who owns it.
+  attended = await writeTaskFixture(makeRun(`ATTENDED-${Date.now()}`, 'codex'));
+  const attendedContract = JSON.parse(
+    await readFile(
+      path.join(path.dirname(attended), 'inputs', 'worker-terminal-contract.json'),
+      'utf-8',
+    ),
+  ) as { unattendedCompletion?: boolean };
+  assert.equal(attendedContract.unattendedCompletion, undefined);
+});
+
 test('mark shim records the slot-synced engine and honours FARMSLOT_MARK_CMD', async (t) => {
   let taskFile = '';
   t.after(async () => {

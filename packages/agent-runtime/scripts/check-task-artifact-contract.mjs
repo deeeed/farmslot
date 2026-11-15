@@ -14,6 +14,9 @@ const {
   deterministicChecks,
 } = require('./worker-terminal-contract.cjs');
 const { SUBTASK_INDEX_REL, openSubtaskUnits } = require('./subtask-unit.cjs');
+const proofArtifacts = require('./proof-artifacts.cjs');
+const checklistOrder = require('./checklist-order.cjs');
+const { resolveChecklistTarget } = require('./checklist-target.cjs');
 const { acceptanceContractIssues, readAcceptanceLedger } = require('./acceptance-ledger.cjs');
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const workspaceProtocolRoot = path.resolve(packageRoot, '../protocol');
@@ -94,6 +97,8 @@ const rawArgs = process.argv.slice(3);
 const flags = new Set();
 let contractPath;
 let terminalCommand;
+let proofChecklist;
+let proofSignal;
 for (let i = 0; i < rawArgs.length; i += 1) {
   const arg = rawArgs[i];
   if (arg === '--contract') {
@@ -103,6 +108,18 @@ for (let i = 0; i < rawArgs.length; i += 1) {
   }
   if (arg === '--terminal') {
     terminalCommand = rawArgs[i + 1];
+    i += 1;
+    continue;
+  }
+  // The caller's selection, when it has one: `mark --checklist X --signal Y`
+  // completes X and keeps its claims in Y, which the manifest need not name.
+  if (arg === '--proof-checklist') {
+    proofChecklist = rawArgs[i + 1];
+    i += 1;
+    continue;
+  }
+  if (arg === '--proof-signal') {
+    proofSignal = rawArgs[i + 1];
     i += 1;
     continue;
   }
@@ -671,6 +688,25 @@ if (contractPath && terminalCommand && !existsSync(contractPath)) {
   }
   if (expanded.requireRecipeCoverage && hasRecipe && !fileExists('artifacts/recipe-coverage.md')) {
     issues.push('recipe.json exists but artifacts/recipe-coverage.md is missing');
+  }
+}
+
+// A checked proof step must have the evidence it declared, written no later than
+// the claim (proof-artifacts.cjs). A step that declares nothing is not inspected
+// here, so a checklist without the marker reaches completion exactly as before.
+if (terminalCommand !== 'blocked' && !proofMeasurement) {
+  try {
+    // Only the checklist that is completing: a reviewer finishing REVIEW.md
+    // answers for its own declarations, never for the worker's CHECKLIST.md,
+    // whose unproven steps are what the reviewer is reporting on. The caller's
+    // own selection wins over the manifest, which it may not have written.
+    const checklist = proofChecklist ?? resolveChecklistTarget(taskDir).checklist;
+    issues.push(...proofArtifacts.issues(taskDir, checklist, terminalContract, proofSignal));
+    // Steps are claimed in order, and only a step the template declared optional
+    // may be skipped. A checklist edited around the mark engine shows up here.
+    issues.push(...checklistOrder.issues(taskDir, checklist, terminalContract, proofSignal));
+  } catch (error) {
+    issues.push(`Proof declarations cannot be validated: ${error.message}`);
   }
 }
 

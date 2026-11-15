@@ -314,6 +314,9 @@ test('workspace completion refuses a terminal signal written around an open chil
     await mark('start');
     const started = JSON.parse(await readFile(path.join(f.task, 'SIGNAL.json'), 'utf8'));
     f.run.agentContexts![0].signalAttemptId = started.attemptId;
+    // Steps are claimed in order (ADR-064 Amendment 7), and a child on step 2
+    // claims the work reached it, so step 1 is done first.
+    await mark('1');
     await mark(
       'sub',
       'start',

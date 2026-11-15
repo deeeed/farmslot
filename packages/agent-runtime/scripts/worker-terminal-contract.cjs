@@ -4,8 +4,8 @@ const { createHash, randomUUID } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const {
   enumerateChecklistCheckboxes,
-  terminalContractInputForChecklist,
   resolveChecklistTarget,
+  readFrozenTerminalContract,
 } = require('./checklist-target.cjs');
 const { atomicWrite } = require('./mark-io.cjs');
 
@@ -518,11 +518,9 @@ function readOptionalJson(file) {
 }
 
 function deterministicContract(taskDir, checklist) {
-  return (
-    readOptionalJson(path.join(taskDir, terminalContractInputForChecklist(checklist))) ??
-    readOptionalJson(path.join(taskDir, 'inputs', 'worker-terminal-contract.json')) ??
-    {}
-  );
+  // One reader for the frozen contract, shared with the mark engine and the
+  // order checks so their idea of "this checklist's contract" cannot drift.
+  return readFrozenTerminalContract(taskDir, checklist) ?? {};
 }
 
 function recordedDeterministicSteps(taskDir, checklist) {

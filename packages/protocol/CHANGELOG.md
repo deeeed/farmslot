@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- `WorkerTerminalContractDocument` carries `proofArtifacts`, the evidence each declaring checklist step claims, and `unattendedCompletion`, the gateway's statement that no person answers a refusal on this run.
 
 ## 0.86.0 - 2026-11-15
 

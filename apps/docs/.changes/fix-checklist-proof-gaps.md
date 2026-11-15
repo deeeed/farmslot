@@ -1,0 +1,1 @@
+- The task-directory contract reference now documents the step-level `[PROOF: <path>]` and `[OPTIONAL: <when>]` declarations and the rule that checklist steps are claimed in order.

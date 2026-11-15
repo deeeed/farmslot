@@ -41,6 +41,42 @@ const { deterministicChecks } = require('../../scripts/worker-terminal-contract.
     ) => WorkerTerminalContractDocument;
   };
 };
+const proofArtifacts = require('../../scripts/proof-artifacts.cjs') as {
+  freeze: (
+    contract: WorkerTerminalContractDocument,
+    markdown: string,
+    checklist: string,
+  ) => WorkerTerminalContractDocument;
+};
+const checklistOrder = require('../../scripts/checklist-order.cjs') as {
+  freeze: (
+    contract: WorkerTerminalContractDocument,
+    markdown: string,
+    checklist: string,
+  ) => WorkerTerminalContractDocument;
+};
+
+/**
+ * Freeze every step-level declaration from one checklist read: the commands a
+ * step must execute (ADR-064), the artifact a proof step must produce, and the
+ * steps the template declared optional.
+ */
+function freezeChecklistDeclarations(
+  contract: WorkerTerminalContractDocument,
+  markdown: string,
+  checklist: string,
+  commands?: Record<string, string>,
+): WorkerTerminalContractDocument {
+  return checklistOrder.freeze(
+    proofArtifacts.freeze(
+      deterministicChecks.freeze(contract, markdown, checklist, commands),
+      markdown,
+      checklist,
+    ),
+    markdown,
+    checklist,
+  );
+}
 
 /** Generic default: this package's mark engine. A control plane or harness passes its own. */
 export function defaultMarkCommand(): string {
@@ -99,7 +135,7 @@ export async function writeTaskDir(input: WriteTaskDirInput): Promise<WrittenTas
   const taskDocument = path.join(taskDir, TASK_DOCUMENT);
   await writeFile(taskDocument, input.taskMarkdown, 'utf-8');
 
-  const terminalContract = deterministicChecks.freeze(
+  const terminalContract = freezeChecklistDeclarations(
     input.terminalContract,
     input.checklistMarkdown ?? input.taskMarkdown,
     input.checklistMarkdown === null ? TASK_DOCUMENT : EXECUTION_CHECKLIST_DOCUMENT,
@@ -117,7 +153,7 @@ export async function ensureTaskRuntime(
   if (input.checklistMarkdown !== null) {
     input = {
       ...input,
-      terminalContract: deterministicChecks.freeze(
+      terminalContract: freezeChecklistDeclarations(
         input.terminalContract,
         input.checklistMarkdown,
         EXECUTION_CHECKLIST_DOCUMENT,

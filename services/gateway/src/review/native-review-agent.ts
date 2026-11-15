@@ -632,6 +632,10 @@ async function runNativeReviewAttempt(
           reportPath: feedbackRelPath,
           additionalArtifactPaths: [resultRelPath],
           target,
+          // A recovery does not rewrite the template, and the reviewer has been
+          // editing this checklist, so its optional declarations stay as the
+          // first sync froze them.
+          templateJustWritten: !recovering,
         }),
       );
       if (recovering && context?.nativeSession?.generation) {

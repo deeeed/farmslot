@@ -79,6 +79,21 @@ const {
   };
 };
 
+const proofArtifacts = require('@farmslot/agent-runtime/scripts/proof-artifacts.cjs') as {
+  freeze: (
+    contract: WorkerTerminalContractDocument,
+    markdown: string,
+    checklist: string,
+  ) => WorkerTerminalContractDocument;
+};
+const checklistOrder = require('@farmslot/agent-runtime/scripts/checklist-order.cjs') as {
+  freeze: (
+    contract: WorkerTerminalContractDocument,
+    markdown: string,
+    checklist: string,
+  ) => WorkerTerminalContractDocument;
+};
+
 export {
   lintWorkerTemplateAgainstContract,
   resolveWorkerTerminalContract,
@@ -187,6 +202,14 @@ export async function validateTerminalSignalArtifacts(
   const taskDir = path.posix.dirname(signalJsonPath);
 
   const checklistBasename = checklistBasenameFromTaskPath(checklistTaskFile);
+  // A cold dispatch records the task document, not the checklist: TASK.md sits
+  // beside CHECKLIST.md, which is where a split run's declarations are frozen.
+  // Only a role checklist is a selection worth passing; for anything else the
+  // slot resolves its own target, the same way the worker's mark does.
+  const roleChecklistBasename =
+    checklistBasename && checklistBasename !== 'TASK.md' && checklistBasename !== 'CHECKLIST.md'
+      ? checklistBasename
+      : undefined;
   const contractInput = checklistBasename
     ? terminalContractInputForChecklist(checklistBasename)
     : WORKER_TERMINAL_CONTRACT_INPUT;
@@ -283,6 +306,12 @@ export async function validateTerminalSignalArtifacts(
     shellQuote(contractPath),
     '--terminal',
     terminalCommand,
+    // The same selection the worker completed with: the checklist this signal
+    // belongs to, and the signal file itself. Without them the checker would
+    // re-derive both and could judge another checklist's declarations.
+    ...(roleChecklistBasename ? ['--proof-checklist', shellQuote(roleChecklistBasename)] : []),
+    '--proof-signal',
+    shellQuote(path.posix.basename(signalJsonPath)),
     ...(requiresAcceptanceLedger ? ['--require-acceptance-status'] : []),
     ...artifactContractWaiverArgs(signal),
   ];
@@ -372,6 +401,30 @@ export function localCheckWithBaseRef(command: string, ciBaseRef?: string | null
     : command;
 }
 
+/**
+ * The optional steps a previous sync already froze for this checklist, or
+ * undefined when it has no contract yet. An existing contract is the grant of
+ * record: a later sync keeps it rather than re-reading a file the agent owns.
+ */
+async function retainedOptionalSteps(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  fullTaskDir: string,
+  checklist: string,
+): Promise<
+  NonNullable<WorkerTerminalContractDocument['optionalSteps']> | 'unreadable' | undefined
+> {
+  const input = `${fullTaskDir}/${terminalContractInputForChecklist(checklist)}`;
+  if (!(await slotFileExists(vars, input))) return undefined;
+  try {
+    const existing: WorkerTerminalContractDocument = JSON.parse(await slotReadFile(vars, input));
+    return (existing.optionalSteps ?? []).filter((step) => step.checklist === checklist);
+  } catch {
+    // Unreadable is not 'grants nothing': a transient read failure must not
+    // rewrite the contract without the grant the template made.
+    return 'unreadable';
+  }
+}
+
 export async function syncTerminalContractForFlowOnSlot(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   taskDir: string,
@@ -381,6 +434,14 @@ export async function syncTerminalContractForFlowOnSlot(
   checklistBasename?: string,
   additionalArtifactPaths: readonly string[] = [],
   ciBaseRef?: string | null,
+  /**
+   * Set only by a caller that just rendered this checklist from its template.
+   * `[OPTIONAL: ...]` is a privilege, and after dispatch the file on the slot is
+   * the agent's to edit, so a later sync must not adopt a marker from it: the
+   * reviewer or fix worker would otherwise grant itself the skip the mark
+   * refused (ADR-064 Amendment 7).
+   */
+  options: { templateJustWritten?: boolean } = {},
 ): Promise<void> {
   const fullTaskDir = `${vars.remoteRepo}/${taskDirRelPath(taskDir, '')}`;
   const parentContractPath = `${fullTaskDir}/${WORKER_TERMINAL_CONTRACT_INPUT}`;
@@ -414,12 +475,26 @@ export async function syncTerminalContractForFlowOnSlot(
   }
   if (reportPath) contract = withTerminalReportPath(contract, reportPath, additionalArtifactPaths);
   const localCheck = getProjectField(projectVars.projectJson, 'ci.local_check');
-  if (localCheck) {
-    const checklist = checklistBasename ?? 'CHECKLIST.md';
+  const checklist = checklistBasename ?? 'CHECKLIST.md';
+  // One checklist read freezes both step-level declarations: the deterministic
+  // command this project configures, and the proof artifact a step declares.
+  // Proof declarations are frozen for every project, so a role checklist that
+  // carries them is covered even where no CI command is configured; a checklist
+  // that declares none leaves the contract unchanged.
+  if (localCheck || (await slotFileExists(vars, `${fullTaskDir}/${checklist}`))) {
     const markdown = await slotReadFile(vars, `${fullTaskDir}/${checklist}`);
-    contract = deterministicChecks.freeze(contract, markdown, checklist, {
-      'ci.local_check': localCheckWithBaseRef(localCheck, ciBaseRef),
-    });
+    if (localCheck)
+      contract = deterministicChecks.freeze(contract, markdown, checklist, {
+        'ci.local_check': localCheckWithBaseRef(localCheck, ciBaseRef),
+      });
+    contract = proofArtifacts.freeze(contract, markdown, checklist);
+    const retained = await retainedOptionalSteps(vars, fullTaskDir, checklist);
+    // Leave an unreadable contract alone rather than replace it with one that
+    // has lost its optional grant: the next sync, or its own checks, report it.
+    if (retained === 'unreadable') return;
+    if (options.templateJustWritten || retained === undefined)
+      contract = checklistOrder.freeze(contract, markdown, checklist);
+    else if (retained.length) contract = { ...contract, optionalSteps: retained };
   }
   await writeTextFileOnSlot(
     vars,
@@ -623,7 +698,8 @@ export async function validateDeterministicChecksForRun(
   const checklists = [...new Set(declaredChecks.map((check) => check.checklist))];
   const evaluate = [
     'const {deterministicChecks}=require(process.argv[1]);',
-    'const results=JSON.parse(process.argv[3]).map(c=>deterministicChecks.evaluate(process.argv[2],c));',
+    'const results=JSON.parse(process.argv[3]).map(c=>(',
+    '{...deterministicChecks.evaluate(process.argv[2],c),checklist:c}));',
     'process.stdout.write(JSON.stringify(results));',
     'process.exitCode=results.some(r=>r.issues.length)?1:0;',
   ].join('');
@@ -641,9 +717,11 @@ export async function validateDeterministicChecksForRun(
   );
   if (result.exitCode !== 0)
     throw new Error(`Deterministic CI gate blocked: ${result.stderr || result.stdout}`);
-  const evaluated: Array<{ checks: DeterministicChecklistCheck[]; issues: string[] }> = JSON.parse(
-    result.stdout,
-  );
+  const evaluated: Array<{
+    checks: DeterministicChecklistCheck[];
+    issues: string[];
+    checklist?: string;
+  }> = JSON.parse(result.stdout);
   const checks = evaluated.flatMap((item) => item.checks);
   if (
     !checks.length ||
@@ -662,7 +740,7 @@ export async function validateDeterministicChecksForRun(
   ) {
     throw new Error(
       `Deterministic CI gate blocked: no verified receipts were returned for ${taskDir}/${input}, ` +
-        `which declares ${declaredChecks.length} check(s). Verify the selected task/checklist contract and rerun its CI mark step.`,
+        `which declares ${declaredChecks.length} check(s) this run still owes. Verify the selected task/checklist contract and rerun its CI mark step.`,
     );
   }
   return checks;

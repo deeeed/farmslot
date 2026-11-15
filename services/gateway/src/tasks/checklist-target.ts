@@ -121,6 +121,8 @@ interface RoleTerminalOptions {
   additionalArtifactPaths?: readonly string[];
   target?: ChecklistTarget;
   ciBaseRef?: string | null;
+  /** True only when the caller just rendered this role checklist from its template. */
+  templateJustWritten?: boolean;
 }
 
 export async function syncChecklistTargetForRole(
@@ -141,6 +143,7 @@ export async function syncChecklistTargetForRole(
     target.checklist,
     terminal?.additionalArtifactPaths,
     terminal?.ciBaseRef,
+    { templateJustWritten: terminal?.templateJustWritten === true },
   );
 }
 

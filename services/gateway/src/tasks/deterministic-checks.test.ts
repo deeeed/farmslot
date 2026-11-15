@@ -276,6 +276,165 @@ test('every nested role inherits only the frozen parent review authority', async
   }
 });
 
+test('a role checklist freezes its declared proof artifacts, with or without a CI command', async (t) => {
+  const { root } = await task(t);
+  const contractFile = path.join(root, 'inputs', 'worker-terminal-contract.json');
+  await writeFile(contractFile, JSON.stringify(resolveWorkerTerminalContract(null, 'dev')));
+  const vars = {
+    projectName: 'farmslot-farm',
+    remoteRepo: path.dirname(root),
+    host: 'localhost',
+    machine: 'local',
+  } as Parameters<typeof syncTerminalContractForFlowOnSlot>[0];
+  await writeFile(
+    path.join(root, 'REVIEW.md'),
+    '- [ ] 1. Role work\n- [ ] 2. Run the recipe [PROOF: artifacts/recipe-run]\n',
+  );
+  await syncTerminalContractForFlowOnSlot(
+    vars,
+    path.basename(root),
+    'review',
+    undefined,
+    'artifacts/role-report.md',
+    'REVIEW.md',
+  );
+  const scoped = JSON.parse(
+    await readFile(path.join(root, 'inputs/worker-terminal-contract.REVIEW.json'), 'utf8'),
+  );
+  // farmslot-farm configures no ci.local_check, so this contract is the case the
+  // declarations would have been skipped in: they are frozen regardless.
+  assert.equal(scoped.deterministicChecks, undefined);
+  assert.deepEqual(scoped.proofArtifacts, [
+    { checklist: 'REVIEW.md', stepNumber: 2, path: 'artifacts/recipe-run' },
+  ]);
+
+  // A checklist that declares nothing leaves the field off entirely.
+  await writeFile(path.join(root, 'CI-FIX.md'), '- [ ] 1. Role work\n');
+  await syncTerminalContractForFlowOnSlot(
+    vars,
+    path.basename(root),
+    'ci-fix',
+    undefined,
+    'artifacts/role-report.md',
+    'CI-FIX.md',
+  );
+  const plain = JSON.parse(
+    await readFile(path.join(root, 'inputs/worker-terminal-contract.CI-FIX.json'), 'utf8'),
+  );
+  assert.equal('proofArtifacts' in plain, false);
+});
+
+test('a later role sync keeps the optional steps the template granted, not the ones in the file', async (t) => {
+  const { root } = await task(t);
+  await writeFile(
+    path.join(root, 'inputs', 'worker-terminal-contract.json'),
+    JSON.stringify(resolveWorkerTerminalContract(null, 'dev')),
+  );
+  const vars = {
+    projectName: 'farmslot-farm',
+    remoteRepo: path.dirname(root),
+    host: 'localhost',
+    machine: 'local',
+  } as Parameters<typeof syncTerminalContractForFlowOnSlot>[0];
+  const roleContract = path.join(root, 'inputs/worker-terminal-contract.REVIEW.json');
+  const sync = (templateJustWritten: boolean) =>
+    syncTerminalContractForFlowOnSlot(
+      vars,
+      path.basename(root),
+      'review',
+      undefined,
+      'artifacts/role-report.md',
+      'REVIEW.md',
+      [],
+      null,
+      { templateJustWritten },
+    );
+
+  // The gateway renders the template, then syncs: that first sync is the grant.
+  await writeFile(
+    path.join(root, 'REVIEW.md'),
+    '- [ ] 1. Read the diff\n- [ ] 2. Smoke the domain [OPTIONAL: the project declares no smoke]\n',
+  );
+  await sync(true);
+  assert.deepEqual(JSON.parse(await readFile(roleContract, 'utf8')).optionalSteps, [
+    { checklist: 'REVIEW.md', stepNumber: 2, when: 'the project declares no smoke' },
+  ]);
+
+  // The reviewer then marks its own row optional and a recovery re-syncs. The
+  // file is the agent's to edit after dispatch, so it grants nothing.
+  await writeFile(
+    path.join(root, 'REVIEW.md'),
+    '- [ ] 1. Read the diff [OPTIONAL: I would rather not]\n' +
+      '- [ ] 2. Smoke the domain [OPTIONAL: the project declares no smoke]\n',
+  );
+  await sync(false);
+  assert.deepEqual(
+    JSON.parse(await readFile(roleContract, 'utf8')).optionalSteps,
+    [{ checklist: 'REVIEW.md', stepNumber: 2, when: 'the project declares no smoke' }],
+    'a later sync must not adopt a marker the worker wrote',
+  );
+
+  // A genuine template rewrite says so, and only then are the declarations reread.
+  await sync(true);
+  assert.deepEqual(JSON.parse(await readFile(roleContract, 'utf8')).optionalSteps, [
+    { checklist: 'REVIEW.md', stepNumber: 1, when: 'I would rather not' },
+    { checklist: 'REVIEW.md', stepNumber: 2, when: 'the project declares no smoke' },
+  ]);
+});
+
+test('a role contract that cannot be read is left alone, not rewritten without its grant', async (t) => {
+  const { root } = await task(t);
+  await writeFile(
+    path.join(root, 'inputs', 'worker-terminal-contract.json'),
+    JSON.stringify(resolveWorkerTerminalContract(null, 'dev')),
+  );
+  const vars = {
+    projectName: 'farmslot-farm',
+    remoteRepo: path.dirname(root),
+    host: 'localhost',
+    machine: 'local',
+  } as Parameters<typeof syncTerminalContractForFlowOnSlot>[0];
+  const roleContract = path.join(root, 'inputs/worker-terminal-contract.REVIEW.json');
+  const sync = (templateJustWritten: boolean) =>
+    syncTerminalContractForFlowOnSlot(
+      vars,
+      path.basename(root),
+      'review',
+      undefined,
+      'artifacts/role-report.md',
+      'REVIEW.md',
+      [],
+      null,
+      { templateJustWritten },
+    );
+
+  await writeFile(
+    path.join(root, 'REVIEW.md'),
+    '- [ ] 1. Read the diff\n- [ ] 2. Smoke the domain [OPTIONAL: the project declares no smoke]\n',
+  );
+  await sync(true);
+
+  // The grant exists, then the read of it fails. Treating that as "grants
+  // nothing" would write a contract without optionalSteps, so a skip the mark
+  // already accepted becomes unauthorized at completion — a stall no rerun
+  // clears, because the grant is gone from the record for good.
+  await writeFile(roleContract, '{ truncated');
+  await sync(false);
+  assert.equal(
+    await readFile(roleContract, 'utf8'),
+    '{ truncated',
+    'an unreadable contract is preserved for the next sync to report, never overwritten',
+  );
+
+  // A contract that reads cleanly and declares no optional steps grants none:
+  // only a failed read is treated as unknown.
+  await writeFile(roleContract, JSON.stringify({ schemaVersion: 1, commands: {} }));
+  await sync(false);
+  const synced = JSON.parse(await readFile(roleContract, 'utf8'));
+  assert.equal('optionalSteps' in synced, false);
+  assert.equal(synced.schemaVersion, 1);
+});
+
 test('retained replay reads only the matching frozen dispatch contract', async (t) => {
   const { root } = await task(t);
   const run = {

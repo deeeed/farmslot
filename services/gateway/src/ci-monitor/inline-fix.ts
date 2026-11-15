@@ -793,7 +793,12 @@ async function writeCIFixTask(
   // Write CI-FIX.md to slot using the shared safe text writer
   const taskPath = taskDirRelPath(taskDir, CI_FIX_CHECKLIST_TARGET.checklist);
   await writeTextFileOnSlot(vars, taskPath, expanded);
-  await syncChecklistTargetForRole(vars, taskDir, 'ci-fix', { ciBaseRef });
+  // The checklist was just rendered from its template on the line above, so this
+  // sync is the sanctioned point to freeze its [OPTIONAL: ...] declarations.
+  await syncChecklistTargetForRole(vars, taskDir, 'ci-fix', {
+    ciBaseRef,
+    templateJustWritten: true,
+  });
 
   // Mark CI-FIX.md as the active task file for progress tracking
   updateRun(runId, { activeTaskFile: taskPath });
