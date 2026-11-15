@@ -19,7 +19,6 @@ export interface ChatOpenFileDetail {
 const COPIED_MS = 1200;
 
 /** Whether markdown may hold a fenced code block, whose HTML depends on the loaded highlighters. */
-const hasCodeFence = (markdown: string) => markdown.includes('```') || markdown.includes('~~~');
 
 /** Rendered message markdown. */
 const markdownCss = `
@@ -298,7 +297,9 @@ export class ChatMessageElement extends LitElement {
   private markdown?: { key: string; html: string };
 
   private markdownHtml(source: string): string {
-    const key = `${this.fileLinks ? 'f' : ''}${hasCodeFence(source) ? highlightGeneration() : ''}\0${source}`;
+    // The generation is in every key, but only code blocks re-render when it changes: the block
+    // cache keys the rest without it.
+    const key = `${this.fileLinks ? 'f' : ''}${highlightGeneration()}\0${source}`;
     if (this.markdown?.key !== key)
       this.markdown = { key, html: renderChatMarkdown(source, { fileLinks: this.fileLinks }) };
     return this.markdown.html;
@@ -312,9 +313,10 @@ export class ChatMessageElement extends LitElement {
       const block = action.closest('.cm-code');
       if (!block) return;
       if (action.dataset.codeAction === 'wrap') {
-        const wrapped = block.getAttribute('data-wrap') !== 'true';
-        block.setAttribute('data-wrap', String(wrapped));
-        action.setAttribute('aria-pressed', String(wrapped));
+        const index = [...this.querySelectorAll('.cm-code')].indexOf(block);
+        if (this.unwrapped.has(index)) this.unwrapped.delete(index);
+        else this.unwrapped.add(index);
+        this.applyWrap();
       } else if (action.dataset.codeAction === 'copy') {
         this.copy(action, block.querySelector('pre')?.textContent ?? '');
       }
@@ -340,6 +342,23 @@ export class ChatMessageElement extends LitElement {
       }),
     );
   };
+
+  /** Code blocks (by position) the reader unwrapped; kept across re-renders, e.g. once highlighted. */
+  private unwrapped = new Set<number>();
+
+  private applyWrap() {
+    for (const [index, block] of this.querySelectorAll('.cm-code').entries()) {
+      const wrapped = !this.unwrapped.has(index);
+      block.setAttribute('data-wrap', String(wrapped));
+      block
+        .querySelector('[data-code-action="wrap"]')
+        ?.setAttribute('aria-pressed', String(wrapped));
+    }
+  }
+
+  protected override updated() {
+    if (this.unwrapped.size) this.applyWrap();
+  }
 
   /** Copies `text`, and says so on the button that asked for a moment. */
   private copy(button: HTMLButtonElement, text: string) {
@@ -372,7 +391,7 @@ export class ChatMessageElement extends LitElement {
     super.connectedCallback();
     // A language's highlighter arriving re-renders messages whose code showed as plain text.
     this.stopHighlightListener ??= onHighlighterReady(() => {
-      if (hasCodeFence(this.message.content)) this.requestUpdate();
+      if (this.markdown?.html.includes('class="cm-code"')) this.requestUpdate();
     });
     // One stylesheet per document or shadow root that holds messages, not one per message. It goes
     // before the root's own sheets, where each message's <style> element used to cascade.

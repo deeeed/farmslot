@@ -164,7 +164,10 @@ export function renderChatMarkdown(md: string, options: ChatMarkdownOptions = {}
   for (const [index, token] of tokens.entries()) {
     const tail = index === tokens.length - 1;
     // Only code (fenced, indented or nested in a list or quote) depends on the loaded highlighters.
-    const code = token.type === 'code' || /```|~~~/.test(token.raw);
+    let code = false;
+    chat.walkTokens([token], (child) => {
+      code ||= child.type === 'code';
+    });
     const key = `${scope}${code ? generation : ''}\0${token.raw.includes('[') ? links : ''}\0${token.type}\0${token.raw}`;
     let block = tail ? undefined : chatBlocks.get(key);
     if (block === undefined) {

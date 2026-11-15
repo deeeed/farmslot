@@ -14,7 +14,7 @@
       },
       "workspace": {
         "action": "command",
-        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/native-chat-rendering.mts --out \"${FARMSLOT_RENDERING_PROOF_OUTPUT:-${TMPDIR:-/tmp}/native-chat-rendering-proof}/workspace\" --only file-link,markdown,turn-diff",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/native-chat-rendering.mts --out \"${FARMSLOT_RENDERING_PROOF_OUTPUT:-${TMPDIR:-/tmp}/native-chat-rendering-proof}/workspace\" --only file-link,wrap-kept,markdown,turn-diff,diff-update",
         "intent": "A file chip opens src/app.ts at line 42, selected and in view; docs/GUIDE.md opens rendered and then raw; the turn's diff renders its added lines.",
         "timeout_ms": 600000,
         "next": "done"

@@ -3,7 +3,7 @@
 // first use, so pages without a native workspace never fetch it.
 import type { File as PierreFile, FileDiff as PierreFileDiff } from '@pierre/diffs';
 import { css, html, LitElement, type PropertyValues } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 
 import { CODE_THEME } from '../../utils/code-highlight.js';
 
@@ -97,7 +97,7 @@ export class PierreDiffView extends LitElement {
   @property() diffStyle: 'unified' | 'split' = 'unified';
   private view?: PierreFileDiff<undefined, undefined>;
   private revision = 0;
-  private unparsed = false;
+  @state() private unparsed = false;
 
   protected override updated(changed: PropertyValues<this>) {
     if (changed.has('diff') || changed.has('diffStyle') || changed.has('filename'))
@@ -117,12 +117,12 @@ export class PierreDiffView extends LitElement {
     if (revision !== this.revision || !this.isConnected) return;
     const wrapper = this.renderRoot.querySelector<HTMLElement>('.diff');
     if (!wrapper) return;
-    const fileDiff = parsePatchFiles(this.diff, this.filename).flatMap((patch) => patch.files)[0];
+    // No cache key prefix: the library would then treat a newer patch of the same file as unchanged.
+    const fileDiff = parsePatchFiles(this.diff).flatMap((patch) => patch.files)[0];
     this.unparsed = !fileDiff;
     if (!fileDiff) {
       this.view?.cleanUp();
       this.view = undefined;
-      this.requestUpdate();
       return;
     }
     this.view ??= new FileDiff<undefined, undefined>({

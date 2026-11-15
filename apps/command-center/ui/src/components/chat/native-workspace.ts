@@ -16,6 +16,7 @@ import '../diff-viewer/pierre-views.js';
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import { onHighlighterReady } from '../../utils/code-highlight.js';
 import { diffSelectionHandOff } from '../../utils/diff-test-filter.js';
 import { renderChatMarkdown } from '../../utils/markdown.js';
 import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
@@ -270,9 +271,22 @@ export class NativeWorkspace extends LitElement {
     }
   }
 
+  private stopHighlightListener?: () => void;
+
+  connectedCallback() {
+    super.connectedCallback();
+    // Rendered markdown shows a fence as plain text until its language loads, then highlighted.
+    this.stopHighlightListener ??= onHighlighterReady(() => {
+      if (this.markdownView === 'rendered' && isMarkdownPath(this.source?.path ?? ''))
+        this.requestUpdate();
+    });
+  }
+
   disconnectedCallback() {
     super.disconnectedCallback();
     this.revision++;
+    this.stopHighlightListener?.();
+    this.stopHighlightListener = undefined;
   }
 
   private async refresh() {

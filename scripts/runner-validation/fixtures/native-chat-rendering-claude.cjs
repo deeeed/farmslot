@@ -37,6 +37,18 @@ const answer = [
   'Run it with `npm test`.',
 ].join('\n');
 
+// Asked to answer slowly: the code block streams first, then lines keep arriving for about 6 s, so a
+// person can act on the block while the message is still streaming.
+const slowAnswer = [
+  'Slow answer, see [src/slow.ts](src/slow.ts).',
+  '',
+  '```ts',
+  'export const slow = true;',
+  '```',
+  '',
+  ...Array.from({ length: 20 }, (_, index) => `Line ${index + 1} of the slow answer.\n`),
+].join('\n');
+
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const message = JSON.parse(line);
   if (message.type === 'control_request') {
@@ -55,20 +67,28 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   );
   const id = `msg-${Date.now()}`;
   send({ type: 'stream_event', event: { type: 'message_start', message: { id } } });
-  const chunks = answer.match(/[\s\S]{1,24}/g);
+  const slow = JSON.stringify(message.message).includes('slowly');
+  const text = slow ? slowAnswer : answer;
+  // Slow: the fence and link arrive in the first chunk, then one line per chunk.
+  const chunks = slow
+    ? [text.split('```\n')[0] + '```\n', ...text.split('```\n')[1].split(/(?<=\n)/)]
+    : text.match(/[\s\S]{1,24}/g);
   let index = 0;
-  const timer = setInterval(() => {
-    send({
-      type: 'stream_event',
-      event: {
-        type: 'content_block_delta',
-        index: 0,
-        delta: { type: 'text_delta', text: chunks[index] },
-      },
-    });
-    if (++index < chunks.length) return;
-    clearInterval(timer);
-    send({ type: 'assistant', message: { id, content: [{ type: 'text', text: answer }] } });
-    send({ type: 'result', subtype: 'success', is_error: false });
-  }, 15);
+  const timer = setInterval(
+    () => {
+      send({
+        type: 'stream_event',
+        event: {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'text_delta', text: chunks[index] },
+        },
+      });
+      if (++index < chunks.length) return;
+      clearInterval(timer);
+      send({ type: 'assistant', message: { id, content: [{ type: 'text', text }] } });
+      send({ type: 'result', subtype: 'success', is_error: false });
+    },
+    slow ? 300 : 15,
+  );
 });

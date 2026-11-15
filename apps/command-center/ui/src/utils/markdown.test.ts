@@ -163,6 +163,26 @@ test('a code block renders highlighted once its language has loaded', async () =
   assert.match(renderChatMarkdown('```not-a-language-9c1\nplain\n```'), /plain/);
 });
 
+test('code nested in a list renders again when a highlighter loads; other blocks stay cached', async (t) => {
+  const md = '- step\n\n      indented code\n\nafter\n\nlast';
+  renderChatMarkdown(md);
+  const sanitize = t.mock.method(DOMPurify, 'sanitize');
+  renderChatMarkdown(md);
+  assert.equal(sanitize.mock.callCount(), 1, 'only the tail renders while nothing new loads');
+  sanitize.mock.resetCalls();
+  await preloadCodeLanguage('py');
+  renderChatMarkdown(md);
+  assert.equal(sanitize.mock.callCount(), 2, 'the list holding code and the tail');
+});
+
+test('inline code shows HTML as text', () => {
+  for (const fileLinks of [false, true]) {
+    const html = chatMarkdownHtml('see `<img src="https://example.com/x.png">`', { fileLinks });
+    assert.doesNotMatch(html, /<img/);
+    assert.match(html, /&lt;img src=/);
+  }
+});
+
 test('with file links on, paths become workspace chips and other links stay links', () => {
   const md = [
     'See [src/a.ts:12](src/a.ts:12), [the store](services/gateway/src/store.ts#L40),',

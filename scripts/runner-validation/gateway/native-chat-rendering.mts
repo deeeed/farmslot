@@ -30,7 +30,17 @@ import { parseArgs, promisify } from 'node:util';
 
 import type { NativeSessionInfo } from '@farmslot/protocol';
 
-const NODES = ['code', 'copy', 'wrap', 'file-link', 'markdown', 'turn-diff', 'message'] as const;
+const NODES = [
+  'code',
+  'copy',
+  'wrap',
+  'file-link',
+  'wrap-kept',
+  'markdown',
+  'turn-diff',
+  'diff-update',
+  'message',
+] as const;
 type ProofNode = (typeof NODES)[number];
 
 const { values } = parseArgs({
@@ -88,7 +98,8 @@ await writeFile(
 );
 await writeFile(
   path.join(workspace, 'docs/GUIDE.md'),
-  '# Greeting guide\n\nCall `greet` with a **name**.\n\n| arg | type |\n| --- | --- |\n| name | string |\n',
+  // The Python fence loads a language the chat answer does not use.
+  '# Greeting guide\n\nCall `greet` with a **name**.\n\n| arg | type |\n| --- | --- |\n| name | string |\n\n```py\ndef greet(name: str) -> str:\n    return f"hello {name}"\n```\n',
 );
 const git = (...args: string[]) =>
   execFileSync('git', ['-c', 'user.name=Proof', '-c', 'user.email=proof@invalid', ...args], {
@@ -189,12 +200,7 @@ const run = async () => {
     credential: { token: grant.accessToken },
     timeout: 60_000,
   }).connect();
-  let completed = false;
-  const stopEvents = connection.onEvent((frame: { event: string; payload: unknown }) => {
-    if (frame.event !== 'native.session.delta') return;
-    const payload = frame.payload as { page?: { events: { type: string }[] } };
-    if (payload.page?.events.some((event) => event.type === 'turn.completed')) completed = true;
-  });
+  const client = connection;
   session = (
     (await connection.call('native.session.create', {
       runner: 'claude',
@@ -207,17 +213,30 @@ const run = async () => {
   ).session;
   const selection = { sessionId: session.id, executionNodeId: 'local' };
   await connection.call('native.session.subscribe', selection);
-  await connection.call('native.session.send', {
-    ...selection,
-    commandId: crypto.randomUUID(),
-    text: 'Add a greeting helper.',
-  });
-  const turnDeadline = Date.now() + 60_000;
-  while (!completed) {
-    assert.ok(Date.now() < turnDeadline, 'Timed out: turn completion');
-    await delay(100);
-  }
-  stopEvents();
+  /** Sends one prompt; the synthetic peer appends greet to src/app.ts and answers. */
+  const sendTurn = async (text: string) => {
+    let completed = false;
+    const stopEvents = client.onEvent((frame: { event: string; payload: unknown }) => {
+      if (frame.event !== 'native.session.delta') return;
+      const payload = frame.payload as { page?: { events: { type: string }[] } };
+      if (payload.page?.events.some((event) => event.type === 'turn.completed')) completed = true;
+    });
+    try {
+      await client.call('native.session.send', {
+        ...selection,
+        commandId: crypto.randomUUID(),
+        text,
+      });
+      const turnDeadline = Date.now() + 60_000;
+      while (!completed) {
+        assert.ok(Date.now() < turnDeadline, 'Timed out: turn completion');
+        await delay(100);
+      }
+    } finally {
+      stopEvents();
+    }
+  };
+  await sendTurn('Add a greeting helper.');
 
   // The browser signs in with the person credential, as a person does: the page exchanges it
   // for an expiring device session.
@@ -414,12 +433,39 @@ const run = async () => {
       'src/app.ts open at line 42',
     );
   });
+  await check('wrap-kept', async () => {
+    // A block unwrapped while its message is still streaming stays unwrapped as later lines
+    // arrive and the message re-renders. The old <pre> is kept only to see that it was replaced.
+    const message = `chat-message:has(a.cm-file[data-file-path="src/slow.ts"])`;
+    const turn = sendTurn('Answer slowly.');
+    await waitFor<boolean>(
+      `return !!all.find(e=>e.matches('${message} .cm-code'));`,
+      Boolean,
+      'slow answer code block',
+    );
+    await click(`${message} .cm-code [data-code-action=wrap]`);
+    await probe(
+      `window.__proofSlowPre=all.find(e=>e.matches('${message} .cm-code pre'));return true;`,
+    );
+    await turn;
+    return waitFor<{ replaced: boolean; done: boolean; wrap: string; pressed: string }>(
+      `const host=all.find(e=>e.matches('${message}'));const block=host.querySelector('.cm-code');
+       return {replaced:block.querySelector('pre')!==window.__proofSlowPre,
+         done:host.textContent.includes('Line 20 of the slow answer.'),wrap:block.dataset.wrap,
+         pressed:block.querySelector('[data-code-action=wrap]').getAttribute('aria-pressed')};`,
+      (value) =>
+        value.replaced && value.done && value.wrap === 'false' && value.pressed === 'false',
+      'slow answer finished and its block still unwrapped',
+    );
+  });
   await check('markdown', async () => {
     await click('chat-message a.cm-file[data-file-path="docs/GUIDE.md"]');
-    const rendered = await waitFor<{ heading: string; cells: number }>(
+    // The Python fence is a language nothing else here loads: it shows highlighted once it loads.
+    const rendered = await waitFor<{ heading: string; cells: number; fence: number }>(
       `const md=all.find(e=>e.matches('[data-testid=workspace-markdown]'));
-       return md?{heading:md.querySelector('h1')?.textContent,cells:md.querySelectorAll('td').length}:null;`,
-      (value) => value?.heading === 'Greeting guide' && value.cells === 2,
+       return md?{heading:md.querySelector('h1')?.textContent,cells:md.querySelectorAll('td').length,
+         fence:md.querySelectorAll('.cm-code pre span[style*="color"]').length}:null;`,
+      (value) => value?.heading === 'Greeting guide' && value.cells === 2 && value.fence >= 3,
       'GUIDE.md rendered',
     );
     await click(
@@ -443,6 +489,28 @@ const run = async () => {
       (value) => (value?.added ?? 0) >= 3 && value.text.includes('greet'),
       'turn diff rows',
     );
+  });
+  await check('diff-update', async () => {
+    // The workspace diff of src/app.ts, then the agent edits it again: reopening the diff must
+    // show the new patch, not the one drawn before for the same file.
+    const workspace = 'native-session-view >>> native-workspace >>>';
+    // The header's "+N" added-line count: rows below the fold are not drawn, so they can't be counted.
+    const added = `const view=all.find(e=>e.matches('native-workspace'))?.shadowRoot.querySelector('pierre-diff-view');
+       const root=view?.shadowRoot.querySelector('diffs-container')?.shadowRoot;
+       const stats=[...(root?.querySelectorAll('*')??[])].map(e=>e.textContent.trim()).filter(t=>/^\\+\\d+$/.test(t));
+       return stats.length?Math.max(...stats.map(t=>Number(t.slice(1)))):null;`;
+    await click('chat-message a.cm-file[data-file-path="src/app.ts"]');
+    await click(`${workspace} [data-testid=workspace-diff]`);
+    const before = await waitFor<number | null>(added, (value) => (value ?? 0) > 0, 'first diff');
+    await click(`${workspace} [data-testid=workspace-source]`);
+    await sendTurn('Add it again.');
+    await click(`${workspace} [data-testid=workspace-diff]`);
+    const after = await waitFor<number | null>(
+      added,
+      (value) => before !== null && (value ?? 0) > before,
+      'diff after second edit',
+    );
+    return { before, after };
   });
   await check('message', () =>
     waitFor<string>(
