@@ -810,6 +810,7 @@ export async function evalTrialStart(
     throw new Error('A blind trial requires a nonempty reference patch and head identity.');
   const blind: EvalBlindTrial = {
     version: 1,
+    ...(proof ? {} : { executionPolicy: 'normal-slot' }),
     baseSha: candidateStartRef.requestedRef,
     problemDigest: sha256Text(problem),
     referenceCommits: commits,

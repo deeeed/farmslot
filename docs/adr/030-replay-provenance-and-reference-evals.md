@@ -425,3 +425,13 @@ Status: Proposed. Scope approved on 2026-11-14; paired review is pending.
 **Rationale and consequences.** Experiments can compare unpublished templates without changing live-run selection. Catalog-backed trials and ordinary runs retain their existing selection behavior. Source edits after admission cannot change an admitted trial.
 
 **Public surface.** The protocol-owned `EvalTrialStartParams.candidateTemplatePath` is an optional gateway-local file path, consumed by template experiment launchers through the existing `eval.trial.start` RPC. Existing result axes and provenance carry its digest. The agent-runtime export `candidateExecutionTemplate` parses and validates one snapshot for the gateway and hosted CLI task initializer. No new CLI command or harness extension point; harnesses consume the resulting task through the existing lifecycle. Additive protocol fields follow patch versioning. See the [trial-local template contract](../reference/blind-eval-trials.md#trial-local-candidate-templates).
+
+## Amendment 6: before-fix replays on normal slots, 2026-11-15
+
+Status: Proposed. Scope approved on 2026-11-15; paired review is pending.
+
+**Decision.** New `dev` and `fix-bug` trials use ordinary slots at the frozen before-fix commit. Retain neutral task identity, real criteria, autonomous artifact-only execution, candidate template hashes and frozen first output. Add a no-lookup instruction to farm-owned task context. Fresh preparation parks earlier ignored task/temp/artifact inputs outside the checkout while keeping caches and this trial's inputs. These trials create no eval capsule or worker sandbox. Existing capsule trials and proof trials keep their recorded lifecycle.
+
+**Rationale and consequences.** Eval sandbox restrictions prevented normal harness tools from running. Benchmark collection owns detecting answer fetch/read access and discarding exposed rows. Farm eligibility does not wait on that check or treat a matching patch alone as exposure for normal-slot trials. A successful farm run is not a clean benchmark certification.
+
+**Public surface.** No new RPC or caller flag. Protocol-owned trial provenance gains an internal execution policy consumed by gateway prepare, dispatch, collection and cleanup. Existing task-init, result-package and harness interfaces remain in use. Matching protocol/gateway readers are required. See the [normal-slot replay contract](../reference/blind-eval-trials.md#normal-slot-before-fix-replays).

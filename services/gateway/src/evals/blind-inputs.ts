@@ -11,6 +11,8 @@ import { parseUnifiedDiff } from '@farmslot/protocol/client-cache';
 import { shSingleQuote } from '../../../../scripts/lib/shell-quote.mjs';
 import { isSourceCodePath, type SourceDiffFilter } from '../core/source-diff-filter.js';
 
+import { usesEvalTrialCapsule } from './trial-policy.js';
+
 const auditScript = readFileSync(new URL('./blind-inputs.py', import.meta.url), 'utf8');
 export const FULL_COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 
@@ -128,7 +130,7 @@ export function buildBlindInputAuditCommand(root: string, markers: readonly stri
 export function blindTrialEligibility(
   blind: EvalBlindTrial | undefined,
 ): EvalComparisonEligibility {
-  if (!blind?.isolation?.verifiedAt || !blind.firstOutput)
+  if (!blind?.firstOutput || (usesEvalTrialCapsule(blind) && !blind.isolation?.verifiedAt))
     return { status: 'invalid', reason: 'Blind trial provenance or first output is missing.' };
   if (blind.invalidReason) return { status: 'invalid', reason: blind.invalidReason };
   const identity = {
@@ -140,7 +142,9 @@ export function blindTrialEligibility(
     return blind.firstOutput.proofPackage
       ? { ...identity, status: 'eligible' }
       : { ...identity, status: 'invalid', reason: 'Frozen proof output is missing.' };
-  return blind.firstOutput.patchId && blind.firstOutput.patchId === blind.referencePatchId
+  return usesEvalTrialCapsule(blind) &&
+    blind.firstOutput.patchId &&
+    blind.firstOutput.patchId === blind.referencePatchId
     ? { ...identity, status: 'contaminated', reason: 'First output matches the reference patch.' }
     : { ...identity, status: 'eligible' };
 }

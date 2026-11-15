@@ -113,6 +113,18 @@ test('only a verified, distinct first output can enter comparison; legacy output
     },
   };
   assert.equal(blindTrialEligibility(blind).status, 'contaminated');
+  const normal: EvalBlindTrial = { ...blind, executionPolicy: 'normal-slot', isolation: undefined };
+  assert.equal(
+    blindTrialEligibility(normal).status,
+    'eligible',
+    'patch equality alone is not answer access',
+  );
+  assert.equal(blindTrialEligibility({ ...normal, firstOutput: undefined }).status, 'invalid');
+  assert.equal(
+    blindTrialEligibility({ ...normal, invalidReason: 'Changed frozen bytes' }).status,
+    'invalid',
+  );
+
   assert.equal(
     blindTrialEligibility({
       ...blind,

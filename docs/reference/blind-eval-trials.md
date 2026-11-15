@@ -1,6 +1,6 @@
 # Blind eval trials
 
-Normative reference for [ADR-030](../adr/030-replay-provenance-and-reference-evals.md#amendment-1-blind-trial-inputs-and-comparison-eligibility-2026-10-30). Owned by gateway eval execution; retain with that capability. This reference defines the worker-input and comparison contract, rather than a particular experiment or rollout. The proof profile below is proposed in Amendment 4; existing profiles retain Amendments 1 to 3.
+Normative reference for [ADR-030](../adr/030-replay-provenance-and-reference-evals.md#amendment-1-blind-trial-inputs-and-comparison-eligibility-2026-10-30). Owned by gateway eval execution; retain with that capability. This reference defines the worker-input and comparison contract, rather than a particular experiment or rollout. Amendment 6 replaces the capsule requirements for new before-fix trials; existing capsule trials and the proof profile retain their recorded boundary.
 
 ## Inputs
 
@@ -11,7 +11,17 @@ These input rules describe the existing `dev` and `fix-bug` profiles. The [proof
 - The gateway resolves and freezes a full base commit identity before launching the worker. The reference answer must not be part of that base.
 - Task-specific worker inputs contain the problem statement and base identity. They must not contain the reference PR number, URL, commit, patch, package or experiment manifest, including paths to those inputs. Reference data stays gateway-side.
 - Normal framework instructions and tool provenance remain available. Forward task sync and replay must preserve the same input boundary.
-- Trials missing problem text, a usable reference comparison patch or verified isolation fail before worker dispatch. A legacy trial cannot silently resume through an unblinded path.
+- Trials missing problem text or a usable reference comparison patch fail before worker dispatch. Capsule trials also require verified isolation. A legacy trial cannot silently resume through an unblinded path.
+
+## Normal-slot before-fix replays
+
+- New `dev` and `fix-bug` trials retain `blind.executionPolicy: "normal-slot"` as internal provenance. There is no caller flag. An absent policy retains the existing capsule contract; idempotent starts and retries never migrate a retained trial. Proof admission is unchanged.
+- Before first worker launch, park earlier ignored task/temp/artifact inputs outside the checkout, including recipe runtime state and earlier task folders. Keep dependency/tool caches and this trial's task inputs using the existing keep-path selection. Record the prepared workspace identity after successful parking; retries keep this trial's progress and do not repeat cleanup. Parking does not swap Git, create a capsule or restore earlier answer files at completion.
+- Ordinary slot preparation checks out the frozen full base SHA on the trial branch, with merge-main disabled. Verify initial HEAD before worker launch; retained worker retries preserve their candidate progress. Do not create a capsule, swap Git metadata, install eval credential wrappers or apply an eval sandbox. Ordinary runner permissions and slot lifecycle still apply.
+- Keep the neutral `EVAL-...` task identity, explicit problem and real ACs, autonomous mode, frozen candidate template bytes/hash and artifact-only publication policy. Farm-owned task context says not to fetch or read the original answer, including newer Git history, other checkouts and reference artifacts. This instruction does not alter shared skill or candidate template bytes.
+- Freeze first-output base/head/diff/hash with ordinary slot ownership checks before judging. Collect artifacts and return the slot through ordinary cleanup without capsule restoration. First-output integrity failures remain invalid; isolation and external ref-check are not prerequisites for farm eligibility. Patch equality alone does not mark a normal-slot trial contaminated.
+- Benchmark collection inspects retained worker tool/session evidence for answer fetch/read access and discards exposed rows. It owns this ref-check and its fixtures; the farm neither invokes nor waits for its script. Farm eligibility and completion do not certify a benchmark row as unexposed.
+- The Git isolation and worker-boundary sections below apply to capsule trials only. The dispatch canary uses the new normal-slot policy and must still reach a real model/tool call, cancel, return its slot ready and archive.
 
 ## Trial-local candidate templates
 
@@ -60,6 +70,8 @@ Status: proposed contract for ADR-030 Amendment 4.
 
 ## Git isolation and cleanup
 
+This section applies to capsule trials.
+
 - For `dev` and `fix-bug`, the worker repository has its own object store, without alternates or shared worktree objects. It contains a shallow base snapshot and candidate objects only. The proof profile instead admits its implementation and QA base snapshots.
 - Before implementation-trial worker launch, verify that reference answer commits are unavailable, remote URLs are absent and fetch protocols are disabled. Proof trials check hidden proof commits while admitting their explicit source pair. Recheck the boundary at dispatch and first-output capture.
 - Existing slot Git metadata is retained outside the worker checkout under the trial's lease. Preparation and recovery must not fetch into the isolated repository.
@@ -67,6 +79,8 @@ Status: proposed contract for ADR-030 Amendment 4.
 - A finished trial's run-end cleanup restores the original Git while the run still owns the slot; a failed restoration holds the slot for retry. With the first output frozen, the checkout then returns to idle and the candidate branch stays. A run that retains its workspace for completion replay or a result decision keeps it until that is settled; a cancelled trial kept for replay is restored when its slot is reclaimed.
 
 ## Worker boundary
+
+This section applies to capsule trials. Normal-slot trials retain the frozen CI base through task context and ordinary worker initialization.
 
 - The worker starts without source-host credentials: no GitHub token variables, an empty GitHub CLI configuration, no Git credential helper and no Git SSH transport.
 - Recording stand-ins in the trial capsule refuse the GitHub CLI on the worker's path and Git's credential and SSH-transport calls. Git's trace in the capsule records transports the isolated repository refuses, whichever git binary ran. A recorded attempt makes the trial invalid at first-output capture.
@@ -80,7 +94,7 @@ Status: proposed contract for ADR-030 Amendment 4.
 ## First output and contamination
 
 - Freeze the first worker output's base, head, contribution diff and digest before review or a fix round can alter it. Later output cannot replace this snapshot.
-- For `dev` and `fix-bug`, the gateway computes stable patch identities from the frozen candidate contribution and reference patch. A nonempty identity match makes the trial contaminated and ineligible for comparison. The proof profile uses its frozen proof package and immutable implementation receipt instead.
+- For `dev` and `fix-bug`, the gateway computes stable patch identities from the frozen candidate contribution and reference patch. For capsule trials, a nonempty identity match makes the trial contaminated and ineligible for comparison. Normal-slot trials retain both identities without inferring exposure from equality. The proof profile uses its frozen proof package and immutable implementation receipt instead.
 - Comparison eligibility is pending until an output is captured, then eligible, contaminated or invalid. Completed outputs with missing blind provenance or unavailable comparison inputs are invalid.
 - Preserve the reason and source identities with the assessment. Hidden reference identities are never copied back into the worker task tree; a proof profile explicitly admits its supplied implementation identity.
 - Finalized historical output packages retain their original bytes and hashes. Readers show their missing blind provenance as invalid comparison input; finality alone does not imply eligibility.
@@ -96,10 +110,10 @@ Status: proposed contract for ADR-030 Amendment 4.
 
 ## Public surface
 
-The protocol package owns the case, trial and result-package fields consumed by the existing eval RPCs and Command Center comparison readers. The gateway owns input validation, Git isolation, first-output capture and contamination assessment. Existing framework prepare/dispatch/teardown contracts remain the lifecycle path. Harnesses inherit the blinded task, base and worker boundary; they receive no reference lookup capability or new command. Additive wire metadata follows protocol patch versioning and the matching-reader rollout.
+The protocol package owns the case, trial and result-package fields consumed by the existing eval RPCs and Command Center comparison readers. The gateway owns input validation, recorded execution policy and first-output capture. Benchmark collection owns normal-slot answer-access assessment; existing capsule assessment remains unchanged. Existing framework prepare/dispatch/teardown contracts remain the lifecycle path. Harnesses inherit the blinded task, base and worker boundary; they receive no reference lookup capability or new command. Additive wire metadata follows protocol patch versioning and the matching-reader rollout.
 
 ## Dispatch canary
 
 The existing fullflow canary runs a `blind-dispatch` case with its selected cheap worker before its implementation and QA cases after gateway deployment and nightly. Run only that case with `--profile fullflow --target isolated --only blind-dispatch`.
 
-Use the disposable stack's synthetic repository, dedicated slot, family and experiment manifest. Never attach dataset identifiers or use a dataset manifest. Success requires verified blind isolation, completed admission/task-init/prepare/dispatch, and a tool call in this worker's structured transcript or provider turn hook. Cancel after the first tool call, verify capsule restoration and slot readiness, then archive the run. Admission, inference, restoration or cleanup failure fails the existing canary report and status alert.
+Use the disposable stack's synthetic repository, dedicated slot, family and experiment manifest. Never attach dataset identifiers or use a dataset manifest. Success requires the normal-slot policy at the frozen base, completed admission/task-init/prepare/dispatch, and a tool call in this worker's structured transcript or provider turn hook. Cancel after the first tool call, verify slot readiness without a capsule, then archive the run. Admission, inference, restoration or cleanup failure fails the existing canary report and status alert.

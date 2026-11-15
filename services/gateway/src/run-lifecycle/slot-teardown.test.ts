@@ -1911,3 +1911,14 @@ test('done cleanup retries an unavailable return only after ownership release', 
   assert.equal(result.released, true);
   assert.deepEqual(owners, [RUN_ID, null]);
 });
+
+test('a normal-slot first output releases through ordinary cleanup without capsule restore', async () => {
+  run.status = 'completing';
+  asFinishedBlindTrial();
+  run.engineState!.evalExperiment!.blind!.executionPolicy = 'normal-slot';
+  delete run.engineState!.evalExperiment!.blind!.isolation;
+  idleReturnResult = { kind: 'ready' };
+  assert.deepEqual(await releaseCompletedRunSlot(run), { released: true });
+  assert.deepEqual(blindRestores, []);
+  assert.deepEqual(idleReturnRetained, [true]);
+});

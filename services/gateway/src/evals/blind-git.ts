@@ -8,6 +8,8 @@ import { runnerLaunchDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { shSingleQuote } from '../../../../scripts/lib/shell-quote.mjs';
 import { withFarmGitConfig } from '../core/farm-git.js';
 
+import { usesEvalTrialCapsule } from './trial-policy.js';
+
 export interface BlindGitSpec {
   slotId: string;
   slotEpoch: number;
@@ -64,7 +66,7 @@ export function blindHostRoots(
 const script = readFileSync(new URL('./blind-git.py', import.meta.url), 'utf8');
 
 export function buildBlindGitCommand(
-  action: 'plan' | 'isolate' | 'boundary' | 'verify' | 'restore',
+  action: 'plan' | 'isolate' | 'boundary' | 'verify' | 'restore' | 'park-ignored',
   spec: BlindGitSpec,
 ): string {
   // Each slot's launch directory, own slot first, as tmux-launch-script.ts writes it.
@@ -304,7 +306,7 @@ export function blindTrialWorkerBoundary(
   if (!run || (role && role !== primaryRoleForFlow(run.flowType))) return undefined;
   const trial = run.engineState?.evalExperiment?.blind;
   const capsule = trial?.isolation?.capsulePath;
-  return trial && capsule
+  return usesEvalTrialCapsule(trial) && trial && capsule
     ? { capsule, baseSha: trial.baseSha, browserCdpPort: trial.isolation?.browserCdpPort }
     : undefined;
 }

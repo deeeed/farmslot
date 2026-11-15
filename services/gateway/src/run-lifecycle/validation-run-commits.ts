@@ -14,6 +14,7 @@ import { withFarmGitConfig } from '../core/farm-git.js';
 import { findUnpushedSlotCommits } from '../core/git-publication.js';
 import { readSlotRow, updateSlotStatusIf } from '../core/state.js';
 import { shellQuote } from '../core/tmux.js';
+import { usesEvalTrialCapsule } from '../evals/trial-policy.js';
 import { excludeSlotScaffolding } from '../fleet/slot-scaffolding.js';
 import {
   executeParkedGitMutation,
@@ -176,7 +177,7 @@ export function ownsRunBranch(run: Run | undefined): run is Run {
     !!run &&
     !!run.branch &&
     !!(run.startRef?.resolvedSha ?? run.worktreeHeadAtDispatch) &&
-    !run.engineState?.evalExperiment?.blind
+    !usesEvalTrialCapsule(run.engineState?.evalExperiment?.blind)
   );
 }
 

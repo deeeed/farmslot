@@ -4,6 +4,7 @@ import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execArgvOnSlot, execOnSlot, isLocal } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import { prepareBlindTrialGit } from '../evals/blind-trial.js';
+import { usesEvalTrialCapsule } from '../evals/trial-policy.js';
 import { dispatchExecute, nudgeDispatch, warmSessionHandoffDispatch } from '../methods/dispatch.js';
 import { slotPrepare } from '../methods/slot.js';
 import { ensureFrozenQaSource } from '../qa/frozen-source.js';
@@ -434,9 +435,13 @@ export async function executePrepareStep(
       prepareController.signal,
       {
         ...(warmRecovery ? { stripClean: true } : {}),
-        ...(isPrepareReplay || current.engineState?.evalExperiment ? { preserveBranch: true } : {}),
-        ...(current.engineState?.evalExperiment?.blind
-          ? { blindBaseSha: current.engineState.evalExperiment.blind.baseSha }
+        ...(isPrepareReplay ||
+        usesEvalTrialCapsule(current.engineState?.evalExperiment?.blind) ||
+        (current.engineState?.evalExperiment && !forceNewBranch)
+          ? { preserveBranch: true }
+          : {}),
+        ...(usesEvalTrialCapsule(current.engineState?.evalExperiment?.blind)
+          ? { blindBaseSha: current.engineState?.evalExperiment?.blind?.baseSha }
           : {}),
         // Isolation happens in beforeBranchSetup; read its durable result at capture time.
         get blindRepoKey() {
