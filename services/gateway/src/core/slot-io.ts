@@ -221,12 +221,6 @@ export async function slotFileExists(ctx: SlotLocality, filePath: string): Promi
   return result.exists;
 }
 
-/** Absence as `slotFileExists` reports it: no entry, or a parent that is not a directory. */
-function isMissingPath(error: unknown): boolean {
-  const code = (error as NodeJS.ErrnoException | null)?.code;
-  return code === 'ENOENT' || code === 'ENOTDIR';
-}
-
 /**
  * After a failed read or listing, the existence check the one-request path skipped: null
  * where `slotFileExists` is false (a dangling symlink, a parent that is a file), so absence
@@ -289,9 +283,10 @@ export async function slotListFiles(
           // stat follows a symlink, as a file read does.
           const info = await stat(path.join(dirPath, name));
           entries.push(info.isFile() ? { name, size: info.size, mtimeMs: info.mtimeMs } : { name });
-        } catch (error) {
-          // Listed without metadata, as slotListDir lists it; reading it reports the fault.
-          if (!isMissingPath(error)) throw error;
+        } catch {
+          // Metadata is optional: an entry that cannot be statted (removed, unsearchable, a
+          // dangling link) is listed by name, as slotListDir lists it. A caller that reads it
+          // gets the fault then; one that ignores it, as main did, is unaffected.
           entries.push({ name });
         }
       }

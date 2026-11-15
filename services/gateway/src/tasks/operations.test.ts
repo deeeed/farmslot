@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
-import fs, { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import fs, {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test, { mock } from 'node:test';
@@ -192,6 +199,18 @@ test('absence and faults read as they did with an existence check first', async 
     const directory = progress();
     await attachOperations(local, path.join(root, 'c/CHECKLIST.md'), directory);
     assert.match(directory.operationsError ?? '', /Operation progress unavailable/);
+    // An unrelated entry that cannot be statted does not affect the records.
+    const operations = path.join(root, 'd/artifacts/operations');
+    mkdirSync(path.join(operations, 'archive'), { recursive: true });
+    chmodSync(operations, 0o644);
+    const unsearchable = progress();
+    try {
+      await attachOperations(local, path.join(root, 'd/CHECKLIST.md'), unsearchable);
+    } finally {
+      chmodSync(operations, 0o755);
+    }
+    assert.equal(unsearchable.operationsError, undefined);
+    assert.deepEqual(unsearchable.operations, []);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
