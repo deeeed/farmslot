@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { balance, withoutBuilds } from './pr-ci-plan.mjs';
+import { balance, balanceTestShards, estimateTestMs, withoutBuilds } from './pr-ci-plan.mjs';
 import { verifyReceipts } from './pr-ci-run.mjs';
 
 test('duration balancing covers every file exactly once', () => {
@@ -13,6 +13,23 @@ test('duration balancing covers every file exactly once', () => {
   );
   assert.ok(Math.max(...bins.map((bin) => bin.reduce((sum, item) => sum + item, 0))) <= 110);
   assert.deepEqual(balance([], 8), []);
+});
+test('PR estimates include mock/serial time before sorted parallel workers', () => {
+  const durations = { a: 10000, b: 20000, c: 10000, d: 20000, s: 30000 };
+  const lanes = new Map([['s', 'module-mock']]);
+  assert.equal(estimateTestMs(['s', 'd', 'c', 'b', 'a'], 2, durations, lanes), 70000);
+  assert.equal(estimateTestMs([], 4, durations, lanes), 0);
+});
+test('PR sharding bounds the critical path without repeating tests or losing available workers', () => {
+  const files = Array.from({ length: 40 }, (_, index) => `file-${String(index).padStart(2, '0')}`);
+  const durations = Object.fromEntries(files.map((file, i) => [file, i < 20 ? 12000 : 2000]));
+  const lanes = new Map(files.slice(0, 20).map((file) => [file, 'module-mock']));
+  const bins = balanceTestShards(files, 4, 2, durations, lanes);
+  assert.deepEqual(bins.flatMap((bin) => bin.files).sort(), files);
+  assert.ok(Math.max(...bins.map((bin) => bin.ms)) <= 72000);
+  assert.ok(bins.reduce((ms, bin) => ms + bin.ms, 0) <= 280000);
+  assert.deepEqual(balanceTestShards(files, 4, 2, durations, lanes), bins);
+  assert.deepEqual(balanceTestShards([], 12, 4, durations, lanes), []);
 });
 test('custom suite commands retain assertions and omit already-built prerequisites', () => {
   assert.equal(
@@ -57,9 +74,10 @@ test('full workspace inventory has one test owner and splits the critical app su
     durations: JSON.parse(readFileSync('scripts/quality/ci-test-durations.json', 'utf8')),
   });
   const tasks = plan.jobs.flatMap(({ tasks }) => tasks);
-  assert.equal(plan.jobs.filter(({ id }) => id.startsWith('gateway-')).length, 8);
+  assert.equal(plan.jobs.filter(({ id }) => id.startsWith('gateway-')).length, 16);
   assert.equal(plan.jobs.filter(({ id }) => id.startsWith('command-center-ui-')).length, 4);
   const assigned = tasks.flatMap((task) => task.tests ?? []);
+  assert.deepEqual(Object.keys(plan.testOwners).sort(), [...plan.selected].sort());
   assert.equal(new Set(assigned).size, assigned.length);
   assert.deepEqual(
     assigned.filter((file) => file.endsWith('.test.ts')).sort(),
@@ -79,6 +97,22 @@ test('full workspace inventory has one test owner and splits the critical app su
   assert.ok(controls.selected.includes('packages/run-bundle/src/retained-locks.test.ts'));
   assert.ok(controlTasks.some(({ id }) => id.startsWith('command-center-ui-')));
   assert.ok(!controlTasks.some(({ id }) => id.startsWith('tests-')));
+  const calibrated = createPrPlan({
+    ...base,
+    changed: ['.github/workflows/farmslot-quality.yml', 'scripts/quality/run-tsx-tests.mjs'],
+    taskDurations: { 'guard-lint': { ms: 1000 } },
+  });
+  assert.equal(
+    calibrated.jobs.flatMap((job) => job.tasks).find((task) => task.id === 'guard-lint').seconds,
+    1,
+  );
+  assert.deepEqual(
+    calibrated.jobs
+      .flatMap((job) => job.tasks)
+      .map(({ id }) => id)
+      .sort(),
+    controlTasks.map(({ id }) => id).sort(),
+  );
   const mixed = createPrPlan({
     ...base,
     changed: ['scripts/quality/run-tsx-tests.mjs', 'apps/command-center/ui/src/utils/url-state.ts'],
@@ -110,6 +144,35 @@ test('full workspace inventory has one test owner and splits the critical app su
     (task) => task.id.startsWith('types-') && task.args.includes('bash'),
   ))
     assert.deepEqual(task.args.slice(0, 3), ['yarn', 'exec', 'bash']);
+});
+
+test('subset cost calibration retains the fixed work of a declared workspace suite', async () => {
+  const { createPrPlan } = await import('./pr-ci-plan.mjs');
+  const { workspaceSuiteFiles, workspaceTestCatalog } =
+    await import('./workspace-test-targets.mjs');
+  const root = process.cwd();
+  const workspace = workspaceTestCatalog(root).find((entry) => entry.name === '@farmslot/cli');
+  const files = [...workspaceSuiteFiles([workspace], root)]
+    .filter((file) => file.endsWith('.test.ts'))
+    .slice(0, 2);
+  const input = {
+    root,
+    workspaces: [workspace],
+    durations: { [files[0]]: 1000, [files[1]]: 3000 },
+    taskDurations: {
+      'tests-@farmslot/cli': { ms: 10000, fixedMs: 2000, workers: 2, referenceFiles: files },
+    },
+  };
+  const suite = (plan) =>
+    plan.jobs.flatMap((job) => job.tasks).find((task) => task.id === 'tests-@farmslot/cli');
+  assert.equal(
+    suite(createPrPlan({ ...input, changed: [files[0]], selected: [files[0]] })).seconds,
+    4,
+  );
+  assert.equal(
+    suite(createPrPlan({ ...input, changed: ['packages/cli/package.json'], selected: [] })).seconds,
+    2,
+  );
 });
 
 test('full validation supplements docs and suites omitted by package quality', async () => {
@@ -249,6 +312,7 @@ test('script batches keep native Node tests separate from typed tests', async ()
     .filter(({ id }) => id.startsWith('other-selected-tests-'));
   const assigned = tasks.flatMap(({ args }) => args.filter((arg) => selected.includes(arg)));
   assert.deepEqual(assigned.sort(), [...selected].sort());
+  assert.deepEqual(Object.keys(plan.testOwners).sort(), [...selected].sort());
   for (const task of tasks) {
     if (task.args.some((arg) => /\.[cm]?js$/.test(arg))) {
       assert.deepEqual(task.args.slice(0, 3), [

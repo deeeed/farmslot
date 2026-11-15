@@ -118,6 +118,7 @@ export function workspaceTestCatalog(repoRoot) {
   const catalog = [...loadWorkspacePackages(repoRoot)].map(([dir, pkg]) => ({
     dir,
     name: pkg.name,
+    exports: pkg.exports,
     test: pkg.scripts?.test,
     quality: pkg.scripts?.quality,
     scripts: pkg.scripts ?? {},
