@@ -13,14 +13,17 @@
 // may be skipped with `./mark 11 --skip "<reason>"`, which records the reason in
 // the ledger beside the step. A step without that marker can never be skipped,
 // and completion refuses a checklist with a gap in it.
+//
+// `[OPTIONAL:]` and `[DETERMINISTIC:]` on one row are refused: a step a command
+// receipt proves cannot also be one the worker may declare inapplicable.
 
 const fs = require('node:fs');
 const path = require('node:path');
 
 const {
   enumerateChecklistCheckboxes,
+  readFrozenTerminalContract,
   signalFileForChecklist,
-  terminalContractInputForChecklist,
 } = require('./checklist-target.cjs');
 const { readJson } = require('./mark-io.cjs');
 
@@ -33,6 +36,17 @@ function optionalDeclarations(markdown, checklist) {
       throw new Error(
         `Invalid optional declaration in ${checklist} step ${item.stepNumber}: ` +
           'use [OPTIONAL: <when it does not apply>]',
+      );
+    // A deterministic step is verified by a command receipt, so "the worker may
+    // decide this one does not apply" and "a recorded command proves this one"
+    // are contradictory claims about the same row. Refusing the combination at
+    // the declaration keeps one answer per step instead of carrying a skip
+    // through every gate that wants the receipt (ADR-064 Amendment 7).
+    if (match && item.rawLabel.includes('[DETERMINISTIC'))
+      throw new Error(
+        `${checklist} step ${item.stepNumber} is declared both [OPTIONAL:] and ` +
+          '[DETERMINISTIC:]: a step proven by a command receipt cannot also be skippable. ' +
+          'Drop one marker, or split the row into the optional work and its check.',
       );
     return match ? [{ checklist, stepNumber: item.stepNumber, when: match[1].trim() }] : [];
   });
@@ -76,32 +90,18 @@ function skippedSteps(taskDir, checklist, signalFile) {
   return skipped;
 }
 
-/** The frozen contract for a checklist, falling back to the task's root contract. */
-function frozenContractFor(taskDir, checklist) {
-  for (const input of [
-    terminalContractInputForChecklist(checklist),
-    'inputs/worker-terminal-contract.json',
-  ]) {
-    try {
-      return JSON.parse(fs.readFileSync(path.join(taskDir, input), 'utf8'));
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-    }
-  }
-  return null;
-}
-
 /**
  * Steps whose skip the template authorized and the worker recorded: the one
- * definition of "this step is settled by its skip". Every gate that would
- * otherwise demand the step's work asks here, so a skip cannot be accepted at
- * the mark and refused at a later gate.
+ * definition of "this step is settled by its skip". The proof check asks here so
+ * a skip accepted at the mark is not refused for missing evidence at
+ * completion. Deterministic steps cannot be optional, so no receipt gate needs
+ * this.
  */
 function authorizedSkips(taskDir, checklist, contract, signalFile) {
   const optional = declaredOptionalSteps(
     taskDir,
     checklist,
-    contract ?? frozenContractFor(taskDir, checklist),
+    contract ?? readFrozenTerminalContract(taskDir, checklist),
   );
   return new Set(
     [...skippedSteps(taskDir, checklist, signalFile).keys()].filter((step) => optional.has(step)),
@@ -155,7 +155,6 @@ function orderIssues(taskDir, checklist, contract, signalFile) {
 module.exports = {
   OPTIONAL_REFERENCE,
   authorizedSkips,
-  frozenContractFor,
   declarations: optionalDeclarations,
   freeze: freezeOptionalSteps,
   declared: declaredOptionalSteps,

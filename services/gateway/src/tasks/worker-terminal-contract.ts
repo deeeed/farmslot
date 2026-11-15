@@ -410,15 +410,18 @@ async function retainedOptionalSteps(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   fullTaskDir: string,
   checklist: string,
-): Promise<NonNullable<WorkerTerminalContractDocument['optionalSteps']> | undefined> {
+): Promise<
+  NonNullable<WorkerTerminalContractDocument['optionalSteps']> | 'unreadable' | undefined
+> {
   const input = `${fullTaskDir}/${terminalContractInputForChecklist(checklist)}`;
   if (!(await slotFileExists(vars, input))) return undefined;
   try {
     const existing: WorkerTerminalContractDocument = JSON.parse(await slotReadFile(vars, input));
     return (existing.optionalSteps ?? []).filter((step) => step.checklist === checklist);
   } catch {
-    // An unreadable contract grants nothing; the checks below report it.
-    return [];
+    // Unreadable is not 'grants nothing': a transient read failure must not
+    // rewrite the contract without the grant the template made.
+    return 'unreadable';
   }
 }
 
@@ -486,6 +489,9 @@ export async function syncTerminalContractForFlowOnSlot(
       });
     contract = proofArtifacts.freeze(contract, markdown, checklist);
     const retained = await retainedOptionalSteps(vars, fullTaskDir, checklist);
+    // Leave an unreadable contract alone rather than replace it with one that
+    // has lost its optional grant: the next sync, or its own checks, report it.
+    if (retained === 'unreadable') return;
     if (options.templateJustWritten || retained === undefined)
       contract = checklistOrder.freeze(contract, markdown, checklist);
     else if (retained.length) contract = { ...contract, optionalSteps: retained };
@@ -690,18 +696,10 @@ export async function validateDeterministicChecksForRun(
   // would incorrectly demand a second task-bound acceptance ledger.
   const checker = await agentRuntimeScriptForSlot(vars, 'worker-terminal-contract.cjs');
   const checklists = [...new Set(declaredChecks.map((check) => check.checklist))];
-  // A step the template declared optional and the worker skipped with a recorded
-  // reason ran no command by design, so this gate must not demand its receipt:
-  // accepting the skip at the mark and refusing it here is the stall the skip
-  // contract exists to avoid (ADR-064 Amendment 7).
   const evaluate = [
-    'const path=require("path");',
     'const {deterministicChecks}=require(process.argv[1]);',
-    'const order=require(path.join(path.dirname(process.argv[1]),"checklist-order.cjs"));',
-    'const results=JSON.parse(process.argv[3]).map(c=>{',
-    'const skipped=order.authorizedSkips(process.argv[2],c);',
-    'return {...deterministicChecks.evaluate(process.argv[2],c,{skipped}),checklist:c,skipped:[...skipped]};',
-    '});',
+    'const results=JSON.parse(process.argv[3]).map(c=>(',
+    '{...deterministicChecks.evaluate(process.argv[2],c),checklist:c}));',
     'process.stdout.write(JSON.stringify(results));',
     'process.exitCode=results.some(r=>r.issues.length)?1:0;',
   ].join('');
@@ -723,23 +721,13 @@ export async function validateDeterministicChecksForRun(
     checks: DeterministicChecklistCheck[];
     issues: string[];
     checklist?: string;
-    skipped?: number[];
   }> = JSON.parse(result.stdout);
   const checks = evaluated.flatMap((item) => item.checks);
-  // The declared checks this run still owes: an authorized skip removes its own
-  // row, so a contract whose only deterministic step was skipped owes nothing.
-  const skippedByChecklist = new Map(
-    evaluated.map((item) => [item.checklist, new Set(item.skipped ?? [])] as const),
-  );
-  const owed = declaredChecks.filter(
-    (check) => !skippedByChecklist.get(check.checklist)?.has(check.stepNumber),
-  );
-  if (!owed.length) return checks;
   if (
     !checks.length ||
     evaluated.some((item) => item.issues.length > 0) ||
     checks.some((check) => check.status !== 'passed') ||
-    owed.some(
+    declaredChecks.some(
       (expected) =>
         !checks.some(
           (check) =>
@@ -752,7 +740,7 @@ export async function validateDeterministicChecksForRun(
   ) {
     throw new Error(
       `Deterministic CI gate blocked: no verified receipts were returned for ${taskDir}/${input}, ` +
-        `which declares ${owed.length} check(s) this run still owes. Verify the selected task/checklist contract and rerun its CI mark step.`,
+        `which declares ${declaredChecks.length} check(s) this run still owes. Verify the selected task/checklist contract and rerun its CI mark step.`,
     );
   }
   return checks;

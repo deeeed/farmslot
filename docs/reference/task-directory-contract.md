@@ -267,7 +267,10 @@ produce its declared proof. A step without the marker MUST NOT be skipped, and
 completion MUST refuse a recorded skip on a step the template does not declare
 optional. The declaration MUST come from the frozen terminal contract: a marker
 present only in the checklist file MUST NOT grant a skip or waive a declared
-proof (ADR-064 Amendment 7).
+proof. One step MUST NOT carry both `[OPTIONAL: <when>]` and
+`[DETERMINISTIC: <reference>]`: a step a command receipt proves cannot also be
+one the worker may declare inapplicable, and freezing the declarations MUST
+refuse that template, naming the step (ADR-064 Amendment 7).
 
 ### Mark and receipt rules
 

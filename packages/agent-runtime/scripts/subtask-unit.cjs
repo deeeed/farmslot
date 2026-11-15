@@ -16,9 +16,9 @@ const {
   SUBTASK_ID_PATTERN,
   SUBTASK_INDEX_FILE,
   SUBTASKS_DIR,
+  readFrozenTerminalContract,
   subtaskPaths,
   targetForChecklistBasename,
-  terminalContractInputForChecklist,
 } = require('./checklist-target.cjs');
 const {
   atomicWrite,
@@ -44,20 +44,6 @@ const {
 
 const HANDOFF_INPUT = path.join('inputs', 'handoff.json');
 
-/** The checklist's frozen terminal contract, or null when it has none yet. */
-function frozenContract(taskDir, checklist) {
-  for (const input of [
-    terminalContractInputForChecklist(checklist),
-    'inputs/worker-terminal-contract.json',
-  ]) {
-    try {
-      return JSON.parse(fs.readFileSync(path.join(taskDir, input), 'utf8'));
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-    }
-  }
-  return null;
-}
 const SUBTASK_INDEX_REL = `${SUBTASKS_DIR}/${SUBTASK_INDEX_FILE}`;
 
 /** A refused command: the message is worker-facing, the code is the exit code. */
@@ -504,7 +490,7 @@ function subStart(taskDir, rest) {
     const earlier = checklistOrder.firstUnmarkedEarlierStep(parent.items, stepNumber);
     if (earlier) {
       const when = checklistOrder
-        .declared(taskDir, target.checklist, frozenContract(taskDir, target.checklist))
+        .declared(taskDir, target.checklist, readFrozenTerminalContract(taskDir, target.checklist))
         .get(earlier.stepNumber);
       throw new SubtaskRefusal(
         `step ${stepNumber} cannot take a child while step ${earlier.stepNumber} ` +

@@ -4,8 +4,8 @@ const { createHash, randomUUID } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const {
   enumerateChecklistCheckboxes,
-  terminalContractInputForChecklist,
   resolveChecklistTarget,
+  readFrozenTerminalContract,
 } = require('./checklist-target.cjs');
 const { atomicWrite } = require('./mark-io.cjs');
 
@@ -518,11 +518,9 @@ function readOptionalJson(file) {
 }
 
 function deterministicContract(taskDir, checklist) {
-  return (
-    readOptionalJson(path.join(taskDir, terminalContractInputForChecklist(checklist))) ??
-    readOptionalJson(path.join(taskDir, 'inputs', 'worker-terminal-contract.json')) ??
-    {}
-  );
+  // One reader for the frozen contract, shared with the mark engine and the
+  // order checks so their idea of "this checklist's contract" cannot drift.
+  return readFrozenTerminalContract(taskDir, checklist) ?? {};
 }
 
 function recordedDeterministicSteps(taskDir, checklist) {
@@ -800,17 +798,8 @@ function readDeterministicChecks(taskDir, checklist, options = {}) {
   });
 }
 
-/**
- * `options.skipped`: step numbers the template declared optional and the worker
- * skipped with a recorded reason (ADR-064 Amendment 7). A skipped step runs no
- * command, so demanding its receipt would accept the skip at the mark and then
- * refuse the completion. The skip itself is the record, in the ledger.
- */
-function evaluateDeterministicChecks(taskDir, checklist, options = {}) {
-  const skipped = options.skipped ?? new Set();
-  const checks = readDeterministicChecks(taskDir, checklist).filter(
-    (step) => !skipped.has(step.stepNumber),
-  );
+function evaluateDeterministicChecks(taskDir, checklist) {
+  const checks = readDeterministicChecks(taskDir, checklist);
   const issues = checks
     .filter((step) => step.status !== 'passed')
     .map(

@@ -129,6 +129,25 @@ function checklistStepName(rawLabel) {
   return rawLabel.replace(/^\*\*(.+?)\*\*.*$/, '$1').trim();
 }
 
+/**
+ * The frozen terminal contract for a checklist: its own input when a role wrote
+ * one, else the task's root contract. Returns null when neither exists, and
+ * throws when one exists but cannot be read, so a caller can tell "no contract"
+ * from "unreadable contract" rather than treating a transient failure as a
+ * contract that grants nothing.
+ */
+function readFrozenTerminalContract(taskDir, checklist) {
+  for (const input of [
+    terminalContractInputForChecklist(checklist),
+    WORKER_TERMINAL_CONTRACT_INPUT,
+  ]) {
+    const file = path.join(taskDir, input);
+    if (!fs.existsSync(file)) continue;
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  }
+  return null;
+}
+
 function signalFileForChecklist(checklistBasename) {
   if (
     checklistBasename === TASK_PROGRESS_MARKDOWN ||
@@ -369,6 +388,7 @@ module.exports = {
   checklistTargetForAgentRole,
   taskDirRelPath,
   signalFileForChecklist,
+  readFrozenTerminalContract,
   targetForChecklistBasename,
   terminalContractInputForChecklist,
   defaultWorkerTarget,

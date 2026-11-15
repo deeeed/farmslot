@@ -685,15 +685,49 @@ const DECLARED = `- [ ] 1. Retain the failing baseline run [PROOF: ${BASELINE}]`
   assert.equal(spawnSync(process.execPath, [helper, dir, '2'], { encoding: 'utf8' }).status, 0);
 }
 
-// A step declared both optional and deterministic: the skip runs no command, so
-// completion must not then demand its receipt. Accepting a skip at the mark and
-// refusing it at completion is the stall this whole gate exists to avoid.
+// A step cannot be both optional and deterministic. The two markers make
+// contradictory claims about one row — a command receipt proves it, and the
+// worker may declare it inapplicable — and the combination is what forced a skip
+// to be carried through every receipt gate. The declaration refuses it instead,
+// in either marker order, and says which step and what to do.
 {
-  const checker = path.join(root, 'scripts', 'check-task-artifact-contract.mjs');
-  const dir = task('optional-deterministic');
-  const frozen = {
+  for (const label of [
+    '- [ ] 1. Unit checks [DETERMINISTIC: checks.unit] [OPTIONAL: the project runs no unit checks]',
+    '- [ ] 1. Unit checks [OPTIONAL: the project runs no unit checks] [DETERMINISTIC: checks.unit]',
+  ]) {
+    assert.throws(
+      () => checklistOrder.declarations(label, 'CHECKLIST.md'),
+      (error) =>
+        /step 1 is declared both \[OPTIONAL:\] and \[DETERMINISTIC:\]/.test(error.message) &&
+        /Drop one marker/.test(error.message),
+      `expected a refusal for: ${label}`,
+    );
+    // The freeze runs the same declaration, so task init refuses the template
+    // rather than writing a contract nothing can satisfy.
+    assert.throws(() => checklistOrder.freeze({}, label, 'CHECKLIST.md'), /both \[OPTIONAL:\]/);
+  }
+  // Neither marker alone is affected: this is one illegal pairing, not a new
+  // restriction on either declaration.
+  const separate = [
+    '- [ ] 1. Reproduce [OPTIONAL: the bug still reproduces]',
+    '- [ ] 2. Unit checks [DETERMINISTIC: checks.unit]',
+  ].join('\n');
+  assert.deepEqual(checklistOrder.declarations(separate, 'CHECKLIST.md'), [
+    { checklist: 'CHECKLIST.md', stepNumber: 1, when: 'the bug still reproduces' },
+  ]);
+}
+
+// MICRO3's recorded sequence on the engine before this change: steps 1 and 2
+// marked individually, then step 3 ticked by `complete --mark-last`. A run that
+// follows its checklist in order must behave identically afterwards, and the
+// terminal mark reaches the last row through the same order check.
+{
+  const dir = task('micro3-no-regression');
+  writeChecklist(dir, ['- [ ] 1. First', '- [ ] 2. Second', '- [ ] 3. Third']);
+  writeContract(dir, {
     schemaVersion: 1,
     flowType: 'fix-bug',
+    mode: 'autonomous',
     requireSignal: true,
     commands: {
       complete: { report: 'artifacts/report.md', artifacts: ['artifacts/report.md'] },
@@ -701,49 +735,29 @@ const DECLARED = `- [ ] 1. Retain the failing baseline run [PROOF: ${BASELINE}]`
       blocked: { artifacts: [] },
     },
     whenPresent: [],
-    deterministicChecks: [
-      {
-        checklist: 'CHECKLIST.md',
-        stepNumber: 1,
-        reference: 'checks.unit',
-        command: 'printf frozen',
-      },
-    ],
-    optionalSteps: [
-      { checklist: 'CHECKLIST.md', stepNumber: 1, when: 'the project runs no unit checks' },
-    ],
-  };
-  writeContract(dir, frozen);
-  writeChecklist(dir, [
-    '- [ ] 1. Unit checks [DETERMINISTIC: checks.unit] [OPTIONAL: the project runs no unit checks]',
-  ]);
+  });
   writeFileSync(path.join(dir, 'artifacts', 'report.md'), '# Report\n\nDone.\n');
+  writeFileSync(path.join(dir, 'artifacts', 'learnings.md'), '- Nothing relevant.\n');
 
-  const skipped = spawnSync(
-    process.execPath,
-    [helper, dir, '1', '--skip', 'this project declares no unit checks'],
-    { encoding: 'utf8' },
+  for (const step of ['1', '2']) {
+    const marked = spawnSync(process.execPath, [helper, dir, step], { encoding: 'utf8' });
+    assert.equal(marked.status, 0, `step ${step}: ${marked.stderr}`);
+  }
+  const completed = spawnSync(process.execPath, [helper, dir, 'complete', '--mark-last'], {
+    encoding: 'utf8',
+  });
+  assert.equal(completed.status, 0, completed.stdout + completed.stderr);
+  const signal = JSON.parse(readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8'));
+  assert.equal(signal.status, 'complete');
+  assert.deepEqual(
+    signal.checklistTiming.events.map((event) => event.stepNumber),
+    [1, 2, 3],
   );
-  assert.equal(skipped.status, 0, skipped.stderr);
-  // No receipt was written, because no command ran.
-  assert.equal(existsSync(path.join(dir, 'artifacts', 'deterministic-checks')), false);
-
-  const completion = spawnSync(
-    process.execPath,
-    [
-      checker,
-      dir,
-      '--contract',
-      path.join(dir, 'inputs', 'worker-terminal-contract.json'),
-      '--terminal',
-      'complete',
-      '--proof-checklist',
-      'CHECKLIST.md',
-    ],
-    { encoding: 'utf8' },
+  assert.ok(
+    signal.checklistTiming.events.every((event) => event.skipped === undefined),
+    'nothing was skipped, as in the recorded run',
   );
-  assert.equal(completion.status, 0, completion.stdout + completion.stderr);
-  assert.doesNotMatch(completion.stderr, /Execution receipt is missing/);
+  assert.equal(signal.checklistTiming.outOfOrder, undefined);
 }
 
 console.log('proof-artifacts tests passed');

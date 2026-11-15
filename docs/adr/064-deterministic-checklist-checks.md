@@ -198,9 +198,8 @@ carry a condition:
 
 Such a step may be skipped with `./mark 11 --skip "<reason>"`. The reason is
 recorded in the ledger beside the step (`skipped: true` with the reason in
-`checklistTiming`), the step's deterministic command does not run, and a declared
-proof artifact is not required of it, because the skip claims the work did not
-apply. A step without the marker can never be skipped: the worker does it, or
+`checklistTiming`), and a declared proof artifact is not required of it, because
+the skip claims the work did not apply. A step without the marker can never be skipped: the worker does it, or
 stops the run with `mark blocked`. The grant is the frozen contract, not the file
 on disk: a marker a worker writes into its own checklist grants nothing, so a
 step it was refused cannot be waived by marking that row optional. A task whose
@@ -211,6 +210,16 @@ The marker is frozen into the task's terminal contract at init beside the
 deterministic commands and the proof declarations, and it is one spec across every
 project: the same `[OPTIONAL: <when>]` in a pack template, a recipe-cook template
 or a role checklist.
+
+One step cannot carry both `[OPTIONAL: <when>]` and `[DETERMINISTIC: <reference>]`.
+The two make contradictory claims about the same row: a deterministic step is
+settled by a command receipt, and an optional step is one the worker may declare
+inapplicable, leaving nothing for the gates that ask for that receipt — package
+preparation, the terminal signal probe and the artifact checker each ask
+separately. Carrying the skip to all of them is three places to keep in step, so
+freezing the declarations refuses the combination instead, naming the step. A
+template that wants both splits the row: the optional work, and the check that
+runs regardless. No pack, recipe-cook or role template declares both today.
 
 Good models already work in order, so nothing changes for them. What changes is
 that skipping ahead now fails loudly at the mark, where the worker can still fix

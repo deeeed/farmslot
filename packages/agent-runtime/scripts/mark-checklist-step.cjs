@@ -584,9 +584,9 @@ function resolveTarget(taskPath, stepNumber, markLast) {
       }
     }
     try {
-      // A skipped step runs nothing: its declared command belongs to the work
-      // the template says does not apply here.
-      if (skipReason === null) deterministicChecks.execute(dir, checklist, item.stepNumber);
+      // A deterministic step cannot be optional, so a skip never reaches a
+      // declared command: this runs for the step that declares one, or nothing.
+      deterministicChecks.execute(dir, checklist, item.stepNumber);
     } catch (error) {
       console.error(error.message);
       process.exit(1);
