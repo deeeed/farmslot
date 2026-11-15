@@ -63,6 +63,7 @@ let ownedSupport = false;
 let ownedCleanupFailure = false;
 let onFixtures = async () => {};
 let moves = 0;
+let remoteReads = 0;
 const calls: string[] = [];
 mock.module('../../core/index.js', {
   namedExports: {
@@ -112,19 +113,20 @@ mock.module('../../core/index.js', {
 });
 // Recovery uses this same simulated transport for ancestry reads in the background owner.
 const simulatedCore = await import('../../core/index.js');
+const readCommands = await import('../../host-services/read-command.js');
 mock.module('../../host-services/read-command.js', {
   namedExports: {
+    ...readCommands,
     readSlotCommand: (...args: Parameters<typeof core.execOnSlot>) =>
       simulatedCore.execOnSlot(...args),
   },
 });
 mock.module('../../core/read-probes.js', {
   namedExports: {
-    readSlotProbe: async () => ({
-      exitCode: 0,
-      stdout: `${remote}\trefs/heads/main\n`,
-      stderr: '',
-    }),
+    readSlotProbe: async () => {
+      remoteReads++;
+      return { exitCode: 0, stdout: `${remote}\trefs/heads/main\n`, stderr: '' };
+    },
   },
 });
 mock.module('./workspace-probe.js', {
@@ -217,7 +219,6 @@ const scaffolding = await import('../../fleet/slot-scaffolding.js');
 mock.module('../../fleet/slot-scaffolding.js', {
   namedExports: { ...scaffolding, excludeSlotScaffolding: async () => {} },
 });
-mock.module('../fleet.js', { namedExports: { checkFixtures: async () => fixtures } });
 mock.module('./fixtures.js', {
   namedExports: {
     slotFixtureRefresh: async () => {
@@ -242,9 +243,14 @@ mock.module('./release.js', {
 });
 mock.module('../../run-engine/gate-held-lifecycle.js', {
   namedExports: {
+    blocksGateHeldSlotRelease: () => false,
     findActiveGateHeldRunForSlot: () => undefined,
     findGateParkedRunForSlot: () => undefined,
   },
+});
+const fleet = await import('../fleet.js');
+mock.module('../fleet.js', {
+  namedExports: { ...fleet, checkFixtures: async () => fixtures },
 });
 const { inspectSlotWorkspace } = await import('./workspace.js');
 const { recoverSlotWorkspace } = await import('./recover-workspace.js');
@@ -306,6 +312,7 @@ const recover = (extra: Partial<SlotRefreshParams> = {}) =>
     {},
   );
 beforeEach(async () => {
+  remoteReads = 0;
   head = 'a'.repeat(40);
   remote = head;
   branch = 'main';
@@ -334,6 +341,59 @@ test('recovery cleans declared support before fixture refresh and final verifica
   const result = await recover();
   assert.equal(result.refreshed, true, result.detail);
   assert.equal(calls.filter((call) => call === 'owned-support').length, 1);
+});
+
+test('late working observation cannot suppress the final recovery remote lookup', async () => {
+  let readsBeforeVerify = -1;
+  onFixtures = async () => {
+    const row = await core.readSlotRow('example-slot');
+    assert.ok(row);
+    assert.equal(row.phase, 'releasing');
+    assert.equal(row.agent, 'idle');
+    const refreshed = fleet.buildFleetRefreshSnapshot(
+      [row],
+      [
+        {
+          slot: 'example-slot',
+          machine: 'example',
+          platform: 'cli',
+          project: 'example',
+          ssh: 'LOCAL',
+          dev: '-',
+          devserver: '-',
+          device: '-',
+          cdp: '-',
+          fixtures: 'OK',
+          branch: 'main',
+          agent: 'working',
+          enabled: true,
+          mode: 'dispatch',
+          dispatchable: false,
+        },
+      ],
+      [],
+      new Date().toISOString(),
+    );
+    await writeFile(path.join(root, 'status.json'), JSON.stringify(refreshed));
+    readsBeforeVerify = remoteReads;
+  };
+  const result = await recover();
+  assert.equal(result.refreshed, true, result.detail);
+  assert.equal(remoteReads, readsBeforeVerify + 1, 'final verify must read the remote');
+  const row = await core.readSlotRow('example-slot');
+  assert.equal(row?.lifecycle, 'ready');
+  assert.equal(row?.agent, 'idle');
+  assert.equal(row?.workspace_recovery, null);
+  assert.equal(branch, 'main');
+});
+
+test('a working agent at recovery entry still refuses an ownerless slot', async () => {
+  await seed({ agent: 'working' });
+  const result = await recover();
+  assert.equal(result.refreshed, false);
+  assert.deepEqual(calls, []);
+  assert.equal(remoteReads, 0);
+  assert.equal((await core.readSlotRow('example-slot'))?.agent, 'working');
 });
 
 test('unconfirmed support cleanup leaves recovery held', async () => {
