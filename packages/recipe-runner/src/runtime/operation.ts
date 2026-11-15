@@ -210,6 +210,9 @@ export class OperationRecord {
   finish(exitCode: number): void {
     clearInterval(this.timer);
     // One line, once, after the last output: the total is only known now.
+    // Order matters: end the payload at a line break first, so the count the
+    // marker reports is the count a reader can verify.
+    if (this.droppedBytes > 0) this.observe(() => this.endAtLastLine());
     if (this.droppedBytes > 0)
       this.observe(() =>
         fs.appendFileSync(
@@ -221,6 +224,43 @@ export class OperationRecord {
     this.value.status = exitCode === 0 ? 'pass' : 'fail';
     this.value.finishedAt = new Date().toISOString();
     this.observe(() => this.flush());
+  }
+
+  /**
+   * End a truncated log at its last line break.
+   *
+   * Adapters forward raw pipe buffers, so a write that fits can end in the
+   * middle of a multi-byte character, with the bytes completing it in the next
+   * write. While everything is appended that resolves itself; once a write is
+   * withheld at the cap it never does, and the log would end in bytes that are
+   * not valid UTF-8. Cutting back to the last newline covers that and any
+   * partial last line in one rule, with no need to reason about byte classes.
+   *
+   * A log with no line break at all is left alone: it is one unterminated line,
+   * and discarding all of it to tidy a few bytes would lose more than it fixes.
+   */
+  private endAtLastLine(): void {
+    if (this.logBytes === 0) return;
+    const window = 64 * 1024;
+    const handle = fs.openSync(this.value.logPath, 'r');
+    let lastBreak = -1;
+    try {
+      for (let end = this.logBytes; end > 0 && lastBreak < 0; end -= window) {
+        const size = Math.min(window, end);
+        const buffer = Buffer.alloc(size);
+        fs.readSync(handle, buffer, 0, size, end - size);
+        const index = buffer.lastIndexOf(0x0a);
+        if (index >= 0) lastBreak = end - size + index;
+      }
+    } finally {
+      fs.closeSync(handle);
+    }
+    if (lastBreak < 0) return;
+    const keep = lastBreak + 1;
+    if (keep === this.logBytes) return;
+    fs.truncateSync(this.value.logPath, keep);
+    this.droppedBytes += this.logBytes - keep;
+    this.logBytes = keep;
   }
 
   private observe(write: () => void): void {

@@ -283,7 +283,7 @@ test('the cap keeps whole lines and never splits a character', async (t) => {
   // Nothing partial: the payload is whole lines of the filler and nothing else.
   assert.ok(payload.length > 0);
   assert.equal(payload.at(-1), 0x0a, 'the payload ends at a line break');
-  assert.ok(!payload.includes(Buffer.from('tail without a break')), 'no fragment was kept');
+  assert.ok(!payload.includes(Buffer.from('tail without a line break')), 'no fragment was kept');
   // Valid UTF-8 throughout: a round trip cannot introduce a replacement char.
   const text = payload.toString('utf8');
   assert.ok(!text.includes('\uFFFD'), 'no character was split');
@@ -297,4 +297,57 @@ test('the cap keeps whole lines and never splits a character', async (t) => {
     )!;
   assert.equal(Number(marker[1]), payload.length, 'the marker counts what is there');
   assert.ok(Number(marker[3]) > 0, 'the withheld writes are reported');
+});
+
+// Codex r4: adapters forward raw pipe buffers, so a write that fits can end in
+// the middle of a character — its last byte is 0xC3 — and the bytes completing
+// it arrive next. Once that next write is withheld at the cap, the completing
+// bytes never come, so the log would end on a half-written character. The log
+// is cut back to its last newline whenever anything was withheld.
+test('a withheld write cannot stand the log on a half-written character', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'operation-log-split-'));
+  const previous = harnessHost();
+  t.after(() => {
+    configureHarnessHost(previous);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  configureHarnessHost({ ...previous, journaledCommands: ['run'] });
+  const cap = 2 * 1024 * 1024;
+
+  await withCommandJournal(
+    'run',
+    ['run', 'split-character'],
+    async () => {
+      const line = `${'y'.repeat(31)}\n`;
+      const fill = Math.floor(cap / line.length) - 1;
+      process.stdout.write(line.repeat(fill));
+      // Leave 4 bytes of room, then fit a buffer whose last byte opens a
+      // two-byte character: exactly the state a pipe boundary leaves behind.
+      const gap = cap - fill * line.length - 4;
+      process.stdout.write(`${'z'.repeat(gap - 1)}\n`);
+      process.stdout.write(Buffer.from([0x61, 0x62, 0xc3]));
+      // The bytes that would complete it, in a write that crosses the cap.
+      process.stdout.write(Buffer.from([0xa9, 0x0a, 0x63, 0x64, 0x0a]));
+      return 0;
+    },
+    { target: root, runtimeDir: 'runtime' },
+  );
+
+  const operations = path.join(root, 'runtime', 'operations');
+  const logs = fs.readdirSync(operations).filter((entry) => entry.endsWith('.log'));
+  const bytes = fs.readFileSync(path.join(operations, logs[0]!));
+  const payload = bytes.subarray(0, bytes.indexOf(Buffer.from('\n[log truncated:')));
+
+  assert.equal(payload.at(-1), 0x0a, 'the payload ends at a line break');
+  assert.ok(!payload.includes(0xc3), 'the half-written character is gone');
+  const text = payload.toString('utf8');
+  assert.ok(!text.includes('\uFFFD'), 'nothing in the log is a broken character');
+  assert.ok(Buffer.from(text, 'utf8').equals(payload), 'the log is byte-exact UTF-8');
+
+  const marker =
+    /\[log truncated: kept (\d+) bytes of a (\d+) byte limit; (\d+) further bytes dropped\]/.exec(
+      bytes.toString('utf8'),
+    )!;
+  assert.equal(Number(marker[1]), payload.length, 'the marker counts what is there');
+  assert.ok(Number(marker[3]) > 0, 'the removed bytes are reported as dropped');
 });
