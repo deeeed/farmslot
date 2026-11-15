@@ -19,7 +19,7 @@ import { resolveConfiguredExecutionTemplateSources } from '../../../packages/age
 import type { ProjectExecutionTemplatesConfig } from '../../../packages/protocol/src/index.js';
 import { validatePackPortability } from '../../../packages/protocol/src/node/pack-portability.js';
 
-import { projectPacks } from './fixtures.mjs';
+import { canaryPack, projectPacks } from './fixtures.mjs';
 
 const source = fileURLToPath(new URL('../../../', import.meta.url));
 const json = (file: string, value: unknown) => {
@@ -33,9 +33,16 @@ test('setup emits a portable pack and preserves the node installation environmen
   const farm = path.join(root, 'farm');
   const bin = path.join(root, 'bin');
   mkdirSync(bin);
-  const config: { live: { nodes: { machine: string; slot: string }[] } } = JSON.parse(
-    readFileSync(new URL('./config.json', import.meta.url), 'utf8'),
-  );
+  const config = {
+    live: {
+      nodes: [
+        { machine: 'first', slot: 'first-canary' },
+        { machine: 'second', slot: 'second-canary' },
+      ],
+    },
+  };
+  const configFile = path.join(root, 'config.json');
+  json(configFile, config);
   const homes: Record<string, string> = {};
   for (const node of config.live.nodes) {
     const home = path.join(root, node.machine);
@@ -75,6 +82,8 @@ process.exit(result.status??1);
         path.join(source, 'scripts/runner-validation/canary/setup.mts'),
         '--farm',
         farm,
+        '--config',
+        configFile,
         ...(apply ? ['--apply'] : []),
       ],
       {
@@ -141,10 +150,28 @@ process.exit(result.status??1);
     },
   );
   const original = readFileSync(path.join(projectDir, 'project.json'));
+  const devTemplate = path.join(projectDir, 'templates/shared/dev/shared.md');
+  const localTemplate = '# Local canary worker\n';
+  writeFileSync(devTemplate, localTemplate);
   writeFileSync(path.join(projectDir, 'keep-local'), 'keep');
+  const reviewTemplate = path.join(projectDir, 'templates/worker/review.md');
+  rmSync(reviewTemplate, { force: true });
   setup(true);
+  assert.equal(
+    readFileSync(reviewTemplate, 'utf8'),
+    canaryPack().files['templates/worker/review.md'],
+    'setup adds the missing review template to an existing installation',
+  );
+  assert.equal(readFileSync(devTemplate, 'utf8'), localTemplate);
   assert.deepEqual(readFileSync(path.join(projectDir, 'project.json')), original);
   assert.equal(readFileSync(path.join(projectDir, 'keep-local'), 'utf8'), 'keep');
+});
+
+test('the live canary pack supports its reviewed lifecycle profile', () => {
+  const pack = canaryPack();
+  for (const name of ['review.md', 'review-fix.md']) {
+    assert.ok(pack.files[`templates/worker/${name}`], `missing canary ${name}`);
+  }
 });
 
 test('restart matrix packs preserve their shared template IDs in the deployment layout', (t) => {

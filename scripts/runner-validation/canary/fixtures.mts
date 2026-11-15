@@ -249,6 +249,10 @@ export const canaryPack = (fast = false): ProjectPack =>
       review: { enabled: false },
       monitoring: { poll_interval_min: 0.02, total_timeout_min: 15 },
     },
+    files: {
+      'templates/worker/review.md': REVIEW_TEMPLATE,
+      'templates/worker/review-fix.md': REVIEW_FIX_TEMPLATE,
+    },
   });
 
 export const REVIEW_TICKET = {
