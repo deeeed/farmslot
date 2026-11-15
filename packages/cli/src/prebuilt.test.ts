@@ -42,7 +42,11 @@ async function snapshot(t: TestContext, revision = 'rev-1') {
     'export const extra = (n: number): number => n + 1;',
   );
   await writeFile(path.join(cli, 'src/local.ts'), 'export const local: string = "local";');
-  await writeFile(path.join(root, 'outside.ts'), 'export const outside: string = "outside";');
+  // An enum: Node's own type stripping cannot load it, so this proves the outside file reached TSX.
+  await writeFile(
+    path.join(root, 'outside.ts'),
+    'enum Where { Outside = "outside" }\nexport const outside: string = Where.Outside;',
+  );
   await writeFile(
     path.join(cli, 'src/entry.ts'),
     `import { value } from '@farmslot/lib';
@@ -72,11 +76,23 @@ test('an unbuilt snapshot runs its TypeScript sources', async (t) => {
   assert.deepEqual({ ...result, entry: undefined }, { ...expected, entry: undefined });
 });
 
+/** Node versions where TSX registers in-thread hooks: the prebuilt hooks chain only with those. */
+const [major, minor, patch] = process.versions.node.split('.').map(Number) as [
+  number,
+  number,
+  number,
+];
+const inThreadTsx =
+  major >= 26 ||
+  (major === 25 && (minor > 1 || (minor === 1 && patch >= 0))) ||
+  (major === 24 && (minor > 11 || (minor === 11 && patch >= 1)));
+
 test('a built snapshot runs the prebuilt modules and still loads TypeScript from outside', async (t) => {
   const { cli } = await snapshot(t);
   await run(process.execPath, [path.join(cli, 'bin/build-prebuilt.mjs'), 'rev-1']);
   const result = await call(cli);
-  assert.match(result.entry, /src\/entry\.js$/);
+  // Older Node keeps the sources: TSX's loader-thread hooks would drop the outside named exports.
+  assert.match(result.entry, inThreadTsx ? /src\/entry\.js$/ : /src\/entry\.ts$/);
   assert.deepEqual({ ...result, entry: undefined }, { ...expected, entry: undefined });
   // An operator can still force the sources.
   assert.match((await call(cli, { FARMSLOT_CLI_FROM_SOURCE: '1' })).entry, /src\/entry\.ts$/);

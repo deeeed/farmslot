@@ -67,14 +67,9 @@ function settled(result) {
   return result;
 }
 
-/** In-thread hook for `module.registerHooks` (Node 22.15+); `initialize` must run first. */
+/** In-thread resolve hook for `module.registerHooks`; `initialize` must run first. */
 export function resolveSync(specifier, context, next) {
   return prebuilt(specifier) ?? settled(next(specifier, context));
-}
-
-/** Loader-thread hook for `module.register`, on Node versions without `registerHooks`. */
-export async function resolve(specifier, context, next) {
-  return prebuilt(specifier) ?? settled(await next(specifier, context));
 }
 
 /**
@@ -85,7 +80,8 @@ function prebuiltSource(url) {
   if (!url.startsWith('file:') || !url.endsWith('.js')) return undefined;
   const file = fileURLToPath(url);
   const name = sourcePackage(file);
-  if (!name || !existsSync(file.replace(/\.js$/, '.ts'))) return undefined;
+  const base = file.replace(/\.js$/, '');
+  if (!name || !(existsSync(`${base}.ts`) || existsSync(`${base}.tsx`))) return undefined;
   return {
     format: state.commonjs.includes(name) ? 'commonjs' : 'module',
     source: readFileSync(file, 'utf8'),
@@ -95,10 +91,5 @@ function prebuiltSource(url) {
 
 /** In-thread load hook for `module.registerHooks`. */
 export function loadSync(url, context, next) {
-  return prebuiltSource(url) ?? next(url, context);
-}
-
-/** Loader-thread load hook for `module.register`. */
-export async function load(url, context, next) {
   return prebuiltSource(url) ?? next(url, context);
 }

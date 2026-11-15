@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
@@ -157,8 +158,11 @@ export function createDefaultRecipeEngine(options: DefaultRecipeEngineOptions): 
   const packageMetadata = readFile(new URL('../package.json', import.meta.url), 'utf8').then(
     (text) => JSON.parse(text) as { version: string },
   );
-  const entryDir = import.meta.url.endsWith('.ts') ? 'src' : 'dist';
-  const extension = import.meta.url.endsWith('.ts') ? 'ts' : 'js';
+  // A prebuilt CLI snapshot runs the .js built beside each source: its runner is still that source.
+  const running = fileURLToPath(import.meta.url);
+  const fromSource = running.endsWith('.ts') || existsSync(running.replace(/\.js$/, '.ts'));
+  const entryDir = fromSource ? 'src' : 'dist';
+  const extension = fromSource ? 'ts' : 'js';
   const runnerDigest = Promise.all(
     ['engine', 'diagnostics', 'types'].map((file) =>
       digestFileWithinRoot(runnerRoot, `${entryDir}/${file}.${extension}`),

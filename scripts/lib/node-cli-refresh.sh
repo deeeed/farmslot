@@ -173,8 +173,10 @@ if [ ! -f "$snapshot/DEPLOYED-REVISION.json" ]; then
     exit 1
   fi
   # Each CLI call then loads JavaScript built once here instead of transforming its TypeScript
-  # (packages/cli/bin/build-prebuilt.mjs); the launcher uses it only for this revision.
-  if ! (cd "$partial" && node packages/cli/bin/build-prebuilt.mjs "$sha") >> "$log" 2>&1; then
+  # (packages/cli/bin/build-prebuilt.mjs); the launcher uses it only for this revision. A
+  # revision from before the prebuilt CLI has no build script and runs from source.
+  if [ -f "$partial/packages/cli/bin/build-prebuilt.mjs" ] &&
+    ! (cd "$partial" && node packages/cli/bin/build-prebuilt.mjs "$sha") >> "$log" 2>&1; then
     tail -20 "$log" >&2
     echo "[deploy] ERROR: prebuilding the node CLI failed; full log: $log" >&2
     echo "  fix: resolve the error in that log, then redeploy" >&2
