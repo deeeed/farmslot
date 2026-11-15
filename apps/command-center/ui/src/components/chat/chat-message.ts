@@ -6,7 +6,19 @@ import type { ChatMessage } from '@farmslot/protocol';
 import './chat-action-card.js';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { highlightGeneration, onHighlighterReady } from '../../utils/code-highlight.js';
 import { renderChatMarkdown } from '../../utils/markdown.js';
+
+/** Asks the chat view to open a workspace file a message names (a file chip was clicked). */
+export interface ChatOpenFileDetail {
+  path: string;
+  line?: number;
+  column?: number;
+}
+
+const COPIED_MS = 1200;
+
+/** Whether markdown may hold a fenced code block, whose HTML depends on the loaded highlighters. */
 
 /** Rendered message markdown. */
 const markdownCss = `
@@ -32,6 +44,57 @@ const markdownCss = `
     white-space: pre;
   }
   chat-message .cm-markdown pre code { padding: 0; background: none; }
+  chat-message .cm-code {
+    margin: ${spacing.sm} 0;
+    border: 1px solid ${colors.bgCardHover};
+    border-radius: ${radii.md};
+    background: ${colors.bgSidebar};
+    overflow: hidden;
+  }
+  chat-message .cm-code-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: ${spacing.md};
+    padding: ${spacing.xs} ${spacing.xs} 0 ${spacing.md};
+    color: ${colors.textMuted};
+    font-size: ${fonts.sizeXs};
+    user-select: none;
+  }
+  chat-message .cm-code-actions { display: flex; gap: ${spacing.xs}; }
+  chat-message .cm-code-actions button,
+  chat-message .cm-copy-message {
+    font: inherit;
+    font-size: ${fonts.sizeXs};
+    color: ${colors.textMuted};
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: ${radii.sm};
+    padding: 1px 6px;
+    cursor: pointer;
+  }
+  chat-message .cm-code-actions button:hover,
+  chat-message .cm-copy-message:hover { color: ${colors.textPrimary}; border-color: ${colors.bgCardHover}; }
+  chat-message .cm-code-actions button[aria-pressed='true'] { color: ${colors.accent}; }
+  chat-message .cm-code-actions button:focus-visible,
+  chat-message .cm-copy-message:focus-visible { outline: 2px solid ${colors.accent}; }
+  chat-message .cm-code pre { margin: 0; border-radius: 0; background: transparent !important; }
+  chat-message .cm-code[data-wrap='true'] pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  chat-message .cm-markdown a.cm-file {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0 5px;
+    border: 1px solid ${colors.bgCardHover};
+    border-radius: ${radii.sm};
+    background: ${colors.bgSurface};
+    color: ${colors.accent};
+    text-decoration: none;
+    cursor: pointer;
+  }
+  chat-message .cm-markdown a.cm-file code { background: none; padding: 0; }
+  chat-message .cm-markdown a.cm-file:hover { border-color: ${colors.accent}; }
+  chat-message .cm-message-actions { display: flex; justify-content: flex-start; margin-top: 2px; }
   chat-message .cm-markdown h1,
   chat-message .cm-markdown h2,
   chat-message .cm-markdown h3 { margin: ${spacing.md} 0 ${spacing.sm}; font-size: ${fonts.sizeMd}; }
@@ -169,6 +232,12 @@ let sheet: CSSStyleSheet | undefined;
 export class ChatMessageElement extends LitElement {
   @property({ attribute: false }) message!: ChatMessage;
   @property({ type: Boolean }) isStreaming = false;
+  /**
+   * File paths in the markdown become chips that ask the host to open them
+   * (`chat-open-file`, detail ChatOpenFileDetail). Only a host with a workspace to open them sets it.
+   */
+  @property({ type: Boolean }) fileLinks = false;
+  private stopHighlightListener?: () => void;
 
   protected override createRenderRoot() {
     return this;
@@ -221,17 +290,109 @@ export class ChatMessageElement extends LitElement {
       .replaceAll(snippetSentinel, '[redacted sentinel file snippet]');
   }
 
-  /** The last message markdown rendered, so an update that keeps the text renders nothing. */
-  private markdown?: { source: string; html: string };
+  /**
+   * The last message markdown rendered, so an update that keeps the text (and the highlighter
+   * generation and options) renders nothing.
+   */
+  private markdown?: { key: string; html: string };
 
   private markdownHtml(source: string): string {
-    if (this.markdown?.source !== source)
-      this.markdown = { source, html: renderChatMarkdown(source) };
+    // The generation is in every key, but only code blocks re-render when it changes: the block
+    // cache keys the rest without it.
+    const key = `${this.fileLinks ? 'f' : ''}${highlightGeneration()}\0${source}`;
+    if (this.markdown?.key !== key)
+      this.markdown = { key, html: renderChatMarkdown(source, { fileLinks: this.fileLinks }) };
     return this.markdown.html;
+  }
+
+  /** Code block buttons and file chips live in rendered markdown, so one listener serves them. */
+  private onMarkdownClick = (event: MouseEvent) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const action = target?.closest<HTMLButtonElement>('[data-code-action]');
+    if (action) {
+      const block = action.closest('.cm-code');
+      if (!block) return;
+      if (action.dataset.codeAction === 'wrap') {
+        const index = [...this.querySelectorAll('.cm-code')].indexOf(block);
+        if (this.unwrapped.has(index)) this.unwrapped.delete(index);
+        else this.unwrapped.add(index);
+        this.applyWrap();
+      } else if (action.dataset.codeAction === 'copy') {
+        this.copy(action, block.querySelector('pre')?.textContent ?? '');
+      }
+      return;
+    }
+    const chip = target?.closest<HTMLAnchorElement>('a[data-file-path]');
+    if (!chip) return;
+    event.preventDefault();
+    const path = chip.dataset.filePath;
+    if (!path) return;
+    const line = Number(chip.dataset.fileLine);
+    const column = Number(chip.dataset.fileColumn);
+    const detail: ChatOpenFileDetail = {
+      path,
+      ...(line > 0 ? { line } : {}),
+      ...(column > 0 ? { column } : {}),
+    };
+    this.dispatchEvent(
+      new CustomEvent<ChatOpenFileDetail>('chat-open-file', {
+        detail,
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  };
+
+  /** Code blocks (by position) the reader unwrapped; kept across re-renders, e.g. once highlighted. */
+  private unwrapped = new Set<number>();
+
+  private applyWrap() {
+    for (const [index, block] of this.querySelectorAll('.cm-code').entries()) {
+      const wrapped = !this.unwrapped.has(index);
+      block.setAttribute('data-wrap', String(wrapped));
+      block
+        .querySelector('[data-code-action="wrap"]')
+        ?.setAttribute('aria-pressed', String(wrapped));
+    }
+  }
+
+  protected override updated() {
+    if (this.unwrapped.size) this.applyWrap();
+  }
+
+  /** Copies `text`, and says so on the button that asked for a moment. */
+  private copy(button: HTMLButtonElement, text: string) {
+    const label = button.textContent;
+    void navigator.clipboard.writeText(text).then(
+      () => {
+        button.textContent = 'Copied';
+        setTimeout(() => {
+          button.textContent = label;
+        }, COPIED_MS);
+      },
+      (error: unknown) => {
+        // Clipboard access can be refused (no focus, no permission): the button says so.
+        button.textContent = 'Copy failed';
+        button.title = error instanceof Error ? error.message : String(error);
+        setTimeout(() => {
+          button.textContent = label;
+        }, COPIED_MS);
+      },
+    );
+  }
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    this.stopHighlightListener?.();
+    this.stopHighlightListener = undefined;
   }
 
   override connectedCallback() {
     super.connectedCallback();
+    // A language's highlighter arriving re-renders messages whose code showed as plain text.
+    this.stopHighlightListener ??= onHighlighterReady(() => {
+      if (this.markdown?.html.includes('class="cm-code"')) this.requestUpdate();
+    });
     // One stylesheet per document or shadow root that holds messages, not one per message. It goes
     // before the root's own sheets, where each message's <style> element used to cascade.
     const root = this.getRootNode();
@@ -270,8 +431,28 @@ export class ChatMessageElement extends LitElement {
         <div class="cm-bubble ${isUser ? 'cm-user' : 'cm-assistant'}">
           ${isUser
             ? html`<span>${this.message.content}</span>`
-            : html`<span class="cm-markdown" .innerHTML=${this.markdownHtml(content)}></span>`}
+            : html`<span
+                class="cm-markdown"
+                @click=${this.onMarkdownClick}
+                .innerHTML=${this.markdownHtml(content)}
+              ></span>`}
         </div>
+        ${!isUser && !this.isStreaming && this.message.content
+          ? html`<div class="cm-message-actions">
+              <button
+                type="button"
+                class="cm-copy-message"
+                data-testid="chat-copy-message"
+                title="Copy message"
+                @click=${(event: MouseEvent) => {
+                  if (event.currentTarget instanceof HTMLButtonElement)
+                    this.copy(event.currentTarget, this.message.content);
+                }}
+              >
+                Copy
+              </button>
+            </div>`
+          : ''}
         ${!isUser && this.message.usage?.costUsd
           ? html`<span class="cm-cost-badge">$${this.message.usage.costUsd.toFixed(4)}</span>`
           : ''}
@@ -287,5 +468,8 @@ export class ChatMessageElement extends LitElement {
 declare global {
   interface HTMLElementTagNameMap {
     'chat-message': ChatMessageElement;
+  }
+  interface HTMLElementEventMap {
+    'chat-open-file': CustomEvent<ChatOpenFileDetail>;
   }
 }

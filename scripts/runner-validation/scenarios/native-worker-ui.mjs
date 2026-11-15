@@ -153,7 +153,7 @@ export async function verifyNativeWorkerUi({
         'eval',
         route,
         walk +
-          `return all.filter(e=>e.matches('diff-review')).some(e=>e.textContent.includes(${JSON.stringify(token)}));`,
+          `return all.filter(e=>e.matches('pierre-diff-view')).some(e=>e.renderedText.includes(${JSON.stringify(token)}));`,
       ),
     Boolean,
     timeoutMs,

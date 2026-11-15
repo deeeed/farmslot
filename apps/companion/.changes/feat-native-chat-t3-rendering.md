@@ -1,0 +1,3 @@
+- Native conversations draw assistant replies and proposed plans as native markdown with highlighted code blocks, adopted from T3 Code's mobile renderer.
+- File links in a reply (`path:line`, `#L12`, file-named inline code) show as chips; tapping one opens the session's file at that line in a native, highlighted viewer, and markdown files open rendered with a Raw toggle.
+- Tool edits and each turn's changed files open in T3 Code's native diff view with syntax highlighting.

@@ -17,6 +17,7 @@ const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 /** A diff viewer: the shared element, a source view with changed lines, a diff split, or hand-coloured diff lines. */
 const DIFF_VIEWER_MARKERS = [
   /<diff-review\b/,
+  /<pierre-diff-view\b/,
   /<code-viewer\b[^>]*?\.changedLines=/,
   /\b(parseUnifiedDiff|splitUnifiedDiff)\(/,
   /startsWith\(\s*['"](@@|\+\+\+)/,

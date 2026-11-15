@@ -155,7 +155,7 @@ try {
   if (foldClosed) await page.click('[data-testid=native-work-fold]');
   await page.click('.tool details > summary');
   await page.waitForExpression(
-    `(() => { const find=root=>{const diff=root.querySelector('diff-review');if(diff)return diff;for(const node of root.querySelectorAll('*'))if(node.shadowRoot){const diff=find(node.shadowRoot);if(diff)return diff;}};const text=find(document)?.textContent??'';return text.includes('hello ACP')&&${editOnly ? "text.includes('prefix')&&text.includes('suffix')" : 'true'}; })()`,
+    `(() => { const find=root=>{const diff=root.querySelector('pierre-diff-view');if(diff)return diff;for(const node of root.querySelectorAll('*'))if(node.shadowRoot){const diff=find(node.shadowRoot);if(diff)return diff;}};const text=find(document)?.renderedText??'';return text.includes('hello ACP')&&${editOnly ? "text.includes('prefix')&&text.includes('suffix')" : 'true'}; })()`,
   );
   await screenshot('final-edit-diff');
   result.browserFinalWholeFileDiff = true;

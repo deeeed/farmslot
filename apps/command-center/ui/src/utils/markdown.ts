@@ -1,6 +1,15 @@
 import DOMPurify from 'dompurify';
 import { Marked, marked, Renderer, type Token, type TokensList } from 'marked';
 
+import { type FilePathPosition, formatFilePathPosition } from './t3/fileLinks.js';
+import {
+  inlineCodeFilePathCandidate,
+  isMarkdownFileLinkLabel,
+  parseMarkdownFileLink,
+} from './t3/markdownLinks.js';
+import { fileBasename } from './t3/path.js';
+import { highlightedCodeHtml, highlightGeneration } from './code-highlight.js';
+
 marked.setOptions({ breaks: true, gfm: true });
 
 export function renderMarkdown(md: string): string {
@@ -36,36 +45,101 @@ const showsText = (tokens: Token[] | undefined): boolean =>
 // An image is a link: model output must not make the page fetch a URL it chose. An image
 // inside a link is that link's text, or the link's URL when it has no alt text, so the link
 // stays visible. marked has already escaped an image's alt text.
-const chatMarked = new Marked({
-  breaks: true,
-  gfm: true,
-  walkTokens: (token) => {
-    if (token.type === 'link')
-      markLinkedImages(token.tokens, showsText(token.tokens) ? '' : token.href);
-  },
-  renderer: {
-    link(token) {
-      return Renderer.prototype.link.call(this, token).replace(/^<a /, `<a ${NEW_TAB} `);
+/** Options for chat markdown: `fileLinks` turns file paths into workspace file chips. */
+export interface ChatMarkdownOptions {
+  fileLinks?: boolean;
+}
+
+/**
+ * A chip naming a workspace file, as T3 Code shows one: the basename and line, the full target in
+ * its title. The chat view that shows it handles the click (`data-file-path`); elsewhere it is an
+ * inert link.
+ */
+function fileChip(target: FilePathPosition, label: string): string {
+  const position = `${target.line ? ` data-file-line="${target.line}"` : ''}${
+    target.column ? ` data-file-column="${target.column}"` : ''
+  }`;
+  return `<a href="#" class="cm-file" data-file-path="${escapeText(target.path)}"${position} title="${escapeText(
+    formatFilePathPosition(target),
+  )}">${label}</a>`;
+}
+
+function fileChipLabel(target: FilePathPosition): string {
+  return escapeText(
+    [fileBasename(target.path), target.line ? `L${target.line}` : undefined]
+      .filter(Boolean)
+      .join(' · '),
+  );
+}
+
+/**
+ * A fenced code block in T3 Code's frame: the language, a wrap toggle and a copy button above
+ * the highlighted code. Until the language's highlighter has loaded, the code shows as plain text.
+ */
+function codeBlock(text: string, fence: string | undefined): string {
+  const language = fence?.trim().split(/\s+/)[0] ?? '';
+  const body =
+    highlightedCodeHtml(text, language || 'text') ?? `<pre><code>${escapeText(text)}</code></pre>`;
+  return `<div class="cm-code" data-wrap="true"><div class="cm-code-head"><span class="cm-code-lang">${escapeText(
+    language || 'text',
+  )}</span><span class="cm-code-actions" role="toolbar" aria-label="Code block actions"><button type="button" data-code-action="wrap" aria-pressed="true" title="Wrap lines">Wrap</button><button type="button" data-code-action="copy" title="Copy code">Copy</button></span></div>${body}</div>`;
+}
+
+function createChatMarked({ fileLinks = false }: ChatMarkdownOptions): Marked {
+  return new Marked({
+    breaks: true,
+    gfm: true,
+    walkTokens: (token) => {
+      if (token.type === 'link')
+        markLinkedImages(token.tokens, showsText(token.tokens) ? '' : token.href);
     },
-    html: ({ text, block }) =>
-      block ? `<p>${escapeText(text.trimEnd()).replace(/\n/g, '<br>')}</p>` : escapeText(text),
-    image: (token) =>
-      'inLink' in token
-        ? token.text.trim()
-          ? token.text
-          : escapeText(String(token.inLink))
-        : `<a ${NEW_TAB} href="${escapeText(token.href)}">${token.text || escapeText(token.href)}</a>`,
-  },
-});
+    renderer: {
+      link(token) {
+        const target = fileLinks ? parseMarkdownFileLink(token.href) : null;
+        if (target) {
+          const label = isMarkdownFileLinkLabel(token.text, token.href)
+            ? fileChipLabel(target)
+            : this.parser.parseInline(token.tokens);
+          return fileChip(target, label);
+        }
+        return Renderer.prototype.link.call(this, token).replace(/^<a /, `<a ${NEW_TAB} `);
+      },
+      codespan(token) {
+        const candidate = fileLinks ? inlineCodeFilePathCandidate(token.text) : null;
+        const target = candidate === null ? null : parseMarkdownFileLink(candidate);
+        return target
+          ? fileChip(target, `<code>${token.text}</code>`)
+          : `<code>${token.text}</code>`;
+      },
+      code: ({ text, lang }) => codeBlock(text, lang),
+      html: ({ text, block }) =>
+        block ? `<p>${escapeText(text.trimEnd()).replace(/\n/g, '<br>')}</p>` : escapeText(text),
+      image: (token) =>
+        'inLink' in token
+          ? token.text.trim()
+            ? token.text
+            : escapeText(String(token.inLink))
+          : `<a ${NEW_TAB} href="${escapeText(token.href)}">${token.text || escapeText(token.href)}</a>`,
+    },
+  });
+}
+
+const chatMarked = createChatMarked({});
+const fileLinkMarked = createChatMarked({ fileLinks: true });
+const markedFor = (options: ChatMarkdownOptions) =>
+  options.fileLinks ? fileLinkMarked : chatMarked;
 
 /** Chat message markdown before sanitizing: lists, links, code and tables; raw HTML stays text. */
-export function chatMarkdownHtml(md: string): string {
-  return chatMarked.parse(md, { async: false }) as string;
+export function chatMarkdownHtml(md: string, options: ChatMarkdownOptions = {}): string {
+  return markedFor(options).parse(md, { async: false }) as string;
 }
 
 const sanitizeChat = (html: string) => DOMPurify.sanitize(html, { ADD_ATTR: ['target'] });
 
-/** Rendered, sanitized top-level blocks by link definitions, type and source; least recent out. */
+/**
+ * Rendered, sanitized top-level blocks by options, highlighter generation, link definitions, type
+ * and source; least recent out.
+ */
 const chatBlocks = new Map<string, string>();
 const CHAT_BLOCK_LIMIT = 500;
 
@@ -74,25 +148,31 @@ const CHAT_BLOCK_LIMIT = 500;
  * rendering), so every block is split where a full parse splits it. Each finished top-level block
  * is then rendered and sanitized once: a streamed delta re-renders only the last block. A block
  * that can hold a reference link keys on the message's link definitions, so a definition arriving
- * later re-renders the links that use it.
+ * later re-renders the links that use it. A highlighter that finishes loading starts a new
+ * generation, so blocks rendered as plain code render again highlighted.
  */
-export function renderChatMarkdown(md: string): string {
-  const tokens: TokensList = chatMarked.lexer(md);
-  // The parser joins adjacent top-level text tokens into one paragraph; those cannot be split.
-  if (tokens.some((token) => token.type === 'text')) return sanitizeChat(chatMarkdownHtml(md));
+export function renderChatMarkdown(md: string, options: ChatMarkdownOptions = {}): string {
+  const chat = markedFor(options);
+  const tokens: TokensList = chat.lexer(md);
+  if (tokens.some((token) => token.type === 'text'))
+    return sanitizeChat(chatMarkdownHtml(md, options));
   const links = Object.keys(tokens.links).length ? JSON.stringify(tokens.links) : '';
-  const walk = chatMarked.defaults.walkTokens;
+  const walk = chat.defaults.walkTokens;
+  const scope = options.fileLinks ? 'f' : '';
+  const generation = highlightGeneration();
   let html = '';
   for (const [index, token] of tokens.entries()) {
-    // The last block may still be streaming: caching each of its prefixes would fill the cache
-    // with near-duplicates, so it is rendered every time and only finished blocks are kept.
     const tail = index === tokens.length - 1;
-    // A reference link needs `[`; other blocks do not depend on the link definitions.
-    const key = `${token.raw.includes('[') ? links : ''}\0${token.type}\0${token.raw}`;
+    // Only code (fenced, indented or nested in a list or quote) depends on the loaded highlighters.
+    let code = false;
+    chat.walkTokens([token], (child) => {
+      code ||= child.type === 'code';
+    });
+    const key = `${scope}${code ? generation : ''}\0${token.raw.includes('[') ? links : ''}\0${token.type}\0${token.raw}`;
     let block = tail ? undefined : chatBlocks.get(key);
     if (block === undefined) {
-      if (walk) chatMarked.walkTokens([token], walk);
-      const rendered = chatMarked.parser([token]);
+      if (walk) chat.walkTokens([token], walk);
+      const rendered = chat.parser([token]);
       block = rendered && sanitizeChat(rendered);
     } else chatBlocks.delete(key);
     if (!tail) putCapped(chatBlocks, key, block, CHAT_BLOCK_LIMIT);
