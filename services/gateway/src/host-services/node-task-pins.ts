@@ -11,7 +11,6 @@ import {
   reclaimReviewWorkspaceStorage,
   runNeedsExecutionStorage,
 } from '../review-workspaces/storage-use.js';
-import { runIsSettled } from '../runs/retention.js';
 import { getAllRunsWithArchived, hasTaskAdmissions, runTaskDirectories } from '../runs/store.js';
 import type { TaskPinProtection, TaskPinStage, TaskPinSweepInput } from '../runs/task-pins.cjs';
 
@@ -40,7 +39,8 @@ export interface NodePinRetentionDeps {
 export function taskPinProtection(runs: Run[]): TaskPinProtection {
   const taskDirs = new Set<string>();
   for (const run of runs) {
-    if (runIsSettled(run) && !runNeedsExecutionStorage(run) && !run.park) continue;
+    // Terminal runs can still reactivate from their original pin until explicitly archived.
+    if (run.archivedAt && !runNeedsExecutionStorage(run) && !run.park) continue;
     for (const dir of runTaskDirectories(run)) taskDirs.add(path.resolve(dir));
     if (run.reviewWorkspace?.taskPath) taskDirs.add(path.resolve(run.reviewWorkspace.taskPath));
     const recovery = run.park?.recoveryHandle;

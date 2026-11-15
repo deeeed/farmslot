@@ -298,3 +298,26 @@ test('terminal replay waits until the node pin staging fence is released', async
   }
   assert.equal(settled, true);
 });
+
+for (const status of ['cancelled', 'done'] as const)
+  test(`${status} replayable owner retains a missing-task pin until archival`, async (t) => {
+    const f = await fixture(t);
+    const task = await f.pin('terminal-pin');
+    const owner = makeRun({ status, taskFile: path.join(task, 'TASK.md') });
+    const retained = await sweepTaskPins({
+      root: f.root,
+      now,
+      ageMs,
+      protection: taskPinProtection([owner]),
+    });
+    assert.deepEqual(retained.removed, []);
+    assert.equal(await readFile(path.join(f.root, 'terminal-pin/input'), 'utf8'), 'immutable');
+    owner.archivedAt = new Date(now).toISOString();
+    const archived = await sweepTaskPins({
+      root: f.root,
+      now,
+      ageMs,
+      protection: taskPinProtection([owner]),
+    });
+    assert.deepEqual(archived.removed, ['terminal-pin']);
+  });
