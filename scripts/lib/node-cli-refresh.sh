@@ -64,6 +64,14 @@ user_bins=("$@")
 : "${user_bins[0]:?missing resolved user bin directories}"
 snapshot="$root/$sha"
 entry="$snapshot/packages/cli/bin/farmslot.mjs"
+# The engine's own refusals tell a worker to run `farmslot-agent` (the escape
+# hatch in checklist-target.cjs, the mark help), and the farmslot-farm recipe
+# fixture tells it to run `farmslot-agent ac`. That bin was never linked here,
+# so it kept resolving to whatever npm installed globally — on mini an
+# agent-runtime 0.4.0 predating every worker-side fix in this revision, and a
+# worker calling it directly re-opened terminal signals the wrapper refuses. It
+# is linked from the same snapshot as the CLI, by the same rules.
+agent_entry="$snapshot/packages/agent-runtime/bin/farmslot-agent.mjs"
 lock="$root/.lock"
 partial=""
 mkdir -p "$root"
@@ -212,22 +220,42 @@ link_entry() {
   echo "  → $link${previous:+ (was $previous)}"
 }
 
+# One install only. A global @farmslot package shadows the snapshot through the
+# bins npm owns, so it goes before the links below are written: npm's uninstall
+# removes those bins, and doing this afterwards would delete ours.
+npm_root=$(npm root -g 2> /dev/null || true)
+if [ -n "$npm_root" ] && [ -d "$npm_root/@farmslot" ]; then
+  for pkg in "$npm_root"/@farmslot/*; do
+    [ -e "$pkg/package.json" ] || continue
+    name="@farmslot/$(basename "$pkg")"
+    echo "  removing global $name (the snapshot is the only install)"
+    if ! npm uninstall -g "$name" > /dev/null 2>&1; then
+      echo "[deploy] ERROR: could not uninstall global $name; remove it by hand, it shadows $snapshot" >&2
+      exit 1
+    fi
+  done
+fi
+
 shared="$HOME/.local/share/farmslot-cli"
 shim="$shared/farmslot-shim"
+agent_shim="$shared/farmslot-agent-shim"
 if [[ "$layout" != 2 && ! -f "$shim" ]]; then
   # Unmigrated machines keep their original direct snapshot links byte for byte.
   for bin in "${user_bins[@]}"; do
     link="$bin/farmslot"
     if [[ "$bin" != "${user_bins[0]}" && ! -L "$link" && ! -e "$link" ]]; then continue; fi
     link_entry "$link" "$entry"
+    link_entry "$bin/farmslot-agent" "$agent_entry"
   done
 else
 mkdir -p "$shared"
 if [[ "$layout" == 2 ]]; then
   link_entry "$instance_bin/farmslot" "$entry"
+  link_entry "$instance_bin/farmslot-agent" "$agent_entry"
 else
   # Legacy deploys retain the same immutable snapshot target as before migration.
   link_entry "$shared/legacy" "$entry"
+  link_entry "$shared/legacy-agent" "$agent_entry"
 fi
 # A first layout-2 deploy preserves any previously installed legacy snapshot.
 for bin in "${user_bins[@]}"; do
@@ -254,12 +282,60 @@ exec "$HOME/.local/share/farmslot-cli/legacy" "$@"
 SHIM
 chmod 755 "$shim.tmp.$$"
 mv -f "$shim.tmp.$$" "$shim"
+cat > "$agent_shim.tmp.$$" <<'AGENTSHIM'
+#!/usr/bin/env bash
+set -euo pipefail
+farm_home="${FARMSLOT_HOME:-$HOME/.farmslot}"
+if [[ "$farm_home" == '~' ]]; then farm_home="$HOME"; elif [[ "$farm_home" == '~/'* ]]; then farm_home="$HOME/${farm_home#'~/'}"; fi
+if [[ -f "$farm_home/config/instance.json" ]]; then
+  exec "$farm_home/code/bin/farmslot-agent" "$@"
+fi
+exec "$HOME/.local/share/farmslot-cli/legacy-agent" "$@"
+AGENTSHIM
+chmod 755 "$agent_shim.tmp.$$"
+mv -f "$agent_shim.tmp.$$" "$agent_shim"
 for bin in "${user_bins[@]}"; do
   link="$bin/farmslot"
   if [[ "$bin" != "${user_bins[0]}" && ! -L "$link" && ! -e "$link" ]]; then continue; fi
   link_entry "$link" "$shim"
+  link_entry "$bin/farmslot-agent" "$agent_shim"
 done
 fi
+
+# Fail loudly rather than leave a worker on a stale engine: no global @farmslot
+# package may remain, and both bins must resolve inside this install.
+if [ -n "$npm_root" ] && [ -d "$npm_root/@farmslot" ]; then
+  echo "[deploy] ERROR: a global @farmslot package is still installed at $npm_root/@farmslot; it shadows $snapshot" >&2
+  exit 1
+fi
+for bin in "${user_bins[@]}"; do
+  for name in farmslot farmslot-agent; do
+    link="$bin/$name"
+    [ -e "$link" ] || continue
+    resolved=$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$link" 2> /dev/null || echo "")
+    # Prefix tests rather than `case`: bash 3.2, which is what these nodes run,
+    # parses this heredoc body as code inside the surrounding $( ), and a `;;`
+    # there is a syntax error that stops the whole deploy script from loading.
+    inside=false
+    for prefix in "$root" "$shared" "$instance_home"; do
+      [ -n "$prefix" ] || continue
+      # Resolve the prefix too. The link resolves through /private/var on macOS,
+      # where /var is a symlink, while these variables hold the /var form, so
+      # comparing a resolved path against an unresolved prefix rejects a
+      # perfectly good link.
+      prefix_resolved=$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$prefix" 2> /dev/null || echo "$prefix")
+      if [ "${resolved#"$prefix_resolved"/}" != "$resolved" ] ||
+        [ "${resolved#"$prefix"/}" != "$resolved" ]; then
+        inside=true
+        break
+      fi
+    done
+    if [ "$inside" != true ]; then
+      echo "[deploy] ERROR: $link resolves to ${resolved:-unknown}, outside this install ($root)" >&2
+      exit 1
+    fi
+  done
+done
 [[ "$moved" == true ]] || exit 0
 for dir in "$root"/*/; do
   name=$(basename "$dir")

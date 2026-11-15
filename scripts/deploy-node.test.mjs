@@ -731,6 +731,7 @@ esac
     cliRoot,
     snapshot,
     entry: path.join(snapshot, 'packages/cli/bin/farmslot.mjs'),
+    agentEntry: path.join(snapshot, 'packages/agent-runtime/bin/farmslot-agent.mjs'),
     deploy: ({
       instance = 'prod',
       machine = 'fixture-machine',
@@ -798,6 +799,10 @@ const seedSnapshot = (fixture, sha) => {
   const dir = path.join(fixture.cliRoot, sha);
   fs.mkdirSync(path.join(dir, 'packages/cli/bin'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'packages/cli/bin/farmslot.mjs'), FAKE_CLI, { mode: 0o755 });
+  fs.mkdirSync(path.join(dir, 'packages/agent-runtime/bin'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'packages/agent-runtime/bin/farmslot-agent.mjs'), FAKE_CLI, {
+    mode: 0o755,
+  });
   fs.writeFileSync(path.join(dir, 'DEPLOYED-REVISION.json'), JSON.stringify({ sha }));
   return path.join(dir, 'packages/cli/bin/farmslot.mjs');
 };
@@ -898,6 +903,7 @@ test('deploy-node reuses an installed snapshot and moves nothing when the revisi
   const older = 'c'.repeat(40);
   seedSnapshot(fixture, older);
   link(fixture, '.local/bin/farmslot', seedSnapshot(fixture, fixture.sha));
+  link(fixture, '.local/bin/farmslot-agent', fixture.agentEntry);
 
   const output = fixture.deploy();
 
