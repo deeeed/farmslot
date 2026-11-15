@@ -71,7 +71,11 @@ export function sourceFileInputs(source, file, reads) {
               entry.name.text,
               node,
               immutable && module
-                ? { module, name: (entry.propertyName ?? entry.name).getText(source) }
+                ? {
+                    module,
+                    name: (entry.propertyName ?? entry.name).getText(source),
+                    requireAt: node.initializer,
+                  }
                 : {},
             );
           else for (const name of bindingNames(entry.name)) bind(name, node, {});
@@ -117,7 +121,8 @@ export function sourceFileInputs(source, file, reads) {
   function callable(node, seen = new Set()) {
     if (ts.isIdentifier(node)) {
       const value = binding(node.text, node);
-      if (value?.module) return value;
+      if (value?.module)
+        return value.requireAt && binding('require', value.requireAt) ? undefined : value;
       if (value?.initializer && !seen.has(value))
         return callable(value.initializer, new Set([...seen, value]));
     }
@@ -126,7 +131,7 @@ export function sourceFileInputs(source, file, reads) {
       if (owner?.module && !owner.name) return { module: owner.module, name: node.name.text };
     }
     const module = moduleLiteral(node);
-    if (module) return { module };
+    if (module && !binding('require', node)) return { module };
   }
   function value(node, seen = new Set()) {
     if (!node) return;

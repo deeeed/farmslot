@@ -242,6 +242,7 @@ test('mutable, shadowed, linked and script-produced paths retain the unknown-rea
     "let root = mkdtempSync(join(tmpdir(), 'x-')); readFileSync(join(root, 'result'));",
     "const root = mkdtempSync(join(tmpdir(), 'x-')); function check(root) { readFileSync(join(root, 'result')); }",
     "const root = mkdtempSync(join(tmpdir(), 'x-')); function check({root}) { readFileSync(join(root, 'result')); }",
+    "const root = mkdtempSync(join(tmpdir(), 'x-')); function check(require) { const {readFileSync} = require('node:fs'); readFileSync(join(root, 'result')); }",
     "const root = mkdtempSync(join(tmpdir(), 'x-')); function check() { const [root] = inputs; readFileSync(join(root, 'result')); }",
     "const root = mkdtempSync(join(tmpdir(), 'x-')); symlinkSync(target, root); readFileSync(join(root, 'result'));",
     "const root = mkdtempSync(join(tmpdir(), 'x-')); execFileSync(tool); readFileSync(join(root, 'result'));",
