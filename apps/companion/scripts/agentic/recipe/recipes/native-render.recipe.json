@@ -1,0 +1,236 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion native chat rendering",
+  "description": "Start native-stream-stack.mts with NATIVE_STREAM_RUNNER=opencode, NATIVE_STREAM_FIXTURE=native-render-opencode.cjs, NATIVE_STREAM_MODEL=synthetic/render and NATIVE_STREAM_SEED_DIR=apps/companion/scripts/agentic/native-render-seed (isolated gateway; a synthetic OpenCode ACP peer edits two files and replies with markdown). Pair the app once with `native-render-proof.mjs pair`, then set NATIVE_RENDER_CONTROL, NATIVE_RENDER_STATE (a new file), METRO_PORT and IOS_SIMULATOR. Proves through the real composer, file chips and diff controls that the reply renders as native markdown with a highlighted TypeScript fence, that a file chip opens the native source viewer highlighted and scrolled to its line, that a markdown file opens rendered and toggles to raw source, and that the tool and turn diffs render in the native diff view with highlighted rows.",
+  "proofTargets": [
+    {
+      "id": "markdown-reply",
+      "claim": "The assistant reply renders as native markdown: a list, a complete TypeScript fence and two file links.",
+      "proofMode": "state"
+    },
+    {
+      "id": "file-at-line",
+      "claim": "A file chip opens the native source viewer at its line, highlighted by the native lexer, with that line on screen.",
+      "proofMode": "state"
+    },
+    {
+      "id": "markdown-file",
+      "claim": "A markdown file opens rendered, and Raw shows its highlighted source.",
+      "proofMode": "state"
+    },
+    {
+      "id": "native-diffs",
+      "claim": "The tool diff and the turn diff render in the native diff view with highlighted rows.",
+      "proofMode": "state"
+    }
+  ],
+  "workflow": {
+    "entry": "setup",
+    "nodes": {
+      "setup": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-render-proof.mjs setup",
+        "intent": "Create a native session with the synthetic OpenCode peer in a seeded folder.",
+        "next": "open"
+      },
+      "open": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-render-proof.mjs open",
+        "intent": "Open the session by deep link and wait for its history.",
+        "next": "type"
+      },
+      "type": {
+        "action": "ui.set_input",
+        "test_id": "companion-native-draft",
+        "value": "Bump the greeting count and write the plan.",
+        "intent": "Ask the agent for the edit through the composer.",
+        "next": "send"
+      },
+      "send": {
+        "action": "ui.press",
+        "test_id": "companion-native-send",
+        "intent": "Send the prompt through the shared session API.",
+        "next": "reply"
+      },
+      "reply": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-render-proof.mjs reply",
+        "intent": "The reply's markdown rendered natively with its fence and file links.",
+        "next": "assert-reply"
+      },
+      "assert-reply": {
+        "action": "assert_output",
+        "source": "reply",
+        "stream": "stdout",
+        "match": "\"phase\":\"reply\"",
+        "proves": ["markdown-reply"],
+        "intent": "The reply phase passed its checks.",
+        "next": "open-fold"
+      },
+      "open-fold": {
+        "action": "ui.press",
+        "test_id": "companion-native-work-fold",
+        "intent": "Open the finished turn's folded work, which holds the reply.",
+        "next": "reveal-reply"
+      },
+      "reveal-reply": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-render-proof.mjs reveal 'demo.ts · L32, demo.ts line 32'",
+        "intent": "Drag the conversation until the reply's file chip shows.",
+        "next": "wait-chip"
+      },
+      "wait-chip": {
+        "action": "ui.wait_for",
+        "text": "demo.ts · L32, demo.ts line 32",
+        "timeout_ms": 30000,
+        "intent": "The file link shows as a chip.",
+        "next": "capture-reply"
+      },
+      "capture-reply": {
+        "action": "ui.screenshot",
+        "path": "native-render-reply.png",
+        "intent": "Record the highlighted code block and the file chips.",
+        "next": "press-chip"
+      },
+      "press-chip": {
+        "action": "ui.press",
+        "text": "demo.ts · L32, demo.ts line 32",
+        "intent": "Open the file chip.",
+        "next": "file-line"
+      },
+      "file-line": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-render-proof.mjs file-line",
+        "intent": "The viewer opened src/demo.ts natively at line 32, highlighted and on screen.",
+        "next": "assert-file-line"
+      },
+      "assert-file-line": {
+        "action": "assert_output",
+        "source": "file-line",
+        "stream": "stdout",
+        "match": "\"phase\":\"file-line\"",
+        "proves": ["file-at-line"],
+        "intent": "The file-line phase passed its checks.",
+        "next": "capture-file"
+      },
+      "capture-file": {
+        "action": "ui.screenshot",
+        "path": "native-render-file-line.png",
+        "intent": "Record the highlighted file scrolled to its line.",
+        "next": "back-from-file"
+      },
+      "back-from-file": {
+        "action": "ui.press",
+        "text": "Conversation",
+        "intent": "Go back to the conversation.",
+        "next": "reveal-plan"
+      },
+      "reveal-plan": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-render-proof.mjs reveal 'plan.md, notes/plan.md'",
+        "intent": "Bring the plan's file chip into view again.",
+        "next": "press-plan"
+      },
+      "press-plan": {
+        "action": "ui.press",
+        "text": "plan.md, notes/plan.md",
+        "intent": "Open the inline-code file chip for the plan.",
+        "next": "markdown-rendered"
+      },
+      "markdown-rendered": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-render-proof.mjs markdown-rendered",
+        "intent": "notes/plan.md opened rendered, with its fence and its link back to the source.",
+        "next": "capture-markdown"
+      },
+      "capture-markdown": {
+        "action": "ui.screenshot",
+        "path": "native-render-markdown.png",
+        "intent": "Record the rendered markdown file.",
+        "next": "press-raw"
+      },
+      "press-raw": {
+        "action": "ui.press",
+        "test_id": "companion-native-file-markdown-toggle",
+        "intent": "Show the markdown source.",
+        "next": "markdown-raw"
+      },
+      "markdown-raw": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-render-proof.mjs markdown-raw",
+        "intent": "Raw shows the file in the native source view, highlighted as markdown.",
+        "next": "assert-markdown"
+      },
+      "assert-markdown": {
+        "action": "assert_output",
+        "source": "markdown-raw",
+        "stream": "stdout",
+        "match": "\"phase\":\"markdown-raw\"",
+        "proves": ["markdown-file"],
+        "intent": "Both markdown phases passed their checks.",
+        "next": "back-from-markdown"
+      },
+      "back-from-markdown": {
+        "action": "ui.press",
+        "text": "Conversation",
+        "intent": "Go back to the conversation.",
+        "next": "reveal-turn-file"
+      },
+      "reveal-turn-file": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-render-proof.mjs reveal 'src/demo.ts · modified · +1 −1 · Diff' end",
+        "intent": "Return to the end of the conversation, where the turn's files are.",
+        "next": "press-turn-file"
+      },
+      "press-turn-file": {
+        "action": "ui.press",
+        "text": "src/demo.ts · modified · +1 −1 · Diff",
+        "intent": "Open the turn's diff for src/demo.ts.",
+        "next": "turn-diff"
+      },
+      "turn-diff": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-render-proof.mjs turn-diff",
+        "intent": "The turn diff decoded and drew in the native view with highlighted rows.",
+        "next": "capture-turn-diff"
+      },
+      "capture-turn-diff": {
+        "action": "ui.screenshot",
+        "path": "native-render-turn-diff.png",
+        "intent": "Record the native turn diff.",
+        "next": "press-tool"
+      },
+      "press-tool": {
+        "action": "ui.press",
+        "test_id": "companion-native-tool-toggle",
+        "intent": "Open the edit tool's details.",
+        "next": "tool-diff"
+      },
+      "tool-diff": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-render-proof.mjs tool-diff",
+        "intent": "The tool diff decoded and drew in the native view with highlighted rows.",
+        "next": "assert-diffs"
+      },
+      "assert-diffs": {
+        "action": "assert_output",
+        "source": "tool-diff",
+        "stream": "stdout",
+        "match": "\"phase\":\"tool-diff\"",
+        "proves": ["native-diffs"],
+        "intent": "Both diff phases passed their checks.",
+        "next": "capture-tool-diff"
+      },
+      "capture-tool-diff": {
+        "action": "ui.screenshot",
+        "path": "native-render-tool-diff.png",
+        "intent": "Record the native tool diff.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

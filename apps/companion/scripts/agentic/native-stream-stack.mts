@@ -17,6 +17,11 @@
  *   GET  /read            → { sessionId, state, cursor, completedTurns, commands }
  *   POST /shutdown        → closes the session, stops the private native host, exits
  *
+ * NATIVE_STREAM_RUNNER (default claude), NATIVE_STREAM_FIXTURE (a file in
+ * scripts/runner-validation/fixtures, installed as that runner's binary) and NATIVE_STREAM_MODEL
+ * swap in another synthetic peer. NATIVE_STREAM_SEED_DIR is copied into the session folder, which
+ * then becomes a Git repository with one commit, so turns get checkpoints and diffs.
+ *
  * Every exit path tears down what started: /shutdown, SIGINT and SIGTERM, and a startup failure. A
  * clean stop removes the temp root, which holds credentials; a failure keeps it and logs its path.
  */
@@ -50,6 +55,10 @@ interface StackState {
   sessionId?: string;
 }
 
+const runner = process.env.NATIVE_STREAM_RUNNER ?? 'claude';
+const fixture = process.env.NATIVE_STREAM_FIXTURE ?? 'native-stream-latency-claude.cjs';
+const binaries: Record<string, string> = { claude: 'claude', opencode: 'opencode' };
+assert(binaries[runner], `NATIVE_STREAM_RUNNER: one of ${Object.keys(binaries).join(', ')}`);
 const port = Number(process.env.GATEWAY_PORT);
 const controlPort = Number(process.env.CONTROL_PORT);
 assert(Number.isSafeInteger(port) && port > 0, 'Set GATEWAY_PORT');
@@ -203,8 +212,8 @@ function controlRoutes(personId: string): Record<string, Handler> {
       const { session } = await connected().call<{ session: NativeSessionInfo }>(
         'native.session.create',
         {
-          runner: 'claude',
-          model: 'haiku',
+          runner,
+          model: process.env.NATIVE_STREAM_MODEL ?? 'haiku',
           cwd: path.join(root, 'cwd'),
           executionNodeId: 'local',
           mode: 'default',
@@ -270,12 +279,28 @@ async function start() {
     path.join(root, 'pool/local.json'),
     JSON.stringify({ machine: 'local', project: 'stream', host: 'localhost', slots: [] }),
   );
-  const executable = path.join(root, 'bin/claude');
-  await copyFile(
-    path.join(repo, 'scripts/runner-validation/fixtures/native-stream-latency-claude.cjs'),
-    executable,
-  );
+  const executable = path.join(root, 'bin', binaries[runner]!);
+  await copyFile(path.join(repo, 'scripts/runner-validation/fixtures', fixture), executable);
   fs.chmodSync(executable, 0o700);
+  const seed = process.env.NATIVE_STREAM_SEED_DIR;
+  if (seed) {
+    const cwd = path.join(root, 'cwd');
+    fs.cpSync(seed, cwd, { recursive: true });
+    const git = (...args: string[]) =>
+      execFileSync('git', ['-C', cwd, ...args], { stdio: 'ignore' });
+    git('init', '--quiet');
+    git('add', '.');
+    git(
+      '-c',
+      'user.name=proof',
+      '-c',
+      'user.email=proof@example.invalid',
+      'commit',
+      '--quiet',
+      '-m',
+      'seed',
+    );
+  }
   Object.assign(process.env, {
     PATH: `${path.join(root, 'bin')}${path.delimiter}${process.env.PATH}`,
     CLAUDE_CONFIG_DIR: path.join(root, 'claude'),

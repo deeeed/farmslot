@@ -173,6 +173,8 @@ export function NativeConversationScreen({
               planOpen={nativePlanOpen(item, watchedTools.current)}
               implementing={implement && vm.implementing}
               onImplement={implement ? implementPlan : undefined}
+              workspace={vm.workspace}
+              turnDiffs={vm.turnDiffs}
             />
           );
         }
@@ -216,6 +218,8 @@ export function NativeConversationScreen({
       openFolds,
       vm.implementKey,
       vm.implementing,
+      vm.workspace,
+      vm.turnDiffs,
       vm.pendingText,
       delivery,
       vm.canEdit,
