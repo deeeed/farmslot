@@ -86,6 +86,21 @@ function compactScanSubjects(subjects: ScanSubjects): ScanSubjects {
   return compact;
 }
 
+/**
+ * The document with every rule's subjects compact, including rules no scan will rewrite (a
+ * disabled rule keeps its last scan): a store written before compact subjects is compacted on
+ * load, and its next commit writes the compact form.
+ */
+function compactStoreSubjects(data: PRRuleStoreData): PRRuleStoreData {
+  return {
+    ...data,
+    rules: data.rules.map((rule) => ({
+      ...rule,
+      scan: { ...rule.scan, subjects: compactScanSubjects(rule.scan.subjects) },
+    })),
+  };
+}
+
 export class PRRuleStore {
   async scheduleWebhookRefresh(
     expected: Pick<PRRuleStoreData, 'teams' | 'rules'>,
@@ -143,7 +158,7 @@ export class PRRuleStore {
       // No rule store exists before the first profile is saved; other load failures are fatal.
       return new PRRuleStore(file, { version: 1, teams: [], rules: [], intents: [] });
     }
-    const data = decodePRRuleStore(JSON.parse(contents));
+    const data = compactStoreSubjects(decodePRRuleStore(JSON.parse(contents)));
     const deferred = data.intents.some(
       (intent) =>
         ['held', 'needs-configuration', 'queued', 'running'].includes(intent.status) &&
@@ -186,7 +201,10 @@ export class PRRuleStore {
             const text = await readFile(this.file, 'utf8');
             // The watcher also reports this store's own writes. Text equal to the committed state
             // was validated before it was written, so it is not parsed and compared again.
-            data = text === this.text ? this.data : decodePRRuleStore(JSON.parse(text));
+            data =
+              text === this.text
+                ? this.data
+                : compactStoreSubjects(decodePRRuleStore(JSON.parse(text)));
           } catch (error) {
             this.validatedRetirementReload = false;
             this.sourceFailure = error instanceof Error ? error.message : String(error);
