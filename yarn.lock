@@ -5125,6 +5125,9 @@ __metadata:
     "@siteed/audio-studio": "npm:3.2.1"
     "@siteed/audio-ui": "npm:1.1.2-beta.0"
     "@siteed/sherpa-onnx.rn": "npm:1.3.1"
+    "@t3tools/mobile-highlights-native": "link:./modules/t3-highlights"
+    "@t3tools/mobile-review-diff-native": "link:./modules/t3-review-diff"
+    "@t3tools/mobile-source-text": "link:./modules/t3-source-text"
     "@types/babel__core": "npm:^7"
     "@types/node": "npm:^25.9.1"
     "@types/react": "npm:~19.3.0"
@@ -5156,7 +5159,9 @@ __metadata:
     react: "npm:19.3.0"
     react-dom: "npm:19.3.0"
     react-native: "npm:0.88.1"
+    react-native-enriched-markdown: "file:./deps/react-native-enriched-markdown-1.2.0-t3.18-497fbe63.tgz"
     react-native-gesture-handler: "npm:~3.3.0"
+    react-native-nitro-modules: "npm:0.37.1"
     react-native-reanimated: "npm:4.7.1"
     react-native-safe-area-context: "npm:~5.10.1"
     react-native-screens: "npm:~4.30.1"
@@ -7461,6 +7466,24 @@ __metadata:
   checksum: 10c0/4629d2fbb2ea67c2e9dc03af235c0991c79ebdddcbc19aed5d5732fb29ce01c13331e9b1a491584b9069bd6ecde6581dcbf871f11b7eefdebbab34de6cf2197e
   languageName: node
   linkType: hard
+
+"@t3tools/mobile-highlights-native@link:./modules/t3-highlights::locator=%40farmslot%2Fmobile%40workspace%3Aapps%2Fcompanion":
+  version: 0.0.0-use.local
+  resolution: "@t3tools/mobile-highlights-native@link:./modules/t3-highlights::locator=%40farmslot%2Fmobile%40workspace%3Aapps%2Fcompanion"
+  languageName: node
+  linkType: soft
+
+"@t3tools/mobile-review-diff-native@link:./modules/t3-review-diff::locator=%40farmslot%2Fmobile%40workspace%3Aapps%2Fcompanion":
+  version: 0.0.0-use.local
+  resolution: "@t3tools/mobile-review-diff-native@link:./modules/t3-review-diff::locator=%40farmslot%2Fmobile%40workspace%3Aapps%2Fcompanion"
+  languageName: node
+  linkType: soft
+
+"@t3tools/mobile-source-text@link:./modules/t3-source-text::locator=%40farmslot%2Fmobile%40workspace%3Aapps%2Fcompanion":
+  version: 0.0.0-use.local
+  resolution: "@t3tools/mobile-source-text@link:./modules/t3-source-text::locator=%40farmslot%2Fmobile%40workspace%3Aapps%2Fcompanion"
+  languageName: node
+  linkType: soft
 
 "@types/babel__core@npm:^7":
   version: 7.20.5
@@ -20085,6 +20108,20 @@ __metadata:
   languageName: node
   linkType: hard
 
+"react-native-enriched-markdown@file:./deps/react-native-enriched-markdown-1.2.0-t3.18-497fbe63.tgz::locator=%40farmslot%2Fmobile%40workspace%3Aapps%2Fcompanion":
+  version: 1.2.0-t3.18
+  resolution: "react-native-enriched-markdown@file:./deps/react-native-enriched-markdown-1.2.0-t3.18-497fbe63.tgz#./deps/react-native-enriched-markdown-1.2.0-t3.18-497fbe63.tgz::hash=d8f876&locator=%40farmslot%2Fmobile%40workspace%3Aapps%2Fcompanion"
+  peerDependencies:
+    katex: ">=0.16.0"
+    react: "*"
+    react-native: "*"
+  peerDependenciesMeta:
+    katex:
+      optional: true
+  checksum: 10c0/f4035bef194baa87cb08d898e496809e7c670991ab0a7d7582f35446853606ff028e50c63e1bf86aa10f01946d13e976f25004934e6b764f8dd6875fbf73c9d3
+  languageName: node
+  linkType: hard
+
 "react-native-gesture-handler@npm:~3.3.0":
   version: 3.3.0
   resolution: "react-native-gesture-handler@npm:3.3.0"
@@ -20105,6 +20142,16 @@ __metadata:
     react: "*"
     react-native: "*"
   checksum: 10c0/28cebd5f1f3632864ff5e342278721d1e5e38627ae73859a8814012116ef15c629fee7137a6c9c97bb05d94bbe639b0b47e69b36fc2735ab53ed31570140663f
+  languageName: node
+  linkType: hard
+
+"react-native-nitro-modules@npm:0.37.1":
+  version: 0.37.1
+  resolution: "react-native-nitro-modules@npm:0.37.1"
+  peerDependencies:
+    react: "*"
+    react-native: "*"
+  checksum: 10c0/5178f2ee891cb746b084fdf382b6020e366d8e4a81922a3f1d60a453d34fca6ebb1b00c4c28785c36385bc182ab76a30cba70441c39abbc25d3ad54db612e46e
   languageName: node
   linkType: hard
 
