@@ -182,6 +182,11 @@ function preserveTerminalSignal(
 
   const status = terminalSignalStatus(taskDir, overrides);
   if (!status) return null;
+  // A blocked run resumes through the mark script, which keeps its boxes. A
+  // start on a successful verdict is ignored here and never reaches the mark
+  // script, so this path already leaves a finished run's signal intact — two
+  // tests pin that. The mark script refuses the same case for the direct
+  // `./mark` path, which used to fall through and overwrite the signal.
   if (step === 'start' && status === 'blocked') return null;
 
   if (status === 'complete' && stepNumber !== null) {

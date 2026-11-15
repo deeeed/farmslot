@@ -379,6 +379,15 @@ function assertWorkerReport(taskDir, taskPath) {
   return null;
 }
 
+/** True when no step is left unchecked: the worker has run out of steps to do. */
+function checklistFullyChecked(file) {
+  try {
+    return parseChecklist(fs.readFileSync(file, 'utf8')).items.every((entry) => entry.checked);
+  } catch {
+    return false; // Unreadable: treat it as work outstanding rather than end a run.
+  }
+}
+
 function assertChecklistComplete(taskPath, { allowOneUnchecked = false } = {}) {
   const parsed = parseChecklist(fs.readFileSync(taskPath, 'utf8'));
   const unchecked = parsed.items.filter((entry) => !entry.checked);
@@ -665,6 +674,18 @@ if (terminalCommand === 'complete' && autonomousContract()) {
     };
     process.on('exit', (code) => {
       if (code === 0) return;
+      // Read the checklist now, not when this hook was installed: `complete
+      // --mark-last` ticks its final row after that point, and every standard
+      // template finishes that way. Sampling early left a fully marked run
+      // looking unfinished, so an acceptance refusal it could never clear would
+      // have parked it — the F6 stall, rebuilt.
+      //
+      // A refusal ends the run only when every step is marked: the worker has
+      // nothing left to try and the trial is scored as a refusal (F6, run
+      // 8cb5aea2). With steps outstanding it is the ordinary kind — a premature
+      // complete, a missing artifact it can still write — and ending the run
+      // there abandons a worker that was still working (GLM eval 4cba5c2f).
+      if (!checklistFullyChecked(taskPath)) return;
       const reason = refusalReason(captured);
       const ended = spawnSync(
         process.execPath,
@@ -798,13 +819,22 @@ if (
   assertNoOpenSubtasks(terminalCommand);
 }
 if (
-  terminalCommand &&
-  (terminalCommand === 'complete' || terminalCommand === 'no-change') &&
-  opts['mark-last'] &&
+  // `complete` only. `no-change` is a documented early exit: the fix-bug and
+  // review-fix templates tell a worker that finds the bug already fixed or not
+  // reproducible to write its reports and call plain `mark no-change`, leaving
+  // the implementation, commit and PR rows unchecked. Requiring a full
+  // checklist there would refuse the exit the template asks for.
+  terminalCommand === 'complete' &&
   !proofMeasurement &&
   !opts['skip-checklist']
 ) {
-  assertChecklistComplete(taskPath, { allowOneUnchecked: true });
+  // Every success claims the checklist is done, so every success checks it.
+  // This was gated on --mark-last, which meant a plain `mark complete` never
+  // looked: GLM eval 4cba5c2f completed with nothing marked at all, and the
+  // order rule cannot catch that either, since it only reports steps left
+  // behind the last checked one and there was no checked one. `--mark-last`
+  // still tolerates the row it is about to tick itself.
+  assertChecklistComplete(taskPath, { allowOneUnchecked: opts['mark-last'] === true });
 }
 // A successful verdict (no-change writes `complete` too) stays put: `./mark N` on
 // a declared deterministic step validates its receipt against the current tree,
@@ -819,6 +849,38 @@ if (stepNumber != null && readJson(signalPath).status === 'complete') {
     }
   } catch (error) {
     console.error(`signal already terminal: status=complete; ${error.message}`);
+    process.exit(1);
+  }
+}
+// `start` must not re-open a run that already ended. GLM eval 4cba5c2f marked a
+// terminal blocked signal and then called start, which reset it to running with
+// a fresh attempt id while the gateway had already moved the run to review: the
+// worker went on marking steps nobody was watching.
+//
+// A legitimate re-dispatch never meets this: the gateway removes SIGNAL.json and
+// the role signals before replaying a step (methods/run/replay-step.ts, "cleared
+// worker terminal signals"), and an initial dispatch has no signal yet. So a
+// terminal signal still on disk means the worker is restarting itself inside a
+// run that is over, which is the case to refuse. The guard deliberately does not
+// consult FARMSLOT_SIGNAL_ATTEMPT_ID: only the review terminal sets it
+// (agent-runtime/scripts/review-terminal.cjs), so for a worker run it would
+// never be present and would decide nothing.
+if (isStartCommand) {
+  const existing = readJson(signalPath);
+  // `blocked` stays resumable: a worker that blocked and is then told to carry
+  // on calls start and keeps its checked boxes, which is the contract the
+  // harness tests pin. The eval only reached that door because a premature
+  // complete had manufactured a blocked signal; with completion refusing an
+  // incomplete checklist and a refusal no longer ending the run, that signal
+  // never exists. A successful verdict is different: nothing resumes a run that
+  // finished, and before this a start on `complete` fell straight through and
+  // destroyed the record of a run parked at its human gate.
+  if (existing && ['complete', 'no-change'].includes(existing.status)) {
+    console.error(
+      `signal already terminal: status=${existing.status}; start does not re-open it. ` +
+        'This run finished; a re-dispatch clears the signal first. ' +
+        `Fix what the refusal reported and mark the run again, or stop with ${path.join(taskDir, 'mark')} blocked --reason "<why>".`,
+    );
     process.exit(1);
   }
 }

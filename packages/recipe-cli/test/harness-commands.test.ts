@@ -195,3 +195,56 @@ test('an explicit --checklist (or its --signal) that is not a task-local basenam
   assert.equal(completeHookRan, false);
   assert.equal(readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8'), signal);
 });
+
+// The pi `farmslot_mark` tool reaches the engine through this handler, and GLM
+// eval 4cba5c2f used it to re-open a terminal blocked signal with `start`. This
+// path used to return null for that case so the mark could proceed, and the
+// mark script had no guard either. The decision now lives in the mark script,
+// so this handler must surface its refusal rather than answer success.
+test('start does not re-open a completed run through the tool path', async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'host-start-reopen-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, 'inputs'), { recursive: true });
+  mkdirSync(path.join(dir, 'artifacts'), { recursive: true });
+  writeFileSync(path.join(dir, 'CHECKLIST.md'), '- [ ] 1. First\n- [ ] 2. Second\n');
+  writeFileSync(
+    path.join(dir, 'inputs', 'worker-terminal-contract.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      flowType: 'fix-bug',
+      mode: 'autonomous',
+      requireSignal: true,
+      commands: {
+        complete: { report: 'artifacts/report.md', artifacts: ['artifacts/report.md'] },
+        'no-change': { artifacts: [] },
+        blocked: { artifacts: [] },
+      },
+      whenPresent: [],
+    }),
+  );
+
+  writeFileSync(path.join(dir, 'artifacts', 'report.md'), '# Report\n');
+  assert.equal(await handleChecklist(['mark', dir, '1']), 0);
+  assert.equal(await handleChecklist(['mark', dir, '2']), 0);
+  assert.equal(await handleChecklist(['mark', dir, 'complete']), 0);
+  assert.equal(JSON.parse(readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8')).status, 'complete');
+
+  // This path ignores the start rather than refusing it, which two existing
+  // tests pin. What matters is the signal: a finished run keeps its record.
+  await handleChecklist(['mark', dir, 'start']);
+  assert.equal(
+    JSON.parse(readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8')).status,
+    'complete',
+    'the finished run keeps its record',
+  );
+
+  // Cleared by a re-dispatch, start is the ordinary beginning of an attempt.
+  rmSync(path.join(dir, 'SIGNAL.json'));
+  assert.equal(await handleChecklist(['mark', dir, 'start']), 0);
+  assert.equal(JSON.parse(readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8')).status, 'running');
+
+  // And a blocked run still resumes, the contract the harness pins elsewhere.
+  assert.equal(await handleChecklist(['mark', dir, 'blocked', '--reason', 'target down']), 0);
+  assert.equal(await handleChecklist(['mark', dir, 'start']), 0);
+  assert.equal(JSON.parse(readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8')).status, 'running');
+});

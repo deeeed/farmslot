@@ -266,9 +266,23 @@ export default async function (pi: {
     name: 'farmslot_mark',
     label: 'Farmslot mark',
     description:
-      'Advance the Farmslot worker checklist. Use this instead of shelling ./mark. Pass start, complete, blocked, or a step number.',
+      'Advance the Farmslot worker checklist. Use this instead of shelling ./mark. ' +
+      'A step number is how you report progress and is what you use as you work. ' +
+      "complete and blocked are the run's final disposition: they end it. " +
+      'Mark complete only once every checklist step is marked — calling it earlier is refused, ' +
+      'and it is not a way to record that a step is done.',
     parameters: Type.Object({
-      action: Type.String({ description: 'start | complete | blocked | a checklist step number' }),
+      action: Type.String({
+        description:
+          'A checklist step number — "1", "2", "3" — to record progress on that step. ' +
+          'This is the normal value and the one you use as you work. ' +
+          'The lifecycle words are rare and three of them are final: ' +
+          '"start" once before the first step; ' +
+          '"complete" ENDS the run and is valid only after every step is marked; ' +
+          '"blocked" ENDS the run when you cannot continue; ' +
+          '"no-change" ENDS the run when there was nothing to do.',
+        examples: ['1', '2', '3', 'start', 'complete'],
+      }),
     }),
     async execute(_toolCallId: string, params: { action?: string }) {
       try {

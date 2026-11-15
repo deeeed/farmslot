@@ -1,0 +1,1 @@
+- The `farmslot_mark` tool schema leads with a checklist step number as the normal value and marks `complete`, `blocked` and `no-change` as ending the run. Its exemplar values were lifecycle words with no step number in sight, which is what GLM eval ee2a98b8 said made `complete` look like a mid-run step.
