@@ -37,6 +37,19 @@ function ledger(criteria: AcceptanceCriterionStatus[]): AcceptanceStatusLedger {
   return { schemaVersion: 1, criteria };
 }
 
+test('criterion text is readable without opening a second disclosure', () => {
+  const text = litText(renderAcceptancePanel(ledger([criterion()]), { embedded: true }));
+  assert.match(text, /The panel lists every criterion/);
+  assert.doesNotMatch(text, /<details class="gate-claim-text"|<summary class="ac-text"/);
+  assert.match(text, /data-testid="acceptance-row"/);
+});
+
+test('a missing ledger has a diagnostic, never a zero acceptance tally', () => {
+  const text = litText(renderAcceptancePanel(ledger([]), { error: 'Malformed task ledger' }));
+  assert.match(text, /Malformed task ledger/);
+  assert.doesNotMatch(text, /0\/0|acceptance-counts/);
+});
+
 test('a package without criteria shows evidence diagnostics without a zero assessment count', () => {
   const model = createEvidenceReviewModel({
     context: 'run-detail',

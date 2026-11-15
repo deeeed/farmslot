@@ -632,7 +632,7 @@ export function renderAcceptancePanel(
     options.registration,
   );
   const linked = rows.filter((row) => row.link).length;
-  const hasAcceptance = rows.length > 0 || Boolean(options.registration) || Boolean(options.error);
+  const hasAcceptance = rows.length > 0;
   // Like the links, a manifest read error only matters while there is no ledger.
   const linksError = ledger.criteria.length === 0 ? options.evidenceLinksError : null;
   const body = html`

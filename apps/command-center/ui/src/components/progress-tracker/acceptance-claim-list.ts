@@ -1,6 +1,5 @@
 import { html, nothing, type TemplateResult } from 'lit';
 
-import { acceptanceClaimField } from '@farmslot/protocol';
 import {
   acceptanceClaimLabel,
   type AcceptanceClaimRow,
@@ -11,7 +10,6 @@ import {
 import { publicationGateCssVariables } from '@farmslot/theme';
 
 import { fonts, radii, spacing } from '../../styles/theme-tokens.js';
-import { viewDetails } from '../../utils/view-state.js';
 import {
   renderVisualClaimJudgment,
   visualClaimJudgmentStyles,
@@ -54,8 +52,8 @@ export function renderAcceptanceClaimList(
         data-ac-verdict=${verdict}
       >
         <strong class="ac-id">${claim.id}</strong>
-        <details class="gate-claim-text" ${viewDetails(acceptanceClaimField(claim.id))}>
-          <summary class="ac-text" title=${claim.text}>${claim.text}</summary>
+        <div class="gate-claim-text">
+          <span class="ac-text">${claim.text}</span>
           ${claim.detail ? html`<p>${claim.detail}</p>` : nothing}
           ${claim.origin
             ? html`<p data-testid="acceptance-origin" data-source-id=${claim.origin.reference}>
@@ -69,7 +67,7 @@ export function renderAcceptanceClaimList(
                   : html`<span>${claim.origin.reference}</span>`}
               </p>`
             : nothing}
-        </details>
+        </div>
         ${html`<span
           class="gate-state ac-verdict"
           data-state=${claim.tone}
@@ -189,8 +187,7 @@ export function acceptanceClaimListStyles() {
     .acceptance-claim-list li { display: grid; grid-template-columns: 50px minmax(160px, 1fr) auto auto auto; gap: ${spacing.md}; align-items: center; padding: ${spacing.sm} 0; border-top: 1px solid var(--gate-border); }
     .acceptance-claim-list .ac-id { width: auto; color: var(--gate-secondary); font-family: ${fonts.mono}; }
     .acceptance-claim-list .gate-claim-text { overflow-wrap: anywhere; color: var(--gate-text); min-width: 0; }
-    .gate-claim-text summary { display: block; cursor: pointer; min-height: 44px; align-content: center; }
-    .gate-claim-text[open] summary { display: block; -webkit-line-clamp: unset; }
+    .gate-claim-text .ac-text { display: block; line-height: 1.5; }
     .gate-claim-text p { margin: 0; padding: 4px 0; }
     .acceptance-claim-list .gate-state { display: inline-flex; align-items: center; gap: 6px; justify-self: start; color: var(--gate-text); font-size: ${fonts.sizeSm}; font-weight: 600; border: 0; border-radius: 999px; padding: 2px 10px; white-space: nowrap; background: var(--gate-surface); text-transform: none; cursor: default; }
     ${['proven', 'verified', 'checked', 'issue', 'pending', 'untestable'].map((tone) => `.acceptance-claim-list .gate-state[data-state="${tone}"] { color: var(--gate-${tone}); background: var(--gate-${tone}Surface); }`).join('')}
