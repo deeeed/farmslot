@@ -39,6 +39,8 @@ export default [
       // must never be autofixed: a `lint:fix` here rewrote three files in a
       // MetaMask/skills checkout.
       '.skills-cache/**',
+      // T3 Code native modules, kept byte-identical to upstream (see their UPSTREAM.md).
+      'apps/companion/modules/**',
       '**/.yarn/**',
       '**/node_modules/**',
       '**/dist/**',

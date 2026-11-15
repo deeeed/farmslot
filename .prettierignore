@@ -33,3 +33,7 @@ scripts/failure-triage/corpus-v2.json
 scripts/failure-triage/navigation-reference.v1.json
 # Recorded PR evidence (gh output as captured). Do not reformat.
 docs/operations/evidence/
+
+# Vendored T3 Code native modules and archives stay byte-identical to upstream.
+apps/companion/modules/
+apps/companion/deps/

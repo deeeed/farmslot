@@ -16,6 +16,7 @@ import { ResourceStoreNotice } from '../components/ResourceStoreNotice';
 import { WhatsNewMonitor } from '../components/WhatsNewMonitor';
 import { RecipeBridgeProvider } from '../farmslot';
 import { observeLocalStoreProof } from '../farmslot/local-store-proof';
+import { observeNativeRenderProof } from '../farmslot/native-render-proof';
 import { observeOfflineClientCacheProof } from '../farmslot/offline-client-cache-proof';
 import { observeOfflineClientStoreBaseline } from '../farmslot/offline-client-store-baseline';
 import { observeRunCollectionsProof } from '../farmslot/run-collections-proof';
@@ -111,6 +112,7 @@ export default function RootLayout() {
             </Stack.Protected>
             <Stack.Protected guard={farm || renderAccess === 'native'}>
               <Stack.Screen name="native" options={{ title: 'Conversations' }} />
+              <Stack.Screen name="native-file" options={{ title: 'File' }} />
             </Stack.Protected>
             <Stack.Protected guard={farm}>
               <Stack.Screen
@@ -262,6 +264,7 @@ function WorkspaceProviders({ children }: { children: React.ReactNode }) {
       observeUi={
         __DEV__
           ? async (refs) =>
+              (await observeNativeRenderProof(refs)) ??
               (await observeSourcesCacheProof(refs)) ??
               (await observeRunCollectionsProof(refs)) ??
               (await observeLocalStoreProof(refs)) ??

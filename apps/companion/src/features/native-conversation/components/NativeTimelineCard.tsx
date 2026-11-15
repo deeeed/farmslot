@@ -18,10 +18,11 @@ import {
   nativeToolDisclosureKey,
 } from '@farmslot/protocol/client-cache';
 
-import { FormattedDocument } from '../../../components/FormattedDocument';
-import { MobileDiffViewer } from '../../../components/MobileDiffViewer';
 import { useViewChoice, useViewToggle } from '../../../components/view-state';
-import { formatDocumentCached } from '../../../lib/document-format-cache';
+import type { NativeWorkspaceTarget } from '../../../lib/native-workspace-target';
+import { NativeDiffView } from '../../native-files/NativeDiffView';
+import { NativeMarkdown } from '../../native-files/NativeMarkdown';
+import { NativeTurnChangesList } from '../../native-files/NativeTurnChanges';
 import { nativeStyles as styles } from '../styles/native-conversation.styles';
 
 import { NativeCopyButton, NativeLinkedText } from './NativeMessageActions';
@@ -36,6 +37,10 @@ interface NativeTimelineCardProps {
   onImplement?: (plan: string) => void;
   /** Implement is starting its session. */
   implementing?: boolean;
+  /** The session's files, for file links; one object per session, so memo still holds. */
+  workspace?: NativeWorkspaceTarget;
+  /** Present when this account can read a turn's diffs. */
+  turnDiffs?: NativeWorkspaceTarget;
 }
 
 /**
@@ -48,6 +53,8 @@ export const NativeTimelineCard = memo(function NativeTimelineCard({
   planOpen = true,
   onImplement,
   implementing = false,
+  workspace,
+  turnDiffs,
 }: NativeTimelineCardProps) {
   const [expanded, setExpanded] = useViewChoice(
     entry.kind === 'tool'
@@ -93,10 +100,16 @@ export const NativeTimelineCard = memo(function NativeTimelineCard({
           // A proposal's entry text is its plan.
           onImplement={onImplement ? () => onImplement(entry.text) : undefined}
           implementing={implementing}
+          workspace={workspace}
         />
       ) : entry.kind === 'tool' ? (
         <>
-          <Pressable accessibilityRole="button" accessibilityState={{ expanded }} onPress={toggle}>
+          <Pressable
+            testID="companion-native-tool-toggle"
+            accessibilityRole="button"
+            accessibilityState={{ expanded }}
+            onPress={toggle}
+          >
             <Text style={styles.buttonText}>
               {entry.text} ·{' '}
               {entry.event.tool?.status ??
@@ -132,13 +145,18 @@ export const NativeTimelineCard = memo(function NativeTimelineCard({
           ) : null}
           {expanded
             ? entry.event.tool?.diffs?.map((diff, index) => (
-                <MobileDiffViewer
+                <NativeDiffView
                   // Keyed by entry too: a recycled list cell must not keep another tool's diff state.
                   key={`${entry.key}:${diff.path}:${index}`}
                   title={diff.path}
                   diffText={nativeToolDiffText(diff)}
-                  initialPath={diff.path}
-                  fullscreenChoiceId={`native-diff:${entry.key}:${diff.path}:${index}`}
+                  source="tool"
+                  root={workspace?.cwd}
+                  proof={
+                    workspace
+                      ? { sessionId: workspace.sessionId, key: `tool:${entry.key}:${index}` }
+                      : undefined
+                  }
                 />
               ))
             : null}
@@ -153,8 +171,19 @@ export const NativeTimelineCard = memo(function NativeTimelineCard({
             text={entry.text}
             preview={preview}
             muted={entry.kind === 'status'}
+            markdown={entry.kind === 'assistant'}
+            workspace={workspace}
             onDisclosure={onDisclosure}
           />
+          {entry.kind === 'changes' && entry.event.changes ? (
+            <NativeTurnChangesList
+              entryKey={String(entry.key)}
+              sequence={entry.event.sequence}
+              changes={entry.event.changes}
+              workspace={turnDiffs}
+              onDisclosure={onDisclosure}
+            />
+          ) : null}
           <NativeCopyButton
             // Keyed: a recycled cell never shows another message's Copied.
             key={entry.key}
@@ -193,6 +222,7 @@ function NativePlanBody({
   onDisclosure,
   onImplement,
   implementing,
+  workspace,
 }: {
   choiceId: string;
   plan: NativeSessionPlan;
@@ -203,6 +233,7 @@ function NativePlanBody({
   onDisclosure: () => void;
   onImplement?: () => void;
   implementing?: boolean;
+  workspace?: NativeWorkspaceTarget;
 }) {
   if (plan.kind === 'proposal')
     return (
@@ -212,6 +243,7 @@ function NativePlanBody({
           text={text}
           preview={preview}
           markdown
+          workspace={workspace}
           onDisclosure={onDisclosure}
         />
         <NativeCopyButton
@@ -320,6 +352,7 @@ function NativeMessageText({
   preview,
   muted = false,
   markdown = false,
+  workspace,
   onDisclosure,
 }: {
   choiceId?: string;
@@ -328,6 +361,7 @@ function NativeMessageText({
   muted?: boolean;
   /** The whole text is markdown; a collapsed preview stays plain. */
   markdown?: boolean;
+  workspace?: NativeWorkspaceTarget;
   onDisclosure: () => void;
 }) {
   const [expanded, setExpanded] = useViewToggle(`native-text:${choiceId}`);
@@ -335,7 +369,8 @@ function NativeMessageText({
   return (
     <>
       {markdown && whole ? (
-        <FormattedDocument blocks={formatDocumentCached('plan.md', text)} />
+        // Keyed: a recycled cell must not keep another message's parsed links.
+        <NativeMarkdown key={choiceId} text={text} entryKey={choiceId} workspace={workspace} />
       ) : preview && !expanded ? (
         // A preview may end inside an address: it stays plain until the whole text shows.
         <Text selectable style={muted ? styles.muted : styles.text}>

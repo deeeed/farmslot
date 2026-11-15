@@ -76,6 +76,9 @@
     "@siteed/audio-studio": "3.2.1",
     "@siteed/audio-ui": "1.1.2-beta.0",
     "@siteed/sherpa-onnx.rn": "1.3.1",
+    "@t3tools/mobile-highlights-native": "link:./modules/t3-highlights",
+    "@t3tools/mobile-review-diff-native": "link:./modules/t3-review-diff",
+    "@t3tools/mobile-source-text": "link:./modules/t3-source-text",
     "expo": "~58.0.22",
     "expo-asset": "~58.0.19",
     "expo-camera": "~58.0.14",
@@ -100,7 +103,9 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-native": "0.88.1",
+    "react-native-enriched-markdown": "file:./deps/react-native-enriched-markdown-1.2.0-t3.18-497fbe63.tgz",
     "react-native-gesture-handler": "~3.3.0",
+    "react-native-nitro-modules": "0.37.1",
     "react-native-reanimated": "4.7.1",
     "react-native-safe-area-context": "~5.10.1",
     "react-native-screens": "~4.30.1",
@@ -122,15 +127,28 @@
     "typescript": "~6.0.3"
   },
   "packageManager": "yarn@4.5.3",
+  "enriched-markdown": {
+    "enableMath": false,
+    "enableVideo": false
+  },
   "expo": {
     "doctor": {
       "reactNativeDirectoryCheck": {
         "exclude": [
           "@siteed/audio-studio",
           "@siteed/sherpa-onnx.rn",
-          "expo-modules-jsi"
+          "expo-modules-jsi",
+          "react-native-enriched-markdown",
+          "@t3tools/mobile-highlights-native",
+          "@t3tools/mobile-review-diff-native",
+          "@t3tools/mobile-source-text"
         ]
       }
+    },
+    "install": {
+      "exclude": [
+        "react-native-enriched-markdown"
+      ]
     }
   },
   "license": "MIT"

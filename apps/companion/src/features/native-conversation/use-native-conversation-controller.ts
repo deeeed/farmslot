@@ -56,9 +56,10 @@ import {
   type NativeWorkerViewTarget,
   sameNativeWorkerViewBinding,
 } from '../../lib/native-worker-target';
+import type { NativeWorkspaceTarget } from '../../lib/native-workspace-target';
 import { getResourceCache, getResourceNativeOwnerId } from '../../lib/resource-cache';
 import { useWorkspaceRenderAccess } from '../../lib/use-workspace-render-access';
-import { canOpenNativeConversation } from '../../lib/workspace-access';
+import { canOpenNativeConversation, workspaceAllowsMethod } from '../../lib/workspace-access';
 import { useConnectionStore } from '../../store/connection';
 import { useHeldConnection } from '../../store/held-connection';
 
@@ -342,6 +343,33 @@ export function useNativeConversationController(params: NativeConversationParams
     executionNodeId: node,
     ...(workerControl ? { worker: workerControl } : {}),
   };
+  const cwd = session?.cwd;
+  /** File links and turn diffs read the session's folder with the history's worker pin. */
+  const workspace = useMemo((): NativeWorkspaceTarget | undefined => {
+    if (!params.sessionId || !cwd) return undefined;
+    const target: NativeWorkspaceTarget = {
+      sessionId: params.sessionId,
+      executionNodeId: node,
+      cwd,
+      ...(worker
+        ? {
+            worker: {
+              runId: worker.runId,
+              contextId: worker.contextId,
+              generation: worker.binding.generation ?? '',
+              leaseId: worker.binding.leaseId,
+            },
+          }
+        : {}),
+    };
+    return workspaceAllowsMethod(access, Methods.NATIVE_SESSION_WORKSPACE_READ, target)
+      ? target
+      : undefined;
+  }, [params.sessionId, node, cwd, worker, access]);
+  const turnDiffs =
+    workspace && workspaceAllowsMethod(access, Methods.NATIVE_SESSION_TURN_DIFF, workspace)
+      ? workspace
+      : undefined;
   /** `history`: "exact" for actions on the snapshot on screen; "current" for a new message. */
   const assertCurrentControls = (history: 'exact' | 'current' = 'exact') => {
     const live = useConnectionStore.getState();
@@ -642,6 +670,8 @@ export function useNativeConversationController(params: NativeConversationParams
       entries,
       rows,
       work,
+      workspace,
+      turnDiffs,
       requests: snapshot?.pendingRequests ?? NO_REQUESTS,
       responses,
       draft,
