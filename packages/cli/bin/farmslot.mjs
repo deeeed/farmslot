@@ -1,6 +1,13 @@
 #!/usr/bin/env node
 // Load the CLI in this process so its signal handlers own the invoked PID.
-import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+} from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -68,4 +75,70 @@ process.env.TSX_TSCONFIG_PATH = resolve(root, 'tsconfig.json');
 // Keep startup cost independent of the accumulated shared transform cache.
 process.env.TSX_DISABLE_CACHE = '1';
 await import('tsx');
-await import(pathToFileURL(entry).href);
+const prebuilt = prebuiltRevision();
+if (prebuilt) {
+  // An installed snapshot built its own sources at install time (build-prebuilt.mjs): load those
+  // instead of transforming every module on each call. TSX stays registered for TypeScript from
+  // outside the CLI, such as a project's own scripts.
+  const hooks = pathToFileURL(resolve(root, 'bin/prebuilt-resolve.mjs'));
+  const { registerHooks } = await import('node:module');
+  const { initialize, resolveSync, loadSync } = await import(hooks.href);
+  initialize({
+    root: resolve(root, '../..'),
+    paths: prebuiltPaths(),
+    commonjs: commonjsPackages(),
+  });
+  registerHooks({ resolve: resolveSync, load: loadSync });
+  await import(pathToFileURL(entry.replace(/\.ts$/, '.js')).href);
+} else await import(pathToFileURL(entry).href);
+
+/**
+ * Whether TSX registered in-thread hooks (`module.registerHooks`), which the prebuilt hooks chain
+ * with. TSX 4.22 decides by Node version (its node-features `registerHooks` table). With TSX's
+ * loader-thread hooks, TypeScript a prebuilt module imports from outside the build loses its
+ * named exports, so older Node runs from source as before. prebuilt.test.ts checks both sides.
+ */
+function tsxUsesRegisterHooks() {
+  const [major, minor, patch] = process.versions.node.split('.').map(Number);
+  const atLeast = (m, n, p) => minor > n || (minor === n && patch >= p);
+  if (major === 24) return atLeast(24, 11, 1);
+  if (major === 25) return atLeast(25, 1, 0);
+  return major >= 26;
+}
+
+/**
+ * The deployed revision when this snapshot's prebuilt sources were built for it, otherwise
+ * undefined. A checkout has no DEPLOYED-REVISION.json, so it always runs from source.
+ */
+function prebuiltRevision() {
+  const deployed = resolve(root, '../../DEPLOYED-REVISION.json');
+  const built = resolve(root, 'PREBUILT.json');
+  if (
+    process.env.FARMSLOT_CLI_FROM_SOURCE === '1' ||
+    !tsxUsesRegisterHooks() ||
+    !existsSync(deployed) ||
+    !existsSync(built)
+  )
+    return undefined;
+  const { sha } = JSON.parse(readFileSync(deployed, 'utf8'));
+  const { revision } = JSON.parse(readFileSync(built, 'utf8'));
+  return sha && sha === revision ? sha : undefined;
+}
+
+/** Workspace packages whose plain .js files Node reads as CommonJS (no `"type": "module"`). */
+function commonjsPackages() {
+  const packages = resolve(root, '..');
+  return readdirSync(packages).filter((name) => {
+    const manifest = resolve(packages, name, 'package.json');
+    return existsSync(manifest) && JSON.parse(readFileSync(manifest, 'utf8')).type !== 'module';
+  });
+}
+
+/** The CLI tsconfig's `paths`, resolved to absolute targets, as TSX applies them. */
+function prebuiltPaths() {
+  const { compilerOptions } = JSON.parse(readFileSync(resolve(root, 'tsconfig.json'), 'utf8'));
+  return Object.entries(compilerOptions.paths ?? {}).map(([pattern, [target]]) => ({
+    pattern,
+    target: resolve(root, target),
+  }));
+}

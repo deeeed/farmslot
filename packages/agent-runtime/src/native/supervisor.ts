@@ -100,7 +100,10 @@ durableWrite(join(root, 'host.json'), {
   token: randomBytes(32).toString('hex'),
   socket,
 });
-const extension = import.meta.url.endsWith('.ts') ? 'ts' : 'js';
+// From source (or a prebuilt CLI's .js beside it) the host runs from source too, under TSX.
+const running = fileURLToPath(import.meta.url);
+const extension =
+  running.endsWith('.ts') || existsSync(running.replace(/\.js$/, '.ts')) ? 'ts' : 'js';
 const child = fork(fileURLToPath(new URL(`./host.${extension}`, import.meta.url)), [root], {
   stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
 });

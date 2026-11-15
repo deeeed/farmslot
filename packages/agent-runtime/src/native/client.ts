@@ -170,7 +170,10 @@ export class NativeSessionClient {
   }
   private async start(): Promise<HostIdentity> {
     privateDirectory(this.root);
-    const source = import.meta.url.endsWith('.ts');
+    // A prebuilt CLI snapshot runs the .js built beside each source: start the supervisor from
+    // its source with TSX, as when this module itself runs from source.
+    const running = fileURLToPath(import.meta.url);
+    const source = running.endsWith('.ts') || existsSync(running.replace(/\.js$/, '.ts'));
     const entry = fileURLToPath(new URL(`./supervisor.${source ? 'ts' : 'js'}`, import.meta.url));
     const args = source
       ? ['--import', import.meta.resolve('tsx'), entry, this.root]

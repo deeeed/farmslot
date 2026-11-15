@@ -1,0 +1,1 @@
+- The default recipe engine records its runner identity from its sources when it runs as the JavaScript a prebuilt CLI snapshot built beside them, as a checkout of the same revision does.

@@ -1,0 +1,1 @@
+- From a prebuilt CLI snapshot, the native client and supervisor start their host processes from source, as when they run from source themselves.
