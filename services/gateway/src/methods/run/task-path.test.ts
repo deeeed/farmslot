@@ -84,7 +84,8 @@ test('run create refuses a task dir with no CHECKLIST.md before the run exists',
 test('run create continues when the task dir already has CHECKLIST.md', async () => {
   const fixture = await taskDir('- [ ] one\n');
   try {
-    // The checklist guard is passed. The next check is the sentinel review sequence.
+    // Checklist is present, so create reaches the review-sequence limit.
+    const selection = { runner: 'codex', model: 'x', effort: 'low', mode: 'cold' as const };
     await assert.rejects(
       runCreate(
         {
@@ -93,11 +94,11 @@ test('run create continues when the task dir already has CHECKLIST.md', async ()
           ticketOrPr: 'PROJ-123',
           taskFile: fixture.taskFile,
           executionTemplateId: 'dev/example',
-          reviewSequence: ['not-a-selection'],
+          reviewSequence: Array.from({ length: 6 }, () => selection),
         },
         () => {},
       ),
-      /Review selection must be an object/,
+      /Review sequence may contain at most 5 rows/,
     );
   } finally {
     await rm(fixture.dir, { recursive: true, force: true });
