@@ -14,7 +14,7 @@
 // It never edits an existing farm file. The gateway lists the new slots after its next fleet
 // refresh.
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
@@ -139,15 +139,11 @@ for (const node of config.live.nodes) {
 
 const pack = canaryPack();
 const projectDir = path.join(farm, 'projects', CANARY_PROJECT);
-if (existsSync(path.join(projectDir, 'project.json')))
-  console.log(`kept ${projectDir}: it exists (remove it to rewrite)`);
-else {
-  for (const [file, content] of Object.entries(pack.files))
-    await publish(path.join(projectDir, file), content);
-  await publish(
-    path.join(projectDir, 'project.json'),
-    `${JSON.stringify({ name: CANARY_PROJECT, ...pack.projectJson }, null, 2)}\n`,
-  );
-}
+for (const [file, content] of Object.entries(pack.files))
+  await publish(path.join(projectDir, file), content);
+await publish(
+  path.join(projectDir, 'project.json'),
+  `${JSON.stringify({ name: CANARY_PROJECT, ...pack.projectJson }, null, 2)}\n`,
+);
 for (const { file, content } of pools) await publish(file, content);
 console.log(apply ? 'canary setup applied' : 'dry run: rerun with --apply to write');
