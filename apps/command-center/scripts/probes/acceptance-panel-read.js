@@ -6,6 +6,9 @@ const panel = root?.querySelector('[data-panel="run-acceptance"]');
 const rows = [...(panel?.querySelectorAll('[data-testid="acceptance-row"]') ?? [])];
 return {
   connected: document.querySelector('farm-app')?.connection === 'connected',
+  modalOpen: Boolean(
+    document.querySelector('whats-new-modal')?.shadowRoot?.querySelector('button.primary'),
+  ),
   runId: run?.id,
   status: run?.status,
   taskFile: run?.taskFile ?? null,

@@ -34,6 +34,7 @@ const dom = await cdp(
   path.join(source, 'apps/command-center/scripts/probes/acceptance-panel-read.js'),
 );
 assert(dom.connected, 'Browser must use the real connected gateway');
+assert(!dom.modalOpen, 'Dismiss the announcement before capturing readable criteria');
 assert.equal(dom.runId, runId);
 assert(!dom.text?.includes('0/0'), 'An absent ledger must not imply zero acceptance criteria');
 assert(
