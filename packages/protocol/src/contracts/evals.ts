@@ -328,6 +328,10 @@ export interface EvalComparisonEligibility {
 /** Gateway provenance; reference material must never be copied into worker inputs. */
 export interface EvalBlindTrial {
   version: 1;
+  /** New before-fix trials use ordinary slots. Absent retains the capsule lifecycle. */
+  executionPolicy?: 'normal-slot';
+  /** Fresh normal-slot prepare parked earlier ignored inputs without swapping Git. */
+  workspace?: { slotId: string; slotEpoch: number; preparedAt: string; baseVerifiedAt?: string };
   baseSha: string;
   problemDigest: string;
   invalidReason?: string;

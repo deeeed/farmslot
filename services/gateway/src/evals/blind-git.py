@@ -1,4 +1,4 @@
-"""Gateway-owned Git isolation for one blind trial; sent to the node on stdin."""
+"""Gateway-owned eval Git preparation and ignored-input parking; sent to the node on stdin."""
 import fcntl
 import fnmatch
 import hashlib
@@ -1154,9 +1154,9 @@ def restore_submodule_entries(state):
             entry.unlink(missing_ok=True)
 
 
-def ignored_moves(repo, keep):
-    # Gitignored leftovers of earlier runs (task folders, runtime ledgers, env
-    # files), in the checkout and its initialized submodules, move into the capsule.
+def ignored_moves(repo, keep, roots=None):
+    # Select ignored leftovers in the checkout and its initialized submodules.
+    # Normal-slot parking limits selection to its declared cleanup roots.
     # Kept caches and this run's own files stay, at any depth: an ignored directory
     # that holds one is entered and only its other entries move.
     def kept(rel):
@@ -1184,6 +1184,11 @@ def ignored_moves(repo, keep):
             kept_seen.add(rel)
             return
         entry = repo / rel
+        if roots is not None and not any(rel == root or rel.startswith(root + '/') for root in roots):
+            if entry.is_dir() and not entry.is_symlink() and any(root.startswith(rel + '/') for root in roots):
+                for child in sorted(entry.iterdir()):
+                    visit(rel + '/' + child.name)
+            return
         if entry.is_dir() and not entry.is_symlink() and holds_kept(rel):
             for child in sorted(entry.iterdir()):
                 visit(rel + '/' + child.name)
@@ -1199,6 +1204,21 @@ def ignored_moves(repo, keep):
                 scan(root / path, prefix + path + '/')
     scan(repo, '')
     return moves
+
+
+def park_ignored(spec):
+    # Normal-slot replays keep Git untouched. Prior task/runtime/artifact inputs
+    # leave the checkout permanently; no capsule or restoration is involved.
+    repo = Path(spec['repo']).resolve()
+    parking = repo.parent / spec['priorWorkDirectory'] / spec['slotId'] / spec['runId'] / str(time.time_ns())
+    moved = ignored_moves(repo, spec.get('keepIgnored', []), spec['cleanupRoots'])
+    for rel in moved:
+        target = parking / rel
+        if target.exists() or target.is_symlink():
+            raise RuntimeError('Prior eval workspace parking path already exists: ' + rel)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).rename(target)
+    return {'status': 'parked-ignored', 'runId': spec['runId'], 'parkingPath': str(parking), 'moved': moved}
 
 
 def move_back(source, destination, aside):
@@ -1516,5 +1536,5 @@ if __name__ == '__main__':
         repo_key = hashlib.sha256(os.path.abspath(repo / common).encode()).hexdigest()
         result = {'status': 'planned', 'capsule': str(capsule), 'repoKey': repo_key}
     else:
-        result = {'isolate': isolate, 'boundary': boundary, 'verify': verify, 'restore': restore}[action](request)
+        result = {'isolate': isolate, 'boundary': boundary, 'verify': verify, 'restore': restore, 'park-ignored': park_ignored}[action](request)
     print(json.dumps(result))

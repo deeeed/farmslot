@@ -1358,3 +1358,30 @@ test('the rendered brief is capped while the snapshot keeps everything', () => {
   assert.match(section, /16 of 40 relations omitted here/);
   assert.match(section, /snapshot artifact above holds all 40/);
 });
+
+for (const policy of ['normal-slot', undefined] as const) {
+  test(`farm no-lookup context is ${policy ? 'present for a normal-slot trial' : 'absent for an ordinary run'}`, async (t) => {
+    const run = makeRun(`EVAL-LOOKUP-${policy ?? 'ordinary'}`, `lookup-${policy ?? 'ordinary'}`);
+    run.project = legacyProject;
+    if (policy) {
+      run.engineState = makeArtifactOnlyReplayRun().engineState;
+      run.engineState!.evalExperiment!.blind = {
+        version: 1,
+        executionPolicy: policy,
+        baseSha: 'a'.repeat(40),
+        problemDigest: 'problem',
+        referenceCommits: [],
+        referencePatchId: 'reference',
+        forbiddenInputs: [],
+      };
+    }
+    let taskPath = '';
+    t.after(async () => {
+      if (taskPath) await rm(path.dirname(taskPath), { recursive: true, force: true });
+    });
+    taskPath = await writeTaskFixture(run, { skipCollisionCheck: true });
+    const task = await readFile(taskPath, 'utf8');
+    assert.equal(task.includes('Do not look up the original answer:'), !!policy);
+    assert.doesNotMatch(task, /executionPolicy|referencePatchId|experimentManifestPath/);
+  });
+}

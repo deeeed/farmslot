@@ -1,0 +1,1 @@
+- Run new before-fix eval trials on normal slots at the frozen base, with prior ignored inputs parked and candidate/first-output provenance preserved. Existing capsule trials retain their lifecycle.

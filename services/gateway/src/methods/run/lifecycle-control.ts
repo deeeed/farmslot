@@ -20,6 +20,7 @@ import {
 import { selectAgentContext } from '../../agents/contexts.js';
 import { execOnSlot } from '../../core/exec.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
+import { usesEvalTrialCapsule } from '../../evals/trial-policy.js';
 import { hasValidPrNumber } from '../../run-engine/gate-policy.js';
 import {
   bumpRunGeneration,
@@ -372,7 +373,10 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
   if (!slotId) return { released: false };
   // COMPLETE precedes finalization. Blind trials have no released-checkout receipt,
   // so retain their owner until terminal cleanup can restore Git and park the output.
-  if (run.engineState?.evalExperiment?.blind && !isTerminalRunStatus(run.status))
+  if (
+    usesEvalTrialCapsule(run.engineState?.evalExperiment?.blind) &&
+    !isTerminalRunStatus(run.status)
+  )
     return { released: false, skipped: 'Blind trial awaits terminal cleanup' };
   if (getRun(run.id)) {
     // An uncertain handoff can still have the parent on the slot row. Retire
@@ -429,8 +433,8 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
     blocker = await recordSlotTeardownBlocker(run, workerBlocker ?? runtimeBlocker);
     // A blind trial's original Git comes back while the run still owns the slot;
     // a failure holds the slot for retry rather than leaving it on the isolated Git.
-    const { restoreFinishedBlindTrialGit } = await import('../../evals/blind-trial.js');
-    if (!blocker) {
+    if (!blocker && usesEvalTrialCapsule(run.engineState?.evalExperiment?.blind)) {
+      const { restoreFinishedBlindTrialGit } = await import('../../evals/blind-trial.js');
       blocker = await restoreFinishedBlindTrialGit(run);
       if (blocker) await recordSlotTeardownSkipped(run, blocker);
     }

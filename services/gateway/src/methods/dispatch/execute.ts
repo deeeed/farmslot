@@ -173,6 +173,7 @@ export {
   validateTicketRef,
 } from './ticket-ref.js';
 import { blindLaunchScript, blindTrialWorkerBoundary } from '../../evals/blind-git.js';
+import { usesEvalTrialCapsule } from '../../evals/trial-policy.js';
 import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
 import { admitWorkerLaunch } from '../../run-engine/worker-launch-preflight.js';
 
@@ -1341,7 +1342,7 @@ export async function dispatchExecute(
   }
   const launchNative = async () => {
     if (!currentRun) throw new Error('Native dispatch requires a persisted run');
-    if (currentRun.engineState?.evalExperiment?.blind)
+    if (usesEvalTrialCapsule(currentRun.engineState?.evalExperiment?.blind))
       throw new Error(
         'Blind eval trials run terminal workers, which start without GitHub credentials.',
       );
@@ -1730,7 +1731,10 @@ export async function dispatchExecute(
         runTier: currentRun.safetyTier,
         projectDefaultRaw: projectJson.default_safety_tier,
       }) ?? runnerDefaultSafetyTier(runner);
-    if (currentRun.engineState?.evalExperiment?.blind && runnerAppliesOwnSandbox(runner, tier))
+    if (
+      usesEvalTrialCapsule(currentRun.engineState?.evalExperiment?.blind) &&
+      runnerAppliesOwnSandbox(runner, tier)
+    )
       throw new Error(
         `Blind eval trials run the worker inside a macOS sandbox, and ${runner} applies its own sandbox in the ${tier} tier, which cannot nest. Choose a tier or runner without its own sandbox.`,
       );

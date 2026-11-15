@@ -4,6 +4,7 @@ import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execArgvOnSlot, execOnSlot, isLocal } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import { prepareBlindTrialGit } from '../evals/blind-trial.js';
+import { usesEvalTrialCapsule } from '../evals/trial-policy.js';
 import { dispatchExecute, nudgeDispatch, warmSessionHandoffDispatch } from '../methods/dispatch.js';
 import { slotPrepare } from '../methods/slot.js';
 import { ensureFrozenQaSource } from '../qa/frozen-source.js';
@@ -389,7 +390,13 @@ export async function executePrepareStep(
   const branchIdentity = current.branch
     ? { slotId: current.slotId, branch: current.branch }
     : undefined;
-  if (!isPrepareReplay && branchIdentity && !current.engineState?.prepareBranch) {
+  const normalSlotTrial =
+    current.engineState?.evalExperiment?.blind?.executionPolicy === 'normal-slot';
+  if (
+    (!isPrepareReplay || normalSlotTrial) &&
+    branchIdentity &&
+    !current.engineState?.prepareBranch
+  ) {
     await persistRunNow(
       updateRun(runId, {
         engineState: {
@@ -403,9 +410,9 @@ export async function executePrepareStep(
       'prepare branch intent',
     );
   }
-  const branchState = current.engineState?.prepareBranch;
+  const branchState = getRun(runId)?.engineState?.prepareBranch;
   const allowMissingReplayBranch =
-    isPrepareReplay &&
+    (isPrepareReplay || normalSlotTrial) &&
     branchState?.slotId === current.slotId &&
     branchState.branch === current.branch &&
     branchState.started === false;
@@ -439,9 +446,13 @@ export async function executePrepareStep(
       prepareController.signal,
       {
         ...(warmRecovery ? { stripClean: true } : {}),
-        ...(isPrepareReplay || current.engineState?.evalExperiment ? { preserveBranch: true } : {}),
-        ...(current.engineState?.evalExperiment?.blind
-          ? { blindBaseSha: current.engineState.evalExperiment.blind.baseSha }
+        ...(isPrepareReplay ||
+        usesEvalTrialCapsule(current.engineState?.evalExperiment?.blind) ||
+        (current.engineState?.evalExperiment && !forceNewBranch)
+          ? { preserveBranch: true }
+          : {}),
+        ...(usesEvalTrialCapsule(current.engineState?.evalExperiment?.blind)
+          ? { blindBaseSha: current.engineState?.evalExperiment?.blind?.baseSha }
           : {}),
         // Isolation happens in beforeBranchSetup; read its durable result at capture time.
         get blindRepoKey() {

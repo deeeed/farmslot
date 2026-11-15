@@ -286,6 +286,9 @@ test('ended runs park attributed commits; only artifact-only code work parks bef
     },
   };
   assert.equal(parksBranchCommits(blind), false);
+  blind.engineState!.evalExperiment!.blind!.executionPolicy = 'normal-slot';
+  delete blind.engineState!.evalExperiment!.blind!.isolation;
+  assert.equal(parksBranchCommits(blind), true, 'normal-slot trials use ordinary commit parking');
   assert.equal(parksBranchCommits(run({ status: 'monitoring', steps: [] })), false);
   assert.equal(
     parksBranchCommits(

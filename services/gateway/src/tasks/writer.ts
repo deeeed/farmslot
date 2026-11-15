@@ -1376,6 +1376,9 @@ export async function writeTaskFile(
   const { executionTemplate: _reference, ...portableProvenance } = templateProvenance;
   const additions =
     (await appendTaskContext('')) +
+    (run.engineState?.evalExperiment?.blind?.executionPolicy === 'normal-slot'
+      ? '\nDo not look up the original answer: do not fetch or read newer Git history, reference PRs or patches, earlier task artifacts, or other checkouts to find the fix.\n'
+      : '') +
     (run.flowType === 'review-pr'
       ? `\n\n${renderApprovalPolicy(projectVars.projectJson.approvalPolicy)}\n\n${renderReviewResultInstructions('artifacts/review-result.json')}`
       : '');
