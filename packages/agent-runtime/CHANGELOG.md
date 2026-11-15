@@ -2,7 +2,6 @@
 
 ## Unreleased
 
-- `./mark N --reason "<text>"` records that text as a note on the step's ledger event. The step stays done: only `--skip` waives it, and a note never sets `skipped`. Before this the flag was accepted on a numbered step and silently discarded, so a worker that recorded why it judged an exit-early step complete left nothing behind. `--reason` together with `--skip` is refused rather than guessing which text persisted, an empty note is a usage error, and a re-mark replaces the note.
 - TASK.md no longer tells a worker to act before its first checklist step. The "Required skills" line still requires every frozen file to be read, but after marking step 1 and before the work each file governs, instead of before the first step; the recipe tooling block requires its quality reference as part of the step that writes a recipe. A worker that obeyed the old wording marked step 1 only after doing the reads. Commands, paths and operational constraints are unchanged.
 - A checklist step can declare the evidence it claims with `[PROOF: artifacts/...]`. `./mark N` refuses the tick while that path is absent or empty, and `mark complete` refuses a checked step whose evidence is missing or was written after the claim; re-marking such a step restates the claim over repaired evidence. Steps without a declaration are unaffected.
 - A refused `mark complete` on a run whose contract is marked unattended now ends the run with the refusal as its reason, instead of printing advice no operator will read.

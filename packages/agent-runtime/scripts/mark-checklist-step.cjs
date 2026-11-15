@@ -871,14 +871,12 @@ if (!isStartCommand && target.stepNumber != null && recordedEvent === -1) {
     stepNumber: target.stepNumber,
     label: target.label,
     checkedAt: now,
-    // A skip is a claim about the work not applying, so the reason it was
-    // granted on stays with the step in the ledger. A note is the same record
-    // for a step that was done: the reason without the waiver.
-    ...(skipReason !== null
-      ? { skipped: true, reason: skipReason }
-      : noteReason !== null
-        ? { reason: noteReason }
-        : {}),
+    // Two different claims, two fields. `reason` is why a step was waived and
+    // is what the order check quotes back when a skip was not declared; `note`
+    // is what the worker observed doing a step it did perform. Sharing one key
+    // would let a later note overwrite a waiver's rationale.
+    ...(skipReason !== null ? { skipped: true, reason: skipReason } : {}),
+    ...(noteReason !== null ? { note: noteReason } : {}),
   });
 } else if (!isStartCommand && target.stepNumber != null) {
   // Re-marking stays the no-op it has always been, with one exception: a step
@@ -894,8 +892,10 @@ if (!isStartCommand && target.stepNumber != null && recordedEvent === -1) {
     path.basename(signalPath),
   );
   // A re-mark restates the claim, so a new note replaces the old one rather
-  // than leaving rationale from a statement the worker has moved past.
-  if (noteReason !== null) events[recordedEvent] = { ...events[recordedEvent], reason: noteReason };
+  // than leaving rationale from a statement the worker has moved past. A
+  // waiver's own reason is never touched: a step skipped and then rechecked
+  // after a rebase keeps why it was waived and gains what the recheck found.
+  if (noteReason !== null) events[recordedEvent] = { ...events[recordedEvent], note: noteReason };
   if (stale) events[recordedEvent] = { ...events[recordedEvent], remarkedAt: now };
 }
 

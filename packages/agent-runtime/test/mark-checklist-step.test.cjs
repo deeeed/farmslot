@@ -630,7 +630,9 @@ console.log(
     assert.equal(noted.status, 0, noted.stderr);
     const event = events().at(-1);
     assert.equal(event.stepNumber, 1);
-    assert.equal(event.reason, 'the bug still reproduces, continuing');
+    assert.equal(event.note, 'the bug still reproduces, continuing');
+    // A note is not a waiver, so it never lands in the waiver field.
+    assert.equal(event.reason, undefined);
     // Done is not skipped: the work was performed, and only `--skip` waives it.
     assert.equal(event.skipped, undefined);
     const checklistOrder = require('../scripts/checklist-order.cjs');
@@ -640,7 +642,7 @@ console.log(
     // rather than leaving stale rationale on the row.
     const remarked = mark('1', '--reason', 'reproduced again after the rebase');
     assert.equal(remarked.status, 0, remarked.stderr);
-    assert.equal(events().at(-1).reason, 'reproduced again after the rebase');
+    assert.equal(events().at(-1).note, 'reproduced again after the rebase');
 
     // Two reasons on one event is ambiguous about which one persisted.
     const both = mark('2', '--reason', 'a note', '--skip', 'does not apply');
@@ -665,6 +667,20 @@ console.log(
     const skipEvent = events().at(-1);
     assert.equal(skipEvent.skipped, true);
     assert.equal(skipEvent.reason, 'nothing left to fix');
+    assert.equal(skipEvent.note, undefined);
+
+    // A waived step rechecked later: the worker skipped it, rebased, found the
+    // bug reproducing after all, and records that. The waiver's rationale is
+    // what the order check quotes back when a skip was not declared, so a note
+    // must not overwrite it — both records survive on the one event.
+    const rechecked = mark('2', '--reason', 'rebased, it reproduces after all');
+    assert.equal(rechecked.status, 0, rechecked.stderr);
+    const waivedAndNoted = events().at(-1);
+    assert.equal(waivedAndNoted.skipped, true, 'the skip itself is unchanged');
+    assert.equal(waivedAndNoted.reason, 'nothing left to fix', 'the waiver rationale survives');
+    assert.equal(waivedAndNoted.note, 'rebased, it reproduces after all');
+    const order = require('../scripts/checklist-order.cjs');
+    assert.equal(order.skipped(noteDir, 'CHECKLIST.md').get(2), 'nothing left to fix');
   } finally {
     rmSync(noteDir, { recursive: true, force: true });
   }

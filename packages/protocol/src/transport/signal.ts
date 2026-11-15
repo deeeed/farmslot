@@ -178,11 +178,18 @@ export interface WorkerSignalChecklistEvent {
    */
   skipped?: boolean;
   /**
-   * Why, in the worker's words. On a skipped step it is the waiver the template
-   * granted. On a step that was done it is a note the worker recorded about how
-   * it judged the step, which no gate reads.
+   * Why the step was waived, in the worker's words, recorded with the skip. The
+   * order check quotes it back when a skip was not declared optional, so it is
+   * never overwritten by a later mark.
    */
   reason?: string;
+  /**
+   * What the worker observed doing a step it did perform, from
+   * `mark N --reason "<text>"`. A record for a later reader, not an input: no
+   * gate reads it. Kept apart from `reason` so a note on a step that was
+   * skipped and then rechecked cannot replace the waiver's rationale.
+   */
+  note?: string;
   /**
    * UTC ISO8601 timestamp of a re-mark that restated an existing claim, written
    * when a declared proof artifact changed after the first tick (ADR-064
