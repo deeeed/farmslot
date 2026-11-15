@@ -265,7 +265,7 @@ const validate = ajv.compile<PRRuleStoreData>({
                 additionalProperties: {
                   type: 'object',
                   additionalProperties: false,
-                  required: ['revision', 'matched', 'admitted'],
+                  required: ['revision'],
                   properties: {
                     revision: text,
                     matched: { type: 'boolean' },
