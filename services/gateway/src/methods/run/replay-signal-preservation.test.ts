@@ -148,3 +148,80 @@ test('dispatch replay preserves the idle worker signal until replacement admissi
   );
   assert.equal(await readFile(signalFile, 'utf8'), signal);
 });
+
+// A terminal signal is the opposite case: nothing is still running, and
+// `mark start` refuses to re-open a `complete` or `no-change` signal
+// (agent-runtime/scripts/mark-checklist-step.cjs). The clearing that makes a
+// re-dispatch legitimate ran only for a native fresh restart, so on tmux the
+// replayed worker met its own finished signal and had no way past it.
+for (const status of ['complete', 'no-change']) {
+  test(`dispatch replay clears a terminal ${status} signal on tmux transport`, async (t) => {
+    const run = createRun({ project, flowType: 'dev', ticketOrPr: 'example/fixture#2' });
+    t.after(async () => {
+      if (!getRun(run.id)) return;
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    });
+    await writeFile(
+      signalFile,
+      JSON.stringify({
+        attemptId: 'finished-attempt',
+        status,
+        timestamp: '2026-11-12T00:00:00.000Z',
+      }),
+    );
+    updateRun(run.id, {
+      status: 'done',
+      slotId,
+      taskFile,
+      transport: 'tmux',
+      engineState: { taskInit: { taskFile, status: 'initialized' } },
+      agentContexts: [
+        {
+          id: 'dev',
+          role: 'dev',
+          label: 'Worker',
+          runId: run.id,
+          slotId,
+          status: 'done',
+          taskFile: '.task/probe/TASK.md',
+          signalFile: '.task/probe/SIGNAL.json',
+          signalAttemptId: 'finished-attempt',
+          attemptStartedAt: '2026-11-12T00:00:00.000Z',
+        },
+      ],
+      steps: run.steps.map((step) => ({
+        ...step,
+        status: ['find-slot', 'write-task', 'prepare', 'dispatch', 'monitor'].includes(step.name)
+          ? 'done'
+          : 'pending',
+      })),
+    });
+    await writeFile(
+      statusFile,
+      JSON.stringify({
+        slots: [{ slot: slotId, lifecycle: 'held', phase: 'idle', current_run_id: run.id }],
+      }),
+    );
+
+    let observe!: (value: string | null) => void;
+    const observed = new Promise<string | null>((resolve) => {
+      observe = resolve;
+    });
+    await runReplayStep(
+      { runId: run.id, stepName: 'dispatch', triggeredBy: 'operator' },
+      () => {},
+      {
+        probeTaskSignal: async () => null,
+        startEngine: async () => {
+          observe(await readFile(signalFile, 'utf8').catch(() => null));
+        },
+      },
+    );
+    assert.equal(
+      await observed,
+      null,
+      'a replayed worker must not meet the finished signal its own start refuses',
+    );
+  });
+}

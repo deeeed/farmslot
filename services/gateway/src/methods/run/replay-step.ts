@@ -439,6 +439,37 @@ export function canAdoptTaskSignalAfterUncertainDispatch(
   return signalAt !== null && dispatchStartedAt !== null && signalAt >= dispatchStartedAt;
 }
 
+/**
+ * Which of `files` in the worker task directory hold a signal whose run ended.
+ * `complete` and `no-change` are the two a `mark start` refuses to re-open; a
+ * `running` or `blocked` signal is left in place.
+ */
+async function terminalSignalFiles(
+  vars: SlotVars,
+  workerTaskDir: string,
+  files: readonly string[],
+): Promise<string[]> {
+  const terminal: string[] = [];
+  for (const file of files) {
+    const read = await execOnSlot(
+      vars,
+      `cat ${shellQuote(`${workerTaskDir}/${file}`)} 2>/dev/null`,
+      vars.remoteRepo,
+    );
+    // No signal, or one too broken to read, is nothing to clear: a worker that
+    // cannot read it will write its own.
+    if (read.exitCode !== 0 || !read.stdout.trim()) continue;
+    let status: unknown;
+    try {
+      status = (JSON.parse(read.stdout) as { status?: unknown }).status;
+    } catch {
+      continue;
+    }
+    if (status === 'complete' || status === 'no-change') terminal.push(file);
+  }
+  return terminal;
+}
+
 /** The `blocked` signal a blocked run's monitor stopped on, or null. */
 function blockedMonitorSignal(run: Pick<Run, 'status' | 'steps'>): Record<string, unknown> | null {
   const monitor = blockedWorkerRecoveryStep(run);
@@ -2259,13 +2290,20 @@ async function replayRunStep(
       targetIdx >= prepareIdx &&
       targetIdx <= dispatchIdx;
 
-    if (
+    // A replayed worker calls `mark start`, which refuses to re-open a
+    // `complete` or `no-change` signal. Clearing ran only for a native fresh
+    // restart, so on tmux the new worker met the finished signal of the attempt
+    // it replaces and had no way past it. Every worker-launch replay clears it.
+    //
+    // Only a terminal signal goes. A `running` one belongs to a worker that may
+    // still be alive and is preserved until admission replaces it, and `blocked`
+    // stays because `start` resumes it and keeps the checked boxes.
+    const clearsWorkerSignal =
       replaysWorkerLaunch &&
-      existing.transport === 'native' &&
-      nativeFreshRestart &&
-      effectiveSlotId &&
-      existing.taskFile
-    ) {
+      Boolean(effectiveSlotId) &&
+      Boolean(existing.taskFile) &&
+      (existing.transport === 'native' ? nativeFreshRestart : true);
+    if (clearsWorkerSignal) {
       assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
       assertNativeReplayCurrent();
       try {
@@ -2292,17 +2330,32 @@ async function replayRunStep(
           const ciFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['ci-fix'];
           assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
           assertNativeReplayCurrent();
-          await execOnSlot(
-            vars,
-            `rm -f ${shellQuote(`${workerTaskDir}/${WORKER_SIGNAL_FILE}`)} ` +
-              `${shellQuote(`${workerTaskDir}/${reviewTarget.signal}`)} ` +
-              `${shellQuote(`${workerTaskDir}/${reviewFixTarget.signal}`)} ` +
-              `${shellQuote(`${workerTaskDir}/${ciFixTarget.signal}`)} 2>/dev/null`,
-            vars.remoteRepo,
-          );
-          console.log(
-            `[run] replay from ${replayStepName} — cleared worker terminal signals in ${workerTaskDir}`,
-          );
+          const signalFiles = [
+            WORKER_SIGNAL_FILE,
+            reviewTarget.signal,
+            reviewFixTarget.signal,
+            ciFixTarget.signal,
+          ];
+          // A native fresh restart has already established that no worker of
+          // the previous attempt survives, so it clears whatever is there. Any
+          // other transport reads each signal first and removes only the ones
+          // that ended, so a live attempt's running signal is left alone.
+          const removable =
+            existing.transport === 'native'
+              ? signalFiles
+              : await terminalSignalFiles(vars, workerTaskDir, signalFiles);
+          if (removable.length > 0) {
+            await execOnSlot(
+              vars,
+              `rm -f ${removable
+                .map((file) => shellQuote(`${workerTaskDir}/${file}`))
+                .join(' ')} 2>/dev/null`,
+              vars.remoteRepo,
+            );
+            console.log(
+              `[run] replay from ${replayStepName} — cleared worker terminal signals in ${workerTaskDir} (${removable.join(', ')})`,
+            );
+          }
         }
       } catch (err) {
         if (isReplayOwnershipError(err)) throw err;

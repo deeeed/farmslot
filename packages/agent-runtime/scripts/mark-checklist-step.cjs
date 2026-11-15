@@ -863,11 +863,14 @@ if (stepNumber != null && readJson(signalPath).status === 'complete') {
 // a fresh attempt id while the gateway had already moved the run to review: the
 // worker went on marking steps nobody was watching.
 //
-// A legitimate re-dispatch never meets this: the gateway removes SIGNAL.json and
-// the role signals before replaying a step (methods/run/replay-step.ts, "cleared
-// worker terminal signals"), and an initial dispatch has no signal yet. So a
-// terminal signal still on disk means the worker is restarting itself inside a
-// run that is over, which is the case to refuse. The guard deliberately does not
+// A legitimate re-dispatch never meets this: replaying any step that relaunches
+// a worker removes a terminal SIGNAL.json and the role signals first
+// (methods/run/replay-step.ts, "cleared worker terminal signals"), and an
+// initial dispatch has no signal yet. A running signal is deliberately left
+// there for admission to replace, and `blocked` stays resumable, so neither
+// reaches the refusal below. So a terminal signal still on disk means the
+// worker is restarting itself inside a run that is over, which is the case to
+// refuse. The guard deliberately does not
 // consult FARMSLOT_SIGNAL_ATTEMPT_ID: only the review terminal sets it
 // (agent-runtime/scripts/review-terminal.cjs), so for a worker run it would
 // never be present and would decide nothing.
