@@ -1,0 +1,1 @@
+- The PR-rules store is compacted when it loads, so rules no scan rewrites (a disabled rule keeps its last scan) are written compactly on the store's next change too. Loading alone writes nothing.
