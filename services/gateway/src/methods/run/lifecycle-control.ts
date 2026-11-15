@@ -20,6 +20,7 @@ import {
 import { selectAgentContext } from '../../agents/contexts.js';
 import { execOnSlot } from '../../core/exec.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
+import { usesEvalTrialCapsule } from '../../evals/trial-policy.js';
 import { hasValidPrNumber } from '../../run-engine/gate-policy.js';
 import {
   bumpRunGeneration,
@@ -32,6 +33,7 @@ import {
   defaultCancelCollaborators,
 } from '../../run-lifecycle/cancel-transition.js';
 import { captureEpisodeAfterRelease } from '../../run-lifecycle/episode-capture-effect.js';
+import { failedBeforeWorkerLaunch } from '../../run-lifecycle/pre-worker-failure.js';
 import {
   operatorCompletionCollaborators,
   terminalTransitionDeps,
@@ -371,7 +373,10 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
   if (!slotId) return { released: false };
   // COMPLETE precedes finalization. Blind trials have no released-checkout receipt,
   // so retain their owner until terminal cleanup can restore Git and park the output.
-  if (run.engineState?.evalExperiment?.blind && !isTerminalRunStatus(run.status))
+  if (
+    usesEvalTrialCapsule(run.engineState?.evalExperiment?.blind) &&
+    !isTerminalRunStatus(run.status)
+  )
     return { released: false, skipped: 'Blind trial awaits terminal cleanup' };
   if (getRun(run.id)) {
     // An uncertain handoff can still have the parent on the slot row. Retire
@@ -399,9 +404,12 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
   let blocker: string | null = workerBlocker;
   const { readSlotRow } = await import('../../core/index.js');
   // A finished artifact-only run's checkout returns to idle with its own commits parked. A
-  // failed run keeps it for "replay the failed step" until it is closed or archived.
+  // failure after a launch keeps it for replay until it is closed or archived.
+  const preWorkerFailure = failedBeforeWorkerLaunch(run);
   const parksOnRelease =
-    isTerminalRunStatus(run.status) && run.status !== 'failed' && parksBranchCommits(run);
+    isTerminalRunStatus(run.status) &&
+    (run.status !== 'failed' || preWorkerFailure) &&
+    parksBranchCommits(run);
   let fence = { before: await readSlotRow(slotId) };
   let checkoutHasLocalWork = false;
   const unconfirmedStops: string[] = [];
@@ -425,13 +433,14 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
     blocker = await recordSlotTeardownBlocker(run, workerBlocker ?? runtimeBlocker);
     // A blind trial's original Git comes back while the run still owns the slot;
     // a failure holds the slot for retry rather than leaving it on the isolated Git.
-    const { restoreFinishedBlindTrialGit } = await import('../../evals/blind-trial.js');
-    if (!blocker) {
+    if (!blocker && usesEvalTrialCapsule(run.engineState?.evalExperiment?.blind)) {
+      const { restoreFinishedBlindTrialGit } = await import('../../evals/blind-trial.js');
       blocker = await restoreFinishedBlindTrialGit(run);
       if (blocker) await recordSlotTeardownSkipped(run, blocker);
     }
     const retainedCandidate = Boolean(run.engineState?.evalExperiment?.blind?.firstOutput);
-    const returnsToIdle = run.status === 'done' || retainedCandidate || parksOnRelease;
+    const returnsToIdle =
+      run.status === 'done' || retainedCandidate || parksOnRelease || preWorkerFailure;
     if (!blocker && returnsToIdle) {
       const before = await readSlotRow(slotId);
       const { ownsRunSlotCleanup, updateSlotStatusIf } = await import('../../core/index.js');
@@ -443,9 +452,22 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
           ownsRunSlotCleanup(row, run.id) &&
           row.slot_epoch === before?.slot_epoch &&
           row.phase !== 'releasing' &&
-          !row.cleanup_run_id &&
+          (!row.cleanup_run_id || (preWorkerFailure && row.cleanup_run_id === run.id)) &&
           !row.handoff_run_id,
-        { agent: 'idle' },
+        {
+          agent: 'idle',
+          // Re-enter safe recovery under the same terminal owner and epoch.
+          // A held cleanup retry must not publish ready before Git returns.
+          ...(preWorkerFailure && before?.cleanup_run_id === run.id
+            ? {
+                current_run_id: run.id,
+                cleanup_run_id: null,
+                lifecycle: 'busy',
+                phase: null,
+                held_reason: null,
+              }
+            : {}),
+        },
       );
       if (idle) {
         const result = await reuseSafeIdleSlot(
@@ -463,6 +485,7 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
         await recordSlotTeardownSkipped(run, `Checkout retained: ${result.reason}`);
         if ((await readSlotRow(slotId))?.workspace_recovery)
           return { released: false, skipped: result.reason };
+        if (preWorkerFailure) blocker = `Pre-worker checkout return failed: ${result.reason}`;
       }
     }
     fence = await fenceRunSlotCleanup(run, blocker);

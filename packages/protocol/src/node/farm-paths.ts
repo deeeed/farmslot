@@ -7,6 +7,8 @@ import { readLegacyStorageFacts } from './farm-paths-storage.js';
 import { expandHome } from './farmslot-home.js';
 
 export const FARM_INSTANCE_CLAIM = '.farmslot-instance';
+/** Prior eval inputs stay beside the resolved checkout so parking is a rename. */
+export const EVAL_PRIOR_WORK_DIRECTORY = '.farmslot-eval-prior-work';
 
 // Refresh always installs the first directory and updates existing entries in the rest.
 const LEGACY_CLI_BIN_DIRS = ['.local/bin', '.npm-global/bin'] as const;

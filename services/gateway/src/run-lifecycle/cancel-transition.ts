@@ -8,6 +8,7 @@
 import { closeStepWait, Events, isSlotFreedByPark, type Run } from '@farmslot/protocol';
 
 import { markBacklogRunObserved } from '../backlog/store.js';
+import { usesEvalTrialCapsule } from '../evals/trial-policy.js';
 import { invalidateWarmReviewerSessions } from '../review/session-mode.js';
 import { cancelRunEngine } from '../run-engine/orchestrator.js';
 import { scheduledGraphOf } from '../run-engine/stack-base.js';
@@ -311,7 +312,11 @@ export function defaultCancelCollaborators({
         // Keep replay by default; on-demand selection releases the confirmed owned cleanup.
         // A reclaimed blind trial gets its original Git back while it still owns the slot.
         let releaseBlocker = blocker;
-        if (!releaseBlocker && !keepForReplay) {
+        if (
+          !releaseBlocker &&
+          !keepForReplay &&
+          usesEvalTrialCapsule(run.engineState?.evalExperiment?.blind)
+        ) {
           const { restoreFinishedBlindTrialGit } = await import('../evals/blind-trial.js');
           releaseBlocker = await restoreFinishedBlindTrialGit(run);
           if (releaseBlocker) await recordSlotTeardownSkipped(run, releaseBlocker);

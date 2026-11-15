@@ -462,7 +462,7 @@ export class ArtifactBrowser extends LitElement {
         @keydown=${(event: KeyboardEvent) => this.onSearchKey(event)}
       />
       <div class="chips" role="group" aria-label="File types">
-        ${ARTIFACT_TYPES.filter((type) => counts[type] > 0).map(
+        ${ARTIFACT_TYPES.filter((type) => counts[type] > 0 || this.types.has(type)).map(
           (type) =>
             html`<button
               class="chip"
@@ -598,7 +598,9 @@ export class ArtifactBrowser extends LitElement {
     const focusedRow = this.focusedRow(rows);
     const browse = html`
       ${this.renderKeyFiles()}
-      ${this.artifacts.length >= TOOLBAR_MIN_FILES ? this.renderToolbar(tree.fileCount) : nothing}
+      ${this.artifacts.length >= TOOLBAR_MIN_FILES || this.filtering
+        ? this.renderToolbar(tree.fileCount)
+        : nothing}
       ${rows.length
         ? html`<ul
             class="tree"

@@ -83,6 +83,12 @@ mock.module('../core/exec.js', {
     isLocal: () => false,
     execOnSlot: async (_vars: SlotVars, command: string) => {
       slotCommands.push(command);
+      if (command.includes('"action":"park-ignored"'))
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({ status: 'parked-ignored', runId: run.id }),
+          stderr: '',
+        };
       if (command.includes('config --get farmslot.blindRun'))
         return marker ?? { exitCode: 0, stdout: `${run.id}\n`, stderr: '' };
       if (command.includes('"action":"restore"')) {
@@ -532,4 +538,77 @@ test('blind isolation keeps farm tooling and toolchain state, never generated so
     'shared/lib/manifestFlags.*',
   ])
     assert.ok(!DEFAULT_BLIND_KEEP_IGNORED.includes(entry), entry);
+});
+
+async function normalSlotFixture(t: TestContext) {
+  const root = await fixture(t);
+  const blind = run.engineState!.evalExperiment!.blind!;
+  blind.executionPolicy = 'normal-slot';
+  delete blind.isolation;
+  slotCommands.length = 0;
+  return root;
+}
+
+test('normal-slot prepare parks prior inputs once and launches without any capsule boundary', async (t) => {
+  await normalSlotFixture(t);
+  await assert.rejects(verifyBlindTrialForDispatch(run), /prior workspace cleanup is missing/);
+  await prepareBlindTrialGit(run.id);
+  const blind = run.engineState!.evalExperiment!.blind!;
+  assert.equal(blind.workspace?.slotId, run.slotId);
+  assert.equal(blind.workspace?.slotEpoch, epoch);
+  assert.equal(blind.isolation, undefined);
+  assert.equal(blindTrialWorkerBoundary(run), undefined);
+  checkout = head;
+  await assert.rejects(verifyBlindTrialForDispatch(run), /differs from its base/);
+  checkout = base;
+  await verifyBlindTrialForDispatch(run);
+  assert.ok(run.engineState!.evalExperiment!.blind!.workspace!.baseVerifiedAt);
+  checkout = head;
+  await verifyBlindTrialForDispatch(run);
+  epoch++;
+  await prepareBlindTrialGit(run.id);
+  await verifyBlindTrialForDispatch(run, true);
+  assert.equal(
+    slotCommands.filter((command) => command.includes('"action":"park-ignored"')).length,
+    1,
+  );
+  assert.equal(verifications, 0, 'no isolate, boundary or capsule verify command');
+  slotCommands.length = 0;
+  assert.equal(await restoreFinishedBlindTrialGit(run), null);
+  await restoreBlindTrialGit(run, vars, epoch, async () => {});
+  assert.deepEqual(slotCommands, []);
+});
+
+test('normal-slot first output is frozen without isolation or a benchmark ref-check', async (t) => {
+  const root = await normalSlotFixture(t);
+  await prepareBlindTrialGit(run.id);
+  // Answer access is assessed by benchmark collection. Farm retains the output.
+  githubAttempt = 'gh pr diff 291';
+  await freezeBlindTrialFirstOutput(run.id);
+  const blind = run.engineState!.evalExperiment!.blind!;
+  assert.equal(blind.invalidReason, undefined);
+  assert.equal(blind.firstOutput?.headSha, head);
+  assert.equal(blind.firstOutput?.diff.baseSha, base);
+  assert.equal(await readFile(path.join(root, 'first-output.diff'), 'utf8'), diffText);
+  assert.equal(captures, 1);
+  assert.equal(verifications, 0);
+  await freezeBlindTrialFirstOutput(run.id);
+  assert.equal(captures, 1);
+});
+
+test('normal-slot capture recovers its checkpoint and refuses ownership changes', async (t) => {
+  const root = await normalSlotFixture(t);
+  await prepareBlindTrialGit(run.id);
+  const before = structuredClone(run.engineState!.evalExperiment!.blind!);
+  failPersist = true;
+  await assert.rejects(freezeBlindTrialFirstOutput(run.id), /simulated restart/);
+  run.engineState!.evalExperiment!.blind = before;
+  failPersist = false;
+  epoch++;
+  await freezeBlindTrialFirstOutput(run.id);
+  assert.equal(captures, 1);
+  assert.equal(await readFile(path.join(root, 'first-output.diff'), 'utf8'), diffText);
+  delete run.engineState!.evalExperiment!.blind!.firstOutput;
+  run.slotId = 'foreign';
+  await assert.rejects(freezeBlindTrialFirstOutput(run.id), /prior workspace cleanup/);
 });

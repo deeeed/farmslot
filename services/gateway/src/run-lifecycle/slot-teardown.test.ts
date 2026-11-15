@@ -7,6 +7,7 @@ import {
   cancelledRunHoldReason,
   FLOW_STEPS,
   type Run,
+  slotRecoveryEligibility,
   type SlotResource,
 } from '@farmslot/protocol';
 
@@ -483,12 +484,13 @@ const { reclaimCancelledSlot, cancelledSlotReplayRefusal } =
   await import('./cancelled-slot-reclaim.js');
 const { releaseCompletedRunSlot } = await import('../methods/run/lifecycle-control.js');
 
-const run = {
+const { makeRun: makeCleanupRun } = await import('../run-engine/test-fixtures.js');
+const run = makeCleanupRun({
   id: RUN_ID,
   slotId: SLOT_ID,
   status: 'cancelled',
   agentContexts: [],
-} as unknown as Run;
+});
 const reaps = () => commands.filter((cmd) => cmd.includes(`identityfile='${IDENTITY}'`));
 
 beforeEach(() => {
@@ -1880,6 +1882,121 @@ test('failed cleanup retains its checkout until archive rather than resetting it
   assert.equal(idleReturnCalls, 0);
 });
 
+test('a confirmed pre-worker failure returns its parked checkout before publishing ready', async () => {
+  run.status = 'failed';
+  run.steps = [
+    { name: 'dispatch', status: 'failed', outputs: { failedPhase: 'before-worker-launch' } },
+  ];
+  configuredResources = slotRuntimeResources();
+  idleReturnResult = { kind: 'ready' };
+  onIdleReturn = () => {
+    assert.equal(slotRow?.current_run_id, RUN_ID);
+    assert.notEqual(slotRow?.lifecycle, 'ready');
+    assert.deepEqual(stoppedResources, ['ios-sim', 'browser', 'dev-server']);
+  };
+  assert.equal((await releaseCompletedRunSlot(run)).released, true);
+  assert.equal(idleReturnCalls, 1);
+  assert.equal(run.status, 'failed');
+});
+
+test('a dispatch failure after a launch attempt retains the checkout for replay', async () => {
+  run.status = 'failed';
+  run.steps = [{ name: 'dispatch', status: 'failed', outputs: { failedPhase: 'worker-launch' } }];
+  await releaseCompletedRunSlot(run);
+  assert.equal(idleReturnCalls, 0);
+});
+
+test('a pre-worker idle-return failure stays held instead of publishing a ready task branch', async () => {
+  run.status = 'failed';
+  run.steps = [
+    { name: 'dispatch', status: 'failed', outputs: { failedPhase: 'before-worker-launch' } },
+  ];
+  idleReturnResult = { kind: 'unavailable', reason: 'default branch unavailable' };
+  assert.equal((await releaseCompletedRunSlot(run)).released, false);
+  assert.equal(idleReturnCalls, 1);
+  assert.equal(slotRow?.lifecycle, 'held');
+  assert.equal(slotRow?.cleanup_run_id, RUN_ID);
+  assert.ok(slotWrites.every((write) => write.lifecycle !== 'ready'));
+  slotWrites = [];
+  assert.equal(await retryOccupiedRunSlot(SLOT_ID), false);
+  assert.equal(slotRow?.lifecycle, 'held');
+  assert.equal(slotRow?.cleanup_run_id, RUN_ID);
+  assert.ok(slotWrites.every((write) => write.lifecycle !== 'ready'));
+  idleReturnResult = { kind: 'ready' };
+  onIdleReturn = () => {
+    assert.equal(slotRow?.current_run_id, RUN_ID);
+    assert.equal(slotRow?.cleanup_run_id, null);
+    assert.notEqual(slotRow?.lifecycle, 'ready');
+    const lifecycle = slotRow?.lifecycle;
+    const phase = slotRow?.phase;
+    assert.ok(lifecycle === 'busy' || lifecycle === 'held');
+    assert.equal(phase, null, 'the production recovery mutation guard refuses occupied');
+    const eligibility = slotRecoveryEligibility({
+      slot: SLOT_ID,
+      machine: 'fixture',
+      project: 'fixture',
+      platform: 'cli',
+      branch: 'fix/retained',
+      agent: 'idle',
+      enabled: true,
+      dispatchable: false,
+      lifecycle,
+      phase: null,
+      warm: false,
+      heldReason: typeof slotRow?.held_reason === 'string' ? slotRow.held_reason : undefined,
+      cleanupRunId: null,
+      handoffRunId: null,
+      currentRunId: RUN_ID,
+      health: { ssh: 'OK', device: '-', devserver: 'OFF', cdp: 'OFF', fixtures: 'OK' },
+      taskId: null,
+      taskFile: null,
+      dispatchedAt: null,
+      completedAt: null,
+      runner: null,
+      model: null,
+      deviceName: null,
+      taskPhase: null,
+      taskStepProgress: null,
+      workspace: {
+        epoch: 1,
+        currentRunId: RUN_ID,
+        cleanupRunId: null,
+        handoffRunId: null,
+        branch: 'fix/retained',
+        headSha: '1'.repeat(40),
+        dirtyFingerprint: 'fixture',
+        recoveryId: null,
+        observedAt: new Date().toISOString(),
+        defaultBranch: 'main',
+        localDefaultSha: '1'.repeat(40),
+        defaultFetchedAt: null,
+        remoteDefaultSha: '1'.repeat(40),
+        remoteObservedAt: null,
+        behind: 0,
+        remoteAdvanced: false,
+        publication: 'baseline',
+        dirtyCount: 0,
+        unpublishedCount: 0,
+        terminalOwner: true,
+      },
+    });
+    assert.equal(eligibility.allowed, true, eligibility.detail);
+  };
+  assert.equal(await retryOccupiedRunSlot(SLOT_ID), true);
+});
+
+test('pre-worker cleanup cannot return a foreign owner to idle', async () => {
+  run.status = 'failed';
+  run.steps = [
+    { name: 'dispatch', status: 'failed', outputs: { failedPhase: 'before-worker-launch' } },
+  ];
+  slotRow = { current_run_id: 'foreign-run', slot_epoch: 2, lifecycle: 'busy' };
+  const before = structuredClone(slotRow);
+  assert.equal((await releaseCompletedRunSlot(run)).released, false);
+  assert.equal(idleReturnCalls, 0);
+  assert.deepEqual(slotRow, before);
+});
+
 for (const reason of ['dirty files', 'unpushed commits'])
   test(`done cleanup retains ${reason} without retrying recovery`, async () => {
     run.status = 'done';
@@ -1910,4 +2027,15 @@ test('done cleanup retries an unavailable return only after ownership release', 
   const result = await releaseCompletedRunSlot(run);
   assert.equal(result.released, true);
   assert.deepEqual(owners, [RUN_ID, null]);
+});
+
+test('a normal-slot first output releases through ordinary cleanup without capsule restore', async () => {
+  run.status = 'completing';
+  asFinishedBlindTrial();
+  run.engineState!.evalExperiment!.blind!.executionPolicy = 'normal-slot';
+  delete run.engineState!.evalExperiment!.blind!.isolation;
+  idleReturnResult = { kind: 'ready' };
+  assert.deepEqual(await releaseCompletedRunSlot(run), { released: true });
+  assert.deepEqual(blindRestores, []);
+  assert.deepEqual(idleReturnRetained, [true]);
 });

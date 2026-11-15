@@ -2,13 +2,18 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  DEFAULT_TASK_DIR,
   type EvalBlindTrial,
   isFamilyDiffProvenance,
   isRecord,
   isTerminalRunStatus,
   type Run,
 } from '@farmslot/protocol';
-import { currentFarmPaths, legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
+import {
+  currentFarmPaths,
+  EVAL_PRIOR_WORK_DIRECTORY,
+  legacyRemoteFarmPaths,
+} from '@farmslot/protocol/node/farm-paths';
 import { reportedFarmPaths } from '@farmslot/slot-config';
 
 import { shSingleQuote } from '../../../../scripts/lib/shell-quote.mjs';
@@ -18,6 +23,7 @@ import {
   loadMachineSlots,
   loadProjectVars,
   loadSlotVars,
+  type ProjectVars,
   resolveProjectRuntimeDir,
   resolveProjectTaskDirName,
   type SlotVars,
@@ -40,6 +46,7 @@ import {
 } from './blind-inputs.js';
 import { sha256Text } from './package-store.js';
 import { freezeProofOutput, readProofOutput } from './proof-output.js';
+import { usesEvalTrialCapsule } from './trial-policy.js';
 
 function blindFor(run: Run): EvalBlindTrial {
   const blind = run.engineState?.evalExperiment?.blind;
@@ -180,9 +187,15 @@ export const DEFAULT_BLIND_KEEP_IGNORED = [
 ];
 
 /** The project's cache list, plus this run's own task folder when it already exists. */
-async function keptIgnoredPaths(run: Run, vars: SlotVars): Promise<string[]> {
-  const project = await loadProjectVars(run.project);
-  const configured = getProjectFieldRaw(project.projectJson, 'blind_keep_ignored');
+async function keptIgnoredPaths(
+  run: Run,
+  vars: SlotVars,
+  retainedProject?: ProjectVars,
+): Promise<string[]> {
+  const project = retainedProject ?? (await loadProjectVars(run.project));
+  const configured = usesEvalTrialCapsule(run.engineState?.evalExperiment?.blind)
+    ? getProjectFieldRaw(project.projectJson, 'blind_keep_ignored')
+    : undefined;
   return [
     ...(Array.isArray(configured) ? configured.map(String) : DEFAULT_BLIND_KEEP_IGNORED),
     ...(run.taskFile
@@ -207,6 +220,48 @@ export async function prepareBlindTrialGit(runId: string, signal?: AbortSignal):
   if (!run.slotId) throw new Error('Blind trial has no assigned slot.');
   const vars = await loadSlotVars(run.slotId);
   const epoch = await ownedEpoch(run);
+  if (!usesEvalTrialCapsule(blind)) {
+    if (blind.workspace) {
+      if (blind.workspace.slotId !== run.slotId)
+        throw new Error('Normal-slot trial workspace belongs to a different slot.');
+      return;
+    }
+    const project = await loadProjectVars(run.project);
+    const runtime = project.runtimeDir || '.agent';
+    const artifacts = getProjectFieldRaw(project.projectJson, 'paths.artifact_dir');
+    const receipt = await executeGit(
+      'park-ignored',
+      vars,
+      {
+        ...gitSpec(run, vars, blind, epoch, ''),
+        priorWorkDirectory: EVAL_PRIOR_WORK_DIRECTORY,
+        keepIgnored: [
+          ...(await keptIgnoredPaths(run, vars, project)),
+          `${runtime}/.preparing.lock`,
+        ],
+        cleanupRoots: [
+          ...new Set([
+            resolveProjectTaskDirName(project.projectJson),
+            DEFAULT_TASK_DIR,
+            runtime,
+            ...(typeof artifacts === 'string' && artifacts ? [artifacts] : []),
+          ]),
+        ],
+      },
+      signal,
+    );
+    if (receipt.status !== 'parked-ignored' || receipt.runId !== run.id)
+      throw new Error('Normal-slot trial prior workspace cleanup was not confirmed.');
+    await ownedEpoch(run, epoch);
+    await persistRunNow(
+      updateBlind(runId, {
+        ...blind,
+        workspace: { slotId: run.slotId, slotEpoch: epoch, preparedAt: new Date().toISOString() },
+      }),
+      'normal-slot trial prior workspace parked',
+    );
+    return;
+  }
   let isolation = blind.isolation;
   if (isolation && isolation.slotId !== vars.slotId)
     throw new Error('Blind trial isolation belongs to a different slot.');
@@ -313,6 +368,11 @@ async function verifyBlindTrialGit(run: Run): Promise<string | undefined> {
 export async function verifyBlindTrialForDispatch(run: Run, retained = false): Promise<void> {
   if (!run.engineState?.evalExperiment) return;
   const blind = blindFor(run);
+  if (!usesEvalTrialCapsule(blind)) {
+    if (!blind.workspace || blind.workspace.slotId !== run.slotId)
+      throw new Error('Normal-slot trial prior workspace cleanup is missing.');
+    await ownedEpoch(run);
+  }
   if (blind.proof) {
     if (!run.taskFile || !blind.isolation) throw new Error('Proof task isolation is missing.');
     const vars = await loadSlotVars(blind.isolation.slotId);
@@ -341,15 +401,30 @@ export async function verifyBlindTrialForDispatch(run: Run, retained = false): P
       },
     });
   }
-  await verifyBlindTrialGit(run);
-  // The same retained worker may have candidate commits; isolation still applies.
-  if (retained) return;
-  const vars = await loadSlotVars(blind.isolation!.slotId);
-  const checkout = await execOnSlot(vars, `git rev-parse HEAD && git status --porcelain`, {
-    timeout: 30_000,
-  });
+  if (usesEvalTrialCapsule(blind)) await verifyBlindTrialGit(run);
+  // New normal-slot workers verify the base once; same-run retries keep their work.
+  // Capsule workers still recheck isolation on every retained dispatch.
+  if (usesEvalTrialCapsule(blind) ? retained : blind.workspace?.baseVerifiedAt) return;
+  const epoch = await ownedEpoch(run);
+  const vars = await loadSlotVars(run.slotId!);
+  const checkout = await execOnSlot(
+    vars,
+    usesEvalTrialCapsule(blind)
+      ? 'git rev-parse HEAD && git status --porcelain'
+      : 'git rev-parse HEAD',
+    { timeout: 30_000 },
+  );
+  await ownedEpoch(run, epoch);
   if (checkout.exitCode !== 0 || checkout.stdout.trim() !== blind.baseSha)
     throw new Error('Blind trial checkout differs from its base before worker launch.');
+  if (!usesEvalTrialCapsule(blind) && blind.workspace)
+    await persistRunNow(
+      updateBlind(run.id, {
+        ...blind,
+        workspace: { ...blind.workspace, baseVerifiedAt: new Date().toISOString() },
+      }),
+      'normal-slot trial initial base verified',
+    );
 }
 
 const firstOutputCaptures = new Map<string, Promise<void>>();
@@ -377,7 +452,10 @@ async function captureFirstOutput(runId: string): Promise<void> {
     return;
   }
   const isolation = blind.isolation;
-  if (!isolation?.verifiedAt) throw new Error('Blind first output lacks verified isolation.');
+  if (usesEvalTrialCapsule(blind) && !isolation?.verifiedAt)
+    throw new Error('Blind first output lacks verified isolation.');
+  if (!usesEvalTrialCapsule(blind) && (!blind.workspace || blind.workspace.slotId !== run.slotId))
+    throw new Error('Normal-slot first output lacks prior workspace cleanup.');
   const captureEpoch = await ownedEpoch(run);
   const assertOwner = async () => {
     const current = getRun(runId);
@@ -402,7 +480,13 @@ async function captureFirstOutput(runId: string): Promise<void> {
       !isRecord(checkpoint) ||
       checkpoint.runId !== runId ||
       typeof checkpoint.slotEpoch !== 'number' ||
-      checkpoint.slotEpoch < isolation.slotEpoch ||
+      (isolation
+        ? checkpoint.slotEpoch < isolation.slotEpoch
+        : !blind.workspace ||
+          checkpoint.slotEpoch < blind.workspace.slotEpoch ||
+          checkpoint.slotEpoch > captureEpoch ||
+          checkpoint.slotId !== run.slotId) ||
+      checkpoint.executionPolicy !== blind.executionPolicy ||
       checkpoint.baseSha !== blind.baseSha ||
       typeof checkpoint.diffText !== 'string' ||
       !isRecord(checkpoint.firstOutput)
@@ -447,12 +531,14 @@ async function captureFirstOutput(runId: string): Promise<void> {
   } else {
     if (run.steps.some((step) => step.name === 'review' && step.startedAt))
       invalidReason = 'First output was not frozen before review started.';
-    try {
-      const attempt = await verifyBlindTrialGit(run);
-      if (attempt) invalidReason ??= `Blind trial worker attempted GitHub access: ${attempt}`;
-    } catch (error) {
-      // Retain failed isolation as invalid evidence, but never cross an ownership boundary.
-      invalidReason ??= (error as Error).message;
+    if (usesEvalTrialCapsule(blind)) {
+      try {
+        const attempt = await verifyBlindTrialGit(run);
+        if (attempt) invalidReason ??= `Blind trial worker attempted GitHub access: ${attempt}`;
+      } catch (error) {
+        // Retain failed isolation as invalid evidence, but never cross an ownership boundary.
+        invalidReason ??= (error as Error).message;
+      }
     }
     await assertOwner();
     const snapshot = await captureRunDiffSnapshot(run);
@@ -478,6 +564,8 @@ async function captureFirstOutput(runId: string): Promise<void> {
       JSON.stringify({
         runId,
         slotEpoch: captureEpoch,
+        slotId: run.slotId,
+        executionPolicy: blind.executionPolicy,
         baseSha: blind.baseSha,
         firstOutput,
         diffText,
@@ -502,7 +590,7 @@ export async function restoreBlindTrialGit(
 ): Promise<void> {
   const blind = run.engineState?.evalExperiment?.blind;
   const isolation = blind?.isolation;
-  if (!blind || !isolation) return;
+  if (!usesEvalTrialCapsule(blind) || !blind || !isolation) return;
   if (isolation.slotId !== vars.slotId)
     throw new Error('Blind trial restoration does not own this slot.');
   await assertOwnership();
@@ -557,6 +645,7 @@ export async function readBlindTrialMarker(vars: SlotVars): Promise<string | nul
  * Resolves to why it was not restored, or null when restored or nothing to do.
  */
 export async function restoreFinishedBlindTrialGit(run: Run): Promise<string | null> {
+  if (!usesEvalTrialCapsule(run.engineState?.evalExperiment?.blind)) return null;
   const isolation = run.engineState?.evalExperiment?.blind?.isolation;
   if (!isolation || isolation.slotId !== run.slotId) return null;
   try {

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Browse a real run with at least 100 artifacts",
+  "description": "Use an explicit authenticated gateway profile and an unobstructed desktop-width owned tab already showing FARMSLOT_ARTIFACT_PROOF_RUN_ID. Set FARMSLOT_ARTIFACT_PROOF_TAB and FARMSLOT_ARTIFACT_PROOF_OUTPUT. The real retained inventory must contain at least 100 files, folder groups, an image and Markdown. Uses actual controls, reads and previews; no run/slot changes or UI state injection.",
+  "workflow": {
+    "entry": "browse-artifacts",
+    "nodes": {
+      "browse-artifacts": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=apps/command-center/ui/tsconfig.json node --import tsx apps/command-center/scripts/prove-artifact-browser.mts",
+        "timeout_ms": 300000,
+        "intent": "Read the actual run and match all displayed paths. Reset saved query and type filters through their controls. Exercise folder collapse and exact restoration before narrowing to an image-only search, verify the exact type-filtered rows, decode an image preview and render Markdown.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

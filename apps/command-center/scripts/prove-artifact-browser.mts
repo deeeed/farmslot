@@ -1,0 +1,219 @@
+// A real retained run, authenticated RPC, and actual browser controls. No seeded UI state.
+import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+
+import { collectRunEvidenceArtifacts } from '../ui/src/components/runs/run-utils.js';
+import {
+  workspaceArtifactBasename,
+  workspaceArtifactType,
+  workspaceArtifactTypeLabel,
+} from '../ui/src/components/workspace/workspace-artifacts.js';
+import { GatewayClient } from '../../../packages/cli/src/gateway-client.js';
+import type { RunGetResult } from '../../../packages/protocol/src/rpc/run.js';
+import { automationGatewayTarget } from '../../../scripts/lib/gateway-profile.mjs';
+
+const source = fileURLToPath(new URL('../../../', import.meta.url));
+const output = process.env.FARMSLOT_ARTIFACT_PROOF_OUTPUT;
+const runId = process.env.FARMSLOT_ARTIFACT_PROOF_RUN_ID;
+const tab = process.env.FARMSLOT_ARTIFACT_PROOF_TAB;
+assert(
+  output && runId && tab,
+  'Select output directory, real run UUID and owned connected CDP tab',
+);
+const target = await automationGatewayTarget();
+assert(target, 'Select an explicit automation/test gateway profile');
+const client = await new GatewayClient({ ...target, timeout: 30000 }).connect();
+const execute = promisify(execFile);
+const cdp = async (...args: string[]) =>
+  JSON.parse(
+    (
+      await execute(
+        process.execPath,
+        [path.join(source, 'apps/command-center/scripts/cdp.mjs'), ...args],
+        { cwd: source, timeout: 40000, maxBuffer: 4 * 1024 * 1024 },
+      )
+    ).stdout,
+  );
+const selector =
+  'run-detail >>> [data-testid="run-artifact-explorer"] step-artifacts >>> artifact-browser >>> ';
+const inspect = () =>
+  cdp(
+    'eval',
+    tab,
+    '--file',
+    path.join(source, 'apps/command-center/scripts/probes/artifact-browser-read.js'),
+  );
+type Observation = Awaited<ReturnType<typeof inspect>>;
+const until = async (check: (state: Observation) => boolean, label: string) => {
+  const end = Date.now() + 20000;
+  let state;
+  do {
+    state = await inspect();
+    if (check(state)) return state;
+    await delay(100);
+  } while (Date.now() < end);
+  throw new Error(`${label}: ${JSON.stringify(state)}`);
+};
+try {
+  const { run } = await client.call<RunGetResult>('run.get', { runId, view: 'snapshot' });
+  const artifacts = collectRunEvidenceArtifacts(run);
+  assert(artifacts.length >= 100, 'Select a real run with at least 100 retained artifacts');
+  const image = artifacts.find((file) => workspaceArtifactType(file) === 'image');
+  const document = artifacts.find((file) => workspaceArtifactType(file) === 'markdown');
+  assert(image && document, 'The proof run must contain an image and a Markdown document');
+  let state = await inspect();
+  assert(
+    state.connected && state.runId === runId,
+    'Open the selected real run in the owned connected tab',
+  );
+  if (!state.panelOpen)
+    await cdp('click', tab, 'run-detail >>> [data-testid="run-artifacts-toggle"]');
+  state = await until((value) => value.paths.length > 0, 'Artifact inventory must load');
+  assert(
+    !state.modalOpen && state.browserWidth >= 720,
+    'Use an unobstructed desktop-width owned tab',
+  );
+  assert.deepEqual(
+    state.paths,
+    artifacts.map((file) => file.path),
+    'Displayed inventory must match the real run read',
+  );
+  await mkdir(output, { recursive: true });
+  const cases: string[] = [];
+  const save = async (name: string, value: Observation) => {
+    cases.push(name);
+    await writeFile(path.join(output, `${name}.json`), JSON.stringify(value, null, 2) + '\n', {
+      mode: 0o600,
+    });
+  };
+  const clearTypes = async () => {
+    let current = await inspect();
+    while (current.types.length > 0) {
+      const count = current.types.length;
+      const index = current.chips.findIndex((chip: { pressed: boolean }) => chip.pressed);
+      assert(index >= 0, 'Every saved type filter must have an editable control');
+      await cdp('click', tab, selector + `.chips .chip:nth-child(${index + 1})`);
+      current = await until((value) => value.types.length < count, 'The selected type must clear');
+    }
+    return current;
+  };
+  const onlyType = async (type: 'image' | 'markdown') => {
+    const current = await clearTypes();
+    const label = workspaceArtifactTypeLabel(type);
+    const index = current.chips.findIndex((chip: { text: string }) => chip.text.startsWith(label));
+    assert(index >= 0, 'The requested type must have a control');
+    await cdp('click', tab, selector + `.chips .chip:nth-child(${index + 1})`);
+    return until(
+      (value) => value.types.length === 1 && value.types[0] === type,
+      'Type filter must select only the requested type',
+    );
+  };
+  const expandGroups = async () => {
+    let current = await inspect();
+    // Filtering leaves explicit folder choices intact. Expand each closed group in
+    // the finite retained tree through its real control before selecting a file.
+    while (current.folders.some((folder: { expanded: boolean }) => !folder.expanded)) {
+      const key = current.folders.find((folder: { expanded: boolean }) => !folder.expanded).key;
+      await cdp('click', tab, selector + '.tree [aria-expanded="false"] button.toggle');
+      current = await until(
+        (value) =>
+          value.folders.find((folder: { key: string }) => folder.key === key)?.expanded !== false,
+        'The selected folder must expand',
+      );
+    }
+    return current;
+  };
+  await cdp('fill', tab, selector + 'input.search', '');
+  await clearTypes();
+  await until(
+    (value) => value.query === '' && value.types.length === 0 && value.folders.length > 0,
+    'Cleared filters must expose the real folder groups',
+  );
+  state = await expandGroups();
+  assert.deepEqual(
+    [...state.files].sort(),
+    artifacts.map((file) => file.path).sort(),
+    'The expanded tree must expose every retained file',
+  );
+  const visibleBeforeCollapse: string[] = [...state.files];
+  await cdp('click', tab, selector + 'button.toggle');
+  state = await until(
+    (value) =>
+      value.folders[0]?.expanded === false && value.files.length < visibleBeforeCollapse.length,
+    'Collapsing a group hides its rows',
+  );
+  await save('folder-collapsed', state);
+  state = await expandGroups();
+  assert.deepEqual(state.files, visibleBeforeCollapse);
+  await save('folder-restored', state);
+  state = await onlyType('image');
+  state = await expandGroups();
+  assert.equal(
+    Number(state.match?.split(' ')[0]),
+    artifacts.filter((file) => workspaceArtifactType(file) === 'image').length,
+  );
+  assert.deepEqual(
+    [...state.files].sort(),
+    artifacts
+      .filter((file) => workspaceArtifactType(file) === 'image')
+      .map((file) => file.path)
+      .sort(),
+    'The filtered tree must contain exactly the retained images',
+  );
+  await save('type-filter', state);
+  const needle = workspaceArtifactBasename(image.path);
+  await cdp('fill', tab, selector + 'input.search', needle);
+  state = await until((value) => value.query === needle, 'Search must find a retained image');
+  state = await expandGroups();
+  assert(state.files.length > 0, 'Search must expose a retained image');
+  assert(state.files.every((file: string) => file.toLowerCase().includes(needle.toLowerCase())));
+  await save('search', state);
+  await cdp('click', tab, selector + 'a.file');
+  state = await until(
+    (value) =>
+      value.files.includes(value.preview.path) &&
+      value.preview.imageWidth > 0 &&
+      !value.preview.error,
+    'Selected image preview must decode',
+  );
+  await save('image-preview', state);
+  await cdp('screenshot', tab, path.join(output, 'image-preview.png'));
+  await onlyType('markdown');
+  await cdp('fill', tab, selector + 'input.search', workspaceArtifactBasename(document.path));
+  state = await until(
+    (value) => value.query === workspaceArtifactBasename(document.path),
+    'Search must find the retained document',
+  );
+  state = await expandGroups();
+  assert(state.files.length > 0, 'Search must expose the retained document');
+  await cdp('click', tab, selector + 'a.file');
+  state = await until(
+    (value) =>
+      value.files.includes(value.preview.path) &&
+      value.preview.markdownChars > 0 &&
+      !value.preview.error,
+    'Selected Markdown preview must render',
+  );
+  await save('document-preview', state);
+  await cdp('screenshot', tab, path.join(output, 'document-preview.png'));
+  const result = {
+    status: 'pass',
+    runId,
+    runStatus: run.status,
+    artifactCount: artifacts.length,
+    cases,
+    proof:
+      'Actual authenticated run.get matched to the displayed inventory; real filter/search/folder/preview interactions; no UI state injection or run writes',
+  };
+  await writeFile(path.join(output, 'proof.json'), JSON.stringify(result, null, 2) + '\n', {
+    mode: 0o600,
+  });
+  console.log(JSON.stringify(result));
+} finally {
+  client.close();
+}

@@ -8,6 +8,8 @@ import { runnerLaunchDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import { shSingleQuote } from '../../../../scripts/lib/shell-quote.mjs';
 import { withFarmGitConfig } from '../core/farm-git.js';
 
+import { usesEvalTrialCapsule } from './trial-policy.js';
+
 export interface BlindGitSpec {
   slotId: string;
   slotEpoch: number;
@@ -27,8 +29,12 @@ export interface BlindGitSpec {
   branch: string;
   baseSha: string;
   referenceCommits: string[];
-  /** Gitignored paths isolation leaves in place (patterns relative to the checkout); every other ignored path moves into the capsule. */
+  /** Ignored paths eval preparation keeps in place, relative to the checkout. */
   keepIgnored?: string[];
+  /** Normal-slot parking is limited to declared task/runtime/artifact roots. */
+  cleanupRoots?: string[];
+  /** Protocol-owned directory name, resolved beside the real checkout on the node. */
+  priorWorkDirectory?: string;
   proof?: EvalProofSource;
   /** Captured from the admitted project/task, never from worker arguments. */
   proofBoundary?: {
@@ -64,7 +70,7 @@ export function blindHostRoots(
 const script = readFileSync(new URL('./blind-git.py', import.meta.url), 'utf8');
 
 export function buildBlindGitCommand(
-  action: 'plan' | 'isolate' | 'boundary' | 'verify' | 'restore',
+  action: 'plan' | 'isolate' | 'boundary' | 'verify' | 'restore' | 'park-ignored',
   spec: BlindGitSpec,
 ): string {
   // Each slot's launch directory, own slot first, as tmux-launch-script.ts writes it.
@@ -304,7 +310,7 @@ export function blindTrialWorkerBoundary(
   if (!run || (role && role !== primaryRoleForFlow(run.flowType))) return undefined;
   const trial = run.engineState?.evalExperiment?.blind;
   const capsule = trial?.isolation?.capsulePath;
-  return trial && capsule
+  return usesEvalTrialCapsule(trial) && trial && capsule
     ? { capsule, baseSha: trial.baseSha, browserCdpPort: trial.isolation?.browserCdpPort }
     : undefined;
 }
