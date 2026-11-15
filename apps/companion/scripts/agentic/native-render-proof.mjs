@@ -93,7 +93,11 @@ async function until(read, check, label, timeout = 60000) {
   }
   throw new Error(`Timed out: ${label}: ${failure}`);
 }
-const render = async () => (await observe(`native-render:${readState().sessionId}`))?.nativeRender;
+/** What the session's renderers reported; empty until one draws, undefined between routes. */
+const render = async () => {
+  const observations = await observe(`native-render:${readState().sessionId}`);
+  return observations && (observations.nativeRender ?? {});
+};
 const conversation = async () =>
   (await observe(`runs-cache:conversation:${readState().sessionId}`))?.runCollections?.conversation;
 const DEMO = 'src/demo.ts';
