@@ -115,6 +115,7 @@ import {
   type ReviewWorkspaceAdmission,
 } from '../review-workspaces/admission.js';
 import { resolveDirectWorkflowDefaults } from '../review-workspaces/direct-defaults.js';
+import { useReviewWorkspaceStorage } from '../review-workspaces/storage-use.js';
 import {
   assertReadyGatePackageInputsCurrent,
   isArtifactOnlyRun,
@@ -450,13 +451,15 @@ export async function runCreate(
 ): Promise<RunCreateResult> {
   assertValidTicketData(params.ticketData);
   if ('sourceProvenance' in params) throw new Error('Source provenance is gateway-owned');
-  return withTaskAdmission(params.taskFile, () =>
-    withSourceCreationPlan(params, options, (plan, seal, runId) =>
-      runCreateWithSources(
-        params,
-        emit,
-        { ...options, sourceCreationSeal: seal, sourceCreationRunId: runId },
-        plan,
+  return useReviewWorkspaceStorage(() =>
+    withTaskAdmission(params.taskFile, () =>
+      withSourceCreationPlan(params, options, (plan, seal, runId) =>
+        runCreateWithSources(
+          params,
+          emit,
+          { ...options, sourceCreationSeal: seal, sourceCreationRunId: runId },
+          plan,
+        ),
       ),
     ),
   );

@@ -6,11 +6,9 @@ import { backgroundHost } from './background/client.js';
 import type { BackgroundParams } from './background/protocol.js';
 
 /** Both command owners retain cancellation until the child confirms process closeout. */
-export function runBackgroundCommand<O extends 'commands.read' | 'taskFiles.transfer'>(
-  operation: O,
-  params: BackgroundParams<O>,
-  signal?: AbortSignal,
-): Promise<ExecResult> {
+export function runBackgroundCommand<
+  O extends 'commands.read' | 'taskFiles.transfer' | 'taskPins.retain',
+>(operation: O, params: BackgroundParams<O>, signal?: AbortSignal): Promise<ExecResult> {
   return trackCleanupCommand(
     backgroundHost.request(operation, params, {
       deadlineMs:

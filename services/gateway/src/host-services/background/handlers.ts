@@ -34,6 +34,7 @@ export const backgroundHandlers: BackgroundHandlers = {
   'decisions.scan': () => loadFileDecisions(),
   'commands.read': command,
   'taskFiles.transfer': command,
+  'taskPins.retain': command,
 };
 
 /** Only command-running requests carry an execution tally. */
@@ -41,4 +42,5 @@ export const COMMAND_OPERATIONS: ReadonlySet<BackgroundOperation> = new Set([
   'fleet.probeMachine',
   'commands.read',
   'taskFiles.transfer',
+  'taskPins.retain',
 ]);

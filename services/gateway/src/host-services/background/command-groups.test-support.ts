@@ -65,6 +65,7 @@ serveBackgroundRequests(
     'decisions.scan': async () => process.exit(3),
     'commands.read': command,
     'taskFiles.transfer': command,
+    'taskPins.retain': command,
   },
   new Set(['fleet.probeMachine']),
   env.FIXTURE_NO_WATCHDOG === '1' ? { commandWatchdog: false } : {},

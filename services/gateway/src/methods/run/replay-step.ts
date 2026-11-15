@@ -54,6 +54,7 @@ import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
 import { pipelineReviewSelection, resolveReviewRunnerModel } from '../../review/orchestrator.js';
 import { getReviewConfig } from '../../review/templates.js';
+import { useReviewWorkspaceStorage } from '../../review-workspaces/storage-use.js';
 import { captureRunOutput } from '../../run-completion/output.js';
 import { markPreparedPackageStale } from '../../run-completion/prepared-package-stale.js';
 import { readRetainedRunText } from '../../run-completion/retained-artifacts.js';
@@ -993,6 +994,14 @@ export async function runReplayStep(
   params: RunReplayStepParams,
   emit: Emit,
   hooks: RunReplayStepHooks = {},
+): Promise<RunReplayStepResult> {
+  return useReviewWorkspaceStorage(() => replayStepWithStorage(params, emit, hooks));
+}
+
+async function replayStepWithStorage(
+  params: RunReplayStepParams,
+  emit: Emit,
+  hooks: RunReplayStepHooks,
 ): Promise<RunReplayStepResult> {
   // Cancelled replay and completed-task rebinding serialize their state changes.
   // Other terminal replays protect only claim-to-revive, so their preflight stays

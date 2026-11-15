@@ -13,6 +13,7 @@ import {
   resolveFamilyIdentity,
 } from '../../family-observability/context.js';
 import { loadProjectConfig } from '../../fleet/state.js';
+import { nodeTaskPinRetentionPass } from '../../host-services/node-task-pins.js';
 import { github } from '../../integrations/github-client.js';
 import { reviewPRIdentity } from '../../review/session-mode.js';
 import { reclaimReviewWorkspaceStorage } from '../../review-workspaces/storage-use.js';
@@ -459,6 +460,7 @@ export function startRunRetention(emit: Emit): void {
     running = true;
     runRetentionPass({ apply: true, emit })
       .then(async (plan) => {
+        await nodeTaskPinRetentionPass(Date.now(), (await retentionContext([])).ageMs);
         await parkedWorkRetentionPass();
         if (plan.runs.length) console.log(`[run-retention] ${formatRunRetention(plan)}`);
       })
