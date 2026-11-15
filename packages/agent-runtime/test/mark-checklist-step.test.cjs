@@ -686,3 +686,97 @@ console.log(
   }
   console.log('Numbered mark records its note');
 }
+
+// GLM evals 4cba5c2f and ee2a98b8 both called complete with zero steps marked.
+// Three things were wrong and each is checked here.
+{
+  const gapDir = mkdtempSync(path.join(tmpdir(), 'farmslot-premature-'));
+  try {
+    const contract = (extra = {}) =>
+      JSON.stringify({
+        schemaVersion: 1,
+        flowType: 'fix-bug',
+        mode: 'autonomous',
+        requireSignal: true,
+        commands: {
+          complete: { report: 'artifacts/report.md', artifacts: ['artifacts/report.md'] },
+          'no-change': { artifacts: [] },
+          blocked: { artifacts: [] },
+        },
+        whenPresent: [],
+        ...extra,
+      });
+    const fresh = (name, extra) => {
+      const dir = path.join(gapDir, name);
+      mkdirSync(path.join(dir, 'inputs'), { recursive: true });
+      mkdirSync(path.join(dir, 'artifacts'), { recursive: true });
+      writeManifest(dir, 'CHECKLIST.md');
+      writeFileSync(path.join(dir, 'CHECKLIST.md'), '- [ ] 1. First\n- [ ] 2. Second\n');
+      writeFileSync(path.join(dir, 'inputs', 'worker-terminal-contract.json'), contract(extra));
+      return dir;
+    };
+    const mark = (dir, ...args) =>
+      spawnSync(process.execPath, [helper, dir, ...args], { encoding: 'utf8' });
+    const status = (dir) =>
+      existsSync(path.join(dir, 'SIGNAL.json'))
+        ? JSON.parse(readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8')).status
+        : 'none';
+
+    // (3) A plain `complete` checks its checklist. This was gated on
+    // --mark-last, so a complete with nothing marked was simply accepted and
+    // the run was reported successful over an untouched checklist.
+    const premature = fresh('premature', { unattendedCompletion: true });
+    writeFileSync(path.join(premature, 'artifacts', 'report.md'), '# Report\n');
+    const refused = mark(premature, 'complete');
+    assert.equal(refused.status, 1, refused.stdout + refused.stderr);
+    assert.match(refused.stderr, /checklist incomplete — 2 step\(s\) still \[ \]/);
+    // (1) A refusal with steps outstanding must not end the run: the worker is
+    // still working, and ending it sent the run to review underneath it.
+    assert.equal(status(premature), 'none', 'the refusal left no terminal signal');
+
+    // (1) With every step marked and the refusal still standing, the worker has
+    // nothing left to try, so the run ends as a scorable refusal (F6).
+    const exhausted = fresh('exhausted', { unattendedCompletion: true });
+    assert.equal(mark(exhausted, '1').status, 0);
+    assert.equal(mark(exhausted, '2').status, 0);
+    const ended = mark(exhausted, 'complete');
+    assert.equal(ended.status, 1, ended.stdout + ended.stderr);
+    assert.match(ended.stderr, /missing required artifact: artifacts\/report\.md/);
+    assert.equal(status(exhausted), 'blocked', 'an exhausted worker ends the run');
+
+    // (2) A blocked run stays resumable: a worker told to carry on calls start
+    // and keeps its boxes, which is the existing contract. The eval only reached
+    // that door because the premature complete above had manufactured a blocked
+    // signal, and with (3) and (1) fixed that signal never exists.
+    const resumable = fresh('resumable');
+    assert.equal(mark(resumable, '1').status, 0);
+    assert.equal(mark(resumable, 'blocked', '--reason', 'target unavailable').status, 0);
+    assert.equal(status(resumable), 'blocked');
+    assert.equal(mark(resumable, 'start').status, 0, 'a blocked run still resumes');
+    assert.equal(status(resumable), 'running');
+    assert.match(readFileSync(path.join(resumable, 'CHECKLIST.md'), 'utf8'), /\[x\] 1\. First/);
+
+    // (2) A finished run is not resumable. Before this, start on a complete
+    // signal fell straight through and destroyed the record of a run parked at
+    // its human gate.
+    const finished = fresh('finished');
+    writeFileSync(path.join(finished, 'artifacts', 'report.md'), '# Report\n');
+    assert.equal(mark(finished, '1').status, 0);
+    assert.equal(mark(finished, '2').status, 0);
+    assert.equal(mark(finished, 'complete').status, 0);
+    assert.equal(status(finished), 'complete');
+    const afterComplete = mark(finished, 'start');
+    assert.equal(afterComplete.status, 1, afterComplete.stdout + afterComplete.stderr);
+    assert.match(afterComplete.stderr, /start does not re-open it/);
+    assert.equal(status(finished), 'complete', 'a finished run keeps its signal');
+
+    // A re-dispatch clears the signal first (replay-step.ts), and then start is
+    // the ordinary beginning of a new attempt.
+    rmSync(path.join(finished, 'SIGNAL.json'));
+    assert.equal(mark(finished, 'start').status, 0);
+    assert.equal(status(finished), 'running', 'a cleared signal starts again');
+  } finally {
+    rmSync(gapDir, { recursive: true, force: true });
+  }
+  console.log('Premature complete and start re-open are refused');
+}
