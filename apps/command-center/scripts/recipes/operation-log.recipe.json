@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Operation log empty and missing states",
+  "description": "Start operation-log-proof-fixture.mjs, connect an owned desktop tab to its run and authenticate with its private test profile. Set OPERATION_LOG_PROOF_OUTPUT and OPERATION_LOG_PROOF_TAB. Read real HTTP responses and select each log through the run URL.",
+  "workflow": {
+    "entry": "logs",
+    "nodes": {
+      "logs": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-operation-log.mjs",
+        "timeout_ms": 180000,
+        "intent": "Empty, populated and missing operation logs show distinct states.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
