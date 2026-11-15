@@ -7,7 +7,11 @@ import { prepareBlindTrialGit } from '../evals/blind-trial.js';
 import { dispatchExecute, nudgeDispatch, warmSessionHandoffDispatch } from '../methods/dispatch.js';
 import { slotPrepare } from '../methods/slot.js';
 import { ensureFrozenQaSource } from '../qa/frozen-source.js';
-import { BEFORE_WORKER_LAUNCH, WORKER_LAUNCH } from '../run-lifecycle/pre-worker-failure.js';
+import {
+  BEFORE_WORKER_LAUNCH,
+  WORKER_LAUNCH,
+  workerMayHaveStarted,
+} from '../run-lifecycle/pre-worker-failure.js';
 import { assertRunnerLaunchPrerequisites } from '../runners/launch-command.js';
 import { nudgeNativeWorker } from '../runners/native/worker-nudge.js';
 import {
@@ -588,14 +592,16 @@ export async function executeDispatchStep(
   context: DispatchStepContext,
 ): Promise<StepIO> {
   const { blockedRunError, stepPartialIO } = context;
-  stepPartialIO.set(runId, { outputs: { failedPhase: BEFORE_WORKER_LAUNCH } });
+  const entry = ensureRunSlotBinding(runId);
+  stepPartialIO.set(runId, {
+    outputs: { failedPhase: workerMayHaveStarted(entry) ? WORKER_LAUNCH : BEFORE_WORKER_LAUNCH },
+  });
   const onLaunchAttempt = () => {
     const io = stepPartialIO.get(runId);
     stepPartialIO.set(runId, { ...io, outputs: { ...io?.outputs, failedPhase: WORKER_LAUNCH } });
   };
   // Restore the slot binding first: update-branch has no PREPARE step, and restart
   // recovery can mark one done before its task initialized.
-  ensureRunSlotBinding(runId);
   await completeRunTaskInitialization(runId, { onlyPending: true });
   const bound = ensureRunSlotBinding(runId);
   const taskExecution = taskExecutionAtDispatch(bound);
