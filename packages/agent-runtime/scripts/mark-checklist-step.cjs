@@ -665,13 +665,7 @@ if (terminalCommand === 'complete' && autonomousContract()) {
   // read the advice below, so the refusal itself ends the run. The trial is then
   // scored as a refusal with its cause, instead of parking until a human aborts
   // it hours later.
-  // A refusal ends the run only when the checklist is complete: the worker has
-  // done every step and still cannot finish, so there is nothing left for it to
-  // try and the trial is scored as a refusal (the F6 case, run 8cb5aea2). With
-  // steps outstanding the refusal is the ordinary kind — a premature complete,
-  // a missing artifact it can still write — and ending the run there abandons a
-  // worker that was still working (GLM eval 4cba5c2f).
-  if (unattendedContract() && checklistFullyChecked(taskPath)) {
+  if (unattendedContract()) {
     const captured = [];
     const inherited = process.stderr.write.bind(process.stderr);
     process.stderr.write = (chunk, ...rest) => {
@@ -680,6 +674,18 @@ if (terminalCommand === 'complete' && autonomousContract()) {
     };
     process.on('exit', (code) => {
       if (code === 0) return;
+      // Read the checklist now, not when this hook was installed: `complete
+      // --mark-last` ticks its final row after that point, and every standard
+      // template finishes that way. Sampling early left a fully marked run
+      // looking unfinished, so an acceptance refusal it could never clear would
+      // have parked it — the F6 stall, rebuilt.
+      //
+      // A refusal ends the run only when every step is marked: the worker has
+      // nothing left to try and the trial is scored as a refusal (F6, run
+      // 8cb5aea2). With steps outstanding it is the ordinary kind — a premature
+      // complete, a missing artifact it can still write — and ending the run
+      // there abandons a worker that was still working (GLM eval 4cba5c2f).
+      if (!checklistFullyChecked(taskPath)) return;
       const reason = refusalReason(captured);
       const ended = spawnSync(
         process.execPath,
@@ -813,8 +819,12 @@ if (
   assertNoOpenSubtasks(terminalCommand);
 }
 if (
-  terminalCommand &&
-  (terminalCommand === 'complete' || terminalCommand === 'no-change') &&
+  // `complete` only. `no-change` is a documented early exit: the fix-bug and
+  // review-fix templates tell a worker that finds the bug already fixed or not
+  // reproducible to write its reports and call plain `mark no-change`, leaving
+  // the implementation, commit and PR rows unchecked. Requiring a full
+  // checklist there would refuse the exit the template asks for.
+  terminalCommand === 'complete' &&
   !proofMeasurement &&
   !opts['skip-checklist']
 ) {

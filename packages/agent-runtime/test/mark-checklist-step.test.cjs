@@ -775,6 +775,33 @@ console.log(
     rmSync(path.join(finished, 'SIGNAL.json'));
     assert.equal(mark(finished, 'start').status, 0);
     assert.equal(status(finished), 'running', 'a cleared signal starts again');
+
+    // Grok graded this a blocker and Codex a major: `no-change` is the
+    // documented early exit. fix-bug.md:7 tells a worker that finds the bug
+    // already fixed or not reproducible to write its reports and run
+    // `mark no-change`, and the core 21-step checklist puts that at step 11
+    // with steps 12-21 still ahead and not optional, so it cannot skip them.
+    const earlyExit = fresh('early-exit');
+    writeFileSync(path.join(earlyExit, 'artifacts', 'no-change-report.md'), '# Not reproduced\n');
+    writeFileSync(path.join(earlyExit, 'artifacts', 'learnings.md'), '- Nothing to fix.\n');
+    assert.equal(mark(earlyExit, '1').status, 0);
+    const exited = mark(earlyExit, 'no-change', '--reason', 'already fixed on this base');
+    assert.equal(exited.status, 0, exited.stdout + exited.stderr);
+    assert.equal(status(earlyExit), 'complete', 'the early exit still signals');
+    assert.match(readFileSync(path.join(earlyExit, 'CHECKLIST.md'), 'utf8'), /\[ \] 2\. Second/);
+
+    // Codex's second major: `complete --mark-last` ticks its final row AFTER
+    // the exit handler is installed, and every standard template finishes that
+    // way. Sampling completeness early left a fully marked run looking
+    // unfinished, so a refusal it could never clear would have parked it - the
+    // F6 stall rebuilt. The handler reads the checklist at refusal time.
+    const markLast = fresh('mark-last', { unattendedCompletion: true });
+    assert.equal(mark(markLast, '1').status, 0);
+    const lastRow = mark(markLast, 'complete', '--mark-last');
+    assert.equal(lastRow.status, 1, lastRow.stdout + lastRow.stderr);
+    assert.match(lastRow.stderr, /missing required artifact: artifacts\/report\.md/);
+    assert.match(readFileSync(path.join(markLast, 'CHECKLIST.md'), 'utf8'), /\[x\] 2\. Second/);
+    assert.equal(status(markLast), 'blocked', 'a run marked to its last row still ends');
   } finally {
     rmSync(gapDir, { recursive: true, force: true });
   }
