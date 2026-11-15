@@ -220,18 +220,48 @@ link_entry() {
   echo "  → $link${previous:+ (was $previous)}"
 }
 
+export PATH="$node_dir:$PATH"
+
+# Resolve a link through the node this deploy installs with, which is on the
+# PATH above by construction. There is one resolver, used for links and
+# prefixes alike, and a failure here is a real fault worth stopping for rather
+# than something to guess around.
+resolve_path() {
+  node -e 'process.stdout.write(require("fs").realpathSync(process.argv[1]))' "$1" 2> /dev/null
+}
+
 # One install only. A global @farmslot package shadows the snapshot through the
 # bins npm owns, so it goes before the links below are written: npm's uninstall
 # removes those bins, and doing this afterwards would delete ours.
-npm_root=$(npm root -g 2> /dev/null || true)
+#
+# A failure here does not exit. Each uninstall is permanent before the next is
+# attempted, so exiting would leave a node whose global agent bin is already
+# gone and whose snapshot link does not exist yet - no working farmslot-agent
+# at all. The failure is remembered, the links are written, and the
+# verification at the end fails the deploy naming the package.
+if command -v npm > /dev/null 2>&1; then
+  npm_root=$(npm root -g 2> /dev/null || true)
+else
+  # No npm to ask, and none to uninstall with. The conventional prefix is still
+  # readable, so a global package that is there is still reported below rather
+  # than passing in silence, and a node that simply has no npm still deploys.
+  npm_root="$HOME/.npm-global/lib/node_modules"
+  echo "  no npm on this PATH; checking $npm_root directly"
+fi
+uninstall_failed=""
 if [ -n "$npm_root" ] && [ -d "$npm_root/@farmslot" ]; then
   for pkg in "$npm_root"/@farmslot/*; do
     [ -e "$pkg/package.json" ] || continue
     name="@farmslot/$(basename "$pkg")"
+    if ! command -v npm > /dev/null 2>&1; then
+      echo "[deploy] WARNING: global $name shadows $snapshot and there is no npm here to remove it" >&2
+      uninstall_failed="$uninstall_failed $name"
+      continue
+    fi
     echo "  removing global $name (the snapshot is the only install)"
     if ! npm uninstall -g "$name" > /dev/null 2>&1; then
-      echo "[deploy] ERROR: could not uninstall global $name; remove it by hand, it shadows $snapshot" >&2
-      exit 1
+      echo "[deploy] WARNING: could not uninstall global $name; linking first, then failing" >&2
+      uninstall_failed="$uninstall_failed $name"
     fi
   done
 fi
@@ -243,9 +273,13 @@ if [[ "$layout" != 2 && ! -f "$shim" ]]; then
   # Unmigrated machines keep their original direct snapshot links byte for byte.
   for bin in "${user_bins[@]}"; do
     link="$bin/farmslot"
-    if [[ "$bin" != "${user_bins[0]}" && ! -L "$link" && ! -e "$link" ]]; then continue; fi
+    agent_link="$bin/farmslot-agent"
+    # Either bin already living here makes this a directory we own: one that
+    # holds only farmslot-agent used to be skipped, leaving that bin stale.
+    if [[ "$bin" != "${user_bins[0]}" && ! -L "$link" && ! -e "$link" &&
+      ! -L "$agent_link" && ! -e "$agent_link" ]]; then continue; fi
     link_entry "$link" "$entry"
-    link_entry "$bin/farmslot-agent" "$agent_entry"
+    link_entry "$agent_link" "$agent_entry"
   done
 else
 mkdir -p "$shared"
@@ -267,52 +301,87 @@ for bin in "${user_bins[@]}"; do
     if ! ln -s "$previous" "$shared/legacy"; then
       [[ -L "$shared/legacy" ]] || exit 1
     fi
+    previous_agent="${previous%/packages/cli/bin/farmslot.mjs}/packages/agent-runtime/bin/farmslot-agent.mjs"
+    [[ "$previous_agent" != "$previous" && -e "$previous_agent" ]] || previous_agent="$agent_entry"
+    if ! ln -s "$previous_agent" "$shared/legacy-agent"; then
+      [[ -L "$shared/legacy-agent" ]] || exit 1
+    fi
     break
   fi
 done
-cat > "$shim.tmp.$$" <<'SHIM'
-#!/usr/bin/env bash
-set -euo pipefail
-farm_home="${FARMSLOT_HOME:-$HOME/.farmslot}"
-if [[ "$farm_home" == '~' ]]; then farm_home="$HOME"; elif [[ "$farm_home" == '~/'* ]]; then farm_home="$HOME/${farm_home#'~/'}"; fi
-if [[ -f "$farm_home/config/instance.json" ]]; then
-  exec "$farm_home/code/bin/farmslot" "$@"
+# A node migrated before this change has the legacy CLI route but no agent one.
+if [[ -e "$shared/legacy" && ! -e "$shared/legacy-agent" ]]; then
+  link_entry "$shared/legacy-agent" "$agent_entry"
 fi
-exec "$HOME/.local/share/farmslot-cli/legacy" "$@"
-SHIM
-chmod 755 "$shim.tmp.$$"
-mv -f "$shim.tmp.$$" "$shim"
-cat > "$agent_shim.tmp.$$" <<'AGENTSHIM'
-#!/usr/bin/env bash
-set -euo pipefail
-farm_home="${FARMSLOT_HOME:-$HOME/.farmslot}"
-if [[ "$farm_home" == '~' ]]; then farm_home="$HOME"; elif [[ "$farm_home" == '~/'* ]]; then farm_home="$HOME/${farm_home#'~/'}"; fi
-if [[ -f "$farm_home/config/instance.json" ]]; then
-  exec "$farm_home/code/bin/farmslot-agent" "$@"
-fi
-exec "$HOME/.local/share/farmslot-cli/legacy-agent" "$@"
-AGENTSHIM
-chmod 755 "$agent_shim.tmp.$$"
-mv -f "$agent_shim.tmp.$$" "$agent_shim"
+# One generator for both shims: they differ only in the bin they dispatch to,
+# and two copies of the home expansion is the duplication this repo refuses.
+# printf rather than a heredoc: this body is already inside a heredoc inside a
+# command substitution, and bash 3.2 parses that as code.
+write_shim() {
+  local path="$1" bin_name="$2" legacy_name="$3"
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf '%s\n' 'set -euo pipefail'
+    printf '%s\n' 'farm_home="${FARMSLOT_HOME:-$HOME/.farmslot}"'
+    # Double quotes, not single: tilde expansion happens in neither, and a
+    # line with no single quotes in it survives being emitted by printf.
+    printf '%s\n' 'if [[ "$farm_home" == "~" ]]; then farm_home="$HOME"; elif [[ "$farm_home" == "~/"* ]]; then farm_home="$HOME/${farm_home#"~/"}"; fi'
+    printf '%s\n' 'if [[ -f "$farm_home/config/instance.json" ]]; then'
+    printf '  exec "$farm_home/code/bin/%s" "$@"\n' "$bin_name"
+    printf '%s\n' 'fi'
+    printf 'exec "$HOME/.local/share/farmslot-cli/%s" "$@"\n' "$legacy_name"
+  } > "$path.tmp.$$"
+  chmod 755 "$path.tmp.$$"
+  mv -f "$path.tmp.$$" "$path"
+}
+write_shim "$shim" farmslot legacy
+write_shim "$agent_shim" farmslot-agent legacy-agent
 for bin in "${user_bins[@]}"; do
   link="$bin/farmslot"
-  if [[ "$bin" != "${user_bins[0]}" && ! -L "$link" && ! -e "$link" ]]; then continue; fi
+  agent_link="$bin/farmslot-agent"
+  if [[ "$bin" != "${user_bins[0]}" && ! -L "$link" && ! -e "$link" &&
+    ! -L "$agent_link" && ! -e "$agent_link" ]]; then continue; fi
   link_entry "$link" "$shim"
-  link_entry "$bin/farmslot-agent" "$agent_shim"
+  link_entry "$agent_link" "$agent_shim"
 done
 fi
 
 # Fail loudly rather than leave a worker on a stale engine: no global @farmslot
 # package may remain, and both bins must resolve inside this install.
-if [ -n "$npm_root" ] && [ -d "$npm_root/@farmslot" ]; then
-  echo "[deploy] ERROR: a global @farmslot package is still installed at $npm_root/@farmslot; it shadows $snapshot" >&2
+if [ -n "$uninstall_failed" ]; then
+  echo "[deploy] ERROR: could not uninstall global$uninstall_failed; the links are in place, but a global package shadows $snapshot. Remove it by hand and redeploy." >&2
   exit 1
 fi
-for bin in "${user_bins[@]}"; do
-  for name in farmslot farmslot-agent; do
+# A remaining package, not a remaining directory: npm can remove the last
+# scoped package and leave its empty @farmslot directory, which would fail the
+# deploy of the node that had just been cleaned.
+if [ -n "$npm_root" ]; then
+  for pkg in "$npm_root"/@farmslot/*; do
+    [ -e "$pkg/package.json" ] || continue
+    echo "[deploy] ERROR: global @farmslot/$(basename "$pkg") is still installed at $npm_root/@farmslot; it shadows $snapshot" >&2
+    exit 1
+  done
+fi
+verify_bins=("${user_bins[@]}")
+# The shims exec these, so verifying the shim file alone proves nothing: it
+# always sits under $shared and passes while dispatching somewhere else.
+[ -n "$instance_bin" ] && verify_bins+=("$instance_bin")
+if [ -e "$shared/legacy" ] || [ -L "$shared/legacy" ]; then verify_bins+=("$shared"); fi
+for bin in "${verify_bins[@]}"; do
+  for name in farmslot farmslot-agent legacy legacy-agent; do
     link="$bin/$name"
-    [ -e "$link" ] || continue
-    resolved=$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$link" 2> /dev/null || echo "")
+    # -L as well as -e: -e is false for a dangling symlink, so a broken agent
+    # link used to be skipped silently by the check meant to catch it.
+    if [ ! -e "$link" ] && [ ! -L "$link" ]; then continue; fi
+    if [ ! -e "$link" ]; then
+      echo "[deploy] ERROR: $link is a broken link to $(readlink "$link" 2> /dev/null); workers would get no CLI" >&2
+      exit 1
+    fi
+    resolved=$(resolve_path "$link" || true)
+    if [ -z "$resolved" ]; then
+      echo "[deploy] ERROR: could not resolve $link with $node_dir/node; the link may be a cycle, or this node's node is broken" >&2
+      exit 1
+    fi
     # Prefix tests rather than `case`: bash 3.2, which is what these nodes run,
     # parses this heredoc body as code inside the surrounding $( ), and a `;;`
     # there is a syntax error that stops the whole deploy script from loading.
@@ -323,7 +392,7 @@ for bin in "${user_bins[@]}"; do
       # where /var is a symlink, while these variables hold the /var form, so
       # comparing a resolved path against an unresolved prefix rejects a
       # perfectly good link.
-      prefix_resolved=$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$prefix" 2> /dev/null || echo "$prefix")
+      prefix_resolved=$(resolve_path "$prefix" || echo "$prefix")
       if [ "${resolved#"$prefix_resolved"/}" != "$resolved" ] ||
         [ "${resolved#"$prefix"/}" != "$resolved" ]; then
         inside=true
@@ -475,6 +544,25 @@ fi
 if [ ! "$effective" -ef "$entry" ]; then
   echo "[deploy] ERROR: farmslot on the worker PATH is $resolved, not the deployed $entry" >&2
   echo "  fix: remove $resolved from the worker PATH, or point it at $entry" >&2
+  exit 1
+fi
+agent_resolved=$(command -v farmslot-agent) || {
+  echo "[deploy] ERROR: no farmslot-agent on the worker PATH, though the worker prefix puts $HOME/.local/bin first" >&2
+  echo "  fix: check that $HOME/.local/bin/farmslot-agent links into the deployed snapshot, then redeploy" >&2
+  exit 1
+}
+agent_effective="$agent_resolved"
+if [ "$agent_resolved" -ef "$HOME/.local/share/farmslot-cli/farmslot-agent-shim" ]; then
+  if [ -f "$profile_home/config/instance.json" ]; then
+    agent_effective="$profile_home/code/bin/farmslot-agent"
+  else
+    agent_effective="$HOME/.local/share/farmslot-cli/legacy-agent"
+  fi
+fi
+agent_entry="${entry%/packages/cli/bin/farmslot.mjs}/packages/agent-runtime/bin/farmslot-agent.mjs"
+if [ ! "$agent_effective" -ef "$agent_entry" ]; then
+  echo "[deploy] ERROR: farmslot-agent on the worker PATH is $agent_resolved, not the deployed $agent_entry" >&2
+  echo "  fix: remove $agent_resolved from the worker PATH, or point it at $agent_entry" >&2
   exit 1
 fi
 version=$(farmslot --version < /dev/null) || {

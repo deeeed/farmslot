@@ -646,6 +646,10 @@ const cliFixture = (t, { tmuxServer = true } = {}) => {
   const { root, write } = deployFixture(t, 'node-deploy-cli-');
   const home = path.join(root, 'home');
   write('packages/cli/bin/farmslot.mjs', FAKE_CLI, true);
+  // The repo ships this bin, and a snapshot is a git archive of the repo, so
+  // the fixture must carry it too: without it every installed snapshot here
+  // had a dangling farmslot-agent link that no assertion looked at.
+  write('packages/agent-runtime/bin/farmslot-agent.mjs', FAKE_CLI, true);
   write('yarn.lock', '# fixture lockfile\n');
   commitFixture(root);
   write(
@@ -698,6 +702,25 @@ esac
     '#!/bin/sh\n[ "$1" = 0.5 ] && [ ! -f "$HOME/tmux-hangs" ] || exit 0\n' +
       '[ -f "$HOME/cli-hangs" ] || exec /bin/sleep "$1"\n' +
       'for _ in $(seq 1 100); do [ -s "$HOME/cli-hang.pid" ] && exit 0; /bin/sleep 0.05; done\n',
+    true,
+  );
+  // The node's global npm prefix, as these machines have one. `npm uninstall`
+  // removes the package directory and the bins npm owns, which is exactly the
+  // ordering constraint the deploy works around, so the stub does both.
+  write(
+    'bin/npm',
+    `#!/bin/sh
+root="$HOME/.npm-global/lib/node_modules"
+case "$1" in
+  root) echo "$root" ;;
+  uninstall)
+    shift; shift
+    echo "$1" >> "$HOME/npm-uninstalls.log"
+    [ ! -f "$HOME/npm-uninstall-fails" ] || exit 1
+    rm -rf "$root/$1"
+    rm -f "$HOME/.npm-global/bin/farmslot" "$HOME/.npm-global/bin/farmslot-agent" ;;
+esac
+`,
     true,
   );
   fs.symlinkSync('/usr/bin/true', path.join(root, 'bin/rsync'));
@@ -784,6 +807,7 @@ esac
         { env, cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000 },
       );
     },
+    read,
     calls: () => read('cli-calls.jsonl').map((line) => JSON.parse(line)),
     tscBuilds: () => read('tsc.log'),
     systemctl: () => read('systemctl.log'),
@@ -793,6 +817,16 @@ esac
     snapshotBuilds: () =>
       read('yarn.log').filter((line) => line.includes(' workspace @farmslot/recipe-cli build')),
   };
+};
+
+const seedGlobalPackage = (fixture, name, version) => {
+  const dir = path.join(fixture.home, '.npm-global/lib/node_modules/@farmslot', name);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'package.json'),
+    JSON.stringify({ name: `@farmslot/${name}`, version }),
+  );
+  return dir;
 };
 
 const seedSnapshot = (fixture, sha) => {
@@ -867,6 +901,12 @@ for (const instance of ['prod', 'dev']) {
     assert.match(output, new RegExp(`pruned .*/${stale}`));
     for (const relative of ['.local/bin/farmslot', '.npm-global/bin/farmslot'])
       assert.equal(fs.readlinkSync(path.join(fixture.home, relative)), fixture.entry, relative);
+    for (const relative of ['.local/bin/farmslot-agent', '.npm-global/bin/farmslot-agent'])
+      assert.equal(
+        fs.readlinkSync(path.join(fixture.home, relative)),
+        fixture.agentEntry,
+        relative,
+      );
     assert.match(
       output,
       new RegExp(`\\.local/bin/farmslot \\(was .*/${previous}/packages/cli/bin/farmslot\\.mjs\\)`),
@@ -913,6 +953,97 @@ test('deploy-node reuses an installed snapshot and moves nothing when the revisi
   assert.doesNotMatch(output, / → .*\/bin\/farmslot|pruned/);
   assert.ok(fs.existsSync(path.join(fixture.cliRoot, older)), 'a redeploy prunes nothing');
   assert.equal(fixture.calls().length, 2);
+});
+
+// mini ran an agent-runtime 0.4.0 installed globally, which shadowed the
+// deployed snapshot through the bin npm owns and served a worker engine code
+// predating every fix in the revision it was supposedly running.
+test('deploy-node uninstalls a global @farmslot package and links both bins at the snapshot', (t) => {
+  const fixture = cliFixture(t);
+  seedGlobalPackage(fixture, 'agent-runtime', '0.4.0');
+  link(
+    fixture,
+    '.npm-global/bin/farmslot-agent',
+    path.join(
+      fixture.home,
+      '.npm-global/lib/node_modules/@farmslot/agent-runtime/bin/farmslot-agent.mjs',
+    ),
+  );
+
+  const output = fixture.deploy();
+
+  assert.match(output, /removing global @farmslot\/agent-runtime/);
+  assert.deepEqual(
+    fixture.read('npm-uninstalls.log'),
+    ['@farmslot/agent-runtime'],
+    'the deploy uninstalls by package name',
+  );
+  assert.equal(
+    fs.existsSync(path.join(fixture.home, '.npm-global/lib/node_modules/@farmslot/agent-runtime')),
+    false,
+  );
+  assert.equal(
+    fs.readlinkSync(path.join(fixture.home, '.local/bin/farmslot-agent')),
+    fixture.agentEntry,
+  );
+});
+
+// npm can remove the last scoped package and leave the empty scope directory,
+// which must not fail the deploy of the node that was just cleaned.
+test('deploy-node accepts an empty @farmslot scope directory', (t) => {
+  const fixture = cliFixture(t);
+  fs.mkdirSync(path.join(fixture.home, '.npm-global/lib/node_modules/@farmslot'), {
+    recursive: true,
+  });
+
+  const output = fixture.deploy();
+
+  assert.doesNotMatch(output, /still installed/);
+  assert.match(output, /farmslot 0\.0\.0-fixture/);
+});
+
+// Each uninstall is permanent before the next is attempted, so a failure must
+// not exit before the links exist: that left a node with no agent bin at all.
+test('deploy-node links both bins before failing on an uninstall it could not do', (t) => {
+  const fixture = cliFixture(t);
+  seedGlobalPackage(fixture, 'agent-runtime', '0.4.0');
+  fixture.write('home/npm-uninstall-fails', '');
+
+  assert.throws(
+    () => fixture.deploy(),
+    (error) => /could not uninstall global @farmslot\/agent-runtime/.test(error.stderr),
+  );
+
+  assert.equal(
+    fs.readlinkSync(path.join(fixture.home, '.local/bin/farmslot-agent')),
+    fixture.agentEntry,
+    'the agent bin exists even though the deploy failed',
+  );
+  assert.equal(fs.readlinkSync(path.join(fixture.home, '.local/bin/farmslot')), fixture.entry);
+});
+
+// A directory holding only farmslot-agent is one this deploy owns: the choice
+// used to read the farmslot link alone and skip the directory, leaving a stale
+// or dangling agent bin behind in it.
+test('deploy-node relinks a bin directory that holds only a dangling farmslot-agent', (t) => {
+  const fixture = cliFixture(t);
+  link(
+    fixture,
+    '.npm-global/bin/farmslot-agent',
+    path.join(fixture.home, 'gone/farmslot-agent.mjs'),
+  );
+
+  fixture.deploy();
+
+  assert.equal(
+    fs.readlinkSync(path.join(fixture.home, '.npm-global/bin/farmslot-agent')),
+    fixture.agentEntry,
+  );
+  assert.equal(
+    fs.readlinkSync(path.join(fixture.home, '.npm-global/bin/farmslot')),
+    fixture.entry,
+    'the farmslot bin comes with it',
+  );
 });
 
 // On a local deploy the CLI on PATH is the operator's own. MACHINE matching
@@ -1413,10 +1544,17 @@ test('node CLI refreshes started together over a stale lock never overlap', asyn
     { mode: 0o755 },
   );
   fs.writeFileSync(path.join(bin, 'sleep'), '#!/bin/sh\nexec /bin/sleep 0.01\n', { mode: 0o755 });
+  // The node this refresh runs with, as a deploy always passes one: the link
+  // verification resolves paths through it rather than a system python.
+  fs.symlinkSync(process.execPath, path.join(bin, 'node'));
   const source = path.join(base, 'source');
   fs.mkdirSync(path.join(source, 'packages/cli/bin'), { recursive: true });
   fs.writeFileSync(path.join(source, 'yarn.lock'), '# fixture lockfile\n');
   fs.writeFileSync(path.join(source, 'packages/cli/bin/farmslot.mjs'), FAKE_CLI);
+  // The archive stands in for the repo, which ships both bins; without the
+  // agent one every installed snapshot here leaves a dangling agent link.
+  fs.mkdirSync(path.join(source, 'packages/agent-runtime/bin'), { recursive: true });
+  fs.writeFileSync(path.join(source, 'packages/agent-runtime/bin/farmslot-agent.mjs'), FAKE_CLI);
   const archive = path.join(base, 'cli.tar');
   execFileSync('tar', ['-cf', archive, '-C', source, '.']);
 
@@ -1661,6 +1799,7 @@ for (const tmuxServer of [true, false]) {
       }),
     );
     link(fixture, '.local/bin/farmslot', seedSnapshot(fixture, fixture.sha));
+    link(fixture, '.local/bin/farmslot-agent', fixture.agentEntry);
     const script = fs.readFileSync(
       path.join(fixture.root, 'scripts/lib/node-cli-refresh.sh'),
       'utf8',
@@ -1726,6 +1865,7 @@ for (const phase of ['list-sessions', 'new-session', 'kill-session', 'success'])
       fixture.write('home/tmux-unresponsive', phase);
       const entry = seedSnapshot(fixture, fixture.sha);
       link(fixture, '.local/bin/farmslot', entry);
+      link(fixture, '.local/bin/farmslot-agent', fixture.agentEntry);
       const script = fs.readFileSync(path.join(repo, 'scripts/lib/node-cli-refresh.sh'), 'utf8');
       const verify = /<< 'VERIFY'\n([\s\S]*?)\nVERIFY\n/.exec(script)[1];
       const healthFile = path.join(fixture.home, '.farmslot-dev/node-worker-cli-health.json');
