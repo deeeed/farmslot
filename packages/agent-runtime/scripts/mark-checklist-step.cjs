@@ -864,11 +864,12 @@ if (stepNumber != null && readJson(signalPath).status === 'complete') {
 // worker went on marking steps nobody was watching.
 //
 // A legitimate re-dispatch never meets this: replaying any step that relaunches
-// a worker removes a terminal SIGNAL.json and the role signals first
-// (methods/run/replay-step.ts, "cleared worker terminal signals"), and an
+// a worker removes a finished SIGNAL.json and the role signals first
+// (methods/run/replay-step.ts, "cleared finished worker signals"), and an
 // initial dispatch has no signal yet. A running signal is deliberately left
 // there for admission to replace, and `blocked` stays resumable, so neither
-// reaches the refusal below. So a terminal signal still on disk means the
+// reaches the refusal below. A replay at or before write-task regenerates the
+// task into a new directory instead, so this file is not reached at all. So a terminal signal still on disk means the
 // worker is restarting itself inside a run that is over, which is the case to
 // refuse. The guard deliberately does not
 // consult FARMSLOT_SIGNAL_ATTEMPT_ID: only the review terminal sets it

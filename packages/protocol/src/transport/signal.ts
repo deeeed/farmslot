@@ -98,8 +98,10 @@ export function isWorkerSignalStatus(value: unknown): value is WorkerSignalStatu
  * what that guard refuses. The two must stay in step - widen the guard and this
  * grows with it.
  */
+export const START_REFUSED_WORKER_SIGNAL_STATUS = 'complete';
+
 export function isStartRefusedWorkerSignalStatus(status: string | null | undefined): boolean {
-  return status === 'complete';
+  return status === START_REFUSED_WORKER_SIGNAL_STATUS;
 }
 
 /**

@@ -170,7 +170,10 @@ const finishedSignals = [
     },
   },
 ];
-const finishedRun = (run, overrides = {}) => ({
+type FixtureRun = ReturnType<typeof createRun>;
+type RunUpdate = Parameters<typeof updateRun>[1];
+
+const finishedRun = (run: FixtureRun, overrides: RunUpdate = {}): RunUpdate => ({
   status: 'done',
   slotId,
   taskFile,
@@ -183,7 +186,7 @@ const finishedRun = (run, overrides = {}) => ({
       label: 'Worker',
       runId: run.id,
       slotId,
-      status: 'done',
+      status: 'complete',
       taskFile: '.task/probe/TASK.md',
       signalFile: '.task/probe/SIGNAL.json',
       signalAttemptId: 'finished-attempt',
@@ -198,18 +201,24 @@ const finishedRun = (run, overrides = {}) => ({
   })),
   ...overrides,
 });
-const heldSlotStatus = (run) =>
+const heldSlotStatus = (run: FixtureRun) =>
   JSON.stringify({
     slots: [{ slot: slotId, lifecycle: 'held', phase: 'idle', current_run_id: run.id }],
   });
 /** The signal as the replay left it, read at the engine handoff. */
-const replayAndReadSignal = async (run, stepName, file = signalFile) => {
-  let observe;
-  const observed = new Promise((resolve) => {
+const replayAndReadSignal = async (
+  run: FixtureRun,
+  stepName: string,
+  hooks: Parameters<typeof runReplayStep>[2] = {},
+  file: string = signalFile,
+): Promise<string | null> => {
+  let observe!: (value: string | null) => void;
+  const observed = new Promise<string | null>((resolve) => {
     observe = resolve;
   });
   await runReplayStep({ runId: run.id, stepName, triggeredBy: 'operator' }, () => {}, {
     probeTaskSignal: async () => null,
+    ...hooks,
     startEngine: async () => {
       observe(await readFile(file, 'utf8').catch(() => null));
     },
@@ -333,4 +342,45 @@ test('write-task replay regenerates the task rather than reusing the old one', a
     null,
     'the replay clears the task file so write-task regenerates it in a new directory',
   );
+});
+
+// Deciding and deleting are two round trips, and a worker repairing evidence
+// with `./mark N` publishes a fresh `running` signal over the same path in
+// between (mark-io.cjs renames into place). The delete re-reads each file, so
+// what the decision saw cannot be what gets removed.
+//
+// This covers the gap between the two round trips only. The narrower window
+// inside the delete — another process writing between its own read and unlink —
+// is closed by renaming the candidate aside and judging the bytes that moved,
+// which this suite cannot schedule and so does not prove.
+test('a signal that goes live between the decision and the delete survives', async (t) => {
+  const run = createRun({ project, flowType: 'dev', ticketOrPr: 'example/fixture#6' });
+  t.after(async () => {
+    if (!getRun(run.id)) return;
+    updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+  await writeFile(
+    signalFile,
+    JSON.stringify({
+      attemptId: 'finished-attempt',
+      status: 'complete',
+      timestamp: '2026-11-12T00:00:00.000Z',
+    }),
+  );
+  updateRun(run.id, finishedRun(run));
+  await writeFile(statusFile, heldSlotStatus(run));
+
+  const live = JSON.stringify({
+    attemptId: 'repairing-attempt',
+    status: 'running',
+    timestamp: '2026-11-12T00:00:01.000Z',
+  });
+  const observed = await replayAndReadSignal(run, 'dispatch', {
+    beforeWorkerSignalDelete: async () => {
+      await writeFile(signalFile, live);
+    },
+  });
+
+  assert.equal(observed, live, 'the live signal must be the one the worker finds');
 });

@@ -29,6 +29,7 @@ import {
   type RunReplayStepResult,
   type RunStatus,
   type RuntimeCapabilityStatusResult,
+  START_REFUSED_WORKER_SIGNAL_STATUS,
   staticReviewReplayBlock,
   supersedePendingResultDecisions,
   taskDirRelPath,
@@ -143,6 +144,11 @@ export interface RunReplayStepHooks {
   preserveDispatchBaseline?: boolean;
   /** Test-only: pause after the replay-owned generation bump. */
   afterGenerationBump?(): Promise<void>;
+  /**
+   * Test-only: pause between deciding which worker signals are finished and
+   * deleting them, which is the window a worker can write `running` into.
+   */
+  beforeWorkerSignalDelete?(): Promise<void>;
   /** Test-only: pause after reading device requirements, while the engine still runs. */
   afterSlotPlanning?(): Promise<void>;
   /** Test-only: retain a controlled engine observer without starting workers. */
@@ -452,7 +458,7 @@ export function canAdoptTaskSignalAfterUncertainDispatch(
  * each file and is the authority on what goes.
  */
 async function startRefusedSignalFiles(
-  vars: SlotVars,
+  vars: Awaited<ReturnType<typeof import('../../core/config.js').loadSlotVars>>,
   workerTaskDir: string,
   files: readonly string[],
 ): Promise<string[]> {
@@ -478,29 +484,72 @@ async function startRefusedSignalFiles(
 }
 
 /**
- * Delete each named signal that still holds a start-refused status, in one
- * round trip that re-reads it. A separate read and `rm` can delete the
- * `running` signal of a worker that marked a step in between.
+ * Delete each named signal that still holds the start-refused status, and leave
+ * every other one exactly where it was.
+ *
+ * Reading a file and then unlinking its path are two acts, and `mark` can
+ * publish a fresh signal over the path in between (it renames into place,
+ * mark-io.cjs), so an unlink by name can remove the `running` signal of a
+ * worker that marked a step. Rename is the one atomic step available: the
+ * candidate is moved aside, and only the bytes that moved are judged. A
+ * snapshot that turns out to be live is put back, or dropped when the worker
+ * has already written a new signal over the original path.
+ *
+ * Returns the files it actually removed, so the log cannot claim a failed
+ * unlink as cleared.
  */
 async function deleteStartRefusedSignals(
-  vars: SlotVars,
+  vars: Awaited<ReturnType<typeof import('../../core/config.js').loadSlotVars>>,
   workerTaskDir: string,
   files: readonly string[],
-): Promise<void> {
-  const script =
-    'for (const file of process.argv.slice(1)) {' +
-    'try {' +
-    "const parsed = JSON.parse(require('node:fs').readFileSync(file, 'utf8'));" +
-    "if (parsed && parsed.status === 'complete') require('node:fs').rmSync(file);" +
-    '} catch {}' +
-    '}';
-  await execOnSlot(
+  refusedStatus: string,
+): Promise<string[]> {
+  const script = `
+const fs = require('node:fs');
+const [refusedStatus, ...files] = process.argv.slice(1);
+const removed = [];
+for (const file of files) {
+  const aside = file + '.replay-clear.' + process.pid;
+  try {
+    fs.renameSync(file, aside);
+  } catch {
+    continue;
+  }
+  let status = null;
+  try {
+    status = JSON.parse(fs.readFileSync(aside, 'utf8')).status;
+  } catch {}
+  if (status === refusedStatus) {
+    try {
+      fs.rmSync(aside);
+      removed.push(file);
+    } catch {}
+    continue;
+  }
+  // Live after all, or unreadable: put it back unless the worker has already
+  // written its own over the path, in which case that newer file wins.
+  try {
+    if (fs.existsSync(file)) fs.rmSync(aside);
+    else fs.renameSync(aside, file);
+  } catch {}
+}
+process.stdout.write(JSON.stringify(removed));
+`;
+  const result = await execOnSlot(
     vars,
-    `node -e ${shellQuote(script)} ${files
+    `node -e ${shellQuote(script)} ${shellQuote(refusedStatus)} ${files
       .map((file) => shellQuote(`${workerTaskDir}/${file}`))
       .join(' ')}`,
     vars.remoteRepo,
   );
+  if (result.exitCode !== 0) return [];
+  try {
+    const removed: unknown = JSON.parse(result.stdout.trim() || '[]');
+    if (!Array.isArray(removed)) return [];
+    return removed.map((file) => String(file).slice(`${workerTaskDir}/`.length));
+  } catch {
+    return [];
+  }
 }
 
 /** The `blocked` signal a blocked run's monitor stopped on, or null. */
@@ -2330,20 +2379,29 @@ async function replayRunStep(
     //
     // The rule is any replay that ends in a worker launch: a target at or
     // before dispatch. `replaysWorkerLaunch` is not that rule - it also demands
-    // a prepare step, so an `update-branch` run (which has none) and a replay
-    // of find-slot or write-task dispatched a worker onto the old signal. It
-    // keeps its own meaning for the metrics reset below.
+    // a prepare step, so an `update-branch` run (which has none) dispatched a
+    // worker onto the old signal. It keeps its own meaning for the metrics
+    // reset below. A replay at or before write-task is safe for its own reason:
+    // the task regenerates into a new directory, so the old signal is
+    // unreachable whatever this does.
     //
-    // Only a finished signal goes. A `running` one belongs to a worker that may
-    // still be alive and is preserved until admission replaces it, and `blocked`
-    // stays because `start` resumes it and keeps the checked boxes.
+    // Only the status `start` refuses goes, and on native only as part of a
+    // fresh restart, which is the one case that has established that no worker
+    // of the previous attempt survives. A `running` signal belongs to a worker
+    // that may still be alive and is preserved until admission replaces it, and
+    // `blocked` stays because `start` resumes it and keeps the checked boxes.
     const relaunchesWorker = targetIdx >= 0 && dispatchIdx >= 0 && targetIdx <= dispatchIdx;
-    const clearsWorkerSignal =
+    // One narrowed value, so the block below does not re-derive either half:
+    // the slot to clear on, and the task file whose directory names the signals.
+    const clearing =
       relaunchesWorker &&
-      Boolean(effectiveSlotId) &&
-      Boolean(existing.taskFile) &&
-      (existing.transport === 'native' ? nativeFreshRestart : true);
-    if (clearsWorkerSignal) {
+      existing.taskFile !== null &&
+      existing.taskFile !== undefined &&
+      effectiveSlotId !== null &&
+      (existing.transport === 'native' ? nativeFreshRestart : true)
+        ? { slotId: effectiveSlotId, taskFile: existing.taskFile }
+        : null;
+    if (clearing) {
       try {
         const {
           loadSlotVars,
@@ -2352,10 +2410,10 @@ async function replayRunStep(
           resolveProjectTaskDirName,
           resolveTaskRelDir,
         } = await import('../../core/config.js');
-        const vars = await loadSlotVars(effectiveSlotId);
+        const vars = await loadSlotVars(clearing.slotId);
         const pv = await loadProjectVars(existing.project).catch(() => null);
         const taskRelDir = resolveTaskRelDir(
-          existing.taskFile,
+          clearing.taskFile,
           getOrchestratorTaskRoot(existing.project, pv?.projectJson ?? null),
         );
         if (taskRelDir !== null) {
@@ -2399,10 +2457,17 @@ async function replayRunStep(
             if (refused.length > 0) {
               assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
               assertNativeReplayCurrent();
-              await deleteStartRefusedSignals(vars, workerTaskDir, refused);
-              console.log(
-                `[run] replay from ${replayStepName} — cleared finished worker signals in ${workerTaskDir} (${refused.join(', ')})`,
+              if (hooks.beforeWorkerSignalDelete) await hooks.beforeWorkerSignalDelete();
+              const removed = await deleteStartRefusedSignals(
+                vars,
+                workerTaskDir,
+                refused,
+                START_REFUSED_WORKER_SIGNAL_STATUS,
               );
+              if (removed.length > 0)
+                console.log(
+                  `[run] replay from ${replayStepName} — cleared finished worker signals in ${workerTaskDir} (${removed.join(', ')})`,
+                );
             }
           }
         }
