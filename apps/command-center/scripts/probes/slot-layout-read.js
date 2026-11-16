@@ -7,6 +7,7 @@ const selectors = [
   'slot-view',
   '.sv-header',
   '[data-testid="slot-load-run"]',
+  '[data-testid="slot-history"]',
   '.sv-body',
   '.sv-sidebar',
   '.sv-right-col',
@@ -91,6 +92,18 @@ return {
   activePrepare: view?._activePrepare
     ? { running: view._activePrepare.running, exitCode: view._activePrepare.exitCode }
     : null,
+  headerChildren: [...(view?.querySelector('.sv-header')?.children ?? [])].map((node) => {
+    const rect = node.getBoundingClientRect();
+    return {
+      tag: node.tagName,
+      className: node.className,
+      text: node.textContent.trim(),
+      x: rect.x,
+      y: rect.y,
+      width: rect.width,
+      height: rect.height,
+    };
+  }),
   noticeRows,
   loadRunStyle: buttonStyle('[data-testid="slot-load-run"]'),
   historyStyle: buttonStyle('[data-testid="slot-history"]'),

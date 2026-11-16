@@ -42,12 +42,38 @@ export function renderSlotViewHeader(
     <!-- Header -->
     <div class="sv-header">
       <button class="sv-back-btn" @click=${view._handleBack}>&larr;</button>
+      <span class="sv-slot-title">${hasSlotData ? slot!.slot : view.slotId || 'workspace'}</span>
+      <!-- Keep permanent navigation before changing run state and actions. -->
+      ${hasSlotData
+        ? html`
+            <button
+              class="sv-run-ctrl history"
+              data-testid="slot-history"
+              @click=${() => {
+                view._historyOpen = true;
+                view._syncUrlState();
+              }}
+              title="View recent retained runs for this slot"
+            >
+              History
+            </button>
+            <button
+              class="sv-run-ctrl"
+              data-testid="slot-load-run"
+              @click=${() => {
+                view._loadRunOpen = true;
+              }}
+              title="Browse all runs and warm-switch this slot onto one"
+            >
+              Load run →
+            </button>
+          `
+        : nothing}
       ${slot?.heldReason
         ? html`<span role="status" data-testid="slot-held-reason"
             >Workspace occupied: ${slot.heldReason}</span
           >`
         : nothing}
-      <span class="sv-slot-title">${hasSlotData ? slot!.slot : view.slotId || 'workspace'}</span>
       ${view._linkedRun
         ? html`
             <a
@@ -143,31 +169,6 @@ export function renderSlotViewHeader(
               </button>
             `
           : ''}
-      ${hasSlotData
-        ? html`
-            <button
-              class="sv-run-ctrl history"
-              data-testid="slot-history"
-              @click=${() => {
-                view._historyOpen = true;
-                view._syncUrlState();
-              }}
-              title="View recent retained runs for this slot"
-            >
-              History
-            </button>
-            <button
-              class="sv-run-ctrl"
-              data-testid="slot-load-run"
-              @click=${() => {
-                view._loadRunOpen = true;
-              }}
-              title="Browse all runs and warm-switch this slot onto one"
-            >
-              Load run →
-            </button>
-          `
-        : nothing}
       ${view._prNumber && view._prRepo
         ? html`
             <a
