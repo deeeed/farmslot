@@ -29,6 +29,11 @@ else
   : "${TARGET_HOME:?missing resolved FARMSLOT_HOME}" "${FARM_LAYOUT:?missing target layout}"
   CLI_SNAPSHOT="$CLI_ROOT/$CLI_SHA"
   CLI_ENTRY="$CLI_SNAPSHOT/packages/cli/bin/farmslot.mjs"
+  # The agent bin that belongs to the same snapshot. Derived once, here: the
+  # refresh body and the worker probe both need it and run as separate
+  # processes on the node, so each gets it as an argument rather than
+  # repeating the suffix strip.
+  CLI_AGENT_ENTRY="$CLI_SNAPSHOT/packages/agent-runtime/bin/farmslot-agent.mjs"
   # The archive is streamed only when the snapshot is missing; the node checks
   # again under its lock.
   CLI_ARCHIVE=/dev/null
@@ -71,7 +76,12 @@ entry="$snapshot/packages/cli/bin/farmslot.mjs"
 # agent-runtime 0.4.0 predating every worker-side fix in this revision, and a
 # worker calling it directly re-opened terminal signals the wrapper refuses. It
 # is linked from the same snapshot as the CLI, by the same rules.
-agent_entry="$snapshot/packages/agent-runtime/bin/farmslot-agent.mjs"
+# The agent bin that belongs beside a given CLI bin. Two callers below ask it:
+# this snapshot, and whatever target a first layout-2 deploy preserves.
+agent_bin_for() {
+  printf '%s\n' "${1%/packages/cli/bin/farmslot.mjs}/packages/agent-runtime/bin/farmslot-agent.mjs"
+}
+agent_entry=$(agent_bin_for "$entry")
 lock="$root/.lock"
 partial=""
 mkdir -p "$root"
@@ -301,7 +311,7 @@ for bin in "${user_bins[@]}"; do
     if ! ln -s "$previous" "$shared/legacy"; then
       [[ -L "$shared/legacy" ]] || exit 1
     fi
-    previous_agent="${previous%/packages/cli/bin/farmslot.mjs}/packages/agent-runtime/bin/farmslot-agent.mjs"
+    previous_agent=$(agent_bin_for "$previous")
     [[ "$previous_agent" != "$previous" && -e "$previous_agent" ]] || previous_agent="$agent_entry"
     if ! ln -s "$previous_agent" "$shared/legacy-agent"; then
       [[ -L "$shared/legacy-agent" ]] || exit 1
@@ -382,6 +392,14 @@ for bin in "${verify_bins[@]}"; do
       echo "[deploy] ERROR: could not resolve $link with $node_dir/node; the link may be a cycle, or this node's node is broken" >&2
       exit 1
     fi
+    # The legacy pair deliberately preserves whatever the pre-migration link
+    # pointed at, and install.sh points it at the operator's checkout, which is
+    # outside this install by definition. Requiring it inside would refuse a
+    # first layout-2 deploy on any node installed that way, and refuse it again
+    # on every retry, since layout 2 never repoints an existing legacy link.
+    # It must resolve to something real, which is checked above; where it
+    # resolves is not this deploy's business.
+    if [ "$name" = legacy ] || [ "$name" = legacy-agent ]; then continue; fi
     # Prefix tests rather than `case`: bash 3.2, which is what these nodes run,
     # parses this heredoc body as code inside the surrounding $( ), and a `;;`
     # there is a syntax error that stops the whole deploy script from loading.
@@ -405,6 +423,21 @@ for bin in "${verify_bins[@]}"; do
     fi
   done
 done
+# Retention follows the links, and the preserved legacy pair is the one route
+# link_entry never repoints: layout 2 creates it once and then leaves it alone,
+# so its snapshot never enters `keep` the way a repointed link's does. A legacy
+# route into this install is read here instead. Without it the fallback survives
+# verification and dangles two deploys later, when the snapshot it names stops
+# being either the current or the previous instance target and is pruned below.
+if [[ -n "$shared" ]]; then
+  for link in "$shared/legacy" "$shared/legacy-agent"; do
+    [[ -L "$link" ]] || continue
+    legacy_target=$(readlink "$link")
+    [[ "$legacy_target" == "$root"/* ]] || continue
+    legacy_kept=${legacy_target#"$root"/}
+    keep="$keep${legacy_kept%%/*} "
+  done
+fi
 [[ "$moved" == true ]] || exit 0
 for dir in "$root"/*/; do
   name=$(basename "$dir")
@@ -456,10 +489,10 @@ WORKER_HOME
   if [[ "$INSTANCE" == dev ]]; then
     WORKER_CLI_HEALTH_FILE="$TARGET_HOME/node-worker-cli-health.json"
   fi
-  if ! run "bash -s $(printf '%q ' "$CLI_ENTRY" "$NODE_GATEWAY_URL" "$WORKER_ENV_PREFIX" "$TMUX_BIN_LOOKUP" "${CLI_VERIFY_TIMEOUT_SECONDS:-120}" "$INSTANCE" "$WORKER_FARMSLOT_HOME" "$NODE_PATH" "$MACHINE" "$WORKER_CLI_HEALTH_FILE")" << 'VERIFY'
+  if ! run "bash -s $(printf '%q ' "$CLI_ENTRY" "$NODE_GATEWAY_URL" "$WORKER_ENV_PREFIX" "$TMUX_BIN_LOOKUP" "${CLI_VERIFY_TIMEOUT_SECONDS:-120}" "$INSTANCE" "$WORKER_FARMSLOT_HOME" "$NODE_PATH" "$MACHINE" "$WORKER_CLI_HEALTH_FILE" "$CLI_AGENT_ENTRY")" << 'VERIFY'
 set -uo pipefail
 entry=$1 gw_url=$2 prefix=$3 tmux_lookup=$4 timeout=$5 instance=$6 worker_home=$7
-node=$8 machine=$9 health_file=${10}
+node=$8 machine=$9 health_file=${10} agent_entry=${11}
 failure_reason=""
 tmux_with_timeout() {
   "$node" - "$TMUX_BIN" "$timeout" "$@" << 'TMUX_TIMEOUT'
@@ -524,7 +557,7 @@ trap finish EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 cat > "$work/probe.sh" << 'PROBE'
-entry=$1 instance=$2
+entry=$1 instance=$2 agent_entry=$3
 unset FARMSLOT_NODE_TOKEN FARMSLOT_GATEWAY_TOKEN FARMSLOT_GATEWAY_PASSWORD
 cd "$HOME" || exit 1
 resolved=$(command -v farmslot) || {
@@ -559,7 +592,6 @@ if [ "$agent_resolved" -ef "$HOME/.local/share/farmslot-cli/farmslot-agent-shim"
     agent_effective="$HOME/.local/share/farmslot-cli/legacy-agent"
   fi
 fi
-agent_entry="${entry%/packages/cli/bin/farmslot.mjs}/packages/agent-runtime/bin/farmslot-agent.mjs"
 if [ ! "$agent_effective" -ef "$agent_entry" ]; then
   echo "[deploy] ERROR: farmslot-agent on the worker PATH is $agent_resolved, not the deployed $agent_entry" >&2
   echo "  fix: remove $agent_resolved from the worker PATH, or point it at $agent_entry" >&2
@@ -600,7 +632,7 @@ fi
 echo "  farmslot rpc gateway.status ok ($GW_URL)"
 PROBE
 if [ -n "$worker_home" ]; then prefix="$prefix; export FARMSLOT_HOME=$(printf '%q' "$worker_home")"; fi
-probe="$prefix && export GW_URL=$(printf '%q' "$gw_url") && bash $(printf '%q' "$work/probe.sh") $(printf '%q ' "$entry" "$instance")"
+probe="$prefix && export GW_URL=$(printf '%q' "$gw_url") && bash $(printf '%q' "$work/probe.sh") $(printf '%q ' "$entry" "$instance" "$agent_entry")"
 launch="exec bash -lc $(printf '%q' "$probe > $(printf '%q' "$work/out") 2>&1; echo \$? > $(printf '%q' "$work/status")")"
 eval "$tmux_lookup"
 list_status=1

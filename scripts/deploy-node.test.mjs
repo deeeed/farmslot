@@ -1815,6 +1815,9 @@ for (const tmuxServer of [true, false]) {
       SCRIPT_DIR: path.join(fixture.root, 'scripts'),
       MACHINE: 'fixture-machine',
       CLI_ENTRY: fixture.entry,
+      // The deploy derives this beside CLI_ENTRY and hands it to the probe; a
+      // slice of the script that starts after that assignment has to supply it.
+      CLI_AGENT_ENTRY: fixture.agentEntry,
       NODE_PATH: path.join(fixture.root, 'node-bin/node'),
       NODE_GATEWAY_URL: 'ws://127.0.0.1:7777',
       INSTANCE: 'prod',
@@ -1899,6 +1902,7 @@ for (const phase of ['list-sessions', 'new-session', 'kill-session', 'success'])
           path.join(fixture.root, 'node-bin/node'),
           'fixture-machine',
           healthFile,
+          fixture.agentEntry,
         ],
         {
           detached: true,
