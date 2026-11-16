@@ -1,0 +1,1 @@
+- An omitted PI effort defaults to high for every role. An explicit level, including xhigh, stays as selected.

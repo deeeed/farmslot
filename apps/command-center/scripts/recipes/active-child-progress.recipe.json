@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Active parent and child progress in Run Detail",
+  "description": "Read-only. Select an authenticated gateway profile, an active run with recorded child progress, owned FARMSLOT_CHILD_PROOF_TAB, FARMSLOT_CHILD_PROOF_RUN_ID and FARMSLOT_CHILD_PROOF_OUTPUT. For model-free marker setup, operation-log-proof-fixture.mjs with CHILD_PROGRESS_PROOF=1 executes real mark/sub commands and retains their files. Browser login uses operation-log-proof, CLI uses worker-ack-cli. No UI state injection or ordinary worker-dispatch claim. Rerun with FARMSLOT_CHILD_PROOF_EXPECT_READ_STATE=saved after stopping the owned fixture, or =error after making its checklist unreadable. Assert real disconnected/read-failure rendering with no UI state writes.",
+  "workflow": {
+    "entry": "two-level-progress",
+    "nodes": {
+      "two-level-progress": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-active-child-progress.mjs",
+        "timeout_ms": 180000,
+        "intent": "Show the current recorded child under its parent with separate real counts at wide and narrow widths.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

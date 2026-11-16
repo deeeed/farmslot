@@ -1,0 +1,1 @@
+- Show the active recorded child checklist beneath its parent progress in Run Detail, keeping parent and child counts separate.

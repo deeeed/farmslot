@@ -16,6 +16,7 @@ import {
 } from '../src/checklist-progress.js';
 import {
   acceptsRunChecklistProgress,
+  runChecklistProgressSummary,
   runChecklistProgressTarget,
   runChecklistProgressView,
 } from '../src/run-checklist-progress.js';
@@ -411,4 +412,46 @@ test('a pre-bound reviewer cannot become the worker acknowledgement during a pha
     ],
   });
   assert.equal(checklistProgressExecution(input, current)?.acknowledgedAt, undefined);
+});
+
+test('the compact summary carries the recorded child of the running parent and keeps parent counts', () => {
+  const input = progress();
+  const active = input.phases[0].steps[4];
+  const childSteps = [
+    { index: 1, name: 'Child 1', status: 'done' as const },
+    { index: 2, name: 'Child 2', status: 'running' as const },
+    { index: 3, name: 'Child 3', status: 'pending' as const },
+  ];
+  active.subtask = {
+    id: 'recipe-proof',
+    status: 'running',
+    lastEventAt: null,
+    source: { kind: 'inline', sha256: 'a', renderedSha256: 'b' },
+    progress: {
+      schema: {
+        flowType: 'subtask',
+        title: 'Child',
+        totalSteps: 3,
+        phases: [{ name: 'Child', steps: childSteps }],
+      },
+      phases: [{ name: 'Child', completedSteps: 1, totalSteps: 3, steps: childSteps }],
+      completedSteps: 1,
+      totalSteps: 3,
+      currentPhase: 'Child',
+      currentStep: 'Child 2',
+    },
+  };
+  const view = runChecklistProgressSummary(input);
+  assert.equal(view?.counts, '4/8');
+  assert.equal(view?.subtask, active.subtask);
+  active.status = 'done';
+  input.completedSteps = input.phases[0].completedSteps = 5;
+  input.phases[0].steps[5].status = 'running';
+  input.currentStep = input.phases[0].steps[5].name;
+  active.subtask.status = 'complete';
+  active.subtask.progress.completedSteps = 3;
+  active.subtask.progress.phases[0].completedSteps = 3;
+  active.subtask.progress.currentStep = null;
+  for (const step of active.subtask.progress.phases[0].steps) step.status = 'done';
+  assert.equal(runChecklistProgressSummary(input)?.subtask, undefined);
 });

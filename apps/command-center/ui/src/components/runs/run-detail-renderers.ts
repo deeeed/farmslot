@@ -44,6 +44,7 @@ import '../shared/hydrating-placeholder.js';
 import { gateway } from '../../gateway-client.js';
 import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import type { ProgressReadNotice } from '../../utils/progress-read-status.js';
 import { formatUsageCost } from '../../utils/review-gate-display.js';
 import { navigateHash } from '../../utils/url-state.js';
 import { viewDetails } from '../../utils/view-state.js';
@@ -113,6 +114,7 @@ export interface RunDetailViewContext {
   taskProgress: TaskProgressStructured | null;
   /** The viewed session's spend so far (task.progress `liveSpend`). */
   liveSpend: TaskLiveSpend | null;
+  taskProgressNotice?: ProgressReadNotice;
   /** The run's acceptance ledger (ADR-060), rendered beside the pipeline progress. */
   evidenceModel?: EvidenceReviewModel | null;
   acceptanceStatus: AcceptanceStatusLedger | null;
@@ -1098,6 +1100,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         .run=${r}
         .taskProgress=${ctx.taskProgress}
         .liveSpend=${ctx.liveSpend ?? undefined}
+        .taskProgressNotice=${ctx.taskProgressNotice}
         .evidenceModel=${ctx.evidenceModel}
         .acceptanceStatus=${ctx.acceptanceStatus}
         .acceptanceCriteria=${ctx.acceptanceCriteria}

@@ -136,6 +136,31 @@ test('runner-default repair model and effort remain authorized at final admissio
   assert.throws(() => dispatcher.assertCurrent({ ...selected, effort: 'low' }), /changed/);
 });
 
+test('an omitted pi repair effort is high', async (t) => {
+  const selection = { runner: 'pi', model: null, effort: null, mode: 'cold' as const };
+  const profile = { ...execution, models: [selection] };
+  const { store, monitor } = await fixture(t, profile);
+  const dispatcher = new PRRepairDispatcher(
+    store,
+    {
+      refresh: async () => {
+        const current = store.get(monitor.id, 'owner');
+        await store.observe(monitor.id, 'owner', current.revision, { observation: observation() });
+        return store.get(monitor.id, 'owner');
+      },
+    },
+    () => true,
+    () => {},
+    async () => ({ choices: [{ slotId: 'repair-slot', ...selection }], errors: [] }),
+    async () => {},
+  );
+  await dispatcher.reconcile();
+  const item = getQueueSnapshot().find((entry) => entry.prWork?.sourceId === monitor.id)!;
+  assert.equal(item.effort, 'high');
+  assert.equal(executionModelFromSelection(selection).effort, 'high');
+  assert.equal(executionModelFromSelection({ ...selection, effort: 'xhigh' }).effort, 'xhigh');
+});
+
 test('manual repair rejects workspace review authority without mutating the monitor', async (t) => {
   const { store, monitor } = await fixture(t);
   const before = store.get(monitor.id, 'owner');
