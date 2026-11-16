@@ -103,9 +103,7 @@ await writeFile(path.join(taskDir, paths[0]), '');
 await writeFile(path.join(taskDir, paths[1]), 'Recorded operation output\n');
 updateRun(run.id, {
   status: ledgerFailure ? 'done' : reviewAcknowledgement ? 'reviewing' : 'monitoring',
-  ...(reviewAcknowledgement
-    ? { activeTaskFile: path.join(config.getOrchestratorTaskRoot('log-proof'), 'proof/REVIEW.md') }
-    : {}),
+  ...(reviewAcknowledgement ? { activeTaskFile: path.join(taskDir, 'REVIEW.md') } : {}),
   taskFile: path.join(config.getOrchestratorTaskRoot('log-proof'), 'proof/TASK.md'),
   steps: run.steps.map((step) => ({
     ...step,
@@ -163,6 +161,10 @@ await writeFile(path.join(recorded, 'CHECKLIST.md.worker'), checklist);
 if (reviewAcknowledgement) {
   await writeFile(path.join(taskDir, 'REVIEW.md'), checklist);
   await writeFile(path.join(recorded, 'REVIEW.md'), checklist);
+  await writeFile(
+    path.join(recorded, 'REVIEW.md.worker'),
+    await readFile(path.join(taskDir, 'REVIEW.md'), 'utf8'),
+  );
 }
 if (ledgerFailure)
   await writeFile(
@@ -196,6 +198,7 @@ await writeFile(
   }),
 );
 let acknowledgement;
+let acknowledgementWatch;
 if (workerAcknowledgement) {
   const { upsertAgentContext } = await load('services/gateway/src/agents/contexts.ts');
   const { applyRunningWorkerSignalToContext } = await load(
@@ -245,6 +248,17 @@ if (workerAcknowledgement) {
     role,
     contextId,
   );
+  if (reviewAcknowledgement) {
+    const { startProgressWatcher } = await load('services/gateway/src/review/progress.ts');
+    acknowledgementWatch = startProgressWatcher(
+      await config.loadSlotVars('log-proof-1'),
+      path.join(taskDir, 'REVIEW.md'),
+      run.id,
+      'Review',
+      { contextId, role },
+    );
+    await acknowledgementWatch.ready;
+  }
   acknowledgement = {
     command: 'production mark start',
     phase: reviewAcknowledgement ? 'review' : 'worker',
@@ -328,6 +342,7 @@ for (const signal of ['SIGTERM', 'SIGINT'])
   process.on(signal, async () => {
     if (stopping) return;
     stopping = true;
+    if (acknowledgementWatch) await acknowledgementWatch.stop();
     for (const client of wss.clients) client.terminate();
     wss.close();
     server.closeAllConnections();

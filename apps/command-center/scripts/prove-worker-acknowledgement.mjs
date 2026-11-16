@@ -66,6 +66,7 @@ if (phase === 'review') {
     view = await read();
     if (
       view.runId === runId &&
+      view.panelPresent &&
       view.signalContexts.some(
         (entry) => entry.id === context.id && entry.lastSignalAt === context.lastSignalAt,
       )
@@ -80,6 +81,26 @@ if (phase === 'review') {
     ),
     'Observe the real accepted reviewer signal in the browser',
   );
+  assert(view.panelPresent, 'The verified review watch must provide a Step progress panel');
+  if (!view.panelOpen)
+    await cdp(
+      'click',
+      tab,
+      'run-detail >>> run-pipeline >>> [data-panel="run-step-progress"] button',
+    );
+  const mountEnd = Date.now() + 10000;
+  do {
+    view = await read();
+    if (view.panelOpen && view.stripMounted) break;
+    await delay(100);
+  } while (Date.now() < mountEnd);
+  assert(
+    view.panelOpen && view.stripMounted,
+    'Mount the actual review checklist renderer before asserting no acknowledgement',
+  );
+  await cdp('click', tab, 'run-detail >>> run-pipeline >>> run-checklist-progress >>> .counts');
+  view = await read();
+  assert(view.stripVisible, 'Keep the rendered review strip visible in the screenshot');
   assert.equal(
     view.acknowledgedAt,
     undefined,
@@ -87,7 +108,12 @@ if (phase === 'review') {
   );
   await mkdir(output, { recursive: true });
   await cdp('screenshot', tab, path.join(output, 'review-clock-not-acknowledged.png'));
-  assert.equal((await read()).acknowledgedAt, undefined);
+  const captured = await read();
+  assert(
+    captured.panelOpen && captured.stripMounted,
+    'The screenshot must keep the review renderer mounted',
+  );
+  assert.equal(captured.acknowledgedAt, undefined);
   const after = await readSource();
   assert(
     after.run.agentContexts.some(
