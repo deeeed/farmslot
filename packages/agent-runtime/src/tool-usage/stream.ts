@@ -58,9 +58,17 @@ export interface ToolUsageAdapter {
 /** Drops events before `time`; events without a time stay. */
 export function dropStreamBefore(stream: ToolUsageStream, time: number): void {
   const keep = (at: string | undefined) => !at || !(Date.parse(at) < time);
-  stream.tools.splice(0, stream.tools.length, ...stream.tools.filter((tool) => keep(tool.issuedAt)));
+  stream.tools.splice(
+    0,
+    stream.tools.length,
+    ...stream.tools.filter((tool) => keep(tool.issuedAt)),
+  );
   if (stream.tokens)
-    stream.tokens.splice(0, stream.tokens.length, ...stream.tokens.filter((sample) => keep(sample.at)));
+    stream.tokens.splice(
+      0,
+      stream.tokens.length,
+      ...stream.tokens.filter((sample) => keep(sample.at)),
+    );
   if (stream.compactions)
     stream.compactions.splice(
       0,

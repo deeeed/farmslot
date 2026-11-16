@@ -19,7 +19,13 @@ import {
 import { count, isoTime, isRecord, readJsonLines, text } from './jsonl.js';
 
 /** Item types native Codex does not publish as tools (agent-runtime/src/native/codex.ts). */
-const NOT_TOOLS = new Set(['userMessage', 'agentMessage', 'reasoning', 'plan', 'contextCompaction']);
+const NOT_TOOLS = new Set([
+  'userMessage',
+  'agentMessage',
+  'reasoning',
+  'plan',
+  'contextCompaction',
+]);
 
 function cumulativeTotal(usage: Record<string, unknown>): number {
   return usage.total_tokens != null
@@ -68,10 +74,19 @@ function codexParser(): StreamParser {
       const type = text(payload.type) ?? '';
       if (record.type === 'turn_context') {
         model = text(payload.model) ?? model;
-      } else if (record.type === 'event_msg' && type === 'item_completed' && isRecord(payload.item)) {
+      } else if (
+        record.type === 'event_msg' &&
+        type === 'item_completed' &&
+        isRecord(payload.item)
+      ) {
         const name = itemName(text(payload.item.type) ?? 'unknown');
         if (!NOT_TOOLS.has(name))
-          items.push({ id: text(payload.item.id), name, issuedAt: itemStart(payload, at), completedAt: at });
+          items.push({
+            id: text(payload.item.id),
+            name,
+            issuedAt: itemStart(payload, at),
+            completedAt: at,
+          });
       } else if (record.type === 'response_item' && type.endsWith('_call_output')) {
         const id = text(payload.call_id);
         if (id) completions.push({ id, completedAt: at });

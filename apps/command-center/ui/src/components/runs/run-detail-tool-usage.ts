@@ -62,7 +62,7 @@ function compactionsLabel(session: ToolUsageSessionView) {
   return session.compactions === null
     ? html` · <span title=${session.compactionsUnavailable ?? ''}>compactions not recorded</span>`
     : html` · ${session.compactions.toLocaleString()}
-        compaction${session.compactions === 1 ? '' : 's'}`;
+      compaction${session.compactions === 1 ? '' : 's'}`;
 }
 
 function renderSession(session: ToolUsageSessionView, showHeading: boolean) {

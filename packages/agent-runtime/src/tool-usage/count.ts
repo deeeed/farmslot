@@ -53,7 +53,10 @@ export function countToolUsage(
     steps: [],
     compactions: compactions?.length ?? null,
     ...(compactions === null
-      ? { compactionsUnavailable: stream.compactionsUnavailable ?? 'The transcript records no compactions' }
+      ? {
+          compactionsUnavailable:
+            stream.compactionsUnavailable ?? 'The transcript records no compactions',
+        }
       : {}),
   };
   const timed: Array<{ at: number; name: string }> = [];
@@ -69,7 +72,11 @@ export function countToolUsage(
     add(usage.toolCallsByName, tool.name);
   }
   const tokens = (stream.tokens ?? [])
-    .map((sample) => ({ at: Date.parse(sample.at), tokens: sample.tokens }))
+    .map((sample) => ({
+      at: Date.parse(sample.at),
+      tokens: sample.tokens,
+      costUsd: sample.costUsd,
+    }))
     .filter((sample) => Number.isFinite(sample.at) && inWindow(sample.at, start, end));
 
   const boundaries = marks
@@ -124,6 +131,7 @@ export function countToolUsage(
       toolCallsByName: {},
       totalTokens: stream.tokens ? 0 : null,
       compactions: compactions ? compactions.filter(inside).length : null,
+      costUsd: stream.tokens ? 0 : null,
     };
     for (const tool of timed)
       if (inside(tool.at)) {
@@ -131,7 +139,13 @@ export function countToolUsage(
         add(segment.toolCallsByName, tool.name);
       }
     for (const sample of tokens)
-      if (inside(sample.at)) segment.totalTokens = (segment.totalTokens ?? 0) + sample.tokens;
+      if (inside(sample.at)) {
+        segment.totalTokens = (segment.totalTokens ?? 0) + sample.tokens;
+        segment.costUsd =
+          segment.costUsd == null || sample.costUsd == null
+            ? null
+            : segment.costUsd + sample.costUsd;
+      }
     usage.steps.push(segment);
   }
   usage.toolCallsBeforeFirstMark = timed.filter((tool) => tool.at < boundaries[0].at).length;
@@ -171,6 +185,8 @@ export function mergeToolUsage(usages: ToolUsage[]): ToolUsage | null {
         continue;
       }
       known.toolCalls += step.toolCalls;
+      known.costUsd =
+        known.costUsd == null || step.costUsd == null ? null : known.costUsd + step.costUsd;
       known.compactions =
         (known.compactions ?? null) === null || (step.compactions ?? null) === null
           ? null

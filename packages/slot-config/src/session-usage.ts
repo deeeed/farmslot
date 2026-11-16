@@ -21,10 +21,10 @@ import path from 'node:path';
 
 import {
   type ChecklistMark,
-  measureToolUsage,
-  toolUsageAdapter,
   CLAUDE_PRICING,
+  measureToolUsage,
   OPENAI_PRICING,
+  toolUsageAdapter,
 } from '@farmslot/agent-runtime/tool-usage';
 
 import {
@@ -65,7 +65,6 @@ function inUsageWindow(timestamp: number, window: ParsedSessionUsageWindow): boo
 }
 
 // ─── Pricing tables ──────────────────────────────────────────────────────────
-
 
 // ─── Internal totals shape ───────────────────────────────────────────────────
 

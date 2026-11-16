@@ -47,7 +47,10 @@ function piParser(): StreamParser {
       tokens.push({
         at,
         tokens:
-          count(usage.input) + count(usage.output) + count(usage.cacheRead) + count(usage.cacheWrite),
+          count(usage.input) +
+          count(usage.output) +
+          count(usage.cacheRead) +
+          count(usage.cacheWrite),
         costUsd: typeof cost === 'number' && Number.isFinite(cost) ? cost : null,
       });
     },

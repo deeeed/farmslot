@@ -750,6 +750,8 @@ export interface SessionToolUsageSegment {
   totalTokens: number | null;
   /** Compactions in this segment; null when the runner records no compaction events. */
   compactions?: number | null;
+  /** USD of this segment's tokens; null when any of them has no recorded or listed price. */
+  costUsd?: number | null;
 }
 
 /** Tool calls of one agent session (or the sum of a run's sessions). */

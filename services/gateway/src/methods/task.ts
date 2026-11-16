@@ -56,6 +56,7 @@ import { getRun, listRuns } from '../runs/store.js';
 import { readAcceptanceStatusForDisplay } from '../tasks/acceptance-status.js';
 import { checklistTimingContext, isRecord } from '../tasks/checklist-timing.js';
 import { attachChecklistTiming } from '../tasks/checklist-timing-read.js';
+import { liveSpendFor, liveSpendSource } from '../tasks/live-spend.js';
 import { attachOperations } from '../tasks/operations.js';
 import {
   resolveTaskProgressMarkdownPath,
@@ -415,11 +416,19 @@ async function readTaskProgress(
       reconcileFinalStepFromSignal(result.structured);
     }
   }
+  // Read beside the existing reads, so the transcript tail adds no wait of its own.
+  const spendSource =
+    activeRun && !isTerminalRunStatus(activeRun.status)
+      ? liveSpendSource(activeRun, context)
+      : undefined;
+  const liveSpend = spendSource ? liveSpendFor(vars, spendSource) : undefined;
   if (result.structured) {
     await attachOperations(vars, effectiveMdPath, result.structured);
     await attachChecklistTiming(vars, effectiveMdPath, result.structured, activeRun, context);
   }
   await attachAcceptanceStatus(vars, effectiveMdPath, result, activeRun);
+  const spent = await liveSpend;
+  if (spent) result.liveSpend = spent;
 
   return result;
 }

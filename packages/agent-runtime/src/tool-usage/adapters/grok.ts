@@ -70,7 +70,11 @@ export const grokToolUsage: ToolUsageAdapter = {
       const params = isRecord(record.params) ? record.params : {};
       const update = isRecord(params.update) ? params.update : {};
       if (update.sessionUpdate !== 'auto_compact_completed') continue;
-      const meta = isRecord(record._meta) ? record._meta : isRecord(params._meta) ? params._meta : {};
+      const meta = isRecord(record._meta)
+        ? record._meta
+        : isRecord(params._meta)
+          ? params._meta
+          : {};
       const at = isoTime(meta.agentTimestampMs) ?? isoTime(record.timestamp);
       if (at) compactions.push({ at, ...tokensBefore(update.tokens_before) });
     }

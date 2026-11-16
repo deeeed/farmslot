@@ -30,7 +30,9 @@ export function text(value: unknown): string | undefined {
 
 /** `{ tokensBefore }` when the transcript records a usable count, else nothing. */
 export function tokensBefore(value: unknown): { tokensBefore?: number } {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? { tokensBefore: value } : {};
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? { tokensBefore: value }
+    : {};
 }
 
 export function count(value: unknown): number {

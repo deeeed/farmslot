@@ -8,12 +8,20 @@ import { nativeToolUsage } from './adapters/native.js';
 import { piToolUsage } from './adapters/pi.js';
 import { countToolUsage, type ToolUsage, type ToolUsageWindow } from './count.js';
 import type { ChecklistMark } from './ledger.js';
+import { LiveToolUsage } from './live.js';
 import type { ToolUsageAdapter } from './stream.js';
 
 export type { ToolUsage, ToolUsageSegment, ToolUsageWindow } from './count.js';
 export { countToolUsage, mergeToolUsage } from './count.js';
 export type { ChecklistMark } from './ledger.js';
 export { checklistMarks, checklistMarksFromSignal } from './ledger.js';
+export { LiveToolUsage, type LiveUsageSummary } from './live.js';
+export {
+  CLAUDE_PRICING,
+  type ClaudePricing,
+  OPENAI_PRICING,
+  type OpenaiPricing,
+} from './prices.js';
 export type {
   CompactionEvent,
   TokenSample,
@@ -21,7 +29,8 @@ export type {
   ToolUsageAdapter,
   ToolUsageStream,
 } from './stream.js';
-export { pairToolEvents } from './stream.js';
+export type { StreamParser } from './stream.js';
+export { dropStreamBefore, pairToolEvents } from './stream.js';
 
 const ADAPTERS: readonly ToolUsageAdapter[] = [
   piToolUsage,
@@ -48,4 +57,10 @@ export async function measureToolUsage(params: {
   if (!adapter) throw new Error(`No tool-usage adapter for runner ${params.runner}`);
   const stream = await adapter.read(params.sessionPath, { home: params.home });
   return countToolUsage(stream, params.marks ?? [], params.window);
+}
+
+/** A live reader for the runner's transcript; undefined when it is not one appendable JSONL file. */
+export function createLiveToolUsage(runner: string): LiveToolUsage | undefined {
+  const parser = toolUsageAdapter(runner)?.parser;
+  return parser ? new LiveToolUsage(runner, parser) : undefined;
 }

@@ -6,7 +6,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
 
-import { type ChecklistMark, countToolUsage, measureToolUsage, mergeToolUsage } from './index.js';
+import {
+  type ChecklistMark,
+  countToolUsage,
+  createLiveToolUsage,
+  measureToolUsage,
+  mergeToolUsage,
+} from './index.js';
 
 let dir = '';
 before(async () => {
@@ -128,10 +134,14 @@ test('cursor: tool_use without times counts as untimed', async () => {
   assert.deepEqual(marked.steps, []);
   assert.equal(marked.toolCallsBeforeFirstMark, null);
   assert.match(marked.stepsUnavailable ?? '', /no call times/);
-  const windowed = countToolUsage({ tools: [{ name: 'Read' }], tokens: null, compactions: [] }, marks, {
-    startedAt: t(0),
-    completedAt: t(5),
-  });
+  const windowed = countToolUsage(
+    { tools: [{ name: 'Read' }], tokens: null, compactions: [] },
+    marks,
+    {
+      startedAt: t(0),
+      completedAt: t(5),
+    },
+  );
   assert.deepEqual(windowed.steps, []);
   assert.equal(windowed.toolCallsBeforeFirstMark, null);
   assert.match(windowed.stepsUnavailable ?? '', /no call times/);
@@ -209,7 +219,10 @@ test('counter: a runner that records no compactions reports null with its reason
 });
 
 test('counter: no marks means no segments; tokenless runners report null', () => {
-  const none = countToolUsage({ tools: [{ name: 'bash', issuedAt: t(1) }], tokens: [], compactions: [] }, []);
+  const none = countToolUsage(
+    { tools: [{ name: 'bash', issuedAt: t(1) }], tokens: [], compactions: [] },
+    [],
+  );
   assert.equal(none.toolCallsBeforeFirstMark, null);
   assert.deepEqual(none.steps, []);
   const tokenless = countToolUsage(
@@ -239,10 +252,14 @@ test('merge: a session that ends between marks keeps its tail in that step', () 
       ['step', 2, 1, t(12)],
     ],
   );
-  const second = countToolUsage({ tools: [{ name: 'b', issuedAt: t(15) }], tokens: [], compactions: [] }, marks, {
-    startedAt: t(12),
-    completedAt: t(30),
-  });
+  const second = countToolUsage(
+    { tools: [{ name: 'b', issuedAt: t(15) }], tokens: [], compactions: [] },
+    marks,
+    {
+      startedAt: t(12),
+      completedAt: t(30),
+    },
+  );
   const merged = mergeToolUsage([first, second]);
   assert.equal(merged?.toolCalls, 3);
   assert.equal(merged?.toolCallsBeforeFirstMark, 1);
@@ -277,14 +294,22 @@ test('codex: an item starts at its recorded start time', async () => {
 });
 
 test('merge: a later session starts mid-run', () => {
-  const first = countToolUsage({ tools: [{ name: 'a', issuedAt: t(5) }], tokens: [], compactions: [] }, marks, {
-    startedAt: t(0),
-    completedAt: t(12),
-  });
-  const second = countToolUsage({ tools: [{ name: 'b', issuedAt: t(15) }], tokens: [], compactions: [] }, marks, {
-    startedAt: t(12),
-    completedAt: t(30),
-  });
+  const first = countToolUsage(
+    { tools: [{ name: 'a', issuedAt: t(5) }], tokens: [], compactions: [] },
+    marks,
+    {
+      startedAt: t(0),
+      completedAt: t(12),
+    },
+  );
+  const second = countToolUsage(
+    { tools: [{ name: 'b', issuedAt: t(15) }], tokens: [], compactions: [] },
+    marks,
+    {
+      startedAt: t(12),
+      completedAt: t(30),
+    },
+  );
   const merged = mergeToolUsage([first, second]);
   assert.equal(merged?.toolCalls, 2);
   assert.equal(merged?.toolCallsBeforeFirstMark, 1);
@@ -296,4 +321,42 @@ test('merge: a later session starts mid-run', () => {
       ['after-last-mark', undefined],
     ],
   );
+});
+
+test('live: any chunking of a transcript gives the full read, and closed steps are frozen', async () => {
+  const lines = [1, 5, 12, 15, 22, 25].map((second) =>
+    JSON.stringify({
+      type: 'message',
+      id: `m${second}`,
+      timestamp: t(second),
+      message: {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: `c${second}`, name: 'bash' }],
+        usage: { input: 10, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0.5 } },
+      },
+    }),
+  );
+  lines.splice(3, 0, JSON.stringify({ type: 'compaction', timestamp: t(14), tokensBefore: 900 }));
+  const text = `${lines.join('\n')}\n`;
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'live-usage-'));
+  const file = path.join(dir, 'pi.jsonl');
+  await writeFile(file, text);
+  const full = await measureToolUsage({ runner: 'pi', sessionPath: file, marks });
+  await rm(dir, { recursive: true, force: true });
+  for (const size of [1, 7, 64, text.length]) {
+    const live = createLiveToolUsage('pi')!;
+    let summary;
+    for (let at = 0; at < text.length; at += size) {
+      live.append(Buffer.from(text.slice(at, at + size)));
+      summary = live.summary(marks);
+    }
+    assert.equal(summary!.toolCalls, full.toolCalls, `chunk ${size}`);
+    assert.equal(summary!.compactions, 1);
+    assert.equal(summary!.costUsd, 3);
+    assert.deepEqual(
+      summary!.steps.map((step) => [step.stepNumber ?? 'end', step.toolCalls, step.compactions]),
+      full.steps.map((step) => [step.stepNumber ?? 'end', step.toolCalls, step.compactions]),
+    );
+  }
+  assert.equal(createLiveToolUsage('cursor'), undefined, 'cursor has no appendable transcript');
 });

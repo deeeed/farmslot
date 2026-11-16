@@ -1,0 +1,1 @@
+- `SessionToolUsage` and its segments carry `compactions` (null with a reason when the runner records none) and per-step `costUsd`; `task.progress` returns `liveSpend`, the viewed session's tokens, cost, compactions and tool calls so far, per checklist step.
