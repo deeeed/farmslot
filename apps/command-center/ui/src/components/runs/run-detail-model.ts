@@ -240,19 +240,9 @@ export function shouldAcceptTaskProgressUpdate(
 export function acceptanceLedgerRead(
   query: ResourceQueryController<TaskProgressResult> | undefined,
   now = Date.now(),
-  run?: Pick<Run, 'status'> | null,
 ): { error: string | null; pending: boolean } {
   if (!query) return { error: null, pending: true };
   const { data } = query.state;
-  // No worker watch exists yet during preparation. Keep real read failures,
-  // held ledger data and missing watches after dispatch visible.
-  if (
-    !data &&
-    query.state.error?.code === 'RESOURCE_OBSERVATION_UNSUPPORTED' &&
-    run &&
-    ['created', 'slot-finding', 'grading', 'writing-task', 'preparing'].includes(run.status)
-  )
-    return { error: null, pending: true };
   const failure = readFailureText(query, now);
   return {
     error: failure ?? data?.acceptanceStatusError ?? null,

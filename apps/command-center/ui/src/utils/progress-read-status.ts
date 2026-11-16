@@ -4,6 +4,8 @@ import {
   type ResourceQueryState,
 } from '@farmslot/protocol/client-cache';
 
+import { isExpectedReadAbsence } from './resource-read-status.js';
+
 export interface ProgressReadNotice {
   kind: 'saved' | 'error';
   text: string;
@@ -15,15 +17,7 @@ export function progressReadNotice(
   state: ResourceQueryState,
   connected = true,
 ): ProgressReadNotice | undefined {
-  if (
-    state.status === 'unsupported' ||
-    [
-      'RESOURCE_OBSERVATION_UNSUPPORTED',
-      'RESOURCE_OBSERVATION_UNAVAILABLE',
-      'PROGRESS_OWNER_CHANGED',
-    ].includes(state.error?.code ?? '')
-  )
-    return undefined;
+  if (isExpectedReadAbsence(state)) return undefined;
   if (connected && state.error && !isSupersededRead(state.error))
     return { kind: 'error', text: 'Could not read progress', detail: state.error.message };
   if (!heldDataIsSaved(state, connected)) return undefined;

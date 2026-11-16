@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const output = process.env.OPERATION_LOG_PROOF_OUTPUT;
 const ledgerFailure = process.env.ACCEPTANCE_LEDGER_ERROR_PROOF === '1';
+const expectedAbsence = process.env.ACCEPTANCE_ABSENCE_PROOF === '1';
 const port = Number(process.env.GATEWAY_PORT);
 assert(output && Number.isSafeInteger(port) && port > 0);
 const source = fileURLToPath(new URL('../../../', import.meta.url));
@@ -89,6 +90,36 @@ updateRun(run.id, {
         : {},
   })),
 });
+// Optional setup-only runs exercise absent observations through production RPCs.
+// No worker or browser state is created or changed by the proof driver.
+const absenceRuns = {};
+if (expectedAbsence) {
+  const preparingTask = path.join(config.getOrchestratorTaskRoot('log-proof'), 'preparing-absence');
+  await mkdir(preparingTask, { recursive: true });
+  await writeFile(path.join(preparingTask, 'TASK.md'), '# Preparing task\n');
+  await writeFile(path.join(preparingTask, 'CHECKLIST.md'), '- [ ] Worker has not started\n');
+  for (const status of ['created', 'preparing']) {
+    const empty = createRun(
+      {
+        project: 'log-proof',
+        flowType: 'dev',
+        ticketOrPr: `${status} absence proof`,
+        mode: 'interactive',
+        slotId: 'log-proof-1',
+      },
+      { createdByPrincipalId: person.id, nativeOwnerPrincipalId: person.id },
+    );
+    updateRun(empty.id, {
+      status,
+      ...(status === 'preparing' ? { taskFile: path.join(preparingTask, 'TASK.md') } : {}),
+      steps: empty.steps.map((step) => ({
+        ...step,
+        status: status === 'preparing' && step.name === 'prepare' ? 'running' : 'pending',
+      })),
+    });
+    absenceRuns[status] = empty.id;
+  }
+}
 // Setup-time recorded progress uses the production task reader, which discovers
 // operation records from disk. No progress payload is injected into the browser.
 const recorded = path.join(config.getOrchestratorTaskRoot('log-proof'), 'proof');
@@ -175,7 +206,15 @@ await mkdir(output, { recursive: true });
 await writeFile(
   path.join(output, 'fixture.json'),
   JSON.stringify(
-    { root, runId: run.id, paths, clientHome: path.join(root, 'client'), url, pid: process.pid },
+    {
+      root,
+      runId: run.id,
+      paths,
+      ...(expectedAbsence ? { absenceRuns } : {}),
+      clientHome: path.join(root, 'client'),
+      url,
+      pid: process.pid,
+    },
     null,
     2,
   ),

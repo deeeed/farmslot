@@ -1,0 +1,1 @@
+- Keep expected missing or pending observations neutral across run and slot panels, while preserving real read and ledger parse errors.

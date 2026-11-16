@@ -41,6 +41,20 @@ test('reads that keep being superseded are named after the grace period, held or
   await flush();
   const socket = fake.sockets.at(-1)!;
   const lastRead = () => socket.sent.filter(({ method }) => method === 'run.list').at(-1)!;
+  // An absent producer is not a failure streak, including while its retry is loading.
+  for (const code of [
+    'RESOURCE_OBSERVATION_UNSUPPORTED',
+    'RESOURCE_OBSERVATION_UNAVAILABLE',
+    'PROGRESS_OWNER_CHANGED',
+  ]) {
+    socket.failure(lastRead().id, { code, message: 'Observation not available yet' });
+    await flush();
+    assert.equal(panel.failingSince, undefined, code);
+    assert.equal(readFailureText(panel, Date.now() + 120000), undefined, code);
+    void panel.retry();
+    await flush();
+    assert.equal(readFailureText(panel, Date.now() + 120000), undefined, code);
+  }
   const superseded = {
     code: 'RESOURCE_OBSERVATION_CHANGED',
     message: 'The file observation changed during this read.',

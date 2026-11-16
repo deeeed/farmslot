@@ -12,7 +12,11 @@ const runId = process.env.FARMSLOT_AC_PROOF_RUN_ID;
 const target = process.env.FARMSLOT_AC_PROOF_TAB;
 const phase = process.env.FARMSLOT_AC_PROOF_PHASE ?? 'task';
 assert(output && runId && target, 'Select output, run UUID and owned CDP tab');
-assert(['pre-task', 'task', 'pre-worker', 'read-failure'].includes(phase));
+assert(
+  ['pre-task', 'task', 'pre-worker', 'no-watch', 'fresh', 'preparing', 'read-failure'].includes(
+    phase,
+  ),
+);
 const execute = promisify(execFile);
 const cdp = async (...args) =>
   JSON.parse(
@@ -72,15 +76,24 @@ if (phase === 'pre-task') {
     dom.preparing || dom.rows.length,
     'Show registered criteria or a quiet task preparation state',
   );
-} else if (phase === 'pre-worker') {
-  assert.equal(run.status, 'preparing', 'The live run left Preparing before capture');
-  assert.equal(dom.status, 'preparing', 'The live run left Preparing before capture');
+} else if (phase === 'fresh' || phase === 'preparing') {
+  assert.equal(run.status, phase === 'fresh' ? 'created' : 'preparing');
+  assert.equal(dom.status, run.status);
+  if (phase === 'fresh') assert(!run.taskFile, 'A fresh run has no task yet');
+  assert(!dom.ledgerDataError, 'No ledger exists yet');
+  assert.equal(dom.errors.length, 0);
+} else if (phase === 'pre-worker' || phase === 'no-watch') {
+  if (phase === 'pre-worker') {
+    assert.equal(run.status, 'preparing', 'The run left Preparing before capture');
+    assert.equal(dom.status, 'preparing', 'The run left Preparing before capture');
+  }
   assert.equal(
     dom.ledgerReadCode,
     'RESOURCE_OBSERVATION_UNSUPPORTED',
     'The live no-watch state ended before capture',
   );
-  assert.equal(dom.hasProgressData, false, 'The live no-watch state ended before capture');
+  if (phase === 'pre-worker')
+    assert.equal(dom.hasProgressData, false, 'The no-watch state ended before capture');
   assert.equal(dom.errors.length, 0);
 } else if (phase === 'read-failure') {
   assert(dom.ledgerDataError, 'Require a real ledger read failure from the backend');
@@ -103,14 +116,16 @@ if (phase === 'pre-task') {
 await mkdir(output, { recursive: true });
 await cdp('screenshot', target, path.join(output, `${phase}.png`));
 
-if (phase === 'pre-worker') {
+if (['pre-worker', 'no-watch', 'fresh', 'preparing'].includes(phase)) {
   const after = await cdp(
     'eval',
     target,
     '--file',
     path.join(source, 'apps/command-center/scripts/probes/acceptance-panel-read.js'),
   );
-  assert.equal(after.status, 'preparing', 'The screenshot must still show live preparation');
+  assert.equal(after.status, dom.status, 'The screenshot must preserve the run phase');
+  if (phase === 'pre-worker' || phase === 'no-watch')
+    assert.equal(after.ledgerReadCode, 'RESOURCE_OBSERVATION_UNSUPPORTED');
   assert.equal(after.errors.length, 0);
 }
 
