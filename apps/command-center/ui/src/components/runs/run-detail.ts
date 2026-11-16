@@ -60,6 +60,7 @@ import { gateway } from '../../gateway-client.js';
 import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { type AppState, getState, subscribe } from '../../state.js';
 import { copyTextToClipboard } from '../../utils/clipboard.js';
+import { progressReadNotice } from '../../utils/progress-read-status.js';
 import { hashParams, navigateHash } from '../../utils/url-state.js';
 import {
   type AcceptanceEvidenceOpen,
@@ -1792,6 +1793,10 @@ export class RunDetail extends RunDetailState {
       prStatus: this.prStatus,
       siblings: this.siblings,
       taskProgress: this.taskProgress,
+      taskProgressNotice: progressReadNotice(
+        this._progressObservation,
+        gateway.connectionState === 'connected',
+      ),
       evidenceModel: this.evidenceModel,
       acceptanceStatus: this.acceptanceStatus,
       acceptanceCriteria: this.acceptanceCriteria,

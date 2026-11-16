@@ -31,6 +31,7 @@ import './run-checklist-progress.js';
 import './run-ci-watch-status.js';
 
 import { gateway } from '../../gateway-client.js';
+import type { ProgressReadNotice } from '../../utils/progress-read-status.js';
 import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 import {
   type AcceptanceEvidenceOpen,
@@ -99,6 +100,7 @@ export class RunPipeline extends LitElement {
   private readonly subtaskOpen = new SubtaskOpenState();
   @property({ attribute: false }) run!: Run;
   @property({ attribute: false }) taskProgress?: TaskProgressStructured;
+  @property({ attribute: false }) taskProgressNotice?: ProgressReadNotice;
   /** The run's acceptance ledger (ADR-060); the panel is hidden without one. */
   @property({ attribute: false }) evidenceModel?: EvidenceReviewModel | null;
   @property({ attribute: false }) acceptanceStatus?: AcceptanceStatusLedger | null;
@@ -281,6 +283,9 @@ export class RunPipeline extends LitElement {
     return html`<run-checklist-progress
       .run=${this.run}
       .progress=${this.taskProgress}
+      .showSubtasks=${true}
+      .stale=${this.taskProgressNotice?.kind === 'saved'}
+      .error=${this.taskProgressNotice?.kind === 'error' ? this.taskProgressNotice.text : undefined}
       .acknowledgedAt=${checklistProgressExecution(this.taskProgress, this.run)?.acknowledgedAt}
     ></run-checklist-progress>`;
   }

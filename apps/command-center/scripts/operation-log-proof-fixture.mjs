@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,7 +11,9 @@ import { promisify } from 'node:util';
 
 const output = process.env.OPERATION_LOG_PROOF_OUTPUT;
 const ledgerFailure = process.env.ACCEPTANCE_LEDGER_ERROR_PROOF === '1';
-const workerAcknowledgement = ['1', 'review'].includes(process.env.WORKER_ACKNOWLEDGEMENT_PROOF);
+const childProgress = process.env.CHILD_PROGRESS_PROOF === '1';
+const workerAcknowledgement =
+  childProgress || ['1', 'review'].includes(process.env.WORKER_ACKNOWLEDGEMENT_PROOF);
 const reviewAcknowledgement = process.env.WORKER_ACKNOWLEDGEMENT_PROOF === 'review';
 const expectedAbsence = process.env.ACCEPTANCE_ABSENCE_PROOF === '1';
 const port = Number(process.env.GATEWAY_PORT);
@@ -194,7 +196,15 @@ const { statusFile } = await load('services/gateway/src/core/state.ts');
 await writeFile(
   statusFile,
   JSON.stringify({
-    slots: [{ slot: 'log-proof-1', lifecycle: 'held', current_run_id: run.id, task_file: 'proof' }],
+    slots: [
+      {
+        slot: 'log-proof-1',
+        machine: 'log-proof',
+        lifecycle: 'held',
+        current_run_id: run.id,
+        task_file: 'proof',
+      },
+    ],
   }),
 );
 let acknowledgement;
@@ -248,6 +258,40 @@ if (workerAcknowledgement) {
     role,
     contextId,
   );
+  if (childProgress) {
+    const marker = path.join(source, 'packages/agent-runtime/scripts/mark-checklist-step.cjs');
+    const child =
+      '# Recipe proof\n\n- [ ] Discover the target\n- [ ] Record the proof\n- [ ] Finish the child\n';
+    await promisify(execFile)(process.execPath, [
+      marker,
+      taskDir,
+      'sub',
+      'start',
+      'cook',
+      '--step',
+      '1',
+      '--from',
+      `inline:${child}`,
+    ]);
+    await promisify(execFile)(process.execPath, [marker, taskDir, 'sub', 'cook', '1']);
+    // Preserve the actual marker-created records for the retained worker reader.
+    // Counts and statuses are derived by the gateway, never seeded as UI payloads.
+    await cp(path.join(taskDir, 'subtasks'), path.join(recorded, 'subtasks'), { recursive: true });
+    const mirror = async (directory) => {
+      for (const entry of await readdir(directory, { withFileTypes: true })) {
+        const file = path.join(directory, entry.name);
+        if (entry.isDirectory()) await mirror(file);
+        else await cp(file, `${file}.worker`);
+      }
+    };
+    await mirror(path.join(recorded, 'subtasks'));
+    await cp(path.join(taskDir, 'CHECKLIST.md'), path.join(recorded, 'CHECKLIST.md.worker'));
+  }
+  if (childProgress) {
+    const { watchSlot, unwatchSlot } = await load('services/gateway/src/tasks/watcher.ts');
+    await watchSlot('log-proof-1', { runId: run.id });
+    acknowledgementWatch = { stop: () => unwatchSlot('log-proof-1') };
+  }
   if (reviewAcknowledgement) {
     const { startProgressWatcher } = await load('services/gateway/src/review/progress.ts');
     acknowledgementWatch = startProgressWatcher(
