@@ -6,7 +6,7 @@
 
 ## 0.25.8 - 2026-11-16
 
-- An omitted PI effort is high for every selection and picker. Claude, Codex, and Cursor defaults stay as they are.
+- Use the installed protocol's PI effort default when a native host omits it, and show only supported defaults in pickers.
 
 - Align exact dependencies with the prepared-source-witness patch cohort.
 - Show the active recorded child checklist beneath its parent progress in Run Detail, keeping parent and child counts separate.
