@@ -9,7 +9,11 @@ import {
   trimRunForList,
 } from '@farmslot/protocol';
 
-import { checklistProgressIsLive, checklistProgressView } from '../src/checklist-progress.js';
+import {
+  checklistProgressExecution,
+  checklistProgressIsLive,
+  checklistProgressView,
+} from '../src/checklist-progress.js';
 import {
   acceptsRunChecklistProgress,
   runChecklistProgressTarget,
@@ -305,4 +309,59 @@ test('the CI-fix checklist is the same from the served slim row, the full run an
   assert.deepEqual([expected?.completed, expected?.total], [2, 4]);
   assert.deepEqual(runChecklistProgressView(runListRow(full), null), expected);
   assert.deepEqual(runChecklistProgressView(trimRunForList(full), null), expected);
+});
+
+test('worker acknowledgement uses the first accepted signal, never the launch or latest mark', () => {
+  const input = progress();
+  input.completedSteps = 0;
+  input.phases[0].completedSteps = 0;
+  input.phases[0].steps.forEach((step) => {
+    step.status = 'pending';
+  });
+  input.timing = {
+    schemaVersion: 1,
+    source: 'CHECKLIST.md',
+    events: [],
+    startedAt: '2026-11-16T01:00:00Z',
+  };
+  const current = run({
+    status: 'monitoring',
+    activeTaskFile: undefined,
+    steps: [{ name: 'monitor', status: 'running' }],
+    agentContexts: [
+      {
+        id: 'worker',
+        role: 'dev',
+        label: 'Worker',
+        status: 'launching',
+        runId: 'run-1',
+        slotId: 'slot-1',
+        taskFile: 'tasks/test/TASK.md',
+        startedAt: '2026-11-16T00:59:00Z',
+        attemptStartedAt: '2026-11-16T01:00:00Z',
+      },
+    ],
+  });
+  assert.equal(checklistProgressExecution(input, current)?.acknowledgedAt, undefined);
+  const context = current.agentContexts![0];
+  context.status = 'working';
+  context.signalAttemptId = 'observed-attempt';
+  context.attemptStartedAt = '2026-11-16T01:00:07Z';
+  context.lastSignalAt = '2026-11-16T01:00:07Z';
+  assert.equal(checklistProgressExecution(input, current)?.acknowledgedAt, '2026-11-16T01:00:07Z');
+  assert.equal(runChecklistProgressView(current, input)?.counts, '0/8');
+  context.lastSignalAt = '2026-11-16T01:01:15Z';
+  assert.equal(checklistProgressExecution(input, current)?.acknowledgedAt, '2026-11-16T01:00:07Z');
+  current.agentContexts!.push({
+    ...context,
+    id: 'nested',
+    role: 'subtask',
+    taskFile: 'tasks/test/subtasks/nested/CHECKLIST.md',
+    attemptStartedAt: '2026-11-16T01:02:00Z',
+    lastSignalAt: '2026-11-16T01:02:00Z',
+    signalAttemptId: 'nested-attempt',
+  });
+  assert.equal(checklistProgressExecution(input, current)?.acknowledgedAt, '2026-11-16T01:00:07Z');
+  context.signalAttemptId = undefined;
+  assert.equal(checklistProgressExecution(input, current)?.acknowledgedAt, undefined);
 });

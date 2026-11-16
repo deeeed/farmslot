@@ -1,13 +1,16 @@
 // Disposable real gateway and files for the operation-log browser proof. No worker is launched.
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 
 const output = process.env.OPERATION_LOG_PROOF_OUTPUT;
 const ledgerFailure = process.env.ACCEPTANCE_LEDGER_ERROR_PROOF === '1';
+const workerAcknowledgement = process.env.WORKER_ACKNOWLEDGEMENT_PROOF === '1';
 const port = Number(process.env.GATEWAY_PORT);
 assert(output && Number.isSafeInteger(port) && port > 0);
 const source = fileURLToPath(new URL('../../../', import.meta.url));
@@ -94,7 +97,10 @@ updateRun(run.id, {
 const recorded = path.join(config.getOrchestratorTaskRoot('log-proof'), 'proof');
 await mkdir(path.join(recorded, 'artifacts/operations'), { recursive: true });
 await writeFile(path.join(recorded, 'TASK.md'), '# Operation log proof\n');
-const checklist = '# Worker\n\n- [x] **1. Inspect operation logs**\n';
+const checklist = workerAcknowledgement
+  ? '# Worker\n\n- [ ] **1. Read the task**\n- [ ] **2. Finish the work**\n'
+  : '# Worker\n\n- [x] **1. Inspect operation logs**\n';
+if (workerAcknowledgement) await writeFile(path.join(taskDir, 'CHECKLIST.md'), checklist);
 await writeFile(path.join(recorded, 'CHECKLIST.md'), checklist);
 await writeFile(path.join(recorded, 'CHECKLIST.md.worker'), checklist);
 if (ledgerFailure)
@@ -102,7 +108,7 @@ if (ledgerFailure)
     path.join(recorded, 'artifacts/acceptance-status.json'),
     '{ malformed ledger JSON',
   );
-for (const id of ids) {
+for (const id of workerAcknowledgement ? [] : ids) {
   await writeFile(
     path.join(recorded, 'artifacts/operations', `${id}.json`),
     JSON.stringify({
@@ -128,6 +134,49 @@ await writeFile(
     slots: [{ slot: 'log-proof-1', lifecycle: 'held', current_run_id: run.id, task_file: 'proof' }],
   }),
 );
+let acknowledgement;
+if (workerAcknowledgement) {
+  const { upsertAgentContext } = await load('services/gateway/src/agents/contexts.ts');
+  const { applyRunningWorkerSignalToContext } = await load(
+    'services/gateway/src/tasks/worker-signal-context.ts',
+  );
+  const { normalizeWorkerSignal } = await load('services/gateway/src/tasks/worker-signals.ts');
+  const launchedAt = new Date(Date.now() - 1000).toISOString();
+  await upsertAgentContext(run.id, 'dev', {
+    id: 'ack-worker',
+    label: 'Worker',
+    status: 'launching',
+    taskFile: path.join(taskDir, 'TASK.md'),
+    signalFile: path.join(taskDir, 'SIGNAL.json'),
+    startedAt: launchedAt,
+    attemptStartedAt: launchedAt,
+  });
+  // Execute the actual marker. The acknowledgement is adopted from its signal,
+  // not seeded into the run record or injected into the browser.
+  await promisify(execFile)(process.execPath, [
+    path.join(source, 'packages/agent-runtime/scripts/mark-checklist-step.cjs'),
+    taskDir,
+    'start',
+  ]);
+  const normalized = normalizeWorkerSignal(
+    JSON.parse(await readFile(path.join(taskDir, 'SIGNAL.json'), 'utf8')),
+  );
+  assert(normalized.ok, 'The real marker must emit a valid signal');
+  assert.equal(normalized.signal.step, 'started');
+  await applyRunningWorkerSignalToContext(
+    'log-proof-1',
+    run.id,
+    normalized.signal,
+    'dev',
+    'ack-worker',
+  );
+  acknowledgement = {
+    command: 'production mark start',
+    timestamp: normalized.signal.timestamp,
+    signalAttemptId: normalized.signal.attemptId,
+    launchedAt,
+  };
+}
 const { serveRunArtifact } = await load('services/gateway/src/methods/filesystem.ts');
 const { createWebSocketServer } = await load('services/gateway/src/server.ts');
 const server = createServer((request, response) => {
@@ -152,12 +201,13 @@ const server = createServer((request, response) => {
 const wss = createWebSocketServer(server, auth);
 await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
 const url = `ws://127.0.0.1:${port}/ws`;
-const cliSession = ledgerFailure
-  ? await auth.writer.exchangePersonCredential(credential.secret, {
-      deviceName: 'Ledger failure proof',
-      deviceKind: 'cli',
-    })
-  : undefined;
+const cliSession =
+  ledgerFailure || workerAcknowledgement
+    ? await auth.writer.exchangePersonCredential(credential.secret, {
+        deviceName: workerAcknowledgement ? 'Worker acknowledgement proof' : 'Ledger failure proof',
+        deviceKind: 'cli',
+      })
+    : undefined;
 await writeFile(
   path.join(root, 'client/gateways.json'),
   JSON.stringify({
@@ -165,7 +215,13 @@ await writeFile(
     gateways: {
       'operation-log-proof': { url, authMode: 'token', secret: credential.secret },
       ...(cliSession
-        ? { 'ledger-error-cli': { url, authMode: 'token', secret: cliSession.accessToken } }
+        ? {
+            [workerAcknowledgement ? 'worker-ack-cli' : 'ledger-error-cli']: {
+              url,
+              authMode: 'token',
+              secret: cliSession.accessToken,
+            },
+          }
         : {}),
     },
   }),
@@ -175,7 +231,15 @@ await mkdir(output, { recursive: true });
 await writeFile(
   path.join(output, 'fixture.json'),
   JSON.stringify(
-    { root, runId: run.id, paths, clientHome: path.join(root, 'client'), url, pid: process.pid },
+    {
+      root,
+      runId: run.id,
+      paths,
+      clientHome: path.join(root, 'client'),
+      url,
+      pid: process.pid,
+      ...(acknowledgement ? { acknowledgement } : {}),
+    },
     null,
     2,
   ),

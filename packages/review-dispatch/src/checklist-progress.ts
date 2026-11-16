@@ -67,6 +67,8 @@ export interface ChecklistProgressOptions {
 
 export interface ChecklistProgressExecution {
   active: boolean;
+  /** First accepted worker signal for this attempt, never its launch timestamp. */
+  acknowledgedAt?: string;
   finishedAt?: string;
 }
 
@@ -82,13 +84,16 @@ export function checklistProgressExecution(
     return name === 'TASK.md' ? 'CHECKLIST.md' : name;
   };
   const name = checklistName(file);
-  const context = [...(run.agentContexts ?? [])]
+  const contexts = [...(run.agentContexts ?? [])]
     .filter((entry) => name && checklistName(entry.taskFile) === name)
     .sort((a, b) =>
       (b.attemptStartedAt ?? b.startedAt ?? '').localeCompare(
         a.attemptStartedAt ?? a.startedAt ?? '',
       ),
-    )[0];
+    );
+  const context = contexts[0];
+  // A child may also use CHECKLIST.md; its start must not replace the worker's acknowledgement.
+  const worker = contexts.find((entry) => entry.role !== 'subtask');
   const activity = runActivityView(run);
   const active = Boolean(
     activity && (activity.ownerStepName !== 'human-gate' || activity.kind !== 'step'),
@@ -96,6 +101,12 @@ export function checklistProgressExecution(
   return {
     active: active && (!context || ['working', 'launching'].includes(context.status)),
     finishedAt: context?.completedAt ?? run.completedAt ?? undefined,
+    ...(worker?.signalAttemptId &&
+    worker.status !== 'launching' &&
+    Number.isFinite(Date.parse(worker.attemptStartedAt ?? '')) &&
+    Date.parse(worker.lastSignalAt ?? '') >= Date.parse(worker.attemptStartedAt ?? '')
+      ? { acknowledgedAt: worker.attemptStartedAt }
+      : {}),
   };
 }
 
