@@ -1,0 +1,1 @@
+- Show registered and supplied acceptance text with a diff when a recipe claim conflicts with the task, preserving verbatim matching.

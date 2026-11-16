@@ -1,0 +1,1 @@
+- Keep independent reviewer recipe replays unbound through a scoped diagnostic environment setting, preserving scratch output and worker acceptance evidence across old and new harness versions.

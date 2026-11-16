@@ -1,0 +1,2 @@
+- Refuse unbound recipe execution in checkouts with task storage unless explicit diagnostic mode is selected, with a same-invocation task-binding recovery command; reject conflicting bound-task and diagnostic options.
+- Refuse missing required task action implementations before execution and report the declared root and exact script lookup paths.
