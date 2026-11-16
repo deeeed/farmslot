@@ -25,6 +25,7 @@ import { type ProjectSourceContext, withProjectSources } from '@farmslot/slot-co
 import { farmslotRoot } from '../projects/repo-root.js';
 import { beginRunArchive, endRunArchive } from '../run-lifecycle/archive-fence.js';
 import { runnerDefaultSafetyTier } from '../runners/registry.js';
+import { captureRunCreationRequest } from '../sources/creation-request.js';
 
 import {
   archiveRun,
@@ -286,6 +287,51 @@ test('createRun freezes a task note and omits a blank one', async (t) => {
       }),
     /taskNote applies only when Farmslot generates TASK.md/,
   );
+});
+
+test('createRun trims a supplied create request note and drops a blank one', async (t) => {
+  const note =
+    'This is an evaluation. Work only in this checkout. Do not search other checkouts, branches, PRs, git history beyond the base, or the web for an existing fix.';
+  const sources = lockedProjectSources();
+  const padded = {
+    flowType: 'fix-bug' as const,
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-override-note`,
+    taskNote: `  ${note}  `,
+    model: 'kept-model',
+  };
+  const paddedRequest = captureRunCreationRequest(padded);
+  assert.equal(paddedRequest.taskNote, `  ${note}  `);
+  const withNote = withProjectSources(sources, () =>
+    createRun(
+      { ...padded, taskNote: note, model: 'planner-model' },
+      { dispatchRequest: paddedRequest },
+    ),
+  );
+  t.after(() => cleanupRun(withNote.id));
+  assert.equal(withNote.taskNote, note);
+  assert.equal(withNote.metrics.model, 'planner-model');
+  assert.ok(withNote.dispatchRequest);
+  assert.equal(withNote.dispatchRequest.taskNote, note);
+  assert.equal(withNote.dispatchRequest.model, 'kept-model');
+
+  const blankCaller = {
+    flowType: 'fix-bug' as const,
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-override-blank`,
+    taskNote: '   ',
+    model: 'kept-model',
+  };
+  const blankRequest = captureRunCreationRequest(blankCaller);
+  assert.equal(blankRequest.taskNote, '   ');
+  const blank = withProjectSources(sources, () =>
+    createRun(blankCaller, { dispatchRequest: blankRequest }),
+  );
+  t.after(() => cleanupRun(blank.id));
+  assert.equal('taskNote' in blank, false);
+  assert.ok(blank.dispatchRequest);
+  assert.equal('taskNote' in blank.dispatchRequest, false);
+  assert.equal(blank.dispatchRequest.model, 'kept-model');
 });
 
 test('createRun rejects domain names outside the slug contract and drops blank ones', async (t) => {

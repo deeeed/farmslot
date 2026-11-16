@@ -904,18 +904,18 @@ function normalizeTaskNote(params: RunCreateParams): string | undefined {
   return note;
 }
 
-/** Freeze the accepted note. A caller-supplied request is kept as given. */
+/** Trim or drop taskNote on the request that will be frozen. Other fields stay. */
 function creationRequestForFreeze(
   params: RunCreateParams,
-  taskNote: string | undefined,
   override: RunCreateParams | undefined,
 ): RunCreateParams {
-  if (override) return override;
+  const selected = override ?? params;
+  const taskNote = normalizeTaskNote(selected);
   if (!taskNote) {
-    const { taskNote: _omitted, ...rest } = params;
+    const { taskNote: _omitted, ...rest } = selected;
     return rest;
   }
-  return { ...params, taskNote };
+  return { ...selected, taskNote };
 }
 
 export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuildOptions): Run {
@@ -1251,7 +1251,7 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
   run.sourcePlan = planRunSources(run.id, params.slotId);
   if (run.sourcePlan)
     run.dispatchRequest = captureRunCreationRequest(
-      creationRequestForFreeze(params, taskNote, options?.dispatchRequest),
+      creationRequestForFreeze(params, options?.dispatchRequest),
     );
   return run;
 }
