@@ -4,7 +4,11 @@ import type { ResourceQuery, ResourceQueryState } from '@farmslot/protocol/clien
 import { NotificationTrayModel, type TrayItem } from './notification-tray-model.js';
 import { notify } from './notifications.js';
 import { progressReadNotice } from './progress-read-status.js';
-import { heldDataIsSaved, isSupersededRead } from './resource-read-status.js';
+import {
+  heldDataIsSaved,
+  isExpectedReadAbsence,
+  isSupersededRead,
+} from './resource-read-status.js';
 
 export const notificationTray = new NotificationTrayModel((item) =>
   notify(item.title, {
@@ -78,45 +82,39 @@ export function publishReadNotice(
     );
     return;
   }
+  if (isExpectedReadAbsence(state)) {
+    notificationTray.clear(source);
+    return;
+  }
   const label = labels[query.method] ?? 'This view';
   const error = isSupersededRead(state.error) ? undefined : state.error;
   const stale = heldDataIsSaved(state, context.connected);
   const target = readRoute(query, route);
   const missing = error?.code === 'RUN_NOT_FOUND';
-  const unsupported = query.live && state.status === 'unsupported';
   const item: TrayItem | undefined = missing
     ? undefined
-    : unsupported
+    : error
       ? {
-          id: `unsupported:${query.method}`,
-          title: `${label} updates unavailable`,
-          body: 'Update the gateway to restore live reads.',
+          id: `read:${query.id}`,
+          title: `Could not refresh ${label.toLowerCase()}`,
+          body: error.message,
           route: target,
           needsYou: false,
           current: false,
+          retry,
+          observedAt: state.sourceObservation?.observedAt ?? state.observedAt,
         }
-      : error
+      : stale
         ? {
             id: `read:${query.id}`,
-            title: `Could not refresh ${label.toLowerCase()}`,
-            body: error.message,
+            title: `Saved ${label.toLowerCase()}`,
+            body: 'Actions wait for a current read.',
             route: target,
+            observedAt: state.sourceObservation?.observedAt ?? state.observedAt,
             needsYou: false,
             current: false,
-            retry,
-            observedAt: state.sourceObservation?.observedAt ?? state.observedAt,
           }
-        : stale
-          ? {
-              id: `read:${query.id}`,
-              title: `Saved ${label.toLowerCase()}`,
-              body: 'Actions wait for a current read.',
-              route: target,
-              observedAt: state.sourceObservation?.observedAt ?? state.observedAt,
-              needsYou: false,
-              current: false,
-            }
-          : undefined;
+        : undefined;
   notificationTray.set(source, owner, item ? [item] : []);
 }
 export function updateNoticeKey(status: GatewayUpdateStatus): string | null {

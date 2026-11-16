@@ -16,6 +16,7 @@ import {
   subscribeResourceCache,
 } from '../../resource-cache.js';
 import { notificationTray, publishReadNotice } from '../../utils/notification-tray.js';
+import { isExpectedReadAbsence } from '../../utils/resource-read-status.js';
 
 import { readCurrent, readFresh } from './read-current.js';
 
@@ -181,7 +182,7 @@ export class ResourceQueryController<T> implements ReactiveController {
   }
 
   private publish(state: ResourceQueryState<T>): void {
-    if (state.data !== undefined || state.status === 'ready' || state.status === 'unsupported')
+    if (state.data !== undefined || state.status === 'ready' || isExpectedReadAbsence(state))
       this.failingSince = undefined;
     else if (state.error) this.failingSince ??= Date.now();
     this.state = state;
