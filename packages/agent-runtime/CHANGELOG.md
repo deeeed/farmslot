@@ -4,11 +4,6 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
-## 0.48.4 - 2026-11-16
-
-- Align exact dependencies with the prepared-source-witness patch cohort.
-- Session tool usage counts context compactions (Claude `compact_boundary`, Codex `compacted`, Grok `auto_compact_completed`, pi `compaction`) overall and per checklist step, and prices each step from recorded or static rates. Cursor and the native journal record none and say so. Codex `ContextCompaction` items are no longer counted as tool calls. A live reader takes appended transcript bytes and keeps only the open step in memory.
-
 ## 0.48.3 - 2026-11-16
 
 - `mark start` tests the one status a finished run actually writes. `mark no-change` records status `complete` with a disposition rather than a status of its own, so the refusal also names that disposition, and a run that ended as no-change now says so instead of reporting a bare `complete`.

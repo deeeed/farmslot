@@ -1,0 +1,1 @@
+- Reuse prepared source and capture observations behind fresh filesystem witnesses, with per-boundary file-read wall and CPU measurements.

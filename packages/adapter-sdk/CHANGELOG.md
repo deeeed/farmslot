@@ -6,10 +6,6 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
-## 0.28.1 - 2026-11-16
-
-- Let adapters declare fingerprint inputs so prepared recipe executions can revalidate source without repeated Git processes.
-
 ## 0.28.0 - 2026-11-16
 
 - Allow issue-buffer adapters to complete diagnostics asynchronously while preserving synchronous adapters.
