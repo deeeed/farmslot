@@ -32,11 +32,14 @@ export interface RunResourceSnapshot {
   readsReviewScope: boolean;
   /** Prior review generations whose records run.get reads for chain metrics. */
   priorGenerationIds: string[];
+  /** A gate summary (open ready gate or retrospective): run.get rolls up its family's runs. */
+  readsFamily: boolean;
 }
 
 /**
  * run.get also serves facts of other runs: the review-round budget of the PR (while a ready gate
- * is open) and the metrics of prior review generations. Those runs' keys advance when such a
+ * is open), the family token/cost rollup of its gate summaries, and the metrics of prior review
+ * generations. Those runs' keys advance when such a
  * run changes, so run.get need not reread on every farm-wide run change. Both indexes hold only
  * runs that read other runs, and are kept by this publisher from the snapshots it receives.
  */
@@ -44,6 +47,8 @@ const scopeReaders = new Map<string, Set<string>>();
 const scopeOfReader = new Map<string, string>();
 const generationReaders = new Map<string, Set<string>>();
 const generationsOfReader = new Map<string, string[]>();
+const familyReaders = new Map<string, Set<string>>();
+const familyOfReader = new Map<string, string>();
 
 function indexReader(snapshot: RunResourceSnapshot, removed: boolean): void {
   const scope = scopeOfReader.get(snapshot.id);
@@ -52,7 +57,16 @@ function indexReader(snapshot: RunResourceSnapshot, removed: boolean): void {
   for (const prior of generationsOfReader.get(snapshot.id) ?? [])
     generationReaders.get(prior)?.delete(snapshot.id);
   generationsOfReader.delete(snapshot.id);
+  const family = familyOfReader.get(snapshot.id);
+  if (family) familyReaders.get(family)?.delete(snapshot.id);
+  familyOfReader.delete(snapshot.id);
   if (removed) return;
+  if (snapshot.readsFamily) {
+    const readers = familyReaders.get(snapshot.familyId) ?? new Set<string>();
+    readers.add(snapshot.id);
+    familyReaders.set(snapshot.familyId, readers);
+    familyOfReader.set(snapshot.id, snapshot.familyId);
+  }
   if (snapshot.readsReviewScope && snapshot.reviewScope) {
     const readers = scopeReaders.get(snapshot.reviewScope) ?? new Set<string>();
     readers.add(snapshot.id);
@@ -78,6 +92,8 @@ function crossRunReaders(
   for (const scope of new Set([current.reviewScope, previous?.reviewScope]))
     for (const id of (scope && scopeReaders.get(scope)) || []) readers.add(id);
   for (const id of generationReaders.get(current.id) ?? []) readers.add(id);
+  for (const family of new Set([current.familyId, previous?.familyId]))
+    for (const id of (family && familyReaders.get(family)) || []) readers.add(id);
   readers.delete(current.id);
   return readers;
 }
@@ -136,6 +152,11 @@ export function captureRunResources(run: RunResourceRecord): RunResourceSnapshot
     ),
     priorGenerationIds: (run.repeatReviewContext?.priorGenerations ?? []).map(
       (entry) => entry.runId,
+    ),
+    readsFamily: (run.decisions ?? []).some(
+      (decision) =>
+        (decision.payload?.kind === 'ready' && !decision.resolvedAt) ||
+        decision.payload?.kind === 'retrospective',
     ),
   };
 }

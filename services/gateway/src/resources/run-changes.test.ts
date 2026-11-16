@@ -13,6 +13,7 @@ test('legacy records without family or decisions retain their own resource ident
     decisionIds: [],
     readsReviewScope: false,
     priorGenerationIds: [],
+    readsFamily: false,
   });
 });
 
@@ -33,6 +34,7 @@ test('a run moving families invalidates both memberships and removed decision pr
       decisionIds: ['resolved'],
       readsReviewScope: false,
       priorGenerationIds: [],
+      readsFamily: false,
     });
     assert.equal(revisions.revision({ family: 'family', familyId: 'before' }), 1);
     assert.equal(revisions.revision({ family: 'family', familyId: 'after' }), 1);
@@ -266,6 +268,49 @@ test('a prior review generation change advances the runs that show its metrics',
       removed,
       'a removed reader is dropped',
     );
+  } finally {
+    revisions.dispose();
+  }
+});
+
+test('a family member change advances the runs whose gate summaries roll up that family', () => {
+  const revisions = new GatewayResourceRevisions();
+  try {
+    const retro = [
+      { id: 'retro', resolvedAt: 'done', payload: { kind: 'retrospective' as const } },
+    ];
+    publishRunResources(
+      captureRunResources({ id: 'parent', familyId: 'fam', decisions: retro }),
+      undefined,
+      'updated',
+      revisions,
+    );
+    publishRunResources(
+      captureRunResources({ id: 'other', familyId: 'fam-2', decisions: retro }),
+      undefined,
+      'updated',
+      revisions,
+    );
+    const rev = (id: string) => revisions.revision({ family: 'run', runId: id });
+    const parent = rev('parent'),
+      other = rev('other');
+    // A fix-loop child of the family records usage: the parent's rollup changes.
+    publishRunResources(
+      captureRunResources({ id: 'child', familyId: 'fam', decisions: [] }),
+      undefined,
+      'updated',
+      revisions,
+    );
+    assert.equal(rev('parent'), parent + 1);
+    assert.equal(rev('other'), other, 'another family is unrelated');
+    // A run leaving the family still refreshes the family it left.
+    publishRunResources(
+      captureRunResources({ id: 'child', familyId: 'fam-3', decisions: [] }),
+      captureRunResources({ id: 'child', familyId: 'fam', decisions: [] }),
+      'updated',
+      revisions,
+    );
+    assert.equal(rev('parent'), parent + 2);
   } finally {
     revisions.dispose();
   }
