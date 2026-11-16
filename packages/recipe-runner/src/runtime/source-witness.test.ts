@@ -407,3 +407,98 @@ test('a symlinked alternate index follows the target identity', async () => {
     assert.notEqual(read(), initial);
   });
 });
+
+test('ignored extra files are length-framed before reuse', async () => {
+  const f = fixture();
+  fs.appendFileSync(path.join(f.root, '.gitignore'), '.env.local\n');
+  const files = ['.env', '.env.local'];
+  const write = (values: string[]) =>
+    files.forEach((file, i) => fs.writeFileSync(path.join(f.root, file), values[i]!));
+  const first = ['VALUE=a', 'VALUE=b.env.localVALUE=c'];
+  const second = ['VALUE=a.env.localVALUE=b', 'VALUE=c'];
+  write(first);
+  await withPreparedSourceWitness(async () => {
+    const read = () =>
+      preparedSourceValue(
+        f.root,
+        'two-env-files',
+        () => JSON.stringify(files.map((file) => fs.readFileSync(path.join(f.root, file), 'utf8'))),
+        (value) => (typeof value === 'string' ? value : undefined),
+        files,
+      );
+    assert.equal(read(), JSON.stringify(first));
+    write(second);
+    currentSourceWitness()!.checkpoint();
+    assert.equal(read(), JSON.stringify(second));
+  });
+});
+
+for (const kind of ['ignore', 'attributes'])
+  test(`default user Git ${kind} bytes invalidate reuse`, async () => {
+    const f = fixture();
+    const config = path.join(path.dirname(f.root), 'config');
+    fs.mkdirSync(path.join(config, 'git'), { recursive: true });
+    const oldXdg = process.env.XDG_CONFIG_HOME;
+    const oldGlobal = process.env.GIT_CONFIG_GLOBAL;
+    process.env.XDG_CONFIG_HOME = config;
+    const global = path.join(config, 'empty-config');
+    fs.writeFileSync(global, '');
+    process.env.GIT_CONFIG_GLOBAL = global;
+    cleanup.push(() => {
+      if (oldXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = oldXdg;
+      if (oldGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = oldGlobal;
+    });
+    const file = path.join(config, 'git', kind);
+    if (kind === 'ignore') fs.writeFileSync(path.join(f.root, 'scratch'), 'untracked');
+    fs.writeFileSync(file, kind === 'ignore' ? 'scratch\n' : '*.txt -text\n');
+    await withPreparedSourceWitness(async () => {
+      const read = () =>
+        preparedSourceValue(
+          f.root,
+          kind,
+          () =>
+            f
+              .git(
+                ...(kind === 'ignore'
+                  ? ['status', '--porcelain']
+                  : ['check-attr', 'text', '--', 'source.txt']),
+              )
+              .toString(),
+          (value) => (typeof value === 'string' ? value : undefined),
+        );
+      const before = read();
+      fs.writeFileSync(file, kind === 'ignore' ? '' : '*.txt text\n');
+      currentSourceWitness()!.checkpoint();
+      assert.notEqual(read(), before);
+    });
+  });
+
+for (const code of ['EACCES', 'EPERM', 'EROFS', 'ENOSPC'])
+  test(`cache write ${code} retains fresh reads`, async (t) => {
+    const f = fixture();
+    const original = fs.writeFileSync;
+    t.mock.method(
+      fs,
+      'writeFileSync',
+      (
+        file: fs.PathOrFileDescriptor,
+        data: Parameters<typeof fs.writeFileSync>[1],
+        options?: Parameters<typeof fs.writeFileSync>[2],
+      ) => {
+        if (String(file).includes(path.sep + 'prepared-sources' + path.sep))
+          throw Object.assign(new Error('refused cache'), { code });
+        return original(file, data, options);
+      },
+    );
+    await withPreparedSourceWitness(async () => {
+      assert.equal(f.read(), 'original');
+      fs.writeFileSync(path.join(f.root, 'source.txt'), 'changed');
+      currentSourceWitness()!.checkpoint();
+      assert.equal(f.read(), 'changed');
+      assert.ok(
+        currentSourceWitness()!.fallbacks.some((entry) => entry.reason === 'cache-unavailable'),
+      );
+    });
+  });

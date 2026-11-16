@@ -14,7 +14,10 @@ import {
   type PreparedSourceWitness,
   type RecipeArtifactFinalization,
   type RecipeLibrarySource,
+  sourceGitRoot,
   sourceWitnessExclusions,
+  sourceWitnessSupportsOutputs,
+  withoutPreparedSourceWitness,
   withPreparedSourceWitness,
 } from '@farmslot/recipe-runner';
 
@@ -288,8 +291,20 @@ export function sourceSnapshot(
   includedRoots: string[] = [],
 ): SourceProvenanceSnapshot {
   const platform = adapter ? harnessAdapter(adapter) : undefined;
-  if (platform?.sourceFingerprint && !platform.sourceFingerprintInputs)
-    return freshSourceSnapshot(root, adapter, excludedRoots, includedRoots);
+  const view = currentSourceWitness();
+  const legacy = () =>
+    withoutPreparedSourceWitness(() =>
+      freshSourceSnapshot(root, adapter, excludedRoots, includedRoots),
+    );
+  if (platform?.sourceFingerprint && !platform.sourceFingerprintInputs) {
+    view?.fallback(root, 'undeclared-inputs');
+    return legacy();
+  }
+  if (view && includedRoots.length && sourceGitRoot(root)) {
+    view.fallback(root, 'included-git-inputs');
+    return legacy();
+  }
+  if (view && !sourceWitnessSupportsOutputs(root, excludedRoots)) return legacy();
   const inputs = platform?.sourceFingerprintInputs?.(root);
   const extraFiles = inputs?.envFiles ?? [];
   const exclusions = sourceWitnessExclusions(root, excludedRoots);

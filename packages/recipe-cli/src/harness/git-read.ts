@@ -44,7 +44,12 @@ const topLevels = new Map<string, string | null>();
 /** The real path of the Git work tree `dir` is in, or undefined outside one; read once per process. */
 export function gitTopLevel(dir: string): string | undefined {
   const key = path.resolve(dir);
-  if (currentSourceWitness() && !process.env.GIT_DIR && !process.env.GIT_WORK_TREE)
+  if (
+    currentSourceWitness() &&
+    !process.env.GIT_DIR &&
+    !process.env.GIT_WORK_TREE &&
+    !process.env.GIT_COMMON_DIR
+  )
     return sourceGitRoot(key);
   if (!topLevels.has(key)) {
     let topLevel: string | null = null;
@@ -98,6 +103,7 @@ function isGitRefusal(error: unknown): boolean {
  * unborn branch, a symbolic ref chain, another ref store); `git rev-parse` decides then.
  */
 export function readHeadCommit(topLevel: string): string | undefined {
+  if (process.env.GIT_COMMON_DIR) return undefined;
   const gitDir = repositoryDir(topLevel);
   if (!gitDir) return undefined;
   const commonDir = readText(path.join(gitDir, 'commondir'));
@@ -126,7 +132,8 @@ export function readHeadCommit(topLevel: string): string | undefined {
 /** Prepared runner identity; unsupported ref stores keep Git's verified answer. */
 export function preparedHeadCommit(directory: string): string | undefined {
   const known = sourceGitRoot(directory);
-  if (!known && !process.env.GIT_DIR && !process.env.GIT_WORK_TREE) return undefined;
+  if (!known && !process.env.GIT_DIR && !process.env.GIT_WORK_TREE && !process.env.GIT_COMMON_DIR)
+    return undefined;
   const result = preparedSourceValue(
     directory,
     { kind: 'head-commit' },

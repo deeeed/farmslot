@@ -31,6 +31,7 @@ import {
   withPreparedSourceWitness,
 } from '@farmslot/recipe-runner';
 
+import { observeRecipeCaptureSource } from '../../recipe-runner/src/evidence/comparisons.js';
 import { CallTimingRecorder, withCallTimings } from '../src/harness/call-timings.js';
 import { statusListing } from '../src/harness/execution-provenance.js';
 import { gitOriginUrl } from '../src/harness/git-read.js';
@@ -957,6 +958,63 @@ describe('execution provenance', () => {
     fs.writeFileSync(recipePath, JSON.stringify({ ...recipeDocument, title: 'Changed source' }));
     const drift = executionProvenanceDrift(start, await captureExecutionProvenance(input, 'end'));
     assert.ok(drift.some((entry) => entry.field === 'libraries[0].sourceFingerprint'));
+  });
+
+  test('nested capture source keeps repository-wide sibling freshness', async () => {
+    const product = checkout('capture-sibling-', { 'app/a.txt': 'first', 'other/b.txt': 'first' });
+    await withPreparedSourceWitness(async () => {
+      const before = await observeRecipeCaptureSource(path.join(product, 'app'));
+      assert.equal(before.sourceDirty, false);
+      fs.writeFileSync(path.join(product, 'other/b.txt'), 'changed');
+      const after = await observeRecipeCaptureSource(path.join(product, 'app'));
+      assert.equal(after.sourceDirty, true);
+      assert.equal(currentSourceWitness()!.measurements.length, 0);
+    });
+  });
+
+  test('unignored output history retains fresh checks without a witness scan', async () => {
+    process.env.FARMSLOT_RECIPE_CACHE_DIR = tempRoot('prepared-cache-');
+    for (const gitBacked of [false, true]) {
+      const product = gitBacked
+        ? checkout('unignored-output-', { 'source.txt': 'first' })
+        : tempRoot('unignored-output-');
+      if (!gitBacked) fs.writeFileSync(path.join(product, 'source.txt'), 'first');
+      if (gitBacked) git(product, 'config', 'core.excludesFile', '/dev/null');
+      const output = path.join(product, 'execution-output');
+      fs.mkdirSync(output);
+      await withPreparedSourceWitness(async () => {
+        const first = sourceSnapshot(product, undefined, [output]);
+        for (let n = 0; n < 100; n++) fs.writeFileSync(path.join(output, n + '.json'), '{}');
+        currentSourceWitness()!.checkpoint();
+        assert.deepEqual(sourceSnapshot(product, undefined, [output]), first);
+        assert.equal(currentSourceWitness()!.measurements.length, 0);
+        fs.writeFileSync(path.join(product, 'source.txt'), 'changed');
+        assert.notEqual(
+          sourceSnapshot(product, undefined, [output]).sourceFingerprint,
+          first.sourceFingerprint,
+        );
+      });
+    }
+  });
+
+  test('ignored compiled runner inputs retain fresh legacy drift checks', async () => {
+    process.env.FARMSLOT_RECIPE_CACHE_DIR = tempRoot('prepared-cache-');
+    const runner = checkout('ignored-runner-', {
+      '.gitignore': 'dist/\n',
+      'src/runner.ts': 'first',
+    });
+    fs.mkdirSync(path.join(runner, 'dist'));
+    fs.writeFileSync(path.join(runner, 'dist/runner.js'), 'first');
+    await withPreparedSourceWitness(async () => {
+      const first = sourceSnapshot(runner, undefined, [], ['dist']);
+      fs.writeFileSync(path.join(runner, 'dist/runner.js'), 'changed');
+      currentSourceWitness()!.checkpoint();
+      assert.notEqual(
+        sourceSnapshot(runner, undefined, [], ['dist']).sourceFingerprint,
+        first.sourceFingerprint,
+      );
+      assert.equal(currentSourceWitness()!.measurements.length, 0);
+    });
   });
 
   test('an origin change invalidates the prepared origin across a source checkpoint', async () => {

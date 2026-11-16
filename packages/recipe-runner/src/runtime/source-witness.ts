@@ -32,6 +32,18 @@ export interface SourceWitnessMeasurement {
   refreshed: boolean;
 }
 
+export interface SourceWitnessFallback {
+  root: string;
+  reason:
+    | 'unignored-outputs'
+    | 'nested-git-root'
+    | 'explicit-git-binding'
+    | 'included-git-inputs'
+    | 'undeclared-inputs'
+    | 'cache-unavailable'
+    | 'unsupported-git-layout';
+}
+
 export type SourceWitnessPhase =
   | 'prepare'
   | 'provider-source'
@@ -41,7 +53,7 @@ export type SourceWitnessPhase =
   | 'capture-source'
   | 'observation';
 
-const sessions = new AsyncLocalStorage<PreparedSourceWitness>();
+const sessions = new AsyncLocalStorage<PreparedSourceWitness | undefined>();
 const implementation = createHash('sha256')
   .update(optionalFile(fileURLToPath(import.meta.url)))
   .update(optionalFile(fileURLToPath(new URL('../../package.json', import.meta.url))))
@@ -50,6 +62,9 @@ const implementation = createHash('sha256')
 /** One fresh source view per physical root at each execution boundary. */
 export class PreparedSourceWitness {
   readonly measurements: SourceWitnessMeasurement[] = [];
+  readonly fallbacks: SourceWitnessFallback[] = [];
+  readonly supportedRoots = new Map<string, readonly string[]>();
+  readonly supportedOutputChecks = new Set<string>();
   readonly #roots = new Map<string, PreparedRootRecord>();
   #generation = 0;
   #phase: SourceWitnessPhase = 'prepare';
@@ -58,10 +73,21 @@ export class PreparedSourceWitness {
     return this.#generation;
   }
 
+  get reusable(): boolean {
+    return this.fallbacks.length === 0;
+  }
+
+  fallback(root: string, reason: SourceWitnessFallback['reason']): false {
+    if (!this.fallbacks.some((entry) => entry.root === root && entry.reason === reason))
+      this.fallbacks.push({ root, reason });
+    return false;
+  }
+
   checkpoint(phase: SourceWitnessPhase = 'observation'): void {
     this.#generation++;
     this.#phase = phase;
     this.#roots.clear();
+    this.supportedOutputChecks.clear();
   }
 
   root(directory: string): PreparedRootRecord {
@@ -123,6 +149,7 @@ export function sourceWitnessTotals():
       directories: number;
       refreshes: number;
       measurements: SourceWitnessMeasurement[];
+      fallbacks: SourceWitnessFallback[];
     }
   | undefined {
   const view = sessions.getStore();
@@ -138,7 +165,7 @@ export function sourceWitnessTotals():
     }),
     { wallMs: 0, cpuMs: 0, rootReads: 0, files: 0, directories: 0, refreshes: 0 },
   );
-  return { ...totals, measurements: [...view.measurements] };
+  return { ...totals, measurements: [...view.measurements], fallbacks: [...view.fallbacks] };
 }
 
 export function withPreparedSourceWitness<T>(
@@ -146,6 +173,60 @@ export function withPreparedSourceWitness<T>(
   witness: PreparedSourceWitness = sessions.getStore() ?? new PreparedSourceWitness(),
 ): Promise<T> {
   return sessions.getStore() === witness ? body() : sessions.run(witness, body);
+}
+
+export function withoutPreparedSourceWitness<T>(body: () => T): T {
+  return sessions.run(undefined, body);
+}
+
+function reusableWitness(directory: string): PreparedSourceWitness | undefined {
+  const view = sessions.getStore();
+  if (!view?.reusable) return undefined;
+  if (
+    process.env.GIT_DIR ||
+    process.env.GIT_WORK_TREE ||
+    process.env.GIT_COMMON_DIR ||
+    process.env.GIT_CONFIG_PARAMETERS
+  ) {
+    view.fallback(directory, 'explicit-git-binding');
+    return undefined;
+  }
+  try {
+    const root = physicalSourceRoot(directory);
+    const git = sourceGitRoot(root);
+    if (git && git !== root && !root.includes(path.sep + 'node_modules' + path.sep)) {
+      view.fallback(root, 'nested-git-root');
+      return undefined;
+    }
+  } catch (error) {
+    if (!unavailableWitness(error)) throw error;
+    view.fallback(directory, 'unsupported-git-layout');
+    return undefined;
+  }
+  return view;
+}
+
+function unavailableWitness(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (('status' in error && error.status === 128) ||
+      ('code' in error &&
+        ['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'ELOOP'].includes(String(error.code))))
+  );
+}
+
+function witnessedRoot(
+  view: PreparedSourceWitness,
+  directory: string,
+): PreparedRootRecord | undefined {
+  try {
+    return view.root(directory);
+  } catch (error) {
+    // A failed optimization cannot replace the producer's original fresh checks.
+    if (!unavailableWitness(error)) throw error;
+    view.fallback(directory, 'unsupported-git-layout');
+    return undefined;
+  }
 }
 
 /** The parser is the boundary between a rebuildable record and typed inputs. */
@@ -156,23 +237,19 @@ export function preparedSourceValue<T>(
   decode: (value: unknown) => T | undefined,
   extraFiles: readonly string[] = [],
 ): T {
-  const view = sessions.getStore();
-  if (
-    !view ||
-    process.env.GIT_DIR ||
-    process.env.GIT_WORK_TREE ||
-    process.env.GIT_CONFIG_PARAMETERS
-  )
-    return compute();
-  const record = view.root(directory);
-  if (record.cacheable === false) return compute();
+  const view = reusableWitness(directory);
+  if (!view) return withoutPreparedSourceWitness(compute);
+  const record = witnessedRoot(view, directory);
+  if (!record || !view.reusable || record.cacheable === false)
+    return withoutPreparedSourceWitness(compute);
   const identity = createHash('sha256')
     .update(JSON.stringify([path.relative(record.root, fs.realpathSync(directory)), key]))
     .digest('hex');
   const extras = createHash('sha256');
   for (const file of extraFiles) {
-    extras.update(file);
-    extras.update(optionalFile(path.resolve(directory, file)));
+    const bytes = optionalFile(path.resolve(directory, file));
+    extras.update(JSON.stringify([file, bytes.length]) + '\0');
+    extras.update(bytes);
   }
   const extraIdentity = extras.digest('hex');
   const entry = record.values[identity];
@@ -196,9 +273,10 @@ export function preparedSourceValue<T>(
 
 /** Ignore an exclusion in an identity only if it affects no prepared input. */
 export function sourceWitnessExclusions(root: string, exclusions: readonly string[]): string[] {
-  const view = sessions.getStore();
-  if (!view) return [...exclusions];
-  const record = view.root(root);
+  const view = reusableWitness(root);
+  if (!view || !sourceWitnessSupportsOutputs(root, exclusions)) return [...exclusions];
+  const record = witnessedRoot(view, root);
+  if (!record || !view.reusable) return [...exclusions];
   const git = gitDirectory(record.root);
   const affectsInput = (excluded: string): boolean => {
     const relative = Buffer.from(path.relative(record.root, excluded)).toString('latin1');
@@ -225,7 +303,8 @@ export function sourceWitnessExclusions(root: string, exclusions: readonly strin
 
 /** Find normal and linked worktrees without starting Git. Overrides keep Git's path. */
 export function sourceGitRoot(directory: string): string | undefined {
-  if (process.env.GIT_DIR || process.env.GIT_WORK_TREE) return undefined;
+  if (process.env.GIT_DIR || process.env.GIT_WORK_TREE || process.env.GIT_COMMON_DIR)
+    return undefined;
   const ceiling = new Set((process.env.GIT_CEILING_DIRECTORIES ?? '').split(path.delimiter));
   let current: string;
   try {
@@ -260,12 +339,13 @@ export async function preparedSourceValueAsync<T>(
   decode: (value: unknown) => T | undefined,
 ): Promise<T> {
   const missing = Symbol('missing');
-  const view = sessions.getStore();
+  const view = reusableWitness(root);
+  if (!view) return withoutPreparedSourceWitness(compute);
   const generation = view?.generation;
   const cached = preparedSourceValue<T | typeof missing>(root, key, () => missing, decode);
   if (cached !== missing) return cached;
   const value = await compute();
-  if (view && view.generation !== generation) return value;
+  if (!view.reusable || view.generation !== generation) return value;
   return preparedSourceValue(root, key, () => value, decode);
 }
 
@@ -307,6 +387,10 @@ function sourceMetadata(root: string, configFiles: readonly string[] = []): stri
     JSON.stringify(Object.entries(process.env).filter(([key]) => key.startsWith('GIT_'))),
   );
   const configs = [
+    path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'git/ignore'),
+    path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'git/attributes'),
+    '/etc/gitattributes',
+    '/opt/homebrew/etc/gitattributes',
     process.env.GIT_CONFIG_GLOBAL || path.join(os.homedir(), '.gitconfig'),
     ...(process.env.GIT_CONFIG_GLOBAL
       ? []
@@ -390,60 +474,243 @@ function sourceMetadata(root: string, configFiles: readonly string[] = []): stri
   return hash.digest('hex');
 }
 
+function witnessGit(root: string, args: string[], input?: Buffer): Buffer {
+  return execFileSync(
+    'git',
+    [
+      '-c',
+      'gc.auto=0',
+      '-c',
+      'maintenance.auto=false',
+      '-c',
+      'core.hooksPath=/dev/null',
+      '-c',
+      'core.fsmonitor=false',
+      ...args,
+    ],
+    {
+      cwd: root,
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+      input,
+      maxBuffer: 128 * 1024 * 1024,
+      stdio: ['pipe', 'pipe', 'ignore'],
+    },
+  );
+}
+
+function configurationFiles(root: string): string[] {
+  const files = new Set<string>();
+  const entries = witnessGit(root, [
+    'config',
+    '--null',
+    '--show-origin',
+    '--includes',
+    '--type=path',
+    '--list',
+  ])
+    .toString('utf8')
+    .split('\0');
+  for (let n = 0; n + 1 < entries.length; n += 2) {
+    const origin = entries[n]!;
+    const setting = entries[n + 1]!;
+    const newline = setting.indexOf('\n');
+    const key = newline < 0 ? setting : setting.slice(0, newline);
+    const value = newline < 0 ? '' : setting.slice(newline + 1);
+    const config = origin.startsWith('file:') ? path.resolve(root, origin.slice(5)) : undefined;
+    if (config) files.add(config);
+    if (/^(?:include.*\.path|core\.(?:excludesfile|attributesfile))$/u.test(key))
+      files.add(
+        path.resolve(key.startsWith('include') && config ? path.dirname(config) : root, value),
+      );
+  }
+  return [...files];
+}
+
+interface OutputRule {
+  prefix: string;
+  ignored: boolean;
+  signature: string;
+}
+interface OutputRules {
+  root: string;
+  metadata: string;
+  configFiles: string[];
+  entries: OutputRule[];
+}
+
+function inside(root: string, target: string): boolean {
+  const relative = path.relative(root, target);
+  return relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative);
+}
+
+function outputSignature(root: string, prefix: string): string {
+  const hash = createHash('sha256');
+  for (let current = prefix; ; current = path.dirname(current)) {
+    const stat = fs.lstatSync(current, { throwIfNoEntry: false });
+    hash.update(current);
+    hash.update(stat ? String(stat.mode & 0o170000) : '<absent>');
+    if (stat?.isSymbolicLink()) hash.update(fs.readlinkSync(current));
+    if (current !== prefix) hash.update(optionalFile(path.join(current, '.gitignore')));
+    if (current === root) break;
+  }
+  return hash.digest('hex');
+}
+
+function readOutputRules(file: string, root: string): OutputRules | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(optionalFile(file).toString());
+  } catch (error) {
+    if (error instanceof SyntaxError) return undefined;
+    throw error;
+  }
+  if (typeof value !== 'object' || value === null) return undefined;
+  const data = value as Partial<OutputRules>;
+  return data.root === root &&
+    typeof data.metadata === 'string' &&
+    Array.isArray(data.configFiles) &&
+    data.configFiles.every((p) => typeof p === 'string') &&
+    Array.isArray(data.entries) &&
+    data.entries.length <= 32 &&
+    data.entries.every(
+      (entry) =>
+        typeof entry === 'object' &&
+        entry !== null &&
+        typeof entry.prefix === 'string' &&
+        path.isAbsolute(entry.prefix) &&
+        inside(root, entry.prefix) &&
+        typeof entry.ignored === 'boolean' &&
+        typeof entry.signature === 'string',
+    )
+    ? (data as OutputRules)
+    : undefined;
+}
+
+/** Output layout is validated before any source-tree traversal. */
+export function sourceWitnessSupportsOutputs(
+  directory: string,
+  excludedRoots: readonly string[],
+): boolean {
+  const view = reusableWitness(directory);
+  if (!view) return false;
+  try {
+    return supportedOutputs(view, directory, excludedRoots);
+  } catch (error) {
+    if (!unavailableWitness(error)) throw error;
+    return view.fallback(directory, 'unsupported-git-layout');
+  }
+}
+
+function supportedOutputs(
+  view: PreparedSourceWitness,
+  directory: string,
+  excludedRoots: readonly string[],
+): boolean {
+  const root = fs.realpathSync(directory);
+  const outputs = [
+    ...new Set(
+      excludedRoots
+        .map((file) => (fs.existsSync(file) ? fs.realpathSync(file) : path.resolve(file)))
+        .filter((file) => inside(root, file) || inside(file, root)),
+    ),
+  ];
+  const checkKey = JSON.stringify([root, outputs.sort()]);
+  if (view.supportedOutputChecks.has(checkKey)) return true;
+  if (outputs.length === 0) {
+    view.supportedRoots.set(root, [...excludedRoots]);
+    view.supportedOutputChecks.add(checkKey);
+    return true;
+  }
+  if (outputs.some((output) => !inside(root, output)))
+    return view.fallback(root, 'unignored-outputs');
+  if (sourceGitRoot(root) !== root) return view.fallback(root, 'unignored-outputs');
+  const file = recordFile(root) + '.outputs';
+  let saved: OutputRules | undefined;
+  try {
+    saved = readOutputRules(file, root);
+  } catch (error) {
+    if (cacheUnavailable(error)) return view.fallback(root, 'cache-unavailable');
+    throw error;
+  }
+  const metadata = sourceMetadata(root, saved?.configFiles);
+  let rules: OutputRules;
+  if (saved?.metadata === metadata) rules = saved;
+  else {
+    let configFiles: string[];
+    try {
+      configFiles = configurationFiles(root);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (('status' in error && error.status === 128) ||
+          ('code' in error && error.code === 'ENOENT'))
+      )
+        return view.fallback(root, 'unsupported-git-layout');
+      throw error;
+    }
+    rules = { root, metadata: sourceMetadata(root, configFiles), configFiles, entries: [] };
+  }
+  const valid = (entry: OutputRule) => entry.signature === outputSignature(root, entry.prefix);
+  const found = (output: string) =>
+    rules.entries.find(
+      (entry) =>
+        (entry.ignored ? inside(entry.prefix, output) : entry.prefix === output) && valid(entry),
+    );
+  const missing = outputs.filter((output) => !found(output));
+  if (missing.length) {
+    const paths = new Set<string>();
+    for (const output of missing)
+      for (let current = output; ; current = path.dirname(current)) {
+        paths.add(current);
+        if (current === root) break;
+      }
+    let ignored: Buffer = Buffer.alloc(0);
+    try {
+      ignored = witnessGit(
+        root,
+        ['check-ignore', '--stdin', '-z'],
+        Buffer.from([...paths].map((p) => path.relative(root, p) || '.').join('\0') + '\0'),
+      );
+    } catch (error) {
+      if (error instanceof Error && 'status' in error && error.status === 128)
+        return view.fallback(root, 'unsupported-git-layout');
+      if (!(error instanceof Error && 'status' in error && error.status === 1)) throw error;
+    }
+    const ignoredPaths = ignored
+      .toString('utf8')
+      .split('\0')
+      .filter(Boolean)
+      .map((p) => path.resolve(root, p));
+    for (const output of missing) {
+      const prefix = ignoredPaths
+        .filter((p) => inside(p, output))
+        .sort((a, b) => a.length - b.length)[0];
+      const entry = {
+        prefix: prefix ?? output,
+        ignored: prefix !== undefined,
+        signature: outputSignature(root, prefix ?? output),
+      };
+      rules.entries = [...rules.entries.filter((old) => old.prefix !== entry.prefix), entry].slice(
+        -32,
+      );
+    }
+    writeWitnessFile(file, rules, root);
+  }
+  if (!view.reusable) return false;
+  if (!outputs.every((output) => found(output)?.ignored))
+    return view.fallback(root, 'unignored-outputs');
+  view.supportedRoots.set(root, [...excludedRoots]);
+  view.supportedOutputChecks.add(checkKey);
+  return true;
+}
+
 function prepareRoot(root: string): PreparedRootRecord {
   let paths: string[] = [];
   let ignored = ['.git', 'node_modules', 'temp'];
   const configFiles = new Set<string>();
   if (sourceGitRoot(root)) {
-    const run = (args: string[]) =>
-      execFileSync(
-        'git',
-        [
-          '-c',
-          'gc.auto=0',
-          '-c',
-          'maintenance.auto=false',
-          '-c',
-          'core.hooksPath=/dev/null',
-          '-c',
-          'core.fsmonitor=false',
-          ...args,
-        ],
-        {
-          cwd: root,
-          env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
-          maxBuffer: 128 * 1024 * 1024,
-          stdio: ['ignore', 'pipe', 'ignore'],
-        },
-      );
-    let configuration: Buffer = Buffer.alloc(0);
-    try {
-      configuration = run([
-        'config',
-        '--null',
-        '--show-origin',
-        '--includes',
-        '--type=path',
-        '--get-regexp',
-        '^(include.*\\.path|core\\.(excludesfile|attributesfile))$',
-      ]);
-    } catch (error) {
-      // No matching path settings is Git's documented exit status 1.
-      if (!(error instanceof Error && 'status' in error && error.status === 1)) throw error;
-    }
-    const entries = configuration.toString('utf8').split('\0');
-    for (let n = 0; n + 1 < entries.length; n += 2) {
-      const origin = entries[n]!;
-      const setting = entries[n + 1]!;
-      const newline = setting.indexOf('\n');
-      const key = setting.slice(0, newline);
-      const value = setting.slice(newline + 1);
-      const config = origin.startsWith('file:') ? path.resolve(root, origin.slice(5)) : undefined;
-      if (config) configFiles.add(config);
-      configFiles.add(
-        path.resolve(key.startsWith('include') && config ? path.dirname(config) : root, value),
-      );
-    }
+    const run = (args: string[]) => witnessGit(root, args);
+    for (const file of configurationFiles(root)) configFiles.add(file);
     paths = run(['ls-files', '--cached', '--others', '--exclude-standard', '-z'])
       .toString('latin1')
       .split('\0')
@@ -563,7 +830,16 @@ function recordFile(root: string): string {
 }
 
 function readRecord(root: string): PreparedRootRecord | undefined {
-  const text = optionalFile(recordFile(root)).toString();
+  let text: string;
+  try {
+    text = optionalFile(recordFile(root)).toString();
+  } catch (error) {
+    if (cacheUnavailable(error)) {
+      currentSourceWitness()?.fallback(root, 'cache-unavailable');
+      return undefined;
+    }
+    throw error;
+  }
   if (text === '<absent>') return undefined;
   let value: unknown;
   try {
@@ -594,13 +870,34 @@ function readRecord(root: string): PreparedRootRecord | undefined {
 }
 
 function writeRecord(record: PreparedRootRecord): void {
-  const file = recordFile(record.root);
+  writeWitnessFile(recordFile(record.root), record, record.root);
+}
+
+function cacheUnavailable(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    'code' in error &&
+    ['EACCES', 'EPERM', 'EROFS', 'ENOSPC'].includes(String(error.code))
+  );
+}
+
+function writeWitnessFile(file: string, value: unknown, root: string): void {
   const temporary = `${file}.${randomUUID()}.tmp`;
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+  let failure: unknown;
   try {
-    fs.writeFileSync(temporary, JSON.stringify(record), { mode: 0o600 });
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(temporary, JSON.stringify(value), { mode: 0o600 });
     fs.renameSync(temporary, file);
-  } finally {
-    fs.rmSync(temporary, { force: true });
+  } catch (error) {
+    // Persistence is optional; a refused cache must retain fresh execution.
+    if (cacheUnavailable(error)) currentSourceWitness()?.fallback(root, 'cache-unavailable');
+    else failure = error;
   }
+  try {
+    fs.rmSync(temporary, { force: true });
+  } catch (error) {
+    if (cacheUnavailable(error)) currentSourceWitness()?.fallback(root, 'cache-unavailable');
+    else failure ??= error;
+  }
+  if (failure !== undefined) throw failure;
 }
