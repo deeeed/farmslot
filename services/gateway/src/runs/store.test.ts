@@ -198,6 +198,39 @@ test('createRun persists the domain overlay and omits it when unset', async (t) 
   assert.equal('domain' in withoutDomain, false);
 });
 
+test('createRun freezes a task note and omits a blank one', async (t) => {
+  const note =
+    'This is an evaluation. Work only in this checkout. Do not search other checkouts, branches, PRs, git history beyond the base, or the web for an existing fix.';
+  const withNote = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-note`,
+    taskNote: `  ${note}  `,
+  });
+  t.after(() => cleanupRun(withNote.id));
+  const blank = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-blank-note`,
+    taskNote: '   ',
+  });
+  t.after(() => cleanupRun(blank.id));
+  assert.equal(withNote.taskNote, note);
+  if (withNote.dispatchRequest) assert.equal(withNote.dispatchRequest.taskNote, note);
+  assert.equal('taskNote' in blank, false);
+  assert.throws(
+    () =>
+      createRun({
+        flowType: 'fix-bug',
+        project: 'example-mobile-farm',
+        ticketOrPr: `PROJ-${Date.now()}-task-file-note`,
+        taskFile: '/tmp/TASK.md',
+        taskNote: note,
+      }),
+    /taskNote applies only when Farmslot generates TASK.md/,
+  );
+});
+
 test('createRun rejects domain names outside the slug contract and drops blank ones', async (t) => {
   for (const hostile of ['../evil', 'a b', 'a|b', 'a"b', 'Blue', 'a/../b', 'blue\nEVIL']) {
     assert.throws(

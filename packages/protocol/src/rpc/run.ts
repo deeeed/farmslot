@@ -257,6 +257,12 @@ export interface RunCreateParams {
   initialContext?: string;
   /** Optional operator-owned checklist rendered beside TASK.md for lightweight dev. */
   devChecklist?: string[];
+  /**
+   * Text appended to the generated TASK.md as one `## Note` section.
+   * Ignored when blank. Refused when `taskFile` is set, because that file is
+   * not generated.
+   */
+  taskNote?: string;
 }
 
 export interface RunCreateResult {

@@ -494,6 +494,36 @@ test('run create omits the domain key entirely unless --domain is given', () => 
   assert.equal(withDomain.domain, 'blue');
 });
 
+test('run create forwards --task-note and refuses it with an existing task file', () => {
+  const note =
+    'This is an evaluation. Work only in this checkout. Do not search other checkouts, branches, PRs, git history beyond the base, or the web for an existing fix.';
+  const params = buildRunCreateParams({
+    project: 'audiolab-farm',
+    flowType: 'dev',
+    ticket: 'DEMO-414',
+    taskNote: `  ${note}  `,
+  });
+  assert.equal(params.taskNote, note);
+  assert.equal(
+    'taskNote' in
+      buildRunCreateParams({
+        project: 'audiolab-farm',
+        flowType: 'dev',
+        ticket: 'DEMO-414',
+        taskNote: '   ',
+      }),
+    false,
+  );
+  assert.throws(
+    () =>
+      buildRunCreateParams({
+        task: 'projects/demo/tasks/dev/DEMO-1/TASK.md',
+        taskNote: note,
+      }),
+    /--task-note applies to a generated TASK.md/,
+  );
+});
+
 test('--no-pipeline-review creates an artifact-only validation run with no pipeline review', () => {
   const ticket = { project: 'audiolab-farm', flowType: 'dev', ticket: 'DEMO-414' };
   const validation = buildRunCreateParams({ ...ticket, pipelineReview: false });
