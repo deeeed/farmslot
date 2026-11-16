@@ -94,6 +94,22 @@ test('materialization ignores an execution-only pool and preserves frozen guidan
       JSON.parse(await readFile(path.join(f.task, 'inputs/review-support.json'), 'utf8')),
       f.run.reviewWorkspace!.support,
     );
+    // A reviewer reads the reference paths in the document, not only in a JSON file,
+    // and the bundle carries every file the document names.
+    assert.match(task, /### Reference checkouts \(read-only\)/);
+    assert.match(task, new RegExp(`- \`mobile\`: \`/dev/mobile-ref\` at \`${'c'.repeat(40)}\``));
+    assert.match(task, /- `core`: not cloned on this machine\./);
+    assert.deepEqual(
+      JSON.parse(await readFile(path.join(f.task, 'inputs/reference-checkouts.json'), 'utf8')),
+      {
+        schemaVersion: 1,
+        references: [
+          { name: 'mobile', path: '/dev/mobile-ref', present: true, headSha: 'c'.repeat(40) },
+          { name: 'core', path: '/dev/core-ref', present: false },
+          { name: 'unplaced', path: '', present: false },
+        ],
+      },
+    );
     assert.equal(
       JSON.parse(await readFile(path.join(f.task, 'inputs/review-subject.json'), 'utf8')).headSha,
       f.subject.headSha,

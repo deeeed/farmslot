@@ -225,7 +225,7 @@ export function renderReferenceCheckoutInputs(
     '',
     '### Reference checkouts (read-only)',
     '',
-    'Other codebases this task is compared against. Read them; never write, build or install in them, and never run their tooling: they are shared and kept on `origin/main`.',
+    'Other codebases this task is compared against. Read them; never write, build or install in them, and never run their tooling: they are shared, and another run may be reading the same tree.',
     '',
     ...references.map((reference) =>
       reference.present

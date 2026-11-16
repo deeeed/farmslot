@@ -19,7 +19,7 @@ import {
   ticketCriteriaAsRegistered,
 } from '@farmslot/protocol';
 import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
-import { expandSourceBindings } from '@farmslot/slot-config';
+import { expandSourceBindings, referenceRepoPath } from '@farmslot/slot-config';
 
 import {
   getOrchestratorTaskRoot,
@@ -433,17 +433,11 @@ Use the task's mark wrapper for this reviewer checklist. Preserve the parent wor
   let mobileRepo = '';
   try {
     pv = await loadProjectVars(project);
-    const parentDir = path.dirname(vars.remoteRepo);
     const refName = pv?.projectJson.reference_repos?.mobile?.local_name;
-    const candidates = refName
-      ? [path.join(parentDir, refName), path.join(parentDir, refName.replace(/-ref$/, '-1'))]
-      : [];
-    for (const c of candidates) {
-      if (existsSync(c)) {
-        mobileRepo = c;
-        break;
-      }
-    }
+    // The declared reference only. A '<name>-1' sibling is that project's slot
+    // checkout: a working tree other runs branch-switch, never a reference.
+    const checkout = refName ? referenceRepoPath(vars.remoteRepo, refName) : '';
+    if (checkout && existsSync(checkout)) mobileRepo = checkout;
   } catch (err) {
     // Recoverable: runtimeDir defaults to '.agent', mobileRepo stays empty.
     console.warn(`[review] project vars fallback for ${project}: ${(err as Error).message}`);

@@ -252,3 +252,23 @@ test('a task with no declared references writes no reference input', async (t) =
   assert.equal(result.referenceCheckouts, null);
   assert.doesNotMatch(await readFile(result.taskDocument, 'utf8'), /Reference checkouts/);
 });
+
+test('an operator plan is the task document too, so it carries the reference checkouts', async (t) => {
+  const input = await spec(t);
+  const result = await taskInit({
+    ...input,
+    operatorPlan: '# Operator plan\n- [ ] Compare against Mobile\n',
+    referenceCheckouts: [
+      { name: 'mobile', path: '/dev/metamask/mobile-ref', present: true, headSha: 'aaa111' },
+    ],
+  });
+  const document = await readFile(result.taskDocument, 'utf8');
+  assert.match(
+    document,
+    /### Reference checkouts \(read-only\)/,
+    'the paths reach this worker too',
+  );
+  assert.match(document, /- `mobile`: `\/dev\/metamask\/mobile-ref` at `aaa111`/);
+  assert.match(document, /never write, build or install in them/);
+  assert.ok(result.referenceCheckouts, 'and the input file is still written');
+});

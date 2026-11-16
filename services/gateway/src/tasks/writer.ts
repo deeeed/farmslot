@@ -1301,11 +1301,10 @@ export async function writeTaskFile(
   // host's. A key that machine has not cloned is reported absent and binds an empty
   // path; it is never substituted with that project's slot checkout, which is a
   // working tree other runs branch-switch and rewrite.
-  const parentDir = path.dirname(slotVars.remoteRepo);
   const referenceCheckouts = await resolveReferenceCheckouts(
     slotVars,
     projectVars.projectJson.reference_repos,
-    parentDir,
+    slotVars.remoteRepo,
   );
   for (const reference of referenceCheckouts) {
     const bound = reference.present ? reference.path : '';

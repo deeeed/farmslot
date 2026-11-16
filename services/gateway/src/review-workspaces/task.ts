@@ -457,11 +457,21 @@ export async function materializeReviewWorkspaceTask(
         selectionReason: 'frozen-run-selection',
       },
     });
+    const reviewReferences = run.reviewWorkspace.support?.references?.length
+      ? run.reviewWorkspace.support.references.map((reference) => ({
+          name: reference.name,
+          path: reference.path,
+          present: !reference.missing,
+          ...(reference.headSha && !reference.missing ? { headSha: reference.headSha } : {}),
+        }))
+      : undefined;
     await writeTaskDir({
       taskDir: bundleDir,
       checklistMarkdown: selected.markdown,
       terminalContract,
       handoff,
+      // The document names this file, so the bundle has to carry it.
+      ...(reviewReferences ? { referenceCheckouts: reviewReferences } : {}),
       markCommand: `node ${quoteMarkCommandWord(path.posix.join(taskDir, 'inputs/runtime/node_modules/@farmslot/agent-runtime/scripts/mark-checklist-step.cjs'))}`,
       taskMarkdown: buildTaskDocument({
         flowType: 'review-pr',
@@ -487,16 +497,7 @@ export async function materializeReviewWorkspaceTask(
         // The support binding already read these on the execution node. Listing them
         // in the document, absent ones included, is what makes a comparison the
         // reviewer cannot read a blocked row instead of a silent omission.
-        ...(run.reviewWorkspace.support?.references?.length
-          ? {
-              referenceCheckouts: run.reviewWorkspace.support.references.map((reference) => ({
-                name: reference.name,
-                path: reference.path,
-                present: !reference.missing,
-                ...(reference.headSha && !reference.missing ? { headSha: reference.headSha } : {}),
-              })),
-            }
-          : {}),
+        ...(reviewReferences ? { referenceCheckouts: reviewReferences } : {}),
       }),
     });
     await writeFile(path.join(bundleDir, SUBJECT), `${JSON.stringify(subject, null, 2)}\n`);
