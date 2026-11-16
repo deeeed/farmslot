@@ -174,11 +174,13 @@ function resolveBrowserGatewayConnection(): BrowserGatewayConnection {
   const storedCandidates = localStorage.getItem(GATEWAY_CANDIDATES_STORAGE_KEY);
   const storedGatewayUrl = localStorage.getItem(GATEWAY_URL_STORAGE_KEY);
   const storedSource = localStorage.getItem(GATEWAY_SOURCE_STORAGE_KEY);
+  const devGatewayPort = env.DEV ? env.VITE_FARMSLOT_DEV_GATEWAY_PORT : undefined;
   const urls = resolveGatewayWebSocketUrls(
     env.VITE_FARMSLOT_GATEWAY_URL,
     location,
     storedCandidates,
     storedGatewayUrl,
+    devGatewayPort,
   );
   const source = resolveGatewayConnectionSource(
     env.VITE_FARMSLOT_GATEWAY_URL,
@@ -186,6 +188,7 @@ function resolveBrowserGatewayConnection(): BrowserGatewayConnection {
     storedCandidates,
     storedGatewayUrl,
     storedSource,
+    devGatewayPort,
   );
   return {
     urls,

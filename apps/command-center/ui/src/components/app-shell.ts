@@ -979,12 +979,14 @@ export class FarmApp extends LitElement {
       return 'copilot';
     if (isDesktopClient()) return 'fleet';
     const env = (import.meta as ImportMetaWithEnv).env;
+    const devGatewayPort = env.DEV ? env.VITE_FARMSLOT_DEV_GATEWAY_PORT : undefined;
     const source = resolveGatewayConnectionSource(
       env.VITE_FARMSLOT_GATEWAY_URL,
       location,
       localStorage.getItem(GATEWAY_CANDIDATES_STORAGE_KEY),
       localStorage.getItem(GATEWAY_URL_STORAGE_KEY),
       localStorage.getItem(GATEWAY_SOURCE_STORAGE_KEY),
+      devGatewayPort,
     );
     return source === 'implicit' ? 'onboarding' : 'fleet';
   }

@@ -13,7 +13,9 @@ import {
 
 interface SharedViewEnvironment extends ImportMeta {
   env?: {
+    DEV?: string | boolean;
     VITE_FARMSLOT_GATEWAY_URL?: string;
+    VITE_FARMSLOT_DEV_GATEWAY_PORT?: string;
     VITE_FARMSLOT_COMMAND_CENTER_URL?: string;
     VITE_FARMSLOT_SHARED_GATEWAY_URLS?: string;
   };
@@ -48,11 +50,13 @@ function gatewayAliases(value: string | undefined): string[] {
 /** Runs before importing gateway consumers or mounting a requested view. */
 export function browserSharedViewReceipt(): SharedViewReceipt {
   const env = (import.meta as SharedViewEnvironment).env ?? {};
+  const devGatewayPort = env.DEV ? env.VITE_FARMSLOT_DEV_GATEWAY_PORT : undefined;
   const candidates = resolveGatewayWebSocketUrls(
     env.VITE_FARMSLOT_GATEWAY_URL,
     location,
     localStorage.getItem(GATEWAY_CANDIDATES_STORAGE_KEY),
     localStorage.getItem(GATEWAY_URL_STORAGE_KEY),
+    devGatewayPort,
   );
   const { connectable } = filterConnectableGatewayUrls(candidates, location);
   return sharedViewStartupReceipt(location.href, connectable, {

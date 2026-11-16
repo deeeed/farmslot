@@ -6,6 +6,7 @@ export * from './contracts/runner-reasoning.js';
 export { deepFreeze } from './deep-freeze.js';
 export * from './evals/bench-patch.js';
 export * from './evals/bench-rollup.js';
+export * from './explicit-dev-host.js';
 export { isRacyStamp, RACY_STAMP_MS } from './file-stamp.js';
 export * from './fleet/host-load.js';
 export * from './fleet/stale.js';

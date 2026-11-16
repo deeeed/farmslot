@@ -29,6 +29,11 @@
       "import": "./dist/checklist-target.js",
       "default": "./dist/checklist-target.js"
     },
+    "./explicit-dev-host": {
+      "types": "./dist/explicit-dev-host.d.ts",
+      "import": "./dist/explicit-dev-host.js",
+      "default": "./dist/explicit-dev-host.js"
+    },
     "./client-cache": {
       "types": "./dist/client-cache/index.d.ts",
       "import": "./dist/client-cache/index.js",
