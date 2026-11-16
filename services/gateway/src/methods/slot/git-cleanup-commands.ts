@@ -30,13 +30,15 @@ export function landDefaultBranchCommand(
 }
 
 /**
- * `git branch -D <branch>` then `git checkout -b <branch> <base>` in one pass, from the clean
- * default branch: the branch recreated at `base`, with no config left from an older `<branch>`.
+ * `git branch -D <branch>` then `git checkout -b <branch> <base>` as one guarded mutation, from
+ * the clean default branch (so no second checkout of it): the branch recreated at `base`, with no
+ * config left from the older one. When another worktree holds `<branch>`, `branch -D` refuses,
+ * keeping the branch and its config, and nothing else runs.
  */
 export function recreateBranchCommand(
   branch: string,
   base: string,
   quote: (value: string) => string,
 ): string {
-  return `git config --remove-section ${quote(`branch.${branch}`)} 2>/dev/null; git checkout -B ${quote(branch)} ${quote(base)}`;
+  return `git branch -D ${quote(branch)} && git checkout -b ${quote(branch)} ${quote(base)}`;
 }

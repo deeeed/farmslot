@@ -282,3 +282,21 @@ test('recreateBranchCommand recreates the branch at its base with no config from
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('recreateBranchCommand is refused, config kept, when another worktree holds the branch', () => {
+  const { root, slot } = slotBehindOrigin('farmslot-recreate-held-');
+  try {
+    git(slot, 'config', 'branch.feat/x.merge', 'refs/heads/feat/x');
+    git(slot, 'checkout', '-q', 'main');
+    git(slot, 'worktree', 'add', '-q', path.join(root, 'aux'), 'feat/x');
+    const before = git(slot, 'rev-parse', 'refs/heads/feat/x').stdout.trim();
+    const base = git(slot, 'rev-parse', 'origin/main').stdout.trim();
+    const result = runBash(recreateBranchCommand('feat/x', base, quote), slot);
+    assert.notEqual(result.status, 0);
+    assert.equal(git(slot, 'rev-parse', 'refs/heads/feat/x').stdout.trim(), before);
+    assert.equal(git(slot, 'config', 'branch.feat/x.merge').stdout.trim(), 'refs/heads/feat/x');
+    assert.equal(git(slot, 'symbolic-ref', 'HEAD').stdout.trim(), 'refs/heads/main');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
