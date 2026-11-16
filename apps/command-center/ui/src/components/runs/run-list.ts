@@ -49,7 +49,7 @@ import {
 } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
-import { navigateHash } from '../../utils/url-state.js';
+import { navigateHash, replaceHistoryEntryState } from '../../utils/url-state.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
 import { readCurrent } from '../shared/read-current.js';
 import { canActOn, ResourceQueryController } from '../shared/resource-query-controller.js';
@@ -92,6 +92,11 @@ import {
   showsRunProgress,
   TERMINAL_STATUSES,
 } from './run-list-model.js';
+import {
+  restoreRunDetailScroll,
+  savedRunDetailScroll,
+  withRunDetailScroll,
+} from './run-list-scroll.js';
 import { renderRunListSkeleton } from './run-list-skeleton.js';
 import {
   FLOW_OPTIONS,
@@ -191,6 +196,44 @@ export class RunList extends RunListState {
   private readonly progressQueries = new Map<string, ResourceQueryController<TaskProgressResult>>();
   @state() private taskProgressErrorsByRun = new Map<string, string>();
   private progressClock?: number;
+  private reloadScrollTop?: number;
+  private reloadScrollRun = '';
+  private restoreScrollFrame?: number;
+  private readonly saveScroll = () => {
+    if (this.selectedRunId)
+      replaceHistoryEntryState(
+        withRunDetailScroll(history.state, this.selectedRunId, this.scrollTop),
+      );
+  };
+  private readonly cancelScrollRestore = () => {
+    this.reloadScrollTop = undefined;
+    if (this.restoreScrollFrame !== undefined) cancelAnimationFrame(this.restoreScrollFrame);
+    this.restoreScrollFrame = undefined;
+  };
+  private readonly onDetailRendered = () => {
+    if (this.reloadScrollTop === undefined) return;
+    if (this.restoreScrollFrame !== undefined) cancelAnimationFrame(this.restoreScrollFrame);
+    // Descendant Lit updates settle before the next paint.
+    this.restoreScrollFrame = requestAnimationFrame(() => this.restoreScrollAfterLayout());
+  };
+  private restoreScrollAfterLayout(): void {
+    const detail = this.renderRoot.querySelector<import('./run-detail.js').RunDetail>('run-detail');
+    if (this.reloadScrollTop === undefined) return;
+    if (this.selectedRunId !== this.reloadScrollRun) {
+      this.cancelScrollRestore();
+      return;
+    }
+    if (
+      restoreRunDetailScroll(
+        this,
+        this.reloadScrollTop,
+        detail?.run?.id === this.selectedRunId &&
+          Boolean(detail.shadowRoot?.querySelector('.pipeline-section')),
+      )
+    )
+      this.cancelScrollRestore();
+  }
+
   private readonly tagQuery = new ResourceQueryController<RunListResult>(this, (state) => {
     this.tagRuns = this.tagFilter ? (state.data?.runs ?? []) : null;
   });
@@ -241,7 +284,15 @@ export class RunList extends RunListState {
       this.narrowViewport = this.narrowMedia.matches;
       this.narrowMedia.addEventListener('change', this.onNarrowChange);
     }
+    const savedHistory: unknown = history.state;
     this._onHashChange();
+    this.reloadScrollRun = this.selectedRunId;
+    this.reloadScrollTop = savedRunDetailScroll(savedHistory, this.selectedRunId);
+    // pagehide retires the resource owner and disconnects this view first.
+    // Save before that teardown; this handler never requests a navigation prompt.
+    window.addEventListener('beforeunload', this.saveScroll);
+    for (const event of ['wheel', 'pointerdown', 'touchstart', 'keydown'])
+      this.addEventListener(event, this.cancelScrollRestore, { passive: true });
     // "last progress Nm ago" and the stale line move with the clock, not with run events.
     this.progressClock = window.setInterval(() => this.requestUpdate(), 60_000);
   }
@@ -257,6 +308,10 @@ export class RunList extends RunListState {
     this.progressQueries.clear();
     this.narrowMedia?.removeEventListener('change', this.onNarrowChange);
     window.removeEventListener('hashchange', this._onHashChange);
+    window.removeEventListener('beforeunload', this.saveScroll);
+    for (const event of ['wheel', 'pointerdown', 'touchstart', 'keydown'])
+      this.removeEventListener(event, this.cancelScrollRestore);
+    this.cancelScrollRestore();
   }
 
   private syncTaskProgress(runs: readonly RunListRow[]): void {
@@ -788,6 +843,7 @@ export class RunList extends RunListState {
                       class="run-list-detail"
                       .runId=${selectedRunId}
                       embedded
+                      @run-detail-rendered=${this.onDetailRendered}
                     ></run-detail>`
                 : nothing;
               return renderWorkInventoryLayout({

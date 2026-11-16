@@ -424,6 +424,8 @@ export class RunDetail extends RunDetailState {
     }
     this._syncLiveArtifacts();
     this._focusSharedPanel();
+    if (changed.has('run') && this.run)
+      this.dispatchEvent(new CustomEvent('run-detail-rendered', { bubbles: true, composed: true }));
   }
 
   private _focusSharedPanel() {
