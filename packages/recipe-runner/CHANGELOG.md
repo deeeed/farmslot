@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- mm-harness 0.96.28 refuses unavailable configured Mobile slot devices instead of selecting another connected device; shared runner code and dependency pins are unchanged.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.46.21 - 2026-11-16
