@@ -15,3 +15,17 @@ export const REFRESH_REMOTE_REF_LOCKS_COMMAND = `now=$(date +%s); cleanup_git_lo
 // Same-branch prepares should still refresh/unlock after flag-sweep failures,
 // but the final exit status must preserve the flag-sweep failure.
 export const CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND = `flag_status=0; ${CLEAR_INDEX_FLAGS_COMMAND} || flag_status=$?; ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; exit $flag_status`;
+
+/**
+ * `git branch -D <branch>` then `git checkout -b <branch> <base>` as one guarded mutation, from
+ * the clean default branch (so no second checkout of it): the branch recreated at `base`, with no
+ * config left from the older one. When another worktree holds `<branch>`, `branch -D` refuses,
+ * keeping the branch and its config, and nothing else runs.
+ */
+export function recreateBranchCommand(
+  branch: string,
+  base: string,
+  quote: (value: string) => string,
+): string {
+  return `git branch -D ${quote(branch)} && git checkout -b ${quote(branch)} ${quote(base)}`;
+}
