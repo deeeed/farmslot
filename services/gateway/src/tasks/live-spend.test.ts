@@ -109,3 +109,82 @@ test('a runner without one appendable transcript says so instead of reading', as
   assert.equal(node.requests(), 0);
   assert.match(spend.unavailable ?? '', /not one appendable transcript/);
 });
+
+test('catching up reads several chunks in one read and still waits the interval', async () => {
+  resetLiveSpend();
+  const node = remoteTranscript();
+  // More than one 512 KB chunk of records.
+  for (let i = 0; i < 6000; i++)
+    node.write(assistant(1 + (i % 50), 0.001).replace(/"id":"m\d+"/, `"id":"u${i}"`));
+  const source = { key: 'catch', runner: 'pi', path: '/s.jsonl', marks: [] };
+  const first = await liveSpendFor(node.io, source, 0);
+  const afterFirst = node.requests();
+  assert.ok(afterFirst > 1 && afterFirst <= 8, `one read took ${afterFirst} chunks`);
+  assert.equal(first.toolCalls, 6000);
+  assert.equal(first.behindBytes, undefined);
+  for (const now of [10, 20, 14_000]) await liveSpendFor(node.io, source, now);
+  assert.equal(node.requests(), afterFirst, 'polls inside the interval read nothing');
+});
+
+test('a replaced transcript is read again from its start within the same read', async () => {
+  resetLiveSpend();
+  let identity = '1:1';
+  let content = assistant(1, 0.01) + assistant(2, 0.01);
+  const io: SlotLocality = {
+    host: 'node.invalid',
+    machine: 'live-spend-node',
+    sshTarget: 'node.invalid',
+    nodeRequest: async (_method, params) => {
+      const { offset, length } = params as { offset: number; length: number };
+      const bytes = Buffer.from(content).subarray(offset, offset + length);
+      return {
+        content: bytes.toString('base64'),
+        size: Buffer.byteLength(content),
+        offset,
+        bytesRead: bytes.length,
+        eof: true,
+        fileIdentity: identity,
+      };
+    },
+  };
+  const source = { key: 'rot', runner: 'pi', path: '/s.jsonl', marks: [] };
+  assert.equal((await liveSpendFor(io, source, 0)).toolCalls, 2);
+  identity = '1:2';
+  content = assistant(3, 0.01);
+  assert.equal((await liveSpendFor(io, source, LIVE_SPEND_READ_INTERVAL_MS)).toolCalls, 1);
+});
+
+test('repeated read failures restart the reader from byte 0', async () => {
+  resetLiveSpend();
+  let fail = false;
+  const offsets: number[] = [];
+  const content = assistant(1, 0.01);
+  const io: SlotLocality = {
+    host: 'node.invalid',
+    machine: 'live-spend-node',
+    sshTarget: 'node.invalid',
+    nodeRequest: async (_method, params) => {
+      const { offset, length } = params as { offset: number; length: number };
+      offsets.push(offset);
+      if (fail) throw new Error('fs.readChunk offset beyond file size');
+      const bytes = Buffer.from(content).subarray(offset, offset + length);
+      return {
+        content: bytes.toString('base64'),
+        size: Buffer.byteLength(content),
+        offset,
+        bytesRead: bytes.length,
+        eof: true,
+        fileIdentity: '1:1',
+      };
+    },
+  };
+  const source = { key: 'trunc', runner: 'pi', path: '/s.jsonl', marks: [] };
+  await liveSpendFor(io, source, 0);
+  fail = true;
+  const failed = await liveSpendFor(io, source, LIVE_SPEND_READ_INTERVAL_MS);
+  assert.match(failed.unavailable ?? '', /could not be read/);
+  await liveSpendFor(io, source, 2 * LIVE_SPEND_READ_INTERVAL_MS);
+  fail = false;
+  await liveSpendFor(io, source, 3 * LIVE_SPEND_READ_INTERVAL_MS);
+  assert.equal(offsets.at(-1), 0, 'after two failures the next read starts at byte 0');
+});

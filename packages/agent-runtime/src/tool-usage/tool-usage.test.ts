@@ -360,3 +360,79 @@ test('live: any chunking of a transcript gives the full read, and closed steps a
   }
   assert.equal(createLiveToolUsage('cursor'), undefined, 'cursor has no appendable transcript');
 });
+
+const codexLine = (record: Record<string, unknown>) => `${JSON.stringify(record)}\n`;
+const codexItem = (completed: number, started: number, id: string) =>
+  codexLine({
+    timestamp: t(completed),
+    type: 'event_msg',
+    payload: {
+      type: 'item_completed',
+      started_at_ms: Date.parse(t(started)),
+      item: { type: 'CommandExecution', id },
+    },
+  });
+
+test('live: a record timed inside a frozen step is added to that step, not lost', () => {
+  const live = createLiveToolUsage('codex')!;
+  live.append(Buffer.from(codexItem(5, 4, 'a') + codexItem(12, 11, 'b')));
+  let summary = live.summary(marks);
+  assert.deepEqual(
+    summary.steps.map((step) => [step.stepNumber ?? 'end', step.toolCalls]),
+    [
+      [1, 1],
+      [2, 1],
+      ['end', 0],
+    ],
+  );
+  // A long command that started before mark 1 (second 10) completes now.
+  live.append(Buffer.from(codexItem(14, 9, 'c')));
+  summary = live.summary(marks);
+  assert.equal(summary.toolCalls, 3);
+  assert.equal(summary.steps[0].toolCalls, 2, 'the back-dated call belongs to step 1');
+  // Freezing step 2 later keeps the total.
+  live.append(Buffer.from(codexItem(25, 24, 'd')));
+  assert.equal(live.summary(marks).toolCalls, 4);
+});
+
+test('live: records before the accounting window belong to an earlier run', () => {
+  const live = createLiveToolUsage('codex', Date.parse(t(10)))!;
+  live.append(Buffer.from(codexItem(5, 4, 'old') + codexItem(12, 11, 'new')));
+  assert.equal(live.summary([]).toolCalls, 1);
+});
+
+test('codex: native items stay the calls after old ones are dropped', () => {
+  const live = createLiveToolUsage('codex')!;
+  live.append(
+    Buffer.from(
+      codexItem(5, 4, 'a') +
+        codexLine({
+          timestamp: t(12),
+          type: 'event_msg',
+          payload: {
+            type: 'token_count',
+            info: { total_token_usage: { total_tokens: 100, input_tokens: 90, output_tokens: 10 } },
+          },
+        }) +
+        codexLine({
+          timestamp: t(12),
+          type: 'response_item',
+          payload: { type: 'function_call', call_id: 'w', name: 'exec' },
+        }),
+    ),
+  );
+  // The token record freezes step 1 and drops item `a`; the wrapper must not then count as a call.
+  assert.equal(live.summary(marks).toolCalls, 1, 'the exec wrapper is not a second call');
+});
+
+test('counter: a compaction outside the call and token span still counts', () => {
+  const usage = countToolUsage(
+    {
+      tools: [{ name: 'bash', issuedAt: t(5) }],
+      tokens: [],
+      compactions: [{ at: t(1) }, { at: t(30) }],
+    },
+    [],
+  );
+  assert.equal(usage.compactions, 2);
+});

@@ -29,6 +29,8 @@ export function countToolUsage(
   const times = [
     ...stream.tools.flatMap((tool) => (tool.issuedAt ? [Date.parse(tool.issuedAt)] : [])),
     ...(stream.tokens ?? []).map((sample) => Date.parse(sample.at)),
+    // A compaction before the first call or after the last record is still in the session.
+    ...(stream.compactions ?? []).map((event) => Date.parse(event.at)),
   ].filter(Number.isFinite);
   const start = window.startedAt ? Date.parse(window.startedAt) : Math.min(...times);
   // A mark after the last recorded activity still closes its step.

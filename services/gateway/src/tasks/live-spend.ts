@@ -24,6 +24,8 @@ export interface LiveSpendSource {
   runner: string;
   path: string;
   marks: ChecklistMark[];
+  /** Accounting window start: a reused conversation's earlier records belong to an earlier run. */
+  since?: number;
 }
 
 /** The viewed context's source; undefined when it names no runner session. */
@@ -34,15 +36,23 @@ export function liveSpendSource(
   const path = context?.runnerSessionPath;
   const runner = context?.runner;
   if (!context || !path || !runner) return undefined;
+  // The same window the session receipt counts in: this attempt of this context.
+  const started = Date.parse(context.attemptStartedAt ?? context.startedAt ?? '');
+  const since = Number.isFinite(started) ? started : undefined;
   return {
-    key: `${run.id}\u0000${context.id}\u0000${path}`,
+    key: `${run.id}\u0000${context.id}\u0000${since ?? ''}\u0000${path}`,
     runner,
     path,
     marks: contextChecklistMarks(run, context),
+    ...(since !== undefined ? { since } : {}),
   };
 }
 
 export const LIVE_SPEND_READ_INTERVAL_MS = 15_000;
+/** Chunks one read may take while catching up (a restart, a long transcript): 8 x 512 KB. */
+const MAX_CHUNKS_PER_READ = 8;
+/** Consecutive failed reads after which the reader starts again from byte 0 (a truncated file). */
+const RESTART_AFTER_FAILURES = 2;
 /** Readers kept; the oldest goes first. Each holds only its open step's events. */
 const MAX_SESSIONS = 64;
 
@@ -53,8 +63,9 @@ interface Session {
   marksKey?: string;
   summary?: LiveUsageSummary;
   unavailable?: string;
-  /** Transcript bytes not read yet: the numbers are partial and the next poll reads on. */
+  /** Transcript bytes not read yet: the numbers are partial until a later read catches up. */
   behindBytes?: number;
+  failures: number;
 }
 
 const sessions = new Map<string, Session>();
@@ -66,24 +77,25 @@ export function resetLiveSpend(): void {
 
 async function readTail(io: SlotLocality, path: string, session: Session): Promise<void> {
   const { live } = session;
-  const range = await slotReadRange(io, path, live.offset, FILE_TRANSFER_CHUNK_MAX_BYTES);
-  // A rotated or shorter transcript is another file: count it from its start next time.
-  if (
-    (live.fileIdentity !== undefined && range.fileIdentity !== live.fileIdentity) ||
-    range.size < live.offset
-  ) {
-    live.reset(range.fileIdentity);
-    session.summary = undefined;
-    return;
+  for (let chunk = 0; chunk < MAX_CHUNKS_PER_READ; chunk++) {
+    const range = await slotReadRange(io, path, live.offset, FILE_TRANSFER_CHUNK_MAX_BYTES);
+    // A rotated or shorter transcript is another file: count it again from its start.
+    if (
+      (live.fileIdentity !== undefined && range.fileIdentity !== live.fileIdentity) ||
+      range.size < live.offset
+    ) {
+      live.reset(range.fileIdentity);
+      session.summary = undefined;
+      continue;
+    }
+    live.fileIdentity = range.fileIdentity;
+    if (range.bytes.length) {
+      live.append(range.bytes);
+      session.summary = undefined;
+    }
+    session.behindBytes = Math.max(0, range.size - live.offset);
+    if (!session.behindBytes || !range.bytes.length) return;
   }
-  live.fileIdentity = range.fileIdentity;
-  if (range.bytes.length) {
-    live.append(range.bytes);
-    session.summary = undefined;
-  }
-  session.behindBytes = Math.max(0, range.size - live.offset);
-  // Catching up (a restart, a long transcript): the next poll continues without the wait.
-  if (session.behindBytes > 0) session.readAt = -Infinity;
 }
 
 function spend(session: Session, readAt: number): TaskLiveSpend {
@@ -104,12 +116,12 @@ function spend(session: Session, readAt: number): TaskLiveSpend {
 /** The session's spend so far. */
 export async function liveSpendFor(
   io: SlotLocality,
-  { key, runner, path, marks }: LiveSpendSource,
+  { key, runner, path, marks, since }: LiveSpendSource,
   now = Date.now(),
 ): Promise<TaskLiveSpend> {
   let session = sessions.get(key);
   if (!session) {
-    const live = createLiveToolUsage(runner);
+    const live = createLiveToolUsage(runner, since);
     if (!live)
       return {
         runner,
@@ -121,7 +133,7 @@ export async function liveSpendFor(
         steps: [],
         unavailable: `${runner} sessions are not one appendable transcript; spend arrives with the session receipt`,
       };
-    session = { live, readAt: -Infinity };
+    session = { live, readAt: -Infinity, failures: 0 };
     sessions.set(key, session);
     while (sessions.size > MAX_SESSIONS) sessions.delete(sessions.keys().next().value!);
   } else {
@@ -136,11 +148,19 @@ export async function liveSpendFor(
       .then(
         () => {
           active.unavailable = undefined;
+          active.failures = 0;
         },
         (error: unknown) => {
           // The worker may not have written its first record yet; any other failure is shown
-          // on the progress read instead of failing it, and the next read tries again.
+          // on the progress read instead of failing it, and the next read tries again. A node
+          // refuses an offset past a truncated file's end without saying so: after repeated
+          // failures the reader starts again from byte 0.
           const code = (error as NodeJS.ErrnoException)?.code;
+          if (code !== 'ENOENT' && ++active.failures >= RESTART_AFTER_FAILURES) {
+            active.live.reset();
+            active.summary = undefined;
+            active.failures = 0;
+          }
           active.unavailable =
             code === 'ENOENT'
               ? 'The session transcript is not written yet'
@@ -157,5 +177,5 @@ export async function liveSpendFor(
     session.summary = session.live.summary(marks);
     session.marksKey = marksKey;
   }
-  return spend(session, Number.isFinite(session.readAt) ? session.readAt : now);
+  return spend(session, session.readAt);
 }

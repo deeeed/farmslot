@@ -124,6 +124,28 @@ export async function taskProgress(
     slot?.phase,
     slot?.agent,
   ]);
+  // Every live slot read, with or without an explicit task file, reports the viewed session's
+  // spend. It reads beside the progress files, so the transcript tail adds no wait of its own.
+  const spendSource =
+    live && !inactive && boundRun && params.slotId && !isTerminalRunStatus(boundRun.status)
+      ? liveSpendSource(boundRun, context)
+      : undefined;
+  const spending = spendSource
+    ? loadSlotVars(params.slotId).then(
+        (vars) => liveSpendFor(vars, spendSource),
+        // Without slot variables the progress read itself fails; the spend says the same.
+        (error: unknown) => ({
+          runner: spendSource.runner,
+          readAt: new Date().toISOString(),
+          totalTokens: null,
+          costUsd: null,
+          compactions: null,
+          toolCalls: 0,
+          steps: [],
+          unavailable: `The slot could not be resolved: ${(error as Error).message}`,
+        }),
+      )
+    : undefined;
   const checkSource =
     options.observed && !inactive
       ? await admitProgressSource(params, requested, slot, live)
@@ -173,6 +195,8 @@ export async function taskProgress(
       );
   }
   checkSource?.();
+  const spent = await spending;
+  if (spent) result.liveSpend = spent;
   return result;
 }
 
@@ -416,19 +440,11 @@ async function readTaskProgress(
       reconcileFinalStepFromSignal(result.structured);
     }
   }
-  // Read beside the existing reads, so the transcript tail adds no wait of its own.
-  const spendSource =
-    activeRun && !isTerminalRunStatus(activeRun.status)
-      ? liveSpendSource(activeRun, context)
-      : undefined;
-  const liveSpend = spendSource ? liveSpendFor(vars, spendSource) : undefined;
   if (result.structured) {
     await attachOperations(vars, effectiveMdPath, result.structured);
     await attachChecklistTiming(vars, effectiveMdPath, result.structured, activeRun, context);
   }
   await attachAcceptanceStatus(vars, effectiveMdPath, result, activeRun);
-  const spent = await liveSpend;
-  if (spent) result.liveSpend = spent;
 
   return result;
 }

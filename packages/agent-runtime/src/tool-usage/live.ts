@@ -1,6 +1,8 @@
 // Live tokens, cost, compactions and tool calls of a running session, from the transcript bytes
 // appended since the last read. A step a checklist mark has closed is frozen and its events are
 // dropped, so each summary counts only the open step: the cost does not grow with the session.
+// An event appended later but timed inside a frozen step (a Codex command that started before
+// the mark) is added to that step rather than lost.
 import type { SessionToolUsageSegment } from '@farmslot/protocol/contracts/runs';
 
 import { countToolUsage } from './count.js';
@@ -29,20 +31,20 @@ interface Totals {
 
 const add = (a: number | null, b: number | null | undefined) =>
   a === null || b == null ? null : a + b;
+const zero = (): Totals => ({ tokens: 0, costUsd: 0, compactions: 0, toolCalls: 0 });
+const ms = (at: string | undefined) => (at ? Date.parse(at) : NaN);
 
-function streamTotals(stream: ToolUsageStream): Totals {
-  let costUsd: number | null = 0;
-  let tokens = 0;
-  for (const sample of stream.tokens ?? []) {
-    tokens += sample.tokens;
-    costUsd = add(costUsd, sample.costUsd);
-  }
-  return {
-    tokens,
-    costUsd,
-    compactions: stream.compactions?.length ?? 0,
-    toolCalls: stream.tools.length,
-  };
+/** Totals of the events at or after `from`. */
+function streamTotals(stream: ToolUsageStream, from: number): Totals {
+  const totals = zero();
+  for (const sample of stream.tokens ?? [])
+    if (!(ms(sample.at) < from)) {
+      totals.tokens += sample.tokens;
+      totals.costUsd = add(totals.costUsd, sample.costUsd);
+    }
+  totals.compactions = (stream.compactions ?? []).filter((event) => !(ms(event.at) < from)).length;
+  totals.toolCalls = stream.tools.filter((tool) => !(ms(tool.issuedAt) < from)).length;
+  return totals;
 }
 
 export class LiveToolUsage {
@@ -53,14 +55,19 @@ export class LiveToolUsage {
   private carry = '';
   private parser: StreamParser;
   private frozen: SessionToolUsageSegment[] = [];
-  private frozenUntil = -Infinity;
-  private frozenTotals: Totals = { tokens: 0, costUsd: 0, compactions: 0, toolCalls: 0 };
+  /** End (mark time) of each frozen step, ascending. */
+  private boundaries: number[] = [];
+  private frozenUntil: number;
+  private frozenTotals: Totals = zero();
 
+  /** `since`: the accounting window's start; records before it belong to an earlier run. */
   constructor(
     readonly runner: string,
     private readonly makeParser: () => StreamParser,
+    private readonly since = -Infinity,
   ) {
     this.parser = makeParser();
+    this.frozenUntil = since;
   }
 
   /** Start again from byte 0, for a replaced transcript. */
@@ -70,8 +77,9 @@ export class LiveToolUsage {
     this.carry = '';
     this.parser = this.makeParser();
     this.frozen = [];
-    this.frozenUntil = -Infinity;
-    this.frozenTotals = { tokens: 0, costUsd: 0, compactions: 0, toolCalls: 0 };
+    this.boundaries = [];
+    this.frozenUntil = this.since;
+    this.frozenTotals = zero();
   }
 
   /** Bytes read at `this.offset`. A partial last line waits for the next read. */
@@ -94,7 +102,48 @@ export class LiveToolUsage {
     }
   }
 
+  /** Adds an event timed inside a frozen step to that step; one before the window is ignored. */
+  private routeLate(at: number, change: Partial<Totals>): void {
+    if (!(at >= this.since)) return;
+    const index = this.boundaries.findIndex((end) => at < end);
+    if (index < 0) return;
+    const step = this.frozen[index];
+    const hasTokens = change.tokens !== undefined;
+    step.toolCalls += change.toolCalls ?? 0;
+    if (hasTokens) {
+      step.totalTokens = (step.totalTokens ?? 0) + (change.tokens ?? 0);
+      step.costUsd = add(step.costUsd ?? 0, change.costUsd);
+    }
+    if (change.compactions) step.compactions = (step.compactions ?? 0) + change.compactions;
+    this.frozenTotals = {
+      tokens: this.frozenTotals.tokens + (change.tokens ?? 0),
+      costUsd: hasTokens
+        ? add(this.frozenTotals.costUsd, change.costUsd)
+        : this.frozenTotals.costUsd,
+      compactions: this.frozenTotals.compactions + (change.compactions ?? 0),
+      toolCalls: this.frozenTotals.toolCalls + (change.toolCalls ?? 0),
+    };
+  }
+
+  /** Records appended since the last summary but timed before the frozen boundary. */
+  private settleLateEvents(): void {
+    if (!Number.isFinite(this.frozenUntil)) return;
+    const stream = this.parser.stream();
+    if (this.frozen.length) {
+      for (const tool of stream.tools)
+        if (ms(tool.issuedAt) < this.frozenUntil)
+          this.routeLate(ms(tool.issuedAt), { toolCalls: 1 });
+      for (const sample of stream.tokens ?? [])
+        if (ms(sample.at) < this.frozenUntil)
+          this.routeLate(ms(sample.at), { tokens: sample.tokens, costUsd: sample.costUsd ?? null });
+      for (const event of stream.compactions ?? [])
+        if (ms(event.at) < this.frozenUntil) this.routeLate(ms(event.at), { compactions: 1 });
+    }
+    this.parser.dropBefore(this.frozenUntil);
+  }
+
   summary(marks: ChecklistMark[]): LiveUsageSummary {
+    this.settleLateEvents();
     const stream = this.parser.stream();
     // The last frozen mark stays, so the counter labels what follows it as a step or the tail;
     // the segment it closes was frozen already and is dropped below.
@@ -109,31 +158,38 @@ export class LiveToolUsage {
         : {},
     );
     const latest = Math.max(
-      ...stream.tools.flatMap((tool) => (tool.issuedAt ? [Date.parse(tool.issuedAt)] : [])),
-      ...(stream.tokens ?? []).map((sample) => Date.parse(sample.at)),
+      ...stream.tools.flatMap((tool) => (tool.issuedAt ? [ms(tool.issuedAt)] : [])),
+      ...(stream.tokens ?? []).map((sample) => ms(sample.at)),
+      ...(stream.compactions ?? []).map((event) => ms(event.at)),
       -Infinity,
     );
     const steps = usage.steps.filter(
-      (step) => !(step.markedAt !== undefined && Date.parse(step.markedAt) <= this.frozenUntil),
+      (step) =>
+        !(
+          this.frozen.length &&
+          step.markedAt !== undefined &&
+          Date.parse(step.markedAt) <= this.frozenUntil
+        ),
     );
     const closed = steps.filter(
       (step) => step.markedAt !== undefined && Date.parse(step.markedAt) <= latest,
     );
+    for (const step of closed) {
+      // Read past this mark: the step is final, except for late records routed above.
+      this.frozen.push(step);
+      this.boundaries.push(Date.parse(step.markedAt!));
+      this.frozenTotals = {
+        tokens: this.frozenTotals.tokens + (step.totalTokens ?? 0),
+        costUsd: add(this.frozenTotals.costUsd, step.costUsd),
+        compactions: this.frozenTotals.compactions + (step.compactions ?? 0),
+        toolCalls: this.frozenTotals.toolCalls + step.toolCalls,
+      };
+    }
     if (closed.length) {
-      // The transcript is read past these marks: their steps cannot change any more.
-      this.frozen.push(...closed);
-      for (const step of closed) {
-        this.frozenTotals = {
-          tokens: this.frozenTotals.tokens + (step.totalTokens ?? 0),
-          costUsd: add(this.frozenTotals.costUsd, step.costUsd),
-          compactions: this.frozenTotals.compactions + (step.compactions ?? 0),
-          toolCalls: this.frozenTotals.toolCalls + step.toolCalls,
-        };
-      }
-      this.frozenUntil = Date.parse(closed[closed.length - 1].markedAt!);
+      this.frozenUntil = this.boundaries[this.boundaries.length - 1];
       this.parser.dropBefore(this.frozenUntil);
     }
-    const rest = streamTotals(this.parser.stream());
+    const rest = streamTotals(this.parser.stream(), this.frozenUntil);
     return {
       runner: this.runner,
       totalTokens: stream.tokens === null ? null : this.frozenTotals.tokens + rest.tokens,

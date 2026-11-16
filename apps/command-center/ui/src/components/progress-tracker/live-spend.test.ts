@@ -50,4 +50,6 @@ test('spent so far and per-step cost read the live spend, unknown prices stay un
   assert.equal(openStepSpend(spend)?.cost, '$0.0009');
   assert.match(liveSpendSummary({ ...spend, costUsd: null })!.title, /cost unknown/);
   assert.match(liveSpendSummary({ ...spend, behindBytes: 4096 })!.note ?? '', /bytes to go/);
+  // Before the first mark there are no steps: the running step shows the whole session so far.
+  assert.equal(openStepSpend({ ...spend, steps: [] })?.cost, '$0.35');
 });

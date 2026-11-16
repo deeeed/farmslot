@@ -55,10 +55,15 @@ export function stepSpend(
   };
 }
 
-/** What the open step (after the last mark) has spent so far. */
+/** What the open step (after the last mark) has spent so far; before any mark, the whole session. */
 export function openStepSpend(
   spend: TaskLiveSpend | undefined,
 ): { cost: string; title: string } | null {
+  if (spend && !spend.steps.length && !spend.unavailable)
+    return {
+      cost: formatSpendUsd(spend.costUsd),
+      title: `${formatCompactNumber(spend.totalTokens)} tokens · ${spend.toolCalls} tool calls`,
+    };
   const step = spend?.steps.find((segment) => segment.segment === 'after-last-mark');
   if (!step) return null;
   return {

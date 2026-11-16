@@ -55,10 +55,12 @@ function codexParser(): StreamParser {
   const tokens: TokenSample[] = [];
   const compactions: CompactionEvent[] = [];
   let model: string | undefined;
+  // Once a rollout has native items they are the calls; dropping old ones must not switch back.
+  let usesItems = false;
   let previous = { total: 0, input: 0, output: 0 };
   const parsed = { tools: items, tokens, compactions };
   const current = () => ({
-    tools: items.length ? items : pairToolEvents(calls, completions),
+    tools: usesItems ? items : pairToolEvents(calls, completions),
     tokens,
     compactions,
   });
@@ -80,6 +82,7 @@ function codexParser(): StreamParser {
         isRecord(payload.item)
       ) {
         const name = itemName(text(payload.item.type) ?? 'unknown');
+        if (!NOT_TOOLS.has(name)) usesItems = true;
         if (!NOT_TOOLS.has(name))
           items.push({
             id: text(payload.item.id),
