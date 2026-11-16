@@ -57,6 +57,8 @@ type CopilotNative = Pick<
   'ensure' | 'inspect' | 'commandStatus' | 'send' | 'close'
 >;
 const RECONCILE_MS = 5_000;
+/** Snapshot attempts an action makes while checkout writes keep superseding them. */
+const ACTION_STATUS_TRIES = 3;
 function dangerousAutostartEnabled(): boolean {
   return process.env.FARMSLOT_COPILOT_DANGEROUS_AUTOSTART === COPILOT_DANGEROUS_TYPED_PHRASE;
 }
@@ -233,11 +235,28 @@ export class CopilotRuntimeController {
     await confirm();
     return { session: this.persisted.session };
   }
+  /**
+   * An action starts from a whole checkout snapshot. A write to the checkout during the snapshot
+   * supersedes it (the change is already published), so take the snapshot again.
+   */
+  private async actionStatus(): Promise<CopilotStatusResult> {
+    for (let tries = 1; ; tries++) {
+      try {
+        return await this.status();
+      } catch (error) {
+        const superseded =
+          error instanceof Error &&
+          'code' in error &&
+          error.code === 'RESOURCE_OBSERVATION_CHANGED';
+        if (!superseded || tries >= ACTION_STATUS_TRIES) throw error;
+      }
+    }
+  }
   async configure(
     params: CopilotConfigureParams,
     authorize: () => void = () => {},
   ): Promise<CopilotConfigureResult> {
-    const { session } = await this.status();
+    const { session } = await this.actionStatus();
     const requestedRunner = params.runner ?? session.runner;
     const { runner, model, effort } = resolveCopilotRunner({
       runner: requestedRunner,
@@ -305,7 +324,7 @@ export class CopilotRuntimeController {
     localAutostart: boolean,
     authorize: () => void,
   ): Promise<CopilotStartResult> {
-    const { session } = await this.status();
+    const { session } = await this.actionStatus();
     this.legacyCandidates = await this.tmux.listCandidates(COPILOT_TMUX_SESSION);
     if (this.legacyCandidates.length) throw new Error(this.legacyReason());
     const owner = this.owner();
@@ -499,7 +518,7 @@ export class CopilotRuntimeController {
     params: CopilotStopParams = {},
     authorize: () => void = () => {},
   ): Promise<CopilotStopResult> {
-    const { session } = await this.status();
+    const { session } = await this.actionStatus();
     let settledLaunchFailure: string | undefined;
     this.legacyCandidates = await this.tmux.listCandidates(COPILOT_TMUX_SESSION);
     if (this.legacyCandidates.length) {

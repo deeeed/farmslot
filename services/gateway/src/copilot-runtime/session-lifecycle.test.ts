@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { GatewayMethodError } from '../core/index.js';
+
 import { CopilotRuntimeController } from './controller.js';
 import { COPILOT_TMUX_SESSION } from './launcher.js';
 import { CopilotRuntimeStore } from './session-store.js';
@@ -326,4 +328,46 @@ test('a restored stopped singleton with an unavailable host cannot reject gatewa
   await assert.rejects(() => controller.start(), /Native host unavailable/);
   assert.equal(native.launches, 0);
   assert.equal(native.sends.size, 0);
+});
+
+test('start and stop take a new checkout snapshot when a checkout write supersedes one', async () => {
+  const home = await mkdtemp(path.join(tmpdir(), 'copilot-superseded-'));
+  let superseded = 0;
+  const { controller, native } = testController({
+    home,
+    checkout: process.cwd(),
+    // Each action's first snapshot is superseded by a write; the next one is current.
+    observeCheckout: async () => async () => {
+      if (superseded++ % 2 === 0)
+        throw new GatewayMethodError(
+          'RESOURCE_OBSERVATION_CHANGED',
+          'Workspace contents changed during the read',
+        );
+    },
+  });
+  const started = await controller.start({ runner: 'cursor', model: 'test-model' });
+  assert.equal(started.session.status, 'running');
+  assert.equal(native.launches, 1);
+  assert.equal((await controller.stop({ reason: 'superseded-test' })).session.status, 'stopped');
+  await rm(home, { recursive: true, force: true });
+});
+
+test('an action still fails when every checkout snapshot is superseded', async () => {
+  const home = await mkdtemp(path.join(tmpdir(), 'copilot-superseded-always-'));
+  const { controller, native } = testController({
+    home,
+    checkout: process.cwd(),
+    observeCheckout: async () => async () => {
+      throw new GatewayMethodError(
+        'RESOURCE_OBSERVATION_CHANGED',
+        'Workspace contents changed during the read',
+      );
+    },
+  });
+  await assert.rejects(
+    () => controller.start({ runner: 'cursor', model: 'test-model' }),
+    /changed during the read/,
+  );
+  assert.equal(native.launches, 0);
+  await rm(home, { recursive: true, force: true });
 });
