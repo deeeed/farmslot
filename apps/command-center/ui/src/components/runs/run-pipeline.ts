@@ -14,6 +14,7 @@ import {
   type RunCancelResult,
   type RunStep,
   type RunStepDisplayStatus,
+  type TaskLiveSpend,
   type TaskProgressStructured,
   viewToggleField,
 } from '@farmslot/protocol';
@@ -99,6 +100,8 @@ export class RunPipeline extends LitElement {
   private readonly subtaskOpen = new SubtaskOpenState();
   @property({ attribute: false }) run!: Run;
   @property({ attribute: false }) taskProgress?: TaskProgressStructured;
+  /** task.progress `liveSpend` for the run's live session: "Spent so far" and each step's cost. */
+  @property({ attribute: false }) liveSpend?: TaskLiveSpend;
   /** The run's acceptance ledger (ADR-060); the panel is hidden without one. */
   @property({ attribute: false }) evidenceModel?: EvidenceReviewModel | null;
   @property({ attribute: false }) acceptanceStatus?: AcceptanceStatusLedger | null;
@@ -508,6 +511,7 @@ export class RunPipeline extends LitElement {
       .runId=${this.run.id}
       .run=${this.run}
       .runActive=${isRunWorking(this.run)}
+      .liveSpend=${this.liveSpend}
       closable
       @progress-close=${() => {
         this.monitorExpanded = false;

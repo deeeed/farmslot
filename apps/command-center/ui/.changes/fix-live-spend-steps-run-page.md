@@ -1,0 +1,1 @@
+- The run page (`#runs?run=`) shows "Spent so far" and the per-step cost in its progress panel, as the slot view does.

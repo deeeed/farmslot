@@ -532,6 +532,7 @@ export class RunDetail extends RunDetailState {
       this._directRunRefreshing = false;
       this._taskProgressLoading = false;
       this.taskProgress = null;
+      this.liveSpend = null;
       this.acceptanceStatus = null;
       this.acceptanceCriteria = null;
       this.acceptanceStatusError = null;
@@ -1253,6 +1254,7 @@ export class RunDetail extends RunDetailState {
     const data = query?.state.data;
     const ledger = acceptanceLedgerRead(query, this._now);
     this.taskProgress = taskProgressWithStepDetails(data?.structured, data?.markdown) ?? null;
+    this.liveSpend = data?.liveSpend ?? null;
     this.acceptanceStatus = data?.acceptanceStatus ?? null;
     this.acceptanceCriteria = data?.acceptanceCriteria ?? null;
     this.acceptanceStatusError = ledger.error;
@@ -1792,6 +1794,7 @@ export class RunDetail extends RunDetailState {
       prStatus: this.prStatus,
       siblings: this.siblings,
       taskProgress: this.taskProgress,
+      liveSpend: this.liveSpend,
       evidenceModel: this.evidenceModel,
       acceptanceStatus: this.acceptanceStatus,
       acceptanceCriteria: this.acceptanceCriteria,
