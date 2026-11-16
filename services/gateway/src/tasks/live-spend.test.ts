@@ -3,7 +3,12 @@ import test from 'node:test';
 
 import type { SlotLocality } from '../core/slot-io.js';
 
-import { LIVE_SPEND_READ_INTERVAL_MS, liveSpendFor, resetLiveSpend } from './live-spend.js';
+import {
+  LIVE_SPEND_READ_INTERVAL_MS,
+  liveSpendFor,
+  liveSpendKey,
+  resetLiveSpend,
+} from './live-spend.js';
 
 /** A remote slot whose node serves fs.readChunk from a transcript that grows, counting requests. */
 function remoteTranscript() {
@@ -231,4 +236,32 @@ test('a native session waits for its journal receipt and reads nothing', async (
   );
   assert.equal(node.requests(), 0);
   assert.match(spend.unavailable ?? '', /node journal/);
+});
+
+test('a new attempt on the same transcript gets its own reader from byte 0', async () => {
+  resetLiveSpend();
+  const context = { id: 'review', runnerSessionPath: '/s.jsonl', attemptStartedAt: at(0) };
+  const first = liveSpendKey('run', context);
+  const rearmed = liveSpendKey('run', { ...context, attemptStartedAt: at(30) });
+  assert.notEqual(first, rearmed);
+  const node = remoteTranscript();
+  node.write(assistant(1, 0.01) + assistant(12, 0.01));
+  const offsets: number[] = [];
+  const io: SlotLocality = {
+    ...node.io,
+    nodeRequest: async (method, params) => {
+      offsets.push((params as { offset: number }).offset);
+      return node.io.nodeRequest!(method, params);
+    },
+  };
+  const marks = [{ stepNumber: 1, label: '1. Review', checkedAt: at(10) }];
+  await liveSpendFor(io, { key: first, runner: 'pi', path: '/s.jsonl', marks }, 0);
+  const second = await liveSpendFor(
+    io,
+    { key: rearmed, runner: 'pi', path: '/s.jsonl', marks: [] },
+    1000,
+  );
+  assert.deepEqual(offsets, [0, 0], 'the new attempt reads from the start');
+  assert.equal(second.toolCalls, 2, 'and counts the whole transcript');
+  assert.deepEqual(second.steps, [], "against its own marks, not the first attempt's frozen steps");
 });

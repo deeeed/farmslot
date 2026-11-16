@@ -28,6 +28,19 @@ export interface LiveSpendSource {
   unavailable?: string;
 }
 
+/**
+ * A reader's identity. A new attempt (a reviewer re-armed on the same transcript) has new marks,
+ * so it gets its own reader, which counts the whole transcript against them, as the receipt does.
+ * The start is part of the identity only; no record is filtered by it.
+ */
+export function liveSpendKey(
+  runId: string,
+  context: Pick<AgentContext, 'id' | 'attemptStartedAt' | 'startedAt' | 'runnerSessionPath'>,
+): string {
+  const attempt = context.attemptStartedAt ?? context.startedAt ?? '';
+  return `${runId}\u0000${context.id}\u0000${attempt}\u0000${context.runnerSessionPath ?? ''}`;
+}
+
 /** The viewed context's source; undefined when it names no runner session. */
 export function liveSpendSource(
   run: Run,
@@ -37,7 +50,7 @@ export function liveSpendSource(
   const runner = context?.runner;
   if (!context || !path || !runner) return undefined;
   return {
-    key: `${run.id}\u0000${context.id}\u0000${path}`,
+    key: liveSpendKey(run.id, context),
     runner,
     path,
     marks: contextChecklistMarks(run, context),
