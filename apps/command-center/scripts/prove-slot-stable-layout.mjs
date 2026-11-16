@@ -289,6 +289,7 @@ const required = [
   'slot-view',
   '.sv-body',
   '[data-testid="slot-load-run"]',
+  '[data-testid="slot-history"]',
   '.sv-editor-row',
   '.sv-task-panel-col',
   '.sv-run-panel',

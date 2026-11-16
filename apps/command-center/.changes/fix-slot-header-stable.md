@@ -1,0 +1,1 @@
+- Keep History and Load run fixed in the slot header when run status and available actions change.
