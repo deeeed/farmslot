@@ -563,9 +563,14 @@ function parameterValidator(schema: Record<string, unknown>): ValidateFunction {
   return validator;
 }
 
-/** The fence map as the store's entry list. */
-function fenceEntries(fenced: ReadonlyMap<string, string>): RuntimeCapabilityFenceEntry[] {
-  return [...fenced].map(([id, at]) => ({ id, at }));
+/** The fence map as the store's entry list, carrying each owner entry's provenance. */
+function fenceEntries(
+  fenced: ReadonlyMap<string, string>,
+  ownCleanup?: ReadonlySet<string>,
+): RuntimeCapabilityFenceEntry[] {
+  return [...fenced].map(([id, at]) =>
+    ownCleanup ? { id, at, viaFamily: !ownCleanup.has(id) } : { id, at },
+  );
 }
 
 export class RuntimeCapabilityRegistry {
@@ -577,6 +582,14 @@ export class RuntimeCapabilityRegistry {
    * one of them: the run is gone, so nothing would ever release it again.
    */
   private terminatedOwners = new Map<string, string>();
+  /**
+   * The subset of `terminatedOwners` written by the owner's OWN cleanup.
+   *
+   * Only a durable replay retires one of these. Everything else in the map was
+   * written by a family sweep over someone else's cleanup, and yields to a run
+   * the store still vouches for as live.
+   */
+  private ownCleanupOwners = new Set<string>();
   /** Families whose terminal cleanup has run; siblings must not reacquire. */
   private terminatedFamilies = new Map<string, string>();
   private loaded = false;
@@ -619,6 +632,8 @@ export class RuntimeCapabilityRegistry {
           loadedAt,
         )) {
           this.terminatedOwners.set(entry.id, entry.at);
+          // Absent provenance reads as sweep-written: see the field's comment.
+          if (entry.viaFamily === false) this.ownCleanupOwners.add(entry.id);
         }
         for (const entry of hydrateFenceEntries(
           snapshot.terminalFamilyEntries,
@@ -680,7 +695,9 @@ export class RuntimeCapabilityRegistry {
         retainFreshFenceEntries(fenceEntries(fenced), nowMs).map((entry) => entry.id),
       );
       for (const id of fenced.keys()) {
-        if (!fresh.has(id)) fenced.delete(id);
+        if (fresh.has(id)) continue;
+        fenced.delete(id);
+        if (fenced === this.terminatedOwners) this.ownCleanupOwners.delete(id);
       }
     }
   }
@@ -690,12 +707,15 @@ export class RuntimeCapabilityRegistry {
     this.pendingEvents = [];
     this.pruneExpiredFences();
     for (const [ownerRunId, at] of this.terminatedOwners) {
-      if (this.recoveredAfterCleanup(ownerRunId, at)) this.terminatedOwners.delete(ownerRunId);
+      if (this.recoveredAfterCleanup(ownerRunId, at)) {
+        this.terminatedOwners.delete(ownerRunId);
+        this.ownCleanupOwners.delete(ownerRunId);
+      }
     }
     // Stamped on every write, so the terminal fence lands in the SAME replace as
     // the release that armed it. A separate write would leave a window where the
     // providers were stopped but the fence was not durable yet.
-    snapshot.terminalOwnerEntries = fenceEntries(this.terminatedOwners);
+    snapshot.terminalOwnerEntries = fenceEntries(this.terminatedOwners, this.ownCleanupOwners);
     snapshot.terminalFamilyEntries = fenceEntries(this.terminatedFamilies);
     // The legacy count-bounded keys were folded into the entry lists at load;
     // rewriting them would resurrect the bound the entries replaced.
@@ -3044,27 +3064,22 @@ export class RuntimeCapabilityRegistry {
   }
 
   /**
-   * Release every lease on a slot.
+   * Release every lease on a slot, with no exception for a live owner.
    *
-   * `preserveLiveOwnersOtherThan` makes this a RUN-scoped teardown: the named
-   * run's leases go, and so does everything the run store cannot vouch for, but
-   * a live sibling's lease stays. Slot release runs this sweep straight after
-   * the family-terminal reconcile (`methods/slot/release.ts`), so without it
-   * the sweep takes back the very lease that reconcile just spared. A genuine
-   * slot teardown passes nothing and still clears the slot whole.
+   * Sparing one looks attractive: slot release runs this sweep right after the
+   * family-terminal reconcile, so it takes back whatever that reconcile spared.
+   * But it strands what it spares. The same teardown detaches every other run
+   * from the slot, and a detached run's own cleanup returns immediately with no
+   * slot to clean (`run-lifecycle/slot-teardown.ts` `releaseRunOwnedCapabilities`),
+   * leaving an acquired lease, its claim, and a provider the browser reaper
+   * then protects precisely because the lease is acquired — later surfacing as
+   * a refused archive through `assertRunReleased`. A sibling that genuinely
+   * shares a slot loses its worker and its slot pin to this teardown anyway, so
+   * keeping one lease alive would not save it; that is a slot-ownership
+   * problem, not a lease one.
    */
-  async releaseSlot(
-    slotId: string,
-    options?: { preserveLiveOwnersOtherThan?: string },
-  ): Promise<RuntimeCapabilityReleaseResult> {
-    const owner = options?.preserveLiveOwnersOtherThan;
-    const preserve =
-      owner === undefined ? undefined : this.liveOwnerPredicate((runId) => runId !== owner);
-    return this.releaseSelected(slotId, (lease) => !preserve?.(lease.owner.runId), {
-      force: false,
-      keepWarmFor: () => true,
-      ...(preserve ? { skip: (lease) => preserve(lease.owner.runId) } : {}),
-    });
+  async releaseSlot(slotId: string): Promise<RuntimeCapabilityReleaseResult> {
+    return this.releaseSelected(slotId, () => true, { force: false, keepWarmFor: () => true });
   }
 
   /**
@@ -3154,7 +3169,7 @@ export class RuntimeCapabilityRegistry {
         lease.owner.runId === ownerRunId ||
         (familyId !== undefined && lease.owner.familyId === familyId)
       ) {
-        this.fenceOwner(lease.owner.runId);
+        this.fenceOwner(lease.owner.runId, lease.owner.runId !== ownerRunId);
       }
     }
     return result;
@@ -3164,8 +3179,11 @@ export class RuntimeCapabilityRegistry {
   // evicted the oldest owners, which are exactly the ones whose run records
   // archiving has already deleted, so the run-store fallback meant to cover
   // eviction was blind precisely where eviction bit.
-  private fenceOwner(ownerRunId: string): void {
+  private fenceOwner(ownerRunId: string, viaFamily = false): void {
     this.terminatedOwners.set(ownerRunId, this.timestamp());
+    // Own cleanup is the stronger claim and outranks a later sweep: once a run
+    // has had its own, only a durable replay retires it.
+    if (!viaFamily) this.ownCleanupOwners.add(ownerRunId);
   }
 
   private fenceFamily(familyId: string): void {
@@ -3208,13 +3226,14 @@ export class RuntimeCapabilityRegistry {
     if (
       ownerCleanupAt &&
       !this.recoveredAfterCleanup(ownerRunId, ownerCleanupAt) &&
-      // An owner ENTRY the run store contradicts is one a sibling's family
-      // sweep wrote on a run that never ended — the same incident, one scope
-      // up, and entries like it are already on disk from before this fix. The
-      // store is the authority on whether a cleanup actually happened to this
-      // run: terminal status or terminal posture both read as not live, so a
-      // run that really was cleaned still needs its durable replay.
-      this.options.isLiveOwner?.(ownerRunId) !== true
+      // A SWEEP-written entry is one a sibling's cleanup put on a run that
+      // never ended — the same incident, one scope up, and entries like it are
+      // already on disk from before this fix. It yields to a run the store
+      // vouches for as live. An entry the run's OWN cleanup wrote never yields
+      // here: posture is overwritable (a terminal reconcile followed by an
+      // active one would otherwise retire the fence), and a durable replay is
+      // what that contract requires.
+      (this.ownCleanupOwners.has(ownerRunId) || this.options.isLiveOwner?.(ownerRunId) !== true)
     ) {
       return { scope: 'owner', id: ownerRunId };
     }

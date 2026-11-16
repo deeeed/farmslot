@@ -865,9 +865,8 @@ export async function releaseRuntimeCapabilitiesForRunAndFamily(
 
 export async function releaseRuntimeCapabilitiesForSlot(
   slotId: string,
-  options?: { preserveLiveOwnersOtherThan?: string },
 ): Promise<RuntimeCapabilityReleaseResult> {
-  return registry.releaseSlot(slotId, options);
+  return registry.releaseSlot(slotId);
 }
 
 /**

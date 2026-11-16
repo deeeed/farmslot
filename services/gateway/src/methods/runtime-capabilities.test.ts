@@ -12,6 +12,7 @@ import type {
 
 import '../runtime/mock-pty.test-support.js';
 
+import { buildRunRecord } from '../runs/store.js';
 import {
   RuntimeCapabilityRegistry,
   type WarmSweepSummary,
@@ -82,7 +83,8 @@ test('a run held for a decision is vouched for as live, a settled or paused one 
 test('an unsettled completion-prerequisite failure keeps its retained resources', () => {
   // r1 (Codex): these runs retain their worker and their providers on purpose.
   // Treating every `failed` status as settled let a sibling's close strip them.
-  const retained = {
+  const retained: Run = {
+    ...buildRunRecord({ project: 'test-project', ticketOrPr: 'TEST-1', flowType: 'fix-bug' }),
     status: 'failed',
     steps: [
       {
@@ -94,7 +96,7 @@ test('an unsettled completion-prerequisite failure keeps its retained resources'
         },
       },
     ],
-  } as unknown as Run;
+  };
   assert.equal(hasHadTerminalCleanup(retained), false);
   assert.equal(isLiveCapabilityOwner(retained), true);
   assert.equal(isLiveCapabilityOwner({ ...retained, status: 'done' } as Run), false);

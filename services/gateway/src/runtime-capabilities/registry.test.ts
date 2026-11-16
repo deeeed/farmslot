@@ -1764,34 +1764,89 @@ test('a family whose members are all terminal still releases and fences every ow
   assert.equal((await acquire(registry, 'permit', 'run-sibling', 'fam-a')).ok, false);
 });
 
-test('the slot sweep that follows a family terminal keeps a live sibling acquired', async (t) => {
-  // r1 (Grok): slot release reconciles the family to terminal and then sweeps
-  // the whole slot, so the lease the reconcile spared was taken back one call
-  // later and the sibling's recording stopped anyway.
-  const { registry, actions } = await fixture(t, [entry('browser'), entry('permit')], {
+test('a slot teardown still clears the slot whole, live owner or not', async (t) => {
+  // r2 (Grok) showed the close path sweeps the slot right after the reconcile,
+  // and r2 (Codex) showed why the sweep must not make an exception: the same
+  // teardown detaches every other run, and a detached run's own cleanup has no
+  // slot to clean, so a spared lease and its provider are stranded.
+  const { registry } = await fixture(t, [entry('browser'), entry('permit')], {
     isLiveOwner: (runId) => runId === 'run-live',
   });
   assert.equal((await acquire(registry, 'browser', 'run-closing', 'fam-a')).ok, true);
   assert.equal((await acquire(registry, 'permit', 'run-live', 'fam-a')).ok, true);
-  actions.length = 0;
 
   await registry.releaseRunTerminal(SLOT, 'run-closing', 'fam-a');
-  await registry.releaseSlot(SLOT, { preserveLiveOwnersOtherThan: 'run-closing' });
-
-  const status = await registry.status({ slotId: SLOT });
   assert.equal(
-    status.leases.find((lease) => lease.owner.runId === 'run-live')?.state,
+    (await registry.status({ slotId: SLOT })).leases.find(
+      (lease) => lease.owner.runId === 'run-live',
+    )?.state,
     'acquired',
-    'the sweep after the reconcile must not take back the spared lease',
+    'the run-scoped cleanup still spares the live sibling',
   );
-  assert.deepEqual(actions, ['browser.release']);
 
-  // A slot teardown that names no run still clears the slot whole.
   await registry.releaseSlot(SLOT);
-  const swept = await registry.status({ slotId: SLOT });
   assert.deepEqual(
-    swept.leases.filter((lease) => holdsProviderForTest(lease)),
+    (await registry.status({ slotId: SLOT })).leases.filter((lease) => holdsProviderForTest(lease)),
     [],
+    'a slot teardown leaves nothing holding a provider behind it',
+  );
+});
+
+test('a sibling paused while cleanup awaits its provider keeps the lease it was spared', async (t) => {
+  // r2 (Codex): liveness was read again after the awaited release, so a pause
+  // landing in that window fenced an owner this pass had deliberately spared.
+  let livePaused = false;
+  const { registry } = await fixture(t, [entry('browser'), entry('permit')], {
+    isLiveOwner: (runId) => runId === 'run-live' && !livePaused,
+    runAction: async (_slot, action) => {
+      if (action.kind === 'slot-action' && action.actionId === 'browser.release') {
+        livePaused = true; // The operator pauses the sibling mid-release.
+      }
+      return { ok: true };
+    },
+  });
+  assert.equal((await acquire(registry, 'browser', 'run-closing', 'fam-a')).ok, true);
+  assert.equal((await acquire(registry, 'permit', 'run-live', 'fam-a')).ok, true);
+
+  await registry.releaseRunTerminal(SLOT, 'run-closing', 'fam-a');
+
+  assert.equal(
+    (await registry.status({ slotId: SLOT })).leases.find(
+      (lease) => lease.owner.runId === 'run-live',
+    )?.state,
+    'acquired',
+    'one liveness answer per pass: the spared lease stays spared',
+  );
+  livePaused = false;
+  assert.equal(
+    (await acquire(registry, 'browser', 'run-live', 'fam-a')).ok,
+    true,
+    'and its owner was not fenced on the way out',
+  );
+});
+
+test("an owner's own cleanup fence outlives a posture overwrite", async (t) => {
+  // r2 (Codex): posture is replaceable. Applying terminal then active clears
+  // hasHadTerminalCleanup, so liveness alone would retire a fence the run's own
+  // cleanup wrote — the one thing only a durable replay may retire.
+  let live = false;
+  const { registry, store } = await fixture(t, [entry('browser')], {
+    isLiveOwner: () => live,
+  });
+  assert.equal((await acquire(registry, 'browser', 'run-a', 'fam-a')).ok, true);
+  await registry.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
+
+  live = true; // terminal posture overwritten by a later active one
+  assert.equal(
+    (await acquire(registry, 'browser', 'run-a', 'fam-a')).ok,
+    false,
+    'a run that had its OWN cleanup stays fenced until it is durably replayed',
+  );
+  assert.ok(
+    store
+      .snapshot()
+      .terminalOwnerEntries?.some((entry) => entry.id === 'run-a' && !entry.viaFamily),
+    'its entry records that the run itself was cleaned',
   );
 });
 
