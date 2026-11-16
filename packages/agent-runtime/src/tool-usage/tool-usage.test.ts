@@ -395,10 +395,35 @@ test('live: a record timed inside a frozen step is added to that step, not lost'
   assert.equal(live.summary(marks).toolCalls, 4);
 });
 
-test('live: records before the accounting window belong to an earlier run', () => {
-  const live = createLiveToolUsage('codex', Date.parse(t(10)))!;
-  live.append(Buffer.from(codexItem(5, 4, 'old') + codexItem(12, 11, 'new')));
-  assert.equal(live.summary([]).toolCalls, 1);
+test('live: a late record in a step the first read saw nothing of gets that step', () => {
+  const live = createLiveToolUsage('codex')!;
+  // Marks at 10 and 20; nothing yet in step 1, calls at 12 and 25.
+  live.append(Buffer.from(codexItem(13, 12, 'a') + codexItem(26, 25, 'b')));
+  live.summary(marks);
+  // A long command that started at second 9 completes now: it belongs to step 1.
+  live.append(Buffer.from(codexItem(27, 9, 'late')));
+  const summary = live.summary(marks);
+  assert.deepEqual(
+    summary.steps.map((step) => [step.stepNumber ?? 'end', step.toolCalls, step.toolCallsByName]),
+    [
+      [1, 1, { commandExecution: 1 }],
+      [2, 1, { commandExecution: 1 }],
+      ['end', 1, { commandExecution: 1 }],
+    ],
+  );
+  assert.equal(summary.toolCalls, 3);
+});
+
+test('live: a late priced record keeps an unknown step cost unknown', () => {
+  const live = createLiveToolUsage('pi')!;
+  const msg = (second: number, cost: unknown) =>
+    `${JSON.stringify({ type: 'message', id: `p${second}`, timestamp: t(second), message: { role: 'assistant', content: [], usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, ...(cost === undefined ? {} : { cost: { total: cost } }) } } })}\n`;
+  live.append(Buffer.from(msg(5, undefined) + msg(12, 1)));
+  live.summary(marks);
+  live.append(Buffer.from(msg(6, 2)));
+  const summary = live.summary(marks);
+  assert.equal(summary.steps[0].costUsd, null);
+  assert.equal(summary.costUsd, null);
 });
 
 test('codex: native items stay the calls after old ones are dropped', () => {

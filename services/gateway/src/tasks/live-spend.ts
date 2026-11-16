@@ -24,8 +24,8 @@ export interface LiveSpendSource {
   runner: string;
   path: string;
   marks: ChecklistMark[];
-  /** Accounting window start: a reused conversation's earlier records belong to an earlier run. */
-  since?: number;
+  /** Why this session has no live spend (native sessions are counted from the node journal). */
+  unavailable?: string;
 }
 
 /** The viewed context's source; undefined when it names no runner session. */
@@ -36,23 +36,24 @@ export function liveSpendSource(
   const path = context?.runnerSessionPath;
   const runner = context?.runner;
   if (!context || !path || !runner) return undefined;
-  // The same window the session receipt counts in: this attempt of this context.
-  const started = Date.parse(context.attemptStartedAt ?? context.startedAt ?? '');
-  const since = Number.isFinite(started) ? started : undefined;
   return {
-    key: `${run.id}\u0000${context.id}\u0000${since ?? ''}\u0000${path}`,
+    key: `${run.id}\u0000${context.id}\u0000${path}`,
     runner,
     path,
     marks: contextChecklistMarks(run, context),
-    ...(since !== undefined ? { since } : {}),
+    // The receipt counts a tmux session's whole transcript, and so does this. A native session's
+    // receipt counts only its leases, from the node journal: a gateway-clock boundary here could
+    // count the wrong run, so it waits for the receipt.
+    ...(context.nativeSession
+      ? { unavailable: 'Native sessions are counted from the node journal when the session ends' }
+      : {}),
   };
 }
 
 export const LIVE_SPEND_READ_INTERVAL_MS = 15_000;
 /** Chunks one read may take while catching up (a restart, a long transcript): 8 x 512 KB. */
 const MAX_CHUNKS_PER_READ = 8;
-/** Consecutive failed reads after which the reader starts again from byte 0 (a truncated file). */
-const RESTART_AFTER_FAILURES = 2;
+
 /** Readers kept; the oldest goes first. Each holds only its open step's events. */
 const MAX_SESSIONS = 64;
 
@@ -65,7 +66,6 @@ interface Session {
   unavailable?: string;
   /** Transcript bytes not read yet: the numbers are partial until a later read catches up. */
   behindBytes?: number;
-  failures: number;
 }
 
 const sessions = new Map<string, Session>();
@@ -75,15 +75,36 @@ export function resetLiveSpend(): void {
   sessions.clear();
 }
 
+/** A file shorter than the offset, or another incarnation: the reader starts again. */
+function replaced(live: LiveToolUsage, range: { size: number; fileIdentity?: string }): boolean {
+  return (
+    (live.fileIdentity !== undefined && range.fileIdentity !== live.fileIdentity) ||
+    range.size < live.offset
+  );
+}
+
 async function readTail(io: SlotLocality, path: string, session: Session): Promise<void> {
   const { live } = session;
   for (let chunk = 0; chunk < MAX_CHUNKS_PER_READ; chunk++) {
-    const range = await slotReadRange(io, path, live.offset, FILE_TRANSFER_CHUNK_MAX_BYTES);
+    let range;
+    try {
+      range = await slotReadRange(io, path, live.offset, FILE_TRANSFER_CHUNK_MAX_BYTES);
+    } catch (error) {
+      // A node refuses an offset past a truncated file's end without a code. Establish that
+      // with a one-byte read at 0; a transport failure fails it too and keeps the reader as is.
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT' || live.offset === 0) throw error;
+      let probe;
+      try {
+        probe = await slotReadRange(io, path, 0, 1);
+      } catch {
+        // The probe failing too means the node or transport is down: report the read's failure.
+        throw error;
+      }
+      if (!replaced(live, probe)) throw error;
+      range = { bytes: Buffer.alloc(0), size: probe.size, fileIdentity: probe.fileIdentity };
+    }
     // A rotated or shorter transcript is another file: count it again from its start.
-    if (
-      (live.fileIdentity !== undefined && range.fileIdentity !== live.fileIdentity) ||
-      range.size < live.offset
-    ) {
+    if (replaced(live, range)) {
       live.reset(range.fileIdentity);
       session.summary = undefined;
       continue;
@@ -116,12 +137,12 @@ function spend(session: Session, readAt: number): TaskLiveSpend {
 /** The session's spend so far. */
 export async function liveSpendFor(
   io: SlotLocality,
-  { key, runner, path, marks, since }: LiveSpendSource,
+  { key, runner, path, marks, unavailable }: LiveSpendSource,
   now = Date.now(),
 ): Promise<TaskLiveSpend> {
   let session = sessions.get(key);
   if (!session) {
-    const live = createLiveToolUsage(runner, since);
+    const live = unavailable ? undefined : createLiveToolUsage(runner);
     if (!live)
       return {
         runner,
@@ -131,9 +152,11 @@ export async function liveSpendFor(
         compactions: null,
         toolCalls: 0,
         steps: [],
-        unavailable: `${runner} sessions are not one appendable transcript; spend arrives with the session receipt`,
+        unavailable:
+          unavailable ??
+          `${runner} sessions are not one appendable transcript; spend arrives with the session receipt`,
       };
-    session = { live, readAt: -Infinity, failures: 0 };
+    session = { live, readAt: -Infinity };
     sessions.set(key, session);
     while (sessions.size > MAX_SESSIONS) sessions.delete(sessions.keys().next().value!);
   } else {
@@ -148,19 +171,11 @@ export async function liveSpendFor(
       .then(
         () => {
           active.unavailable = undefined;
-          active.failures = 0;
         },
         (error: unknown) => {
           // The worker may not have written its first record yet; any other failure is shown
-          // on the progress read instead of failing it, and the next read tries again. A node
-          // refuses an offset past a truncated file's end without saying so: after repeated
-          // failures the reader starts again from byte 0.
+          // on the progress read instead of failing it, and the next read tries again.
           const code = (error as NodeJS.ErrnoException)?.code;
-          if (code !== 'ENOENT' && ++active.failures >= RESTART_AFTER_FAILURES) {
-            active.live.reset();
-            active.summary = undefined;
-            active.failures = 0;
-          }
           active.unavailable =
             code === 'ENOENT'
               ? 'The session transcript is not written yet'

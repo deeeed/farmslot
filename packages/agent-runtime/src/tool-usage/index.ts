@@ -59,11 +59,8 @@ export async function measureToolUsage(params: {
   return countToolUsage(stream, params.marks ?? [], params.window);
 }
 
-/**
- * A live reader for the runner's transcript, counting from `since` (the accounting window's
- * start); undefined when the transcript is not one appendable JSONL file.
- */
-export function createLiveToolUsage(runner: string, since?: number): LiveToolUsage | undefined {
+/** A live reader for the runner's transcript; undefined when it is not one appendable JSONL file. */
+export function createLiveToolUsage(runner: string): LiveToolUsage | undefined {
   const parser = toolUsageAdapter(runner)?.parser;
-  return parser ? new LiveToolUsage(runner, parser, since) : undefined;
+  return parser ? new LiveToolUsage(runner, parser) : undefined;
 }

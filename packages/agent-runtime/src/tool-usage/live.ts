@@ -57,17 +57,14 @@ export class LiveToolUsage {
   private frozen: SessionToolUsageSegment[] = [];
   /** End (mark time) of each frozen step, ascending. */
   private boundaries: number[] = [];
-  private frozenUntil: number;
+  private frozenUntil = -Infinity;
   private frozenTotals: Totals = zero();
 
-  /** `since`: the accounting window's start; records before it belong to an earlier run. */
   constructor(
     readonly runner: string,
     private readonly makeParser: () => StreamParser,
-    private readonly since = -Infinity,
   ) {
     this.parser = makeParser();
-    this.frozenUntil = since;
   }
 
   /** Start again from byte 0, for a replaced transcript. */
@@ -78,7 +75,7 @@ export class LiveToolUsage {
     this.parser = this.makeParser();
     this.frozen = [];
     this.boundaries = [];
-    this.frozenUntil = this.since;
+    this.frozenUntil = -Infinity;
     this.frozenTotals = zero();
   }
 
@@ -102,17 +99,49 @@ export class LiveToolUsage {
     }
   }
 
-  /** Adds an event timed inside a frozen step to that step; one before the window is ignored. */
-  private routeLate(at: number, change: Partial<Totals>): void {
-    if (!(at >= this.since)) return;
-    const index = this.boundaries.findIndex((end) => at < end);
+  /**
+   * Adds an event timed before the frozen boundary to the step whose mark interval holds it,
+   * creating that step's segment when the first read saw no activity in it.
+   */
+  private routeLate(
+    at: number,
+    marks: ChecklistMark[],
+    stream: ToolUsageStream,
+    change: Partial<Totals> & { toolName?: string },
+  ): void {
+    const index = marks.findIndex((mark) => at < Date.parse(mark.checkedAt));
     if (index < 0) return;
-    const step = this.frozen[index];
+    const mark = marks[index];
+    let step = this.frozen.find((segment) => segment.markedAt === mark.checkedAt);
+    if (!step) {
+      const lower = index === 0 ? at : Math.max(at, Date.parse(marks[index - 1].checkedAt));
+      step = {
+        segment: index === 0 ? 'before-first-mark' : 'step',
+        stepNumber: mark.stepNumber,
+        title: mark.label,
+        markedAt: mark.checkedAt,
+        startedAt: new Date(lower).toISOString(),
+        endedAt: mark.checkedAt,
+        wallMs: Date.parse(mark.checkedAt) - lower,
+        toolCalls: 0,
+        toolCallsByName: {},
+        totalTokens: stream.tokens ? 0 : null,
+        compactions: stream.compactions ? 0 : null,
+        costUsd: stream.tokens ? 0 : null,
+      };
+      this.frozen.push(step);
+      this.frozen.sort((a, b) => Date.parse(a.markedAt!) - Date.parse(b.markedAt!));
+    }
     const hasTokens = change.tokens !== undefined;
-    step.toolCalls += change.toolCalls ?? 0;
+    if (change.toolCalls) {
+      step.toolCalls += change.toolCalls;
+      const name = change.toolName ?? 'unknown';
+      step.toolCallsByName[name] = (step.toolCallsByName[name] ?? 0) + change.toolCalls;
+    }
     if (hasTokens) {
       step.totalTokens = (step.totalTokens ?? 0) + (change.tokens ?? 0);
-      step.costUsd = add(step.costUsd ?? 0, change.costUsd);
+      // An unknown price stays unknown, as in the counter.
+      step.costUsd = add(step.costUsd === undefined ? 0 : step.costUsd, change.costUsd);
     }
     if (change.compactions) step.compactions = (step.compactions ?? 0) + change.compactions;
     this.frozenTotals = {
@@ -126,24 +155,29 @@ export class LiveToolUsage {
   }
 
   /** Records appended since the last summary but timed before the frozen boundary. */
-  private settleLateEvents(): void {
+  private settleLateEvents(marks: ChecklistMark[]): void {
     if (!Number.isFinite(this.frozenUntil)) return;
     const stream = this.parser.stream();
     if (this.frozen.length) {
+      const sorted = [...marks].sort((a, b) => Date.parse(a.checkedAt) - Date.parse(b.checkedAt));
       for (const tool of stream.tools)
         if (ms(tool.issuedAt) < this.frozenUntil)
-          this.routeLate(ms(tool.issuedAt), { toolCalls: 1 });
+          this.routeLate(ms(tool.issuedAt), sorted, stream, { toolCalls: 1, toolName: tool.name });
       for (const sample of stream.tokens ?? [])
         if (ms(sample.at) < this.frozenUntil)
-          this.routeLate(ms(sample.at), { tokens: sample.tokens, costUsd: sample.costUsd ?? null });
+          this.routeLate(ms(sample.at), sorted, stream, {
+            tokens: sample.tokens,
+            costUsd: sample.costUsd ?? null,
+          });
       for (const event of stream.compactions ?? [])
-        if (ms(event.at) < this.frozenUntil) this.routeLate(ms(event.at), { compactions: 1 });
+        if (ms(event.at) < this.frozenUntil)
+          this.routeLate(ms(event.at), sorted, stream, { compactions: 1 });
     }
     this.parser.dropBefore(this.frozenUntil);
   }
 
   summary(marks: ChecklistMark[]): LiveUsageSummary {
-    this.settleLateEvents();
+    this.settleLateEvents(marks);
     const stream = this.parser.stream();
     // The last frozen mark stays, so the counter labels what follows it as a step or the tail;
     // the segment it closes was frozen already and is dropped below.

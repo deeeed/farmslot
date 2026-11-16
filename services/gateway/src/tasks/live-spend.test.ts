@@ -154,11 +154,10 @@ test('a replaced transcript is read again from its start within the same read', 
   assert.equal((await liveSpendFor(io, source, LIVE_SPEND_READ_INTERVAL_MS)).toolCalls, 1);
 });
 
-test('repeated read failures restart the reader from byte 0', async () => {
-  resetLiveSpend();
-  let fail = false;
+function flakyNode() {
+  let content = assistant(1, 0.01) + assistant(2, 0.01);
+  let down = false;
   const offsets: number[] = [];
-  const content = assistant(1, 0.01);
   const io: SlotLocality = {
     host: 'node.invalid',
     machine: 'live-spend-node',
@@ -166,11 +165,13 @@ test('repeated read failures restart the reader from byte 0', async () => {
     nodeRequest: async (_method, params) => {
       const { offset, length } = params as { offset: number; length: number };
       offsets.push(offset);
-      if (fail) throw new Error('fs.readChunk offset beyond file size');
+      if (down) throw new Error('node request timed out');
+      const size = Buffer.byteLength(content);
+      if (offset > size) throw new Error(`fs.readChunk offset ${offset} beyond file size ${size}`);
       const bytes = Buffer.from(content).subarray(offset, offset + length);
       return {
         content: bytes.toString('base64'),
-        size: Buffer.byteLength(content),
+        size,
         offset,
         bytesRead: bytes.length,
         eof: true,
@@ -178,13 +179,56 @@ test('repeated read failures restart the reader from byte 0', async () => {
       };
     },
   };
+  return {
+    io,
+    offsets,
+    setDown: (value: boolean) => (down = value),
+    truncate: (text: string) => (content = text),
+  };
+}
+
+test('transport failures keep the reader and its offset', async () => {
+  resetLiveSpend();
+  const node = flakyNode();
+  const source = { key: 'flaky', runner: 'pi', path: '/s.jsonl', marks: [] };
+  const first = await liveSpendFor(node.io, source, 0);
+  const offset = node.offsets.at(-1)! + Buffer.byteLength(assistant(1, 0.01) + assistant(2, 0.01));
+  node.setDown(true);
+  for (const step of [1, 2, 3]) {
+    const spend = await liveSpendFor(node.io, source, step * LIVE_SPEND_READ_INTERVAL_MS);
+    assert.match(spend.unavailable ?? '', /could not be read/);
+    assert.equal(spend.toolCalls, first.toolCalls, 'numbers are kept through the outage');
+  }
+  node.setDown(false);
+  await liveSpendFor(node.io, source, 4 * LIVE_SPEND_READ_INTERVAL_MS);
+  assert.equal(node.offsets.at(-1), offset, 'the read resumes at its offset, not byte 0');
+});
+
+test('a transcript truncated below the offset is found by a probe and read again from 0', async () => {
+  resetLiveSpend();
+  const node = flakyNode();
   const source = { key: 'trunc', runner: 'pi', path: '/s.jsonl', marks: [] };
-  await liveSpendFor(io, source, 0);
-  fail = true;
-  const failed = await liveSpendFor(io, source, LIVE_SPEND_READ_INTERVAL_MS);
-  assert.match(failed.unavailable ?? '', /could not be read/);
-  await liveSpendFor(io, source, 2 * LIVE_SPEND_READ_INTERVAL_MS);
-  fail = false;
-  await liveSpendFor(io, source, 3 * LIVE_SPEND_READ_INTERVAL_MS);
-  assert.equal(offsets.at(-1), 0, 'after two failures the next read starts at byte 0');
+  assert.equal((await liveSpendFor(node.io, source, 0)).toolCalls, 2);
+  node.truncate(assistant(3, 0.01).slice(0, 10));
+  const after = await liveSpendFor(node.io, source, LIVE_SPEND_READ_INTERVAL_MS);
+  assert.equal(after.unavailable, undefined);
+  assert.equal(after.toolCalls, 0, 'the short file starts the count again');
+});
+
+test('a native session waits for its journal receipt and reads nothing', async () => {
+  resetLiveSpend();
+  const node = remoteTranscript();
+  const spend = await liveSpendFor(
+    node.io,
+    {
+      key: 'n',
+      runner: 'codex',
+      path: '/r.jsonl',
+      marks: [],
+      unavailable: 'Native sessions are counted from the node journal when the session ends',
+    },
+    0,
+  );
+  assert.equal(node.requests(), 0);
+  assert.match(spend.unavailable ?? '', /node journal/);
 });

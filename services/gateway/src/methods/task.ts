@@ -167,6 +167,10 @@ export async function taskProgress(
       'PROGRESS_OWNER_CHANGED',
       `Run ${params.runId} no longer owns slot ${params.slotId}, and its recorded progress is unavailable.`,
     );
+  // Awaited before the owner checks below, so an owner change during the transcript read is
+  // refused like one during the progress read.
+  const spent = await spending;
+  if (spent) result.liveSpend = spent;
   if (boundRun) {
     const current = getRun(boundRun.id);
     if (!current) throw new GatewayMethodError('RUN_NOT_FOUND', `Run not found: ${boundRun.id}`);
@@ -195,8 +199,6 @@ export async function taskProgress(
       );
   }
   checkSource?.();
-  const spent = await spending;
-  if (spent) result.liveSpend = spent;
   return result;
 }
 
