@@ -119,6 +119,7 @@ export async function resolveCandidateTemplateProvenance(
   axes: EvalPackageAxes,
   proof?: EvalProofInput,
   candidateTemplatePath?: string,
+  domain?: string,
 ): Promise<{
   axes: EvalPackageAxes;
   provenance?: TemplateProvenance;
@@ -215,6 +216,7 @@ export async function resolveCandidateTemplateProvenance(
   const missingData: string[] = [];
   const projectVars = await loadProjectVars(project);
   const catalog = projectUsesExecutionTemplateCatalog(projectVars);
+  const requestedDomain = domain?.trim() || undefined;
   if (axes.template?.hash?.trim() && !catalog) {
     return { axes, missingData };
   }
@@ -235,6 +237,7 @@ export async function resolveCandidateTemplateProvenance(
     if (requestedPath) {
       const { options } = await configuredExecutionTemplateOptions(projectVars, {
         flow: taskProfile,
+        ...(requestedDomain ? { domain: requestedDomain } : {}),
       });
       const exact = options.filter((entry) => entry.relativePath === requestedPath);
       const matches = exact.length
@@ -260,6 +263,7 @@ export async function resolveCandidateTemplateProvenance(
       flow: taskProfile,
       runMode: 'autonomous',
       explicitId,
+      ...(requestedDomain ? { domain: requestedDomain } : {}),
     });
     const expectedHash = axes.template?.hash?.trim();
     if (expectedHash && expectedHash !== snapshot.entry.sha256) {

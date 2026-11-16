@@ -457,6 +457,166 @@ test('evalTrialStart rejects a domain that is not a lowercase slug', async () =>
   );
 });
 
+test('evalTrialStart selects a domain-gated catalog template', async (t) => {
+  const name = `eval-domain-catalog-${process.pid}-farm`;
+  const projectRoot = path.join(farmslotRoot(), 'projects', name);
+  const templatePath = 'fix-bug/sentry-cuf-autonomous.mobile.md';
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-eval-domain-catalog-'));
+  const runIds: string[] = [];
+  const previousDisableEngine = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+  process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+  t.after(async () => {
+    if (previousDisableEngine === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+    else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = previousDisableEngine;
+    for (const runId of runIds.reverse()) {
+      if (getRun(runId)) {
+        updateRun(runId, { status: 'done', completedAt: new Date().toISOString() });
+        await deleteRun(runId);
+      }
+    }
+    await rm(root, { recursive: true, force: true });
+    await rm(projectRoot, { recursive: true, force: true });
+  });
+
+  await mkdir(path.join(projectRoot, 'team/checklists/fix-bug'), { recursive: true });
+  await mkdir(path.join(projectRoot, 'catalog/fix-bug'), { recursive: true });
+  await writeFile(
+    path.join(projectRoot, 'project.json'),
+    JSON.stringify({
+      name,
+      command_env: { domains: { perps: { set: { FEATURE: 'perps' } } } },
+      execution_templates: {
+        sources: [
+          { id: 'package:synthetic', kind: 'package', root: { projectPath: 'catalog' } },
+          {
+            id: 'team:perps',
+            kind: 'workspace',
+            root: { projectPath: 'team' },
+            subpath: 'checklists',
+            domains: ['perps'],
+          },
+        ],
+      },
+    }),
+  );
+  await writeFile(
+    path.join(projectRoot, 'catalog/fix-bug/general.md'),
+    '---\nid: fix-bug/general\nflow: fix-bug\n---\n\n# General\n\n- [ ] Check the general path.\n',
+  );
+  const gated = `---
+id: fix-bug/sentry-cuf-autonomous.mobile
+title: Sentry CUF
+description: Perps checklist
+flow: fix-bug
+platforms: [ios]
+---
+
+# Sentry CUF
+
+- [ ] Check the perps flow.
+`;
+  await writeFile(path.join(projectRoot, 'team/checklists', templatePath), gated);
+
+  const baseSha = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const headSha = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  const referencePackagePath = path.join(root, 'reference.result-package.json');
+  const referencePackage = await writeResultPackageManifest(referencePackagePath, {
+    ...makeReferencePackage(),
+    project: name,
+    source: {
+      kind: 'merged-pr',
+      repo: 'owner/repo',
+      prNumber: 123,
+      baseSha,
+      headSha,
+      baseRef: 'main',
+      headRef: 'fix/perps',
+    },
+    diff: {
+      source: 'artifact',
+      available: true,
+      files: 1,
+      additions: 2,
+      deletions: 1,
+      kind: 'contribution',
+      baseRef: 'main',
+      baseSha,
+      headRef: 'fix/perps',
+      headSha,
+      capturedAt: '2026-05-09T00:00:01.000Z',
+      artifactPath: path.basename(root) + '/reference.diff',
+      repository: 'owner/repo',
+      prNumber: 123,
+    },
+  });
+  await writeEvalTestFile(root, 'reference.diff', REFERENCE_DIFF);
+  const experimentManifestPath = path.join(root, 'experiment-manifest.json');
+  await writeEvalExperimentManifest(experimentManifestPath, {
+    version: 1,
+    kind: 'eval-experiment',
+    experimentId: 'experiment-domain-catalog',
+    experimentKey: `experiment-key-domain-catalog-${Date.now()}`,
+    createdAt: '2026-05-09T00:00:00.000Z',
+    updatedAt: '2026-05-09T00:00:01.000Z',
+    project: name,
+    familyId: 'eval-family-domain-catalog',
+    case: {
+      caseId: 'case-domain-catalog',
+      source: referencePackage.source,
+      taskProfile: 'fix-bug',
+      objectiveHash: 'objective-1',
+      problemStatement: 'Show the latest payment in Activity.',
+      referencePackageId: referencePackage.packageId,
+      referencePackageHash: referencePackage.packageHash,
+      referencePackagePath,
+    },
+    rubric: {
+      taskProfile: 'fix-bug',
+      rubricId: 'eval-default',
+      rubricVersion: '1',
+      requiredEvidence: [],
+    },
+    candidateStrategies: [],
+    trials: [],
+    missingData: [],
+  });
+  await writeEvalTestFile(
+    root,
+    'inputs/reference-pr.json',
+    JSON.stringify({
+      title: 'Show the latest payment in Activity.',
+      url: 'https://github.com/owner/repo/pull/123',
+      body: 'Manual testing steps: Activity shows most recent funding payments.',
+    }),
+  );
+
+  const trialBase: EvalTrialStartParams = {
+    project: name,
+    experimentManifestPath,
+    axes: { template: { path: templatePath }, model: { name: 'gpt-5.5' } },
+    label: 'domain gated candidate',
+    runner: 'codex',
+    model: 'gpt-5.5',
+  };
+  await assert.rejects(
+    () => evalTrialStart(trialBase, () => {}),
+    /Candidate template is unavailable in the project catalog: fix-bug\/sentry-cuf-autonomous\.mobile\.md/,
+  );
+
+  const started = await evalTrialStart({ ...trialBase, domain: ' perps ' }, () => {});
+  if (started.run) runIds.push(started.run.id);
+  assert.equal(started.deduped, false);
+  assert.equal(started.run?.domain, 'perps');
+  assert.equal(started.run?.executionTemplate?.relativePath, templatePath);
+  assert.equal(started.run?.executionTemplate?.sourceId, 'team:perps');
+  assert.equal(started.run?.templateProvenance?.templateName, templatePath);
+  assert.equal(
+    started.run?.templateProvenance?.contentHash,
+    started.run?.executionTemplate?.sha256,
+  );
+  assert.equal(started.candidatePackage.axes.template?.path, templatePath);
+});
+
 test('harnessLifecycleForAxes preserves explicit local harness paths', () => {
   const lifecycle = harnessLifecycleForAxes('example-mobile-farm', {
     harness: { path: '/tmp/recipe-harness', version: 'mobile' },

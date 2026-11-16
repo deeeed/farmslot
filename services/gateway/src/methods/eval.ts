@@ -760,6 +760,7 @@ export async function evalTrialStart(
   }
   const candidateStartRef = candidateStartRefForReferencePackage(params, referencePackage, proof);
   const axesDefaults = axesWithExecutionDefaults(params.axes, params);
+  const domain = trialDomain(params);
   const templateResolution = await resolveCandidateTemplateProvenance(
     params.project,
     evalCase.taskProfile,
@@ -768,13 +769,13 @@ export async function evalTrialStart(
     params.candidateTemplatePath
       ? path.resolve(path.dirname(params.experimentManifestPath), params.candidateTemplatePath)
       : undefined,
+    domain,
   );
   const axes = axesForTrialTransport(templateResolution.axes, params.transport);
   if (!isEvalPackageAxes(axes)) throw new Error('Invalid candidate axes: expected EvalPackageAxes');
   const harnessLifecycle = harnessLifecycleForAxes(params.project, axes);
   const candidateSource = await resolveCandidateSource(params.project, params.source);
   const prepareProfile = trialPrepareProfile(params);
-  const domain = trialDomain(params);
   const candidateStrategyFingerprint = computeCandidateStrategyFingerprint({
     axes,
     source: candidateSource,
