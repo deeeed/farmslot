@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'path';
 import { defineConfig } from 'vite';
 
+import { commandCenterDevBind, devGatewayPortDefine } from './src/dev-server-bind.ts';
+
 const uiPackage = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf8')) as {
   version?: string;
 };
@@ -14,6 +16,7 @@ const vitePort = Number(process.env.VITE_PORT) || 5174;
 const gatewayTarget = `http://${gatewayHost}:${gatewayPort}`;
 const base = process.env.FARMSLOT_CC_BASE || process.env.VITE_BASE || '/';
 const hmr = process.env.FARMSLOT_DEV_UI_HMR !== '0';
+const devBind = commandCenterDevBind(process.env);
 
 export default defineConfig({
   base,
@@ -33,6 +36,9 @@ export default defineConfig({
   root: resolve(__dirname),
   define: {
     __FARMSLOT_APP_VERSION__: JSON.stringify(appVersion),
+    'import.meta.env.VITE_FARMSLOT_DEV_GATEWAY_PORT': JSON.stringify(
+      devGatewayPortDefine(process.env),
+    ),
   },
   resolve: {
     alias: {
@@ -53,6 +59,7 @@ export default defineConfig({
   optimizeDeps: { exclude: ['@sqlite.org/sqlite-wasm'] },
   worker: { format: 'es' },
   server: {
+    ...devBind,
     port: vitePort,
     strictPort: true,
     // Background agents edit UI source in bursts (5–20 files in seconds). Without
