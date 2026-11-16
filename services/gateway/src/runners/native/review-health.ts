@@ -1,10 +1,11 @@
 import { NATIVE_WORKER_READ } from '@farmslot/agent-runtime/native';
-import { Methods, type NativeSessionReadResult } from '@farmslot/protocol';
+import { type NativeSessionReadResult } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../../core/method-error.js';
 import type { ReviewWorkspaceAdmissionInput } from '../../review-workspaces/admission.js';
 import { getAllRunsWithArchived } from '../../runs/store.js';
 
+import { waitForNativeHostReady } from './host-wait.js';
 import { routeNativeExecution } from './node.js';
 
 /** Check the current host before consulting retained runner startup evidence. */
@@ -16,11 +17,24 @@ export async function assertReviewNativeRunnerHealthy(
   owner: string,
   executionNodeId: string,
   excludingRunId?: string,
+  /**
+   * What the caller has left to spend on a host that is restarting. A candidate
+   * being priced for a list of choices keeps the default: it refuses now and says
+   * so, because the next choice is cheaper than any wait. Only a caller whose
+   * machine is already placed has a launch worth waiting for.
+   */
+  hostWaitBudgetMs = 0,
 ): Promise<void> {
   if (input.transport !== 'native') return;
   try {
-    // Past acceptance cannot attest that the host is still serving requests.
-    await routeNativeExecution(owner, Methods.NATIVE_SESSION_LIST, { executionNodeId });
+    // Past acceptance cannot attest that the host is still serving requests. A host
+    // that never answered was never sent anything, so a restart within the caller's
+    // budget is waited out rather than refused on the next line down.
+    await waitForNativeHostReady({
+      owner,
+      executionNodeId,
+      budgetMs: hostWaitBudgetMs,
+    });
   } catch (error) {
     if (error instanceof GatewayMethodError) throw error;
     throw new GatewayMethodError(

@@ -25,6 +25,7 @@ import type {
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { subscribeHost } from './conversation-ipc.js';
+import { nativeHostUnavailableError } from './host-unavailable.js';
 import { type HostIdentity, type HostRequest, requestHost } from './ipc.js';
 import { alive, privateDirectory, readJson } from './storage.js';
 import {
@@ -209,9 +210,7 @@ export class NativeSessionClient {
       if (exited && child.exitCode !== 0) break;
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
-    throw new Error(
-      `Native host unavailable; inspect ${join(this.root, 'host.log')}. No command was retried.`,
-    );
+    throw nativeHostUnavailableError(join(this.root, 'host.log'));
   }
   /** Explicit lifecycle operation. Deployment invokes it from the login/GUI context. */
   async warm(): Promise<void> {
