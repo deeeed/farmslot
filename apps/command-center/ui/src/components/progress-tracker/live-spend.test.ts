@@ -3,7 +3,16 @@ import test from 'node:test';
 
 import type { TaskLiveSpend } from '@farmslot/protocol';
 
-import { formatSpendUsd, liveSpendSummary, openStepSpend, stepSpend } from './live-spend.js';
+import { litText } from '../../testing/lit-text.js';
+
+import {
+  formatSpendUsd,
+  liveSpendSummary,
+  openStepSpend,
+  renderSpentSoFar,
+  stepSpend,
+  withSpentSummary,
+} from './live-spend.js';
 
 const spend: TaskLiveSpend = {
   runner: 'pi',
@@ -52,4 +61,20 @@ test('spent so far and per-step cost read the live spend, unknown prices stay un
   assert.match(liveSpendSummary({ ...spend, behindBytes: 4096 })!.note ?? '', /bytes to go/);
   // Before the first mark there are no steps: the running step shows the whole session so far.
   assert.equal(openStepSpend({ ...spend, steps: [] })?.cost, '$0.35');
+});
+
+test('the run page panel shows spent so far, and its summary keeps the cost when collapsed', () => {
+  assert.match(
+    litText(renderSpentSoFar(spend))
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' '),
+    /Spent so far \$0\.35 31\.1M tokens 258 tool calls 0 compactions/,
+  );
+  assert.equal(litText(renderSpentSoFar(undefined)), '');
+  assert.equal(
+    withSpentSummary('8/13 · 9. Fix findings', spend),
+    '8/13 · 9. Fix findings · $0.35 spent',
+  );
+  assert.equal(withSpentSummary('', spend), '$0.35 spent');
+  assert.equal(withSpentSummary('8/13 · 9. Fix findings', undefined), '8/13 · 9. Fix findings');
 });

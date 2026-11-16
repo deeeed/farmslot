@@ -153,6 +153,7 @@ function context(): RunDetailViewContext {
     prStatus: null,
     siblings: [],
     taskProgress: null,
+    liveSpend: null,
     acceptanceStatus: ledger,
     acceptanceCriteria: null,
     acceptanceStatusError: null,
