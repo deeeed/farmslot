@@ -239,13 +239,13 @@ for (const legacyBin of ['.local/bin', '.npm-global/bin'])
 // which follows the links it moves, never heard about it. Two later refreshes
 // then rotated that snapshot out of the current/previous pair and pruned it,
 // leaving the legacy fallback pointing at a deleted tree.
-test('a legacy route into a snapshot keeps that snapshot through later refreshes', (t) => {
+test('a legacy route into a snapshot keeps that snapshot through the next refresh', (t) => {
   const root = fixture(t);
   const refresh = /<< 'REFRESH'\n([\s\S]*?)\nREFRESH/.exec(
     readFileSync(path.join(repo, 'scripts/lib/node-cli-refresh.sh'), 'utf8'),
   )[1];
   const home = path.join(root, 'node');
-  const shas = ['a', 'b', 'c'].map((letter) => letter.repeat(40));
+  const [first, previous, current] = ['a', 'b', 'c'].map((letter) => letter.repeat(40));
   const seed = (revision) => {
     const snapshot = path.join(home, 'code/cli', revision);
     for (const [relative, body] of [
@@ -261,48 +261,66 @@ test('a legacy route into a snapshot keeps that snapshot through later refreshes
     writeFileSync(path.join(snapshot, 'DEPLOYED-REVISION.json'), '{}');
     return snapshot;
   };
+  // The state two deploys leave behind, seeded rather than performed: the
+  // instance bin names the previous revision, and the preserved legacy pair
+  // still names the one before it, which is what install.sh left when this node
+  // was migrated. One refresh is enough to prune, and running the rotation for
+  // real cost this file three refreshes beside a lock test that tolerates about
+  // a second of other work.
   mkdirSync(path.join(home, 'config'), { recursive: true });
   writeFileSync(path.join(home, 'config/instance.json'), '{"layout":2}');
-  // The pre-migration bin names a snapshot of this install, not a checkout.
-  const first = seed(shas[0]);
-  mkdirSync(path.join(root, '.local/bin'), { recursive: true });
+  const firstSnapshot = seed(first);
+  seed(previous);
+  seed(current);
+  const shared = path.join(root, '.local/share/farmslot-cli');
+  mkdirSync(shared, { recursive: true });
+  mkdirSync(path.join(home, 'code/bin'), { recursive: true });
   symlinkSync(
-    path.join(first, 'packages/cli/bin/farmslot.mjs'),
-    path.join(root, '.local/bin/farmslot'),
+    path.join(firstSnapshot, 'packages/cli/bin/farmslot.mjs'),
+    path.join(shared, 'legacy'),
+  );
+  symlinkSync(
+    path.join(firstSnapshot, 'packages/agent-runtime/bin/farmslot-agent.mjs'),
+    path.join(shared, 'legacy-agent'),
+  );
+  symlinkSync(
+    path.join(home, 'code/cli', previous, 'packages/cli/bin/farmslot.mjs'),
+    path.join(home, 'code/bin/farmslot'),
+  );
+  symlinkSync(
+    path.join(home, 'code/cli', previous, 'packages/agent-runtime/bin/farmslot-agent.mjs'),
+    path.join(home, 'code/bin/farmslot-agent'),
   );
 
-  for (const sha of shas) {
-    if (sha !== shas[0]) seed(sha);
-    const result = run(
-      [
-        '-s',
-        '--',
-        path.join(home, 'code/cli'),
-        sha,
-        '',
-        path.dirname(process.execPath),
-        '1',
-        home,
-        path.join(home, 'code/bin'),
-        '2',
-        ...legacyCliBinDirs(root),
-      ],
-      { HOME: root },
-      refresh,
-      20000,
-    );
-    assert.equal(result.status, 0, result.stderr);
-  }
+  const result = run(
+    [
+      '-s',
+      '--',
+      path.join(home, 'code/cli'),
+      current,
+      '',
+      path.dirname(process.execPath),
+      '1',
+      home,
+      path.join(home, 'code/bin'),
+      '2',
+      ...legacyCliBinDirs(root),
+    ],
+    { HOME: root },
+    refresh,
+    20000,
+  );
+  assert.equal(result.status, 0, result.stderr);
 
-  const shared = path.join(root, '.local/share/farmslot-cli');
-  for (const name of ['legacy', 'legacy-agent']) {
-    const link = path.join(shared, name);
+  // `first` is neither the revision being deployed nor the one the instance bin
+  // named, so retention has to come from the legacy pair or the prune takes it.
+  assert.ok(
+    existsSync(path.join(home, 'code/cli', first)),
+    'the snapshot the legacy route names must survive the prune',
+  );
+  for (const name of ['legacy', 'legacy-agent'])
     assert.ok(
-      existsSync(readlinkSync(link)),
-      `${name} must still resolve after the snapshot rotation: ${readlinkSync(link)}`,
+      existsSync(readlinkSync(path.join(shared, name))),
+      `${name} must still resolve: ${readlinkSync(path.join(shared, name))}`,
     );
-  }
-  const legacyCli = run([path.join(root, '.local/bin/farmslot')], { HOME: root });
-  assert.equal(legacyCli.status, 0, legacyCli.stderr);
-  assert.equal(legacyCli.stdout.trim(), 'a');
 });

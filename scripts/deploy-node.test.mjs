@@ -1592,7 +1592,11 @@ test('node CLI refreshes started together over a stale lock never overlap', asyn
           sha,
           'f'.repeat(64),
           bin,
-          '30',
+          // The loop sleeps `sleep` once per attempt and the fixture stubs that
+          // to 0.01s, so this is a budget in iterations, not seconds: 30 left
+          // the waiters about a second of real time, and any test sharing the
+          // job starved them. Production waits 600.
+          '600',
           path.join(home, '.farmslot'),
           path.join(home, '.local/bin'),
           'legacy',
