@@ -1,30 +1,60 @@
-// Claude Code JSONL: assistant `tool_use` blocks; a user `tool_result` block completes one.
-// One API message is split across records that repeat its usage, so usage counts once per id.
-import { pairToolEvents, type ToolCallEvent, type ToolUsageAdapter } from '../stream.js';
+// Claude Code session JSONL: assistant `tool_use` blocks, completed by user `tool_result` blocks.
+// One API message spans several records, so usage counts once per message id. `compact_boundary`
+// system records mark context compactions. Cost is priced from the static table by model.
+import { CLAUDE_PRICING } from '../prices.js';
+import {
+  type CompactionEvent,
+  dropStreamBefore,
+  pairToolEvents,
+  type StreamParser,
+  type TokenSample,
+  type ToolCallEvent,
+  type ToolUsageAdapter,
+} from '../stream.js';
 
-import { count, isRecord, readJsonLines, text } from './jsonl.js';
+import { count, isRecord, readJsonLines, text, tokensBefore } from './jsonl.js';
 
-export const claudeToolUsage: ToolUsageAdapter = {
-  runner: 'claude',
-  async read(sessionPath) {
-    const calls: ToolCallEvent[] = [];
-    const completions: Array<{ id: string; completedAt: string }> = [];
-    const tokens = [];
-    const callIds = new Set<string>();
-    const messageIds = new Set<string>();
-    for (const record of await readJsonLines(sessionPath)) {
+function claudeCost(model: string | undefined, usage: Record<string, unknown>): number | null {
+  const prices = model
+    ? Object.entries(CLAUDE_PRICING).find(([key]) => model.includes(key))?.[1]
+    : undefined;
+  if (!prices) return null;
+  return (
+    (count(usage.input_tokens) * prices.input +
+      count(usage.output_tokens) * prices.output +
+      count(usage.cache_creation_input_tokens) * prices.cache_write +
+      count(usage.cache_read_input_tokens) * prices.cache_read) /
+    1_000_000
+  );
+}
+
+function claudeParser(): StreamParser {
+  const calls: ToolCallEvent[] = [];
+  const completions: Array<{ id: string; completedAt: string }> = [];
+  const tokens: TokenSample[] = [];
+  const compactions: CompactionEvent[] = [];
+  const callIds = new Set<string>();
+  const messageIds = new Set<string>();
+  const parsed = { tools: calls, tokens, compactions };
+  return {
+    push(record) {
       const message = record.message;
       const at = text(record.timestamp);
-      if (!isRecord(message) || !at) continue;
+      if (record.type === 'system' && record.subtype === 'compact_boundary' && at) {
+        const meta = isRecord(record.compactMetadata) ? record.compactMetadata : {};
+        compactions.push({ at, ...tokensBefore(meta.preTokens) });
+        return;
+      }
+      if (!isRecord(message) || !at) return;
       const blocks = Array.isArray(message.content) ? message.content.filter(isRecord) : [];
       if (record.type === 'user') {
         for (const block of blocks) {
           const id = block.type === 'tool_result' ? text(block.tool_use_id) : undefined;
           if (id) completions.push({ id, completedAt: at });
         }
-        continue;
+        return;
       }
-      if (record.type !== 'assistant') continue;
+      if (record.type !== 'assistant') return;
       for (const block of blocks) {
         const id = text(block.id);
         if (block.type !== 'tool_use' || (id && callIds.has(id))) continue;
@@ -33,8 +63,8 @@ export const claudeToolUsage: ToolUsageAdapter = {
       }
       const messageId = text(message.id);
       const usage = message.usage;
-      if (!isRecord(usage) || !Object.keys(usage).length) continue;
-      if (messageId && messageIds.has(messageId)) continue;
+      if (!isRecord(usage) || !Object.keys(usage).length) return;
+      if (messageId && messageIds.has(messageId)) return;
       if (messageId) messageIds.add(messageId);
       tokens.push({
         at,
@@ -43,8 +73,27 @@ export const claudeToolUsage: ToolUsageAdapter = {
           count(usage.output_tokens) +
           count(usage.cache_creation_input_tokens) +
           count(usage.cache_read_input_tokens),
+        costUsd: claudeCost(text(message.model), usage),
       });
-    }
-    return { tools: pairToolEvents(calls, completions), tokens };
+    },
+    stream() {
+      pairToolEvents(calls, completions);
+      return parsed;
+    },
+    dropBefore(time) {
+      pairToolEvents(calls, completions);
+      completions.length = 0;
+      dropStreamBefore(parsed, time);
+    },
+  };
+}
+
+export const claudeToolUsage: ToolUsageAdapter = {
+  runner: 'claude',
+  parser: claudeParser,
+  async read(sessionPath) {
+    const parser = claudeParser();
+    for (const record of await readJsonLines(sessionPath)) parser.push(record);
+    return parser.stream();
   },
 };

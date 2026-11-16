@@ -15,6 +15,7 @@ import type {
   SlotActionSummary,
   SlotResource,
   SlotStatus,
+  TaskLiveSpend,
   TaskProgressResult,
   TaskProgressStructured,
 } from '@farmslot/protocol';
@@ -63,6 +64,9 @@ export abstract class SlotViewState extends LitElement {
   @state() _taskSteps: ChecklistProgressStep[] = [];
   @state() _taskProgress = 0;
   @state() _structuredProgress?: TaskProgressStructured;
+  /** The viewed session's spend so far; kept across progress pushes that do not carry it. */
+  @state() _liveSpend?: TaskLiveSpend;
+  _liveSpendContext?: string;
   _taskProgressSource?: TaskProgressStructured;
   @state() _progressObservation: ResourceQueryState<TaskProgressResult> = { status: 'loading' };
   @state() _selectedAgentContextId = 'primary';

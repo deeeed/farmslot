@@ -4,6 +4,7 @@ import { customElement, property } from 'lit/decorators.js';
 import {
   type Run,
   type TaskChecklistTiming,
+  type TaskLiveSpend,
   type TaskProgressStructured,
   type TaskStepProgress,
   viewToggleField,
@@ -25,6 +26,7 @@ import {
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { browserViewState, viewDetails, viewStateUpdates } from '../../utils/view-state.js';
 
+import { liveSpendSummary, openStepSpend, stepSpend } from './live-spend.js';
 import { OperationClock, operationPanelStyles, renderOperationPanel } from './operation-panel.js';
 import {
   renderSubtaskBlock,
@@ -49,12 +51,18 @@ export function renderTrackerStepRow(
   nowMs?: number,
   execution?: ChecklistProgressExecution,
   detailScope: ChecklistStepDetailScope = {},
+  spent?: { cost: string; title: string } | null,
 ): TemplateResult {
   const row = checklistProgressRow(step, timing, nowMs, execution);
   const content = html` <span class="substep-icon">${row.icon}</span>
     <span class="substep-name">${step.name}</span>
     ${row.duration
       ? html`<span class="substep-duration" data-live=${row.live}>${row.duration}</span>`
+      : nothing}
+    ${spent
+      ? html`<span class="substep-cost" data-testid="step-cost" title=${spent.title}
+          >${spent.cost}</span
+        >`
       : nothing}`;
   const field = viewToggleField(
     'stepDetails',
@@ -105,6 +113,21 @@ export interface ChecklistRenderOptions extends ChecklistProgressOptions {
   closable?: boolean;
   onClose?: () => void;
   openScope: SubtaskOpenScope;
+  /** task.progress `liveSpend`: "Spent so far" and each step's cost. */
+  liveSpend?: TaskLiveSpend;
+}
+
+function renderSpentSoFar(spend: TaskLiveSpend | undefined) {
+  const view = liveSpendSummary(spend);
+  if (!view) return nothing;
+  return html`<div class="spent-so-far" data-testid="spent-so-far" title=${view.title}>
+    <span class="spent-label">Spent so far</span>
+    <span class="spent-cost">${view.cost}</span>
+    <span>${view.tokens} tokens</span>
+    <span>${view.toolCalls} tool calls</span>
+    <span>${view.compactions} compactions</span>
+    ${view.note ? html`<span class="spent-note">${view.note}</span>` : nothing}
+  </div>`;
 }
 
 /** The sole web checklist renderer, shared by the element and its contract tests. */
@@ -128,6 +151,7 @@ export function renderChecklistProgress(
             </button>`
           : nothing}
       </div>
+      ${renderSpentSoFar(options.compact ? undefined : options.liveSpend)}
       ${progress && !options.compact
         ? renderOperationPanel(progress, options.runId, { runActive: options.runActive })
         : nothing}
@@ -161,6 +185,8 @@ export function renderChecklistProgress(
                       runId: options.runId ?? options.run?.id,
                       checklist: progress?.timing?.source ?? options.activeTaskBasename,
                     },
+                    stepSpend(options.liveSpend, step.index) ??
+                      (step.status === 'running' ? openStepSpend(options.liveSpend) : null),
                   ),
                 )}
               </div>`,
@@ -188,6 +214,7 @@ export class ProgressTracker extends LitElement {
   @property({ attribute: false }) run?: Run;
   @property({ type: Boolean }) runActive = false;
   @property({ type: Boolean }) closable = false;
+  @property({ attribute: false }) liveSpend?: TaskLiveSpend;
 
   static styles = [
     css`
@@ -307,6 +334,34 @@ export class ProgressTracker extends LitElement {
         color: ${unsafeCSS(colors.textSecondary)};
         font-size: ${unsafeCSS(fonts.sizeSm)};
       }
+      .spent-so-far {
+        display: flex;
+        flex-wrap: wrap;
+        gap: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.md)};
+        align-items: baseline;
+        font-size: ${unsafeCSS(fonts.sizeSm)};
+        color: ${unsafeCSS(colors.textSecondary)};
+        margin-bottom: ${unsafeCSS(spacing.sm)};
+      }
+      .spent-label {
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        font-weight: 600;
+      }
+      .spent-cost {
+        color: ${unsafeCSS(colors.textPrimary)};
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }
+      .spent-note {
+        color: ${unsafeCSS(colors.textMuted)};
+      }
+      .substep-cost {
+        margin-left: auto;
+        flex: none;
+        color: ${unsafeCSS(colors.textSecondary)};
+        font-variant-numeric: tabular-nums;
+      }
     `,
     operationPanelStyles,
     subtaskBlockStyles,
@@ -324,6 +379,7 @@ export class ProgressTracker extends LitElement {
       runActive: this.runActive,
       compact: this.compact,
       closable: this.closable,
+      liveSpend: this.liveSpend,
       openScope: this.openScope ?? this.subtaskOpen.scope(this.runId),
       onClose: () =>
         this.dispatchEvent(new CustomEvent('progress-close', { bubbles: true, composed: true })),

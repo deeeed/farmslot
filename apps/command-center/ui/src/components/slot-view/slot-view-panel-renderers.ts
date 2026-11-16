@@ -150,6 +150,7 @@ export function renderSlotViewSidebarTask(view: SlotView) {
     .run=${view._linkedRun ?? undefined}
     .runActive=${view._linkedRun ? isRunWorking(view._linkedRun) : false}
     .activeTaskBasename=${view._linkedRun?.activeTaskFile?.split('/').pop()}
+    .liveSpend=${view._liveSpend}
   ></progress-tracker>`;
 }
 

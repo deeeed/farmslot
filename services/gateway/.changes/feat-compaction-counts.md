@@ -1,0 +1,1 @@
+- `task.progress` reports live spend for the viewed agent session. It reads only the transcript bytes appended since the last read, at most once per session every 15 s however many viewers poll, beside the existing reads: no new RPC, poll, process or Git call.

@@ -152,6 +152,7 @@ import {
 } from './mock-data.js';
 import { MOCK_CHANGED_LINES, MOCK_MODIFIED_SOURCE, MOCK_UNIFIED_DIFF } from './mock-diff-data.js';
 import { MockH264Source } from './mock-h264-source.js';
+import { MOCK_LIVE_SPEND } from './mock-live-spend.js';
 import { mockWorkGraphBacklogItems, mockWorkGraphs } from './mock-work-graph-data.js';
 
 type DevRoute =
@@ -1641,6 +1642,15 @@ All checks passed.`;
         Structured progress — Mid (5/8, Validate)
       </p>
       <progress-tracker .markdown=${md} .structured=${midProgress}></progress-tracker>
+      <p class="section-label" style="margin-top: 24px">
+        Structured progress — Mid with live spend (run 6ff29609 transcript)
+      </p>
+      <progress-tracker
+        data-testid="progress-live-spend"
+        .markdown=${md}
+        .structured=${midProgress}
+        .liveSpend=${MOCK_LIVE_SPEND}
+      ></progress-tracker>
       <p class="section-label" style="margin-top: 24px">
         Structured progress — Late (7/8, Validate)
       </p>

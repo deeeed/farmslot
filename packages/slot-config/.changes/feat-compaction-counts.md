@@ -1,0 +1,1 @@
+- Session cost uses the shared static price table from `@farmslot/agent-runtime/tool-usage`, the same one live spend uses.

@@ -41,6 +41,11 @@ export const cursorToolUsage: ToolUsageAdapter = {
         if (isRecord(block) && block.type === 'tool_use')
           tools.push({ name: text(block.name) ?? 'unknown' });
     }
-    return { tools, tokens: null };
+    return {
+      tools,
+      tokens: null,
+      compactions: null,
+      compactionsUnavailable: 'Cursor transcripts record no compaction events',
+    };
   },
 };
