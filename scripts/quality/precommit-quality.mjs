@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, lstatSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { constants as osConstants } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -114,6 +114,10 @@ const stagedFiles = splitNullList(
   capture('git', ['diff', '--name-only', '--cached', '--diff-filter=ACMRD', '-z']),
 );
 const existingStagedFiles = stagedFiles.filter((file) => existsSync(join(repoRoot, file)));
+// Prettier exits 2 when a path argument is a symlink, even if .prettierignore lists it.
+const prettierFiles = existingStagedFiles.filter(
+  (file) => !lstatSync(join(repoRoot, file)).isSymbolicLink(),
+);
 const deletedStagedFiles = stagedFiles.filter((file) => !existsSync(join(repoRoot, file)));
 const eslintFiles = existingStagedFiles.filter((file) => /\.[cm]?[jt]sx?$/.test(file));
 
@@ -133,7 +137,7 @@ try {
   for (const batch of chunks(eslintFiles, 100)) {
     run(process.execPath, [eslintBin, '--fix', ...batch], { allowLintIssues: true });
   }
-  for (const batch of chunks(existingStagedFiles, 100)) {
+  for (const batch of chunks(prettierFiles, 100)) {
     run(process.execPath, [prettierBin, '--write', '--ignore-unknown', ...batch]);
   }
   for (const batch of chunks(existingStagedFiles, 100)) {

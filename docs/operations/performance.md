@@ -49,7 +49,7 @@ command a host service (`services/gateway/src/host-services`) started, and
 
 ## How to improve a metric
 
-Follow the [performance rules](../../AGENTS.md#performance-rules).
+Follow the [performance rules](../../CLAUDE.md#performance-rules).
 
 1. Record method, class, cache source/age, workload size and observation window.
 2. Compare bytes, managed processes, Git calls, node wait and loop lag. Confirm the
