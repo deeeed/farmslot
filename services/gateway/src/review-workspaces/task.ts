@@ -466,7 +466,7 @@ export async function materializeReviewWorkspaceTask(
       taskMarkdown: buildTaskDocument({
         flowType: 'review-pr',
         modePreamble: '',
-        completionInstructions: `Mark completed checklist steps with ${shellQuote(path.posix.join(taskDir, 'mark'))} N, using the visible 1-based number. Child checklist completion marks its parent step. Finish with ${shellQuote(path.posix.join(taskDir, 'mark'))} complete --mark-last. Never hand-write SIGNAL.json.`,
+        completionInstructions: `Mark ${shellQuote(path.posix.join(taskDir, 'mark'))} 1 as soon as step 1 is done, before any other work, then mark completed checklist steps with ${shellQuote(path.posix.join(taskDir, 'mark'))} N, using the visible 1-based number. Child checklist completion marks its parent step. Finish with ${shellQuote(path.posix.join(taskDir, 'mark'))} complete --mark-last. Never hand-write SIGNAL.json.`,
         vars: {
           TICKET: run.ticketOrPr,
           TITLE: subject.title,

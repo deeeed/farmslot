@@ -40,13 +40,13 @@ SLOT: {{SLOT}}
 
 ## Checklist
 
-These steps are common to every interactive run, and are the same list as `{{TASK_DIR}}/CHECKLIST.md`. The work specific to _this_ task is not listed here — you write it into `{{TASK_DIR}}/artifacts/approach.md` and the operator approves it at the gate that follows. After each step, run `{{TASK_DIR}}/mark N` with the number shown below.
+These steps are common to every interactive run, and are the same list as `{{TASK_DIR}}/CHECKLIST.md`. The work specific to _this_ task is not listed here — you write it into `{{TASK_DIR}}/artifacts/approach.md` and the operator approves it at the gate that follows. Run `{{TASK_DIR}}/mark 1` as soon as step 1 is done, before any other work, then `{{TASK_DIR}}/mark N` after each step with the number shown below.
 
 {{INTERACTIVE_CHECKLIST}}
 
 ## Interactive protocol
 
-- When the operator begins steering work, run `{{TASK_DIR}}/mark start` before the first `./mark N`.
+- `{{TASK_DIR}}/mark start` and `{{TASK_DIR}}/mark 1` come first, at the top of the run, not when the operator begins steering.
 - The human operator drives scope, order, review, and whether/when to publish.
 - Keep changes local unless the operator explicitly tells you otherwise.
 - Avoid publishing, pushing, or mutating GitHub PRs unless explicitly instructed.
