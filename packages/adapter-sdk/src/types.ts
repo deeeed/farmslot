@@ -661,8 +661,8 @@ export interface AdapterDiagnostics {
   };
   // An in-app issue buffer armed at the start and collected at the end.
   issueBuffer?: {
-    arm(projectRoot: string): boolean;
-    collect(projectRoot: string): unknown[] | null;
+    arm(projectRoot: string): boolean | Promise<boolean>;
+    collect(projectRoot: string): unknown[] | null | Promise<unknown[] | null>;
   };
 }
 

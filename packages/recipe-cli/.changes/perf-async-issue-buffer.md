@@ -1,0 +1,1 @@
+- Await issue-buffer arming and collection so adapters can reuse an existing bridge without helper processes.
