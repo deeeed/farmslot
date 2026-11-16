@@ -1,0 +1,1 @@
+- The acceptance instruction no longer reads as permission to leave an AC unproven. An AC awaiting review with recorded proof can reach the configured human gate; an AC with no executed proof is incomplete, and the worker either proves it or records it UNTESTABLE with its reason before completing.
