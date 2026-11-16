@@ -4,9 +4,10 @@ import test from 'node:test';
 
 import { PipelineSteps, type Run } from '@farmslot/protocol';
 
+import { canCollectRecipeArtifacts } from '../../run-lifecycle/recipe-artifacts.js';
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
-import { canCollectRecipeArtifacts, slotRelease } from './release.js';
+import { slotRelease } from './release.js';
 
 // These tests resolve the committed demo pool's slots (demo-work-1), which the
 // loaders hide unless explicitly opted in.

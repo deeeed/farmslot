@@ -9,12 +9,10 @@ import {
   DEFAULT_BRANCH,
   type FlowType,
   isCompletionPrerequisiteFailure,
-  isGateParkInFlightOrFreed,
   isHeldForResultDecision,
   isReviewerWindowName,
   isTerminalRunStatus,
   primaryRoleForFlow,
-  type Run,
   SLOT_DESTRUCTIVE_OPS,
   type SlotReleaseParams,
   type SlotReleaseResult,
@@ -77,6 +75,7 @@ import {
 } from '../../run-engine/terminal-teardown-registry.js';
 import { isRunArchiving } from '../../run-lifecycle/archive-fence.js';
 import { reapSlotBrowserSession } from '../../run-lifecycle/browser-session-reap.js';
+import { canCollectRecipeArtifacts } from '../../run-lifecycle/recipe-artifacts.js';
 import { slotTeardownBlocker } from '../../run-lifecycle/slot-teardown.js';
 import {
   dropParkedBranch,
@@ -455,16 +454,6 @@ async function releasePreflight(
     blindMarker,
     ...(interruptedRelease ? { interruptedRelease } : {}),
   };
-}
-
-export function canCollectRecipeArtifacts(run: Run | undefined): run is Run {
-  return (
-    !!run &&
-    isTerminalRunStatus(run.status) &&
-    !isHeldForResultDecision(run) &&
-    !isCompletionPrerequisiteFailure(run) &&
-    !isGateParkInFlightOrFreed(run)
-  );
 }
 
 /**

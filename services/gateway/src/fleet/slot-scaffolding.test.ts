@@ -1238,3 +1238,41 @@ test('overlapping task receipts preserve every source before collection', async 
   assert(existsSync(path.join(other, 'TASK.md')));
   assert.deepEqual(readFileSync(path.join(owned.bucket, 'evidence.png')), owned.bytes);
 });
+
+test('direct teardown retains recipe output while leaving task inputs and observations in place', async (t) => {
+  const f = fixture(t);
+  const owned = await recipeBucket(f.repo, 'finished-owner', 'calls', 'owned-call');
+  const observations = path.join(f.repo, '.agent/.observability');
+  mkdirSync(observations, { recursive: true });
+  writeFileSync(path.join(observations, 'worker.jsonl'), 'retained observation');
+  const external = path.join(runnerRuntimeDir(f.repo, '.agent'), '.observability');
+  mkdirSync(external, { recursive: true });
+  writeFileSync(path.join(external, 'worker.jsonl'), 'retained external observation');
+  const result = await archiveSlotScaffolding(
+    f.vars,
+    {},
+    {
+      destination: f.destination,
+      taskRelativeDir: 'fix/finished-owner',
+      recipeOwnerRunId: 'finished-owner',
+      recipeArtifactsOnly: true,
+      beforeRemove: async () => undefined,
+    },
+  );
+  assert.equal(existsSync(owned.bucket), false);
+  assert.equal(
+    readFileSync(path.join(external, 'worker.jsonl'), 'utf8'),
+    'retained external observation',
+  );
+  assert(existsSync(owned.taskFile));
+  assert.equal(
+    readFileSync(path.join(observations, 'worker.jsonl'), 'utf8'),
+    'retained observation',
+  );
+  const bytes = execFileSync('tar', [
+    '-xOf',
+    path.join(result.directory, 'scaffolding.tar'),
+    path.posix.join(path.relative(f.repo, owned.bucket), 'evidence.png'),
+  ]);
+  assert.deepEqual(bytes, owned.bytes);
+});

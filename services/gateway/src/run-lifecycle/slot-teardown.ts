@@ -691,6 +691,10 @@ export async function releaseRunSlotOwnership(
         ...(before?.handoff_run_id === run.id ? { handoff_run_id: null } : {}),
       });
     }
+    // Direct cancelled-slot reclaim can skip idle recovery, but cannot publish
+    // readiness with this terminal owner's ignored recipe output still present.
+    const { archiveRunRecipeArtifacts } = await import('./recipe-artifacts.js');
+    await archiveRunRecipeArtifacts(run, assertOwned);
     if (checkoutVars) {
       await recordReleasedCheckout(run, checkoutVars, execOnSlot);
       await assertOwned();
