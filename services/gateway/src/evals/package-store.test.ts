@@ -283,6 +283,26 @@ test('experimentKey and candidateStrategyFingerprint are content-addressed', () 
     startRef: 'bbb222',
   });
   assert.notEqual(startA, startB);
+  const plain = computeCandidateStrategyFingerprint({
+    taskProfile: 'fix-bug',
+    axes: { model: { name: 'gpt-5.5' } },
+  });
+  assert.equal(
+    computeCandidateStrategyFingerprint({
+      taskProfile: 'fix-bug',
+      axes: { model: { name: 'gpt-5.5' } },
+      prepareProfile: '   ',
+    }),
+    plain,
+  );
+  assert.notEqual(
+    computeCandidateStrategyFingerprint({
+      taskProfile: 'fix-bug',
+      axes: { model: { name: 'gpt-5.5' } },
+      prepareProfile: 'mobile',
+    }),
+    plain,
+  );
   assert.equal(
     packageIdFor({
       experimentKey: a,

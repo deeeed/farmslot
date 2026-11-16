@@ -503,6 +503,7 @@ const EVAL_TRIAL_START_PARAMS: Record<keyof EvalTrialStartParams, true> = {
   reviewModel: true,
   effort: true,
   app: true,
+  prepareProfile: true,
   slotId: true,
   allowedSlots: true,
   safetyTier: true,
@@ -555,6 +556,15 @@ function assertEvalTrialStartParams(params: EvalTrialStartParams): void {
     throw new Error('Native profile selection requires native worker transport');
   if (params.nativeProfile !== undefined && !isNativeProfileReference(params.nativeProfile))
     throw new Error('Invalid native profile reference');
+  trialPrepareProfile(params);
+}
+
+function trialPrepareProfile(params: EvalTrialStartParams): string | undefined {
+  if (params.prepareProfile === undefined) return undefined;
+  if (typeof params.prepareProfile !== 'string')
+    throw new Error(`${EVAL_TRIAL_START_VALIDATION_PREFIX} prepareProfile must be a string`);
+  const profile = params.prepareProfile.trim();
+  return profile || undefined;
 }
 
 async function resolveCandidateSource(
@@ -747,11 +757,13 @@ export async function evalTrialStart(
   if (!isEvalPackageAxes(axes)) throw new Error('Invalid candidate axes: expected EvalPackageAxes');
   const harnessLifecycle = harnessLifecycleForAxes(params.project, axes);
   const candidateSource = await resolveCandidateSource(params.project, params.source);
+  const prepareProfile = trialPrepareProfile(params);
   const candidateStrategyFingerprint = computeCandidateStrategyFingerprint({
     axes,
     source: candidateSource,
     startRef: candidateStartRef.requestedRef,
     taskProfile: evalCase.taskProfile,
+    prepareProfile,
   });
   const explicitTrialId = params.trialId?.trim() || undefined;
   const strategyId = strategyIdFor(candidateStrategyFingerprint);
@@ -956,6 +968,7 @@ export async function evalTrialStart(
       effort: params.effort,
       ...(params.transport ? { transport: params.transport } : {}),
       ...(params.nativeProfile ? { nativeProfile: params.nativeProfile } : {}),
+      ...(prepareProfile ? { prepareProfile } : {}),
       app: params.app,
       safetyTier: params.safetyTier,
       // A blind trial has no operator to answer a gate, whatever its template's default mode.

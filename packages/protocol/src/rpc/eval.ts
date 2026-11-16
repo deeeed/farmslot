@@ -87,6 +87,8 @@ export interface EvalTrialStartParams {
   reviewModel?: string;
   effort?: string;
   app?: string;
+  /** Named prepare profile. Blank matches the omitted default. A named profile is a separate trial. */
+  prepareProfile?: string;
   slotId?: string;
   allowedSlots?: string[];
   safetyTier?: SafetyTier;
