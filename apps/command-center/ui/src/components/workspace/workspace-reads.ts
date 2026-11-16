@@ -13,6 +13,14 @@ import {
   getResourceWorkspaceKey,
   subscribeResourceCache,
 } from '../../resource-cache.js';
+import { isExpectedReadAbsence } from '../../utils/resource-read-status.js';
+
+/** A replaced read has no failure to display in either workspace. */
+export class WorkspaceReadCancelledError extends Error {
+  constructor() {
+    super('Workspace read superseded');
+  }
+}
 
 interface OpenRead {
   stop?: () => void;
@@ -93,7 +101,10 @@ export class WorkspaceReads implements ReactiveController {
     return this.reads.get(query.id)?.state;
   }
   get error() {
-    return [...this.reads.values()].find((r) => r.state.error)?.state.error?.message ?? '';
+    return (
+      [...this.reads.values()].find((r) => r.state.error && !isExpectedReadAbsence(r.state))?.state
+        .error?.message ?? ''
+    );
   }
   get status() {
     const saved = [...this.reads.values()]
@@ -162,7 +173,7 @@ export class WorkspaceReads implements ReactiveController {
         cancel: () => {
           if (!settled) {
             settled = true;
-            reject(new Error('Workspace read superseded'));
+            reject(new WorkspaceReadCancelledError());
           }
         },
         bind: () => {
@@ -211,7 +222,7 @@ export class WorkspaceReads implements ReactiveController {
                   resolve(state.data);
                 }
               }
-              if (state.error && !settled) {
+              if (state.error && !isExpectedReadAbsence(state) && !settled) {
                 settled = true;
                 reject(new Error(state.error.message));
               }

@@ -1,0 +1,1 @@
+- Run detail (`run.get`) no longer rereads on every farm-wide run change: it depends on its own run key, which the gateway advances when a run whose facts it serves changes.

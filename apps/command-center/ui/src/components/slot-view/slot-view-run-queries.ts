@@ -11,7 +11,7 @@ import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { gateway } from '../../gateway-client.js';
 import { getResourceWorkspaceKey } from '../../resource-cache.js';
-import { ResourceQueryController } from '../shared/resource-query-controller.js';
+import { readFailureText, ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import type { SlotView } from './slot-view.js';
 import { selectSlotViewLinkedRun } from './slot-view-linked-run-model.js';
@@ -145,8 +145,7 @@ export class SlotViewRunQueries implements ReactiveController {
         this.pinned.belongsToWorkspace ? this.pinned.state.data : undefined,
       );
       view._linkedRunCurrent = this.ready;
-      view._linkedRunReadError =
-        this.pinned.state.error?.message ?? this.slot.state.error?.message ?? '';
+      view._linkedRunReadError = readFailureText(this.pinned) ?? readFailureText(this.slot) ?? '';
       const observation =
         requestedRunId && run?.id === requestedRunId ? this.pinned.state : this.slot.state;
       view._linkedRunObservedAt = observation.observedAt;
@@ -174,7 +173,7 @@ export class SlotViewRunQueries implements ReactiveController {
       view._recipeRunsLoading = Boolean(
         run && !this.recipes.state.data && this.recipes.state.status === 'loading',
       );
-      view._recipeRunsError = this.recipes.state.error?.message ?? '';
+      view._recipeRunsError = readFailureText(this.recipes) ?? '';
       if (run && this.recipes.belongsToWorkspace && this.recipes.state.data) {
         if (this.recipeData !== this.recipes.state.data) {
           this.recipeData = this.recipes.state.data;

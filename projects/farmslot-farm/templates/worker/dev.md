@@ -12,7 +12,7 @@ Everything this run produces to PROVE the work — `recipe.json`, evidence, repo
 
 ## Checklist
 
-Execute top-to-bottom. After each step, run `{{TASK_DIR}}/mark N`. STOP at failures — fix before proceeding.
+Execute top-to-bottom. Run `{{TASK_DIR}}/mark start` and `{{TASK_DIR}}/mark 1` as soon as step 1 is done, before any other work; after each later step, run `{{TASK_DIR}}/mark N`. STOP at failures — fix before proceeding.
 
 ### Phase 1: Setup
 
@@ -22,7 +22,7 @@ Execute top-to-bottom. After each step, run `{{TASK_DIR}}/mark N`. STOP at failu
   - `companion-device` — Companion app UX on the slot sim/device (install + launch; Metro alone is not enough)
     Recipe proof is the default for every mode; surface list decides which prepared resources step 4 verifies and which evidence Phase 5 needs.
 - [ ] **2. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md`.
-- [ ] **3. Start** — `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 3`.
+- [ ] **3. Start** — `{{TASK_DIR}}/mark 3`.
 - [ ] **4. Confirm required prepared surfaces only** — verify only what step 1 listed. Prepare provides the declared resources; the gateway owns capability leases. Do not call `runtime.capability.*`, guess control-plane URLs, request credentials, or start/install resources from the worker. If a required surface is missing or unhealthy, run `{{TASK_DIR}}/mark blocked --reason "<resource and failed check>"` and stop.
   - **`command-center` only when listed:**
     ```bash

@@ -175,11 +175,11 @@ test('an older gateway has a stable update notice and cannot launch or change th
   }
 });
 
-test('action preflight waits for a current settings read before capturing its owner', async () => {
+test('action preflight waits for a fresh settings read before capturing its owner', async () => {
   const panel = new ChatPanel();
   let checked = false;
   const query = Reflect.get(panel, 'runtimeQuery');
-  query.requireCurrent = async () => {
+  query.requireFresh = async () => {
     checked = true;
   };
   const owns = await Reflect.get(panel, 'ownerGuard').call(panel);
@@ -242,7 +242,7 @@ test('dangerous confirmation preflights a stale read without changing the displa
     throw new Error('stale read must preflight');
   };
   let fresh = false;
-  query.requireCurrent = async () => {
+  query.requireFresh = async () => {
     fresh = true;
     Reflect.set(panel, 'runtime', {
       status: 'stopped',

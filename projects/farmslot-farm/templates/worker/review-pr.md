@@ -34,12 +34,12 @@ proof only. Missing evidence is a finding or marked unverified.
 
 ## Checklist
 
-**STOP GATE:** Mark step N `[x]` before starting step N+1. Sequential only.
+**STOP GATE:** Run `{{TASK_DIR}}/mark N` before starting step N+1 — a hand-ticked `[x]` records nothing. Sequential only.
 
 ### Setup (1–5)
 
-- [ ] **1. Read quality docs** — `{{recipe_quality_path}}`, `{{review_quality_path}}`, both CLAUDE files.
-- [ ] **2. Start** — `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
+- [ ] **1. Read quality docs** — `{{recipe_quality_path}}`, `{{review_quality_path}}`, both CLAUDE files. Then run `{{TASK_DIR}}/mark start` and `{{TASK_DIR}}/mark 1`, before any other work.
+- [ ] **2. Start** — `{{TASK_DIR}}/mark 2`.
 - [ ] **3. Print tier** — `Review tier: {{REVIEW_TIER}}`.
 - [ ] **4. Read recorded runtime health** - inspect supplied doctor and runtime evidence. Do not start services or run probes. Missing evidence stays unverified.
 - [ ] **5. Fetch PR metadata + diff:**

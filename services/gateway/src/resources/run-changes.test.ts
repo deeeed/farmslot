@@ -11,6 +11,9 @@ test('legacy records without family or decisions retain their own resource ident
     id: 'legacy',
     familyId: 'legacy',
     decisionIds: [],
+    readsReviewScope: false,
+    priorGenerationIds: [],
+    readsFamily: false,
   });
 });
 
@@ -25,7 +28,14 @@ test('a run moving families invalidates both memberships and removed decision pr
   try {
     publishRunResources(captureRunResources(record), previous, 'updated', revisions);
     await Promise.resolve();
-    assert.deepEqual(previous, { id: 'run', familyId: 'before', decisionIds: ['resolved'] });
+    assert.deepEqual(previous, {
+      id: 'run',
+      familyId: 'before',
+      decisionIds: ['resolved'],
+      readsReviewScope: false,
+      priorGenerationIds: [],
+      readsFamily: false,
+    });
     assert.equal(revisions.revision({ family: 'family', familyId: 'before' }), 1);
     assert.equal(revisions.revision({ family: 'family', familyId: 'after' }), 1);
     const changes = packets.flatMap((packet) => packet.changes);
@@ -175,4 +185,133 @@ test('separate runs keep separate inbox deadlines and disposal cancels remaining
   revisions.dispose();
   t.mock.timers.tick(40);
   assert.equal(revisions.revision(key), 3);
+});
+
+const prLink = (pr: number) => [{ label: 'PR', url: `https://github.com/acme/app/pull/${pr}` }];
+const readyGate = [{ id: 'gate', payload: { kind: 'ready' as const } }];
+
+test('a run change advances the detail of runs whose review budget shares its PR, and only those', () => {
+  const revisions = new GatewayResourceRevisions();
+  try {
+    const run = (id: string, pr: number, decisions: typeof readyGate = []) =>
+      captureRunResources({
+        id,
+        ticketOrPr: 'TAT-1',
+        links: prLink(pr),
+        flowType: 'fix-bug',
+        decisions,
+      });
+    // A run with an open ready gate reads the budget of its PR; one without does not.
+    publishRunResources(run('gated', 7, readyGate), undefined, 'updated', revisions);
+    publishRunResources(run('plain', 7), undefined, 'updated', revisions);
+    publishRunResources(run('elsewhere', 8, readyGate), undefined, 'updated', revisions);
+    const before = (id: string) => revisions.revision({ family: 'run', runId: id });
+    const gated = before('gated'),
+      plain = before('plain'),
+      elsewhere = before('elsewhere');
+    publishRunResources(run('sibling', 7), undefined, 'updated', revisions);
+    assert.equal(before('gated'), gated + 1, 'the gated run serves this PR budget');
+    assert.equal(before('plain'), plain, 'a run without an open ready gate reads no other run');
+    assert.equal(before('elsewhere'), elsewhere, 'another PR is unrelated');
+    // The gate resolves: the run no longer reads its PR scope.
+    publishRunResources(
+      captureRunResources({
+        id: 'gated',
+        ticketOrPr: 'TAT-1',
+        links: prLink(7),
+        flowType: 'fix-bug',
+        decisions: [{ id: 'gate', resolvedAt: 'now', payload: { kind: 'ready' } }],
+      }),
+      undefined,
+      'updated',
+      revisions,
+    );
+    const resolved = before('gated');
+    publishRunResources(run('sibling', 7), undefined, 'updated', revisions);
+    assert.equal(before('gated'), resolved);
+  } finally {
+    revisions.dispose();
+  }
+});
+
+test('a prior review generation change advances the runs that show its metrics', () => {
+  const revisions = new GatewayResourceRevisions();
+  try {
+    publishRunResources(
+      captureRunResources({
+        id: 'gen-2',
+        flowType: 'review-pr',
+        repeatReviewContext: { priorGenerations: [{ runId: 'gen-1' }] },
+      }),
+      undefined,
+      'updated',
+      revisions,
+    );
+    const gen2 = revisions.revision({ family: 'run', runId: 'gen-2' });
+    publishRunResources(
+      captureRunResources({ id: 'gen-1', flowType: 'review-pr' }),
+      undefined,
+      'updated',
+      revisions,
+    );
+    assert.equal(revisions.revision({ family: 'run', runId: 'gen-2' }), gen2 + 1);
+    publishRunResources(captureRunResources({ id: 'gen-2' }), undefined, 'deleted', revisions);
+    const removed = revisions.revision({ family: 'run', runId: 'gen-2' });
+    publishRunResources(
+      captureRunResources({ id: 'gen-1', flowType: 'review-pr' }),
+      undefined,
+      'updated',
+      revisions,
+    );
+    assert.equal(
+      revisions.revision({ family: 'run', runId: 'gen-2' }),
+      removed,
+      'a removed reader is dropped',
+    );
+  } finally {
+    revisions.dispose();
+  }
+});
+
+test('a family member change advances the runs whose gate summaries roll up that family', () => {
+  const revisions = new GatewayResourceRevisions();
+  try {
+    const retro = [
+      { id: 'retro', resolvedAt: 'done', payload: { kind: 'retrospective' as const } },
+    ];
+    publishRunResources(
+      captureRunResources({ id: 'parent', familyId: 'fam', decisions: retro }),
+      undefined,
+      'updated',
+      revisions,
+    );
+    publishRunResources(
+      captureRunResources({ id: 'other', familyId: 'fam-2', decisions: retro }),
+      undefined,
+      'updated',
+      revisions,
+    );
+    const rev = (id: string) => revisions.revision({ family: 'run', runId: id });
+    const parent = rev('parent'),
+      other = rev('other');
+    // A fix-loop child of the family records usage: the parent's rollup changes.
+    publishRunResources(
+      captureRunResources({ id: 'child', familyId: 'fam', decisions: [] }),
+      undefined,
+      'updated',
+      revisions,
+    );
+    assert.equal(rev('parent'), parent + 1);
+    assert.equal(rev('other'), other, 'another family is unrelated');
+    // A run leaving the family still refreshes the family it left.
+    publishRunResources(
+      captureRunResources({ id: 'child', familyId: 'fam-3', decisions: [] }),
+      captureRunResources({ id: 'child', familyId: 'fam', decisions: [] }),
+      'updated',
+      revisions,
+    );
+    assert.equal(rev('parent'), parent + 2);
+  } finally {
+    revisions.dispose();
+  }
 });

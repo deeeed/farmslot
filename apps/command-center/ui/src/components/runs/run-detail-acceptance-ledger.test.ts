@@ -120,8 +120,7 @@ test('the acceptance panel names no superseded ledger read for the grace period'
     pending: false,
   });
 
-  // Preparing has no watch until the worker starts. That absence is neutral,
-  // while a real refusal and a missing watch after dispatch remain visible.
+  // A missing watch is neutral in every phase; actual read failures stay visible.
   const workerRun = view.run;
   assert.ok(workerRun);
   const noWatch = {
@@ -136,7 +135,21 @@ test('the acceptance panel names no superseded ledger read for the grace period'
   view._acceptProgressObservation();
   assert.equal(view.acceptanceStatusError, null);
   assert.equal(view._taskProgressLoading, true);
-  for (const status of ['created', 'slot-finding', 'grading', 'writing-task'] as const) {
+  for (const status of [
+    'created',
+    'slot-finding',
+    'grading',
+    'writing-task',
+    'dispatching',
+    'monitoring',
+    'reviewing',
+    'fixing',
+    'human-gating',
+    'ci-watching',
+    'done',
+    'failed',
+    'cancelled',
+  ] as const) {
     view.run = { ...workerRun, status };
     view._acceptProgressObservation();
     assert.equal(view.acceptanceStatusError, null, status);
@@ -145,7 +158,7 @@ test('the acceptance panel names no superseded ledger read for the grace period'
   void progress.retry();
   await flush();
   socket.failure(lastRead().id, {
-    code: 'RESOURCE_OBSERVATION_UNAVAILABLE',
+    code: 'RESOURCE_OBSERVATION_FAILED',
     message: 'Ledger read failed: EACCES',
   });
   await flush();
@@ -161,7 +174,7 @@ test('the acceptance panel names no superseded ledger read for the grace period'
   socket.failure(lastRead().id, noWatch);
   await flush();
   view._acceptProgressObservation();
-  assert.equal(view.acceptanceStatusError, noWatch.message);
+  assert.equal(view.acceptanceStatusError, null);
   view.run = workerRun;
 
   // Held data: a superseded reread names nothing, and the ledger's own error still shows.
@@ -204,13 +217,13 @@ test('the acceptance panel names no superseded ledger read for the grace period'
     error: 'Request task.progress timed out',
     pending: false,
   });
-  // A ledger that was already read never becomes pre-worker preparation again.
+  // Missing observation must not hide a retained ledger parse failure.
   view.run = { ...workerRun, status: 'preparing' };
   void progress.retry();
   await flush();
   socket.failure(lastRead().id, noWatch);
   await flush();
   view._acceptProgressObservation();
-  assert.equal(view.acceptanceStatusError, noWatch.message);
+  assert.equal(view.acceptanceStatusError, 'invalid acceptance-status.json');
   progress.hostDisconnected();
 });

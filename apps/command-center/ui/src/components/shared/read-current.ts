@@ -1,5 +1,6 @@
 import {
   type GatewayResourceCache,
+  isSupersededRead,
   readStoredResource,
   type ResourceQuery,
 } from '@farmslot/protocol/client-cache';
@@ -35,19 +36,33 @@ export async function readCurrent<T>(
   }
 }
 
-/** A one-shot action preflight must finish a successful read from its current owner. */
+export interface ReadFreshOptions {
+  /**
+   * The gateway revalidates the state this action depends on, so a change published after the
+   * read (live runs change runs, slots and workers continuously) does not block it.
+   */
+  rechecked?: boolean;
+}
+
+/**
+ * A one-shot action preflight must finish a successful read from its current owner. A read the
+ * gateway refused because its source changed while it ran is tried again.
+ */
 export async function readFresh<T>(
   cache: GatewayResourceCache,
   query: ResourceQuery<T>,
   isCurrent: () => boolean,
+  { rechecked = false }: ReadFreshOptions = {},
 ): Promise<T> {
   const startedAt = Date.now();
-  const state = await cache.retry(query);
+  let state = await cache.retry(query);
+  for (let tries = 1; tries < READ_CURRENT_TRIES && isSupersededRead(state.error); tries++)
+    state = await cache.retry(query);
   if (
     !isCurrent() ||
     state.error ||
     state.data === undefined ||
-    (query.live && state.status !== 'ready') ||
+    (query.live && !rechecked && state.status !== 'ready') ||
     (state.observedAt ?? -Infinity) < startedAt
   )
     throw new Error('A current read is required before acting');
