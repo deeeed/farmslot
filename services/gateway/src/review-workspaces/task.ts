@@ -457,26 +457,32 @@ export async function materializeReviewWorkspaceTask(
         selectionReason: 'frozen-run-selection',
       },
     });
-    // Same rule as task init: only a reference the project declares read-only is
-    // listed as one. A support key bound to the slot's own checkout is not.
-    const readOnlyReferenceKeys = new Set(
-      Object.entries(project.projectJson.reference_repos ?? {})
-        .filter(([, reference]) => reference?.read_only === true)
-        .map(([name]) => name),
+    // Every reference the project declares read-only, whether or not this review's
+    // support environment binds it. The support binding is the only reader of those
+    // checkouts, so a declared one it did not bind is unreadable here — and the
+    // reviewer has to see that, or an unread comparison passes as nothing to compare.
+    // A key that is the slot's own checkout is not a reference and is left out.
+    const declaredReadOnly = Object.entries(project.projectJson.reference_repos ?? {})
+      .filter(([, reference]) => reference?.read_only === true)
+      .map(([name]) => name);
+    const boundReferences = new Map(
+      (run.reviewWorkspace.support?.references ?? []).map((reference) => [
+        reference.name,
+        reference,
+      ]),
     );
-    const reviewReferences = run.reviewWorkspace.support?.references?.filter((reference) =>
-      readOnlyReferenceKeys.has(reference.name),
-    ).length
-      ? run.reviewWorkspace.support.references
-          .filter((reference) => readOnlyReferenceKeys.has(reference.name))
-          .map((reference) => ({
-            name: reference.name,
-            path: reference.path,
-            present: !reference.missing,
-            ...(reference.headSha && !reference.missing ? { headSha: reference.headSha } : {}),
+    const reviewReferences = declaredReadOnly.length
+      ? declaredReadOnly.map((name) => {
+          const bound = boundReferences.get(name);
+          return {
+            name,
+            path: bound?.path ?? '',
+            present: Boolean(bound) && !bound!.missing,
+            ...(bound?.headSha && !bound.missing ? { headSha: bound.headSha } : {}),
             // A dirty tree is not described by its revision; the reviewer has to know.
-            ...(reference.dirty ? { dirty: true } : {}),
-          }))
+            ...(bound?.dirty ? { dirty: true } : {}),
+          };
+        })
       : undefined;
     await writeTaskDir({
       taskDir: bundleDir,

@@ -53,7 +53,7 @@ test('a reference checkout the machine lacks reads as blocked, never as unchecke
   const lines = renderReferenceCheckoutInputs([
     { name: 'mobile', path: '/dev/metamask/mobile-ref', present: false },
   ]).join('\n');
-  assert.match(lines, /- `mobile`: not cloned on this machine\./);
+  assert.match(lines, /- `mobile`: not readable from this task/);
   // The reviewer's checklist records BLOCKED or NOT_CHECKED; name the one it means.
   assert.match(lines, /BLOCKED, never NOT_CHECKED/);
   assert.ok(!lines.includes('/dev/metamask/mobile-ref` at'), 'no revision is claimed for it');

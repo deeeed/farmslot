@@ -43,6 +43,13 @@ async function fixture() {
           local_name: 'core-ref',
           read_only: true,
         },
+        // Declared read-only but never bound by the support environment below: the
+        // task inputs still name it, because an unread comparison is blocked.
+        extension: {
+          repo_url: 'git@github.com:MetaMask/metamask-extension.git',
+          local_name: 'extension-ref',
+          read_only: true,
+        },
         unplaced: {
           repo_url: 'git@github.com:MetaMask/metamask-extension.git',
           local_name: 'extension-1',

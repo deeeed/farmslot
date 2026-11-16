@@ -235,7 +235,7 @@ test('declared reference checkouts reach the task document and a frozen input', 
   const document = await readFile(result.taskDocument, 'utf8');
   assert.match(document, /### Reference checkouts \(read-only\)/);
   assert.match(document, /- `mobile`: `\/dev\/metamask\/mobile-ref` at `aaa111`/);
-  assert.match(document, /- `extension`: not cloned on this machine\./);
+  assert.match(document, /- `extension`: not readable from this task/);
   assert.ok(result.referenceCheckouts, 'the input file is written');
   assert.deepEqual(JSON.parse(await readFile(result.referenceCheckouts!, 'utf8')), {
     schemaVersion: 1,
