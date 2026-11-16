@@ -60,7 +60,6 @@ function wizard(): WizardSync {
         allowedActions: ['dispatch'],
         allowSequence: true,
         allowEmpty: true,
-        effortRole: 'review',
       },
       sequence: [],
     }),
@@ -73,17 +72,17 @@ function wizard(): WizardSync {
   return view;
 }
 
-test('the dispatch wizard primary picker follows the review-pr flow', () => {
+test('the dispatch wizard primary picker labels high for every pi flow', () => {
   const view = wizard();
   view._flowType = 'review-pr';
   view._syncWorkflowSelection();
   assert.equal(label(view._executionPicker), 'Runner default · high');
   view._flowType = 'dev';
   view._syncWorkflowSelection();
-  assert.equal(label(view._executionPicker), 'Runner default · medium');
+  assert.equal(label(view._executionPicker), 'Runner default · high');
   view._flowType = 'qa';
   view._syncWorkflowSelection();
-  assert.equal(label(view._executionPicker), 'Runner default · medium');
+  assert.equal(label(view._executionPicker), 'Runner default · high');
 });
 
 interface EditorSync {
@@ -114,7 +113,6 @@ function editor(): EditorSync {
         allowedActions: ['dispatch'],
         allowSequence: true,
         allowEmpty: true,
-        effortRole: 'review',
       },
       sequence: [],
     }),
@@ -122,15 +120,15 @@ function editor(): EditorSync {
   return view;
 }
 
-test('the config editor primary picker follows the review-pr flow', () => {
+test('the config editor primary picker labels high for every pi flow', () => {
   const view = editor();
   view.flowType = 'review-pr';
   view.willUpdate(new Map([['flowType', '']]));
   assert.equal(label(view.executionPicker), 'Runner default · high');
   view.flowType = 'qa';
   view.willUpdate(new Map([['flowType', 'review-pr']]));
-  assert.equal(label(view.executionPicker), 'Runner default · medium');
+  assert.equal(label(view.executionPicker), 'Runner default · high');
   view.flowType = 'dev';
   view.willUpdate(new Map([['flowType', 'qa']]));
-  assert.equal(label(view.executionPicker), 'Runner default · medium');
+  assert.equal(label(view.executionPicker), 'Runner default · high');
 });

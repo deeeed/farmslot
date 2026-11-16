@@ -136,7 +136,7 @@ test('runner-default repair model and effort remain authorized at final admissio
   assert.throws(() => dispatcher.assertCurrent({ ...selected, effort: 'low' }), /changed/);
 });
 
-test('an omitted pi repair effort stays on the worker default', async (t) => {
+test('an omitted pi repair effort is high', async (t) => {
   const selection = { runner: 'pi', model: null, effort: null, mode: 'cold' as const };
   const profile = { ...execution, models: [selection] };
   const { store, monitor } = await fixture(t, profile);
@@ -156,8 +156,9 @@ test('an omitted pi repair effort stays on the worker default', async (t) => {
   );
   await dispatcher.reconcile();
   const item = getQueueSnapshot().find((entry) => entry.prWork?.sourceId === monitor.id)!;
-  assert.equal(item.effort, 'medium');
-  assert.equal(executionModelFromSelection(selection, undefined, 'review').effort, 'high');
+  assert.equal(item.effort, 'high');
+  assert.equal(executionModelFromSelection(selection).effort, 'high');
+  assert.equal(executionModelFromSelection({ ...selection, effort: 'xhigh' }).effort, 'xhigh');
 });
 
 test('manual repair rejects workspace review authority without mutating the monitor', async (t) => {

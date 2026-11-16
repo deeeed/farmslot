@@ -1148,16 +1148,12 @@ export async function runReviewAgent(
       'missing-session',
       'WARM requires the reviewId of the lineage being continued',
     );
-  const resolvedEffort = executionModelFromSelection(
-    {
-      runner,
-      model,
-      effort: effort ?? null,
-      mode,
-    },
-    undefined,
-    'review',
-  ).effort;
+  const resolvedEffort = executionModelFromSelection({
+    runner,
+    model,
+    effort: effort ?? null,
+    mode,
+  }).effort;
   // Only already-admitted tmux attempts may finish on their original transport.
   // Every new pipeline admission uses the native reviewer contract.
   const retainedTmux = selectRecoverableReviewContext(getRun(_runId)?.agentContexts ?? [], {

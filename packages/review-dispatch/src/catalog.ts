@@ -8,7 +8,6 @@ import {
   DEFAULT_GROK_EFFORT,
   DEFAULT_GROK_MODEL,
   DEFAULT_PI_MODEL,
-  DEFAULT_PI_REVIEW_THINKING,
   DEFAULT_PI_THINKING,
   DEFAULT_REVIEW_MODE,
   DEFAULT_RUNNER,
@@ -162,12 +161,10 @@ export function defaultEffortForRunner(
   runner: string,
   model?: string | null,
   catalog: ReviewDispatchCatalog = DEFAULT_REVIEW_DISPATCH_CATALOG,
-  role?: string,
 ): string | null {
   const option = runnerOption(runner, catalog);
   const levels = effortsForRunner(runner, model, catalog);
-  const preferred =
-    runner === 'pi' && role === 'review' ? DEFAULT_PI_REVIEW_THINKING : option.defaultEffort;
+  const preferred = option.defaultEffort;
   return preferred && levels.includes(preferred) ? preferred : null;
 }
 
@@ -239,7 +236,7 @@ export function catalogForNativeRunners(
         id: native.runner,
         allowCustomModels: option?.allowCustomModels ?? true,
         defaultModel: nativeRunnerDefaultModel(native, executionNodeId) || null,
-        // Native chat and workers keep the worker default when the host omits one.
+        // A host that omits PI effort uses the shared PI default.
         defaultEffort:
           native.defaultEffort !== undefined
             ? native.defaultEffort

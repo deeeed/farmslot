@@ -755,8 +755,6 @@ export interface ReloadRunnerForParkOptions {
   blindTrialBoundary?: BlindTrialWorkerBoundary;
   /** The owning run's modelQuestionsForRun. */
   modelQuestions?: 'off';
-  /** Review reloads keep the review default when the handle effort is empty. */
-  role?: string | null;
 }
 
 /** Reload exactly the persisted runner session; never falls back to a fresh launch. */
@@ -832,7 +830,6 @@ export async function reloadRunnerForPark(
       handle.sessionId,
       {
         effort: handle.effort,
-        role: options.role,
         safetyTier: handle.safetyTier,
         runtimeDir: handle.runtimeDir,
         taskDir: handle.taskDir,

@@ -517,7 +517,6 @@ export async function defaultReloadRunner(
     initialPrompt: continuationPrompt,
     beforeRespawn: assertSessionCurrent,
     blindTrialBoundary: blindTrialWorkerBoundary(run, retainedRole),
-    role: retainedRole,
     modelQuestions: modelQuestionsForRun(run),
   });
   if (!result.ok) throw new Error(result.error);

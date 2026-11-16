@@ -495,18 +495,7 @@ export class ReviewDispatchViewModel {
     const selection = this.row(id).selection;
     const runner = this.catalog.runners.find((option) => option.id === selection.runner);
     if (!runner) return [{ value: null, label: 'Unavailable runner default' }];
-    const role =
-      this.currentContext.effortRole ??
-      (this.currentContext.workflow === 'review' ||
-      this.currentContext.allowedActions.includes('request-review')
-        ? 'review'
-        : undefined);
-    const defaultEffort = defaultEffortForRunner(
-      selection.runner,
-      selection.model,
-      this.catalog,
-      role,
-    );
+    const defaultEffort = defaultEffortForRunner(selection.runner, selection.model, this.catalog);
     return [
       {
         value: null,

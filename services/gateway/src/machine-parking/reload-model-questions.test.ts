@@ -72,7 +72,7 @@ function parkedContext(runId: string, role: AgentContext['role']): AgentContext 
   };
 }
 
-test('a parked pi review reload keeps the review role when effort is empty', async () => {
+test('a parked pi reload uses high thinking when effort is empty', async () => {
   const run = makeRun({
     id: 'parked-review',
     slotId: 'slot',
@@ -85,44 +85,33 @@ test('a parked pi review reload keeps the review role when effort is empty', asy
     runnerId: 'pi',
     model: 'grok-4.7',
   };
+  const commandFor = (recovery: (typeof reloads)[number] | undefined, sessionId: string) =>
+    buildRunnerSessionReloadCommand(
+      makeVars({ piPath: 'pi', slotId: 'slot' }),
+      'pi',
+      'grok-4.7',
+      sessionId,
+      { effort: recovery?.recoveryHandle.effort },
+    );
   await assert.rejects(defaultReloadRunner(run, piHandle, 'Continue'), /fixture stops/);
   const reload = reloads.at(-1);
-  assert.equal(reload?.role, 'review');
   assert.equal(reload?.recoveryHandle.effort, undefined);
-  const command = buildRunnerSessionReloadCommand(
-    makeVars({ piPath: 'pi', slotId: 'slot' }),
-    piHandle.runnerId,
-    piHandle.model,
-    piHandle.sessionId,
-    { effort: reload?.recoveryHandle.effort, role: reload?.role },
-  );
-  assert.match(command, /--thinking high/);
+  assert.match(commandFor(reload, piHandle.sessionId), /--thinking high/);
 
   run.agentContexts = [parkedContext(run.id, 'dev')];
   await assert.rejects(defaultReloadRunner(run, piHandle, 'Continue'), /fixture stops/);
-  const worker = reloads.at(-1);
-  assert.equal(worker?.role, 'dev');
-  const workerCommand = buildRunnerSessionReloadCommand(
-    makeVars({ piPath: 'pi', slotId: 'slot' }),
-    piHandle.runnerId,
-    piHandle.model,
-    piHandle.sessionId,
-    { effort: worker?.recoveryHandle.effort, role: worker?.role },
-  );
-  assert.match(workerCommand, /--thinking medium/);
+  assert.match(commandFor(reloads.at(-1), piHandle.sessionId), /--thinking high/);
 
   const kept: MachinePauseTerminalRecoveryHandle = { ...piHandle, effort: 'low' };
   run.agentContexts = [parkedContext(run.id, 'review')];
   await assert.rejects(defaultReloadRunner(run, kept, 'Continue'), /fixture stops/);
   const explicit = reloads.at(-1);
-  assert.equal(explicit?.role, 'review');
   assert.equal(explicit?.recoveryHandle.effort, 'low');
-  const explicitCommand = buildRunnerSessionReloadCommand(
-    makeVars({ piPath: 'pi', slotId: 'slot' }),
-    kept.runnerId,
-    kept.model,
-    kept.sessionId,
-    { effort: explicit?.recoveryHandle.effort, role: explicit?.role },
-  );
-  assert.match(explicitCommand, /--thinking low/);
+  assert.match(commandFor(explicit, kept.sessionId), /--thinking low/);
+
+  const raised: MachinePauseTerminalRecoveryHandle = { ...piHandle, effort: 'xhigh' };
+  await assert.rejects(defaultReloadRunner(run, raised, 'Continue'), /fixture stops/);
+  const selected = reloads.at(-1);
+  assert.equal(selected?.recoveryHandle.effort, 'xhigh');
+  assert.match(commandFor(selected, raised.sessionId), /--thinking xhigh/);
 });

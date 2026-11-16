@@ -243,7 +243,7 @@ export async function launchReviewWorkspaceWorker(input: {
   if (!runner || !model || !runnerSupportsReadonlyReviewWorkspace(runner))
     throw new Error('Selected runner cannot enforce read-only source review');
   validateNativeRunner(runner, model);
-  const effort = resolveRunnerEffort(runner, run.effort, 'review');
+  const effort = resolveRunnerEffort(runner, run.effort);
   if (!runnerSupportsEffort(runner, model, effort))
     throw new Error('Selected static review runner/model does not support this effort');
   if (run.nativeProfile)

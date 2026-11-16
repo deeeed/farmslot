@@ -22,7 +22,6 @@ import { parseReviewSelection, parseReviewSequence } from './validation.js';
 export function executionModelFromSelection(
   selection: ReviewSelection,
   catalog: ReviewDispatchCatalog = DEFAULT_REVIEW_DISPATCH_CATALOG,
-  role?: string,
 ): ResolvedReviewDispatchExecutionModel {
   const row = parseReviewSelection(
     {
@@ -35,7 +34,7 @@ export function executionModelFromSelection(
   );
   const model = row.model ?? defaultModelForRunner(row.runner, catalog);
   if (!model) throw new Error(`Select an explicit execution model for ${row.runner}`);
-  const effort = row.effort ?? defaultEffortForRunner(row.runner, model, catalog, role);
+  const effort = row.effort ?? defaultEffortForRunner(row.runner, model, catalog);
   return { runner: row.runner, model, effort, mode: row.mode };
 }
 

@@ -131,7 +131,6 @@ export abstract class DispatchWizardState extends LitElement {
       allowedActions: ['dispatch'],
       allowSequence: true,
       allowEmpty: true,
-      effortRole: 'review',
     },
     sequence: [],
   });

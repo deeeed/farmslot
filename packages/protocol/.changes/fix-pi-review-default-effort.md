@@ -1,1 +1,1 @@
-- A REVIEW role that omits PI thinking defaults to high. The shared catalog and workers stay on medium.
+- An omitted PI effort defaults to high for every role. An explicit level, including xhigh, stays as selected.

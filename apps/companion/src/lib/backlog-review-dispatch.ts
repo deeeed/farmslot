@@ -23,7 +23,7 @@ export function backlogExecutionDefaults(
   });
 }
 
-/** Primary backlog picker. Review-PR shows the review effort. Other flows stay on the worker default. */
+/** Primary backlog picker. An omitted PI effort labels high for every flow. */
 export function backlogCreatePrimaryPicker(input: {
   project: BacklogExecutionProject | undefined;
   flowType: FlowType;
@@ -37,7 +37,6 @@ export function backlogCreatePrimaryPicker(input: {
       allowSequence: false,
       allowFreshChain: review,
       reviewContext: review ? input.item?.reviewContext : undefined,
-      effortRole: review ? 'review' : undefined,
     },
   });
 }

@@ -9,15 +9,15 @@ import {
 } from './launch-command.js';
 import { makeVars } from './test-fixtures.js';
 
-test('pi review effort defaults to high and a worker keeps medium', () => {
-  assert.equal(resolveRunnerEffort('pi', undefined), 'medium');
-  assert.equal(resolveRunnerEffort('pi', null, 'dev'), 'medium');
-  assert.equal(resolveRunnerEffort('pi', '  ', 'review-fix'), 'medium');
-  assert.equal(resolveRunnerEffort('pi', undefined, 'review'), 'high');
-  assert.equal(resolveRunnerEffort('pi', 'low', 'review'), 'low');
+test('an omitted pi effort defaults to high and an explicit level stays selected', () => {
+  assert.equal(resolveRunnerEffort('pi', undefined), 'high');
+  assert.equal(resolveRunnerEffort('pi', null), 'high');
+  assert.equal(resolveRunnerEffort('pi', '  '), 'high');
+  assert.equal(resolveRunnerEffort('pi', 'low'), 'low');
+  assert.equal(resolveRunnerEffort('pi', 'xhigh'), 'xhigh');
 });
 
-test('an omitted pi review launch asks for high thinking and a worker launch stays medium', () => {
+test('an omitted pi launch and reload ask for high thinking', () => {
   const review = buildInteractiveRefinementRunnerCommand({
     runner: 'pi',
     repo: '/tmp/review.source',
@@ -33,17 +33,15 @@ test('an omitted pi review launch asks for high thinking and a worker launch sta
     promptPath: '/tmp/task/prompt.txt',
     model: 'grok-4.7',
     workspaceTrust: 'untrusted',
-    effort: 'low',
+    effort: 'xhigh',
   });
-  assert.match(explicit ?? '', /--thinking low/);
+  assert.match(explicit ?? '', /--thinking xhigh/);
   const worker = buildPiLaunch({ binary: 'pi', repo: '/tmp/repo', model: 'grok-4.7' });
-  assert.match(worker, /--thinking medium/);
-  assert.match(worker, /FARMSLOT_THINKING='medium'/);
+  assert.match(worker, /--thinking high/);
+  assert.match(worker, /FARMSLOT_THINKING='high'/);
+  const low = buildPiLaunch({ binary: 'pi', repo: '/tmp/repo', model: 'grok-4.7', effort: 'low' });
+  assert.match(low, /--thinking low/);
   const vars = makeVars({ piPath: 'pi' });
-  const reviewReload = buildRunnerSessionReloadCommand(vars, 'pi', 'grok-4.7', 'session', {
-    role: 'review',
-  });
-  assert.match(reviewReload, /--thinking high/);
-  const workerReload = buildRunnerSessionReloadCommand(vars, 'pi', 'grok-4.7', 'session', {});
-  assert.match(workerReload, /--thinking medium/);
+  const reload = buildRunnerSessionReloadCommand(vars, 'pi', 'grok-4.7', 'session', {});
+  assert.match(reload, /--thinking high/);
 });

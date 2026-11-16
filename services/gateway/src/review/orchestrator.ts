@@ -428,16 +428,12 @@ async function executeOwnedReview(
   const mode = evalJudge
     ? 'cold'
     : resolveReviewMode({ explicitMode: options.mode, defaultMode: config.mode });
-  const effort = executionModelFromSelection(
-    {
-      runner: reviewRunner,
-      model,
-      effort: requestedEffort ?? null,
-      mode,
-    },
-    undefined,
-    'review',
-  ).effort;
+  const effort = executionModelFromSelection({
+    runner: reviewRunner,
+    model,
+    effort: requestedEffort ?? null,
+    mode,
+  }).effort;
   const primaryContext = run.reviewContext ?? run.prWork?.review?.options.reviewContext;
   const reviewId = evalJudge
     ? `eval-first-output-${runId}`

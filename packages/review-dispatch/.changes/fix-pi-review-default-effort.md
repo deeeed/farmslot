@@ -1,1 +1,1 @@
-- An omitted PI effort is high only for a review selection. Worker selection and the worker picker stay on medium.
+- An omitted PI effort is high for every selection and picker. Claude, Codex, and Cursor defaults stay as they are.

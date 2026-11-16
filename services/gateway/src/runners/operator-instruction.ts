@@ -135,7 +135,6 @@ export async function deliverOperatorInstruction(
         beforeRespawn: assertCurrent,
         blindTrialBoundary: blindTrialWorkerBoundary(run, context.role),
         modelQuestions: modelQuestionsForRun(run),
-        role: context.role,
       });
       if (!resumed.ok) throw new Error(resumed.error);
       return 'confirmed';

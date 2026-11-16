@@ -94,8 +94,8 @@ function primaryLabel(flowType: 'review-pr' | 'dev' | 'qa'): string {
   return picker.effortChoices(id)[0].label;
 }
 
-test('a companion review-pr picker labels high and a worker or qa flow labels medium', () => {
+test('a companion picker labels high for review-pr, dev, and qa', () => {
   assert.equal(primaryLabel('review-pr'), 'Runner default · high');
-  assert.equal(primaryLabel('dev'), 'Runner default · medium');
-  assert.equal(primaryLabel('qa'), 'Runner default · medium');
+  assert.equal(primaryLabel('dev'), 'Runner default · high');
+  assert.equal(primaryLabel('qa'), 'Runner default · high');
 });

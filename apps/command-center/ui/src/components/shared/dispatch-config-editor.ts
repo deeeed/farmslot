@@ -242,7 +242,6 @@ export class DispatchConfigEditor extends LitElement {
       allowedActions: ['dispatch'],
       allowSequence: true,
       allowEmpty: true,
-      effortRole: 'review',
     },
     sequence: [],
   });
@@ -259,7 +258,6 @@ export class DispatchConfigEditor extends LitElement {
         reviewContext: primaryContext,
         allowFreshChain: freshAllowed,
         reviewLineages: this.reviewLineages,
-        effortRole: freshAllowed ? 'review' : undefined,
       });
       this.reviewPicker.setContext({
         ...this.reviewPicker.context,
@@ -281,7 +279,6 @@ export class DispatchConfigEditor extends LitElement {
         ...this.executionPicker.context,
         reviewContext: primaryContext,
         allowFreshChain: freshAllowed,
-        effortRole: freshAllowed ? 'review' : undefined,
       });
       this.executionPicker.setSequence([
         {

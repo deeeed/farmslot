@@ -1,1 +1,1 @@
-- Show high as the omitted PI effort when a companion backlog item is a review.
+- Show high as the omitted PI effort on every companion backlog picker.

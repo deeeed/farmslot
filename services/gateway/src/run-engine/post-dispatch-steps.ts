@@ -942,9 +942,7 @@ export async function executeReviewStep(
     }
     return reviewed;
   };
-  const execution = reviewSelection
-    ? executionModelFromSelection(reviewSelection, undefined, 'review')
-    : null;
+  const execution = reviewSelection ? executionModelFromSelection(reviewSelection) : null;
   // Without a sequence the project's review configuration selects the reviewer.
   const reviewer = execution
     ? { reviewRunner: execution.runner, model: execution.model, effort: execution.effort }

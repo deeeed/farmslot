@@ -596,7 +596,7 @@ export async function executePublishGateReviewPlan(
             .id);
     // Operator and automatic re-reviews share the same session/delta fallback.
     const rereview = planStep.mode === 'warm' ? reReviewOfStatus(priorReview) : undefined;
-    const execution = executionModelFromSelection(planStep, undefined, 'review');
+    const execution = executionModelFromSelection(planStep);
     const requestedRunner = execution.runner;
     updateRunStep(runId, S.HUMAN_GATE, {
       detail: requestedRunner
