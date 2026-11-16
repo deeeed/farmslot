@@ -4,6 +4,8 @@ import { mock, test } from 'node:test';
 
 import { createDraftStore, createMemoryDraftStorage } from '@farmslot/local-store/drafts';
 
+import { FakeControllerHost } from '../../testing/fake-controller-host.js';
+
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 
 const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
@@ -272,4 +274,52 @@ test('selecting a file whose text is cached opens its own read when none is open
   assert.ok(opened.has('src/cached.ts'));
   assert.equal(view._liveFileHashes.get('src/cached.ts'), sha256('cached\n'));
   assert.equal(view._activeFile, 'src/cached.ts');
+});
+
+test('a URL-opened branch diff does not paint a retired read cancellation', async (t) => {
+  const { openSlotViewFileFromUrl } = await import('./slot-view-url-effects.js');
+  const { WorkspaceReads, WorkspaceReadCancelledError } =
+    await import('../workspace/workspace-reads.js');
+  const { branchDiffKey } = await import('./slot-view-model.js');
+  const view = makeView();
+  view._linkedRun = null;
+  view._workspaceReads = new WorkspaceReads(new FakeControllerHost());
+  const open = t.mock.fn();
+  view._openBranchDiffFile = open;
+  let rejectRead!: (error: Error) => void;
+  t.mock.method(
+    view._workspaceReads,
+    'read',
+    () =>
+      new Promise<never>((_resolve, reject) => {
+        rejectRead = reject;
+      }),
+  );
+  const pending = openSlotViewFileFromUrl(
+    view,
+    branchDiffKey('a'.repeat(40), 'b'.repeat(40), 'src/proof.ts'),
+  );
+  view._workspaceReads.clear();
+  rejectRead(new WorkspaceReadCancelledError());
+  await pending;
+  assert.equal(view._liveDiffContents.size, 0);
+  assert.equal(open.mock.callCount(), 0);
+});
+
+test('a URL-opened branch diff retains a real read failure', async (t) => {
+  const { openSlotViewFileFromUrl } = await import('./slot-view-url-effects.js');
+  const { WorkspaceReads } = await import('../workspace/workspace-reads.js');
+  const { branchDiffKey } = await import('./slot-view-model.js');
+  const view = makeView();
+  view._linkedRun = null;
+  view._workspaceReads = new WorkspaceReads(new FakeControllerHost());
+  view._openBranchDiffFile = t.mock.fn();
+  t.mock.method(view._workspaceReads, 'read', () =>
+    Promise.reject(new Error('EACCES: permission denied')),
+  );
+  await openSlotViewFileFromUrl(
+    view,
+    branchDiffKey('a'.repeat(40), 'b'.repeat(40), 'src/proof.ts'),
+  );
+  assert.match([...view._liveDiffContents.values()].join(''), /EACCES/);
 });

@@ -13,6 +13,9 @@ export { heldDataIsSaved, isSupersededRead } from '@farmslot/protocol/client-cac
 const pendingObservationMessages = new Set([
   'The local file watches are still arming.',
   'The remote progress watch is not armed.',
+  'The review watch is still arming.',
+  'The review node watch is not armed.',
+  'The workspace producer has not published progress.',
   'The progress source owner is not observing this file.',
   'The file observation is no longer active.',
   'The file producer disconnected or was replaced.',

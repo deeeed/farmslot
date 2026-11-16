@@ -73,3 +73,18 @@ test('producer-shaped unavailable failures remain visible, including unknown cau
     assert.equal(readFailureText({ state }), message);
   }
 });
+
+test('review and review-workspace progress admission stays neutral while arming', () => {
+  for (const message of [
+    'The review watch is still arming.',
+    'The review node watch is not armed.',
+    'The workspace producer has not published progress.',
+  ]) {
+    const state: ResourceQueryState = {
+      status: 'error',
+      error: { code: 'RESOURCE_OBSERVATION_UNAVAILABLE', message },
+    };
+    assert.equal(isExpectedReadAbsence(state), true, message);
+    assert.equal(readFailureText({ state }), undefined, message);
+  }
+});

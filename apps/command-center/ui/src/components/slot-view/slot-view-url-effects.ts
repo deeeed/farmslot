@@ -3,6 +3,7 @@ import { Methods } from '@farmslot/protocol';
 
 import { navigateHash } from '../../utils/url-state.js';
 import type { ResourcePanel } from '../resources/resource-panel.js';
+import { WorkspaceReadCancelledError } from '../workspace/workspace-reads.js';
 
 import type { SlotView } from './slot-view.js';
 import { committedReviewFileDiffRequest } from './slot-view-branch-model.js';
@@ -201,6 +202,7 @@ export async function openSlotViewFileFromUrl(view: SlotView, file: string): Pro
         next.set(cacheKey, result.diff);
         view._liveDiffContents = next;
       } catch (err) {
+        if (err instanceof WorkspaceReadCancelledError) return;
         const next = new Map(view._liveDiffContents);
         next.set(cacheKey, `Error: ${err instanceof Error ? err.message : 'Failed to load diff'}`);
         view._liveDiffContents = next;

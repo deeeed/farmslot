@@ -898,7 +898,7 @@ try {
       ),
     );
   } else if (cmd === 'gateway') {
-    const [method, paramsJson] = rest;
+    const [method, paramsJson] = rest.filter((arg) => arg !== '--observed');
     if (!method) die('usage: cdp.mjs gateway <method> [paramsJson]');
     const result = await gatewayRpc(method, paramsJson, rest.includes('--observed'));
     console.log(JSON.stringify(result, null, 2));

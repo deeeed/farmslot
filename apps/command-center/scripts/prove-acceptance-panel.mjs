@@ -42,6 +42,11 @@ await cdp('focus', target);
 if (phase === 'workspace-failure') {
   const slotId = process.env.FARMSLOT_AC_PROOF_SLOT_ID;
   assert(slotId, 'Select the owned fixture watch-failure slot');
+  const { fleet } = await cdp('gateway', 'fleet.status', '--observed');
+  assert(
+    fleet.slots.some((slot) => slot.slot === slotId),
+    'Observed read without params returns the real fleet',
+  );
   let failure;
   try {
     await cdp(
