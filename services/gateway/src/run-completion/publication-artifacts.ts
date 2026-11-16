@@ -828,6 +828,16 @@ export interface ResolvedPublicationManifest {
 /** Existing run capture authority, separate from the selected head's claims. */
 export interface PublicationBaselineContext {
   baseSha?: string;
+  /**
+   * Every pre-work base this run RECORDED, any of which before evidence may match.
+   *
+   * One value was not enough: a review loop moves the review snapshot's base
+   * forward to the previously reviewed head, so a baseline recorded on the head
+   * the worker was dispatched from — the unchanged base the templates tell it
+   * to record on — stopped matching the single expected value and the publish
+   * refused. These are recorded facts of the run, never caller input.
+   */
+  beforeBaseShas?: readonly string[];
   /** Verified marker-only baseline; never waives dirty, branch or after-evidence checks. */
   markerBaseline?: ReturnType<typeof markerBaselineVerifier>;
   /** Full comparison captured for this publication, never a warm review delta. */
@@ -892,9 +902,15 @@ export function publicationBaselineContext(
     /^[a-f0-9]{40}$/iu.test(snapshot.headSha)
       ? snapshot.baseSha
       : undefined;
+  const dispatchBase =
+    typeof run.worktreeHeadAtDispatch === 'string' &&
+    /^[a-f0-9]{40}$/iu.test(run.worktreeHeadAtDispatch)
+      ? run.worktreeHeadAtDispatch
+      : undefined;
   return {
     markerBaseline: markerBaselineVerifier(run, inventory),
-    baseSha: fullReviewBase ?? run.worktreeHeadAtDispatch ?? undefined,
+    baseSha: fullReviewBase ?? dispatchBase,
+    beforeBaseShas: [...new Set([fullReviewBase, dispatchBase].filter((sha) => sha !== undefined))],
     comparison,
     branch: run.branch,
     inventory,
@@ -1076,11 +1092,27 @@ export async function assertPublicationManifestOwnership(
                 );
               headSha = selected.git_ref;
             }
-            const expectedSha = beforeOnly
-              ? mergedBefore && comparison?.headSha === headSha
-                ? comparison.baseSha
-                : baseline?.baseSha
-              : headSha;
+            // Before evidence may match ANY base this run recorded before the
+            // work started, not one chosen value: the review loop moves the
+            // review base forward, and a baseline recorded on the dispatch head
+            // is exactly what the fix-bug templates ask the worker for.
+            const beforeBases = beforeOnly
+              ? (baseline?.beforeBaseShas?.length
+                  ? baseline.beforeBaseShas
+                  : baseline?.baseSha
+                    ? [baseline.baseSha]
+                    : []
+                ).concat(
+                  mergedBefore && comparison?.headSha === headSha && comparison?.baseSha
+                    ? [comparison.baseSha]
+                    : [],
+                )
+              : [];
+            const matchedBase =
+              typeof provenance.git_ref === 'string'
+                ? beforeBases.find((base) => base === provenance.git_ref)
+                : undefined;
+            const expectedSha = beforeOnly ? (matchedBase ?? baseline?.baseSha) : headSha;
             // An attestation of this exact attempt manifest waives only the baseline match.
             const attested =
               beforeOnly &&
@@ -1088,21 +1120,34 @@ export async function assertPublicationManifestOwnership(
               admittedBeforeAttemptAttestations(baseline.attestations, (root) =>
                 root === directory ? manifestDigest : undefined,
               ).length > 0;
-            const markerBaseline =
+            // The templates have the worker commit a BUG_MARKER before it
+            // records the baseline, so the baseline legitimately sits one
+            // commit past a recorded base. Each candidate gets the hatch: the
+            // marker's parent is whichever base the worker actually started on.
+            let markerBaseline = false;
+            if (
               beforeOnly &&
               !attested &&
-              expectedSha &&
+              !matchedBase &&
               typeof provenance.git_ref === 'string' &&
-              provenance.git_ref !== expectedSha &&
               provenance.dirty === false &&
               (!baseline?.branch ||
                 provenance.branch === baseline.branch ||
-                provenance.branch === 'detached') &&
-              (await baseline?.markerBaseline?.(provenance.git_ref, expectedSha, io, artifactsDir));
+                provenance.branch === 'detached')
+            ) {
+              for (const base of beforeBases) {
+                if (await baseline?.markerBaseline?.(provenance.git_ref, base, io, artifactsDir)) {
+                  markerBaseline = true;
+                  break;
+                }
+              }
+            }
+            const gitRefInvalid = beforeOnly
+              ? !matchedBase && !markerBaseline
+              : !expectedSha || provenance.git_ref !== expectedSha;
             const invalidProvenanceField =
               !attested &&
-              (((!expectedSha || (provenance.git_ref !== expectedSha && !markerBaseline)) &&
-                'git_ref') ||
+              ((gitRefInvalid && 'git_ref') ||
                 (provenance.dirty !== false && 'dirty') ||
                 (baseline?.branch &&
                   provenance.branch !== baseline.branch &&

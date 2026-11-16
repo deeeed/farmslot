@@ -870,6 +870,92 @@ test('before evidence admits the frozen publication merge base after main is mer
     await assert.rejects(readEvidenceManifest(f.run, invalid), /git_ref|unchanged base/);
 });
 
+test('before evidence on the dispatch base survives a review base moved to the reviewed head', async (t) => {
+  // TAT-4640 7c480491. Round 2 of the review loop captured since the previously
+  // reviewed head, so the snapshot's baseSha became that head while keeping the
+  // origin/main label, and the publish then refused the baseline the worker had
+  // recorded on the head it was dispatched from — the base the template names.
+  const f = await baselineFixture(t);
+  const reviewedHead = 'e'.repeat(40);
+  const fixHead = 'f'.repeat(40);
+  assert.equal(f.provenance.git_ref, f.run.worktreeHeadAtDispatch);
+  const review = f.run.steps.find((step) => step.name === 'review');
+  assert.ok(review);
+  review.outputs = {
+    mode: 'cold',
+    reviewSnapshot: {
+      source: 'local-git',
+      baseRef: 'origin/main',
+      baseSha: reviewedHead,
+      headRef: f.run.branch,
+      headSha: fixHead,
+      capturedAt: '2026-11-16T14:34:00.000Z',
+    },
+  };
+  await retainRunFixture(f.run);
+  const baseline = publicationBaselineContext(f.run);
+  assert.deepEqual(
+    [...(baseline.beforeBaseShas ?? [])].sort(),
+    [reviewedHead, f.provenance.git_ref].sort(),
+    'both recorded pre-work bases are candidates',
+  );
+  const effective = await readEvidenceManifest(f.run);
+  assert.equal(effective?.before_after_pairs?.[0]?.before, `${f.baselineRoot}/proof.png`);
+  const inventory = await buildPackageEvidenceManifest(
+    f.taskDir,
+    f.inventory,
+    effective,
+    1,
+    baseline,
+  );
+  assert.ok(inventory.some((entry) => entry.path === `artifacts/${f.baselineRoot}/proof.png`));
+});
+
+test('the marker hatch reaches the dispatch base when the review base has moved', async (t) => {
+  const f = await baselineFixture(t);
+  const markerSha = 'b'.repeat(40);
+  const dispatchBase = f.provenance.git_ref;
+  f.run.flowType = 'fix-bug';
+  const review = f.run.steps.find((step) => step.name === 'review');
+  assert.ok(review);
+  review.outputs = {
+    mode: 'cold',
+    reviewSnapshot: {
+      source: 'local-git',
+      baseRef: 'origin/main',
+      baseSha: 'e'.repeat(40),
+      headRef: f.run.branch,
+      headSha: 'f'.repeat(40),
+      capturedAt: '2026-11-16T14:34:00.000Z',
+    },
+  };
+  const file = `artifacts/${f.baselineRoot}/product-provenance.json`;
+  const bytes = JSON.stringify({ ...f.provenance, git_ref: markerSha });
+  await writeFile(path.join(f.taskDir, file), bytes);
+  f.inventory.find((entry) => entry.path === file)!.sha256 = digest(Buffer.from(bytes));
+  // The receipt is pinned to the dispatch base, which is the commit the worker
+  // put its BUG_MARKER on, not the review snapshot's moved base.
+  const receiptPath = `artifacts/baseline-marker-verification/${dispatchBase}-${markerSha}.json`;
+  const receipt = JSON.stringify({
+    version: 1,
+    runId: f.run.id,
+    ticket: f.run.ticketOrPr,
+    baseSha: dispatchBase,
+    markerSha,
+  });
+  await mkdir(path.dirname(path.join(f.taskDir, receiptPath)), { recursive: true });
+  await writeFile(path.join(f.taskDir, receiptPath), receipt);
+  f.inventory.push({
+    path: receiptPath,
+    purpose: 'evidence-dependency',
+    sha256: digest(Buffer.from(receipt)),
+  });
+  await retainRunFixture(f.run);
+  const baseline = publicationBaselineContext(f.run);
+  const resolved = await resolvePublicationManifest(f.taskDir, undefined, undefined, 1, baseline);
+  assert.equal(resolved?.manifest.before_after_pairs?.[0]?.before, `${f.baselineRoot}/proof.png`);
+});
+
 test('a warm review delta cannot replace the before-evidence baseline', async (t) => {
   const f = await baselineFixture(t);
   const review = f.run.steps.find((step) => step.name === 'review');

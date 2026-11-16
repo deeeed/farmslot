@@ -39,6 +39,11 @@ export async function isTicketMarkerCommit(
   let added: string[] = [];
   let files = 0;
   let markers = 0;
+  /** Logger objects the worker templates prescribe for a marker, and nothing else. */
+  const loggerObjects = new Set(['DevLogger', 'Logger', 'console']);
+  /** Names an added import bound, checked at the end against the loggers actually logged through. */
+  const importedBindings = new Set<string>();
+  const loggedThrough = new Set<string>();
   const finishHunk = () => {
     if (!added.length) return true;
     const source = ts.createSourceFile('marker.ts', added.join('\n'), ts.ScriptTarget.Latest, true);
@@ -48,6 +53,30 @@ export async function isTicketMarkerCommit(
       Boolean(ts.forEachChild(node, hasParseError));
     if (hasParseError(source) || !source.statements.length) return false;
     const onlyLogs = (statement: ts.Statement): boolean => {
+      // A file that does not already import its logger needs the import to log
+      // at all, which is why a template-conformant marker commit adds one. Only
+      // a plain value import binding a name, and only when that name is what
+      // the marker logs through — checked once the whole patch is read.
+      if (ts.isImportDeclaration(statement)) {
+        const clause = statement.importClause;
+        // No import clause at all is a side-effect-only import, which runs
+        // module code; a phase modifier is `type` (binds nothing) or `defer`.
+        if (!clause || clause.phaseModifier !== undefined) return false;
+        const bound: string[] = [];
+        if (clause.name) bound.push(clause.name.text);
+        if (clause.namedBindings) {
+          if (ts.isNamespaceImport(clause.namedBindings))
+            bound.push(clause.namedBindings.name.text);
+          else
+            for (const element of clause.namedBindings.elements) {
+              if (element.isTypeOnly) return false;
+              bound.push(element.name.text);
+            }
+        }
+        if (!bound.length) return false;
+        for (const name of bound) importedBindings.add(name);
+        return true;
+      }
       if (ts.isIfStatement(statement)) {
         if (statement.elseStatement || writesValue(statement.expression)) return false;
         return ts.isBlock(statement.thenStatement)
@@ -58,12 +87,16 @@ export async function isTicketMarkerCommit(
       if (!ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression))
         return false;
       const call = statement.expression;
-      if (
-        !ts.isPropertyAccessExpression(call.expression) ||
-        call.expression.expression.getText(source) !== 'DevLogger' ||
-        call.expression.name.text !== 'log'
-      )
-        return false;
+      // Mobile logs through DevLogger or Logger, Terminal and Extension through
+      // console; the gate used to admit only the first, so no template could
+      // ever produce a marker it accepted.
+      const loggerObject =
+        ts.isPropertyAccessExpression(call.expression) &&
+        ts.isIdentifier(call.expression.expression) &&
+        call.expression.name.text === 'log'
+          ? call.expression.expression.text
+          : undefined;
+      if (!loggerObject || !loggerObjects.has(loggerObject)) return false;
       const message = call.arguments[0];
       const prefix =
         message &&
@@ -74,6 +107,7 @@ export async function isTicketMarkerCommit(
             : undefined);
       if (!prefix?.startsWith(`[${ticket}] BUG_MARKER:`) || call.arguments.some(writesValue))
         return false;
+      loggedThrough.add(loggerObject);
       markers += 1;
       return true;
     };
@@ -117,7 +151,14 @@ export async function isTicketMarkerCommit(
       if (!/^index [a-f0-9]+\.\.[a-f0-9]+ 100(?:644|755)$/u.test(line)) return false;
     } else if (line !== '') return false; // Deletions, renames, modes, binary data and context all refuse.
   }
-  return finishHunk() && files > 0 && markers > 0;
+  return (
+    finishHunk() &&
+    files > 0 &&
+    markers > 0 &&
+    // An import earns its place only by being the logger the marker logs
+    // through. Anything else added a dependency this commit does not use.
+    [...importedBindings].every((name) => loggedThrough.has(name))
+  );
 }
 
 /** Capture verifies Git once; retained readers admit only the exact gateway-owned, pinned receipt. */

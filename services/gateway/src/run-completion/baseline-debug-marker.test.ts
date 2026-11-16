@@ -56,6 +56,75 @@ test('a marker-only diagnostic admits interpolated measurements with the literal
   );
 });
 
+/** The Mobile checklist's own shape: the file has no logger yet, so the marker brings its import. */
+const mobilePatch = `diff --git a/app/components/Perps/View.tsx b/app/components/Perps/View.tsx
+index 123abcd..456abcd 100644
+--- a/app/components/Perps/View.tsx
++++ b/app/components/Perps/View.tsx
+@@ -3,0 +4 @@
++import Logger from '../../../../util/Logger';
+@@ -41,0 +43 @@
++    Logger.log('[${ticket}] BUG_MARKER: bottom sheet mounted with no venue row');
+`;
+const mobileOutput = `${marker}\0${base}\0debug(${ticket}): add reproduction marker\0\n${mobilePatch}`;
+
+test('a Mobile marker admits the logger import the template makes it add', async () => {
+  // Every template-conformant marker was refused: the gate accepted only
+  // DevLogger.log and refused the import a file without a logger must add, so
+  // no Mobile, Extension or Terminal worker could ever produce one it liked.
+  assert.equal(await isTicketMarkerCommit(mobileOutput, base, marker, ticket), true);
+  assert.equal(
+    await isTicketMarkerCommit(
+      mobileOutput
+        .replace('Logger.log', 'DevLogger.log')
+        .replace('import Logger', 'import DevLogger'),
+      base,
+      marker,
+      ticket,
+    ),
+    true,
+  );
+});
+
+test('a Terminal marker admits the console.log form its template prescribes', async () => {
+  const terminal = `${marker}\0${base}\0debug(${ticket}): add reproduction marker\0\n${`diff --git a/src/perps/order.ts b/src/perps/order.ts
+index 123abcd..456abcd 100644
+--- a/src/perps/order.ts
++++ b/src/perps/order.ts
+@@ -12,0 +13 @@
++  console.log('[${ticket}] BUG_MARKER: size field cleared before submit');
+`}`;
+  assert.equal(await isTicketMarkerCommit(terminal, base, marker, ticket), true);
+});
+
+for (const [name, changed] of [
+  [
+    'an import of something the marker never logs through',
+    mobileOutput.replace(
+      "+import Logger from '../../../../util/Logger';",
+      "+import { track } from '../../../../analytics';",
+    ),
+  ],
+  [
+    'a side-effect-only import',
+    mobileOutput.replace(
+      "+import Logger from '../../../../util/Logger';",
+      "+import '../../../../util/polyfill';",
+    ),
+  ],
+  ['a logger call that is not a log', mobileOutput.replace('Logger.log(', 'Logger.configure(')],
+  [
+    'a logger that is not one the templates prescribe',
+    mobileOutput
+      .replace('Logger.log', 'Telemetry.log')
+      .replace('import Logger', 'import Telemetry'),
+  ],
+] as const) {
+  test(`a marker commit does not admit ${name}`, async () => {
+    assert.equal(await isTicketMarkerCommit(changed, base, marker, ticket), false);
+  });
+}
+
 for (const [name, changed] of [
   ['wrong parent', output.replace(`\0${base}\0`, `\0${'c'.repeat(40)}\0`)],
   ['merge commit', output.replace(`\0${base}\0`, `\0${base} ${'c'.repeat(40)}\0`)],
