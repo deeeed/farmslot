@@ -410,6 +410,23 @@ test('evalTrialStart rejects a native profile without native transport', async (
   );
 });
 
+test('evalTrialStart rejects a prepare profile that is not a string', async () => {
+  await assert.rejects(
+    () =>
+      evalTrialStart(
+        {
+          project: 'farmslot-farm',
+          experimentManifestPath: '/tmp/missing-eval.json',
+          axes: {},
+          // @ts-expect-error negative runtime validation: prepareProfile is a string profile name.
+          prepareProfile: 1,
+        },
+        () => {},
+      ),
+    /prepareProfile must be a string/,
+  );
+});
+
 test('harnessLifecycleForAxes preserves explicit local harness paths', () => {
   const lifecycle = harnessLifecycleForAxes('example-mobile-farm', {
     harness: { path: '/tmp/recipe-harness', version: 'mobile' },
@@ -1203,6 +1220,19 @@ test('evalTrialStart keeps a native transport distinct from the tmux default', a
     );
     assert.equal(again.deduped, true);
     assert.equal(again.run?.id, native.run?.id);
+
+    const profiled = await evalTrialStart({ ...trialBase, prepareProfile: ' mobile ' }, () => {});
+    if (profiled.run) runIds.push(profiled.run.id);
+    assert.equal(profiled.deduped, false);
+    assert.notEqual(profiled.run?.id, tmux.run?.id);
+    assert.equal(profiled.run?.prepareProfile, 'mobile');
+    const sameProfile = await evalTrialStart({ ...trialBase, prepareProfile: 'mobile' }, () => {});
+    assert.equal(sameProfile.deduped, true);
+    assert.equal(sameProfile.run?.id, profiled.run?.id);
+    const blankProfile = await evalTrialStart({ ...trialBase, prepareProfile: '   ' }, () => {});
+    assert.equal(blankProfile.deduped, true);
+    assert.equal(blankProfile.run?.id, tmux.run?.id);
+    assert.equal(tmux.run?.prepareProfile, undefined);
   } finally {
     if (previousDisableEngine === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
     else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = previousDisableEngine;

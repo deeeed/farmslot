@@ -1,0 +1,1 @@
+- An eval trial forwards its prepare profile onto the run. A named profile does not reuse the default-profile trial.
