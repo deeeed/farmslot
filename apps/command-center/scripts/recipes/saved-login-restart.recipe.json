@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Saved person login survives gateway restart and refresh",
+  "description": "Use an owned signed-in Agent Chrome browser context from prove-saved-login-restart.mjs create/signin, with explicit QA profile/principal. Operator coordinates exactly the approved restarts through wait-deploy-quiet and dev-gateway-update, including slot-maintenance acknowledgement. This recipe performs only the post-restart document reload and asserts the same signed-in principal, no auth prompt. It never reads Chrome storage or performs a gateway restart. Env FARMSLOT_CDP_PORT and FARMSLOT_LOGIN_PROOF_{OUTPUT,URL,PRINCIPAL,LABEL}.",
+  "workflow": {
+    "entry": "refresh-saved-login",
+    "nodes": {
+      "refresh-saved-login": {
+        "action": "command",
+        "cmd": "FARMSLOT_LOGIN_PROOF_EXPECT=connected node --import tsx apps/command-center/scripts/prove-saved-login-restart.mjs refresh",
+        "timeout_ms": 120000,
+        "intent": "Reload the actual signed-in document after the coordinated restart and verify that the saved login is reused.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}
