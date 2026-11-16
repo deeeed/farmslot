@@ -4,12 +4,34 @@ import { customElement, property } from 'lit/decorators.js';
 import { colors, fonts, radii } from '../../styles/theme-tokens.js';
 import type { ProgressReadNotice } from '../../utils/progress-read-status.js';
 
+import { ReadNoticeDelay } from './read-notice-delay.js';
+
 /** One shared status row and retry control; every state occupies the same height. */
 @customElement('progress-read-status')
 export class ProgressReadStatus extends LitElement {
   @property({ attribute: false }) notice?: ProgressReadNotice;
   @property({ attribute: false }) retry?: () => void;
   @property({ type: Boolean }) connected = true;
+  @property({ type: Boolean }) delayRefresh = false;
+  @property() scopeKey = '';
+  private readonly delayed = new ReadNoticeDelay(() => this.requestUpdate());
+
+  protected willUpdate(changed: Map<string, unknown>): void {
+    if (changed.has('scopeKey')) this.delayed.clear();
+    if (changed.has('notice') || changed.has('delayRefresh') || changed.has('scopeKey'))
+      this.delayed.update(this.delayRefresh ? this.notice : undefined);
+  }
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    this.delayed.update(this.delayRefresh ? this.notice : undefined);
+  }
+
+  disconnectedCallback(): void {
+    this.delayed.clear();
+    super.disconnectedCallback();
+  }
+
   static styles = css`
     :host {
       display: block;
@@ -24,10 +46,12 @@ export class ProgressReadStatus extends LitElement {
       gap: 8px;
       align-items: center;
       padding: 0 8px;
+      background: ${unsafeCSS(colors.bgCard)};
+      border-radius: ${unsafeCSS(radii.sm)};
       box-sizing: border-box;
     }
     span {
-      color: ${unsafeCSS(colors.textMuted)};
+      color: ${unsafeCSS(colors.textSecondary)};
       font: 11px ${unsafeCSS(fonts.mono)};
       overflow: hidden;
       white-space: nowrap;
@@ -57,7 +81,7 @@ export class ProgressReadStatus extends LitElement {
     }
   `;
   render() {
-    const notice = this.notice;
+    const notice = this.delayRefresh ? this.delayed.visible : this.notice;
     if (!notice) return nothing;
     return html`<div class="row">
       <span role=${notice.kind === 'error' ? 'alert' : 'status'} title=${notice.detail ?? ''}

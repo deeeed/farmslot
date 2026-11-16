@@ -17,32 +17,14 @@ export function renderSlotViewShellStyles(): string {
         flex: 0 0 17px;
         overflow-x: auto;
         overflow-y: hidden;
+        scrollbar-width: none;
+      }
+      slot-view .sv-preconditions::-webkit-scrollbar {
+        display: none;
       }
       slot-view .sv-preconditions > div {
         min-width: max-content;
         white-space: nowrap;
-      }
-
-      /* Run and file-read notices share a fixed row; rereads change content only. */
-      slot-view .sv-read-status {
-        height: 28px;
-        min-height: 28px;
-        flex: 0 0 28px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        overflow-x: auto;
-        overflow-y: hidden;
-        white-space: nowrap;
-        font-size: 11px;
-      }
-      slot-view .sv-read-status > * {
-        flex-shrink: 0;
-      }
-      slot-view .sv-read-status > div {
-        display: flex;
-        align-items: center;
-        gap: 8px;
       }
 
       /* --- Header --- */
@@ -221,7 +203,7 @@ export function renderSlotViewShellStyles(): string {
         background: ${colors.bgCardHover};
         color: ${colors.textPrimary};
       }
-      slot-view .sv-run-ctrl.history {
+      slot-view .sv-run-ctrl {
         background: ${colors.bgCard};
         color: ${colors.textSecondary};
         border: 1px solid ${colors.bgCardHover};
@@ -232,7 +214,7 @@ export function renderSlotViewShellStyles(): string {
         cursor: pointer;
         margin-left: 4px;
       }
-      slot-view .sv-run-ctrl.history:hover {
+      slot-view .sv-run-ctrl:hover {
         background: ${colors.bgCardHover};
         color: ${colors.textPrimary};
       }

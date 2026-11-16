@@ -6,6 +6,7 @@ import { viewListField } from '@farmslot/protocol';
 import { gitStatusColor as sharedGitStatusColor } from '../../styles/git-status.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
+import { AVAILABLE_AFTER_REFRESH } from '../shared/read-notice-delay.js';
 
 export interface FileEntry {
   name: string;
@@ -342,6 +343,7 @@ export class FileTree extends LitElement {
               <div
                 class="ctx-item"
                 aria-disabled=${this.actionsDisabled}
+                title=${this.actionsDisabled ? AVAILABLE_AFTER_REFRESH : ''}
                 @click=${() => this._ctxAction('new-file')}
               >
                 New File Here
@@ -349,6 +351,7 @@ export class FileTree extends LitElement {
               <div
                 class="ctx-item"
                 aria-disabled=${this.actionsDisabled}
+                title=${this.actionsDisabled ? AVAILABLE_AFTER_REFRESH : ''}
                 @click=${() => this._ctxAction('new-folder')}
               >
                 New Folder
@@ -360,6 +363,7 @@ export class FileTree extends LitElement {
         <div
           class="ctx-item"
           aria-disabled=${this.actionsDisabled}
+          title=${this.actionsDisabled ? AVAILABLE_AFTER_REFRESH : ''}
           @click=${() => this._ctxAction('rename')}
         >
           Rename
@@ -370,6 +374,7 @@ export class FileTree extends LitElement {
         <div
           class="ctx-item danger"
           aria-disabled=${this.actionsDisabled}
+          title=${this.actionsDisabled ? AVAILABLE_AFTER_REFRESH : ''}
           @click=${() => this._ctxAction('delete')}
         >
           Delete

@@ -1,1 +1,1 @@
-- Keep the slot workspace steady while reads refresh, and restore panel visibility before data arrives.
+- Keep the slot workspace steady and quiet during refresh, with styled controls and delayed notices.

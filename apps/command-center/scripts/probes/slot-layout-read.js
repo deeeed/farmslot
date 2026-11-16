@@ -6,6 +6,7 @@ const identities = (globalThis[identityKey] ??= { nodes: new WeakMap(), next: 1 
 const selectors = [
   'slot-view',
   '.sv-header',
+  '[data-testid="slot-load-run"]',
   '.sv-body',
   '.sv-sidebar',
   '.sv-right-col',
@@ -35,8 +36,42 @@ const regions = Object.fromEntries(
     ];
   }),
 );
+const noticeRows = Object.fromEntries(
+  [...(view?.querySelectorAll('progress-read-status[data-read-status]') ?? [])].map((host) => {
+    const text = host.shadowRoot?.querySelector('span[role]');
+    const row = host.shadowRoot?.querySelector('.row');
+    return [
+      host.dataset.readStatus,
+      {
+        pending: host.notice?.kind === 'saved',
+        rawError: host.notice?.kind === 'error',
+        text: text?.textContent.trim() ?? '',
+        role: text?.getAttribute('role'),
+        visible: Boolean(row?.getBoundingClientRect().height),
+        scope: host.scopeKey,
+        fontSize: text ? getComputedStyle(text).fontSize : undefined,
+        color: text ? getComputedStyle(text).color : undefined,
+        background: row ? getComputedStyle(row).backgroundColor : undefined,
+      },
+    ];
+  }),
+);
+const buttonStyle = (selector) => {
+  const element = view?.querySelector(selector);
+  if (!element) return undefined;
+  const style = getComputedStyle(element);
+  return {
+    background: style.backgroundColor,
+    color: style.color,
+    font: style.fontFamily,
+    fontSize: style.fontSize,
+    borderStyle: style.borderStyle,
+    borderRadius: style.borderRadius,
+  };
+};
 return {
   at: performance.now(),
+  documentState: document.readyState,
   connected: document.querySelector('farm-app')?.connection === 'connected',
   slotId: view?.slotId,
   runId: view?._linkedRun?.id,
@@ -56,5 +91,8 @@ return {
   activePrepare: view?._activePrepare
     ? { running: view._activePrepare.running, exitCode: view._activePrepare.exitCode }
     : null,
+  noticeRows,
+  loadRunStyle: buttonStyle('[data-testid="slot-load-run"]'),
+  historyStyle: buttonStyle('[data-testid="slot-history"]'),
   regions,
 };

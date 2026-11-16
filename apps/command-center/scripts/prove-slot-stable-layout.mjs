@@ -75,6 +75,12 @@ const inspect = async () => {
   return result.result.value;
 };
 let recording;
+let samplingScript;
+const bindingName = '__farmslotSlotLayoutSample';
+const stopSamples = session.on('Runtime.bindingCalled', (params) => {
+  if (params.name === bindingName && typeof params.payload === 'string')
+    snapshots.push({ phase: 'reload', captureSource: 'document', ...JSON.parse(params.payload) });
+});
 try {
   await session.call('Runtime.enable');
   await session.call('Page.enable');
@@ -97,6 +103,28 @@ try {
     initial.connected && initial.slotId === expectedSlot && initial.runId === expectedRun,
     'Connect the selected live slot and run before recording',
   );
+  // Installed before navigation: sample the first document paint, not only post-load hydration.
+  await session.call('Runtime.addBinding', { name: bindingName });
+  samplingScript = (
+    await session.call('Page.addScriptToEvaluateOnNewDocument', {
+      source: `(() => {
+      if (window.top !== window) return;
+      let stopped = false, previous = '', sentAt = -Infinity;
+      globalThis[Symbol.for('farmslot.slot-layout.stop')] = () => { stopped = true; };
+      const sample = () => {
+        if (stopped) return;
+        const value = (() => { ${source} })();
+        const signature = JSON.stringify({regions: value.regions, notices: value.noticeRows});
+        if (signature !== previous || value.at - sentAt >= 100) {
+          globalThis.${bindingName}(JSON.stringify(value));
+          previous = signature; sentAt = value.at;
+        }
+        requestAnimationFrame(sample);
+      };
+      sample();
+    })()`,
+    })
+  ).identifier;
   const recorder = createCdpVideoRecorder({ cdpPort: port });
   recording = await recorder.start({
     target: { kind: 'cdp-page', host: '127.0.0.1', port, targetId },
@@ -124,24 +152,110 @@ try {
     }
     const end = Date.now() + (phase === 'reload' ? 20000 : 12000);
     do {
-      snapshots.push({ phase, ...(await inspect()) });
+      snapshots.push({ phase, captureSource: 'client', ...(await inspect()) });
       await delay(100);
     } while (Date.now() < end);
     const frame = await session.call('Page.captureScreenshot', { format: 'png' });
     await writeFile(path.join(output, phase + '.png'), Buffer.from(frame.data, 'base64'));
   }
-} finally {
-  stopErrors();
-  if (recording)
-    await writeFile(
-      path.join(output, 'recording.json'),
-      JSON.stringify(await recording.stop(), null, 2) + '\n',
-    );
-  await writeFile(
-    path.join(output, 'positions.json'),
-    JSON.stringify({ snapshots, failures }, null, 2) + '\n',
+  await session.call('Runtime.evaluate', {
+    expression: "globalThis[Symbol.for('farmslot.slot-layout.stop')]?.()",
+  });
+  await session.call('Emulation.setDeviceMetricsOverride', {
+    width: 414,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  const health = async () => {
+    const result = await session.call('Runtime.evaluate', {
+      expression: `(() => {
+      const row = document.querySelector('slot-view .sv-preconditions');
+      const content = row?.firstElementChild;
+      const box = row?.getBoundingClientRect();
+      return row && content && {x: box.x, y: box.y, width: box.width, clientHeight: row.clientHeight,
+        scrollWidth: row.scrollWidth, clientWidth: row.clientWidth, scrollLeft: row.scrollLeft,
+        contentHeight: content.getBoundingClientRect().height,
+        scrollbarWidth: getComputedStyle(row).scrollbarWidth,
+        webkitScrollbar: getComputedStyle(row, '::-webkit-scrollbar').display};
+    })()`,
+      returnByValue: true,
+    });
+    return result.result.value;
+  };
+  const overflow = await health();
+  assert(
+    overflow && overflow.scrollWidth > overflow.clientWidth,
+    'Prove a genuinely overflowing health row',
   );
-  session.close();
+  assert.equal(overflow.clientHeight, 17);
+  assert(
+    overflow.contentHeight <= overflow.clientHeight,
+    'Health text must fit without scrollbar clipping',
+  );
+  assert.equal(overflow.scrollbarWidth, 'none');
+  assert.equal(overflow.webkitScrollbar, 'none');
+  await session.call('Input.dispatchMouseEvent', {
+    type: 'mouseWheel',
+    x: overflow.x + overflow.width / 2,
+    y: overflow.y + 8,
+    deltaX: 2000,
+    deltaY: 0,
+  });
+  let scrolled;
+  const scrollDeadline = Date.now() + 5000;
+  do {
+    scrolled = await health();
+    if (scrolled.scrollLeft > 0) break;
+    await delay(50);
+  } while (Date.now() < scrollDeadline);
+  assert(
+    scrolled.scrollLeft > 0,
+    'The hidden scrollbar must still allow real horizontal wheel input',
+  );
+  const healthFrame = await session.call('Page.captureScreenshot', { format: 'png' });
+  await writeFile(
+    path.join(output, 'health-overflow.png'),
+    Buffer.from(healthFrame.data, 'base64'),
+  );
+  await writeFile(
+    path.join(output, 'health-overflow.json'),
+    JSON.stringify({ overflow, scrolled }, null, 2) + '\n',
+  );
+  await session.call('Emulation.setDeviceMetricsOverride', {
+    width: 1280,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+} finally {
+  try {
+    if (samplingScript) {
+      await session.call('Runtime.evaluate', {
+        expression: "globalThis[Symbol.for('farmslot.slot-layout.stop')]?.()",
+      });
+      await session.call('Page.removeScriptToEvaluateOnNewDocument', {
+        identifier: samplingScript,
+      });
+      await session.call('Runtime.removeBinding', { name: bindingName });
+    }
+  } finally {
+    stopSamples();
+    stopErrors();
+    try {
+      if (recording)
+        await writeFile(
+          path.join(output, 'recording.json'),
+          JSON.stringify(await recording.stop(), null, 2) + '\n',
+        );
+      await writeFile(
+        path.join(output, 'positions.json'),
+        JSON.stringify({ snapshots, failures }, null, 2) + '\n',
+      );
+    } finally {
+      session.close();
+    }
+  }
 }
 const movement = {};
 for (const sample of snapshots) {
@@ -174,6 +288,7 @@ await writeFile(path.join(output, 'movement.json'), JSON.stringify(movement, nul
 const required = [
   'slot-view',
   '.sv-body',
+  '[data-testid="slot-load-run"]',
   '.sv-editor-row',
   '.sv-task-panel-col',
   '.sv-run-panel',
@@ -191,16 +306,85 @@ for (const name of required) {
     `Data/refresh moved ${name}: ${JSON.stringify(value)}`,
   );
 }
+// Authentication admits a new workspace after the saved, read-only preview.
+// Geometry covers both; stateful node identity is stable within the admitted workspace.
 for (const phase of ['live-arrivals', 'reload']) {
   for (const name of ['.sv-editor-row', '.sv-sidebar', 'terminal-view']) {
     const identities = new Set(
       snapshots
-        .filter((sample) => sample.phase === phase)
+        .filter((sample) => sample.phase === phase && sample.connected)
         .map((sample) => sample.regions[name]?.identity)
         .filter((value) => value !== undefined),
     );
     assert.equal(identities.size, 1, `${name} remounted during ${phase}`);
   }
 }
+assert(
+  snapshots.some((sample) => sample.phase === 'reload' && sample.documentState === 'loading'),
+  'Capture the new document before load',
+);
+assert(
+  snapshots.some((sample) => sample.captureSource === 'document' && sample.regions['.sv-body']),
+  'Keep first-paint sampling through workspace hydration',
+);
+const fastCycles = [];
+for (const phase of ['live-arrivals', 'reload']) {
+  const active = new Map();
+  for (const sample of snapshots.filter((value) => value.phase === phase && value.connected)) {
+    for (const [name, notice] of Object.entries(sample.noticeRows ?? {})) {
+      let cycle = active.get(name);
+      if (cycle && cycle.scope !== notice.scope) {
+        active.delete(name);
+        cycle = undefined;
+      }
+      if (notice.pending && !notice.rawError) {
+        if (!cycle) {
+          cycle = {
+            start: sample.at,
+            scope: notice.scope,
+            flashed: false,
+            inheritedError: notice.role === 'alert',
+          };
+          active.set(name, cycle);
+        }
+        if (notice.visible && notice.role !== 'alert') cycle.flashed = true;
+      } else if (cycle) {
+        const elapsed = sample.at - cycle.start;
+        if (!notice.rawError && !cycle.inheritedError && elapsed > 0 && elapsed < 1000) {
+          fastCycles.push({ phase, name, elapsed, flashed: cycle.flashed });
+          assert(!cycle.flashed, `A normal ${name} refresh flashed a notice in ${elapsed}ms`);
+        }
+        active.delete(name);
+      }
+      if (notice.visible) {
+        assert.equal(notice.fontSize, '11px', 'Read notices must use the shared compact styling');
+        if (sample.historyStyle) {
+          assert.equal(
+            notice.color,
+            sample.historyStyle.color,
+            'Read notices use the muted control colour',
+          );
+          assert.equal(
+            notice.background,
+            sample.historyStyle.background,
+            'Read notices use a styled status row',
+          );
+        }
+        assert(
+          !notice.text.includes('Actions wait for a current read'),
+          'No technical freshness sentence',
+        );
+      }
+    }
+    if (sample.loadRunStyle && sample.historyStyle)
+      assert.deepEqual(
+        sample.loadRunStyle,
+        sample.historyStyle,
+        'Load run must match the neighbouring History button',
+      );
+  }
+}
+await writeFile(path.join(output, 'no-flash.json'), JSON.stringify({ fastCycles }, null, 2) + '\n');
+assert(fastCycles.length > 0, 'Observe an actual normal refresh cycle for the no-flash check');
 assert.equal(failures.length, 0, 'No runtime exceptions during refresh');
 console.log(JSON.stringify({ status: 'pass', output, samples: snapshots.length, movement }));

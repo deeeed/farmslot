@@ -321,6 +321,7 @@ export class SlotView extends SlotViewRecipePresenter {
   }
 
   disconnectedCallback() {
+    this._recoveryNotice.clear();
     clearTimeout(this._autosaveTimer);
     this._unsubDrafts?.();
     super.disconnectedCallback();
@@ -329,6 +330,13 @@ export class SlotView extends SlotViewRecipePresenter {
 
   willUpdate(changed: Map<string, unknown>) {
     handleSlotViewWillUpdate(this, changed);
+    if (changed.has('slotId')) this._recoveryNotice.clear();
+    this._recoveryNotice.update(
+      this._isRecoveryBlocked && this._recoveryPhase !== 'error'
+        ? { kind: 'saved', text: 'Loading workspace…' }
+        : undefined,
+    );
+
     if (['slotId', '_slot', '_linkedRun', 'fileEntries'].some((key) => changed.has(key)))
       bindSlotViewTaskProgress(this);
   }
@@ -941,10 +949,16 @@ export class SlotView extends SlotViewRecipePresenter {
 
   private _renderProgressStatus() {
     const active = this._progressQuery.belongsToWorkspace && Boolean(this._slot?.taskFile);
+    const notice = active
+      ? progressReadNotice(this._progressObservation, gateway.connectionState === 'connected')
+      : undefined;
     return html`<progress-read-status
-      .notice=${active
-        ? progressReadNotice(this._progressObservation, gateway.connectionState === 'connected')
-        : undefined}
+      data-read-status="progress"
+      .scopeKey=${`${this.slotId}:${this._linkedRun?.id ?? ''}`}
+      .delayRefresh=${true}
+      .notice=${notice?.kind === 'saved' && gateway.connectionState === 'connected'
+        ? { ...notice, text: 'Refreshing progress…' }
+        : notice}
       .retry=${() => void this._progressQuery.retry()}
       .connected=${gateway.connectionState === 'connected'}
     ></progress-read-status>`;
@@ -964,7 +978,7 @@ export class SlotView extends SlotViewRecipePresenter {
     return html`
       ${renderSlotViewStyles(this._recoveryPhase)}
       ${renderSlotViewHeader(this, { slot, hasSlotData, hasResources, lcColor })}
-      <div class="sv-preconditions">
+      <div class="sv-preconditions" tabindex="0" aria-label="Slot health">
         ${hasSlotData
           ? renderSlotPreparePreconditionStrip({
               slot,

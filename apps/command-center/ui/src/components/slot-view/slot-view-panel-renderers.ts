@@ -5,6 +5,7 @@ import { checklistProgressView, slotSessionView } from '@farmslot/review-dispatc
 import '../chat/native-session-view.js';
 import '../shared/hydrating-placeholder.js';
 
+import { gateway } from '../../gateway-client.js';
 import { getState } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import {
@@ -13,6 +14,7 @@ import {
   isRunWorking,
 } from '../runs/run-detail-model.js';
 import { isTerminalRunStatus, routeForRun, runStatusColor } from '../runs/run-utils.js';
+import { AVAILABLE_AFTER_REFRESH } from '../shared/read-notice-delay.js';
 import { renderRunTitle } from '../shared/run-title.js';
 
 import type { SlotView } from './slot-view.js';
@@ -209,6 +211,9 @@ export function renderSlotViewExplorerPanel(view: SlotView) {
 }
 
 export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBodyRenderContext) {
+  const connected = gateway.connectionState === 'connected';
+  const workspaceError = connected ? view._workspaceReads.error : '';
+  const workspaceText = connected ? view._workspaceReads.status : 'Showing saved files';
   const selectedAgentContext = view._selectedAgentContext();
   const pinnedContextUnresolved = isSlotViewContextPinUnresolved({
     run: view._linkedRun,
@@ -327,13 +332,22 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
 
       <!-- Right column: editor + terminal stacked vertically -->
       <div class="sv-right-col">
-        <div class="sv-read-status" role="status">
-          ${view._isLive ? view._workspaceReads.status : nothing}
-          ${view._isLive && view._workspaceReads.error
-            ? html`<button @click=${() => view._workspaceReads.retry()}>Retry workspace</button>`
-            : nothing}
-        </div>
-        ${view._isRecoveryBlocked
+        <progress-read-status
+          data-read-status="files"
+          .scopeKey=${`${view.slotId}:${view._linkedRun?.id ?? ''}`}
+          .delayRefresh=${true}
+          .connected=${gateway.connectionState === 'connected'}
+          .notice=${view._isLive && view._workspaceReads.status
+            ? {
+                kind: workspaceError ? 'error' : 'saved',
+                text: workspaceError ? 'Could not refresh files' : workspaceText,
+                detail: workspaceError || undefined,
+              }
+            : undefined}
+          .retry=${() => void view._workspaceReads.retry()}
+        ></progress-read-status>
+        ${view._isRecoveryBlocked &&
+        (view._recoveryPhase === 'error' || view._recoveryNotice.visible)
           ? html`
               <div class="sv-recovery-overlay" role="status" aria-live="polite">
                 <div class="sv-recovery-card">
@@ -599,6 +613,7 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                                 <button
                                   class="sv-run-action muted"
                                   ?disabled=${view._tmuxRestoreRunning || view._runActionsBlocked}
+                                  title=${view._runActionsBlocked ? AVAILABLE_AFTER_REFRESH : ''}
                                   @click=${() => view._restoreTmuxWorker()}
                                 >
                                   ${view._tmuxRestoreRunning
@@ -608,6 +623,7 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                                 <button
                                   class="sv-run-action muted"
                                   ?disabled=${view._tmuxRestoreRunning || view._runActionsBlocked}
+                                  title=${view._runActionsBlocked ? AVAILABLE_AFTER_REFRESH : ''}
                                   @click=${() => view._reloadWorkerSession()}
                                 >
                                   ${view._tmuxRestoreRunning
