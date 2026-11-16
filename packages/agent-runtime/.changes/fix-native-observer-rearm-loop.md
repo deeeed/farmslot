@@ -1,1 +1,0 @@
-- A native host source that fails to arm stays failed until its files change, instead of re-arming on every file event. A dead host left after a reboot made the gateway and node agent close and reopen their recursive watchers about 7 times a second. That host now fails as `host-identity-invalid` instead of a generic `arming-failed`.

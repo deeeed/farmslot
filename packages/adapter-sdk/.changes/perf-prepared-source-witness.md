@@ -1,1 +1,0 @@
-- Let adapters declare fingerprint inputs so prepared recipe executions can revalidate source without repeated Git processes.

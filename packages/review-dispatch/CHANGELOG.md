@@ -4,6 +4,14 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.25.8 - 2026-11-16
+
+- An omitted PI effort is high for every selection and picker. Claude, Codex, and Cursor defaults stay as they are.
+
+- Align exact dependencies with the prepared-source-witness patch cohort.
+- Show the active recorded child checklist beneath its parent progress in Run Detail, keeping parent and child counts separate.
+- Expose the current checklist attempt's first accepted signal time for acknowledgement display without treating launch time as acknowledgement.
+
 ## 0.25.7 - 2026-11-16
 
 - Align exact package dependencies with the protocol 0.87.0 and adapter SDK 0.28.0 cohort.

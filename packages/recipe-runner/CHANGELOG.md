@@ -6,6 +6,12 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.46.21 - 2026-11-16
+
+- mm-harness 0.96.27 consumes the prepared source-witness API for zero steady-state Git calls while retaining source freshness.
+
+- Reuse prepared source and capture observations behind fresh filesystem witnesses, with per-boundary file-read wall and CPU measurements.
+
 ## 0.46.20 - 2026-11-16
 
 - mm-harness 0.96.26 consumes this protocol 0.87.0 and SDK 0.28.0 cohort for fewer Mobile source-fingerprint Git calls and asynchronous issue-buffer diagnostics.
