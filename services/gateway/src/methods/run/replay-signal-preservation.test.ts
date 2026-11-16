@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
@@ -411,5 +411,40 @@ test('an aside left by an interrupted clear is restored even with no original', 
     await replayAndReadSignal(run, 'dispatch'),
     stranded,
     'the only copy of that signal must come back to the path the worker reads',
+  );
+});
+
+// A live signal must not even be moved aside. The path is missing for an
+// instant while a snapshot is held, and `mark` reads an absent signal as `{}`
+// (mark-io.cjs), so a worker marking a step in that instant republishes its
+// signal without the attempt id, metadata or timing it had.
+//
+// The evidence is the inode's change time, not its number: putting a snapshot
+// back links it, which keeps the same inode, so a rename-and-restore is
+// invisible to an inode check and visible in ctime.
+test('a running signal is never moved aside', async (t) => {
+  const run = createRun({ project, flowType: 'dev', ticketOrPr: 'example/fixture#8' });
+  t.after(async () => {
+    if (!getRun(run.id)) return;
+    updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+  const live = JSON.stringify({
+    attemptId: 'live-attempt',
+    status: 'running',
+    timestamp: '2026-11-12T00:00:00.000Z',
+  });
+  await writeFile(signalFile, live);
+  const before = await stat(signalFile);
+  updateRun(run.id, finishedRun(run, { status: 'monitoring' }));
+  await writeFile(statusFile, heldSlotStatus(run));
+
+  assert.equal(await replayAndReadSignal(run, 'prepare'), live);
+  const after = await stat(signalFile);
+  assert.equal(after.ino, before.ino, 'the running signal must be the same inode');
+  assert.equal(
+    after.ctimeMs,
+    before.ctimeMs,
+    'an unchanged change time is the evidence it was never renamed aside',
   );
 });

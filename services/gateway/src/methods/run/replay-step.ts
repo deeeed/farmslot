@@ -479,6 +479,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 const [refusedStatus, ...files] = process.argv.slice(1);
 const removed = [];
+const moved = [];
+
+const statusOf = (file) => {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8')).status;
+  } catch {
+    return null;
+  }
+};
 
 // Put a snapshot back without overwriting anything: link refuses an existing
 // destination, where rename would replace a signal written since.
@@ -494,7 +503,8 @@ const restore = (aside, file) => {
 };
 
 // Recover what an interrupted clear left behind, before anything else and for
-// every name, not only the ones whose original is still there.
+// every name, including one whose signal is otherwise missing - which is the
+// state interruption leaves.
 for (const file of files) {
   const prefix = path.basename(file) + '.replay-clear.';
   let entries = [];
@@ -505,17 +515,21 @@ for (const file of files) {
 }
 
 for (const file of files) {
+  // A live signal is never moved. Taking one aside leaves the path missing for
+  // an instant, and a worker's own mark reads an absent signal as {} and
+  // republishes it without its attempt id, metadata or timing - history this
+  // clear has no business touching. Only a signal that reads as finished is a
+  // candidate, and the bytes that move are judged again below in case it
+  // changed in between.
+  if (statusOf(file) !== refusedStatus) continue;
   const aside = file + '.replay-clear.' + process.pid;
   try {
     fs.renameSync(file, aside);
   } catch {
     continue;
   }
-  let status = null;
-  try {
-    status = JSON.parse(fs.readFileSync(aside, 'utf8')).status;
-  } catch {}
-  if (status === refusedStatus) {
+  moved.push(file);
+  if (statusOf(aside) === refusedStatus) {
     try {
       fs.rmSync(aside);
       removed.push(file);
@@ -525,11 +539,12 @@ for (const file of files) {
   restore(aside, file);
 }
 
-// Final state, not a tally of failed calls: a file is lost only if neither this
-// script nor the worker left a signal at the original path.
-const lost = files.filter((file) => !removed.includes(file) && !fs.existsSync(file));
+// Final state, and only for names this clear actually touched: a role signal
+// that never existed is not a loss.
+const lost = moved.filter((file) => !removed.includes(file) && !fs.existsSync(file));
 process.stdout.write(JSON.stringify({ removed, lost }));
 `;
+
   const result = await execOnSlot(
     vars,
     `node -e ${shellQuote(script)} ${shellQuote(refusedStatus)} ${files
