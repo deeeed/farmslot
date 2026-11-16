@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 
 import {
   readCommandJournal,
@@ -14,6 +14,25 @@ import { configureHarnessHost, harnessHost } from '../src/harness/host.js';
 
 const originalStdoutWrite = process.stdout.write;
 const originalStderrWrite = process.stderr.write;
+
+/**
+ * The cap tests print 2-3 MB each. The journal tees to the writer in place
+ * when it starts, so a sink keeps that out of the job log while the operation
+ * log still records every byte.
+ */
+function discardTestOutput(t: TestContext): void {
+  const sink = ((...args: unknown[]) => {
+    const callback = args.find((arg) => typeof arg === 'function');
+    if (callback) (callback as () => void)();
+    return true;
+  }) as typeof process.stdout.write;
+  process.stdout.write = sink;
+  process.stderr.write = sink;
+  t.after(() => {
+    process.stdout.write = originalStdoutWrite;
+    process.stderr.write = originalStderrWrite;
+  });
+}
 
 test('later lifecycle commands retain the last proof under the resolved checkout journal', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'project-journal-'));
@@ -173,6 +192,7 @@ test('an operation log stops at its cap and says what it dropped', async (t) => 
   const cap = 2 * 1024 * 1024;
   const line = `${'x'.repeat(64 * 1024 - 1)}\n`;
 
+  discardTestOutput(t);
   await withCommandJournal(
     'run',
     ['run', 'verbose'],
@@ -214,6 +234,7 @@ test('a single write larger than the cap keeps the part that fits', async (t) =>
   configureHarnessHost({ ...previous, journaledCommands: ['run'] });
   const cap = 2 * 1024 * 1024;
 
+  discardTestOutput(t);
   await withCommandJournal(
     'run',
     ['run', 'one-big-leaf'],
@@ -254,6 +275,7 @@ test('the cap keeps whole lines and never splits a character', async (t) => {
   configureHarnessHost({ ...previous, journaledCommands: ['run'] });
   const cap = 2 * 1024 * 1024;
 
+  discardTestOutput(t);
   await withCommandJournal(
     'run',
     ['run', 'edges'],
@@ -314,6 +336,7 @@ test('a withheld write cannot stand the log on a half-written character', async 
   configureHarnessHost({ ...previous, journaledCommands: ['run'] });
   const cap = 2 * 1024 * 1024;
 
+  discardTestOutput(t);
   await withCommandJournal(
     'run',
     ['run', 'split-character'],
