@@ -12,6 +12,7 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { checklistMarkerInstruction } from '@farmslot/agent-runtime';
 import {
   type ArtifactRef,
   EXECUTION_CHECKLIST_DOCUMENT,
@@ -146,7 +147,7 @@ export function buildTaskDocument(input: TaskDocumentInput): string {
     '## Checklist',
     '',
     `Follow \`${taskDir}/${EXECUTION_CHECKLIST_DOCUMENT}\` top to bottom. That file is the only checklist Farmslot counts.`,
-    `Marker: \`${taskDir}/mark\`, run from the repo root. \`mark start\` once when work begins, \`mark N\` after each step (visible 1-based number), then \`mark complete --mark-last\`, \`mark no-change --reason "…"\`, or \`mark blocked --reason "…"\`.`,
+    checklistMarkerInstruction(taskDir),
     'Never hand-write `SIGNAL.json`. Do not add step checkboxes to this document; append notes (for example `## Recipe ACs`) below.',
     '',
     '## Inputs',

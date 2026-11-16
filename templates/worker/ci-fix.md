@@ -2,10 +2,10 @@
 
 > CI-watch detected issues on your PR. Fix them, verify, commit and push.
 > **Signal file:** `{{TASK_DIR}}/mark --checklist CI-FIX.md N` for progress; `CI-FIX-SIGNAL.json` when done. TASK `STATUS` ≠ SIGNAL `status`.
-> **Checklist marker:** Run `{{TASK_DIR}}/mark --checklist CI-FIX.md start` once when work begins (before the first progress mark). After each checklist item, run `{{TASK_DIR}}/mark --checklist CI-FIX.md N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. Terminal: `{{TASK_DIR}}/mark --checklist CI-FIX.md complete | {{TASK_DIR}}/mark --checklist CI-FIX.md no-change --reason "…" | {{TASK_DIR}}/mark --checklist CI-FIX.md blocked --reason "…"` (never hand-write signal JSON).
+> **Checklist marker:** Run `{{TASK_DIR}}/mark --checklist CI-FIX.md start`, then `{{TASK_DIR}}/mark --checklist CI-FIX.md 1` as soon as step 1 is done, before any other work. After each further checklist item, run `{{TASK_DIR}}/mark --checklist CI-FIX.md N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. Terminal: `{{TASK_DIR}}/mark --checklist CI-FIX.md complete | {{TASK_DIR}}/mark --checklist CI-FIX.md no-change --reason "…" | {{TASK_DIR}}/mark --checklist CI-FIX.md blocked --reason "…"` (never hand-write signal JSON).
 > **Required completion artifacts:** Before `complete`, write non-empty `{{TASK_DIR}}/artifacts/report.md` and `{{TASK_DIR}}/artifacts/learnings.md`. Before `no-change`, write non-empty `{{TASK_DIR}}/artifacts/no-change-report.md` and `{{TASK_DIR}}/artifacts/learnings.md`.
 
-**CRITICAL: Mark blocked when the scope rule below prevents a fix. Otherwise complete the checklist. After each step, run `{{TASK_DIR}}/mark --checklist CI-FIX.md N` (or mark `[x]` manually).**
+**CRITICAL: Mark blocked when the scope rule below prevents a fix. Otherwise complete the checklist. Run `{{TASK_DIR}}/mark --checklist CI-FIX.md 1` as soon as step 1 is done, before any other work, then `{{TASK_DIR}}/mark --checklist CI-FIX.md N` after each step. A hand-checked `[x]` records nothing: only the marker writes the signal.**
 
 This is the **Farmslot default** `ci-fix.md` template. Projects should override it under `projects/<name>/templates/worker/ci-fix.md` with repo-specific validation commands. The gateway uses this file only when the project does not supply its own.
 

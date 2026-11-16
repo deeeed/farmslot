@@ -1,1 +1,1 @@
-New task waiting at {{TASK_FILE}}. Read it, then follow the execution checklist it points at and run {{TASK_DIR}}/mark N after each step.
+New task waiting at {{TASK_FILE}}. Read it, then follow the execution checklist it points at: run {{TASK_DIR}}/mark start and {{TASK_DIR}}/mark 1 as soon as step 1 is done, before any other work, then {{TASK_DIR}}/mark N after each step.
