@@ -1,0 +1,1 @@
+- Keep a live acknowledgement recipe that matches the displayed time to a worker signal before the first checklist completion.

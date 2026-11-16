@@ -19,6 +19,7 @@ import {
 } from '@farmslot/protocol';
 import {
   acceptancePanelPresentation,
+  checklistProgressExecution,
   runActivityStepStatus,
   runActivityView,
   runChecklistProgressSummary,
@@ -280,6 +281,7 @@ export class RunPipeline extends LitElement {
     return html`<run-checklist-progress
       .run=${this.run}
       .progress=${this.taskProgress}
+      .acknowledgedAt=${checklistProgressExecution(this.taskProgress, this.run)?.acknowledgedAt}
     ></run-checklist-progress>`;
   }
 
@@ -310,7 +312,9 @@ export class RunPipeline extends LitElement {
     const checklist =
       runChecklistProgressView(this.run, this.taskProgress) ??
       runChecklistProgressSummary(this._activeTaskProgress());
-    const hasProgress = Boolean(checklist);
+    const hasProgress = Boolean(
+      checklist || checklistProgressExecution(this.taskProgress, this.run)?.acknowledgedAt,
+    );
     const progressSummary = checklist ? `${checklist.counts} · ${checklist.label}` : '';
     const acceptance = this.renderAcceptancePanel();
     const inputs = acceptance === nothing ? null : this.acceptanceInputs();

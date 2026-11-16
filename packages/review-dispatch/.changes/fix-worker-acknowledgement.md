@@ -1,0 +1,1 @@
+- Expose the current checklist attempt's first accepted signal time for acknowledgement display without treating launch time as acknowledgement.
