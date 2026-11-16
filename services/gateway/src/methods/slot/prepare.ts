@@ -72,7 +72,6 @@ import { runFixtureSync } from './fixtures.js';
 import {
   CLEAR_INDEX_FLAGS_COMMAND,
   CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND,
-  landDefaultBranchCommand,
   recreateBranchCommand,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
 } from './git-cleanup-commands.js';
@@ -1090,15 +1089,22 @@ async function slotPrepareInner(
         }
         step('branch', `Worktree synced to ${baseResetRef} without checking out ${defaultBranch}`);
       } else {
-        // The checkout of <default> and its reset to origin/<default> in one worktree pass.
+        const coDefaultR = await mutateGit(
+          'checkout-default',
+          `cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch}`,
+        );
+        if (coDefaultR.exitCode !== 0)
+          throw new Error(
+            `checkout ${defaultBranch} failed on ${vars.slotId} (${vars.remoteRepo}): ${coDefaultR.stderr.slice(-200) || coDefaultR.stdout.slice(-200)}`,
+          );
         const ffR = await mutateGit(
-          'land-default',
-          `cd ${shellQuote(vars.remoteRepo)} && { ${landDefaultBranchCommand(defaultBranch, shellQuote)}; }`,
+          'reset-default',
+          `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard origin/${defaultBranch}; }`,
           [`origin/${defaultBranch}`],
         );
         if (ffR.exitCode !== 0)
           throw new Error(
-            `checkout of ${defaultBranch} at origin/${defaultBranch} failed on ${vars.slotId} (${vars.remoteRepo}): ${ffR.stderr.slice(-200) || ffR.stdout.slice(-200)}`,
+            `fast-forward to origin/${defaultBranch} failed on ${vars.slotId} (${vars.remoteRepo}): ${ffR.stderr.slice(-200) || ffR.stdout.slice(-200)}`,
           );
         const dirty = (
           await execGit(

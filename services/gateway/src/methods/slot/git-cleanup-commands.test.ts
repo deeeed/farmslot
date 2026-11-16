@@ -8,7 +8,6 @@ import test from 'node:test';
 import {
   CLEAR_INDEX_FLAGS_COMMAND,
   CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND,
-  landDefaultBranchCommand,
   recreateBranchCommand,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
   REFRESH_REMOTE_REF_LOCKS_COMMAND,
@@ -227,38 +226,6 @@ function slotBehindOrigin(prefix: string) {
   git(slot, 'checkout', '-q', '-b', 'feat/x');
   return { root, slot };
 }
-
-test('landDefaultBranchCommand checks out main at origin/main and keeps its upstream', () => {
-  const { root, slot } = slotBehindOrigin('farmslot-land-default-');
-  try {
-    const upstream = git(slot, 'config', 'branch.main.merge').stdout.trim();
-    const result = runBash(landDefaultBranchCommand('main', quote), slot);
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(git(slot, 'symbolic-ref', 'HEAD').stdout.trim(), 'refs/heads/main');
-    assert.equal(
-      git(slot, 'rev-parse', 'HEAD').stdout.trim(),
-      git(slot, 'rev-parse', 'origin/main').stdout.trim(),
-    );
-    assert.equal(git(slot, 'config', 'branch.main.merge').stdout.trim(), upstream);
-    assert.equal(git(slot, 'status', '--porcelain').stdout.trim(), '');
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('landDefaultBranchCommand is refused when another worktree has main checked out', () => {
-  const { root, slot } = slotBehindOrigin('farmslot-land-default-held-');
-  try {
-    git(slot, 'worktree', 'add', '-q', path.join(root, 'aux'), 'main');
-    const before = git(slot, 'rev-parse', 'refs/heads/main').stdout.trim();
-    const result = runBash(landDefaultBranchCommand('main', quote), slot);
-    assert.notEqual(result.status, 0);
-    assert.equal(git(slot, 'rev-parse', 'refs/heads/main').stdout.trim(), before);
-    assert.equal(git(slot, 'symbolic-ref', 'HEAD').stdout.trim(), 'refs/heads/feat/x');
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
 
 test('recreateBranchCommand recreates the branch at its base with no config from the old one', () => {
   const { root, slot } = slotBehindOrigin('farmslot-recreate-');

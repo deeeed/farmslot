@@ -17,19 +17,6 @@ export const REFRESH_REMOTE_REF_LOCKS_COMMAND = `now=$(date +%s); cleanup_git_lo
 export const CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND = `flag_status=0; ${CLEAR_INDEX_FLAGS_COMMAND} || flag_status=$?; ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; exit $flag_status`;
 
 /**
- * `git checkout <default>` then `git reset --hard origin/<default>` in one worktree pass: local
- * `<default>` at `origin/<default>`, checked out. It runs after `git reset --hard HEAD` and
- * `git clean -fd`, as the two steps did. Git refuses it, as it refused the checkout, when another
- * worktree has `<default>` checked out. `--no-track` leaves `<default>`'s upstream as it was.
- */
-export function landDefaultBranchCommand(
-  defaultBranch: string,
-  quote: (value: string) => string,
-): string {
-  return `${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git checkout --no-track -B ${quote(defaultBranch)} ${quote(`origin/${defaultBranch}`)}`;
-}
-
-/**
  * `git branch -D <branch>` then `git checkout -b <branch> <base>` as one guarded mutation, from
  * the clean default branch (so no second checkout of it): the branch recreated at `base`, with no
  * config left from the older one. When another worktree holds `<branch>`, `branch -D` refuses,
