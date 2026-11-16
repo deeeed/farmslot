@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.28.2 - 2026-11-17
+
+- Align exact dependency pins with the task-bound recipe evidence producer patch.
+
 ## 0.28.1 - 2026-11-16
 
 - Let adapters declare fingerprint inputs so prepared recipe executions can revalidate source without repeated Git processes.

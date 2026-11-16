@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.19.20 - 2026-11-17
+
+- Align exact dependency pins with the task-bound recipe evidence producer patch.
+
 ## 0.19.19 - 2026-11-16
 
 - Align exact dependencies with the prepared-source-witness patch cohort.
