@@ -28,6 +28,7 @@ import {
   recordReleasedCheckout,
   restoreParkedBranch,
   restoreSlotParkedWork,
+  slotGitMutations,
   slotParkedInventory,
 } from './validation-run-commits.js';
 
@@ -735,3 +736,69 @@ for (const action of ['operator', 'replay'] as const) {
     );
   });
 }
+
+test('a prepare parks once, then parks again only when something else wrote or a tree is new', async (t) => {
+  // The Git side of each op is proven in parked-work.test.ts; this drives the decisions only.
+  const { vars } = await fixture(t);
+  const sent: string[] = [];
+  let changedNext = false;
+  const reply = (value: unknown) => ({
+    stdout: `${JSON.stringify({ ok: true, value })}\n`,
+    stderr: '',
+    exitCode: 0,
+  });
+  const fake: typeof execOnSlot = async (_vars, cmd) => {
+    const command = String(cmd);
+    if (command.includes('info/exclude')) return { stdout: 'installed', stderr: '', exitCode: 0 };
+    if (command.includes("printf '%s %s")) {
+      // origin/main and the base resolve; a missing branch does not.
+      return {
+        stdout: command.includes("'origin/main^{tree}'") ? `0 ${'a'.repeat(40)}\n` : '',
+        stderr: '',
+        exitCode: 0,
+      };
+    }
+    const op = /"op":"(\w+)"/.exec(command)?.[1] ?? 'unknown';
+    sent.push(op);
+    const namespace = `refs/farmslot/parked/${vars.slotId}/`;
+    if (op === 'park') return reply({ receipts: [], fingerprint: 'f', repoKey: 'k', namespace });
+    if (op === 'list') return reply({ items: [], repoKey: 'k', namespace });
+    if (op === 'mutate') return reply({ stdout: '', stderr: '', exitCode: 0, state: 's' });
+    if (op === 'mutateSaved') {
+      if (changedNext) {
+        changedNext = false;
+        return {
+          stdout: `${JSON.stringify({ ok: false, code: 'WORK_CHANGED', message: 'changed' })}\n`,
+          stderr: '',
+          exitCode: 0,
+        };
+      }
+      assert.match(command, /"stateTrees":\["a{40}"\]/);
+      return reply({ stdout: '', stderr: '', exitCode: 0, state: 's' });
+    }
+    throw new Error(`unexpected command ${command.slice(0, 80)}`);
+  };
+  const guarded = slotGitMutations(
+    vars,
+    {},
+    () => ({ defaultBranch: 'main', operationKey: 'prepare-proof', targetBranches: ['main'] }),
+    () => ['origin/main', 'refs/heads/does-not-exist'],
+    fake,
+  );
+  const parks = () => sent.filter((op) => op === 'park').length;
+  await guarded('git reset --hard HEAD');
+  assert.equal(parks(), 1);
+  // The prepare's own next commands on covered trees reuse the capture, checking the target SHA.
+  await guarded('git clean -fd');
+  await guarded('git checkout main', ['origin/main']);
+  assert.equal(parks(), 1);
+  assert.deepEqual(sent.slice(-2), ['mutateSaved', 'mutateSaved']);
+  // The fence saw a change since the last command: park again, then run.
+  changedNext = true;
+  await guarded('git reset --hard origin/main', ['origin/main']);
+  assert.equal(parks(), 2);
+  assert.equal(sent.at(-1), 'mutate');
+  // A tree the capture does not cover parks again, as a capture per command would.
+  await guarded('git checkout -b proof base', ['base']);
+  assert.equal(parks(), 3);
+});

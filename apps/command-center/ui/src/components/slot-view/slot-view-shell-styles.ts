@@ -11,6 +11,22 @@ export function renderSlotViewShellStyles(): string {
         font-family: ${fonts.mono};
       }
 
+      /* Health arrives after the slot identity; reserve its one-line strip. */
+      slot-view .sv-preconditions {
+        height: 17px;
+        flex: 0 0 17px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: none;
+      }
+      slot-view .sv-preconditions::-webkit-scrollbar {
+        display: none;
+      }
+      slot-view .sv-preconditions > div {
+        min-width: max-content;
+        white-space: nowrap;
+      }
+
       /* --- Header --- */
       slot-view .sv-header {
         display: flex;
@@ -187,7 +203,7 @@ export function renderSlotViewShellStyles(): string {
         background: ${colors.bgCardHover};
         color: ${colors.textPrimary};
       }
-      slot-view .sv-run-ctrl.history {
+      slot-view .sv-run-ctrl {
         background: ${colors.bgCard};
         color: ${colors.textSecondary};
         border: 1px solid ${colors.bgCardHover};
@@ -198,7 +214,7 @@ export function renderSlotViewShellStyles(): string {
         cursor: pointer;
         margin-left: 4px;
       }
-      slot-view .sv-run-ctrl.history:hover {
+      slot-view .sv-run-ctrl:hover {
         background: ${colors.bgCardHover};
         color: ${colors.textPrimary};
       }

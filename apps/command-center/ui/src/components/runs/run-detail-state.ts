@@ -10,6 +10,7 @@ import type {
   Run,
   RunListRow,
   RunStep,
+  TaskLiveSpend,
   TaskProgressStructured,
 } from '@farmslot/protocol';
 
@@ -34,6 +35,8 @@ export abstract class RunDetailState extends LitElement {
   @state() prStatus: PRStatus | null = null;
   @state() siblings: RunListRow[] = [];
   @state() taskProgress: TaskProgressStructured | null = null;
+  /** The viewed session's spend so far, from the same progress read. */
+  @state() liveSpend: TaskLiveSpend | null = null;
   /** The run's acceptance ledger (ADR-060), from the same progress read. */
   @state() acceptanceStatus: AcceptanceStatusLedger | null = null;
   /** Registered criteria, from the same read: a criterion with no verdict still shows. */

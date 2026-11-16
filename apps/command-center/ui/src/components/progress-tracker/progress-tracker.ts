@@ -26,7 +26,7 @@ import {
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { browserViewState, viewDetails, viewStateUpdates } from '../../utils/view-state.js';
 
-import { liveSpendSummary, openStepSpend, stepSpend } from './live-spend.js';
+import { openStepSpend, renderSpentSoFar, spentSoFarStyles, stepSpend } from './live-spend.js';
 import { OperationClock, operationPanelStyles, renderOperationPanel } from './operation-panel.js';
 import {
   renderSubtaskBlock,
@@ -117,19 +117,6 @@ export interface ChecklistRenderOptions extends ChecklistProgressOptions {
   liveSpend?: TaskLiveSpend;
 }
 
-function renderSpentSoFar(spend: TaskLiveSpend | undefined) {
-  const view = liveSpendSummary(spend);
-  if (!view) return nothing;
-  return html`<div class="spent-so-far" data-testid="spent-so-far" title=${view.title}>
-    <span class="spent-label">Spent so far</span>
-    <span class="spent-cost">${view.cost}</span>
-    <span>${view.tokens} tokens</span>
-    <span>${view.toolCalls} tool calls</span>
-    <span>${view.compactions} compactions</span>
-    ${view.note ? html`<span class="spent-note">${view.note}</span>` : nothing}
-  </div>`;
-}
-
 /** The sole web checklist renderer, shared by the element and its contract tests. */
 export function renderChecklistProgress(
   progress: TaskProgressStructured | undefined,
@@ -217,6 +204,7 @@ export class ProgressTracker extends LitElement {
   @property({ attribute: false }) liveSpend?: TaskLiveSpend;
 
   static styles = [
+    spentSoFarStyles,
     css`
       :host {
         display: block;
@@ -333,28 +321,6 @@ export class ProgressTracker extends LitElement {
       .waiting {
         color: ${unsafeCSS(colors.textSecondary)};
         font-size: ${unsafeCSS(fonts.sizeSm)};
-      }
-      .spent-so-far {
-        display: flex;
-        flex-wrap: wrap;
-        gap: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.md)};
-        align-items: baseline;
-        font-size: ${unsafeCSS(fonts.sizeSm)};
-        color: ${unsafeCSS(colors.textSecondary)};
-        margin-bottom: ${unsafeCSS(spacing.sm)};
-      }
-      .spent-label {
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        font-weight: 600;
-      }
-      .spent-cost {
-        color: ${unsafeCSS(colors.textPrimary)};
-        font-weight: 600;
-        font-variant-numeric: tabular-nums;
-      }
-      .spent-note {
-        color: ${unsafeCSS(colors.textMuted)};
       }
       .substep-cost {
         margin-left: auto;

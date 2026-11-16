@@ -7,6 +7,8 @@ import {
   LIVE_SPEND_READ_INTERVAL_MS,
   liveSpendFor,
   liveSpendKey,
+  progressChecklistMarks,
+  readLiveSpend,
   resetLiveSpend,
 } from './live-spend.js';
 
@@ -264,4 +266,45 @@ test('a new attempt on the same transcript gets its own reader from byte 0', asy
   assert.deepEqual(offsets, [0, 0], 'the new attempt reads from the start');
   assert.equal(second.toolCalls, 2, 'and counts the whole transcript');
   assert.deepEqual(second.steps, [], "against its own marks, not the first attempt's frozen steps");
+});
+
+test('a live run splits by the marks of its progress read, which its record does not hold yet', async () => {
+  resetLiveSpend();
+  const node = remoteTranscript();
+  node.write(assistant(1, 0.01) + assistant(12, 0.02));
+  // The run's record has no marks while the worker runs; the progress read has them.
+  const source = { key: 'live', runner: 'pi', path: '/s.jsonl', marks: [] };
+  const byMarks = await readLiveSpend(node.io, source, 0);
+  const marks = progressChecklistMarks({
+    schema: { flowType: 'dev', title: 'Live', totalSteps: 2, phases: [] },
+    phases: [],
+    completedSteps: 1,
+    totalSteps: 2,
+    currentPhase: null,
+    currentStep: null,
+    timing: {
+      schemaVersion: 1,
+      source: 'CHECKLIST.md',
+      startedAt: at(0),
+      events: [
+        // A mark from an earlier attempt is not this attempt's step.
+        {
+          stepNumber: 1,
+          label: '1. Old',
+          checkedAt: new Date(Date.parse(at(0)) - 60_000).toISOString(),
+        },
+        { stepNumber: 1, label: '1. Read', checkedAt: at(10) },
+      ],
+    },
+  });
+  assert.deepEqual(
+    marks?.map((mark) => mark.label),
+    ['1. Read'],
+  );
+  const spend = byMarks(marks ?? source.marks);
+  assert.equal(spend.steps.length, 2);
+  assert.equal(spend.steps[0]?.costUsd, 0.01);
+  assert.equal(spend.costUsd, 0.03);
+  // No marks at all: the record's marks are used, so the totals still show.
+  assert.equal(progressChecklistMarks(undefined), undefined);
 });

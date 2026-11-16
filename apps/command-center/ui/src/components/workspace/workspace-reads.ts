@@ -1,7 +1,7 @@
 import type { ReactiveController, ReactiveControllerHost } from 'lit';
 
-import { sourceObservationAge } from '@farmslot/protocol';
 import {
+  isSupersededRead,
   resourceQuery,
   type ResourceQueryState,
   type ResourceReadMethod,
@@ -102,22 +102,15 @@ export class WorkspaceReads implements ReactiveController {
   }
   get error() {
     return (
-      [...this.reads.values()].find((r) => r.state.error && !isExpectedReadAbsence(r.state))?.state
-        .error?.message ?? ''
+      [...this.reads.values()].find(
+        (r) => r.state.error && !isExpectedReadAbsence(r.state) && !isSupersededRead(r.state.error),
+      )?.state.error?.message ?? ''
     );
   }
   get status() {
-    const saved = [...this.reads.values()]
-      .map((r) => r.state.observedAt)
-      .filter((at): at is number => at !== undefined);
-    return (
-      this.error ||
-      (this.ready
-        ? ''
-        : saved.length
-          ? `Saved workspace, ${sourceObservationAge(Math.min(...saved))}. Actions wait for a current read.`
-          : 'Waiting for a current workspace source.')
-    );
+    if (this.error) return this.error;
+    if (this.ready || this.reads.size === 0) return '';
+    return this.hasData ? 'Refreshing files…' : 'Loading files…';
   }
   drop(method: string, params: Record<string, unknown>) {
     const runId = this.runId?.();
@@ -222,7 +215,12 @@ export class WorkspaceReads implements ReactiveController {
                   resolve(state.data);
                 }
               }
-              if (state.error && !isExpectedReadAbsence(state) && !settled) {
+              if (
+                state.error &&
+                !isExpectedReadAbsence(state) &&
+                !isSupersededRead(state.error) &&
+                !settled
+              ) {
                 settled = true;
                 reject(new Error(state.error.message));
               }

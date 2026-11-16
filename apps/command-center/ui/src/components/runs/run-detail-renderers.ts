@@ -30,6 +30,7 @@ import {
   type RunListRow,
   runOutputCloseUnavailableReason,
   runRecoveryHints,
+  type TaskLiveSpend,
   type TaskProgressStructured,
 } from '@farmslot/protocol';
 import { reviewHistoryView, runResultsSummary, runTerminalView } from '@farmslot/review-dispatch';
@@ -111,6 +112,8 @@ export interface RunDetailViewContext {
   prStatus: PRStatus | null;
   siblings: RunListRow[];
   taskProgress: TaskProgressStructured | null;
+  /** The viewed session's spend so far (task.progress `liveSpend`). */
+  liveSpend: TaskLiveSpend | null;
   taskProgressNotice?: ProgressReadNotice;
   /** The run's acceptance ledger (ADR-060), rendered beside the pipeline progress. */
   evidenceModel?: EvidenceReviewModel | null;
@@ -1096,6 +1099,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         collapsible-panels
         .run=${r}
         .taskProgress=${ctx.taskProgress}
+        .liveSpend=${ctx.liveSpend ?? undefined}
         .taskProgressNotice=${ctx.taskProgressNotice}
         .evidenceModel=${ctx.evidenceModel}
         .acceptanceStatus=${ctx.acceptanceStatus}

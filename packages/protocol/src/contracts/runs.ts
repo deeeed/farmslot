@@ -3969,8 +3969,8 @@ export const PI_THINKING_LEVELS = [
 ] as const;
 export type PiThinkingLevel = (typeof PI_THINKING_LEVELS)[number];
 
-/** Default PI thinking when dispatch omits effort. */
-export const DEFAULT_PI_THINKING = 'medium';
+/** Default PI thinking when a dispatch omits effort. */
+export const DEFAULT_PI_THINKING = 'high' satisfies PiThinkingLevel;
 
 export function isPiThinkingLevel(value: string): value is PiThinkingLevel {
   return (PI_THINKING_LEVELS as readonly string[]).includes(value);

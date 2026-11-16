@@ -158,11 +158,9 @@ fi
 # Dev sessions keep the committed demo pool visible (the documented fastest
 # path); installed gateways hide it unless the operator opts in.
 export FARMSLOT_DEMO_POOL="${FARMSLOT_DEMO_POOL:-1}"
-# The gateway admits FARMSLOT_UI_ALLOWED_HOSTS page origins only in development.
-# farmslot up does not come through here, so it does not inherit that admission.
-if [ -z "${NODE_ENV:-}" ]; then
-  export NODE_ENV=development
-fi
+# The gateway admits FARMSLOT_UI_ALLOWED_HOSTS page origins only for this dev stack.
+# farmslot up does not come through here, so an installed gateway keeps refusing them.
+export FARMSLOT_DEV_UI_ORIGINS=1
 
 echo "[dev] Gateway: http://localhost:$GATEWAY_PORT (bind: $GATEWAY_HOST)"
 echo "[dev] UI:      http://localhost:$VITE_PORT"

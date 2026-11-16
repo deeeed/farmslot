@@ -164,9 +164,8 @@ export function defaultEffortForRunner(
 ): string | null {
   const option = runnerOption(runner, catalog);
   const levels = effortsForRunner(runner, model, catalog);
-  return option.defaultEffort && levels.includes(option.defaultEffort)
-    ? option.defaultEffort
-    : null;
+  const preferred = option.defaultEffort;
+  return preferred && levels.includes(preferred) ? preferred : null;
 }
 
 export function catalogWithVisibleModels(
@@ -237,10 +236,13 @@ export function catalogForNativeRunners(
         id: native.runner,
         allowCustomModels: option?.allowCustomModels ?? true,
         defaultModel: nativeRunnerDefaultModel(native, executionNodeId) || null,
+        // A host that omits PI effort uses the shared PI default.
         defaultEffort:
           native.defaultEffort !== undefined
             ? native.defaultEffort
-            : (option?.defaultEffort ?? null),
+            : native.runner === 'pi'
+              ? DEFAULT_PI_THINKING
+              : (option?.defaultEffort ?? null),
         efforts: native.efforts ?? option?.efforts ?? [],
         models: nativeRunnerModels(native, executionNodeId).map((id) => {
           const group = runnerModelProviderLabel(id);

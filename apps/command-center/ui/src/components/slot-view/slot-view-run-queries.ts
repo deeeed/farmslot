@@ -33,7 +33,6 @@ export class SlotViewRunQueries implements ReactiveController {
   private recipeData?: RunRecipeRunsForRunResult;
   private synchronizing = false;
   private generation = 0;
-  private ageClock?: ReturnType<typeof setInterval>;
 
   constructor(private readonly view: SlotView) {
     this.slot = new ResourceQueryController(view, () => this.sync());
@@ -47,8 +46,6 @@ export class SlotViewRunQueries implements ReactiveController {
   }
   hostDisconnected(): void {
     this.generation++;
-    clearInterval(this.ageClock);
-    this.ageClock = undefined;
     this.scope = undefined;
     this.previousStatus = null;
     this.recipeData = undefined;
@@ -146,9 +143,6 @@ export class SlotViewRunQueries implements ReactiveController {
       );
       view._linkedRunCurrent = this.ready;
       view._linkedRunReadError = readFailureText(this.pinned) ?? readFailureText(this.slot) ?? '';
-      const observation =
-        requestedRunId && run?.id === requestedRunId ? this.pinned.state : this.slot.state;
-      view._linkedRunObservedAt = observation.observedAt;
       if (run !== view._linkedRun) {
         if (run?.id !== view._linkedRun?.id) {
           this.generation++;
@@ -182,12 +176,6 @@ export class SlotViewRunQueries implements ReactiveController {
       } else {
         this.recipeData = undefined;
         clearSlotViewRecipeRuns(view);
-      }
-      if (run && !this.ready && !this.ageClock)
-        this.ageClock = setInterval(() => view.requestUpdate(), 1000);
-      else if ((!run || this.ready) && this.ageClock) {
-        clearInterval(this.ageClock);
-        this.ageClock = undefined;
       }
       return this.previousStatus;
     } finally {

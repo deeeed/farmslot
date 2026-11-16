@@ -56,7 +56,7 @@ import { getRun, listRuns } from '../runs/store.js';
 import { readAcceptanceStatusForDisplay } from '../tasks/acceptance-status.js';
 import { checklistTimingContext, isRecord } from '../tasks/checklist-timing.js';
 import { attachChecklistTiming } from '../tasks/checklist-timing-read.js';
-import { liveSpendFor, liveSpendSource } from '../tasks/live-spend.js';
+import { liveSpendSource, progressChecklistMarks, readLiveSpend } from '../tasks/live-spend.js';
 import { attachOperations } from '../tasks/operations.js';
 import {
   resolveTaskProgressMarkdownPath,
@@ -132,9 +132,9 @@ export async function taskProgress(
       : undefined;
   const spending = spendSource
     ? loadSlotVars(params.slotId).then(
-        (vars) => liveSpendFor(vars, spendSource),
+        (vars) => readLiveSpend(vars, spendSource),
         // Without slot variables the progress read itself fails; the spend says the same.
-        (error: unknown) => ({
+        (error: unknown) => () => ({
           runner: spendSource.runner,
           readAt: new Date().toISOString(),
           totalTokens: null,
@@ -169,8 +169,11 @@ export async function taskProgress(
     );
   // Awaited before the owner checks below, so an owner change during the transcript read is
   // refused like one during the progress read.
+  // The steps come from this read's checklist marks: the run records them only when the
+  // worker signals, so a live run's own record has none yet.
   const spent = await spending;
-  if (spent) result.liveSpend = spent;
+  if (spent && spendSource)
+    result.liveSpend = spent(progressChecklistMarks(result.structured) ?? spendSource.marks);
   if (boundRun) {
     const current = getRun(boundRun.id);
     if (!current) throw new GatewayMethodError('RUN_NOT_FOUND', `Run not found: ${boundRun.id}`);

@@ -26,7 +26,7 @@ import {
 import { ReviewDispatchPicker } from '../features/review-dispatch/ReviewDispatchPicker';
 import { useConfigurationProjects } from '../hooks/useConfigurationProjects';
 import { useResourceQuery } from '../hooks/useResourceQuery';
-import { backlogExecutionDefaults } from '../lib/backlog-review-dispatch';
+import { backlogCreatePrimaryPicker } from '../lib/backlog-review-dispatch';
 import { readErrorMessage } from '../lib/resource-read-status';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 import { useWorkspaceRenderAccess } from '../lib/use-workspace-render-access';
@@ -112,16 +112,7 @@ export function BacklogCreateForm({
 
   const selectedProject = projects.find((candidate) => candidate.name === project);
   const executionPicker = useMemo(
-    () =>
-      new ReviewDispatchViewModel({
-        context: {
-          allowedActions: ['configure'],
-          defaults: backlogExecutionDefaults(selectedProject, flowType, item),
-          allowSequence: false,
-          allowFreshChain: flowType === 'review-pr',
-          reviewContext: flowType === 'review-pr' ? item?.reviewContext : undefined,
-        },
-      }),
+    () => backlogCreatePrimaryPicker({ project: selectedProject, flowType, item }),
     [selectedProject, flowType, item],
   );
   const [reviewPicker] = useState(

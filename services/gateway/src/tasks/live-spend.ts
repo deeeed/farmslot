@@ -4,6 +4,7 @@
 // read stopped, at most once every 15 s however many viewers poll, one node request a read.
 import {
   type ChecklistMark,
+  checklistMarks,
   createLiveToolUsage,
   type LiveToolUsage,
   type LiveUsageSummary,
@@ -13,6 +14,7 @@ import {
   FILE_TRANSFER_CHUNK_MAX_BYTES,
   type Run,
   type TaskLiveSpend,
+  type TaskProgressStructured,
 } from '@farmslot/protocol';
 
 import { type SlotLocality, slotReadRange } from '../core/slot-io.js';
@@ -61,6 +63,22 @@ export function liveSpendSource(
       ? { unavailable: 'Native sessions are counted from the node journal when the session ends' }
       : {}),
   };
+}
+
+/**
+ * The current attempt's marks from a progress read's checklist timing, or undefined when the read
+ * has none. A mark from before the attempt started belongs to an earlier attempt.
+ */
+export function progressChecklistMarks(
+  structured: TaskProgressStructured | undefined,
+): ChecklistMark[] | undefined {
+  const timing = structured?.timing;
+  if (!timing) return undefined;
+  const start = timing.startedAt ? Date.parse(timing.startedAt) : Number.NaN;
+  const marks = checklistMarks(timing).filter(
+    (mark) => !Number.isFinite(start) || Date.parse(mark.checkedAt) >= start,
+  );
+  return marks.length ? marks : undefined;
 }
 
 export const LIVE_SPEND_READ_INTERVAL_MS = 15_000;
@@ -147,17 +165,33 @@ function spend(session: Session, readAt: number): TaskLiveSpend {
   };
 }
 
-/** The session's spend so far. */
+/** The session's spend so far, per step by `source.marks`. */
 export async function liveSpendFor(
   io: SlotLocality,
-  { key, runner, path, marks, unavailable }: LiveSpendSource,
+  source: LiveSpendSource,
   now = Date.now(),
 ): Promise<TaskLiveSpend> {
+  return (await readLiveSpend(io, source, now))(source.marks);
+}
+
+/** Spend once the steps are known: the read gives the totals, the marks split them by step. */
+export type LiveSpendByMarks = (marks: ChecklistMark[]) => TaskLiveSpend;
+
+/**
+ * Reads the transcript tail and returns the spend for any marks. A live run's marks come from
+ * the progress read beside it (the run records them only when the worker signals), so the
+ * caller applies them once that read is done.
+ */
+export async function readLiveSpend(
+  io: SlotLocality,
+  { key, runner, path, unavailable }: LiveSpendSource,
+  now = Date.now(),
+): Promise<LiveSpendByMarks> {
   let session = sessions.get(key);
   if (!session) {
     const live = unavailable ? undefined : createLiveToolUsage(runner);
     if (!live)
-      return {
+      return () => ({
         runner,
         readAt: new Date(now).toISOString(),
         totalTokens: null,
@@ -168,7 +202,7 @@ export async function liveSpendFor(
         unavailable:
           unavailable ??
           `${runner} sessions are not one appendable transcript; spend arrives with the session receipt`,
-      };
+      });
     session = { live, readAt: -Infinity };
     sessions.set(key, session);
     while (sessions.size > MAX_SESSIONS) sessions.delete(sessions.keys().next().value!);
@@ -200,10 +234,13 @@ export async function liveSpendFor(
       });
   }
   await session.reading;
-  const marksKey = JSON.stringify(marks.map((mark) => mark.checkedAt));
-  if (!session.summary || session.marksKey !== marksKey) {
-    session.summary = session.live.summary(marks);
-    session.marksKey = marksKey;
-  }
-  return spend(session, session.readAt);
+  const read = session;
+  return (marks) => {
+    const marksKey = JSON.stringify(marks.map((mark) => mark.checkedAt));
+    if (!read.summary || read.marksKey !== marksKey) {
+      read.summary = read.live.summary(marks);
+      read.marksKey = marksKey;
+    }
+    return spend(read, read.readAt);
+  };
 }

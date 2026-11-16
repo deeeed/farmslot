@@ -99,6 +99,8 @@ export class NativeHostObservation {
   private queued = false;
   private changes = 0;
   private failed = false;
+  /** The source state the last arming failed on. An event re-arms only once the source differs. */
+  private failedSource?: string;
   private recovering?: Promise<void>;
   private arming = false;
   private retrying?: Promise<void>;
@@ -144,11 +146,19 @@ export class NativeHostObservation {
     this.stop();
     this.stopped = false;
     this.failed = false;
+    this.failedSource = undefined;
     this.arming = true;
     const generation = this.generation;
+    // The scan outcome arming failed on, when a scan is what failed.
+    let scanFailure: string | undefined;
+    const scan = () =>
+      this.scan().catch((error: unknown) => {
+        scanFailure = sourceFailureKey(error);
+        throw error;
+      });
     try {
       this.arm();
-      const before = await this.scan();
+      const before = await scan();
       if (generation !== this.generation || this.stopped) return;
       const change = this.changes;
       // A failed profile sample affects only profile reads (ADR-057 Amendment 11).
@@ -158,7 +168,7 @@ export class NativeHostObservation {
       // Watcher delivery fences the account sample; the async scan fences the durable bytes.
       const sampleChanged = change !== this.changes;
       if (generation !== this.generation || this.stopped) return;
-      const after = await this.scan();
+      const after = await scan();
       if (generation !== this.generation || this.stopped) return;
       if (this.failed) throw new NativeSourceUnavailable('arming-source-changed');
       if (sampleChanged || before.digest !== after.digest)
@@ -177,6 +187,10 @@ export class NativeHostObservation {
     } catch (error) {
       if (generation !== this.generation || this.stopped) return;
       this.fail(error instanceof NativeSourceUnavailable ? error.reason : 'arming-failed');
+      // A failed scan waits until a scan differs from it. Any other failure is retried by the
+      // next event, as before. Events during arming were not handled, so compare once now.
+      this.failedSource = scanFailure;
+      if (scanFailure) this.recoverWhenChanged();
       if (error instanceof NativeSourceUnavailable) throw error;
       throw new NativeSourceUnavailable('arming-failed');
     } finally {
@@ -365,7 +379,7 @@ export class NativeHostObservation {
     this.changes++;
     if (this.arming) return;
     if (this.failed) {
-      this.recover();
+      this.recoverWhenChanged();
       return;
     }
     const generation = this.generation;
@@ -381,6 +395,32 @@ export class NativeHostObservation {
       // A filesystem lifecycle event can reattach the one owner to a replacement host.
       this.recover();
     }
+  }
+  /**
+   * A failed source's events re-arm only when the source differs from the state arming failed
+   * on. Arming closes the recursive watchers and samples the accounts, so re-arming on every
+   * event of a source that stays broken (a dead host's files) spins the event loop.
+   */
+  private recoverWhenChanged(): void {
+    const failedSource = this.failedSource;
+    if (failedSource === undefined) {
+      this.recover();
+      return;
+    }
+    const generation = this.generation;
+    void this.sourceState().then((current) => {
+      if (generation !== this.generation || this.stopped || !this.failed) return;
+      if (failedSource === this.failedSource && current === failedSource) return;
+      this.recover();
+    });
+  }
+  /** What a scan sees now: its digest, or the reason it fails. Never rejects. */
+  private sourceState(): Promise<string> {
+    // A failing scan is the observed state here, compared with a later one; it is not lost.
+    return this.scan().then(
+      (snapshot) => `digest:${snapshot.digest}`,
+      (error: unknown) => sourceFailureKey(error),
+    );
   }
   private recover(): void {
     if (this.recovering || this.stopped) return;
@@ -495,6 +535,8 @@ export class NativeHostObservation {
       parts.push(`${stat.dev}:${stat.ino}`);
       if (await statIfPresent(join(this.client.root, 'host.json'))) {
         const identity = await readJsonAsync<HostIdentity>(join(this.client.root, 'host.json'));
+        // A dead supervisor's files (a reboot) are an invalid host, not a read failure.
+        if (!alive(identity.pid)) throw new NativeSourceUnavailable('host-identity-invalid');
         const worker = await readJsonAsync<{ pid: number }>(join(this.client.root, 'worker.json'));
         const ready = await readJsonAsync<{ pid: number }>(join(this.client.root, 'ready.json'));
         if (
@@ -548,6 +590,12 @@ async function statIfPresent(file: string) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw error;
   }
+}
+/** The state a failed scan or arming saw, comparable with a later scan's. */
+function sourceFailureKey(error: unknown): string {
+  if (error instanceof NativeSourceUnavailable) return `unavailable:${error.reason}`;
+  const code = (error as NodeJS.ErrnoException)?.code;
+  return `error:${code ?? ''}:${error instanceof Error ? error.message : String(error)}`;
 }
 function nearestDirectory(path: string): string {
   let current = path;

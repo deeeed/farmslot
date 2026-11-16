@@ -1,0 +1,1 @@
+- A PI launch, repair worker, review, and reload use high thinking when effort is omitted. An explicit level, including xhigh, stays as selected.

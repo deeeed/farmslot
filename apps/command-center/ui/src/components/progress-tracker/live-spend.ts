@@ -1,6 +1,9 @@
 // "Spent so far" and the per-step cost column, from task.progress `liveSpend`.
+import { css, html, nothing, unsafeCSS } from 'lit';
+
 import type { TaskLiveSpend } from '@farmslot/protocol';
 
+import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { formatCompactNumber } from '../runs/family-observability-compare-model.js';
 
 /** Small DeepSeek steps cost fractions of a cent; keep them readable instead of "$0.00". */
@@ -71,3 +74,48 @@ export function openStepSpend(
     title: `${formatCompactNumber(step.totalTokens)} tokens · ${step.toolCalls} tool calls`,
   };
 }
+
+/** A panel summary with the session's cost so far, so a collapsed panel still shows it. */
+export function withSpentSummary(summary: string, spend: TaskLiveSpend | undefined): string {
+  const spent = spend ? `${formatSpendUsd(spend.costUsd)} spent` : '';
+  return [summary, spent].filter(Boolean).join(' · ');
+}
+
+/** "Spent so far": the progress tracker and the run page's step progress panel. */
+export function renderSpentSoFar(spend: TaskLiveSpend | undefined) {
+  const view = liveSpendSummary(spend);
+  if (!view) return nothing;
+  return html`<div class="spent-so-far" data-testid="spent-so-far" title=${view.title}>
+    <span class="spent-label">Spent so far</span>
+    <span class="spent-cost">${view.cost}</span>
+    <span>${view.tokens} tokens</span>
+    <span>${view.toolCalls} tool calls</span>
+    <span>${view.compactions} compactions</span>
+    ${view.note ? html`<span class="spent-note">${view.note}</span>` : nothing}
+  </div>`;
+}
+
+export const spentSoFarStyles = css`
+  .spent-so-far {
+    display: flex;
+    flex-wrap: wrap;
+    gap: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.md)};
+    align-items: baseline;
+    font-size: ${unsafeCSS(fonts.sizeSm)};
+    color: ${unsafeCSS(colors.textSecondary)};
+    margin-bottom: ${unsafeCSS(spacing.sm)};
+  }
+  .spent-label {
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+  }
+  .spent-cost {
+    color: ${unsafeCSS(colors.textPrimary)};
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .spent-note {
+    color: ${unsafeCSS(colors.textMuted)};
+  }
+`;
