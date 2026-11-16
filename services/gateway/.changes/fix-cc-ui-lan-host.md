@@ -1,0 +1,1 @@
+- Admit a dev Command Center page origin when its host is in FARMSLOT_UI_ALLOWED_HOSTS and its port is VITE_PORT. Exact FARMSLOT_GATEWAY_ALLOWED_ORIGINS entries still work. Every other origin stays refused.

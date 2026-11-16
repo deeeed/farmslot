@@ -1,1 +1,1 @@
-- Let the dev Command Center listen beyond localhost when FARMSLOT_UI_HOST and FARMSLOT_UI_ALLOWED_HOSTS are set. In dev, the gateway URL uses the page hostname and the gateway port.
+- Let the dev Command Center listen beyond localhost when FARMSLOT_UI_HOST and FARMSLOT_UI_ALLOWED_HOSTS are set. In dev, the gateway URL uses the page hostname and the gateway port. The gateway admits that page origin only for those hosts on VITE_PORT.
