@@ -1,0 +1,1 @@
+- A REVIEW role that omits PI thinking now defaults to high. Workers still default to medium.

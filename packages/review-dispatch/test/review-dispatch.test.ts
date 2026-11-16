@@ -4,6 +4,8 @@ import test from 'node:test';
 import {
   assertPRExecutionProfile,
   assertPRReviewOptions,
+  DEFAULT_PI_REVIEW_THINKING,
+  DEFAULT_PI_THINKING,
   type ReviewSelection,
   type ReviewSessionTrace,
   type Run,
@@ -1015,6 +1017,24 @@ test('selecting a retained WARM review fills its settings and refuses an unavail
   assert.equal(vm.canInvoke('request-review'), false);
   assert.match(vm.errors[0], /cannot be resumed/);
   assert.throws(() => vm.toRequestPayload(), /cannot be resumed/);
+});
+
+test('an omitted pi review effort is high and a native pi session stays on the worker default', () => {
+  assert.equal(DEFAULT_PI_THINKING, 'medium');
+  assert.equal(DEFAULT_PI_REVIEW_THINKING, 'high');
+  assert.equal(
+    executionModelFromSelection({ runner: 'pi', model: null, effort: null, mode: 'cold' }).effort,
+    'high',
+  );
+  assert.equal(
+    executionModelFromSelection({ runner: 'pi', model: 'grok-4.7', effort: 'low', mode: 'cold' })
+      .effort,
+    'low',
+  );
+  const native = catalogForNativeRunners([
+    { runner: 'pi', models: ['grok-4.7'], defaultModel: 'grok-4.7', modes: ['default'] },
+  ]);
+  assert.equal(native.runners[0].defaultEffort, 'medium');
 });
 
 test('fresh review-pr selection clears lineage, selects COLD and survives serialization', () => {

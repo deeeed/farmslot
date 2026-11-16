@@ -16,6 +16,7 @@ import {
   DEFAULT_GROK_EFFORT,
   DEFAULT_GROK_MODEL,
   DEFAULT_PI_MODEL,
+  DEFAULT_PI_REVIEW_THINKING,
   DEFAULT_PI_THINKING,
   isPiThinkingLevel,
   resolveCodexReasoningEffort,
@@ -143,14 +144,18 @@ function withModelQuestionsEnvironment(
   return Object.keys(environment).length ? withExportedEnvironment(environment, command) : command;
 }
 
-export function resolveRunnerEffort(runnerId: string, effort?: string | null): string | undefined {
+export function resolveRunnerEffort(
+  runnerId: string,
+  effort?: string | null,
+  role?: string | null,
+): string | undefined {
   const runner = normalizeRunner(runnerId);
   const trimmed = effort?.trim();
   if (trimmed?.toLowerCase() === 'auto') return undefined;
   if (trimmed) return trimmed;
   if (runner === 'codex') return DEFAULT_CODEX_EFFORT;
   if (runner === 'grok') return DEFAULT_GROK_EFFORT;
-  if (runner === 'pi') return DEFAULT_PI_THINKING;
+  if (runner === 'pi') return role === 'review' ? DEFAULT_PI_REVIEW_THINKING : DEFAULT_PI_THINKING;
   return undefined;
 }
 
@@ -502,12 +507,12 @@ export function buildInteractiveRefinementRunnerCommand(options: {
         `FARMSLOT_OBS_DIR=${shellQuote(getRunnerDefinition(runnerId).reviewObservabilityDir!(taskDir))}`,
         `FARMSLOT_TASK_FILE=${shellQuote(path.posix.join(taskDir, 'TASK.md'))}`,
         `FARMSLOT_RUNNER=${shellQuote('pi')}`,
-        `FARMSLOT_THINKING=${shellQuote(resolvePiThinkingLevel(options.effort))}`,
+        `FARMSLOT_THINKING=${shellQuote(resolvePiThinkingLevel(options.effort, 'review'))}`,
         `FARMSLOT_MODEL=${shellQuote(cliModel)}`,
         "FARMSLOT_PI_WORKSPACE_TRUST='untrusted'",
         shellQuote(binary),
         reviewFlags,
-        piThinkingFlag(options.effort).trim(),
+        piThinkingFlag(options.effort, 'review').trim(),
         `-e ${shellQuote(path.posix.join(support, 'bin/pi-farmslot-observability.ts'))}`,
         `--model ${shellQuote(cliModel)}`,
         resume,
@@ -855,12 +860,13 @@ function codexReasoningEffortFlag(effort?: string | null, model?: string | null)
   return ` --config ${shellQuote(`model_reasoning_effort="${effective}"`)}`;
 }
 
-function resolvePiThinkingLevel(effort?: string | null): string {
-  return (effort?.trim() || DEFAULT_PI_THINKING).toLowerCase();
+function resolvePiThinkingLevel(effort?: string | null, role?: string | null): string {
+  const fallback = role === 'review' ? DEFAULT_PI_REVIEW_THINKING : DEFAULT_PI_THINKING;
+  return (effort?.trim() || fallback).toLowerCase();
 }
 
-function piThinkingFlag(effort?: string | null): string {
-  const normalized = resolvePiThinkingLevel(effort);
+function piThinkingFlag(effort?: string | null, role?: string | null): string {
+  const normalized = resolvePiThinkingLevel(effort, role);
   if (!isPiThinkingLevel(normalized)) {
     throw new Error(`Invalid PI thinking level: ${effort}`);
   }

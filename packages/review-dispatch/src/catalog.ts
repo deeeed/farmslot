@@ -8,6 +8,7 @@ import {
   DEFAULT_GROK_EFFORT,
   DEFAULT_GROK_MODEL,
   DEFAULT_PI_MODEL,
+  DEFAULT_PI_REVIEW_THINKING,
   DEFAULT_PI_THINKING,
   DEFAULT_REVIEW_MODE,
   DEFAULT_RUNNER,
@@ -89,7 +90,7 @@ export const DEFAULT_REVIEW_DISPATCH_CATALOG: ReviewDispatchCatalog = {
       id: 'pi',
       allowCustomModels: true,
       defaultModel: DEFAULT_PI_MODEL,
-      defaultEffort: DEFAULT_PI_THINKING,
+      defaultEffort: DEFAULT_PI_REVIEW_THINKING,
       efforts: PI_THINKING_LEVELS,
       models: [],
     },
@@ -237,10 +238,13 @@ export function catalogForNativeRunners(
         id: native.runner,
         allowCustomModels: option?.allowCustomModels ?? true,
         defaultModel: nativeRunnerDefaultModel(native, executionNodeId) || null,
+        // Native chat and workers keep the worker default when the host omits one.
         defaultEffort:
           native.defaultEffort !== undefined
             ? native.defaultEffort
-            : (option?.defaultEffort ?? null),
+            : native.runner === 'pi'
+              ? DEFAULT_PI_THINKING
+              : (option?.defaultEffort ?? null),
         efforts: native.efforts ?? option?.efforts ?? [],
         models: nativeRunnerModels(native, executionNodeId).map((id) => {
           const group = runnerModelProviderLabel(id);

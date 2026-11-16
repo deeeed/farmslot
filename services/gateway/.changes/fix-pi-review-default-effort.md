@@ -1,0 +1,1 @@
+- A PI review launch uses high thinking when effort is omitted. Worker launches stay on medium.

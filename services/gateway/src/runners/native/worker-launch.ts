@@ -65,7 +65,7 @@ export async function prepareNativeWorkerLaunch(input: {
       throw new Error('Choose either a native configuration profile or a legacy account label');
   }
   validateNativeRunner(runner, input.model);
-  const effort = resolveRunnerEffort(runner, input.effort);
+  const effort = resolveRunnerEffort(runner, input.effort, input.role);
   if (!runnerSupportsEffort(runner, input.model, effort))
     throw new Error('Selected native runner/model does not support this effort');
   const environment = resolveProjectCommandEnv(input.project, {

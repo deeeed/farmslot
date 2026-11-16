@@ -1,0 +1,1 @@
+- Review dispatch fills an omitted PI effort with high. A native session that omits it keeps the worker default.
