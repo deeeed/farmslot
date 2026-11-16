@@ -1,0 +1,1 @@
+- Keep the slot workspace steady while reads refresh, and restore panel visibility before data arrives.

@@ -11,6 +11,40 @@ export function renderSlotViewShellStyles(): string {
         font-family: ${fonts.mono};
       }
 
+      /* Health arrives after the slot identity; reserve its one-line strip. */
+      slot-view .sv-preconditions {
+        height: 17px;
+        flex: 0 0 17px;
+        overflow-x: auto;
+        overflow-y: hidden;
+      }
+      slot-view .sv-preconditions > div {
+        min-width: max-content;
+        white-space: nowrap;
+      }
+
+      /* Run and file-read notices share a fixed row; rereads change content only. */
+      slot-view .sv-read-status {
+        height: 28px;
+        min-height: 28px;
+        flex: 0 0 28px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        white-space: nowrap;
+        font-size: 11px;
+      }
+      slot-view .sv-read-status > * {
+        flex-shrink: 0;
+      }
+      slot-view .sv-read-status > div {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
       /* --- Header --- */
       slot-view .sv-header {
         display: flex;

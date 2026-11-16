@@ -327,15 +327,12 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
 
       <!-- Right column: editor + terminal stacked vertically -->
       <div class="sv-right-col">
-        ${view._isLive && view._workspaceReads.status
-          ? html`<div role="status">
-              ${view._workspaceReads.status}${view._workspaceReads.error
-                ? html`<button @click=${() => view._workspaceReads.retry()}>
-                    Retry workspace
-                  </button>`
-                : nothing}
-            </div>`
-          : nothing}
+        <div class="sv-read-status" role="status">
+          ${view._isLive ? view._workspaceReads.status : nothing}
+          ${view._isLive && view._workspaceReads.error
+            ? html`<button @click=${() => view._workspaceReads.retry()}>Retry workspace</button>`
+            : nothing}
+        </div>
         ${view._isRecoveryBlocked
           ? html`
               <div class="sv-recovery-overlay" role="status" aria-live="polite">
@@ -481,7 +478,13 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                       </div>
                     `}
               `
-            : ''}
+            : view._reviewFullWidth
+              ? nothing
+              : html`<div
+                  class="sv-stream-collapsed"
+                  aria-hidden="true"
+                  style="visibility:hidden"
+                ></div>`}
           ${(() => {
             if (view._reviewFullWidth || !view._taskPanelOpen) return nothing;
             const ctx = view._taskAgentContext();
@@ -665,7 +668,14 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                   : nothing}
               </div>
             `
-          : nothing}
+          : requestedRunFromHash() || view._slot?.currentRunId
+            ? html`<div class="sv-run-panel">
+                <div class="sv-run-bar">
+                  RUN
+                  <span>${(requestedRunFromHash() || view._slot?.currentRunId)?.slice(0, 8)}</span>
+                </div>
+              </div>`
+            : nothing}
 
         <!-- Bottom panel (Terminal / Problems / Comments) -->
         ${view.slotId

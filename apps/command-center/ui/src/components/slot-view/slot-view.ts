@@ -964,17 +964,19 @@ export class SlotView extends SlotViewRecipePresenter {
     return html`
       ${renderSlotViewStyles(this._recoveryPhase)}
       ${renderSlotViewHeader(this, { slot, hasSlotData, hasResources, lcColor })}
-      ${hasSlotData
-        ? renderSlotPreparePreconditionStrip({
-            slot,
-            slotBranch: this._git?.branch ?? slot?.branch,
-            activePrepareLabel:
-              this._activePrepare &&
-              (this._activePrepare.running || this._activePrepare.exitCode !== null)
-                ? this._activePrepare.label
-                : '',
-          })
-        : nothing}
+      <div class="sv-preconditions">
+        ${hasSlotData
+          ? renderSlotPreparePreconditionStrip({
+              slot,
+              slotBranch: this._git?.branch ?? slot?.branch,
+              activePrepareLabel:
+                this._activePrepare &&
+                (this._activePrepare.running || this._activePrepare.exitCode !== null)
+                  ? this._activePrepare.label
+                  : '',
+            })
+          : nothing}
+      </div>
       ${renderSlotPrepareBanner(this)} ${this._renderProgressStatus()}
       ${renderSlotViewBody(this, { hasResources })}
       <slot-history-modal
