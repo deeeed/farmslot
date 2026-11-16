@@ -8,6 +8,11 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.46.22 - 2026-11-17
+
+- Show registered and supplied acceptance text with a diff when a recipe claim conflicts with the task, preserving verbatim matching.
+- Record initialized worker ownership for generated recipe outputs without changing proof binding.
+
 ## 0.46.21 - 2026-11-16
 
 - Read bootstrap Git metadata without source-tree walks; unsupported source/output layouts and unavailable persistence retain fresh legacy validation.
