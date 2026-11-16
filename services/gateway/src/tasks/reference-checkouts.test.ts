@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { beforeEach, mock, test } from 'node:test';
@@ -56,7 +56,9 @@ beforeEach(() => {
 test('every declared codebase is resolved with the revision the worker cites', async () => {
   reply = {
     exitCode: 0,
-    stdout: `mobile\t${'b'.repeat(40)}\nextension\t${'c'.repeat(40)}\ncore\t${'d'.repeat(40)}\n`,
+    stdout: ['mobile', 'extension', 'core']
+      .map((name, index) => `head\t${name}\t${'bcd'[index].repeat(40)}\nstatus\t${name}\t\n`)
+      .join(''),
   };
   const references = await resolveReferenceCheckouts(slotVars, terminalReferences, parentDir);
   assert.deepEqual(references, [
@@ -88,7 +90,10 @@ test('every declared codebase is resolved with the revision the worker cites', a
 
 test('a checkout the machine does not have is reported absent, never substituted', async () => {
   // The Mobile sibling is not cloned: git prints nothing for it.
-  reply = { exitCode: 0, stdout: `mobile\t\nextension\t\ncore\t${'d'.repeat(40)}\n` };
+  reply = {
+    exitCode: 0,
+    stdout: `head\tmobile\t\nstatus\tmobile\t\nhead\textension\t\nstatus\textension\t\nhead\tcore\t${'d'.repeat(40)}\nstatus\tcore\t\n`,
+  };
   const references = await resolveReferenceCheckouts(slotVars, terminalReferences, parentDir);
   assert.deepEqual(
     references.map((reference) => [reference.name, reference.present]),
@@ -108,7 +113,10 @@ test('a checkout the machine does not have is reported absent, never substituted
 
 test('a line that is not a full revision is not taken for one', async () => {
   // A truncated or interrupted probe line names no revision anybody can cite.
-  reply = { exitCode: 0, stdout: 'mobile\tddd333\nextension\tnot-a-sha\ncore\tHEAD\n' };
+  reply = {
+    exitCode: 0,
+    stdout: 'head\tmobile\tddd333\nhead\textension\tnot-a-sha\nhead\tcore\tHEAD\n',
+  };
   const references = await resolveReferenceCheckouts(slotVars, terminalReferences, parentDir);
   assert.deepEqual(
     references.map((reference) => reference.present),
@@ -118,7 +126,7 @@ test('a line that is not a full revision is not taken for one', async () => {
 
 test('a probe that failed part way keeps the revisions it did print', async () => {
   // Driven by output, not exit status: the reference it reached is still readable.
-  reply = { exitCode: 1, stdout: `mobile\t${'b'.repeat(40)}\n` };
+  reply = { exitCode: 1, stdout: `head\tmobile\t${'b'.repeat(40)}\n` };
   const partial = await resolveReferenceCheckouts(slotVars, terminalReferences, parentDir);
   assert.deepEqual(
     partial.map((reference) => reference.present),
@@ -177,6 +185,9 @@ test('the command it builds reads real checkouts through a real shell', async ()
     const head = execFileSync('git', ['-C', cloned, 'rev-parse', 'HEAD'], {
       encoding: 'utf8',
     }).trim();
+    // Uncommitted changes: the revision no longer describes this tree, and the
+    // worker has to be told before it cites that sha.
+    writeFileSync(path.join(cloned, 'left-behind.txt'), 'half-finished sync\n');
     // A repository with no commit yet: plain `rev-parse HEAD` echoes the literal
     // 'HEAD', which must never be recorded as a revision.
     const unborn = path.join(root, 'extension-ref');
@@ -204,7 +215,7 @@ test('the command it builds reads real checkouts through a real shell', async ()
       slot,
     );
     assert.deepEqual(references, [
-      { name: 'mobile', path: cloned, present: true, headSha: head },
+      { name: 'mobile', path: cloned, present: true, headSha: head, dirty: true },
       { name: 'extension', path: unborn, present: false },
       { name: 'core', path: path.join(root, 'core-ref'), present: false },
     ]);

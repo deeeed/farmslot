@@ -236,7 +236,7 @@ export function renderReferenceCheckoutInputs(
               ? ' — uncommitted changes are present, so cite what you read, not that revision alone'
               : ''
           }`
-        : `- \`${reference.name}\`: not readable from this task — not cloned on this machine, or not bound to it. Record a comparison that needs it as BLOCKED, never NOT_CHECKED, and say so in the report.`,
+        : `- \`${reference.name}\`: not readable from this task — not cloned on this machine, no commit in it, or not bound to it. Record a comparison that needs it as BLOCKED, never NOT_CHECKED, and say so in the report.`,
     ),
   ];
 }

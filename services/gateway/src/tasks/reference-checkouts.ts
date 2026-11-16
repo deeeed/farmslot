@@ -38,29 +38,44 @@ export async function resolveReferenceCheckouts(
     });
   if (!declared.length) return [];
   const command = declared
-    .map(
-      (reference) =>
-        // --verify prints nothing when there is no commit yet: a repository without
-        // one must not report the literal 'HEAD' that plain rev-parse echoes.
-        `printf '%s\\t' ${shellQuote(reference.name)}; git -C ${shellQuote(reference.path)} rev-parse --verify HEAD 2>/dev/null || printf '\\n'`,
-    )
+    .map((reference) => {
+      const at = shellQuote(reference.path);
+      const name = shellQuote(reference.name);
+      // --verify prints nothing when there is no commit yet: a repository without one
+      // must not report the literal 'HEAD' that plain rev-parse echoes. The status
+      // line follows it, because a revision does not describe a tree with changes.
+      return [
+        `printf 'head\\t%s\\t' ${name}`,
+        `git -C ${at} rev-parse --verify HEAD 2>/dev/null`,
+        `printf '\\nstatus\\t%s\\t' ${name}`,
+        `git -C ${at} status --porcelain 2>/dev/null | head -1`,
+        `printf '\\n'`,
+      ].join('; ');
+    })
     .join('; ');
   const probe = await execOnSlot(slotVars, command, { timeout: 20_000 });
-  const revisions = new Map(
-    probe.stdout
-      .split('\n')
-      .map((line) => line.split('\t'))
-      .filter((parts) => parts.length === 2)
-      // Only a full revision counts: a truncated or non-revision line is not one.
-      .map(([name, sha]) => [name, /^[0-9a-f]{40}$/.test(sha.trim()) ? sha.trim() : ''] as const)
-      .filter(([, sha]) => sha !== ''),
-  );
+  const revisions = new Map<string, string>();
+  const changed = new Set<string>();
+  for (const line of probe.stdout.split('\n')) {
+    const parts = line.split('\t');
+    if (parts.length !== 3) continue;
+    const [kind, name, value] = parts;
+    // Only a full revision counts: a truncated or non-revision line is not one.
+    if (kind === 'head' && /^[0-9a-f]{40}$/.test(value.trim())) revisions.set(name, value.trim());
+    if (kind === 'status' && value.trim()) changed.add(name);
+  }
   // Driven by what the probe printed, not by its exit status: a command that failed
   // part way still printed real revisions for the checkouts it reached, and a probe
   // that printed nothing leaves every reference absent rather than claiming a
   // revision nobody read.
   return declared.map((reference) => {
     const headSha = revisions.get(reference.name);
-    return headSha ? { ...reference, present: true, headSha } : { ...reference, present: false };
+    if (!headSha) return { ...reference, present: false };
+    return {
+      ...reference,
+      present: true,
+      headSha,
+      ...(changed.has(reference.name) ? { dirty: true } : {}),
+    };
   });
 }
