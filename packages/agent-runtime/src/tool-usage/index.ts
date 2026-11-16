@@ -14,7 +14,13 @@ export type { ToolUsage, ToolUsageSegment, ToolUsageWindow } from './count.js';
 export { countToolUsage, mergeToolUsage } from './count.js';
 export type { ChecklistMark } from './ledger.js';
 export { checklistMarks, checklistMarksFromSignal } from './ledger.js';
-export type { TokenSample, ToolCallEvent, ToolUsageAdapter, ToolUsageStream } from './stream.js';
+export type {
+  CompactionEvent,
+  TokenSample,
+  ToolCallEvent,
+  ToolUsageAdapter,
+  ToolUsageStream,
+} from './stream.js';
 export { pairToolEvents } from './stream.js';
 
 const ADAPTERS: readonly ToolUsageAdapter[] = [

@@ -128,7 +128,7 @@ test('cursor: tool_use without times counts as untimed', async () => {
   assert.deepEqual(marked.steps, []);
   assert.equal(marked.toolCallsBeforeFirstMark, null);
   assert.match(marked.stepsUnavailable ?? '', /no call times/);
-  const windowed = countToolUsage({ tools: [{ name: 'Read' }], tokens: null }, marks, {
+  const windowed = countToolUsage({ tools: [{ name: 'Read' }], tokens: null, compactions: [] }, marks, {
     startedAt: t(0),
     completedAt: t(5),
   });
@@ -165,26 +165,55 @@ test('counter: segments by issue time, the mark call in its own step', () => {
         { at: t(1), tokens: 100 },
         { at: t(15), tokens: 50 },
       ],
+      compactions: [{ at: t(12) }, { at: t(22), tokensBefore: 900 }],
     },
     marks,
   );
   assert.equal(usage.toolCallsBeforeFirstMark, 2);
+  assert.equal(usage.compactions, 2);
   assert.deepEqual(
-    usage.steps.map((s) => [s.segment, s.stepNumber, s.toolCalls, s.totalTokens, s.wallMs]),
+    usage.steps.map((s) => [
+      s.segment,
+      s.stepNumber,
+      s.toolCalls,
+      s.totalTokens,
+      s.wallMs,
+      s.compactions,
+    ]),
     [
-      ['before-first-mark', 1, 2, 100, 9000],
-      ['step', 2, 1, 50, 10000],
-      ['after-last-mark', undefined, 1, 0, 5000],
+      ['before-first-mark', 1, 2, 100, 9000, 0],
+      ['step', 2, 1, 50, 10000, 1],
+      ['after-last-mark', undefined, 1, 0, 5000, 1],
     ],
   );
 });
 
+test('counter: a runner that records no compactions reports null with its reason', () => {
+  const usage = countToolUsage(
+    {
+      tools: [{ name: 'bash', issuedAt: t(1) }],
+      tokens: [],
+      compactions: null,
+      compactionsUnavailable: 'Cursor transcripts record no compaction events',
+    },
+    marks,
+  );
+  assert.equal(usage.compactions, null);
+  assert.equal(usage.compactionsUnavailable, 'Cursor transcripts record no compaction events');
+  assert.equal(usage.steps[0].compactions, null);
+  const merged = mergeToolUsage([
+    usage,
+    countToolUsage({ tools: [], tokens: [], compactions: [{ at: t(5) }] }, marks),
+  ]);
+  assert.equal(merged?.compactions, null, 'one unknown session makes the run total unknown');
+});
+
 test('counter: no marks means no segments; tokenless runners report null', () => {
-  const none = countToolUsage({ tools: [{ name: 'bash', issuedAt: t(1) }], tokens: [] }, []);
+  const none = countToolUsage({ tools: [{ name: 'bash', issuedAt: t(1) }], tokens: [], compactions: [] }, []);
   assert.equal(none.toolCallsBeforeFirstMark, null);
   assert.deepEqual(none.steps, []);
   const tokenless = countToolUsage(
-    { tools: [{ name: 'bash', issuedAt: t(1) }], tokens: null },
+    { tools: [{ name: 'bash', issuedAt: t(1) }], tokens: null, compactions: [] },
     marks,
   );
   assert.equal(tokenless.steps[0].totalTokens, null);
@@ -198,6 +227,7 @@ test('merge: a session that ends between marks keeps its tail in that step', () 
         { name: 'a', issuedAt: t(11) },
       ],
       tokens: [],
+      compactions: [],
     },
     marks,
     { startedAt: t(0), completedAt: t(12) },
@@ -209,7 +239,7 @@ test('merge: a session that ends between marks keeps its tail in that step', () 
       ['step', 2, 1, t(12)],
     ],
   );
-  const second = countToolUsage({ tools: [{ name: 'b', issuedAt: t(15) }], tokens: [] }, marks, {
+  const second = countToolUsage({ tools: [{ name: 'b', issuedAt: t(15) }], tokens: [], compactions: [] }, marks, {
     startedAt: t(12),
     completedAt: t(30),
   });
@@ -247,11 +277,11 @@ test('codex: an item starts at its recorded start time', async () => {
 });
 
 test('merge: a later session starts mid-run', () => {
-  const first = countToolUsage({ tools: [{ name: 'a', issuedAt: t(5) }], tokens: [] }, marks, {
+  const first = countToolUsage({ tools: [{ name: 'a', issuedAt: t(5) }], tokens: [], compactions: [] }, marks, {
     startedAt: t(0),
     completedAt: t(12),
   });
-  const second = countToolUsage({ tools: [{ name: 'b', issuedAt: t(15) }], tokens: [] }, marks, {
+  const second = countToolUsage({ tools: [{ name: 'b', issuedAt: t(15) }], tokens: [], compactions: [] }, marks, {
     startedAt: t(12),
     completedAt: t(30),
   });

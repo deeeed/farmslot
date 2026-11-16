@@ -25,6 +25,11 @@ export const nativeToolUsage: ToolUsageAdapter = {
         if (call) call.completedAt ??= at;
       }
     }
-    return { tools, tokens: null };
+    return {
+      tools,
+      tokens: null,
+      compactions: null,
+      compactionsUnavailable: 'The native journal records no compaction events',
+    };
   },
 };

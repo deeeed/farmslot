@@ -1,12 +1,13 @@
 // Grok session directory: events.jsonl records `tool_started` / `tool_completed` per call; token
-// usage is per inference in ~/.grok/logs/unified.jsonl, keyed by session id.
-import { stat } from 'node:fs/promises';
+// usage is per inference in ~/.grok/logs/unified.jsonl, keyed by session id. Context compactions
+// are `auto_compact_completed` session updates in the directory's updates.jsonl.
+import { access, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { ToolCallEvent, ToolUsageAdapter } from '../stream.js';
+import type { CompactionEvent, ToolCallEvent, ToolUsageAdapter } from '../stream.js';
 
-import { count, readJsonLines, text } from './jsonl.js';
+import { count, isoTime, isRecord, readJsonLines, text, tokensBefore } from './jsonl.js';
 
 async function sessionDirectory(sessionPath: string): Promise<string> {
   return (await stat(sessionPath)).isDirectory() ? sessionPath : path.dirname(sessionPath);
@@ -51,6 +52,28 @@ export const grokToolUsage: ToolUsageAdapter = {
           count(Reflect.get(context, 'completion_tokens')),
       });
     }
-    return { tools, tokens };
+    const updates = path.join(directory, 'updates.jsonl');
+    try {
+      await access(updates);
+    } catch (error) {
+      // Older sessions keep no update log: their compactions are unknown, not zero.
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      return {
+        tools,
+        tokens,
+        compactions: null,
+        compactionsUnavailable: 'The Grok session has no updates.jsonl',
+      };
+    }
+    const compactions: CompactionEvent[] = [];
+    for (const record of await readJsonLines(updates)) {
+      const params = isRecord(record.params) ? record.params : {};
+      const update = isRecord(params.update) ? params.update : {};
+      if (update.sessionUpdate !== 'auto_compact_completed') continue;
+      const meta = isRecord(record._meta) ? record._meta : isRecord(params._meta) ? params._meta : {};
+      const at = isoTime(meta.agentTimestampMs) ?? isoTime(record.timestamp);
+      if (at) compactions.push({ at, ...tokensBefore(update.tokens_before) });
+    }
+    return { tools, tokens, compactions };
   },
 };

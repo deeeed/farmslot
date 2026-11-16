@@ -18,6 +18,9 @@ export interface ToolUsageSessionView {
   byName: string;
   steps: SessionToolUsageSegment[];
   stepsUnavailable?: string;
+  /** Undefined on receipts from before compaction counts; null when the runner records none. */
+  compactions?: number | null;
+  compactionsUnavailable?: string;
 }
 
 function byNameLabel(counts: Record<string, number>): string {
@@ -41,6 +44,8 @@ export function toolUsageSessions(run: Run): ToolUsageSessionView[] {
             byName: byNameLabel(row.toolUsage.toolCallsByName),
             steps: row.toolUsage.steps,
             stepsUnavailable: row.toolUsage.stepsUnavailable,
+            compactions: row.toolUsage.compactions,
+            compactionsUnavailable: row.toolUsage.compactionsUnavailable,
           },
         ]
       : [],
@@ -52,8 +57,17 @@ export function segmentLabel(step: SessionToolUsageSegment): string {
   return step.title ?? `Step ${step.stepNumber}`;
 }
 
+function compactionsLabel(session: ToolUsageSessionView) {
+  if (session.compactions === undefined) return nothing;
+  return session.compactions === null
+    ? html` · <span title=${session.compactionsUnavailable ?? ''}>compactions not recorded</span>`
+    : html` · ${session.compactions.toLocaleString()}
+        compaction${session.compactions === 1 ? '' : 's'}`;
+}
+
 function renderSession(session: ToolUsageSessionView, showHeading: boolean) {
   const maxTools = Math.max(1, ...session.steps.map((step) => step.toolCalls));
+  const showCompactions = session.compactions != null;
   return html`<div class="tool-usage-session" data-testid="run-tool-usage-${session.key}">
     ${showHeading
       ? html`<div class="tool-usage-heading">${session.role} · ${session.runner}</div>`
@@ -62,7 +76,7 @@ function renderSession(session: ToolUsageSessionView, showHeading: boolean) {
       ${session.toolCalls.toLocaleString()} tool
       calls${session.toolCallsBeforeFirstMark != null
         ? html` · ${session.toolCallsBeforeFirstMark.toLocaleString()} before mark 1`
-        : nothing}
+        : nothing}${compactionsLabel(session)}
       <span class="tool-usage-names">${session.byName}</span>
     </div>
     ${session.steps.length
@@ -74,6 +88,7 @@ function renderSession(session: ToolUsageSessionView, showHeading: boolean) {
                 <th class="num">Tool calls</th>
                 <th class="num">Tokens</th>
                 <th class="num">Wall</th>
+                ${showCompactions ? html`<th class="num">Compactions</th>` : nothing}
               </tr>
             </thead>
             <tbody>
@@ -96,6 +111,11 @@ function renderSession(session: ToolUsageSessionView, showHeading: boolean) {
                       ${step.totalTokens == null ? '–' : step.totalTokens.toLocaleString()}
                     </td>
                     <td class="num">${formatDuration(step.wallMs)}</td>
+                    ${showCompactions
+                      ? html`<td class="num" data-testid="tool-usage-step-compactions">
+                          ${step.compactions ?? '–'}
+                        </td>`
+                      : nothing}
                   </tr>`,
               )}
             </tbody>

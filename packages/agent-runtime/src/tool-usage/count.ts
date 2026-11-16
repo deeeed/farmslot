@@ -38,6 +38,12 @@ export function countToolUsage(
     : Math.max(...times, ...markTimes);
   const windowed = window.startedAt !== undefined || window.completedAt !== undefined;
 
+  const compactions =
+    stream.compactions === null
+      ? null
+      : stream.compactions
+          .map((event) => Date.parse(event.at))
+          .filter((at) => Number.isFinite(at) && inWindow(at, start, end));
   const usage: ToolUsage = {
     attribution: 'issuedAt',
     toolCalls: 0,
@@ -45,6 +51,10 @@ export function countToolUsage(
     toolCallsBeforeFirstMark: null,
     untimedToolCalls: 0,
     steps: [],
+    compactions: compactions?.length ?? null,
+    ...(compactions === null
+      ? { compactionsUnavailable: stream.compactionsUnavailable ?? 'The transcript records no compactions' }
+      : {}),
   };
   const timed: Array<{ at: number; name: string }> = [];
   for (const tool of stream.tools) {
@@ -113,6 +123,7 @@ export function countToolUsage(
       toolCalls: 0,
       toolCallsByName: {},
       totalTokens: stream.tokens ? 0 : null,
+      compactions: compactions ? compactions.filter(inside).length : null,
     };
     for (const tool of timed)
       if (inside(tool.at)) {
@@ -137,11 +148,15 @@ export function mergeToolUsage(usages: ToolUsage[]): ToolUsage | null {
     toolCallsBeforeFirstMark: null,
     untimedToolCalls: 0,
     steps: [],
+    compactions: 0,
   };
+  // Older records carry no count; a session whose runner records none makes the run's total unknown.
+  const unknownCompactions = usages.find((usage) => (usage.compactions ?? null) === null);
   const steps = new Map<string, ToolUsageSegment>();
   for (const usage of usages) {
     merged.toolCalls += usage.toolCalls;
     merged.untimedToolCalls += usage.untimedToolCalls;
+    merged.compactions = (merged.compactions ?? 0) + (usage.compactions ?? 0);
     for (const [name, n] of Object.entries(usage.toolCallsByName))
       add(merged.toolCallsByName, name, n);
     if (usage.toolCallsBeforeFirstMark !== null)
@@ -156,6 +171,10 @@ export function mergeToolUsage(usages: ToolUsage[]): ToolUsage | null {
         continue;
       }
       known.toolCalls += step.toolCalls;
+      known.compactions =
+        (known.compactions ?? null) === null || (step.compactions ?? null) === null
+          ? null
+          : (known.compactions ?? 0) + (step.compactions ?? 0);
       known.totalTokens =
         known.totalTokens === null || step.totalTokens === null
           ? null
@@ -171,5 +190,10 @@ export function mergeToolUsage(usages: ToolUsage[]): ToolUsage | null {
   merged.steps = [...steps.values()].sort((a, b) => order(a).localeCompare(order(b)));
   if (!merged.steps.length)
     merged.stepsUnavailable = usages.find((usage) => usage.stepsUnavailable)?.stepsUnavailable;
+  if (unknownCompactions) {
+    merged.compactions = null;
+    merged.compactionsUnavailable =
+      unknownCompactions.compactionsUnavailable ?? 'A session records no compaction count';
+  }
   return merged;
 }
