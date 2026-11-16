@@ -1,1 +1,0 @@
-- An eval trial can start on the native transport. Tmux and native runs of the same candidate stay separate. The default stays tmux.

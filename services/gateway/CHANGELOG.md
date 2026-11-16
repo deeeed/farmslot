@@ -6,6 +6,21 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.39.6 - 2026-11-16
+
+- A run create task note is frozen on the run and appended to the generated TASK.md as one Note section.
+- Stabilize cleanup cancellation checks for coalesced status notifications.
+- Co-Pilot start, stop and configure take a new checkout snapshot when a write to the checkout supersedes one, instead of failing with "Workspace contents changed during the read".
+- An eval trial forwards its domain onto the run and into catalog template selection. Prepare and the task template receive that name. A named domain does not reuse the default trial.
+- An eval trial can start on the native transport. Tmux and native runs of the same candidate stay separate. The default stays tmux.
+- An eval trial forwards its prepare profile onto the run. A named profile does not reuse the default-profile trial.
+- Recover interrupted slot releases through a verified owner retry, and keep unverified checkouts held after the release timeout.
+- A replayed worker no longer meets the finished signal its own `mark start` refuses. Clearing a finished `SIGNAL.json` before a worker-launch replay ran only for a native fresh restart, so on every other transport a replay of a step at or before dispatch left it in place and the new worker had no way past the start guard. Any such replay now clears it, and only it: a signal that does not read as finished is skipped and never moved, and one that does is moved aside with one rename and judged again on the bytes that moved, so a worker that rewrote its signal in between keeps it; the snapshot goes back through a link that refuses an existing destination, so a signal written since is never overwritten. A signal that reads as finished and goes live between those two reads is still moved for the instant of the rename and then put back — that window is inspected, not tested. An aside left behind by a clear that was interrupted is swept back on the next one, including for a name whose signal is otherwise missing, and any name this clear moved or swept whose path is still missing when it returns is named in the log. A `running` signal is preserved for admission to replace and a `blocked` one still resumes with its checked boxes.
+- The task note frozen on a run's create request, including a caller-supplied request, is the trimmed note. A blank note is left out.
+- A hosted TASK.md takes its marker instruction from `@farmslot/agent-runtime` instead of keeping a second copy of the same sentence, so the line a worker reads cannot differ between a hosted task and a node-initialized one.
+- Retain per-command Git preparation timings and exit outcomes without changing commands, ownership guards or phase totals.
+- Publishing a run change also advances the detail key of each run that serves its facts: runs with an open ready gate on the same PR (review-round budget), runs whose gate summaries roll up the same family (open ready gate or retrospective), and runs that list it as a prior review generation. Kept in a small index of those runs, with no scan of all runs.
+
 ## 0.39.5 - 2026-11-15
 
 - Concurrent terminal cleanup and operator release serialize blind Git restoration through the capsule lock, preserving the candidate and allowing reset to finish.

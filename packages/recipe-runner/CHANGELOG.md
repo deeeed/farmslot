@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.46.20 - 2026-11-16
+
+- mm-harness 0.96.26 consumes this protocol 0.87.0 and SDK 0.28.0 cohort for fewer Mobile source-fingerprint Git calls and asynchronous issue-buffer diagnostics.
+
 ## 0.46.19 - 2026-11-15
 
 - mm-harness 0.96.25 consumes this cohort for capped operation logs and corrected checklist/mark contracts.

@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-node` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.8.21 - 2026-11-16
+
+- Align exact package dependencies with the protocol 0.87.0 and adapter SDK 0.28.0 cohort.
+
 ## 0.8.20 - 2026-11-15
 
 - Align exact package dependencies with the protocol 0.86.1, runner 0.46.19 and runtime 0.48.2 release cohort.

@@ -1,1 +1,0 @@
-- Retain per-command Git preparation timings and exit outcomes without changing commands, ownership guards or phase totals.

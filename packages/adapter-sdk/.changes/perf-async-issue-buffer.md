@@ -1,1 +1,0 @@
-- Allow issue-buffer adapters to complete diagnostics asynchronously while preserving synchronous adapters.
