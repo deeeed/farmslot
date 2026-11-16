@@ -58,7 +58,10 @@ import {
   type StartRefResolution,
 } from '../../projects/start-ref-resolution.js';
 import { executeEvalHarnessLifecycle } from '../../run-engine/eval-harness-lifecycle.js';
-import { mutateSlotGit, restoreParkedBranch } from '../../run-lifecycle/validation-run-commits.js';
+import {
+  restoreParkedBranch,
+  slotGitMutations,
+} from '../../run-lifecycle/validation-run-commits.js';
 import {
   assertNativeSlotReplacementOwner,
   retireNativeWorkersForSlot,
@@ -666,30 +669,35 @@ async function slotPrepareInner(
   }
 
   const gitOperationKey = params.runId ?? params.requestId ?? randomUUID();
+  // One capture for the prepare's guarded commands: the first parks the threatened work, covering
+  // the trees the prepare can move to; later ones only check nothing else wrote in between.
+  const guardedGit = slotGitMutations(
+    vars,
+    projectJson,
+    {
+      defaultBranch,
+      runId: params.runId,
+      operationKey: gitOperationKey,
+      blindBaseSha: opts?.blindBaseSha,
+      blindRepoKey: opts?.blindRepoKey,
+      targetBranches: [defaultBranch, ...(branch ? [branch] : [])],
+      verifyWork: async () => {
+        checkAborted();
+      },
+    },
+    () => [
+      ...new Set(
+        [
+          opts?.blindBaseSha ?? `origin/${defaultBranch}`,
+          resolvedStartRef?.resolvedSha,
+          resolvedStackBase?.resolvedSha,
+        ].filter((tree): tree is string => Boolean(tree)),
+      ),
+    ],
+    execOnSlot,
+  );
   const mutateGit = (operation: string, command: string, targetTrees: string[] = []) =>
-    timeGit(
-      operation,
-      () =>
-        mutateSlotGit(
-          vars,
-          projectJson,
-          {
-            defaultBranch,
-            runId: params.runId,
-            operationKey: gitOperationKey,
-            blindBaseSha: opts?.blindBaseSha,
-            blindRepoKey: opts?.blindRepoKey,
-            targetBranches: [defaultBranch, ...(branch ? [branch] : [])],
-            targetTrees,
-            verifyWork: async () => {
-              checkAborted();
-            },
-          },
-          command,
-          execOnSlot,
-        ),
-      'guarded-mutation',
-    );
+    timeGit(operation, () => guardedGit(command, targetTrees), 'guarded-mutation');
 
   // A requested start ref must resolve to structured provenance on every branch
   // path: a slot already on the work branch, a preserved replay branch, or a
@@ -1052,10 +1060,10 @@ async function slotPrepareInner(
         throw new Error(
           `reset --hard HEAD failed on ${vars.slotId} (${vars.remoteRepo}): ${resetR.stderr.slice(-200) || resetR.stdout.slice(-200)}`,
         );
-      const cleanR = await execGit(
+      // Under the same capture, so the next guarded command sees the checkout this left.
+      const cleanR = await mutateGit(
         'clean-worktree',
-        vars,
-        withFarmGitConfig(`cd ${shellQuote(vars.remoteRepo)} && git clean -fd`),
+        `cd ${shellQuote(vars.remoteRepo)} && git clean -fd`,
       );
       if (cleanR.exitCode !== 0)
         throw new Error(

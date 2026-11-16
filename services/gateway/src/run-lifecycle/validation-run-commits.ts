@@ -18,9 +18,11 @@ import { usesEvalTrialCapsule } from '../evals/trial-policy.js';
 import { excludeSlotScaffolding } from '../fleet/slot-scaffolding.js';
 import {
   executeParkedGitMutation,
+  executeSavedGitMutation,
   lookupParkedGitWork,
   type ParkedCapture,
   type ParkedCaptureOptions,
+  type ParkedMutationResult,
   parkedRestoreTargets,
   ParkedWorkError,
   parkGitWork,
@@ -46,6 +48,8 @@ interface SlotMutationOptions extends SlotWorkOptions {
 
 interface SlotWorkCapture extends ParkedCapture {
   assertOwner(): Promise<void>;
+  /** The slot still has the owner it had when this capture was taken. */
+  ownerUnchanged(): Promise<boolean>;
 }
 function sameParkingOwner(
   current: Readonly<Record<string, unknown>>,
@@ -120,11 +124,15 @@ export async function captureSlotWork(
     row,
     options.blindBaseSha ? options.blindRepoKey : undefined,
   );
+  const ownerUnchanged = async () => {
+    const current = await readSlotRow(vars.slotId);
+    return Boolean(current && sameParkingOwner(current, row));
+  };
   return {
     ...capture,
+    ownerUnchanged,
     assertOwner: async () => {
-      const current = await readSlotRow(vars.slotId);
-      if (!current || !sameParkingOwner(current, row))
+      if (!(await ownerUnchanged()))
         throw new ParkedWorkError('OWNER_CHANGED', 'Slot ownership changed after parking');
     },
   };
@@ -138,10 +146,27 @@ export async function mutateSlotGit(
   command: string,
   exec: typeof execOnSlot,
 ): Promise<import('@farmslot/protocol').ExecResult> {
+  const { stdout, stderr, exitCode } = await captureAndMutate(
+    vars,
+    project,
+    options,
+    command,
+    exec,
+  );
+  return { stdout, stderr, exitCode };
+}
+
+async function captureAndMutate(
+  vars: SlotVars,
+  project: RawProjectJson,
+  options: SlotMutationOptions,
+  command: string,
+  exec: typeof execOnSlot,
+): Promise<{ capture: SlotWorkCapture } & ParkedMutationResult> {
   const capture = await captureSlotWork(vars, project, options, exec);
   await options.verifyWork?.();
   await capture.assertOwner();
-  return executeParkedGitMutation(
+  const result = await executeParkedGitMutation(
     vars,
     {
       slotId: vars.slotId,
@@ -153,6 +178,90 @@ export async function mutateSlotGit(
     command,
     exec,
   );
+  return { capture, ...result };
+}
+
+/** One guarded command of a sequence; `targetTrees` are the trees it may check out or reset to. */
+export type SlotGitMutation = (
+  command: string,
+  targetTrees?: string[],
+) => Promise<import('@farmslot/protocol').ExecResult>;
+
+/**
+ * Guarded commands of one sequence (a prepare) under one capture. The first command parks the
+ * threatened work as `mutateSlotGit` does, covering `coverTrees` too (the trees the sequence can
+ * move to; unresolvable ones are dropped). Each later command checks only that the saved
+ * snapshots exist and the checkout is as the previous command left it, then runs. It parks again
+ * when anything else wrote in between, the owner changed, or it targets a tree not covered.
+ */
+export function slotGitMutations(
+  vars: SlotVars,
+  project: RawProjectJson,
+  options: Omit<SlotMutationOptions, 'targetTrees'>,
+  coverTrees: () => string[],
+  exec: typeof execOnSlot,
+): SlotGitMutation {
+  let held: { capture: SlotWorkCapture; trees: Set<string>; state: string } | undefined;
+  const capture = async (command: string, targetTrees: string[]) => {
+    const trees = [
+      ...new Set([...targetTrees, ...(await resolvableTrees(vars, coverTrees(), exec))]),
+    ];
+    const {
+      capture: taken,
+      state,
+      ...result
+    } = await captureAndMutate(vars, project, { ...options, targetTrees: trees }, command, exec);
+    held = { capture: taken, trees: new Set(trees), state };
+    return result;
+  };
+  return async (command, targetTrees = []) => {
+    const current = held;
+    if (!current || targetTrees.some((tree) => !current.trees.has(tree)))
+      return capture(command, targetTrees);
+    await options.verifyWork?.();
+    if (!(await current.capture.ownerUnchanged())) return capture(command, targetTrees);
+    try {
+      const { state, ...result } = await executeSavedGitMutation(
+        vars,
+        { slotId: vars.slotId, repoKey: options.blindBaseSha ? options.blindRepoKey : undefined },
+        current.capture,
+        current.state,
+        command,
+        exec,
+      );
+      current.state = state;
+      return result;
+    } catch (error) {
+      // Something other than this sequence wrote since the last command: park that work too,
+      // exactly as a capture per command would have, then run.
+      if (error instanceof ParkedWorkError && error.code === 'PARKED_WORK_WORK_CHANGED')
+        return capture(command, targetTrees);
+      throw error;
+    }
+  };
+}
+
+/** The trees among `trees` that resolve in the slot checkout, in one command. */
+async function resolvableTrees(
+  vars: SlotVars,
+  trees: string[],
+  exec: typeof execOnSlot,
+): Promise<string[]> {
+  if (!trees.length) return [];
+  const probe = trees
+    .map(
+      (tree) =>
+        `git rev-parse --verify --quiet ${shellQuote(`${tree}^{tree}`)} >/dev/null && printf '%s\\n' ${shellQuote(tree)}`,
+    )
+    .join('; ');
+  const result = await exec(
+    vars,
+    withFarmGitConfig(`cd ${shellQuote(vars.remoteRepo)} && { ${probe}; true; }`),
+  );
+  if (result.exitCode !== 0)
+    throw new Error(`Cannot resolve prepare target trees on ${vars.slotId}: ${result.stderr}`);
+  const resolved = new Set(result.stdout.split('\n').filter(Boolean));
+  return trees.filter((tree) => resolved.has(tree));
 }
 
 /**

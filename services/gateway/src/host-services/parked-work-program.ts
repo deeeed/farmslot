@@ -120,6 +120,8 @@ function snapshot(full) {
   for (const target of targets) {
     for (const file of nul(git(['ls-tree','-r','-z','--name-only',target]).stdout)) if (exists(path.join(repo,file))) collisionPaths.add(file);
   }
+  // add --all staged every unignored path with its content; only ignored collisions need --force.
+  if (collisionPaths.size) for (const file of nul(git(['ls-files','-z'], {index:working}).stdout)) collisionPaths.delete(file);
   if (collisionPaths.size) git(['--literal-pathspecs','add','--force','--pathspec-from-file=-','--pathspec-file-nul'], {index:working,input:Buffer.from([...collisionPaths].join('\0')+'\0')});
   const savedEntries = stageEntries(git(['ls-files','--stage','-z'], {index:working}).stdout);
   const originalLinks = new Set(entries.filter(e => e.mode === '160000').map(e => e.file));
@@ -204,11 +206,31 @@ function verify() {
   }
   return state;
 }
-function mutate() {
-  verify();
+// The checkout as Git's stat cache sees it: HEAD, branch, index flags and every unignored change.
+// Cheap next to snapshot(); prepare's next step compares it to tell whether anything else wrote.
+function quickState() {
+  const head=git(['rev-parse','--verify','--quiet','HEAD'], {allow:[1]}).stdout.toString('utf8').trim();
+  const status=git(['status','--porcelain=v2','-z','--untracked-files=all','--ignore-submodules=none']).stdout;
+  const flags=git(['ls-files','-v','-z']).stdout;
+  return hash(JSON.stringify({head,branch:branch(),status:hash(status),flags:hash(flags)}));
+}
+function runCommand() {
   const commandEnv={...env,GIT_CONFIG_PARAMETERS:(env.GIT_CONFIG_PARAMETERS?env.GIT_CONFIG_PARAMETERS+' ':'')+"'core.hooksPath=/dev/null' 'submodule.recurse=false'"};
   const r=cp.spawnSync('bash',['-c',input.command],{cwd:repo,env:commandEnv,encoding:'utf8',maxBuffer:64*1024*1024});
-  return {stdout:r.stdout||'',stderr:r.stderr||'',exitCode:r.status === null?1:r.status};
+  return {stdout:r.stdout||'',stderr:r.stderr||'',exitCode:r.status === null?1:r.status,state:quickState()};
+}
+function mutate() {
+  verify();
+  return runCommand();
+}
+// A later step under the same capture: the saved snapshots still exist, and the checkout is as the
+// previous step left it. Anything else wrote in between: the caller parks again.
+function mutateSaved() {
+  for(const saved of input.saved || []) {
+    if(refSha(saved.ref) !== saved.headSha || !refSha(metadataRef(saved.ref))) fail('SNAPSHOT_MISSING','A required parked snapshot is missing');
+  }
+  if(quickState() !== input.expectedState) fail('WORK_CHANGED','Local work changed since the last step; capture it again');
+  return runCommand();
 }
 function restore() {
   verify();
@@ -277,6 +299,7 @@ try {
   else if(input.op==='list')value=inventory();
   else if(input.op==='lookup') { const sha=refSha(input.ref); const meta=refSha(metadataRef(input.ref)); value={headSha:sha,metadata:meta?git(['cat-file','blob',meta]).stdout.toString('utf8'):null}; }
   else if(input.op==='mutate')value=mutate();
+  else if(input.op==='mutateSaved')value=mutateSaved();
   else if(input.op==='restore')value=restore();
   else if(input.op==='prune')value=prune();
   else fail('INVALID_OPERATION','Unknown parked-work operation');

@@ -25,6 +25,7 @@ import { makeVars } from '../runners/test-fixtures.js';
 
 import {
   executeParkedGitMutation,
+  executeSavedGitMutation,
   parkGitWork,
   pruneParkedGitWork,
   readParkedGitWork,
@@ -157,6 +158,51 @@ test('changed dirty content at unchanged HEAD refuses the destructive batch', as
   );
   assert.equal(await readFile(path.join(repo, 'tracked'), 'utf8'), 'newer');
   assert.equal(git('rev-parse', capture.receipts[0].ref), capture.receipts[0].headSha);
+});
+
+test('a later command under the same capture runs only while nothing else wrote in between', async (t) => {
+  const { vars, repo, options, git, base } = await fixture(t);
+  await writeFile(path.join(repo, 'tracked'), 'saved');
+  const capture = await parkGitWork(vars, options, localExec);
+  const first = await executeParkedGitMutation(
+    vars,
+    { slotId: 'proof' },
+    capture,
+    'git reset --hard HEAD',
+    localExec,
+  );
+  assert.equal(first.exitCode, 0, first.stderr);
+  // The checkout as the first command left it: the next command runs on the same capture.
+  const second = await executeSavedGitMutation(
+    vars,
+    { slotId: 'proof' },
+    capture,
+    first.state,
+    'git checkout -q main',
+    localExec,
+  );
+  assert.equal(second.exitCode, 0, second.stderr);
+  assert.notEqual(second.state, first.state);
+  // Another writer between commands: the destructive command does not run.
+  await writeFile(path.join(repo, 'stray'), 'written by someone else');
+  await assert.rejects(
+    executeSavedGitMutation(
+      vars,
+      { slotId: 'proof' },
+      capture,
+      second.state,
+      `git reset --hard '${base}' && git clean -fd`,
+      localExec,
+    ),
+    (error: unknown) => isRecord(error) && error.code === 'PARKED_WORK_WORK_CHANGED',
+  );
+  assert.equal(await readFile(path.join(repo, 'stray'), 'utf8'), 'written by someone else');
+  // A missing saved snapshot refuses too.
+  git('update-ref', '-d', capture.receipts[0].ref);
+  await assert.rejects(
+    executeSavedGitMutation(vars, { slotId: 'proof' }, capture, second.state, 'true', localExec),
+    (error: unknown) => isRecord(error) && error.code === 'PARKED_WORK_SNAPSHOT_MISSING',
+  );
 });
 
 test('the overwritten idle branch gets its own immutable receipt', async (t) => {

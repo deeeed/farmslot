@@ -28,6 +28,7 @@ import {
   recordReleasedCheckout,
   restoreParkedBranch,
   restoreSlotParkedWork,
+  slotGitMutations,
   slotParkedInventory,
 } from './validation-run-commits.js';
 
@@ -735,3 +736,38 @@ for (const action of ['operator', 'replay'] as const) {
     );
   });
 }
+
+test('a prepare parks once, then parks again only when something else wrote or a tree is new', async (t) => {
+  const { vars, git, base } = await fixture(t);
+  const parks: string[] = [];
+  const counted: typeof execOnSlot = async (slotVars, cmd, options) => {
+    if (String(cmd).includes('"op":"park"')) parks.push(String(cmd));
+    return localExec(slotVars, cmd, options);
+  };
+  const parkedRefs = () => git('for-each-ref', '--format=%(refname)', 'refs/farmslot/parked/');
+  await writeFile(path.join(vars.remoteRepo, 'dirty.txt'), 'prior work\n');
+  const guarded = slotGitMutations(
+    vars,
+    {},
+    { defaultBranch: 'main', operationKey: 'prepare-proof', targetBranches: ['main'] },
+    () => ['origin/main', 'refs/heads/does-not-exist'],
+    counted,
+  );
+  // The first command parks the prior work, covering origin/main (the missing tree is dropped).
+  assert.equal((await guarded('git reset -q --hard HEAD')).exitCode, 0);
+  assert.equal(parks.length, 1);
+  const firstRefs = parkedRefs();
+  assert.ok(firstRefs, 'the dirty checkout is parked before the reset');
+  // The prepare's own next commands, on covered trees, run under the same capture.
+  assert.equal((await guarded('git clean -fdq')).exitCode, 0);
+  assert.equal((await guarded('git checkout -q main', ['origin/main'])).exitCode, 0);
+  assert.equal(parks.length, 1);
+  // Another writer between commands: its work is parked before the next destructive command.
+  await writeFile(path.join(vars.remoteRepo, 'stray.txt'), 'written during prepare\n');
+  assert.equal((await guarded('git reset -q --hard origin/main && git clean -fdq')).exitCode, 0);
+  assert.equal(parks.length, 2);
+  assert.notEqual(parkedRefs(), firstRefs, 'the stray write has its own receipt');
+  // A tree the capture does not cover parks again, as a capture per command would.
+  assert.equal((await guarded(`git checkout -q -b proof-branch ${base}`, [base])).exitCode, 0);
+  assert.equal(parks.length, 3);
+});

@@ -16,6 +16,7 @@ const OPS = {
   list: 'parkedWork.list',
   lookup: 'parkedWork.lookup',
   mutate: 'parkedWork.mutate',
+  mutateSaved: 'parkedWork.mutateSaved',
   restore: 'parkedWork.restore',
   prune: 'parkedWork.prune',
 } as const;
@@ -270,27 +271,66 @@ export async function readParkedGitWork(
   return receiptsFromRows(value.items, value.repoKey, value.namespace);
 }
 
+/** A guarded command's result, with the checkout's state after it for the next step's check. */
+export interface ParkedMutationResult extends ExecResult {
+  state: string;
+}
+
+function mutationResult(value: unknown): ParkedMutationResult {
+  if (
+    !isRecord(value) ||
+    typeof value.stdout !== 'string' ||
+    typeof value.stderr !== 'string' ||
+    typeof value.exitCode !== 'number' ||
+    typeof value.state !== 'string'
+  )
+    throw new ParkedWorkError('INVALID_METADATA', 'Invalid Git mutation result');
+  return {
+    stdout: value.stdout,
+    stderr: value.stderr,
+    exitCode: value.exitCode,
+    state: value.state,
+  };
+}
+
 export async function executeParkedGitMutation(
   vars: SlotVars,
   options: Pick<ParkedCaptureOptions, 'slotId' | 'extraRefs' | 'targetTrees' | 'repoKey'>,
   capture: ParkedCapture,
   command: string,
   exec: Executor = execOnSlot,
-): Promise<ExecResult> {
-  const value = await request(
-    vars,
-    'mutate',
-    { ...options, expectedFingerprint: capture.fingerprint, saved: capture.receipts, command },
-    exec,
+): Promise<ParkedMutationResult> {
+  return mutationResult(
+    await request(
+      vars,
+      'mutate',
+      { ...options, expectedFingerprint: capture.fingerprint, saved: capture.receipts, command },
+      exec,
+    ),
   );
-  if (
-    !isRecord(value) ||
-    typeof value.stdout !== 'string' ||
-    typeof value.stderr !== 'string' ||
-    typeof value.exitCode !== 'number'
-  )
-    throw new ParkedWorkError('INVALID_METADATA', 'Invalid Git mutation result');
-  return { stdout: value.stdout, stderr: value.stderr, exitCode: value.exitCode };
+}
+
+/**
+ * A later command under an earlier capture, without a new snapshot: the saved snapshots must
+ * still exist and the checkout must be as the previous command left it (`expectedState`).
+ * Anything else writing in between fails it with PARKED_WORK_WORK_CHANGED.
+ */
+export async function executeSavedGitMutation(
+  vars: SlotVars,
+  options: Pick<ParkedCaptureOptions, 'slotId' | 'repoKey'>,
+  capture: ParkedCapture,
+  expectedState: string,
+  command: string,
+  exec: Executor = execOnSlot,
+): Promise<ParkedMutationResult> {
+  return mutationResult(
+    await request(
+      vars,
+      'mutateSaved',
+      { ...options, saved: capture.receipts, expectedState, command },
+      exec,
+    ),
+  );
 }
 
 export type ParkedRestoreSource = Pick<ParkedRunCommits, 'ref' | 'headSha'> &
