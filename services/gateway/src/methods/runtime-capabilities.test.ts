@@ -79,6 +79,27 @@ test('a run held for a decision is vouched for as live, a settled or paused one 
   }
 });
 
+test('an unsettled completion-prerequisite failure keeps its retained resources', () => {
+  // r1 (Codex): these runs retain their worker and their providers on purpose.
+  // Treating every `failed` status as settled let a sibling's close strip them.
+  const retained = {
+    status: 'failed',
+    steps: [
+      {
+        name: 'complete',
+        status: 'failed',
+        outputs: {
+          gatePrerequisiteRefusal:
+            'Artifact mirror refresh failed; cannot build an authoritative publish package',
+        },
+      },
+    ],
+  } as unknown as Run;
+  assert.equal(hasHadTerminalCleanup(retained), false);
+  assert.equal(isLiveCapabilityOwner(retained), true);
+  assert.equal(isLiveCapabilityOwner({ ...retained, status: 'done' } as Run), false);
+});
+
 test('a run whose own providers were torn down at terminal is not live', () => {
   const run = {
     status: 'blocked',

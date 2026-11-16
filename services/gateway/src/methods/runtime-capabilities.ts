@@ -572,7 +572,11 @@ export function hasHadTerminalCleanup(run: Run): boolean {
  * while it waits.
  */
 export function isLiveCapabilityOwner(run: Run): boolean {
-  if (isTerminalRunStatus(run.status) || run.status === 'paused') return false;
+  // `paused` acquires nothing while it waits. Everything else defers to
+  // hasHadTerminalCleanup, which keeps the domain exception this must not lose:
+  // an unsettled completion-prerequisite failure deliberately RETAINS its
+  // worker and its resources, so it is live even though its status is `failed`.
+  if (run.status === 'paused') return false;
   return !hasHadTerminalCleanup(run);
 }
 
@@ -861,8 +865,9 @@ export async function releaseRuntimeCapabilitiesForRunAndFamily(
 
 export async function releaseRuntimeCapabilitiesForSlot(
   slotId: string,
+  options?: { preserveLiveOwnersOtherThan?: string },
 ): Promise<RuntimeCapabilityReleaseResult> {
-  return registry.releaseSlot(slotId);
+  return registry.releaseSlot(slotId, options);
 }
 
 /**

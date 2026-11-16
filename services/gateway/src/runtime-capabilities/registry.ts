@@ -3043,8 +3043,48 @@ export class RuntimeCapabilityRegistry {
     );
   }
 
-  async releaseSlot(slotId: string): Promise<RuntimeCapabilityReleaseResult> {
-    return this.releaseSelected(slotId, () => true, { force: false, keepWarmFor: () => true });
+  /**
+   * Release every lease on a slot.
+   *
+   * `preserveLiveOwnersOtherThan` makes this a RUN-scoped teardown: the named
+   * run's leases go, and so does everything the run store cannot vouch for, but
+   * a live sibling's lease stays. Slot release runs this sweep straight after
+   * the family-terminal reconcile (`methods/slot/release.ts`), so without it
+   * the sweep takes back the very lease that reconcile just spared. A genuine
+   * slot teardown passes nothing and still clears the slot whole.
+   */
+  async releaseSlot(
+    slotId: string,
+    options?: { preserveLiveOwnersOtherThan?: string },
+  ): Promise<RuntimeCapabilityReleaseResult> {
+    const owner = options?.preserveLiveOwnersOtherThan;
+    const preserve =
+      owner === undefined ? undefined : this.liveOwnerPredicate((runId) => runId !== owner);
+    return this.releaseSelected(slotId, (lease) => !preserve?.(lease.owner.runId), {
+      force: false,
+      keepWarmFor: () => true,
+      ...(preserve ? { skip: (lease) => preserve(lease.owner.runId) } : {}),
+    });
+  }
+
+  /**
+   * One liveness answer per owner for the whole of one release pass.
+   *
+   * Asked once and reused: the release awaits provider actions, and a status
+   * that changes in that window (an operator pausing a sibling mid-cleanup)
+   * must not make the read-back fence an owner whose lease this pass
+   * deliberately left acquired.
+   */
+  private liveOwnerPredicate(inScope: (runId: string) => boolean): (runId: string) => boolean {
+    const answers = new Map<string, boolean>();
+    return (runId: string): boolean => {
+      let answer = answers.get(runId);
+      if (answer === undefined) {
+        answer = inScope(runId) && this.options.isLiveOwner?.(runId) === true;
+        answers.set(runId, answer);
+      }
+      return answer;
+    };
   }
 
   /**
@@ -3079,8 +3119,7 @@ export class RuntimeCapabilityRegistry {
     ownerRunId: string,
     familyId?: string,
   ): Promise<RuntimeCapabilityReleaseResult> {
-    const liveSibling = (runId: string): boolean =>
-      runId !== ownerRunId && this.options.isLiveOwner?.(runId) === true;
+    const liveSibling = this.liveOwnerPredicate((runId) => runId !== ownerRunId);
     // Fence before releasing, not after: an acquire queued behind this release
     // would otherwise slip in the moment it finishes. The family entry records
     // that a family-scope cleanup happened here; whether it refuses a given
@@ -3166,7 +3205,17 @@ export class RuntimeCapabilityRegistry {
     familyId?: string,
   ): { scope: 'owner' | 'family'; id: string } | null {
     const ownerCleanupAt = this.terminatedOwners.get(ownerRunId);
-    if (ownerCleanupAt && !this.recoveredAfterCleanup(ownerRunId, ownerCleanupAt)) {
+    if (
+      ownerCleanupAt &&
+      !this.recoveredAfterCleanup(ownerRunId, ownerCleanupAt) &&
+      // An owner ENTRY the run store contradicts is one a sibling's family
+      // sweep wrote on a run that never ended — the same incident, one scope
+      // up, and entries like it are already on disk from before this fix. The
+      // store is the authority on whether a cleanup actually happened to this
+      // run: terminal status or terminal posture both read as not live, so a
+      // run that really was cleaned still needs its durable replay.
+      this.options.isLiveOwner?.(ownerRunId) !== true
+    ) {
       return { scope: 'owner', id: ownerRunId };
     }
     // The owner predicate is a SUPPLEMENT, not the authority: it answers for a

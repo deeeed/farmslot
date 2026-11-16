@@ -761,7 +761,16 @@ async function slotReleaseImpl(
           : `Terminal posture ${outcome.result.transition.outcome}`,
       );
     }
-    const capabilityRelease = await releaseRuntimeCapabilitiesForSlot(params.slotId);
+    // A run-scoped teardown sweeps the slot for this run, not for a sibling the
+    // run store still vouches for: the sweep used to take back the lease the
+    // family-terminal reconcile above had just spared. An operator slot release
+    // or a restart passes no run and still clears the slot whole.
+    const capabilityRelease = await releaseRuntimeCapabilitiesForSlot(
+      params.slotId,
+      params.expectedRunId && !options?.restartRunId
+        ? { preserveLiveOwnersOtherThan: params.expectedRunId }
+        : undefined,
+    );
     step(
       'capabilities',
       capabilityRelease.ok
