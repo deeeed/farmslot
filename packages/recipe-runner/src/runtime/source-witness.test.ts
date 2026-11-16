@@ -11,6 +11,7 @@ import {
   preparedSourceValue,
   preparedSourceValueAsync,
   sourceGitRoot,
+  sourceWitnessSupportsOutputs,
   withPreparedSourceWitness,
 } from './source-witness.js';
 
@@ -469,6 +470,21 @@ test('metadata-only projections never walk generated output history', async () =
     f.git('config', 'remote.origin.url', 'https://example.invalid/other');
     currentSourceWitness()!.checkpoint();
     assert.equal(read(), 'https://example.invalid/other');
+  });
+});
+
+test('an output rule change declines reuse before the next source walk', async () => {
+  const f = fixture();
+  await withPreparedSourceWitness(async () => {
+    assert.ok(sourceWitnessSupportsOutputs(f.root, [path.join(f.root, 'temp')]));
+    assert.equal(f.read(), 'original');
+    const reads = currentSourceWitness()!.measurements.length;
+    fs.writeFileSync(path.join(f.root, '.gitignore'), '.env\n');
+    fs.writeFileSync(path.join(f.root, 'temp', 'old-run.json'), '{}');
+    currentSourceWitness()!.checkpoint();
+    assert.equal(f.read(), 'original');
+    assert.equal(currentSourceWitness()!.measurements.length, reads);
+    assert.equal(currentSourceWitness()!.reusable, false);
   });
 });
 

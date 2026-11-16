@@ -226,6 +226,8 @@ function witnessedRoot(
   view: PreparedSourceWitness,
   directory: string,
 ): PreparedRootRecord | undefined {
+  const declared = view.supportedRoots.get(fs.realpathSync(directory));
+  if (declared && !sourceWitnessSupportsOutputs(directory, declared)) return undefined;
   try {
     return view.root(directory);
   } catch (error) {
