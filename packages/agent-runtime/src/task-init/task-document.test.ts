@@ -54,11 +54,20 @@ test('a reference checkout the machine lacks reads as blocked, never as unchecke
     { name: 'mobile', path: '/dev/metamask/mobile-ref', present: false },
   ]).join('\n');
   assert.match(lines, /- `mobile`: not cloned on this machine\./);
-  assert.match(lines, /blocked, not unchecked/);
+  // The reviewer's checklist records BLOCKED or NOT_CHECKED; name the one it means.
+  assert.match(lines, /BLOCKED, never NOT_CHECKED/);
   assert.ok(!lines.includes('/dev/metamask/mobile-ref` at'), 'no revision is claimed for it');
 });
 
 test('a project with no reference repos adds nothing to the inputs', () => {
   assert.deepEqual(renderReferenceCheckoutInputs(undefined), []);
   assert.deepEqual(renderReferenceCheckoutInputs([]), []);
+});
+
+test('a reference with uncommitted changes is not described by its revision alone', () => {
+  const lines = renderReferenceCheckoutInputs([
+    { name: 'core', path: '/dev/metamask/core-ref', present: true, headSha: 'eee555', dirty: true },
+  ]).join('\n');
+  assert.match(lines, /- `core`: `\/dev\/metamask\/core-ref` at `eee555`/);
+  assert.match(lines, /uncommitted changes are present, so cite what you read/);
 });

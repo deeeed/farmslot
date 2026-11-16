@@ -30,6 +30,24 @@ async function fixture() {
     projectJson: {
       execution_templates: {},
       static_review: { template_id: 'review-pr/default', instruction_files: ['review-guide.md'] },
+      // Two read-only references and one key that is the slot's own checkout, so a
+      // test can tell apart what belongs in the task inputs.
+      reference_repos: {
+        mobile: {
+          repo_url: 'git@github.com:MetaMask/metamask-mobile.git',
+          local_name: 'mobile-ref',
+          read_only: true,
+        },
+        core: {
+          repo_url: 'git@github.com:MetaMask/core.git',
+          local_name: 'core-ref',
+          read_only: true,
+        },
+        unplaced: {
+          repo_url: 'git@github.com:MetaMask/metamask-extension.git',
+          local_name: 'extension-1',
+        },
+      },
     },
     runtimeDir: '.agent',
     artifactDir: 'artifacts',

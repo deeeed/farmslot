@@ -30,13 +30,22 @@ const slotVars = { remoteRepo: SLOT_REPO } as never;
 /** References are siblings of the slot checkout. */
 const parentDir = SLOT_REPO;
 const terminalReferences = {
-  mobile: { repo_url: 'git@github.com:MetaMask/metamask-mobile.git', local_name: 'mobile-ref' },
+  mobile: {
+    repo_url: 'git@github.com:MetaMask/metamask-mobile.git',
+    local_name: 'mobile-ref',
+    read_only: true,
+  },
   extension: {
     repo_url: 'git@github.com:MetaMask/metamask-extension.git',
     local_name: 'extension-ref',
+    read_only: true,
   },
-  core: { repo_url: 'git@github.com:MetaMask/core.git', local_name: 'core-ref' },
-  perps_library: { repo_url: 'git@github.com:MetaMask/perps.git', local_name: 'perps' },
+  core: { repo_url: 'git@github.com:MetaMask/core.git', local_name: 'core-ref', read_only: true },
+  perps_library: {
+    repo_url: 'git@github.com:MetaMask/perps.git',
+    local_name: 'perps',
+    read_only: true,
+  },
 };
 beforeEach(() => {
   commands = [];
@@ -107,6 +116,16 @@ test('a line that is not a full revision is not taken for one', async () => {
   );
 });
 
+test('a probe that failed part way keeps the revisions it did print', async () => {
+  // Driven by output, not exit status: the reference it reached is still readable.
+  reply = { exitCode: 1, stdout: `mobile\t${'b'.repeat(40)}\n` };
+  const partial = await resolveReferenceCheckouts(slotVars, terminalReferences, parentDir);
+  assert.deepEqual(
+    partial.map((reference) => reference.present),
+    [true, false, false],
+  );
+});
+
 test('a probe that could not run claims no revisions', async () => {
   reply = { exitCode: 127, stdout: '' };
   const references = await resolveReferenceCheckouts(slotVars, terminalReferences, parentDir);
@@ -121,7 +140,13 @@ test('a project that declares no reference repos probes nothing', async () => {
   assert.deepEqual(
     await resolveReferenceCheckouts(
       slotVars,
-      { perps_library: { repo_url: 'git@github.com:MetaMask/perps.git', local_name: 'perps' } },
+      {
+        perps_library: {
+          repo_url: 'git@github.com:MetaMask/perps.git',
+          local_name: 'perps',
+          read_only: true,
+        },
+      },
       parentDir,
     ),
     [],
@@ -163,12 +188,18 @@ test('the command it builds reads real checkouts through a real shell', async ()
         mobile: {
           repo_url: 'git@github.com:MetaMask/metamask-mobile.git',
           local_name: 'mobile-ref',
+          read_only: true,
         },
         extension: {
           repo_url: 'git@github.com:MetaMask/metamask-extension.git',
           local_name: 'extension-ref',
+          read_only: true,
         },
-        core: { repo_url: 'git@github.com:MetaMask/core.git', local_name: 'core-ref' },
+        core: {
+          repo_url: 'git@github.com:MetaMask/core.git',
+          local_name: 'core-ref',
+          read_only: true,
+        },
       },
       slot,
     );
@@ -180,4 +211,24 @@ test('the command it builds reads real checkouts through a real shell', async ()
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("a farm's own second checkout is not listed as a read-only reference", async () => {
+  // metamask-recipe-perps-farm declares reference_repos.mobile as the slot's OWN
+  // Mobile tree (vars.owned_mobile_repo) and its checklist installs and boots it.
+  // Without read_only it is not a reference, and nothing probes it.
+  assert.deepEqual(
+    await resolveReferenceCheckouts(
+      slotVars,
+      {
+        mobile: {
+          repo_url: 'git@github.com:MetaMask/metamask-mobile.git',
+          local_name: 'mmrp-mobile',
+        },
+      },
+      parentDir,
+    ),
+    [],
+  );
+  assert.deepEqual(commands, [], 'and no probe runs for it');
 });

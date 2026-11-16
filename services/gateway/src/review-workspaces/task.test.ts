@@ -99,14 +99,24 @@ test('materialization ignores an execution-only pool and preserves frozen guidan
     assert.match(task, /### Reference checkouts \(read-only\)/);
     assert.match(task, new RegExp(`- \`mobile\`: \`/dev/mobile-ref\` at \`${'c'.repeat(40)}\``));
     assert.match(task, /- `core`: not cloned on this machine\./);
+    // 'unplaced' is the slot's own checkout: the support binding reads it, the task
+    // inputs do not call it a read-only reference.
+    assert.doesNotMatch(task, /`unplaced`/);
+    // The support binding recorded this tree dirty: its revision does not describe it.
+    assert.match(task, /uncommitted changes are present, so cite what you read/);
     assert.deepEqual(
       JSON.parse(await readFile(path.join(f.task, 'inputs/reference-checkouts.json'), 'utf8')),
       {
         schemaVersion: 1,
         references: [
-          { name: 'mobile', path: '/dev/mobile-ref', present: true, headSha: 'c'.repeat(40) },
+          {
+            name: 'mobile',
+            path: '/dev/mobile-ref',
+            present: true,
+            headSha: 'c'.repeat(40),
+            dirty: true,
+          },
           { name: 'core', path: '/dev/core-ref', present: false },
-          { name: 'unplaced', path: '', present: false },
         ],
       },
     );

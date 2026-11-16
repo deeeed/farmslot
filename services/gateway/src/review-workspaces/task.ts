@@ -457,13 +457,26 @@ export async function materializeReviewWorkspaceTask(
         selectionReason: 'frozen-run-selection',
       },
     });
-    const reviewReferences = run.reviewWorkspace.support?.references?.length
-      ? run.reviewWorkspace.support.references.map((reference) => ({
-          name: reference.name,
-          path: reference.path,
-          present: !reference.missing,
-          ...(reference.headSha && !reference.missing ? { headSha: reference.headSha } : {}),
-        }))
+    // Same rule as task init: only a reference the project declares read-only is
+    // listed as one. A support key bound to the slot's own checkout is not.
+    const readOnlyReferenceKeys = new Set(
+      Object.entries(project.projectJson.reference_repos ?? {})
+        .filter(([, reference]) => reference?.read_only === true)
+        .map(([name]) => name),
+    );
+    const reviewReferences = run.reviewWorkspace.support?.references?.filter((reference) =>
+      readOnlyReferenceKeys.has(reference.name),
+    ).length
+      ? run.reviewWorkspace.support.references
+          .filter((reference) => readOnlyReferenceKeys.has(reference.name))
+          .map((reference) => ({
+            name: reference.name,
+            path: reference.path,
+            present: !reference.missing,
+            ...(reference.headSha && !reference.missing ? { headSha: reference.headSha } : {}),
+            // A dirty tree is not described by its revision; the reviewer has to know.
+            ...(reference.dirty ? { dirty: true } : {}),
+          }))
       : undefined;
     await writeTaskDir({
       taskDir: bundleDir,

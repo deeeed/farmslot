@@ -455,6 +455,10 @@
               "description": "Branch to track.",
               "default": "main"
             },
+            "read_only": {
+              "type": "boolean",
+              "description": "This checkout is a read-only reference the worker compares against, never a tree it builds in. Listed in the task inputs with its revision; a key without this flag is the slot's own second checkout and stays out of that list."
+            },
             "required_paths": {
               "type": "array",
               "description": "Paths that must exist in the selected reference snapshot before dispatch can continue.",

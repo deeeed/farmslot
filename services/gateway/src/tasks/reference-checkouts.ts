@@ -25,7 +25,11 @@ export async function resolveReferenceCheckouts(
   slotRepo: string,
 ): Promise<ReferenceCheckout[]> {
   const declared = Object.entries(referenceRepos ?? {})
-    .filter(([name]) => !isLibraryKey(name))
+    // Opt-in by design. Several farms declare reference_repos.mobile as the slot's
+    // OWN Mobile checkout (metamask-recipe-perps-farm binds it as
+    // vars.owned_mobile_repo and installs and boots it): telling that worker the
+    // tree is read-only would contradict its own checklist.
+    .filter(([name, reference]) => !isLibraryKey(name) && reference?.read_only === true)
     .flatMap(([name, reference]) => {
       const localName =
         typeof reference?.local_name === 'string' ? reference.local_name.trim() : '';
@@ -51,8 +55,10 @@ export async function resolveReferenceCheckouts(
       .map(([name, sha]) => [name, /^[0-9a-f]{40}$/.test(sha.trim()) ? sha.trim() : ''] as const)
       .filter(([, sha]) => sha !== ''),
   );
-  // A probe that could not run at all leaves every revision unread: report the
-  // checkouts absent rather than claim a revision nobody read.
+  // Driven by what the probe printed, not by its exit status: a command that failed
+  // part way still printed real revisions for the checkouts it reached, and a probe
+  // that printed nothing leaves every reference absent rather than claiming a
+  // revision nobody read.
   return declared.map((reference) => {
     const headSha = revisions.get(reference.name);
     return headSha ? { ...reference, present: true, headSha } : { ...reference, present: false };

@@ -208,6 +208,8 @@ export interface ReferenceCheckout {
   present: boolean;
   /** The revision the worker cites. Absent when the checkout is not there to read. */
   headSha?: string;
+  /** Uncommitted changes: the revision below does not describe what is on disk. */
+  dirty?: boolean;
 }
 
 /**
@@ -229,8 +231,12 @@ export function renderReferenceCheckoutInputs(
     '',
     ...references.map((reference) =>
       reference.present
-        ? `- \`${reference.name}\`: \`${reference.path}\`${reference.headSha ? ` at \`${reference.headSha}\`` : ''}`
-        : `- \`${reference.name}\`: not cloned on this machine. A comparison that needs it is blocked, not unchecked — say so in the report.`,
+        ? `- \`${reference.name}\`: \`${reference.path}\`${reference.headSha ? ` at \`${reference.headSha}\`` : ''}${
+            reference.dirty
+              ? ' — uncommitted changes are present, so cite what you read, not that revision alone'
+              : ''
+          }`
+        : `- \`${reference.name}\`: not cloned on this machine. Record a comparison that needs it as BLOCKED, never NOT_CHECKED, and say so in the report.`,
     ),
   ];
 }
