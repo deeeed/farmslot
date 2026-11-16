@@ -203,7 +203,7 @@ export async function prepareLiveAdapterScript({
       throw new DiscoveryError(
         'ACTION_IMPLEMENTATION_MISSING',
         `No live script implements ${action} for ${platform} under ${implementationRoot}; expected one of: ${candidates.join(', ')}.`,
-        `write the action implementation to ${shellQuoteArg(expected)}, then rerun --plan`,
+        `write the action implementation to ${shellQuoteArg(expected)}, then retry the original command`,
       );
     }
     return null;

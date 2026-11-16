@@ -7,7 +7,8 @@ import { afterEach, beforeEach, mock, test } from 'node:test';
 import { resolveRecipeExecutionArtifacts } from '../src/harness/commands/run.js';
 import { parseArgs } from '../src/harness/parse-args.js';
 
-const variables = ['RECIPE_TASK_DIR', 'FARMSLOT_TASK_DIR'] as const;
+const taskVariables = ['RECIPE_TASK_DIR', 'FARMSLOT_TASK_DIR'] as const;
+const variables = [...taskVariables, 'FARMSLOT_RECIPE_UNBOUND'] as const;
 const original = Object.fromEntries(variables.map((name) => [name, process.env[name]]));
 const roots: string[] = [];
 const layout = { fresh: 'runs/diagnostic', taskSubdir: 'recipe-runs/diagnostic' };
@@ -111,13 +112,38 @@ test('explicit unbound diagnostics may run beside retained tasks without accepti
   assert.equal(result.artifactsDir, path.join(root, 'temp/recipe/runs/diagnostic'));
 });
 
-for (const variable of variables) {
+test('a scoped replay environment selects diagnostics without binding task claims', () => {
+  const root = checkout();
+  fs.mkdirSync(path.join(root, 'temp/tasks/task-one'), { recursive: true });
+  process.env.FARMSLOT_RECIPE_UNBOUND = '1';
+  const result = resolveRecipeExecutionArtifacts(root, undefined, layout);
+  assert.equal(result.taskDir, null);
+  assert.equal(result.claims, undefined);
+});
+
+test('a disabled replay setting cannot bypass task binding', () => {
+  const root = checkout();
+  fs.mkdirSync(path.join(root, 'temp/tasks/task-one'), { recursive: true });
+  process.env.FARMSLOT_RECIPE_UNBOUND = '0';
+  assert.throws(() => resolveRecipeExecutionArtifacts(root, undefined, layout), /--unbound/u);
+});
+
+for (const variable of taskVariables) {
   test(`unbound diagnostics cannot silently discard ${variable}`, () => {
     const root = checkout();
     process.env[variable] = path.join(root, 'temp/tasks/task-one');
     assert.throws(
       () => resolveRecipeExecutionArtifacts(root, undefined, layout, { unbound: true }),
       /cannot combine --unbound/u,
+    );
+  });
+  test(`a scoped replay cannot discard ${variable}`, () => {
+    const root = checkout();
+    process.env[variable] = path.join(root, 'temp/tasks/task-one');
+    process.env.FARMSLOT_RECIPE_UNBOUND = '1';
+    assert.throws(
+      () => resolveRecipeExecutionArtifacts(root, undefined, layout),
+      /cannot combine --unbound or FARMSLOT_RECIPE_UNBOUND=1/u,
     );
   });
 }

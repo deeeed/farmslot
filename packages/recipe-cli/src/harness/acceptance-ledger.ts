@@ -53,7 +53,9 @@ export class RecipeTaskBindingConflictError extends Error {
   readonly userAction: string;
 
   constructor(command: RecipeExecutionCommand) {
-    super('You cannot combine --unbound with RECIPE_TASK_DIR or FARMSLOT_TASK_DIR.');
+    super(
+      'You cannot combine --unbound or FARMSLOT_RECIPE_UNBOUND=1 with RECIPE_TASK_DIR or FARMSLOT_TASK_DIR.',
+    );
     this.name = 'RecipeTaskBindingConflictError';
     const argument = command === 'run' ? '<recipe.json>' : '<action>';
     this.userAction = `env -u RECIPE_TASK_DIR -u FARMSLOT_TASK_DIR ${invokedHostCommand()} ${command} '${argument}' --unbound`;
@@ -72,7 +74,7 @@ export function requireRecipeTaskBinding(
   unbound: boolean,
   command: RecipeExecutionCommand,
 ): string | null {
-  if (unbound) {
+  if (unbound || process.env.FARMSLOT_RECIPE_UNBOUND === '1') {
     if (process.env.RECIPE_TASK_DIR || process.env.FARMSLOT_TASK_DIR)
       throw new RecipeTaskBindingConflictError(command);
     return null;

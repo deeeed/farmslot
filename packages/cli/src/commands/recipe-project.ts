@@ -216,7 +216,7 @@ export function registerProjectExecutionCommand(
       .option('--artifacts-dir <path>', 'Artifact directory for this execution')
       .option(
         '--unbound',
-        'Diagnostic execution without task acceptance; clear task directory variables',
+        'Diagnostic execution without task acceptance; task directory variables must be unset',
       )
       .option('--action-manifest <path>', 'Select an action manifest')
       .addOption(

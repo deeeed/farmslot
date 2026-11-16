@@ -147,7 +147,7 @@ test('complete-manifest validation reports an unused task declaration missing it
     [selected, source],
     [unused, source],
   ]);
-  const manifest = {
+  const manifest: RecipeActionManifestDocument = {
     $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
     actions: {
       [selected]: declaration(selected),

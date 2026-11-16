@@ -3864,7 +3864,9 @@ describe('call', () => {
     const unbound = await capture(() =>
       handleCall([...args, '--artifacts-dir', explicit], callOptions),
     );
-    assert.equal(lastJson(unbound.stdout).error.code, 'RECIPE_TASK_UNBOUND');
+    const refusal = lastJson(unbound.stdout).error;
+    assert(isRecord(refusal));
+    assert.equal(refusal.code, 'RECIPE_TASK_UNBOUND');
     delete process.env.FARMSLOT_TASK_DIR;
     const pinned = await capture(() =>
       handleCall([...args, '--artifacts-dir', explicit, '--unbound'], callOptions),
