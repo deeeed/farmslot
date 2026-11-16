@@ -24,7 +24,8 @@ export interface SourceInputs {
 
 export function sourceFingerprint(projectRoot: string, inputs: SourceInputs): string {
   const hash = createHash('sha256');
-  const head = gitHead(projectRoot);
+  const observed = sourceStatus(projectRoot, inputs.paths);
+  const head = observed?.head ?? gitHead(projectRoot);
   if (head === null) {
     hash.update('non-git\0');
     for (const relative of inputs.paths) {
@@ -32,20 +33,17 @@ export function sourceFingerprint(projectRoot: string, inputs: SourceInputs): st
     }
   } else {
     hash.update(head);
-    hash.update(git(projectRoot, gitDiffArgs(['--binary', 'HEAD', '--', ...inputs.paths])));
+    if (!observed || observed.trackedChanges) {
+      hash.update(git(projectRoot, gitDiffArgs(['--binary', 'HEAD', '--', ...inputs.paths])));
+    }
 
-    const untracked = git(projectRoot, [
-      'ls-files',
-      '--others',
-      '--exclude-standard',
-      '-z',
-      '--',
-      ...inputs.paths,
-    ])
-      .toString('utf8')
-      .split('\0')
-      .filter(Boolean)
-      .sort();
+    const untracked =
+      observed?.untracked ??
+      git(projectRoot, ['ls-files', '--others', '--exclude-standard', '-z', '--', ...inputs.paths])
+        .toString('utf8')
+        .split('\0')
+        .filter(Boolean)
+        .sort();
     for (const relative of untracked) {
       hash.update(`untracked\0${relative}\0`);
       hash.update(fs.readFileSync(path.join(projectRoot, relative)));
@@ -81,13 +79,77 @@ export function recordSourceBaseline(
   );
 }
 
+interface SourceStatus {
+  head: Buffer;
+  trackedChanges: boolean;
+  untracked: string[];
+}
+
+// One fresh observation supplies HEAD and untracked paths. The canonical diff
+// still binds tracked edits. Nested roots keep ls-files' cwd-relative paths;
+// porcelain paths are always relative to the repository root.
+function sourceStatus(projectRoot: string, paths: readonly string[]): SourceStatus | undefined {
+  if (!fs.existsSync(path.join(projectRoot, '.git'))) return undefined;
+  if (process.env.GIT_DIR || process.env.GIT_WORK_TREE) return undefined;
+  let output: Buffer;
+  try {
+    output = git(projectRoot, [
+      'status',
+      '--porcelain=v2',
+      '--branch',
+      '--no-ahead-behind',
+      '-z',
+      '--untracked-files=all',
+      '--ignore-submodules=none',
+      '--no-renames',
+      '--',
+      ...paths,
+    ]);
+  } catch (error) {
+    // An unavailable or unborn repository keeps the existing fallback behavior.
+    const status = (error as { status?: number }).status;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (typeof status === 'number' || code === 'ENOENT') return undefined;
+    throw error;
+  }
+  const text = output.toString('utf8');
+  if (!Buffer.from(text).equals(output)) return undefined;
+  let head: string | undefined;
+  let trackedChanges = false;
+  const untracked: string[] = [];
+  for (const record of text.split('\0').filter(Boolean)) {
+    if (record.startsWith('# branch.oid ')) head = record.slice(13);
+    else if (record.startsWith('# ')) continue;
+    else if (record.startsWith('? ')) untracked.push(record.slice(2));
+    else if (record.startsWith('1 ') || record.startsWith('u ')) trackedChanges = true;
+    else return undefined;
+  }
+  if (!head || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(head)) return undefined;
+  return { head: Buffer.from(`${head}\n`), trackedChanges, untracked: untracked.sort() };
+}
+
 function git(cwd: string, args: string[]): Buffer {
-  return execFileSync('git', args, {
-    cwd,
-    encoding: 'buffer',
-    maxBuffer: 128 * 1024 * 1024,
-    stdio: ['ignore', 'pipe', 'ignore'],
-  });
+  return execFileSync(
+    'git',
+    [
+      '-c',
+      'gc.auto=0',
+      '-c',
+      'maintenance.auto=false',
+      '-c',
+      'core.hooksPath=/dev/null',
+      '-c',
+      'core.fsmonitor=false',
+      ...args,
+    ],
+    {
+      cwd,
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+      encoding: 'buffer',
+      maxBuffer: 128 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    },
+  );
 }
 
 // null when the project is not a git checkout (or git is unavailable): the

@@ -1,0 +1,1 @@
+- Reduce Mobile source-fingerprint Git processes while retaining fresh observations and compatible fingerprints.
