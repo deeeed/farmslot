@@ -863,11 +863,15 @@ if (stepNumber != null && readJson(signalPath).status === 'complete') {
 // a fresh attempt id while the gateway had already moved the run to review: the
 // worker went on marking steps nobody was watching.
 //
-// A legitimate re-dispatch never meets this: the gateway removes SIGNAL.json and
-// the role signals before replaying a step (methods/run/replay-step.ts, "cleared
-// worker terminal signals"), and an initial dispatch has no signal yet. So a
-// terminal signal still on disk means the worker is restarting itself inside a
-// run that is over, which is the case to refuse. The guard deliberately does not
+// A legitimate re-dispatch never meets this: replaying any step that relaunches
+// a worker removes a finished SIGNAL.json and the role signals first
+// (methods/run/replay-step.ts, "cleared finished worker signals"), and an
+// initial dispatch has no signal yet. A running signal is deliberately left
+// there for admission to replace, and `blocked` stays resumable, so neither
+// reaches the refusal below. A replay at or before write-task regenerates the
+// task into a new directory instead, so this file is not reached at all. So a terminal signal still on disk means the
+// worker is restarting itself inside a run that is over, which is the case to
+// refuse. The guard deliberately does not
 // consult FARMSLOT_SIGNAL_ATTEMPT_ID: only the review terminal sets it
 // (agent-runtime/scripts/review-terminal.cjs), so for a worker run it would
 // never be present and would decide nothing.
@@ -881,9 +885,14 @@ if (isStartCommand) {
   // never exists. A successful verdict is different: nothing resumes a run that
   // finished, and before this a start on `complete` fell straight through and
   // destroyed the record of a run parked at its human gate.
-  if (existing && ['complete', 'no-change'].includes(existing.status)) {
+  // `complete` covers a no-change run too: that command writes status
+  // 'complete' with disposition already_fixed or not_reproducible
+  // (resolveTerminalPreset above), so there is no 'no-change' status to test.
+  if (existing && existing.status === 'complete') {
     console.error(
-      `signal already terminal: status=${existing.status}; start does not re-open it. ` +
+      `signal already terminal: status=${existing.status}` +
+        (existing.disposition ? ` (${existing.disposition})` : '') +
+        '; start does not re-open it. ' +
         'This run finished; a re-dispatch clears the signal first. ' +
         `Fix what the refusal reported and mark the run again, or stop with ${path.join(taskDir, 'mark')} blocked --reason "<why>".`,
     );

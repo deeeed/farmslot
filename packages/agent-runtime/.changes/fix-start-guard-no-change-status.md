@@ -1,0 +1,1 @@
+- `mark start` tests the one status a finished run actually writes. `mark no-change` records status `complete` with a disposition rather than a status of its own, so the refusal also names that disposition, and a run that ended as no-change now says so instead of reporting a bare `complete`.

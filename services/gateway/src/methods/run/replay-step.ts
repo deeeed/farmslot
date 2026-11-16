@@ -28,6 +28,7 @@ import {
   type RunReplayStepResult,
   type RunStatus,
   type RuntimeCapabilityStatusResult,
+  START_REFUSED_WORKER_SIGNAL_STATUS,
   staticReviewReplayBlock,
   supersedePendingResultDecisions,
   taskDirRelPath,
@@ -141,6 +142,11 @@ export interface RunReplayStepHooks {
   preserveDispatchBaseline?: boolean;
   /** Test-only: pause after the replay-owned generation bump. */
   afterGenerationBump?(): Promise<void>;
+  /**
+   * Test-only: pause between deciding which worker signals are finished and
+   * deleting them, which is the window a worker can write `running` into.
+   */
+  beforeWorkerSignalDelete?(): Promise<void>;
   /** Test-only: pause after reading device requirements, while the engine still runs. */
   afterSlotPlanning?(): Promise<void>;
   /** Test-only: retain a controlled engine observer without starting workers. */
@@ -437,6 +443,149 @@ export function canAdoptTaskSignalAfterUncertainDispatch(
   const signalAt = parseStrictIsoMs(normalized.signal.timestamp);
   const dispatchStartedAt = parseStrictIsoMs(dispatch.startedAt);
   return signalAt !== null && dispatchStartedAt !== null && signalAt >= dispatchStartedAt;
+}
+
+/**
+ * Clear the worker signals in `files` whose run finished, and leave every other
+ * one exactly as it was.
+ *
+ * One remote script owns the whole decision, because every split between
+ * deciding and acting is a window a worker can write into: `mark` publishes a
+ * signal by renaming over the path (mark-io.cjs), so a name read as finished
+ * can be live by the time anything acts on it.
+ *
+ * Per file: a signal that does not read as finished is skipped and never moved,
+ * because the path is missing for an instant while a snapshot is held. One that
+ * does is moved aside with one rename, judged again on only the bytes that
+ * moved, and then either removed or put back. Putting back uses `link`, which
+ * refuses an existing destination, so a worker that wrote while this was
+ * deciding keeps its newer file and the snapshot is dropped.
+ *
+ * A clear that dies between the rename and the decision leaves the only copy
+ * under the aside name, where the worker never looks. Every candidate name is
+ * swept for such leftovers first - including names whose original is absent,
+ * which is exactly the state that interruption leaves behind.
+ *
+ * Returns the files it removed, and every name it touched - moved aside or
+ * swept - whose path is still missing when it returns. A failure that ends with
+ * the signal back in place is not a loss and is not reported as one, and a name
+ * that never had a signal is not touched and so is never reported.
+ */
+async function clearStartRefusedSignals(
+  vars: Awaited<ReturnType<typeof import('../../core/config.js').loadSlotVars>>,
+  workerTaskDir: string,
+  files: readonly string[],
+  refusedStatus: string,
+): Promise<{ removed: string[]; lost: string[] }> {
+  const script = `
+const fs = require('node:fs');
+const path = require('node:path');
+const [refusedStatus, ...files] = process.argv.slice(1);
+const removed = [];
+const moved = [];
+const swept = [];
+
+const statusOf = (file) => {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8')).status;
+  } catch {
+    return null;
+  }
+};
+
+// Put a snapshot back without overwriting anything: link refuses an existing
+// destination, where rename would replace a signal written since.
+const restore = (aside, file) => {
+  try {
+    fs.linkSync(aside, file);
+  } catch (error) {
+    if (error.code !== 'EEXIST') return;
+  }
+  try {
+    fs.rmSync(aside);
+  } catch {}
+};
+
+// Recover what an interrupted clear left behind, before anything else and for
+// every name, including one whose signal is otherwise missing - which is the
+// state interruption leaves.
+for (const file of files) {
+  const prefix = path.basename(file) + '.replay-clear.';
+  let entries = [];
+  try {
+    entries = fs.readdirSync(path.dirname(file)).filter((entry) => entry.startsWith(prefix));
+  } catch {}
+  if (entries.length === 0) continue;
+  // A recovery that cannot put the only copy back leaves the path missing, and
+  // the loop below then skips that name because it reads as nothing. Record the
+  // name here so the final state covers it.
+  swept.push(file);
+  for (const entry of entries) restore(path.join(path.dirname(file), entry), file);
+}
+
+for (const file of files) {
+  // A live signal is never moved. Taking one aside leaves the path missing for
+  // an instant, and a worker's own mark reads an absent signal as {} and
+  // republishes it without its attempt id, metadata or timing - history this
+  // clear has no business touching. Only a signal that reads as finished is a
+  // candidate, and the bytes that move are judged again below in case it
+  // changed in between.
+  if (statusOf(file) !== refusedStatus) continue;
+  const aside = file + '.replay-clear.' + process.pid;
+  try {
+    fs.renameSync(file, aside);
+  } catch {
+    continue;
+  }
+  moved.push(file);
+  if (statusOf(aside) === refusedStatus) {
+    try {
+      fs.rmSync(aside);
+      removed.push(file);
+    } catch {}
+    continue;
+  }
+  restore(aside, file);
+}
+
+// Final state, and only for names this clear actually touched - moved aside or
+// swept for leftovers. A role signal that never existed is neither, so it is
+// not a loss. A name another clear removed in the meantime can still land here:
+// from inside this process that is indistinguishable from a snapshot that never
+// came back, and reporting it is the safe way round.
+const lost = [...new Set([...moved, ...swept])].filter(
+  (file) => !removed.includes(file) && !fs.existsSync(file),
+);
+process.stdout.write(JSON.stringify({ removed, lost }));
+`;
+
+  const result = await execOnSlot(
+    vars,
+    `node -e ${shellQuote(script)} ${shellQuote(refusedStatus)} ${files
+      .map((file) => shellQuote(`${workerTaskDir}/${file}`))
+      .join(' ')}`,
+    vars.remoteRepo,
+  );
+  const relative = (file: unknown): string => String(file).slice(`${workerTaskDir}/`.length);
+  if (result.exitCode !== 0) {
+    console.warn(
+      `[run] worker signal cleanup failed in ${workerTaskDir} (exit ${result.exitCode}: ${result.stderr.trim() || result.stdout.trim() || 'no output'})`,
+    );
+    return { removed: [], lost: [] };
+  }
+  try {
+    const parsed = JSON.parse(result.stdout.trim() || '{}') as {
+      removed?: unknown;
+      lost?: unknown;
+    };
+    return {
+      removed: Array.isArray(parsed.removed) ? parsed.removed.map(relative) : [],
+      lost: Array.isArray(parsed.lost) ? parsed.lost.map(relative) : [],
+    };
+  } catch {
+    console.warn(`[run] worker signal cleanup returned no readable result in ${workerTaskDir}`);
+    return { removed: [], lost: [] };
+  }
 }
 
 /** The `blocked` signal a blocked run's monitor stopped on, or null. */
@@ -2259,15 +2408,37 @@ async function replayRunStep(
       targetIdx >= prepareIdx &&
       targetIdx <= dispatchIdx;
 
-    if (
-      replaysWorkerLaunch &&
-      existing.transport === 'native' &&
-      nativeFreshRestart &&
-      effectiveSlotId &&
-      existing.taskFile
-    ) {
-      assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
-      assertNativeReplayCurrent();
+    // A replayed worker calls `mark start`, which refuses to re-open a finished
+    // signal. Clearing ran only for a native fresh restart, so on tmux the new
+    // worker met the finished signal of the attempt it replaces and had no way
+    // past it.
+    //
+    // The rule is any replay that ends in a worker launch: a target at or
+    // before dispatch. `replaysWorkerLaunch` is not that rule - it also demands
+    // a prepare step, so an `update-branch` run (which has none) dispatched a
+    // worker onto the old signal. It keeps its own meaning for the metrics
+    // reset below. A replay at or before write-task is safe for its own reason:
+    // the task regenerates into a new directory, so the old signal is
+    // unreachable whatever this does.
+    //
+    // On every transport but native, only the status `start` refuses goes: a
+    // `running` signal belongs to a worker that may still be alive and is
+    // preserved until admission replaces it, and `blocked` stays because
+    // `start` resumes it and keeps the checked boxes. A native fresh restart
+    // removes all of them, because it has already established that no worker of
+    // the previous attempt survives.
+    const relaunchesWorker = targetIdx >= 0 && dispatchIdx >= 0 && targetIdx <= dispatchIdx;
+    // One narrowed value, so the block below does not re-derive either half:
+    // the slot to clear on, and the task file whose directory names the signals.
+    const clearing =
+      relaunchesWorker &&
+      existing.taskFile !== null &&
+      existing.taskFile !== undefined &&
+      effectiveSlotId !== null &&
+      (existing.transport === 'native' ? nativeFreshRestart : true)
+        ? { slotId: effectiveSlotId, taskFile: existing.taskFile }
+        : null;
+    if (clearing) {
       try {
         const {
           loadSlotVars,
@@ -2276,10 +2447,10 @@ async function replayRunStep(
           resolveProjectTaskDirName,
           resolveTaskRelDir,
         } = await import('../../core/config.js');
-        const vars = await loadSlotVars(effectiveSlotId);
+        const vars = await loadSlotVars(clearing.slotId);
         const pv = await loadProjectVars(existing.project).catch(() => null);
         const taskRelDir = resolveTaskRelDir(
-          existing.taskFile,
+          clearing.taskFile,
           getOrchestratorTaskRoot(existing.project, pv?.projectJson ?? null),
         );
         if (taskRelDir !== null) {
@@ -2290,19 +2461,53 @@ async function replayRunStep(
           const reviewTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['review'];
           const reviewFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['review-fix'];
           const ciFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['ci-fix'];
+          const signalFiles = [
+            WORKER_SIGNAL_FILE,
+            reviewTarget.signal,
+            reviewFixTarget.signal,
+            ciFixTarget.signal,
+          ];
+          // A native fresh restart has already established that no worker of
+          // the previous attempt survives, so it clears whatever is there. Any
+          // other transport reads each signal first and removes only the ones
+          // that ended, so a live attempt's running signal is left alone.
+          // Nothing is deleted until the replay is certainly ours: an `rm`
+          // that lands and is then followed by a thrown ownership assertion
+          // leaves a run short of a signal with no step reset behind it.
           assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
           assertNativeReplayCurrent();
-          await execOnSlot(
-            vars,
-            `rm -f ${shellQuote(`${workerTaskDir}/${WORKER_SIGNAL_FILE}`)} ` +
-              `${shellQuote(`${workerTaskDir}/${reviewTarget.signal}`)} ` +
-              `${shellQuote(`${workerTaskDir}/${reviewFixTarget.signal}`)} ` +
-              `${shellQuote(`${workerTaskDir}/${ciFixTarget.signal}`)} 2>/dev/null`,
-            vars.remoteRepo,
-          );
-          console.log(
-            `[run] replay from ${replayStepName} — cleared worker terminal signals in ${workerTaskDir}`,
-          );
+          if (existing.transport === 'native') {
+            // A native fresh restart has already established that no worker of
+            // the previous attempt survives, so every listed signal goes.
+            await execOnSlot(
+              vars,
+              `rm -f ${signalFiles
+                .map((file) => shellQuote(`${workerTaskDir}/${file}`))
+                .join(' ')} 2>/dev/null`,
+              vars.remoteRepo,
+            );
+            console.log(
+              `[run] replay from ${replayStepName} — cleared worker signals in ${workerTaskDir}`,
+            );
+          } else {
+            assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+            assertNativeReplayCurrent();
+            if (hooks.beforeWorkerSignalDelete) await hooks.beforeWorkerSignalDelete();
+            const { removed, lost } = await clearStartRefusedSignals(
+              vars,
+              workerTaskDir,
+              signalFiles,
+              START_REFUSED_WORKER_SIGNAL_STATUS,
+            );
+            if (removed.length > 0)
+              console.log(
+                `[run] replay from ${replayStepName} — cleared finished worker signals in ${workerTaskDir} (${removed.join(', ')})`,
+              );
+            if (lost.length > 0)
+              console.warn(
+                `[run] replay from ${replayStepName} — ${lost.join(', ')} is missing from ${workerTaskDir}; a worker may have lost its signal`,
+              );
+          }
         }
       } catch (err) {
         if (isReplayOwnershipError(err)) throw err;
