@@ -1,0 +1,1 @@
+- Co-Pilot Send, Stop and Dangerous start no longer fail with "Wait for a current read before acting." while live runs keep changing slots and workers: the action needs one successful status read after the click, and a read the gateway superseded is tried again.
