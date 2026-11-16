@@ -4,8 +4,8 @@
 
 ## Checklist
 
-- [ ] **1. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md` to understand repo structure, conventions, and validation rules.
-- [ ] **2. Start** — `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
+- [ ] **1. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md` to understand repo structure, conventions, and validation rules. Then run `{{TASK_DIR}}/mark start` and `{{TASK_DIR}}/mark 1`, before any other work.
+- [ ] **2. Start** — `{{TASK_DIR}}/mark 2`.
 - [ ] **3. Confirm PR context** — verify `PR_NUMBER`, `PR_BRANCH`, and current task scope before editing.
 - [ ] **4. Checkout PR branch** — `git checkout {{PR_BRANCH}}`
 - [ ] **5. Read inherited context** — review `{{TASK_DIR}}/inputs/inherited/` and any materialized family artifacts before making changes.
