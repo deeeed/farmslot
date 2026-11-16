@@ -71,6 +71,17 @@ for trends; do not reset measurements or change workloads to produce a pass.
 Use the shared dispatch, client/cache and exec wrappers. New methods inherit
 coverage; add no endpoint timers or separate measuring service.
 
+Prepare retains exact `git.<sequence>.<operation>` measurements in its existing
+substeps and log stream. Their JSON detail records elapsed `durationMs`, exit code
+and whether the measurement covers a command or a full guarded mutation, including
+parking. These are nested measurements: do not add them to the parent phase totals.
+Command arguments, output and exception text are omitted. Use the read-only
+[prepare Git timing recipe](../../scripts/runner-validation/prepare-git-timing-read.recipe.json)
+with `FARMSLOT_PREPARE_PROOF_RUN` and an authenticated `FARMSLOT_GATEWAY_PROFILE`
+to read the next real run's `prepare.outputs.subSteps` before changing a slow Git operation.
+Use `FARMSLOT_PREPARE_PROOF_ACTIVE=1` during Git work to check that measurements
+leave the human stage detail intact, then rerun after prepare completes.
+
 HTTP ingress shares the request context used for managed exec and node attribution.
 `farmslot_http_requests_total` counts responses by bounded `http.*` route and status
 class, including `aborted`; `farmslot_http_duration_seconds` and Doctor's HTTP rows

@@ -12,7 +12,7 @@ import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import { getResourceCache } from '../../resource-cache.js';
-import { retainOpenedChildren } from '../workspace/workspace-reads.js';
+import { retainOpenedChildren, WorkspaceReadCancelledError } from '../workspace/workspace-reads.js';
 
 import type { SlotView } from './slot-view.js';
 import {
@@ -105,7 +105,8 @@ export async function initSlotViewLive(view: SlotView, epoch: number) {
       changes: gitResult.changes,
     };
   } catch (err) {
-    if (!isCurrentLiveResult(view, epoch, version)) return;
+    if (err instanceof WorkspaceReadCancelledError || !isCurrentLiveResult(view, epoch, version))
+      return;
     view._wsError = err instanceof Error ? err.message : 'Failed to load workspace';
     view._recoveryPhase = 'error';
     view._recoveryMessage = 'Workspace recovery failed — retry to continue';
@@ -155,7 +156,10 @@ export async function refreshSlotViewGitStatus(view: SlotView) {
       },
     );
   } catch (error) {
-    if (isCurrentLiveResult(view, epoch, version))
+    if (
+      !(error instanceof WorkspaceReadCancelledError) &&
+      isCurrentLiveResult(view, epoch, version)
+    )
       view._wsError = error instanceof Error ? error.message : String(error);
   }
 }
@@ -183,7 +187,8 @@ export async function loadSlotViewDirectory(view: SlotView, dirPath: string) {
     if (!isCurrentLiveResult(view, epoch, version) || !view._workspaceReads.owns(result)) return;
     view._liveEntries = updateSlotViewTreeChildren(view._liveEntries, dirPath, result.entries);
   } catch (err) {
-    if (!isCurrentLiveResult(view, epoch, version)) return;
+    if (err instanceof WorkspaceReadCancelledError || !isCurrentLiveResult(view, epoch, version))
+      return;
     view._wsError = err instanceof Error ? err.message : 'Failed to load directory';
     view._recoveryPhase = 'error';
     view._recoveryMessage = 'Directory recovery failed — retry to continue';
@@ -209,6 +214,7 @@ export async function reloadSlotViewTree(view: SlotView) {
     );
     view._liveEntries = retainOpenedChildren(view._liveEntries, result.entries);
   } catch (err) {
+    if (err instanceof WorkspaceReadCancelledError) return;
     console.warn(
       '[slot-view] reload tree failed:',
       err instanceof Error ? err.message : String(err),
@@ -270,7 +276,8 @@ export async function loadSlotViewFileContent(
     if (!result.held) noteSlotViewReadAccess(view, path, true);
     return true;
   } catch (err) {
-    if (!isCurrentLiveResult(view, epoch, version)) return false;
+    if (err instanceof WorkspaceReadCancelledError || !isCurrentLiveResult(view, epoch, version))
+      return false;
     noteSlotViewReadAccess(view, path, false);
     const message = err instanceof Error ? err.message : String(err);
     if (isDirectoryReadErrorMessage(message)) {
@@ -344,7 +351,8 @@ export async function loadSlotViewDiffContent(
     view._liveDiffContents = next;
     return true;
   } catch (err) {
-    if (!isCurrentLiveResult(view, epoch, version)) return false;
+    if (err instanceof WorkspaceReadCancelledError || !isCurrentLiveResult(view, epoch, version))
+      return false;
     if (options.warnLabel) {
       console.warn(
         `[slot-view] ${options.warnLabel}:`,
@@ -394,7 +402,8 @@ export async function loadSlotViewGitFileContent(
     view._liveFileContents = next;
     return true;
   } catch (err) {
-    if (!isCurrentLiveResult(view, epoch, version)) return false;
+    if (err instanceof WorkspaceReadCancelledError || !isCurrentLiveResult(view, epoch, version))
+      return false;
     const next = new Map(view._liveFileContents);
     next.set(cacheKey, `Error: ${err instanceof Error ? err.message : 'Failed to read file'}`);
     view._liveFileContents = next;

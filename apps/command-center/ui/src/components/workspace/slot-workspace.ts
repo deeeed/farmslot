@@ -21,7 +21,11 @@ import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 
 import type { FileEntry } from './file-tree.js';
-import { retainOpenedChildren, WorkspaceReads } from './workspace-reads.js';
+import {
+  retainOpenedChildren,
+  WorkspaceReadCancelledError,
+  WorkspaceReads,
+} from './workspace-reads.js';
 // NOTE: diff-review and code-viewer use createRenderRoot()=>this (no Shadow DOM)
 // so they don't work inside slot-workspace's Shadow DOM. We use a plain text
 // viewer for file content. Diff rendering uses a simple pre-formatted view.
@@ -313,6 +317,7 @@ export class SlotWorkspace extends LitElement {
 
   private async _initLive() {
     this._teardownLive();
+    const version = this.reads.version;
     this._loading = true;
     this._error = '';
     this._liveEntries = [];
@@ -333,6 +338,7 @@ export class SlotWorkspace extends LitElement {
           this._liveGitData = result;
         }),
       ]);
+      if (version !== this.reads.version) return;
       this._liveEntries = retainOpenedChildren(this._liveEntries, fsResult.entries);
       this._liveGitData = {
         branch: gitResult.branch,
@@ -342,9 +348,11 @@ export class SlotWorkspace extends LitElement {
         changes: gitResult.changes,
       };
     } catch (err) {
+      // A retired read belongs to the previous workspace, including its cancellation.
+      if (version !== this.reads.version || err instanceof WorkspaceReadCancelledError) return;
       this._error = err instanceof Error ? err.message : 'Failed to load workspace';
     } finally {
-      this._loading = false;
+      if (version === this.reads.version) this._loading = false;
     }
   }
 
@@ -355,6 +363,7 @@ export class SlotWorkspace extends LitElement {
   }
 
   private async _loadDirectory(dirPath: string) {
+    const version = this.reads.version;
     try {
       const result = await this.reads.read<FsListResult>(
         Methods.FS_LIST,
@@ -366,8 +375,10 @@ export class SlotWorkspace extends LitElement {
           this._liveEntries = this._updateTreeChildren(this._liveEntries, dirPath, result.entries);
         },
       );
+      if (version !== this.reads.version) return;
       this._liveEntries = this._updateTreeChildren(this._liveEntries, dirPath, result.entries);
     } catch (err) {
+      if (version !== this.reads.version || err instanceof WorkspaceReadCancelledError) return;
       this._error = err instanceof Error ? err.message : 'Failed to load directory';
     }
   }
@@ -390,6 +401,7 @@ export class SlotWorkspace extends LitElement {
   }
 
   private async _handleFileSelect(path: string) {
+    const version = this.reads.version;
     if (this._isLive && !this._liveFileContents.has(path)) {
       try {
         const result = await this.reads.read<FsReadResult>(
@@ -402,10 +414,12 @@ export class SlotWorkspace extends LitElement {
             this._liveFileContents = new Map(this._liveFileContents).set(path, result.content);
           },
         );
+        if (version !== this.reads.version) return;
         const next = new Map(this._liveFileContents);
         next.set(path, result.content);
         this._liveFileContents = next;
       } catch (err) {
+        if (version !== this.reads.version || err instanceof WorkspaceReadCancelledError) return;
         const next = new Map(this._liveFileContents);
         next.set(path, `Error: ${err instanceof Error ? err.message : 'Failed to read file'}`);
         this._liveFileContents = next;

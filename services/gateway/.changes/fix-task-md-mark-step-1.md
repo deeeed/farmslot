@@ -1,0 +1,1 @@
+- A hosted TASK.md takes its marker instruction from `@farmslot/agent-runtime` instead of keeping a second copy of the same sentence, so the line a worker reads cannot differ between a hosted task and a node-initialized one.

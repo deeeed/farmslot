@@ -36,6 +36,7 @@ test('workspace views share canonical reads, stale data cannot authorize edits, 
   });
   let requests = 0;
   let resolveRead!: (reply: unknown) => void;
+  let rejectRead!: (error: Error) => void;
   const transport: ResourceCacheTransport = {
     getConnection: () => ({
       id: 1,
@@ -59,7 +60,8 @@ test('workspace views share canonical reads, stale data cannot authorize edits, 
     onResourceChanged: () => () => {},
     request: <T>() => {
       requests++;
-      return new Promise((resolve) => {
+      return new Promise((resolve, reject) => {
+        rejectRead = reject;
         resolveRead = resolve as (reply: unknown) => void;
       }) as Promise<ResourceReadResult<T>>;
     },
@@ -105,6 +107,34 @@ test('workspace views share canonical reads, stale data cannot authorize edits, 
   while (!resolveRead && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 1));
   assert.equal(requests, 1);
   assert.equal(first.ready, false);
+  let settled = false;
+  void a.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+  rejectRead(
+    Object.assign(new Error('The local file watches are still arming.'), {
+      code: 'RESOURCE_OBSERVATION_UNAVAILABLE',
+    }),
+  );
+  const absentEnd = Date.now() + 2000;
+  while (
+    !first.stateOf('fs.read', { slotId: 'slot', path: 'opened.ts' })?.error &&
+    Date.now() < absentEnd
+  )
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  assert.equal(first.error, '');
+  assert.equal(first.ready, false);
+  assert.equal(settled, false, 'Expected absence keeps the read pending, not failed');
+  const supported = ownedCache.retry(query);
+  const supportedEnd = Date.now() + 2000;
+  while (requests < 2 && Date.now() < supportedEnd)
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  assert.equal(requests, 2);
   resolveRead({
     data: { content: 'saved' },
     resourceState: {
@@ -112,17 +142,35 @@ test('workspace views share canonical reads, stale data cannot authorize edits, 
       dependencies: query.dependencies.map((key) => ({ key, revision: 0 })),
     },
   });
-  await Promise.all([a, b]);
+  await Promise.all([a, b, supported]);
   assert.equal(first.ready, true);
   assert.equal(second.ready, true);
   const saved = ownedCache.read(query).data;
   assert(first.hasData && first.owns(saved));
+  // The same UNAVAILABLE code also wraps real producer failures; those must reject.
+  const denied = first.read('fs.read', { slotId: 'slot', path: 'forbidden.ts' }, () =>
+    assert.fail('A failed read cannot apply data'),
+  );
+  const failureEnd = Date.now() + 2000;
+  while (requests < 3 && Date.now() < failureEnd)
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  assert.equal(requests, 3);
+  rejectRead(
+    Object.assign(new Error('EACCES: permission denied, watch workspace'), {
+      code: 'RESOURCE_OBSERVATION_UNAVAILABLE',
+    }),
+  );
+  await assert.rejects(denied, /EACCES/);
+  assert.match(first.error, /EACCES/);
+  assert.equal(first.ready, false);
+  first.drop('fs.read', { slotId: 'slot', path: 'forbidden.ts' });
+  assert.equal(first.ready, true);
   // Switching profiles retires rendered bytes immediately, before another reply is available.
   const refreshing = ownedCache.retry(query);
   const deadline = Date.now() + 500;
-  while (requests < 2 && Date.now() < deadline)
+  while (requests < 4 && Date.now() < deadline)
     await new Promise((resolve) => setTimeout(resolve, 1));
-  assert.equal(requests, 2);
+  assert.equal(requests, 4);
   cache = undefined;
   owner = 'replacement-owner';
   for (const listener of ownerListeners) listener();

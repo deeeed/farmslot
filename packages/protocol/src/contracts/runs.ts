@@ -3082,6 +3082,8 @@ export interface Run {
   project: string;
   ticketOrPr: string;
   app?: string;
+  /** Operator note frozen at create and appended to the generated TASK.md. */
+  taskNote?: string;
   /**
    * Named domain overlay carried by this run. Free-form and project-defined —
    * threaded into prepare/fixture sync as the `DOMAIN` compose variable and

@@ -29,6 +29,7 @@ import {
   type FamilyInputCommitMetadata,
   type FamilyObservabilityArtifact,
   isEvalPackageAxes,
+  isNativeProfileReference,
   type ResultPackageManifest,
   type Run,
   type RunStartRefSource,
@@ -78,6 +79,7 @@ import { getRun, updateRun } from '../runs/store.js';
 import { TEMPLATE_PROVENANCE_INPUT } from '../tasks/writer.js';
 
 import {
+  axesForTrialTransport,
   axesWithExecutionDefaults,
   harnessLifecycleForAxes,
   resolveCandidateTemplateProvenance,
@@ -494,6 +496,8 @@ const EVAL_TRIAL_START_PARAMS: Record<keyof EvalTrialStartParams, true> = {
   startRef: true,
   runner: true,
   model: true,
+  transport: true,
+  nativeProfile: true,
   review: true,
   reviewRunner: true,
   reviewModel: true,
@@ -541,6 +545,16 @@ function assertEvalTrialStartParams(params: EvalTrialStartParams): void {
     throw new Error(`${EVAL_TRIAL_START_VALIDATION_PREFIX} missing axes`);
   if (!isEvalPackageAxes(params.axes))
     throw new Error('Invalid candidate axes: expected EvalPackageAxes');
+  if (
+    params.transport !== undefined &&
+    params.transport !== 'tmux' &&
+    params.transport !== 'native'
+  )
+    throw new Error(`${EVAL_TRIAL_START_VALIDATION_PREFIX} transport must be tmux or native`);
+  if (params.nativeProfile !== undefined && params.transport !== 'native')
+    throw new Error('Native profile selection requires native worker transport');
+  if (params.nativeProfile !== undefined && !isNativeProfileReference(params.nativeProfile))
+    throw new Error('Invalid native profile reference');
 }
 
 async function resolveCandidateSource(
@@ -729,7 +743,7 @@ export async function evalTrialStart(
       ? path.resolve(path.dirname(params.experimentManifestPath), params.candidateTemplatePath)
       : undefined,
   );
-  const axes = templateResolution.axes;
+  const axes = axesForTrialTransport(templateResolution.axes, params.transport);
   if (!isEvalPackageAxes(axes)) throw new Error('Invalid candidate axes: expected EvalPackageAxes');
   const harnessLifecycle = harnessLifecycleForAxes(params.project, axes);
   const candidateSource = await resolveCandidateSource(params.project, params.source);
@@ -940,6 +954,8 @@ export async function evalTrialStart(
       runner: params.runner,
       model: params.model,
       effort: params.effort,
+      ...(params.transport ? { transport: params.transport } : {}),
+      ...(params.nativeProfile ? { nativeProfile: params.nativeProfile } : {}),
       app: params.app,
       safetyTier: params.safetyTier,
       // A blind trial has no operator to answer a gate, whatever its template's default mode.

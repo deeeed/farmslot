@@ -273,3 +273,48 @@ test('selecting a file whose text is cached opens its own read when none is open
   assert.equal(view._liveFileHashes.get('src/cached.ts'), sha256('cached\n'));
   assert.equal(view._activeFile, 'src/cached.ts');
 });
+
+test('a URL-opened branch diff does not paint a retired read cancellation', async (t) => {
+  const { openSlotViewFileFromUrl } = await import('./slot-view-url-effects.js');
+  const { WorkspaceReadCancelledError } = await import('../workspace/workspace-reads.js');
+  const { branchDiffKey } = await import('./slot-view-model.js');
+  const view = makeView();
+  view._linkedRun = null;
+  const open = t.mock.fn();
+  view._openBranchDiffFile = open;
+  let rejectRead!: (error: Error) => void;
+  t.mock.method(
+    view._workspaceReads,
+    'read',
+    () =>
+      new Promise<never>((_resolve, reject) => {
+        rejectRead = reject;
+      }),
+  );
+  const pending = openSlotViewFileFromUrl(
+    view,
+    branchDiffKey('a'.repeat(40), 'b'.repeat(40), 'src/proof.ts'),
+  );
+  // Recovery clears rendered state before the retired read rejects.
+  view._liveDiffContents.clear();
+  rejectRead(new WorkspaceReadCancelledError());
+  await pending;
+  assert.equal(view._liveDiffContents.size, 0);
+  assert.equal(open.mock.callCount(), 0);
+});
+
+test('a URL-opened branch diff retains a real read failure', async (t) => {
+  const { openSlotViewFileFromUrl } = await import('./slot-view-url-effects.js');
+  const { branchDiffKey } = await import('./slot-view-model.js');
+  const view = makeView();
+  view._linkedRun = null;
+  view._openBranchDiffFile = t.mock.fn();
+  t.mock.method(view._workspaceReads, 'read', () =>
+    Promise.reject(new Error('EACCES: permission denied')),
+  );
+  await openSlotViewFileFromUrl(
+    view,
+    branchDiffKey('a'.repeat(40), 'b'.repeat(40), 'src/proof.ts'),
+  );
+  assert.match([...view._liveDiffContents.values()].join(''), /EACCES/);
+});

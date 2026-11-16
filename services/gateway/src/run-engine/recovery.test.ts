@@ -2215,7 +2215,6 @@ function orphanCollaborators(overrides: Partial<OrphanCollaborators>): OrphanCol
     readSlotField: async () => null,
     getRun: () => undefined,
     updateRun: unexpected,
-    stopRunOwnedWorkers: async () => unexpected(),
     resetSlot: async () => unexpected(),
     resetSlotIf: async () => unexpected(),
     updateSlotStatusIf: async () => unexpected(),
@@ -2360,182 +2359,119 @@ test('orphan reconcile leaves a slot a release already fenced', async () => {
   assert.deepEqual(stamped, ['macwork-ff-2'], 'left alone means stamped, not reset');
 });
 
-test('orphan reconcile reclaims a releasing fence through the conditional reset', async () => {
-  // The fence added for terminal teardown has no other way out: this loop
-  // skips a releasing slot, `resetSlot` refuses one, and `slotRelease` returns
-  // `released: false` for one. A release interrupted between fencing and
-  // finishing would strand the slot for good without this bound.
-  //
-  // The reclaim must NOT go through `resetSlot`, which refuses every releasing
-  // slot: the predicate it hands to `resetSlotIf` is what makes the write both
-  // possible and safe. Asserted on the predicate itself here; the end-to-end
-  // proof against a real slot row lives in `core/slot-reset-fence.test.ts`.
+test('orphan reconcile conditionally holds a stale release without claiming Git completion', async () => {
   const stale = new Date(Date.now() - STALE_RELEASE_RECLAIM_MS - 60_000).toISOString();
-  const terminal = minimalActiveRun({
-    id: 'terminal-stale',
-    status: 'done',
-    slotId: 'macwork-ff-2',
-    ticketOrPr: 'RECOVERY-STALE-RELEASE',
-    familyRootTicketOrPr: 'RECOVERY-STALE-RELEASE',
-    taskFile: '/tmp/terminal-stale/TASK.md',
-  });
-  const reset: string[] = [];
-  const conditional: Array<{
-    slotId: string;
-    predicate: (slot: Readonly<Record<string, unknown>>) => boolean;
-  }> = [];
-  const deps = {
-    listRuns: () => ({ runs: [terminal] }),
+  let update:
+    | {
+        predicate: (row: Readonly<Record<string, unknown>>) => boolean;
+        fields: Record<string, unknown>;
+      }
+    | undefined;
+  const row = {
+    phase: 'releasing',
+    releasing_since: stale,
+    release_gateway_instance: 'old',
+    current_run_id: 'owner',
+    slot_epoch: 3,
+  };
+  const deps = orphanCollaborators({
+    listRuns: () => ({ runs: [] }),
     loadFleetStatus: async () => ({
-      slots: [{ slot: 'macwork-ff-2', lifecycle: 'busy', phase: 'releasing' }],
+      slots: [
+        {
+          slot: 'macwork-ff-2',
+          lifecycle: 'busy',
+          phase: 'releasing',
+          currentRunId: 'owner',
+          slotEpoch: 3,
+        },
+      ],
     }),
-    isTerminalTeardownInFlight: () => false,
-    readSlotField: async () => stale,
-    resetSlot: async (slotId: string) => reset.push(slotId),
-    resetSlotIf: async (
-      slotId: string,
-      predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
-    ) => {
-      conditional.push({ slotId, predicate });
-      return true;
+    readSlotField: async (_slotId, field) => Reflect.get(row, field),
+    updateSlotStatusIf: async (_slotId, predicate, fields) => {
+      update = { predicate, fields };
+      return predicate(row);
     },
-  } as unknown as RunRecoveryCollaborators;
-
+  });
   await reconcileOrphanedSlots(deps);
-
-  assert.deepEqual(reset, [], 'the unguarded reset would have been refused');
-  assert.equal(conditional.length, 1);
-  assert.equal(conditional[0]!.slotId, 'macwork-ff-2');
-  const { predicate } = conditional[0]!;
-  assert.equal(
-    predicate({ phase: 'releasing', releasing_since: stale }),
-    true,
-    'the fence the reconciler observed is the one it may clear',
-  );
-  assert.equal(
-    predicate({ phase: 'releasing', releasing_since: new Date().toISOString() }),
-    false,
-    'a release that re-fenced in the meantime owns the slot',
-  );
-  assert.equal(
-    predicate({ phase: 'working', releasing_since: stale }),
-    false,
-    'a fence that already cleared is not reclaimed a second time',
-  );
+  assert.ok(update);
+  assert.equal(update.fields.lifecycle, 'held');
+  assert.equal(update.fields.cleanup_stop_unconfirmed, true);
+  assert.equal('current_run_id' in update.fields, false);
+  assert.equal(update.predicate(row), true);
+  for (const changed of [
+    { releasing_since: new Date().toISOString() },
+    { release_gateway_instance: 'successor' },
+    { current_run_id: 'successor' },
+    { slot_epoch: 4 },
+    { handoff_run_id: 'incoming' },
+    { phase: 'working' },
+  ])
+    assert.equal(update.predicate({ ...row, ...changed }), false);
 });
 
-test('orphan reconcile reclaims a stale release fence a settled blocked run was left on', async () => {
-  // A restart mid-archive leaves the slot fenced `releasing` with the blocked
-  // run still named on it. The blocked run counts as active, which used to
-  // skip the slot before the stale-release reclaim, so it was stranded for good.
+test('a stale settled blocked owner is held without stopping workers or detaching the run', async () => {
   const stale = new Date(Date.now() - STALE_RELEASE_RECLAIM_MS - 60_000).toISOString();
   const blocked = minimalActiveRun({
     id: 'blocked-archive',
     status: 'blocked',
     steps: [{ name: 'monitor', status: 'done' }],
   });
-  const blockedWithMonitor = (status: Run['steps'][number]['status']) => ({
-    ...blocked,
-    steps: [{ name: 'monitor', status }],
-  });
-  const reclaimed: string[] = [];
-  const updates: Array<{ runId: string; fields: Partial<Run> }> = [];
-  const stopped: string[] = [];
-  let liveWorker: string | null = 'Worker dev stop was not confirmed: runner did not exit';
+  const held: string[] = [];
   const deps = (owner: Run, phase: string) =>
-    ({
+    orphanCollaborators({
       listRuns: () => ({ runs: [owner] }),
       loadFleetStatus: async () => ({
-        slots: [{ slot: 'macwork-ff-2', lifecycle: 'busy', phase }],
+        slots: [{ slot: 'macwork-ff-2', lifecycle: 'busy', phase, currentRunId: owner.id }],
       }),
-      isTerminalTeardownInFlight: () => false,
-      readSlotField: async (_slotId: string, field: string) =>
-        field === 'current_run_id' ? owner.id : stale,
+      readSlotField: async (_slotId, field) =>
+        field === 'current_run_id' ? owner.id : field === 'releasing_since' ? stale : undefined,
       getRun: () => owner,
-      updateRun: (runId: string, fields: Partial<Run>) => updates.push({ runId, fields }),
-      broadcast: () => {},
-      stopRunOwnedWorkers: async (run: Run) => {
-        stopped.push(run.id);
-        return liveWorker;
-      },
-      resetSlot: async (slotId: string) => reclaimed.push(`unguarded:${slotId}`),
-      resetSlotIf: async (slotId: string) => {
-        reclaimed.push(slotId);
+      updateSlotStatusIf: async (slotId, predicate, fields) => {
+        if (!predicate({ phase, current_run_id: owner.id, releasing_since: stale })) return false;
+        assert.equal(fields.lifecycle, 'held');
+        held.push(slotId);
         return true;
       },
-      updateSlotStatusIf: async () => true,
-    }) as unknown as RunRecoveryCollaborators;
-
-  await reconcileOrphanedSlots(deps(blockedWithMonitor('running'), 'releasing'));
-  await reconcileOrphanedSlots(deps(blocked, 'pr-watch'));
-  assert.deepEqual(reclaimed, [], 'a live blocked run, or one merely holding its slot, keeps it');
-
-  assert.deepEqual(stopped, [], 'neither of those is touched');
-
-  // The restart may have cut the release short before its agent kill.
-  await reconcileOrphanedSlots(deps(blocked, 'releasing'));
-  assert.deepEqual(stopped, ['blocked-archive']);
-  assert.deepEqual(reclaimed, [], 'a worker that did not stop keeps the fence');
-  assert.deepEqual(updates, []);
-
-  liveWorker = null;
-  await reconcileOrphanedSlots(deps(blocked, 'releasing'));
-  assert.deepEqual(reclaimed, ['macwork-ff-2']);
-  assert.deepEqual(
-    updates,
-    [{ runId: 'blocked-archive', fields: { slotId: null, requestedSlotId: null } }],
-    'the run is detached and keeps its blocked outcome',
+    });
+  await reconcileOrphanedSlots(
+    deps({ ...blocked, steps: [{ name: 'monitor', status: 'running' }] }, 'releasing'),
   );
+  await reconcileOrphanedSlots(deps(blocked, 'pr-watch'));
+  assert.deepEqual(held, []);
+  await reconcileOrphanedSlots(deps(blocked, 'releasing'));
+  assert.deepEqual(held, ['macwork-ff-2']);
+  assert.equal(blocked.slotId, 'macwork-ff-2', 'metadata hold preserves the run owner');
 });
 
-test('a worker stop that throws keeps the fence and the pass goes on to the next slot', async () => {
+test('holding an interrupted release does not prevent cleanup of an unrelated orphan', async () => {
   const stale = new Date(Date.now() - STALE_RELEASE_RECLAIM_MS - 60_000).toISOString();
-  const blocked = minimalActiveRun({
-    id: 'blocked-stop-throws',
-    status: 'blocked',
-    steps: [{ name: 'monitor', status: 'done' }],
-  });
-  const reclaimed: string[] = [];
   const reset: string[] = [];
+  const held: string[] = [];
   const deps = orphanCollaborators({
-    listRuns: () => ({ runs: [blocked] }),
+    listRuns: () => ({ runs: [] }),
     loadFleetStatus: async () => ({
       slots: [
         { slot: 'macwork-ff-2', lifecycle: 'busy', phase: 'releasing' },
         { slot: 'macwork-ff-3', lifecycle: 'busy', phase: 'working' },
       ],
     }),
-    isTerminalTeardownInFlight: () => false,
-    readSlotField: async (slotId: string, field: string) =>
-      field === 'current_run_id' ? (slotId === 'macwork-ff-2' ? blocked.id : null) : stale,
-    getRun: (id: string) => (id === blocked.id ? blocked : undefined),
-    updateRun: () => {},
-    broadcast: () => {},
-    stopRunOwnedWorkers: async () => {
-      throw new Error('Worker dev ownership changed before stop; exit was not delivered');
-    },
-    resetSlot: async (slotId: string) => {
-      reset.push(slotId);
-    },
+    readSlotField: async (_slotId, field) => (field === 'releasing_since' ? stale : undefined),
     resetSlotIf: async (slotId, predicate) => {
-      const releasing = slotId === 'macwork-ff-2';
-      const row = {
-        current_run_id: releasing ? blocked.id : null,
-        lifecycle: 'busy',
-        phase: releasing ? 'releasing' : 'working',
-        releasing_since: stale,
-      };
-      if (!predicate(row)) return false;
-      (releasing ? reclaimed : reset).push(slotId);
+      if (!predicate({ lifecycle: 'busy', phase: 'working' })) return false;
+      reset.push(slotId);
       return true;
     },
-    updateSlotStatusIf: async () => true,
+    updateSlotStatusIf: async (slotId, predicate, fields) => {
+      if (!predicate({ phase: 'releasing', releasing_since: stale })) return false;
+      assert.equal(fields.lifecycle, 'held');
+      held.push(slotId);
+      return true;
+    },
   });
-
   await reconcileOrphanedSlots(deps);
-
-  assert.deepEqual(reclaimed, [], 'an unproven stop keeps the fence');
-  assert.deepEqual(reset, ['macwork-ff-3'], 'the orphan after it is still reclaimed');
+  assert.deepEqual(held, ['macwork-ff-2']);
+  assert.deepEqual(reset, ['macwork-ff-3']);
 });
 
 test('orphan reconcile leaves a releasing fence that is still young', async () => {
@@ -2632,7 +2568,7 @@ test('an unstamped releasing fence is stamped, not reclaimed, so the bound can r
   assert.equal(predicate({ phase: 'releasing' }), false, 'a teardown that registered owns it');
 });
 
-test('a stamped fence past the bound is reclaimed on a later tick', async () => {
+test('a stamped fence past the bound becomes held on a later tick', async () => {
   // The other half of the unstamped path: once stamped, the existing bound is
   // the only thing that decides, with no special case for where the stamp
   // came from.
@@ -2646,7 +2582,7 @@ test('a stamped fence past the bound is reclaimed on a later tick', async () => 
   });
   const row: Record<string, unknown> = { phase: 'releasing' };
   const reclaimed: string[] = [];
-  const deps = {
+  const deps = orphanCollaborators({
     listRuns: () => ({ runs: [terminal] }),
     loadFleetStatus: async () => ({
       slots: [{ slot: 'macwork-ff-2', lifecycle: 'busy', phase: 'releasing' }],
@@ -2671,7 +2607,7 @@ test('a stamped fence past the bound is reclaimed on a later tick', async () => 
       Object.assign(row, fields);
       return true;
     },
-  } as unknown as RunRecoveryCollaborators;
+  });
 
   await reconcileOrphanedSlots(deps);
   assert.equal(typeof row.releasing_since, 'string', 'first tick stamps');
@@ -2682,7 +2618,10 @@ test('a stamped fence past the bound is reclaimed on a later tick', async () => 
 
   row.releasing_since = new Date(Date.now() - STALE_RELEASE_RECLAIM_MS - 1_000).toISOString();
   await reconcileOrphanedSlots(deps);
-  assert.deepEqual(reclaimed, ['macwork-ff-2'], 'past the bound the stamped fence is reclaimed');
+  assert.deepEqual(reclaimed, [], 'the backstop never resets the checkout');
+  assert.equal(row.lifecycle, 'held');
+  assert.equal(row.phase, 'occupied');
+  assert.equal(row.cleanup_stop_unconfirmed, true);
 });
 
 test('orphan reconcile preserves a persisted occupied workspace without a run owner', async () => {

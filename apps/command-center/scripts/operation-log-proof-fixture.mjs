@@ -1,13 +1,16 @@
 // Disposable real gateway and files for the operation-log browser proof. No worker is launched.
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 
 const output = process.env.OPERATION_LOG_PROOF_OUTPUT;
 const ledgerFailure = process.env.ACCEPTANCE_LEDGER_ERROR_PROOF === '1';
+const expectedAbsence = process.env.ACCEPTANCE_ABSENCE_PROOF === '1';
 const port = Number(process.env.GATEWAY_PORT);
 assert(output && Number.isSafeInteger(port) && port > 0);
 const source = fileURLToPath(new URL('../../../', import.meta.url));
@@ -34,6 +37,13 @@ await writeFile(
   path.join(root, 'projects/log-proof/project.json'),
   JSON.stringify({ name: 'log-proof' }),
 );
+if (expectedAbsence) {
+  const failedRepo = path.join(root, 'repo-watch-error');
+  await mkdir(failedRepo);
+  await promisify(execFile)('git', ['init', '--quiet', failedRepo]);
+  // A real disk error in watch-time Git discovery, not an injected RPC response.
+  await writeFile(path.join(failedRepo, '.git/config'), '[broken config\n');
+}
 await writeFile(
   path.join(root, 'pool/local.json'),
   JSON.stringify({
@@ -42,7 +52,18 @@ await writeFile(
     platform: 'cli',
     os: 'darwin',
     host: 'localhost',
-    slots: [{ id: 'log-proof-1', repo: path.join(root, 'repo'), session: 'not-launched' }],
+    slots: [
+      { id: 'log-proof-1', repo: path.join(root, 'repo'), session: 'not-launched' },
+      ...(expectedAbsence
+        ? [
+            {
+              id: 'log-proof-watch-error',
+              repo: path.join(root, 'repo-watch-error'),
+              session: 'not-launched',
+            },
+          ]
+        : []),
+    ],
   }),
 );
 const load = (file) => import(pathToFileURL(path.join(source, file)).href);
@@ -89,6 +110,36 @@ updateRun(run.id, {
         : {},
   })),
 });
+// Optional setup-only runs exercise absent observations through production RPCs.
+// No worker or browser state is created or changed by the proof driver.
+const absenceRuns = {};
+if (expectedAbsence) {
+  const preparingTask = path.join(config.getOrchestratorTaskRoot('log-proof'), 'preparing-absence');
+  await mkdir(preparingTask, { recursive: true });
+  await writeFile(path.join(preparingTask, 'TASK.md'), '# Preparing task\n');
+  await writeFile(path.join(preparingTask, 'CHECKLIST.md'), '- [ ] Worker has not started\n');
+  for (const status of ['created', 'preparing']) {
+    const empty = createRun(
+      {
+        project: 'log-proof',
+        flowType: 'dev',
+        ticketOrPr: `${status} absence proof`,
+        mode: 'interactive',
+        slotId: 'log-proof-1',
+      },
+      { createdByPrincipalId: person.id, nativeOwnerPrincipalId: person.id },
+    );
+    updateRun(empty.id, {
+      status,
+      ...(status === 'preparing' ? { taskFile: path.join(preparingTask, 'TASK.md') } : {}),
+      steps: empty.steps.map((step) => ({
+        ...step,
+        status: status === 'preparing' && step.name === 'prepare' ? 'running' : 'pending',
+      })),
+    });
+    absenceRuns[status] = empty.id;
+  }
+}
 // Setup-time recorded progress uses the production task reader, which discovers
 // operation records from disk. No progress payload is injected into the browser.
 const recorded = path.join(config.getOrchestratorTaskRoot('log-proof'), 'proof');
@@ -175,7 +226,15 @@ await mkdir(output, { recursive: true });
 await writeFile(
   path.join(output, 'fixture.json'),
   JSON.stringify(
-    { root, runId: run.id, paths, clientHome: path.join(root, 'client'), url, pid: process.pid },
+    {
+      root,
+      runId: run.id,
+      paths,
+      ...(expectedAbsence ? { absenceRuns, watchFailureSlotId: 'log-proof-watch-error' } : {}),
+      clientHome: path.join(root, 'client'),
+      url,
+      pid: process.pid,
+    },
     null,
     2,
   ),

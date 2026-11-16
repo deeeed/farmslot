@@ -1,0 +1,1 @@
+- A run create task note is frozen on the run and appended to the generated TASK.md as one Note section.
