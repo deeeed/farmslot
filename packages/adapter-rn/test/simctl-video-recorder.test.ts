@@ -8,13 +8,14 @@ import { test } from 'node:test';
 import { createIosSimulatorVideoRecorder } from '../src/simctl-video-recorder.js';
 
 // An xcrun stand-in: recordVideo reports an error, then exits cleanly on SIGINT
-// without ever writing the output file. It records its pid for the teardown.
+// without ever writing the output file. It records its pid for the teardown and
+// exits on its own after about 10 s, so a stub teardown missed cannot outlive it.
 const XCRUN = String.raw`#!/bin/bash
 echo "$$" > "$(dirname "$0")/pid"
 trap 'exit 0' INT
 echo 'Error: no display attached' >&2
 : > "$(dirname "$0")/ready"
-while :; do sleep 0.02; done
+while ((SECONDS < 10)); do sleep 0.02; done
 `;
 
 test('a clean stop without an output file names the exit and simctl stderr', async (t) => {
