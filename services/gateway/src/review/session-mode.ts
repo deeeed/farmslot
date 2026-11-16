@@ -1,10 +1,6 @@
 import {
-  adoptedPublicationTarget,
   type AgentContext,
   isReviewRoundNoVerdictSettlement,
-  parseGitHubPullUrl,
-  parseGitHubRef,
-  prNumberFromRunInput,
   type ReviewAttempt,
   type ReviewContinuationContext,
   type ReviewGatePayload,
@@ -17,8 +13,11 @@ import {
 } from '@farmslot/protocol';
 import { resolveReviewMode } from '@farmslot/review-dispatch';
 
+import { reviewPRIdentity } from './pr-identity.js';
 import type { ReReviewContinuation } from './review-agent.js';
 import { reviewContextRoundId } from './review-round-budget.js';
+
+export { reviewPRIdentity };
 
 /** Session freshness does not widen a verified re-review's comparison scope. */
 export function usesPreviousReviewDelta(
@@ -88,33 +87,6 @@ function prDiffers(
     (left.repository.toLowerCase() !== right.repository.toLowerCase() ||
       left.prNumber !== right.prNumber)
   );
-}
-
-export function reviewPRIdentity(
-  run:
-    | (Pick<Run, 'ticketOrPr' | 'links' | 'prWork'> &
-        Partial<Pick<Run, 'flowType' | 'prNumber' | 'engineState'>>)
-    | null
-    | undefined,
-  options: { requirePRContext?: boolean } = {},
-): { repository: string; prNumber: number } | null {
-  if (!run) return null;
-  const adopted = adoptedPublicationTarget(run);
-  if (adopted) return { repository: adopted.repository, prNumber: adopted.prNumber };
-  const pr = run.prWork?.pr;
-  if (pr) return { repository: pr.repo, prNumber: pr.number };
-  const prLink = run.links?.find((link) => link.label.toLowerCase() === 'pr');
-  const source = prLink?.url ?? run.ticketOrPr;
-  const pull = parseGitHubPullUrl(source);
-  if (
-    options.requirePRContext &&
-    !prLink &&
-    !pull &&
-    (!run.flowType || prNumberFromRunInput({ ...run, flowType: run.flowType }) === null)
-  )
-    return null;
-  const ref = parseGitHubRef(source) ?? pull;
-  return ref ? { repository: ref.repo, prNumber: ref.number } : null;
 }
 
 /**
