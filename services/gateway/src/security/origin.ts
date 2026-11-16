@@ -5,6 +5,7 @@ import { explicitDevHosts } from '@farmslot/protocol/explicit-dev-host';
 const EXTRA_ORIGINS_ENV = 'FARMSLOT_GATEWAY_ALLOWED_ORIGINS';
 const UI_ALLOWED_HOSTS_ENV = 'FARMSLOT_UI_ALLOWED_HOSTS';
 const UI_PORT_ENV = 'VITE_PORT';
+const DEV_UI_ORIGINS_ENV = 'FARMSLOT_DEV_UI_ORIGINS';
 const HOSTED_ORIGINS = new Set(['https://farmslot.io', 'https://www.farmslot.io']);
 
 export function isGatewayOriginAllowed(
@@ -51,9 +52,9 @@ function configuredOrigins(): Set<string> {
 
 /** Dev page origins for hosts the operator already listed. Other ports and hosts stay out. */
 function devLanPageOrigins(): string[] {
-  // An installed gateway leaves NODE_ENV unset, so inherited UI hosts do not
-  // open it. scripts/dev.sh sets development for the dev stack.
-  if (process.env.NODE_ENV !== 'development') return [];
+  // An installed gateway does not set this flag, so inherited UI hosts do not
+  // open it. scripts/dev.sh sets the flag for the dev stack and does not export NODE_ENV.
+  if (process.env[DEV_UI_ORIGINS_ENV] !== '1') return [];
   const port = process.env[UI_PORT_ENV]?.trim() ?? '';
   if (!/^\d+$/.test(port)) return [];
   return explicitDevHosts(process.env[UI_ALLOWED_HOSTS_ENV]).map(
