@@ -36,6 +36,55 @@ test('native transport is a different candidate from the tmux default', () => {
   assert.notEqual(fingerprint(tmux), fingerprint(native));
 });
 
+test('catalog eval keeps a domain-gated template out until that domain is requested', async (t) => {
+  const name = `eval-domain-gate-${process.pid}-farm`;
+  const root = path.join(farmslotRoot(), 'projects', name);
+  const templatePath = 'fix-bug/sentry-cuf-autonomous.mobile.md';
+  await mkdir(path.join(root, 'team/checklists/fix-bug'), { recursive: true });
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(
+    path.join(root, 'project.json'),
+    JSON.stringify({
+      name,
+      execution_templates: {
+        sources: [
+          {
+            id: 'team:perps',
+            kind: 'workspace',
+            root: { projectPath: 'team' },
+            subpath: 'checklists',
+            domains: ['perps'],
+          },
+        ],
+      },
+    }),
+  );
+  await writeFile(
+    path.join(root, 'team/checklists', templatePath),
+    '---\nid: fix-bug/sentry-cuf-autonomous.mobile\nflow: fix-bug\nplatforms: [ios]\n---\n\n# Sentry CUF\n\n- [ ] Check the perps flow.\n',
+  );
+
+  await assert.rejects(
+    () =>
+      resolveCandidateTemplateProvenance(name, 'fix-bug', {
+        template: { path: templatePath },
+      }),
+    /Candidate template is unavailable in the project catalog/,
+  );
+  const selected = await resolveCandidateTemplateProvenance(
+    name,
+    'fix-bug',
+    { template: { path: templatePath } },
+    undefined,
+    undefined,
+    'perps',
+  );
+  assert.equal(selected.executionTemplate?.relativePath, templatePath);
+  assert.equal(selected.executionTemplate?.sourceId, 'team:perps');
+  assert.equal(selected.provenance?.templateName, templatePath);
+  assert.equal(selected.provenance?.contentHash, selected.executionTemplate?.sha256);
+});
+
 test('catalog eval resolves the configured fix-bug default before a slot is assigned', async (t) => {
   const name = `eval-nested-catalog-${process.pid}-farm`;
   const root = path.join(farmslotRoot(), 'projects', name);

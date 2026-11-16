@@ -164,10 +164,12 @@ export function computeCandidateStrategyFingerprint(input: {
   source?: EvalPackageSource;
   startRef?: string;
   taskProfile: EvalTaskProfile;
-  /** Omitted and blank stay out of the hash so existing default-profile trials still match. */
+  /** Omitted and blank stay out of the hash so existing default trials still match. */
   prepareProfile?: string;
+  domain?: string;
 }): string {
   const prepareProfile = input.prepareProfile?.trim() || undefined;
+  const domain = input.domain?.trim() || undefined;
   return sha256Text(
     stableJson({
       kind: 'candidate-strategy-v1',
@@ -176,6 +178,7 @@ export function computeCandidateStrategyFingerprint(input: {
       startRef: input.startRef?.trim() || null,
       taskProfile: input.taskProfile,
       ...(prepareProfile ? { prepareProfile } : {}),
+      ...(domain ? { domain } : {}),
     }),
   );
 }
