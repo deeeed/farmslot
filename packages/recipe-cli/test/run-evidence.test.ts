@@ -23,13 +23,17 @@ import {
 import {
   createRecipeRunner,
   createStandardCoreAdapters,
+  currentSourceWitness,
+  PreparedSourceWitness,
   type RecipeArtifactFinalization,
   type RecipeRunResult,
   type SummaryDocument,
+  withPreparedSourceWitness,
 } from '@farmslot/recipe-runner';
 
 import { CallTimingRecorder, withCallTimings } from '../src/harness/call-timings.js';
 import { statusListing } from '../src/harness/execution-provenance.js';
+import { gitOriginUrl } from '../src/harness/git-read.js';
 import {
   beginRunDiagnostics,
   captureExecutionProvenance,
@@ -953,6 +957,58 @@ describe('execution provenance', () => {
     fs.writeFileSync(recipePath, JSON.stringify({ ...recipeDocument, title: 'Changed source' }));
     const drift = executionProvenanceDrift(start, await captureExecutionProvenance(input, 'end'));
     assert.ok(drift.some((entry) => entry.field === 'libraries[0].sourceFingerprint'));
+  });
+
+  test('an origin change invalidates the prepared origin across a source checkpoint', async () => {
+    process.env.FARMSLOT_RECIPE_CACHE_DIR = tempRoot('prepared-cache-');
+    const product = checkout('prepared-origin-', { 'app/value.ts': 'first\n' });
+    git(product, 'config', 'remote.origin.url', 'https://example.invalid/first');
+    await withPreparedSourceWitness(async () => {
+      assert.equal(gitOriginUrl(product), 'https://example.invalid/first');
+      git(product, 'config', 'remote.origin.url', 'https://example.invalid/other');
+      currentSourceWitness()!.checkpoint();
+      assert.equal(gitOriginUrl(product), 'https://example.invalid/other');
+    });
+  });
+
+  test('a prepared execution retains fresh boundaries inside another witness context', async () => {
+    process.env.FARMSLOT_RECIPE_CACHE_DIR = tempRoot('prepared-cache-');
+    const product = checkout('prepared-owner-', { 'app/value.ts': 'first\n' });
+    const input = {
+      adapter: 'web',
+      projectRoot: product,
+      recipeDocument,
+      runnerRoot: product,
+      runnerIncludes: ['app'],
+    };
+    const owner = new PreparedSourceWitness();
+    const foreign = new PreparedSourceWitness();
+    const start = await captureExecutionProvenance(input, 'start', owner);
+    await withPreparedSourceWitness(async () => {
+      sourceSnapshot(product, 'web');
+      fs.writeFileSync(path.join(product, 'app/value.ts'), 'changed\n');
+      const end = await captureExecutionProvenance(input, 'end', owner);
+      assert.ok(
+        executionProvenanceDrift(start, end).some(
+          (drift) => drift.field === 'product.sourceFingerprint',
+        ),
+      );
+      assert.equal(currentSourceWitness(), foreign);
+    }, foreign);
+  });
+
+  test('symlinked exclusions cannot reuse an unexcluded source identity', async () => {
+    process.env.FARMSLOT_RECIPE_CACHE_DIR = tempRoot('prepared-cache-');
+    const product = checkout('prepared-exclusion-', { 'src/value.ts': 'first\n' });
+    const alias = path.join(tempRoot('prepared-alias-'), 'evidence');
+    fs.symlinkSync(path.join(product, 'src'), alias);
+    fs.writeFileSync(path.join(product, 'src/value.ts'), 'changed\n');
+    await withPreparedSourceWitness(async () => {
+      const excluded = sourceSnapshot(product, undefined, [alias]);
+      const included = sourceSnapshot(product);
+      assert.notEqual(excluded.sourceFingerprint, included.sourceFingerprint);
+      assert.match(included.status, /src\/value.ts/u);
+    });
   });
 
   test('records stable snapshots, then recipe, library and product drift', async () => {

@@ -15,8 +15,10 @@ import type {
 } from '@farmslot/adapter-sdk';
 import type { RecipeExecutionPlan } from '@farmslot/protocol';
 import {
+  currentSourceWitness,
   isCaptureInterruptedEntry,
   loneCaptureInterruption,
+  type PreparedSourceWitness,
   readRunTraceEntries,
   type RecipeArtifactFinalization,
   type RecipeHudUnavailable,
@@ -25,6 +27,8 @@ import {
   type RecipeRunRequest,
   type RecipeRunResult,
   resolveRecipeTrustInput,
+  sourceWitnessTotals,
+  withPreparedSourceWitness,
 } from '@farmslot/recipe-runner';
 
 import { adapterPortEnv, harnessAdapter } from './adapters.js';
@@ -109,6 +113,7 @@ export interface PreparedRecipeExecution {
   absoluteArtifactsDir: string;
   provenanceInput: ExecutionProvenanceInput;
   provenanceSnapshots: ExecutionProvenanceSnapshot[];
+  sourceWitness?: PreparedSourceWitness;
 }
 
 /** Execute a recipe inside the caller's `activateRecipeRuntimeEnvironment` scope. */
@@ -123,6 +128,23 @@ export async function runRecipe<TMutation, TAllowlist extends ConsoleAllowlist>(
   preflightedExecution?: PreparedRecipeExecution,
   effectsState: HealState = newHealState(),
 ): Promise<RecipeRunEvidence> {
+  const owner = preflightedExecution?.sourceWitness;
+  if (owner && currentSourceWitness() !== owner)
+    return withPreparedSourceWitness(
+      () =>
+        runRecipe(
+          engine,
+          adapter,
+          recipe,
+          artifactsDir,
+          projectRoot,
+          actionManifestPath,
+          runtimeOptions,
+          preflightedExecution,
+          effectsState,
+        ),
+      owner,
+    );
   const wasPreflighted = preflightedExecution !== undefined;
   const execution =
     preflightedExecution ??
@@ -147,7 +169,11 @@ export async function runRecipe<TMutation, TAllowlist extends ConsoleAllowlist>(
     await planRun(runner, runRequest);
   }
   // The start snapshot was taken when the runner froze its bundles: any edit since refuses the run.
-  const preExecute = await captureExecutionProvenance(provenanceInput, 'pre-execute');
+  const preExecute = await captureExecutionProvenance(
+    provenanceInput,
+    'pre-execute',
+    execution.sourceWitness,
+  );
   provenanceSnapshots.push(preExecute);
   const preExecuteDrift = executionProvenanceDrift(provenanceSnapshots[0]!, preExecute);
   if (preExecuteDrift.length > 0) {
@@ -180,7 +206,7 @@ export async function runRecipe<TMutation, TAllowlist extends ConsoleAllowlist>(
   };
   const recordEnd = async (context?: RecipeArtifactFinalization) => {
     recordedEnd = true;
-    const end = await captureExecutionProvenance(provenanceInput, 'end');
+    const end = await captureExecutionProvenance(provenanceInput, 'end', execution.sourceWitness);
     provenanceSnapshots.push(end);
     const endDrift = executionProvenanceDrift(provenanceSnapshots[0]!, end);
     const provenancePath = await writeExecutionProvenance(
@@ -286,7 +312,9 @@ export function preparedExecutionCurrent(
 
 /** Register recovery/mutation metadata with the engine's single final writer. */
 export function persistRunEffects(context: RecipeArtifactFinalization, state: HealState): void {
+  const witness = sourceWitnessTotals();
   const metadata = {
+    ...(witness ? { sourceWitness: witness } : {}),
     recovered: [...state.recovered],
     mutations: state.mutations.map((mutation) => ({ ...mutation })),
   };
@@ -447,6 +475,7 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
     runRequest,
     provenanceInput,
     provenanceSnapshots,
+    sourceWitness: currentSourceWitness(),
   };
 }
 

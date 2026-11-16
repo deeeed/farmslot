@@ -166,6 +166,17 @@ export {
   probeVideoTiming,
   writeRecordingTimeline,
 } from './recording/timeline.js';
+export type { SourceWitnessMeasurement, SourceWitnessPhase } from './runtime/source-witness.js';
+export {
+  currentSourceWitness,
+  preparedSourceValue,
+  preparedSourceValueAsync,
+  PreparedSourceWitness,
+  sourceGitRoot,
+  sourceWitnessExclusions,
+  sourceWitnessTotals,
+  withPreparedSourceWitness,
+} from './runtime/source-witness.js';
 export { RECIPE_RUNNER_VERSION } from './version.js';
 export type {
   RecipeResolutionDependency,

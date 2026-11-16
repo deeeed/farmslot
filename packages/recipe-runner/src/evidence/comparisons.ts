@@ -9,6 +9,7 @@ import {
 } from '@farmslot/protocol';
 
 import { copyFileWithinRoots, statFileWithinRoot } from '../core/path.js';
+import { currentSourceWitness, preparedSourceValueAsync } from '../runtime/source-witness.js';
 
 import { validateRecordedEvidencePackage } from './package.js';
 import { readRecordedEvidencePackage } from './read-package.js';
@@ -20,6 +21,30 @@ export async function observeRecipeCaptureSource(projectRoot: string): Promise<{
   sourceCommit?: string;
   sourceDirty?: boolean;
 }> {
+  currentSourceWitness()?.checkpoint('capture-source');
+  return preparedSourceValueAsync(
+    projectRoot,
+    { kind: 'capture-source' },
+    () => freshRecipeCaptureSource(projectRoot),
+    (value) => {
+      if (typeof value !== 'object' || value === null) return undefined;
+      if ('sourceCommit' in value && typeof value.sourceCommit !== 'string') return undefined;
+      if ('sourceDirty' in value && typeof value.sourceDirty !== 'boolean') return undefined;
+      return {
+        ...('sourceCommit' in value && typeof value.sourceCommit === 'string'
+          ? { sourceCommit: value.sourceCommit }
+          : {}),
+        ...('sourceDirty' in value && typeof value.sourceDirty === 'boolean'
+          ? { sourceDirty: value.sourceDirty }
+          : {}),
+      };
+    },
+  );
+}
+
+async function freshRecipeCaptureSource(
+  projectRoot: string,
+): Promise<{ sourceCommit?: string; sourceDirty?: boolean }> {
   try {
     const { stdout } = await execute(
       'git',

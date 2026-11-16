@@ -7,6 +7,7 @@ import { test, type TestContext } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import type { ProjectConfig } from '@farmslot/protocol';
+import { currentSourceWitness } from '@farmslot/recipe-runner';
 
 import { runTaskDir } from '../src/harness/acceptance-ledger.js';
 import { harnessAdapters } from '../src/harness/adapters.js';
@@ -77,6 +78,12 @@ const invocationContract: CommandContract = {
 
 test('project execution leaves task attempt allocation to run/call and keeps other defaults', async (t) => {
   const options = fixture(t);
+  const previousCache = process.env.FARMSLOT_RECIPE_CACHE_DIR;
+  process.env.FARMSLOT_RECIPE_CACHE_DIR = fixture(t).cwd;
+  t.after(() => {
+    if (previousCache === undefined) delete process.env.FARMSLOT_RECIPE_CACHE_DIR;
+    else process.env.FARMSLOT_RECIPE_CACHE_DIR = previousCache;
+  });
   const previousTask = process.env.RECIPE_TASK_DIR;
   const task = path.join(options.cwd, 'temp/tasks/validation');
   fs.mkdirSync(path.join(task, 'artifacts'), { recursive: true });
@@ -87,6 +94,7 @@ test('project execution leaves task attempt allocation to run/call and keeps oth
   });
   for (const command of ['run', 'call']) {
     await withProjectRecipeHost({ ...options, command }, async ({ cli }) => {
+      assert.ok(currentSourceWitness());
       assert.equal(cli.artifactsDir, undefined);
       const destination = resolveRecipeExecutionArtifacts(options.cwd, undefined, {
         fresh: 'runs/one',
@@ -108,6 +116,7 @@ test('project execution leaves task attempt allocation to run/call and keeps oth
   }
   for (const command of ['doctor', 'launch', 'stop']) {
     await withProjectRecipeHost({ ...options, command }, async ({ cli }) => {
+      assert.equal(currentSourceWitness(), undefined);
       assert.equal(cli.artifactsDir, path.join(options.cwd, 'artifacts'));
     });
   }

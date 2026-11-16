@@ -168,3 +168,39 @@ fresh target selection, collection order, deadlines, custom-script/absent-broker
 fallback and no replay after an uncertain destructive collection. Verify complete
 recipes and recording when changing those contracts. Do not add polling or
 per-call work proportional to accumulated runs or artifacts.
+
+## Prepared recipe source witnesses
+
+The harness lane owns this candidate. Target zero traced framework Git starts in
+unchanged calls, including bootstrap and capture provenance; user-authored Git
+commands are separate work. A prepared record is reused only after fresh file
+witnesses at source, provider-authority and capture boundaries. Retained output
+history must stay outside validation. Unsupported output layouts retain fresh
+legacy checks and must not gain a history scan. No persistent call server is used.
+
+`summary.json.sourceWitness` reports wall/CPU time and source-file/directory
+counts for each physical-root validation, tagged by checkpoint and boundary.
+Cold preparation and refresh counts remain separate from warm measurements.
+The recorded call profiler covers direct children and the runner-revision shell
+call; `work.git` is a narrower counter. Parent-Node CPU remains diagnostic when
+work moves from Git children into the witness. Wall and total descendant CPU
+qualify the comparison.
+
+Preliminary matched candidate measurements against published harness 0.96.26,
+recording/healing off, five calls per action with the first discarded:
+
+| Case              | Outer wall ms before / after | Total CPU ms before / after | Attributed children before / after | Git work before / after |
+| ----------------- | ---------------------------: | --------------------------: | ---------------------------------: | ----------------------: |
+| Core command      |                    640 / 525 |                   840 / 660 |                             19 / 1 |                  17 / 0 |
+| Mobile unlock     |                  2910 / 2635 |                 2815 / 1995 |                             27 / 5 |                  17 / 0 |
+| Mobile screenshot |                  2695 / 2580 |                 3010 / 2170 |                             31 / 7 |                  17 / 0 |
+| Mobile positions  |                  1945 / 1560 |                 2630 / 1695 |                             27 / 5 |                  17 / 0 |
+
+All warm traced Git starts were zero. Core cold preparation used 16 Git starts.
+These are candidate references under recorded host load, not new shared canary
+baselines. Final provider-freshness closeout, Extension proof and exact-head
+review remain required. The alert is any warm framework Git start, history-sized
+validation work, lost drift refusal, or a wall/total-CPU regression beyond the
+accepted comparison budget. File-witness cost must remain below the replaced
+Git/provenance work. Improve the declared input owner and shared projections;
+do not remove freshness or evidence observations to make the count pass.
