@@ -892,6 +892,18 @@ export interface RunRecordBuildOptions extends RunRecordOptions {
   runId?: string;
 }
 
+function normalizeTaskNote(params: RunCreateParams): string | undefined {
+  if (params.taskNote === undefined) return undefined;
+  if (typeof params.taskNote !== 'string') throw new Error('taskNote must be a string');
+  const note = params.taskNote.trim();
+  if (!note) return undefined;
+  if (params.taskFile)
+    throw new Error(
+      'taskNote applies only when Farmslot generates TASK.md. Omit taskFile, or write the note into that file.',
+    );
+  return note;
+}
+
 export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuildOptions): Run {
   if ('sourceProvenance' in params) throw new Error('Source provenance is gateway-owned');
   if (
@@ -1035,6 +1047,7 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
   // paths and sed replacement text in sync-fixtures.sh (which validates too).
   // The contract matches worker-template variant names and the pool domain field.
   const domain = params.domain?.trim() || undefined;
+  const taskNote = normalizeTaskNote(params);
   if (domain !== undefined && !isValidDomainName(domain)) {
     throw new Error(
       `Invalid domain: ${String(params.domain)} — must be a lowercase slug (a-z, 0-9, '._-', no leading/trailing punctuation)`,
@@ -1140,6 +1153,7 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
     project: params.project,
     ticketOrPr: params.ticketOrPr,
     app: params.app,
+    ...(taskNote ? { taskNote } : {}),
     ...(domain ? { domain } : {}),
     ...(params.prepareProfile ? { prepareProfile: params.prepareProfile } : {}),
     ...(params.waitPolicy ? { waitPolicy: params.waitPolicy } : {}),

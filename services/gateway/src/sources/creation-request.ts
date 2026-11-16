@@ -69,6 +69,7 @@ const REQUEST_FIELDS = {
   tags: true,
   initialContext: true,
   devChecklist: true,
+  taskNote: true,
 } satisfies Record<keyof RunCreateParams, true>;
 
 /** Retain caller choices without copying unknown wire fields or trusted verification flags. */

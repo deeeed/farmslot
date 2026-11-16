@@ -12,6 +12,7 @@ test('replanning retains caller intent and optional-field presence without retai
     ticketOrPr: 'PLAN-1',
     allowedSlots: ['slot-1'],
     reviewMode: 'warm',
+    taskNote: 'This is an evaluation.',
     pressureOverride: { machine: 'node-1', pressureGeneration: 'generation-1', reason: 'fixture' },
     startRefSkipPrepareVerified: true,
   };
@@ -20,6 +21,7 @@ test('replanning retains caller intent and optional-field presence without retai
   assert.equal('startRefSkipPrepareVerified' in request, false);
   assert.equal('mode' in request, false);
   assert.equal(request.reviewMode, 'warm');
+  assert.equal(request.taskNote, 'This is an evaluation.');
   request.allowedSlots!.push('slot-2');
   assert.deepEqual(params.allowedSlots, ['slot-1']);
   assert.deepEqual(request.pressureOverride, params.pressureOverride);

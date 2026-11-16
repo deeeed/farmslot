@@ -57,6 +57,13 @@ const TASK_BLOCK_KEYS: ReadonlyArray<{ key: string; optional?: boolean; label?: 
   { key: 'ADB_SERIAL', optional: true },
 ];
 
+/** One `## Note` section, or an empty string when the caller sent no note. */
+export function taskNoteSection(note: string | undefined): string {
+  const text = note?.trim();
+  if (!text) return '';
+  return `\n\n## Note\n\n${text}\n`;
+}
+
 /**
  * Acceptance criteria arrive as plain strings, but Jira and GitHub adapters keep
  * the author's list markers. Normalize to one bullet per criterion so TASK.md
