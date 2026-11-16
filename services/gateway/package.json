@@ -31,6 +31,7 @@
     "@farmslot/credential-store": "workspace:*",
     "@farmslot/handoff": "workspace:*",
     "@farmslot/protocol": "workspace:*",
+    "@farmslot/recipe-runner": "workspace:*",
     "@farmslot/review-dispatch": "workspace:*",
     "@farmslot/run-bundle": "workspace:*",
     "@farmslot/slot-config": "workspace:*",

@@ -1,0 +1,1 @@
+- Record initialized worker ownership for generated recipe outputs without changing proof binding.

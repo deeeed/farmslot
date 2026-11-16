@@ -18,6 +18,15 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import {
+  buildHandoffMetadata,
+  builtinTerminalContract,
+  writeTaskDir,
+} from '@farmslot/agent-runtime';
+import { isRecord, RECIPE_ACTION_MANIFEST_SCHEMA_URL } from '@farmslot/protocol';
+import { createRecipeRunner, createStandardCoreAdapters } from '@farmslot/recipe-runner';
+import { recordRecipeArtifactOwner } from '@farmslot/recipe-runner/runtime/artifact-owner';
+
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
 import type { SlotVars } from '../core/config.js';
 
@@ -991,3 +1000,241 @@ for (const homeRelative of [false, true]) {
     }
   });
 }
+
+async function recipeBucket(
+  repo: string,
+  runId: string,
+  kind: 'calls' | 'runs',
+  name: string,
+): Promise<{ bucket: string; taskFile: string; bytes: Buffer }> {
+  const taskDir = path.join(repo, '.task', 'fix', runId);
+  const contract = builtinTerminalContract('dev');
+  const taskFile = path.join(taskDir, 'TASK.md');
+  if (!existsSync(taskFile))
+    await writeTaskDir({
+      taskDir,
+      taskMarkdown: '# Fixture task\n',
+      checklistMarkdown: null,
+      handoff: buildHandoffMetadata({
+        attemptId: runId,
+        surface: 'farmslot',
+        project: 'fixture',
+        flow: 'dev',
+        title: 'Own recipe outputs',
+        sourceKind: 'text',
+        terminalContract: contract,
+      }),
+      terminalContract: contract,
+    });
+  const previous = process.env.FARMSLOT_TASK_FILE;
+  process.env.FARMSLOT_TASK_FILE = taskFile;
+  const bucket = path.join(repo, 'temp', 'recipe', kind, name);
+  mkdirSync(bucket, { recursive: true });
+  try {
+    const runner = createRecipeRunner({
+      actionManifest: {
+        $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+        actions: { end: { description: 'Finish', examples: [{ action: 'end', status: 'pass' }] } },
+      },
+      adapters: createStandardCoreAdapters({ actions: ['end'] }),
+      defaultSource: { kind: 'operator', trust: 'trusted' },
+    });
+    const result = await runner.run({
+      recipeDocument: {
+        $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+        title: 'Owned recipe output',
+        description: 'Retain one finished invocation',
+        workflow: { entry: 'done', nodes: { done: { action: 'end', status: 'pass' } } },
+      },
+      artifactsDir: bucket,
+      projectRoot: repo,
+    });
+    assert.equal(result.status, 'pass');
+  } finally {
+    if (previous === undefined) delete process.env.FARMSLOT_TASK_FILE;
+    else process.env.FARMSLOT_TASK_FILE = previous;
+  }
+  const bytes = Buffer.from([137, 80, 78, 71, 0, 255, 17]);
+  writeFileSync(path.join(bucket, 'evidence.png'), bytes);
+  return { bucket, taskFile, bytes };
+}
+
+test('release archive retains and removes only its recipe call/run buckets', async (t) => {
+  const f = fixture(t);
+  const call = await recipeBucket(f.repo, 'finished-owner', 'calls', 'owned-call');
+  const run = await recipeBucket(f.repo, 'finished-owner', 'runs', 'owned-run');
+  const foreign = await recipeBucket(f.repo, 'parked-other-owner', 'calls', 'foreign-call');
+  const unknown = path.join(f.repo, 'temp/recipe/calls/unknown');
+  mkdirSync(unknown, { recursive: true });
+  writeFileSync(path.join(unknown, 'notes.txt'), 'unknown ownership');
+  writeFileSync(path.join(unknown, 'recipe-owner.json'), '{broken receipt');
+  const options = {
+    destination: f.destination,
+    taskRelativeDir: 'fix/finished-owner',
+    recipeOwnerRunId: 'finished-owner',
+    beforeRemove: async () => {},
+  };
+  const receiptRoot = path.join(path.dirname(call.taskFile), 'artifacts/recipe-ownership');
+  assert(existsSync(receiptRoot), 'canonical recipe invocation records ownership');
+  const result = await archiveSlotScaffolding(f.vars, {}, options);
+  assert.equal(
+    existsSync(call.bucket),
+    false,
+    'finished call output does not leak to the next run',
+  );
+  assert.equal(
+    existsSync(run.bucket),
+    false,
+    'finished recipe output does not leak to the next run',
+  );
+  for (const owned of [call, run]) {
+    const retained = execFileSync('tar', [
+      '-xOf',
+      path.join(result.directory, 'scaffolding.tar'),
+      path.posix.join(path.relative(f.repo, owned.bucket), 'evidence.png'),
+    ]);
+    assert.deepEqual(retained, owned.bytes, 'binary evidence is retained before removal');
+  }
+  assert.deepEqual(readFileSync(path.join(foreign.bucket, 'evidence.png')), foreign.bytes);
+  assert.equal(readFileSync(path.join(unknown, 'notes.txt'), 'utf8'), 'unknown ownership');
+});
+
+test('recipe cleanup keeps every source when the release fence changes', async (t) => {
+  const f = fixture(t);
+  const owned = await recipeBucket(f.repo, 'finished-owner', 'calls', 'owned-call');
+  const options = {
+    destination: f.destination,
+    taskRelativeDir: 'fix/finished-owner',
+    recipeOwnerRunId: 'finished-owner',
+    beforeRemove: async () => {
+      throw new Error('release owner changed');
+    },
+  };
+  await assert.rejects(archiveSlotScaffolding(f.vars, {}, options), /release owner changed/);
+  assert.deepEqual(readFileSync(path.join(owned.bucket, 'evidence.png')), owned.bytes);
+  assert.equal(existsSync(owned.taskFile), true);
+});
+
+test('recipe cleanup preserves new evidence written after archive capture', async (t) => {
+  const f = fixture(t);
+  const owned = await recipeBucket(f.repo, 'finished-owner', 'calls', 'owned-call');
+  let changed = false;
+  const options = {
+    destination: f.destination,
+    taskRelativeDir: 'fix/finished-owner',
+    recipeOwnerRunId: 'finished-owner',
+    beforeRemove: async () => {
+      if (!changed) {
+        changed = true;
+        writeFileSync(path.join(owned.bucket, 'evidence.png'), 'new evidence');
+      }
+    },
+  };
+  await assert.rejects(archiveSlotScaffolding(f.vars, {}, options), /recipe.*changed/i);
+  assert.equal(readFileSync(path.join(owned.bucket, 'evidence.png'), 'utf8'), 'new evidence');
+  assert.equal(existsSync(owned.taskFile), true);
+});
+
+test('recipe evidence stays on the slot when archive retention fails', async (t) => {
+  const f = fixture(t);
+  const owned = await recipeBucket(f.repo, 'finished-owner', 'calls', 'owned-call');
+  writeFileSync(f.destination, 'archive unavailable');
+  const options = {
+    destination: f.destination,
+    taskRelativeDir: 'fix/finished-owner',
+    recipeOwnerRunId: 'finished-owner',
+    beforeRemove: async () => {},
+  };
+  await assert.rejects(archiveSlotScaffolding(f.vars, {}, options), /ENOTDIR|not a directory/);
+  assert.deepEqual(readFileSync(path.join(owned.bucket, 'evidence.png')), owned.bytes);
+  assert.equal(existsSync(owned.taskFile), true);
+});
+
+for (const protectedKind of ['checkout', 'link'] as const) {
+  test(`recipe cleanup preserves a bucket containing a ${protectedKind}`, async (t) => {
+    const f = fixture(t);
+    const owned = await recipeBucket(f.repo, 'finished-owner', 'calls', 'owned-call');
+    if (protectedKind === 'checkout') mkdirSync(path.join(owned.bucket, '.git'));
+    else {
+      const target = path.join(f.root, 'outside-evidence');
+      writeFileSync(target, 'protected external evidence');
+      symlinkSync(target, path.join(owned.bucket, 'linked-evidence'));
+    }
+    const options = {
+      destination: f.destination,
+      taskRelativeDir: 'fix/finished-owner',
+      recipeOwnerRunId: 'finished-owner',
+      beforeRemove: async () => {},
+    };
+    await assert.rejects(archiveSlotScaffolding(f.vars, {}, options), /checkout or link/);
+    assert.deepEqual(readFileSync(path.join(owned.bucket, 'evidence.png')), owned.bytes);
+    assert.equal(existsSync(owned.taskFile), true);
+  });
+}
+
+test('a task receipt cannot collect a replaced invocation at the same bucket path', async (t) => {
+  const f = fixture(t);
+  const owned = await recipeBucket(f.repo, 'finished-owner', 'calls', 'reused-path');
+  const file = path.join(owned.bucket, 'recipe-invocation.json');
+  const invocation = JSON.parse(readFileSync(file, 'utf8'));
+  writeFileSync(file, JSON.stringify({ ...invocation, recipeRunId: 'another-invocation' }));
+  await archiveSlotScaffolding(
+    f.vars,
+    {},
+    {
+      destination: f.destination,
+      taskRelativeDir: 'fix/finished-owner',
+      recipeOwnerRunId: 'finished-owner',
+      beforeRemove: async () => undefined,
+    },
+  );
+  assert.deepEqual(readFileSync(path.join(owned.bucket, 'evidence.png')), owned.bytes);
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).recipeRunId, 'another-invocation');
+});
+
+test('overlapping task receipts preserve every source before collection', async (t) => {
+  const f = fixture(t);
+  const owned = await recipeBucket(f.repo, 'finished-owner', 'calls', 'owned-call');
+  const other = path.join(f.repo, 'other-tasks/fix/finished-owner');
+  const contract = builtinTerminalContract('dev');
+  await writeTaskDir({
+    taskDir: other,
+    taskMarkdown: '# Second task alias\n',
+    checklistMarkdown: null,
+    terminalContract: contract,
+    handoff: buildHandoffMetadata({
+      attemptId: 'finished-owner',
+      surface: 'farmslot',
+      project: 'fixture',
+      flow: 'dev',
+      title: 'Overlapping identity',
+      sourceKind: 'text',
+      terminalContract: contract,
+    }),
+  });
+  const invocation: unknown = JSON.parse(
+    readFileSync(path.join(owned.bucket, 'recipe-invocation.json'), 'utf8'),
+  );
+  assert(isRecord(invocation) && typeof invocation.recipeRunId === 'string');
+  await recordRecipeArtifactOwner(
+    owned.bucket,
+    invocation.recipeRunId,
+    path.join(other, 'TASK.md'),
+  );
+  await assert.rejects(
+    archiveSlotScaffolding(
+      f.vars,
+      { paths: { artifact_dir: 'other-tasks' } },
+      {
+        destination: f.destination,
+        taskRelativeDir: 'fix/finished-owner',
+        recipeOwnerRunId: 'finished-owner',
+        beforeRemove: async () => undefined,
+      },
+    ),
+    /Overlapping recipe artifact ownership/,
+  );
+  assert(existsSync(owned.taskFile));
+  assert(existsSync(path.join(other, 'TASK.md')));
+  assert.deepEqual(readFileSync(path.join(owned.bucket, 'evidence.png')), owned.bytes);
+});

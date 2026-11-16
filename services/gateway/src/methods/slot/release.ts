@@ -9,10 +9,12 @@ import {
   DEFAULT_BRANCH,
   type FlowType,
   isCompletionPrerequisiteFailure,
+  isGateParkInFlightOrFreed,
   isHeldForResultDecision,
   isReviewerWindowName,
   isTerminalRunStatus,
   primaryRoleForFlow,
+  type Run,
   SLOT_DESTRUCTIVE_OPS,
   type SlotReleaseParams,
   type SlotReleaseResult,
@@ -453,6 +455,16 @@ async function releasePreflight(
     blindMarker,
     ...(interruptedRelease ? { interruptedRelease } : {}),
   };
+}
+
+export function canCollectRecipeArtifacts(run: Run | undefined): run is Run {
+  return (
+    !!run &&
+    isTerminalRunStatus(run.status) &&
+    !isHeldForResultDecision(run) &&
+    !isCompletionPrerequisiteFailure(run) &&
+    !isGateParkInFlightOrFreed(run)
+  );
 }
 
 /**
@@ -1090,10 +1102,22 @@ async function slotReleaseImpl(
         ? path.join(runSessionArchiveDir(runId), 'slot-scaffolding')
         : path.join(runsDirectory(), 'slot-scaffolding', vars.slotId);
       try {
+        const recipeOwner = runId ? await getRunWithArchived(runId) : undefined;
+        const recipeOwnerRunId = canCollectRecipeArtifacts(recipeOwner)
+          ? recipeOwner.id
+          : undefined;
         const collected = await archiveSlotScaffolding(vars, projectJson, {
           destination,
           taskRelativeDir: taskRel,
-          beforeRemove: assertReleaseClaim,
+          recipeOwnerRunId,
+          beforeRemove: async () => {
+            await assertReleaseClaim();
+            if (
+              recipeOwnerRunId &&
+              !canCollectRecipeArtifacts(await getRunWithArchived(recipeOwnerRunId))
+            )
+              throw new Error('Recipe artifact owner became protected during release');
+          },
         });
         step(
           'scaffolding',

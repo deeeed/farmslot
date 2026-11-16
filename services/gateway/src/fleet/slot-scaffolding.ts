@@ -4,6 +4,11 @@ import path from 'node:path';
 
 import { DEFAULT_TASK_DIR } from '@farmslot/protocol';
 import { FARM_INSTANCE_CLAIM } from '@farmslot/protocol/node/farm-paths';
+import {
+  buildRecipeArtifactCommand,
+  parseRecipeArtifactSnapshots,
+  type RecipeArtifactSnapshot,
+} from '@farmslot/recipe-runner/runtime/artifact-owner';
 import { parseProjectOwnedPaths } from '@farmslot/slot-config';
 
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
@@ -183,6 +188,8 @@ export interface SlotScaffoldingArchiveOptions {
   destination: string;
   beforeRemove: () => Promise<void>;
   taskRelativeDir: string | null;
+  /** Terminal, non-reloadable owner, rechecked by beforeRemove. Unknown owners are preserved. */
+  recipeOwnerRunId?: string;
   /** Where nested checkouts are moved on the slot host. Default: `$HOME/slot-retained`. */
   retainedBase?: string;
   /** Largest archive the release downloads. Default: SCAFFOLDING_ARCHIVE_MAX_BYTES. */
@@ -515,14 +522,33 @@ async function collectSlotScaffolding(
           list,
         )
       : `: > ${shellQuote(list)}`;
+    const maxArchiveBytes = options.maxArchiveBytes ?? SCAFFOLDING_ARCHIVE_MAX_BYTES;
+    const inventory = options.recipeOwnerRunId
+      ? buildRecipeArtifactCommand({
+          kind: 'inventory',
+          repo: vars.remoteRepo,
+          runId: options.recipeOwnerRunId,
+          taskFiles: taskRoots.map((root) => path.posix.join(root, 'TASK.md')),
+          fileList: list,
+          maxBytes: maxArchiveBytes,
+        })
+      : '';
     const packed = await execOnSlot(
       vars,
-      `cd ${shellQuote(vars.remoteRepo)} && ${listed} && tar -cf ${shellQuote(remoteArchive)} --null -T ${shellQuote(list)}`,
+      [
+        'set -e',
+        `cd ${shellQuote(vars.remoteRepo)}`,
+        listed,
+        inventory,
+        `tar -cf ${shellQuote(remoteArchive)} --null -T ${shellQuote(list)}`,
+      ].join('\n'),
       { timeout: 120_000 },
     );
     if (packed.exitCode !== 0) throw new Error(`Cannot pack scaffolding: ${packed.stderr}`);
+    const recipeArtifacts: RecipeArtifactSnapshot[] = options.recipeOwnerRunId
+      ? parseRecipeArtifactSnapshots(JSON.parse(packed.stdout))
+      : [];
     const archiveBytes = (await slotStat(vars, remoteArchive)).size;
-    const maxArchiveBytes = options.maxArchiveBytes ?? SCAFFOLDING_ARCHIVE_MAX_BYTES;
     if (archiveBytes > maxArchiveBytes)
       throw new Error(
         `Scaffolding archive is ${Math.ceil(archiveBytes / 1024 ** 2)} MB, over the ${Math.floor(maxArchiveBytes / 1024 ** 2)} MB limit`,
@@ -560,9 +586,27 @@ async function collectSlotScaffolding(
     }
     await writeFile(
       path.join(directory, 'manifest.json'),
-      `${JSON.stringify({ slotId: vars.slotId, sources: sources.map((source) => source.relative), skipped }, null, 2)}\n`,
+      `${JSON.stringify({ slotId: vars.slotId, sources: sources.map((source) => source.relative), skipped, recipeArtifacts }, null, 2)}\n`,
     );
     archived = true;
+    if (recipeArtifacts.length && options.recipeOwnerRunId) {
+      await options.beforeRemove();
+      const removed = await execOnSlot(
+        vars,
+        buildRecipeArtifactCommand({
+          kind: 'remove',
+          repo: vars.remoteRepo,
+          runId: options.recipeOwnerRunId,
+          snapshots: recipeArtifacts,
+          maxBytes: maxArchiveBytes,
+        }),
+        { timeout: 120_000, noRetry: true },
+      );
+      if (removed.exitCode !== 0)
+        throw new Error(
+          `Cannot remove retained recipe artifacts: ${removed.stderr || removed.stdout}`,
+        );
+    }
     const removal = [
       ...sources.filter((source) => source.absolute !== external).reverse(),
       ...sources.filter((source) => source.absolute === external),
@@ -585,7 +629,7 @@ async function collectSlotScaffolding(
     }
     return {
       directory,
-      roots: sources.length,
+      roots: sources.length + recipeArtifacts.length,
       moved: retainedDir ? skipped.filter((entry) => entry.kind === 'checkout').length : 0,
     };
   } finally {

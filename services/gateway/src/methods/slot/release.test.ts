@@ -2,11 +2,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { PipelineSteps } from '@farmslot/protocol';
+import { PipelineSteps, type Run } from '@farmslot/protocol';
 
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
-import { slotRelease } from './release.js';
+import { canCollectRecipeArtifacts, slotRelease } from './release.js';
 
 // These tests resolve the committed demo pool's slots (demo-work-1), which the
 // loaders hide unless explicitly opted in.
@@ -663,4 +663,26 @@ test('a cancelled run whose slot cleanup was deferred can release that slot by n
   assert.deepEqual(result, { released: true });
   assert.equal(await readSlotField(slotId, 'cleanup_run_id'), null);
   assert.equal(await readSlotField(slotId, 'held_reason'), null);
+});
+
+test('recipe artifacts exclude publication, parked, held and replay-kept owners', async (t) => {
+  const run = createRun({ flowType: 'dev', project: 'example', ticketOrPr: 'PROJ-recipe-owner' });
+  t.after(() => cleanupRun(run.id));
+  const done: Run = { ...run, status: 'done' };
+  assert.equal(canCollectRecipeArtifacts(done), true);
+  assert.equal(canCollectRecipeArtifacts(undefined), false);
+  for (const status of ['human-gating', 'needs-decision', 'paused', 'preparing'] as const)
+    assert.equal(canCollectRecipeArtifacts({ ...done, status }), false, status);
+  assert.equal(
+    canCollectRecipeArtifacts({ ...done, park: freedGateParkRecord(run.id, 'fixture-slot') }),
+    false,
+  );
+  const replay: Run = {
+    ...done,
+    status: 'failed',
+    steps: [
+      { name: PipelineSteps.COMPLETE, status: 'failed', outputs: { gatePrerequisiteRefusal: {} } },
+    ],
+  };
+  assert.equal(canCollectRecipeArtifacts(replay), false);
 });
