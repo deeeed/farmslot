@@ -1,1 +1,1 @@
-- Review dispatch fills an omitted PI effort with high. A native session that omits it keeps the worker default.
+- An omitted PI effort is high only for a review selection. Worker selection and the worker picker stay on medium.

@@ -283,6 +283,7 @@ export function buildPiLaunch(options: {
   slotId?: string;
   safetyTier?: SafetyTier;
   effort?: string | null;
+  role?: string | null;
   taskFile?: string | null;
 }): string {
   const cliModel = resolvePiModel(options.model);
@@ -291,8 +292,8 @@ export function buildPiLaunch(options: {
   const extension = piObservabilityExtensionPath(options.repo, runtimeDir);
   const flagList = runnerFlagsForTier('pi', options.safetyTier);
   const flagFragment = flagList.length ? ` ${flagList.join(' ')}` : '';
-  const thinkingFlag = piThinkingFlag(options.effort);
-  const thinking = resolvePiThinkingLevel(options.effort);
+  const thinkingFlag = piThinkingFlag(options.effort, options.role);
+  const thinking = resolvePiThinkingLevel(options.effort, options.role);
   const taskFile = options.taskFile?.trim()
     ? path.isAbsolute(options.taskFile)
       ? options.taskFile
@@ -571,6 +572,8 @@ interface RunnerSessionReloadOptions {
   repo?: string;
   taskDir?: string;
   effort?: string | null;
+  /** Review reloads keep the review default when effort is still empty. */
+  role?: string | null;
   safetyTier?: SafetyTier;
   /** 'off' for an autonomous run: the resumed model has no question tool. */
   modelQuestions?: 'off';
@@ -760,6 +763,7 @@ export function buildRunnerSessionReloadCommand(
             slotId: vars.slotId,
             safetyTier: tier,
             effort: opts.effort,
+            role: opts.role,
             taskFile: opts.taskDir ? path.posix.join(opts.taskDir, 'TASK.md') : undefined,
           })} ${resume}${initialPrompt}`
         : `cd ${shellQuote(repo)} && ${shellQuote(resolveCursorAgentBinary(vars.cursorPath))} --trust --workspace ${shellQuote(repo)} ${runnerFlagsForTier(runner, tier).map(shellQuote).join(' ')}${runnerModelFlag(model)} ${resume}${initialPrompt}`;

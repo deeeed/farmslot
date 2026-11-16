@@ -406,8 +406,17 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
             runner: resolved.choices[0].runner,
             transport: resolved.choices[0].transport ?? (parent ? 'tmux' : undefined),
             nativeProfile: resolved.choices[0].nativeProfile,
-            model: executionModelFromSelection(resolved.choices[0]).model,
-            effort: executionModelFromSelection(resolved.choices[0]).effort ?? undefined,
+            model: executionModelFromSelection(
+              resolved.choices[0],
+              undefined,
+              prReviewWorkflow(review.options) === 'review' ? 'review' : undefined,
+            ).model,
+            effort:
+              executionModelFromSelection(
+                resolved.choices[0],
+                undefined,
+                prReviewWorkflow(review.options) === 'review' ? 'review' : undefined,
+              ).effort ?? undefined,
             completionPolicy: 'artifact-only',
             reviewMode: review.options.mode,
             qaProfileId: review.options.qaProfileId,
@@ -520,12 +529,17 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
     const latestIntent = this.store.intent(intent.id);
     if (!latestIntent || fingerprint(latestIntent) !== resolvedFingerprint)
       throw new Error('PR constraints changed during execution resolution; retry admission');
-    const execution = executionModelFromSelection({
-      runner: item.runner ?? '',
-      model: item.model ?? null,
-      effort: item.effort ?? null,
-      mode: resolveReviewMode({ run: item }),
-    });
+    const reviewRole = item.flowType === 'review-pr' ? 'review' : undefined;
+    const execution = executionModelFromSelection(
+      {
+        runner: item.runner ?? '',
+        model: item.model ?? null,
+        effort: item.effort ?? null,
+        mode: resolveReviewMode({ run: item }),
+      },
+      undefined,
+      reviewRole,
+    );
     const selection = JSON.stringify([
       item.slotId ?? null,
       item.reviewWorkspaceTarget?.machine ?? null,
@@ -537,7 +551,7 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
     ]);
     if (
       !prepared.choices.some((choice) => {
-        const execution = executionModelFromSelection(choice);
+        const execution = executionModelFromSelection(choice, undefined, reviewRole);
         return (
           JSON.stringify([
             choice.slotId ?? null,
@@ -563,12 +577,17 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
     const intent =
       item.prWork?.kind === 'review' ? this.store.intent(item.prWork.sourceId) : undefined;
     const proof = this.proofs.get(item.id);
-    const execution = executionModelFromSelection({
-      runner: item.runner ?? '',
-      model: item.model ?? null,
-      effort: item.effort ?? null,
-      mode: resolveReviewMode({ run: item }),
-    });
+    const reviewRole = item.flowType === 'review-pr' ? 'review' : undefined;
+    const execution = executionModelFromSelection(
+      {
+        runner: item.runner ?? '',
+        model: item.model ?? null,
+        effort: item.effort ?? null,
+        mode: resolveReviewMode({ run: item }),
+      },
+      undefined,
+      reviewRole,
+    );
     if (
       !intent ||
       !proof ||

@@ -332,8 +332,8 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
         const target = {
           project: params.project,
           ...choice,
-          effort: executionModelFromSelection(choice).effort ?? undefined,
-          model: executionModelFromSelection(choice).model,
+          effort: executionModelFromSelection(choice, undefined, 'review').effort ?? undefined,
+          model: executionModelFromSelection(choice, undefined, 'review').model,
         };
         const inspected = await inspectReviewWorkspaceTarget(
           target,
@@ -372,8 +372,8 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
       ...params,
       reviewWorkspaceTarget: { machine: choice.machine },
       runner: choice.runner,
-      model: executionModelFromSelection(choice).model,
-      effort: executionModelFromSelection(choice).effort ?? undefined,
+      model: executionModelFromSelection(choice, undefined, 'review').model,
+      effort: executionModelFromSelection(choice, undefined, 'review').effort ?? undefined,
       transport: choice.transport,
       nativeProfile: choice.nativeProfile,
     };

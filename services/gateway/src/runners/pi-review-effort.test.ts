@@ -4,8 +4,10 @@ import test from 'node:test';
 import {
   buildInteractiveRefinementRunnerCommand,
   buildPiLaunch,
+  buildRunnerSessionReloadCommand,
   resolveRunnerEffort,
 } from './launch-command.js';
+import { makeVars } from './test-fixtures.js';
 
 test('pi review effort defaults to high and a worker keeps medium', () => {
   assert.equal(resolveRunnerEffort('pi', undefined), 'medium');
@@ -37,4 +39,11 @@ test('an omitted pi review launch asks for high thinking and a worker launch sta
   const worker = buildPiLaunch({ binary: 'pi', repo: '/tmp/repo', model: 'grok-4.7' });
   assert.match(worker, /--thinking medium/);
   assert.match(worker, /FARMSLOT_THINKING='medium'/);
+  const vars = makeVars({ piPath: 'pi' });
+  const reviewReload = buildRunnerSessionReloadCommand(vars, 'pi', 'grok-4.7', 'session', {
+    role: 'review',
+  });
+  assert.match(reviewReload, /--thinking high/);
+  const workerReload = buildRunnerSessionReloadCommand(vars, 'pi', 'grok-4.7', 'session', {});
+  assert.match(workerReload, /--thinking medium/);
 });

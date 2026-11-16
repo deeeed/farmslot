@@ -113,7 +113,7 @@ export function remainingExplicitReviewPlan(
   });
   let completed = 0;
   for (const selection of plan) {
-    const execution = executionModelFromSelection(selection);
+    const execution = executionModelFromSelection(selection, undefined, 'review');
     const index = passing.findIndex(
       (review) =>
         normalizeRunner(review.runner) === normalizeRunner(selection.runner) &&
@@ -402,7 +402,7 @@ export function assertWarmReviewRequestAvailable(
       );
     const nativeOwner = [...nativeOwners][0];
     const transport = nativeOwner ? 'native' : (run.transport ?? 'tmux');
-    const execution = executionModelFromSelection(row);
+    const execution = executionModelFromSelection(row, undefined, 'review');
     const ownerPrincipalId =
       nativeOwner ?? run.nativeOwnerPrincipalId ?? run.createdByPrincipalId ?? null;
     // A busy reviewer is not unavailable: the launch waits for its turn (ADR-063 Amendment 5).

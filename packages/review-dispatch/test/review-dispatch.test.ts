@@ -1019,18 +1019,27 @@ test('selecting a retained WARM review fills its settings and refuses an unavail
   assert.throws(() => vm.toRequestPayload(), /cannot be resumed/);
 });
 
-test('an omitted pi review effort is high and a native pi session stays on the worker default', () => {
+test('an omitted pi review effort is high and a worker or native session stays medium', () => {
   assert.equal(DEFAULT_PI_THINKING, 'medium');
   assert.equal(DEFAULT_PI_REVIEW_THINKING, 'high');
-  assert.equal(
-    executionModelFromSelection({ runner: 'pi', model: null, effort: null, mode: 'cold' }).effort,
-    'high',
-  );
+  const omitted = { runner: 'pi', model: null, effort: null, mode: 'cold' as const };
+  assert.equal(executionModelFromSelection(omitted).effort, 'medium');
+  assert.equal(executionModelFromSelection(omitted, undefined, 'review').effort, 'high');
   assert.equal(
     executionModelFromSelection({ runner: 'pi', model: 'grok-4.7', effort: 'low', mode: 'cold' })
       .effort,
     'low',
   );
+  const worker = new ReviewDispatchViewModel({
+    context: { allowedActions: ['dispatch'] },
+    sequence: [omitted],
+  });
+  const review = new ReviewDispatchViewModel({
+    context: { allowedActions: ['request-review'] },
+    sequence: [omitted],
+  });
+  assert.equal(worker.effortChoices(worker.rows[0].id)[0].label, 'Runner default · medium');
+  assert.equal(review.effortChoices(review.rows[0].id)[0].label, 'Runner default · high');
   const native = catalogForNativeRunners([
     { runner: 'pi', models: ['grok-4.7'], defaultModel: 'grok-4.7', modes: ['default'] },
   ]);

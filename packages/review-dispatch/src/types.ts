@@ -53,6 +53,8 @@ export type ReviewDispatchAction = 'request-review' | 'dispatch' | 'configure' |
 export type ReviewDispatchSequenceRole = 'reviews' | 'execution-alternatives';
 export interface ReviewDispatchContext extends ReviewValidationOptions {
   allowedActions: readonly ReviewDispatchAction[];
+  /** Review pickers that are not request-review actions still show the review default. */
+  effortRole?: 'review';
   /** QA uses execution choices without static-review session eligibility. */
   workflow?: 'review' | 'qa';
   defaults?: Partial<ReviewSelection>;

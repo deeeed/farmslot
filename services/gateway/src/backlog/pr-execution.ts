@@ -72,8 +72,8 @@ export async function resolvePRExecution(
         const target = {
           project,
           ...choice,
-          effort: executionModelFromSelection(choice).effort ?? undefined,
-          model: executionModelFromSelection(choice).model,
+          effort: executionModelFromSelection(choice, undefined, 'review').effort ?? undefined,
+          model: executionModelFromSelection(choice, undefined, 'review').model,
         };
         const admission = await inspectReviewWorkspaceTarget(target, context.ownerId);
         await assertReviewNativeRunnerHealthy(target, context.ownerId, admission.executionNodeId);

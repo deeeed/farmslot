@@ -1,1 +1,1 @@
-- A REVIEW role that omits PI thinking now defaults to high. Workers still default to medium.
+- A REVIEW role that omits PI thinking defaults to high. The shared catalog and workers stay on medium.

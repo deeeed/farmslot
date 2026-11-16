@@ -1,1 +1,1 @@
-- A PI review launch uses high thinking when effort is omitted. Worker launches stay on medium.
+- A PI review launch and a PI review reload use high thinking when effort is omitted. Worker launches and repair workers stay on medium.

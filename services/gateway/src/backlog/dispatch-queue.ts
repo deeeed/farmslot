@@ -1546,7 +1546,7 @@ async function selectQueuedReviewWorkspace(
   for (const choice of candidates) {
     let eligible = false;
     try {
-      const execution = executionModelFromSelection(choice);
+      const execution = executionModelFromSelection(choice, undefined, 'review');
       const proposed = { ...item, reviewWorkspaceTarget: { machine: choice.machine } };
       assertReviewWorkspacePlacement(proposed);
       const { queuedSourceCreationRequest, withSourceRequestPlanning } =

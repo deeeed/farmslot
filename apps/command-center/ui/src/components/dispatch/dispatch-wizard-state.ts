@@ -127,7 +127,12 @@ export abstract class DispatchWizardState extends LitElement {
   _workflowSelectionKey = '';
   @state() _reviewAutoFinish = false;
   _reviewPicker = new ReviewDispatchViewModel({
-    context: { allowedActions: ['dispatch'], allowSequence: true, allowEmpty: true },
+    context: {
+      allowedActions: ['dispatch'],
+      allowSequence: true,
+      allowEmpty: true,
+      effortRole: 'review',
+    },
     sequence: [],
   });
   @state() _candidates: DispatchCandidatesResult['candidates'] = [];

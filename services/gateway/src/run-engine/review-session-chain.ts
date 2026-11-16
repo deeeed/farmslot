@@ -273,6 +273,7 @@ export async function attemptRepeatReviewResume(
     runnerId: runner,
     sessionId: plan.binding.runnerSessionId,
     sessionPath: plan.binding.runnerSessionPath,
+    role: delivery.role ?? 'review',
   });
   if (result.delivered) {
     return {

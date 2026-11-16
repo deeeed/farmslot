@@ -238,7 +238,12 @@ export class DispatchConfigEditor extends LitElement {
     context: { allowedActions: ['dispatch'] },
   });
   private reviewPicker = new ReviewDispatchViewModel({
-    context: { allowedActions: ['dispatch'], allowSequence: true, allowEmpty: true },
+    context: {
+      allowedActions: ['dispatch'],
+      allowSequence: true,
+      allowEmpty: true,
+      effortRole: 'review',
+    },
     sequence: [],
   });
 

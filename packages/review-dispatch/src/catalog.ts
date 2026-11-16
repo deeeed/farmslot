@@ -90,7 +90,7 @@ export const DEFAULT_REVIEW_DISPATCH_CATALOG: ReviewDispatchCatalog = {
       id: 'pi',
       allowCustomModels: true,
       defaultModel: DEFAULT_PI_MODEL,
-      defaultEffort: DEFAULT_PI_REVIEW_THINKING,
+      defaultEffort: DEFAULT_PI_THINKING,
       efforts: PI_THINKING_LEVELS,
       models: [],
     },
@@ -162,12 +162,13 @@ export function defaultEffortForRunner(
   runner: string,
   model?: string | null,
   catalog: ReviewDispatchCatalog = DEFAULT_REVIEW_DISPATCH_CATALOG,
+  role?: string,
 ): string | null {
   const option = runnerOption(runner, catalog);
   const levels = effortsForRunner(runner, model, catalog);
-  return option.defaultEffort && levels.includes(option.defaultEffort)
-    ? option.defaultEffort
-    : null;
+  const preferred =
+    runner === 'pi' && role === 'review' ? DEFAULT_PI_REVIEW_THINKING : option.defaultEffort;
+  return preferred && levels.includes(preferred) ? preferred : null;
 }
 
 export function catalogWithVisibleModels(

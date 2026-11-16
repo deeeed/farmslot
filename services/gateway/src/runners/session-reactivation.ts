@@ -67,6 +67,8 @@ export interface RunnerSessionReactivationOptions {
   model?: string | null;
   prompt: string;
   effort?: string | null;
+  /** Review reloads keep the review default when effort is still empty. */
+  role?: string | null;
   safetyTier?: SafetyTier;
   /** 'off' for an autonomous run: a relaunched or resumed model has no question tool. */
   modelQuestions?: 'off';
@@ -457,6 +459,7 @@ async function reactivateRunnerSessionWithPrompt(
       options.sessionId,
       {
         effort: options.effort,
+        role: options.role,
         safetyTier: options.safetyTier,
         modelQuestions: options.modelQuestions,
         runtimeDir,

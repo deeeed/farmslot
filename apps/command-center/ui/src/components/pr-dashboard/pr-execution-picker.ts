@@ -87,6 +87,7 @@ export class PRExecutionPicker extends LitElement {
         allowFreshChain: this.review && this.allowFreshChain,
         reviewContext: this.reviewContext,
         reviewLineages: this.reviewLineages,
+        effortRole: this.review ? 'review' : undefined,
       });
       this.viewModel.setSequence(reviewSequenceForExecution(this.value.models, this.reviewMode));
       this.resources = new Map(

@@ -131,6 +131,7 @@ export function BacklogCreateForm({
           allowedActions: ['configure'],
           allowSequence: true,
           allowEmpty: true,
+          effortRole: 'review',
           reviewContext: item?.reviewSequenceContext,
         },
         sequence: item?.reviewSequence ?? [],
