@@ -93,6 +93,8 @@ for (const notification of ['commit', 'debounce'] as const) {
     { timeout: 4000 },
     async (t) => {
       t.mock.timers.enable({ apis: ['setTimeout'] });
+      // Exercise the fractional delay that a fixed 50ms tick can miss.
+      t.mock.method(performance, 'now', () => 14.001);
       const slot = 'fresh-dispatch';
       await writeFile(selected, JSON.stringify({ slots: [{ slot, current_run_id: 'successor' }] }));
       const controller = new AbortController();
@@ -126,7 +128,7 @@ for (const notification of ['commit', 'debounce'] as const) {
       });
       await withCleanupSignal(controller.signal, () => updateSlotStatus(slot, { phase: 'queued' }));
       controller.abort(new Error('the old cleanup expired'));
-      t.mock.timers.tick(50);
+      t.mock.timers.runAll();
       await completed;
       const stored = JSON.parse(await readFile(selected, 'utf8'));
       assert.equal(stored.slots[0].current_run_id, 'successor');
