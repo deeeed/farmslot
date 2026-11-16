@@ -171,6 +171,10 @@ per-call work proportional to accumulated runs or artifacts.
 
 ## Prepared recipe source witnesses
 
+Task binding must not scan retained task history. Bound executions and explicit
+`--unbound` diagnostics need no task-storage lookup; otherwise one filesystem
+metadata check detects task storage. This adds no process or Git invocation.
+
 The harness lane owns this candidate. Target zero traced framework Git starts in
 unchanged calls, including bootstrap and capture provenance; user-authored Git
 commands are separate work. A prepared record is reused only after fresh file

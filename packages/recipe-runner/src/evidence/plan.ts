@@ -71,7 +71,11 @@ export function planRecipeEvidence(
       if (!prefix && registered && (claim.kind ?? 'acceptance') === 'acceptance' && !task)
         throw new Error(`Claim ${id} is not registered by the task.`);
       if (task && task.claim !== claim.claim)
-        throw new Error(`Claim ${id} conflicts with the task expectation.`);
+        throw new Error(
+          `Claim ${id} conflicts with the task expectation.\n` +
+            `- Registered: ${JSON.stringify(task.claim)}\n` +
+            `+ Supplied: ${JSON.stringify(claim.claim)}`,
+        );
       if (!bound)
         register(
           {

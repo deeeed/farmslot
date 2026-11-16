@@ -3861,8 +3861,13 @@ describe('call', () => {
         'set RECIPE_TASK_DIR/FARMSLOT_TASK_DIR inside the checkout or pass --artifacts-dir <path>',
     });
     const explicit = tempRoot('recipe-cli-call-explicit-');
-    const pinned = await capture(() =>
+    const unbound = await capture(() =>
       handleCall([...args, '--artifacts-dir', explicit], callOptions),
+    );
+    assert.equal(lastJson(unbound.stdout).error.code, 'RECIPE_TASK_UNBOUND');
+    delete process.env.FARMSLOT_TASK_DIR;
+    const pinned = await capture(() =>
+      handleCall([...args, '--artifacts-dir', explicit, '--unbound'], callOptions),
     );
     assert.equal(path.dirname(String(lastJson(pinned.stdout).summaryPath)), explicit);
   });

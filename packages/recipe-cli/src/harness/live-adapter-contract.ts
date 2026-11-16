@@ -16,13 +16,15 @@ import type { Metafile, Plugin, PluginBuild } from 'esbuild';
 import type { ActionExecutionContext } from '@farmslot/recipe-runner';
 import { runOwnedRecipeProcess } from '@farmslot/recipe-runner/adapters/core';
 
+import { DiscoveryError } from '../discovery-error.js';
+
 import { harnessAdapter, harnessAdapters } from './adapters.js';
 import { cacheRecordPath, readCacheRecord, writeCacheRecord } from './cache.js';
 import { countCallWork } from './call-timings.js';
 import { trackCheckoutChild } from './checkout-lock.js';
 import { recordCommandOutput } from './command-journal.js';
 import { harnessHost, recipeEnvName } from './host.js';
-import { isRecord } from './parse-args.js';
+import { isRecord, shellQuoteArg } from './parse-args.js';
 
 function actionFileStem(action: string) {
   return String(action).replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -180,6 +182,7 @@ export async function prepareLiveAdapterScript({
   namespace,
   implementationRoot,
   allowRuntimeImports = false,
+  required = false,
 }: {
   platform: string;
   action: string;
@@ -187,13 +190,24 @@ export async function prepareLiveAdapterScript({
   namespace: string;
   implementationRoot: string;
   allowRuntimeImports?: boolean;
+  /** A declared task action must have executable code before its plan can pass. */
+  required?: boolean;
 }): Promise<PreparedLiveAdapter | null> {
-  const entryPath = await firstExecutablePath(
-    candidatePaths(platform, action, namespace, {
-      [recipeEnvName('ACTION_SOURCE_MAP')]: JSON.stringify({ [action]: implementationRoot }),
-    }),
-  );
-  if (!entryPath) return null;
+  const candidates = candidatePaths(platform, action, namespace, {
+    [recipeEnvName('ACTION_SOURCE_MAP')]: JSON.stringify({ [action]: implementationRoot }),
+  });
+  const entryPath = await firstExecutablePath(candidates);
+  if (!entryPath) {
+    if (required) {
+      const expected = candidates[0]!;
+      throw new DiscoveryError(
+        'ACTION_IMPLEMENTATION_MISSING',
+        `No live script implements ${action} for ${platform} under ${implementationRoot}; expected one of: ${candidates.join(', ')}.`,
+        `write the action implementation to ${shellQuoteArg(expected)}, then rerun --plan`,
+      );
+    }
+    return null;
+  }
   const rootReal = await realpath(implementationRoot);
   const entryReal = await realpath(entryPath);
   if (!isPathWithin(rootReal, entryReal)) {
