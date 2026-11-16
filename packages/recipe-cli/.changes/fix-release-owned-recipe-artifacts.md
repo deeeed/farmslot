@@ -1,0 +1,1 @@
+- Associate checkout recipe outputs with their initialized worker for safe release cleanup.

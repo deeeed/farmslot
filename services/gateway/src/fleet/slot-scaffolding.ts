@@ -4,6 +4,11 @@ import path from 'node:path';
 
 import { DEFAULT_TASK_DIR } from '@farmslot/protocol';
 import { FARM_INSTANCE_CLAIM } from '@farmslot/protocol/node/farm-paths';
+import {
+  buildRecipeArtifactCommand,
+  parseRecipeArtifactSnapshots,
+  type RecipeArtifactSnapshot,
+} from '@farmslot/recipe-runner/runtime/artifact-owner';
 import { parseProjectOwnedPaths } from '@farmslot/slot-config';
 
 import { runnerRuntimeDir } from '../../../../scripts/lib/runner-runtime.cjs';
@@ -183,6 +188,10 @@ export interface SlotScaffoldingArchiveOptions {
   destination: string;
   beforeRemove: () => Promise<void>;
   taskRelativeDir: string | null;
+  /** Terminal, non-reloadable owner, rechecked by beforeRemove. Unknown owners are preserved. */
+  recipeOwnerRunId?: string;
+  /** Direct teardown keeps task inputs and runtime observations for its existing policy. */
+  recipeArtifactsOnly?: boolean;
   /** Where nested checkouts are moved on the slot host. Default: `$HOME/slot-retained`. */
   retainedBase?: string;
   /** Largest archive the release downloads. Default: SCAFFOLDING_ARCHIVE_MAX_BYTES. */
@@ -447,16 +456,18 @@ async function collectSlotScaffolding(
   // released task is collected; shared task roots keep their existing retention.
   const taskRelativeDir = options.taskRelativeDir;
   const taskRoots = releasedTaskRoots(projectJson, taskRelativeDir);
-  const roots = [
-    ...new Set([
-      ...taskRoots,
-      ...(path.posix.isAbsolute(runtime) || runtime === '~' || runtime.startsWith('~/')
-        ? []
-        : [`${runtime}/.observability`]),
-      '.agent/.observability',
-      '.observability',
-    ]),
-  ];
+  const roots = options.recipeArtifactsOnly
+    ? []
+    : [
+        ...new Set([
+          ...taskRoots,
+          ...(path.posix.isAbsolute(runtime) || runtime === '~' || runtime.startsWith('~/')
+            ? []
+            : [`${runtime}/.observability`]),
+          '.agent/.observability',
+          '.observability',
+        ]),
+      ];
   const repo = await slotRealpath(vars, vars.remoteRepo);
   const sources: Array<{ relative: string; absolute: string; resolved: string }> = [];
   for (const relative of roots) {
@@ -472,7 +483,7 @@ async function collectSlotScaffolding(
     '.observability',
   );
   let external: string | null = null;
-  if (await slotFileExists(vars, configuredExternal)) {
+  if (!options.recipeArtifactsOnly && (await slotFileExists(vars, configuredExternal))) {
     const resolved = await slotRealpath(vars, configuredExternal);
     const expected = path.posix.join(
       await slotRealpath(vars, path.posix.dirname(configuredExternal)),
@@ -484,7 +495,8 @@ async function collectSlotScaffolding(
     sources.push({ relative: 'runner-observability', absolute: external, resolved });
   }
   const directory = path.join(options.destination, randomUUID());
-  if (!sources.length) return { directory, roots: 0, moved: 0 };
+  if (!sources.length && (!options.recipeArtifactsOnly || !options.recipeOwnerRunId))
+    return { directory, roots: 0, moved: 0 };
   const { skipped, retainedRoot, repoRealpath } = await inventoryRebuildableScaffolding(
     vars,
     sources
@@ -515,14 +527,35 @@ async function collectSlotScaffolding(
           list,
         )
       : `: > ${shellQuote(list)}`;
+    const maxArchiveBytes = options.maxArchiveBytes ?? SCAFFOLDING_ARCHIVE_MAX_BYTES;
+    const inventory = options.recipeOwnerRunId
+      ? buildRecipeArtifactCommand({
+          kind: 'inventory',
+          repo: vars.remoteRepo,
+          runId: options.recipeOwnerRunId,
+          taskFiles: taskRoots.map((root) => path.posix.join(root, 'TASK.md')),
+          fileList: list,
+          maxBytes: maxArchiveBytes,
+        })
+      : '';
     const packed = await execOnSlot(
       vars,
-      `cd ${shellQuote(vars.remoteRepo)} && ${listed} && tar -cf ${shellQuote(remoteArchive)} --null -T ${shellQuote(list)}`,
+      [
+        'set -e',
+        `cd ${shellQuote(vars.remoteRepo)}`,
+        listed,
+        inventory,
+        `tar -cf ${shellQuote(remoteArchive)} --null -T ${shellQuote(list)}`,
+      ].join('\n'),
       { timeout: 120_000 },
     );
     if (packed.exitCode !== 0) throw new Error(`Cannot pack scaffolding: ${packed.stderr}`);
+    const recipeArtifacts: RecipeArtifactSnapshot[] = options.recipeOwnerRunId
+      ? parseRecipeArtifactSnapshots(JSON.parse(packed.stdout))
+      : [];
+    if (options.recipeArtifactsOnly && !recipeArtifacts.length)
+      return { directory, roots: 0, moved: 0 };
     const archiveBytes = (await slotStat(vars, remoteArchive)).size;
-    const maxArchiveBytes = options.maxArchiveBytes ?? SCAFFOLDING_ARCHIVE_MAX_BYTES;
     if (archiveBytes > maxArchiveBytes)
       throw new Error(
         `Scaffolding archive is ${Math.ceil(archiveBytes / 1024 ** 2)} MB, over the ${Math.floor(maxArchiveBytes / 1024 ** 2)} MB limit`,
@@ -560,9 +593,27 @@ async function collectSlotScaffolding(
     }
     await writeFile(
       path.join(directory, 'manifest.json'),
-      `${JSON.stringify({ slotId: vars.slotId, sources: sources.map((source) => source.relative), skipped }, null, 2)}\n`,
+      `${JSON.stringify({ slotId: vars.slotId, sources: sources.map((source) => source.relative), skipped, recipeArtifacts }, null, 2)}\n`,
     );
     archived = true;
+    if (recipeArtifacts.length && options.recipeOwnerRunId) {
+      await options.beforeRemove();
+      const removed = await execOnSlot(
+        vars,
+        buildRecipeArtifactCommand({
+          kind: 'remove',
+          repo: vars.remoteRepo,
+          runId: options.recipeOwnerRunId,
+          snapshots: recipeArtifacts,
+          maxBytes: maxArchiveBytes,
+        }),
+        { timeout: 120_000, noRetry: true },
+      );
+      if (removed.exitCode !== 0)
+        throw new Error(
+          `Cannot remove retained recipe artifacts: ${removed.stderr || removed.stdout}`,
+        );
+    }
     const removal = [
       ...sources.filter((source) => source.absolute !== external).reverse(),
       ...sources.filter((source) => source.absolute === external),
@@ -585,7 +636,7 @@ async function collectSlotScaffolding(
     }
     return {
       directory,
-      roots: sources.length,
+      roots: sources.length + recipeArtifacts.length,
       moved: retainedDir ? skipped.filter((entry) => entry.kind === 'checkout').length : 0,
     };
   } finally {

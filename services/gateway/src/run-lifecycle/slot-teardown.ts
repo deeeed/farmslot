@@ -446,7 +446,7 @@ export async function settleFailedRunSlotCleanup(
 ): Promise<string> {
   const reason = error instanceof Error ? error.message : String(error);
   try {
-    await releaseRunSlotOwnership(run, fence, reason);
+    await releaseRunSlotOwnership(run, fence, reason, { collectRecipes: false });
     if (getRun(run.id)) {
       const updated = updateRun(run.id, { slotTeardownSkipped: reason });
       const { broadcastEvent } = await import('../server.js');
@@ -645,7 +645,8 @@ export async function releaseRunSlotOwnership(
   {
     keepForReplay = false,
     stopUnconfirmed = false,
-  }: { keepForReplay?: boolean; stopUnconfirmed?: boolean } = {},
+    collectRecipes,
+  }: { keepForReplay?: boolean; stopUnconfirmed?: boolean; collectRecipes: boolean },
 ): Promise<boolean> {
   if (!run.slotId) return false;
   const before = fence.before;
@@ -690,6 +691,12 @@ export async function releaseRunSlotOwnership(
         agent: 'idle',
         ...(before?.handoff_run_id === run.id ? { handoff_run_id: null } : {}),
       });
+    }
+    // Direct cancelled-slot reclaim can skip idle recovery, but cannot publish
+    // readiness with this terminal owner's ignored recipe output still present.
+    if (collectRecipes) {
+      const { archiveRunRecipeArtifacts } = await import('./recipe-artifacts.js');
+      await archiveRunRecipeArtifacts(run, assertOwned);
     }
     if (checkoutVars) {
       await recordReleasedCheckout(run, checkoutVars, execOnSlot);
