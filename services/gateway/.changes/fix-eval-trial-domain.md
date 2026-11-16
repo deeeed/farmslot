@@ -1,0 +1,1 @@
+- An eval trial forwards its domain onto the run. Prepare and the task template receive that name. A named domain does not reuse the default trial.

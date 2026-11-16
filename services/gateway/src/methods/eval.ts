@@ -30,6 +30,7 @@ import {
   type FamilyObservabilityArtifact,
   isEvalPackageAxes,
   isNativeProfileReference,
+  isValidDomainName,
   type ResultPackageManifest,
   type Run,
   type RunStartRefSource,
@@ -503,6 +504,7 @@ const EVAL_TRIAL_START_PARAMS: Record<keyof EvalTrialStartParams, true> = {
   reviewModel: true,
   effort: true,
   app: true,
+  domain: true,
   prepareProfile: true,
   slotId: true,
   allowedSlots: true,
@@ -557,6 +559,20 @@ function assertEvalTrialStartParams(params: EvalTrialStartParams): void {
   if (params.nativeProfile !== undefined && !isNativeProfileReference(params.nativeProfile))
     throw new Error('Invalid native profile reference');
   trialPrepareProfile(params);
+  trialDomain(params);
+}
+
+function trialDomain(params: EvalTrialStartParams): string | undefined {
+  if (params.domain === undefined) return undefined;
+  if (typeof params.domain !== 'string')
+    throw new Error(`${EVAL_TRIAL_START_VALIDATION_PREFIX} domain must be a string`);
+  const domain = params.domain.trim();
+  if (!domain) return undefined;
+  if (!isValidDomainName(domain))
+    throw new Error(
+      `${EVAL_TRIAL_START_VALIDATION_PREFIX} domain must be a lowercase slug (a-z, 0-9, '._-', no leading/trailing punctuation)`,
+    );
+  return domain;
 }
 
 function trialPrepareProfile(params: EvalTrialStartParams): string | undefined {
@@ -758,12 +774,14 @@ export async function evalTrialStart(
   const harnessLifecycle = harnessLifecycleForAxes(params.project, axes);
   const candidateSource = await resolveCandidateSource(params.project, params.source);
   const prepareProfile = trialPrepareProfile(params);
+  const domain = trialDomain(params);
   const candidateStrategyFingerprint = computeCandidateStrategyFingerprint({
     axes,
     source: candidateSource,
     startRef: candidateStartRef.requestedRef,
     taskProfile: evalCase.taskProfile,
     prepareProfile,
+    domain,
   });
   const explicitTrialId = params.trialId?.trim() || undefined;
   const strategyId = strategyIdFor(candidateStrategyFingerprint);
@@ -969,6 +987,7 @@ export async function evalTrialStart(
       ...(params.transport ? { transport: params.transport } : {}),
       ...(params.nativeProfile ? { nativeProfile: params.nativeProfile } : {}),
       ...(prepareProfile ? { prepareProfile } : {}),
+      ...(domain ? { domain } : {}),
       app: params.app,
       safetyTier: params.safetyTier,
       // A blind trial has no operator to answer a gate, whatever its template's default mode.

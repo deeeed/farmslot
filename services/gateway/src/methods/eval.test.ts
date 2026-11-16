@@ -427,6 +427,36 @@ test('evalTrialStart rejects a prepare profile that is not a string', async () =
   );
 });
 
+test('evalTrialStart rejects a domain that is not a lowercase slug', async () => {
+  await assert.rejects(
+    () =>
+      evalTrialStart(
+        {
+          project: 'farmslot-farm',
+          experimentManifestPath: '/tmp/missing-eval.json',
+          axes: {},
+          // @ts-expect-error negative runtime validation: domain is a string slug.
+          domain: 1,
+        },
+        () => {},
+      ),
+    /domain must be a string/,
+  );
+  await assert.rejects(
+    () =>
+      evalTrialStart(
+        {
+          project: 'farmslot-farm',
+          experimentManifestPath: '/tmp/missing-eval.json',
+          axes: {},
+          domain: 'Trading',
+        },
+        () => {},
+      ),
+    /domain must be a lowercase slug/,
+  );
+});
+
 test('harnessLifecycleForAxes preserves explicit local harness paths', () => {
   const lifecycle = harnessLifecycleForAxes('example-mobile-farm', {
     harness: { path: '/tmp/recipe-harness', version: 'mobile' },
@@ -1233,6 +1263,19 @@ test('evalTrialStart keeps a native transport distinct from the tmux default', a
     assert.equal(blankProfile.deduped, true);
     assert.equal(blankProfile.run?.id, tmux.run?.id);
     assert.equal(tmux.run?.prepareProfile, undefined);
+
+    const domained = await evalTrialStart({ ...trialBase, domain: ' trading ' }, () => {});
+    if (domained.run) runIds.push(domained.run.id);
+    assert.equal(domained.deduped, false);
+    assert.notEqual(domained.run?.id, tmux.run?.id);
+    assert.equal(domained.run?.domain, 'trading');
+    const sameDomain = await evalTrialStart({ ...trialBase, domain: 'trading' }, () => {});
+    assert.equal(sameDomain.deduped, true);
+    assert.equal(sameDomain.run?.id, domained.run?.id);
+    const blankDomain = await evalTrialStart({ ...trialBase, domain: '   ' }, () => {});
+    assert.equal(blankDomain.deduped, true);
+    assert.equal(blankDomain.run?.id, tmux.run?.id);
+    assert.equal(tmux.run?.domain, undefined);
   } finally {
     if (previousDisableEngine === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
     else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = previousDisableEngine;
