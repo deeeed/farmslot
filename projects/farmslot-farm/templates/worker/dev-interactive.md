@@ -5,7 +5,7 @@ checklist: none
 # Worker: Interactive Dev — {{TICKET_ID}}
 
 > **Signal file:** `./mark N` records progress. After the operator explicitly approves publication and the worker has created/pushed the PR, `./mark complete --mark-last` hands the run back to Farmslot for the operator-owned completion action.
-> **Checklist marker:** Run `{{TASK_DIR}}/mark start` once when work begins (before the first `./mark N`). After each checklist item in `## Checklist`, run `{{TASK_DIR}}/mark N` with the number shown. `./mark` owns `SIGNAL.json` during the run. If unsure, run `{{TASK_DIR}}/mark --help`. Never hand-write `SIGNAL.json`, and never signal completion while approved work is still local or unpublished.
+> **Checklist marker:** Run `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 1` as soon as step 1 is done, before any other work. After each further checklist item in `## Checklist`, run `{{TASK_DIR}}/mark N` with the number shown. `./mark` owns `SIGNAL.json` during the run. If unsure, run `{{TASK_DIR}}/mark --help`. Never hand-write `SIGNAL.json`, and never signal completion while approved work is still local or unpublished.
 
 ### Repo boundaries — where proof artifacts live
 
