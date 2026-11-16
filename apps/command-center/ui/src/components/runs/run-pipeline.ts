@@ -281,6 +281,7 @@ export class RunPipeline extends LitElement {
     return html`<run-checklist-progress
       .run=${this.run}
       .progress=${this.taskProgress}
+      .showSubtasks=${true}
       .acknowledgedAt=${checklistProgressExecution(this.taskProgress, this.run)?.acknowledgedAt}
     ></run-checklist-progress>`;
   }

@@ -2,10 +2,12 @@ import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
 import type { RunListRow, TaskProgressStructured } from '@farmslot/protocol';
-import { runChecklistProgressView } from '@farmslot/review-dispatch';
+import { runChecklistProgressSummary, runChecklistProgressView } from '@farmslot/review-dispatch';
 import { publicationGateCssVariables } from '@farmslot/theme';
 
 import '../shared/progress-read-status.js';
+
+import { subtaskPresentation } from '../progress-tracker/subtask-block.js';
 
 /** The same checklist strip beneath the list pipeline and the detail canvas. */
 @customElement('run-checklist-progress')
@@ -16,6 +18,8 @@ export class RunChecklistProgress extends LitElement {
   @property({ attribute: false }) acknowledgedAt?: string;
   @property({ attribute: false }) retry?: () => void;
   @property({ type: Boolean }) stale = false;
+  /** Detail only; list strips keep their single parent row. */
+  @property({ type: Boolean }) showSubtasks = false;
 
   static styles = css`
     :host {
@@ -71,6 +75,23 @@ export class RunChecklistProgress extends LitElement {
       overflow: hidden;
       background: var(--checklist-border);
     }
+    .child {
+      margin: 4px 0 0 16px;
+      padding-left: 8px;
+      border-left: 2px solid var(--checklist-accent);
+      min-width: 0;
+    }
+    .child-title {
+      color: var(--checklist-secondary);
+      font-size: 11px;
+      display: flex;
+      gap: 6px;
+      min-width: 0;
+      line-height: 18px;
+    }
+    .child-status {
+      flex: none;
+    }
     .fill {
       height: 100%;
       background: var(--checklist-accent);
@@ -79,6 +100,10 @@ export class RunChecklistProgress extends LitElement {
 
   render() {
     const view = this.run && runChecklistProgressView(this.run, this.progress);
+    const subtask = this.showSubtasks ? view?.subtask : undefined;
+    const child = subtask && runChecklistProgressSummary(subtask.progress);
+    const presentation = subtask && subtaskPresentation(subtask);
+    const childTitle = subtask?.progress.schema.title || presentation?.title;
     if (!view && !this.error && !this.acknowledgedAt) return nothing;
     return html`
       ${this.acknowledgedAt
@@ -101,21 +126,48 @@ export class RunChecklistProgress extends LitElement {
           ></progress-read-status>`
         : view
           ? html`<div class="strip" title=${view.accessibleLabel}>
-              <div class="label">
-                <span class="counts">${view.counts}</span>
-                <span class="item"> ${this.stale ? 'Saved progress' : view.label} </span>
+                <div class="label">
+                  <span class="counts">${view.counts}</span>
+                  <span class="item"> ${this.stale ? 'Saved progress' : view.label} </span>
+                </div>
+                <div
+                  class="track"
+                  role="progressbar"
+                  aria-label=${view.accessibleLabel}
+                  aria-valuemin="0"
+                  aria-valuemax=${view.total}
+                  aria-valuenow=${view.completed}
+                >
+                  <div class="fill" style=${`width: ${view.percent}%`}></div>
+                </div>
               </div>
-              <div
-                class="track"
-                role="progressbar"
-                aria-label=${view.accessibleLabel}
-                aria-valuemin="0"
-                aria-valuemax=${view.total}
-                aria-valuenow=${view.completed}
-              >
-                <div class="fill" style=${`width: ${view.percent}%`}></div>
-              </div>
-            </div>`
+              ${child && presentation
+                ? html`<div class="child" data-testid="checklist-child-progress">
+                    <div class="child-title" title=${presentation.titleTooltip}>
+                      <span aria-hidden="true">↳</span>
+                      <span class="item">${childTitle}</span>
+                      <span class="child-status" title=${presentation.statusTooltip}
+                        >${presentation.statusLabel}</span
+                      >
+                    </div>
+                    <div class="label">
+                      <span class="counts">${child.counts}</span>
+                      <span class="item" title=${child.label}
+                        >${this.stale ? 'Saved child progress' : child.label}</span
+                      >
+                    </div>
+                    <div
+                      class="track"
+                      role="progressbar"
+                      aria-label=${`Child ${childTitle}: ${child.accessibleLabel}`}
+                      aria-valuemin="0"
+                      aria-valuemax=${child.total}
+                      aria-valuenow=${child.completed}
+                    >
+                      <div class="fill" style=${`width: ${child.percent}%`}></div>
+                    </div>
+                  </div>`
+                : nothing}`
           : nothing}
     `;
   }

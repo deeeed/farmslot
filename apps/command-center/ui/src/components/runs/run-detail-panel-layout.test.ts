@@ -653,6 +653,7 @@ test('signal acknowledgement opens a checklist panel before the first progress r
   const text = element.render();
   assert.match(litText(text), /data-panel="run-step-progress"/);
   assert.equal(litBinding(text, '.acknowledgedAt='), acknowledgedAt);
+  assert.equal(litBinding(text, '.showSubtasks='), true);
   element.run = {
     ...element.run,
     agentContexts: [

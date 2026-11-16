@@ -5,6 +5,7 @@ import {
   shouldAcceptTaskProgressUpdate,
   type TaskProgressStructured,
   type TaskProgressUpdatedPayload,
+  type TaskStepSubtaskProgress,
 } from '@farmslot/protocol';
 
 import { ciFixTaskProgress, taskProgressPercent } from './checklist-progress.js';
@@ -54,6 +55,8 @@ export function acceptsRunChecklistProgress(run: Run, update: TaskProgressUpdate
 }
 
 export interface RunChecklistProgressView {
+  /** Recorded child owned by the running parent; never part of the parent counts. */
+  subtask?: TaskStepSubtaskProgress;
   completed: number;
   total: number;
   counts: string;
@@ -96,5 +99,6 @@ export function runChecklistProgressSummary(
     label,
     percent: taskProgressPercent({ completedSteps: completed, totalSteps: total }),
     accessibleLabel: `${counts} checklist steps done · ${label}`,
+    ...(current?.subtask ? { subtask: current.subtask } : {}),
   };
 }
