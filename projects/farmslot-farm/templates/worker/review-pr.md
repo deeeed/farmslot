@@ -34,7 +34,7 @@ proof only. Missing evidence is a finding or marked unverified.
 
 ## Checklist
 
-**STOP GATE:** Mark step N `[x]` before starting step N+1. Sequential only.
+**STOP GATE:** Run `{{TASK_DIR}}/mark N` before starting step N+1 — a hand-ticked `[x]` records nothing. Sequential only.
 
 ### Setup (1–5)
 
