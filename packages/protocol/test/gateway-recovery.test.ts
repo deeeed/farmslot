@@ -182,3 +182,65 @@ test('only an explicit authentication refusal blocks automatic recovery and offl
   assert.equal(gatewayOfflineLabel('connected', true), undefined);
   assert.equal(gatewayOfflineLabel('auth_required', false), undefined);
 });
+
+test('a socket that keeps delivering frames is never pinged', (t) => {
+  const { state, recovery } = fixture(t);
+  recovery.update('connected');
+  for (let i = 0; i < 12; i++) {
+    t.mock.timers.tick(10_000);
+    recovery.received();
+  }
+  assert.equal(state.pings, 0, 'two minutes of inbound frames need no heartbeat ping');
+  t.mock.timers.tick(GATEWAY_HEARTBEAT_MS - 1);
+  assert.equal(state.pings, 0);
+  t.mock.timers.tick(1);
+  assert.equal(state.pings, 1, 'a full silent interval after the last frame pings');
+});
+
+test('frames after a late ping keep the socket; silence after it still retires', async (t) => {
+  const { state, recovery, settle } = fixture(t);
+  state.answer = () => new Promise(() => {});
+  recovery.update('connected');
+  t.mock.timers.tick(GATEWAY_HEARTBEAT_MS);
+  assert.equal(state.pings, 1);
+  t.mock.timers.tick(1000);
+  recovery.received();
+  t.mock.timers.tick(GATEWAY_PING_DEADLINE_MS);
+  await settle();
+  assert.equal(state.retires, 0, 'the pong is queued behind frames that prove the socket is alive');
+  t.mock.timers.tick(GATEWAY_HEARTBEAT_MS);
+  assert.equal(state.pings, 2);
+  t.mock.timers.tick(GATEWAY_PING_DEADLINE_MS);
+  await settle();
+  assert.equal(state.retires, 1, 'a silent socket with an unanswered ping is retired');
+});
+
+test('a timed-out ping request after inbound frames does not retire the socket', async (t) => {
+  const { state, recovery, settle } = fixture(t);
+  let reject!: (error: Error) => void;
+  state.answer = () => new Promise((_, no) => (reject = no));
+  recovery.update('connected');
+  t.mock.timers.tick(GATEWAY_HEARTBEAT_MS);
+  recovery.received();
+  reject(new Error('Request timeout'));
+  await settle();
+  assert.equal(state.retires, 0);
+  t.mock.timers.tick(GATEWAY_PING_DEADLINE_MS);
+  await settle();
+  assert.equal(state.retires, 0, 'the deadline of a settled probe does nothing');
+});
+
+test('a late pong after frames settled the probe still reports its latency', async (t) => {
+  const { state, recovery, settle } = fixture(t);
+  let answer!: (reply: unknown) => void;
+  state.answer = () => new Promise((yes) => (answer = yes));
+  recovery.update('connected');
+  t.mock.timers.tick(GATEWAY_HEARTBEAT_MS);
+  recovery.received();
+  t.mock.timers.tick(GATEWAY_PING_DEADLINE_MS + 2000);
+  answer({ ok: true, serverTimeMs: Date.now() });
+  await settle();
+  assert.equal(state.retires, 0);
+  assert.equal(state.responses.length, 1);
+  assert.equal(state.responses[0].latencyMs, GATEWAY_PING_DEADLINE_MS + 2000);
+});

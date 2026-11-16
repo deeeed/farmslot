@@ -373,6 +373,7 @@ export class GatewayClient {
 
     socket.onmessage = (ev: MessageEvent) => {
       if (this.ws !== socket) return;
+      this.recovery.received();
       try {
         const frame: Frame = JSON.parse(ev.data as string);
         if (frame.type === 'res' || frame.type === 'event')

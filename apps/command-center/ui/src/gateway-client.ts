@@ -620,6 +620,7 @@ export class GatewayClient {
     ws.addEventListener(
       'message',
       (ev) => {
+        if (this.ws === ws) this.recovery.received();
         // Binary frames (stream feed)
         if (ev.data instanceof ArrayBuffer) {
           for (const cb of this.binarySubs) {

@@ -1,0 +1,1 @@
+- A gateway socket that keeps delivering frames is no longer pinged or dropped: the heartbeat pings only after 30 s without an inbound frame, and a frame received after a ping settles that probe even when its pong is queued behind larger frames. Command Center and Companion no longer reconnect, and reload every list, each time one ping runs past 5 s on a busy gateway.

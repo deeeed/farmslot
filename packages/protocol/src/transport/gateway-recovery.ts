@@ -41,6 +41,8 @@ export class GatewayRecovery {
   private probing = false;
   private disposed = false;
   private lastWake = -Infinity;
+  /** When the current socket last delivered a frame; any frame proves it is alive. */
+  private lastInboundAt = -Infinity;
 
   constructor(private readonly options: GatewayRecoveryOptions) {}
 
@@ -52,9 +54,10 @@ export class GatewayRecovery {
     if (state === this.state) return;
     this.cancel();
     this.state = state;
+    this.lastInboundAt = -Infinity;
     if (state === 'connected') {
       this.delay = 1000;
-      this.schedule(() => this.probe(), GATEWAY_HEARTBEAT_MS);
+      this.schedule(() => this.heartbeat(), GATEWAY_HEARTBEAT_MS);
     } else if (state === 'connecting') {
       this.schedule(() => this.fail(), GATEWAY_CONNECT_DEADLINE_MS);
     } else {
@@ -77,6 +80,15 @@ export class GatewayRecovery {
     }
   }
 
+  /**
+   * The platform socket delivered a frame. A socket that keeps delivering frames is alive, so
+   * the heartbeat pings only a silent one, and a frame that arrives after a ping was sent settles
+   * that probe even if its reply is queued behind larger frames.
+   */
+  received(): void {
+    if (this.state === 'connected') this.lastInboundAt = Date.now();
+  }
+
   reset(): void {
     this.cancel();
     this.state = undefined;
@@ -93,10 +105,21 @@ export class GatewayRecovery {
     return !this.disposed && this.options.enabled();
   }
 
+  /** The heartbeat: ping only once the socket has been silent for a full interval. */
+  private heartbeat(): void {
+    if (!this.enabled() || this.state !== 'connected' || this.probing) return;
+    const quietFor = Date.now() - this.lastInboundAt;
+    if (quietFor < GATEWAY_HEARTBEAT_MS) {
+      this.schedule(() => this.heartbeat(), GATEWAY_HEARTBEAT_MS - quietFor);
+      return;
+    }
+    this.probe();
+  }
+
   private probe(): void {
     if (!this.enabled() || this.state !== 'connected' || this.probing) return;
     if (!this.options.canProbe()) {
-      this.schedule(() => this.probe(), GATEWAY_HEARTBEAT_MS);
+      this.schedule(() => this.heartbeat(), GATEWAY_HEARTBEAT_MS);
       return;
     }
     this.cancel();
@@ -104,22 +127,28 @@ export class GatewayRecovery {
     const startedAt = Date.now();
     this.lastWake = startedAt;
     const generation = this.generation;
-    this.schedule(() => this.fail(), GATEWAY_PING_DEADLINE_MS);
-    void this.options.ping().then(
-      (reply) => {
-        if (generation !== this.generation || !this.enabled()) return;
-        if (!reply || typeof reply !== 'object' || Reflect.get(reply, 'ok') !== true) {
-          this.fail();
-          return;
-        }
-        this.probing = false;
-        this.schedule(() => this.probe(), GATEWAY_HEARTBEAT_MS);
-        this.options.onResponse?.(Date.now() - startedAt, Date.now());
-      },
-      () => {
-        if (generation === this.generation && this.enabled()) this.fail();
-      },
-    );
+    // A late or timed-out ping fails the socket only if nothing arrived after it was sent.
+    const unanswered = () => {
+      if (generation !== this.generation || !this.enabled() || !this.probing) return;
+      if (this.lastInboundAt >= startedAt) this.alive();
+      else this.fail();
+    };
+    this.schedule(unanswered, GATEWAY_PING_DEADLINE_MS);
+    void this.options.ping().then((reply) => {
+      if (generation !== this.generation || !this.enabled()) return;
+      if (!reply || typeof reply !== 'object' || Reflect.get(reply, 'ok') !== true) {
+        if (this.probing) this.fail();
+        return;
+      }
+      // A late pong after inbound frames settled the probe still reports its latency.
+      if (this.probing) this.alive();
+      this.options.onResponse?.(Date.now() - startedAt, Date.now());
+    }, unanswered);
+  }
+
+  private alive(): void {
+    this.probing = false;
+    this.schedule(() => this.heartbeat(), GATEWAY_HEARTBEAT_MS);
   }
 
   private fail(): void {
