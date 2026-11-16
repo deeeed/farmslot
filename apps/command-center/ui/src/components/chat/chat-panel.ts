@@ -184,7 +184,8 @@ export class ChatPanel extends LitElement {
   }
   private async ownerGuard() {
     if (!this.nativeCopilotSupported) throw new Error('Native Co-Pilot needs the gateway update.');
-    await this.runtimeQuery.requireCurrent();
+    // The gateway rechecks the runtime on start/stop; run, slot and worker churn must not block.
+    await this.runtimeQuery.requireFresh();
     const cache = getResourceCache(),
       scope = getResourceWorkspaceKey();
     return () =>
@@ -298,8 +299,7 @@ export class ChatPanel extends LitElement {
 
   private async showDangerous(): Promise<void> {
     await this.configure();
-    await this.runtimeQuery.retry();
-    this.runtimeQuery.requireReady();
+    await this.runtimeQuery.requireFresh();
     this.phrase = '';
     this.dangerous = true;
   }
@@ -517,7 +517,7 @@ export class ChatPanel extends LitElement {
               @click=${() =>
                 this.act(async () => {
                   const binding = this.runtime?.dangerousLaunch;
-                  await this.runtimeQuery.requireCurrent();
+                  await this.runtimeQuery.requireFresh();
                   // Keep the fingerprint the user saw; the server rejects a changed checkout.
                   const params = binding && dangerousStartParams(binding, this.phrase);
                   if (params) await this.start(params);

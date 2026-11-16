@@ -82,7 +82,7 @@ import {
 import { subscribeFileTransferStore } from '../shared/file-transfer-progress-store.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { readStored } from '../shared/read-current.js';
-import { ResourceQueryController } from '../shared/resource-query-controller.js';
+import { readFailureText, ResourceQueryController } from '../shared/resource-query-controller.js';
 import {
   refreshRunMirror,
   runMirrorRefreshUnavailableReason,
@@ -964,14 +964,15 @@ export class RunDetail extends RunDetailState {
   private _acceptRecipeObservation(state: ResourceQueryState<RunRecipeRunsForRunResult>): void {
     const run = this.run;
     const result = this.recipeQuery.belongsToWorkspace ? state.data : undefined;
+    const failure = readFailureText(this.recipeQuery, this._now);
     if (!run || !result) {
       this._recipeRuns = [];
       this._recordedEvidence =
-        run && state.error
+        run && failure
           ? {
               artifactPrefix: 'artifacts/',
               contractVersion: run.recordedEvidenceContractVersion ?? 0,
-              errors: [state.error.message],
+              errors: [failure],
             }
           : undefined;
       this._evidenceGroupId = null;
@@ -1250,7 +1251,7 @@ export class RunDetail extends RunDetailState {
     if (this.mockData) return;
     const query = this.progressQuery.belongsToWorkspace ? this.progressQuery : undefined;
     const data = query?.state.data;
-    const ledger = acceptanceLedgerRead(query, this._now, this.run);
+    const ledger = acceptanceLedgerRead(query, this._now);
     this.taskProgress = taskProgressWithStepDetails(data?.structured, data?.markdown) ?? null;
     this.acceptanceStatus = data?.acceptanceStatus ?? null;
     this.acceptanceCriteria = data?.acceptanceCriteria ?? null;

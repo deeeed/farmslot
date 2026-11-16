@@ -466,6 +466,7 @@ export interface RunCreateCliOptions {
   flowType?: string;
   ticket?: string;
   task?: string;
+  taskNote?: string;
   slot?: string;
   reviewMachine?: string;
   qaProfile?: string;
@@ -692,6 +693,11 @@ export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, 
   if (opts.ticket && opts.task) {
     throw new Error('Use either --ticket or --task, not both.');
   }
+  if (opts.task && opts.taskNote?.trim()) {
+    throw new Error(
+      '--task-note applies to a generated TASK.md. Omit --task, or write the note into that file.',
+    );
+  }
   if (!opts.ticket && !opts.task) {
     throw new Error('Provide --ticket <jira-or-github-ref> or --task <TASK.md>.');
   }
@@ -714,6 +720,7 @@ export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, 
     ...(scripted ? { scripted } : {}),
     app: opts.app || undefined,
     ...(opts.domain ? { domain: opts.domain } : {}),
+    ...(opts.taskNote?.trim() ? { taskNote: opts.taskNote.trim() } : {}),
     ...(opts.executionTemplate ? { executionTemplateId: opts.executionTemplate } : {}),
     familyId: opts.familyId || undefined,
     parentRunId: opts.parentRunId || undefined,
@@ -1495,6 +1502,7 @@ export function registerRunCommand(program: Command): void {
     .option('--flow-type <type>', 'Flow type (fix-bug, review-pr, qa, dev, pr-complete)')
     .option('--ticket <ref>', 'Jira key/URL or GitHub issue/PR URL/ref')
     .option('--task <path>', 'Existing TASK.md to dispatch through the run pipeline')
+    .option('--task-note <text>', 'Append one ## Note section to the generated TASK.md')
     .option('--slot <id>', 'Specific slot ID')
     .option('--review-machine <machine>', 'Machine for a static review workspace')
     .option('--publish-review', 'Publish this static review to its PR')

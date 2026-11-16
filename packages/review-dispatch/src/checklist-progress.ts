@@ -101,7 +101,12 @@ export function checklistProgressExecution(
   return {
     active: active && (!context || ['working', 'launching'].includes(context.status)),
     finishedAt: context?.completedAt ?? run.completedAt ?? undefined,
-    ...(worker?.signalAttemptId &&
+    // Only initial worker dispatch adopts its attempt clock from the first signal.
+    // Review attempts can bind their ID before the acknowledgement arrives.
+    ...(['dispatch', 'monitor'].includes(activity?.ownerStepName ?? '') &&
+    worker?.signalAttemptId &&
+    worker.role !== 'review' &&
+    worker.role !== 'review-fix' &&
     worker.status !== 'launching' &&
     Number.isFinite(Date.parse(worker.attemptStartedAt ?? '')) &&
     Date.parse(worker.lastSignalAt ?? '') >= Date.parse(worker.attemptStartedAt ?? '')

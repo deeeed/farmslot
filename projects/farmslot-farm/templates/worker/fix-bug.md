@@ -6,7 +6,7 @@
 
 ### Early no-change exit (before code/PR mutations)
 
-After `mark start`, first decide if a code fix is still needed. If the bug is already fixed or cannot be reproduced in a valid target environment, do not create a fake commit/PR. Write `{{TASK_DIR}}/artifacts/no-change-report.md` and `{{TASK_DIR}}/artifacts/learnings.md` (one bullet per failure in this run that is likely to recur and should change a template, reviewer or engine step; `- None` when there is none), then:
+After `mark 1`, and not before it, decide whether a code fix is still needed. If the bug is already fixed or cannot be reproduced in a valid target environment, do not create a fake commit/PR. Write `{{TASK_DIR}}/artifacts/no-change-report.md` and `{{TASK_DIR}}/artifacts/learnings.md` (one bullet per failure in this run that is likely to recur and should change a template, reviewer or engine step; `- None` when there is none), then:
 
 ```bash
 {{TASK_DIR}}/mark no-change --reason "<one sentence>"
@@ -14,8 +14,8 @@ After `mark start`, first decide if a code fix is still needed. If the bug is al
 
 Add `--already-fixed` when the bug is already fixed on the current branch. Use `{{TASK_DIR}}/mark blocked --reason "<one sentence>"` for branch/env/auth/device/CDP/precondition problems. Never call setup failure `not_reproducible`.
 
-- [ ] **1. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md` to understand repo structure, conventions, and validation rules.
-- [ ] **2. Start** — `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
+- [ ] **1. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md` to understand repo structure, conventions, and validation rules. Then run `{{TASK_DIR}}/mark start` and `{{TASK_DIR}}/mark 1`, before any other work.
+- [ ] **2. Start** — `{{TASK_DIR}}/mark 2`.
 - [ ] **3. Read the bug + required surfaces** — understand the issue and record **which surfaces it needs** (only what ACs require): `gateway-cli` | `command-center` | `companion-device` (Companion on sim/device: install + launch; Metro alone ≠ ready). Boot/install **only** those surfaces: `command-center` → sandbox UI + CDP; `companion-device` → Companion **installed** on slot sim/device (`companion-prepare.sh full` or install scripts if missing; verify simctl/adb); `gateway-cli` → skip boots/installs. Block if a required surface cannot be made ready. Do not start unrelated runtimes.
 
 > **Recipe scope.** Recipes prove a protocol action through a real client endpoint — Command Center,

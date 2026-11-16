@@ -13,6 +13,14 @@ return {
   ),
   runId: detail?.run?.id,
   status: detail?.run?.status,
+  signalContexts: (detail?.run?.agentContexts ?? [])
+    .filter((entry) => entry.signalAttemptId)
+    .map(({ id, role, attemptStartedAt, lastSignalAt }) => ({
+      id,
+      role,
+      attemptStartedAt,
+      lastSignalAt,
+    })),
   panelOpen: panel?.querySelector('button')?.getAttribute('aria-expanded') === 'true',
   completed: detail?.taskProgress?.completedSteps,
   total: detail?.taskProgress?.totalSteps,

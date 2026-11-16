@@ -1,6 +1,7 @@
 // Disposable real gateway and files for the operation-log browser proof. No worker is launched.
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
@@ -10,7 +11,9 @@ import { promisify } from 'node:util';
 
 const output = process.env.OPERATION_LOG_PROOF_OUTPUT;
 const ledgerFailure = process.env.ACCEPTANCE_LEDGER_ERROR_PROOF === '1';
-const workerAcknowledgement = process.env.WORKER_ACKNOWLEDGEMENT_PROOF === '1';
+const workerAcknowledgement = ['1', 'review'].includes(process.env.WORKER_ACKNOWLEDGEMENT_PROOF);
+const reviewAcknowledgement = process.env.WORKER_ACKNOWLEDGEMENT_PROOF === 'review';
+const expectedAbsence = process.env.ACCEPTANCE_ABSENCE_PROOF === '1';
 const port = Number(process.env.GATEWAY_PORT);
 assert(output && Number.isSafeInteger(port) && port > 0);
 const source = fileURLToPath(new URL('../../../', import.meta.url));
@@ -37,6 +40,13 @@ await writeFile(
   path.join(root, 'projects/log-proof/project.json'),
   JSON.stringify({ name: 'log-proof' }),
 );
+if (expectedAbsence) {
+  const failedRepo = path.join(root, 'repo-watch-error');
+  await mkdir(failedRepo);
+  await promisify(execFile)('git', ['init', '--quiet', failedRepo]);
+  // A real disk error in watch-time Git discovery, not an injected RPC response.
+  await writeFile(path.join(failedRepo, '.git/config'), '[broken config\n');
+}
 await writeFile(
   path.join(root, 'pool/local.json'),
   JSON.stringify({
@@ -45,7 +55,18 @@ await writeFile(
     platform: 'cli',
     os: 'darwin',
     host: 'localhost',
-    slots: [{ id: 'log-proof-1', repo: path.join(root, 'repo'), session: 'not-launched' }],
+    slots: [
+      { id: 'log-proof-1', repo: path.join(root, 'repo'), session: 'not-launched' },
+      ...(expectedAbsence
+        ? [
+            {
+              id: 'log-proof-watch-error',
+              repo: path.join(root, 'repo-watch-error'),
+              session: 'not-launched',
+            },
+          ]
+        : []),
+    ],
   }),
 );
 const load = (file) => import(pathToFileURL(path.join(source, file)).href);
@@ -81,17 +102,53 @@ await writeFile(path.join(taskDir, 'TASK.md'), '# Operation log proof\n');
 await writeFile(path.join(taskDir, paths[0]), '');
 await writeFile(path.join(taskDir, paths[1]), 'Recorded operation output\n');
 updateRun(run.id, {
-  status: ledgerFailure ? 'done' : 'monitoring',
+  status: ledgerFailure ? 'done' : reviewAcknowledgement ? 'reviewing' : 'monitoring',
+  ...(reviewAcknowledgement
+    ? { activeTaskFile: path.join(config.getOrchestratorTaskRoot('log-proof'), 'proof/REVIEW.md') }
+    : {}),
   taskFile: path.join(config.getOrchestratorTaskRoot('log-proof'), 'proof/TASK.md'),
   steps: run.steps.map((step) => ({
     ...step,
-    status: !ledgerFailure && step.name === 'monitor' ? 'running' : 'done',
+    status:
+      !ledgerFailure && step.name === (reviewAcknowledgement ? 'review' : 'monitor')
+        ? 'running'
+        : 'done',
     outputs:
       step.name === 'monitor'
         ? { artifacts: paths.map((file) => ({ path: file, purpose: 'other' })) }
         : {},
   })),
 });
+// Optional setup-only runs exercise absent observations through production RPCs.
+// No worker or browser state is created or changed by the proof driver.
+const absenceRuns = {};
+if (expectedAbsence) {
+  const preparingTask = path.join(config.getOrchestratorTaskRoot('log-proof'), 'preparing-absence');
+  await mkdir(preparingTask, { recursive: true });
+  await writeFile(path.join(preparingTask, 'TASK.md'), '# Preparing task\n');
+  await writeFile(path.join(preparingTask, 'CHECKLIST.md'), '- [ ] Worker has not started\n');
+  for (const status of ['created', 'preparing']) {
+    const empty = createRun(
+      {
+        project: 'log-proof',
+        flowType: 'dev',
+        ticketOrPr: `${status} absence proof`,
+        mode: 'interactive',
+        slotId: 'log-proof-1',
+      },
+      { createdByPrincipalId: person.id, nativeOwnerPrincipalId: person.id },
+    );
+    updateRun(empty.id, {
+      status,
+      ...(status === 'preparing' ? { taskFile: path.join(preparingTask, 'TASK.md') } : {}),
+      steps: empty.steps.map((step) => ({
+        ...step,
+        status: status === 'preparing' && step.name === 'prepare' ? 'running' : 'pending',
+      })),
+    });
+    absenceRuns[status] = empty.id;
+  }
+}
 // Setup-time recorded progress uses the production task reader, which discovers
 // operation records from disk. No progress payload is injected into the browser.
 const recorded = path.join(config.getOrchestratorTaskRoot('log-proof'), 'proof');
@@ -103,6 +160,10 @@ const checklist = workerAcknowledgement
 if (workerAcknowledgement) await writeFile(path.join(taskDir, 'CHECKLIST.md'), checklist);
 await writeFile(path.join(recorded, 'CHECKLIST.md'), checklist);
 await writeFile(path.join(recorded, 'CHECKLIST.md.worker'), checklist);
+if (reviewAcknowledgement) {
+  await writeFile(path.join(taskDir, 'REVIEW.md'), checklist);
+  await writeFile(path.join(recorded, 'REVIEW.md'), checklist);
+}
 if (ledgerFailure)
   await writeFile(
     path.join(recorded, 'artifacts/acceptance-status.json'),
@@ -142,22 +203,36 @@ if (workerAcknowledgement) {
   );
   const { normalizeWorkerSignal } = await load('services/gateway/src/tasks/worker-signals.ts');
   const launchedAt = new Date(Date.now() - 1000).toISOString();
-  await upsertAgentContext(run.id, 'dev', {
-    id: 'ack-worker',
+  const role = reviewAcknowledgement ? 'review' : 'dev';
+  const contextId = reviewAcknowledgement ? 'ack-review' : 'ack-worker';
+  const reservedAttempt = reviewAcknowledgement ? randomUUID() : undefined;
+  await upsertAgentContext(run.id, role, {
+    id: contextId,
     label: 'Worker',
     status: 'launching',
-    taskFile: path.join(taskDir, 'TASK.md'),
+    taskFile: path.join(taskDir, reviewAcknowledgement ? 'REVIEW.md' : 'TASK.md'),
+    ...(reservedAttempt ? { signalAttemptId: reservedAttempt } : {}),
     signalFile: path.join(taskDir, 'SIGNAL.json'),
     startedAt: launchedAt,
     attemptStartedAt: launchedAt,
   });
   // Execute the actual marker. The acknowledgement is adopted from its signal,
   // not seeded into the run record or injected into the browser.
-  await promisify(execFile)(process.execPath, [
-    path.join(source, 'packages/agent-runtime/scripts/mark-checklist-step.cjs'),
-    taskDir,
-    'start',
-  ]);
+  await promisify(execFile)(
+    process.execPath,
+    [
+      path.join(source, 'packages/agent-runtime/scripts/mark-checklist-step.cjs'),
+      taskDir,
+      ...(reviewAcknowledgement ? ['--checklist', 'REVIEW.md', '--signal', 'SIGNAL.json'] : []),
+      'start',
+    ],
+    {
+      env: {
+        ...process.env,
+        ...(reservedAttempt ? { FARMSLOT_SIGNAL_ATTEMPT_ID: reservedAttempt } : {}),
+      },
+    },
+  );
   const normalized = normalizeWorkerSignal(
     JSON.parse(await readFile(path.join(taskDir, 'SIGNAL.json'), 'utf8')),
   );
@@ -167,11 +242,13 @@ if (workerAcknowledgement) {
     'log-proof-1',
     run.id,
     normalized.signal,
-    'dev',
-    'ack-worker',
+    role,
+    contextId,
   );
   acknowledgement = {
     command: 'production mark start',
+    phase: reviewAcknowledgement ? 'review' : 'worker',
+    contextId,
     timestamp: normalized.signal.timestamp,
     signalAttemptId: normalized.signal.attemptId,
     launchedAt,
@@ -235,6 +312,7 @@ await writeFile(
       root,
       runId: run.id,
       paths,
+      ...(expectedAbsence ? { absenceRuns, watchFailureSlotId: 'log-proof-watch-error' } : {}),
       clientHome: path.join(root, 'client'),
       url,
       pid: process.pid,

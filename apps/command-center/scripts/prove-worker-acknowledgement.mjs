@@ -10,6 +10,8 @@ import { promisify } from 'node:util';
 const output = process.env.FARMSLOT_ACK_PROOF_OUTPUT;
 const runId = process.env.FARMSLOT_ACK_PROOF_RUN_ID;
 const tab = process.env.FARMSLOT_ACK_PROOF_TAB;
+const phase = process.env.FARMSLOT_ACK_PROOF_PHASE ?? 'worker';
+assert(['worker', 'review'].includes(phase));
 assert(
   output && runId && tab,
   'Select an explicit gateway profile, real run, owned tab and output',
@@ -40,12 +42,77 @@ const readSource = async () => {
     'task.progress',
     JSON.stringify({ runId, slotId: run.slotId ?? '' }),
   );
-  assert.equal(progress.structured?.completedSteps, 0, 'Capture before checkbox 1');
-  assert(progress.structured.totalSteps > 0, 'Read a real worker checklist');
+  if (phase === 'worker') {
+    assert.equal(progress.structured?.completedSteps, 0, 'Capture before checkbox 1');
+    assert(progress.structured.totalSteps > 0, 'Read a real worker checklist');
+  }
   return { run, progress };
 };
 await cdp('focus', tab);
 const before = await readSource();
+if (phase === 'review') {
+  assert.equal(before.run.status, 'reviewing');
+  const context = before.run.agentContexts?.find(
+    (entry) => entry.role === 'review' && entry.signalAttemptId,
+  );
+  assert(context && context.status === 'working');
+  assert(
+    Date.parse(context.lastSignalAt) > Date.parse(context.attemptStartedAt),
+    'A pre-bound review retains its launch clock after the real marker',
+  );
+  let view;
+  const end = Date.now() + 30000;
+  do {
+    view = await read();
+    if (
+      view.runId === runId &&
+      view.signalContexts.some(
+        (entry) => entry.id === context.id && entry.lastSignalAt === context.lastSignalAt,
+      )
+    )
+      break;
+    await delay(100);
+  } while (Date.now() < end);
+  assert(view.connected && view.runId === runId && !view.modalOpen);
+  assert(
+    view.signalContexts.some(
+      (entry) => entry.id === context.id && entry.lastSignalAt === context.lastSignalAt,
+    ),
+    'Observe the real accepted reviewer signal in the browser',
+  );
+  assert.equal(
+    view.acknowledgedAt,
+    undefined,
+    'A review launch clock must not be labelled worker acknowledgement',
+  );
+  await mkdir(output, { recursive: true });
+  await cdp('screenshot', tab, path.join(output, 'review-clock-not-acknowledged.png'));
+  assert.equal((await read()).acknowledgedAt, undefined);
+  const after = await readSource();
+  assert(
+    after.run.agentContexts.some(
+      (entry) => entry.id === context.id && entry.attemptStartedAt === context.attemptStartedAt,
+    ),
+  );
+  await writeFile(
+    path.join(output, 'proof.json'),
+    JSON.stringify(
+      {
+        status: 'pass',
+        phase,
+        runId,
+        contextId: context.id,
+        launchedAt: context.attemptStartedAt,
+        actualSignalAt: context.lastSignalAt,
+        dom: view,
+      },
+      null,
+      2,
+    ) + '\n',
+  );
+  console.log(JSON.stringify({ status: 'pass', phase, runId }));
+  process.exit(0);
+}
 const end = Date.now() + 30000;
 let dom;
 do {

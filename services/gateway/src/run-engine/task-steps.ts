@@ -487,6 +487,7 @@ export async function executeWriteTaskStep(
   const inputs: Record<string, unknown> = {
     flowType: current.flowType,
     hasTicketData: !!current.ticketData,
+    ...(current.taskNote ? { taskNote: current.taskNote } : {}),
   };
   // The node initializes the task after prepare checks out and installs the slot
   // (ADR-068 Amendment 7).

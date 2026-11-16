@@ -365,3 +365,50 @@ test('worker acknowledgement uses the first accepted signal, never the launch or
   context.signalAttemptId = undefined;
   assert.equal(checklistProgressExecution(input, current)?.acknowledgedAt, undefined);
 });
+
+test('a review context with a launch-bound attempt does not claim worker acknowledgement', () => {
+  const input = progress();
+  input.timing = { schemaVersion: 1, source: 'REVIEW.md', events: [] };
+  const review = run({
+    agentContexts: [
+      {
+        id: 'review',
+        role: 'review',
+        label: 'Reviewer',
+        status: 'working',
+        runId: 'run-1',
+        slotId: 'slot-1',
+        taskFile: 'tasks/test/REVIEW.md',
+        signalAttemptId: 'prebound-review-attempt',
+        attemptStartedAt: '2026-11-16T01:00:00Z',
+        lastSignalAt: '2026-11-16T01:00:07Z',
+      },
+    ],
+  });
+  assert.equal(checklistProgressExecution(input, review)?.active, true);
+  assert.equal(checklistProgressExecution(input, review)?.acknowledgedAt, undefined);
+});
+
+test('a pre-bound reviewer cannot become the worker acknowledgement during a phase transition', () => {
+  const input = progress();
+  input.timing = { schemaVersion: 1, source: 'REVIEW.md', events: [] };
+  const current = run({
+    status: 'monitoring',
+    steps: [{ name: 'monitor', status: 'running' }],
+    agentContexts: [
+      {
+        id: 'review-transition',
+        role: 'review',
+        label: 'Reviewer',
+        status: 'working',
+        runId: 'run-1',
+        slotId: 'slot-1',
+        taskFile: 'tasks/test/REVIEW.md',
+        signalAttemptId: 'prebound-review-attempt',
+        attemptStartedAt: '2026-11-16T01:00:00Z',
+        lastSignalAt: '2026-11-16T01:00:07Z',
+      },
+    ],
+  });
+  assert.equal(checklistProgressExecution(input, current)?.acknowledgedAt, undefined);
+});

@@ -29,8 +29,8 @@ merge commit.
 
 ## Checklist
 
-- [ ] **1. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md` to understand repo structure, conventions, and validation rules.
-- [ ] **2. Start** — `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
+- [ ] **1. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md` to understand repo structure, conventions, and validation rules. Then run `{{TASK_DIR}}/mark start` and `{{TASK_DIR}}/mark 1`, before any other work.
+- [ ] **2. Start** — `{{TASK_DIR}}/mark 2`.
 - [ ] **3. Confirm target** — verify `PR_NUMBER`, `PR_BRANCH` and `PUBLICATION_BASE` in TASK.md.
 - [ ] **4. Checkout PR branch** — `git checkout {{PR_BRANCH}}`
 - [ ] **5. Update branch** — fetch `{{PUBLICATION_BASE}}` from origin and rebase onto `origin/{{PUBLICATION_BASE}}`. Follow TASK.md's recorded remote-SHA lease guard and resolve conflicts on `{{PR_BRANCH}}`. The default branch remains the separate freshness reference.

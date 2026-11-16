@@ -1,0 +1,1 @@
+- Co-Pilot start, stop and configure take a new checkout snapshot when a write to the checkout supersedes one, instead of failing with "Workspace contents changed during the read".

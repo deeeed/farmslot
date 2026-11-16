@@ -11,7 +11,7 @@ import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 
 import { metroEnvFingerprint } from '../src/metro-env.js';
-import { sourceFingerprint } from '../src/source-freshness.js';
+import { sourceFingerprint, type SourceInputs } from '../src/source-freshness.js';
 
 // ── Old mm-harness constants (re-stated here to pin parity) ──────────────────
 const MM_SOURCE_PATHS = [
@@ -55,18 +55,21 @@ function oldMetroEnvFingerprint(target: string): string {
 }
 
 /** Inline re-implementation of mm-harness mobileSourceFingerprint. */
-function oldSourceFingerprint(target: string): string {
+function oldSourceFingerprint(
+  target: string,
+  inputs: SourceInputs = { paths: MM_SOURCE_PATHS, envFiles: MM_ENV_FILES },
+): string {
   const hash = createHash('sha256');
   const head = tryGit(target, ['rev-parse', 'HEAD']);
   if (head === null) {
     hash.update('non-git\0');
-    for (const relative of MM_SOURCE_PATHS) {
+    for (const relative of inputs.paths) {
       oldHashPath(hash, target, relative);
     }
   } else {
     hash.update(head);
     hash.update(
-      execFileSync('git', ['diff', '--no-ext-diff', '--binary', 'HEAD', '--', ...MM_SOURCE_PATHS], {
+      execFileSync('git', ['diff', '--no-ext-diff', '--binary', 'HEAD', '--', ...inputs.paths], {
         cwd: target,
         encoding: 'buffer',
         maxBuffer: 128 * 1024 * 1024,
@@ -75,7 +78,7 @@ function oldSourceFingerprint(target: string): string {
     );
     const untracked = execFileSync(
       'git',
-      ['ls-files', '--others', '--exclude-standard', '-z', '--', ...MM_SOURCE_PATHS],
+      ['ls-files', '--others', '--exclude-standard', '-z', '--', ...inputs.paths],
       { cwd: target, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
     )
       .split('\0')
@@ -87,7 +90,7 @@ function oldSourceFingerprint(target: string): string {
       hash.update('\0');
     }
   }
-  for (const relative of MM_ENV_FILES) {
+  for (const relative of inputs.envFiles) {
     const absolute = path.join(target, relative);
     hash.update(`env\0${relative}\0`);
     hash.update(fs.existsSync(absolute) ? fs.readFileSync(absolute) : '<absent>');
@@ -232,6 +235,84 @@ describe('fingerprint parity with mm-harness algorithm', () => {
       });
 
       assert.equal(newHash, oldHash, 'hashes must be byte-identical (untracked + env file)');
+    });
+
+    it('keeps the legacy fingerprint through staged edits, renames, deletion and untracked names', async () => {
+      const dir = await makeTempDir();
+      initGitRepo(dir);
+      fs.mkdirSync(path.join(dir, 'app'));
+      fs.writeFileSync(path.join(dir, 'app', 'tracked.js'), 'before\n');
+      execFileSync('git', ['-C', dir, 'add', '.'], { stdio: 'ignore' });
+      execFileSync('git', ['-C', dir, 'commit', '-m', 'tracked'], { stdio: 'ignore' });
+      const inputs = { paths: ['./app'], envFiles: ['.env'] };
+      const check = () =>
+        assert.equal(sourceFingerprint(dir, inputs), oldSourceFingerprint(dir, inputs));
+      check();
+      fs.writeFileSync(path.join(dir, 'app', 'tracked.js'), 'after\n');
+      check();
+      execFileSync('git', ['-C', dir, 'add', '.'], { stdio: 'ignore' });
+      check();
+      execFileSync('git', ['-C', dir, 'mv', 'app/tracked.js', 'app/renamed.js']);
+      fs.writeFileSync(path.join(dir, 'app', 'new\nname.js'), 'untracked');
+      check();
+      fs.unlinkSync(path.join(dir, 'app', 'renamed.js'));
+      fs.writeFileSync(path.join(dir, '.env'), 'changed env');
+      check();
+    });
+
+    it('preserves cwd-relative paths for nested source roots', async () => {
+      const dir = await makeTempDir();
+      initGitRepo(dir);
+      const nested = path.join(dir, 'nested');
+      fs.mkdirSync(nested);
+      fs.writeFileSync(path.join(nested, 'package.json'), '{}');
+      execFileSync('git', ['-C', dir, 'add', '.'], { stdio: 'ignore' });
+      execFileSync('git', ['-C', dir, 'commit', '-m', 'nested'], { stdio: 'ignore' });
+      fs.writeFileSync(path.join(nested, 'index.js'), 'untracked');
+      const inputs = { paths: ['./package.json', 'index.js'], envFiles: [] };
+      assert.equal(sourceFingerprint(nested, inputs), oldSourceFingerprint(nested, inputs));
+    });
+
+    it('observes new untracked and ignored env bytes on every invocation', async () => {
+      const dir = await makeTempDir();
+      initGitRepo(dir);
+      fs.mkdirSync(path.join(dir, 'app'));
+      fs.writeFileSync(path.join(dir, '.gitignore'), '.env\n');
+      const inputs = { paths: ['app'], envFiles: ['.env'] };
+      const before = sourceFingerprint(dir, inputs);
+      fs.writeFileSync(path.join(dir, 'app', 'new.js'), 'first');
+      const untracked = sourceFingerprint(dir, inputs);
+      assert.notEqual(untracked, before);
+      assert.equal(untracked, oldSourceFingerprint(dir, inputs));
+      fs.writeFileSync(path.join(dir, 'app', 'new.js'), 'second');
+      assert.notEqual(sourceFingerprint(dir, inputs), untracked);
+      fs.writeFileSync(path.join(dir, '.env'), 'ignored but bound');
+      assert.equal(sourceFingerprint(dir, inputs), oldSourceFingerprint(dir, inputs));
+    });
+
+    it('keeps linked worktrees and source path exclusions byte-compatible', async () => {
+      const dir = await makeTempDir();
+      initGitRepo(dir);
+      fs.mkdirSync(path.join(dir, 'app'));
+      fs.writeFileSync(path.join(dir, 'app', 'kept.js'), 'tracked');
+      execFileSync('git', ['-C', dir, 'add', '.'], { stdio: 'ignore' });
+      execFileSync('git', ['-C', dir, 'commit', '-m', 'source'], { stdio: 'ignore' });
+      const worktree = path.join(await makeTempDir(), 'linked');
+      execFileSync('git', ['-C', dir, 'worktree', 'add', '--detach', worktree], {
+        stdio: 'ignore',
+      });
+      cleanups.push(() => {
+        execFileSync('git', ['-C', dir, 'worktree', 'remove', '--force', worktree]);
+      });
+      fs.writeFileSync(path.join(worktree, 'app', 'skip.js'), 'excluded');
+      fs.writeFileSync(path.join(worktree, 'app', 'new.js'), 'included');
+      const inputs = { paths: ['./app', ':(exclude)app/skip.js'], envFiles: [] };
+      const before = sourceFingerprint(worktree, inputs);
+      assert.equal(before, oldSourceFingerprint(worktree, inputs));
+      fs.writeFileSync(path.join(worktree, 'app', 'skip.js'), 'changed excluded');
+      assert.equal(sourceFingerprint(worktree, inputs), before);
+      fs.symlinkSync('kept.js', path.join(worktree, 'app', 'link.js'));
+      assert.equal(sourceFingerprint(worktree, inputs), oldSourceFingerprint(worktree, inputs));
     });
   });
 });

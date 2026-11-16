@@ -15,6 +15,28 @@ needs no server. Missing samples mean unmeasured.
 20 samples and at least 95% within the exact budget bucket. Displayed percentiles
 are bucket estimates; max and bytes are exact. Calls over 2 s emit a slow log.
 
+## Tracked metrics
+
+Baselines are the latest measured values; each performance PR that moves a metric
+updates its row in the same PR. "Budget check" is the operator's alert-only check
+that runs after every gateway deploy: two 10-minute windows compared with the last
+kept windows, never above load 100, and an alert only when the second window
+repeats the first.
+
+| Metric                                 | How measured                                                                                               | Current baseline                                                                                             | Alert threshold                                                                                                                  | Owner                    |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| RPC latency per action class           | `farmslot_rpc_duration_seconds` (`gateway.performance.get`, Doctor)                                        | Targets in the table above                                                                                   | Budget verdict: under 95% of 20+ samples within the class target                                                                 | Runtime performance lane |
+| Node and exec calls per RPC, by method | `farmslot_node_calls_total` and `farmslot_exec_calls_total` over the method's RPC count in a budget window | `task.progress`: 8.5 node requests per RPC on a live run (2026-11-15, after #2230; 33–38 before)             | Budget check: at least 1.5x and +2 calls per RPC against every kept window                                                       | Runtime performance lane |
+| Gateway CPU                            | `ps` CPU seconds per 10 minutes, and per 100 RPCs                                                          | 55–96 s per 10 minutes over the last five kept windows (2026-11-15)                                          | Budget check: at least 1.5x CPU unless CPU per RPC stays flat (then reported as activity)                                        | Runtime performance lane |
+| Event-loop lag                         | `farmslot_event_loop_lag_seconds` max per window                                                           | Read per window; slow-RPC logs carry `loopLagSeconds`                                                        | None yet; reported with slow RPCs                                                                                                | Runtime performance lane |
+| Command Center live slot page          | CDP wire frames and `Performance.getMetrics` on a live run's slot page, 3 cold loads and 120 s steady      | First paint 0.43–0.61 s; 3.1 RPC/s, 25 KB/s, main thread 3.85% busy, no long tasks (2026-11-16)              | Checked in each performance PR that touches it; no automatic alert                                                               | Runtime performance lane |
+| Companion run detail rereads           | Gateway-client frames per method on the slot screen of a live run, 120 s (iOS simulator, Debug client)     | `run.get` 12 reads, 811 KB per 2 minutes (after #2251; 20 and 1.7 MB before)                                 | Checked in each performance PR that touches it; no automatic alert                                                               | Runtime performance lane |
+| Prepare time                           | `prepare` step `durationMs` of completed runs in the run store                                             | p50 118 s, p90 256 s (7 days to 2026-11-16)                                                                  | Budget check `STEP-TIME`: last-24-hour p50 at least 1.5x the prior six days' p50 and 30 s slower, with at least 5 recent samples | Runtime performance lane |
+| Dispatch time                          | `dispatch` step `durationMs`                                                                               | p50 20 s, p90 129 s                                                                                          | Same `STEP-TIME` rule                                                                                                            | Runtime performance lane |
+| Complete and finalize time             | `complete` and `finalize` step `durationMs`                                                                | complete p50 19 s, p90 81 s; finalize p50 2 s, p90 27 s                                                      | Same `STEP-TIME` rule                                                                                                            | Runtime performance lane |
+| Prepare Git commands                   | `git.<sequence>.<operation>` prepare substeps (below)                                                      | Heaviest so far: clear index flags 24 s, checkout default 18 s, reset default 18 s, reset head 16 s (2 runs) | None yet; cost is counted as processes and Git calls per step                                                                    | Runtime performance lane |
+| Slot release time                      | Not recorded: `slot.release` prints phase times to the console only                                        | Unmeasured                                                                                                   | None until it is recorded                                                                                                        | Runtime performance lane |
+
 Cached paint starts at foreground demand, before lookup/hydration, and ends after
 the subscriber's queued render and data frame. Refresh timing stays separate.
 Read counters include cache source, age, stale/blocking state and opaque per-query
@@ -25,14 +47,20 @@ that started the command; outside a request it is `host:<operation>` for a
 command a host service (`services/gateway/src/host-services`) started, and
 `_background` otherwise.
 
-To investigate and improve:
+## How to improve a metric
+
+Follow the [performance rules](../../AGENTS.md#performance-rules).
 
 1. Record method, class, cache source/age, workload size and observation window.
-2. Compare bytes, managed processes, node wait and loop lag. Confirm the cause in
-   source. Remove repeated work at its owner; bring contract changes to the lead.
+2. Compare bytes, managed processes, Git calls, node wait and loop lag. Confirm the
+   cause in source before changing it: a count that rises with run size, a poll that an
+   event could replace, or a reread on a change that does not affect the reply.
+   Remove repeated work at its owner; bring contract changes to the lead.
 3. Repeat the same method, parameters, workload and cache state. Save before/after
    snapshots, build and host. Assert result identities too. A cache hit cannot
    replace a network measurement.
+4. State in the PR the processes and Git calls the change adds or removes per call,
+   and update the metric's row in the table above.
 
 For `fleet.status` with `forceRefresh: true`, measure the genuine machine-health
 generation through its committed `checkedAt`. Optional workspace/Git observations
@@ -70,6 +98,17 @@ for trends; do not reset measurements or change workloads to produce a pass.
 
 Use the shared dispatch, client/cache and exec wrappers. New methods inherit
 coverage; add no endpoint timers or separate measuring service.
+
+Prepare retains exact `git.<sequence>.<operation>` measurements in its existing
+substeps and log stream. Their JSON detail records elapsed `durationMs`, exit code
+and whether the measurement covers a command or a full guarded mutation, including
+parking. These are nested measurements: do not add them to the parent phase totals.
+Command arguments, output and exception text are omitted. Use the read-only
+[prepare Git timing recipe](../../scripts/runner-validation/prepare-git-timing-read.recipe.json)
+with `FARMSLOT_PREPARE_PROOF_RUN` and an authenticated `FARMSLOT_GATEWAY_PROFILE`
+to read the next real run's `prepare.outputs.subSteps` before changing a slow Git operation.
+Use `FARMSLOT_PREPARE_PROOF_ACTIVE=1` during Git work to check that measurements
+leave the human stage detail intact, then rerun after prepare completes.
 
 HTTP ingress shares the request context used for managed exec and node attribution.
 `farmslot_http_requests_total` counts responses by bounded `http.*` route and status

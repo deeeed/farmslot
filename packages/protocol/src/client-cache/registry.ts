@@ -1170,11 +1170,9 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     // Match their bounded verification window instead of the generic 15-second RPC limit.
     timeoutMs: 120_000,
     live: true,
-    dependencies: (params: unknown) => [
-      { family: 'run', runId: requiredId(params, 'runId') },
-      // Review-round budgets include other runs of the same PR.
-      { family: 'runs', scope: 'farm' },
-    ],
+    // The gateway advances this run's key when a run it serves facts of changes (review-round
+    // budget of its PR, prior review generations), so unrelated run changes cost no reread.
+    dependencies: (params: unknown) => [{ family: 'run', runId: requiredId(params, 'runId') }],
   },
   [Methods.DECISION_LIST]: {
     persisted: true,

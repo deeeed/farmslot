@@ -178,6 +178,22 @@ test('prepare stage lines are progress; stall notices and plain output are not',
   // Pin an old progress time so any later bump is visible.
   const progressAt = iso(T0);
   updateRunStep(run.id, 'prepare', { lastProgressAt: progressAt });
+  const stageDetail = step(run.id, 'prepare').detail;
+  emit('slot.prepare.step', {
+    name: 'git.1.fetch-default',
+    detail: '{"operation":"fetch-default","durationMs":5,"exitCode":0}',
+    measurement: 'git-command',
+    durationMs: 5,
+    outcome: 'ok',
+  });
+  assert.equal(step(run.id, 'prepare').detail, stageDetail, 'timings do not replace the stage');
+  assert.equal(step(run.id, 'prepare').lastProgressAt, progressAt);
+  const recordedSteps = step(run.id, 'prepare').outputs?.subSteps;
+  assert.ok(Array.isArray(recordedSteps));
+  assert.ok(
+    recordedSteps.some((row) => row.name === 'git.1.fetch-default' && row.durationMs === 5),
+    'timings still reach the retained substeps',
+  );
   emit('script.output', { stream: 'stdout', data: 'webpack compiled 4210 modules\n' });
   assert.equal(step(run.id, 'prepare').lastProgressAt, progressAt);
 

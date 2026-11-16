@@ -46,6 +46,23 @@ export function createSubStepCollector(): SubStepCollector {
           ? p.outcome
           : undefined;
       if (!name) return;
+      // Exact Git observations are nested in a phase. They must not close or
+      // rename that phase, or charge time after the command to its measurement.
+      if (
+        event === 'slot.prepare.step' &&
+        p?.measurement === 'git-command' &&
+        typeof p.durationMs === 'number' &&
+        Number.isFinite(p.durationMs) &&
+        p.durationMs >= 0
+      ) {
+        records.push({
+          name,
+          outcome: outcome ?? 'ok',
+          durationMs: p.durationMs,
+          ...(detail ? { detail } : {}),
+        });
+        return;
+      }
       if (current && current.name !== name) {
         records.push({
           name: current.name,
