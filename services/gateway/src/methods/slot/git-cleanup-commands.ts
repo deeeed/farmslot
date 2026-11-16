@@ -27,5 +27,8 @@ export function recreateWorkBranchCommand(
   defaultBranch: string,
   quote: (value: string) => string,
 ): string {
-  return `${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git config --remove-section ${quote(`branch.${branch}`)} 2>/dev/null; git checkout --force -B ${quote(branch)} ${quote(base)} && git update-ref ${quote(`refs/heads/${defaultBranch}`)} ${quote(`origin/${defaultBranch}`)}`;
+  // Refuse, as `git checkout <default>` did, when another worktree has either branch checked
+  // out: moving its ref would leave that worktree's files staged against a new HEAD.
+  const guard = `top=$(git rev-parse --show-toplevel) || exit 128; used=$(git worktree list --porcelain | awk -v top="$top" '/^worktree /{w=substr($0,10)} /^branch /{if (w!=top) print substr($0,8)}'); for ref in ${quote(`refs/heads/${defaultBranch}`)} ${quote(`refs/heads/${branch}`)}; do if printf '%s\\n' "$used" | grep -qxF "$ref"; then echo "fatal: $ref is checked out in another worktree" >&2; exit 128; fi; done`;
+  return `${guard}; ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git config --remove-section ${quote(`branch.${branch}`)} 2>/dev/null; git checkout --force -B ${quote(branch)} ${quote(base)} && git update-ref ${quote(`refs/heads/${defaultBranch}`)} ${quote(`origin/${defaultBranch}`)}`;
 }

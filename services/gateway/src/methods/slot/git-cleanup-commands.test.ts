@@ -247,3 +247,42 @@ test('recreateWorkBranchCommand leaves the branch at its base, the tree clean of
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('recreateWorkBranchCommand refuses when another worktree has the default or work branch checked out', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'farmslot-recreate-worktree-'));
+  try {
+    const origin = path.join(root, 'origin.git');
+    const slot = path.join(root, 'slot');
+    git(root, 'init', '-q', '--bare', '-b', 'main', origin);
+    git(root, 'clone', '-q', origin, slot);
+    git(slot, 'config', 'user.email', 't@t');
+    git(slot, 'config', 'user.name', 't');
+    git(slot, 'checkout', '-q', '-b', 'main');
+    writeFileSync(path.join(slot, 'a.txt'), 'a1\n');
+    git(slot, 'add', '.');
+    git(slot, 'commit', '-qm', 'c1');
+    git(slot, 'push', '-q', 'origin', 'main');
+    git(slot, 'fetch', '-q', 'origin');
+    const base = git(slot, 'rev-parse', 'origin/main').stdout.trim();
+    // The slot itself on main is its own checkout, not another worktree's.
+    assert.equal(runBash(recreateWorkBranchCommand('feat/x', base, 'main', quote), slot).status, 0);
+    // Another worktree takes main: moving main under it is refused, nothing changes.
+    const aux = path.join(root, 'aux');
+    git(slot, 'worktree', 'add', '-q', aux, 'main');
+    const mainBefore = git(slot, 'rev-parse', 'refs/heads/main').stdout.trim();
+    const headBefore = git(slot, 'rev-parse', 'HEAD').stdout.trim();
+    const refused = runBash(recreateWorkBranchCommand('feat/y', base, 'main', quote), slot);
+    assert.equal(refused.status, 128);
+    assert.match(refused.stderr, /refs\/heads\/main is checked out in another worktree/);
+    assert.equal(git(slot, 'rev-parse', 'refs/heads/main').stdout.trim(), mainBefore);
+    assert.equal(git(slot, 'rev-parse', 'HEAD').stdout.trim(), headBefore);
+    assert.equal(git(aux, 'status', '--porcelain').stdout.trim(), '');
+    // The other worktree holds the work branch itself.
+    git(aux, 'checkout', '-q', '-b', 'feat/z');
+    const busy = runBash(recreateWorkBranchCommand('feat/z', base, 'dev', quote), slot);
+    assert.equal(busy.status, 128);
+    assert.match(busy.stderr, /refs\/heads\/feat\/z is checked out in another worktree/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
