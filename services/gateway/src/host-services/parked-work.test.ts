@@ -160,47 +160,80 @@ test('changed dirty content at unchanged HEAD refuses the destructive batch', as
   assert.equal(git('rev-parse', capture.receipts[0].ref), capture.receipts[0].headSha);
 });
 
-test('a later command under the same capture runs only while nothing else wrote in between', async (t) => {
-  const { vars, repo, options, git, base } = await fixture(t);
-  await writeFile(path.join(repo, 'tracked'), 'saved');
-  const capture = await parkGitWork(vars, options, localExec);
+test('the fence between commands sees content, ignored target paths, branch tips and moved targets', async (t) => {
+  const { vars, repo, options, git } = await fixture(t);
+  // A target that tracks local.properties, which the checkout ignores.
+  git('checkout', '-q', '-b', 'target', 'main');
+  await writeFile(path.join(repo, 'local.properties'), 'tracked by the target\n');
+  git('add', 'local.properties');
+  git('commit', '-qm', 'target tracks it');
+  const targetTree = git('rev-parse', 'target^{tree}');
+  // Targets are named by a remote ref, which the branch-tip check does not cover.
+  git('update-ref', 'refs/remotes/origin/target', 'target');
+  git('checkout', '-q', 'ticket');
+  await writeFile(path.join(repo, '.git/info/exclude'), 'local.properties\n');
+  await writeFile(path.join(repo, 'tracked'), 'dirty one\n');
+  const capture = await parkGitWork(
+    vars,
+    { ...options, targetTrees: ['origin/target'] },
+    localExec,
+  );
   const first = await executeParkedGitMutation(
     vars,
-    { slotId: 'proof' },
+    { slotId: 'proof', targetTrees: ['origin/target'], stateTrees: [targetTree] },
     capture,
-    'git reset --hard HEAD',
+    'true',
     localExec,
   );
-  assert.equal(first.exitCode, 0, first.stderr);
-  // The checkout as the first command left it: the next command runs on the same capture.
-  const second = await executeSavedGitMutation(
-    vars,
-    { slotId: 'proof' },
-    capture,
-    first.state,
-    'git checkout -q main',
-    localExec,
-  );
-  assert.equal(second.exitCode, 0, second.stderr);
-  assert.notEqual(second.state, first.state);
-  // Another writer between commands: the destructive command does not run.
-  await writeFile(path.join(repo, 'stray'), 'written by someone else');
-  await assert.rejects(
+  const saved = (expectedState: string, expectedTrees: Record<string, string> = {}) =>
     executeSavedGitMutation(
       vars,
-      { slotId: 'proof' },
+      { slotId: 'proof', stateTrees: [targetTree], expectedTrees },
       capture,
-      second.state,
-      `git reset --hard '${base}' && git clean -fd`,
+      expectedState,
+      'true',
       localExec,
-    ),
-    (error: unknown) => isRecord(error) && error.code === 'PARKED_WORK_WORK_CHANGED',
+    );
+  const changed = (error: unknown) => isRecord(error) && error.code === 'PARKED_WORK_WORK_CHANGED';
+  // Unchanged: runs, and reports the same state.
+  const same = await saved(first.state, { 'origin/target': targetTree });
+  assert.equal(same.state, first.state);
+  // Each change below is refused, then undone; the unchanged checkout runs again.
+  // A dirty file edited again keeps its status line: its content still differs.
+  await writeFile(path.join(repo, 'tracked'), 'dirty two\n');
+  await assert.rejects(saved(first.state), changed);
+  await writeFile(path.join(repo, 'tracked'), 'dirty one\n');
+  // A new ignored file that a target tracks.
+  await writeFile(path.join(repo, 'local.properties'), 'written later\n');
+  await assert.rejects(saved(first.state), changed);
+  await rm(path.join(repo, 'local.properties'));
+  // A branch tip moved by someone else.
+  const main = git('rev-parse', 'main');
+  git('branch', '-f', 'main', 'target');
+  await assert.rejects(saved(first.state), changed);
+  git('branch', '-f', 'main', main);
+  // A target name that now resolves to another tree.
+  git('update-ref', 'refs/remotes/origin/target', main);
+  await assert.rejects(saved(first.state, { 'origin/target': targetTree }), changed);
+  // A new untracked file.
+  await writeFile(path.join(repo, 'stray'), 'written by someone else\n');
+  await assert.rejects(saved(first.state), changed);
+  await rm(path.join(repo, 'stray'));
+  // The sequence's own command runs and hands the next one its new state.
+  const next = await executeSavedGitMutation(
+    vars,
+    { slotId: 'proof', stateTrees: [targetTree] },
+    capture,
+    first.state,
+    'git reset -q --hard HEAD',
+    localExec,
   );
-  assert.equal(await readFile(path.join(repo, 'stray'), 'utf8'), 'written by someone else');
-  // A missing saved snapshot refuses too.
+  assert.equal(next.exitCode, 0, next.stderr);
+  assert.notEqual(next.state, first.state);
+  // A missing saved snapshot refuses before anything runs.
   git('update-ref', '-d', capture.receipts[0].ref);
   await assert.rejects(
-    executeSavedGitMutation(vars, { slotId: 'proof' }, capture, second.state, 'true', localExec),
+    saved(next.state),
     (error: unknown) => isRecord(error) && error.code === 'PARKED_WORK_SNAPSHOT_MISSING',
   );
 });

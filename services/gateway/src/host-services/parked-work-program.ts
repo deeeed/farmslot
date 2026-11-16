@@ -206,13 +206,49 @@ function verify() {
   }
   return state;
 }
-// The checkout as Git's stat cache sees it: HEAD, branch, index flags and every unignored change.
-// Cheap next to snapshot(); prepare's next step compares it to tell whether anything else wrote.
+// What a prepare command could destroy, compared between its commands: HEAD, branch, index flags,
+// local branch tips, the content of every changed or untracked file, and the content of ignored
+// files the target trees track. Ignored files no target tracks are never reset or cleaned by a
+// prepare command. Cheap next to snapshot(); prepare's next command compares it to tell whether
+// anything else wrote in between.
+function fileDigest(file) {
+  const stat=exists(path.join(repo,file));
+  if(!stat) return 'absent';
+  if(stat.isSymbolicLink()) return 'link:'+fs.readlinkSync(path.join(repo,file));
+  if(!stat.isFile()) return 'kind:'+stat.mode;
+  return stat.mode+':'+hash(fs.readFileSync(path.join(repo,file)));
+}
+function changedPaths(status) {
+  const fields=status.toString('utf8').split('\0'), files=[];
+  for(let i=0;i<fields.length;i++) {
+    const entry=fields[i];
+    if(entry.startsWith('1 ')) files.push(entry.split(' ').slice(8).join(' '));
+    else if(entry.startsWith('2 ')) { files.push(entry.split(' ').slice(9).join(' ')); i++; }
+    else if(entry.startsWith('u ')) files.push(entry.split(' ').slice(10).join(' '));
+    else if(entry.startsWith('? ')) files.push(entry.slice(2));
+  }
+  return files;
+}
+function ignoredTrackedPaths(trees) {
+  const ignored=nul(git(['ls-files','--others','--ignored','--exclude-standard','--directory','-z']).stdout);
+  if(!ignored.length || !trees.length) return [];
+  const files=new Set();
+  for(const tree of trees) {
+    // A long ignored list would overflow argv: list the whole tree and filter instead.
+    const listed=ignored.length > 1000
+      ? nul(git(['ls-tree','-r','-z','--name-only',tree]).stdout).filter(file => ignored.some(entry => entry.endsWith('/') ? file.startsWith(entry) : file === entry))
+      : nul(git(['ls-tree','-r','-z','--name-only',tree,'--',...ignored]).stdout);
+    for(const file of listed) files.add(file);
+  }
+  return [...files].sort();
+}
 function quickState() {
   const head=git(['rev-parse','--verify','--quiet','HEAD'], {allow:[1]}).stdout.toString('utf8').trim();
   const status=git(['status','--porcelain=v2','-z','--untracked-files=all','--ignore-submodules=none']).stdout;
   const flags=git(['ls-files','-v','-z']).stdout;
-  return hash(JSON.stringify({head,branch:branch(),status:hash(status),flags:hash(flags)}));
+  const refs=git(['for-each-ref','--format=%(refname)%00%(objectname)','refs/heads']).stdout;
+  const contents=[...changedPaths(status),...ignoredTrackedPaths(input.stateTrees||[])].map(file => file+'\0'+fileDigest(file));
+  return hash(JSON.stringify({head,branch:branch(),status:hash(status),flags:hash(flags),refs:hash(refs),contents:hash(contents.join('\n'))}));
 }
 function runCommand() {
   const commandEnv={...env,GIT_CONFIG_PARAMETERS:(env.GIT_CONFIG_PARAMETERS?env.GIT_CONFIG_PARAMETERS+' ':'')+"'core.hooksPath=/dev/null' 'submodule.recurse=false'"};
@@ -228,6 +264,10 @@ function mutate() {
 function mutateSaved() {
   for(const saved of input.saved || []) {
     if(refSha(saved.ref) !== saved.headSha || !refSha(metadataRef(saved.ref))) fail('SNAPSHOT_MISSING','A required parked snapshot is missing');
+  }
+  for(const [name,tree] of Object.entries(input.expectedTrees || {})) {
+    const current=git(['rev-parse','--verify','--quiet',name+'^{tree}'], {allow:[1,128]}).stdout.toString('utf8').trim();
+    if(current !== tree) fail('WORK_CHANGED','Target '+name+' moved since the capture; capture it again');
   }
   if(quickState() !== input.expectedState) fail('WORK_CHANGED','Local work changed since the last step; capture it again');
   return runCommand();

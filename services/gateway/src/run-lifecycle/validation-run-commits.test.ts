@@ -738,36 +738,67 @@ for (const action of ['operator', 'replay'] as const) {
 }
 
 test('a prepare parks once, then parks again only when something else wrote or a tree is new', async (t) => {
-  const { vars, git, base } = await fixture(t);
-  const parks: string[] = [];
-  const counted: typeof execOnSlot = async (slotVars, cmd, options) => {
-    if (String(cmd).includes('"op":"park"')) parks.push(String(cmd));
-    return localExec(slotVars, cmd, options);
+  // The Git side of each op is proven in parked-work.test.ts; this drives the decisions only.
+  const { vars } = await fixture(t);
+  const sent: string[] = [];
+  let changedNext = false;
+  const reply = (value: unknown) => ({
+    stdout: `${JSON.stringify({ ok: true, value })}\n`,
+    stderr: '',
+    exitCode: 0,
+  });
+  const fake: typeof execOnSlot = async (_vars, cmd) => {
+    const command = String(cmd);
+    if (command.includes('info/exclude')) return { stdout: 'installed', stderr: '', exitCode: 0 };
+    if (command.includes("printf '%s %s")) {
+      // origin/main and the base resolve; a missing branch does not.
+      return {
+        stdout: command.includes("'origin/main^{tree}'") ? `0 ${'a'.repeat(40)}\n` : '',
+        stderr: '',
+        exitCode: 0,
+      };
+    }
+    const op = /"op":"(\w+)"/.exec(command)?.[1] ?? 'unknown';
+    sent.push(op);
+    const namespace = `refs/farmslot/parked/${vars.slotId}/`;
+    if (op === 'park') return reply({ receipts: [], fingerprint: 'f', repoKey: 'k', namespace });
+    if (op === 'list') return reply({ items: [], repoKey: 'k', namespace });
+    if (op === 'mutate') return reply({ stdout: '', stderr: '', exitCode: 0, state: 's' });
+    if (op === 'mutateSaved') {
+      if (changedNext) {
+        changedNext = false;
+        return {
+          stdout: `${JSON.stringify({ ok: false, code: 'WORK_CHANGED', message: 'changed' })}\n`,
+          stderr: '',
+          exitCode: 0,
+        };
+      }
+      assert.match(command, /"stateTrees":\["a{40}"\]/);
+      return reply({ stdout: '', stderr: '', exitCode: 0, state: 's' });
+    }
+    throw new Error(`unexpected command ${command.slice(0, 80)}`);
   };
-  const parkedRefs = () => git('for-each-ref', '--format=%(refname)', 'refs/farmslot/parked/');
-  await writeFile(path.join(vars.remoteRepo, 'dirty.txt'), 'prior work\n');
   const guarded = slotGitMutations(
     vars,
     {},
     { defaultBranch: 'main', operationKey: 'prepare-proof', targetBranches: ['main'] },
     () => ['origin/main', 'refs/heads/does-not-exist'],
-    counted,
+    fake,
   );
-  // The first command parks the prior work, covering origin/main (the missing tree is dropped).
-  assert.equal((await guarded('git reset -q --hard HEAD')).exitCode, 0);
-  assert.equal(parks.length, 1);
-  const firstRefs = parkedRefs();
-  assert.ok(firstRefs, 'the dirty checkout is parked before the reset');
-  // The prepare's own next commands, on covered trees, run under the same capture.
-  assert.equal((await guarded('git clean -fdq')).exitCode, 0);
-  assert.equal((await guarded('git checkout -q main', ['origin/main'])).exitCode, 0);
-  assert.equal(parks.length, 1);
-  // Another writer between commands: its work is parked before the next destructive command.
-  await writeFile(path.join(vars.remoteRepo, 'stray.txt'), 'written during prepare\n');
-  assert.equal((await guarded('git reset -q --hard origin/main && git clean -fdq')).exitCode, 0);
-  assert.equal(parks.length, 2);
-  assert.notEqual(parkedRefs(), firstRefs, 'the stray write has its own receipt');
+  const parks = () => sent.filter((op) => op === 'park').length;
+  await guarded('git reset --hard HEAD');
+  assert.equal(parks(), 1);
+  // The prepare's own next commands on covered trees reuse the capture, checking the target SHA.
+  await guarded('git clean -fd');
+  await guarded('git checkout main', ['origin/main']);
+  assert.equal(parks(), 1);
+  assert.deepEqual(sent.slice(-2), ['mutateSaved', 'mutateSaved']);
+  // The fence saw a change since the last command: park again, then run.
+  changedNext = true;
+  await guarded('git reset --hard origin/main', ['origin/main']);
+  assert.equal(parks(), 2);
+  assert.equal(sent.at(-1), 'mutate');
   // A tree the capture does not cover parks again, as a capture per command would.
-  assert.equal((await guarded(`git checkout -q -b proof-branch ${base}`, [base])).exitCode, 0);
-  assert.equal(parks.length, 3);
+  await guarded('git checkout -b proof base', ['base']);
+  assert.equal(parks(), 3);
 });

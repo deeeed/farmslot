@@ -162,6 +162,7 @@ async function captureAndMutate(
   options: SlotMutationOptions,
   command: string,
   exec: typeof execOnSlot,
+  stateTrees?: string[],
 ): Promise<{ capture: SlotWorkCapture } & ParkedMutationResult> {
   const capture = await captureSlotWork(vars, project, options, exec);
   await options.verifyWork?.();
@@ -173,6 +174,7 @@ async function captureAndMutate(
       repoKey: options.blindBaseSha ? options.blindRepoKey : undefined,
       extraRefs: (options.targetBranches ?? []).map((branch) => `refs/heads/${branch}`),
       targetTrees: options.targetTrees,
+      stateTrees,
     },
     capture,
     command,
@@ -201,17 +203,32 @@ export function slotGitMutations(
   coverTrees: () => string[],
   exec: typeof execOnSlot,
 ): SlotGitMutation {
-  let held: { capture: SlotWorkCapture; trees: Set<string>; state: string } | undefined;
+  // Each covered tree name with the tree SHA the capture saw; the state covers their ignored paths.
+  let held:
+    | { capture: SlotWorkCapture; trees: Map<string, string>; stateTrees: string[]; state: string }
+    | undefined;
   const capture = async (command: string, targetTrees: string[]) => {
-    const trees = [
-      ...new Set([...targetTrees, ...(await resolvableTrees(vars, coverTrees(), exec))]),
-    ];
+    const resolved = await resolveTrees(
+      vars,
+      [...new Set([...targetTrees, ...coverTrees()])],
+      exec,
+    );
+    // A target that does not resolve is still passed, so the park refuses it as before.
+    const trees = [...new Set([...targetTrees, ...resolved.keys()])];
+    const stateTrees = [...new Set(resolved.values())];
     const {
       capture: taken,
       state,
       ...result
-    } = await captureAndMutate(vars, project, { ...options, targetTrees: trees }, command, exec);
-    held = { capture: taken, trees: new Set(trees), state };
+    } = await captureAndMutate(
+      vars,
+      project,
+      { ...options, targetTrees: trees },
+      command,
+      exec,
+      stateTrees,
+    );
+    held = { capture: taken, trees: resolved, stateTrees, state };
     return result;
   };
   return async (command, targetTrees = []) => {
@@ -223,7 +240,14 @@ export function slotGitMutations(
     try {
       const { state, ...result } = await executeSavedGitMutation(
         vars,
-        { slotId: vars.slotId, repoKey: options.blindBaseSha ? options.blindRepoKey : undefined },
+        {
+          slotId: vars.slotId,
+          repoKey: options.blindBaseSha ? options.blindRepoKey : undefined,
+          stateTrees: current.stateTrees,
+          expectedTrees: Object.fromEntries(
+            targetTrees.map((tree) => [tree, current.trees.get(tree) ?? '']),
+          ),
+        },
         current.capture,
         current.state,
         command,
@@ -232,7 +256,7 @@ export function slotGitMutations(
       current.state = state;
       return result;
     } catch (error) {
-      // Something other than this sequence wrote since the last command: park that work too,
+      // The checkout, a branch tip or a target tree changed since the last command: park again,
       // exactly as a capture per command would have, then run.
       if (error instanceof ParkedWorkError && error.code === 'PARKED_WORK_WORK_CHANGED')
         return capture(command, targetTrees);
@@ -241,17 +265,17 @@ export function slotGitMutations(
   };
 }
 
-/** The trees among `trees` that resolve in the slot checkout, in one command. */
-async function resolvableTrees(
+/** Each name in `trees` that resolves in the slot checkout, with its tree SHA, in one command. */
+async function resolveTrees(
   vars: SlotVars,
   trees: string[],
   exec: typeof execOnSlot,
-): Promise<string[]> {
-  if (!trees.length) return [];
+): Promise<Map<string, string>> {
+  if (!trees.length) return new Map();
   const probe = trees
     .map(
-      (tree) =>
-        `git rev-parse --verify --quiet ${shellQuote(`${tree}^{tree}`)} >/dev/null && printf '%s\\n' ${shellQuote(tree)}`,
+      (tree, index) =>
+        `sha=$(git rev-parse --verify --quiet ${shellQuote(`${tree}^{tree}`)}) && printf '%s %s\\n' ${index} "$sha"`,
     )
     .join('; ');
   const result = await exec(
@@ -260,8 +284,13 @@ async function resolvableTrees(
   );
   if (result.exitCode !== 0)
     throw new Error(`Cannot resolve prepare target trees on ${vars.slotId}: ${result.stderr}`);
-  const resolved = new Set(result.stdout.split('\n').filter(Boolean));
-  return trees.filter((tree) => resolved.has(tree));
+  const resolved = new Map<string, string>();
+  for (const line of result.stdout.split('\n')) {
+    const [index, sha] = line.trim().split(' ');
+    const tree = trees[Number(index)];
+    if (tree !== undefined && sha && /^[0-9a-f]{40,64}$/.test(sha)) resolved.set(tree, sha);
+  }
+  return resolved;
 }
 
 /**

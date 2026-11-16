@@ -276,6 +276,14 @@ export interface ParkedMutationResult extends ExecResult {
   state: string;
 }
 
+/**
+ * The trees (resolved tree SHAs) whose tracked paths the state covers among ignored files: an
+ * ignored file a later command could overwrite. The same list must be passed to every command.
+ */
+interface StateTrees {
+  stateTrees?: string[];
+}
+
 function mutationResult(value: unknown): ParkedMutationResult {
   if (
     !isRecord(value) ||
@@ -295,7 +303,8 @@ function mutationResult(value: unknown): ParkedMutationResult {
 
 export async function executeParkedGitMutation(
   vars: SlotVars,
-  options: Pick<ParkedCaptureOptions, 'slotId' | 'extraRefs' | 'targetTrees' | 'repoKey'>,
+  options: Pick<ParkedCaptureOptions, 'slotId' | 'extraRefs' | 'targetTrees' | 'repoKey'> &
+    StateTrees,
   capture: ParkedCapture,
   command: string,
   exec: Executor = execOnSlot,
@@ -312,12 +321,14 @@ export async function executeParkedGitMutation(
 
 /**
  * A later command under an earlier capture, without a new snapshot: the saved snapshots must
- * still exist and the checkout must be as the previous command left it (`expectedState`).
- * Anything else writing in between fails it with PARKED_WORK_WORK_CHANGED.
+ * still exist, each `expectedTrees` name must still resolve to the tree the capture saw, and the
+ * checkout must be as the previous command left it (`expectedState`). Anything else writing in
+ * between fails it with PARKED_WORK_WORK_CHANGED.
  */
 export async function executeSavedGitMutation(
   vars: SlotVars,
-  options: Pick<ParkedCaptureOptions, 'slotId' | 'repoKey'>,
+  options: Pick<ParkedCaptureOptions, 'slotId' | 'repoKey'> &
+    StateTrees & { expectedTrees?: Record<string, string> },
   capture: ParkedCapture,
   expectedState: string,
   command: string,
