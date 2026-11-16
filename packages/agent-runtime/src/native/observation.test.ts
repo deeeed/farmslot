@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs, { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
@@ -484,5 +485,48 @@ test('a fresh fence queues behind an older active scan rather than inheriting it
     t.mock.restoreAll();
     syncBuiltinESMExports();
     f.close();
+  }
+});
+
+test('a dead host fails once; its events do not re-arm until the source changes', async (t) => {
+  const watch = fs.watch;
+  let armed = 0;
+  t.mock.method(fs, 'watch', (...args: Parameters<typeof watch>) => {
+    armed++;
+    return watch(...args);
+  });
+  syncBuiltinESMExports();
+  const fixture = setup();
+  // A supervisor that exited (a reboot) left host.json and worker.json, but no ready.json.
+  const dead = spawnSync(process.execPath, ['-e', '']).pid;
+  assert.ok(dead && !alive(dead));
+  writeFileSync(
+    join(fixture.root, 'host.json'),
+    JSON.stringify({ pid: dead, socket: join(fixture.root, 'gone.sock') }),
+    { mode: 0o600 },
+  );
+  writeFileSync(join(fixture.root, 'worker.json'), JSON.stringify({ pid: dead }), { mode: 0o600 });
+  try {
+    await assert.rejects(fixture.source.start(), { reason: 'host-identity-invalid' });
+    const failedArms = armed;
+    // Session commits keep arriving; the failed source must not re-arm for any of them.
+    // The ceiling only bounds the wait; every commit is a watcher event.
+    for (let i = 0; i < 25; i++) {
+      fixture.commitMetadata();
+      await delay(20);
+    }
+    assert.equal(armed, failedArms, 'events of an unchanged failed source keep its watchers');
+    assert.equal(fixture.source.current().ready, false);
+    // The dead host's files go away: the source differs, so the next event arms it.
+    rmSync(join(fixture.root, 'host.json'));
+    for (let i = 0; i < 250 && !fixture.source.current().ready; i++) {
+      fixture.commitMetadata();
+      await delay(20);
+    }
+    assert.ok(armed > failedArms && fixture.source.current().ready, 'a changed source re-arms');
+  } finally {
+    fixture.close();
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
   }
 });
