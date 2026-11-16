@@ -781,7 +781,7 @@ test('a prepare parks once, then parks again only when something else wrote or a
   const guarded = slotGitMutations(
     vars,
     {},
-    { defaultBranch: 'main', operationKey: 'prepare-proof', targetBranches: ['main'] },
+    () => ({ defaultBranch: 'main', operationKey: 'prepare-proof', targetBranches: ['main'] }),
     () => ['origin/main', 'refs/heads/does-not-exist'],
     fake,
   );

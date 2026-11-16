@@ -199,7 +199,8 @@ export type SlotGitMutation = (
 export function slotGitMutations(
   vars: SlotVars,
   project: RawProjectJson,
-  options: Omit<SlotMutationOptions, 'targetTrees'>,
+  // Read at each command: a blind prepare learns its repository identity during branch setup.
+  sequenceOptions: () => Omit<SlotMutationOptions, 'targetTrees'>,
   coverTrees: () => string[],
   exec: typeof execOnSlot,
 ): SlotGitMutation {
@@ -223,7 +224,7 @@ export function slotGitMutations(
     } = await captureAndMutate(
       vars,
       project,
-      { ...options, targetTrees: trees },
+      { ...sequenceOptions(), targetTrees: trees },
       command,
       exec,
       stateTrees,
@@ -235,6 +236,7 @@ export function slotGitMutations(
     const current = held;
     if (!current || targetTrees.some((tree) => !current.trees.has(tree)))
       return capture(command, targetTrees);
+    const options = sequenceOptions();
     await options.verifyWork?.();
     if (!(await current.capture.ownerUnchanged())) return capture(command, targetTrees);
     try {

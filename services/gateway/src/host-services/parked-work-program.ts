@@ -212,11 +212,15 @@ function verify() {
 // prepare command. Cheap next to snapshot(); prepare's next command compares it to tell whether
 // anything else wrote in between.
 function fileDigest(file) {
-  const stat=exists(path.join(repo,file));
+  const full=path.join(repo,file.replace(/\/+$/,''));
+  const stat=exists(full);
   if(!stat) return 'absent';
-  if(stat.isSymbolicLink()) return 'link:'+fs.readlinkSync(path.join(repo,file));
+  if(stat.isSymbolicLink()) return 'link:'+fs.readlinkSync(full);
+  // A directory where a target has a file (or an ignored directory a reset may expose): its
+  // whole content counts, so a file written inside it later is a change too.
+  if(stat.isDirectory()) return 'dir:'+hash(fs.readdirSync(full).sort().map(name => name+'\0'+fileDigest(path.join(file.replace(/\/+$/,''),name))).join('\n'));
   if(!stat.isFile()) return 'kind:'+stat.mode;
-  return stat.mode+':'+hash(fs.readFileSync(path.join(repo,file)));
+  return stat.mode+':'+hash(fs.readFileSync(full));
 }
 function changedPaths(status) {
   const fields=status.toString('utf8').split('\0'), files=[];
@@ -229,16 +233,20 @@ function changedPaths(status) {
   }
   return files;
 }
+// Ignored paths a reset or checkout to one of the trees could overwrite: a tracked file at or
+// under an ignored entry, and an ignored directory standing where a tree has a file. Each is
+// reported as the worktree path whose content counts (the directory itself for the latter).
 function ignoredTrackedPaths(trees) {
   const ignored=nul(git(['ls-files','--others','--ignored','--exclude-standard','--directory','-z']).stdout);
   if(!ignored.length || !trees.length) return [];
+  const bare=entry => entry.replace(/\/+$/,'');
   const files=new Set();
   for(const tree of trees) {
     // A long ignored list would overflow argv: list the whole tree and filter instead.
     const listed=ignored.length > 1000
-      ? nul(git(['ls-tree','-r','-z','--name-only',tree]).stdout).filter(file => ignored.some(entry => entry.endsWith('/') ? file.startsWith(entry) : file === entry))
-      : nul(git(['ls-tree','-r','-z','--name-only',tree,'--',...ignored]).stdout);
-    for(const file of listed) files.add(file);
+      ? nul(git(['ls-tree','-r','-z','--name-only',tree]).stdout).filter(file => ignored.some(entry => file === bare(entry) || (entry.endsWith('/') && file.startsWith(entry))))
+      : nul(git(['ls-tree','-r','-z','--name-only',tree,'--',...new Set(ignored.flatMap(entry => [entry,bare(entry)]))]).stdout);
+    for(const file of listed) files.add(ignored.includes(file+'/') ? file+'/' : file);
   }
   return [...files].sort();
 }
@@ -247,7 +255,11 @@ function quickState() {
   const status=git(['status','--porcelain=v2','-z','--untracked-files=all','--ignore-submodules=none']).stdout;
   const flags=git(['ls-files','-v','-z']).stdout;
   const refs=git(['for-each-ref','--format=%(refname)%00%(objectname)','refs/heads']).stdout;
-  const contents=[...changedPaths(status),...ignoredTrackedPaths(input.stateTrees||[])].map(file => file+'\0'+fileDigest(file));
+  const trees=input.stateTrees||[];
+  const headTree=head ? text(['rev-parse',head+'^{tree}']) : '';
+  // Ignored files the restored ignore rules of HEAD or a target would hand to git clean.
+  const exposed=trees.length || headTree ? exposedIgnoredPaths([...new Set([headTree,...trees].filter(Boolean))]) : [];
+  const contents=[...new Set([...changedPaths(status),...ignoredTrackedPaths(trees),...exposed])].sort().map(file => file+'\0'+fileDigest(file));
   return hash(JSON.stringify({head,branch:branch(),status:hash(status),flags:hash(flags),refs:hash(refs),contents:hash(contents.join('\n'))}));
 }
 function runCommand() {

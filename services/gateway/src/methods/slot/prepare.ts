@@ -674,7 +674,7 @@ async function slotPrepareInner(
   const guardedGit = slotGitMutations(
     vars,
     projectJson,
-    {
+    () => ({
       defaultBranch,
       runId: params.runId,
       operationKey: gitOperationKey,
@@ -684,7 +684,7 @@ async function slotPrepareInner(
       verifyWork: async () => {
         checkAborted();
       },
-    },
+    }),
     () => [
       ...new Set(
         [

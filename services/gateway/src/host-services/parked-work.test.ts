@@ -4,6 +4,7 @@ import { existsSync, watch } from 'node:fs';
 import {
   chmod,
   lstat,
+  mkdir,
   mkdtemp,
   readFile,
   readlink,
@@ -215,6 +216,26 @@ test('the fence between commands sees content, ignored target paths, branch tips
   // A target name that now resolves to another tree.
   git('update-ref', 'refs/remotes/origin/target', main);
   await assert.rejects(saved(first.state, { 'origin/target': targetTree }), changed);
+  // An ignored directory standing where a target tracks a file.
+  await mkdir(path.join(repo, 'local.properties'));
+  await assert.rejects(saved(first.state), changed);
+  await rm(path.join(repo, 'local.properties'), { recursive: true });
+  // An ignored file HEAD's rules would expose to clean: only an untracked .gitignore hides it.
+  await writeFile(path.join(repo, '.gitignore'), 'private-note\n');
+  await writeFile(path.join(repo, 'private-note'), 'one\n');
+  const exposedState = (
+    await executeParkedGitMutation(
+      vars,
+      { slotId: 'proof', stateTrees: [targetTree] },
+      await parkGitWork(vars, { ...options, targetTrees: ['origin/target'] }, localExec),
+      'true',
+      localExec,
+    )
+  ).state;
+  await writeFile(path.join(repo, 'private-note'), 'two\n');
+  await assert.rejects(saved(exposedState), changed);
+  await rm(path.join(repo, 'private-note'));
+  await rm(path.join(repo, '.gitignore'));
   // A new untracked file.
   await writeFile(path.join(repo, 'stray'), 'written by someone else\n');
   await assert.rejects(saved(first.state), changed);
