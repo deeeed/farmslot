@@ -8,6 +8,8 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## 0.46.21 - 2026-11-16
 
+- Read bootstrap Git metadata without source-tree walks; unsupported source/output layouts and unavailable persistence retain fresh legacy validation.
+
 - mm-harness 0.96.27 consumes the prepared source-witness API for zero steady-state Git calls while retaining source freshness.
 
 - Reuse prepared source and capture observations behind fresh filesystem witnesses, with per-boundary file-read wall and CPU measurements.
