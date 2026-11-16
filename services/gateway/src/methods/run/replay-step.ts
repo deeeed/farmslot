@@ -454,8 +454,10 @@ export function canAdoptTaskSignalAfterUncertainDispatch(
  * signal by renaming over the path (mark-io.cjs), so a name read as finished
  * can be live by the time anything acts on it.
  *
- * Per file: move it aside with one rename, judge only the bytes that moved, and
- * either remove that snapshot or put it back. Putting back uses `link`, which
+ * Per file: a signal that does not read as finished is skipped and never moved,
+ * because the path is missing for an instant while a snapshot is held. One that
+ * does is moved aside with one rename, judged again on only the bytes that
+ * moved, and then either removed or put back. Putting back uses `link`, which
  * refuses an existing destination, so a worker that wrote while this was
  * deciding keeps its newer file and the snapshot is dropped.
  *
@@ -464,9 +466,10 @@ export function canAdoptTaskSignalAfterUncertainDispatch(
  * swept for such leftovers first - including names whose original is absent,
  * which is exactly the state that interruption leaves behind.
  *
- * Returns the files it removed, and the files whose original is still missing
- * afterwards: a failure that ends with the signal back in place is not a loss
- * and is not reported as one.
+ * Returns the files it removed, and every name it touched - moved aside or
+ * swept - whose path is still missing when it returns. A failure that ends with
+ * the signal back in place is not a loss and is not reported as one, and a name
+ * that never had a signal is not touched and so is never reported.
  */
 async function clearStartRefusedSignals(
   vars: Awaited<ReturnType<typeof import('../../core/config.js').loadSlotVars>>,
@@ -480,6 +483,7 @@ const path = require('node:path');
 const [refusedStatus, ...files] = process.argv.slice(1);
 const removed = [];
 const moved = [];
+const swept = [];
 
 const statusOf = (file) => {
   try {
@@ -511,6 +515,11 @@ for (const file of files) {
   try {
     entries = fs.readdirSync(path.dirname(file)).filter((entry) => entry.startsWith(prefix));
   } catch {}
+  if (entries.length === 0) continue;
+  // A recovery that cannot put the only copy back leaves the path missing, and
+  // the loop below then skips that name because it reads as nothing. Record the
+  // name here so the final state covers it.
+  swept.push(file);
   for (const entry of entries) restore(path.join(path.dirname(file), entry), file);
 }
 
@@ -539,9 +548,14 @@ for (const file of files) {
   restore(aside, file);
 }
 
-// Final state, and only for names this clear actually touched: a role signal
-// that never existed is not a loss.
-const lost = moved.filter((file) => !removed.includes(file) && !fs.existsSync(file));
+// Final state, and only for names this clear actually touched - moved aside or
+// swept for leftovers. A role signal that never existed is neither, so it is
+// not a loss. A name another clear removed in the meantime can still land here:
+// from inside this process that is indistinguishable from a snapshot that never
+// came back, and reporting it is the safe way round.
+const lost = [...new Set([...moved, ...swept])].filter(
+  (file) => !removed.includes(file) && !fs.existsSync(file),
+);
 process.stdout.write(JSON.stringify({ removed, lost }));
 `;
 

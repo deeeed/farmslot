@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
@@ -411,6 +411,49 @@ test('an aside left by an interrupted clear is restored even with no original', 
     await replayAndReadSignal(run, 'dispatch'),
     stranded,
     'the only copy of that signal must come back to the path the worker reads',
+  );
+});
+
+// A sweep that cannot put the only copy back leaves the path missing, and the
+// decision loop then skips that name because it reads as nothing. Reporting
+// only names this clear renamed would stay silent about exactly the signal a
+// worker is about to lose.
+test('a leftover this clear cannot restore is reported as missing', async (t) => {
+  const run = createRun({ project, flowType: 'dev', ticketOrPr: 'example/fixture#8' });
+  const directory = path.dirname(signalFile);
+  const aside = `${signalFile}.replay-clear.99998`;
+  const warnings: string[] = [];
+  const warn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map((value) => String(value)).join(' '));
+  };
+  t.after(async () => {
+    console.warn = warn;
+    await chmod(directory, 0o755);
+    await rm(aside, { force: true });
+    if (!getRun(run.id)) return;
+    updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+  await rm(signalFile, { force: true });
+  await writeFile(
+    aside,
+    JSON.stringify({ attemptId: 'stranded', status: 'running', timestamp: '2026-11-12T00:00:00Z' }),
+  );
+  updateRun(run.id, finishedRun(run));
+  await writeFile(statusFile, heldSlotStatus(run));
+  // No link may be created here, so the only copy stays under a name the worker
+  // never reads.
+  await chmod(directory, 0o555);
+
+  assert.equal(
+    await replayAndReadSignal(run, 'dispatch'),
+    null,
+    'the fixture must leave the signal unrecoverable for this to prove anything',
+  );
+  assert.ok(
+    warnings.some((line) => line.includes('SIGNAL.json') && line.includes('is missing from')),
+    `an unrecoverable leftover must be reported: ${JSON.stringify(warnings)}`,
   );
 });
 
