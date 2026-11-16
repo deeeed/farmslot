@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Read retained prepare Git command timings",
+  "description": "Set FARMSLOT_PREPARE_PROOF_RUN to the next real Mobile run and select an authenticated gateway profile. Reads the stored run snapshot only; creates no runs, commands or slot changes. Fails on missing or inconsistent Git measurements.",
+  "workflow": {
+    "entry": "read",
+    "nodes": {
+      "read": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/prepare-git-timing-read.mts",
+        "intent": "Prove run.get retains each exact Git measurement and exit outcome without counting it as another phase.",
+        "timeout_ms": 60000,
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
