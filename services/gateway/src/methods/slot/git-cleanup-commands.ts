@@ -15,3 +15,17 @@ export const REFRESH_REMOTE_REF_LOCKS_COMMAND = `now=$(date +%s); cleanup_git_lo
 // Same-branch prepares should still refresh/unlock after flag-sweep failures,
 // but the final exit status must preserve the flag-sweep failure.
 export const CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND = `flag_status=0; ${CLEAR_INDEX_FLAGS_COMMAND} || flag_status=$?; ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; exit $flag_status`;
+
+/**
+ * One worktree pass to `<branch>` recreated at `base`, clean of tracked changes, with local
+ * `<defaultBranch>` moved to `origin/<defaultBranch>` and no config left from an older `<branch>`
+ * (as `git branch -D` would). Untracked files are removed separately with `git clean -fd`.
+ */
+export function recreateWorkBranchCommand(
+  branch: string,
+  base: string,
+  defaultBranch: string,
+  quote: (value: string) => string,
+): string {
+  return `${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git config --remove-section ${quote(`branch.${branch}`)} 2>/dev/null; git checkout --force -B ${quote(branch)} ${quote(base)} && git update-ref ${quote(`refs/heads/${defaultBranch}`)} ${quote(`origin/${defaultBranch}`)}`;
+}

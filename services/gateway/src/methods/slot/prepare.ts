@@ -72,6 +72,7 @@ import { runFixtureSync } from './fixtures.js';
 import {
   CLEAR_INDEX_FLAGS_COMMAND,
   CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND,
+  recreateWorkBranchCommand,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
 } from './git-cleanup-commands.js';
 import {
@@ -1043,24 +1044,34 @@ async function slotPrepareInner(
       // Same prefix detects + clears a stale `.git/index.lock` left by a crashed
       // prior git invocation — without this, every retry within ~5min hits
       // "Could not reset index file" until the lock ages out.
-      const resetR = await mutateGit(
-        'reset-head',
-        `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard HEAD; }`,
-      );
-      if (resetR.exitCode !== 0)
-        throw new Error(
-          `reset --hard HEAD failed on ${vars.slotId} (${vars.remoteRepo}): ${resetR.stderr.slice(-200) || resetR.stdout.slice(-200)}`,
-        );
-      const cleanR = await execGit(
-        'clean-worktree',
-        vars,
-        withFarmGitConfig(`cd ${shellQuote(vars.remoteRepo)} && git clean -fd`),
-      );
-      if (cleanR.exitCode !== 0)
-        throw new Error(
-          `git clean -fd failed on ${vars.slotId} (${vars.remoteRepo}): ${cleanR.stderr.slice(-200) || cleanR.stdout.slice(-200)}`,
-        );
       const linkedWorktree = await detectLinkedWorktree(vars);
+      // Every force-new-branch flow ends on <branch> recreated at its base, with a clean tree
+      // and local <default> at origin/<default>. Without a linked worktree it reaches that state
+      // in one forced checkout below, instead of walking the worktree five times (reset HEAD,
+      // checkout <default>, reset <default>, checkout <default> again to delete, checkout -b).
+      const direct = forceNewBranch && !linkedWorktree && branch !== defaultBranch;
+      const cleanWorktree = async () => {
+        const cleanR = await execGit(
+          'clean-worktree',
+          vars,
+          withFarmGitConfig(`cd ${shellQuote(vars.remoteRepo)} && git clean -fd`),
+        );
+        if (cleanR.exitCode !== 0)
+          throw new Error(
+            `git clean -fd failed on ${vars.slotId} (${vars.remoteRepo}): ${cleanR.stderr.slice(-200) || cleanR.stdout.slice(-200)}`,
+          );
+      };
+      if (!direct) {
+        const resetR = await mutateGit(
+          'reset-head',
+          `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard HEAD; }`,
+        );
+        if (resetR.exitCode !== 0)
+          throw new Error(
+            `reset --hard HEAD failed on ${vars.slotId} (${vars.remoteRepo}): ${resetR.stderr.slice(-200) || resetR.stdout.slice(-200)}`,
+          );
+        await cleanWorktree();
+      }
       const baseResetRef = worktreeBaseResetRef(defaultBranch, resolvedStartRef ?? null);
       if (linkedWorktree) {
         // Git worktrees cannot checkout `main` when it is active in the primary clone.
@@ -1087,7 +1098,7 @@ async function slotPrepareInner(
           );
         }
         step('branch', `Worktree synced to ${baseResetRef} without checking out ${defaultBranch}`);
-      } else {
+      } else if (!direct) {
         const coDefaultR = await mutateGit(
           'checkout-default',
           `cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch}`,
@@ -1122,17 +1133,9 @@ async function slotPrepareInner(
           `Local ${defaultBranch} fast-forwarded to origin/${defaultBranch} (clean tree)`,
         );
       }
-      // Check if branch exists on remote
-      const remoteExists =
-        (
-          await execGit(
-            'probe-remote-branch',
-            vars,
-            withFarmGitConfig(
-              `cd ${shellQuote(vars.remoteRepo)} && git ls-remote --exit-code origin refs/heads/${shellQuote(branch)} >/dev/null 2>&1`,
-            ),
-          )
-        ).exitCode === 0;
+      // The work-branch fetch above already answered whether origin has the branch: it
+      // succeeded, or it failed only because the ref is absent (any other failure threw).
+      const remoteExists = fetchBranchR.exitCode === 0;
       const newBranchBase =
         resolvedStartRef?.resolvedSha ??
         resolvedStackBase?.resolvedSha ??
@@ -1146,7 +1149,44 @@ async function slotPrepareInner(
         assertStartRefWorkBranchIsLocalOnly({ branch, remoteExists, startRef: resolvedStartRef });
       }
 
-      if (forceNewBranch && remoteExists) {
+      if (direct) {
+        if (remoteExists) {
+          step('branch', `Deleting stale remote ${branch} (forceNewBranch)...`);
+          await execGit(
+            'delete-remote-branch',
+            vars,
+            withFarmGitConfig(
+              `cd ${shellQuote(vars.remoteRepo)} && git push origin --delete ${shellQuote(branch)} 2>/dev/null`,
+            ),
+          );
+        }
+        branchCreatedFromBase = true;
+        const directR = await mutateGit(
+          'checkout-work-branch',
+          `cd ${shellQuote(vars.remoteRepo)} && { ${recreateWorkBranchCommand(branch, newBranchBase, defaultBranch, shellQuote)}; }`,
+          [newBranchBase],
+        );
+        if (directR.exitCode !== 0)
+          throw new Error(
+            `checkout of ${branch} at ${newBranchBaseLabel} failed on ${vars.slotId} (${vars.remoteRepo}): ${directR.stderr.slice(-200) || directR.stdout.slice(-200)}`,
+          );
+        await cleanWorktree();
+        const dirty = (
+          await execGit(
+            'verify-branch-clean',
+            vars,
+            withFarmGitConfig(`cd ${shellQuote(vars.remoteRepo)} && git status --porcelain`),
+          )
+        ).stdout.trim();
+        if (dirty)
+          throw new Error(
+            `Working tree still dirty on ${vars.slotId} after checking out ${branch} at ${newBranchBaseLabel}. Inspect with: cd ${shellQuote(vars.remoteRepo)} && git status\nDirty paths:\n${dirty}`,
+          );
+        step(
+          'branch',
+          `Recreated ${branch} from ${newBranchBaseLabel}; local ${defaultBranch} at origin/${defaultBranch} (clean tree)`,
+        );
+      } else if (forceNewBranch && remoteExists) {
         // New work flow (fix-bug/dev): delete stale remote branch and recreate from defaultBranch
         step('branch', `Deleting stale remote ${branch} (forceNewBranch)...`);
         if (!linkedWorktree) {

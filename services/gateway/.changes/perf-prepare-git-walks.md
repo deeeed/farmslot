@@ -1,0 +1,1 @@
+- A force-new-branch prepare without a linked worktree reaches its work branch in one forced checkout instead of walking the worktree five times, and reads whether origin has the work branch from its fetch instead of a separate `ls-remote`. The end state is the same: the branch at its base, a clean tree, local default at origin and no config left from an older branch.
