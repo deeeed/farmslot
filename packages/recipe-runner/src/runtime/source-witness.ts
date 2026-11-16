@@ -102,8 +102,10 @@ export class PreparedSourceWitness {
     const measurementStart = this.measurements.length;
     const stored = readRecord(root);
     const metadata = sourceMetadata(root, stored?.configFiles);
+    if (!this.reusable) return unavailableRoot(root, metadata);
     let current = stored?.metadata === metadata ? stored : undefined;
     if (!current) current = prepareRoot(root);
+    if (!this.reusable) return current;
     const observed = fileWitness(current, (nested) => this.#readRoot(nested));
     current.cacheable = observed.cacheable;
     const refreshed = Boolean(current.witness) && observed.digest !== current.witness;
@@ -420,6 +422,8 @@ function sourceMetadata(root: string, configFiles: readonly string[] = []): stri
         ? git
         : path.resolve(git, commonText);
     const directories = [...new Set([git, common])];
+    if (fs.existsSync(path.join(common, 'refs/replace')))
+      currentSourceWitness()?.fallback(root, 'unsupported-git-layout');
     const pending = ['HEAD'];
     const observed = new Set<string>();
     for (let n = 0; n < pending.length && n < 32; n++) {
@@ -704,11 +708,35 @@ function supportedOutputs(
   return true;
 }
 
+function unavailableRoot(root: string, metadata: string): PreparedRootRecord {
+  return {
+    schemaVersion: 1,
+    root,
+    metadata,
+    paths: [],
+    ignored: [],
+    protectedIgnored: [],
+    configFiles: [],
+    witness: '',
+    cacheable: false,
+    values: {},
+  };
+}
+
 function prepareRoot(root: string): PreparedRootRecord {
   let paths: string[] = [];
   let ignored = ['.git', 'node_modules', 'temp'];
   const configFiles = new Set<string>();
   if (sourceGitRoot(root)) {
+    const git = gitDirectory(sourceGitRoot(root)!);
+    if (git) {
+      const pointer = optionalFile(path.join(git, 'commondir')).toString().trim();
+      const common = pointer === '<absent>' ? git : path.resolve(git, pointer);
+      if (optionalFile(path.join(common, 'packed-refs')).includes(Buffer.from(' refs/replace/'))) {
+        currentSourceWitness()?.fallback(root, 'unsupported-git-layout');
+        return unavailableRoot(root, sourceMetadata(root));
+      }
+    }
     const run = (args: string[]) => witnessGit(root, args);
     for (const file of configurationFiles(root)) configFiles.add(file);
     paths = run(['ls-files', '--cached', '--others', '--exclude-standard', '-z'])

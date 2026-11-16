@@ -433,6 +433,20 @@ test('ignored extra files are length-framed before reuse', async () => {
   });
 });
 
+test('replacement-ref layouts retain fresh producers without a tree witness', async () => {
+  const f = fixture();
+  await withPreparedSourceWitness(async () => {
+    assert.equal(f.read(), 'original');
+    fs.mkdirSync(path.join(f.root, '.git/refs/replace'));
+    fs.writeFileSync(path.join(f.root, 'source.txt'), 'changed');
+    currentSourceWitness()!.checkpoint();
+    assert.equal(f.read(), 'changed');
+    assert.ok(
+      currentSourceWitness()!.fallbacks.some((entry) => entry.reason === 'unsupported-git-layout'),
+    );
+  });
+});
+
 for (const kind of ['ignore', 'attributes'])
   test(`default user Git ${kind} bytes invalidate reuse`, async () => {
     const f = fixture();
