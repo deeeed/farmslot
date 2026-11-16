@@ -10,6 +10,7 @@ import {
   NATIVE_WORKER_TRANSFER,
   type NativeWorkerCancelResult,
 } from '@farmslot/agent-runtime/native';
+import { isNativeHostUnavailableError } from '@farmslot/agent-runtime/native/host-unavailable';
 import { effectiveModelQuestions } from '@farmslot/agent-runtime/native/model-questions';
 import { nativeWorkerLaunchDigest } from '@farmslot/agent-runtime/native/worker-launch';
 import {
@@ -50,7 +51,7 @@ import { runTaskLibraries } from '../../tasks/pinned-libraries.js';
 import { unwatchContext, watchContext } from '../../tasks/watcher.js';
 import { modelQuestionsForRun, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../launch-command.js';
 
-import { isNativeHostUnavailableError, waitForNativeHostReady } from './host-wait.js';
+import { waitForNativeHostReady } from './host-wait.js';
 import { routeNativeExecution } from './node.js';
 import { nativeReviewerOwner } from './review-owner.js';
 import { clearSettledWorkerError } from './worker-control.js';
@@ -902,9 +903,13 @@ export async function dispatchNativeWorker(input: {
       info = checkedSession(created.session, binding);
       break;
     } catch (error) {
+      // Only a live start that never became ready earns the retry. A passive read's
+      // NATIVE_SOURCE_UNAVAILABLE is also pre-send, but the observation layer raises
+      // that same code after a read whose source changed, and ENSURE is a mutation:
+      // it is never replayed on a maybe.
       if (!hostWaited && isNativeHostUnavailableError(error)) {
         hostWaited = true;
-        // This failure is raised before any socket write: the reservation is unsent.
+        // A live start that never became ready throws before any socket write.
         ensureSent = false;
         try {
           await waitForNativeHostReady({

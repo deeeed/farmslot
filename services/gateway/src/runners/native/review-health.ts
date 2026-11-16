@@ -24,6 +24,8 @@ export async function assertReviewNativeRunnerHealthy(
    * machine is already placed has a launch worth waiting for.
    */
   hostWaitBudgetMs = 0,
+  /** Ends the wait when the work it would serve is gone: a dropped queue claim. */
+  assertCurrent?: () => Promise<void> | void,
 ): Promise<void> {
   if (input.transport !== 'native') return;
   try {
@@ -34,6 +36,7 @@ export async function assertReviewNativeRunnerHealthy(
       owner,
       executionNodeId,
       budgetMs: hostWaitBudgetMs,
+      ...(assertCurrent ? { assertCurrent } : {}),
     });
   } catch (error) {
     if (error instanceof GatewayMethodError) throw error;

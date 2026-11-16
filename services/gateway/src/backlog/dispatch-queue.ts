@@ -1586,6 +1586,9 @@ async function selectQueuedReviewWorkspace(
         candidates.length === 1 && item.reviewWorkspaceTarget
           ? Math.max(0, Date.parse(claim.expiresAt) - Date.now())
           : 0,
+        // A claim taken over elsewhere ends the wait: the dispatcher is single
+        // flight, so probing on for a claim we lost holds every other item.
+        () => assertQueueClaimHeld(claim, 'native-host-wait'),
       );
       eligible = true;
       assertQueueClaimHeld(claim, 'workspace-selection');

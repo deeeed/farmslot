@@ -1,4 +1,4 @@
-import { isNativeHostUnavailableError } from '@farmslot/agent-runtime/native/host-unavailable';
+import { isNativeHostNotReadyError } from '@farmslot/agent-runtime/native/host-unavailable';
 import { Methods } from '@farmslot/protocol';
 
 import { routeNativeExecution } from './node.js';
@@ -52,7 +52,7 @@ export async function waitForNativeHostReady(input: {
       });
       return { waitedMs: now() - startedAt, probes };
     } catch (error) {
-      if (!isNativeHostUnavailableError(error)) throw error;
+      if (!isNativeHostNotReadyError(error)) throw error;
       const remaining = deadline - now();
       if (remaining <= 0) {
         const waited = describe(now() - startedAt, budgetMs);
@@ -69,4 +69,4 @@ export async function waitForNativeHostReady(input: {
   }
 }
 
-export { isNativeHostUnavailableError };
+export { isNativeHostNotReadyError };
