@@ -47,7 +47,13 @@ test('reads that keep being superseded are named after the grace period, held or
     'RESOURCE_OBSERVATION_UNAVAILABLE',
     'PROGRESS_OWNER_CHANGED',
   ]) {
-    socket.failure(lastRead().id, { code, message: 'Observation not available yet' });
+    socket.failure(lastRead().id, {
+      code,
+      message:
+        code === 'RESOURCE_OBSERVATION_UNAVAILABLE'
+          ? 'The local file watches are still arming.'
+          : 'Observation not available yet',
+    });
     await flush();
     assert.equal(panel.failingSince, undefined, code);
     assert.equal(readFailureText(panel, Date.now() + 120000), undefined, code);

@@ -15,6 +15,13 @@ import {
 } from '../../resource-cache.js';
 import { isExpectedReadAbsence } from '../../utils/resource-read-status.js';
 
+/** A replaced read has no failure to display in either workspace. */
+export class WorkspaceReadCancelledError extends Error {
+  constructor() {
+    super('Workspace read superseded');
+  }
+}
+
 interface OpenRead {
   stop?: () => void;
   bind(): void;
@@ -166,7 +173,7 @@ export class WorkspaceReads implements ReactiveController {
         cancel: () => {
           if (!settled) {
             settled = true;
-            reject(new Error('Workspace read superseded'));
+            reject(new WorkspaceReadCancelledError());
           }
         },
         bind: () => {

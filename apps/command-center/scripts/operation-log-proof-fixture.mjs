@@ -1,10 +1,12 @@
 // Disposable real gateway and files for the operation-log browser proof. No worker is launched.
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 
 const output = process.env.OPERATION_LOG_PROOF_OUTPUT;
 const ledgerFailure = process.env.ACCEPTANCE_LEDGER_ERROR_PROOF === '1';
@@ -35,6 +37,13 @@ await writeFile(
   path.join(root, 'projects/log-proof/project.json'),
   JSON.stringify({ name: 'log-proof' }),
 );
+if (expectedAbsence) {
+  const failedRepo = path.join(root, 'repo-watch-error');
+  await mkdir(failedRepo);
+  await promisify(execFile)('git', ['init', '--quiet', failedRepo]);
+  // A real disk error in watch-time Git discovery, not an injected RPC response.
+  await writeFile(path.join(failedRepo, '.git/config'), '[broken config\n');
+}
 await writeFile(
   path.join(root, 'pool/local.json'),
   JSON.stringify({
@@ -43,7 +52,18 @@ await writeFile(
     platform: 'cli',
     os: 'darwin',
     host: 'localhost',
-    slots: [{ id: 'log-proof-1', repo: path.join(root, 'repo'), session: 'not-launched' }],
+    slots: [
+      { id: 'log-proof-1', repo: path.join(root, 'repo'), session: 'not-launched' },
+      ...(expectedAbsence
+        ? [
+            {
+              id: 'log-proof-watch-error',
+              repo: path.join(root, 'repo-watch-error'),
+              session: 'not-launched',
+            },
+          ]
+        : []),
+    ],
   }),
 );
 const load = (file) => import(pathToFileURL(path.join(source, file)).href);
@@ -210,7 +230,7 @@ await writeFile(
       root,
       runId: run.id,
       paths,
-      ...(expectedAbsence ? { absenceRuns } : {}),
+      ...(expectedAbsence ? { absenceRuns, watchFailureSlotId: 'log-proof-watch-error' } : {}),
       clientHome: path.join(root, 'client'),
       url,
       pid: process.pid,

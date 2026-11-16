@@ -27,7 +27,13 @@ test('loading, ready, empty saved data, absent watches and changing reads stay q
     ].map(
       (code): ResourceQueryState<TaskProgressResult> => ({
         status: 'error',
-        error: { code, message: 'No current watch' },
+        error: {
+          code,
+          message:
+            code === 'RESOURCE_OBSERVATION_UNAVAILABLE'
+              ? 'The local file watches are still arming.'
+              : 'No current watch',
+        },
       }),
     ),
   ];

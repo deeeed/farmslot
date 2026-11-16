@@ -20,7 +20,7 @@
 //   Selectors may cross shadow roots with >>>, e.g. native-session-view >>> textarea.
 //   node scripts/cdp.mjs tabs                         List CDP tabs.
 //   node scripts/cdp.mjs close <hash>                 Close a matching tab.
-//   node scripts/cdp.mjs gateway <method> [paramsJson] Send a JSON-RPC request to ws://localhost:7777.
+//   node scripts/cdp.mjs gateway <method> [paramsJson] [--observed] Send an RPC; optionally require a verified resource observation.
 //   node scripts/cdp.mjs baseline <hash> <cold|reconnect|diff|gate> [gate-route] Measure actual websocket reads;
 //     gate also counts /api/run-artifact HTTP bytes and stops at the rendered diff.
 //   node scripts/cdp.mjs idle-reads <hash> <ms> <methodsJson> Count outgoing reads in a settled page.
@@ -679,7 +679,7 @@ async function loginInTab(hash) {
   );
 }
 
-async function gatewayRpc(method, paramsJson) {
+async function gatewayRpc(method, paramsJson, observed = false) {
   const params = paramsJson ? JSON.parse(paramsJson) : {};
   const ws = new WebSocket(GATEWAY_URL);
   return new Promise((resolve, reject) => {
@@ -718,7 +718,15 @@ async function gatewayRpc(method, paramsJson) {
           return;
         }
         authed = true;
-        ws.send(JSON.stringify({ type: 'req', id: '1', method, params }));
+        ws.send(
+          JSON.stringify({
+            type: 'req',
+            id: '1',
+            method,
+            params,
+            ...(observed ? { resourceRead: { version: 1 } } : {}),
+          }),
+        );
         return;
       }
       if (authed && msg.id === '1') {
@@ -892,7 +900,7 @@ try {
   } else if (cmd === 'gateway') {
     const [method, paramsJson] = rest;
     if (!method) die('usage: cdp.mjs gateway <method> [paramsJson]');
-    const result = await gatewayRpc(method, paramsJson);
+    const result = await gatewayRpc(method, paramsJson, rest.includes('--observed'));
     console.log(JSON.stringify(result, null, 2));
   } else {
     die(

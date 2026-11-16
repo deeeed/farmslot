@@ -117,7 +117,7 @@ test('workspace views share canonical reads, stale data cannot authorize edits, 
     },
   );
   rejectRead(
-    Object.assign(new Error('File watch is still arming'), {
+    Object.assign(new Error('The local file watches are still arming.'), {
       code: 'RESOURCE_OBSERVATION_UNAVAILABLE',
     }),
   );
@@ -147,12 +147,30 @@ test('workspace views share canonical reads, stale data cannot authorize edits, 
   assert.equal(second.ready, true);
   const saved = ownedCache.read(query).data;
   assert(first.hasData && first.owns(saved));
+  // The same UNAVAILABLE code also wraps real producer failures; those must reject.
+  const denied = first.read('fs.read', { slotId: 'slot', path: 'forbidden.ts' }, () =>
+    assert.fail('A failed read cannot apply data'),
+  );
+  const failureEnd = Date.now() + 2000;
+  while (requests < 3 && Date.now() < failureEnd)
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  assert.equal(requests, 3);
+  rejectRead(
+    Object.assign(new Error('EACCES: permission denied, watch workspace'), {
+      code: 'RESOURCE_OBSERVATION_UNAVAILABLE',
+    }),
+  );
+  await assert.rejects(denied, /EACCES/);
+  assert.match(first.error, /EACCES/);
+  assert.equal(first.ready, false);
+  first.drop('fs.read', { slotId: 'slot', path: 'forbidden.ts' });
+  assert.equal(first.ready, true);
   // Switching profiles retires rendered bytes immediately, before another reply is available.
   const refreshing = ownedCache.retry(query);
   const deadline = Date.now() + 500;
-  while (requests < 3 && Date.now() < deadline)
+  while (requests < 4 && Date.now() < deadline)
     await new Promise((resolve) => setTimeout(resolve, 1));
-  assert.equal(requests, 3);
+  assert.equal(requests, 4);
   cache = undefined;
   owner = 'replacement-owner';
   for (const listener of ownerListeners) listener();

@@ -11,11 +11,21 @@ const output = process.env.FARMSLOT_AC_PROOF_OUTPUT;
 const runId = process.env.FARMSLOT_AC_PROOF_RUN_ID;
 const target = process.env.FARMSLOT_AC_PROOF_TAB;
 const phase = process.env.FARMSLOT_AC_PROOF_PHASE ?? 'task';
-assert(output && runId && target, 'Select output, run UUID and owned CDP tab');
 assert(
-  ['pre-task', 'task', 'pre-worker', 'no-watch', 'fresh', 'preparing', 'read-failure'].includes(
-    phase,
-  ),
+  output && target && (runId || phase === 'workspace-failure'),
+  'Select output, run UUID and owned CDP tab',
+);
+assert(
+  [
+    'pre-task',
+    'task',
+    'pre-worker',
+    'no-watch',
+    'fresh',
+    'preparing',
+    'read-failure',
+    'workspace-failure',
+  ].includes(phase),
 );
 const execute = promisify(execFile);
 const cdp = async (...args) =>
@@ -29,6 +39,68 @@ const cdp = async (...args) =>
     ).stdout,
   );
 await cdp('focus', target);
+if (phase === 'workspace-failure') {
+  const slotId = process.env.FARMSLOT_AC_PROOF_SLOT_ID;
+  assert(slotId, 'Select the owned fixture watch-failure slot');
+  let failure;
+  try {
+    await cdp(
+      'gateway',
+      'fs.list',
+      JSON.stringify({ slotId, path: '.', includeIgnored: false }),
+      '--observed',
+    );
+  } catch (error) {
+    failure = JSON.parse(error.stderr.trim().replace(/^cdp.mjs: /, '')).error;
+  }
+  assert.equal(failure?.code, 'RESOURCE_OBSERVATION_UNAVAILABLE');
+  assert.match(failure.message, /^Git metadata discovery failed/);
+  const read = () =>
+    cdp(
+      'eval',
+      target,
+      '--file',
+      path.join(source, 'apps/command-center/scripts/probes/workspace-read-failure.js'),
+    );
+  let view;
+  const end = Date.now() + 10000;
+  do {
+    view = await read();
+    if (view.readError === failure.message) break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  } while (Date.now() < end);
+  assert(view.connected && view.slotId === slotId);
+  assert.equal(view.code, failure.code);
+  assert.equal(
+    view.readError,
+    failure.message,
+    'A real unavailable watch failure must not stay silently pending',
+  );
+  assert(view.visible && view.retry, 'The real read failure needs a visible alert and retry');
+  assert(
+    view.text.includes(failure.message.trim().replace(/\s+/g, ' ')),
+    'Render the actual failure cause',
+  );
+  await mkdir(output, { recursive: true });
+  await cdp('screenshot', target, path.join(output, `${phase}.png`));
+  assert.equal((await read()).readError, failure.message);
+  await writeFile(
+    path.join(output, `${phase}.json`),
+    JSON.stringify(
+      {
+        status: 'pass',
+        source: 'Real disk watch failure, authenticated fs.list and connected browser',
+        slotId,
+        failure,
+        view,
+      },
+      null,
+      2,
+    ) + '\n',
+  );
+  console.log(JSON.stringify({ status: 'pass', phase, slotId }));
+  process.exit(0);
+}
 const result = await cdp('gateway', 'run.get', JSON.stringify({ runId, view: 'snapshot' }));
 const run = result.run;
 assert.equal(run.id, runId);

@@ -8,17 +8,33 @@ import type { ResourceQueryController } from '../components/shared/resource-quer
 
 export { heldDataIsSaved, isSupersededRead } from '@farmslot/protocol/client-cache';
 
+// UNAVAILABLE is also used for real watch failures. Only these producer admission
+// and replacement messages are absence; unknown failures must stay visible.
+const pendingObservationMessages = new Set([
+  'The local file watches are still arming.',
+  'The remote progress watch is not armed.',
+  'The progress source owner is not observing this file.',
+  'The file observation is no longer active.',
+  'The file producer disconnected or was replaced.',
+  'The progress producer disconnected, lost authority or was replaced.',
+  'Native workspace node disconnected',
+  'Workspace node disconnected',
+  'Run no longer owns this slot workspace',
+  'Workspace identity is no longer current',
+  'Workspace source replaced while arming',
+]);
+
 /** Observation availability is not a failed read of the underlying file. */
 export function isExpectedReadAbsence(
   state: Pick<ResourceQueryState, 'status' | 'error'>,
 ): boolean {
-  return state.error
-    ? [
-        'RESOURCE_OBSERVATION_UNSUPPORTED',
-        'RESOURCE_OBSERVATION_UNAVAILABLE',
-        'PROGRESS_OWNER_CHANGED',
-      ].includes(state.error.code)
-    : state.status === 'unsupported';
+  const error = state.error;
+  if (!error) return state.status === 'unsupported';
+  return (
+    ['RESOURCE_OBSERVATION_UNSUPPORTED', 'PROGRESS_OWNER_CHANGED'].includes(error.code) ||
+    (error.code === 'RESOURCE_OBSERVATION_UNAVAILABLE' &&
+      pendingObservationMessages.has(error.message))
+  );
 }
 
 /**

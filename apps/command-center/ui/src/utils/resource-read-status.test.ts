@@ -18,7 +18,13 @@ test('expected observation absence stays neutral beyond the read grace period', 
     for (const data of [undefined, { markdown: '' }]) {
       const state: ResourceQueryState = {
         status: 'error',
-        error: { code, message: 'No current source' },
+        error: {
+          code,
+          message:
+            code === 'RESOURCE_OBSERVATION_UNAVAILABLE'
+              ? 'The local file watches are still arming.'
+              : 'No current source',
+        },
         data,
       };
       const query = { state, failingSince: 1 };
@@ -50,4 +56,20 @@ test('actual I/O, parse, access and selected-resource failures stay errors', () 
     }),
     false,
   );
+});
+
+// WorkspaceObservations.capture wraps arm() failures with this code and the raw message.
+test('producer-shaped unavailable failures remain visible, including unknown causes', () => {
+  for (const message of [
+    'EACCES: permission denied, watch workspace',
+    'Watch initialization failed',
+    'Workspace source or identity changed during the read',
+  ]) {
+    const state: ResourceQueryState = {
+      status: 'error',
+      error: { code: 'RESOURCE_OBSERVATION_UNAVAILABLE', message },
+    };
+    assert.equal(isExpectedReadAbsence(state), false, message);
+    assert.equal(readFailureText({ state }), message);
+  }
 });
