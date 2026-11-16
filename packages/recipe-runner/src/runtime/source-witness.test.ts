@@ -7,6 +7,7 @@ import { afterEach, test } from 'node:test';
 
 import {
   currentSourceWitness,
+  preparedMetadataValue,
   preparedSourceValue,
   preparedSourceValueAsync,
   sourceGitRoot,
@@ -444,6 +445,30 @@ test('replacement-ref layouts retain fresh producers without a tree witness', as
     assert.ok(
       currentSourceWitness()!.fallbacks.some((entry) => entry.reason === 'unsupported-git-layout'),
     );
+  });
+});
+
+test('metadata-only projections never walk generated output history', async () => {
+  const f = fixture();
+  f.git('config', 'remote.origin.url', 'https://example.invalid/first');
+  const output = path.join(f.root, 'unignored-output');
+  fs.mkdirSync(output);
+  await withPreparedSourceWitness(async () => {
+    const read = () =>
+      preparedMetadataValue(
+        f.root,
+        'origin',
+        () => f.git('config', '--get', 'remote.origin.url').toString().trim(),
+        (value) => (typeof value === 'string' ? value : undefined),
+      );
+    assert.equal(read(), 'https://example.invalid/first');
+    for (let n = 0; n < 100; n++) fs.writeFileSync(path.join(output, n + '.json'), '{}');
+    currentSourceWitness()!.checkpoint();
+    assert.equal(read(), 'https://example.invalid/first');
+    assert.equal(currentSourceWitness()!.measurements.length, 0);
+    f.git('config', 'remote.origin.url', 'https://example.invalid/other');
+    currentSourceWitness()!.checkpoint();
+    assert.equal(read(), 'https://example.invalid/other');
   });
 });
 

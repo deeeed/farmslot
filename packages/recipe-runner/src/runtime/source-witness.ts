@@ -54,6 +54,7 @@ export type SourceWitnessPhase =
   | 'observation';
 
 const sessions = new AsyncLocalStorage<PreparedSourceWitness | undefined>();
+const suppressedReuse = new AsyncLocalStorage<boolean>();
 const implementation = createHash('sha256')
   .update(optionalFile(fileURLToPath(import.meta.url)))
   .update(optionalFile(fileURLToPath(new URL('../../package.json', import.meta.url))))
@@ -178,12 +179,16 @@ export function withPreparedSourceWitness<T>(
 }
 
 export function withoutPreparedSourceWitness<T>(body: () => T): T {
-  return sessions.run(undefined, body);
+  return suppressedReuse.run(true, body);
+}
+
+export function sourceWitnessReuseActive(): boolean {
+  return Boolean(sessions.getStore()?.reusable && !suppressedReuse.getStore());
 }
 
 function reusableWitness(directory: string): PreparedSourceWitness | undefined {
   const view = sessions.getStore();
-  if (!view?.reusable) return undefined;
+  if (!view?.reusable || suppressedReuse.getStore()) return undefined;
   if (
     process.env.GIT_DIR ||
     process.env.GIT_WORK_TREE ||
@@ -196,7 +201,7 @@ function reusableWitness(directory: string): PreparedSourceWitness | undefined {
   try {
     const root = physicalSourceRoot(directory);
     const git = sourceGitRoot(root);
-    if (git && git !== root && !root.includes(path.sep + 'node_modules' + path.sep)) {
+    if (git && git !== root) {
       view.fallback(root, 'nested-git-root');
       return undefined;
     }
@@ -229,6 +234,79 @@ function witnessedRoot(
     view.fallback(directory, 'unsupported-git-layout');
     return undefined;
   }
+}
+
+interface PreparedMetadataRecord {
+  root: string;
+  metadata: string;
+  configFiles: string[];
+  values: Record<string, unknown>;
+}
+
+function readMetadataRecord(file: string, root: string): PreparedMetadataRecord | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(optionalFile(file).toString());
+  } catch (error) {
+    if (error instanceof SyntaxError) return undefined;
+    throw error;
+  }
+  if (typeof value !== 'object' || value === null) return undefined;
+  const data = value as Partial<PreparedMetadataRecord>;
+  return data.root === root &&
+    typeof data.metadata === 'string' &&
+    Array.isArray(data.configFiles) &&
+    data.configFiles.every((file) => typeof file === 'string') &&
+    typeof data.values === 'object' &&
+    data.values !== null &&
+    !Array.isArray(data.values)
+    ? (data as PreparedMetadataRecord)
+    : undefined;
+}
+
+/** HEAD and configuration projections do not depend on source-tree membership. */
+export function preparedMetadataValue<T>(
+  directory: string,
+  key: unknown,
+  compute: () => T,
+  decode: (value: unknown) => T | undefined,
+): T {
+  const view = reusableWitness(directory);
+  if (!view) return withoutPreparedSourceWitness(compute);
+  const root = physicalSourceRoot(directory);
+  const file = recordFile(root) + '.metadata';
+  let record: PreparedMetadataRecord;
+  try {
+    const saved = readMetadataRecord(file, root);
+    const metadata = sourceMetadata(root, saved?.configFiles);
+    if (saved?.metadata === metadata) record = saved;
+    else {
+      const configFiles = sourceGitRoot(root) ? configurationFiles(root) : [];
+      record = { root, metadata: sourceMetadata(root, configFiles), configFiles, values: {} };
+    }
+  } catch (error) {
+    if (!unavailableWitness(error) && !cacheUnavailable(error)) throw error;
+    view.fallback(root, cacheUnavailable(error) ? 'cache-unavailable' : 'unsupported-git-layout');
+    return withoutPreparedSourceWitness(compute);
+  }
+  if (!view.reusable) return withoutPreparedSourceWitness(compute);
+  const identity = createHash('sha256')
+    .update(JSON.stringify([path.relative(root, fs.realpathSync(directory)), key]))
+    .digest('hex');
+  const cached = decode(record.values[identity]);
+  if (cached !== undefined) return cached;
+  const value = compute();
+  try {
+    if (record.metadata === sourceMetadata(root, record.configFiles)) {
+      if (Object.keys(record.values).length >= 32) record.values = {};
+      record.values[identity] = value;
+      writeWitnessFile(file, record, root);
+    }
+  } catch (error) {
+    if (!unavailableWitness(error) && !cacheUnavailable(error)) throw error;
+    view.fallback(root, cacheUnavailable(error) ? 'cache-unavailable' : 'unsupported-git-layout');
+  }
+  return value;
 }
 
 /** The parser is the boundary between a rebuildable record and typed inputs. */
@@ -454,7 +532,8 @@ function sourceMetadata(root: string, configFiles: readonly string[] = []): stri
       ]) {
         const file = path.join(dir, name);
         hash.update(file);
-        hash.update(name === 'packed-refs' ? statIdentity(file) : optionalFile(file));
+        hash.update(statIdentity(file));
+        if (name !== 'packed-refs') hash.update(optionalFile(file));
         if (name === 'config' || name === 'config.worktree') configs.push(file);
       }
     }
@@ -473,6 +552,7 @@ function sourceMetadata(root: string, configFiles: readonly string[] = []): stri
     seen.add(file);
     const contents = optionalFile(file).toString();
     hash.update(file);
+    hash.update(statIdentity(file));
     hash.update(contents);
   }
   return hash.digest('hex');
@@ -554,7 +634,11 @@ function outputSignature(root: string, prefix: string): string {
     hash.update(current);
     hash.update(stat ? String(stat.mode & 0o170000) : '<absent>');
     if (stat?.isSymbolicLink()) hash.update(fs.readlinkSync(current));
-    if (current !== prefix) hash.update(optionalFile(path.join(current, '.gitignore')));
+    if (current !== prefix) {
+      const ignore = path.join(current, '.gitignore');
+      hash.update(statIdentity(ignore));
+      hash.update(optionalFile(ignore));
+    }
     if (current === root) break;
   }
   return hash.digest('hex');

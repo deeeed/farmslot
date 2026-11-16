@@ -7,7 +7,12 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { currentSourceWitness, preparedSourceValue, sourceGitRoot } from '@farmslot/recipe-runner';
+import {
+  currentSourceWitness,
+  preparedMetadataValue,
+  sourceGitRoot,
+  sourceWitnessReuseActive,
+} from '@farmslot/recipe-runner';
 
 import { countCallWork } from './call-timings.js';
 
@@ -45,7 +50,7 @@ const topLevels = new Map<string, string | null>();
 export function gitTopLevel(dir: string): string | undefined {
   const key = path.resolve(dir);
   if (
-    currentSourceWitness() &&
+    sourceWitnessReuseActive() &&
     !process.env.GIT_DIR &&
     !process.env.GIT_WORK_TREE &&
     !process.env.GIT_COMMON_DIR
@@ -70,7 +75,7 @@ const origins = new Map<string, string>();
 /** The origin URL, bound to prepared inputs or cached per process outside execution. */
 export function gitOriginUrl(dir: string): string {
   const key = path.resolve(dir);
-  return preparedSourceValue(
+  return preparedMetadataValue(
     key,
     { kind: 'git-origin' },
     () => freshGitOriginUrl(key),
@@ -134,7 +139,7 @@ export function preparedHeadCommit(directory: string): string | undefined {
   const known = sourceGitRoot(directory);
   if (!known && !process.env.GIT_DIR && !process.env.GIT_WORK_TREE && !process.env.GIT_COMMON_DIR)
     return undefined;
-  const result = preparedSourceValue(
+  const result = preparedMetadataValue(
     directory,
     { kind: 'head-commit' },
     () => {

@@ -960,6 +960,41 @@ describe('execution provenance', () => {
     assert.ok(drift.some((entry) => entry.field === 'libraries[0].sourceFingerprint'));
   });
 
+  test('fallback keeps execution origin reads fresh after configuration changes', async () => {
+    process.env.FARMSLOT_RECIPE_CACHE_DIR = tempRoot('prepared-cache-');
+    const product = checkout('fallback-origin-', { 'source.txt': 'first' });
+    const output = path.join(product, 'unignored-output');
+    fs.mkdirSync(output);
+    git(product, 'config', 'remote.origin.url', 'https://example.invalid/first');
+    await withPreparedSourceWitness(async () => {
+      assert.equal(gitOriginUrl(product), 'https://example.invalid/first');
+      sourceSnapshot(product, undefined, [output]);
+      assert.equal(currentSourceWitness()!.reusable, false);
+      git(product, 'config', 'remote.origin.url', 'https://example.invalid/other');
+      currentSourceWitness()!.checkpoint();
+      assert.equal(gitOriginUrl(product), 'https://example.invalid/other');
+    });
+  });
+
+  test('installed packages inside Git keep ancestor rule changes fresh', async () => {
+    process.env.FARMSLOT_RECIPE_CACHE_DIR = tempRoot('prepared-cache-');
+    const product = checkout('nested-installed-', {
+      '.gitignore': 'node_modules/\n',
+      'source.txt': 'first',
+    });
+    const installed = path.join(product, 'node_modules/provider');
+    fs.mkdirSync(installed, { recursive: true });
+    fs.writeFileSync(path.join(installed, 'package.json'), '{"name":"provider","version":"1.0.0"}');
+    fs.writeFileSync(path.join(installed, 'provider.js'), 'export const value=1;');
+    await withPreparedSourceWitness(async () => {
+      const first = sourceSnapshot(installed);
+      fs.writeFileSync(path.join(product, '.gitignore'), '');
+      currentSourceWitness()!.checkpoint();
+      assert.notEqual(sourceSnapshot(installed).sourceFingerprint, first.sourceFingerprint);
+      assert.equal(currentSourceWitness()!.measurements.length, 0);
+    });
+  });
+
   test('nested capture source keeps repository-wide sibling freshness', async () => {
     const product = checkout('capture-sibling-', { 'app/a.txt': 'first', 'other/b.txt': 'first' });
     await withPreparedSourceWitness(async () => {

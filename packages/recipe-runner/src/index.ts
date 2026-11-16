@@ -173,11 +173,13 @@ export type {
 } from './runtime/source-witness.js';
 export {
   currentSourceWitness,
+  preparedMetadataValue,
   preparedSourceValue,
   preparedSourceValueAsync,
   PreparedSourceWitness,
   sourceGitRoot,
   sourceWitnessExclusions,
+  sourceWitnessReuseActive,
   sourceWitnessSupportsOutputs,
   sourceWitnessTotals,
   withoutPreparedSourceWitness,
