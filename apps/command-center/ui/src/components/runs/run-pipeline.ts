@@ -41,9 +41,9 @@ import {
   renderAcceptancePanel,
 } from '../progress-tracker/acceptance-panel.js';
 import {
-  formatSpendUsd,
   renderSpentSoFar,
   spentSoFarStyles,
+  withSpentSummary,
 } from '../progress-tracker/live-spend.js';
 import { SubtaskOpenState } from '../progress-tracker/subtask-block.js';
 import { renderCollapsiblePanel } from '../shared/collapsible-panel.js';
@@ -329,10 +329,10 @@ export class RunPipeline extends LitElement {
     const hasProgress = Boolean(
       checklist || checklistProgressExecution(this.taskProgress, this.run)?.acknowledgedAt,
     );
-    const spent = this.liveSpend ? `${formatSpendUsd(this.liveSpend.costUsd)} spent` : '';
-    const progressSummary = [checklist ? `${checklist.counts} · ${checklist.label}` : '', spent]
-      .filter(Boolean)
-      .join(' · ');
+    const progressSummary = withSpentSummary(
+      checklist ? `${checklist.counts} · ${checklist.label}` : '',
+      this.liveSpend,
+    );
     const acceptance = this.renderAcceptancePanel();
     const inputs = acceptance === nothing ? null : this.acceptanceInputs();
     const awaitingTask = Boolean(this.run && runAwaitsTaskSource(this.run));

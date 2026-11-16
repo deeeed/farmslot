@@ -75,6 +75,12 @@ export function openStepSpend(
   };
 }
 
+/** A panel summary with the session's cost so far, so a collapsed panel still shows it. */
+export function withSpentSummary(summary: string, spend: TaskLiveSpend | undefined): string {
+  const spent = spend ? `${formatSpendUsd(spend.costUsd)} spent` : '';
+  return [summary, spent].filter(Boolean).join(' · ');
+}
+
 /** "Spent so far": the progress tracker and the run page's step progress panel. */
 export function renderSpentSoFar(spend: TaskLiveSpend | undefined) {
   const view = liveSpendSummary(spend);
