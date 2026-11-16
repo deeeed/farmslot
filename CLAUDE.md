@@ -17,7 +17,7 @@ farmslot/
 
 ## Performance
 
-Follow the [performance rules](AGENTS.md#performance-rules) and [the performance process](docs/operations/performance.md) for budgets, tracked metrics, measurements and before/after proof. Use the shared wrappers; add no endpoint timers.
+Follow [the performance process](docs/operations/performance.md) for budgets, measurements and before/after proof. Use the shared wrappers; add no endpoint timers.
 
 ## Key Rules
 
