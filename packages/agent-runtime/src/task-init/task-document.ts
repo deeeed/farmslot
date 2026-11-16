@@ -28,6 +28,8 @@ import { installedRuntimeScriptCommand, installedTaskCommands } from './runtime-
 
 export const HANDOFF_INPUT = 'inputs/handoff.json';
 export const BUG_INPUT = 'inputs/bug-input.json';
+/** Resolved read-only reference checkouts, for a worker or a check that reads them by path. */
+export const REFERENCE_CHECKOUTS_INPUT = 'inputs/reference-checkouts.json';
 /** Optional project-owned addendum rendered into TASK.md (relative to `templates/`). */
 export const TASK_DOCUMENT_ADDENDUM_TEMPLATE = 'task-document.md';
 
@@ -190,6 +192,47 @@ export interface TaskDocumentInput {
   /** Static review supplies its enforced completion command instead of development guidance. */
   completionInstructions?: string;
   hasTicketData: boolean;
+  /**
+   * Read-only checkouts of other codebases this task compares against, one per
+   * `reference_repos` key the project declares. An absent one is listed as absent:
+   * a comparison the worker cannot read is blocked, not unchecked.
+   */
+  referenceCheckouts?: ReadonlyArray<ReferenceCheckout>;
+}
+
+/** One `reference_repos` entry, resolved on the machine the task runs on. */
+export interface ReferenceCheckout {
+  /** The `reference_repos` key: `mobile`, `extension`, `core`. */
+  name: string;
+  path: string;
+  present: boolean;
+  /** The revision the worker cites. Absent when the checkout is not there to read. */
+  headSha?: string;
+}
+
+/**
+ * The `## Inputs` lines for read-only reference checkouts, shared by both task
+ * documents so a worker reads the same rule on either surface. Empty when the
+ * project declares none. An absent checkout is named as absent: a comparison the
+ * worker cannot read is blocked, and silence would read as unchecked.
+ */
+export function renderReferenceCheckoutInputs(
+  references: ReadonlyArray<ReferenceCheckout> | undefined,
+): string[] {
+  if (!references?.length) return [];
+  return [
+    `- \`${path.basename(REFERENCE_CHECKOUTS_INPUT)}\` — the checkouts below, with the revision to cite`,
+    '',
+    '### Reference checkouts (read-only)',
+    '',
+    'Other codebases this task is compared against. Read them; never write, build or install in them, and never run their tooling: they are shared and kept on `origin/main`.',
+    '',
+    ...references.map((reference) =>
+      reference.present
+        ? `- \`${reference.name}\`: \`${reference.path}\`${reference.headSha ? ` at \`${reference.headSha}\`` : ''}`
+        : `- \`${reference.name}\`: not cloned on this machine. A comparison that needs it is blocked, not unchecked — say so in the report.`,
+    ),
+  ];
 }
 
 /** Shared by split task documents and the gateway's lightweight raw templates. */
@@ -312,6 +355,7 @@ export function buildTaskDocument(input: TaskDocumentInput): string {
   if (input.hasTicketData) {
     sections.push(`- \`${path.basename(BUG_INPUT)}\` — full ticket data as fetched`);
   }
+  sections.push(...renderReferenceCheckoutInputs(input.referenceCheckouts));
   sections.push('');
   return sections.join('\n');
 }

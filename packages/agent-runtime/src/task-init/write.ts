@@ -20,6 +20,8 @@ import {
   HANDOFF_INPUT,
   type HandoffMetadata,
   normalizeAcceptanceCriteria,
+  REFERENCE_CHECKOUTS_INPUT,
+  type ReferenceCheckout,
   renderAcceptanceCriteria,
 } from './task-document.js';
 
@@ -115,6 +117,13 @@ export interface WriteTaskDirInput {
   deterministicCommands?: Record<string, string>;
   /** Ticket data as fetched, written to inputs/bug-input.json when present. */
   bugInput?: unknown;
+  /**
+   * Resolved read-only reference checkouts, written to
+   * inputs/reference-checkouts.json when the project declares any. An absent one is
+   * recorded with `present: false` rather than dropped: a worker that must compare
+   * against it reports blocked, and a missing entry would read as nothing to compare.
+   */
+  referenceCheckouts?: ReadonlyArray<ReferenceCheckout>;
 }
 
 export interface WrittenTaskDir {
@@ -125,6 +134,8 @@ export interface WrittenTaskDir {
   handoff: string;
   terminalContract: string;
   bugInput: string | null;
+  /** Written only when the project declares reference repos. */
+  referenceCheckouts: string | null;
 }
 
 export async function writeTaskDir(input: WriteTaskDirInput): Promise<WrittenTaskDir> {
@@ -246,7 +257,24 @@ export async function ensureTaskRuntime(
     await write(bugInput, `${JSON.stringify(input.bugInput, null, 2)}\n`);
   }
 
-  return { taskDir, checklist, mark, handoff, terminalContract, bugInput };
+  let referenceCheckouts: string | null = null;
+  if (input.referenceCheckouts?.length) {
+    referenceCheckouts = path.join(taskDir, REFERENCE_CHECKOUTS_INPUT);
+    await write(
+      referenceCheckouts,
+      `${JSON.stringify({ schemaVersion: 1, references: input.referenceCheckouts }, null, 2)}\n`,
+    );
+  }
+
+  return {
+    taskDir,
+    checklist,
+    mark,
+    handoff,
+    terminalContract,
+    bugInput,
+    referenceCheckouts,
+  };
 }
 
 /** Append the current configured CI check without rewriting a legacy task's existing steps. */

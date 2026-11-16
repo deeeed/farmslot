@@ -484,6 +484,19 @@ export async function materializeReviewWorkspaceTask(
         acceptanceCriteria: [],
         addendum: instructions,
         hasTicketData: false,
+        // The support binding already read these on the execution node. Listing them
+        // in the document, absent ones included, is what makes a comparison the
+        // reviewer cannot read a blocked row instead of a silent omission.
+        ...(run.reviewWorkspace.support?.references?.length
+          ? {
+              referenceCheckouts: run.reviewWorkspace.support.references.map((reference) => ({
+                name: reference.name,
+                path: reference.path,
+                present: !reference.missing,
+                ...(reference.headSha && !reference.missing ? { headSha: reference.headSha } : {}),
+              })),
+            }
+          : {}),
       }),
     });
     await writeFile(path.join(bundleDir, SUBJECT), `${JSON.stringify(subject, null, 2)}\n`);

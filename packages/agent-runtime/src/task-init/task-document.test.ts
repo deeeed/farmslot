@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import { normalizeAcceptanceCriteria, renderAcceptanceCriteria } from './task-document.js';
+import {
+  normalizeAcceptanceCriteria,
+  renderAcceptanceCriteria,
+  renderReferenceCheckoutInputs,
+} from './task-document.js';
 
 const { rawTicketCriteria, ledgerCriteria } = JSON.parse(
   readFileSync(
@@ -31,4 +35,30 @@ test('empty entries, blank lines and checkboxes keep the current normalization',
     ['First\nChild', 'Second'],
   );
   assert.equal(renderAcceptanceCriteria(['', ' * [ ] ']), '_Not specified_');
+});
+
+test('a task document lists every reference checkout the project declares, read-only', () => {
+  const lines = renderReferenceCheckoutInputs([
+    { name: 'mobile', path: '/dev/metamask/mobile-ref', present: true, headSha: 'aaa111' },
+    { name: 'extension', path: '/dev/metamask/extension-ref', present: true, headSha: 'bbb222' },
+  ]).join('\n');
+  assert.match(lines, /### Reference checkouts \(read-only\)/);
+  assert.match(lines, /- `mobile`: `\/dev\/metamask\/mobile-ref` at `aaa111`/);
+  assert.match(lines, /- `extension`: `\/dev\/metamask\/extension-ref` at `bbb222`/);
+  assert.match(lines, /never write, build or install in them/);
+  assert.match(lines, /`reference-checkouts\.json`/);
+});
+
+test('a reference checkout the machine lacks reads as blocked, never as unchecked', () => {
+  const lines = renderReferenceCheckoutInputs([
+    { name: 'mobile', path: '/dev/metamask/mobile-ref', present: false },
+  ]).join('\n');
+  assert.match(lines, /- `mobile`: not cloned on this machine\./);
+  assert.match(lines, /blocked, not unchecked/);
+  assert.ok(!lines.includes('/dev/metamask/mobile-ref` at'), 'no revision is claimed for it');
+});
+
+test('a project with no reference repos adds nothing to the inputs', () => {
+  assert.deepEqual(renderReferenceCheckoutInputs(undefined), []);
+  assert.deepEqual(renderReferenceCheckoutInputs([]), []);
 });
