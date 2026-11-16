@@ -1,1 +1,0 @@
-- Show retained publication errors in the review gate and saved review, and clear the notice when publication succeeds.

@@ -153,10 +153,18 @@ function findOtherActiveRunOnSlot(
 
 /** Another run, reservation or release that owns this slot keeps it; cancel checks only this. */
 export async function slotOwnershipBlocker(run: Run): Promise<string | null> {
+  return inspectSlotOwnership(run, false);
+}
+
+async function inspectSlotOwnership(
+  run: Run,
+  inspectReleaseFence: boolean,
+): Promise<string | null> {
   if (!run.slotId) return null;
   const row = await readSlotRow(run.slotId);
   const owner = row?.current_run_id;
-  if (row?.phase === SLOT_PHASE_RELEASING) return 'Another slot release is in progress';
+  if (row?.phase === SLOT_PHASE_RELEASING && !inspectReleaseFence)
+    return 'Another slot release is in progress';
   if (row?.handoff_run_id && row.handoff_run_id !== run.id)
     return 'Another native handoff owns this slot reservation';
   if (findActiveGateHeldRunForSlot(run.slotId)) return 'A publication gate still holds this slot';
@@ -176,10 +184,17 @@ export async function slotOwnershipBlocker(run: Run): Promise<string | null> {
 }
 
 /** Run transitions may never turn a shared workspace release into a global teardown. */
-export async function slotTeardownBlocker(run: Run): Promise<string | null> {
+export interface SlotTeardownInspectionOptions {
+  /** Observe an interrupted fence without stopping any worker or managed process. */
+  inspectReleaseFence?: true;
+}
+export async function slotTeardownBlocker(
+  run: Run,
+  options: SlotTeardownInspectionOptions = {},
+): Promise<string | null> {
   if (!run.slotId) return null;
   const slotId = run.slotId;
-  const ownership = await slotOwnershipBlocker(run);
+  const ownership = await inspectSlotOwnership(run, options.inspectReleaseFence === true);
   if (ownership) return ownership;
   const ownerAtInspection = await readSlotRow(run.slotId);
   const vars = await loadSlotVars(run.slotId);
@@ -259,6 +274,8 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
       // conversation, but a live or unknown worker still blocks cleanup unless
       // it is provably this closed run's own worker, which closing ends (F315).
       const live = await probeRunnerDescendantPid(vars, panePid);
+      if (options.inspectReleaseFence && live.state !== 'absent')
+        return `Unrecorded pane ${paneId} is not quiescent; interrupted release stays fenced`;
       const left =
         live.state === 'present'
           ? await exitClosedRunUnrecordedWorker(vars, run, { session, paneId, panePid })
@@ -310,7 +327,7 @@ export async function slotTeardownBlocker(run: Run): Promise<string | null> {
   }
   // Pane ownership and shell quiescence must be proven before stopping a
   // managed daemon: an unrecorded worker for another task may share this home.
-  if (isTerminalRunStatus(run.status)) {
+  if (isTerminalRunStatus(run.status) && !options.inspectReleaseFence) {
     const stillOwned = async () => {
       const row = await readSlotRow(slotId);
       return (

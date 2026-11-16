@@ -1,0 +1,1 @@
+- Eval trial start accepts a domain. A blank domain matches the default. A named domain starts its own trial.

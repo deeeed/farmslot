@@ -106,7 +106,7 @@ The verdict or self-review report must contain a `## Diff scope` section with on
 ## Checklist
 
 Follow `.sandbox/farmslot-farm/worker-task/fix/<TASK_ID>/CHECKLIST.md` top to bottom. That file is the only checklist that counts.
-Marker: `.sandbox/farmslot-farm/worker-task/fix/<TASK_ID>/mark`, run from the repo root. `mark start` once when work begins, `mark N` after each step (visible 1-based number), then `mark complete --mark-last`, `mark no-change --reason "…"`, or `mark blocked --reason "…"`.
+Marker: `.sandbox/farmslot-farm/worker-task/fix/<TASK_ID>/mark`, run from the repo root. `mark start`, then `mark 1` as soon as step 1 is done, before any other work; then `mark N` after each step (visible 1-based number), then `mark complete --mark-last`, `mark no-change --reason "…"`, or `mark blocked --reason "…"`.
 Never hand-write `SIGNAL.json`. Do not add step checkboxes to this document; append notes (for example `## Recipe ACs`) below.
 
 ## Inputs

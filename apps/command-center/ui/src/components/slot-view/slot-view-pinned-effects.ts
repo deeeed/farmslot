@@ -2,6 +2,7 @@ import type { FsListResult } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
 import { isRecoveryEpochCurrent } from '../../utils/reconnect.js';
+import { WorkspaceReadCancelledError } from '../workspace/workspace-reads.js';
 
 import type { SlotView } from './slot-view.js';
 import {
@@ -15,7 +16,23 @@ function isCurrentPinnedResult(view: SlotView, epoch: number) {
   return epoch === view._recoveryEpoch && isRecoveryEpochCurrent(epoch);
 }
 
-export async function autoPinSlotViewTaskFolder(view: SlotView) {
+type AutoPinTaskFolderView = Pick<
+  SlotView,
+  | 'slotId'
+  | '_agentContexts'
+  | '_linkedRun'
+  | '_slot'
+  | '_shouldShowTaskUI'
+  | '_autoPinProbedFor'
+  | '_pinnedFolder'
+  | '_workspaceReads'
+  | '_saveLayout'
+  | '_loadPinnedEntries'
+  | '_wsError'
+>;
+
+export async function autoPinSlotViewTaskFolder(view: AutoPinTaskFolderView) {
+  const version = view._workspaceReads.version;
   const slotAgentTaskFile = view._agentContexts().find((ctx) => ctx.taskFile)?.taskFile;
   const taskRelPath = slotViewTaskRelativePath({
     runTaskFile: view._linkedRun?.taskFile,
@@ -52,6 +69,7 @@ export async function autoPinSlotViewTaskFolder(view: SlotView) {
         },
         () => {},
       );
+      if (version !== view._workspaceReads.version) return;
       if (result.entries.length > 0) {
         view._pinnedFolder = candidate;
         view._autoPinProbedFor = taskRelPath;
@@ -60,6 +78,9 @@ export async function autoPinSlotViewTaskFolder(view: SlotView) {
         return;
       }
     } catch (error) {
+      // A replacement workspace owns its own probes and error state.
+      if (version !== view._workspaceReads.version || error instanceof WorkspaceReadCancelledError)
+        return;
       view._workspaceReads.drop(Methods.FS_LIST, {
         slotId: view.slotId,
         path: candidate,

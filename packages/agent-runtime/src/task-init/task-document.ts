@@ -32,6 +32,27 @@ export const BUG_INPUT = 'inputs/bug-input.json';
 export const TASK_DOCUMENT_ADDENDUM_TEMPLATE = 'task-document.md';
 
 /** Shared instructions for a maintenance task and an inline CI-fix checklist. */
+/**
+ * The marker instruction every TASK.md carries. One worker (run 9382c8f2) read
+ * `mark start` once when work begins as covering step 1 and explored for 230
+ * tool calls without marking anything, so the line now names when the first
+ * mark is due instead of leaving it to be inferred from "after each step".
+ *
+ * The trigger is step 1 being done rather than any claim about what step 1 is:
+ * the templates keep that row short, but a checklist whose first row is a read
+ * would make "before reading anything" self-contradictory.
+ *
+ * The gateway writes the same line for a hosted task; this is the only copy.
+ */
+export function checklistMarkerInstruction(taskDir: string): string {
+  return (
+    `Marker: \`${taskDir}/mark\`, run from the repo root. ` +
+    '`mark start`, then `mark 1` as soon as step 1 is done, before any other work; then ' +
+    '`mark N` after each step (visible 1-based number), then `mark complete --mark-last`, ' +
+    '`mark no-change --reason "…"`, or `mark blocked --reason "…"`.'
+  );
+}
+
 export function buildBranchUpdateInstructions(
   publicationBase: string,
   guardCommand?: string,
@@ -277,7 +298,7 @@ export function buildTaskDocument(input: TaskDocumentInput): string {
     ...(input.completionInstructions
       ? [input.completionInstructions]
       : [
-          `Marker: \`${taskDir}/mark\`, run from the repo root. \`mark start\` once when work begins, \`mark N\` after each step (visible 1-based number), then \`mark complete --mark-last\`, \`mark no-change --reason "…"\`, or \`mark blocked --reason "…"\`.`,
+          checklistMarkerInstruction(taskDir),
           'Never hand-write `SIGNAL.json`. Do not add step checkboxes to this document; append notes (for example `## Recipe ACs`) below.',
         ]),
     '',

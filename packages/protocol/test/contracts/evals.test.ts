@@ -460,6 +460,9 @@ test('eval packages accept a provider-neutral assessment axis and scorer', () =>
     isEvalPackageAxes({ assessment: { name: 'structured-assessment', hash: 42 } }),
     false,
   );
+  assert.equal(isEvalPackageAxes({ transport: 'native' }), true);
+  assert.equal(isEvalPackageAxes({ transport: 'tmux' }), true);
+  assert.equal(isEvalPackageAxes({ transport: 'ssh' }), false);
 });
 
 test('isEvalSuiteDraftManifest accepts suite drafts and rejects runtime-shaped fields', () => {

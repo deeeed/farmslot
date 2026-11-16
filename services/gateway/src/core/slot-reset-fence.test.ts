@@ -127,7 +127,7 @@ test('resetSlot still resets a slot no release owns', async (t) => {
 });
 
 /**
- * The reclaim path, driven through the REAL `resetSlotIf` against a real slot
+ * The interrupted-release hold, driven through the real conditional update against a slot
  * row rather than a recorder. Routing it through `resetSlot` — which refuses
  * every releasing slot by design — meant the reconciler logged a reclaim and
  * changed nothing, and a mock that only records the call cannot see that.
@@ -140,16 +140,17 @@ async function reconcileAgainstStatusFile(statusPath: string) {
   return runAgainstStatusFile(
     statusPath,
     `const { reconcileOrphanedSlots } = await import('./src/run-engine/recovery.js');
-     const { readSlotField, resetSlot, resetSlotIf } = await import('./src/core/state.js');
+     const { readSlotField, readSlotRow, resetSlot, resetSlotIf, updateSlotStatusIf } = await import('./src/core/state.js');
      await reconcileOrphanedSlots({
        listRuns: () => ({ runs: [] }),
        loadFleetStatus: async () => ({
-         slots: [{ slot: 'fence-slot', lifecycle: 'busy', phase: 'releasing' }],
+         slots: [{ slot: 'fence-slot', lifecycle: 'busy', phase: 'releasing', currentRunId: (await readSlotRow('fence-slot'))?.current_run_id }],
        }),
        isTerminalTeardownInFlight: () => false,
        readSlotField,
        resetSlot,
        resetSlotIf,
+       updateSlotStatusIf,
      });`,
   );
 }
@@ -157,7 +158,7 @@ async function reconcileAgainstStatusFile(statusPath: string) {
 /** Past `STALE_RELEASE_RECLAIM_MS` (30 minutes), which the reconciler owns. */
 const STALE_FENCE_AGE_MS = 31 * 60 * 1000;
 
-test('a stranded releasing fence is actually reclaimed, not just logged', async (t) => {
+test('a stranded release becomes held without pretending the checkout was reset', async (t) => {
   const stale = new Date(Date.now() - STALE_FENCE_AGE_MS).toISOString();
   const statusPath = statusFileWith(t, {
     slot: 'fence-slot',
@@ -170,9 +171,10 @@ test('a stranded releasing fence is actually reclaimed, not just logged', async 
   await reconcileAgainstStatusFile(statusPath);
 
   const row = JSON.parse(readFileSync(statusPath, 'utf8')).slots[0];
-  assert.equal(row.lifecycle, 'ready', 'a fence nothing is finishing must be cleared');
-  assert.equal(row.current_run_id, null);
-  assert.notEqual(row.phase, 'releasing');
+  assert.equal(row.lifecycle, 'held');
+  assert.equal(row.current_run_id, 'run-stranded');
+  assert.equal(row.phase, 'occupied');
+  assert.equal(row.cleanup_stop_unconfirmed, true);
 });
 
 test('a releasing fence that moved under the reclaim keeps the new fence', async (t) => {
@@ -191,13 +193,13 @@ test('a releasing fence that moved under the reclaim keeps the new fence', async
   await runAgainstStatusFile(
     statusPath,
     `const { reconcileOrphanedSlots } = await import('./src/run-engine/recovery.js');
-     const { readSlotField, resetSlot, resetSlotIf, updateSlotStatus } =
+     const { readSlotField, readSlotRow, resetSlot, resetSlotIf, updateSlotStatusIf, updateSlotStatus } =
        await import('./src/core/state.js');
      const fresh = new Date().toISOString();
      await reconcileOrphanedSlots({
        listRuns: () => ({ runs: [] }),
        loadFleetStatus: async () => ({
-         slots: [{ slot: 'fence-slot', lifecycle: 'busy', phase: 'releasing' }],
+         slots: [{ slot: 'fence-slot', lifecycle: 'busy', phase: 'releasing', currentRunId: (await readSlotRow('fence-slot'))?.current_run_id }],
        }),
        isTerminalTeardownInFlight: () => false,
        // Re-fence with a NEW stamp after the reconciler has read the old one,
@@ -209,6 +211,7 @@ test('a releasing fence that moved under the reclaim keeps the new fence', async
        },
        resetSlot,
        resetSlotIf,
+       updateSlotStatusIf,
      });`,
   );
 

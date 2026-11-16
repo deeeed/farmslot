@@ -16,8 +16,9 @@ import {
   subscribeResourceCache,
 } from '../../resource-cache.js';
 import { notificationTray, publishReadNotice } from '../../utils/notification-tray.js';
+import { isExpectedReadAbsence } from '../../utils/resource-read-status.js';
 
-import { readCurrent } from './read-current.js';
+import { readCurrent, readFresh } from './read-current.js';
 
 export {
   isSupersededRead,
@@ -125,6 +126,24 @@ export class ResourceQueryController<T> implements ReactiveController {
     return state.data;
   }
 
+  /**
+   * Action preflight for state the gateway rechecks itself: one successful read from this
+   * workspace, finished after the action began. Changes published after it do not block.
+   */
+  async requireFresh(): Promise<T> {
+    if (!this.cache || !this.query || !this.belongsToWorkspace)
+      throw new Error('Wait for a current read before acting.');
+    const cache = this.cache;
+    return readFresh(
+      this.cache,
+      this.query,
+      () => cache === this.cache && this.belongsToWorkspace,
+      {
+        rechecked: true,
+      },
+    );
+  }
+
   async requireCurrent(): Promise<T> {
     if (this.cache && this.query && this.actable) await readCurrent(this.cache, [this.query]);
     return this.requireReady();
@@ -163,7 +182,7 @@ export class ResourceQueryController<T> implements ReactiveController {
   }
 
   private publish(state: ResourceQueryState<T>): void {
-    if (state.data !== undefined || state.status === 'ready' || state.status === 'unsupported')
+    if (state.data !== undefined || state.status === 'ready' || isExpectedReadAbsence(state))
       this.failingSince = undefined;
     else if (state.error) this.failingSince ??= Date.now();
     this.state = state;

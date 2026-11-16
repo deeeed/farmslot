@@ -1428,3 +1428,26 @@ for (const policy of ['normal-slot', undefined] as const) {
     assert.doesNotMatch(task, /executionPolicy|referencePatchId|experimentManifestPath/);
   });
 }
+
+test('a task note is one ## Note section in the generated TASK.md', async (t) => {
+  const note =
+    'This is an evaluation. Work only in this checkout. Do not search other checkouts, branches, PRs, git history beyond the base, or the web for an existing fix.';
+  const run = makeRun('EVAL-NOTE', 'task-note');
+  run.project = legacyProject;
+  run.taskNote = note;
+  let taskPath = '';
+  t.after(async () => {
+    if (taskPath) await rm(path.dirname(taskPath), { recursive: true, force: true });
+  });
+  taskPath = await writeTaskFixture(run, { skipCollisionCheck: true });
+  const task = await readFile(taskPath, 'utf8');
+  assert.equal(task.match(/^## Note$/gm)?.length, 1);
+  assert.match(task, new RegExp(`## Note\\n\\n${note.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  const plain = makeRun('EVAL-NOTE-ABSENT', 'task-note-absent');
+  plain.project = legacyProject;
+  const plainPath = await writeTaskFixture(plain, { skipCollisionCheck: true });
+  t.after(async () => {
+    await rm(path.dirname(plainPath), { recursive: true, force: true });
+  });
+  assert.doesNotMatch(await readFile(plainPath, 'utf8'), /^## Note$/m);
+});

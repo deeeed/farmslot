@@ -1,1 +1,0 @@
-- The PR review dispatcher's once-a-second reconcile looks each intent up by id instead of scanning every intent, and computes each intent's work id once instead of for every run and queue item it compares. It makes the same decisions; with a few hundred intents and runs that is about 60,000 fewer calls a second.

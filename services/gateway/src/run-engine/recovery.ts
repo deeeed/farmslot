@@ -25,7 +25,12 @@ import {
 } from '@farmslot/protocol';
 
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/config.js';
-import { SLOT_PHASE_RELEASING, SLOT_RELEASING_SINCE } from '../core/state.js';
+import {
+  SLOT_CLEANUP_STOP_UNCONFIRMED,
+  SLOT_PHASE_RELEASING,
+  SLOT_RELEASE_GATEWAY_INSTANCE,
+  SLOT_RELEASING_SINCE,
+} from '../core/state.js';
 import { onNodeConnected } from '../fleet/machine-registry.js';
 import { activeRunSlotIds } from '../methods/dispatch/slot-scoring.js';
 import { STEP_TO_STATUS } from '../run-lifecycle/step-status.js';
@@ -36,7 +41,6 @@ import {
 } from '../runners/registry.js';
 import { runDecisionWaitingStatus, type RunProgressObservation } from '../runners/run-progress.js';
 import { runnerSessionContextPatch } from '../runners/session-record.js';
-import { requestedRunSlotId } from '../runs/slot-pin.js';
 import { isLeakedGatewayTestRun } from '../runs/test-run-leak.js';
 import { withSourcePlanning } from '../sources/runtime.js';
 
@@ -74,6 +78,9 @@ interface FleetSlotSnapshot {
   lifecycle: string;
   phase?: string | null;
   agent?: string;
+  slotEpoch?: number;
+  currentRunId?: string | null;
+  cleanupRunId?: string | null;
 }
 
 interface FleetSnapshot {
@@ -183,9 +190,8 @@ export interface RunRecoveryCollaborators {
   /**
    * Conditional reset: `predicate` runs INSIDE the serialized slot write, so
    * the check and the write cannot be split by a concurrent release. The
-   * reconciler needs this because `resetSlot` refuses a releasing slot by
-   * design — reclaiming a stranded fence has to prove the fence it observed is
-   * still the one on the row, and then clear it in that same update.
+   * orphan reconciler uses this only when no release owns the row. An
+   * interrupted release is held until real checkout cleanup is verified.
    */
   resetSlotIf: (
     slotId: string,
@@ -1486,7 +1492,6 @@ type OrphanRecoveryCollaborators = Pick<
   | 'readSlotField'
   | 'getRun'
   | 'updateRun'
-  | 'stopRunOwnedWorkers'
   | 'resetSlot'
   | 'resetSlotIf'
   | 'updateSlotStatusIf'
@@ -1565,12 +1570,9 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
     // Same reason, for a release this process did not start: the releasing
     // fence is the marker every other teardown path already respects.
     //
-    // Bounded, though, or the fence becomes a strand. A release interrupted
-    // between fencing the slot and finishing it leaves nothing that will ever
-    // clear it: this loop skips a releasing slot, `resetSlot` refuses one, and
-    // `slotRelease` returns `released: false` for one. So a fence with no
-    // teardown registered in this process, standing longer than any real
-    // teardown takes, is reclaimed.
+    // Owner-bound retry can finish a previous gateway's stamped release. The age
+    // backstop only turns abandoned fences into holds; elapsed time cannot prove
+    // that the checkout was reset or its workers stopped.
     if (slot.phase === SLOT_PHASE_RELEASING) {
       // Read from the slot row, not the fleet snapshot: the stamp is teardown
       // bookkeeping and does not belong on the client-facing slot contract.
@@ -1606,44 +1608,36 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
       // the row, the slot is still releasing, and no teardown registered
       // itself in the meantime. A release that landed, or a new one that
       // re-fenced, changes the stamp and the predicate refuses.
-      if (blockedOwner) {
-        // The restart may have cut the release short before its agent kill, and
-        // a ready slot must not hide a live worker from the next prepare. Finish
-        // that step for the run's own workers; keep the fence unless all stop.
-        // A stop that throws (an ownership change, a pane it could not prepare)
-        // proves nothing either; it must not abort the rest of this pass.
-        const liveWorker = await deps
-          .stopRunOwnedWorkers(blockedOwner)
-          .catch((error: unknown) => `stop failed: ${(error as Error).message}`);
-        if (liveWorker) {
-          console.log(
-            `[run-engine] reconcile: ${slot.slot} keeps its release fence; worker of blocked run ${blockedOwner.id.slice(0, 8)} not stopped: ${liveWorker}`,
-          );
-          continue;
-        }
-      }
-      const reclaimed = await deps.resetSlotIf(
+      // Losing an in-memory release owner proves no Git cleanup. Preserve the workspace
+      // and its identity in a retryable hold instead of advertising a dirty checkout as ready.
+      const observedInstance = await deps.readSlotField(slot.slot, SLOT_RELEASE_GATEWAY_INSTANCE);
+      const reclaimed = await deps.updateSlotStatusIf(
         slot.slot,
         (row) =>
           row.phase === SLOT_PHASE_RELEASING &&
           row[SLOT_RELEASING_SINCE] === observedSince &&
-          !deps.isTerminalTeardownInFlight(slot.slot) &&
-          (!blockedOwner || row.current_run_id === blockedOwner.id),
+          row[SLOT_RELEASE_GATEWAY_INSTANCE] === observedInstance &&
+          (row.cleanup_run_id ?? null) === (slot.cleanupRunId ?? null) &&
+          (Number(row.slot_epoch) || 0) === (slot.slotEpoch ?? 0) &&
+          (row.current_run_id ?? null) === (slot.currentRunId ?? null) &&
+          !row.handoff_run_id &&
+          !deps.isTerminalTeardownInFlight(slot.slot),
+        {
+          lifecycle: 'held',
+          phase: 'occupied',
+          held_reason:
+            'Release interrupted; checkout cleanup is unverified. Retry the owner-bound release.',
+          [SLOT_RELEASING_SINCE]: null,
+          [SLOT_RELEASE_GATEWAY_INSTANCE]: null,
+          cleanup_release_token: null,
+          [SLOT_CLEANUP_STOP_UNCONFIRMED]: true,
+        },
       );
       console.log(
         reclaimed
-          ? `[run-engine] reconcile: ${slot.slot} fenced 'releasing' for ${Math.round(stalledFor / 1000)}s with no teardown running → reclaimed`
-          : `[run-engine] reconcile: ${slot.slot} release fence moved while reclaiming; left alone`,
+          ? `[run-engine] reconcile: ${slot.slot} interrupted release retained for verified cleanup`
+          : `[run-engine] reconcile: ${slot.slot} release fence moved while holding; left alone`,
       );
-      if (reclaimed && blockedOwner) {
-        // Finish what the release would have: detach the run, keeping its
-        // blocked outcome, so a fleet refresh does not re-hold the slot for it.
-        deps.updateRun(blockedOwner.id, {
-          slotId: null,
-          requestedSlotId: requestedRunSlotId(blockedOwner),
-        });
-        deps.broadcast(Events.RUN_UPDATED, { run: deps.getRun(blockedOwner.id) });
-      }
       continue;
     }
     // A closed output run retains ownership until explicit cleanup succeeds.

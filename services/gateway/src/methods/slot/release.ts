@@ -43,6 +43,7 @@ import {
   type SlotVars,
   updateSlotStatusIf,
 } from '../../core/index.js';
+import { currentReleaseGatewayInstance, SLOT_RELEASE_GATEWAY_INSTANCE } from '../../core/state.js';
 import {
   exactTmuxWindowTarget,
   firstWindowTarget,
@@ -68,11 +69,13 @@ import {
   findGateParkedRunForSlot,
 } from '../../run-engine/gate-held-lifecycle.js';
 import {
+  terminalTeardownCount,
   TerminalTeardownTimeoutError,
   withTerminalTeardown,
 } from '../../run-engine/terminal-teardown-registry.js';
 import { isRunArchiving } from '../../run-lifecycle/archive-fence.js';
 import { reapSlotBrowserSession } from '../../run-lifecycle/browser-session-reap.js';
+import { slotTeardownBlocker } from '../../run-lifecycle/slot-teardown.js';
 import {
   dropParkedBranch,
   ownsRunBranch,
@@ -94,6 +97,7 @@ import {
 } from '../../runners/session-lifecycle.js';
 import { findRunnerDescendantPid } from '../../runners/session-process.js';
 import {
+  getCachedRunWithArchived,
   getRun,
   getRunWithArchived,
   listRunsForSlotHistory,
@@ -243,6 +247,32 @@ export async function slotRelease(
   return teardown;
 }
 
+interface InterruptedReleaseFence {
+  epoch: number;
+  owner: string;
+  cleanupOwner: string | null;
+  since: string;
+  gatewayInstance: string;
+  cleanupToken: string | null;
+}
+
+function interruptedFenceMatches(
+  row: Readonly<Record<string, unknown>>,
+  fence: InterruptedReleaseFence,
+): boolean {
+  return (
+    row.phase === SLOT_PHASE_RELEASING &&
+    (Number(row.slot_epoch) || 0) === fence.epoch &&
+    row.current_run_id === fence.owner &&
+    (row.cleanup_run_id ?? null) === fence.cleanupOwner &&
+    !row.handoff_run_id &&
+    !row.workspace_recovery &&
+    row[SLOT_RELEASING_SINCE] === fence.since &&
+    row[SLOT_RELEASE_GATEWAY_INSTANCE] === fence.gatewayInstance &&
+    (row.cleanup_release_token ?? null) === fence.cleanupToken
+  );
+}
+
 export interface SlotReleasePreflight {
   vars: SlotVars;
   boundOwner: string | null;
@@ -252,6 +282,7 @@ export interface SlotReleasePreflight {
   defaultBranch: string;
   /** The detached blind trial whose isolated Git an unowned slot still holds. */
   blindMarker: string | null;
+  interruptedRelease?: InterruptedReleaseFence;
 }
 
 /**
@@ -274,6 +305,7 @@ const BLIND_WORKER_STOP_REFUSAL =
 async function releasePreflight(
   params: SlotReleaseParams,
   options?: SlotReleaseOptions,
+  expectedTeardowns = 0,
 ): Promise<SlotReleasePreflight | { skipped: string }> {
   // Cheap early checks (authoritative validation happens atomically at the
   // releasing-marker CAS in slotReleaseImpl, after this preflight). A slot
@@ -293,10 +325,38 @@ async function releasePreflight(
       row.workspace_recovery.id !== recovery.id)
   )
     throw new Error('Workspace recovery identity changed');
+  let interruptedRelease: InterruptedReleaseFence | undefined;
   if (row?.phase === SLOT_PHASE_RELEASING && !recovery) {
-    const skipped = `Slot ${params.slotId} is already being released`;
-    console.log(`[release] ${skipped}; leaving it untouched`);
-    return { skipped };
+    const since = row[SLOT_RELEASING_SINCE];
+    const instance = row[SLOT_RELEASE_GATEWAY_INSTANCE];
+    const token = row.cleanup_release_token;
+    if (
+      terminalTeardownCount(params.slotId) !== expectedTeardowns ||
+      !params.expectedRunId ||
+      row.current_run_id !== params.expectedRunId ||
+      row.handoff_run_id ||
+      (row.cleanup_run_id && row.cleanup_run_id !== params.expectedRunId) ||
+      typeof row.slot_epoch !== 'number' ||
+      !Number.isSafeInteger(row.slot_epoch) ||
+      typeof since !== 'string' ||
+      !Number.isFinite(Date.parse(since)) ||
+      typeof instance !== 'string' ||
+      !instance ||
+      instance === currentReleaseGatewayInstance() ||
+      !(token == null || typeof token === 'string')
+    ) {
+      const skipped = `Slot ${params.slotId} is already being released`;
+      console.log(`[release] ${skipped}; leaving it untouched`);
+      return { skipped };
+    }
+    interruptedRelease = {
+      epoch: row.slot_epoch,
+      owner: params.expectedRunId,
+      cleanupOwner: typeof row.cleanup_run_id === 'string' ? row.cleanup_run_id : null,
+      since,
+      gatewayInstance: instance,
+      cleanupToken: token ?? null,
+    };
   }
   const boundOwner = (row?.current_run_id as string | null | undefined) ?? null;
   // A finished blind trial can lose the slot pointer while the repo still holds its
@@ -369,6 +429,19 @@ async function releasePreflight(
     );
   if (blindMarker && params.preserveAgents) throw new Error(BLIND_WORKER_STOP_REFUSAL);
 
+  if (interruptedRelease) {
+    // A lost process registration never proves exit. Native or missing bindings stay held;
+    // the ordinary owner retry below requires a fresh, read-only workspace census.
+    if (
+      !ownerRun ||
+      !ownerTerminal ||
+      ownerRun.slotId !== params.slotId ||
+      ownerRun.transport === 'native'
+    )
+      return { skipped: 'Interrupted release has no verifiably quiescent terminal owner' };
+    const blocker = await slotTeardownBlocker(ownerRun, { inspectReleaseFence: true });
+    if (blocker) return { skipped: `Interrupted release remains fenced: ${blocker}` };
+  }
   const defaultBranch = getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH;
   return {
     vars,
@@ -378,6 +451,7 @@ async function releasePreflight(
     projectJson,
     defaultBranch,
     blindMarker,
+    ...(interruptedRelease ? { interruptedRelease } : {}),
   };
 }
 
@@ -448,7 +522,8 @@ async function slotReleaseImpl(
   options?: SlotReleaseOptions,
   registerTimeoutRecovery?: (recover: (confirmed: boolean) => Promise<void>) => void,
 ): Promise<SlotReleaseResult> {
-  const preflight = await releasePreflight(params, options);
+  const preflight = await releasePreflight(params, options, 1);
+  assertCleanupCurrent();
   if ('skipped' in preflight) return { released: false, reason: preflight.skipped };
   // Refused before the kill below, so a refusal leaves the worker running. Step 2
   // checks again after the kill for work the worker wrote in between.
@@ -490,7 +565,21 @@ async function slotReleaseImpl(
   // the teardown is refused unless that exact run still holds the claim.
   // The owner the releasing fence actually lands on: an unbound release takes
   // whoever holds the slot then, which may be a claim made after the preflight.
-  const releaseFence = slotReleasingFenceFields();
+  const interrupted = preflight.interruptedRelease;
+  const releaseFence: Record<string, unknown> = {
+    ...slotReleasingFenceFields(),
+    ...(interrupted ? { cleanup_release_token: randomUUID() } : {}),
+  };
+  const ownsRetryFence = (row: Readonly<Record<string, unknown>>): boolean =>
+    !interrupted ||
+    (row.phase === SLOT_PHASE_RELEASING &&
+      row[SLOT_RELEASING_SINCE] === releaseFence[SLOT_RELEASING_SINCE] &&
+      row[SLOT_RELEASE_GATEWAY_INSTANCE] === releaseFence[SLOT_RELEASE_GATEWAY_INSTANCE] &&
+      row.cleanup_release_token === releaseFence.cleanup_release_token &&
+      !row.handoff_run_id &&
+      !row.workspace_recovery &&
+      (row.current_run_id == null || row.current_run_id === interrupted.owner) &&
+      (row.cleanup_run_id == null || row.cleanup_run_id === interrupted.owner));
   let releasedOwner: string | null = options?.workspaceRecovery ? boundOwner : null;
   let releaseRefusal: string | null = null;
   let claimSkip = `Slot ${params.slotId} could not be claimed for release`;
@@ -510,7 +599,20 @@ async function slotReleaseImpl(
           // joining at the same epoch would run a second destructive pass and keep
           // going after the first publishes `ready`, clobbering whatever claims
           // the slot next. Applies to bound AND unbound entries.
-          if (slot.phase === SLOT_PHASE_RELEASING) {
+          if (interrupted) {
+            const currentOwner =
+              getRun(interrupted.owner) ?? getCachedRunWithArchived(interrupted.owner);
+            if (
+              terminalTeardownCount(params.slotId) !== 1 ||
+              !interruptedFenceMatches(slot, interrupted) ||
+              !currentOwner ||
+              !isTerminalRunStatus(currentOwner.status)
+            ) {
+              claimSkip = 'Interrupted release ownership or fence changed; inspect again';
+              return false;
+            }
+          }
+          if (slot.phase === SLOT_PHASE_RELEASING && !interrupted) {
             claimSkip = `Slot ${params.slotId} is already being released`;
             return false;
           }
@@ -544,6 +646,8 @@ async function slotReleaseImpl(
             lifecycle: slot.lifecycle,
             phase: slot.phase,
             [SLOT_RELEASING_SINCE]: slot[SLOT_RELEASING_SINCE] ?? null,
+            [SLOT_RELEASE_GATEWAY_INSTANCE]: slot[SLOT_RELEASE_GATEWAY_INSTANCE] ?? null,
+            cleanup_release_token: slot.cleanup_release_token ?? null,
           };
           const epoch = Number(slot.slot_epoch) || 0;
           const priorCleanupOwner = slot.cleanup_run_id ?? null;
@@ -552,6 +656,7 @@ async function slotReleaseImpl(
             await updateSlotStatusIf(
               params.slotId,
               (current) =>
+                ownsRetryFence(current) &&
                 (Number(current.slot_epoch) || 0) === epoch &&
                 current.phase === SLOT_PHASE_RELEASING &&
                 current[SLOT_RELEASING_SINCE] === releaseFence[SLOT_RELEASING_SINCE] &&
@@ -604,7 +709,8 @@ async function slotReleaseImpl(
       (Number(row.slot_epoch) || 0) === entryEpoch &&
       row.phase === SLOT_PHASE_RELEASING &&
       owner === releasedOwner &&
-      !refusal
+      !refusal &&
+      ownsRetryFence(row)
     )
       return;
     await updateSlotStatusIf(
@@ -612,7 +718,8 @@ async function slotReleaseImpl(
       (slot) =>
         (Number(slot.slot_epoch) || 0) === entryEpoch &&
         slot.phase === SLOT_PHASE_RELEASING &&
-        (slot.current_run_id ?? null) === releasedOwner,
+        (slot.current_run_id ?? null) === releasedOwner &&
+        ownsRetryFence(slot),
       priorFence,
     );
     if (params.expectedRunId && owner !== params.expectedRunId) {
@@ -692,7 +799,7 @@ async function slotReleaseImpl(
   const guardedTeardownWrite = async (fields: Record<string, unknown>): Promise<boolean> => {
     const ok = await updateSlotStatusIf(
       params.slotId,
-      (slot) => (Number(slot.slot_epoch) || 0) === entryEpoch,
+      (slot) => (Number(slot.slot_epoch) || 0) === entryEpoch && ownsRetryFence(slot),
       fields,
     );
     if (!ok) {
@@ -1145,7 +1252,7 @@ async function slotReleaseImpl(
   // 7. Re-prepare if keep-warm, otherwise mark ready (cold). resetSlot writes
   // unconditionally, so re-verify the epoch immediately before it.
   const epochStillOurs = (slot: Readonly<Record<string, unknown>>): boolean =>
-    (Number(slot.slot_epoch) || 0) === entryEpoch;
+    (Number(slot.slot_epoch) || 0) === entryEpoch && ownsRetryFence(slot);
   const abortReset = (): SlotReleaseResult => {
     const reason = `Slot ${params.slotId} was re-claimed before final reset (epoch moved past ${entryEpoch})`;
     step('claim', `${reason}; aborting reset`);

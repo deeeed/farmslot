@@ -90,6 +90,17 @@ export function isWorkerSignalStatus(value: unknown): value is WorkerSignalStatu
 }
 
 /**
+ * The finished status that `mark start` refuses to re-open, so a replayed
+ * worker that meets it on disk has no way past it
+ * (agent-runtime/scripts/mark-checklist-step.cjs). Deliberately narrower than
+ * {@link isTerminalWorkerSignalStatus}: `blocked` is terminal for the run but
+ * `start` resumes it with its checked boxes, and `failed` and `done` are not
+ * what that guard refuses. The guard and this value must stay in step - widen
+ * one and the other follows.
+ */
+export const START_REFUSED_WORKER_SIGNAL_STATUS = 'complete';
+
+/**
  * A status the worker cannot move past. `done` is an accepted terminal alias of
  * `complete`. Takes a plain string so readers of an untyped SIGNAL.json can ask
  * without first narrowing; an unknown status is not terminal.

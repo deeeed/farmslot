@@ -1,1 +1,0 @@
-- An operation log stops at 2 MiB and ends with one line naming the bytes it kept, the limit, and the bytes dropped. A write that crosses the cap keeps the part that fits, cut back to a line break, because a command hands a whole leaf's output over in one call and dropping it would store none of a failed step.

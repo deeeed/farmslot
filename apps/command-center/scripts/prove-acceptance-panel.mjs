@@ -11,8 +11,22 @@ const output = process.env.FARMSLOT_AC_PROOF_OUTPUT;
 const runId = process.env.FARMSLOT_AC_PROOF_RUN_ID;
 const target = process.env.FARMSLOT_AC_PROOF_TAB;
 const phase = process.env.FARMSLOT_AC_PROOF_PHASE ?? 'task';
-assert(output && runId && target, 'Select output, run UUID and owned CDP tab');
-assert(['pre-task', 'task', 'pre-worker', 'read-failure'].includes(phase));
+assert(
+  output && target && (runId || phase === 'workspace-failure'),
+  'Select output, run UUID and owned CDP tab',
+);
+assert(
+  [
+    'pre-task',
+    'task',
+    'pre-worker',
+    'no-watch',
+    'fresh',
+    'preparing',
+    'read-failure',
+    'workspace-failure',
+  ].includes(phase),
+);
 const execute = promisify(execFile);
 const cdp = async (...args) =>
   JSON.parse(
@@ -25,6 +39,73 @@ const cdp = async (...args) =>
     ).stdout,
   );
 await cdp('focus', target);
+if (phase === 'workspace-failure') {
+  const slotId = process.env.FARMSLOT_AC_PROOF_SLOT_ID;
+  assert(slotId, 'Select the owned fixture watch-failure slot');
+  const { fleet } = await cdp('gateway', 'fleet.status', '--observed');
+  assert(
+    fleet.slots.some((slot) => slot.slot === slotId),
+    'Observed read without params returns the real fleet',
+  );
+  let failure;
+  try {
+    await cdp(
+      'gateway',
+      'fs.list',
+      JSON.stringify({ slotId, path: '.', includeIgnored: false }),
+      '--observed',
+    );
+  } catch (error) {
+    failure = JSON.parse(error.stderr.trim().replace(/^cdp.mjs: /, '')).error;
+  }
+  assert.equal(failure?.code, 'RESOURCE_OBSERVATION_UNAVAILABLE');
+  assert.match(failure.message, /^Git metadata discovery failed/);
+  const read = () =>
+    cdp(
+      'eval',
+      target,
+      '--file',
+      path.join(source, 'apps/command-center/scripts/probes/workspace-read-failure.js'),
+    );
+  let view;
+  const end = Date.now() + 10000;
+  do {
+    view = await read();
+    if (view.readError === failure.message) break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  } while (Date.now() < end);
+  assert(view.connected && view.slotId === slotId);
+  assert.equal(view.code, failure.code);
+  assert.equal(
+    view.readError,
+    failure.message,
+    'A real unavailable watch failure must not stay silently pending',
+  );
+  assert(view.visible && view.retry, 'The real read failure needs a visible alert and retry');
+  assert(
+    view.text.includes(failure.message.trim().replace(/\s+/g, ' ')),
+    'Render the actual failure cause',
+  );
+  await mkdir(output, { recursive: true });
+  await cdp('screenshot', target, path.join(output, `${phase}.png`));
+  assert.equal((await read()).readError, failure.message);
+  await writeFile(
+    path.join(output, `${phase}.json`),
+    JSON.stringify(
+      {
+        status: 'pass',
+        source: 'Real disk watch failure, authenticated fs.list and connected browser',
+        slotId,
+        failure,
+        view,
+      },
+      null,
+      2,
+    ) + '\n',
+  );
+  console.log(JSON.stringify({ status: 'pass', phase, slotId }));
+  process.exit(0);
+}
 const result = await cdp('gateway', 'run.get', JSON.stringify({ runId, view: 'snapshot' }));
 const run = result.run;
 assert.equal(run.id, runId);
@@ -72,15 +153,24 @@ if (phase === 'pre-task') {
     dom.preparing || dom.rows.length,
     'Show registered criteria or a quiet task preparation state',
   );
-} else if (phase === 'pre-worker') {
-  assert.equal(run.status, 'preparing', 'The live run left Preparing before capture');
-  assert.equal(dom.status, 'preparing', 'The live run left Preparing before capture');
+} else if (phase === 'fresh' || phase === 'preparing') {
+  assert.equal(run.status, phase === 'fresh' ? 'created' : 'preparing');
+  assert.equal(dom.status, run.status);
+  if (phase === 'fresh') assert(!run.taskFile, 'A fresh run has no task yet');
+  assert(!dom.ledgerDataError, 'No ledger exists yet');
+  assert.equal(dom.errors.length, 0);
+} else if (phase === 'pre-worker' || phase === 'no-watch') {
+  if (phase === 'pre-worker') {
+    assert.equal(run.status, 'preparing', 'The run left Preparing before capture');
+    assert.equal(dom.status, 'preparing', 'The run left Preparing before capture');
+  }
   assert.equal(
     dom.ledgerReadCode,
     'RESOURCE_OBSERVATION_UNSUPPORTED',
     'The live no-watch state ended before capture',
   );
-  assert.equal(dom.hasProgressData, false, 'The live no-watch state ended before capture');
+  if (phase === 'pre-worker')
+    assert.equal(dom.hasProgressData, false, 'The no-watch state ended before capture');
   assert.equal(dom.errors.length, 0);
 } else if (phase === 'read-failure') {
   assert(dom.ledgerDataError, 'Require a real ledger read failure from the backend');
@@ -103,14 +193,16 @@ if (phase === 'pre-task') {
 await mkdir(output, { recursive: true });
 await cdp('screenshot', target, path.join(output, `${phase}.png`));
 
-if (phase === 'pre-worker') {
+if (['pre-worker', 'no-watch', 'fresh', 'preparing'].includes(phase)) {
   const after = await cdp(
     'eval',
     target,
     '--file',
     path.join(source, 'apps/command-center/scripts/probes/acceptance-panel-read.js'),
   );
-  assert.equal(after.status, 'preparing', 'The screenshot must still show live preparation');
+  assert.equal(after.status, dom.status, 'The screenshot must preserve the run phase');
+  if (phase === 'pre-worker' || phase === 'no-watch')
+    assert.equal(after.ledgerReadCode, 'RESOURCE_OBSERVATION_UNSUPPORTED');
   assert.equal(after.errors.length, 0);
 }
 

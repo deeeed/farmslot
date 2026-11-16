@@ -49,6 +49,19 @@ export function axesWithExecutionDefaults(
   };
 }
 
+/**
+ * The start param owns transport. Omitted and explicit tmux leave the axis
+ * unset so they stay one candidate. Native is recorded and does not dedupe
+ * with that tmux candidate.
+ */
+export function axesForTrialTransport(
+  axes: EvalPackageAxes,
+  transport: EvalTrialStartParams['transport'],
+): EvalPackageAxes {
+  const { transport: _callerTransport, ...rest } = axes;
+  return transport === 'native' ? { ...rest, transport: 'native' } : rest;
+}
+
 function fullSha(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed && /^[0-9a-f]{40}$/i.test(trimmed) ? trimmed : undefined;
@@ -106,6 +119,7 @@ export async function resolveCandidateTemplateProvenance(
   axes: EvalPackageAxes,
   proof?: EvalProofInput,
   candidateTemplatePath?: string,
+  domain?: string,
 ): Promise<{
   axes: EvalPackageAxes;
   provenance?: TemplateProvenance;
@@ -202,6 +216,7 @@ export async function resolveCandidateTemplateProvenance(
   const missingData: string[] = [];
   const projectVars = await loadProjectVars(project);
   const catalog = projectUsesExecutionTemplateCatalog(projectVars);
+  const requestedDomain = domain?.trim() || undefined;
   if (axes.template?.hash?.trim() && !catalog) {
     return { axes, missingData };
   }
@@ -222,6 +237,7 @@ export async function resolveCandidateTemplateProvenance(
     if (requestedPath) {
       const { options } = await configuredExecutionTemplateOptions(projectVars, {
         flow: taskProfile,
+        ...(requestedDomain ? { domain: requestedDomain } : {}),
       });
       const exact = options.filter((entry) => entry.relativePath === requestedPath);
       const matches = exact.length
@@ -247,6 +263,7 @@ export async function resolveCandidateTemplateProvenance(
       flow: taskProfile,
       runMode: 'autonomous',
       explicitId,
+      ...(requestedDomain ? { domain: requestedDomain } : {}),
     });
     const expectedHash = axes.template?.hash?.trim();
     if (expectedHash && expectedHash !== snapshot.entry.sha256) {

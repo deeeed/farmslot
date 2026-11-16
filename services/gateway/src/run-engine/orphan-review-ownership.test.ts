@@ -116,7 +116,6 @@ async function setup(t: import('node:test').TestContext) {
     readSlotField: core.readSlotField,
     getRun: store.getRun,
     updateRun: store.updateRun,
-    stopRunOwnedWorkers: async () => null,
     resetSlot: core.resetSlot,
     resetSlotIf: core.resetSlotIf,
     updateSlotStatusIf: core.updateSlotStatusIf,

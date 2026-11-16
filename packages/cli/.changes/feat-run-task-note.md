@@ -1,0 +1,1 @@
+- `farmslot run create --task-note` appends one Note section to the generated TASK.md.

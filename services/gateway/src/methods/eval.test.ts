@@ -8,6 +8,7 @@ import {
   DEFAULT_CURSOR_MODEL,
   type EvalExperimentManifest,
   type EvalTrialStartParams,
+  type Principal,
   type ResultPackageManifest,
 } from '@farmslot/protocol';
 
@@ -30,6 +31,7 @@ import {
   runRecordPath,
   updateRun,
 } from '../runs/store.js';
+import { runWithSessionOriginator } from '../security/work-originator.js';
 import { writeTaskFixture } from '../tasks/writer.test-support.js';
 
 import {
@@ -368,6 +370,251 @@ test('evalTrialStart rejects malformed axes before dispatch', async () => {
       ),
     /Invalid candidate axes/,
   );
+});
+
+test('evalTrialStart rejects a transport that is not tmux or native', async () => {
+  await assert.rejects(
+    () =>
+      evalTrialStart(
+        {
+          project: 'farmslot-farm',
+          experimentManifestPath: '/tmp/missing-eval.json',
+          axes: {},
+          // @ts-expect-error negative runtime validation: transport is only tmux or native.
+          transport: 'ssh',
+        },
+        () => {},
+      ),
+    /transport must be tmux or native/,
+  );
+});
+
+test('evalTrialStart rejects a native profile without native transport', async () => {
+  await assert.rejects(
+    () =>
+      evalTrialStart(
+        {
+          project: 'farmslot-farm',
+          experimentManifestPath: '/tmp/missing-eval.json',
+          axes: {},
+          nativeProfile: {
+            executionNodeId: 'local',
+            runner: 'pi',
+            profileId: 'sparks',
+            accountContextId: '00000000-0000-4000-8000-000000000001',
+          },
+        },
+        () => {},
+      ),
+    /Native profile selection requires native worker transport/,
+  );
+});
+
+test('evalTrialStart rejects a prepare profile that is not a string', async () => {
+  await assert.rejects(
+    () =>
+      evalTrialStart(
+        {
+          project: 'farmslot-farm',
+          experimentManifestPath: '/tmp/missing-eval.json',
+          axes: {},
+          // @ts-expect-error negative runtime validation: prepareProfile is a string profile name.
+          prepareProfile: 1,
+        },
+        () => {},
+      ),
+    /prepareProfile must be a string/,
+  );
+});
+
+test('evalTrialStart rejects a domain that is not a lowercase slug', async () => {
+  await assert.rejects(
+    () =>
+      evalTrialStart(
+        {
+          project: 'farmslot-farm',
+          experimentManifestPath: '/tmp/missing-eval.json',
+          axes: {},
+          // @ts-expect-error negative runtime validation: domain is a string slug.
+          domain: 1,
+        },
+        () => {},
+      ),
+    /domain must be a string/,
+  );
+  await assert.rejects(
+    () =>
+      evalTrialStart(
+        {
+          project: 'farmslot-farm',
+          experimentManifestPath: '/tmp/missing-eval.json',
+          axes: {},
+          domain: 'Trading',
+        },
+        () => {},
+      ),
+    /domain must be a lowercase slug/,
+  );
+});
+
+test('evalTrialStart selects a domain-gated catalog template', async (t) => {
+  const name = `eval-domain-catalog-${process.pid}-farm`;
+  const projectRoot = path.join(farmslotRoot(), 'projects', name);
+  const templatePath = 'fix-bug/sentry-cuf-autonomous.mobile.md';
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-eval-domain-catalog-'));
+  const runIds: string[] = [];
+  const previousDisableEngine = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+  process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+  t.after(async () => {
+    if (previousDisableEngine === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+    else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = previousDisableEngine;
+    for (const runId of runIds.reverse()) {
+      if (getRun(runId)) {
+        updateRun(runId, { status: 'done', completedAt: new Date().toISOString() });
+        await deleteRun(runId);
+      }
+    }
+    await rm(root, { recursive: true, force: true });
+    await rm(projectRoot, { recursive: true, force: true });
+  });
+
+  await mkdir(path.join(projectRoot, 'team/checklists/fix-bug'), { recursive: true });
+  await mkdir(path.join(projectRoot, 'catalog/fix-bug'), { recursive: true });
+  await writeFile(
+    path.join(projectRoot, 'project.json'),
+    JSON.stringify({
+      name,
+      command_env: { domains: { perps: { set: { FEATURE: 'perps' } } } },
+      execution_templates: {
+        sources: [
+          { id: 'package:synthetic', kind: 'package', root: { projectPath: 'catalog' } },
+          {
+            id: 'team:perps',
+            kind: 'workspace',
+            root: { projectPath: 'team' },
+            subpath: 'checklists',
+            domains: ['perps'],
+          },
+        ],
+      },
+    }),
+  );
+  await writeFile(
+    path.join(projectRoot, 'catalog/fix-bug/general.md'),
+    '---\nid: fix-bug/general\nflow: fix-bug\n---\n\n# General\n\n- [ ] Check the general path.\n',
+  );
+  const gated = `---
+id: fix-bug/sentry-cuf-autonomous.mobile
+title: Sentry CUF
+description: Perps checklist
+flow: fix-bug
+platforms: [ios]
+---
+
+# Sentry CUF
+
+- [ ] Check the perps flow.
+`;
+  await writeFile(path.join(projectRoot, 'team/checklists', templatePath), gated);
+
+  const baseSha = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const headSha = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  const referencePackagePath = path.join(root, 'reference.result-package.json');
+  const referencePackage = await writeResultPackageManifest(referencePackagePath, {
+    ...makeReferencePackage(),
+    project: name,
+    source: {
+      kind: 'merged-pr',
+      repo: 'owner/repo',
+      prNumber: 123,
+      baseSha,
+      headSha,
+      baseRef: 'main',
+      headRef: 'fix/perps',
+    },
+    diff: {
+      source: 'artifact',
+      available: true,
+      files: 1,
+      additions: 2,
+      deletions: 1,
+      kind: 'contribution',
+      baseRef: 'main',
+      baseSha,
+      headRef: 'fix/perps',
+      headSha,
+      capturedAt: '2026-05-09T00:00:01.000Z',
+      artifactPath: path.basename(root) + '/reference.diff',
+      repository: 'owner/repo',
+      prNumber: 123,
+    },
+  });
+  await writeEvalTestFile(root, 'reference.diff', REFERENCE_DIFF);
+  const experimentManifestPath = path.join(root, 'experiment-manifest.json');
+  await writeEvalExperimentManifest(experimentManifestPath, {
+    version: 1,
+    kind: 'eval-experiment',
+    experimentId: 'experiment-domain-catalog',
+    experimentKey: `experiment-key-domain-catalog-${Date.now()}`,
+    createdAt: '2026-05-09T00:00:00.000Z',
+    updatedAt: '2026-05-09T00:00:01.000Z',
+    project: name,
+    familyId: 'eval-family-domain-catalog',
+    case: {
+      caseId: 'case-domain-catalog',
+      source: referencePackage.source,
+      taskProfile: 'fix-bug',
+      objectiveHash: 'objective-1',
+      problemStatement: 'Show the latest payment in Activity.',
+      referencePackageId: referencePackage.packageId,
+      referencePackageHash: referencePackage.packageHash,
+      referencePackagePath,
+    },
+    rubric: {
+      taskProfile: 'fix-bug',
+      rubricId: 'eval-default',
+      rubricVersion: '1',
+      requiredEvidence: [],
+    },
+    candidateStrategies: [],
+    trials: [],
+    missingData: [],
+  });
+  await writeEvalTestFile(
+    root,
+    'inputs/reference-pr.json',
+    JSON.stringify({
+      title: 'Show the latest payment in Activity.',
+      url: 'https://github.com/owner/repo/pull/123',
+      body: 'Manual testing steps: Activity shows most recent funding payments.',
+    }),
+  );
+
+  const trialBase: EvalTrialStartParams = {
+    project: name,
+    experimentManifestPath,
+    axes: { template: { path: templatePath }, model: { name: 'gpt-5.5' } },
+    label: 'domain gated candidate',
+    runner: 'codex',
+    model: 'gpt-5.5',
+  };
+  await assert.rejects(
+    () => evalTrialStart(trialBase, () => {}),
+    /Candidate template is unavailable in the project catalog: fix-bug\/sentry-cuf-autonomous\.mobile\.md/,
+  );
+
+  const started = await evalTrialStart({ ...trialBase, domain: ' perps ' }, () => {});
+  if (started.run) runIds.push(started.run.id);
+  assert.equal(started.deduped, false);
+  assert.equal(started.run?.domain, 'perps');
+  assert.equal(started.run?.executionTemplate?.relativePath, templatePath);
+  assert.equal(started.run?.executionTemplate?.sourceId, 'team:perps');
+  assert.equal(started.run?.templateProvenance?.templateName, templatePath);
+  assert.equal(
+    started.run?.templateProvenance?.contentHash,
+    started.run?.executionTemplate?.sha256,
+  );
+  assert.equal(started.candidatePackage.axes.template?.path, templatePath);
 });
 
 test('harnessLifecycleForAxes preserves explicit local harness paths', () => {
@@ -1012,6 +1259,189 @@ test('evalTrialStart automatically replays from the reference base commit when a
     await readFile(path.join(candidateDir, 'inputs', 'candidate-start-ref.json'), 'utf-8'),
   ) as Record<string, unknown>;
   assert.deepEqual(startRefInput, { requestedRef: baseSha, source: 'eval-reference' });
+});
+
+test('evalTrialStart keeps a native transport distinct from the tmux default', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-eval-trial-native-'));
+  const runIds: string[] = [];
+  t.after(async () => {
+    for (const runId of runIds.reverse()) {
+      if (getRun(runId)) {
+        updateRun(runId, { status: 'done', completedAt: new Date().toISOString() });
+        await deleteRun(runId);
+      }
+    }
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const baseSha = 'dddddddddddddddddddddddddddddddddddddddd';
+  const headSha = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+  const referencePackagePath = path.join(root, 'reference.result-package.json');
+  const referencePackage = await writeResultPackageManifest(referencePackagePath, {
+    ...makeReferencePackage(),
+    source: {
+      kind: 'merged-pr',
+      repo: 'owner/repo',
+      prNumber: 123,
+      baseSha,
+      headSha,
+      baseRef: 'main',
+      headRef: 'fix/perps',
+    },
+    diff: {
+      source: 'artifact',
+      available: true,
+      files: 1,
+      additions: 2,
+      deletions: 1,
+      kind: 'contribution',
+      baseRef: 'main',
+      baseSha,
+      headRef: 'fix/perps',
+      headSha,
+      capturedAt: '2026-05-09T00:00:01.000Z',
+      artifactPath: path.basename(root) + '/reference.diff',
+      repository: 'owner/repo',
+      prNumber: 123,
+    },
+  });
+  await writeEvalTestFile(root, 'reference.diff', REFERENCE_DIFF);
+  const experimentManifestPath = path.join(root, 'experiment-manifest.json');
+  const experimentManifest: EvalExperimentManifest = {
+    version: 1,
+    kind: 'eval-experiment',
+    experimentId: 'experiment-native-transport',
+    experimentKey: `experiment-key-native-transport-${Date.now()}`,
+    createdAt: '2026-05-09T00:00:00.000Z',
+    updatedAt: '2026-05-09T00:00:01.000Z',
+    project: 'farmslot-farm',
+    familyId: 'eval-family-native-transport',
+    case: {
+      caseId: 'case-merged-pr',
+      source: referencePackage.source,
+      taskProfile: 'fix-bug',
+      objectiveHash: 'objective-1',
+      problemStatement: 'Show the latest payment in Activity.',
+      referencePackageId: referencePackage.packageId,
+      referencePackageHash: referencePackage.packageHash,
+      referencePackagePath,
+    },
+    rubric: {
+      taskProfile: 'fix-bug',
+      rubricId: 'eval-default',
+      rubricVersion: '1',
+      requiredEvidence: [],
+    },
+    candidateStrategies: [],
+    trials: [],
+    missingData: [],
+  };
+  await writeEvalExperimentManifest(experimentManifestPath, experimentManifest);
+  await writeEvalTestFile(
+    root,
+    'inputs/reference-pr.json',
+    JSON.stringify({
+      title: 'Show the latest payment in Activity.',
+      url: 'https://github.com/owner/repo/pull/123',
+      body: 'Manual testing steps: Activity shows most recent funding payments.',
+    }),
+  );
+
+  const nativeProfile = {
+    executionNodeId: 'local',
+    runner: 'pi',
+    profileId: 'sparks',
+    accountContextId: '00000000-0000-4000-8000-000000000001',
+  };
+  const owner: Principal = {
+    id: 'eval-native-transport-owner',
+    subject: { type: 'person', displayName: 'Owner' },
+    roles: [{ role: 'admin', scope: { kind: 'global' } }],
+  };
+  const trialBase: EvalTrialStartParams = {
+    project: 'farmslot-farm',
+    experimentManifestPath,
+    axes: {
+      template: { path: 'templates/fix-bug.md' },
+      model: { name: 'gpt-5.5' },
+    },
+    label: 'native transport candidate',
+    variant: 'native-transport-candidate',
+    runner: 'pi',
+    model: 'gpt-5.5',
+  };
+  const previousDisableEngine = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+  const previousOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+  process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = owner.id;
+  try {
+    const tmux = await evalTrialStart(trialBase, () => {});
+    if (tmux.run) runIds.push(tmux.run.id);
+    const explicitTmux = await evalTrialStart({ ...trialBase, transport: 'tmux' }, () => {});
+    assert.equal(explicitTmux.deduped, true);
+    assert.equal(explicitTmux.run?.id, tmux.run?.id);
+    assert.equal(tmux.run?.transport, undefined);
+    assert.equal(tmux.candidatePackage.axes.transport, undefined);
+
+    const native = await runWithSessionOriginator(owner, () =>
+      evalTrialStart({ ...trialBase, transport: 'native', nativeProfile }, () => {}),
+    );
+    if (native.run) runIds.push(native.run.id);
+    assert.equal(native.deduped, false);
+    assert.notEqual(native.run?.id, tmux.run?.id);
+    assert.equal(native.run?.transport, 'native');
+    assert.equal(native.run?.metrics.runner, 'pi');
+    assert.deepEqual(native.run?.nativeProfile, nativeProfile);
+    assert.equal(native.candidatePackage.axes.transport, 'native');
+    const axesInput = JSON.parse(
+      await readFile(
+        path.join(
+          path.dirname(path.dirname(path.dirname(native.candidatePackagePath))),
+          'inputs',
+          'candidate-axes.json',
+        ),
+        'utf8',
+      ),
+    ) as { transport?: string };
+    assert.equal(axesInput.transport, 'native');
+
+    const again = await runWithSessionOriginator(owner, () =>
+      evalTrialStart({ ...trialBase, transport: 'native', nativeProfile }, () => {}),
+    );
+    assert.equal(again.deduped, true);
+    assert.equal(again.run?.id, native.run?.id);
+
+    const profiled = await evalTrialStart({ ...trialBase, prepareProfile: ' mobile ' }, () => {});
+    if (profiled.run) runIds.push(profiled.run.id);
+    assert.equal(profiled.deduped, false);
+    assert.notEqual(profiled.run?.id, tmux.run?.id);
+    assert.equal(profiled.run?.prepareProfile, 'mobile');
+    const sameProfile = await evalTrialStart({ ...trialBase, prepareProfile: 'mobile' }, () => {});
+    assert.equal(sameProfile.deduped, true);
+    assert.equal(sameProfile.run?.id, profiled.run?.id);
+    const blankProfile = await evalTrialStart({ ...trialBase, prepareProfile: '   ' }, () => {});
+    assert.equal(blankProfile.deduped, true);
+    assert.equal(blankProfile.run?.id, tmux.run?.id);
+    assert.equal(tmux.run?.prepareProfile, undefined);
+
+    const domained = await evalTrialStart({ ...trialBase, domain: ' trading ' }, () => {});
+    if (domained.run) runIds.push(domained.run.id);
+    assert.equal(domained.deduped, false);
+    assert.notEqual(domained.run?.id, tmux.run?.id);
+    assert.equal(domained.run?.domain, 'trading');
+    const sameDomain = await evalTrialStart({ ...trialBase, domain: 'trading' }, () => {});
+    assert.equal(sameDomain.deduped, true);
+    assert.equal(sameDomain.run?.id, domained.run?.id);
+    const blankDomain = await evalTrialStart({ ...trialBase, domain: '   ' }, () => {});
+    assert.equal(blankDomain.deduped, true);
+    assert.equal(blankDomain.run?.id, tmux.run?.id);
+    assert.equal(tmux.run?.domain, undefined);
+  } finally {
+    if (previousDisableEngine === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+    else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = previousDisableEngine;
+    if (previousOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = previousOwner;
+  }
 });
 
 test('candidateVariant always preserves the axis fingerprint suffix', () => {

@@ -395,7 +395,7 @@ export async function materializeReviewWorkspaceTask(
         'artifacts/review-ledger.md',
       );
     const taskDir = run.reviewWorkspace.taskPath;
-    const prompt = `${coverage?.packet ? `Read ${shellQuote(path.posix.join(taskDir, 'inputs/warm-delta.json'))} first. This is the current review; old task commands are obsolete. ` : ''}Read ${shellQuote(path.posix.join(taskDir, 'TASK.md'))}. Run ${shellQuote(path.posix.join(taskDir, 'mark'))} start before reviewing. Follow the exact CHECKLIST.md and frozen inputs. Review source read-only and write reports only in the task directory. Finish through the shared mark command; native idle is not task completion.`;
+    const prompt = `${coverage?.packet ? `Read ${shellQuote(path.posix.join(taskDir, 'inputs/warm-delta.json'))} first. This is the current review; old task commands are obsolete. ` : ''}Read ${shellQuote(path.posix.join(taskDir, 'TASK.md'))}. Run ${shellQuote(path.posix.join(taskDir, 'mark'))} start, then ${shellQuote(path.posix.join(taskDir, 'mark'))} 1 as soon as step 1 is done and before any other work. Follow the exact CHECKLIST.md and frozen inputs. Review source read-only and write reports only in the task directory. Finish through the shared mark command; native idle is not task completion.`;
     const exampleIssue = {
       file: 'src/file.ts',
       line: 1,
@@ -466,7 +466,7 @@ export async function materializeReviewWorkspaceTask(
       taskMarkdown: buildTaskDocument({
         flowType: 'review-pr',
         modePreamble: '',
-        completionInstructions: `Mark completed checklist steps with ${shellQuote(path.posix.join(taskDir, 'mark'))} N, using the visible 1-based number. Child checklist completion marks its parent step. Finish with ${shellQuote(path.posix.join(taskDir, 'mark'))} complete --mark-last. Never hand-write SIGNAL.json.`,
+        completionInstructions: `Mark ${shellQuote(path.posix.join(taskDir, 'mark'))} 1 as soon as step 1 is done, before any other work, then mark completed checklist steps with ${shellQuote(path.posix.join(taskDir, 'mark'))} N, using the visible 1-based number. Child checklist completion marks its parent step. Finish with ${shellQuote(path.posix.join(taskDir, 'mark'))} complete --mark-last. Never hand-write SIGNAL.json.`,
         vars: {
           TICKET: run.ticketOrPr,
           TITLE: subject.title,

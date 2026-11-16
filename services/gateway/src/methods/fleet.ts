@@ -44,6 +44,7 @@ import {
   type SlotVars,
 } from '../core/index.js';
 import { lazyImport } from '../core/lazy-import.js';
+import { SLOT_RELEASE_GATEWAY_INSTANCE } from '../core/state.js';
 import {
   shellQuote,
   splitTmuxFields,
@@ -387,6 +388,7 @@ interface PreviousSlotStatus {
   handoff_run_id?: unknown;
   readiness?: ReadinessRecord | null;
   releasing_since?: unknown;
+  release_gateway_instance?: unknown;
   cleanup_release_token?: unknown;
   cleanup_run_id?: unknown;
   cleanup_stop_unconfirmed?: boolean | null;
@@ -924,6 +926,7 @@ export function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus
     ...(phase === SLOT_PHASE_RELEASING
       ? {
           [SLOT_RELEASING_SINCE]: prev.releasing_since ?? null,
+          [SLOT_RELEASE_GATEWAY_INSTANCE]: prev.release_gateway_instance ?? null,
           cleanup_release_token: prev.cleanup_release_token ?? null,
         }
       : {}),

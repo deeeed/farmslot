@@ -1,4 +1,4 @@
-import { lstat, readdir, readFile, stat } from 'node:fs/promises';
+import { lstat, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { Run } from '@farmslot/protocol';
@@ -7,6 +7,8 @@ import { resolveRetainedRunBundleRef, runBundleRefs } from '@farmslot/run-bundle
 import { runNeedsExecutionStorage } from '../review-workspaces/storage-use.js';
 
 import { isTaskDirectoryAdmitting, runTaskDirectories } from './store.js';
+import { readTaskPins, retiredTaskPinsOf as retiredPins, type TaskPinEntry } from './task-pins.cjs';
+export { readTaskPins, type TaskPinEntry };
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -258,61 +260,21 @@ export interface RetentionOwnersView {
   keepsTaskDirectory(dir: string): boolean;
 }
 
-/** A task pin with the task directory its provenance names and when that was written. */
-export interface TaskPinEntry {
-  pin: string;
-  taskDir: string;
-  writtenAt: number;
-}
-
-/** Every readable task pin under `pinRoot`, in directory order. */
-export async function readTaskPins(pinRoot: string): Promise<TaskPinEntry[]> {
-  let names: string[];
-  try {
-    names = await readdir(pinRoot);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-    throw error;
-  }
-  const entries: TaskPinEntry[] = [];
-  for (const name of names) {
-    if (name.startsWith('.retention-')) continue; // Already staged by this pass, not a new orphan.
-    const pin = path.join(pinRoot, name);
-    const provenance = path.join(pin, 'provenance.json');
-    let taskDir: unknown;
-    let writtenAt: number;
-    try {
-      writtenAt = (await stat(provenance)).mtimeMs;
-      taskDir = (JSON.parse(await readFile(provenance, 'utf8')) as { taskDir?: unknown }).taskDir;
-    } catch {
-      continue; // A pin still being written, or unreadable, is not retired.
-    }
-    if (typeof taskDir === 'string') entries.push({ pin, taskDir, writtenAt });
-  }
-  return entries;
-}
-
-/**
- * The pins among `entries` whose task directory is gone or is being removed. `pending` names task
- * directories other runs still use. With `present`, a pin is skipped once it no longer exists,
- * as a pin read earlier in a pass may since have been staged.
- */
-export async function retiredTaskPinsOf(
+/** Shared node-local eligibility, with this gateway's in-flight task admission guard. */
+export function retiredTaskPinsOf(
   entries: readonly TaskPinEntry[],
   removedTaskDirs: ReadonlySet<string>,
-  { now, ageMs }: Pick<RunRetentionContext, 'now' | 'ageMs'>,
+  context: Pick<RunRetentionContext, 'now' | 'ageMs'>,
   pending: (dir: string) => boolean,
   present?: (pin: string) => Promise<boolean>,
 ): Promise<string[]> {
-  const retired: string[] = [];
-  for (const { pin, taskDir, writtenAt } of entries) {
-    if (now - writtenAt < ageMs) continue;
-    const resolved = path.resolve(taskDir);
-    if (pending(resolved) || isTaskDirectoryAdmitting(resolved)) continue;
-    if (present && !(await present(pin))) continue;
-    if (removedTaskDirs.has(resolved) || !(await exists(resolved))) retired.push(pin);
-  }
-  return retired;
+  return retiredPins(
+    entries,
+    removedTaskDirs,
+    context,
+    (dir) => pending(dir) || isTaskDirectoryAdmitting(dir),
+    present,
+  );
 }
 
 /**

@@ -1,9 +1,10 @@
+import type { PrepareGitTiming } from './prepare-git-timing.js';
 import { activePrepareSessions, type EventEmitter } from './shared.js';
 
 export interface PrepareStream {
   requestId: string;
   slotId: string;
-  step: (name: string, detail: string) => void;
+  step: (name: string, detail: string, timing?: PrepareGitTiming) => void;
   output: (stream: 'stdout' | 'stderr', data: string) => void;
   complete: (exitCode: number, error?: string) => void;
 }
@@ -28,9 +29,21 @@ export function createPrepareStream(
   return {
     requestId,
     slotId,
-    step(name, detail) {
+    step(name, detail, timing) {
       activePrepareSessions.get(slotId)?.steps.push({ name, detail });
-      emit('slot.prepare.step', { requestId, slotId, name, detail });
+      emit('slot.prepare.step', {
+        requestId,
+        slotId,
+        name,
+        detail,
+        ...(timing
+          ? {
+              measurement: 'git-command',
+              durationMs: timing.durationMs,
+              outcome: timing.outcome,
+            }
+          : {}),
+      });
       out('stdout', `[${name}] ${detail}\n`);
     },
     output: out,
