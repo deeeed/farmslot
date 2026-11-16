@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.19.19 - 2026-11-16
+
+- Align exact dependencies with the prepared-source-witness patch cohort.
+
 ## 0.19.18 - 2026-11-16
 
 - Align exact package dependencies with the protocol 0.87.0 and adapter SDK 0.28.0 cohort.
