@@ -1,0 +1,1 @@
+- The task note frozen on a run's create request is the trimmed note. A blank note is left out.

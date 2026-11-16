@@ -904,6 +904,20 @@ function normalizeTaskNote(params: RunCreateParams): string | undefined {
   return note;
 }
 
+/** Freeze the accepted note. A caller-supplied request is kept as given. */
+function creationRequestForFreeze(
+  params: RunCreateParams,
+  taskNote: string | undefined,
+  override: RunCreateParams | undefined,
+): RunCreateParams {
+  if (override) return override;
+  if (!taskNote) {
+    const { taskNote: _omitted, ...rest } = params;
+    return rest;
+  }
+  return { ...params, taskNote };
+}
+
 export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuildOptions): Run {
   if ('sourceProvenance' in params) throw new Error('Source provenance is gateway-owned');
   if (
@@ -1236,7 +1250,9 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
   run.agentContexts = initialAgentContextsForRun(run);
   run.sourcePlan = planRunSources(run.id, params.slotId);
   if (run.sourcePlan)
-    run.dispatchRequest = captureRunCreationRequest(options?.dispatchRequest ?? params);
+    run.dispatchRequest = captureRunCreationRequest(
+      creationRequestForFreeze(params, taskNote, options?.dispatchRequest),
+    );
   return run;
 }
 

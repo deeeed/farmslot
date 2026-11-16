@@ -20,6 +20,8 @@ import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
+import { type ProjectSourceContext, withProjectSources } from '@farmslot/slot-config';
+
 import { farmslotRoot } from '../projects/repo-root.js';
 import { beginRunArchive, endRunArchive } from '../run-lifecycle/archive-fence.js';
 import { runnerDefaultSafetyTier } from '../runners/registry.js';
@@ -198,26 +200,81 @@ test('createRun persists the domain overlay and omits it when unset', async (t) 
   assert.equal('domain' in withoutDomain, false);
 });
 
+function lockedProjectSources(): ProjectSourceContext {
+  const pack = { sourceId: 'pack', entry: '.' };
+  const lock = {
+    schemaVersion: 1 as const,
+    context: { project: 'example-mobile-farm' },
+    generation: 1,
+    declarationRevision: 1,
+    pinRevision: 0,
+    resolvedAt: '2026-11-16T00:00:00.000Z',
+    packBindings: { 'example-mobile-farm': pack },
+    entries: [
+      {
+        sourceId: 'pack',
+        kind: 'pack' as const,
+        repo: 'https://example.test/owner/demo',
+        declaredRef: 'main',
+        effectiveRef: 'main',
+        commit: 'a'.repeat(40),
+        objectFormat: 'sha1' as const,
+        treeDigest: 'b'.repeat(64),
+        resolutionGeneration: 1,
+        scope: 'farm' as const,
+        dependencies: [],
+      },
+    ],
+    digest: 'pending',
+  };
+  return {
+    project: 'example-mobile-farm',
+    pack,
+    materialization: {
+      lock,
+      roots: { pack: '/immutable/pack' },
+      receiptPath: '/receipts/pending.json',
+      receipt: {
+        schemaVersion: 1,
+        id: 'receipt',
+        nodeId: 'node',
+        lockDigest: 'pending',
+        verifiedAt: lock.resolvedAt,
+        sources: [],
+      },
+    },
+    packs: lock.packBindings,
+  };
+}
+
 test('createRun freezes a task note and omits a blank one', async (t) => {
   const note =
     'This is an evaluation. Work only in this checkout. Do not search other checkouts, branches, PRs, git history beyond the base, or the web for an existing fix.';
-  const withNote = createRun({
-    flowType: 'fix-bug',
-    project: 'example-mobile-farm',
-    ticketOrPr: `PROJ-${Date.now()}-note`,
-    taskNote: `  ${note}  `,
-  });
+  const sources = lockedProjectSources();
+  const withNote = withProjectSources(sources, () =>
+    createRun({
+      flowType: 'fix-bug',
+      project: 'example-mobile-farm',
+      ticketOrPr: `PROJ-${Date.now()}-note`,
+      taskNote: `  ${note}  `,
+    }),
+  );
   t.after(() => cleanupRun(withNote.id));
-  const blank = createRun({
-    flowType: 'fix-bug',
-    project: 'example-mobile-farm',
-    ticketOrPr: `PROJ-${Date.now()}-blank-note`,
-    taskNote: '   ',
-  });
+  const blank = withProjectSources(sources, () =>
+    createRun({
+      flowType: 'fix-bug',
+      project: 'example-mobile-farm',
+      ticketOrPr: `PROJ-${Date.now()}-blank-note`,
+      taskNote: '   ',
+    }),
+  );
   t.after(() => cleanupRun(blank.id));
   assert.equal(withNote.taskNote, note);
-  if (withNote.dispatchRequest) assert.equal(withNote.dispatchRequest.taskNote, note);
+  assert.ok(withNote.dispatchRequest);
+  assert.equal(withNote.dispatchRequest.taskNote, note);
   assert.equal('taskNote' in blank, false);
+  assert.ok(blank.dispatchRequest);
+  assert.equal('taskNote' in blank.dispatchRequest, false);
   assert.throws(
     () =>
       createRun({
