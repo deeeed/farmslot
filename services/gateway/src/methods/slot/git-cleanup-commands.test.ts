@@ -286,3 +286,47 @@ test('recreateWorkBranchCommand refuses when another worktree has the default or
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('recreateWorkBranchCommand refuses when the worktree listing itself fails', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'farmslot-recreate-listing-'));
+  try {
+    const origin = path.join(root, 'origin.git');
+    const slot = path.join(root, 'slot');
+    git(root, 'init', '-q', '--bare', '-b', 'main', origin);
+    git(root, 'clone', '-q', origin, slot);
+    git(slot, 'config', 'user.email', 't@t');
+    git(slot, 'config', 'user.name', 't');
+    git(slot, 'checkout', '-q', '-b', 'main');
+    writeFileSync(path.join(slot, 'a.txt'), 'a1\n');
+    git(slot, 'add', '.');
+    git(slot, 'commit', '-qm', 'c1');
+    git(slot, 'push', '-q', 'origin', 'main');
+    git(slot, 'checkout', '-q', '-b', 'feat/x');
+    git(slot, 'worktree', 'add', '-q', path.join(root, 'aux'), 'main');
+    const base = git(slot, 'rev-parse', 'origin/main').stdout.trim();
+    const mainBefore = git(slot, 'rev-parse', 'refs/heads/main').stdout.trim();
+    // A git that fails only `worktree list`, as a broken or locked repo can.
+    const shim = path.join(root, 'bin');
+    const realGit = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+    spawnSync('mkdir', ['-p', shim]);
+    writeFileSync(
+      path.join(shim, 'git'),
+      `#!/bin/sh\nif [ "$1" = worktree ] && [ "$2" = list ]; then exit 128; fi\nexec ${realGit} "$@"\n`,
+      { mode: 0o755 },
+    );
+    const result = spawnSync('bash', ['-c', 'eval "$CMD"'], {
+      cwd: slot,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${shim}:${process.env.PATH}`,
+        CMD: recreateWorkBranchCommand('feat/y', base, 'main', quote),
+      },
+    });
+    assert.equal(result.status, 128);
+    assert.equal(git(slot, 'rev-parse', 'refs/heads/main').stdout.trim(), mainBefore);
+    assert.equal(git(slot, 'symbolic-ref', 'HEAD').stdout.trim(), 'refs/heads/feat/x');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

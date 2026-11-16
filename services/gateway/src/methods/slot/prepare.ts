@@ -1150,16 +1150,8 @@ async function slotPrepareInner(
       }
 
       if (direct) {
-        if (remoteExists) {
-          step('branch', `Deleting stale remote ${branch} (forceNewBranch)...`);
-          await execGit(
-            'delete-remote-branch',
-            vars,
-            withFarmGitConfig(
-              `cd ${shellQuote(vars.remoteRepo)} && git push origin --delete ${shellQuote(branch)} 2>/dev/null`,
-            ),
-          );
-        }
+        // Untracked files go first, with the current branch's ignore rules, as before.
+        await cleanWorktree();
         branchCreatedFromBase = true;
         const directR = await mutateGit(
           'checkout-work-branch',
@@ -1170,7 +1162,6 @@ async function slotPrepareInner(
           throw new Error(
             `checkout of ${branch} at ${newBranchBaseLabel} failed on ${vars.slotId} (${vars.remoteRepo}): ${directR.stderr.slice(-200) || directR.stdout.slice(-200)}`,
           );
-        await cleanWorktree();
         const dirty = (
           await execGit(
             'verify-branch-clean',
@@ -1182,10 +1173,18 @@ async function slotPrepareInner(
           throw new Error(
             `Working tree still dirty on ${vars.slotId} after checking out ${branch} at ${newBranchBaseLabel}. Inspect with: cd ${shellQuote(vars.remoteRepo)} && git status\nDirty paths:\n${dirty}`,
           );
-        step(
-          'branch',
-          `Recreated ${branch} from ${newBranchBaseLabel}; local ${defaultBranch} at origin/${defaultBranch} (clean tree)`,
-        );
+        // The published branch is deleted only once the local branch is in place and clean.
+        if (remoteExists) {
+          step('branch', `Deleting stale remote ${branch} (forceNewBranch)...`);
+          await execGit(
+            'delete-remote-branch',
+            vars,
+            withFarmGitConfig(
+              `cd ${shellQuote(vars.remoteRepo)} && git push origin --delete ${shellQuote(branch)} 2>/dev/null`,
+            ),
+          );
+        }
+        step('branch', `Created ${branch} from ${newBranchBaseLabel}`);
       } else if (forceNewBranch && remoteExists) {
         // New work flow (fix-bug/dev): delete stale remote branch and recreate from defaultBranch
         step('branch', `Deleting stale remote ${branch} (forceNewBranch)...`);

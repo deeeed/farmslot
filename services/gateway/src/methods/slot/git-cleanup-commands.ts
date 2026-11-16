@@ -19,7 +19,9 @@ export const CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND = `flag_status=0; ${CLEAR_IN
 /**
  * One worktree pass to `<branch>` recreated at `base`, clean of tracked changes, with local
  * `<defaultBranch>` moved to `origin/<defaultBranch>` and no config left from an older `<branch>`
- * (as `git branch -D` would). Untracked files are removed separately with `git clean -fd`.
+ * (as `git branch -D` would). Run `git clean -fd` before it, with the current branch's ignore
+ * rules, as the old sequence did: what `--force` then overwrites is only what a plain checkout
+ * would (ignored files, which git treats as expendable). Check porcelain after it.
  */
 export function recreateWorkBranchCommand(
   branch: string,
@@ -29,6 +31,8 @@ export function recreateWorkBranchCommand(
 ): string {
   // Refuse, as `git checkout <default>` did, when another worktree has either branch checked
   // out: moving its ref would leave that worktree's files staged against a new HEAD.
-  const guard = `top=$(git rev-parse --show-toplevel) || exit 128; used=$(git worktree list --porcelain | awk -v top="$top" '/^worktree /{w=substr($0,10)} /^branch /{if (w!=top) print substr($0,8)}'); for ref in ${quote(`refs/heads/${defaultBranch}`)} ${quote(`refs/heads/${branch}`)}; do if printf '%s\\n' "$used" | grep -qxF "$ref"; then echo "fatal: $ref is checked out in another worktree" >&2; exit 128; fi; done`;
-  return `${guard}; ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git config --remove-section ${quote(`branch.${branch}`)} 2>/dev/null; git checkout --force -B ${quote(branch)} ${quote(base)} && git update-ref ${quote(`refs/heads/${defaultBranch}`)} ${quote(`origin/${defaultBranch}`)}`;
+  // The listing is captured before awk: a pipe would report awk's status and hide Git's failure.
+  const guard = `top=$(git rev-parse --show-toplevel) || exit 128; worktrees=$(git worktree list --porcelain) || exit 128; used=$(printf '%s\\n' "$worktrees" | awk -v top="$top" '/^worktree /{w=substr($0,10)} /^branch /{if (w!=top) print substr($0,8)}'); for ref in ${quote(`refs/heads/${defaultBranch}`)} ${quote(`refs/heads/${branch}`)}; do if printf '%s\\n' "$used" | grep -qxF "$ref"; then echo "fatal: $ref is checked out in another worktree" >&2; exit 128; fi; done`;
+  // The default ref moves first: a missing origin/<default> fails before the work branch moves.
+  return `${guard}; ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git update-ref ${quote(`refs/heads/${defaultBranch}`)} ${quote(`origin/${defaultBranch}`)} || exit 128; git config --remove-section ${quote(`branch.${branch}`)} 2>/dev/null; git checkout --force -B ${quote(branch)} ${quote(base)}`;
 }
