@@ -1275,63 +1275,116 @@ describe('run diagnostics', () => {
     assert.equal(document.counts.total, 1);
   });
 
-  test('reads the platform request log and its in-app buffer through the adapter', async () => {
-    const root = tempRoot('diagnostics-platform-');
+  for (const asynchronous of [false, true]) {
+    test(`reads platform diagnostics through ${asynchronous ? 'asynchronous' : 'synchronous'} callbacks`, async () => {
+      const root = tempRoot('diagnostics-platform-');
+      const appLog = path.join(root, 'app.log');
+      const requestLog = path.join(root, 'requests.jsonl');
+      fs.writeFileSync(appLog, '');
+      fs.writeFileSync(requestLog, 'refused before\n');
+      useAdapters(
+        fakeAdapter('web', {
+          appLogSource: () => ({ label: 'app', path: appLog }),
+          diagnostics: {
+            requestLog: {
+              path: () => requestLog,
+              findings: (lines) =>
+                lines
+                  .filter((line) => line.startsWith('refused'))
+                  .map((line) => ({ level: 'error' as const, source: 'requests', text: line })),
+            },
+            issueBuffer: {
+              arm: asynchronous ? async () => true : () => true,
+              collect: asynchronous
+                ? async () => [{ level: 'warn', text: 'buffered warning' }]
+                : () => [{ level: 'warn', text: 'buffered warning' }],
+            },
+          },
+        }),
+      );
+      const baseline = await beginRunDiagnostics('web', root);
+      assert.deepEqual(baseline?.issueBuffer, { adapter: 'web', projectRoot: root });
+      fs.appendFileSync(requestLog, 'refused during\nok\n');
+      const summaryPath = path.join(root, 'summary.json');
+      const artifactManifestPath = path.join(root, 'artifact-manifest.json');
+      fs.writeFileSync(summaryPath, '{}\n');
+      fs.writeFileSync(artifactManifestPath, '{"artifacts":[]}\n');
+      const context = artifactContext({
+        summaryPath,
+        artifactManifestPath,
+        tracePath: path.join(root, 'trace.json'),
+      });
+      const result = await finishRunDiagnostics(baseline, context, classifier);
+      const document = readRunDiagnosticsDocument(result.diagnosticsPath);
+      assert.deepEqual(
+        document?.findings.map((finding) => [finding.source, finding.preview]),
+        [
+          [undefined, 'buffered warning'],
+          ['requests', 'refused during'],
+        ],
+      );
+      assert.equal(document?.source.inAppBuffer, 'collected');
+      assert.deepEqual(result.sideFindings?.counts.total, 2);
+      assert.deepEqual(
+        context.artifacts().map((artifact) => artifact.path),
+        ['diagnostics.json', 'diagnostics-app-log.txt'],
+      );
+      assert.equal((context.summary.sideFindings as { status: string }).status, 'review');
+      assert.equal(fs.readFileSync(summaryPath, 'utf8'), '{}\n');
+      assert.equal(fs.readFileSync(artifactManifestPath, 'utf8'), '{"artifacts":[]}\n');
+      assert.deepEqual(formatRunDiagnosticsForHuman(document, 'web').slice(0, 1), [
+        `REVIEW — ${document?.note}`,
+      ]);
+    });
+  }
+
+  test('an asynchronous refusal does not arm the optional issue buffer', async () => {
+    const root = tempRoot('diagnostics-unavailable-');
     const appLog = path.join(root, 'app.log');
-    const requestLog = path.join(root, 'requests.jsonl');
     fs.writeFileSync(appLog, '');
-    fs.writeFileSync(requestLog, 'refused before\n');
     useAdapters(
       fakeAdapter('web', {
         appLogSource: () => ({ label: 'app', path: appLog }),
-        diagnostics: {
-          requestLog: {
-            path: () => requestLog,
-            findings: (lines) =>
-              lines
-                .filter((line) => line.startsWith('refused'))
-                .map((line) => ({ level: 'error' as const, source: 'requests', text: line })),
-          },
-          issueBuffer: {
-            arm: () => true,
-            collect: () => [{ level: 'warn', text: 'buffered warning' }],
-          },
-        },
+        diagnostics: { issueBuffer: { arm: async () => false, collect: () => [] } },
       }),
     );
     const baseline = await beginRunDiagnostics('web', root);
-    assert.deepEqual(baseline?.issueBuffer, { adapter: 'web', projectRoot: root });
-    fs.appendFileSync(requestLog, 'refused during\nok\n');
-    const summaryPath = path.join(root, 'summary.json');
+    assert.ok(baseline);
+    assert.equal(baseline.issueBuffer, undefined);
+  });
+
+  test('asynchronous callback errors retain the existing diagnostic failure behavior', async () => {
+    const root = tempRoot('diagnostics-rejected-');
+    const appLog = path.join(root, 'app.log');
+    fs.writeFileSync(appLog, '');
+    const failure = new Error('issue buffer unavailable');
+    const adapter = fakeAdapter('web', {
+      appLogSource: () => ({ label: 'app', path: appLog }),
+      diagnostics: {
+        issueBuffer: {
+          arm: async () => {
+            throw failure;
+          },
+          collect: async () => {
+            throw failure;
+          },
+        },
+      },
+    });
+    useAdapters(adapter);
+    await assert.rejects(() => beginRunDiagnostics('web', root), failure);
+    adapter.diagnostics!.issueBuffer!.arm = async () => true;
+    const baseline = await beginRunDiagnostics('web', root);
     const artifactManifestPath = path.join(root, 'artifact-manifest.json');
-    fs.writeFileSync(summaryPath, '{}\n');
     fs.writeFileSync(artifactManifestPath, '{"artifacts":[]}\n');
     const context = artifactContext({
-      summaryPath,
-      artifactManifestPath,
+      summaryPath: path.join(root, 'summary.json'),
       tracePath: path.join(root, 'trace.json'),
+      artifactManifestPath,
     });
     const result = await finishRunDiagnostics(baseline, context, classifier);
-    const document = readRunDiagnosticsDocument(result.diagnosticsPath);
-    assert.deepEqual(
-      document?.findings.map((finding) => [finding.source, finding.preview]),
-      [
-        [undefined, 'buffered warning'],
-        ['requests', 'refused during'],
-      ],
-    );
-    assert.equal(document?.source.inAppBuffer, 'collected');
-    assert.deepEqual(result.sideFindings?.counts.total, 2);
-    assert.deepEqual(
-      context.artifacts().map((artifact) => artifact.path),
-      ['diagnostics.json', 'diagnostics-app-log.txt'],
-    );
-    assert.equal((context.summary.sideFindings as { status: string }).status, 'review');
-    assert.equal(fs.readFileSync(summaryPath, 'utf8'), '{}\n');
-    assert.equal(fs.readFileSync(artifactManifestPath, 'utf8'), '{"artifacts":[]}\n');
-    assert.deepEqual(formatRunDiagnosticsForHuman(document, 'web').slice(0, 1), [
-      `REVIEW — ${document?.note}`,
-    ]);
+    assert.equal(result.sideFindings?.status, 'unavailable');
+    assert.equal(result.summaryPath, context.result.summaryPath);
   });
 
   test('verifies console capture through the platform control', async () => {

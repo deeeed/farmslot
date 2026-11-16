@@ -127,3 +127,44 @@ Task staging uses `taskFiles.transfer` in the existing background child. SSH/SCP
 Passive workspace refresh batches Git metadata through the trusted read-probe executor once per remote node every 15 seconds. Generic node filesystem access to `.git` stays denied. Unchanged metadata retains the existing 90-second inspection limit and original observation time; ownership changes, explicit invalidation and acting reads still force inspection. A missing metadata result cannot justify reuse.
 
 Passive default-branch ancestry may reuse only a successful exact HEAD/base result for at most ten minutes, without extending expiry on hits. The shared metadata batch supplies graph eligibility; shallow, grafted and replaced histories bypass the cache. Metadata, worktree, ownership and node identity changes invalidate reuse. Acting/force reads and negative/error results remain fresh. Count real node/child commands when comparing rates, not cache-result reads.
+
+## Recipe-call issue diagnostics
+
+The harness lane owns these call-path metrics. Measure five calls per action with
+recording and healing off; discard the first and report warm time medians and
+maximum direct-child/Git counts. Outer `/usr/bin/time -p` covers elapsed time and
+user + system CPU, including descendants. The call profiler records direct Git
+starts across traced Node processes; the shared `work.git` counter is narrower.
+The existing full-flow call-perf canary fails above 120% of its accepted time
+reference or any increase in its count budgets. A busy or incomplete sample is
+not release qualification. Baseline changes remain explicit.
+
+| Metric                                 | How measured                                       | Current reference                                                                           | Alert threshold                                                       | Owner        |
+| -------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ------------ |
+| Mobile call wall / total CPU           | Outer warm medians, milliseconds                   | Deployed harness 0.96.25: unlock 3040 / 2945; screenshot 2740 / 3110; positions 1875 / 2605 | More than 20% over the accepted case reference                        | Harness lane |
+| Mobile call direct children / Git work | Maximum warm `call-timings.json` counts            | Deployed 0.96.25: unlock 38 / 17; screenshot 42 / 17; positions 38 / 17                     | Any increase over the accepted case budget                            | Harness lane |
+| Mobile call traced Git starts          | Profiler child starts across traced Node processes | Deployed 0.96.25: unlock 30; screenshot 32; positions 30                                    | Diagnostic before/after count, not a separate automatic verdict field | Harness lane |
+
+The asynchronous issue-buffer candidate was compared with the same package graph
+including the merged source-fingerprint reduction. These are matched preview
+measurements, not replacements for the deployed references above:
+
+| Call                              | Outer wall ms, before / after | Total CPU ms, before / after | Direct children, before / after | Traced Git starts, before / after |
+| --------------------------------- | ----------------------------- | ---------------------------- | ------------------------------- | --------------------------------- |
+| `metamask.wallet.ensure_unlocked` | 2925 / 2780                   | 2830 / 2700                  | 30 / 27                         | 22 / 22                           |
+| `ui.screenshot`                   | 2660 / 2545                   | 2995 / 2905                  | 34 / 31                         | 24 / 24                           |
+| `metamask.perps.read_positions`   | 1810 / 1700                   | 2480 / 2415                  | 30 / 27                         | 22 / 22                           |
+
+All 30 calls passed; the unchanged call-perf comparison passed. All 90 provenance
+snapshots retained identical product fingerprints, and diagnostics retained arm,
+baseline drain and final drain. No helper process or Git call is added for old
+synchronous adapters. The companion harness removes three helper processes and
+adds zero Git calls per Mobile call. Earlier incomplete and contended failures
+remain in the operator's receipts; the final complete comparison passed.
+
+To improve these metrics, remove repeated work at its owner. Await the existing
+diagnostic operations and use the existing broker instead of Node helpers. Keep
+fresh target selection, collection order, deadlines, custom-script/absent-broker
+fallback and no replay after an uncertain destructive collection. Verify complete
+recipes and recording when changing those contracts. Do not add polling or
+per-call work proportional to accumulated runs or artifacts.

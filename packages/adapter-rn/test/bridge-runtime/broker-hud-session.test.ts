@@ -294,3 +294,26 @@ test('ordinary sessions retain the configured asynchronous evaluation timeout', 
     /timed out after 50ms/,
   );
 });
+
+test('issue commands arm and drain fresh buffers without replay or lost collection points', async () => {
+  const { session, requests } = await fixture(true);
+  assert.deepEqual(await session.send('issues-arm', []), { installed: true });
+  await session.send('eval', ["console.warn('before recipe')"]);
+  const baseline = await session.send('issues-collect', []);
+  assert.ok(baseline && typeof baseline === 'object' && 'entries' in baseline);
+  assert.ok(Array.isArray(baseline.entries));
+  assert.deepEqual(
+    baseline.entries.map(({ level, text }) => ({ level, text })),
+    [{ level: 'warn', text: 'before recipe' }],
+  );
+  await session.send('eval', ["console.error('during recipe')"]);
+  const final = await session.send('issues-collect', []);
+  assert.ok(final && typeof final === 'object' && 'entries' in final);
+  assert.ok(Array.isArray(final.entries));
+  assert.deepEqual(
+    final.entries.map(({ level, text }) => ({ level, text })),
+    [{ level: 'error', text: 'during recipe' }],
+  );
+  assert.deepEqual(await session.send('issues-collect', []), { count: 0, entries: [] });
+  assert.equal(requests.filter((r) => r.action === 'resolve-targets').length, 6);
+});
