@@ -1711,6 +1711,13 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _syncWorkflowSelection(): void {
+    const effortRole = this._flowType === 'review-pr' ? 'review' : undefined;
+    if (this._executionPicker.context.effortRole !== effortRole) {
+      this._executionPicker.setContext({
+        ...this._executionPicker.context,
+        effortRole,
+      });
+    }
     const freshAllowed = this._flowType === 'review-pr';
     if (this._executionPicker.context.allowFreshChain !== freshAllowed) {
       const context = this._executionPicker.toReviewContext();

@@ -510,15 +510,14 @@ export async function defaultReloadRunner(
       );
     }
   };
+  const retainedRole = run.agentContexts?.find((context) => context.id === handle.contextId)?.role;
   const result = await reloadRunnerForPark({
     vars,
     recoveryHandle: handle,
     initialPrompt: continuationPrompt,
     beforeRespawn: assertSessionCurrent,
-    blindTrialBoundary: blindTrialWorkerBoundary(
-      run,
-      run.agentContexts?.find((context) => context.id === handle.contextId)?.role,
-    ),
+    blindTrialBoundary: blindTrialWorkerBoundary(run, retainedRole),
+    role: retainedRole,
     modelQuestions: modelQuestionsForRun(run),
   });
   if (!result.ok) throw new Error(result.error);
