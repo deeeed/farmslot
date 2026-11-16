@@ -1,3 +1,4 @@
+import type { WorkerTransport } from './agents.js';
 import type { ExecutionTemplateReference } from './execution-templates.js';
 import { type QaProfileSelection, validateQaConfig } from './qa.js';
 import {
@@ -166,6 +167,11 @@ export interface EvalPackageAxes {
   actualModel?: EvalPackageAxisRef;
   /** Provider-neutral structured-assessment configuration/provenance. */
   assessment?: EvalPackageAxisRef;
+  /**
+   * Worker transport for this candidate. Omitted means tmux, so an existing
+   * tmux trial stays the same candidate. Native is a different candidate.
+   */
+  transport?: WorkerTransport;
 }
 
 export type EvalHarnessLifecycleStatus = 'pending' | 'passed' | 'failed' | 'skipped';
@@ -658,7 +664,8 @@ export function isEvalPackageAxes(value: unknown): value is EvalPackageAxes {
     (value.runner == null || isEvalPackageAxisRef(value.runner)) &&
     (value.model == null || isEvalPackageAxisRef(value.model)) &&
     (value.actualModel == null || isEvalPackageAxisRef(value.actualModel)) &&
-    (value.assessment == null || isEvalPackageAxisRef(value.assessment))
+    (value.assessment == null || isEvalPackageAxisRef(value.assessment)) &&
+    (value.transport == null || value.transport === 'tmux' || value.transport === 'native')
   );
 }
 

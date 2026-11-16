@@ -8,7 +8,10 @@ import { executionTemplateReference } from '@farmslot/agent-runtime';
 
 import { farmslotRoot, loadProjectVars } from '../../core/config.js';
 import { proofInputFixture } from '../../evals/first-output.test-support.js';
-import { writeResultPackageManifest } from '../../evals/package-store.js';
+import {
+  computeCandidateStrategyFingerprint,
+  writeResultPackageManifest,
+} from '../../evals/package-store.js';
 import { admitProofQa } from '../../evals/proof-profile.js';
 import { makeEvalResultPackage } from '../../run-engine/test-fixtures.js';
 import {
@@ -17,7 +20,21 @@ import {
   resolveConfiguredExecutionTemplateForSlot,
 } from '../../tasks/execution-template-catalog.js';
 
-import { resolveCandidateTemplateProvenance } from './candidate-setup.js';
+import { axesForTrialTransport, resolveCandidateTemplateProvenance } from './candidate-setup.js';
+
+test('native transport is a different candidate from the tmux default', () => {
+  const axes = { model: { name: 'gpt-5.5' } };
+  const tmux = axesForTrialTransport(axes, undefined);
+  const explicitTmux = axesForTrialTransport({ ...axes, transport: 'native' }, 'tmux');
+  const native = axesForTrialTransport(axes, 'native');
+  assert.equal(tmux.transport, undefined);
+  assert.equal(explicitTmux.transport, undefined);
+  assert.equal(native.transport, 'native');
+  const fingerprint = (recorded: typeof tmux) =>
+    computeCandidateStrategyFingerprint({ axes: recorded, taskProfile: 'fix-bug' });
+  assert.equal(fingerprint(tmux), fingerprint(explicitTmux));
+  assert.notEqual(fingerprint(tmux), fingerprint(native));
+});
 
 test('catalog eval resolves the configured fix-bug default before a slot is assigned', async (t) => {
   const name = `eval-nested-catalog-${process.pid}-farm`;
