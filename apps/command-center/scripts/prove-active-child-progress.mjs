@@ -54,6 +54,50 @@ const readSource = async () => {
   return { run, parent, unit };
 };
 await cdp('focus', tab);
+// Rerun this same recipe after stopping the owned fixture, or making its
+// checklist unreadable. These checks read actual connection/read state only.
+const expectedReadState = process.env.FARMSLOT_CHILD_PROOF_EXPECT_READ_STATE;
+if (expectedReadState) {
+  assert(['saved', 'error'].includes(expectedReadState));
+  let dom;
+  const end = Date.now() + 30000;
+  do {
+    dom = await read();
+    if (
+      expectedReadState === 'saved'
+        ? !dom.connected && dom.childStep === 'Saved child progress'
+        : dom.connected && dom.readNotice === 'Could not read progress' && dom.childBars === 0
+    )
+      break;
+    await delay(100);
+  } while (Date.now() < end);
+  assert.equal(dom.runId, runId);
+  if (expectedReadState === 'saved') {
+    assert(!dom.connected);
+    assert.equal(dom.childStep, 'Saved child progress');
+    assert.equal(dom.childBars, 1);
+  } else {
+    assert(dom.connected);
+    assert.equal(dom.readNotice, 'Could not read progress');
+    assert.equal(dom.childBars, 0);
+  }
+  await mkdir(output, { recursive: true });
+  await cdp(
+    'screenshot',
+    tab,
+    path.join(output, `child-progress-${expectedReadState}.png`),
+    '--width',
+    '1100',
+    '--height',
+    '900',
+  );
+  await writeFile(
+    path.join(output, `proof-${expectedReadState}.json`),
+    JSON.stringify({ status: 'pass', runId, expectedReadState, dom }, null, 2) + '\n',
+  );
+  console.log(JSON.stringify({ status: 'pass', runId, expectedReadState }));
+  process.exit(0);
+}
 const before = await readSource();
 let dom;
 const end = Date.now() + 30000;

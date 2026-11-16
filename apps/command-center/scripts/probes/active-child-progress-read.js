@@ -6,6 +6,10 @@ const root = panel?.querySelector('run-checklist-progress')?.shadowRoot;
 const child = root?.querySelector('[data-testid="checklist-child-progress"]');
 const rect = child?.getBoundingClientRect();
 return {
+  readNotice: root
+    ?.querySelector('progress-read-status')
+    ?.shadowRoot?.querySelector('[role="alert"]')
+    ?.textContent.trim(),
   connected: document.querySelector('farm-app')?.connection === 'connected',
   runId: detail?.run?.id,
   modalOpen: Boolean(

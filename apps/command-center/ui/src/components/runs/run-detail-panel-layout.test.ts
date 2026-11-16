@@ -662,3 +662,32 @@ test('signal acknowledgement opens a checklist panel before the first progress r
   };
   assert.doesNotMatch(litText(element.render()), /data-panel="run-step-progress"/);
 });
+
+test('detail forwards saved and failed progress observations through the pipeline to the strip', () => {
+  for (const notice of [
+    { kind: 'saved' as const, text: 'Saved progress' },
+    { kind: 'error' as const, text: 'Could not read progress', detail: 'EACCES' },
+  ]) {
+    const ctx = { ...context(), taskProgressNotice: notice };
+    const view = renderRunDetailView(ctx);
+    assert.deepEqual(litBinding(view, '.taskProgressNotice='), notice);
+    const element = new RunPipeline();
+    element.run = run;
+    element.collapsiblePanels = true;
+    element.taskProgress = {
+      schema: { flowType: 'proof', title: 'Parent', totalSteps: 1, phases: [] },
+      phases: [],
+      totalSteps: 1,
+      completedSteps: 0,
+      currentPhase: 'Parent',
+      currentStep: 'Work',
+    };
+    element.taskProgressNotice = notice;
+    const checklist = litBinding(element.render(), '.stale=');
+    assert.equal(checklist, notice.kind === 'saved');
+    assert.equal(
+      litBinding(element.render(), '.error='),
+      notice.kind === 'error' ? notice.text : undefined,
+    );
+  }
+});
