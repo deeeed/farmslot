@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs, { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
@@ -484,5 +485,85 @@ test('a fresh fence queues behind an older active scan rather than inheriting it
     t.mock.restoreAll();
     syncBuiltinESMExports();
     f.close();
+  }
+});
+
+test('a dead host fails once; its events do not re-arm until the source changes', async (t) => {
+  const watch = fs.watch;
+  let armed = 0;
+  t.mock.method(fs, 'watch', (...args: Parameters<typeof watch>) => {
+    armed++;
+    return watch(...args);
+  });
+  syncBuiltinESMExports();
+  const fixture = setup();
+  // A supervisor that exited (a reboot) left host.json and worker.json, but no ready.json.
+  const dead = spawnSync(process.execPath, ['-e', '']).pid;
+  assert.ok(dead && !alive(dead));
+  writeFileSync(
+    join(fixture.root, 'host.json'),
+    JSON.stringify({ pid: dead, socket: join(fixture.root, 'gone.sock') }),
+    { mode: 0o600 },
+  );
+  writeFileSync(join(fixture.root, 'worker.json'), JSON.stringify({ pid: dead }), { mode: 0o600 });
+  try {
+    await assert.rejects(fixture.source.start(), { reason: 'host-identity-invalid' });
+    const failedArms = armed;
+    // Session commits keep arriving; the failed source must not re-arm for any of them.
+    // The ceiling only bounds the wait; every commit is a watcher event.
+    for (let i = 0; i < 25; i++) {
+      fixture.commitMetadata();
+      await delay(20);
+    }
+    assert.equal(armed, failedArms, 'events of an unchanged failed source keep its watchers');
+    assert.equal(fixture.source.current().ready, false);
+    // The dead host's files go away: the source differs, so the next event arms it.
+    rmSync(join(fixture.root, 'host.json'));
+    for (let i = 0; i < 250 && !fixture.source.current().ready; i++) {
+      fixture.commitMetadata();
+      await delay(20);
+    }
+    assert.ok(armed > failedArms && fixture.source.current().ready, 'a changed source re-arms');
+  } finally {
+    fixture.close();
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+});
+
+test('a source repaired while arming failed is armed without another event', async (t) => {
+  const watch = fs.watch;
+  const silent = mkdtempSync(join(tmpdir(), 'native-silent-'));
+  // No watcher delivers: only the failed arming's own check can see the repair.
+  t.mock.method(fs, 'watch', (_path: unknown, options: { recursive?: boolean }, listener: never) =>
+    watch(silent, options, listener),
+  );
+  const open = fsPromises.open;
+  let repaired = false;
+  const fixture = setup();
+  t.mock.method(fsPromises, 'open', async (...args: Parameters<typeof open>) => {
+    const handle = await open(...args);
+    // The dead host's files go away right after the failing scan opened them.
+    if (!repaired && String(args[0]).endsWith('host.json')) {
+      repaired = true;
+      rmSync(join(fixture.root, 'host.json'));
+    }
+    return handle;
+  });
+  syncBuiltinESMExports();
+  const dead = spawnSync(process.execPath, ['-e', '']).pid;
+  assert.ok(dead && !alive(dead));
+  writeFileSync(join(fixture.root, 'host.json'), JSON.stringify({ pid: dead }), { mode: 0o600 });
+  try {
+    await assert.rejects(fixture.source.start(), { reason: 'host-identity-invalid' });
+    assert.ok(repaired);
+    // The ceiling only reports a hang; the check is one scan.
+    for (let i = 0; i < 250 && !fixture.source.current().ready; i++) await delay(20);
+    assert.ok(fixture.source.current().ready, 'the repaired source is armed');
+  } finally {
+    fixture.close();
+    rmSync(silent, { recursive: true, force: true });
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
   }
 });
