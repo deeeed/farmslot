@@ -210,15 +210,20 @@ fi
 
 keep=" $sha "
 moved=false
+# The one place that reads a snapshot out of a path and retains it. A target
+# outside this install names no snapshot and is left alone.
+keep_snapshot_target() {
+  local target="$1" kept
+  [[ "$target" == "$root"/* ]] || return 0
+  kept=${target#"$root"/}
+  keep="$keep${kept%%/*} "
+}
 link_entry() {
-  local link="$1" target="$2" previous="" kept
+  local link="$1" target="$2" previous=""
   if [[ -L "$link" ]]; then
     previous=$(readlink "$link")
     [[ "$previous" == "$target" ]] && return 0
-    if [[ "$previous" == "$root"/* ]]; then
-      kept=${previous#"$root"/}
-      keep="$keep${kept%%/*} "
-    fi
+    keep_snapshot_target "$previous"
   elif [[ -e "$link" ]]; then
     echo "[deploy] ERROR: $link is not a symlink; move it aside so workers run the deployed CLI" >&2
     exit 1
@@ -432,10 +437,7 @@ done
 if [[ -n "$shared" ]]; then
   for link in "$shared/legacy" "$shared/legacy-agent"; do
     [[ -L "$link" ]] || continue
-    legacy_target=$(readlink "$link")
-    [[ "$legacy_target" == "$root"/* ]] || continue
-    legacy_kept=${legacy_target#"$root"/}
-    keep="$keep${legacy_kept%%/*} "
+    keep_snapshot_target "$(readlink "$link")"
   done
 fi
 [[ "$moved" == true ]] || exit 0
