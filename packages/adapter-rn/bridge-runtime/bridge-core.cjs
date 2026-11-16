@@ -1378,6 +1378,8 @@ function createBrokerCommandSession(socketPath, env = process.env) {
       'get-route',
       'eval',
       'eval-async',
+      'issues-arm',
+      'issues-collect',
       'show-step-json',
       'hide-step',
       'show-step-json-deferred',

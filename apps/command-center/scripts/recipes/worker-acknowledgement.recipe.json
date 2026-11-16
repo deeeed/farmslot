@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Worker acknowledgement before the first checkbox",
+  "description": "Read-only proof of a worker acknowledgement. For a model-free actual-marker case, start operation-log-proof-fixture.mjs with WORKER_ACKNOWLEDGEMENT_PROOF=1, use operation-log-proof for browser login and worker-ack-cli for the recipe. Select an authenticated gateway profile, FARMSLOT_ACK_PROOF_RUN_ID, FARMSLOT_ACK_PROOF_TAB and FARMSLOT_ACK_PROOF_OUTPUT. With WORKER_ACKNOWLEDGEMENT_PROOF=review and FARMSLOT_ACK_PROOF_PHASE=review, prove that a real mark-start with the review terminal's pre-bound attempt does not label its launch clock as worker acknowledgement. Match the run's actual accepted signal attempt to its displayed acknowledgement while checklist completion remains zero.",
+  "workflow": {
+    "entry": "acknowledgement",
+    "nodes": {
+      "acknowledgement": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/prove-worker-acknowledgement.mjs",
+        "timeout_ms": 180000,
+        "intent": "The worker acknowledgement appears before checkbox one is completed.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

@@ -27,6 +27,7 @@ import { updateSlotStatus } from '../core/state.js';
 import { fetchPRDiffFiles } from '../external/github.js';
 import { acceptanceCriteriaFromMarkdown } from '../external/ticket-markdown.js';
 import { loadFleetStatus } from '../fleet/state.js';
+import { ensureRunNodePackTemplate } from '../host-services/node-pack-template.js';
 import {
   buildSmartBranch,
   computeOverrideRate,
@@ -484,6 +485,7 @@ export async function executeWriteTaskStep(
   const { broadcastFn, stepPartialIO } = deps;
   const run = currentRun;
   let current = await normalizeEvalReplayForTaskWrite(runId, getRun(runId)!);
+  await ensureRunNodePackTemplate(current);
   const inputs: Record<string, unknown> = {
     flowType: current.flowType,
     hasTicketData: !!current.ticketData,

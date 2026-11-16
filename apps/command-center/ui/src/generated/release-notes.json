@@ -1,11 +1,8 @@
 {
-  "version": "0.36.5",
-  "date": "2026-11-15",
+  "version": "0.36.6",
+  "date": "2026-11-16",
   "items": [
-    "Compare trial output, evidence and findings against the pre-review original, and export a self-contained HTML snapshot",
-    "View benchmark results by problem type and model with separate original/merged verdicts and measured original-run usage",
-    "Native conversations render like T3 Code: fenced code is syntax-highlighted in a frame with its language, a wrap toggle and a copy button; each answer has a copy button; file paths in answers (`src/app.ts:42`, markdown links to files) are chips that open the file in the workspace panel at that line; Markdown files open rendered, with a raw toggle; workspace files, workspace diffs, turn diffs and tool diffs use the same highlighted viewer",
-    "Run detail shows the worker's tool calls next to Turns, and a \"Cost per checklist step\" panel with tool calls, tokens and wall time for each step",
-    "Keep the acceptance panel neutral before a worker watch exists during preparation; retain genuine ledger errors and missing-watch failures after dispatch"
+    "Keep expected missing or pending observations neutral across run and slot panels, while preserving real read and ledger parse errors",
+    "Co-Pilot Send, Stop and Dangerous start no longer fail with \"Wait for a current read before acting.\" while live runs keep changing slots and workers: the action needs one successful status read after the click, and a read the gateway superseded is tried again"
   ]
 }

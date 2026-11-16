@@ -632,3 +632,32 @@ test('pipeline review header uses each reviewer retained placement', () => {
   assert.match(text, /Review execution/);
   assert.match(text, />\/original\/checkout<\/code/);
 });
+
+test('signal acknowledgement opens a checklist panel before the first progress read', () => {
+  const element = pipeline();
+  const acknowledgedAt = '2026-11-16T01:02:03Z';
+  element.taskProgress = undefined;
+  element.run = {
+    ...run,
+    activeTaskFile: run.taskFile ?? undefined,
+    agentContexts: [
+      {
+        ...agent('primary'),
+        taskFile: run.taskFile,
+        signalAttemptId: 'acknowledged-attempt',
+        attemptStartedAt: acknowledgedAt,
+        lastSignalAt: acknowledgedAt,
+      },
+    ],
+  };
+  const text = element.render();
+  assert.match(litText(text), /data-panel="run-step-progress"/);
+  assert.equal(litBinding(text, '.acknowledgedAt='), acknowledgedAt);
+  element.run = {
+    ...element.run,
+    agentContexts: [
+      { ...agent('primary'), taskFile: run.taskFile, attemptStartedAt: acknowledgedAt },
+    ],
+  };
+  assert.doesNotMatch(litText(element.render()), /data-panel="run-step-progress"/);
+});

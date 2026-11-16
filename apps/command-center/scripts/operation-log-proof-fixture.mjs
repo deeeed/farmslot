@@ -1,7 +1,8 @@
 // Disposable real gateway and files for the operation-log browser proof. No worker is launched.
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,6 +11,8 @@ import { promisify } from 'node:util';
 
 const output = process.env.OPERATION_LOG_PROOF_OUTPUT;
 const ledgerFailure = process.env.ACCEPTANCE_LEDGER_ERROR_PROOF === '1';
+const workerAcknowledgement = ['1', 'review'].includes(process.env.WORKER_ACKNOWLEDGEMENT_PROOF);
+const reviewAcknowledgement = process.env.WORKER_ACKNOWLEDGEMENT_PROOF === 'review';
 const expectedAbsence = process.env.ACCEPTANCE_ABSENCE_PROOF === '1';
 const port = Number(process.env.GATEWAY_PORT);
 assert(output && Number.isSafeInteger(port) && port > 0);
@@ -99,11 +102,15 @@ await writeFile(path.join(taskDir, 'TASK.md'), '# Operation log proof\n');
 await writeFile(path.join(taskDir, paths[0]), '');
 await writeFile(path.join(taskDir, paths[1]), 'Recorded operation output\n');
 updateRun(run.id, {
-  status: ledgerFailure ? 'done' : 'monitoring',
+  status: ledgerFailure ? 'done' : reviewAcknowledgement ? 'reviewing' : 'monitoring',
+  ...(reviewAcknowledgement ? { activeTaskFile: path.join(taskDir, 'REVIEW.md') } : {}),
   taskFile: path.join(config.getOrchestratorTaskRoot('log-proof'), 'proof/TASK.md'),
   steps: run.steps.map((step) => ({
     ...step,
-    status: !ledgerFailure && step.name === 'monitor' ? 'running' : 'done',
+    status:
+      !ledgerFailure && step.name === (reviewAcknowledgement ? 'review' : 'monitor')
+        ? 'running'
+        : 'done',
     outputs:
       step.name === 'monitor'
         ? { artifacts: paths.map((file) => ({ path: file, purpose: 'other' })) }
@@ -145,15 +152,26 @@ if (expectedAbsence) {
 const recorded = path.join(config.getOrchestratorTaskRoot('log-proof'), 'proof');
 await mkdir(path.join(recorded, 'artifacts/operations'), { recursive: true });
 await writeFile(path.join(recorded, 'TASK.md'), '# Operation log proof\n');
-const checklist = '# Worker\n\n- [x] **1. Inspect operation logs**\n';
+const checklist = workerAcknowledgement
+  ? '# Worker\n\n- [ ] **1. Read the task**\n- [ ] **2. Finish the work**\n'
+  : '# Worker\n\n- [x] **1. Inspect operation logs**\n';
+if (workerAcknowledgement) await writeFile(path.join(taskDir, 'CHECKLIST.md'), checklist);
 await writeFile(path.join(recorded, 'CHECKLIST.md'), checklist);
 await writeFile(path.join(recorded, 'CHECKLIST.md.worker'), checklist);
+if (reviewAcknowledgement) {
+  await writeFile(path.join(taskDir, 'REVIEW.md'), checklist);
+  await writeFile(path.join(recorded, 'REVIEW.md'), checklist);
+  await writeFile(
+    path.join(recorded, 'REVIEW.md.worker'),
+    await readFile(path.join(taskDir, 'REVIEW.md'), 'utf8'),
+  );
+}
 if (ledgerFailure)
   await writeFile(
     path.join(recorded, 'artifacts/acceptance-status.json'),
     '{ malformed ledger JSON',
   );
-for (const id of ids) {
+for (const id of workerAcknowledgement ? [] : ids) {
   await writeFile(
     path.join(recorded, 'artifacts/operations', `${id}.json`),
     JSON.stringify({
@@ -179,6 +197,77 @@ await writeFile(
     slots: [{ slot: 'log-proof-1', lifecycle: 'held', current_run_id: run.id, task_file: 'proof' }],
   }),
 );
+let acknowledgement;
+let acknowledgementWatch;
+if (workerAcknowledgement) {
+  const { upsertAgentContext } = await load('services/gateway/src/agents/contexts.ts');
+  const { applyRunningWorkerSignalToContext } = await load(
+    'services/gateway/src/tasks/worker-signal-context.ts',
+  );
+  const { normalizeWorkerSignal } = await load('services/gateway/src/tasks/worker-signals.ts');
+  const launchedAt = new Date(Date.now() - 1000).toISOString();
+  const role = reviewAcknowledgement ? 'review' : 'dev';
+  const contextId = reviewAcknowledgement ? 'ack-review' : 'ack-worker';
+  const reservedAttempt = reviewAcknowledgement ? randomUUID() : undefined;
+  await upsertAgentContext(run.id, role, {
+    id: contextId,
+    label: 'Worker',
+    status: 'launching',
+    taskFile: path.join(taskDir, reviewAcknowledgement ? 'REVIEW.md' : 'TASK.md'),
+    ...(reservedAttempt ? { signalAttemptId: reservedAttempt } : {}),
+    signalFile: path.join(taskDir, 'SIGNAL.json'),
+    startedAt: launchedAt,
+    attemptStartedAt: launchedAt,
+  });
+  // Execute the actual marker. The acknowledgement is adopted from its signal,
+  // not seeded into the run record or injected into the browser.
+  await promisify(execFile)(
+    process.execPath,
+    [
+      path.join(source, 'packages/agent-runtime/scripts/mark-checklist-step.cjs'),
+      taskDir,
+      ...(reviewAcknowledgement ? ['--checklist', 'REVIEW.md', '--signal', 'SIGNAL.json'] : []),
+      'start',
+    ],
+    {
+      env: {
+        ...process.env,
+        ...(reservedAttempt ? { FARMSLOT_SIGNAL_ATTEMPT_ID: reservedAttempt } : {}),
+      },
+    },
+  );
+  const normalized = normalizeWorkerSignal(
+    JSON.parse(await readFile(path.join(taskDir, 'SIGNAL.json'), 'utf8')),
+  );
+  assert(normalized.ok, 'The real marker must emit a valid signal');
+  assert.equal(normalized.signal.step, 'started');
+  await applyRunningWorkerSignalToContext(
+    'log-proof-1',
+    run.id,
+    normalized.signal,
+    role,
+    contextId,
+  );
+  if (reviewAcknowledgement) {
+    const { startProgressWatcher } = await load('services/gateway/src/review/progress.ts');
+    acknowledgementWatch = startProgressWatcher(
+      await config.loadSlotVars('log-proof-1'),
+      path.join(taskDir, 'REVIEW.md'),
+      run.id,
+      'Review',
+      { contextId, role },
+    );
+    await acknowledgementWatch.ready;
+  }
+  acknowledgement = {
+    command: 'production mark start',
+    phase: reviewAcknowledgement ? 'review' : 'worker',
+    contextId,
+    timestamp: normalized.signal.timestamp,
+    signalAttemptId: normalized.signal.attemptId,
+    launchedAt,
+  };
+}
 const { serveRunArtifact } = await load('services/gateway/src/methods/filesystem.ts');
 const { createWebSocketServer } = await load('services/gateway/src/server.ts');
 const server = createServer((request, response) => {
@@ -203,12 +292,13 @@ const server = createServer((request, response) => {
 const wss = createWebSocketServer(server, auth);
 await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
 const url = `ws://127.0.0.1:${port}/ws`;
-const cliSession = ledgerFailure
-  ? await auth.writer.exchangePersonCredential(credential.secret, {
-      deviceName: 'Ledger failure proof',
-      deviceKind: 'cli',
-    })
-  : undefined;
+const cliSession =
+  ledgerFailure || workerAcknowledgement
+    ? await auth.writer.exchangePersonCredential(credential.secret, {
+        deviceName: workerAcknowledgement ? 'Worker acknowledgement proof' : 'Ledger failure proof',
+        deviceKind: 'cli',
+      })
+    : undefined;
 await writeFile(
   path.join(root, 'client/gateways.json'),
   JSON.stringify({
@@ -216,7 +306,13 @@ await writeFile(
     gateways: {
       'operation-log-proof': { url, authMode: 'token', secret: credential.secret },
       ...(cliSession
-        ? { 'ledger-error-cli': { url, authMode: 'token', secret: cliSession.accessToken } }
+        ? {
+            [workerAcknowledgement ? 'worker-ack-cli' : 'ledger-error-cli']: {
+              url,
+              authMode: 'token',
+              secret: cliSession.accessToken,
+            },
+          }
         : {}),
     },
   }),
@@ -234,6 +330,7 @@ await writeFile(
       clientHome: path.join(root, 'client'),
       url,
       pid: process.pid,
+      ...(acknowledgement ? { acknowledgement } : {}),
     },
     null,
     2,
@@ -245,6 +342,7 @@ for (const signal of ['SIGTERM', 'SIGINT'])
   process.on(signal, async () => {
     if (stopping) return;
     stopping = true;
+    if (acknowledgementWatch) await acknowledgementWatch.stop();
     for (const client of wss.clients) client.terminate();
     wss.close();
     server.closeAllConnections();

@@ -37,3 +37,5 @@ docs/operations/evidence/
 # Vendored T3 Code native modules and archives stay byte-identical to upstream.
 apps/companion/modules/
 apps/companion/deps/
+# Symlink to CLAUDE.md. Prettier rejects a symlink passed as a path.
+AGENTS.md

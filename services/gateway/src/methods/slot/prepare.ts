@@ -72,6 +72,7 @@ import { runFixtureSync } from './fixtures.js';
 import {
   CLEAR_INDEX_FLAGS_COMMAND,
   CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND,
+  recreateBranchCommand,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
 } from './git-cleanup-commands.js';
 import {
@@ -1122,17 +1123,9 @@ async function slotPrepareInner(
           `Local ${defaultBranch} fast-forwarded to origin/${defaultBranch} (clean tree)`,
         );
       }
-      // Check if branch exists on remote
-      const remoteExists =
-        (
-          await execGit(
-            'probe-remote-branch',
-            vars,
-            withFarmGitConfig(
-              `cd ${shellQuote(vars.remoteRepo)} && git ls-remote --exit-code origin refs/heads/${shellQuote(branch)} >/dev/null 2>&1`,
-            ),
-          )
-        ).exitCode === 0;
+      // The work-branch fetch above already answered whether origin has the branch: it
+      // succeeded, or it failed only because the ref is absent (any other failure threw).
+      const remoteExists = fetchBranchR.exitCode === 0;
       const newBranchBase =
         resolvedStartRef?.resolvedSha ??
         resolvedStackBase?.resolvedSha ??
@@ -1222,23 +1215,30 @@ async function slotPrepareInner(
           ).exitCode === 0;
         if (localExists) {
           if (forceNewBranch) {
+            branchCreatedFromBase = true;
             if (linkedWorktree) {
               await mutateGit(
                 'delete-local-replay-branch',
                 `cd ${shellQuote(vars.remoteRepo)} && git branch -D ${shellQuote(branch)} 2>/dev/null`,
               );
-            } else {
               await mutateGit(
-                'switch-and-delete-local-branch',
-                `cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch} 2>/dev/null && git branch -D ${shellQuote(branch)} 2>/dev/null`,
+                'recreate-local-branch',
+                `cd ${shellQuote(vars.remoteRepo)} && git checkout -b ${shellQuote(branch)} ${shellQuote(newBranchBase)}`,
+                [newBranchBase],
               );
+            } else {
+              // The slot is on the clean <default> (verified above): delete and recreate in one
+              // pass, instead of a second checkout of <default>, `branch -D` and `checkout -b`.
+              const recreateR = await mutateGit(
+                'recreate-local-branch',
+                `cd ${shellQuote(vars.remoteRepo)} && { ${recreateBranchCommand(branch, newBranchBase, shellQuote)}; }`,
+                [newBranchBase],
+              );
+              if (recreateR.exitCode !== 0)
+                throw new Error(
+                  `recreating ${branch} at ${newBranchBaseLabel} failed on ${vars.slotId} (${vars.remoteRepo}): ${recreateR.stderr.slice(-200) || recreateR.stdout.slice(-200)}`,
+                );
             }
-            branchCreatedFromBase = true;
-            await mutateGit(
-              'recreate-local-branch',
-              `cd ${shellQuote(vars.remoteRepo)} && git checkout -b ${shellQuote(branch)} ${shellQuote(newBranchBase)}`,
-              [newBranchBase],
-            );
             step('branch', `Recreated local ${branch} from ${newBranchBaseLabel}`);
           } else {
             await mutateGit(

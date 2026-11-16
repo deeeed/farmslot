@@ -6,6 +6,11 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.36.6 - 2026-11-16
+
+- Keep expected missing or pending observations neutral across run and slot panels, while preserving real read and ledger parse errors.
+- Co-Pilot Send, Stop and Dangerous start no longer fail with "Wait for a current read before acting." while live runs keep changing slots and workers: the action needs one successful status read after the click, and a read the gateway superseded is tried again.
+
 ## 0.36.5 - 2026-11-15
 
 - Compare trial output, evidence and findings against the pre-review original, and export a self-contained HTML snapshot.

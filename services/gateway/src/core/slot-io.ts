@@ -9,6 +9,7 @@ import {
   copyFile,
   lstat,
   mkdir,
+  open,
   readdir,
   readFile,
   realpath,
@@ -199,6 +200,41 @@ export async function slotReadFile(ctx: SlotLocality, filePath: string): Promise
     ...nodePathParams(filePath),
   })) as { content: string };
   return result.content;
+}
+
+/** Up to `length` bytes at `offset`, with the file's size and incarnation; one node request. */
+export async function slotReadRange(
+  ctx: SlotLocality,
+  filePath: string,
+  offset: number,
+  length: number,
+): Promise<{ bytes: Buffer; size: number; fileIdentity?: string }> {
+  if (local(ctx)) {
+    const handle = await open(filePath, 'r');
+    try {
+      const info = await handle.stat();
+      const toRead = Math.max(0, Math.min(length, info.size - offset));
+      const buffer = Buffer.alloc(toRead);
+      const { bytesRead } = await handle.read(buffer, 0, toRead, offset);
+      return {
+        bytes: buffer.subarray(0, bytesRead),
+        size: info.size,
+        fileIdentity: `${info.dev}:${info.ino}`,
+      };
+    } finally {
+      await handle.close();
+    }
+  }
+  const chunk = (await requestFor(ctx)('fs.readChunk', {
+    ...nodePathParams(filePath),
+    offset,
+    length,
+  })) as NodeFsReadChunkResult;
+  return {
+    bytes: Buffer.from(chunk.content, 'base64'),
+    size: chunk.size,
+    fileIdentity: chunk.fileIdentity,
+  };
 }
 
 export async function slotRealpath(ctx: SlotLocality, filePath: string): Promise<string> {

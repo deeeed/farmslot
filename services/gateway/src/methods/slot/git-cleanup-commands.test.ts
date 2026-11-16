@@ -8,6 +8,7 @@ import test from 'node:test';
 import {
   CLEAR_INDEX_FLAGS_COMMAND,
   CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND,
+  recreateBranchCommand,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
   REFRESH_REMOTE_REF_LOCKS_COMMAND,
 } from './git-cleanup-commands.js';
@@ -198,4 +199,71 @@ test('REFRESH_REMOTE_REF_LOCKS_COMMAND leaves owned remote ref locks in place', 
 
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   assert.doesNotMatch(result.stdout, /RM_CALLED/);
+});
+
+const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+
+/** A slot clone on a work branch, its local main one commit behind origin/main. */
+function slotBehindOrigin(prefix: string) {
+  const root = mkdtempSync(path.join(tmpdir(), prefix));
+  const origin = path.join(root, 'origin.git');
+  const slot = path.join(root, 'slot');
+  git(root, 'init', '-q', '--bare', '-b', 'main', origin);
+  git(root, 'clone', '-q', origin, slot);
+  git(slot, 'config', 'user.email', 't@t');
+  git(slot, 'config', 'user.name', 't');
+  git(slot, 'checkout', '-q', '-b', 'main');
+  writeFileSync(path.join(slot, 'a.txt'), 'a1\n');
+  git(slot, 'add', '.');
+  git(slot, 'commit', '-qm', 'c1');
+  git(slot, 'push', '-q', 'origin', 'HEAD:refs/heads/main');
+  git(slot, 'branch', '-q', '--set-upstream-to=origin/main');
+  writeFileSync(path.join(slot, 'b.txt'), 'b1\n');
+  git(slot, 'add', '.');
+  git(slot, 'commit', '-qm', 'c2');
+  git(slot, 'push', '-q', 'origin', 'HEAD:refs/heads/main');
+  git(slot, 'reset', '-q', '--hard', 'HEAD~1');
+  git(slot, 'checkout', '-q', '-b', 'feat/x');
+  return { root, slot };
+}
+
+test('recreateBranchCommand recreates the branch at its base with no config from the old one', () => {
+  const { root, slot } = slotBehindOrigin('farmslot-recreate-');
+  try {
+    writeFileSync(path.join(slot, 'w.txt'), 'w\n');
+    git(slot, 'add', '.');
+    git(slot, 'commit', '-qm', 'work');
+    git(slot, 'config', 'branch.feat/x.merge', 'refs/heads/feat/x');
+    git(slot, 'checkout', '-q', 'main');
+    const base = git(slot, 'rev-parse', 'origin/main').stdout.trim();
+    const result = runBash(recreateBranchCommand('feat/x', base, quote), slot);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(git(slot, 'symbolic-ref', 'HEAD').stdout.trim(), 'refs/heads/feat/x');
+    assert.equal(git(slot, 'rev-parse', 'HEAD').stdout.trim(), base);
+    const config = spawnSync('git', ['config', '--get-regexp', '^branch\\.feat/x\\.'], {
+      cwd: slot,
+      encoding: 'utf8',
+    });
+    assert.equal(config.stdout.trim(), '', 'no config left from the old branch');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('recreateBranchCommand is refused, config kept, when another worktree holds the branch', () => {
+  const { root, slot } = slotBehindOrigin('farmslot-recreate-held-');
+  try {
+    git(slot, 'config', 'branch.feat/x.merge', 'refs/heads/feat/x');
+    git(slot, 'checkout', '-q', 'main');
+    git(slot, 'worktree', 'add', '-q', path.join(root, 'aux'), 'feat/x');
+    const before = git(slot, 'rev-parse', 'refs/heads/feat/x').stdout.trim();
+    const base = git(slot, 'rev-parse', 'origin/main').stdout.trim();
+    const result = runBash(recreateBranchCommand('feat/x', base, quote), slot);
+    assert.notEqual(result.status, 0);
+    assert.equal(git(slot, 'rev-parse', 'refs/heads/feat/x').stdout.trim(), before);
+    assert.equal(git(slot, 'config', 'branch.feat/x.merge').stdout.trim(), 'refs/heads/feat/x');
+    assert.equal(git(slot, 'symbolic-ref', 'HEAD').stdout.trim(), 'refs/heads/main');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
