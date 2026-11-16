@@ -83,6 +83,11 @@ export function navigateHash(
   else history[mode === 'push' ? 'pushState' : 'replaceState'](state, '', next);
 }
 
+/** Replace this entry's private view metadata without changing its URL or shell choices. */
+export function replaceHistoryEntryState(state: unknown): void {
+  history.replaceState(state, '');
+}
+
 /** Context owns the route, parameter and omitted default for a persistent view choice. */
 export interface ViewChoiceContext {
   route: string;

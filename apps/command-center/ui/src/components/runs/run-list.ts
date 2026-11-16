@@ -49,7 +49,7 @@ import {
 } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
-import { navigateHash } from '../../utils/url-state.js';
+import { navigateHash, replaceHistoryEntryState } from '../../utils/url-state.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
 import { readCurrent } from '../shared/read-current.js';
 import { canActOn, ResourceQueryController } from '../shared/resource-query-controller.js';
@@ -201,9 +201,8 @@ export class RunList extends RunListState {
   private restoreScrollFrame?: number;
   private readonly saveScroll = () => {
     if (this.selectedRunId)
-      history.replaceState(
+      replaceHistoryEntryState(
         withRunDetailScroll(history.state, this.selectedRunId, this.scrollTop),
-        '',
       );
   };
   private readonly cancelScrollRestore = () => {
