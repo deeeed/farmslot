@@ -8,7 +8,8 @@ import test from 'node:test';
 import {
   CLEAR_INDEX_FLAGS_COMMAND,
   CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND,
-  recreateWorkBranchCommand,
+  landDefaultBranchCommand,
+  recreateBranchCommand,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
   REFRESH_REMOTE_REF_LOCKS_COMMAND,
 } from './git-cleanup-commands.js';
@@ -203,129 +204,80 @@ test('REFRESH_REMOTE_REF_LOCKS_COMMAND leaves owned remote ref locks in place', 
 
 const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
 
-test('recreateWorkBranchCommand leaves the branch at its base, the tree clean of tracked edits, default at origin and no stale branch config', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'farmslot-recreate-branch-'));
+/** A slot clone on a work branch, its local main one commit behind origin/main. */
+function slotBehindOrigin(prefix: string) {
+  const root = mkdtempSync(path.join(tmpdir(), prefix));
+  const origin = path.join(root, 'origin.git');
+  const slot = path.join(root, 'slot');
+  git(root, 'init', '-q', '--bare', '-b', 'main', origin);
+  git(root, 'clone', '-q', origin, slot);
+  git(slot, 'config', 'user.email', 't@t');
+  git(slot, 'config', 'user.name', 't');
+  git(slot, 'checkout', '-q', '-b', 'main');
+  writeFileSync(path.join(slot, 'a.txt'), 'a1\n');
+  git(slot, 'add', '.');
+  git(slot, 'commit', '-qm', 'c1');
+  git(slot, 'push', '-q', 'origin', 'HEAD:refs/heads/main');
+  git(slot, 'branch', '-q', '--set-upstream-to=origin/main');
+  writeFileSync(path.join(slot, 'b.txt'), 'b1\n');
+  git(slot, 'add', '.');
+  git(slot, 'commit', '-qm', 'c2');
+  git(slot, 'push', '-q', 'origin', 'HEAD:refs/heads/main');
+  git(slot, 'reset', '-q', '--hard', 'HEAD~1');
+  git(slot, 'checkout', '-q', '-b', 'feat/x');
+  return { root, slot };
+}
+
+test('landDefaultBranchCommand checks out main at origin/main and keeps its upstream', () => {
+  const { root, slot } = slotBehindOrigin('farmslot-land-default-');
   try {
-    const origin = path.join(root, 'origin.git');
-    const slot = path.join(root, 'slot');
-    git(root, 'init', '-q', '--bare', '-b', 'main', origin);
-    git(root, 'clone', '-q', origin, slot);
-    git(slot, 'config', 'user.email', 't@t');
-    git(slot, 'config', 'user.name', 't');
-    git(slot, 'checkout', '-q', '-b', 'main');
-    writeFileSync(path.join(slot, 'a.txt'), 'a1\n');
-    git(slot, 'add', '.');
-    git(slot, 'commit', '-qm', 'c1');
-    git(slot, 'push', '-q', 'origin', 'main');
-    // origin moves ahead; the slot's local main stays behind
-    writeFileSync(path.join(slot, 'b.txt'), 'b1\n');
-    git(slot, 'add', '.');
-    git(slot, 'commit', '-qm', 'c2');
-    git(slot, 'push', '-q', 'origin', 'main');
-    git(slot, 'reset', '-q', '--hard', 'HEAD~1');
-    git(slot, 'fetch', '-q', 'origin');
-    // an older work branch with a commit, an upstream from a past publish, and local edits
-    git(slot, 'checkout', '-q', '-b', 'feat/x');
+    const upstream = git(slot, 'config', 'branch.main.merge').stdout.trim();
+    const result = runBash(landDefaultBranchCommand('main', quote), slot);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(git(slot, 'symbolic-ref', 'HEAD').stdout.trim(), 'refs/heads/main');
+    assert.equal(
+      git(slot, 'rev-parse', 'HEAD').stdout.trim(),
+      git(slot, 'rev-parse', 'origin/main').stdout.trim(),
+    );
+    assert.equal(git(slot, 'config', 'branch.main.merge').stdout.trim(), upstream);
+    assert.equal(git(slot, 'status', '--porcelain').stdout.trim(), '');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('landDefaultBranchCommand is refused when another worktree has main checked out', () => {
+  const { root, slot } = slotBehindOrigin('farmslot-land-default-held-');
+  try {
+    git(slot, 'worktree', 'add', '-q', path.join(root, 'aux'), 'main');
+    const before = git(slot, 'rev-parse', 'refs/heads/main').stdout.trim();
+    const result = runBash(landDefaultBranchCommand('main', quote), slot);
+    assert.notEqual(result.status, 0);
+    assert.equal(git(slot, 'rev-parse', 'refs/heads/main').stdout.trim(), before);
+    assert.equal(git(slot, 'symbolic-ref', 'HEAD').stdout.trim(), 'refs/heads/feat/x');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('recreateBranchCommand recreates the branch at its base with no config from the old one', () => {
+  const { root, slot } = slotBehindOrigin('farmslot-recreate-');
+  try {
     writeFileSync(path.join(slot, 'w.txt'), 'w\n');
     git(slot, 'add', '.');
     git(slot, 'commit', '-qm', 'work');
     git(slot, 'config', 'branch.feat/x.merge', 'refs/heads/feat/x');
-    writeFileSync(path.join(slot, 'a.txt'), 'local edit\n');
+    git(slot, 'checkout', '-q', 'main');
     const base = git(slot, 'rev-parse', 'origin/main').stdout.trim();
-    const result = runBash(recreateWorkBranchCommand('feat/x', base, 'main', quote), slot);
+    const result = runBash(recreateBranchCommand('feat/x', base, quote), slot);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(git(slot, 'symbolic-ref', 'HEAD').stdout.trim(), 'refs/heads/feat/x');
     assert.equal(git(slot, 'rev-parse', 'HEAD').stdout.trim(), base);
-    assert.equal(git(slot, 'rev-parse', 'refs/heads/main').stdout.trim(), base);
-    assert.equal(git(slot, 'status', '--porcelain', '--untracked-files=no').stdout.trim(), '');
     const config = spawnSync('git', ['config', '--get-regexp', '^branch\\.feat/x\\.'], {
       cwd: slot,
       encoding: 'utf8',
     });
     assert.equal(config.stdout.trim(), '', 'no config left from the old branch');
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('recreateWorkBranchCommand refuses when another worktree has the default or work branch checked out', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'farmslot-recreate-worktree-'));
-  try {
-    const origin = path.join(root, 'origin.git');
-    const slot = path.join(root, 'slot');
-    git(root, 'init', '-q', '--bare', '-b', 'main', origin);
-    git(root, 'clone', '-q', origin, slot);
-    git(slot, 'config', 'user.email', 't@t');
-    git(slot, 'config', 'user.name', 't');
-    git(slot, 'checkout', '-q', '-b', 'main');
-    writeFileSync(path.join(slot, 'a.txt'), 'a1\n');
-    git(slot, 'add', '.');
-    git(slot, 'commit', '-qm', 'c1');
-    git(slot, 'push', '-q', 'origin', 'main');
-    git(slot, 'fetch', '-q', 'origin');
-    const base = git(slot, 'rev-parse', 'origin/main').stdout.trim();
-    // The slot itself on main is its own checkout, not another worktree's.
-    assert.equal(runBash(recreateWorkBranchCommand('feat/x', base, 'main', quote), slot).status, 0);
-    // Another worktree takes main: moving main under it is refused, nothing changes.
-    const aux = path.join(root, 'aux');
-    git(slot, 'worktree', 'add', '-q', aux, 'main');
-    const mainBefore = git(slot, 'rev-parse', 'refs/heads/main').stdout.trim();
-    const headBefore = git(slot, 'rev-parse', 'HEAD').stdout.trim();
-    const refused = runBash(recreateWorkBranchCommand('feat/y', base, 'main', quote), slot);
-    assert.equal(refused.status, 128);
-    assert.match(refused.stderr, /refs\/heads\/main is checked out in another worktree/);
-    assert.equal(git(slot, 'rev-parse', 'refs/heads/main').stdout.trim(), mainBefore);
-    assert.equal(git(slot, 'rev-parse', 'HEAD').stdout.trim(), headBefore);
-    assert.equal(git(aux, 'status', '--porcelain').stdout.trim(), '');
-    // The other worktree holds the work branch itself.
-    git(aux, 'checkout', '-q', '-b', 'feat/z');
-    const busy = runBash(recreateWorkBranchCommand('feat/z', base, 'dev', quote), slot);
-    assert.equal(busy.status, 128);
-    assert.match(busy.stderr, /refs\/heads\/feat\/z is checked out in another worktree/);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('recreateWorkBranchCommand refuses when the worktree listing itself fails', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'farmslot-recreate-listing-'));
-  try {
-    const origin = path.join(root, 'origin.git');
-    const slot = path.join(root, 'slot');
-    git(root, 'init', '-q', '--bare', '-b', 'main', origin);
-    git(root, 'clone', '-q', origin, slot);
-    git(slot, 'config', 'user.email', 't@t');
-    git(slot, 'config', 'user.name', 't');
-    git(slot, 'checkout', '-q', '-b', 'main');
-    writeFileSync(path.join(slot, 'a.txt'), 'a1\n');
-    git(slot, 'add', '.');
-    git(slot, 'commit', '-qm', 'c1');
-    git(slot, 'push', '-q', 'origin', 'main');
-    git(slot, 'checkout', '-q', '-b', 'feat/x');
-    git(slot, 'worktree', 'add', '-q', path.join(root, 'aux'), 'main');
-    const base = git(slot, 'rev-parse', 'origin/main').stdout.trim();
-    const mainBefore = git(slot, 'rev-parse', 'refs/heads/main').stdout.trim();
-    // A git that fails only `worktree list`, as a broken or locked repo can.
-    const shim = path.join(root, 'bin');
-    const realGit = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
-    spawnSync('mkdir', ['-p', shim]);
-    writeFileSync(
-      path.join(shim, 'git'),
-      `#!/bin/sh\nif [ "$1" = worktree ] && [ "$2" = list ]; then exit 128; fi\nexec ${realGit} "$@"\n`,
-      { mode: 0o755 },
-    );
-    const result = spawnSync('bash', ['-c', 'eval "$CMD"'], {
-      cwd: slot,
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        PATH: `${shim}:${process.env.PATH}`,
-        CMD: recreateWorkBranchCommand('feat/y', base, 'main', quote),
-      },
-    });
-    assert.equal(result.status, 128);
-    assert.equal(git(slot, 'rev-parse', 'refs/heads/main').stdout.trim(), mainBefore);
-    assert.equal(git(slot, 'symbolic-ref', 'HEAD').stdout.trim(), 'refs/heads/feat/x');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
