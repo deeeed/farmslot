@@ -100,7 +100,7 @@ export class NativeHostObservation {
   private changes = 0;
   private failed = false;
   /** The source state the last arming failed on. An event re-arms only once the source differs. */
-  private failedSource?: Promise<string>;
+  private failedSource?: string;
   private recovering?: Promise<void>;
   private arming = false;
   private retrying?: Promise<void>;
@@ -149,9 +149,16 @@ export class NativeHostObservation {
     this.failedSource = undefined;
     this.arming = true;
     const generation = this.generation;
+    // The scan outcome arming failed on, when a scan is what failed.
+    let scanFailure: string | undefined;
+    const scan = () =>
+      this.scan().catch((error: unknown) => {
+        scanFailure = sourceFailureKey(error);
+        throw error;
+      });
     try {
       this.arm();
-      const before = await this.scan();
+      const before = await scan();
       if (generation !== this.generation || this.stopped) return;
       const change = this.changes;
       // A failed profile sample affects only profile reads (ADR-057 Amendment 11).
@@ -161,7 +168,7 @@ export class NativeHostObservation {
       // Watcher delivery fences the account sample; the async scan fences the durable bytes.
       const sampleChanged = change !== this.changes;
       if (generation !== this.generation || this.stopped) return;
-      const after = await this.scan();
+      const after = await scan();
       if (generation !== this.generation || this.stopped) return;
       if (this.failed) throw new NativeSourceUnavailable('arming-source-changed');
       if (sampleChanged || before.digest !== after.digest)
@@ -180,12 +187,10 @@ export class NativeHostObservation {
     } catch (error) {
       if (generation !== this.generation || this.stopped) return;
       this.fail(error instanceof NativeSourceUnavailable ? error.reason : 'arming-failed');
-      // A source that changed while arming is retried by its next event; any other failure
-      // waits until the source differs from the state it failed on.
-      this.failedSource =
-        error instanceof NativeSourceUnavailable && error.reason === 'arming-source-changed'
-          ? undefined
-          : this.sourceState();
+      // A failed scan waits until a scan differs from it. Any other failure is retried by the
+      // next event, as before. Events during arming were not handled, so compare once now.
+      this.failedSource = scanFailure;
+      if (scanFailure) this.recoverWhenChanged();
       if (error instanceof NativeSourceUnavailable) throw error;
       throw new NativeSourceUnavailable('arming-failed');
     } finally {
@@ -398,14 +403,14 @@ export class NativeHostObservation {
    */
   private recoverWhenChanged(): void {
     const failedSource = this.failedSource;
-    if (failedSource === undefined || this.recovering) {
+    if (failedSource === undefined) {
       this.recover();
       return;
     }
     const generation = this.generation;
-    void Promise.all([failedSource, this.sourceState()]).then(([failedOn, current]) => {
+    void this.sourceState().then((current) => {
       if (generation !== this.generation || this.stopped || !this.failed) return;
-      if (failedSource === this.failedSource && current === failedOn) return;
+      if (failedSource === this.failedSource && current === failedSource) return;
       this.recover();
     });
   }
