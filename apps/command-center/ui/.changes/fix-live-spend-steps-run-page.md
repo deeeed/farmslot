@@ -1,1 +1,1 @@
-- The run page (`#runs?run=`) shows "Spent so far" and the per-step cost in its progress panel, as the slot view does.
+- The run page (`#runs?run=`) shows "Spent so far" at the top of its step progress panel, and the cost in the panel summary while it is collapsed. The slot view keeps its own.
