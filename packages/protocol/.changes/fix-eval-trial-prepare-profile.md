@@ -1,1 +1,0 @@
-- Eval trial start accepts a prepare profile. A blank profile matches the default. A named profile starts its own trial.

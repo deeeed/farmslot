@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.28.0 - 2026-11-16
+
+- Allow issue-buffer adapters to complete diagnostics asynchronously while preserving synchronous adapters.
+
 ## 0.27.10 - 2026-11-15
 
 - Align exact package dependencies with the protocol 0.86.1, runner 0.46.19 and runtime 0.48.2 release cohort.

@@ -6,6 +6,11 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.31.22 - 2026-11-16
+
+- Run issue-buffer commands through the existing CDP broker command session with fresh target resolution.
+- Reduce Mobile source-fingerprint Git processes while retaining fresh observations and compatible fingerprints.
+
 ## 0.31.21 - 2026-11-15
 
 - Align exact package dependencies with the protocol 0.86.1, runner 0.46.19 and runtime 0.48.2 release cohort.

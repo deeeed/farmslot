@@ -6,6 +6,15 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.87.0 - 2026-11-16
+
+- Run create accepts an optional task note. The generated TASK.md appends it as one Note section.
+- Eval trial start accepts a domain. A blank domain matches the default. A named domain starts its own trial.
+- Eval trial start accepts an optional worker transport and native profile. The default stays tmux.
+- Eval trial start accepts a prepare profile. A blank profile matches the default. A named profile starts its own trial.
+- `START_REFUSED_WORKER_SIGNAL_STATUS` names the one finished status a worker`s `mark start`refuses to re-open, so the gateway and the mark engine cannot drift apart about which signal a re-dispatch must clear. It is narrower than`isTerminalWorkerSignalStatus`on purpose:`blocked` is terminal for the run but resumable for the worker.
+- Run detail (`run.get`) no longer rereads on every farm-wide run change: it depends on its own run key, which the gateway advances when a run whose facts it serves changes.
+
 ## 0.86.1 - 2026-11-15
 
 - `WorkerTerminalContractDocument` carries `proofArtifacts`, the evidence each declaring checklist step claims, and `unattendedCompletion`, the gateway's statement that no person answers a refusal on this run.
