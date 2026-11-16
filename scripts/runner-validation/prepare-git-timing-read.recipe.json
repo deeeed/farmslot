@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Read retained prepare Git command timings",
-  "description": "Set FARMSLOT_PREPARE_PROOF_RUN to the next real Mobile run and select an authenticated gateway profile. Reads the stored run snapshot only; creates no runs, commands or slot changes. Fails on missing or inconsistent Git measurements.",
+  "description": "Set FARMSLOT_PREPARE_PROOF_RUN to the next real Mobile run and select an authenticated gateway profile. Run with FARMSLOT_PREPARE_PROOF_ACTIVE=1 after its first Git measurement to check the human stage detail, then again after prepare finishes. Reads stored snapshots only; creates no runs, commands or slot changes. Fails on missing or inconsistent Git measurements.",
   "workflow": {
     "entry": "read",
     "nodes": {

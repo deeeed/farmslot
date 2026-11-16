@@ -79,6 +79,8 @@ Command arguments, output and exception text are omitted. Use the read-only
 [prepare Git timing recipe](../../scripts/runner-validation/prepare-git-timing-read.recipe.json)
 with `FARMSLOT_PREPARE_PROOF_RUN` and an authenticated `FARMSLOT_GATEWAY_PROFILE`
 to read the next real run's `prepare.outputs.subSteps` before changing a slow Git operation.
+Use `FARMSLOT_PREPARE_PROOF_ACTIVE=1` during Git work to check that measurements
+leave the human stage detail intact, then rerun after prepare completes.
 
 HTTP ingress shares the request context used for managed exec and node attribution.
 `farmslot_http_requests_total` counts responses by bounded `http.*` route and status

@@ -13,11 +13,16 @@ const client = await new GatewayClient({ ...target, timeout: 30_000 }).connect()
 try {
   const { run } = await client.call<RunGetResult>('run.get', { runId, view: 'snapshot' });
   const prepare = run.steps.find((step) => step.name === 'prepare');
-  assert.equal(prepare?.status, 'done', 'Wait for the real prepare to finish');
+  const expectedStatus = process.env.FARMSLOT_PREPARE_PROOF_ACTIVE === '1' ? 'running' : 'done';
+  assert.equal(prepare?.status, expectedStatus, 'Observe the selected real prepare phase');
   const rows = prepare?.outputs?.subSteps;
   assert(Array.isArray(rows), 'Prepare has no retained substeps');
   const timings = rows.filter(isRecord).filter((row) => /^git\.\d+\./.test(String(row.name)));
   assert(timings.length, 'Prepare has no Git timing records; instrumentation is not proven');
+  assert(
+    timings.every((row) => row.detail !== prepare?.detail),
+    'Timing measurements must not replace the human stage detail',
+  );
   const commands = timings.map((row) => {
     assert(typeof row.detail === 'string');
     const detail: unknown = JSON.parse(row.detail);
@@ -34,6 +39,7 @@ try {
     status: 'pass',
     runId: run.id,
     slotId: run.slotId,
+    prepareStatus: prepare?.status,
     startedAt: prepare?.startedAt,
     completedAt: prepare?.completedAt,
     commands,

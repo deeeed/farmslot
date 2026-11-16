@@ -211,8 +211,11 @@ export function createPrepareProgressEmitter(params: {
   let lastProgressText: string | undefined;
   return (event: string, payload: unknown) => {
     collector.emit(event, payload);
-    const p = payload as { name?: string; detail?: string; stream?: string } | undefined;
+    const p = payload as
+      | { name?: string; detail?: string; stream?: string; measurement?: string }
+      | undefined;
     if (p?.name) {
+      const gitMeasurement = event === 'slot.prepare.step' && p.measurement === 'git-command';
       // Named step events are infrequent — safe to snapshot + broadcast
       const lo = collector.getLastOutput();
       const outputs: Record<string, unknown> = {
@@ -223,10 +226,10 @@ export function createPrepareProgressEmitter(params: {
       // Progress is a line that says something new: not a stall notice, and not
       // a heartbeat repeating the last line with a later elapsed time.
       const text = (p.detail || p.name).replace(ELAPSED_SUFFIX, '');
-      const moved = !text.includes(STALL_NOTICE) && text !== lastProgressText;
+      const moved = !gitMeasurement && !text.includes(STALL_NOTICE) && text !== lastProgressText;
       if (moved) lastProgressText = text;
       updateRunStep(runId, 'prepare', {
-        detail: p.detail || p.name,
+        ...(!gitMeasurement ? { detail: p.detail || p.name } : {}),
         outputs,
         ...(moved ? { lastProgressAt: new Date().toISOString() } : {}),
       });
