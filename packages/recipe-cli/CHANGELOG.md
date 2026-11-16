@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.15 - 2026-11-16
+
+- Reuse prepared provenance and library metadata while preserving drift boundaries, provider import checks and execution-affecting configuration inputs.
+
 ## 0.35.14 - 2026-11-16
 
 - Await issue-buffer arming and collection so adapters can reuse an existing bridge without helper processes.
