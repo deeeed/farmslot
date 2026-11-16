@@ -1,3 +1,5 @@
+import { explicitDevHosts } from '@farmslot/protocol/explicit-dev-host';
+
 export interface CommandCenterDevBind {
   host?: string;
   allowedHosts?: string[];
@@ -8,10 +10,7 @@ export function commandCenterDevBind(
   env: Record<string, string | undefined>,
 ): CommandCenterDevBind {
   const host = env.FARMSLOT_UI_HOST?.trim();
-  const allowedHosts = (env.FARMSLOT_UI_ALLOWED_HOSTS ?? '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
+  const allowedHosts = explicitDevHosts(env.FARMSLOT_UI_ALLOWED_HOSTS);
   return {
     ...(host ? { host } : {}),
     ...(allowedHosts.length > 0 ? { allowedHosts } : {}),

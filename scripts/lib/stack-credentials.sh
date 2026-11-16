@@ -4,6 +4,7 @@
 clear_inherited_gateway_credentials() {
   unset FARMSLOT_NODE_TOKEN FARMSLOT_GATEWAY_TOKEN FARMSLOT_GATEWAY_PASSWORD
   unset GATEWAY_HOST FARMSLOT_GATEWAY_AUTH_MODE
+  unset FARMSLOT_UI_HOST FARMSLOT_UI_ALLOWED_HOSTS
 }
 
 # The caller selects this sandbox home. FarmPaths resolves its remaining roots.

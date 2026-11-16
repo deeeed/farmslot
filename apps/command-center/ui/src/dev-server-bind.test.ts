@@ -17,7 +17,7 @@ test('dev server bind reads host, allowed hosts, and gateway port from env', () 
   assert.deepEqual(
     commandCenterDevBind({
       FARMSLOT_UI_HOST: ' 0.0.0.0 ',
-      FARMSLOT_UI_ALLOWED_HOSTS: ' lan.example, other.example ',
+      FARMSLOT_UI_ALLOWED_HOSTS: ' lan.example, other.example, .lan.example, *, lan.example:5175 ',
     }),
     { host: '0.0.0.0', allowedHosts: ['lan.example', 'other.example'] },
   );
