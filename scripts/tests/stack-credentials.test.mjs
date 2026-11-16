@@ -61,7 +61,7 @@ function fixture(t, auth = '') {
   const capture = path.join(root, 'capture.json');
   writeFileSync(
     path.join(bin, 'yarn'),
-    '#!/usr/bin/env node\nconst fs=require("node:fs");fs.writeFileSync(process.env.STACK_CREDENTIAL_CAPTURE,JSON.stringify(Object.fromEntries(["FARMSLOT_NODE_TOKEN","FARMSLOT_GATEWAY_TOKEN","FARMSLOT_GATEWAY_PASSWORD","GATEWAY_URL","GATEWAY_HOST","FARMSLOT_GATEWAY_AUTH_MODE","FARMSLOT_UI_HOST","FARMSLOT_UI_ALLOWED_HOSTS","FARMSLOT_HOME","NODE_OPTIONS","TYPESAFE_API_KEY","FARMSLOT_ASSESSMENT_MODEL","FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID"].map(k=>[k,process.env[k]??null]))));if(process.env.STACK_KEEP_CAPTURE_RUNNING==="1")setInterval(()=>{},20);\n',
+    '#!/usr/bin/env node\nconst fs=require("node:fs");fs.writeFileSync(process.env.STACK_CREDENTIAL_CAPTURE,JSON.stringify(Object.fromEntries(["FARMSLOT_NODE_TOKEN","FARMSLOT_GATEWAY_TOKEN","FARMSLOT_GATEWAY_PASSWORD","GATEWAY_URL","GATEWAY_HOST","FARMSLOT_GATEWAY_AUTH_MODE","FARMSLOT_UI_HOST","FARMSLOT_UI_ALLOWED_HOSTS","FARMSLOT_DEV_UI_ORIGINS","NODE_ENV","FARMSLOT_HOME","NODE_OPTIONS","TYPESAFE_API_KEY","FARMSLOT_ASSESSMENT_MODEL","FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID"].map(k=>[k,process.env[k]??null]))));if(process.env.STACK_KEEP_CAPTURE_RUNNING==="1")setInterval(()=>{},20);\n',
     { mode: 0o755 },
   );
   const env = {
@@ -96,6 +96,20 @@ function fixture(t, auth = '') {
     },
   };
 }
+
+test('dev stack admits page origins without exporting NODE_ENV', (t) => {
+  const f = fixture(t);
+  delete f.env.NODE_ENV;
+  delete f.env.FARMSLOT_DEV_UI_ORIGINS;
+  const child = f.run();
+  assert.equal(child.FARMSLOT_DEV_UI_ORIGINS, '1');
+  assert.equal(child.NODE_ENV, null);
+  const kept = fixture(t);
+  kept.env.NODE_ENV = 'production';
+  const keptChild = kept.run();
+  assert.equal(keptChild.NODE_ENV, 'production');
+  assert.equal(keptChild.FARMSLOT_DEV_UI_ORIGINS, '1');
+});
 
 test('dev stack drops inherited parent credentials before co-launching its node', (t) => {
   const f = fixture(t);
