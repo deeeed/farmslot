@@ -199,6 +199,17 @@ export interface RuntimeCapabilityRegistryOptions {
    * tests and validation gateways that have no run store.
    */
   isTerminalOwner?: (ownerRunId: string) => boolean;
+  /**
+   * Whether the RUN STORE vouches for this owner as STILL RUNNING.
+   *
+   * Not the negation of `isTerminalOwner`: this one answers `true` only for a
+   * run the store can actually name as live, so an owner it has evicted,
+   * archived or never had reads `false` and stays fenced. That asymmetry is the
+   * whole point — family cleanup is scoped by what this vouches for, and an
+   * unwired predicate (tests, validation gateways with no run store) keeps the
+   * old family-wide behaviour rather than opening the fence for everyone.
+   */
+  isLiveOwner?: (ownerRunId: string) => boolean;
   /** Latest durable replay of a live run. Older cleanup fences belong to its prior attempt. */
   recoveryStartedAtForRun?: (ownerRunId: string) => number | undefined;
 
@@ -3055,25 +3066,43 @@ export class RuntimeCapabilityRegistry {
    *
    * The owner is also fenced, so a later acquire cannot hand a provider to a run
    * that is already terminal.
+   *
+   * What this does NOT clean is a family member the run store still vouches for
+   * as live. One comparison run closing used to take the whole family's
+   * providers and fence every owner holding one, which stopped an active
+   * sibling's proof permit mid-recording and then refused to give it back. A
+   * sibling that is still running is not part of anyone else's terminal
+   * cleanup; its own will come when it ends.
    */
   async releaseRunTerminal(
     slotId: string,
     ownerRunId: string,
     familyId?: string,
   ): Promise<RuntimeCapabilityReleaseResult> {
+    const liveSibling = (runId: string): boolean =>
+      runId !== ownerRunId && this.options.isLiveOwner?.(runId) === true;
     // Fence before releasing, not after: an acquire queued behind this release
-    // would otherwise slip in the moment it finishes. The family is fenced as a
-    // whole because the whole family is what this cleans, so a sibling cannot
-    // reacquire on the way out.
+    // would otherwise slip in the moment it finishes. The family entry records
+    // that a family-scope cleanup happened here; whether it refuses a given
+    // acquire is decided at acquire time, against that run's liveness then.
     this.fenceOwner(ownerRunId);
     if (familyId !== undefined) this.fenceFamily(familyId);
     const result = await this.releaseSelected(
       slotId,
       (lease) =>
         lease.owner.runId === ownerRunId ||
-        (familyId !== undefined && lease.owner.familyId === familyId),
+        (familyId !== undefined &&
+          lease.owner.familyId === familyId &&
+          !liveSibling(lease.owner.runId)),
       // Terminal bypasses keep-warm by definition (ADR-054).
-      { force: false, keepWarmFor: () => false },
+      {
+        force: false,
+        keepWarmFor: () => false,
+        // Dependency expansion reaches past the selection, so the skip has to
+        // as well: a live sibling's lease must survive being depended on by a
+        // lease that is going away.
+        skip: (lease) => liveSibling(lease.owner.runId),
+      },
     );
     // Fence every owner this cleanup covered, read back from the store rather
     // than from the result: a lease whose cleanup FAILED appears in neither
@@ -3081,6 +3110,7 @@ export class RuntimeCapabilityRegistry {
     // be allowed to acquire again.
     for (const lease of this.options.store.snapshot().leases) {
       if (lease.slotId !== slotId) continue;
+      if (liveSibling(lease.owner.runId)) continue;
       if (
         lease.owner.runId === ownerRunId ||
         (familyId !== undefined && lease.owner.familyId === familyId)
@@ -3155,7 +3185,18 @@ export class RuntimeCapabilityRegistry {
     const familyCleanupAt = this.terminatedFamilies.get(familyId);
     // Replay revives only this owner, never every sibling in its family.
     if (familyCleanupAt && !this.recoveredAfterCleanup(ownerRunId, familyCleanupAt)) {
-      return { scope: 'family', id: familyId };
+      // A sibling the run store vouches for as STILL RUNNING is not what this
+      // fence is for. One comparison run closing used to leave every live
+      // sibling unable to acquire anything for the fence's 90-day TTL, with no
+      // supported way back: replay is the only thing that retires an entry, and
+      // replaying a live run supersedes the decision it is holding. Liveness is
+      // asked here, at acquire time, so the answer is the current one — and an
+      // owner the store cannot vouch for (evicted, archived, unknown) still
+      // reads as not live and is still refused.
+      if (this.options.isLiveOwner?.(ownerRunId) !== true) {
+        return { scope: 'family', id: familyId };
+      }
+      return null;
     }
     return null;
   }
@@ -3189,6 +3230,12 @@ export class RuntimeCapabilityRegistry {
        * being released (ADR-054).
        */
       expandDependencies?: boolean;
+      /**
+       * Leases this release must never touch, applied AFTER dependency
+       * expansion. `select` alone cannot express it: expansion reaches leases
+       * the selection never named.
+       */
+      skip?: (lease: RuntimeCapabilityLease) => boolean;
     },
   ): Promise<RuntimeCapabilityReleaseResult> {
     const { force, keepWarmFor } = options;
@@ -3201,7 +3248,10 @@ export class RuntimeCapabilityRegistry {
       );
       const rootIds = new Set(roots.map((lease) => lease.id));
       const ordered = this.releaseOrder(snapshot, roots);
-      const order = expandDependencies ? ordered : ordered.filter((lease) => rootIds.has(lease.id));
+      const expanded = expandDependencies
+        ? ordered
+        : ordered.filter((lease) => rootIds.has(lease.id));
+      const order = options.skip ? expanded.filter((lease) => !options.skip!(lease)) : expanded;
       const released: RuntimeCapabilityLease[] = [];
       /** The subset of `released` that was actually holding its claims. */
       const freedClaims: RuntimeCapabilityLease[] = [];

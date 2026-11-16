@@ -563,6 +563,19 @@ export function hasHadTerminalCleanup(run: Run): boolean {
   return !(recoveredAt !== undefined && recoveredAt > Date.parse(run.resourcePosture.updatedAt));
 }
 
+/**
+ * Whether the run store vouches for this run as still running.
+ *
+ * Deliberately NOT `!hasHadTerminalCleanup(run)`: this answers for a run record
+ * that is present and working, so a caller holding only a run id it cannot
+ * resolve gets `false`. A `paused` run is not live either — it acquires nothing
+ * while it waits.
+ */
+export function isLiveCapabilityOwner(run: Run): boolean {
+  if (isTerminalRunStatus(run.status) || run.status === 'paused') return false;
+  return !hasHadTerminalCleanup(run);
+}
+
 const capabilityStore = new RuntimeCapabilityStore(runtimeCapabilityStorePath());
 const registry = new RuntimeCapabilityRegistry({
   store: capabilityStore,
@@ -594,6 +607,13 @@ const registry = new RuntimeCapabilityRegistry({
     const run = getCachedRunWithArchived(ownerRunId);
     if (!run) return false;
     return hasHadTerminalCleanup(run);
+  },
+  // The live half. `getRun` is the LIVE store on purpose: an archived run is
+  // not vouched for, so family cleanup still covers it and the fence still
+  // refuses it.
+  isLiveOwner: (ownerRunId) => {
+    const run = getRun(ownerRunId);
+    return run ? isLiveCapabilityOwner(run) : false;
   },
   recoveryStartedAtForRun: (ownerRunId) => {
     const run = getRun(ownerRunId);

@@ -23,6 +23,7 @@ import {
   completeGrantedClaim,
   type DeviceTargetGuardDeps,
   hasHadTerminalCleanup,
+  isLiveCapabilityOwner,
   reservationSettlement,
   runtimeCapabilityRecoveryStartedAt,
   runtimeCapabilityStopWarm,
@@ -63,6 +64,44 @@ test('same-run prepare replay supersedes stale terminal posture without reviving
     }),
     true,
   );
+});
+
+test('a run held for a decision is vouched for as live, a settled or paused one is not', () => {
+  // The run a sibling's close must not strip: still active, holding a result
+  // decision, its providers stopped by its own operator-wait posture.
+  const held = {
+    status: 'needs-decision',
+    resourcePosture: { posture: 'operator-wait', updatedAt: '2026-11-16T17:16:43.510Z' },
+  } as Run;
+  assert.equal(isLiveCapabilityOwner(held), true);
+  for (const status of ['done', 'failed', 'cancelled', 'paused'] as const) {
+    assert.equal(isLiveCapabilityOwner({ ...held, status }), false);
+  }
+});
+
+test('a run whose own providers were torn down at terminal is not live', () => {
+  const run = {
+    status: 'blocked',
+    resourcePosture: { posture: 'terminal', updatedAt: '2026-11-16T17:16:43.510Z' },
+  } as Run;
+  assert.equal(hasHadTerminalCleanup(run), true);
+  assert.equal(
+    isLiveCapabilityOwner(run),
+    false,
+    'terminal posture outranks a non-terminal status',
+  );
+  const replayed = {
+    ...run,
+    recoveryAttempts: [
+      {
+        stepName: 'prepare',
+        startedAt: '2026-11-16T18:00:00.000Z',
+        status: 'started',
+        triggeredBy: 'operator',
+      },
+    ],
+  } as Run;
+  assert.equal(isLiveCapabilityOwner(replayed), true, 'a durable replay revives the owner');
 });
 
 const PARAMS = { slotId: 'slot-a', capabilityId: 'metro' };

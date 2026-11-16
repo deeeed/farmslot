@@ -404,6 +404,7 @@ async function fixture(
     onEvent?: (event: RuntimeCapabilityLifecycleEvent) => void;
     storeFactory?: (storePath: string) => RuntimeCapabilityStore;
     isTerminalOwner?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['isTerminalOwner'];
+    isLiveOwner?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['isLiveOwner'];
     recoveryStartedAtForRun?: ConstructorParameters<
       typeof RuntimeCapabilityRegistry
     >[0]['recoveryStartedAtForRun'];
@@ -472,6 +473,7 @@ async function fixture(
     ...(options.familyForRun ? { familyForRun: options.familyForRun } : {}),
     ...(options.onEvent ? { onEvent: options.onEvent } : {}),
     ...(options.isTerminalOwner ? { isTerminalOwner: options.isTerminalOwner } : {}),
+    ...(options.isLiveOwner ? { isLiveOwner: options.isLiveOwner } : {}),
     ...(options.recoveryStartedAtForRun
       ? { recoveryStartedAtForRun: options.recoveryStartedAtForRun }
       : {}),
@@ -1666,6 +1668,100 @@ test('a run that already had terminal cleanup cannot acquire again', async (t) =
   // Another run is unaffected by the fence.
   const other = await acquire(registry, 'browser', 'run-b');
   assert.equal(other.ok, true);
+});
+
+test('family terminal cleanup leaves a live sibling holding its own capability', async (t) => {
+  // A comparison run closing took the whole family's providers with it, so an
+  // active sibling lost the proof permit it was still recording with.
+  const { registry, actions } = await fixture(t, [entry('browser'), entry('permit')], {
+    isLiveOwner: (runId) => runId === 'run-live',
+  });
+  assert.equal((await acquire(registry, 'browser', 'run-closing', 'fam-a')).ok, true);
+  assert.equal((await acquire(registry, 'permit', 'run-live', 'fam-a')).ok, true);
+  actions.length = 0;
+
+  await registry.releaseRunTerminal(SLOT, 'run-closing', 'fam-a');
+
+  const status = await registry.status({ slotId: SLOT });
+  const live = status.leases.find((lease) => lease.owner.runId === 'run-live');
+  assert.equal(live?.state, 'acquired', "a live sibling's lease must survive a sibling's cleanup");
+  assert.deepEqual(
+    actions,
+    ['browser.release'],
+    "only the terminal run's own provider may be stopped",
+  );
+});
+
+test('a live sibling can still acquire after a family terminal cleanup, across a restart', async (t) => {
+  const { registry, store } = await fixture(t, [entry('browser'), entry('permit')], {
+    isLiveOwner: (runId) => runId === 'run-live',
+  });
+  assert.equal((await acquire(registry, 'browser', 'run-closing', 'fam-a')).ok, true);
+  await registry.releaseRunTerminal(SLOT, 'run-closing', 'fam-a');
+
+  const sibling = await acquire(registry, 'permit', 'run-live', 'fam-a');
+  assert.equal(
+    sibling.ok,
+    true,
+    'a run that is still active must not be refused by a family fence',
+  );
+
+  // The durable entry outlives the process; a restart must read it the same way.
+  const restarted = new RuntimeCapabilityRegistry({
+    store: new RuntimeCapabilityStore(store.path),
+    catalogForSlot: async (slotId) => ({
+      slotId,
+      project: 'test-project',
+      capabilities: [entry('browser'), entry('permit')],
+    }),
+    runAction: async () => ({ ok: true }),
+    isLiveOwner: (runId) => runId === 'run-live',
+    now: () => new Date(FIXTURE_NOW),
+  });
+  assert.equal(
+    (await acquire(restarted, 'browser', 'run-live', 'fam-a')).ok,
+    true,
+    'the fence already on disk must stop refusing a live sibling without a hand edit',
+  );
+});
+
+test('the family fence still refuses a sibling the run store does not vouch for', async (t) => {
+  // Fail closed: only an owner the run store can name as live is admitted. An
+  // evicted, archived or terminal sibling is exactly the case the fence exists
+  // for, and an unwired predicate must change nothing.
+  const { registry, actions } = await fixture(t, [entry('browser'), entry('permit')], {
+    isLiveOwner: (runId) => runId === 'run-live',
+  });
+  assert.equal((await acquire(registry, 'browser', 'run-closing', 'fam-a')).ok, true);
+  await registry.releaseRunTerminal(SLOT, 'run-closing', 'fam-a');
+  actions.length = 0;
+
+  const unknown = await acquire(registry, 'permit', 'run-archived', 'fam-a');
+  assert.equal(unknown.ok, false, 'an owner with no live run record stays fenced');
+  if (!unknown.ok) assert.match(unknown.conflict.reason, /terminal capability cleanup/);
+  const itself = await acquire(registry, 'permit', 'run-closing', 'fam-a');
+  assert.equal(itself.ok, false, 'the terminal run itself stays fenced at owner scope');
+  assert.deepEqual(actions, [], 'nothing may be booted for a fenced owner');
+});
+
+test('a family whose members are all terminal still releases and fences every owner', async (t) => {
+  const { registry, actions } = await fixture(t, [entry('browser'), entry('permit')], {
+    isLiveOwner: () => false,
+  });
+  assert.equal((await acquire(registry, 'browser', 'run-closing', 'fam-a')).ok, true);
+  assert.equal((await acquire(registry, 'permit', 'run-sibling', 'fam-a')).ok, true);
+  actions.length = 0;
+
+  await registry.releaseRunTerminal(SLOT, 'run-closing', 'fam-a');
+
+  const status = await registry.status({ slotId: SLOT });
+  assert.deepEqual(
+    status.leases.filter((lease) => holdsProviderForTest(lease)),
+    [],
+    'a family with nothing live in it is cleaned whole',
+  );
+  assert.deepEqual([...actions].sort(), ['browser.release', 'permit.release']);
+  assert.equal((await acquire(registry, 'permit', 'run-sibling', 'fam-a')).ok, false);
 });
 
 test('a durable same-run replay retires prior cleanup after an empty supported release', async (t) => {
