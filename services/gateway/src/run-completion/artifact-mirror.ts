@@ -12,6 +12,7 @@ import {
   type Run,
   SUBTASKS_DIR,
 } from '@farmslot/protocol';
+import { TASK_DIRECTORY_LAYOUT } from '@farmslot/protocol/task-layout';
 
 import { removeStaleArtifactDirectory } from '../core/artifact-cleanup.js';
 import {
@@ -25,7 +26,7 @@ import {
   resolveProjectTaskDirName,
   resolveTaskRelDir,
 } from '../core/config.js';
-import { execArgvOnSlot, isLocal } from '../core/exec.js';
+import { execArgvOnSlot } from '../core/exec.js';
 import { assertHeavyWriteRoom } from '../core/heavy-write-room.js';
 import {
   type LatestValidRecipeRunPointer,
@@ -40,6 +41,7 @@ import {
   slotReadFile,
   slotRealpath,
   slotStat,
+  type SlotWriteFileEntry,
   slotWriteFiles,
 } from '../core/slot-io.js';
 import {
@@ -74,6 +76,7 @@ import {
   selectPublishPackageEntries,
 } from './publish-package-scope.js';
 import type { RunArtifactAcquisition } from './retained-artifacts.js';
+import { assertTaskActionInputsComplete } from './task-action-inputs.js';
 
 // Push only executable recipe inputs (recipe.json + recipe-library/) from
 // the gateway-owned mirror to a slot's worker task dir, so a run loaded onto
@@ -101,7 +104,7 @@ export async function pushRunRecipeToSlot(
 
   // One batch write (base64) — slotWriteFiles creates parent dirs, so it works
   // even when the slot has never run this task (no temp/tasks/.../artifacts/ yet).
-  const files: Array<{ path: string; content: string }> = [];
+  const files: SlotWriteFileEntry[] = [];
   const localRecipe = path.join(localArtifactsDir, 'recipe.json');
   const inheritedRecipe = path.join(
     path.dirname(run.taskFile),
@@ -119,8 +122,22 @@ export async function pushRunRecipeToSlot(
   }
   const localLibraryDir = path.join(localArtifactsDir, 'recipe-library');
   if (existsSync(localLibraryDir)) {
-    await collectRecipeLibraryFiles(localLibraryDir, '', files);
+    await collectRecipeLibraryFiles(localLibraryDir, '', files, 'recipe-library');
   }
+  const localActions = path.join(
+    path.dirname(run.taskFile),
+    TASK_DIRECTORY_LAYOUT.taskActions.relativePath,
+  );
+  if (existsSync(localActions))
+    await collectRecipeLibraryFiles(
+      localActions,
+      '',
+      files,
+      path.posix.relative(
+        TASK_DIRECTORY_LAYOUT.artifacts.relativePath,
+        TASK_DIRECTORY_LAYOUT.taskActions.relativePath,
+      ),
+    );
   if (files.length === 0) return 0;
   await slotWriteFiles(vars, workerArtifactsDir, files);
   console.log(
@@ -132,18 +149,20 @@ export async function pushRunRecipeToSlot(
 async function collectRecipeLibraryFiles(
   root: string,
   relativeDir: string,
-  files: Array<{ path: string; content: string }>,
+  files: SlotWriteFileEntry[],
+  prefix: string,
 ): Promise<void> {
   for (const entry of await readdir(path.join(root, relativeDir))) {
     const relativePath = path.join(relativeDir, entry);
     const fullPath = path.join(root, relativePath);
     const info = await lstat(fullPath);
     if (info.isDirectory()) {
-      await collectRecipeLibraryFiles(root, relativePath, files);
+      await collectRecipeLibraryFiles(root, relativePath, files, prefix);
     } else if (info.isFile()) {
       files.push({
-        path: path.join('recipe-library', relativePath),
+        path: path.join(prefix, relativePath),
         content: (await readFile(fullPath)).toString('base64'),
+        mode: info.mode & 0o777,
       });
     }
   }
@@ -419,8 +438,9 @@ export async function refreshArtifactMirror(
   const workerTaskDir = path.join(vars.remoteRepo, taskDirName, taskRelDir);
   const workerArtifactsDir = path.join(workerTaskDir, 'artifacts');
   const localArtifactsDir = path.join(taskDir, 'artifacts');
+  let publicationRoots: string[] = [];
   if (options.forPublication) {
-    await resolvePublicationManifest(
+    const publication = await resolvePublicationManifest(
       workerTaskDir,
       workerPublicationReadIO(vars),
       workerArtifactsDir,
@@ -428,6 +448,12 @@ export async function refreshArtifactMirror(
       // Newly declared attempts are not in any earlier capture yet.
       publicationBaselineContext(run, null, options.publicationComparison),
     );
+    publicationRoots = [
+      ...new Set([
+        ...(publication?.selectedArtifactRoot ? [publication.selectedArtifactRoot] : []),
+        ...(publication?.additionalArtifactRoots ?? []),
+      ]),
+    ];
   }
   const workerPointerPath = path.join(workerArtifactsDir, 'latest-valid-recipe-run.json');
   const workerPointerExists = await slotFileExists(vars, workerPointerPath);
@@ -502,6 +528,11 @@ export async function refreshArtifactMirror(
     }
   }
   const namedPaths = [
+    // Executable inputs are a named closure, even below the package marker depth.
+    path.posix.relative(
+      TASK_DIRECTORY_LAYOUT.artifacts.relativePath,
+      TASK_DIRECTORY_LAYOUT.taskActions.relativePath,
+    ),
     ...manifestPaths,
     ...referencedRecipeRunRoots(manifestPaths),
     ...citedPaths,
@@ -666,22 +697,24 @@ export async function refreshArtifactMirror(
     invalidateArtifactTextCache(workerArtifactsDir, run.slotId);
     invalidateLiveRecipeContextMemo(run.id);
 
-    const workerActionsDir = path.join(workerTaskDir, 'task-actions');
-    const localActionsDir = path.join(taskDir, 'task-actions');
-    // A dedicated mirror must reflect deletions, but a local self-copy is already current.
-    if (
-      !isLocal(vars.host, vars.machine) ||
-      path.resolve(workerActionsDir) !== path.resolve(localActionsDir)
-    ) {
-      await rm(localActionsDir, { recursive: true, force: true });
-      if (await slotFileExists(vars, workerActionsDir)) {
-        copied += await slotCopyDir(vars, workerActionsDir, localActionsDir, {
-          skipUnchanged: true,
-          phase: 'mirror',
-          ...transferMeta,
-          labelPrefix: 'task-actions',
-        });
+    if (options.forPublication) {
+      const summaries: unknown[] = [];
+      for (const root of publicationRoots.length ? publicationRoots : ['']) {
+        const summary = path.join(localArtifactsDir, root, 'summary.json');
+        try {
+          summaries.push(JSON.parse(await readFile(summary, 'utf8')));
+        } catch (error) {
+          if (
+            !publicationRoots.length &&
+            error instanceof Error &&
+            'code' in error &&
+            error.code === 'ENOENT'
+          )
+            continue;
+          throw error;
+        }
       }
+      await assertTaskActionInputsComplete(taskDir, summaries);
     }
 
     await mirrorWorkerSubtasks(vars, workerTaskDir, taskDir, { transfer: transferMeta });

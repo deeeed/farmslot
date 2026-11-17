@@ -1,0 +1,1 @@
+- The checklist shows "Spent so far" (cost, tokens, tool calls, compactions) and a cost per step while a run works; the run-detail tool-usage panel shows compactions overall and per step.

@@ -147,14 +147,63 @@ test('workspace views share canonical reads, stale data cannot authorize edits, 
   assert.equal(second.ready, true);
   const saved = ownedCache.read(query).data;
   assert(first.hasData && first.owns(saved));
+  // A watch revision changing is an ordinary refresh, not a visible error or failed read.
+  const changingQuery = resourceQuery<{ content: string }>('fs.read', {
+    slotId: 'slot',
+    runId: 'run',
+    path: 'changing.ts',
+  });
+  const changing = first.read<{ content: string }>(
+    'fs.read',
+    { slotId: 'slot', path: 'changing.ts' },
+    () => {},
+  );
+  let changingSettled = false;
+  void changing.then(
+    () => {
+      changingSettled = true;
+    },
+    () => {
+      changingSettled = true;
+    },
+  );
+  const changingDeadline = Date.now() + 2000;
+  while (requests < 3 && Date.now() < changingDeadline)
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  rejectRead(
+    Object.assign(new Error('Workspace contents changed during the read'), {
+      code: 'RESOURCE_OBSERVATION_CHANGED',
+    }),
+  );
+  const changedDeadline = Date.now() + 2000;
+  while (
+    !first.stateOf('fs.read', { slotId: 'slot', path: 'changing.ts' })?.error &&
+    Date.now() < changedDeadline
+  )
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  assert.equal(first.error, '');
+  assert.equal(changingSettled, false);
+  const changedRetry = ownedCache.retry(changingQuery);
+  const retryDeadline = Date.now() + 2000;
+  while (requests < 4 && Date.now() < retryDeadline)
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  resolveRead({
+    data: { content: 'current' },
+    resourceState: {
+      epoch: 'workspace',
+      dependencies: changingQuery.dependencies.map((key) => ({ key, revision: 0 })),
+    },
+  });
+  await Promise.all([changing, changedRetry]);
+  first.drop('fs.read', { slotId: 'slot', path: 'changing.ts' });
   // The same UNAVAILABLE code also wraps real producer failures; those must reject.
   const denied = first.read('fs.read', { slotId: 'slot', path: 'forbidden.ts' }, () =>
     assert.fail('A failed read cannot apply data'),
   );
   const failureEnd = Date.now() + 2000;
-  while (requests < 3 && Date.now() < failureEnd)
+  while (requests < 5 && Date.now() < failureEnd)
     await new Promise((resolve) => setTimeout(resolve, 1));
-  assert.equal(requests, 3);
+  assert.equal(requests, 5);
   rejectRead(
     Object.assign(new Error('EACCES: permission denied, watch workspace'), {
       code: 'RESOURCE_OBSERVATION_UNAVAILABLE',
@@ -168,9 +217,9 @@ test('workspace views share canonical reads, stale data cannot authorize edits, 
   // Switching profiles retires rendered bytes immediately, before another reply is available.
   const refreshing = ownedCache.retry(query);
   const deadline = Date.now() + 500;
-  while (requests < 4 && Date.now() < deadline)
+  while (requests < 6 && Date.now() < deadline)
     await new Promise((resolve) => setTimeout(resolve, 1));
-  assert.equal(requests, 4);
+  assert.equal(requests, 6);
   cache = undefined;
   owner = 'replacement-owner';
   for (const listener of ownerListeners) listener();

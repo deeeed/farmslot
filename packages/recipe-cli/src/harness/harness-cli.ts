@@ -10,7 +10,11 @@ import { Command, CommanderError } from 'commander';
 
 import type { AdapterRegistry } from '@farmslot/adapter-sdk';
 import { SlotByRepoError } from '@farmslot/protocol/node/slot-by-repo';
-import { RecipeResolutionError, RecipeTrustError } from '@farmslot/recipe-runner';
+import {
+  RecipeResolutionError,
+  RecipeTrustError,
+  withPreparedSourceWitness,
+} from '@farmslot/recipe-runner';
 
 import { RECIPE_CLI_VERSION } from '../version.js';
 
@@ -178,7 +182,11 @@ export function createHarnessCli(options: HarnessCliOptions): HarnessCli {
   // One invocation at a time per process: each sets the process-wide context
   // and port environment for its dispatch, so an overlapping one must wait.
   function main(argv: readonly string[]): Promise<HarnessCliResult> {
-    return withHarnessInvocation(() => runInvocation(argv));
+    return withHarnessInvocation(() =>
+      argv[0] === 'call' || argv[0] === 'run'
+        ? withPreparedSourceWitness(() => runInvocation(argv))
+        : runInvocation(argv),
+    );
   }
 
   async function runInvocation(argv: readonly string[]): Promise<HarnessCliResult> {

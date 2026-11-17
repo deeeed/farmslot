@@ -80,6 +80,7 @@ import { handleListExecutables } from './discover.js';
 import {
   type DeviceTargeting,
   provenanceFailure,
+  recipeArtifactsFailure,
   type RecipeArtifactsLayout,
   type RecipeExecutionArtifacts,
   reportTrustFailure,
@@ -466,13 +467,18 @@ async function runCall<TMutation, TAllowlist extends ConsoleAllowlist>(
       target,
       optionString(options, 'artifactsDir'),
       callArtifactsLayout(resolvedAction),
+      { unbound: optionFlag(options, 'unbound'), command: 'call' },
     );
   } catch (error) {
+    const failure = recipeArtifactsFailure(error);
     return usageOut(
       json,
       'call',
-      error instanceof Error ? error.message : String(error),
-      'set RECIPE_TASK_DIR/FARMSLOT_TASK_DIR inside the checkout or pass --artifacts-dir <path>',
+      failure.message,
+      failure.userAction,
+      failure.code === 'RECIPE_TASK_UNBOUND' || failure.code === 'RECIPE_TASK_BINDING_CONFLICT'
+        ? failure.code
+        : undefined,
     );
   }
   const { artifactsDir, claims } = artifactContext;

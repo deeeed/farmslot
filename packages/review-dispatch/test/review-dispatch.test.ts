@@ -4,6 +4,9 @@ import test from 'node:test';
 import {
   assertPRExecutionProfile,
   assertPRReviewOptions,
+  DEFAULT_CODEX_EFFORT,
+  DEFAULT_GROK_EFFORT,
+  DEFAULT_PI_THINKING,
   type ReviewSelection,
   type ReviewSessionTrace,
   type Run,
@@ -1015,6 +1018,49 @@ test('selecting a retained WARM review fills its settings and refuses an unavail
   assert.equal(vm.canInvoke('request-review'), false);
   assert.match(vm.errors[0], /cannot be resumed/);
   assert.throws(() => vm.toRequestPayload(), /cannot be resumed/);
+});
+
+test('an omitted pi effort is high for every picker and other runners keep their defaults', () => {
+  assert.equal(DEFAULT_PI_THINKING, 'high');
+  const omitted = { runner: 'pi', model: null, effort: null, mode: 'cold' as const };
+  assert.equal(executionModelFromSelection(omitted).effort, 'high');
+  assert.equal(
+    executionModelFromSelection({ runner: 'pi', model: 'grok-4.7', effort: 'low', mode: 'cold' })
+      .effort,
+    'low',
+  );
+  assert.equal(
+    executionModelFromSelection({ runner: 'pi', model: 'grok-4.7', effort: 'xhigh', mode: 'cold' })
+      .effort,
+    'xhigh',
+  );
+  assert.equal(
+    executionModelFromSelection({ runner: 'codex', model: null, effort: null, mode: 'cold' })
+      .effort,
+    DEFAULT_CODEX_EFFORT,
+  );
+  assert.equal(
+    executionModelFromSelection({ runner: 'grok', model: null, effort: null, mode: 'cold' }).effort,
+    DEFAULT_GROK_EFFORT,
+  );
+  const worker = new ReviewDispatchViewModel({
+    context: { allowedActions: ['dispatch'] },
+    sequence: [omitted],
+  });
+  const review = new ReviewDispatchViewModel({
+    context: { allowedActions: ['request-review'] },
+    sequence: [omitted],
+  });
+  assert.equal(worker.effortChoices(worker.rows[0].id)[0].label, 'Runner default · high');
+  assert.equal(review.effortChoices(review.rows[0].id)[0].label, 'Runner default · high');
+  const native = catalogForNativeRunners([
+    { runner: 'pi', models: ['grok-4.7'], defaultModel: 'grok-4.7', modes: ['default'] },
+  ]);
+  assert.equal(native.runners[0].defaultEffort, 'high');
+  assert.equal(
+    createReviewDispatchCatalog().runners.find((runner) => runner.id === 'cursor')?.defaultEffort,
+    null,
+  );
 });
 
 test('fresh review-pr selection clears lineage, selects COLD and survives serialization', () => {

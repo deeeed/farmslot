@@ -53,7 +53,8 @@ export async function fetchSlotViewRepoPath(view: SlotView, machine: string): Pr
 
 /** Binds the slot's resources; the next list may open the resource panel, as a slot load did. */
 function bindSlotViewResources(view: SlotView): void {
-  view._resourcesMayOpenPanel = true;
+  // The URL owns visibility; a late resource list must not open and then close it.
+  view._resourcesMayOpenPanel = Boolean(view._requestedResourceFromUrl());
   view._resourcesQuery.setQuery(
     resourceQuery<ResourceListResult>(Methods.RESOURCE_LIST, { slotId: view.slotId }),
   );
@@ -113,6 +114,8 @@ export function bindSlotViewTaskProgress(view: SlotView): void {
 type SlotViewProgressTarget = Pick<
   SlotView,
   | '_structuredProgress'
+  | '_liveSpend'
+  | '_liveSpendContext'
   | '_taskProgressSource'
   | '_taskSteps'
   | '_taskProgress'
@@ -129,6 +132,11 @@ export function applySlotViewTaskProgress(view: SlotViewProgressTarget): void {
   // Enrichment is a display copy; pin invalidation follows the observed payload.
   const previous = view._structuredProgress ? view._taskProgressSource : undefined;
   view._taskProgressSource = result?.structured;
+  // A pushed progress update carries no spend; keep the last one for the same session.
+  const spendContext = result ? `${result.slotId}\u0000${result.contextId ?? ''}` : undefined;
+  view._liveSpend =
+    result?.liveSpend ?? (spendContext === view._liveSpendContext ? view._liveSpend : undefined);
+  view._liveSpendContext = spendContext;
   view._structuredProgress =
     taskProgressWithStepDetails(result?.structured, result?.markdown) ?? undefined;
   const steps = checklistProgressSteps(result?.markdown ?? '');

@@ -58,7 +58,10 @@ import {
   type StartRefResolution,
 } from '../../projects/start-ref-resolution.js';
 import { executeEvalHarnessLifecycle } from '../../run-engine/eval-harness-lifecycle.js';
-import { mutateSlotGit, restoreParkedBranch } from '../../run-lifecycle/validation-run-commits.js';
+import {
+  restoreParkedBranch,
+  slotGitMutations,
+} from '../../run-lifecycle/validation-run-commits.js';
 import {
   assertNativeSlotReplacementOwner,
   retireNativeWorkersForSlot,
@@ -72,6 +75,7 @@ import { runFixtureSync } from './fixtures.js';
 import {
   CLEAR_INDEX_FLAGS_COMMAND,
   CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND,
+  recreateBranchCommand,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
 } from './git-cleanup-commands.js';
 import {
@@ -665,30 +669,35 @@ async function slotPrepareInner(
   }
 
   const gitOperationKey = params.runId ?? params.requestId ?? randomUUID();
+  // One capture for the prepare's guarded commands: the first parks the threatened work, covering
+  // the trees the prepare can move to; later ones only check nothing else wrote in between.
+  const guardedGit = slotGitMutations(
+    vars,
+    projectJson,
+    () => ({
+      defaultBranch,
+      runId: params.runId,
+      operationKey: gitOperationKey,
+      blindBaseSha: opts?.blindBaseSha,
+      blindRepoKey: opts?.blindRepoKey,
+      targetBranches: [defaultBranch, ...(branch ? [branch] : [])],
+      verifyWork: async () => {
+        checkAborted();
+      },
+    }),
+    () => [
+      ...new Set(
+        [
+          opts?.blindBaseSha ?? `origin/${defaultBranch}`,
+          resolvedStartRef?.resolvedSha,
+          resolvedStackBase?.resolvedSha,
+        ].filter((tree): tree is string => Boolean(tree)),
+      ),
+    ],
+    execOnSlot,
+  );
   const mutateGit = (operation: string, command: string, targetTrees: string[] = []) =>
-    timeGit(
-      operation,
-      () =>
-        mutateSlotGit(
-          vars,
-          projectJson,
-          {
-            defaultBranch,
-            runId: params.runId,
-            operationKey: gitOperationKey,
-            blindBaseSha: opts?.blindBaseSha,
-            blindRepoKey: opts?.blindRepoKey,
-            targetBranches: [defaultBranch, ...(branch ? [branch] : [])],
-            targetTrees,
-            verifyWork: async () => {
-              checkAborted();
-            },
-          },
-          command,
-          execOnSlot,
-        ),
-      'guarded-mutation',
-    );
+    timeGit(operation, () => guardedGit(command, targetTrees), 'guarded-mutation');
 
   // A requested start ref must resolve to structured provenance on every branch
   // path: a slot already on the work branch, a preserved replay branch, or a
@@ -1051,10 +1060,10 @@ async function slotPrepareInner(
         throw new Error(
           `reset --hard HEAD failed on ${vars.slotId} (${vars.remoteRepo}): ${resetR.stderr.slice(-200) || resetR.stdout.slice(-200)}`,
         );
-      const cleanR = await execGit(
+      // Under the same capture, so the next guarded command sees the checkout this left.
+      const cleanR = await mutateGit(
         'clean-worktree',
-        vars,
-        withFarmGitConfig(`cd ${shellQuote(vars.remoteRepo)} && git clean -fd`),
+        `cd ${shellQuote(vars.remoteRepo)} && git clean -fd`,
       );
       if (cleanR.exitCode !== 0)
         throw new Error(
@@ -1122,17 +1131,9 @@ async function slotPrepareInner(
           `Local ${defaultBranch} fast-forwarded to origin/${defaultBranch} (clean tree)`,
         );
       }
-      // Check if branch exists on remote
-      const remoteExists =
-        (
-          await execGit(
-            'probe-remote-branch',
-            vars,
-            withFarmGitConfig(
-              `cd ${shellQuote(vars.remoteRepo)} && git ls-remote --exit-code origin refs/heads/${shellQuote(branch)} >/dev/null 2>&1`,
-            ),
-          )
-        ).exitCode === 0;
+      // The work-branch fetch above already answered whether origin has the branch: it
+      // succeeded, or it failed only because the ref is absent (any other failure threw).
+      const remoteExists = fetchBranchR.exitCode === 0;
       const newBranchBase =
         resolvedStartRef?.resolvedSha ??
         resolvedStackBase?.resolvedSha ??
@@ -1222,23 +1223,30 @@ async function slotPrepareInner(
           ).exitCode === 0;
         if (localExists) {
           if (forceNewBranch) {
+            branchCreatedFromBase = true;
             if (linkedWorktree) {
               await mutateGit(
                 'delete-local-replay-branch',
                 `cd ${shellQuote(vars.remoteRepo)} && git branch -D ${shellQuote(branch)} 2>/dev/null`,
               );
-            } else {
               await mutateGit(
-                'switch-and-delete-local-branch',
-                `cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch} 2>/dev/null && git branch -D ${shellQuote(branch)} 2>/dev/null`,
+                'recreate-local-branch',
+                `cd ${shellQuote(vars.remoteRepo)} && git checkout -b ${shellQuote(branch)} ${shellQuote(newBranchBase)}`,
+                [newBranchBase],
               );
+            } else {
+              // The slot is on the clean <default> (verified above): delete and recreate in one
+              // pass, instead of a second checkout of <default>, `branch -D` and `checkout -b`.
+              const recreateR = await mutateGit(
+                'recreate-local-branch',
+                `cd ${shellQuote(vars.remoteRepo)} && { ${recreateBranchCommand(branch, newBranchBase, shellQuote)}; }`,
+                [newBranchBase],
+              );
+              if (recreateR.exitCode !== 0)
+                throw new Error(
+                  `recreating ${branch} at ${newBranchBaseLabel} failed on ${vars.slotId} (${vars.remoteRepo}): ${recreateR.stderr.slice(-200) || recreateR.stdout.slice(-200)}`,
+                );
             }
-            branchCreatedFromBase = true;
-            await mutateGit(
-              'recreate-local-branch',
-              `cd ${shellQuote(vars.remoteRepo)} && git checkout -b ${shellQuote(branch)} ${shellQuote(newBranchBase)}`,
-              [newBranchBase],
-            );
             step('branch', `Recreated local ${branch} from ${newBranchBaseLabel}`);
           } else {
             await mutateGit(

@@ -7,6 +7,7 @@ import {
   INTERACTIVE_CHECKLIST_MARKDOWN,
   SUBTASKS_DIR,
 } from '@farmslot/protocol/checklist-target';
+import { TASK_DIRECTORY_LAYOUT } from '@farmslot/protocol/task-layout';
 
 import { loadSlotVars } from '../core/config.js';
 import { isLocal } from '../core/index.js';
@@ -33,11 +34,10 @@ export const TASK_ROOT_SIDECARS = [
  * (ADR-060) was the copy a fourth hand-maintained array would have missed.
  */
 export const TASK_DIR_COPIED_SUBDIRS = [
-  'assets',
-  'inputs',
-  'artifacts',
+  TASK_DIRECTORY_LAYOUT.assets.relativePath,
+  TASK_DIRECTORY_LAYOUT.inputs.relativePath,
+  TASK_DIRECTORY_LAYOUT.artifacts.relativePath,
   SUBTASKS_DIR,
-  'task-actions',
 ] as const;
 
 /**

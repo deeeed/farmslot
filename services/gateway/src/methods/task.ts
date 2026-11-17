@@ -56,6 +56,7 @@ import { getRun, listRuns } from '../runs/store.js';
 import { readAcceptanceStatusForDisplay } from '../tasks/acceptance-status.js';
 import { checklistTimingContext, isRecord } from '../tasks/checklist-timing.js';
 import { attachChecklistTiming } from '../tasks/checklist-timing-read.js';
+import { liveSpendSource, progressChecklistMarks, readLiveSpend } from '../tasks/live-spend.js';
 import { attachOperations } from '../tasks/operations.js';
 import {
   resolveTaskProgressMarkdownPath,
@@ -123,6 +124,28 @@ export async function taskProgress(
     slot?.phase,
     slot?.agent,
   ]);
+  // Every live slot read, with or without an explicit task file, reports the viewed session's
+  // spend. It reads beside the progress files, so the transcript tail adds no wait of its own.
+  const spendSource =
+    live && !inactive && boundRun && params.slotId && !isTerminalRunStatus(boundRun.status)
+      ? liveSpendSource(boundRun, context)
+      : undefined;
+  const spending = spendSource
+    ? loadSlotVars(params.slotId).then(
+        (vars) => readLiveSpend(vars, spendSource),
+        // Without slot variables the progress read itself fails; the spend says the same.
+        (error: unknown) => () => ({
+          runner: spendSource.runner,
+          readAt: new Date().toISOString(),
+          totalTokens: null,
+          costUsd: null,
+          compactions: null,
+          toolCalls: 0,
+          steps: [],
+          unavailable: `The slot could not be resolved: ${(error as Error).message}`,
+        }),
+      )
+    : undefined;
   const checkSource =
     options.observed && !inactive
       ? await admitProgressSource(params, requested, slot, live)
@@ -144,6 +167,13 @@ export async function taskProgress(
       'PROGRESS_OWNER_CHANGED',
       `Run ${params.runId} no longer owns slot ${params.slotId}, and its recorded progress is unavailable.`,
     );
+  // Awaited before the owner checks below, so an owner change during the transcript read is
+  // refused like one during the progress read.
+  // The steps come from this read's checklist marks: the run records them only when the
+  // worker signals, so a live run's own record has none yet.
+  const spent = await spending;
+  if (spent && spendSource)
+    result.liveSpend = spent(progressChecklistMarks(result.structured) ?? spendSource.marks);
   if (boundRun) {
     const current = getRun(boundRun.id);
     if (!current) throw new GatewayMethodError('RUN_NOT_FOUND', `Run not found: ${boundRun.id}`);

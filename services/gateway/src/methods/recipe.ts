@@ -719,8 +719,10 @@ export function expandRecipeProjectHookTemplate(
     conformance?: HostedRecipeConformanceOptions;
   } = {},
 ): RecipeProjectHookCommandResult {
+  const diagnosticEnv = 'env -u RECIPE_TASK_DIR -u FARMSLOT_TASK_DIR FARMSLOT_RECIPE_UNBOUND=1';
   const hosted = buildHostedRecipeCommand(hook, projectVars, slotVars, params);
-  if (hosted) return { hook, command: hosted };
+  if (hosted)
+    return { hook, command: hook === 'recipe_run' ? `${diagnosticEnv} ${hosted}` : hosted };
   if (params.conformance) throw new Error('Conformance requires a declared project provider.');
   const template = projectVars.projectJson.hooks?.[hook];
   if (!template || typeof template !== 'string') {
@@ -735,13 +737,15 @@ export function expandRecipeProjectHookTemplate(
     }
     return {
       hook,
-      command: expandRecipeRunHookTemplate(
-        template,
-        slotVars,
-        projectVars,
-        shellExpressionForRemotePath(params.recipePath),
-        shellExpressionForRemotePath(params.artifactsDir),
-      ),
+      command: `${diagnosticEnv} bash -c ${shellQuote(
+        expandRecipeRunHookTemplate(
+          template,
+          slotVars,
+          projectVars,
+          shellExpressionForRemotePath(params.recipePath),
+          shellExpressionForRemotePath(params.artifactsDir),
+        ),
+      )}`,
     };
   }
   return { hook, command: expandTemplate(template, slotVars, projectVars) };
@@ -1222,6 +1226,8 @@ async function buildRecipeExecutionCommand(
     recipeCmd,
     recipeRunOptionsForProject(projectVars.projectJson, { playbackSlowMs, recordVideo }),
   );
+  const taskDirectory = shellExpressionForRemotePath(workerTaskDir);
+  recipeCmd = `unset FARMSLOT_RECIPE_UNBOUND; export RECIPE_TASK_DIR=${taskDirectory} FARMSLOT_TASK_DIR=${taskDirectory}; ${recipeCmd}`;
   recipeCmd = withMachineEnv(
     withTaskRecipeTrustEnvironment(recipeCmd, slotVars.remoteRepo, workerTaskDir),
     slotVars,

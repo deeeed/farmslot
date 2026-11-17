@@ -231,6 +231,7 @@ function publicCall(
       '--json',
       'recipe',
       operation,
+      ...(operation === 'run' || operation === 'call' ? ['--unbound'] : []),
       ...args,
       '--target',
       root,
@@ -277,6 +278,17 @@ function callPublic(
   assert.ifError(result.error);
   return result;
 }
+
+test('public call refuses omitted diagnostic or task binding before executing', (t) => {
+  const root = callFixture(t);
+  const command = publicCall(root, ['command', 'cmd=printf unsafe > artifacts/effect']);
+  const args = command.args.filter((argument) => argument !== '--unbound');
+  const result = spawnSync(process.execPath, args, { ...command.options, timeout: 4900 });
+  assert.ifError(result.error);
+  assert.equal(result.status, 2, result.stderr || result.stdout);
+  assert.equal(JSON.parse(result.stdout).error.code, 'RECIPE_TASK_UNBOUND');
+  assert.equal(fs.existsSync(path.join(root, 'artifacts/effect')), false);
+});
 
 test('public call rejects unknown flags before provider construction', (t) => {
   const root = callFixture(t);

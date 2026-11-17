@@ -1,5 +1,6 @@
 import { html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
+import { repeat } from 'lit/directives/repeat.js';
 
 import type {
   PRStatus,
@@ -49,7 +50,7 @@ import {
 } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
-import { navigateHash } from '../../utils/url-state.js';
+import { navigateHash, replaceHistoryEntryState } from '../../utils/url-state.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
 import { readCurrent } from '../shared/read-current.js';
 import { canActOn, ResourceQueryController } from '../shared/resource-query-controller.js';
@@ -92,6 +93,11 @@ import {
   showsRunProgress,
   TERMINAL_STATUSES,
 } from './run-list-model.js';
+import {
+  restoreRunDetailScroll,
+  savedRunDetailScroll,
+  withRunDetailScroll,
+} from './run-list-scroll.js';
 import { renderRunListSkeleton } from './run-list-skeleton.js';
 import {
   FLOW_OPTIONS,
@@ -191,6 +197,44 @@ export class RunList extends RunListState {
   private readonly progressQueries = new Map<string, ResourceQueryController<TaskProgressResult>>();
   @state() private taskProgressErrorsByRun = new Map<string, string>();
   private progressClock?: number;
+  private reloadScrollTop?: number;
+  private reloadScrollRun = '';
+  private restoreScrollFrame?: number;
+  private readonly saveScroll = () => {
+    if (this.selectedRunId)
+      replaceHistoryEntryState(
+        withRunDetailScroll(history.state, this.selectedRunId, this.scrollTop),
+      );
+  };
+  private readonly cancelScrollRestore = () => {
+    this.reloadScrollTop = undefined;
+    if (this.restoreScrollFrame !== undefined) cancelAnimationFrame(this.restoreScrollFrame);
+    this.restoreScrollFrame = undefined;
+  };
+  private readonly onDetailRendered = () => {
+    if (this.reloadScrollTop === undefined) return;
+    if (this.restoreScrollFrame !== undefined) cancelAnimationFrame(this.restoreScrollFrame);
+    // Descendant Lit updates settle before the next paint.
+    this.restoreScrollFrame = requestAnimationFrame(() => this.restoreScrollAfterLayout());
+  };
+  private restoreScrollAfterLayout(): void {
+    const detail = this.renderRoot.querySelector<import('./run-detail.js').RunDetail>('run-detail');
+    if (this.reloadScrollTop === undefined) return;
+    if (this.selectedRunId !== this.reloadScrollRun) {
+      this.cancelScrollRestore();
+      return;
+    }
+    if (
+      restoreRunDetailScroll(
+        this,
+        this.reloadScrollTop,
+        detail?.run?.id === this.selectedRunId &&
+          Boolean(detail.shadowRoot?.querySelector('.pipeline-section')),
+      )
+    )
+      this.cancelScrollRestore();
+  }
+
   private readonly tagQuery = new ResourceQueryController<RunListResult>(this, (state) => {
     this.tagRuns = this.tagFilter ? (state.data?.runs ?? []) : null;
   });
@@ -241,7 +285,15 @@ export class RunList extends RunListState {
       this.narrowViewport = this.narrowMedia.matches;
       this.narrowMedia.addEventListener('change', this.onNarrowChange);
     }
+    const savedHistory: unknown = history.state;
     this._onHashChange();
+    this.reloadScrollRun = this.selectedRunId;
+    this.reloadScrollTop = savedRunDetailScroll(savedHistory, this.selectedRunId);
+    // pagehide retires the resource owner and disconnects this view first.
+    // Save before that teardown; this handler never requests a navigation prompt.
+    window.addEventListener('beforeunload', this.saveScroll);
+    for (const event of ['wheel', 'pointerdown', 'touchstart', 'keydown'])
+      this.addEventListener(event, this.cancelScrollRestore, { passive: true });
     // "last progress Nm ago" and the stale line move with the clock, not with run events.
     this.progressClock = window.setInterval(() => this.requestUpdate(), 60_000);
   }
@@ -257,6 +309,10 @@ export class RunList extends RunListState {
     this.progressQueries.clear();
     this.narrowMedia?.removeEventListener('change', this.onNarrowChange);
     window.removeEventListener('hashchange', this._onHashChange);
+    window.removeEventListener('beforeunload', this.saveScroll);
+    for (const event of ['wheel', 'pointerdown', 'touchstart', 'keydown'])
+      this.removeEventListener(event, this.cancelScrollRestore);
+    this.cancelScrollRestore();
   }
 
   private syncTaskProgress(runs: readonly RunListRow[]): void {
@@ -751,8 +807,16 @@ export class RunList extends RunListState {
                     columns: RUN_INVENTORY_COLUMNS,
                     head: this.renderTableHead(showCheckboxes),
                     rows: showFamilyGroups
-                      ? familyGroups.map((group) => this.renderFamilyGroup(group, showCheckboxes))
-                      : filtered.map((r) => this.renderCard(r, showCheckboxes)),
+                      ? html`${repeat(
+                          familyGroups,
+                          (group) => group.familyId,
+                          (group) => this.renderFamilyGroup(group, showCheckboxes),
+                        )}`
+                      : html`${repeat(
+                          filtered,
+                          (run) => run.id,
+                          (run) => this.renderCard(run, showCheckboxes),
+                        )}`,
                     isEmpty: false,
                     testId: 'work-inventory-table',
                     minWidth: '1100px',
@@ -788,6 +852,7 @@ export class RunList extends RunListState {
                       class="run-list-detail"
                       .runId=${selectedRunId}
                       embedded
+                      @run-detail-rendered=${this.onDetailRendered}
                     ></run-detail>`
                 : nothing;
               return renderWorkInventoryLayout({
@@ -857,7 +922,7 @@ export class RunList extends RunListState {
     });
   }
 
-  private renderCard(run: RunListRow, showCheckbox: boolean) {
+  private renderCard(run: RunListRow, showCheckbox: boolean, showSummary = true) {
     const timing = runElapsedTimeView({ ...run, steps: runActivityView(run)?.steps ?? run.steps });
     const fc = runDisplayColor(run);
     const sc = runStatusColor(run.status);
@@ -938,28 +1003,48 @@ export class RunList extends RunListState {
       html`<span class="updated-cell" data-testid="runs-updated" title=${run.updatedAt}
         >${run.updatedAt.slice(0, 10)}</span
       >`,
-      html`<div class="run-pipeline-cell" data-testid="runs-pipeline" title=${pipelineLabel}>
-        ${run.summary ? html`${renderRunTitle(run, 'run-title')}` : nothing}
-        <run-pipeline-mini
-          .run=${run}
-          .steps=${run.steps}
-          .flowType=${run.flowType}
-          .taskProgressError=${this.taskProgressErrorsByRun.get(
-            runChecklistProgressTarget(run)?.key ?? '',
-          )}
-          .taskProgress=${this.taskProgressByRun.get(runChecklistProgressTarget(run)?.key ?? '')}
-          .retryProgress=${() =>
-            void this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')?.retry()}
-          .taskProgressStale=${progressReadNotice(
-            this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')?.state ?? {
-              status: 'loading',
-            },
-            gateway.connectionState === 'connected',
-          )?.kind === 'saved'}
-        ></run-pipeline-mini>
-        <span class="pipeline-label" data-testid="runs-timing" title=${pipelineLabel}
-          >${timing.label}</span
-        >
+    ];
+    return renderWorkInventoryRow({
+      row: {
+        id: run.id,
+        selected: isSelected,
+        className: `run-card ${this.manageMode ? 'manage-mode' : ''}`,
+        testId: `runs-row-${run.id}`,
+        onActivate: () => {
+          this.manageMode ? this.toggleSelectId(run.id) : this.selectRun(run);
+        },
+        onDeselect: this.manageMode ? undefined : () => this.backToRunList(),
+      },
+      cells,
+      summary:
+        showSummary && run.summary
+          ? html`<div class="run-row-summary" role="gridcell">
+              ${renderRunTitle(run, 'run-title')}
+            </div>`
+          : undefined,
+      footer: html`<div class="run-row-footer" role="gridcell">
+        <div class="run-pipeline-cell" data-testid="runs-pipeline" title=${pipelineLabel}>
+          <run-pipeline-mini
+            .run=${run}
+            .steps=${run.steps}
+            .flowType=${run.flowType}
+            .taskProgressError=${this.taskProgressErrorsByRun.get(
+              runChecklistProgressTarget(run)?.key ?? '',
+            )}
+            .taskProgress=${this.taskProgressByRun.get(runChecklistProgressTarget(run)?.key ?? '')}
+            .retryProgress=${this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')
+              ?.retry}
+            .taskProgressStale=${progressReadNotice(
+              this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')?.state ?? {
+                status: 'loading',
+              },
+              gateway.connectionState === 'connected',
+            )?.kind === 'saved'}
+          ></run-pipeline-mini>
+          <span class="pipeline-label" data-testid="runs-timing" title=${pipelineLabel}
+            >${timing.label}</span
+          >
+        </div>
         <div class="run-row-affordances" @click=${(e: Event) => e.stopPropagation()}>
           ${this.renderRunTags(run)} ${this.renderEvidenceSignals(run, evidenceSummary)}
           <a class="ext-link" href=${familyRunHash(run.familyId, run.id)}>retrospective</a>
@@ -1014,19 +1099,6 @@ export class RunList extends RunListState {
             : nothing}
         </div>
       </div>`,
-    ];
-    return renderWorkInventoryRow({
-      row: {
-        id: run.id,
-        selected: isSelected,
-        className: `run-card ${this.manageMode ? 'manage-mode' : ''}`,
-        testId: `runs-row-${run.id}`,
-        onActivate: () => {
-          this.manageMode ? this.toggleSelectId(run.id) : this.selectRun(run);
-        },
-        onDeselect: this.manageMode ? undefined : () => this.backToRunList(),
-      },
-      cells,
     });
   }
 
@@ -1107,6 +1179,10 @@ export class RunList extends RunListState {
 
   private renderFamilyGroup(group: RunFamilyGroup, showCheckbox: boolean) {
     const comparePair = pickFamilyComparePair(group.runs);
+    const summariesInHeader = new Set([
+      group.rootRun?.summary?.trim(),
+      group.runs.find((run) => run.createdAt === group.latestCreatedAt)?.summary?.trim(),
+    ]);
     const prNumbers = [
       ...new Set(
         group.runs.map((run) => run.prNumber).filter((value): value is number => value != null),
@@ -1198,7 +1274,11 @@ export class RunList extends RunListState {
           </div>
         </div>
         ${this.renderFamilySummaryRow(group, familyPR)}
-        ${group.runs.map((run) => this.renderCard(run, showCheckbox))}
+        ${repeat(
+          group.runs,
+          (run) => run.id,
+          (run) => this.renderCard(run, showCheckbox, !summariesInHeader.has(run.summary?.trim())),
+        )}
       </section>
     `;
   }

@@ -11,6 +11,26 @@ export interface TaskProgressParams extends SlotAgentTargetParams {
   taskFile?: string;
 }
 
+/** Spend of the viewed agent session so far, from the transcript bytes appended since the last read. */
+export interface TaskLiveSpend {
+  runner: string;
+  /** When the gateway last read the transcript; at most one read per session every 15 s. */
+  readAt: string;
+  /** Null when the runner records no timed token usage. */
+  totalTokens: number | null;
+  /** Null when a token record has no recorded or listed price. */
+  costUsd: number | null;
+  /** Null when the runner records no compaction events. */
+  compactions: number | null;
+  toolCalls: number;
+  /** Closed checklist steps, then the open one. */
+  steps: import('../contracts/runs.js').SessionToolUsageSegment[];
+  /** Why there are no numbers: no transcript yet, a runner without one appendable file, a read failure. */
+  unavailable?: string;
+  /** Transcript bytes not read yet (catching up after a gateway restart); the numbers are partial. */
+  behindBytes?: number;
+}
+
 export interface TaskProgressResult {
   slotId: string;
   role?: AgentRole;
@@ -52,4 +72,6 @@ export interface TaskProgressResult {
    * ledger error: `acceptanceStatusError` keeps that meaning.
    */
   acceptanceEvidenceLinksError?: string;
+  /** Live tokens, cost, compactions and tool calls of the viewed agent session. */
+  liveSpend?: TaskLiveSpend;
 }

@@ -2333,7 +2333,7 @@ describe('buildLaunchCommand', () => {
         cmd,
         /-e '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/bin\/pi-farmslot-observability\.ts'/,
       );
-      assert.match(cmd, /--thinking medium/);
+      assert.match(cmd, /--thinking high/);
       assert.match(cmd, /--model xai\/grok-4\.7/);
       assert.doesNotMatch(cmd, /(^|[\s])-p([\s]|$)/);
       assert.doesNotMatch(cmd, /--mode json/);
@@ -2343,7 +2343,7 @@ describe('buildLaunchCommand', () => {
     it('uses the configured pi_path and selected model', () => {
       const vars = makeVars({ dispatchCmd: '', piPath: '/usr/local/bin/pi' });
       const cmd = buildLaunchCommand(vars, 'pi', 'grok-4.5', PROMPT);
-      assert.match(cmd, /\/usr\/local\/bin\/pi --thinking medium --approve -e /);
+      assert.match(cmd, /\/usr\/local\/bin\/pi --thinking high --approve -e /);
       assert.match(cmd, /--model xai\/grok-4\.5/);
     });
 

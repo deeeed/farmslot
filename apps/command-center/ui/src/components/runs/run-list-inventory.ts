@@ -29,13 +29,6 @@ export const RUN_INVENTORY_COLUMNS: WorkInventoryColumnDef<RunInventorySortKey>[
   { key: 'slot', label: 'Slot', width: '120px', testId: 'runs-sort-slot' },
   { key: 'runner', label: 'Runner / model', width: '140px', testId: 'runs-sort-runner' },
   { key: 'updated', label: 'Updated', width: '86px', testId: 'runs-sort-updated' },
-  {
-    key: 'pipeline',
-    label: 'Pipeline / review',
-    width: 'minmax(140px, 1fr)',
-    sortable: false,
-    testId: 'runs-pipeline-col',
-  },
 ];
 
 export function runInventorySortValue(run: RunListRow, key: RunInventorySortKey): string {

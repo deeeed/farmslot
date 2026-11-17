@@ -313,7 +313,11 @@ test('Cursor retained handoff relaunches with argv and waits for the scoped task
     release();
     result = await delivery;
   }
-  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  assert.deepEqual(result, {
+    delivered: true,
+    acknowledgement: 'structured',
+    runnerReplaced: true,
+  });
   assert.equal(mutationStarts, 1);
   const command = launchScripts.at(-1) ?? '';
   assert.match(command, /cursor-agent/);
@@ -343,7 +347,11 @@ test('Pi fix handoff launches its task file without typing into the prior sessio
     launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
     timeoutMs: 1_000,
   });
-  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  assert.deepEqual(result, {
+    delivered: true,
+    acknowledgement: 'structured',
+    runnerReplaced: true,
+  });
   const command = launchScripts.at(-1) ?? '';
   assert.match(command, /--model '?router\/GLM-5[.]3-Flash-s12'?/);
   assert.match(command, /FARMSLOT_TASK_FILE=/);
@@ -402,7 +410,11 @@ test('Cursor argv relaunch preserves dispatch templates that require task_file',
     launchAckSignalPath: '/tmp/REVIEW-FIX-SIGNAL.json',
   });
 
-  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  assert.deepEqual(result, {
+    delivered: true,
+    acknowledgement: 'structured',
+    runnerReplaced: true,
+  });
   const command = launchScripts.at(-1) ?? '';
   assert.match(command, /tasks\/run-1\/REVIEW-FIX[.]md/);
 });
@@ -586,7 +598,11 @@ test('Cursor argv handoff refreshes a nonterminal prior-task snapshot on retry',
     timeoutMs: 2_000,
   });
 
-  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  assert.deepEqual(result, {
+    delivered: true,
+    acknowledgement: 'structured',
+    runnerReplaced: true,
+  });
   assert.equal(
     commands.some((candidate) => candidate.includes('PRIOR-TASK-SIGNAL.json')),
     true,
@@ -702,7 +718,11 @@ test('Cursor argv handoff waits for a delayed replacement process', async (t) =>
     timeoutMs: 3_000,
   });
 
-  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  assert.deepEqual(result, {
+    delivered: true,
+    acknowledgement: 'structured',
+    runnerReplaced: true,
+  });
   assert.ok(runnerLivenessProbes >= 3);
 });
 
@@ -1195,7 +1215,11 @@ test('warm Cursor retained handoff uses argv relaunch and requires a fresh task 
     timeoutMs: 5,
   });
 
-  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  assert.deepEqual(result, {
+    delivered: true,
+    acknowledgement: 'structured',
+    runnerReplaced: true,
+  });
   assert.equal(
     commands.some((command) => command.includes('respawn-window')),
     true,
@@ -1446,7 +1470,11 @@ for (const runnerId of ['cursor', 'pi']) {
         clock += 119_000;
       },
     });
-    assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+    assert.deepEqual(result, {
+      delivered: true,
+      acknowledgement: 'structured',
+      runnerReplaced: true,
+    });
     assert.equal(launchWindowOpenedAt, restoredAt);
   });
 

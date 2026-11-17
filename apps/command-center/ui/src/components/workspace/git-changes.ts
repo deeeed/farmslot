@@ -7,6 +7,7 @@ import { gitStateChips, gitStatusColor, stateChipStyles } from '../../styles/git
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { viewBinding, ViewStateBindings } from '../../utils/view-state.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
+import { AVAILABLE_AFTER_REFRESH } from '../shared/read-notice-delay.js';
 
 // Local types (protocol types not imported in isolated phase)
 type GitChangeStatus = 'M' | 'A' | 'D' | '?' | 'R';
@@ -700,7 +701,7 @@ export class GitChanges extends LitElement {
                 ? html`<button
                     ?disabled=${this.actionsDisabled}
                     class="file-action-btn"
-                    title="Unstage"
+                    title=${this.actionsDisabled ? AVAILABLE_AFTER_REFRESH : 'Unstage'}
                     @click=${(e: Event) => this._unstage(f.path, e)}
                   >
                     &minus;
@@ -710,7 +711,7 @@ export class GitChanges extends LitElement {
                 ? html`<button
                       ?disabled=${this.actionsDisabled}
                       class="file-action-btn"
-                      title="Stage"
+                      title=${this.actionsDisabled ? AVAILABLE_AFTER_REFRESH : 'Stage'}
                       @click=${(e: Event) => this._stage(f.path, e)}
                     >
                       +
@@ -720,9 +721,11 @@ export class GitChanges extends LitElement {
                       class="file-action-btn danger ${this._confirmDiscard === f.path
                         ? 'confirming'
                         : ''}"
-                      title="${this._confirmDiscard === f.path
-                        ? 'Click again to confirm'
-                        : 'Discard changes'}"
+                      title="${this.actionsDisabled
+                        ? AVAILABLE_AFTER_REFRESH
+                        : this._confirmDiscard === f.path
+                          ? 'Click again to confirm'
+                          : 'Discard changes'}"
                       @click=${(e: Event) => this._discard(f.path, e)}
                     >
                       ${'↩'}
@@ -793,7 +796,7 @@ export class GitChanges extends LitElement {
                 <button
                   ?disabled=${this.actionsDisabled}
                   class="file-action-btn"
-                  title="Unstage"
+                  title=${this.actionsDisabled ? AVAILABLE_AFTER_REFRESH : 'Unstage'}
                   @click=${(e: Event) => this._unstage(c.path, e)}
                 >
                   &minus;
@@ -803,7 +806,7 @@ export class GitChanges extends LitElement {
                 <button
                   ?disabled=${this.actionsDisabled}
                   class="file-action-btn"
-                  title="Stage"
+                  title=${this.actionsDisabled ? AVAILABLE_AFTER_REFRESH : 'Stage'}
                   @click=${(e: Event) => this._stage(c.path, e)}
                 >
                   +
@@ -816,9 +819,11 @@ export class GitChanges extends LitElement {
                   class="file-action-btn danger ${this._confirmDiscard === c.path
                     ? 'confirming'
                     : ''}"
-                  title="${this._confirmDiscard === c.path
-                    ? 'Click again to confirm'
-                    : 'Discard changes'}"
+                  title="${this.actionsDisabled
+                    ? AVAILABLE_AFTER_REFRESH
+                    : this._confirmDiscard === c.path
+                      ? 'Click again to confirm'
+                      : 'Discard changes'}"
                   @click=${(e: Event) => this._discard(c.path, e)}
                 >
                   ${'↩'}

@@ -35,7 +35,7 @@ export class GlobalFilterBar extends LitElement {
         border-bottom: 1px solid ${unsafeCSS(colors.bgCard)};
         flex-shrink: 0;
         flex-wrap: wrap;
-        min-height: 32px;
+        align-content: flex-start;
         box-sizing: border-box;
       }
       .label {

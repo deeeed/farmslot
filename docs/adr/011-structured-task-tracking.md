@@ -123,3 +123,9 @@ export interface TaskProgressStructured {
 
 - PRD Feature C4: TASK.md Progress Tracker
 - Roadmap M8: Structured Task Tracking
+
+## Amendment: typed task-directory paths, 2026-11-17
+
+The shared task-directory layout and file-format references belong to `@farmslot/protocol/task-layout`. Markdown remains the task/checklist source; no task-schema sidecar is reintroduced. Gateway action transport, retention and inheritance use the catalog's single `artifacts/task-actions` root.
+
+Referenced task-action bytes and their library digest must survive publication and inheritance. New publication refuses incomplete or changed executable inputs. A historical absence at the canonical location becomes a structured input gap: follow-up work may start, but must re-author and validate its own inputs and cannot reuse the original proof. Existing root-layout artifacts and frozen decisions remain unchanged; there is no fallback root. See the owning [task-directory contract](../reference/task-directory-contract.md#typed-path-authority-and-task-actions).

@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { ReviewDispatchViewModel } from '@farmslot/review-dispatch';
 
-import { backlogExecutionDefaults } from './backlog-review-dispatch';
+import { backlogCreatePrimaryPicker, backlogExecutionDefaults } from './backlog-review-dispatch';
 
 test('editing only a backlog title retains the project runner and model when overrides are absent', () => {
   const project = { name: 'project', defaults: { dev: { runner: 'claude', model: 'opus' } } };
@@ -85,4 +85,17 @@ test('title edits preserve explicit runner-default model and effort from review 
     },
   }).toSelection();
   assert.deepEqual(selection, { runner: 'codex', model: null, effort: null, mode: 'cold' });
+});
+
+function primaryLabel(flowType: 'review-pr' | 'dev' | 'qa'): string {
+  const picker = backlogCreatePrimaryPicker({ project: undefined, flowType });
+  const id = picker.rows[0].id;
+  picker.setRunner(id, 'pi');
+  return picker.effortChoices(id)[0].label;
+}
+
+test('a companion picker labels high for review-pr, dev, and qa', () => {
+  assert.equal(primaryLabel('review-pr'), 'Runner default · high');
+  assert.equal(primaryLabel('dev'), 'Runner default · high');
+  assert.equal(primaryLabel('qa'), 'Runner default · high');
 });

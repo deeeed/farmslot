@@ -1,13 +1,14 @@
 import { html, nothing } from 'lit';
 
 import type { SlotStatus } from '@farmslot/protocol';
-import { sourceObservationAge } from '@farmslot/protocol';
 
 import '../shared/workspace-pin.js';
 
+import { gateway } from '../../gateway-client.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { isSlotPinned } from '../../utils/pinned-slots.js';
 import { runDisplayTitle } from '../runs/run-utils.js';
+import { AVAILABLE_AFTER_REFRESH } from '../shared/read-notice-delay.js';
 
 import type { SlotView } from './slot-view.js';
 import { EDITORS } from './slot-view-model.js';
@@ -41,12 +42,38 @@ export function renderSlotViewHeader(
     <!-- Header -->
     <div class="sv-header">
       <button class="sv-back-btn" @click=${view._handleBack}>&larr;</button>
+      <span class="sv-slot-title">${hasSlotData ? slot!.slot : view.slotId || 'workspace'}</span>
+      <!-- Keep permanent navigation before changing run state and actions. -->
+      ${hasSlotData
+        ? html`
+            <button
+              class="sv-run-ctrl history"
+              data-testid="slot-history"
+              @click=${() => {
+                view._historyOpen = true;
+                view._syncUrlState();
+              }}
+              title="View recent retained runs for this slot"
+            >
+              History
+            </button>
+            <button
+              class="sv-run-ctrl"
+              data-testid="slot-load-run"
+              @click=${() => {
+                view._loadRunOpen = true;
+              }}
+              title="Browse all runs and warm-switch this slot onto one"
+            >
+              Load run →
+            </button>
+          `
+        : nothing}
       ${slot?.heldReason
         ? html`<span role="status" data-testid="slot-held-reason"
             >Workspace occupied: ${slot.heldReason}</span
           >`
         : nothing}
-      <span class="sv-slot-title">${hasSlotData ? slot!.slot : view.slotId || 'workspace'}</span>
       ${view._linkedRun
         ? html`
             <a
@@ -124,7 +151,7 @@ export function renderSlotViewHeader(
               style="background:${colors.statusWarn}22; color:${colors.statusWarn}; border:1px solid ${colors.statusWarn}44; padding:2px 8px; border-radius:4px; font-size:11px; font-family:${fonts.mono}; cursor:pointer; margin-left:4px"
               ?disabled=${view._runActionsBlocked}
               @click=${() => view._pauseRun()}
-              title="Pause worker (Ctrl+C)"
+              title=${view._runActionsBlocked ? AVAILABLE_AFTER_REFRESH : 'Pause worker (Ctrl+C)'}
             >
               Pause
             </button>
@@ -136,35 +163,12 @@ export function renderSlotViewHeader(
                 style="background:${colors.statusOk}22; color:${colors.statusOk}; border:1px solid ${colors.statusOk}44; padding:2px 8px; border-radius:4px; font-size:11px; font-family:${fonts.mono}; cursor:pointer; margin-left:4px"
                 ?disabled=${view._runActionsBlocked}
                 @click=${() => view._resumeRun()}
-                title="Resume worker"
+                title=${view._runActionsBlocked ? AVAILABLE_AFTER_REFRESH : 'Resume worker'}
               >
                 Resume
               </button>
             `
           : ''}
-      ${hasSlotData
-        ? html`
-            <button
-              class="sv-run-ctrl history"
-              @click=${() => {
-                view._historyOpen = true;
-                view._syncUrlState();
-              }}
-              title="View recent retained runs for this slot"
-            >
-              History
-            </button>
-            <button
-              class="sv-run-ctrl"
-              @click=${() => {
-                view._loadRunOpen = true;
-              }}
-              title="Browse all runs and warm-switch this slot onto one"
-            >
-              Load run →
-            </button>
-          `
-        : nothing}
       ${view._prNumber && view._prRepo
         ? html`
             <a
@@ -218,11 +222,15 @@ export function renderSlotViewHeader(
                     ?disabled=${view._runningSlotActionIds.includes(action.id) ||
                     view._isRecoveryBlocked}
                     @click=${() => view._runConfiguredSlotAction(action.id)}
-                    title=${failed
-                      ? `Failed: ${view._failedSlotActionMsg}`
-                      : (action.confirm ??
-                        action.description ??
-                        (action.mode === 'copy' ? `Copy command: ${action.label}` : action.label))}
+                    title=${view._isRecoveryBlocked
+                      ? AVAILABLE_AFTER_REFRESH
+                      : failed
+                        ? `Failed: ${view._failedSlotActionMsg}`
+                        : (action.confirm ??
+                          action.description ??
+                          (action.mode === 'copy'
+                            ? `Copy command: ${action.label}`
+                            : action.label))}
                   >
                     ${view._runningSlotActionIds.includes(action.id)
                       ? '...'
@@ -272,30 +280,25 @@ export function renderSlotViewHeader(
           : ''}
       </div>
     </div>
-    ${(!view._linkedRunCurrent && view._linkedRun) ||
-    view._linkedRunReadError ||
-    view._runCommandError
-      ? html`<div
-          style="padding:${spacing.sm} ${spacing.md}; border-bottom:1px solid #2a2a44; color:${colors.textSecondary}; font-size:${fonts.sizeXs}; min-width:0; white-space:normal; overflow-wrap:anywhere"
-        >
-          ${view._linkedRun && !view._linkedRunCurrent && view._linkedRunObservedAt !== undefined
-            ? html`<div role="status" data-slot-run-freshness="stale">
-                Saved run ${view._linkedRun.ticketOrPr},
-                ${sourceObservationAge(view._linkedRunObservedAt)}. Actions wait for a current read.
-              </div>`
-            : nothing}
-          ${view._linkedRunReadError
-            ? html`<div role="alert" data-slot-run-read-error>
-                ${view._linkedRunReadError}
-                <button class="sv-run-ctrl" @click=${() => void view._retryRunReads()}>
-                  Retry
-                </button>
-              </div>`
-            : nothing}
-          ${view._runCommandError
-            ? html`<div role="alert">${view._runCommandError}</div>`
-            : nothing}
-        </div>`
-      : nothing}
+    <progress-read-status
+      data-read-status="run"
+      .scopeKey=${`${view.slotId}:${view._linkedRun?.id ?? ''}`}
+      .delayRefresh=${true}
+      .connected=${gateway.connectionState === 'connected'}
+      .notice=${view._runCommandError || view._linkedRunReadError
+        ? {
+            kind: 'error',
+            text: view._runCommandError || 'Could not refresh run',
+            detail: view._runCommandError || view._linkedRunReadError,
+          }
+        : view._linkedRun && !view._linkedRunCurrent
+          ? {
+              kind: 'saved',
+              text:
+                gateway.connectionState === 'connected' ? 'Refreshing run…' : 'Showing saved run',
+            }
+          : undefined}
+      .retry=${() => void view._retryRunReads()}
+    ></progress-read-status>
   `;
 }

@@ -15,6 +15,7 @@ import type {
   SlotActionSummary,
   SlotResource,
   SlotStatus,
+  TaskLiveSpend,
   TaskProgressResult,
   TaskProgressStructured,
 } from '@farmslot/protocol';
@@ -26,6 +27,7 @@ import { type RecoveryPhase } from '../../utils/reconnect.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
 import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
 import type { PrepareProgressState } from '../shared/prepare-progress-model.js';
+import { ReadNoticeDelay } from '../shared/read-notice-delay.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import type { FileEntry } from '../workspace/file-tree.js';
 import {
@@ -63,10 +65,12 @@ export abstract class SlotViewState extends LitElement {
   @state() _taskSteps: ChecklistProgressStep[] = [];
   @state() _taskProgress = 0;
   @state() _structuredProgress?: TaskProgressStructured;
+  /** The viewed session's spend so far; kept across progress pushes that do not carry it. */
+  @state() _liveSpend?: TaskLiveSpend;
+  _liveSpendContext?: string;
   _taskProgressSource?: TaskProgressStructured;
   @state() _progressObservation: ResourceQueryState<TaskProgressResult> = { status: 'loading' };
   @state() _selectedAgentContextId = 'primary';
-  @state() _tmuxSessionSelection: string | null = null;
   @state() _selectedAgentContextIds: Record<string, string> = {};
   _lastLinkedRunId: string | null = null;
   _lastLinkedRunActiveTaskFile: string | null = null;
@@ -190,7 +194,6 @@ export abstract class SlotViewState extends LitElement {
   @state() _linkedRunCurrent = false;
   @state() _linkedRunReadError = '';
   @state() _runCommandError = '';
-  @state() _linkedRunObservedAt?: number;
   @state() _recipeRunsCurrent = false;
   @state() _tmuxRestoreRunning = false;
   _tmuxRestoreRequest?: symbol;
@@ -297,6 +300,7 @@ export abstract class SlotViewState extends LitElement {
       this._copiedSlotActionId = key;
     },
   });
+  readonly _recoveryNotice = new ReadNoticeDelay(() => this.requestUpdate());
   readonly _workspaceReads: WorkspaceReads = new WorkspaceReads(
     this,
     () => {

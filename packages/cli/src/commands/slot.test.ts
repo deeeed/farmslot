@@ -1,7 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { pickStreamOutput } from './slot.js';
+import { Command } from 'commander';
+
+import { pickStreamOutput, registerSlotCommand } from './slot.js';
+
+test('slot check accepts an explicit force flag', () => {
+  const program = new Command().exitOverride().configureOutput({ writeErr: () => {} });
+  registerSlotCommand(program);
+  const slot = program.commands.find((command) => command.name() === 'slot');
+  const check = slot?.commands.find((command) => command.name() === 'check');
+  assert(check);
+  check.parseOptions(['--force']);
+  assert.equal(check.opts<{ force?: boolean }>().force, true);
+});
 
 const frame = (event: string, payload?: unknown) => ({
   type: 'event' as const,

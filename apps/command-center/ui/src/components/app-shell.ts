@@ -1,5 +1,7 @@
 import { html, LitElement, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
+import { guard } from 'lit/directives/guard.js';
+import { repeat } from 'lit/directives/repeat.js';
 import QRCode from 'qrcode';
 
 import {
@@ -120,6 +122,7 @@ import {
   type PinnedWorkspacePreference,
   unpinWorkspace,
 } from '../utils/pinned-slots.js';
+import { resourcePresentationChanged } from '../utils/resource-presentation.js';
 import {
   buildHash,
   hashParams,
@@ -131,6 +134,7 @@ import { browserViewState, viewBinding, ViewStateBindings } from '../utils/view-
 
 import type { ChatPanel } from './chat/chat-panel.js';
 import { runStatusColor } from './runs/run-utils.js';
+import { ReadNoticeDelay } from './shared/read-notice-delay.js';
 import { heldDataIsSaved, ResourceQueryController } from './shared/resource-query-controller.js';
 import { renderRunTitle } from './shared/run-title.js';
 import {
@@ -290,14 +294,21 @@ export class FarmApp extends LitElement {
   @state() private pinnedSlots: PinnedWorkspacePreference[] = [];
   @state() private globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() private tmuxWorkers: TmuxWorkerSummary[] = [];
-  @state() private workerObservation: ResourceQueryState<TmuxWorkerListResult> = {
+  @state({ hasChanged: resourcePresentationChanged })
+  private workerObservation: ResourceQueryState<TmuxWorkerListResult> = {
     status: 'loading',
   };
   private workerAgeTimer?: ReturnType<typeof setInterval>;
+  private readonly workerReadDelay = new ReadNoticeDelay(() => this.requestUpdate());
   private readonly workerQuery = new ResourceQueryController<TmuxWorkerListResult>(
     this,
     (state) => {
       this.workerObservation = state;
+      this.workerReadDelay.update(
+        state.status !== 'ready' && state.data
+          ? { kind: 'saved', text: `Saved workers, ${sourceObservationAge(state.observedAt)}.` }
+          : undefined,
+      );
       this.tmuxWorkers =
         state.data?.workers ?? state.data?.nodes.flatMap((node) => node.workers) ?? [];
       if (state.data && state.status !== 'ready' && !this.workerAgeTimer)
@@ -435,6 +446,7 @@ export class FarmApp extends LitElement {
     );
     clearInterval(this.workerAgeTimer);
     this.workerAgeTimer = undefined;
+    this.workerReadDelay.clear();
     clearInterval(this.updateAgeTimer);
     this.updateAgeTimer = undefined;
     this.unsub?.();
@@ -471,10 +483,8 @@ export class FarmApp extends LitElement {
     if (!this.pinnedSlots.length || !this.workerQuery.belongsToWorkspace) return nothing;
     const error = pinnedWorkerReadError(state);
     return html`
-      ${state.status !== 'ready' && state.data
-        ? html`<p data-pinned-workers-freshness="stale">
-            Saved workers, ${sourceObservationAge(state.observedAt)}.
-          </p>`
+      ${this.workerReadDelay.visible
+        ? html`<p data-pinned-workers-freshness="stale">${this.workerReadDelay.visible.text}</p>`
         : nothing}
       ${state.status === 'unsupported'
         ? html`<p>Worker updates are unavailable on this gateway.</p>`
@@ -979,12 +989,14 @@ export class FarmApp extends LitElement {
       return 'copilot';
     if (isDesktopClient()) return 'fleet';
     const env = (import.meta as ImportMetaWithEnv).env;
+    const devGatewayPort = env.DEV ? env.VITE_FARMSLOT_DEV_GATEWAY_PORT : undefined;
     const source = resolveGatewayConnectionSource(
       env.VITE_FARMSLOT_GATEWAY_URL,
       location,
       localStorage.getItem(GATEWAY_CANDIDATES_STORAGE_KEY),
       localStorage.getItem(GATEWAY_URL_STORAGE_KEY),
       localStorage.getItem(GATEWAY_SOURCE_STORAGE_KEY),
+      devGatewayPort,
     );
     return source === 'implicit' ? 'onboarding' : 'fleet';
   }
@@ -1635,7 +1647,11 @@ export class FarmApp extends LitElement {
           ? html`<div class="fa-active-runs-empty">
               ${hiddenCount > 0 ? 'hidden by filters' : 'none'}
             </div>`
-          : html`${pins.map((pin) => this.renderPinnedSlotShortcut(pin))}`}
+          : html`${repeat(
+              pins,
+              (pin) => ('runId' in pin ? `run:${pin.runId}` : `slot:${pin.slotId}`),
+              (pin) => this.renderPinnedSlotShortcut(pin),
+            )}`}
       </div>
     `;
   }
@@ -1694,7 +1710,7 @@ export class FarmApp extends LitElement {
   }
 
   private pinnedSlotWorkerStatus(worker: TmuxWorkerSummary | null): string {
-    if (!worker || !this.workerQuery.ready) return 'unknown';
+    if (!worker) return 'unknown';
     const source = worker.status.source;
     const state = worker.status.state;
     const isRunnerSignal = source === 'hook' || source === 'statusline' || source === 'task-file';
@@ -1718,12 +1734,11 @@ export class FarmApp extends LitElement {
   }
 
   private pinnedSlotNeedsAttention(worker: TmuxWorkerSummary | null): boolean {
-    return this.workerQuery.ready && worker?.status.requiresAttention === true;
+    return worker?.status.requiresAttention === true;
   }
 
   private pinnedSlotWorkerTitle(worker: TmuxWorkerSummary | null): string {
-    if (!worker || !this.workerQuery.ready)
-      return 'No current structured runner signal for this slot';
+    if (!worker) return 'No retained structured runner signal for this slot';
     const signal = `${worker.status.source}/${worker.status.confidence}`;
     const attention = worker.status.requiresAttention
       ? ` · needs attention (${worker.status.attentionReason ?? 'runner stopped'})`
@@ -1798,65 +1813,86 @@ export class FarmApp extends LitElement {
         ? `#run/${encodeURIComponent(runId)}`
         : `#terminal?run=${encodeURIComponent(runId)}`
       : `#slot/${slotId}${run ? `?runId=${encodeURIComponent(run.id)}` : ''}`;
-    return html`
-      <div class="fa-active-run-wrap">
-        <a
-          class="fa-active-run ${selected ? 'active' : ''} ${needsAttention
-            ? 'needs-attention'
-            : ''}"
-          href=${href}
-          title=${`${slotId ?? runId}${pin.label ? ` · ${pin.label}` : ''}${run ? ` · ${run.ticketOrPr}` : ''}`}
-        >
-          <div class="fa-active-run-top">
-            <span class="fa-active-run-ticket">${displayLabel}</span>
-            ${machine || pin.label
-              ? html`<span class="fa-active-run-flow" style="--flow-color:#94a3b8"
-                  >${machine}</span
-                >`
-              : nothing}
-          </div>
-          <div class="fa-active-run-summary">
+    return guard(
+      [
+        pin,
+        slotId,
+        runId,
+        run,
+        selected,
+        displayLabel,
+        needsAttention,
+        workerStatus,
+        statusColor,
+        machine,
+        href,
+        slot?.phase,
+        slot?.branch,
+        Boolean(worker),
+        worker?.status.source,
+        worker?.status.confidence,
+        this.pinnedSlotWorkerTitle(worker),
+      ],
+      () => html`
+        <div class="fa-active-run-wrap">
+          <a
+            class="fa-active-run ${selected ? 'active' : ''} ${needsAttention
+              ? 'needs-attention'
+              : ''}"
+            href=${href}
+            title=${`${slotId ?? runId}${pin.label ? ` · ${pin.label}` : ''}${run ? ` · ${run.ticketOrPr}` : ''}`}
+          >
+            <div class="fa-active-run-top">
+              <span class="fa-active-run-ticket">${displayLabel}</span>
+              ${machine || pin.label
+                ? html`<span class="fa-active-run-flow" style="--flow-color:#94a3b8"
+                    >${machine}</span
+                  >`
+                : nothing}
+            </div>
+            <div class="fa-active-run-summary">
+              ${run
+                ? renderRunTitle(run)
+                : slot?.branch || (runId ? 'Saved review workspace' : 'Slot not in current fleet')}
+            </div>
+            <div class="fa-active-run-meta">
+              <span
+                class="fa-active-run-worker"
+                style="--worker-color:${statusColor}"
+                title=${runId ? `Run status: ${workerStatus}` : this.pinnedSlotWorkerTitle(worker)}
+              >
+                <span class="fa-active-run-worker-dot"></span>${workerStatus}
+              </span>
+              ${worker
+                ? html`<span>${worker.status.source}/${worker.status.confidence}</span>`
+                : nothing}
+              ${slot?.phase ? html`<span>${slot.phase}</span>` : nothing}
+              ${slot?.branch ? html`<span>${slot.branch}</span>` : nothing}
+              ${run && !runId ? html`<span>${run.status}</span>` : nothing}
+            </div>
             ${run
-              ? renderRunTitle(run)
-              : slot?.branch || (runId ? 'Saved review workspace' : 'Slot not in current fleet')}
-          </div>
-          <div class="fa-active-run-meta">
-            <span
-              class="fa-active-run-worker"
-              style="--worker-color:${statusColor}"
-              title=${runId ? `Run status: ${workerStatus}` : this.pinnedSlotWorkerTitle(worker)}
-            >
-              <span class="fa-active-run-worker-dot"></span>${workerStatus}
-            </span>
-            ${worker
-              ? html`<span>${worker.status.source}/${worker.status.confidence}</span>`
+              ? html`<run-pipeline-mini
+                  class="fa-pinned-run-pipeline"
+                  .run=${run}
+                  .flowType=${run.flowType}
+                ></run-pipeline-mini>`
               : nothing}
-            ${slot?.phase ? html`<span>${slot.phase}</span>` : nothing}
-            ${slot?.branch ? html`<span>${slot.branch}</span>` : nothing}
-            ${run && !runId ? html`<span>${run.status}</span>` : nothing}
-          </div>
-          ${run
-            ? html`<run-pipeline-mini
-                class="fa-pinned-run-pipeline"
-                .run=${run}
-                .flowType=${run.flowType}
-              ></run-pipeline-mini>`
-            : nothing}
-        </a>
-        <button
-          class="fa-active-run-unpin"
-          title=${`Unpin ${displayLabel}`}
-          aria-label=${`Unpin ${displayLabel}`}
-          @click=${(event: Event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            unpinWorkspace(pin);
-          }}
-        >
-          ×
-        </button>
-      </div>
-    `;
+          </a>
+          <button
+            class="fa-active-run-unpin"
+            title=${`Unpin ${displayLabel}`}
+            aria-label=${`Unpin ${displayLabel}`}
+            @click=${(event: Event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              unpinWorkspace(pin);
+            }}
+          >
+            ×
+          </button>
+        </div>
+      `,
+    );
   }
 
   private applyOnboardingConnection(event: Event) {

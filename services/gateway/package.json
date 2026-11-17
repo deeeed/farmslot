@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/gateway",
-  "version": "0.39.5",
+  "version": "0.39.6",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
@@ -31,6 +31,7 @@
     "@farmslot/credential-store": "workspace:*",
     "@farmslot/handoff": "workspace:*",
     "@farmslot/protocol": "workspace:*",
+    "@farmslot/recipe-runner": "workspace:*",
     "@farmslot/review-dispatch": "workspace:*",
     "@farmslot/run-bundle": "workspace:*",
     "@farmslot/slot-config": "workspace:*",

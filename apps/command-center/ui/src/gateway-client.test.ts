@@ -774,3 +774,19 @@ test('browser focus, online and visible events recover the current client withou
   await settle();
   assert.equal(fake.sockets.length, before, 'wake never bypasses sign-out');
 });
+
+test('verified implicit sign-in persists its selected endpoint for later UI restarts', async (t) => {
+  const fake = installFakeGateway(t);
+  const { GatewayClient, gateway } = await import('./gateway-client.js');
+  const client = new GatewayClient();
+  t.after(() => {
+    client.disconnect();
+    gateway.disconnect();
+  });
+  await client.setAuthCredentials({ token: 'fixture-device-secret' });
+  client.connect();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(client.connectionState, 'connected');
+  assert.equal(fake.store.get('farmslot.gateway.url'), client.gatewayUrl);
+  assert.equal(fake.store.get('farmslot.gateway.candidates'), JSON.stringify([client.gatewayUrl]));
+});

@@ -75,6 +75,7 @@ import {
 } from '../../run-engine/terminal-teardown-registry.js';
 import { isRunArchiving } from '../../run-lifecycle/archive-fence.js';
 import { reapSlotBrowserSession } from '../../run-lifecycle/browser-session-reap.js';
+import { canCollectRecipeArtifacts } from '../../run-lifecycle/recipe-artifacts.js';
 import { slotTeardownBlocker } from '../../run-lifecycle/slot-teardown.js';
 import {
   dropParkedBranch,
@@ -1090,10 +1091,22 @@ async function slotReleaseImpl(
         ? path.join(runSessionArchiveDir(runId), 'slot-scaffolding')
         : path.join(runsDirectory(), 'slot-scaffolding', vars.slotId);
       try {
+        const recipeOwner = runId ? await getRunWithArchived(runId) : undefined;
+        const recipeOwnerRunId = canCollectRecipeArtifacts(recipeOwner)
+          ? recipeOwner.id
+          : undefined;
         const collected = await archiveSlotScaffolding(vars, projectJson, {
           destination,
           taskRelativeDir: taskRel,
-          beforeRemove: assertReleaseClaim,
+          recipeOwnerRunId,
+          beforeRemove: async () => {
+            await assertReleaseClaim();
+            if (
+              recipeOwnerRunId &&
+              !canCollectRecipeArtifacts(await getRunWithArchived(recipeOwnerRunId))
+            )
+              throw new Error('Recipe artifact owner became protected during release');
+          },
         });
         step(
           'scaffolding',

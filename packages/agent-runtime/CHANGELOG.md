@@ -4,6 +4,30 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.48.7 - 2026-11-17
+
+- Align exact dependency pins with the JSON proof diagnostic release.
+
+## 0.48.6 - 2026-11-17
+
+- Align exact dependency pins with the implementation-isolated prepared-cache release.
+
+## 0.48.5 - 2026-11-17
+
+- Align exact dependency pins with the task-bound recipe evidence producer patch.
+
+## 0.48.4 - 2026-11-16
+
+- A native host source that fails to arm stays failed until its files change, instead of re-arming on every file event. A dead host left after a reboot made the gateway and node agent close and reopen their recursive watchers about 7 times a second. That host now fails as `host-identity-invalid` instead of a generic `arming-failed`.
+
+- Align exact dependencies with the prepared-source-witness patch cohort.
+- Session tool usage counts context compactions (Claude `compact_boundary`, Codex `compacted`, Grok `auto_compact_completed`, pi `compaction`) overall and per checklist step, and prices each step from recorded or static rates. Cursor and the native journal record none and say so. Codex `ContextCompaction` items are no longer counted as tool calls. A live reader takes appended transcript bytes and keeps only the open step in memory.
+
+## 0.48.3 - 2026-11-16
+
+- `mark start` tests the one status a finished run actually writes. `mark no-change` records status `complete` with a disposition rather than a status of its own, so the refusal also names that disposition, and a run that ended as no-change now says so instead of reporting a bare `complete`.
+- TASK.md names when the first checklist mark is due: `mark start`, then `mark 1` as soon as step 1 is done and before any other work. A worker read the old line (`mark start` once when work begins, `mark N` after each step) as covering step 1 and explored for 230 tool calls without marking anything. The instruction has one source now, shared with the gateway, so the two cannot drift; the interactive-dev and ci-fix worker templates carry the same rule in their own wording. No other wording changed.
+
 ## 0.48.2 - 2026-11-15
 
 - `@farmslot/agent-runtime/tool-usage` counts an agent session's tool calls from one normalized stream (name, issued and completed time). Per-runner adapters translate Pi, Claude, Codex, Grok and Cursor transcripts and native session journals into it, and one counter splits calls, tokens and wall time at the checklist marks. Calls are attributed to the step in which they were issued; Cursor transcripts record no times, so they report totals only.

@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import type { RecipeSourceProvenance } from '@farmslot/protocol';
+import { preparedSourceValueAsync } from '@farmslot/recipe-runner';
 
 import { countCallWork } from './call-timings.js';
 import { sourceIsDirty, type SourceProvenanceSnapshot } from './execution-provenance.js';
@@ -19,6 +20,32 @@ function readGitAsync(root: string, args: string[]) {
 }
 
 export async function gitLibraryProvenance(
+  root: string,
+  snapshot?: SourceProvenanceSnapshot,
+): Promise<Pick<RecipeSourceProvenance, 'revision' | 'dirty'>> {
+  const key = { kind: 'library-metadata', snapshot };
+  const decode = (
+    value: unknown,
+  ): Pick<RecipeSourceProvenance, 'revision' | 'dirty'> | undefined => {
+    if (typeof value !== 'object' || value === null) return undefined;
+    if ('revision' in value && typeof value.revision !== 'string') return undefined;
+    if ('dirty' in value && typeof value.dirty !== 'boolean') return undefined;
+    return {
+      ...('revision' in value && typeof value.revision === 'string'
+        ? { revision: value.revision }
+        : {}),
+      ...('dirty' in value && typeof value.dirty === 'boolean' ? { dirty: value.dirty } : {}),
+    };
+  };
+  return preparedSourceValueAsync(
+    root,
+    key,
+    () => freshGitLibraryProvenance(root, snapshot),
+    decode,
+  );
+}
+
+async function freshGitLibraryProvenance(
   root: string,
   snapshot?: SourceProvenanceSnapshot,
 ): Promise<Pick<RecipeSourceProvenance, 'revision' | 'dirty'>> {

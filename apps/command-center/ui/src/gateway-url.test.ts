@@ -80,6 +80,32 @@ test('gateway websocket URL can reuse stored candidates', () => {
   );
 });
 
+test('dev gateway url follows the page host and keeps the gateway port', () => {
+  const page = { protocol: 'http:', host: 'lan.example:5175' };
+
+  assert.equal(
+    resolveGatewayWebSocketUrl('ws://localhost:7801/ws', page, '7801'),
+    'ws://lan.example:7801/ws',
+  );
+  assert.equal(
+    resolveGatewayWebSocketUrl('ws://127.0.0.1:7801', page, '7801'),
+    'ws://lan.example:7801/ws',
+  );
+  assert.equal(resolveGatewayWebSocketUrl(undefined, page, '7801'), 'ws://lan.example:7801/ws');
+  assert.equal(
+    resolveGatewayWebSocketUrl(
+      'ws://localhost:7801/ws',
+      { protocol: 'http:', host: 'localhost:5175' },
+      '7801',
+    ),
+    'ws://localhost:7801/ws',
+  );
+  assert.equal(
+    resolveGatewayWebSocketUrl('wss://gateway.example/ws', page, '7801'),
+    'wss://gateway.example/ws',
+  );
+});
+
 test('gateway websocket URL ignores malformed hosted and stored candidates', () => {
   assert.deepEqual(parseHostedGatewayConnection('#doctor?connect=not-base64-json'), { urls: [] });
   assert.deepEqual(

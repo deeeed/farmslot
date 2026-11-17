@@ -157,6 +157,9 @@ export function renderSlotViewPanelStyles(recoveryPhase: RecoveryPhase): string 
         font-size: ${fonts.sizeXs};
       }
       slot-view .sv-run-bar {
+        height: 33px;
+        box-sizing: border-box;
+        overflow: hidden;
         display: flex;
         align-items: center;
         gap: 8px;

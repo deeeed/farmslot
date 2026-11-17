@@ -101,7 +101,7 @@ class SlotPRReads {
     const repo = this.view._prRepo;
     this.commentsBound = Boolean(pr && repo);
     if (!this.commentsBound) {
-      this.view._prThreads = [];
+      if (this.view._prThreads.length) this.view._prThreads = [];
       this.view._prCommentsLoading = false;
     }
     this.comments.setQuery(
@@ -142,7 +142,7 @@ class SlotPRReads {
       this.view._prCurrentUser = state.data.currentUser;
     } else {
       console.warn('[slot-view] PR comments load failed:', state.error?.message);
-      this.view._prThreads = [];
+      if (this.view._prThreads.length) this.view._prThreads = [];
     }
   }
 }
@@ -190,7 +190,7 @@ export async function loadSlotViewPRComments(view: SlotView) {
 /** Each view's latest branch-diff request; an older base's read never writes after it. */
 const latestBranchDiff = new WeakMap<
   SlotView,
-  { token: symbol; request: Record<string, unknown> }
+  { token: symbol; request: Record<string, unknown>; key: string; done: Promise<void> }
 >();
 
 export async function loadSlotViewBranchDiff(view: SlotView) {
@@ -210,7 +210,23 @@ export async function loadSlotViewBranchDiff(view: SlotView) {
     reviewSnapshot,
   );
   const previous = latestBranchDiff.get(view);
-  latestBranchDiff.set(view, { token, request });
+  const key = JSON.stringify({
+    ticket,
+    request,
+    runId: view._linkedRun?.id,
+    workspaceVersion: view._workspaceReads.version,
+  });
+  // The existing observed read already follows repository changes. A poll of
+  // the same source must not retire it or replace its content with loading UI.
+  if (previous?.key === key) {
+    if (view._branchDiffError) await view._workspaceReads.retry();
+    return previous.done;
+  }
+  let finish!: () => void;
+  const done = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  latestBranchDiff.set(view, { token, request, key, done });
   // Dropped before this read opens, so it can only retire the previous base or slot.
   if (previous) view._workspaceReads.drop(Methods.GIT_BRANCH_DIFF, previous.request);
   view._branchDiffLoading = true;
@@ -247,6 +263,7 @@ export async function loadSlotViewBranchDiff(view: SlotView) {
     if (isCurrent()) {
       view._branchDiffLoading = false;
     }
+    finish();
   }
 
   // Load branch list for the dropdown (only once per slot)

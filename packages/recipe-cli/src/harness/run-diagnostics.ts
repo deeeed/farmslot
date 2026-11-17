@@ -163,7 +163,7 @@ export async function beginRunDiagnostics(
   const source = surface.appLogSource(projectRoot);
   if (!source) return null;
   const diagnostics = surface.diagnostics;
-  const issueBuffer = diagnostics?.issueBuffer?.arm(projectRoot)
+  const issueBuffer = (await diagnostics?.issueBuffer?.arm(projectRoot))
     ? { adapter, projectRoot }
     : undefined;
   let capture: ConsoleCaptureSpec | undefined;
@@ -244,7 +244,7 @@ export async function finishRunDiagnostics<TAllowlist extends ConsoleAllowlist>(
   if (!baseline) return result;
   try {
     const bufferedIssues = baseline.issueBuffer
-      ? harnessAdapter(baseline.issueBuffer.adapter).diagnostics?.issueBuffer?.collect(
+      ? await harnessAdapter(baseline.issueBuffer.adapter).diagnostics?.issueBuffer?.collect(
           baseline.issueBuffer.projectRoot,
         )
       : undefined;

@@ -6,6 +6,10 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.20.5 - 2026-11-16
+
+- Keep expected missing or pending observations neutral across run and slot panels, while preserving real read and ledger parse errors.
+
 ## 0.20.4 - 2026-11-15
 
 - Extend the acceptance-panel proof to distinguish live preparation without a watch from a genuine red ledger read failure.

@@ -4,7 +4,37 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- mm-harness 0.96.29 consumes runner 0.46.22 and CLI 0.35.16 for explicit task binding, isolated diagnostics, required task-script lookup and exact claim-conflict messages.
+- mm-harness 0.96.28 refuses unavailable configured Mobile slot devices instead of selecting another connected device; shared runner code and dependency pins are unchanged.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.46.24 - 2026-11-17
+
+- Name the executed JSON assertion, literal artifact path and required proof category when claim evidence is unbound, preserving existing proof eligibility and verdicts.
+- mm-harness 0.96.31 consumes runner 0.46.24 and CLI 0.35.18 for unbound JSON proof diagnostics while preserving proof eligibility and verdicts.
+
+## 0.46.23 - 2026-11-17
+
+- Isolate prepared source, metadata and output-support cache records by implementation so mixed versions keep warm checks without weakening source freshness.
+- mm-harness 0.96.30 consumes runner 0.46.23 and CLI 0.35.17 for implementation-isolated prepared caches while retaining source freshness.
+
+## 0.46.22 - 2026-11-17
+
+- Show registered and supplied acceptance text with a diff when a recipe claim conflicts with the task, preserving verbatim matching.
+- Record initialized worker ownership for generated recipe outputs without changing proof binding.
+
+## 0.46.21 - 2026-11-16
+
+- Read bootstrap Git metadata without source-tree walks; unsupported source/output layouts and unavailable persistence retain fresh legacy validation.
+
+- mm-harness 0.96.27 consumes the prepared source-witness API for zero steady-state Git calls while retaining source freshness.
+
+- Reuse prepared source and capture observations behind fresh filesystem witnesses, with per-boundary file-read wall and CPU measurements.
+
+## 0.46.20 - 2026-11-16
+
+- mm-harness 0.96.26 consumes this protocol 0.87.0 and SDK 0.28.0 cohort for fewer Mobile source-fingerprint Git calls and asynchronous issue-buffer diagnostics.
 
 ## 0.46.19 - 2026-11-15
 

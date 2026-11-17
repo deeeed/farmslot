@@ -748,6 +748,10 @@ export interface SessionToolUsageSegment {
   toolCallsByName: Record<string, number>;
   /** Null when the runner records no timed token usage. */
   totalTokens: number | null;
+  /** Compactions in this segment; null when the runner records no compaction events. */
+  compactions?: number | null;
+  /** USD of this segment's tokens; null when any of them has no recorded or listed price. */
+  costUsd?: number | null;
 }
 
 /** Tool calls of one agent session (or the sum of a run's sessions). */
@@ -763,6 +767,10 @@ export interface SessionToolUsage {
   steps: SessionToolUsageSegment[];
   /** Why `steps` is empty: no checklist marks, or a transcript that records no call times. */
   stepsUnavailable?: string;
+  /** Context compactions the runner recorded; null when its transcript records none at all. */
+  compactions?: number | null;
+  /** Why `compactions` is null. */
+  compactionsUnavailable?: string;
 }
 
 export type ReviewLoopTimelineSegmentKind = 'review' | 'worker-fix' | 're-review';
@@ -3285,6 +3293,18 @@ export interface Run {
   readOnly?: boolean;
   /** Slot HEAD SHA captured at dispatch (after prepare) — base for per-run iteration diff. */
   worktreeHeadAtDispatch?: string | null;
+  /**
+   * The slot HEAD this run was FIRST dispatched from, written once and never
+   * rewritten (ADR-062 Amendment 19).
+   *
+   * `worktreeHeadAtDispatch` is the current dispatch baseline and a later
+   * prepare overwrites it with whatever HEAD is then, so after a re-dispatch it
+   * can name a commit that already contains the run's own fix. Recorded
+   * evidence needs a base no later work can move: before evidence may match
+   * this, while matching a moved dispatch head would let a post-fix capture
+   * pass as the baseline. Absent on runs first dispatched before this existed.
+   */
+  preWorkBaseSha?: string | null;
 }
 
 export type { RunImportProvenance } from './run-bundles.js';
@@ -3961,8 +3981,8 @@ export const PI_THINKING_LEVELS = [
 ] as const;
 export type PiThinkingLevel = (typeof PI_THINKING_LEVELS)[number];
 
-/** Default PI thinking when dispatch omits effort. */
-export const DEFAULT_PI_THINKING = 'medium';
+/** Default PI thinking when a dispatch omits effort. */
+export const DEFAULT_PI_THINKING = 'high' satisfies PiThinkingLevel;
 
 export function isPiThinkingLevel(value: string): value is PiThinkingLevel {
   return (PI_THINKING_LEVELS as readonly string[]).includes(value);

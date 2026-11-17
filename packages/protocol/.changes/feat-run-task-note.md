@@ -1,1 +1,0 @@
-- Run create accepts an optional task note. The generated TASK.md appends it as one Note section.

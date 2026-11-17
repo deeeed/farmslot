@@ -153,6 +153,7 @@ function context(): RunDetailViewContext {
     prStatus: null,
     siblings: [],
     taskProgress: null,
+    liveSpend: null,
     acceptanceStatus: ledger,
     acceptanceCriteria: null,
     acceptanceStatusError: null,
@@ -631,4 +632,63 @@ test('pipeline review header uses each reviewer retained placement', () => {
   const text = litText(renderRunDetailView(ctx));
   assert.match(text, /Review execution/);
   assert.match(text, />\/original\/checkout<\/code/);
+});
+
+test('signal acknowledgement opens a checklist panel before the first progress read', () => {
+  const element = pipeline();
+  const acknowledgedAt = '2026-11-16T01:02:03Z';
+  element.taskProgress = undefined;
+  element.run = {
+    ...run,
+    activeTaskFile: run.taskFile ?? undefined,
+    agentContexts: [
+      {
+        ...agent('primary'),
+        taskFile: run.taskFile,
+        signalAttemptId: 'acknowledged-attempt',
+        attemptStartedAt: acknowledgedAt,
+        lastSignalAt: acknowledgedAt,
+      },
+    ],
+  };
+  const text = element.render();
+  assert.match(litText(text), /data-panel="run-step-progress"/);
+  assert.equal(litBinding(text, '.acknowledgedAt='), acknowledgedAt);
+  assert.equal(litBinding(text, '.showSubtasks='), true);
+  element.run = {
+    ...element.run,
+    agentContexts: [
+      { ...agent('primary'), taskFile: run.taskFile, attemptStartedAt: acknowledgedAt },
+    ],
+  };
+  assert.doesNotMatch(litText(element.render()), /data-panel="run-step-progress"/);
+});
+
+test('detail forwards saved and failed progress observations through the pipeline to the strip', () => {
+  for (const notice of [
+    { kind: 'saved' as const, text: 'Saved progress' },
+    { kind: 'error' as const, text: 'Could not read progress', detail: 'EACCES' },
+  ]) {
+    const ctx = { ...context(), taskProgressNotice: notice };
+    const view = renderRunDetailView(ctx);
+    assert.deepEqual(litBinding(view, '.taskProgressNotice='), notice);
+    const element = new RunPipeline();
+    element.run = run;
+    element.collapsiblePanels = true;
+    element.taskProgress = {
+      schema: { flowType: 'proof', title: 'Parent', totalSteps: 1, phases: [] },
+      phases: [],
+      totalSteps: 1,
+      completedSteps: 0,
+      currentPhase: 'Parent',
+      currentStep: 'Work',
+    };
+    element.taskProgressNotice = notice;
+    const checklist = litBinding(element.render(), '.stale=');
+    assert.equal(checklist, notice.kind === 'saved');
+    assert.equal(
+      litBinding(element.render(), '.error='),
+      notice.kind === 'error' ? notice.text : undefined,
+    );
+  }
 });

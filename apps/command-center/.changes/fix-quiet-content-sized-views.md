@@ -1,0 +1,1 @@
+- Add a reusable connected-browser check for background refresh renders, DOM replacements and pinned-card flashing.

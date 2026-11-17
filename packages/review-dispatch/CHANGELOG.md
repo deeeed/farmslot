@@ -4,6 +4,30 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.25.11 - 2026-11-17
+
+- Align exact dependency pins with the JSON proof diagnostic release.
+
+## 0.25.10 - 2026-11-17
+
+- Align exact dependency pins with the implementation-isolated prepared-cache release.
+
+## 0.25.9 - 2026-11-17
+
+- Align exact dependency pins with the task-bound recipe evidence producer patch.
+
+## 0.25.8 - 2026-11-16
+
+- Use the installed protocol's PI effort default when a native host omits it, and show only supported defaults in pickers.
+
+- Align exact dependencies with the prepared-source-witness patch cohort.
+- Show the active recorded child checklist beneath its parent progress in Run Detail, keeping parent and child counts separate.
+- Expose the current checklist attempt's first accepted signal time for acknowledgement display without treating launch time as acknowledgement.
+
+## 0.25.7 - 2026-11-16
+
+- Align exact package dependencies with the protocol 0.87.0 and adapter SDK 0.28.0 cohort.
+
 ## 0.25.6 - 2026-11-15
 
 - Align exact package dependencies with the protocol 0.86.1, runner 0.46.19 and runtime 0.48.2 release cohort.

@@ -23,13 +23,18 @@ import {
 import {
   createRecipeRunner,
   createStandardCoreAdapters,
+  currentSourceWitness,
+  PreparedSourceWitness,
   type RecipeArtifactFinalization,
   type RecipeRunResult,
   type SummaryDocument,
+  withPreparedSourceWitness,
 } from '@farmslot/recipe-runner';
 
+import { observeRecipeCaptureSource } from '../../recipe-runner/src/evidence/comparisons.js';
 import { CallTimingRecorder, withCallTimings } from '../src/harness/call-timings.js';
 import { statusListing } from '../src/harness/execution-provenance.js';
+import { gitOriginUrl } from '../src/harness/git-read.js';
 import {
   beginRunDiagnostics,
   captureExecutionProvenance,
@@ -955,6 +960,150 @@ describe('execution provenance', () => {
     assert.ok(drift.some((entry) => entry.field === 'libraries[0].sourceFingerprint'));
   });
 
+  test('fallback keeps execution origin reads fresh after configuration changes', async () => {
+    process.env.FARMSLOT_RECIPE_CACHE_DIR = tempRoot('prepared-cache-');
+    const product = checkout('fallback-origin-', { 'source.txt': 'first' });
+    const output = path.join(product, 'unignored-output');
+    fs.mkdirSync(output);
+    git(product, 'config', 'remote.origin.url', 'https://example.invalid/first');
+    await withPreparedSourceWitness(async () => {
+      assert.equal(gitOriginUrl(product), 'https://example.invalid/first');
+      sourceSnapshot(product, undefined, [output]);
+      assert.equal(currentSourceWitness()!.reusable, false);
+      git(product, 'config', 'remote.origin.url', 'https://example.invalid/other');
+      currentSourceWitness()!.checkpoint();
+      assert.equal(gitOriginUrl(product), 'https://example.invalid/other');
+    });
+  });
+
+  test('installed packages inside Git keep ancestor rule changes fresh', async () => {
+    process.env.FARMSLOT_RECIPE_CACHE_DIR = tempRoot('prepared-cache-');
+    const product = checkout('nested-installed-', {
+      '.gitignore': 'node_modules/\n',
+      'source.txt': 'first',
+    });
+    const installed = path.join(product, 'node_modules/provider');
+    fs.mkdirSync(installed, { recursive: true });
+    fs.writeFileSync(path.join(installed, 'package.json'), '{"name":"provider","version":"1.0.0"}');
+    fs.writeFileSync(path.join(installed, 'provider.js'), 'export const value=1;');
+    await withPreparedSourceWitness(async () => {
+      const first = sourceSnapshot(installed);
+      fs.writeFileSync(path.join(product, '.gitignore'), '');
+      currentSourceWitness()!.checkpoint();
+      assert.notEqual(sourceSnapshot(installed).sourceFingerprint, first.sourceFingerprint);
+      assert.equal(currentSourceWitness()!.measurements.length, 0);
+    });
+  });
+
+  test('nested capture source keeps repository-wide sibling freshness', async () => {
+    const product = checkout('capture-sibling-', { 'app/a.txt': 'first', 'other/b.txt': 'first' });
+    await withPreparedSourceWitness(async () => {
+      const before = await observeRecipeCaptureSource(path.join(product, 'app'));
+      assert.equal(before.sourceDirty, false);
+      fs.writeFileSync(path.join(product, 'other/b.txt'), 'changed');
+      const after = await observeRecipeCaptureSource(path.join(product, 'app'));
+      assert.equal(after.sourceDirty, true);
+      assert.equal(currentSourceWitness()!.measurements.length, 0);
+    });
+  });
+
+  test('unignored output history retains fresh checks without a witness scan', async () => {
+    process.env.FARMSLOT_RECIPE_CACHE_DIR = tempRoot('prepared-cache-');
+    for (const gitBacked of [false, true]) {
+      const product = gitBacked
+        ? checkout('unignored-output-', { 'source.txt': 'first' })
+        : tempRoot('unignored-output-');
+      if (!gitBacked) fs.writeFileSync(path.join(product, 'source.txt'), 'first');
+      if (gitBacked) git(product, 'config', 'core.excludesFile', '/dev/null');
+      const output = path.join(product, 'execution-output');
+      fs.mkdirSync(output);
+      await withPreparedSourceWitness(async () => {
+        const first = sourceSnapshot(product, undefined, [output]);
+        for (let n = 0; n < 100; n++) fs.writeFileSync(path.join(output, n + '.json'), '{}');
+        currentSourceWitness()!.checkpoint();
+        assert.deepEqual(sourceSnapshot(product, undefined, [output]), first);
+        assert.equal(currentSourceWitness()!.measurements.length, 0);
+        fs.writeFileSync(path.join(product, 'source.txt'), 'changed');
+        assert.notEqual(
+          sourceSnapshot(product, undefined, [output]).sourceFingerprint,
+          first.sourceFingerprint,
+        );
+      });
+    }
+  });
+
+  test('ignored compiled runner inputs retain fresh legacy drift checks', async () => {
+    process.env.FARMSLOT_RECIPE_CACHE_DIR = tempRoot('prepared-cache-');
+    const runner = checkout('ignored-runner-', {
+      '.gitignore': 'dist/\n',
+      'src/runner.ts': 'first',
+    });
+    fs.mkdirSync(path.join(runner, 'dist'));
+    fs.writeFileSync(path.join(runner, 'dist/runner.js'), 'first');
+    await withPreparedSourceWitness(async () => {
+      const first = sourceSnapshot(runner, undefined, [], ['dist']);
+      fs.writeFileSync(path.join(runner, 'dist/runner.js'), 'changed');
+      currentSourceWitness()!.checkpoint();
+      assert.notEqual(
+        sourceSnapshot(runner, undefined, [], ['dist']).sourceFingerprint,
+        first.sourceFingerprint,
+      );
+      assert.equal(currentSourceWitness()!.measurements.length, 0);
+    });
+  });
+
+  test('an origin change invalidates the prepared origin across a source checkpoint', async () => {
+    process.env.FARMSLOT_RECIPE_CACHE_DIR = tempRoot('prepared-cache-');
+    const product = checkout('prepared-origin-', { 'app/value.ts': 'first\n' });
+    git(product, 'config', 'remote.origin.url', 'https://example.invalid/first');
+    await withPreparedSourceWitness(async () => {
+      assert.equal(gitOriginUrl(product), 'https://example.invalid/first');
+      git(product, 'config', 'remote.origin.url', 'https://example.invalid/other');
+      currentSourceWitness()!.checkpoint();
+      assert.equal(gitOriginUrl(product), 'https://example.invalid/other');
+    });
+  });
+
+  test('a prepared execution retains fresh boundaries inside another witness context', async () => {
+    process.env.FARMSLOT_RECIPE_CACHE_DIR = tempRoot('prepared-cache-');
+    const product = checkout('prepared-owner-', { 'app/value.ts': 'first\n' });
+    const input = {
+      adapter: 'web',
+      projectRoot: product,
+      recipeDocument,
+      runnerRoot: product,
+      runnerIncludes: ['app'],
+    };
+    const owner = new PreparedSourceWitness();
+    const foreign = new PreparedSourceWitness();
+    const start = await captureExecutionProvenance(input, 'start', owner);
+    await withPreparedSourceWitness(async () => {
+      sourceSnapshot(product, 'web');
+      fs.writeFileSync(path.join(product, 'app/value.ts'), 'changed\n');
+      const end = await captureExecutionProvenance(input, 'end', owner);
+      assert.ok(
+        executionProvenanceDrift(start, end).some(
+          (drift) => drift.field === 'product.sourceFingerprint',
+        ),
+      );
+      assert.equal(currentSourceWitness(), foreign);
+    }, foreign);
+  });
+
+  test('symlinked exclusions cannot reuse an unexcluded source identity', async () => {
+    process.env.FARMSLOT_RECIPE_CACHE_DIR = tempRoot('prepared-cache-');
+    const product = checkout('prepared-exclusion-', { 'src/value.ts': 'first\n' });
+    const alias = path.join(tempRoot('prepared-alias-'), 'evidence');
+    fs.symlinkSync(path.join(product, 'src'), alias);
+    fs.writeFileSync(path.join(product, 'src/value.ts'), 'changed\n');
+    await withPreparedSourceWitness(async () => {
+      const excluded = sourceSnapshot(product, undefined, [alias]);
+      const included = sourceSnapshot(product);
+      assert.notEqual(excluded.sourceFingerprint, included.sourceFingerprint);
+      assert.match(included.status, /src\/value.ts/u);
+    });
+  });
+
   test('records stable snapshots, then recipe, library and product drift', async () => {
     const product = checkout('provenance-product-', { 'app/value.ts': 'export const v = 1;\n' });
     const library = checkout('provenance-library-', { 'recipes/smoke.recipe.json': '{}\n' });
@@ -1275,63 +1424,116 @@ describe('run diagnostics', () => {
     assert.equal(document.counts.total, 1);
   });
 
-  test('reads the platform request log and its in-app buffer through the adapter', async () => {
-    const root = tempRoot('diagnostics-platform-');
+  for (const asynchronous of [false, true]) {
+    test(`reads platform diagnostics through ${asynchronous ? 'asynchronous' : 'synchronous'} callbacks`, async () => {
+      const root = tempRoot('diagnostics-platform-');
+      const appLog = path.join(root, 'app.log');
+      const requestLog = path.join(root, 'requests.jsonl');
+      fs.writeFileSync(appLog, '');
+      fs.writeFileSync(requestLog, 'refused before\n');
+      useAdapters(
+        fakeAdapter('web', {
+          appLogSource: () => ({ label: 'app', path: appLog }),
+          diagnostics: {
+            requestLog: {
+              path: () => requestLog,
+              findings: (lines) =>
+                lines
+                  .filter((line) => line.startsWith('refused'))
+                  .map((line) => ({ level: 'error' as const, source: 'requests', text: line })),
+            },
+            issueBuffer: {
+              arm: asynchronous ? async () => true : () => true,
+              collect: asynchronous
+                ? async () => [{ level: 'warn', text: 'buffered warning' }]
+                : () => [{ level: 'warn', text: 'buffered warning' }],
+            },
+          },
+        }),
+      );
+      const baseline = await beginRunDiagnostics('web', root);
+      assert.deepEqual(baseline?.issueBuffer, { adapter: 'web', projectRoot: root });
+      fs.appendFileSync(requestLog, 'refused during\nok\n');
+      const summaryPath = path.join(root, 'summary.json');
+      const artifactManifestPath = path.join(root, 'artifact-manifest.json');
+      fs.writeFileSync(summaryPath, '{}\n');
+      fs.writeFileSync(artifactManifestPath, '{"artifacts":[]}\n');
+      const context = artifactContext({
+        summaryPath,
+        artifactManifestPath,
+        tracePath: path.join(root, 'trace.json'),
+      });
+      const result = await finishRunDiagnostics(baseline, context, classifier);
+      const document = readRunDiagnosticsDocument(result.diagnosticsPath);
+      assert.deepEqual(
+        document?.findings.map((finding) => [finding.source, finding.preview]),
+        [
+          [undefined, 'buffered warning'],
+          ['requests', 'refused during'],
+        ],
+      );
+      assert.equal(document?.source.inAppBuffer, 'collected');
+      assert.deepEqual(result.sideFindings?.counts.total, 2);
+      assert.deepEqual(
+        context.artifacts().map((artifact) => artifact.path),
+        ['diagnostics.json', 'diagnostics-app-log.txt'],
+      );
+      assert.equal((context.summary.sideFindings as { status: string }).status, 'review');
+      assert.equal(fs.readFileSync(summaryPath, 'utf8'), '{}\n');
+      assert.equal(fs.readFileSync(artifactManifestPath, 'utf8'), '{"artifacts":[]}\n');
+      assert.deepEqual(formatRunDiagnosticsForHuman(document, 'web').slice(0, 1), [
+        `REVIEW — ${document?.note}`,
+      ]);
+    });
+  }
+
+  test('an asynchronous refusal does not arm the optional issue buffer', async () => {
+    const root = tempRoot('diagnostics-unavailable-');
     const appLog = path.join(root, 'app.log');
-    const requestLog = path.join(root, 'requests.jsonl');
     fs.writeFileSync(appLog, '');
-    fs.writeFileSync(requestLog, 'refused before\n');
     useAdapters(
       fakeAdapter('web', {
         appLogSource: () => ({ label: 'app', path: appLog }),
-        diagnostics: {
-          requestLog: {
-            path: () => requestLog,
-            findings: (lines) =>
-              lines
-                .filter((line) => line.startsWith('refused'))
-                .map((line) => ({ level: 'error' as const, source: 'requests', text: line })),
-          },
-          issueBuffer: {
-            arm: () => true,
-            collect: () => [{ level: 'warn', text: 'buffered warning' }],
-          },
-        },
+        diagnostics: { issueBuffer: { arm: async () => false, collect: () => [] } },
       }),
     );
     const baseline = await beginRunDiagnostics('web', root);
-    assert.deepEqual(baseline?.issueBuffer, { adapter: 'web', projectRoot: root });
-    fs.appendFileSync(requestLog, 'refused during\nok\n');
-    const summaryPath = path.join(root, 'summary.json');
+    assert.ok(baseline);
+    assert.equal(baseline.issueBuffer, undefined);
+  });
+
+  test('asynchronous callback errors retain the existing diagnostic failure behavior', async () => {
+    const root = tempRoot('diagnostics-rejected-');
+    const appLog = path.join(root, 'app.log');
+    fs.writeFileSync(appLog, '');
+    const failure = new Error('issue buffer unavailable');
+    const adapter = fakeAdapter('web', {
+      appLogSource: () => ({ label: 'app', path: appLog }),
+      diagnostics: {
+        issueBuffer: {
+          arm: async () => {
+            throw failure;
+          },
+          collect: async () => {
+            throw failure;
+          },
+        },
+      },
+    });
+    useAdapters(adapter);
+    await assert.rejects(() => beginRunDiagnostics('web', root), failure);
+    adapter.diagnostics!.issueBuffer!.arm = async () => true;
+    const baseline = await beginRunDiagnostics('web', root);
     const artifactManifestPath = path.join(root, 'artifact-manifest.json');
-    fs.writeFileSync(summaryPath, '{}\n');
     fs.writeFileSync(artifactManifestPath, '{"artifacts":[]}\n');
     const context = artifactContext({
-      summaryPath,
-      artifactManifestPath,
+      summaryPath: path.join(root, 'summary.json'),
       tracePath: path.join(root, 'trace.json'),
+      artifactManifestPath,
     });
     const result = await finishRunDiagnostics(baseline, context, classifier);
-    const document = readRunDiagnosticsDocument(result.diagnosticsPath);
-    assert.deepEqual(
-      document?.findings.map((finding) => [finding.source, finding.preview]),
-      [
-        [undefined, 'buffered warning'],
-        ['requests', 'refused during'],
-      ],
-    );
-    assert.equal(document?.source.inAppBuffer, 'collected');
-    assert.deepEqual(result.sideFindings?.counts.total, 2);
-    assert.deepEqual(
-      context.artifacts().map((artifact) => artifact.path),
-      ['diagnostics.json', 'diagnostics-app-log.txt'],
-    );
-    assert.equal((context.summary.sideFindings as { status: string }).status, 'review');
-    assert.equal(fs.readFileSync(summaryPath, 'utf8'), '{}\n');
-    assert.equal(fs.readFileSync(artifactManifestPath, 'utf8'), '{"artifacts":[]}\n');
-    assert.deepEqual(formatRunDiagnosticsForHuman(document, 'web').slice(0, 1), [
-      `REVIEW — ${document?.note}`,
-    ]);
+    assert.equal(result.sideFindings?.status, 'unavailable');
+    assert.equal(result.summaryPath, context.result.summaryPath);
   });
 
   test('verifies console capture through the platform control', async () => {
@@ -1919,9 +2121,18 @@ describe('live adapter scripts', () => {
       path.join(dir, 'probe.mjs'),
       `import value from 'helper-pkg';\nconsole.log(value);\n`,
     );
-    // Files written before the build, whose folders the first build must not read as changing.
+    // Inputs and folders predate the build, even when fixture writes share its millisecond.
     const earlier = new Date(Date.now() - 60_000);
-    for (const entry of [pkg, path.dirname(pkg), dir, path.dirname(dir), root]) {
+    for (const entry of [
+      path.join(pkg, 'package.json'),
+      path.join(pkg, 'index.js'),
+      path.join(dir, 'probe.mjs'),
+      pkg,
+      path.dirname(pkg),
+      dir,
+      path.dirname(dir),
+      root,
+    ]) {
       fs.utimesSync(entry, earlier, earlier);
     }
     const recorder = new CallTimingRecorder();

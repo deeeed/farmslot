@@ -1,0 +1,1 @@
+- Document the canonical task-action input path, shared format references and fresh-proof handling for historical input gaps.

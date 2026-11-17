@@ -43,8 +43,15 @@ interface HostedGatewayPayload {
 export function resolveGatewayWebSocketUrl(
   configuredUrl: string | undefined,
   currentLocation: BrowserLocationLike,
+  devGatewayPort?: string,
 ): string {
-  return resolveGatewayWebSocketUrls(configuredUrl, currentLocation)[0];
+  return resolveGatewayWebSocketUrls(
+    configuredUrl,
+    currentLocation,
+    undefined,
+    undefined,
+    devGatewayPort,
+  )[0];
 }
 
 export function resolveGatewayWebSocketUrls(
@@ -52,9 +59,13 @@ export function resolveGatewayWebSocketUrls(
   currentLocation: BrowserLocationLike,
   storedCandidates?: string | null,
   storedGatewayUrl?: string | null,
+  devGatewayPort?: string,
 ): string[] {
   const trimmedUrl = configuredUrl?.trim();
-  if (trimmedUrl) return [normalizeGatewayWebSocketUrl(trimmedUrl)];
+  if (trimmedUrl) {
+    const normalized = normalizeGatewayWebSocketUrl(trimmedUrl);
+    return [devGatewayPort ? alignLoopbackGatewayHost(normalized, currentLocation) : normalized];
+  }
 
   const hosted = parseHostedGatewayConnection(currentLocation.hash ?? '');
   if (hosted.urls.length > 0) return hosted.urls;
@@ -65,7 +76,7 @@ export function resolveGatewayWebSocketUrls(
   ];
   if (stored.length > 0) return [...new Set(stored)];
 
-  return [defaultGatewayWebSocketUrl(currentLocation)];
+  return [defaultGatewayWebSocketUrl(currentLocation, devGatewayPort)];
 }
 
 export function resolveGatewayConnectionSource(
@@ -74,11 +85,12 @@ export function resolveGatewayConnectionSource(
   storedCandidates?: string | null,
   storedGatewayUrl?: string | null,
   storedSource?: string | null,
+  devGatewayPort?: string,
 ): GatewayConnectionSource {
   if (configuredUrl?.trim()) return 'configured';
   if (parseHostedGatewayConnection(currentLocation.hash ?? '').urls.length > 0) return 'hosted';
 
-  const implicit = defaultGatewayWebSocketUrl(currentLocation);
+  const implicit = defaultGatewayWebSocketUrl(currentLocation, devGatewayPort);
   const stored = [
     ...parseStoredGatewayCandidates(storedCandidates),
     ...parseStoredGatewayUrl(storedGatewayUrl),
@@ -245,8 +257,42 @@ export function replaceStoredGatewayAuthForHttp(auth: { token?: string; password
   persistGatewayAuthForHttp(auth);
 }
 
-function defaultGatewayWebSocketUrl(currentLocation: BrowserLocationLike): string {
+function pageHostname(host: string): string {
+  if (host.startsWith('[')) {
+    const end = host.indexOf(']');
+    return end === -1 ? host : host.slice(1, end);
+  }
+  const colon = host.lastIndexOf(':');
+  if (colon > 0 && /^\d+$/.test(host.slice(colon + 1))) return host.slice(0, colon);
+  return host;
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const name = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  return name === 'localhost' || name === '::1' || name.startsWith('127.');
+}
+
+/** A dev server's loopback gateway is the machine serving the page, not the browser's. */
+function alignLoopbackGatewayHost(url: string, page: BrowserLocationLike): string {
+  const pageHost = pageHostname(page.host);
+  if (!pageHost || isLoopbackHostname(pageHost)) return url;
+  const parsed = new URL(url);
+  if (!isLoopbackHostname(parsed.hostname)) return url;
+  parsed.hostname = pageHost;
+  return parsed.toString();
+}
+
+function defaultGatewayWebSocketUrl(
+  currentLocation: BrowserLocationLike,
+  devGatewayPort?: string,
+): string {
   const protocol = currentLocation.protocol === 'https:' ? 'wss:' : 'ws:';
+  const port = devGatewayPort?.trim() ?? '';
+  if (/^\d+$/.test(port)) {
+    const name = pageHostname(currentLocation.host);
+    const host = name.includes(':') ? `[${name}]` : name;
+    return `${protocol}//${host}:${port}/ws`;
+  }
   return `${protocol}//${currentLocation.host}/ws`;
 }
 

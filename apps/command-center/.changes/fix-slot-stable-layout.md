@@ -1,0 +1,1 @@
+- Keep the slot workspace steady and quiet during refresh, with styled controls and delayed notices.

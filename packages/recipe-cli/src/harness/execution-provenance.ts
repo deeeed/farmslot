@@ -8,7 +8,18 @@ import path from 'node:path';
 
 import { gitDiffArgs } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import { digestRecipeDocument, type RecipeConformanceSource } from '@farmslot/protocol';
-import type { RecipeArtifactFinalization, RecipeLibrarySource } from '@farmslot/recipe-runner';
+import {
+  currentSourceWitness,
+  preparedSourceValue,
+  type PreparedSourceWitness,
+  type RecipeArtifactFinalization,
+  type RecipeLibrarySource,
+  sourceGitRoot,
+  sourceWitnessExclusions,
+  sourceWitnessSupportsOutputs,
+  withoutPreparedSourceWitness,
+  withPreparedSourceWitness,
+} from '@farmslot/recipe-runner';
 
 import { harnessAdapter } from './adapters.js';
 import { cacheRecordPath, readCacheRecord, writeCacheRecord } from './cache.js';
@@ -95,7 +106,14 @@ export class ProvenanceDriftError extends Error {
 export async function captureExecutionProvenance(
   input: ExecutionProvenanceInput,
   phase: ExecutionProvenancePhase,
+  sourceWitness: PreparedSourceWitness | undefined = currentSourceWitness(),
 ): Promise<ExecutionProvenanceSnapshot> {
+  if (sourceWitness && currentSourceWitness() !== sourceWitness)
+    return withPreparedSourceWitness(
+      () => captureExecutionProvenance(input, phase, sourceWitness),
+      sourceWitness,
+    );
+  sourceWitness?.checkpoint(phase);
   countCallWork('provenanceSnapshot');
   const recipeDigest = input.recipePath
     ? recipeFileDigest(input.recipePath)
@@ -220,6 +238,7 @@ export function providerSourceSnapshot(
   module: string,
   excludedRoots: string[] = [],
 ): SourceProvenanceSnapshot {
+  currentSourceWitness()?.checkpoint('provider-source');
   const exclusions = inputSourceExclusions(root, excludedRoots);
   const source = sourceSnapshot(root, undefined, exclusions);
   const fullDirectory = source.head === null || gitContext(root)?.pathspec !== '.';
@@ -270,6 +289,63 @@ export function sourceSnapshot(
   adapter?: string,
   excludedRoots: string[] = [],
   includedRoots: string[] = [],
+): SourceProvenanceSnapshot {
+  const platform = adapter ? harnessAdapter(adapter) : undefined;
+  const view = currentSourceWitness();
+  const legacy = () =>
+    withoutPreparedSourceWitness(() =>
+      freshSourceSnapshot(root, adapter, excludedRoots, includedRoots),
+    );
+  if (platform?.sourceFingerprint && !platform.sourceFingerprintInputs) {
+    view?.fallback(root, 'undeclared-inputs');
+    return legacy();
+  }
+  if (view && includedRoots.length && sourceGitRoot(root)) {
+    view.fallback(root, 'included-git-inputs');
+    return legacy();
+  }
+  if (view && !sourceWitnessSupportsOutputs(root, excludedRoots)) return legacy();
+  const inputs = platform?.sourceFingerprintInputs?.(root);
+  const extraFiles = inputs?.envFiles ?? [];
+  const exclusions = sourceWitnessExclusions(root, excludedRoots);
+  return preparedSourceValue(
+    root,
+    {
+      kind: 'execution-source',
+      adapter,
+      inputs,
+      exclusions,
+      includedRoots,
+      host: harnessHost().packageRoot,
+      hostPackage: fs.existsSync(path.join(harnessHost().packageRoot, 'package.json'))
+        ? fs.readFileSync(path.join(harnessHost().packageRoot, 'package.json'), 'utf8')
+        : null,
+    },
+    () => freshSourceSnapshot(root, adapter, excludedRoots, includedRoots),
+    (value) => {
+      if (
+        typeof value !== 'object' ||
+        value === null ||
+        !('head' in value) ||
+        !('status' in value) ||
+        !('sourceFingerprint' in value)
+      )
+        return undefined;
+      return (value.head === null || typeof value.head === 'string') &&
+        typeof value.status === 'string' &&
+        typeof value.sourceFingerprint === 'string'
+        ? { head: value.head, status: value.status, sourceFingerprint: value.sourceFingerprint }
+        : undefined;
+    },
+    extraFiles,
+  );
+}
+
+function freshSourceSnapshot(
+  root: string,
+  adapter: string | undefined,
+  excludedRoots: string[],
+  includedRoots: string[],
 ): SourceProvenanceSnapshot {
   const git = gitContext(root);
   if (!git) {

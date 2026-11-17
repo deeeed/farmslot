@@ -5,14 +5,17 @@ import { checklistProgressView, slotSessionView } from '@farmslot/review-dispatc
 import '../chat/native-session-view.js';
 import '../shared/hydrating-placeholder.js';
 
+import { gateway } from '../../gateway-client.js';
 import { getState } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import { useViewState } from '../../utils/view-state.js';
 import {
   buildRerunAlongsideHref,
   canReplayRunSteps,
   isRunWorking,
 } from '../runs/run-detail-model.js';
 import { isTerminalRunStatus, routeForRun, runStatusColor } from '../runs/run-utils.js';
+import { AVAILABLE_AFTER_REFRESH } from '../shared/read-notice-delay.js';
 import { renderRunTitle } from '../shared/run-title.js';
 
 import type { SlotView } from './slot-view.js';
@@ -21,7 +24,11 @@ import { renderSlotViewEditStrip } from './slot-view-edit-renderers.js';
 import { isSlotViewContextPinUnresolved } from './slot-view-linked-run-model.js';
 import { realPath, slotBoundRunIdForSlot, slotViewTerminalRunId } from './slot-view-model.js';
 import { slotViewEffectiveTerminalHeight } from './slot-view-resize-effects.js';
-import { getSlotViewHashParam, requestedRunFromHash } from './slot-view-url-state.js';
+import {
+  getSlotViewHashParam,
+  requestedRunFromHash,
+  slotSessionField,
+} from './slot-view-url-state.js';
 
 export interface SlotViewBodyRenderContext {
   hasResources: boolean;
@@ -150,6 +157,7 @@ export function renderSlotViewSidebarTask(view: SlotView) {
     .run=${view._linkedRun ?? undefined}
     .runActive=${view._linkedRun ? isRunWorking(view._linkedRun) : false}
     .activeTaskBasename=${view._linkedRun?.activeTaskFile?.split('/').pop()}
+    .liveSpend=${view._liveSpend}
   ></progress-tracker>`;
 }
 
@@ -208,6 +216,9 @@ export function renderSlotViewExplorerPanel(view: SlotView) {
 }
 
 export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBodyRenderContext) {
+  const connected = gateway.connectionState === 'connected';
+  const workspaceError = connected ? view._workspaceReads.error : '';
+  const workspaceText = connected ? view._workspaceReads.status : 'Showing saved files';
   const selectedAgentContext = view._selectedAgentContext();
   const pinnedContextUnresolved = isSlotViewContextPinUnresolved({
     run: view._linkedRun,
@@ -225,17 +236,19 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
     requestedRunFromHash(),
     slotBoundRunIdForSlot(view.slotId, view._slot?.currentRunId, getState().fleet?.slots),
   );
-  const tmuxSelectionKey = `${view.slotId}:${terminalRunId}`;
-  const tmuxSelected = view._tmuxSessionSelection === tmuxSelectionKey;
+  const sessionView = useViewState(view);
+  const tmuxSelected = sessionView.get(slotSessionField) === 'host';
   const {
-    target: nativeWorker,
-    unavailable: nativeUnavailable,
+    target: selectedNativeWorker,
+    unavailable: selectedNativeUnavailable,
     tabs: nativeTabs,
   } = slotSessionView(view._linkedRun?.agentContexts ?? [], {
     slotId: view.slotId,
     contextId: selectedAgentContext?.id ?? '',
-    tmux: tmuxSelected,
+    tmux: false,
   });
+  const nativeWorker = tmuxSelected ? undefined : selectedNativeWorker;
+  const nativeUnavailable = !tmuxSelected && selectedNativeUnavailable;
   return html`
     <!-- Body: activity bar + sidebar + editor -->
     <div class="sv-body">
@@ -326,16 +339,22 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
 
       <!-- Right column: editor + terminal stacked vertically -->
       <div class="sv-right-col">
-        ${view._isLive && view._workspaceReads.status
-          ? html`<div role="status">
-              ${view._workspaceReads.status}${view._workspaceReads.error
-                ? html`<button @click=${() => view._workspaceReads.retry()}>
-                    Retry workspace
-                  </button>`
-                : nothing}
-            </div>`
-          : nothing}
-        ${view._isRecoveryBlocked
+        <progress-read-status
+          data-read-status="files"
+          .scopeKey=${`${view.slotId}:${view._linkedRun?.id ?? ''}`}
+          .delayRefresh=${true}
+          .connected=${gateway.connectionState === 'connected'}
+          .notice=${view._isLive && view._workspaceReads.status
+            ? {
+                kind: workspaceError ? 'error' : 'saved',
+                text: workspaceError ? 'Could not refresh files' : workspaceText,
+                detail: workspaceError || undefined,
+              }
+            : undefined}
+          .retry=${() => void view._workspaceReads.retry()}
+        ></progress-read-status>
+        ${view._isRecoveryBlocked &&
+        (view._recoveryPhase === 'error' || view._recoveryNotice.visible)
           ? html`
               <div class="sv-recovery-overlay" role="status" aria-live="polite">
                 <div class="sv-recovery-card">
@@ -480,7 +499,13 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                       </div>
                     `}
               `
-            : ''}
+            : view._reviewFullWidth
+              ? nothing
+              : html`<div
+                  class="sv-stream-collapsed"
+                  aria-hidden="true"
+                  style="visibility:hidden"
+                ></div>`}
           ${(() => {
             if (view._reviewFullWidth || !view._taskPanelOpen) return nothing;
             const ctx = view._taskAgentContext();
@@ -595,6 +620,7 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                                 <button
                                   class="sv-run-action muted"
                                   ?disabled=${view._tmuxRestoreRunning || view._runActionsBlocked}
+                                  title=${view._runActionsBlocked ? AVAILABLE_AFTER_REFRESH : ''}
                                   @click=${() => view._restoreTmuxWorker()}
                                 >
                                   ${view._tmuxRestoreRunning
@@ -604,6 +630,7 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                                 <button
                                   class="sv-run-action muted"
                                   ?disabled=${view._tmuxRestoreRunning || view._runActionsBlocked}
+                                  title=${view._runActionsBlocked ? AVAILABLE_AFTER_REFRESH : ''}
                                   @click=${() => view._reloadWorkerSession()}
                                 >
                                   ${view._tmuxRestoreRunning
@@ -664,7 +691,14 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                   : nothing}
               </div>
             `
-          : nothing}
+          : requestedRunFromHash() || view._slot?.currentRunId
+            ? html`<div class="sv-run-panel">
+                <div class="sv-run-bar">
+                  RUN
+                  <span>${(requestedRunFromHash() || view._slot?.currentRunId)?.slice(0, 8)}</span>
+                </div>
+              </div>`
+            : nothing}
 
         <!-- Bottom panel (Terminal / Problems / Comments) -->
         ${view.slotId
@@ -689,15 +723,34 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                   }}
                 >
                   <button
-                    class="sv-bottom-tab ${view._bottomTab === 'terminal' ? 'active' : ''}"
+                    class="sv-bottom-tab ${view._bottomTab === 'terminal' && !tmuxSelected
+                      ? 'active'
+                      : ''}"
                     @click=${() => {
+                      sessionView.set(slotSessionField, 'worker');
                       view._bottomTab = 'terminal';
                       view._terminalOpen = true;
                       view._saveLayout();
                     }}
                   >
-                    ${nativeWorker ? 'Conversation' : 'Terminal'}
+                    ${selectedNativeWorker ? 'Conversation' : 'Terminal'}
                   </button>
+                  ${nativeTabs.length || tmuxSelected
+                    ? html`<button
+                        class="sv-bottom-tab ${view._bottomTab === 'terminal' && tmuxSelected
+                          ? 'active'
+                          : ''}"
+                        data-testid="slot-host-terminal"
+                        @click=${() => {
+                          sessionView.set(slotSessionField, 'host');
+                          view._bottomTab = 'terminal';
+                          view._terminalOpen = true;
+                          view._saveLayout();
+                        }}
+                      >
+                        Host terminal
+                      </button>`
+                    : nothing}
                   ${view._workerHistoryEnabled
                     ? html`
                         <button
@@ -771,7 +824,7 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                           nativeWorker ? 480 : 0,
                         )}px"
                       >
-                        ${pinnedContextUnresolved || nativeUnavailable
+                        ${(!tmuxSelected && pinnedContextUnresolved) || nativeUnavailable
                           ? html`<p role="status" data-testid="native-context-unavailable">
                               The selected task context is loading or unavailable.
                             </p>`
@@ -792,7 +845,7 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                                     event: CustomEvent<{ contextId: string | null }>,
                                   ) => {
                                     if (event.detail.contextId === null) {
-                                      view._tmuxSessionSelection = tmuxSelectionKey;
+                                      sessionView.set(slotSessionField, 'host');
                                       return;
                                     }
                                     const target = view

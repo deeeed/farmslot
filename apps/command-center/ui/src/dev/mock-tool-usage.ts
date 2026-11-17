@@ -13,6 +13,8 @@ export const MOCK_TOOL_USAGE: SessionToolUsage = {
   },
   toolCallsBeforeFirstMark: 50,
   untimedToolCalls: 0,
+  // The session's transcript has no compaction entries.
+  compactions: 0,
   steps: [
     {
       segment: 'before-first-mark',
@@ -27,6 +29,7 @@ export const MOCK_TOOL_USAGE: SessionToolUsage = {
         read: 3,
       },
       totalTokens: 1073626,
+      compactions: 0,
     },
     {
       segment: 'step',
@@ -40,6 +43,7 @@ export const MOCK_TOOL_USAGE: SessionToolUsage = {
         bash: 2,
       },
       totalTokens: 60048,
+      compactions: 0,
     },
     {
       segment: 'step',
@@ -54,6 +58,7 @@ export const MOCK_TOOL_USAGE: SessionToolUsage = {
         read: 1,
       },
       totalTokens: 457923,
+      compactions: 0,
     },
     {
       segment: 'step',
@@ -65,6 +70,7 @@ export const MOCK_TOOL_USAGE: SessionToolUsage = {
       toolCalls: 0,
       toolCallsByName: {},
       totalTokens: 0,
+      compactions: 0,
     },
     {
       segment: 'step',
@@ -79,6 +85,7 @@ export const MOCK_TOOL_USAGE: SessionToolUsage = {
         write: 5,
       },
       totalTokens: 3198450,
+      compactions: 0,
     },
     {
       segment: 'step',
@@ -90,6 +97,7 @@ export const MOCK_TOOL_USAGE: SessionToolUsage = {
       toolCalls: 0,
       toolCallsByName: {},
       totalTokens: 0,
+      compactions: 0,
     },
     {
       segment: 'step',
@@ -101,6 +109,7 @@ export const MOCK_TOOL_USAGE: SessionToolUsage = {
       toolCalls: 0,
       toolCallsByName: {},
       totalTokens: 0,
+      compactions: 0,
     },
     {
       segment: 'step',
@@ -112,6 +121,7 @@ export const MOCK_TOOL_USAGE: SessionToolUsage = {
       toolCalls: 0,
       toolCallsByName: {},
       totalTokens: 0,
+      compactions: 0,
     },
     {
       segment: 'step',
@@ -127,6 +137,7 @@ export const MOCK_TOOL_USAGE: SessionToolUsage = {
         edit: 2,
       },
       totalTokens: 704592,
+      compactions: 0,
     },
     {
       segment: 'step',
@@ -138,6 +149,7 @@ export const MOCK_TOOL_USAGE: SessionToolUsage = {
       toolCalls: 0,
       toolCallsByName: {},
       totalTokens: 0,
+      compactions: 0,
     },
     {
       segment: 'step',
@@ -153,6 +165,7 @@ export const MOCK_TOOL_USAGE: SessionToolUsage = {
         edit: 3,
       },
       totalTokens: 3546676,
+      compactions: 0,
     },
     {
       segment: 'step',
@@ -166,6 +179,7 @@ export const MOCK_TOOL_USAGE: SessionToolUsage = {
         bash: 2,
       },
       totalTokens: 282595,
+      compactions: 0,
     },
     {
       segment: 'step',
@@ -179,6 +193,7 @@ export const MOCK_TOOL_USAGE: SessionToolUsage = {
         bash: 1,
       },
       totalTokens: 141563,
+      compactions: 0,
     },
     {
       segment: 'step',
@@ -194,6 +209,7 @@ export const MOCK_TOOL_USAGE: SessionToolUsage = {
         edit: 1,
       },
       totalTokens: 1030244,
+      compactions: 0,
     },
     {
       segment: 'after-last-mark',
@@ -208,6 +224,7 @@ export const MOCK_TOOL_USAGE: SessionToolUsage = {
         write: 9,
       },
       totalTokens: 20598871,
+      compactions: 0,
     },
   ],
 };

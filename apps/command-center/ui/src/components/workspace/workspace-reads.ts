@@ -1,7 +1,7 @@
 import type { ReactiveController, ReactiveControllerHost } from 'lit';
 
-import { sourceObservationAge } from '@farmslot/protocol';
 import {
+  isSupersededRead,
   resourceQuery,
   type ResourceQueryState,
   type ResourceReadMethod,
@@ -13,6 +13,7 @@ import {
   getResourceWorkspaceKey,
   subscribeResourceCache,
 } from '../../resource-cache.js';
+import { resourcePresentationChanged } from '../../utils/resource-presentation.js';
 import { isExpectedReadAbsence } from '../../utils/resource-read-status.js';
 
 /** A replaced read has no failure to display in either workspace. */
@@ -102,22 +103,15 @@ export class WorkspaceReads implements ReactiveController {
   }
   get error() {
     return (
-      [...this.reads.values()].find((r) => r.state.error && !isExpectedReadAbsence(r.state))?.state
-        .error?.message ?? ''
+      [...this.reads.values()].find(
+        (r) => r.state.error && !isExpectedReadAbsence(r.state) && !isSupersededRead(r.state.error),
+      )?.state.error?.message ?? ''
     );
   }
   get status() {
-    const saved = [...this.reads.values()]
-      .map((r) => r.state.observedAt)
-      .filter((at): at is number => at !== undefined);
-    return (
-      this.error ||
-      (this.ready
-        ? ''
-        : saved.length
-          ? `Saved workspace, ${sourceObservationAge(Math.min(...saved))}. Actions wait for a current read.`
-          : 'Waiting for a current workspace source.')
-    );
+    if (this.error) return this.error;
+    if (this.ready || this.reads.size === 0) return '';
+    return this.hasData ? 'Refreshing files…' : 'Loading files…';
   }
   drop(method: string, params: Record<string, unknown>) {
     const runId = this.runId?.();
@@ -210,6 +204,7 @@ export class WorkspaceReads implements ReactiveController {
                 this.host.requestUpdate();
                 return;
               }
+              const changed = resourcePresentationChanged(state, read.state);
               read.state = state;
               if (state.data !== undefined) {
                 if (applied !== state.data || appliedOwner !== owner) {
@@ -222,12 +217,19 @@ export class WorkspaceReads implements ReactiveController {
                   resolve(state.data);
                 }
               }
-              if (state.error && !isExpectedReadAbsence(state) && !settled) {
+              if (
+                state.error &&
+                !isExpectedReadAbsence(state) &&
+                !isSupersededRead(state.error) &&
+                !settled
+              ) {
                 settled = true;
                 reject(new Error(state.error.message));
               }
-              this.changed();
-              this.host.requestUpdate();
+              if (changed) {
+                this.changed();
+                this.host.requestUpdate();
+              }
             });
           this.changed();
           this.host.requestUpdate();

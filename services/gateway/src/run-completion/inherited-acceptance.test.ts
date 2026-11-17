@@ -70,7 +70,12 @@ const { inheritedAcceptanceView } = await import('./inherited-acceptance-view.js
 const { initializeAcceptanceRegistration, acceptAcceptanceDerivation } =
   await import('../tasks/acceptance-registration.js');
 
-async function fixture(t: TestContext, requireFresh = false, noLedger = false) {
+async function fixture(
+  t: TestContext,
+  requireFresh = false,
+  noLedger = false,
+  missingTaskAction?: string,
+) {
   existingComment = '';
   createdComments = 0;
   patchedComments = 0;
@@ -91,6 +96,27 @@ async function fixture(t: TestContext, requireFresh = false, noLedger = false) {
   );
   const raw = JSON.stringify({ schemaVersion: 2, recipeRunId: 'original-execution', criteria: [] });
   if (!noLedger) await writeFile(path.join(parentDir, 'artifacts/acceptance-status.json'), raw);
+  if (missingTaskAction) {
+    await mkdir(path.join(parentDir, 'artifacts/recipe-runs/parent-proof'), { recursive: true });
+    await writeFile(
+      path.join(parentDir, 'artifacts/recipe-runs/parent-proof/summary.json'),
+      JSON.stringify({
+        recipeRunId: 'parent-proof',
+        taskActions: [
+          { action: missingTaskAction, official: false, digest: `sha256:${'a'.repeat(64)}` },
+        ],
+      }),
+    );
+    await writeFile(
+      path.join(parentDir, 'artifacts/latest-valid-recipe-run.json'),
+      JSON.stringify({
+        version: 1,
+        runId: 'parent-proof',
+        relativeArtifactRoot: 'recipe-runs/parent-proof',
+        updatedAt: '2026-11-17T00:00:00Z',
+      }),
+    );
+  }
   parent = makeRun({
     id: randomUUID(),
     flowType: 'dev',
@@ -448,3 +474,10 @@ test('an inherited review claim needs a clean code review at the approved parent
   assert.equal(await inherit([certifyingReview(f.prepared), openFindingAtHead(f.prepared)]), null);
   assert.equal(await inherit([]), null);
 });
+
+for (const action of ['fixture.gtm_state', 'task.read_text']) {
+  test(`parent proof with unretained ${action} cannot supply inherited acceptance`, async (t) => {
+    const f = await fixture(t, false, false, action);
+    assert.equal(await readInheritedAcceptanceSource(f.child), null);
+  });
+}

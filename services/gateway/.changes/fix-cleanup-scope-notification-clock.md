@@ -1,1 +1,0 @@
-- Stabilize cleanup cancellation checks for coalesced status notifications.

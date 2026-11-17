@@ -6,6 +6,28 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.18 - 2026-11-17
+
+- Align exact dependency pins with the JSON proof diagnostic release.
+
+## 0.35.17 - 2026-11-17
+
+- Align exact dependency pins with the implementation-isolated prepared-cache release.
+
+## 0.35.16 - 2026-11-17
+
+- Refuse unbound recipe execution in checkouts with task storage unless explicit diagnostic mode is selected, with a same-invocation task-binding recovery command; reject conflicting bound-task and diagnostic options.
+- Refuse missing required task action implementations before execution and report the declared root and exact script lookup paths.
+- Associate checkout recipe outputs with their initialized worker for safe release cleanup.
+
+## 0.35.15 - 2026-11-16
+
+- Reuse prepared provenance and library metadata while preserving drift boundaries, provider import checks and execution-affecting configuration inputs.
+
+## 0.35.14 - 2026-11-16
+
+- Await issue-buffer arming and collection so adapters can reuse an existing bridge without helper processes.
+
 ## 0.35.13 - 2026-11-15
 
 - An operation log now holds what its command printed, not only what it spawned. `recordCommandOutput` was reached from the spawned-leaf and live-adapter paths alone, so a command doing its work in process — a `run` walking recipe nodes, `doctor`, `prepare` — left the empty log the operation created: one live task had 14 of 15 logs at 0 bytes, including both failed runs. The command journal now tees the process stdout/stderr into the active operation for its lifetime. A leaf whose output is captured but never printed is still recorded explicitly, so nothing is logged twice. `spawnInherit` hands the terminal to its child, so interactive and follow leaves remain unlogged.

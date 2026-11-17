@@ -12,6 +12,7 @@ import {
 
 import {
   DEFAULT_REVIEW_DISPATCH_CATALOG,
+  defaultEffortForRunner,
   effortsForRunner,
   resolveReviewMode,
   runnerOption,
@@ -494,12 +495,11 @@ export class ReviewDispatchViewModel {
     const selection = this.row(id).selection;
     const runner = this.catalog.runners.find((option) => option.id === selection.runner);
     if (!runner) return [{ value: null, label: 'Unavailable runner default' }];
+    const defaultEffort = defaultEffortForRunner(selection.runner, selection.model, this.catalog);
     return [
       {
         value: null,
-        label: runner.defaultEffort
-          ? `Runner default · ${runner.defaultEffort}`
-          : 'Supported default',
+        label: defaultEffort ? `Runner default · ${defaultEffort}` : 'Supported default',
       },
       ...effortsForRunner(selection.runner, selection.model, this.catalog).map((value) => ({
         value,

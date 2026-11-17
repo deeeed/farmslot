@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/protocol",
-  "version": "0.86.1",
+  "version": "0.87.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -28,6 +28,16 @@
       "types": "./dist/checklist-target.d.ts",
       "import": "./dist/checklist-target.js",
       "default": "./dist/checklist-target.js"
+    },
+    "./task-layout": {
+      "types": "./dist/task-layout.d.ts",
+      "import": "./dist/task-layout.js",
+      "default": "./dist/task-layout.js"
+    },
+    "./explicit-dev-host": {
+      "types": "./dist/explicit-dev-host.d.ts",
+      "import": "./dist/explicit-dev-host.js",
+      "default": "./dist/explicit-dev-host.js"
     },
     "./client-cache": {
       "types": "./dist/client-cache/index.d.ts",

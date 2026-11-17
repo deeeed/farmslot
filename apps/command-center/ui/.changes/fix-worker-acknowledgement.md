@@ -1,0 +1,1 @@
+- Show the worker acknowledgement time above Run Detail checklist progress before the first checkbox is completed.

@@ -1,0 +1,1 @@
+- An omitted PI effort is high for every selection and picker. Claude, Codex, and Cursor defaults stay as they are.

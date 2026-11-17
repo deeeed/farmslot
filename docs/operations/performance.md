@@ -49,7 +49,7 @@ command a host service (`services/gateway/src/host-services`) started, and
 
 ## How to improve a metric
 
-Follow the [performance rules](../../AGENTS.md#performance-rules).
+Follow the [performance rules](../../CLAUDE.md#performance-rules).
 
 1. Record method, class, cache source/age, workload size and observation window.
 2. Compare bytes, managed processes, Git calls, node wait and loop lag. Confirm the
@@ -127,3 +127,115 @@ Task staging uses `taskFiles.transfer` in the existing background child. SSH/SCP
 Passive workspace refresh batches Git metadata through the trusted read-probe executor once per remote node every 15 seconds. Generic node filesystem access to `.git` stays denied. Unchanged metadata retains the existing 90-second inspection limit and original observation time; ownership changes, explicit invalidation and acting reads still force inspection. A missing metadata result cannot justify reuse.
 
 Passive default-branch ancestry may reuse only a successful exact HEAD/base result for at most ten minutes, without extending expiry on hits. The shared metadata batch supplies graph eligibility; shallow, grafted and replaced histories bypass the cache. Metadata, worktree, ownership and node identity changes invalidate reuse. Acting/force reads and negative/error results remain fresh. Count real node/child commands when comparing rates, not cache-result reads.
+
+## Recipe-call issue diagnostics
+
+The harness lane owns these call-path metrics. Measure five calls per action with
+recording and healing off; discard the first and report warm time medians and
+maximum direct-child/Git counts. Outer `/usr/bin/time -p` covers elapsed time and
+user + system CPU, including descendants. The call profiler records direct Git
+starts across traced Node processes; the shared `work.git` counter is narrower.
+The existing full-flow call-perf canary fails above 120% of its accepted time
+reference or any increase in its count budgets. A busy or incomplete sample is
+not release qualification. Baseline changes remain explicit.
+
+| Metric                                 | How measured                                       | Current reference                                                                           | Alert threshold                                                       | Owner        |
+| -------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ------------ |
+| Mobile call wall / total CPU           | Outer warm medians, milliseconds                   | Deployed harness 0.96.25: unlock 3040 / 2945; screenshot 2740 / 3110; positions 1875 / 2605 | More than 20% over the accepted case reference                        | Harness lane |
+| Mobile call direct children / Git work | Maximum warm `call-timings.json` counts            | Deployed 0.96.25: unlock 38 / 17; screenshot 42 / 17; positions 38 / 17                     | Any increase over the accepted case budget                            | Harness lane |
+| Mobile call traced Git starts          | Profiler child starts across traced Node processes | Deployed 0.96.25: unlock 30; screenshot 32; positions 30                                    | Diagnostic before/after count, not a separate automatic verdict field | Harness lane |
+
+The asynchronous issue-buffer candidate was compared with the same package graph
+including the merged source-fingerprint reduction. These are matched preview
+measurements, not replacements for the deployed references above:
+
+| Call                              | Outer wall ms, before / after | Total CPU ms, before / after | Direct children, before / after | Traced Git starts, before / after |
+| --------------------------------- | ----------------------------- | ---------------------------- | ------------------------------- | --------------------------------- |
+| `metamask.wallet.ensure_unlocked` | 2925 / 2780                   | 2830 / 2700                  | 30 / 27                         | 22 / 22                           |
+| `ui.screenshot`                   | 2660 / 2545                   | 2995 / 2905                  | 34 / 31                         | 24 / 24                           |
+| `metamask.perps.read_positions`   | 1810 / 1700                   | 2480 / 2415                  | 30 / 27                         | 22 / 22                           |
+
+All 30 calls passed; the unchanged call-perf comparison passed. All 90 provenance
+snapshots retained identical product fingerprints, and diagnostics retained arm,
+baseline drain and final drain. No helper process or Git call is added for old
+synchronous adapters. The companion harness removes three helper processes and
+adds zero Git calls per Mobile call. Earlier incomplete and contended failures
+remain in the operator's receipts; the final complete comparison passed.
+
+To improve these metrics, remove repeated work at its owner. Await the existing
+diagnostic operations and use the existing broker instead of Node helpers. Keep
+fresh target selection, collection order, deadlines, custom-script/absent-broker
+fallback and no replay after an uncertain destructive collection. Verify complete
+recipes and recording when changing those contracts. Do not add polling or
+per-call work proportional to accumulated runs or artifacts.
+
+## Prepared recipe source witnesses
+
+Task binding must not scan retained task history. Bound executions and explicit
+`--unbound` diagnostics need no task-storage lookup; otherwise one filesystem
+metadata check detects task storage. This adds no process or Git invocation.
+Independent replay wrappers set `FARMSLOT_RECIPE_UNBOUND=1` on their existing
+invocation, without capability discovery or another process; old harnesses ignore
+that explicit diagnostic setting. Task directory variables must still be unset.
+
+Live doctor scopes three environment variables in its existing CLI process.
+Task reruns export their computed worker binding in the existing execution shell;
+neither adds a process or Git invocation. Standalone hosted recipe hooks reuse
+their Bash launcher through `env`; legacy compound hook strings use one extra
+Bash invocation per hook to isolate the diagnostic environment. That work is
+constant per hook, never per recipe node or retained run.
+
+The harness lane owns this candidate. Target zero traced framework Git starts in
+unchanged calls, including bootstrap and capture provenance; user-authored Git
+commands are separate work. A prepared record is reused only after fresh file
+witnesses at source, provider-authority and capture boundaries. Retained output
+history must stay outside validation. Unsupported output layouts retain fresh
+legacy checks and must not gain a history scan. No persistent call server is used.
+
+`summary.json.sourceWitness` reports wall/CPU time and source-file/directory
+counts for each physical-root validation, tagged by checkpoint and boundary.
+Cold preparation and refresh counts remain separate from warm measurements.
+The recorded call profiler covers direct children and the runner-revision shell
+call; `work.git` is a narrower counter. Parent-Node CPU remains diagnostic when
+work moves from Git children into the witness. Wall and total descendant CPU
+qualify the comparison.
+
+Preliminary matched candidate measurements against published harness 0.96.26,
+recording/healing off, five calls per action with the first discarded:
+
+| Case              | Outer wall ms before / after | Total CPU ms before / after | Attributed children before / after | Git work before / after |
+| ----------------- | ---------------------------: | --------------------------: | ---------------------------------: | ----------------------: |
+| Core command      |                    640 / 525 |                   840 / 660 |                             19 / 1 |                  17 / 0 |
+| Mobile unlock     |                  2910 / 2635 |                 2815 / 1995 |                             27 / 5 |                  17 / 0 |
+| Mobile screenshot |                  2695 / 2580 |                 3010 / 2170 |                             31 / 7 |                  17 / 0 |
+| Mobile positions  |                  1945 / 1560 |                 2630 / 1695 |                             27 / 5 |                  17 / 0 |
+
+All warm traced Git starts were zero. Core cold preparation used 16 Git starts.
+These are candidate references under recorded host load, not new shared canary
+baselines. Final provider-freshness closeout, Extension proof and exact-head
+review remain required. The alert is any warm framework Git start, history-sized
+validation work, lost drift refusal, or a wall/total-CPU regression beyond the
+accepted comparison budget. File-witness cost must remain below the replaced
+Git/provenance work. Improve the declared input owner and shared projections;
+do not remove freshness or evidence observations to make the count pass.
+
+Prepared source, metadata and output-support records include the implementation
+hash in their filename. Different implementations can share the default cache
+directory without evicting each other's records. Each implementation still
+validates fresh source witnesses; its first preparation remains cold.
+
+Mixed-version Core command canary, five samples per variant with the first
+discarded, recording/healing off, and an old-version peer before each target call:
+
+| Metric                                      |   Before / after filename isolation | Alert threshold                                    | Owner        |
+| ------------------------------------------- | ----------------------------------: | -------------------------------------------------- | ------------ |
+| Maximum warm traced Git starts              |                              18 / 0 | Any warm framework Git start with unchanged inputs | Harness lane |
+| Maximum warm attributed children / Git work |     19 / 1 children; 7 / 0 Git work | Any increase over the accepted case budget         | Harness lane |
+| Outer wall / total CPU warm medians         | 725 / 585 ms wall; 925 / 750 ms CPU | Existing 120% comparison budget                    | Harness lane |
+
+These are preview measurements on the released 0.96.29 package graph with only
+the compiled cache-key fix changed. Node load declined from 16.4–19.2 before to
+12.5–14.6 after; timings are observations, not an isolated speedup claim. The
+default cache, physical checkout, action and shared canary baseline stayed the
+same. Keep the key bound to implementation and physical root; never remove
+source validation or partition by task/run to avoid the mixed-version case.

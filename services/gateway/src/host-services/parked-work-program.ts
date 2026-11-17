@@ -120,6 +120,8 @@ function snapshot(full) {
   for (const target of targets) {
     for (const file of nul(git(['ls-tree','-r','-z','--name-only',target]).stdout)) if (exists(path.join(repo,file))) collisionPaths.add(file);
   }
+  // add --all staged every unignored path with its content; only ignored collisions need --force.
+  if (collisionPaths.size) for (const file of nul(git(['ls-files','-z'], {index:working}).stdout)) collisionPaths.delete(file);
   if (collisionPaths.size) git(['--literal-pathspecs','add','--force','--pathspec-from-file=-','--pathspec-file-nul'], {index:working,input:Buffer.from([...collisionPaths].join('\0')+'\0')});
   const savedEntries = stageEntries(git(['ls-files','--stage','-z'], {index:working}).stdout);
   const originalLinks = new Set(entries.filter(e => e.mode === '160000').map(e => e.file));
@@ -204,11 +206,83 @@ function verify() {
   }
   return state;
 }
-function mutate() {
-  verify();
+// What a prepare command could destroy, compared between its commands: HEAD, branch, index flags,
+// local branch tips, the content of every changed or untracked file, and the content of ignored
+// files the target trees track. Ignored files no target tracks are never reset or cleaned by a
+// prepare command. Cheap next to snapshot(); prepare's next command compares it to tell whether
+// anything else wrote in between.
+function fileDigest(file) {
+  const full=path.join(repo,file.replace(/\/+$/,''));
+  const stat=exists(full);
+  if(!stat) return 'absent';
+  if(stat.isSymbolicLink()) return 'link:'+fs.readlinkSync(full);
+  // A directory where a target has a file (or an ignored directory a reset may expose): its
+  // whole content counts, so a file written inside it later is a change too.
+  if(stat.isDirectory()) return 'dir:'+hash(fs.readdirSync(full).sort().map(name => name+'\0'+fileDigest(path.join(file.replace(/\/+$/,''),name))).join('\n'));
+  if(!stat.isFile()) return 'kind:'+stat.mode;
+  return stat.mode+':'+hash(fs.readFileSync(full));
+}
+function changedPaths(status) {
+  const fields=status.toString('utf8').split('\0'), files=[];
+  for(let i=0;i<fields.length;i++) {
+    const entry=fields[i];
+    if(entry.startsWith('1 ')) files.push(entry.split(' ').slice(8).join(' '));
+    else if(entry.startsWith('2 ')) { files.push(entry.split(' ').slice(9).join(' ')); i++; }
+    else if(entry.startsWith('u ')) files.push(entry.split(' ').slice(10).join(' '));
+    else if(entry.startsWith('? ')) files.push(entry.slice(2));
+  }
+  return files;
+}
+// Ignored paths a reset or checkout to one of the trees could overwrite: a tracked file at or
+// under an ignored entry, and an ignored directory standing where a tree has a file. Each is
+// reported as the worktree path whose content counts (the directory itself for the latter).
+function ignoredTrackedPaths(trees) {
+  const ignored=nul(git(['ls-files','--others','--ignored','--exclude-standard','--directory','-z']).stdout);
+  if(!ignored.length || !trees.length) return [];
+  const bare=entry => entry.replace(/\/+$/,'');
+  const files=new Set();
+  for(const tree of trees) {
+    // A long ignored list would overflow argv: list the whole tree and filter instead.
+    const listed=ignored.length > 1000
+      ? nul(git(['ls-tree','-r','-z','--name-only',tree]).stdout).filter(file => ignored.some(entry => file === bare(entry) || (entry.endsWith('/') && file.startsWith(entry))))
+      : nul(git(['ls-tree','-r','-z','--name-only',tree,'--',...new Set(ignored.flatMap(entry => [entry,bare(entry)]))]).stdout);
+    for(const file of listed) files.add(ignored.includes(file+'/') ? file+'/' : file);
+  }
+  return [...files].sort();
+}
+function quickState() {
+  const head=git(['rev-parse','--verify','--quiet','HEAD'], {allow:[1]}).stdout.toString('utf8').trim();
+  const status=git(['status','--porcelain=v2','-z','--untracked-files=all','--ignore-submodules=none']).stdout;
+  const flags=git(['ls-files','-v','-z']).stdout;
+  const refs=git(['for-each-ref','--format=%(refname)%00%(objectname)','refs/heads']).stdout;
+  const trees=input.stateTrees||[];
+  const headTree=head ? text(['rev-parse',head+'^{tree}']) : '';
+  // Ignored files the restored ignore rules of HEAD or a target would hand to git clean.
+  const exposed=trees.length || headTree ? exposedIgnoredPaths([...new Set([headTree,...trees].filter(Boolean))]) : [];
+  const contents=[...new Set([...changedPaths(status),...ignoredTrackedPaths(trees),...exposed])].sort().map(file => file+'\0'+fileDigest(file));
+  return hash(JSON.stringify({head,branch:branch(),status:hash(status),flags:hash(flags),refs:hash(refs),contents:hash(contents.join('\n'))}));
+}
+function runCommand() {
   const commandEnv={...env,GIT_CONFIG_PARAMETERS:(env.GIT_CONFIG_PARAMETERS?env.GIT_CONFIG_PARAMETERS+' ':'')+"'core.hooksPath=/dev/null' 'submodule.recurse=false'"};
   const r=cp.spawnSync('bash',['-c',input.command],{cwd:repo,env:commandEnv,encoding:'utf8',maxBuffer:64*1024*1024});
-  return {stdout:r.stdout||'',stderr:r.stderr||'',exitCode:r.status === null?1:r.status};
+  return {stdout:r.stdout||'',stderr:r.stderr||'',exitCode:r.status === null?1:r.status,state:quickState()};
+}
+function mutate() {
+  verify();
+  return runCommand();
+}
+// A later step under the same capture: the saved snapshots still exist, and the checkout is as the
+// previous step left it. Anything else wrote in between: the caller parks again.
+function mutateSaved() {
+  for(const saved of input.saved || []) {
+    if(refSha(saved.ref) !== saved.headSha || !refSha(metadataRef(saved.ref))) fail('SNAPSHOT_MISSING','A required parked snapshot is missing');
+  }
+  for(const [name,tree] of Object.entries(input.expectedTrees || {})) {
+    const current=git(['rev-parse','--verify','--quiet',name+'^{tree}'], {allow:[1,128]}).stdout.toString('utf8').trim();
+    if(current !== tree) fail('WORK_CHANGED','Target '+name+' moved since the capture; capture it again');
+  }
+  if(quickState() !== input.expectedState) fail('WORK_CHANGED','Local work changed since the last step; capture it again');
+  return runCommand();
 }
 function restore() {
   verify();
@@ -277,6 +351,7 @@ try {
   else if(input.op==='list')value=inventory();
   else if(input.op==='lookup') { const sha=refSha(input.ref); const meta=refSha(metadataRef(input.ref)); value={headSha:sha,metadata:meta?git(['cat-file','blob',meta]).stdout.toString('utf8'):null}; }
   else if(input.op==='mutate')value=mutate();
+  else if(input.op==='mutateSaved')value=mutateSaved();
   else if(input.op==='restore')value=restore();
   else if(input.op==='prune')value=prune();
   else fail('INVALID_OPERATION','Unknown parked-work operation');
