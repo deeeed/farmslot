@@ -239,3 +239,19 @@ the compiled cache-key fix changed. Node load declined from 16.4–19.2 before t
 default cache, physical checkout, action and shared canary baseline stayed the
 same. Keep the key bound to implementation and physical root; never remove
 source validation or partition by task/run to avoid the mixed-version case.
+
+## iOS recorder selection
+
+| Metric                     | How measured                                                                                | Current baseline                                                                                                                               | Alert threshold                                                                                | Owner        |
+| -------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------ |
+| Unused iOS recorder probes | Child-command fixture at factory construction, without doctor/start                         | 0 commands before and after visible-window selection                                                                                           | Any command while recording is off                                                             | Harness lane |
+| Recorded Mobile call work  | Same `wallet.read_state` with full-run recording; operation-log wall/CPU/process/Git fields | Installed 0.96.32: 4,761 ms wall, 2,192 ms total CPU, 8 processes, 0 Git. Private recorder component: 10,484 ms, 3,350 ms, 18 processes, 3 Git | Release canary rules remain unchanged; this private-layout sample is not latency qualification | Harness lane |
+| Native recorder stop       | Owned-client signal/exit and a bounded stop wait                                            | SIGINT; stop timeout retains a responsive client rather than force-killing it                                                                  | Any SIGKILL or renderer restart by the recorder                                                | Harness lane |
+
+The private component layout retains three legacy source checks; the recorder adds no Git call.
+Visible selection adds bounded device/window discovery and helper doctor/version commands only
+when recording is requested. A device listing can be reused for five seconds by the existing
+inventory helper. Selection repeats at start so a doctor result cannot select a stale window.
+Keep the lookup independent of run history, preserve stream snapshots/timing, and use the
+first-frame event for native readiness instead of a fixed delay. Do not reset a renderer to
+recover capture: that tears down its simulator.

@@ -118,6 +118,8 @@ Metro-backed action runs, so headless and native-only recipes do not need it.
 
 When asserting command output that may be redacted, prefer stable substrings or structured fields over exact pretty-printed JSON whitespace.
 
+`createIosSimulatorVideoRecorder` uses capture-helper for the selected simulator's unique visible window, checking name uniqueness across all available simulators. It preserves simulator identity and stream snapshots/timing; headless or unavailable window capture uses simctl. Native recording waits for its first-frame acknowledgement and stops with SIGINT; bounded startup-cleanup and stop timeouts report the retained client PID without force-killing it or restarting the simulator.
+
 For motion-sensitive visual proof, `farmslot-adapter-rn run --record-video`
 records one whole-recipe MP4 through `capture-helper`. By default it targets the
 macOS Simulator window; override with `--record-pid`, `--record-window-id`, or
