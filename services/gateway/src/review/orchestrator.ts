@@ -302,12 +302,14 @@ export function resolveReviewMaxRetries(opts: {
 export function reviewSessionForReplay(
   run: Run,
   selection?: ReviewSelection,
+  lineageId?: string,
 ): WarmReviewerSession | undefined {
   const context = [...(run.agentContexts ?? [])]
     .reverse()
     .find(
       (candidate) =>
         candidate.role === 'review' &&
+        (!lineageId || candidate.reviewId === lineageId) &&
         (!selection ||
           (candidate.runner === selection.runner &&
             (!selection.model || candidate.model === selection.model))) &&
@@ -2299,7 +2301,7 @@ async function recoverReviewFixPass({
     run?.agentContexts?.some(
       (context) => context.role === 'review-fix' && context.status === 'failed',
     ) &&
-    reviewSessionForReplay(run)?.reviewId === reviewId;
+    reviewSessionForReplay(run, undefined, reviewId ?? undefined)?.reviewId === reviewId;
   const fixContext = run?.agentContexts?.find((ctx) =>
     canRecoverReviewFixPass(ctx, taskDir, findingsArtifactScope, Boolean(recoverFailed)),
   );

@@ -538,6 +538,12 @@ test('replay refuses a completed review without usable lineage instead of select
     undefined,
     'an explicit different reviewer remains selected',
   );
+  run.agentContexts[0].reviewId = 'retained-lineage';
+  assert.equal(
+    reviewSessionForReplay(run, undefined, 'other-lineage'),
+    undefined,
+    'recovery cannot select an independent lineage',
+  );
   assert.equal(
     reviewSessionForReplay(makeRun()),
     undefined,
