@@ -35,7 +35,7 @@ test('a clean stop without an output file names the exit and simctl stderr', asy
       ? spawnSync('ps', ['-p', pid, '-o', 'command='], { encoding: 'utf8' }).stdout
       : '';
     try {
-      if (command.includes(path.join(dir, 'xcrun'))) process.kill(Number(pid), 'SIGKILL');
+      if (command.includes(path.join(dir, 'xcrun'))) process.kill(Number(pid), 'SIGTERM');
     } catch (error) {
       // The stub can exit between its ownership probe and the signal.
       if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;

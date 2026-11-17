@@ -12,7 +12,7 @@ import {
   type VideoRecorderDoctorOptions,
 } from '@farmslot/recipe-runner';
 
-import { listConnectedDevices } from './devices.js';
+import { listIosSimulators } from './devices.js';
 
 const exec = promisify(execFile);
 type WindowTarget = Extract<RecordingTarget, { kind: 'window-id' }>;
@@ -30,14 +30,16 @@ export function createVisibleSimulatorRecorder(
 ): VideoRecorder {
   let helper: HostCapture | undefined;
   let selection: Selection | undefined;
+  let recording: { outputPath: string; selection: Selection } | undefined;
 
   const select = async (options?: VideoRecorderDoctorOptions): Promise<Selection> => {
-    const devices = listConnectedDevices('ios');
+    const devices = listIosSimulators('available', []);
+    const booted = devices.filter((device) => device.state === 'Booted');
     const matches = devices.filter(
       (device) =>
         device.id === simulator ||
         device.name === simulator ||
-        (simulator === 'booted' && devices.length === 1),
+        (simulator === 'booted' && device.state === 'Booted' && booted.length === 1),
     );
     const device = matches.length === 1 ? matches[0] : undefined;
     if (
@@ -129,7 +131,16 @@ export function createVisibleSimulatorRecorder(
     async start(request) {
       if (request.target.kind !== 'simulator' || request.target.device !== simulator)
         throw new Error('Recording target differs from the selected simulator.');
-      const selected = await select({ signal: request.signal });
+      // Segment rotation changes only the suffix. Keep capabilities and window identity
+      // stable until the next independent recording; a closed window must fail at the helper.
+      const segmentPrefix = recording?.outputPath.replace(/\.mp4$/u, '-segment-');
+      const segment =
+        segmentPrefix &&
+        request.outputPath.startsWith(segmentPrefix) &&
+        /^\d+\.mp4$/u.test(request.outputPath.slice(segmentPrefix.length));
+      const selected =
+        segment && recording ? recording.selection : await select({ signal: request.signal });
+      if (!segment) recording = { outputPath: request.outputPath, selection: selected };
       const active = await (selected.kind === 'window'
         ? selected.recorder.start({ ...request, target: selected.target })
         : fallback.start(request));

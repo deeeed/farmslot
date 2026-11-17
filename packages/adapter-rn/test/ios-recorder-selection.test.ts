@@ -18,6 +18,8 @@ interface FixtureOptions {
   windows: WindowFixture[];
   nativeBusy?: boolean;
   ignoreInterrupt?: boolean;
+  noFirstFrame?: boolean;
+  devices?: { udid: string; name: string; state: string }[];
 }
 
 function fixture(t: TestContext, options: FixtureOptions) {
@@ -32,13 +34,14 @@ fs.appendFileSync(path.join(dir,'calls'),path.basename(process.argv[1])+' '+args
     path.join(dir, 'capture-helper'),
     `#!${process.execPath}\n${common}
 if(args[0]==='doctor'){console.log(JSON.stringify({ok:true}));process.exit(0)}
-if(args[0]==='version'){console.log(JSON.stringify({version:'test',capabilities:[]}));process.exit(0)}
+if(args[0]==='version'){console.log(JSON.stringify({version:'test',capabilities:['record_session_snapshot']}));process.exit(0)}
 if(args[0]==='list'){console.log(JSON.stringify({windows:cfg.windows}));process.exit(0)}
 if(args[0]!=='record')process.exit(9);
 fs.writeFileSync(path.join(dir,'helper.pid'),String(process.pid));
 process.on('SIGINT',()=>process.exit(0));process.on('SIGTERM',()=>process.exit(0));
 fs.writeFileSync(args[args.indexOf('--output')+1],'unit recording');
 process.stderr.write(JSON.stringify({type:'record_ready',recording_id:'unit'})+'\\n');
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{const output=line.slice(9);fs.writeFileSync(output,'unit snapshot');process.stderr.write(JSON.stringify({type:'snapshot',output})+'\\n')});
 setTimeout(()=>process.exit(90),3000);
 `,
     { mode: 0o755 },
@@ -46,7 +49,7 @@ setTimeout(()=>process.exit(90),3000);
   fs.writeFileSync(
     path.join(dir, 'xcrun'),
     `#!${process.execPath}\n${common}
-if(args.includes('list')){console.log(JSON.stringify({devices:{test:[{udid:'sim-1',name:'Own',state:'Booted'},{udid:'other',name:'Own-other',state:'Booted'}]}}));process.exit(0)}
+if(args.includes('list')){let devices=cfg.devices??[{udid:'sim-1',name:'Own',state:'Booted'},{udid:'other',name:'Own-other',state:'Booted'}];if(args.includes('booted'))devices=devices.filter(d=>d.state==='Booted');console.log(JSON.stringify({devices:{test:devices}}));process.exit(0)}
 if(args.includes('getenv')){console.log('sim-1');process.exit(0)}
 if(!args.includes('recordVideo'))process.exit(8);
 if(cfg.nativeBusy){console.error('A recording is already in progress');process.exit(16)}
@@ -54,7 +57,7 @@ fs.writeFileSync(path.join(dir,'native.pid'),String(process.pid));
 fs.writeFileSync(args.at(-1),'ftypmoov');
 process.on('SIGINT',()=>{if(!cfg.ignoreInterrupt)process.exit(0)});process.on('SIGTERM',()=>process.exit(0));
 process.on('SIGUSR1',()=>fs.writeFileSync(path.join(dir,'alive'),'yes'));
-process.stderr.write('Recording started\\n');setTimeout(()=>process.exit(90),3000);
+if(!cfg.noFirstFrame)process.stderr.write('Recording started\\n');setTimeout(()=>process.exit(90),3000);
 `,
     { mode: 0o755 },
   );
@@ -173,4 +176,66 @@ test('constructing an unused recorder adds no helper processes', (t) => {
   const f = fixture(t, { windows: [] });
   createIosSimulatorVideoRecorder('sim-1');
   assert.equal(fs.existsSync(path.join(f.dir, 'calls')), false);
+});
+
+test('a shutdown namesake cannot supply the selected simulator window', async (t) => {
+  const f = fixture(t, {
+    windows: [visible],
+    devices: [
+      { udid: 'sim-1', name: 'Own', state: 'Booted' },
+      { udid: 'shutdown', name: 'Own', state: 'Shutdown' },
+    ],
+  });
+  const active = await createIosSimulatorVideoRecorder('sim-1').start(f.request);
+  assert.equal((await active.stop()).segments[0]?.recorder?.name, 'simctl');
+});
+
+test('segment rotation retains the helper backend; a new recording may select native', async (t) => {
+  const f = fixture(t, { windows: [visible] });
+  const recorder = createIosSimulatorVideoRecorder('sim-1');
+  const first = await recorder.start(f.request);
+  assert.equal(typeof first.snapshot, 'function');
+  await first.stop();
+  fs.writeFileSync(
+    path.join(f.dir, 'config.json'),
+    JSON.stringify({ windows: [], nativeBusy: true }),
+  );
+  const rotated = await recorder.start({
+    ...f.request,
+    outputPath: path.join(f.dir, 'run-segment-1.mp4'),
+  });
+  assert.equal(typeof rotated.snapshot, 'function');
+  await rotated.snapshot?.(path.join(f.dir, 'segment.png'));
+  assert.equal(fs.readFileSync(path.join(f.dir, 'segment.png'), 'utf8'), 'unit snapshot');
+  assert.equal((await rotated.stop()).segments[0]?.recorder?.name, 'capture-helper');
+  fs.writeFileSync(path.join(f.dir, 'config.json'), JSON.stringify({ windows: [] }));
+  const next = await recorder.start(f.request);
+  assert.equal((await next.stop()).segments[0]?.recorder?.name, 'simctl');
+});
+
+test('startup timeout waits for SIGINT cleanup and reports a retained client PID', async (t) => {
+  const f = fixture(t, { windows: [], noFirstFrame: true, ignoreInterrupt: true });
+  const recorder = createIosSimulatorVideoRecorder('sim-1', {
+    startTimeoutMs: 750,
+    stopTimeoutMs: 60,
+  });
+  await assert.rejects(recorder.start(f.request), /first frame.*recorder PID \d+ is retained/s);
+  const pid = Number(fs.readFileSync(path.join(f.dir, 'native.pid'), 'utf8'));
+  process.kill(pid, 'SIGUSR1');
+  await waitForFile(path.join(f.dir, 'alive'));
+});
+
+test('booted sentinel resolves the only booted simulator among available devices', async (t) => {
+  const f = fixture(t, {
+    windows: [visible],
+    devices: [
+      { udid: 'sim-1', name: 'Own', state: 'Booted' },
+      { udid: 'shutdown', name: 'Other', state: 'Shutdown' },
+    ],
+  });
+  const active = await createIosSimulatorVideoRecorder('booted').start({
+    ...f.request,
+    target: { kind: 'simulator', device: 'booted' },
+  });
+  assert.equal((await active.stop()).segments[0]?.recorder?.name, 'capture-helper');
 });

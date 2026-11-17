@@ -21,6 +21,7 @@ const DEFAULT_STOP_TIMEOUT_MS = 20_000;
 
 export interface SimctlVideoRecorderOptions {
   stopTimeoutMs?: number;
+  startTimeoutMs?: number;
 }
 
 export function createIosSimulatorVideoRecorder(
@@ -34,10 +35,12 @@ class SimctlVideoRecorder implements VideoRecorder {
   readonly name = 'simctl';
   readonly platform = 'ios';
   readonly #stopTimeoutMs: number;
+  readonly #startTimeoutMs: number;
   readonly #simulator: string;
 
   constructor(simulator: string, options: SimctlVideoRecorderOptions) {
     this.#simulator = simulator;
+    this.#startTimeoutMs = options.startTimeoutMs ?? START_TIMEOUT_MS;
     this.#stopTimeoutMs = options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
   }
 
@@ -106,10 +109,14 @@ class SimctlVideoRecorder implements VideoRecorder {
       child.once('error', () => resolve({ code: null, signal: null }));
     });
     try {
-      await waitForRecordingStart(child, logPath);
+      await waitForRecordingStart(child, logPath, this.#startTimeoutMs);
     } catch (error) {
       if (child.exitCode === null && child.signalCode === null) child.kill('SIGINT');
-      child.unref();
+      await waitForExit(exit, {
+        timeoutMs: this.#stopTimeoutMs,
+        onTimeout: () => child.unref(),
+        message: `${errorMessage(error)} SIGINT cleanup did not finish within ${this.#stopTimeoutMs}ms; recorder PID ${child.pid} is retained to avoid orphaning Simulator capture.`,
+      });
       throw error;
     }
 
@@ -258,17 +265,19 @@ function recordingLog(file: string, head = false): string {
   }
 }
 
-function waitForRecordingStart(child: ChildProcess, logPath: string): Promise<void> {
+function waitForRecordingStart(
+  child: ChildProcess,
+  logPath: string,
+  timeoutMs: number,
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const watcher = watch(logPath);
     const timer = setTimeout(
       () =>
         finish(
-          new Error(
-            `simctl recordVideo did not report its first frame within ${START_TIMEOUT_MS}ms.`,
-          ),
+          new Error(`simctl recordVideo did not report its first frame within ${timeoutMs}ms.`),
         ),
-      START_TIMEOUT_MS,
+      timeoutMs,
     );
     const finish = (error?: Error) => {
       clearTimeout(timer);
