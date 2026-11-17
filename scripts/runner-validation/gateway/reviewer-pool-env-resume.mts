@@ -240,9 +240,9 @@ try {
   assert.equal(firstDone.reviewResult?.recommendation, 'COMMENT');
   const marker = path.join(cwd, path.dirname(prior.taskFile!), 'artifacts/memory.txt');
   assert.equal((await readFile(marker, 'utf8')).trim(), token);
-  const nativeRead = (runId: string, value: AgentContext) => {
+  const nativeRead = async (runId: string, value: AgentContext) => {
     const binding = value.nativeSession!;
-    return active.call<NativeSessionReadResult>('native.session.read', {
+    const request = {
       sessionId: binding.sessionId,
       executionNodeId: binding.executionNodeId,
       worker: {
@@ -252,7 +252,19 @@ try {
         leaseId: binding.leaseId,
       },
       limit: 200,
-    });
+    };
+    let page = await active.call<NativeSessionReadResult>('native.session.read', request);
+    const events = [...page.events];
+    while (page.hasMore) {
+      const cursor = page.cursor;
+      page = await active.call<NativeSessionReadResult>('native.session.read', {
+        ...request,
+        after: cursor,
+      });
+      assert.ok(page.cursor > cursor, 'owned history cursor must advance');
+      events.push(...page.events);
+    }
+    return { ...page, events };
   };
   let stopped = await nativeRead(first.id, prior);
   if (!stopped.session.processStopped) {
