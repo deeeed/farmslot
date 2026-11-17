@@ -23,7 +23,8 @@ const { rewriteStatusFile } = await import('../core/state.js');
 const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
 const { runWithSessionOriginator } = await import('../security/work-originator.js');
 const { makeVars } = await import('../runners/test-fixtures.js');
-const { NativeWorkerOperationUncertainError } = await import('../runners/native/worker-error.js');
+const { NativeReviewerEmptyThreadError, NativeWorkerOperationUncertainError } =
+  await import('../runners/native/worker-error.js');
 
 const vars = makeVars();
 const owner: Principal = {
@@ -41,6 +42,9 @@ let ancestorExitCode = 0;
 let resumeFailure: 'handoff' | 'handoff-once' | 'delivery' | 'superseded' | null = null;
 let freshSessions = 0;
 let commandFailed = false;
+let nativeSessionHasInput: boolean | undefined;
+let stoppedEmptyReviewer = false;
+let refuseRecovery = false;
 const resumed: string[] = [];
 let expectedFixCheck: Error | undefined;
 const dispatches: Array<{ contextId: string; retainedFrom?: { contextId: string } }> = [];
@@ -172,7 +176,13 @@ mock.module('../runners/native/worker-control.js', {
   namedExports: {
     readNativeWorkerCommandError: async () => undefined,
     readNativeWorkerSnapshot: async () => ({
-      session: { state: commandFailed ? 'idle' : 'running', processStopped: !commandFailed },
+      session: {
+        state: stoppedEmptyReviewer ? 'closed' : commandFailed ? 'idle' : 'running',
+        processStopped: !commandFailed,
+        nativeSessionHasInput,
+        nativeSessionId: 'empty-thread',
+      },
+      pendingRequests: [],
       commands: [
         {
           commandId: 'review-command',
@@ -189,6 +199,14 @@ mock.module('../runners/native/worker-control.js', {
 mock.module('../runners/native/worker-recovery.js', {
   namedExports: {
     resumeNativeWorker: async (runId: string, options: { contextId: string }) => {
+      if (stoppedEmptyReviewer && nativeSessionHasInput === false)
+        throw new NativeReviewerEmptyThreadError();
+      if (refuseRecovery)
+        throw new NativeWorkerOperationUncertainError(
+          'launch',
+          'handoff recovery unconfirmed',
+          new Error('no rollout found'),
+        );
       resumed.push(options.contextId);
       const context = getRun(runId)!.agentContexts!.find(
         (entry) => entry.id === options.contextId,
@@ -347,6 +365,9 @@ async function prePublishRun(t: TestContext, ticketOrPr = 'WARM-PREPUBLISH') {
   currentHead = head;
   worktreeStatus = '';
   commandFailed = false;
+  nativeSessionHasInput = undefined;
+  stoppedEmptyReviewer = false;
+  refuseRecovery = false;
   expectedFixCheck = undefined;
   resumed.length = 0;
   resumeFailure = null;
@@ -937,3 +958,73 @@ test('a reviewer already launched for the same reserved repair retries without a
   assert.deepEqual(resumed, [failed.id]);
   assert.deepEqual(getRun(run.id)!.reviewRoundAdmissions, admissions);
 });
+
+for (const evidence of [false, true, undefined]) {
+  test(`stopped reviewer input evidence ${evidence}: only proven empty replaces its session`, async (t) => {
+    const run = await prePublishRun(t);
+    await review(run.id);
+    commandFailed = true;
+    await assert.rejects(reReview(run.id));
+    const failed = reviewers(run.id).at(-1)!;
+    commandFailed = false;
+    stoppedEmptyReviewer = true;
+    nativeSessionHasInput = evidence;
+    const sessionsBefore = freshSessions;
+    const result = await executeReview(run.id, vars.slotId, {
+      reviewRunner: 'claude',
+      model: 'opus',
+      mode: 'warm',
+      reviewId: 'lineage-a',
+      publicationReview: true,
+      validationDepth: 'static-code',
+      rereview: { lastReviewedHeadSha: head, priorIssues },
+    });
+    if (evidence === false) {
+      assert.equal(result.mode, 'cold');
+      assert.match(result.session?.fallback?.detail ?? '', /never received input/);
+      assert.equal(freshSessions, sessionsBefore + 1);
+      assert.deepEqual(resumed, [], 'never resume an unmaterialized thread');
+      assert.notEqual(reviewers(run.id).at(-1)!.id, failed.id);
+    } else {
+      assert.equal(result.mode, 'warm');
+      assert.equal(freshSessions, sessionsBefore);
+      assert.deepEqual(resumed, [failed.id]);
+    }
+  });
+}
+
+for (const evidence of [true, undefined]) {
+  test(`resume failure with input evidence ${evidence} keeps its reservation`, async (t) => {
+    const run = await prePublishRun(t);
+    await review(run.id);
+    commandFailed = true;
+    await assert.rejects(reReview(run.id));
+    const failed = reviewers(run.id).at(-1)!;
+    const sessionsBefore = freshSessions;
+    commandFailed = false;
+    stoppedEmptyReviewer = true;
+    nativeSessionHasInput = evidence;
+    refuseRecovery = true;
+    await assert.rejects(
+      executeReview(run.id, vars.slotId, {
+        reviewRunner: 'claude',
+        model: 'opus',
+        mode: 'warm',
+        reviewId: 'lineage-a',
+        publicationReview: true,
+        validationDepth: 'static-code',
+        rereview: { lastReviewedHeadSha: head, priorIssues },
+      }),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.cause instanceof NativeWorkerOperationUncertainError &&
+        error.cause.message === 'handoff recovery unconfirmed',
+    );
+    assert.equal(freshSessions, sessionsBefore);
+    assert.equal(reviewers(run.id).at(-1)!.id, failed.id);
+    assert.equal(
+      reviewers(run.id).at(-1)!.nativeSession?.sessionId,
+      failed.nativeSession?.sessionId,
+    );
+  });
+}

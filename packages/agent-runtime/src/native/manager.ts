@@ -678,6 +678,11 @@ export class NativeSessionManager {
       hostPid: process.pid,
       runner: params.runner,
       nativeSessionId: params.resumeSessionId ?? '',
+      ...(previous
+        ? { nativeSessionHasInput: previous.info.nativeSessionHasInput }
+        : params.runner === 'codex'
+          ? { nativeSessionHasInput: false }
+          : {}),
       ownerPrincipalId,
       ...(previous
         ? {
@@ -1215,6 +1220,8 @@ export class NativeSessionManager {
         ? { request: { ...event.request, id: `${record.info.generation}:${randomUUID()}` } }
         : {}),
     };
+    if (event.type === 'command.submitted' || event.type === 'turn.started')
+      record.info.nativeSessionHasInput = true;
     record.events.push(enriched);
     if (event.type === 'session.started' && event.nativeId)
       record.info.nativeSessionId = event.nativeId;

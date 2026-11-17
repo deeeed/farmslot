@@ -262,7 +262,8 @@ const tmuxWatch = (realTmux: string, holds: string) =>
 // Requests are answered before the hold, so no native request times out (30 s). `turn/started`
 // passes through. Every other invocation (--version, login status) runs codex directly.
 // Each turn sent to codex is a model call and is logged to holds/model-calls.log. A hold whose
-// marker reads `swallow` answers the turn itself instead: an accepted reviewer, no model call.
+// marker reads `swallow` persists input through thread/inject_items, then answers the turn itself:
+// an accepted, resumable reviewer with no model call.
 // Once the marker reads `complete`, the proxy ends every turn it swallowed (the test has written
 // the reviewer's output by then) and logs `completed`; it still swallows any turn that starts then.
 export const codexProxy = (realCodex: string, holds: string) => `'use strict';
@@ -282,6 +283,7 @@ writeFileSync(HOLD + '-env.json', JSON.stringify(Object.fromEntries(Object.entri
 const turnStarts = new Set();
 const marker = () => (existsSync(HOLD) ? readFileSync(HOLD, 'utf8').trim() : '');
 const swallowed = [];
+const injections = new Map();
 const completeReadyTurns = () => {
   if (!swallowed.length) return;
   const ready = swallowed.filter(({ thread }) => marker() === 'complete' || existsSync(HOLD + '.complete-' + thread));
@@ -290,6 +292,16 @@ const completeReadyTurns = () => {
     process.stdout.write(JSON.stringify({ method: 'turn/completed', params: { turn: { id, status: 'completed' } } }) + '\\n');
     appendFileSync(HOLD + '.hit', new Date().toISOString() + ' completed\\n');
   }
+};
+const acceptSwallowed = (message) => {
+  const id = 'swallowed-' + message.id;
+  appendFileSync(HOLD + '.hit', new Date().toISOString() + ' turn ' + message.id + ' swallowed\\n');
+  process.stdout.write(JSON.stringify({ id: message.id, result: { turn: { id } } }) + '\\n');
+  process.stdout.write(JSON.stringify({ method: 'turn/started', params: { turn: { id } } }) + '\\n');
+  const thread = message.params?.threadId;
+  writeFileSync(HOLD + '.env-' + thread + '.json', JSON.stringify(Object.fromEntries(Object.entries(process.env).filter(([key]) => !/KEY|TOKEN|SECRET|PASSWORD/i.test(key)))), { mode: 0o600 });
+  swallowed.push({ id, thread });
+  completeReadyTurns();
 };
 const completionWatcher = watch(path.dirname(HOLD), (_event, file) => {
   if (file && (String(file) === 'review' || String(file).startsWith('review.complete-')))
@@ -305,14 +317,14 @@ process.stdin.on('data', (chunk) => {
     try { message = JSON.parse(line); } catch {}
     if (message.method === 'turn/start' && message.id !== undefined) {
       if (marker() === 'swallow' || marker() === 'complete') {
-        const id = 'swallowed-' + message.id;
-        appendFileSync(HOLD + '.hit', new Date().toISOString() + ' turn ' + message.id + ' swallowed\\n');
-        process.stdout.write(JSON.stringify({ id: message.id, result: { turn: { id } } }) + '\\n');
-        process.stdout.write(JSON.stringify({ method: 'turn/started', params: { turn: { id } } }) + '\\n');
-        const thread = message.params?.threadId;
-        writeFileSync(HOLD + '.env-' + thread + '.json', JSON.stringify(Object.fromEntries(Object.entries(process.env).filter(([key]) => !/KEY|TOKEN|SECRET|PASSWORD/i.test(key)))), { mode: 0o600 });
-        swallowed.push({ id, thread });
-        completeReadyTurns();
+        // Persist genuine user input without inference before fabricating the fixture turn.
+        // A fresh thread/start has no rollout and cannot resume until this succeeds.
+        const id = 'fixture-input-' + message.id;
+        injections.set(id, message);
+        child.stdin.write(JSON.stringify({id, method:'thread/inject_items', params:{
+          threadId:message.params.threadId,
+          items:[{type:'message',role:'user',content:message.params.input.map(item => ({type:'input_text',text:item.text}))}]
+        }}) + '\\n');
         continue;
       }
       turnStarts.add(String(message.id));
@@ -336,6 +348,16 @@ child.stdout.on('data', (chunk) => {
     const line = output.slice(0, end + 1);
     let message;
     try { message = JSON.parse(line); } catch { message = {}; }
+    if (injections.has(message.id)) {
+      const original = injections.get(message.id);
+      injections.delete(message.id);
+      if (message.error) {
+        process.stdout.write(JSON.stringify({id:original.id,error:message.error}) + '\\n');
+        continue;
+      }
+      acceptSwallowed(original);
+      continue;
+    }
     if (held && message.method !== 'turn/started') { held.lines.push(line); continue; }
     process.stdout.write(line);
     if (!held && message.id !== undefined && message.method === undefined && turnStarts.has(String(message.id)) && existsSync(HOLD)) {
