@@ -1,0 +1,1 @@
+- Define documented task paths and purposes, and share an exact path check for skills Markdown and harness HTML without directory-wide allowances.
