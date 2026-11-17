@@ -63,8 +63,6 @@ export function evidenceLabel(evidencePath: string): string {
 const AC_BORDER = '1px';
 const AC_SUMMARY_HEIGHT = '44px';
 const AC_SUMMARY_PADDING_Y = '4px';
-/** The collapsed panel's outer height, margins included, for a host that holds its row. */
-export const ACCEPTANCE_PANEL_COLLAPSED_HEIGHT = `calc(${AC_SUMMARY_HEIGHT} + 2 * ${AC_SUMMARY_PADDING_Y} + 2 * ${AC_BORDER} + 2 * ${spacing.sm})`;
 
 export const acceptancePanelStyles = css`
   ${unsafeCSS(acceptanceClaimListStyles())}

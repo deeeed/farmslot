@@ -1,7 +1,6 @@
 import { css, unsafeCSS } from 'lit';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
-import { ACCEPTANCE_PANEL_COLLAPSED_HEIGHT } from '../progress-tracker/acceptance-panel.js';
 
 export const runPipelineStyles = css`
   :host {
@@ -14,9 +13,6 @@ export const runPipelineStyles = css`
   }
   .acceptance-slot {
     display: flow-root;
-  }
-  .acceptance-slot[data-held] {
-    min-height: ${unsafeCSS(ACCEPTANCE_PANEL_COLLAPSED_HEIGHT)};
   }
   .review-recovery {
     margin: 0 0 ${unsafeCSS(spacing.sm)};

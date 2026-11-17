@@ -301,9 +301,21 @@ export const runListStyles = css`
     );
     align-items: center;
   }
+  .run-row-summary,
+  .run-row-footer {
+    grid-column: 1 / -1;
+    min-width: 0;
+  }
+  .run-row-footer {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+  }
   .run-pipeline-cell {
     display: flex;
-    flex-direction: column;
+    flex-wrap: wrap;
+    align-items: center;
     gap: 2px;
     min-width: 0;
   }
@@ -363,7 +375,6 @@ export const runListStyles = css`
     background: ${unsafeCSS(colors.bgCard)};
     border-radius: ${unsafeCSS(radii.md)};
     margin-top: 3px;
-    min-height: 40px;
     padding: 5px 8px;
     cursor: pointer;
     transition: background 0.15s;

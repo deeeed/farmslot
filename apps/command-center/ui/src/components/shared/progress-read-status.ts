@@ -6,7 +6,7 @@ import type { ProgressReadNotice } from '../../utils/progress-read-status.js';
 
 import { ReadNoticeDelay } from './read-notice-delay.js';
 
-/** One shared status row and retry control; every state occupies the same height. */
+/** Shared read notice and retry control; an absent notice occupies no space. */
 @customElement('progress-read-status')
 export class ProgressReadStatus extends LitElement {
   @property({ attribute: false }) notice?: ProgressReadNotice;
@@ -35,13 +35,11 @@ export class ProgressReadStatus extends LitElement {
   static styles = css`
     :host {
       display: block;
-      height: 28px;
-      min-height: 28px;
-      flex: 0 0 28px;
+      flex: none;
       min-width: 0;
     }
     .row {
-      height: 100%;
+      min-height: 28px;
       display: flex;
       gap: 8px;
       align-items: center;

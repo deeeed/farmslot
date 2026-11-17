@@ -20,6 +20,7 @@ import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import type { GlobalFilters } from '../../state.js';
 import { parseRunsHashState, writeRunsHashState } from '../../state.js';
+import { resourcePresentationChanged } from '../../utils/resource-presentation.js';
 
 export type TabFilter = 'active' | 'history' | 'all';
 export type StatusFilter = RunStatus | 'all';
@@ -98,7 +99,8 @@ export abstract class RunListState extends LitElement {
   abstract refreshTagFilter(): Promise<void>;
 
   @state() runs: RunListRow[] = [];
-  @state() runsObservation: ResourceQueryState<RunListResult> = { status: 'loading' };
+  @state({ hasChanged: resourcePresentationChanged })
+  runsObservation: ResourceQueryState<RunListResult> = { status: 'loading' };
   @state() prs: PRStatus[] = [];
   @state() runSummaryMeta: RunListSummaryMeta | null = null;
   @state() runFamilySummaries: RunFamilyReadinessSummary[] = [];

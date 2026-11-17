@@ -98,6 +98,8 @@ interface QueryEntry {
   /** Canonical ids of `query.dependencies`, which every change notification is matched against. */
   dependencyIds: ReadonlySet<string>;
   state: ResourceQueryState;
+  /** Reuse the serialization already produced for persistence, bounded by this query's budget. */
+  acceptedJson?: { data: unknown; json: string };
   metricSource?: 'memory' | 'stored' | 'network';
   listeners: Set<(state: ResourceQueryState) => void>;
   hydration: Promise<void>;
@@ -494,6 +496,7 @@ export function createGatewayResourceCache(
     if (clear) {
       entry.lastRequestedAt = undefined;
       entry.retryAt = undefined;
+      entry.acceptedJson = undefined;
     }
     entry.serial++;
     entry.pending?.controller.abort();
@@ -1569,7 +1572,7 @@ export function createGatewayResourceCache(
     const unknownGeneration = entry.unknownGeneration;
     entry.state = {
       ...entry.state,
-      status: entry.state.data === undefined ? 'loading' : 'stale',
+      status: entry.state.data === undefined ? 'loading' : entry.state.status,
       // A cold connected retry can show loading; saved data keeps its last
       // failure visible until a successful read replaces that observation.
       error: entry.state.data === undefined ? undefined : entry.state.error,
@@ -1640,6 +1643,7 @@ export function createGatewayResourceCache(
             },
           );
         entry.metricSource = 'network';
+        const previousData = entry.state.data;
         entry.state = {
           status: covered
             ? sourceObservation && sourceObservation.status !== 'ready'
@@ -1684,6 +1688,19 @@ export function createGatewayResourceCache(
             )
           : undefined;
         const bytes = serialized === undefined ? 0 : encoder.encode(serialized).byteLength;
+        if (
+          !entry.query.persistedData &&
+          serialized !== undefined &&
+          bytes <= entry.query.maxBytes
+        ) {
+          if (
+            entry.acceptedJson &&
+            entry.acceptedJson.data === previousData &&
+            entry.acceptedJson.json === serialized
+          )
+            entry.state = { ...entry.state, data: previousData };
+          entry.acceptedJson = { data: entry.state.data, json: serialized };
+        } else entry.acceptedJson = undefined;
         const retention = entry.query.retention;
         const saved: StoredResourceQuery | undefined =
           serialized !== undefined &&
@@ -1698,6 +1715,7 @@ export function createGatewayResourceCache(
                 bytes,
               }
             : undefined;
+        const acceptedData = entry.state.data;
         notify(entry);
         // This reply is already accepted. A transport pause may make it stale
         // without changing its owner or value. Authority changes clear data
@@ -1705,7 +1723,7 @@ export function createGatewayResourceCache(
         const current = () =>
           !disposed &&
           entries.get(entry.query.id) === entry &&
-          entry.state.data === reply.data &&
+          entry.state.data === acceptedData &&
           entry.state.observedAt === observedAt &&
           writingIncarnation === storeVersion &&
           writingStore === store &&
@@ -1849,6 +1867,7 @@ export function createGatewayResourceCache(
         if (evictionCodes.has(failure.code)) {
           const evictingStore = store;
           const evictingIncarnation = storeVersion;
+          entry.acceptedJson = undefined;
           entry.state = { status: 'error', error: failure };
           // Commit an accepted refusal before a listener queues its profile's close.
           const eviction = updateStore(

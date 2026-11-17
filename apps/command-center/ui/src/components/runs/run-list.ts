@@ -1,5 +1,6 @@
 import { html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
+import { repeat } from 'lit/directives/repeat.js';
 
 import type {
   PRStatus,
@@ -806,8 +807,16 @@ export class RunList extends RunListState {
                     columns: RUN_INVENTORY_COLUMNS,
                     head: this.renderTableHead(showCheckboxes),
                     rows: showFamilyGroups
-                      ? familyGroups.map((group) => this.renderFamilyGroup(group, showCheckboxes))
-                      : filtered.map((r) => this.renderCard(r, showCheckboxes)),
+                      ? html`${repeat(
+                          familyGroups,
+                          (group) => group.familyId,
+                          (group) => this.renderFamilyGroup(group, showCheckboxes),
+                        )}`
+                      : html`${repeat(
+                          filtered,
+                          (run) => run.id,
+                          (run) => this.renderCard(run, showCheckboxes),
+                        )}`,
                     isEmpty: false,
                     testId: 'work-inventory-table',
                     minWidth: '1100px',
@@ -913,7 +922,7 @@ export class RunList extends RunListState {
     });
   }
 
-  private renderCard(run: RunListRow, showCheckbox: boolean) {
+  private renderCard(run: RunListRow, showCheckbox: boolean, showSummary = true) {
     const timing = runElapsedTimeView({ ...run, steps: runActivityView(run)?.steps ?? run.steps });
     const fc = runDisplayColor(run);
     const sc = runStatusColor(run.status);
@@ -994,28 +1003,48 @@ export class RunList extends RunListState {
       html`<span class="updated-cell" data-testid="runs-updated" title=${run.updatedAt}
         >${run.updatedAt.slice(0, 10)}</span
       >`,
-      html`<div class="run-pipeline-cell" data-testid="runs-pipeline" title=${pipelineLabel}>
-        ${run.summary ? html`${renderRunTitle(run, 'run-title')}` : nothing}
-        <run-pipeline-mini
-          .run=${run}
-          .steps=${run.steps}
-          .flowType=${run.flowType}
-          .taskProgressError=${this.taskProgressErrorsByRun.get(
-            runChecklistProgressTarget(run)?.key ?? '',
-          )}
-          .taskProgress=${this.taskProgressByRun.get(runChecklistProgressTarget(run)?.key ?? '')}
-          .retryProgress=${() =>
-            void this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')?.retry()}
-          .taskProgressStale=${progressReadNotice(
-            this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')?.state ?? {
-              status: 'loading',
-            },
-            gateway.connectionState === 'connected',
-          )?.kind === 'saved'}
-        ></run-pipeline-mini>
-        <span class="pipeline-label" data-testid="runs-timing" title=${pipelineLabel}
-          >${timing.label}</span
-        >
+    ];
+    return renderWorkInventoryRow({
+      row: {
+        id: run.id,
+        selected: isSelected,
+        className: `run-card ${this.manageMode ? 'manage-mode' : ''}`,
+        testId: `runs-row-${run.id}`,
+        onActivate: () => {
+          this.manageMode ? this.toggleSelectId(run.id) : this.selectRun(run);
+        },
+        onDeselect: this.manageMode ? undefined : () => this.backToRunList(),
+      },
+      cells,
+      summary:
+        showSummary && run.summary
+          ? html`<div class="run-row-summary" role="gridcell">
+              ${renderRunTitle(run, 'run-title')}
+            </div>`
+          : undefined,
+      footer: html`<div class="run-row-footer" role="gridcell">
+        <div class="run-pipeline-cell" data-testid="runs-pipeline" title=${pipelineLabel}>
+          <run-pipeline-mini
+            .run=${run}
+            .steps=${run.steps}
+            .flowType=${run.flowType}
+            .taskProgressError=${this.taskProgressErrorsByRun.get(
+              runChecklistProgressTarget(run)?.key ?? '',
+            )}
+            .taskProgress=${this.taskProgressByRun.get(runChecklistProgressTarget(run)?.key ?? '')}
+            .retryProgress=${this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')
+              ?.retry}
+            .taskProgressStale=${progressReadNotice(
+              this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')?.state ?? {
+                status: 'loading',
+              },
+              gateway.connectionState === 'connected',
+            )?.kind === 'saved'}
+          ></run-pipeline-mini>
+          <span class="pipeline-label" data-testid="runs-timing" title=${pipelineLabel}
+            >${timing.label}</span
+          >
+        </div>
         <div class="run-row-affordances" @click=${(e: Event) => e.stopPropagation()}>
           ${this.renderRunTags(run)} ${this.renderEvidenceSignals(run, evidenceSummary)}
           <a class="ext-link" href=${familyRunHash(run.familyId, run.id)}>retrospective</a>
@@ -1070,19 +1099,6 @@ export class RunList extends RunListState {
             : nothing}
         </div>
       </div>`,
-    ];
-    return renderWorkInventoryRow({
-      row: {
-        id: run.id,
-        selected: isSelected,
-        className: `run-card ${this.manageMode ? 'manage-mode' : ''}`,
-        testId: `runs-row-${run.id}`,
-        onActivate: () => {
-          this.manageMode ? this.toggleSelectId(run.id) : this.selectRun(run);
-        },
-        onDeselect: this.manageMode ? undefined : () => this.backToRunList(),
-      },
-      cells,
     });
   }
 
@@ -1163,6 +1179,10 @@ export class RunList extends RunListState {
 
   private renderFamilyGroup(group: RunFamilyGroup, showCheckbox: boolean) {
     const comparePair = pickFamilyComparePair(group.runs);
+    const summariesInHeader = new Set([
+      group.rootRun?.summary?.trim(),
+      group.runs.find((run) => run.createdAt === group.latestCreatedAt)?.summary?.trim(),
+    ]);
     const prNumbers = [
       ...new Set(
         group.runs.map((run) => run.prNumber).filter((value): value is number => value != null),
@@ -1254,7 +1274,11 @@ export class RunList extends RunListState {
           </div>
         </div>
         ${this.renderFamilySummaryRow(group, familyPR)}
-        ${group.runs.map((run) => this.renderCard(run, showCheckbox))}
+        ${repeat(
+          group.runs,
+          (run) => run.id,
+          (run) => this.renderCard(run, showCheckbox, !summariesInHeader.has(run.summary?.trim())),
+        )}
       </section>
     `;
   }
