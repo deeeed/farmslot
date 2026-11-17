@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
@@ -176,10 +177,15 @@ test('readFarmslotSignal reports missing then parsed SIGNAL.json', () => {
   assert.equal(present.body.status, 'blocked');
 });
 
-function pausedMarkFixture(t) {
+function pausedMarkFixture(t, nested = false) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-mark-gate-'));
   const task = path.join(dir, 'TASK.md');
   fs.writeFileSync(task, '# Deterministic check\n');
+  if (nested)
+    fs.writeFileSync(
+      path.join(dir, 'check.cjs'),
+      'process.send("ready"); setInterval(() => {}, 100);\n',
+    );
   fs.writeFileSync(
     path.join(dir, 'mark'),
     '#!' +
@@ -192,7 +198,9 @@ function pausedMarkFixture(t) {
       '    watcher.close(); process.stdout.write("marked " + process.argv[2] + "\\n");\n' +
       '  }\n' +
       '});\n' +
-      'fs.writeFileSync(path.join(dir, "ready"), String(process.pid));\n',
+      (nested
+        ? 'const check = require("node:child_process").fork(path.join(dir, "check.cjs"), [], { stdio: ["ignore", "ignore", "ignore", "ipc"] });\ncheck.once("message", () => fs.writeFileSync(path.join(dir, "ready"), String(check.pid)));\n'
+        : 'fs.writeFileSync(path.join(dir, "ready"), String(process.pid));\n'),
     { mode: 0o755 },
   );
   const ready = new Promise((resolve) => {
@@ -214,6 +222,14 @@ function pausedMarkFixture(t) {
   t.after(async () => {
     controller.abort();
     const settled = await outcome;
+    if (nested && fs.existsSync(path.join(dir, 'ready'))) {
+      const pid = Number(fs.readFileSync(path.join(dir, 'ready'), 'utf8'));
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch (error) {
+        if (error.code !== 'ESRCH') throw error;
+      }
+    }
     fs.rmSync(dir, { recursive: true, force: true });
     if (settled.error && settled.error.name !== 'AbortError') throw settled.error;
   });
@@ -233,4 +249,47 @@ test('tool cancellation rejects a running mark without reporting success', async
   await fixture.ready;
   fixture.controller.abort();
   await assert.rejects(fixture.result, { name: 'AbortError' });
+});
+
+test('cancellation stops the nested deterministic check before it settles', async (t) => {
+  const fixture = pausedMarkFixture(t, true);
+  await fixture.ready;
+  const pid = Number(fs.readFileSync(path.join(fixture.dir, 'ready'), 'utf8'));
+  fixture.controller.abort();
+  await assert.rejects(fixture.result, { name: 'AbortError' });
+  const observed = spawnSync('ps', ['-p', String(pid), '-o', 'stat='], { encoding: 'utf8' });
+  assert.ok(observed.status === 0 || observed.status === 1, observed.stderr);
+  assert.ok(
+    !observed.stdout.trim() || observed.stdout.trim().startsWith('Z'),
+    'nested check is still running',
+  );
+});
+
+test('an already-cancelled mark does not start its command', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-mark-aborted-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const task = path.join(dir, 'TASK.md');
+  fs.writeFileSync(task, '# Task\n');
+  fs.writeFileSync(path.join(dir, 'mark'), '#!/bin/sh\ntouch started\n', { mode: 0o755 });
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(runFarmslotMark('14', { FARMSLOT_TASK_FILE: task }, controller.signal), {
+    name: 'AbortError',
+  });
+  assert.equal(fs.existsSync(path.join(dir, 'started')), false);
+});
+
+test('mark output retains its size limit', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-mark-output-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const task = path.join(dir, 'TASK.md');
+  fs.writeFileSync(task, '# Task\n');
+  fs.writeFileSync(
+    path.join(dir, 'mark'),
+    '#!' + process.execPath + '\nprocess.stdout.write("x".repeat(2 * 1024 * 1024));\n',
+    { mode: 0o755 },
+  );
+  await assert.rejects(runFarmslotMark('14', { FARMSLOT_TASK_FILE: task }), {
+    code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
+  });
 });
