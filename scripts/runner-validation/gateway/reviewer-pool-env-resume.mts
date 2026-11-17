@@ -122,6 +122,17 @@ try {
   runId = created.run.id;
   await writeFile(path.join(evidence, 'run-id'), runId);
   const read = async () => (await active.call<{ run: Run }>('run.get', { runId })).run;
+  await poll(
+    'scripted producer monitoring',
+    async () => {
+      const run = await read();
+      assert.ok(!['failed', 'blocked', 'cancelled'].includes(run.status), run.error);
+      return run.status === 'monitoring' ? true : undefined;
+    },
+    90_000,
+  );
+  await writeFile(path.join(active.holds, 'monitoring'), 'gateway confirmed monitoring\n');
+
   const first = await poll(
     'validated first review and held fix',
     async () => {
