@@ -1,5 +1,6 @@
 // Two real native reviewer rounds through the isolated gateway; no external publication.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -27,6 +28,27 @@ const evidence = path.resolve(
   process.argv[2] ?? path.join(root, 'temp/reviewer-pool-env-evidence'),
 );
 await mkdir(evidence, { recursive: true });
+// The proof mirrors the selected real pack's permission policy, not a fixture-specific grant.
+const policyFile = process.env.FARMSLOT_REVIEW_PROOF_PROJECT_CONFIG;
+assert.ok(policyFile, 'FARMSLOT_REVIEW_PROOF_PROJECT_CONFIG must name the real pack project.json');
+const policyBytes = await readFile(policyFile);
+const productionPolicy: unknown = JSON.parse(policyBytes.toString('utf8'));
+assert.ok(isRecord(productionPolicy));
+const safetyTier = productionPolicy.default_safety_tier;
+assert.ok(safetyTier === 'sandboxed' || safetyTier === 'full-auto' || safetyTier === 'dangerous');
+await writeFile(
+  path.join(evidence, 'production-review-policy.json'),
+  JSON.stringify(
+    {
+      source: path.resolve(policyFile),
+      sha256: createHash('sha256').update(policyBytes).digest('hex'),
+      default_safety_tier: safetyTier,
+    },
+    null,
+    2,
+  ),
+);
+
 const reaper = startReaper();
 let stack: RemoteNodeStack | undefined;
 let runId: string | undefined;
@@ -68,6 +90,7 @@ try {
             ...pack,
             projectJson: {
               ...pack.projectJson,
+              default_safety_tier: safetyTier,
               scripted: {
                 ...scripted,
                 commands: { ...scripted.commands, work: { ...work, command } },
@@ -116,9 +139,11 @@ try {
   await writeFile(path.join(active.holds, 'fix'), 'hold the real fix before its completion signal');
   const created = await active.call<{ run: Run }>('run.create', {
     ...reviewRunParams(REVIEW_PROJECT + '-1'),
+    safetyTier,
     reviewValidationDepth: 'full-live',
     reviewSequence: [reviewer],
   });
+  assert.equal(created.run.safetyTier, safetyTier);
   runId = created.run.id;
   await writeFile(path.join(evidence, 'run-id'), runId);
   const read = async () => (await active.call<{ run: Run }>('run.get', { runId })).run;
@@ -150,6 +175,7 @@ try {
     },
     300_000,
   );
+  assert.equal(first.context.nativeSession!.safetyTier, safetyTier);
   await writeFile(path.join(evidence, 'first.json'), JSON.stringify(first, null, 2));
   const envChange = {
     ASDF_DATA_DIR: path.join(homedir(), '.asdf'),
@@ -191,6 +217,7 @@ try {
   assert.equal(resumed.runnerSessionId, first.context.runnerSessionId);
   assert.notEqual(resumed.nativeSession!.leaseId, first.context.nativeSession!.leaseId);
   assert.ok(resumed.nativeSession!.acceptedAt);
+  assert.equal(resumed.nativeSession!.safetyTier, safetyTier);
   assert.ok(resumed.nativeSession!.launchDigest?.startsWith('reviewer-v1:'));
   const snapshot = await active.call<NativeSessionReadResult>('native.session.read', {
     sessionId: resumed.nativeSession!.sessionId,
