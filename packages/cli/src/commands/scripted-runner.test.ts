@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -292,6 +300,12 @@ test(
     });
     const sessionDir = path.join(dir, '.agent', 'scripted-88');
     const receipt = path.join(sessionDir, 'session.json');
+    const deliverPrompt = (prompt: string) => {
+      // Match the gateway sender: publish complete JSON to the watched inbox atomically.
+      const pending = path.join(sessionDir, 'prompt.pending');
+      writeFileSync(pending, JSON.stringify({ prompt, taskDir: task }));
+      renameSync(pending, path.join(sessionDir, 'prompt.json'));
+    };
     const wait = async (predicate: () => boolean) => {
       const deadline = Date.now() + 2000;
       while (!predicate()) {
@@ -305,10 +319,7 @@ test(
       JSON.parse(readFileSync(path.join(task, 'SIGNAL.json'), 'utf8')).status,
       'complete',
     );
-    writeFileSync(
-      path.join(sessionDir, 'prompt.json'),
-      JSON.stringify({ prompt: 'Read REVIEW-FIX.md', taskDir: task }),
-    );
+    deliverPrompt('Read REVIEW-FIX.md');
     await wait(() => JSON.parse(readFileSync(receipt, 'utf8')).active);
     const activeAt = JSON.parse(readFileSync(receipt, 'utf8')).observedAt;
     assert.equal(existsSync(path.join(task, 'ack')), false);
@@ -318,10 +329,7 @@ test(
     assert.equal(readFileSync(path.join(task, 'ack'), 'utf8'), 'complete');
     assert.equal(git('show', '--format=', '--name-only', 'HEAD'), 'scripted-change.txt');
     // A stop during a turn must settle that turn before the session exits.
-    writeFileSync(
-      path.join(sessionDir, 'prompt.json'),
-      JSON.stringify({ prompt: 'Read REVIEW-FIX.md again', taskDir: task }),
-    );
+    deliverPrompt('Read REVIEW-FIX.md again');
     await wait(() => JSON.parse(readFileSync(receipt, 'utf8')).active);
     const closed = new Promise<void>((resolve) => child.once('exit', () => resolve()));
     child.kill('SIGTERM');
