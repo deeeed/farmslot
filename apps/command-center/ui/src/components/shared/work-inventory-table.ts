@@ -101,6 +101,8 @@ export function renderWorkInventoryRow(options: {
   row: WorkInventoryRowRenderOptions;
   /** One entry per column track so each becomes a `role="gridcell"`. */
   cells: ReadonlyArray<TemplateResult | typeof nothing | string>;
+  summary?: TemplateResult;
+  footer?: TemplateResult;
 }): TemplateResult {
   const { row, cells } = options;
   const className = [
@@ -133,7 +135,8 @@ export function renderWorkInventoryRow(options: {
       }
     }}
   >
-    ${cells.map((cell) => html`<div role="gridcell">${cell}</div>`)}
+    ${options.summary ?? nothing} ${cells.map((cell) => html`<div role="gridcell">${cell}</div>`)}
+    ${options.footer ?? nothing}
   </div>`;
 }
 

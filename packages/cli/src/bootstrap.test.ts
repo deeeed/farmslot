@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
-import { copyFile, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { copyFile, link, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -51,11 +51,14 @@ async function startBootstrap(t: TestContext, args: string[], options: Bootstrap
   const managedDir = path.join(root, 'managed runtime');
   if (managedRuntime) {
     await mkdir(managedDir);
-    await copyFile(
-      process.execPath,
-      path.join(managedDir, path.basename(process.execPath)),
-      constants.COPYFILE_FICLONE,
-    );
+    const managedNode = path.join(managedDir, path.basename(process.execPath));
+    try {
+      // A distinct path exercises execve without copying the entire interpreter. Never mutate it.
+      await link(process.execPath, managedNode);
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'EXDEV')) throw error;
+      await copyFile(process.execPath, managedNode, constants.COPYFILE_FICLONE);
+    }
   }
   await copyFile(path.join(packageDir, 'bin/farmslot.mjs'), path.join(root, 'bin/farmslot.mjs'));
   await symlink(path.resolve(packageDir, '../../node_modules'), path.join(root, 'node_modules'));

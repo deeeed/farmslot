@@ -53,10 +53,13 @@ test('panel observers share reads, refuse stale actions and drop old filters and
   await gateway.setAuthCredentials({ token: 'test-secret' });
   gateway.connect();
   await flush();
+  let hostUpdates = 0;
   const host: ReactiveControllerHost = {
     addController() {},
     removeController() {},
-    requestUpdate() {},
+    requestUpdate() {
+      hostUpdates++;
+    },
     updateComplete: Promise.resolve(true),
   };
   const first = new ResourceQueryController<RunListResult>(host);
@@ -75,6 +78,16 @@ test('panel observers share reads, refuse stale actions and drop old filters and
   );
   assert.equal(first.requireReady().totalCount, 1);
   assert.equal(second.state, first.state);
+  const updatesBeforeEqualRead = hostUpdates;
+  const held = first.state.data;
+  await first.retry();
+  await flush();
+  assert.equal(first.state.data, held);
+  assert.equal(
+    hostUpdates,
+    updatesBeforeEqualRead,
+    'An equal network refresh does not render either subscriber',
+  );
   first.hostDisconnected();
   second.hostDisconnected();
   const oneShot = new ResourceQueryController<RunListResult>(host, (state) => {

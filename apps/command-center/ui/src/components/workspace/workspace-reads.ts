@@ -13,6 +13,7 @@ import {
   getResourceWorkspaceKey,
   subscribeResourceCache,
 } from '../../resource-cache.js';
+import { resourcePresentationChanged } from '../../utils/resource-presentation.js';
 import { isExpectedReadAbsence } from '../../utils/resource-read-status.js';
 
 /** A replaced read has no failure to display in either workspace. */
@@ -203,6 +204,7 @@ export class WorkspaceReads implements ReactiveController {
                 this.host.requestUpdate();
                 return;
               }
+              const changed = resourcePresentationChanged(state, read.state);
               read.state = state;
               if (state.data !== undefined) {
                 if (applied !== state.data || appliedOwner !== owner) {
@@ -224,8 +226,10 @@ export class WorkspaceReads implements ReactiveController {
                 settled = true;
                 reject(new Error(state.error.message));
               }
-              this.changed();
-              this.host.requestUpdate();
+              if (changed) {
+                this.changed();
+                this.host.requestUpdate();
+              }
             });
           this.changed();
           this.host.requestUpdate();

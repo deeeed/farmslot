@@ -25,7 +25,7 @@ export class FleetSummaryBar extends LitElement {
       height: ${unsafeCSS(layout.summaryHeight)};
       background: ${unsafeCSS(colors.bgSurface)};
       border-bottom: 1px solid ${unsafeCSS(colors.bgCard)};
-      padding: 0 ${unsafeCSS(spacing.xl)};
+      padding: 0 74px 0 ${unsafeCSS(spacing.xl)};
       font-family: ${unsafeCSS(fonts.mono)};
       font-size: ${unsafeCSS(fonts.sizeSm)};
       color: ${unsafeCSS(colors.textSecondary)};
@@ -41,11 +41,13 @@ export class FleetSummaryBar extends LitElement {
       font-weight: 600;
     }
     .conn {
+      min-width: 0;
       margin-left: auto;
       display: flex;
       align-items: center;
     }
     .conn-button {
+      min-width: 0;
       display: flex;
       align-items: center;
       gap: 6px;

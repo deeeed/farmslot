@@ -77,8 +77,6 @@ export class NotificationTray extends LitElement {
       display: block;
       flex: none;
       position: relative;
-      height: 44px;
-      min-height: 44px;
       font-family: ${unsafeCSS(fonts.mono)};
     }
     .strip {
@@ -90,6 +88,18 @@ export class NotificationTray extends LitElement {
       padding: 0 12px;
       border-bottom: 1px solid ${unsafeCSS(colors.bgCardHover)};
       background: ${unsafeCSS(colors.bgCard)};
+    }
+    .strip.empty {
+      height: 0;
+      padding: 0;
+      border: 0;
+    }
+    .strip.empty .bell {
+      position: absolute;
+      top: 0;
+      right: 8px;
+      min-height: 32px;
+      z-index: 2;
     }
     .attention {
       min-width: 0;
@@ -188,10 +198,12 @@ export class NotificationTray extends LitElement {
   }
   render() {
     const top = getAttentionAlertPreferences().attentionEnabled
-      ? this.items.find((item) => item.needsYou && item.current)
+      ? // A retained decision remains visible while its background read is stale.
+        // Freshness still gates system alerts in the tray model, never this read-only link.
+        this.items.find((item) => item.needsYou)
       : undefined;
     return html`
-      <div class="strip" data-testid="notification-strip">
+      <div class=${top ? 'strip' : 'strip empty'} data-testid="notification-strip">
         ${top
           ? html`<span class="attention" role="status"
               ><a href=${top.route} title=${top.body}>${top.title}</a></span

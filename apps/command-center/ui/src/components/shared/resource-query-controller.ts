@@ -16,6 +16,7 @@ import {
   subscribeResourceCache,
 } from '../../resource-cache.js';
 import { notificationTray, publishReadNotice } from '../../utils/notification-tray.js';
+import { resourcePresentationChanged } from '../../utils/resource-presentation.js';
 import { isExpectedReadAbsence } from '../../utils/resource-read-status.js';
 
 import { readCurrent, readFresh } from './read-current.js';
@@ -149,10 +150,10 @@ export class ResourceQueryController<T> implements ReactiveController {
     return this.requireReady();
   }
 
-  async retry(): Promise<ResourceQueryState<T>> {
+  readonly retry = async (): Promise<ResourceQueryState<T>> => {
     if (!this.cache || !this.query) return this.state;
     return this.cache.retry(this.query);
-  }
+  };
 
   private bind(force = false): void {
     if (!this.connected) return;
@@ -185,6 +186,7 @@ export class ResourceQueryController<T> implements ReactiveController {
     if (state.data !== undefined || state.status === 'ready' || isExpectedReadAbsence(state))
       this.failingSince = undefined;
     else if (state.error) this.failingSince ??= Date.now();
+    const changed = resourcePresentationChanged(state, this.state);
     this.state = state;
     if (this.query) {
       const owner = this.workspaceKey;
@@ -198,6 +200,6 @@ export class ResourceQueryController<T> implements ReactiveController {
       });
     }
     this.onChange?.(state);
-    this.host.requestUpdate();
+    if (changed) this.host.requestUpdate();
   }
 }

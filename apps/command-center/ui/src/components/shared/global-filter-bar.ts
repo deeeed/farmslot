@@ -35,10 +35,6 @@ export class GlobalFilterBar extends LitElement {
         border-bottom: 1px solid ${unsafeCSS(colors.bgCard)};
         flex-shrink: 0;
         flex-wrap: wrap;
-        /* Catalogue hydration must not move the workspace beneath the filters. */
-        height: 114px;
-        min-height: 114px;
-        overflow-y: auto;
         align-content: flex-start;
         box-sizing: border-box;
       }
