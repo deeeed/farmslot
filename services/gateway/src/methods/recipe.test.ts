@@ -10,6 +10,7 @@ import {
 } from '@farmslot/protocol';
 
 import type { RawProjectJson } from '../core/config.js';
+import { shellQuote } from '../core/tmux.js';
 import type {
   ResourcePostureRequest,
   RunResourcePostureReconciler,
@@ -158,8 +159,7 @@ test('expandRecipeProjectHookTemplate expands action manifest, doctor, and run h
     }),
     {
       hook: 'recipe_run',
-      command:
-        "cd /repo && node runner.js run '/repo/.task/recipe.json' --artifacts-dir '/repo/.task/artifacts/recipe-runs/manual-1' --cdp-port 9222 --slot runner-browser-1",
+      command: `env -u RECIPE_TASK_DIR -u FARMSLOT_TASK_DIR FARMSLOT_RECIPE_UNBOUND=1 bash -c ${shellQuote("cd /repo && node runner.js run '/repo/.task/recipe.json' --artifacts-dir '/repo/.task/artifacts/recipe-runs/manual-1' --cdp-port 9222 --slot runner-browser-1")}`,
     },
   );
   assert.throws(
