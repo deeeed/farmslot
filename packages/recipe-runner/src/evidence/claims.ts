@@ -44,6 +44,45 @@ const parentVerdictOrder: readonly RecipeClaimVerdict[] = [
   'untestable',
 ];
 
+/** Diagnostic only: eligibility remains owned by executedProofIndices. */
+function unboundJsonEvidenceNotes(
+  input: DeriveRecipeClaimsInput,
+  excluded: ReadonlySet<string>,
+): Map<string, string> {
+  const executed = new Set(
+    input.trace
+      .filter((entry) => entry.action === 'assert_json')
+      .map((entry) => entry.nodeId ?? entry.id),
+  );
+  if (!executed.size) return new Map();
+  const categories = new Map<string, Set<string>>();
+  for (const artifact of input.artifacts) {
+    const values = categories.get(artifact.path) ?? new Set<string>();
+    values.add(artifact.category ?? 'unset');
+    categories.set(artifact.path, values);
+  }
+  const notes = new Map<string, string>();
+  for (const [id, node] of input.nodes) {
+    if (
+      node.action !== 'assert_json' ||
+      typeof node.path !== 'string' ||
+      excluded.has(id) ||
+      !executed.has(id)
+    )
+      continue;
+    const found = categories.get(node.path);
+    if (found?.has('proof')) continue;
+    const detail = found
+      ? `indexed categories: ${[...found].map((category) => JSON.stringify(category)).join(', ')}`
+      : 'not indexed at that literal path';
+    notes.set(
+      id,
+      `Node ${JSON.stringify(id)} (assert_json), literal path ${JSON.stringify(node.path)}: requires an indexed artifact with category "proof"; ${detail}.`,
+    );
+  }
+  return notes;
+}
+
 /** Successful actions/captures are evidence, never the assertion that proves a claim. */
 export function deriveRecipeClaims(
   input: DeriveRecipeClaimsInput,
@@ -53,6 +92,7 @@ export function deriveRecipeClaims(
   if (validation.status !== 'valid')
     throw new Error(validation.findings.map((finding) => finding.message).join('\n'));
   const excluded = unselectedProofNodes(input.nodes, input.trace);
+  let unboundEvidence: Map<string, string> | undefined;
   const claims = input.declarations.map((declaration): RecipeClaimEvidence => {
     const id = normalizeRecipeClaimId(declaration.id);
     const recipeNodes = [...input.nodes]
@@ -184,7 +224,23 @@ export function deriveRecipeClaims(
       evidence: [...new Set(evidence)],
       timing,
       moments,
-      ...(verdict === 'missing' ? { note: 'A required executed expectation is missing.' } : {}),
+      ...(verdict === 'missing'
+        ? {
+            note: [
+              'A required executed expectation is missing.',
+              ...[...(unboundEvidence ??= unboundJsonEvidenceNotes(input, excluded))]
+                .filter(([nodeId]) =>
+                  recipeNodes.some(
+                    (required) =>
+                      nodeId === required ||
+                      (input.nodes.get(required)?.action === 'call' &&
+                        nodeId.startsWith(`${required}/`)),
+                  ),
+                )
+                .map(([, note]) => note),
+            ].join(' '),
+          }
+        : {}),
     };
   });
   const byId = new Map(claims.map((claim) => [claim.id, claim]));
