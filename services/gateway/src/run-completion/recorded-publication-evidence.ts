@@ -279,11 +279,12 @@ async function frozenPublicationTextClosure(
     bundleRef,
     headSha ?? null,
     comparison,
+    'published',
   );
   // This inventory is the frozen publication closure, not the task's historical
   // artifacts. Media pixels retain their existing visual-review requirements.
-  // Additional recipe roots were validated above even though only the selected ledger
-  // is returned as verdict authority.
+  // The publication scope includes additional packages without promoting their ledgers
+  // to acceptance authority in the default selected-attempt reader.
   const textPrefixes = [
     ...new Set([
       ...sources.map(({ artifactPrefix }) => artifactPrefix),

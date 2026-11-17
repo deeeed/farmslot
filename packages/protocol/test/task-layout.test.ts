@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+import ts from 'typescript';
 
 import {
   TASK_DIRECTORY_LAYOUT,
   TASK_DIRECTORY_LAYOUT_VERSION,
   TASK_FILE_SCHEMAS,
   type TaskDirectoryFileId,
-} from './task-layout.js';
+} from '../src/task-layout.js';
 
 test('task actions have the documented canonical root and a manifest format', () => {
   assert.equal(TASK_DIRECTORY_LAYOUT_VERSION, 1);
@@ -40,4 +43,22 @@ test('every reserved task path is relative, unique and has a named format author
   // @ts-expect-error Unknown files cannot be selected from the contract.
   const unsupported: TaskDirectoryFileId = 'task-actions-fallback';
   void unsupported;
+});
+
+// Compile this discovered test as well as executing it, including the negative assertion above.
+test('task layout consumer types reject unknown file identifiers', () => {
+  const program = ts.createProgram([fileURLToPath(import.meta.url)], {
+    noEmit: true,
+    strict: true,
+    skipLibCheck: true,
+    module: ts.ModuleKind.NodeNext,
+    moduleResolution: ts.ModuleResolutionKind.NodeNext,
+    target: ts.ScriptTarget.ES2022,
+  });
+  assert.deepEqual(
+    ts
+      .getPreEmitDiagnostics(program)
+      .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')),
+    [],
+  );
 });

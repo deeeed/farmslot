@@ -669,7 +669,8 @@ export async function materializeInheritedContext(
     const source = relevantRuns.find(
       (entry) => entry.id === (recipe?.sourceRunId ?? run.parentRunId),
     );
-    if (source) {
+    // A parent with no capture has no frozen inputs or proof to qualify.
+    if (source && (source.artifactBundle || source.output?.artifactBundle)) {
       const inputs = await inputsFor(source);
       if (!inputs.available) {
         manifest.taskActionInputGaps = [
