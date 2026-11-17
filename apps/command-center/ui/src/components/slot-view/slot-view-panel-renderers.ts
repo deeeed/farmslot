@@ -8,6 +8,7 @@ import '../shared/hydrating-placeholder.js';
 import { gateway } from '../../gateway-client.js';
 import { getState } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import { useViewState } from '../../utils/view-state.js';
 import {
   buildRerunAlongsideHref,
   canReplayRunSteps,
@@ -23,7 +24,11 @@ import { renderSlotViewEditStrip } from './slot-view-edit-renderers.js';
 import { isSlotViewContextPinUnresolved } from './slot-view-linked-run-model.js';
 import { realPath, slotBoundRunIdForSlot, slotViewTerminalRunId } from './slot-view-model.js';
 import { slotViewEffectiveTerminalHeight } from './slot-view-resize-effects.js';
-import { getSlotViewHashParam, requestedRunFromHash } from './slot-view-url-state.js';
+import {
+  getSlotViewHashParam,
+  requestedRunFromHash,
+  slotSessionField,
+} from './slot-view-url-state.js';
 
 export interface SlotViewBodyRenderContext {
   hasResources: boolean;
@@ -231,17 +236,19 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
     requestedRunFromHash(),
     slotBoundRunIdForSlot(view.slotId, view._slot?.currentRunId, getState().fleet?.slots),
   );
-  const tmuxSelectionKey = `${view.slotId}:${terminalRunId}`;
-  const tmuxSelected = view._tmuxSessionSelection === tmuxSelectionKey;
+  const sessionView = useViewState(view);
+  const tmuxSelected = sessionView.get(slotSessionField) === 'host';
   const {
-    target: nativeWorker,
-    unavailable: nativeUnavailable,
+    target: selectedNativeWorker,
+    unavailable: selectedNativeUnavailable,
     tabs: nativeTabs,
   } = slotSessionView(view._linkedRun?.agentContexts ?? [], {
     slotId: view.slotId,
     contextId: selectedAgentContext?.id ?? '',
-    tmux: tmuxSelected,
+    tmux: false,
   });
+  const nativeWorker = tmuxSelected ? undefined : selectedNativeWorker;
+  const nativeUnavailable = !tmuxSelected && selectedNativeUnavailable;
   return html`
     <!-- Body: activity bar + sidebar + editor -->
     <div class="sv-body">
@@ -716,15 +723,34 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                   }}
                 >
                   <button
-                    class="sv-bottom-tab ${view._bottomTab === 'terminal' ? 'active' : ''}"
+                    class="sv-bottom-tab ${view._bottomTab === 'terminal' && !tmuxSelected
+                      ? 'active'
+                      : ''}"
                     @click=${() => {
+                      sessionView.set(slotSessionField, 'worker');
                       view._bottomTab = 'terminal';
                       view._terminalOpen = true;
                       view._saveLayout();
                     }}
                   >
-                    ${nativeWorker ? 'Conversation' : 'Terminal'}
+                    ${selectedNativeWorker ? 'Conversation' : 'Terminal'}
                   </button>
+                  ${nativeTabs.length || tmuxSelected
+                    ? html`<button
+                        class="sv-bottom-tab ${view._bottomTab === 'terminal' && tmuxSelected
+                          ? 'active'
+                          : ''}"
+                        data-testid="slot-host-terminal"
+                        @click=${() => {
+                          sessionView.set(slotSessionField, 'host');
+                          view._bottomTab = 'terminal';
+                          view._terminalOpen = true;
+                          view._saveLayout();
+                        }}
+                      >
+                        Host terminal
+                      </button>`
+                    : nothing}
                   ${view._workerHistoryEnabled
                     ? html`
                         <button
@@ -798,7 +824,7 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                           nativeWorker ? 480 : 0,
                         )}px"
                       >
-                        ${pinnedContextUnresolved || nativeUnavailable
+                        ${(!tmuxSelected && pinnedContextUnresolved) || nativeUnavailable
                           ? html`<p role="status" data-testid="native-context-unavailable">
                               The selected task context is loading or unavailable.
                             </p>`
@@ -819,7 +845,7 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                                     event: CustomEvent<{ contextId: string | null }>,
                                   ) => {
                                     if (event.detail.contextId === null) {
-                                      view._tmuxSessionSelection = tmuxSelectionKey;
+                                      sessionView.set(slotSessionField, 'host');
                                       return;
                                     }
                                     const target = view
