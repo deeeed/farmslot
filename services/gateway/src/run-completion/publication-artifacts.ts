@@ -924,26 +924,35 @@ export function publicationBaselineContext(
     /^[a-f0-9]{40}$/iu.test(run.startRef.resolvedSha)
       ? run.startRef.resolvedSha
       : undefined;
-  // `worktreeHeadAtDispatch` is NOT immutable: a re-dispatch overwrites it with
-  // whatever HEAD is then (`methods/dispatch/execute.ts`), and only one caller
-  // opts into preserving the old value. After a replay of dispatch or anything
-  // before it, the field can name a POST-fix commit, which must never pass as a
-  // pre-work base — that is what the attestation path is for. So it counts as a
-  // candidate only while no such replay has happened.
-  const dispatchReplayed = (run.recoveryAttempts ?? []).some((attempt) =>
+  // The head of the FIRST dispatch, written once and never rewritten.
+  const preWorkBase =
+    typeof run.preWorkBaseSha === 'string' && /^[a-f0-9]{40}$/iu.test(run.preWorkBaseSha)
+      ? run.preWorkBaseSha
+      : undefined;
+  // `worktreeHeadAtDispatch` is NOT immutable: a later prepare overwrites it
+  // with whatever HEAD is then (`methods/dispatch/execute.ts`), so after a
+  // re-dispatch it can name a POST-fix commit, which must never pass as a
+  // pre-work base — that is what the attestation path is for. Runs first
+  // dispatched before `preWorkBaseSha` existed have no frozen record, so for
+  // those it stands in only while no replay of dispatch, or of a step before
+  // it, has had a chance to move it.
+  const dispatchMoved = (run.recoveryAttempts ?? []).some((attempt) =>
     DISPATCH_BASELINE_STEPS.has(attempt.stepName),
   );
   const dispatchBase =
-    !dispatchReplayed &&
+    preWorkBase === undefined &&
+    !dispatchMoved &&
     typeof run.worktreeHeadAtDispatch === 'string' &&
     /^[a-f0-9]{40}$/iu.test(run.worktreeHeadAtDispatch)
       ? run.worktreeHeadAtDispatch
       : undefined;
   return {
     markerBaseline: markerBaselineVerifier(run, inventory),
-    baseSha: fullReviewBase ?? dispatchBase ?? startBase,
+    baseSha: fullReviewBase ?? preWorkBase ?? dispatchBase ?? startBase,
     beforeBaseShas: [
-      ...new Set([fullReviewBase, startBase, dispatchBase].filter((sha) => sha !== undefined)),
+      ...new Set(
+        [fullReviewBase, preWorkBase, startBase, dispatchBase].filter((sha) => sha !== undefined),
+      ),
     ],
     comparison,
     branch: run.branch,

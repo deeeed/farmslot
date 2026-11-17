@@ -119,6 +119,43 @@ for (const [name, changed] of [
       .replace('Logger.log', 'Telemetry.log')
       .replace('import Logger', 'import Telemetry'),
   ],
+  [
+    'an import that renames something else behind a logger name',
+    mobileOutput.replace(
+      "+import Logger from '../../../../util/Logger';",
+      "+import { track as Logger } from '../../../../analytics';",
+    ),
+  ],
+  [
+    'a namespace import bound to a logger name',
+    mobileOutput.replace(
+      "+import Logger from '../../../../util/Logger';",
+      "+import * as Logger from '../../../../util/Logger';",
+    ),
+  ],
+  [
+    'a named import of the logger under a different name',
+    mobileOutput.replace(
+      "+import Logger from '../../../../util/Logger';",
+      "+import { DevLogger as Logger } from '../../../../util/Logger';",
+    ),
+  ],
+  [
+    'an import justified only by a marker in another file',
+    `${marker}\0${base}\0debug(${ticket}): add reproduction marker\0\n${`diff --git a/app/a.tsx b/app/a.tsx
+index 123abcd..456abcd 100644
+--- a/app/a.tsx
++++ b/app/a.tsx
+@@ -3,0 +4 @@
++import Logger from '../util/Logger';
+diff --git a/app/b.tsx b/app/b.tsx
+index 123abcd..456abcd 100644
+--- a/app/b.tsx
++++ b/app/b.tsx
+@@ -9,0 +10 @@
++    Logger.log('[${ticket}] BUG_MARKER: no venue row');
+`}`,
+  ],
 ] as const) {
   test(`a marker commit does not admit ${name}`, async () => {
     assert.equal(await isTicketMarkerCommit(changed, base, marker, ticket), false);

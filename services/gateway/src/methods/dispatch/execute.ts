@@ -1635,7 +1635,13 @@ export async function dispatchExecute(
       const { assertInheritedPrCommitsSigned } =
         await import('../../run-completion/commit-signatures.js');
       await assertInheritedPrCommitsSigned(dispatchRun, vars, worktreeHeadAtDispatch);
-      updateRunStore(params.runId, { worktreeHeadAtDispatch });
+      updateRunStore(params.runId, {
+        worktreeHeadAtDispatch,
+        // Write-once: the FIRST dispatch is the only one that happened before
+        // any of this run's own work, so recorded before evidence has a base
+        // that no later prepare can move out from under it.
+        ...(dispatchRun?.preWorkBaseSha ? {} : { preWorkBaseSha: worktreeHeadAtDispatch }),
+      });
     }
   }
   if (selectedApp) {

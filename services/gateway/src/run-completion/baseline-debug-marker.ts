@@ -62,17 +62,29 @@ export async function isTicketMarkerCommit(
         // No import clause at all is a side-effect-only import, which runs
         // module code; a phase modifier is `type` (binds nothing) or `defer`.
         if (!clause || clause.phaseModifier !== undefined) return false;
+        // The module has to BE a logger module. Without this, the binding name
+        // was the only rule, so `import { track as Logger } from './analytics'`
+        // read as a logger import, loaded that module and aliased something
+        // else behind a logger name — and a namespace import called `console`
+        // shadowed the global for the rest of the file.
+        if (
+          !ts.isStringLiteralLike(statement.moduleSpecifier) ||
+          !/(?:^|\/)(?:dev-?)?logger$/iu.test(
+            statement.moduleSpecifier.text.replace(/\.[jt]sx?$/u, ''),
+          )
+        )
+          return false;
+        if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) return false;
         const bound: string[] = [];
+        // A default import binds the module's own export under the name the
+        // marker logs through; a named one must not rename, so the name in the
+        // log is the name the logger module exports.
         if (clause.name) bound.push(clause.name.text);
-        if (clause.namedBindings) {
-          if (ts.isNamespaceImport(clause.namedBindings))
-            bound.push(clause.namedBindings.name.text);
-          else
-            for (const element of clause.namedBindings.elements) {
-              if (element.isTypeOnly) return false;
-              bound.push(element.name.text);
-            }
-        }
+        if (clause.namedBindings)
+          for (const element of clause.namedBindings.elements) {
+            if (element.isTypeOnly || element.propertyName) return false;
+            bound.push(element.name.text);
+          }
         if (!bound.length) return false;
         for (const name of bound) importedBindings.add(name);
         return true;
@@ -138,9 +150,21 @@ export async function isTicketMarkerCommit(
     return Boolean(ts.forEachChild(node, writesValue));
   }
 
+  /**
+   * An import earns its place only by being the logger the marker logs through
+   * IN THE SAME FILE. Commit-wide sets let an import in one file be justified
+   * by a marker in another, so the sets close and reset at each file boundary.
+   */
+  const closeFile = (): boolean => {
+    const justified = [...importedBindings].every((name) => loggedThrough.has(name));
+    importedBindings.clear();
+    loggedThrough.clear();
+    return justified;
+  };
+
   for (const line of patch.split('\n')) {
     if (line.startsWith('diff --git ')) {
-      if (!finishHunk()) return false;
+      if (!finishHunk() || !closeFile()) return false;
       files += 1;
     } else if (line.startsWith('@@ ')) {
       if (!finishHunk()) return false;
@@ -151,14 +175,7 @@ export async function isTicketMarkerCommit(
       if (!/^index [a-f0-9]+\.\.[a-f0-9]+ 100(?:644|755)$/u.test(line)) return false;
     } else if (line !== '') return false; // Deletions, renames, modes, binary data and context all refuse.
   }
-  return (
-    finishHunk() &&
-    files > 0 &&
-    markers > 0 &&
-    // An import earns its place only by being the logger the marker logs
-    // through. Anything else added a dependency this commit does not use.
-    [...importedBindings].every((name) => loggedThrough.has(name))
-  );
+  return finishHunk() && closeFile() && files > 0 && markers > 0;
 }
 
 /** Capture verifies Git once; retained readers admit only the exact gateway-owned, pinned receipt. */
