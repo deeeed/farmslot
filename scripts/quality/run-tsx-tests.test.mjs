@@ -390,6 +390,8 @@ const SHARED_STATE_READ_ONLY = {
   'src/methods/runner-models-pi-cli.test.ts':
     'redirects pool and projects to a private mkdtemp farm root',
   'src/methods/slot/workspace-cache.test.ts': 'writes only its private mkdtemp farm status file',
+  'src/methods/slot/check-active.test.ts':
+    'sets a private mkdtemp status path before state imports',
   'src/node-support/remote-command-bundle-cache.test.ts':
     'redirects pool and farm home to a private mkdtemp root',
   'src/run-lifecycle/idle-devserver-service.test.ts':
