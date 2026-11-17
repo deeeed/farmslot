@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.19.22 - 2026-11-17
+
+- Align exact dependency pins with the JSON proof diagnostic release.
+
 ## 0.19.21 - 2026-11-17
 
 - Align exact dependency pins with the implementation-isolated prepared-cache release.

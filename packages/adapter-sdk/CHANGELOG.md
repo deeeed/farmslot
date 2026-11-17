@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.28.4 - 2026-11-17
+
+- Align exact dependency pins with the JSON proof diagnostic release.
+
 ## 0.28.3 - 2026-11-17
 
 - Align exact dependency pins with the implementation-isolated prepared-cache release.

@@ -9,6 +9,11 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.46.24 - 2026-11-17
+
+- Name the executed JSON assertion, literal artifact path and required proof category when claim evidence is unbound, preserving existing proof eligibility and verdicts.
+- mm-harness 0.96.31 consumes runner 0.46.24 and CLI 0.35.18 for unbound JSON proof diagnostics while preserving proof eligibility and verdicts.
+
 ## 0.46.23 - 2026-11-17
 
 - Isolate prepared source, metadata and output-support cache records by implementation so mixed versions keep warm checks without weakening source freshness.
