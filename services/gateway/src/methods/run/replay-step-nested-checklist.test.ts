@@ -10,13 +10,14 @@ import {
   type ExecutionTemplateReference,
   PipelineSteps as PS,
 } from '@farmslot/protocol';
-
 // mock.module replaces a module wholesale, so a partial namedExports map silently
 // deletes every export the subject's import graph still needs. These namespace
 // imports are evaluated before mock.module runs, so they hold the REAL modules;
 // spreading them keeps every export real and overrides only the fixtures this
 // test actually needs. Enumerating exports by hand is what produced the
 // missing-export chain (isLocal, resolveSlot, isIgnoredPoolFile, …).
+import { parseReviewSelection } from '@farmslot/review-dispatch';
+
 import * as realConfig from '../../core/config.js';
 import * as realCoreIndex from '../../core/index.js';
 import * as realOutput from '../../run-completion/output.js';
@@ -205,13 +206,14 @@ test('completion refuses a mirror capture replaced while the original contract i
   assert.equal(getRun(run.id)?.artifactBundle?.bundleDigest, 'd'.repeat(64));
 });
 
-for (const [stepName, retainedFix] of [
-  [PS.MONITOR, false],
-  [PS.REVIEW, false],
-  [PS.HUMAN_GATE, false],
-  [PS.REVIEW, true],
+for (const [stepName, retainedFix, failedReviewerLaunch] of [
+  [PS.MONITOR, false, false],
+  [PS.REVIEW, false, false],
+  [PS.HUMAN_GATE, false, false],
+  [PS.REVIEW, true, false],
+  [PS.REVIEW, true, true],
 ] as const) {
-  test(`runReplayStep ${stepName} restores frozen policy${retainedFix ? ' and the retained fix base' : ''} without changing evidence`, async (t) => {
+  test(`runReplayStep ${stepName} restores frozen policy${failedReviewerLaunch ? ' after reviewer-launch failure (961987b5)' : retainedFix ? ' and the retained fix base' : ''} without changing evidence`, async (t) => {
     workspace = await mkdtemp(path.join(os.tmpdir(), 'replay-nested-checklist-'));
     orchestratorTaskRoot = path.join(workspace, 'orchestrator-tasks');
     const taskRel = 'fix/replay-reset';
@@ -285,15 +287,49 @@ for (const [stepName, retainedFix] of [
       label: 'Fix',
       runner: 'claude',
       model: 'opus',
-      status: 'working',
+      status: failedReviewerLaunch ? 'failed' : 'working',
       target: null,
       taskFile: `${taskDirOnSlot}/${fix.checklist}`,
+      signalFile: `${taskDirOnSlot}/${fix.signal}`,
       deliveryBaselineRef: 'a'.repeat(40),
       startedAt: '2026-10-22T00:00:00Z',
       updatedAt: '2026-10-22T00:00:00Z',
     };
+    const reviewId = `pipeline-review-${run.id}`;
+    const priorReviewer: AgentContext = {
+      id: 'rev-codex-native-round-1',
+      role: 'review',
+      label: 'Review',
+      runId: run.id,
+      slotId: 'macwork-ff-replay-checklist',
+      status: 'complete',
+      runner: 'codex',
+      model: 'gpt-6.1-sol',
+      effort: 'high',
+      reviewId,
+      reviewLoopNumber: 1,
+      reviewValidationDepth: 'static-code',
+      taskFile: `${taskDirOnSlot}/REVIEW.round-1.md`,
+      reviewResultValidatedAt: '2026-11-17T15:32:18.361Z',
+      runnerSessionId: '01a1ea1d-46e1-73e1-8cdc-1e26113f6363',
+      deliveryBaselineRef: 'a'.repeat(40),
+      nativeSession: {
+        sessionId: 'b0630c19-938d-4c0f-bfc8-617785711efb',
+        leaseId: 'retained-lease',
+        commandId: 'round-1-command',
+        ownerPrincipalId: 'fixture-owner',
+        executionNodeId: 'local',
+        acceptedAt: '2026-11-17T15:25:50.129Z',
+        closedAt: '2026-11-17T15:32:19.484Z',
+        launchDigest: 'ab049197d37131fdf90f097fb632400b047f2811e6d14abd17e277f084c7046e',
+      },
+    };
     updateRun(run.id, {
-      agentContexts: retainedFix ? [fixContext] : [],
+      agentContexts: failedReviewerLaunch
+        ? [priorReviewer, fixContext]
+        : retainedFix
+          ? [fixContext]
+          : [],
       status: 'failed',
       slotId: 'macwork-ff-replay-checklist',
       taskFile,
@@ -317,6 +353,18 @@ for (const [stepName, retainedFix] of [
     });
 
     await runReplayStep({ runId: run.id, stepName, triggeredBy: 'operator' }, () => {});
+    if (failedReviewerLaunch) {
+      const replayed = getRun(run.id)!;
+      const selection = replayed.steps.find((step) => step.name === PS.REVIEW)?.inputs
+        ?.reviewSelection;
+      assert.equal(selection ? parseReviewSelection(selection).mode : replayed.reviewMode, 'warm');
+      assert.equal(replayed.reviewContext?.reviewLineages[0]?.reviewId, reviewId);
+      assert.equal(
+        replayed.agentContexts?.find((context) => context.id === priorReviewer.id)?.nativeSession
+          ?.sessionId,
+        'b0630c19-938d-4c0f-bfc8-617785711efb',
+      );
+    }
 
     assert.equal(
       await readFile(path.join(taskDirOnSlot, 'inputs/worker-terminal-contract.json'), 'utf8'),
