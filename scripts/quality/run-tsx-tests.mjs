@@ -35,6 +35,26 @@ export const SERIAL_PRAGMA = '@farmslot:serial';
 
 export const WORKERS_ENV = 'FARMSLOT_TSX_TEST_WORKERS';
 export const TEST_STATUS_ENV = 'FARMSLOT_TEST_STATUS_FILE';
+export const FILE_TIMEOUT_ENV = 'FARMSLOT_TSX_TEST_FILE_TIMEOUT_MS';
+
+/**
+ * How long one test file may run before its process group is killed. A file
+ * whose process never exits (a child it started still running) otherwise holds
+ * the job until CI's own limit and never says which file it was. The slowest CI
+ * file takes about 60 s, so 180 s leaves room for a loaded runner.
+ */
+export const DEFAULT_FILE_TIMEOUT_MS = 180_000;
+
+export function resolveFileTimeout(rawValue = process.env[FILE_TIMEOUT_ENV]) {
+  if (rawValue === undefined || rawValue === '') return DEFAULT_FILE_TIMEOUT_MS;
+  const value = Number(rawValue);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(
+      `${FILE_TIMEOUT_ENV} must be a positive integer of milliseconds, got: ${rawValue}`,
+    );
+  }
+  return value;
+}
 
 // Git exports GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE (etc.) into hook
 // environments (pre-commit, pre-push). A test that spawns `git` to build a
@@ -343,15 +363,15 @@ let interrupted = false;
  * Pass a signal on to the running test processes and wait for them to close,
  * against one deadline, so none recreates files after the run's directories
  * are removed. Asynchronous: Node reaps an exited child only while the event
- * loop runs. Only the yarn children are signalled; yarn passes the signal to
- * the test process, but a process a test started itself is not tracked here.
+ * loop runs. Each test file runs in its own process group, so the signal
+ * reaches the processes the test started as well.
  */
 export async function stopChildren(signal, children = activeChildren, timeoutMs = 5000) {
   const running = [...children].filter(
     (child) => child.exitCode === null && child.signalCode === null,
   );
   const closed = running.map((child) => new Promise((resolve) => child.once('close', resolve)));
-  for (const child of running) child.kill(signal);
+  for (const child of running) signalGroup(child, signal);
   let timer;
   const deadline = new Promise((resolve) => {
     timer = setTimeout(() => resolve('timeout'), timeoutMs);
@@ -368,21 +388,42 @@ export async function stopChildren(signal, children = activeChildren, timeoutMs 
   }
 }
 
-function runYarn(args, { cwd, env, buffered }) {
+/** Signal a test file's whole process group: yarn, node and anything the test started. */
+function signalGroup(child, signal) {
+  try {
+    process.kill(-child.pid, signal);
+  } catch (error) {
+    // The group's last process exited after the caller saw it running.
+    if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
+  }
+}
+
+function runYarn(args, { cwd, env, buffered, timeoutMs }) {
   return new Promise((resolvePromise, rejectPromise) => {
     // An interrupted run starts nothing new: it could outlive the shutdown.
     if (interrupted) {
       resolvePromise({ status: 1, output: '' });
       return;
     }
+    // Its own process group, so a timeout or an interrupt reaches every process
+    // the file started. No stdin: a background group reading the terminal stops.
     const child = spawn('yarn', args, {
       cwd,
       env,
       shell: false,
-      stdio: buffered ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+      detached: true,
+      stdio: buffered ? ['ignore', 'pipe', 'pipe'] : ['ignore', 'inherit', 'inherit'],
     });
     activeChildren.add(child);
-    child.once('close', () => activeChildren.delete(child));
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      signalGroup(child, 'SIGKILL');
+    }, timeoutMs);
+    child.once('close', () => {
+      clearTimeout(timer);
+      activeChildren.delete(child);
+    });
     let output = '';
     if (buffered) {
       child.stdout.setEncoding('utf-8');
@@ -395,7 +436,9 @@ function runYarn(args, { cwd, env, buffered }) {
       });
     }
     child.on('error', rejectPromise);
-    child.on('close', (code) => resolvePromise({ status: code ?? 1, output }));
+    child.on('close', (code) => {
+      resolvePromise({ status: timedOut ? 1 : (code ?? 1), output, timedOut });
+    });
   });
 }
 
@@ -578,6 +621,7 @@ async function runOne(file, context) {
         TEMP: fileTmp,
       },
       buffered: context.buffered,
+      timeoutMs: context.fileTimeoutMs,
     });
     const caches = new Set([...sharedToolCaches(), ...toolOutputs()]);
     // A test that removed its whole TMPDIR left nothing behind.
@@ -587,7 +631,14 @@ async function runOne(file, context) {
   }
   const label = `${basename(context.cwd)}/${relative(context.cwd, file)}`;
   const leakFailure = tmpdirLeakFailure(label, leaked);
-  const leakMessage = leakFailure ?? knownLeakerNotice(label, leaked);
+  const leakMessage = [
+    result.timedOut
+      ? `[tsx-tests] ${label} did not finish within ${context.fileTimeoutMs} ms (${FILE_TIMEOUT_ENV}); killed its process group`
+      : undefined,
+    leakFailure ?? knownLeakerNotice(label, leaked),
+  ]
+    .filter(Boolean)
+    .join('\n');
   // Buffered lanes print the message inside this file's own output block.
   if (leakMessage && !context.buffered) console.error(leakMessage);
   const status = leakFailure && result.status === 0 ? 1 : result.status;
@@ -711,8 +762,10 @@ async function main() {
   // the way the usage error below does, rather than seven frames of module-loader
   // stack burying it.
   let parsed;
+  let fileTimeoutMs;
   try {
     parsed = parseArgs(process.argv.slice(2));
+    fileTimeoutMs = resolveFileTimeout();
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
@@ -811,7 +864,16 @@ async function main() {
   // active lane keeps the historical live-streaming behaviour.
   const activeLanes = partition.parallel.filter((lane) => lane.length > 0);
   const buffered = activeLanes.length > 1;
-  const context = { cwd, env, tsconfig, toLabel, buffered: false, runRoot, files: { count: 0 } };
+  const context = {
+    cwd,
+    env,
+    tsconfig,
+    toLabel,
+    buffered: false,
+    runRoot,
+    fileTimeoutMs,
+    files: { count: 0 },
+  };
   const started = performance.now();
   const records = [];
 

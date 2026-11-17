@@ -20,12 +20,15 @@ import {
   assignments,
   buildArtifact,
   classifyTest,
+  DEFAULT_FILE_TIMEOUT_MS,
   discoverTests,
+  FILE_TIMEOUT_ENV,
   finish,
   knownLeakerNotice,
   parseArgs,
   parseShard,
   partitionTests,
+  resolveFileTimeout,
   resolveWorkers,
   selectShard,
   SERIAL_PRAGMA,
@@ -1143,6 +1146,68 @@ test('b', () => writeFileSync(${JSON.stringify(second)}, ''));
     await new Promise((resolve) => setTimeout(resolve, 2500));
 
     assert.equal(existsSync(second), false, 'the interrupted run started another test file');
+  },
+);
+
+test('the per-file timeout defaults, and rejects anything but a positive integer', () => {
+  assert.equal(resolveFileTimeout(undefined), DEFAULT_FILE_TIMEOUT_MS);
+  assert.equal(resolveFileTimeout(''), DEFAULT_FILE_TIMEOUT_MS);
+  assert.equal(resolveFileTimeout('2500'), 2500);
+  for (const bad of ['0', '-1', '1.5', 'soon']) {
+    assert.throws(() => resolveFileTimeout(bad), new RegExp(FILE_TIMEOUT_ENV));
+  }
+});
+
+test(
+  'a file held open by a child it started fails at the timeout, named, with the child killed',
+  { skip: process.platform === 'win32' },
+  (t) => {
+    const fixture = mkdtempSync(path.join(QUALITY_DIR, '.tmux-sandbox-fixture-'));
+    const pidFile = path.join(fixture, 'child.pid');
+    t.after(() => {
+      // The runner should have killed it; this only covers a failed assertion.
+      const pid = existsSync(pidFile) ? Number(readFileSync(pidFile, 'utf8')) : 0;
+      if (pid) {
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch (error) {
+          // Already gone: the expected case.
+          if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
+        }
+      }
+      rmSync(fixture, { recursive: true, force: true });
+    });
+    writeFileSync(path.join(fixture, 'tsconfig.json'), '{}');
+    mkdirSync(path.join(fixture, 'src'));
+    // The test passes, but the child it never stops keeps its process alive.
+    writeFileSync(
+      path.join(fixture, 'src', 'held.test.ts'),
+      `import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import test from 'node:test';
+test('starts a child and returns', () => {
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));
+});
+`,
+    );
+    const started = Date.now();
+    const run = spawnSync(
+      process.execPath,
+      [RUNNER_PATH, '--cwd', fixture, '--tsconfig', 'tsconfig.json', '--workers', '1', 'src'],
+      { encoding: 'utf8', env: { ...process.env, [FILE_TIMEOUT_ENV]: '2500' }, timeout: 60_000 },
+    );
+    const elapsed = Date.now() - started;
+
+    assert.equal(run.status, 1, run.stdout + run.stderr);
+    assert.match(
+      run.stderr,
+      /src\/held\.test\.ts did not finish within 2500 ms \(FARMSLOT_TSX_TEST_FILE_TIMEOUT_MS\); killed its process group/,
+    );
+    assert.ok(elapsed < 30_000, `the run took ${elapsed} ms`);
+    assert.ok(existsSync(pidFile), 'the fixture never started its child');
+    const pid = Number(readFileSync(pidFile, 'utf8'));
+    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' }, 'the child outlived its file');
   },
 );
 

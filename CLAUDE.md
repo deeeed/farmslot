@@ -244,7 +244,7 @@ bash scripts/sync-fixtures.sh --slot <slot-id>
 
 ## Test speed
 
-Each package's default suite (`yarn workspace <package> run test`) and CI must take 5 minutes or less. No runner checks the budget yet: `scripts/quality/run-tsx-tests.mjs` prints each workspace's slowest files after a run.
+Each package's default suite (`yarn workspace <package> run test`) and CI must take 5 minutes or less. No runner checks the budget yet: `scripts/quality/run-tsx-tests.mjs` prints each workspace's slowest files after a run. It fails a test file still running after 180 s (`FARMSLOT_TSX_TEST_FILE_TIMEOUT_MS`) and kills every process the file started.
 
 Every new or changed test follows these rules:
 
