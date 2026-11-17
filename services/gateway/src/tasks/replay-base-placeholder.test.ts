@@ -77,6 +77,43 @@ test('a replay ignores bases recorded after the task input was frozen', async ()
   assert.equal(replay?.base, undefined);
 });
 
+// A capsule blind trial carries its base before write-task, and prepare checks
+// the capsule out at exactly that commit, so it is the worker's real starting
+// point rather than an inference about where the branch ended up.
+test('a capsule blind trial names the base prepare checks it out at', async () => {
+  const replay = artifactOnlyReplayForRun(
+    comparisonReplayRun({
+      engineState: {
+        evalExperiment: {
+          blind: { version: 1, baseSha: frozenBase, referenceCommits: [], forbiddenInputs: [] },
+        },
+      },
+    } as Partial<Run>),
+  );
+  assert.equal(replay?.base, frozenBase);
+});
+
+// A normal-slot trial is not checked out at that sha by prepare, so naming it
+// would compare against a commit the worktree may never have been on.
+test('a normal-slot blind trial declares no base', async () => {
+  const replay = artifactOnlyReplayForRun(
+    comparisonReplayRun({
+      engineState: {
+        evalExperiment: {
+          blind: {
+            version: 1,
+            executionPolicy: 'normal-slot',
+            baseSha: frozenBase,
+            referenceCommits: [],
+            forbiddenInputs: [],
+          },
+        },
+      },
+    } as Partial<Run>),
+  );
+  assert.equal(replay?.base, undefined);
+});
+
 test('no generated replay base is ever a placeholder string', async () => {
   for (const run of [
     comparisonReplayRun(),
