@@ -40,8 +40,11 @@ const has = (row, contextId) => (row.contextIds ?? []).includes(contextId);
 const worker = run.agentContexts.find((entry) => entry.role === 'dev');
 assert.ok(worker, 'The proof run must have a dev worker context');
 // The worker's own session is bound to the worker context only. On the broken path the
-// review fix adopted it, so one receipt carried both contexts.
-const workerOnly = measured.filter((row) => has(row, worker.id) && !has(row, fix.id));
+// review fix adopted it, so its receipt carries the review-fix context for good.
+// A CI-fix session is bound to the worker context too, so "alone" means no other context.
+const workerOnly = measured.filter(
+  (row) => (row.contextIds ?? []).length > 0 && row.contextIds.every((id) => id === worker.id),
+);
 assert.ok(workerOnly.length > 0, `No measured ${runner} receipt for the worker session alone`);
 // Each respawned fix session is bound to the review-fix context. CI-fix sessions carry
 // their own context, and a session recovered at slot release carries none.
