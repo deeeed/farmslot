@@ -911,6 +911,68 @@ test('before evidence on the dispatch base survives a review base moved to the r
   assert.ok(inventory.some((entry) => entry.path === `artifacts/${f.baselineRoot}/proof.png`));
 });
 
+test('a dispatch replay disqualifies the dispatch head as a before base', async (t) => {
+  // r1 (Codex): worktreeHeadAtDispatch is overwritten by a re-dispatch, so
+  // after a replay of dispatch or anything before it the field can name a
+  // POST-fix commit. A clean capture there must still be refused — that is what
+  // the operator attestation path exists for.
+  const f = await baselineFixture(t);
+  const postFixHead = f.provenance.git_ref;
+  f.run.recoveryAttempts = [
+    {
+      id: 'attempt-1',
+      attempt: 1,
+      stepName: 'dispatch',
+      startedAt: '2026-11-16T15:00:00.000Z',
+      status: 'started',
+      triggeredBy: 'operator',
+    },
+  ];
+  assert.equal(f.run.worktreeHeadAtDispatch, postFixHead);
+  await retainRunFixture(f.run);
+  const baseline = publicationBaselineContext(f.run);
+  assert.deepEqual(baseline.beforeBaseShas, [], 'a replayed dispatch head is not a recorded base');
+  await assert.rejects(
+    resolvePublicationManifest(f.taskDir, undefined, undefined, 1, baseline),
+    /git_ref|unchanged base/,
+  );
+
+  // The marker hatch cannot launder it either: a marker child of the replayed
+  // head is a child of a post-fix commit.
+  const markerSha = 'b'.repeat(40);
+  const file = `artifacts/${f.baselineRoot}/product-provenance.json`;
+  const bytes = JSON.stringify({ ...f.provenance, git_ref: markerSha });
+  await writeFile(path.join(f.taskDir, file), bytes);
+  f.inventory.find((entry) => entry.path === file)!.sha256 = digest(Buffer.from(bytes));
+  const receiptPath = `artifacts/baseline-marker-verification/${postFixHead}-${markerSha}.json`;
+  const receipt = JSON.stringify({
+    version: 1,
+    runId: f.run.id,
+    ticket: f.run.ticketOrPr,
+    baseSha: postFixHead,
+    markerSha,
+  });
+  await mkdir(path.dirname(path.join(f.taskDir, receiptPath)), { recursive: true });
+  await writeFile(path.join(f.taskDir, receiptPath), receipt);
+  f.inventory.push({
+    path: receiptPath,
+    purpose: 'evidence-dependency',
+    sha256: digest(Buffer.from(receipt)),
+  });
+  f.run.flowType = 'fix-bug';
+  await retainRunFixture(f.run);
+  await assert.rejects(
+    resolvePublicationManifest(
+      f.taskDir,
+      undefined,
+      undefined,
+      1,
+      publicationBaselineContext(f.run),
+    ),
+    /git_ref|unchanged base/,
+  );
+});
+
 test('the marker hatch reaches the dispatch base when the review base has moved', async (t) => {
   const f = await baselineFixture(t);
   const markerSha = 'b'.repeat(40);

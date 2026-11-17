@@ -9,6 +9,7 @@ import {
   type HumanPublicationAdoptionReceipt,
   isRecord,
   isRunArtifactMediaPath,
+  PipelineSteps,
   type ReadyGatePrPackage,
   RecordedEvidenceReadError,
   type ReviewDiffSnapshot,
@@ -885,6 +886,18 @@ export function capturedBeforeAttemptAttestations(
   );
 }
 
+/**
+ * Steps whose replay re-reads HEAD, so `worktreeHeadAtDispatch` after one of
+ * them may name a commit that already contains the fix.
+ */
+const DISPATCH_BASELINE_STEPS: ReadonlySet<string> = new Set([
+  PipelineSteps.FIND_SLOT,
+  PipelineSteps.GRADE,
+  PipelineSteps.WRITE_TASK,
+  PipelineSteps.PREPARE,
+  PipelineSteps.DISPATCH,
+]);
+
 export function publicationBaselineContext(
   run: Run,
   inventory: readonly ArtifactRef[] | null = run.output?.artifactManifest ?? [],
@@ -902,15 +915,36 @@ export function publicationBaselineContext(
     /^[a-f0-9]{40}$/iu.test(snapshot.headSha)
       ? snapshot.baseSha
       : undefined;
+  // The ref the run was created from. A replay re-resolves it against the
+  // commit the run already recorded (`run-engine/dispatch-lifecycle-steps.ts`),
+  // so it names the same commit for the life of the run: a pre-work identity
+  // nothing later moves. Set only by the flows that record one.
+  const startBase =
+    typeof run.startRef?.resolvedSha === 'string' &&
+    /^[a-f0-9]{40}$/iu.test(run.startRef.resolvedSha)
+      ? run.startRef.resolvedSha
+      : undefined;
+  // `worktreeHeadAtDispatch` is NOT immutable: a re-dispatch overwrites it with
+  // whatever HEAD is then (`methods/dispatch/execute.ts`), and only one caller
+  // opts into preserving the old value. After a replay of dispatch or anything
+  // before it, the field can name a POST-fix commit, which must never pass as a
+  // pre-work base — that is what the attestation path is for. So it counts as a
+  // candidate only while no such replay has happened.
+  const dispatchReplayed = (run.recoveryAttempts ?? []).some((attempt) =>
+    DISPATCH_BASELINE_STEPS.has(attempt.stepName),
+  );
   const dispatchBase =
+    !dispatchReplayed &&
     typeof run.worktreeHeadAtDispatch === 'string' &&
     /^[a-f0-9]{40}$/iu.test(run.worktreeHeadAtDispatch)
       ? run.worktreeHeadAtDispatch
       : undefined;
   return {
     markerBaseline: markerBaselineVerifier(run, inventory),
-    baseSha: fullReviewBase ?? dispatchBase,
-    beforeBaseShas: [...new Set([fullReviewBase, dispatchBase].filter((sha) => sha !== undefined))],
+    baseSha: fullReviewBase ?? dispatchBase ?? startBase,
+    beforeBaseShas: [
+      ...new Set([fullReviewBase, startBase, dispatchBase].filter((sha) => sha !== undefined)),
+    ],
     comparison,
     branch: run.branch,
     inventory,
