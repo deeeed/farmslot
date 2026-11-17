@@ -1,0 +1,1 @@
+- Preserve the validated reviewer lineage and failed fix receipts when replaying an interrupted review loop.
