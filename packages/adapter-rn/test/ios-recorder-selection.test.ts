@@ -19,6 +19,7 @@ interface FixtureOptions {
   nativeBusy?: boolean;
   ignoreInterrupt?: boolean;
   noFirstFrame?: boolean;
+  invalidInventory?: boolean;
   devices?: { udid: string; name: string; state: string }[];
 }
 
@@ -49,7 +50,7 @@ setTimeout(()=>process.exit(90),3000);
   fs.writeFileSync(
     path.join(dir, 'xcrun'),
     `#!${process.execPath}\n${common}
-if(args.includes('list')){let devices=cfg.devices??[{udid:'sim-1',name:'Own',state:'Booted'},{udid:'other',name:'Own-other',state:'Booted'}];if(args.includes('booted'))devices=devices.filter(d=>d.state==='Booted');console.log(JSON.stringify({devices:{test:devices}}));process.exit(0)}
+if(args.includes('list')){if(cfg.invalidInventory){console.log('invalid inventory');process.exit(0)}let devices=cfg.devices??[{udid:'sim-1',name:'Own',state:'Booted'},{udid:'other',name:'Own-other',state:'Booted'}];if(args.includes('booted'))devices=devices.filter(d=>d.state==='Booted');console.log(JSON.stringify({devices:{test:devices}}));process.exit(0)}
 if(args.includes('getenv')){console.log('sim-1');process.exit(0)}
 if(!args.includes('recordVideo'))process.exit(8);
 if(cfg.nativeBusy){console.error('A recording is already in progress');process.exit(16)}
@@ -250,3 +251,14 @@ test(
     assert.equal((await active.stop()).segments[0]?.recorder?.name, 'capture-helper');
   },
 );
+
+test('native fallback retains the simulator inventory failure', async (t) => {
+  const f = fixture(t, { windows: [visible], invalidInventory: true });
+  const active = await createIosSimulatorVideoRecorder('sim-1').start(f.request);
+  const video = (await active.stop()).segments[0];
+  assert.equal(video?.recorder?.name, 'simctl');
+  assert.match(
+    String(video?.recorder?.fallbackReason),
+    /iOS device discovery returned an invalid response/,
+  );
+});

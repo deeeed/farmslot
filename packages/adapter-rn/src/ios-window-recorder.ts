@@ -12,7 +12,7 @@ import {
   type VideoRecorderDoctorOptions,
 } from '@farmslot/recipe-runner';
 
-import { listIosSimulators } from './devices.js';
+import { type DeviceDiscoveryError, listIosSimulators } from './devices.js';
 
 const exec = promisify(execFile);
 type WindowTarget = Extract<RecordingTarget, { kind: 'window-id' }>;
@@ -33,7 +33,14 @@ export function createVisibleSimulatorRecorder(
   let recording: { outputPath: string; selection: Selection } | undefined;
 
   const select = async (options?: VideoRecorderDoctorOptions): Promise<Selection> => {
-    const devices = listIosSimulators('available', []);
+    const errors: DeviceDiscoveryError[] = [];
+    const devices = listIosSimulators('available', errors);
+    const discoveryError = errors[0];
+    if (discoveryError)
+      return (selection = {
+        kind: 'native',
+        reason: `${discoveryError.message} Check: ${discoveryError.userAction}`,
+      });
     const booted = devices.filter((device) => device.state === 'Booted');
     const matches = devices.filter(
       (device) =>
