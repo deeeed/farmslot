@@ -284,9 +284,9 @@ export default async function (pi: {
         examples: ['1', '2', '3', 'start', 'complete'],
       }),
     }),
-    async execute(_toolCallId: string, params: { action?: string }) {
+    async execute(_toolCallId: string, params: { action?: string }, signal?: AbortSignal) {
       try {
-        const output = runFarmslotMark(params.action ?? '');
+        const output = await runFarmslotMark(params.action ?? '', process.env, signal);
         return toolResult(output || `marked ${params.action}`);
       } catch (error) {
         return toolResult(error instanceof Error ? error.message : String(error), true);

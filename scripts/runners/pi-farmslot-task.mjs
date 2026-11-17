@@ -1,8 +1,11 @@
 // Farmslot task/mark helpers used by the PI extension. Fail closed if TASK.md is missing.
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { promisify } from 'node:util';
+
+const runFile = promisify(execFile);
 
 export function taskFilePath(env = process.env) {
   return String(env.FARMSLOT_TASK_FILE ?? '').trim();
@@ -31,20 +34,23 @@ export function farmslotStatusLine(env = process.env) {
   return parts.join(' ');
 }
 
-export function runFarmslotMark(action, env = process.env) {
+/** @param {AbortSignal | undefined} signal */
+export async function runFarmslotMark(action, env = process.env, signal = undefined) {
   const dir = taskDir(env);
   if (!dir) throw new Error('FARMSLOT_TASK_FILE is not set');
   const mark = path.join(dir, 'mark');
   if (!fs.existsSync(mark)) throw new Error(`mark shim missing at ${mark}`);
   const args = [String(action)];
   if (args[0].toLowerCase() === 'complete') args.push('--mark-last');
-  const result = execFileSync(mark, args, {
+  // A mark may run a frozen deterministic check for several minutes. Its
+  // lifetime belongs to that check and tool cancellation, not a helper timeout.
+  const result = await runFile(mark, args, {
     encoding: 'utf8',
     cwd: dir,
-    timeout: 30_000,
+    signal,
     env: { ...process.env, ...env },
   });
-  return String(result);
+  return String(result.stdout);
 }
 
 export function readFarmslotSignal(env = process.env) {

@@ -23,7 +23,7 @@ const { resolveWorkerTerminalContract } = require(
   path.join(runtimeScripts, 'worker-terminal-contract.cjs'),
 );
 
-function realMarkFixture(t, checklist = 'CHECKLIST.md') {
+async function realMarkFixture(t, checklist = 'CHECKLIST.md') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-mark-complete-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   fs.mkdirSync(path.join(dir, 'inputs'));
@@ -49,14 +49,14 @@ function realMarkFixture(t, checklist = 'CHECKLIST.md') {
     { mode: 0o755 },
   );
   const env = { FARMSLOT_TASK_FILE: task };
-  runFarmslotMark('start', env);
+  await runFarmslotMark('start', env);
   return { dir, env, checklist: path.join(dir, checklist) };
 }
 
 for (const action of ['complete', 'COMPLETE']) {
-  test(`${action} closes the final row through the real task marker`, (t) => {
-    const fixture = realMarkFixture(t);
-    runFarmslotMark(action, fixture.env);
+  test(`${action} closes the final row through the real task marker`, async (t) => {
+    const fixture = await realMarkFixture(t);
+    await runFarmslotMark(action, fixture.env);
     assert.match(fs.readFileSync(fixture.checklist, 'utf8'), /- \[x\] Finish the review/);
     const signal = readFarmslotSignal(fixture.env).body;
     assert.equal(signal.status, 'complete');
@@ -64,23 +64,23 @@ for (const action of ['complete', 'COMPLETE']) {
   });
 }
 
-test('complete refuses earlier open rows without changing the running signal or checklist', (t) => {
-  const fixture = realMarkFixture(t);
+test('complete refuses earlier open rows without changing the running signal or checklist', async (t) => {
+  const fixture = await realMarkFixture(t);
   fs.writeFileSync(fixture.checklist, '- [ ] Review the code\n- [ ] Finish the review\n');
   const checklistBefore = fs.readFileSync(fixture.checklist, 'utf8');
   const signalPath = path.join(fixture.dir, 'SIGNAL.json');
   const signalBefore = fs.readFileSync(signalPath, 'utf8');
-  assert.throws(() => runFarmslotMark('complete', fixture.env), /checklist incomplete/);
+  await assert.rejects(runFarmslotMark('complete', fixture.env), /checklist incomplete/);
   assert.equal(fs.readFileSync(fixture.checklist, 'utf8'), checklistBefore);
   assert.equal(fs.readFileSync(signalPath, 'utf8'), signalBefore);
 });
 
-test('complete honors the selected review checklist and signal', (t) => {
-  const fixture = realMarkFixture(t, 'REVIEW.md');
+test('complete honors the selected review checklist and signal', async (t) => {
+  const fixture = await realMarkFixture(t, 'REVIEW.md');
   const workerChecklist = path.join(fixture.dir, 'CHECKLIST.md');
   const workerBefore = '- [ ] Worker task remains open\n';
   fs.writeFileSync(workerChecklist, workerBefore);
-  runFarmslotMark('complete', fixture.env);
+  await runFarmslotMark('complete', fixture.env);
   assert.match(fs.readFileSync(fixture.checklist, 'utf8'), /- \[x\] Finish the review/);
   assert.equal(fs.readFileSync(workerChecklist, 'utf8'), workerBefore);
   assert.equal(
@@ -153,12 +153,12 @@ test('farmslotStatusLine includes slot thinking and truncated run id', () => {
   );
 });
 
-test('runFarmslotMark executes the task-dir mark shim', () => {
+test('runFarmslotMark executes the task-dir mark shim', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-mark-'));
   const taskFile = path.join(dir, 'TASK.md');
   fs.writeFileSync(taskFile, '# task\n');
   fs.writeFileSync(path.join(dir, 'mark'), '#!/bin/sh\necho "marked $1"\n', { mode: 0o755 });
-  const out = runFarmslotMark('start', { FARMSLOT_TASK_FILE: taskFile });
+  const out = await runFarmslotMark('start', { FARMSLOT_TASK_FILE: taskFile });
   assert.match(out, /marked start/);
   assert.equal(taskDir({ FARMSLOT_TASK_FILE: taskFile }), dir);
   assert.equal(readTaskMarkdown({ FARMSLOT_TASK_FILE: taskFile }), '# task\n');
@@ -174,4 +174,63 @@ test('readFarmslotSignal reports missing then parsed SIGNAL.json', () => {
   const present = readFarmslotSignal({ FARMSLOT_TASK_FILE: taskFile });
   assert.equal(present.present, true);
   assert.equal(present.body.status, 'blocked');
+});
+
+function pausedMarkFixture(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-mark-gate-'));
+  const task = path.join(dir, 'TASK.md');
+  fs.writeFileSync(task, '# Deterministic check\n');
+  fs.writeFileSync(
+    path.join(dir, 'mark'),
+    '#!' +
+      process.execPath +
+      '\n' +
+      'const fs = require("node:fs"), path = require("node:path");\n' +
+      'const dir = __dirname;\n' +
+      'const watcher = fs.watch(dir, () => {\n' +
+      '  if (fs.existsSync(path.join(dir, "release"))) {\n' +
+      '    watcher.close(); process.stdout.write("marked " + process.argv[2] + "\\n");\n' +
+      '  }\n' +
+      '});\n' +
+      'fs.writeFileSync(path.join(dir, "ready"), String(process.pid));\n',
+    { mode: 0o755 },
+  );
+  const ready = new Promise((resolve) => {
+    const watcher = fs.watch(dir, () => {
+      if (fs.existsSync(path.join(dir, 'ready'))) {
+        watcher.close();
+        resolve();
+      }
+    });
+    t.after(() => watcher.close());
+  });
+  const controller = new AbortController();
+  const result = runFarmslotMark('14', { FARMSLOT_TASK_FILE: task }, controller.signal);
+  // Observe rejection immediately, including if a test fails before releasing its gate.
+  const outcome = result.then(
+    (output) => ({ output }),
+    (error) => ({ error }),
+  );
+  t.after(async () => {
+    controller.abort();
+    const settled = await outcome;
+    fs.rmSync(dir, { recursive: true, force: true });
+    if (settled.error && settled.error.name !== 'AbortError') throw settled.error;
+  });
+  return { dir, ready, controller, result };
+}
+
+test('a running deterministic mark leaves the session responsive until its gate completes', async (t) => {
+  const fixture = pausedMarkFixture(t);
+  // This event cannot reach the parent while a synchronous child blocks it.
+  await fixture.ready;
+  fs.writeFileSync(path.join(fixture.dir, 'release'), 'gate completed\n');
+  assert.equal(await fixture.result, 'marked 14\n');
+});
+
+test('tool cancellation rejects a running mark without reporting success', async (t) => {
+  const fixture = pausedMarkFixture(t);
+  await fixture.ready;
+  fixture.controller.abort();
+  await assert.rejects(fixture.result, { name: 'AbortError' });
 });
