@@ -47,21 +47,43 @@ function isMergedPR(pr: Record<string, unknown>): boolean {
   return pr.state === 'MERGED';
 }
 
+/**
+ * A merged PR is a publication target only when THIS package is what shipped:
+ * a publication receipt for it, or its merged head is the head being published.
+ *
+ * Historical ownership is not enough. A run that reviewed an existing PR at H1,
+ * fixed findings to H2, and had H1 merged out from under it would otherwise bind
+ * that merged PR through the retained H1 review, push H2 onto its branch and
+ * report success while H2 never got a PR of its own.
+ */
+function shippedThisPackage(
+  run: Run,
+  ciRepo: string,
+  pr: Record<string, unknown>,
+  publicationHeadSha?: string | null,
+): boolean {
+  if (publishedByRun(run, ciRepo, pr)) return true;
+  return (
+    typeof publicationHeadSha === 'string' &&
+    publicationHeadSha.length > 0 &&
+    pr.headRefOid === publicationHeadSha
+  );
+}
+
 function canBindPR(
   run: Run,
   ciRepo: string,
   pr: Record<string, unknown>,
-  options?: { excludeMerged?: boolean },
+  options?: { excludeMerged?: boolean; publicationHeadSha?: string | null },
 ): boolean {
   // TAT-4644: branch names are deterministic, so a reused branch still carries
-  // its old merged PR. For publication a merged PR is held to the same proof of
-  // ownership as a closed one — this run published it, or its head is a head
-  // this run had approved or reviewed. A historical merge satisfies neither, so
-  // publication opens its own PR; the run's own PR, merged mid-publication by
-  // an out-of-band merge, still links on retry instead of being duplicated.
+  // its old merged PR. Publication opens its own PR instead of pushing the
+  // approved head onto that branch, unless this very package is what merged.
   const mergedTarget = options?.excludeMerged === true && isMergedPR(pr);
   if (pr.state !== 'CLOSED' && !mergedTarget) return true;
-  const bindable = ownedByRun(run, ciRepo, pr);
+  const bindable = mergedTarget
+    ? shippedThisPackage(run, ciRepo, pr, options?.publicationHeadSha)
+    : ownedByRun(run, ciRepo, pr);
   if (mergedTarget && !bindable) {
     console.log(
       `[pr-linkage] skipping merged PR #${String(pr.number)} runId=${run.id.slice(0, 8)} branch=${run.branch ?? '<empty>'}`,
@@ -94,7 +116,7 @@ function ownedByRun(run: Run, ciRepo: string, pr: Record<string, unknown>): bool
 export async function findPRNumber(
   run: Run,
   ciRepo: string,
-  options?: { noRetry?: boolean; excludeMerged?: boolean },
+  options?: { noRetry?: boolean; excludeMerged?: boolean; publicationHeadSha?: string | null },
 ): Promise<number | null> {
   // 1. ticketOrPr may encode the PR number. For follow-up flows
   //    (review-pr / pr-complete / update-branch) the dispatch validator guarantees
@@ -257,7 +279,11 @@ export async function findPRNumber(
  */
 const MERGED_PR_PROBE_TIMEOUT_MS = 15_000;
 
-export async function findMergedPRNumber(run: Run, ciRepo: string): Promise<number | null> {
+export async function findMergedPRNumber(
+  run: Run,
+  ciRepo: string,
+  publicationHeadSha?: string | null,
+): Promise<number | null> {
   if (!run.branch) return null;
   try {
     const prs = await withProbeTimeout(
@@ -275,8 +301,10 @@ export async function findMergedPRNumber(run: Run, ciRepo: string): Promise<numb
     // A reused branch name keeps its old merged PR, and close-as-shipped is the
     // gate's primary action: offering it for a historical merge would mark the
     // run shipped against work it never did and leave its own commits without
-    // a PR (TAT-4644). Only this run's own shipment counts as shipped.
-    if (!ownedByRun(run, ciRepo, pr)) {
+    // a PR (TAT-4644). Only this package's own shipment counts as shipped;
+    // externally shipped work at an unreviewed head goes through
+    // `run adopt-published-pr` instead.
+    if (!shippedThisPackage(run, ciRepo, pr, publicationHeadSha)) {
       console.log(
         `[pr-linkage] merged PR #${String(pr.number)} is not this run's shipment runId=${run.id.slice(0, 8)} branch=${run.branch}`,
       );

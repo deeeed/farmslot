@@ -1,2 +1,3 @@
 - Publication opens its own PR instead of pushing the approved head onto a merged PR's branch when a run reuses a branch whose PR already merged; a PR this run published, or one merged out-of-band at a head this run approved or reviewed, still links.
 - The publication gate no longer offers Close as Shipped for a merged PR this run did not ship: a reused branch's historical merge would have marked the run shipped against work it never did.
+- A merged PR counts as this run's shipment only when the published head is what merged, so a run that reviewed a PR at one head and fixed findings on top no longer binds the PR merged at the older head.

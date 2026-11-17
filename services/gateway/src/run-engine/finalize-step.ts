@@ -378,7 +378,13 @@ export async function executeFinalizeStep(
     if (!publishedPrNumber && ciRepo) {
       const { findMergedPRNumber, persistRunPrNumber } =
         await import('../integrations/pr-linkage.js');
-      publishedPrNumber = await findMergedPRNumber(current, ciRepo);
+      // The probe links a merged PR only when this package is what shipped, so
+      // it needs the approved head the gate was deciding about.
+      publishedPrNumber = await findMergedPRNumber(
+        current,
+        ciRepo,
+        (await readPreparedPackage(current))?.headSha,
+      );
       if (publishedPrNumber) await persistRunPrNumber(current.id, publishedPrNumber);
     }
     if (publishedPrNumber) {

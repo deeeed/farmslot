@@ -112,7 +112,50 @@ test('publication links its own PR merged out-of-band at the approved head', asy
     decisions: readyAtHead(head),
   });
   assert.equal(
-    await findPRNumber(run, 'owner/repo', { noRetry: true, excludeMerged: true }),
+    await findPRNumber(run, 'owner/repo', {
+      noRetry: true,
+      excludeMerged: true,
+      publicationHeadSha: head,
+    }),
+    candidate.number,
+  );
+});
+
+// A run that reviewed an existing PR at H1 and fixed findings to H2 must not
+// bind that PR when H1 merged out from under it: H2 never shipped.
+test('publication refuses a merged PR at an earlier reviewed head', async () => {
+  const reviewedHead = 'c'.repeat(40);
+  candidate = { number: 388, state: 'MERGED', headRefOid: reviewedHead };
+  const run = makeRun({
+    branch: 'fix/reused',
+    prNumber: candidate.number,
+    decisions: readyAtHead(reviewedHead),
+  });
+  assert.equal(
+    await findPRNumber(run, 'owner/repo', {
+      noRetry: true,
+      excludeMerged: true,
+      publicationHeadSha: head,
+    }),
+    null,
+  );
+  assert.equal(await findMergedPRNumber(run, 'owner/repo', head), null);
+});
+
+test('a closed PR at an earlier reviewed head still links', async () => {
+  const reviewedHead = 'c'.repeat(40);
+  candidate = { number: 388, state: 'CLOSED', headRefOid: reviewedHead };
+  const run = makeRun({
+    branch: 'fix/reused',
+    prNumber: candidate.number,
+    decisions: readyAtHead(reviewedHead),
+  });
+  assert.equal(
+    await findPRNumber(run, 'owner/repo', {
+      noRetry: true,
+      excludeMerged: true,
+      publicationHeadSha: head,
+    }),
     candidate.number,
   );
 });
@@ -142,7 +185,15 @@ test('the merged-PR probe ignores a historical merged PR on a reused branch', as
 test("the merged-PR probe reports this run's own PR merged out-of-band", async () => {
   candidate = { number: 388, state: 'MERGED', headRefOid: head };
   const run = makeRun({ branch: 'fix/reused', prNumber: undefined, decisions: readyAtHead(head) });
-  assert.equal(await findMergedPRNumber(run, 'owner/repo'), 388);
+  assert.equal(await findMergedPRNumber(run, 'owner/repo', head), 388);
+});
+
+// Without a package head the probe has nothing to compare, so only a recorded
+// publication of its own counts; the gate must not guess.
+test('the merged-PR probe stays quiet when no package head is known', async () => {
+  candidate = { number: 388, state: 'MERGED', headRefOid: head };
+  const run = makeRun({ branch: 'fix/reused', prNumber: undefined, decisions: readyAtHead(head) });
+  assert.equal(await findMergedPRNumber(run, 'owner/repo'), null);
 });
 
 test('the merged-PR probe reports a PR this run published', async () => {

@@ -1112,7 +1112,8 @@ export async function executeReadyGate(
   if (publicationApprovalGate && ciRepo) {
     const { findMergedPRNumber, persistRunPrNumber } =
       await import('../integrations/pr-linkage.js');
-    mergedPrNumber = await findMergedPRNumber(current, ciRepo);
+    // The package head is what close-as-shipped would claim has shipped.
+    mergedPrNumber = await findMergedPRNumber(current, ciRepo, preparedPackage?.headSha);
     if (mergedPrNumber && !current.prNumber) {
       // Persist at probe time so finalize's close-as-shipped bypass never
       // depends on a second probe succeeding.
