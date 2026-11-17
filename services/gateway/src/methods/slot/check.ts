@@ -54,7 +54,7 @@ export async function slotCheck(
   emit: EventEmitter,
 ): Promise<SlotCheckResult> {
   if (params.force !== true) {
-    const fleet = await loadFleetStatus();
+    const fleet = await loadFleetStatus(false, true);
     const slot = fleet.slots.find((slot) => slot.slot === params.slotId);
     const runId = slot?.currentRunId ?? slot?.cleanupRunId ?? slot?.handoffRunId;
     if (runId)

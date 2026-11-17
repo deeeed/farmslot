@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { beforeEach, mock, test } from 'node:test';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { after, beforeEach, mock, test } from 'node:test';
 
 import {
   computeSummary,
@@ -8,6 +11,15 @@ import {
   type SlotStatus,
 } from '@farmslot/protocol';
 
+const stateDirectory = await mkdtemp(path.join(os.tmpdir(), 'slot-check-admission-'));
+const previousStatusFile = process.env.FARMSLOT_TEST_STATUS_FILE;
+const statusFile = path.join(stateDirectory, 'status.json');
+process.env.FARMSLOT_TEST_STATUS_FILE = statusFile;
+after(async () => {
+  if (previousStatusFile === undefined) delete process.env.FARMSLOT_TEST_STATUS_FILE;
+  else process.env.FARMSLOT_TEST_STATUS_FILE = previousStatusFile;
+  await rm(stateDirectory, { recursive: true, force: true });
+});
 await import('../../runtime/mock-pty.test-support.js');
 const actualFleet = await import('../../fleet/state.js');
 const actualSources = await import('../../sources/runtime.js');
@@ -16,6 +28,7 @@ let owner: string | null = 'owned-run';
 let reservedOwner: 'cleanupRunId' | 'handoffRunId' | undefined;
 let phase: SlotStatus['phase'] = 'working';
 let sourceActivations = 0;
+let realStatusRead = false;
 const sourceReached = new Error('source activation reached');
 
 function fleet(): FleetStatus {
@@ -49,7 +62,11 @@ function fleet(): FleetStatus {
 }
 
 mock.module('../../fleet/state.js', {
-  namedExports: { ...actualFleet, loadFleetStatus: async () => fleet() },
+  namedExports: {
+    ...actualFleet,
+    loadFleetStatus: async (forceRefresh = false, strictRead = false) =>
+      realStatusRead ? actualFleet.loadFleetStatus(forceRefresh, strictRead) : fleet(),
+  },
 });
 mock.module('../../sources/runtime.js', {
   namedExports: {
@@ -67,6 +84,7 @@ beforeEach(() => {
   reservedOwner = undefined;
   phase = 'working';
   sourceActivations = 0;
+  realStatusRead = false;
 });
 
 for (const activePhase of ['preparing', 'working'] as const) {
@@ -114,6 +132,27 @@ test('an idle slot keeps the existing check path', async () => {
   owner = null;
   await assert.rejects(
     slotCheck({ slotId: 'mobile-fixture' }, () => {}),
+    (error) => error === sourceReached,
+  );
+  assert.equal(sourceActivations, 1);
+});
+
+test('unreadable ownership refuses before source activation using the real status reader', async () => {
+  await writeFile(statusFile, '{bad');
+  realStatusRead = true;
+  await assert.rejects(
+    slotCheck({ slotId: 'mobile-fixture' }, () => {}),
+    SyntaxError,
+  );
+  assert.equal(sourceActivations, 0);
+});
+
+test('explicit force preserves its path even when the ownership file is unreadable', async () => {
+  await writeFile(statusFile, '{bad');
+  realStatusRead = true;
+  const request: SlotCheckParams & { force: boolean } = { slotId: 'mobile-fixture', force: true };
+  await assert.rejects(
+    slotCheck(request, () => {}),
     (error) => error === sourceReached,
   );
   assert.equal(sourceActivations, 1);
