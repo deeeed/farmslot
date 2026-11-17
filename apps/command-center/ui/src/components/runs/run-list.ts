@@ -1179,6 +1179,10 @@ export class RunList extends RunListState {
 
   private renderFamilyGroup(group: RunFamilyGroup, showCheckbox: boolean) {
     const comparePair = pickFamilyComparePair(group.runs);
+    const summariesInHeader = new Set([
+      group.rootRun?.summary?.trim(),
+      group.runs.find((run) => run.createdAt === group.latestCreatedAt)?.summary?.trim(),
+    ]);
     const prNumbers = [
       ...new Set(
         group.runs.map((run) => run.prNumber).filter((value): value is number => value != null),
@@ -1273,7 +1277,7 @@ export class RunList extends RunListState {
         ${repeat(
           group.runs,
           (run) => run.id,
-          (run) => this.renderCard(run, showCheckbox, false),
+          (run) => this.renderCard(run, showCheckbox, !summariesInHeader.has(run.summary?.trim())),
         )}
       </section>
     `;
