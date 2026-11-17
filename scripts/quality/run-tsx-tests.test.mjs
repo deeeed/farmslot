@@ -1100,6 +1100,88 @@ test(
 );
 
 test(
+  'an interrupted run stops a process group whose leader exited while a descendant holds its output',
+  { skip: process.platform === 'win32' },
+  async (t) => {
+    const fixture = mkdtempSync(path.join(QUALITY_DIR, '.tmux-sandbox-fixture-'));
+    const report = path.join(fixture, 'pids.json');
+    t.after(() => {
+      // The runner should have stopped it; this only covers a failed assertion.
+      const pids = existsSync(report) ? JSON.parse(readFileSync(report, 'utf8')) : {};
+      if (pids.descendant) {
+        try {
+          process.kill(pids.descendant, 'SIGKILL');
+        } catch (error) {
+          // Already gone: the expected case.
+          if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
+        }
+      }
+      rmSync(fixture, { recursive: true, force: true });
+    });
+    writeFileSync(path.join(fixture, 'tsconfig.json'), '{}');
+    mkdirSync(path.join(fixture, 'src'));
+    // Two files make two buffered lanes. The descendant inherits this file's
+    // output pipes and keeps writing under its TMPDIR after the test exits.
+    writeFileSync(
+      path.join(fixture, 'src', 'a.test.ts'),
+      `import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import test from 'node:test';
+test('leaves a descendant behind', () => {
+  const script = "const fs = require('node:fs'); setInterval(() => fs.mkdirSync(process.env.TMPDIR + '/still-writing', { recursive: true }), 20);";
+  const child = spawn(process.execPath, ['-e', script], { stdio: 'inherit' });
+  child.unref();
+  writeFileSync(${JSON.stringify(report)}, JSON.stringify({ test: process.pid, descendant: child.pid, tmp: process.env.TMPDIR }));
+});
+`,
+    );
+    writeFileSync(
+      path.join(fixture, 'src', 'b.test.ts'),
+      "import test from 'node:test';\ntest('b', () => {});\n",
+    );
+    const runner = spawn(
+      process.execPath,
+      [RUNNER_PATH, '--cwd', fixture, '--tsconfig', 'tsconfig.json', '--workers', '2', 'src'],
+      { stdio: 'ignore' },
+    );
+    const closed = new Promise((resolve) =>
+      runner.once('close', (_code, signal) => resolve(signal)),
+    );
+    const alive = (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'ESRCH') return false;
+        throw error;
+      }
+    };
+    for (let i = 0; i < 300 && !existsSync(report); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.ok(existsSync(report), 'the fixture test never started');
+    const pids = JSON.parse(readFileSync(report, 'utf8'));
+    // Wait for the test process itself to exit, leaving only the descendant.
+    for (let i = 0; i < 300 && alive(pids.test); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(alive(pids.test), false, 'the test process never exited');
+    assert.equal(alive(pids.descendant), true, `the descendant ${pids.descendant} is running`);
+
+    runner.kill('SIGTERM');
+    assert.equal(await closed, 'SIGTERM');
+    for (let i = 0; i < 100 && alive(pids.descendant); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(alive(pids.descendant), false, 'the descendant outlived the interrupted run');
+    const runRoot = path.dirname(path.dirname(pids.tmp));
+    // Long enough for a surviving descendant to recreate its TMPDIR.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(existsSync(runRoot), false, 'the run directory was recreated');
+  },
+);
+
+test(
   'an interrupted run starts no further test file',
   { skip: process.platform === 'win32' },
   async (t) => {
@@ -1149,12 +1231,17 @@ test('b', () => writeFileSync(${JSON.stringify(second)}, ''));
   },
 );
 
-test('the per-file timeout defaults, and rejects anything but a positive integer', () => {
-  assert.equal(resolveFileTimeout(undefined), DEFAULT_FILE_TIMEOUT_MS);
-  assert.equal(resolveFileTimeout(''), DEFAULT_FILE_TIMEOUT_MS);
-  assert.equal(resolveFileTimeout('2500'), 2500);
-  for (const bad of ['0', '-1', '1.5', 'soon']) {
-    assert.throws(() => resolveFileTimeout(bad), new RegExp(FILE_TIMEOUT_ENV));
+test('the per-file timeout defaults, and rejects values outside the timer range', () => {
+  assert.equal(resolveFileTimeout({}), DEFAULT_FILE_TIMEOUT_MS);
+  assert.equal(resolveFileTimeout({ [FILE_TIMEOUT_ENV]: '' }), DEFAULT_FILE_TIMEOUT_MS);
+  assert.equal(resolveFileTimeout({ [FILE_TIMEOUT_ENV]: '2500' }), 2500);
+  assert.equal(resolveFileTimeout({ [FILE_TIMEOUT_ENV]: '2147483647' }), 2147483647);
+  // 2147483648 is past Node's timer range, which would fire after 1 ms.
+  for (const bad of ['0', '-1', '1.5', 'soon', '2147483648']) {
+    assert.throws(
+      () => resolveFileTimeout({ [FILE_TIMEOUT_ENV]: bad }),
+      new RegExp(FILE_TIMEOUT_ENV),
+    );
   }
 });
 

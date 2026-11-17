@@ -44,13 +44,16 @@ export const FILE_TIMEOUT_ENV = 'FARMSLOT_TSX_TEST_FILE_TIMEOUT_MS';
  * file takes about 60 s, so 180 s leaves room for a loaded runner.
  */
 export const DEFAULT_FILE_TIMEOUT_MS = 180_000;
+/** Node runs a longer timer after 1 ms instead. */
+const MAX_TIMER_MS = 2_147_483_647;
 
-export function resolveFileTimeout(rawValue = process.env[FILE_TIMEOUT_ENV]) {
+export function resolveFileTimeout(env = process.env) {
+  const rawValue = env[FILE_TIMEOUT_ENV];
   if (rawValue === undefined || rawValue === '') return DEFAULT_FILE_TIMEOUT_MS;
   const value = Number(rawValue);
-  if (!Number.isInteger(value) || value <= 0) {
+  if (!Number.isInteger(value) || value <= 0 || value > MAX_TIMER_MS) {
     throw new Error(
-      `${FILE_TIMEOUT_ENV} must be a positive integer of milliseconds, got: ${rawValue}`,
+      `${FILE_TIMEOUT_ENV} must be an integer from 1 to ${MAX_TIMER_MS} milliseconds, got: ${rawValue}`,
     );
   }
   return value;
@@ -364,13 +367,16 @@ let interrupted = false;
  * against one deadline, so none recreates files after the run's directories
  * are removed. Asynchronous: Node reaps an exited child only while the event
  * loop runs. Each test file runs in its own process group, so the signal
- * reaches the processes the test started as well.
+ * reaches the processes the test started as well. A group counts as running
+ * until its child closes: yarn can exit while a process the test started still
+ * holds its output pipes.
  */
 export async function stopChildren(signal, children = activeChildren, timeoutMs = 5000) {
-  const running = [...children].filter(
-    (child) => child.exitCode === null && child.signalCode === null,
+  const running = [...children];
+  const open = new Set(running);
+  const closed = running.map(
+    (child) => new Promise((resolve) => child.once('close', () => resolve(open.delete(child)))),
   );
-  const closed = running.map((child) => new Promise((resolve) => child.once('close', resolve)));
   for (const child of running) signalGroup(child, signal);
   let timer;
   const deadline = new Promise((resolve) => {
@@ -379,11 +385,9 @@ export async function stopChildren(signal, children = activeChildren, timeoutMs 
   const outcome = await Promise.race([Promise.all(closed), deadline]);
   clearTimeout(timer);
   if (outcome === 'timeout') {
-    for (const child of running) {
-      if (child.exitCode === null && child.signalCode === null) {
-        console.error(`[tsx-tests] test process ${child.pid} did not exit after ${signal}`);
-        process.exitCode = 1;
-      }
+    for (const child of open) {
+      console.error(`[tsx-tests] test process group ${child.pid} did not exit after ${signal}`);
+      process.exitCode = 1;
     }
   }
 }
