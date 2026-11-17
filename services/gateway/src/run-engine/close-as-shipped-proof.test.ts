@@ -68,7 +68,13 @@ const closeAsShipped: RunDecision = {
   resolvedAction: 'close-as-shipped',
 };
 
-const finalize = async (t: { after: (fn: () => void) => void }) => {
+const finalizeWithoutCiRepo = async (t: { after: (fn: () => void) => void }) =>
+  finalize(t, { ci: undefined });
+
+const finalize = async (
+  t: { after: (fn: () => void) => void },
+  projectJson: Record<string, unknown> = { default_branch: 'main', ci: { repo: 'owner/repo' } },
+) => {
   probeCalls.length = 0;
   persisted.length = 0;
   staleChecks.length = 0;
@@ -89,9 +95,7 @@ const finalize = async (t: { after: (fn: () => void) => void }) => {
   const context: FinalizeStepContext = {
     broadcastFn: () => {},
     latestResolvedHumanGateDecision,
-    loadProjectVarsOrNull: async () => ({
-      projectJson: { default_branch: 'main', ci: { repo: 'owner/repo' } },
-    }),
+    loadProjectVarsOrNull: async () => ({ projectJson }),
     readPreparedPackage: async () => makeReadyGatePackage({ headSha: packageHead }),
     refreshRunLinks: async () => {},
     stepPartialIO: new Map(),
@@ -155,6 +159,22 @@ test('close-as-shipped keeps a live PR link that is not a stale merge', async (t
     getRun(run.id)?.prNumber,
     stalePrNumber,
     'an open saved PR is live publication state, not stale discovery linkage',
+  );
+});
+
+// Without ci.repo there is nothing to prove a shipment against, so a saved
+// number stays a link and never becomes a publication claim.
+test('close-as-shipped makes no publication claim without a ci repo', async (t) => {
+  probeResult = shippedPrNumber;
+  probeError = undefined;
+  savedLinkIsStale = false;
+  const run = await finalizeWithoutCiRepo(t);
+  assert.deepEqual(probeCalls, []);
+  assert.equal(getRun(run.id)?.prNumber, stalePrNumber);
+  assert.notEqual(
+    getRun(run.id)?.engineState?.publishGate?.publicationStatus,
+    'published_ready',
+    'a saved number with nothing to prove it against is not a shipment',
   );
 });
 

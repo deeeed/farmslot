@@ -1110,13 +1110,20 @@ export async function executeReadyGate(
   let mergedPrNumber: number | null = null;
   let branchZeroAhead = false;
   if (publicationApprovalGate && ciRepo) {
-    const { findMergedPRNumber, persistRunPrNumber } =
+    const { findMergedPRNumber, mergedLinkIsStale, persistRunPrNumber } =
       await import('../integrations/pr-linkage.js');
     // The package head is what close-as-shipped would claim has shipped.
     mergedPrNumber = await findMergedPRNumber(current, ciRepo, preparedPackage?.headSha);
-    if (mergedPrNumber && !current.prNumber) {
-      // Persist at probe time so finalize's close-as-shipped bypass never
-      // depends on a second probe succeeding.
+    // Record what this probe proved. Finalize re-proves it rather than trusting
+    // the field, but the number the operator sees on the card and in the run
+    // links has to be the shipment this gate is offering: a number saved by an
+    // earlier gate can name a PR that merged a head the branch has moved past,
+    // and leaving it also blocks adoption of the real one.
+    if (
+      mergedPrNumber &&
+      mergedPrNumber !== current.prNumber &&
+      (!current.prNumber || (await mergedLinkIsStale(current, ciRepo, preparedPackage?.headSha)))
+    ) {
       await persistRunPrNumber(current.id, mergedPrNumber);
     }
   }

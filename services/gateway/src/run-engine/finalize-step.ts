@@ -375,6 +375,10 @@ export async function executeFinalizeStep(
       name: 'close-as-shipped',
       detail: 'Branch already merged — linking PR and skipping publication',
     });
+    // Only a proved shipment is claimed as published. Without ci.repo there is
+    // nothing to prove it against, so a saved number stays a link and never
+    // becomes a publication claim.
+    publishedPrNumber = null;
     if (ciRepo) {
       const { findMergedPRNumber, mergedLinkIsStale, persistRunPrNumber } =
         await import('../integrations/pr-linkage.js');
