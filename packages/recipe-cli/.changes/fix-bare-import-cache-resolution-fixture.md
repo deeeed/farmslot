@@ -1,1 +1,1 @@
-- Control the bare-import reuse fixture's clock so unrelated ancestor-directory writes cannot make it flaky.
+- Control bundle reuse fixture clocks so unrelated ancestor-directory writes cannot make them flaky.
