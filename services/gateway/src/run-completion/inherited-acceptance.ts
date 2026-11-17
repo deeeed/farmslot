@@ -39,7 +39,12 @@ import {
   verifyReadyGatePackageHash,
   verifyReadyGateSelectedEvidenceFiles,
 } from './ready-gate-package.js';
-import { readOptionalRetainedRunText, readRetainedRunText } from './retained-artifacts.js';
+import {
+  readOptionalRetainedRunText,
+  readRetainedRunText,
+  retainedTaskActionInputs,
+} from './retained-artifacts.js';
+import { taskActionInputReferences } from './task-action-inputs.js';
 
 // Tests mock the gate prerequisites module.
 const loadGatePrerequisites = lazyImport(() => import('../run-engine/gate-prerequisites.js'));
@@ -106,6 +111,7 @@ export async function readInheritedAcceptanceCandidate(
     return null;
   if (!prPackage.headSha) throw new Error('Parent acceptance proof has no captured head');
   verifyReadyGatePackageHash(prPackage);
+  if (!(await retainedTaskActionInputs(parent, prPackage.artifactBundle)).available) return null;
   const ledger = await readOptionalRetainedRunText(
     parent,
     ACCEPTANCE_STATUS_ARTIFACT,
@@ -136,6 +142,12 @@ export async function readInheritedAcceptanceSource(
   const inputs = (await readGateRecordedEvidenceSources(source.run, source.prPackage)).map(
     ({ input }) => input,
   );
+  const actionInputs = await retainedTaskActionInputs(
+    source.run,
+    source.prPackage.artifactBundle,
+    inputs.flatMap((input) => taskActionInputReferences(input.summary)),
+  );
+  if (!actionInputs.available) return null;
   const assessed = assessRecordedAcceptance({
     reviewBinding: 'approved',
     run: source.run,

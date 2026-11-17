@@ -1733,3 +1733,90 @@ test('a valid failed comparison dependency remains inside the head closure witho
     'failed',
   );
 });
+
+test('frozen publication refuses an action whose canonical implementation was never captured', async (t) => {
+  const f = await fixture(t);
+  const file = path.join(f.root, 'summary.json');
+  const parsed: unknown = JSON.parse(await readFile(file, 'utf8'));
+  assert.ok(parsed && typeof parsed === 'object' && !Array.isArray(parsed));
+  const summary = {
+    ...parsed,
+    taskActions: [
+      { action: 'task.read_text', official: false, digest: `sha256:${'a'.repeat(64)}` },
+    ],
+  };
+  const bytes = JSON.stringify(summary);
+  await writeFile(file, bytes);
+  const summaryEntry = f.artifacts.find(({ path: file }) => file.endsWith('/summary.json'));
+  assert.ok(summaryEntry);
+  summaryEntry.sha256 = digest(Buffer.from(bytes));
+  await retainRunFixture(f.run);
+  const inventory = await buildPackageEvidenceManifest(f.taskDir, f.artifacts, f.manifest);
+  await retainRunFixture(f.run);
+  await assert.rejects(
+    verifyFrozenPublicationEvidence(f.run, inventory, ['artifacts/recipe-run/proof.png']),
+    /Cannot publish recipe.*task-action.*task.read_text/,
+  );
+});
+
+for (const mode of ['missing', 'corrupt'] as const) {
+  test(`frozen publication refuses ${mode} inputs referenced only by additional before evidence`, async (t) => {
+    const f = await baselineFixture(t);
+    const actionFile = 'artifacts/task-actions/actions/read_text.mjs';
+    let libraryDigest = `sha256:${'c'.repeat(64)}`;
+    if (mode === 'corrupt') {
+      const manifestFile = 'artifacts/task-actions/manifests/task.action-manifest.json';
+      const manifest = {
+        $schema: 'https://farmslot.io/schemas/action-manifest-v1.schema.json',
+        actions: {
+          'task.read_text': {
+            description: 'Read fixture text.',
+            examples: [{ action: 'task.read_text', intent: 'Read text.', next: 'done' }],
+            schema: { type: 'object', properties: {}, additionalProperties: false },
+          },
+        },
+      };
+      for (const [file, bytes] of [
+        [actionFile, 'export default () => "fixture";\n'],
+        [manifestFile, JSON.stringify(manifest)],
+      ]) {
+        await mkdir(path.dirname(path.join(f.taskDir, file)), { recursive: true });
+        await writeFile(path.join(f.taskDir, file), bytes);
+        f.inventory.push({ path: file, purpose: 'task-input', sha256: digest(Buffer.from(bytes)) });
+      }
+      const { digestRecipeLibrary, readRecipeLibraryManifest } =
+        await import('@farmslot/recipe-runner');
+      const root = path.join(f.taskDir, 'artifacts/task-actions');
+      libraryDigest = await digestRecipeLibrary(root, await readRecipeLibraryManifest(root));
+    }
+    const summaryFile = `artifacts/${f.baselineRoot}/summary.json`;
+    const summary: unknown = JSON.parse(await readFile(path.join(f.taskDir, summaryFile), 'utf8'));
+    assert.ok(summary && typeof summary === 'object' && !Array.isArray(summary));
+    const bytes = JSON.stringify({
+      ...summary,
+      taskActions: [{ action: 'task.read_text', official: false, digest: libraryDigest }],
+    });
+    await writeFile(path.join(f.taskDir, summaryFile), bytes);
+    const entry = f.inventory.find(({ path: file }) => file === summaryFile);
+    assert.ok(entry);
+    entry.sha256 = digest(Buffer.from(bytes));
+    await retainRunFixture(f.run);
+    const inventory = await buildPackageEvidenceManifest(
+      f.taskDir,
+      f.inventory,
+      await readEvidenceManifest(f.run),
+      1,
+      publicationBaselineContext(f.run),
+    );
+    await retainRunFixture(f.run);
+    if (mode === 'corrupt')
+      await overwriteRetainedFixture(f.run, actionFile, 'changed implementation');
+    await assert.rejects(
+      verifyFrozenPublicationEvidence(f.run, inventory, [
+        `artifacts/${f.baselineRoot}/proof.png`,
+        `artifacts/${f.headRoot}/proof.png`,
+      ]),
+      /task-action.*task.read_text/i,
+    );
+  });
+}

@@ -212,6 +212,7 @@ export async function readFrozenPublicationRecipeSources(
   bundleRef?: RunArtifactBundleRef,
   headSha?: string | null,
   comparison?: ReviewDiffSnapshot,
+  sourceScope: 'selected' | 'published' = 'selected',
 ): Promise<RecordedEvidenceSource[]> {
   const contractVersion = run.recordedEvidenceContractVersion ?? 0;
   if (contractVersion !== 0 && contractVersion !== 1)
@@ -247,6 +248,7 @@ export async function readFrozenPublicationRecipeSources(
       )
         external.push(selected.path);
     }
+    const additionalSources: RecordedEvidenceSource[] = [];
     if (external.length) {
       const { readFrozenPublicationManifest } =
         await import('../run-completion/recorded-publication-evidence.js');
@@ -283,6 +285,7 @@ export async function readFrozenPublicationRecipeSources(
         external,
         bundleRef,
       );
+      additionalSources.push(...additional);
       for (const source of additional) {
         if (validateRecordedEvidencePackage(source.input).status !== 'valid')
           throw new RecordedEvidenceReadError(
@@ -291,12 +294,16 @@ export async function readFrozenPublicationRecipeSources(
           );
       }
     }
-    return readFrozenRecordedEvidenceSources(
+    const selectedSources = await readFrozenRecordedEvidenceSources(
       run,
       inventory.filter((artifact) => artifact.path.startsWith(prefix)),
       [],
       bundleRef,
     );
+    // Acceptance keeps the selected attempt as authority; publication qualifies every package.
+    return sourceScope === 'published'
+      ? [...selectedSources, ...additionalSources]
+      : selectedSources;
   }
   if (contractVersion === 1) {
     const sources = inventory.filter(

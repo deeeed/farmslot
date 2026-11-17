@@ -376,7 +376,7 @@ test('written task stages sidecars once after QA inputs and mirrors all producer
     'inputs/context.json',
     'artifacts/recipe.json',
     'subtasks/index.json',
-    'task-actions/index.json',
+    'artifacts/task-actions/index.json',
   ];
   for (const file of sidecarFiles) {
     fs.mkdirSync(path.dirname(path.join(gateway, file)), { recursive: true });
