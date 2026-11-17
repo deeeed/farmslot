@@ -1,0 +1,1 @@
+- Check task-directory reference paths against the protocol contract in docs CI.

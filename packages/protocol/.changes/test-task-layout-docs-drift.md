@@ -1,0 +1,1 @@
+- Add a task-directory documentation check that reports undefined paths in skills Markdown and harness HTML against the shared layout contract.

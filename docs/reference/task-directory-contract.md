@@ -151,7 +151,7 @@ This is the only layout the task writer produces. One flow keeps its own pairing
 
 ## Typed path authority and task actions
 
-`@farmslot/protocol/task-layout` owns the typed task-relative paths and references to their file-format contracts. Gateway staging, mirror, retention and family inheritance consume this catalog for task-local action inputs. Schema references reuse the existing payload owners and validators.
+`@farmslot/protocol/task-layout` owns the typed task-relative paths and references to their file-format contracts. Gateway staging, mirror, retention and family inheritance consume this catalog for task-local action inputs. Schema references reuse the existing payload owners and validators. Every named task path in the reference, skills or harness site must have an explicit contract entry and purpose. The shared `@farmslot/protocol/scripts/check-task-layout-docs.mjs` check runs on real Markdown and HTML files in their owning repository CI. Farmslot checks its own references without external credentials or copied consumer documents.
 
 Task action manifests live at `artifacts/task-actions/manifests/`, with implementations and helpers under `artifacts/task-actions/actions/`. This is the single active action root. The full captured input tree and its recorded library digest travel with the proof; publication refuses missing or changed implementations and names the affected actions.
 
@@ -179,7 +179,7 @@ One producer writes the shared layer on every surface: `taskInit` / `farmslot-ag
 | `subtasks/<id>-SIGNAL.json`            | `mark sub` only                                         | gateway task watcher, review-workspace progress publisher, progress projection, terminal contract check, view mirror |
 | `artifacts/acceptance-status.json`     | `farmslot-agent ac`; a recipe run with a task dir       | terminal contract check, PR body / gate summary, run detail AC panel                                                 |
 | `artifacts/sandbox.json`               | project harness preparation                             | worker, evidence package, Command Center (later)                                                                     |
-| `artifacts/*`                          | worker                                                  | publication gate, review, retrospective (see worker artifacts by flow)                                               |
+| `artifacts/` files                     | worker                                                  | publication gate, review, retrospective (see worker artifacts by flow)                                               |
 
 ## Provenance
 
@@ -251,7 +251,7 @@ or resolve publication gates.
 
 `project.json` may set `ci.local_check` to a nonempty portable shell command. The built-in project uses `yarn ci:local`; the repository quality job calls the same script. Its guard list is shared, formatting is scoped to changed files when Git supplies a base, and tests requiring a tmux server remain CI-only.
 
-The shared task writer freezes each declaration under `inputs/worker-terminal-contract.json.deterministicChecks`, with `checklist`, `stepNumber`, `reference` and the resolved `command`. Task-init callers supply command references through their existing `vars`. Missing command references or malformed declarations refuse initialization. No new mark flags or top-level SDK functions are added.
+The shared task writer freezes each declaration under the `deterministicChecks` field in `inputs/worker-terminal-contract.json`, with `checklist`, `stepNumber`, `reference` and the resolved `command`. Task-init callers supply command references through their existing `vars`. Missing command references or malformed declarations refuse initialization. No new mark flags or top-level SDK functions are added.
 
 Implementation checklists MUST declare `[DETERMINISTIC: ci.local_check]` for code validation.
 Workers MUST call `./mark N` and inspect failures rather than selecting or launching
