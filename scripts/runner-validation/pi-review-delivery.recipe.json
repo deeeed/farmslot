@@ -30,7 +30,7 @@
         "action": "command",
         "cmd": "node scripts/runner-validation/gateway/fix-round-usage.mjs",
         "timeout_ms": 60000,
-        "intent": "Each respawned fix round keeps its own worker usage receipt, so the run total counts every fix session.",
+        "intent": "Each respawned fix round binds its own session, so the worker session and every review-fix session carry measured receipts that roll into the run total. A round whose session was only recovered at slot release fails this node: the binding missed it.",
         "next": "delivery-isolation"
       },
       "delivery-isolation": {
