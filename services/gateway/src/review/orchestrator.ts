@@ -137,9 +137,13 @@ import {
 import {
   invalidateWarmReviewerSessions,
   invalidateWarmReviewerSessionsForSlot,
+  persistedWarmReviewerSession,
   reReviewOfStatus,
   reviewLineageId,
   shouldRetainCompletedReviewer,
+  warmLineageScope,
+  type WarmReviewerSession,
+  WarmReviewRefusal,
 } from './session-mode.js';
 import {
   captureCurrentHeadSha,
@@ -292,6 +296,49 @@ export function resolveReviewMaxRetries(opts: {
     : Math.max(0, Math.min(5, hasRequested ? requested : projectCap));
   if (!opts.resume || opts.publicationReview) return base;
   return Math.max((opts.priorRetryCount ?? 0) + 1, base);
+}
+
+/** A replay continues the last validated round, never the project's first-pass default. */
+export function reviewSessionForReplay(
+  run: Run,
+  selection?: ReviewSelection,
+): WarmReviewerSession | undefined {
+  const context = [...(run.agentContexts ?? [])]
+    .reverse()
+    .find(
+      (candidate) =>
+        candidate.role === 'review' &&
+        (!selection ||
+          (candidate.runner === selection.runner &&
+            (!selection.model || candidate.model === selection.model))) &&
+        (candidate.reviewResultValidatedAt || candidate.status === 'complete'),
+    );
+  if (!context) return undefined;
+  if (!context.reviewId || !context.taskFile || !context.runner)
+    throw new WarmReviewRefusal('missing-session', 'the prior review round has no lineage binding');
+  const session = persistedWarmReviewerSession(
+    {
+      runId: run.id,
+      reviewId: context.reviewId,
+      project: run.project,
+      familyId: warmLineageScope(run),
+      ownerPrincipalId: context.nativeSession?.ownerPrincipalId ?? run.createdByPrincipalId ?? null,
+      ownerPrincipalGeneration: run.createdByPrincipalGeneration ?? 0,
+      transport: context.nativeSession ? 'native' : 'tmux',
+      taskDir: path.posix.dirname(context.taskFile),
+      artifactScope: context.artifactScope ?? null,
+      runner: context.runner,
+      model: context.model ?? '',
+      effort: context.effort ?? null,
+    },
+    run,
+  );
+  if (!session)
+    throw new WarmReviewRefusal(
+      'session-unavailable',
+      'the prior review round cannot be continued',
+    );
+  return session;
 }
 
 /** A replay's recorded row takes precedence over the original dispatch plan. */
@@ -1786,11 +1833,12 @@ export function canRecoverReviewFixPass(
     | undefined,
   taskDir: string,
   findingsArtifactScope?: string | null,
+  allowFailed = false,
 ): boolean {
   // A pass its worker blocked belongs only to its own findings generation: never to a
   // publication review or a Send back, and never through the legacy null-scope match.
   const matchesFindingsGeneration =
-    fixContext?.status === 'blocked'
+    fixContext?.status === 'blocked' || fixContext?.status === 'failed'
       ? (fixContext.artifactScope ?? null) === (findingsArtifactScope ?? null)
       : !findingsArtifactScope ||
         !fixContext?.artifactScope ||
@@ -1798,7 +1846,9 @@ export function canRecoverReviewFixPass(
   return (
     fixContext?.role === 'review-fix' &&
     // A worker that blocked mid-fix can reopen its attempt and finish (TAT-4006 7721a02b).
-    (fixContext.status === 'working' || fixContext.status === 'blocked') &&
+    (fixContext.status === 'working' ||
+      fixContext.status === 'blocked' ||
+      (allowFailed && fixContext.status === 'failed')) &&
     fixContext.taskFile === taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.checklist) &&
     fixContext.signalFile === taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.signal) &&
     matchesFindingsGeneration
@@ -2244,8 +2294,14 @@ async function recoverReviewFixPass({
   const recoveredRetryCount = Math.max(1, reservedFixPass?.retryCount ?? 1);
   const run = getRun(runId);
   const recoveryGeneration = run?.engineState?.generation ?? 0;
+  const recoverFailed =
+    mode === 'warm' &&
+    run?.agentContexts?.some(
+      (context) => context.role === 'review-fix' && context.status === 'failed',
+    ) &&
+    reviewSessionForReplay(run)?.reviewId === reviewId;
   const fixContext = run?.agentContexts?.find((ctx) =>
-    canRecoverReviewFixPass(ctx, taskDir, findingsArtifactScope),
+    canRecoverReviewFixPass(ctx, taskDir, findingsArtifactScope, Boolean(recoverFailed)),
   );
   // Never recover from REVIEW-FIX-SIGNAL.json alone. That file is reused by every
   // review loop in the task dir, so a completed prior loop can otherwise masquerade as the
