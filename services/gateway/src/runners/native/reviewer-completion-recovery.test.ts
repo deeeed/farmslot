@@ -369,3 +369,57 @@ test('a changed slot owner prevents completion recovery', async (t) => {
   await assert.rejects(resume(), /ownership changed/);
   assert.equal(calls.filter((call) => call.method !== Methods.NATIVE_SESSION_READ).length, 0);
 });
+
+for (const pending of [false, true]) {
+  test(`proven empty stopped reviewer refuses resume for fresh-review fallback, recovery intent=${pending}`, async (t) => {
+    const { run, context } = await fixture(t, true);
+    snapshot.session.nativeSessionHasInput = false;
+    snapshot.commands = [];
+    updateRun(run.id, {
+      agentContexts: [
+        {
+          ...context,
+          nativeSession: {
+            ...context.nativeSession!,
+            ...(pending
+              ? { recovery: { fromGeneration: 'original', commandId: 'retry', resumeOnly: true } }
+              : {}),
+          },
+        },
+      ],
+    });
+    await assert.rejects(
+      resumeNativeWorker(run.id, {
+        purpose: 'review',
+        contextId: context.id,
+        text: 'review input',
+      }),
+      /never received input/,
+    );
+    assert.equal(
+      calls.some(
+        (call) => call.method === NATIVE_WORKER_RESUME || call.method === NATIVE_WORKER_SEND,
+      ),
+      false,
+    );
+  });
+}
+
+test('an unsent reviewer without explicit empty evidence keeps the accepted-command guard', async (t) => {
+  const { run, context } = await fixture(t, true);
+  updateRun(run.id, {
+    agentContexts: [
+      { ...context, nativeSession: { ...context.nativeSession!, acceptedAt: undefined } },
+    ],
+  });
+  await assert.rejects(
+    resumeNativeWorker(run.id, { purpose: 'review', contextId: context.id, text: 'review input' }),
+    /accepted command/,
+  );
+  assert.equal(
+    calls.some(
+      (call) => call.method === NATIVE_WORKER_RESUME || call.method === NATIVE_WORKER_SEND,
+    ),
+    false,
+  );
+});

@@ -1,0 +1,1 @@
+- Expose optional host evidence distinguishing a fresh empty native thread from submitted or unknown input.

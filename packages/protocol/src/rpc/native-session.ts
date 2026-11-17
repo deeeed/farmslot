@@ -226,6 +226,9 @@ export interface NativeSessionInfo extends Partial<NativeProcessExitEvidence> {
   nativeSessionId: string;
   /** Runner-reported saved transcript, when its transport exposes one. */
   nativeSessionPath?: string;
+  /** False only for a fresh thread with no input submission; absent on older hosts.
+   * Set true durably before the first runner write, including uncertain delivery. */
+  nativeSessionHasInput?: boolean;
   ownerPrincipalId: string;
   requestedByPrincipalId?: string;
   requestedByPrincipalGeneration?: number;

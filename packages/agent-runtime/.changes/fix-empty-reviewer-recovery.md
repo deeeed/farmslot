@@ -1,0 +1,1 @@
+- Preserve durable evidence that a fresh native thread has never received input, clearing it before any runner write.
