@@ -1796,15 +1796,19 @@ test('a sibling paused while cleanup awaits its provider keeps the lease it was 
   // r2 (Codex): liveness was read again after the awaited release, so a pause
   // landing in that window fenced an owner this pass had deliberately spared.
   let livePaused = false;
-  const { registry } = await fixture(t, [entry('browser'), entry('permit')], {
-    isLiveOwner: (runId) => runId === 'run-live' && !livePaused,
-    runAction: async (_slot, action) => {
-      if (action.kind === 'slot-action' && action.actionId === 'browser.release') {
-        livePaused = true; // The operator pauses the sibling mid-release.
-      }
-      return { ok: true };
+  const { registry, store } = await fixture(
+    t,
+    [entry('browser'), entry('permit'), entry('editor')],
+    {
+      isLiveOwner: (runId) => runId === 'run-live' && !livePaused,
+      runAction: async (_slot, action) => {
+        if (action.kind === 'slot-action' && action.actionId === 'browser.release') {
+          livePaused = true; // The operator pauses the sibling mid-release.
+        }
+        return { ok: true };
+      },
     },
-  });
+  );
   assert.equal((await acquire(registry, 'browser', 'run-closing', 'fam-a')).ok, true);
   assert.equal((await acquire(registry, 'permit', 'run-live', 'fam-a')).ok, true);
 
@@ -1817,11 +1821,22 @@ test('a sibling paused while cleanup awaits its provider keeps the lease it was 
     'acquired',
     'one liveness answer per pass: the spared lease stays spared',
   );
+  // The fence entry itself is what discriminates: re-reading liveness in the
+  // read-back loop writes one for the paused sibling, and an acquire cannot see
+  // the difference because a sweep-written entry yields to liveness anyway.
+  // An unrelated run acquiring an unrelated capability is the ordinary write
+  // that flushes the fences to disk.
+  assert.equal((await acquire(registry, 'editor', 'run-other')).ok, true);
+  assert.deepEqual(
+    store.snapshot().terminalOwnerEntries?.filter((fence) => fence.id === 'run-live'),
+    [],
+    'no fence may be written for an owner this pass deliberately spared',
+  );
   livePaused = false;
   assert.equal(
     (await acquire(registry, 'browser', 'run-live', 'fam-a')).ok,
     true,
-    'and its owner was not fenced on the way out',
+    'and it can still acquire once it resumes',
   );
 });
 
@@ -1845,8 +1860,33 @@ test("an owner's own cleanup fence outlives a posture overwrite", async (t) => {
   assert.ok(
     store
       .snapshot()
-      .terminalOwnerEntries?.some((entry) => entry.id === 'run-a' && !entry.viaFamily),
-    'its entry records that the run itself was cleaned',
+      .terminalOwnerEntries?.some((fence) => fence.id === 'run-a' && fence.viaFamily === false),
+    'its entry records explicitly that the run itself was cleaned',
+  );
+
+  // Both orders, and a restart in between: own cleanup outranks a later sweep,
+  // and a sweep entry never downgrades an own-cleanup one.
+  const restarted = new RuntimeCapabilityRegistry({
+    store: new RuntimeCapabilityStore(store.path),
+    catalogForSlot: async (slotId) => ({
+      slotId,
+      project: 'test-project',
+      capabilities: [entry('browser')],
+    }),
+    runAction: async () => ({ ok: true }),
+    isLiveOwner: () => true,
+    now: () => new Date(FIXTURE_NOW),
+  });
+  assert.equal(
+    (await acquire(restarted, 'browser', 'run-a', 'fam-a')).ok,
+    false,
+    'the explicit provenance survives a restart over the same store',
+  );
+  await restarted.releaseRunTerminal(SLOT, 'run-b', 'fam-a');
+  assert.equal(
+    (await acquire(restarted, 'browser', 'run-a', 'fam-a')).ok,
+    false,
+    "a later sibling sweep cannot downgrade the run's own cleanup fence",
   );
 });
 
