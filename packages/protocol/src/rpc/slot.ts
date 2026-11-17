@@ -90,6 +90,8 @@ export type {
 
 export interface SlotCheckParams {
   slotId: string;
+  /** Explicitly allow health hooks to run on an owned slot. Authorization is unchanged. */
+  force?: boolean;
 }
 
 export type MergeMainStrategy = 'merge' | 'rebase';

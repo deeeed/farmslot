@@ -1,0 +1,1 @@
+- Add an explicit force option for health checks on slots owned by a run.
