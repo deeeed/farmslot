@@ -1,0 +1,1 @@
+- Prefer capture-helper for a uniquely visible selected iOS simulator window; preserve native simctl recording for unavailable/headless capture and stop it with a bounded SIGINT wait without force-killing the client.

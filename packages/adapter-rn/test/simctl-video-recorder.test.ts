@@ -11,8 +11,10 @@ import { createIosSimulatorVideoRecorder } from '../src/simctl-video-recorder.js
 // without ever writing the output file. It records its pid for the teardown and
 // exits on its own after about 10 s, so a stub teardown missed cannot outlive it.
 const XCRUN = String.raw`#!/bin/bash
+if [[ " $* " != *" recordVideo "* ]]; then printf '{"devices":{}}\n'; exit 0; fi
 echo "$$" > "$(dirname "$0")/pid"
 trap 'exit 0' INT
+echo 'Recording started' >&2
 echo 'Error: no display attached' >&2
 : > "$(dirname "$0")/ready"
 while ((SECONDS < 10)); do sleep 0.02; done
