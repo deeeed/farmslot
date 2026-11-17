@@ -518,7 +518,7 @@ test('replay refuses a completed review without usable lineage instead of select
     {
       id: 'review',
       runId: run.id,
-      slotId: run.slotId,
+      slotId: run.slotId ?? null,
       role: 'review',
       label: 'Review',
       status: 'complete',
