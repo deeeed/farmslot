@@ -34,7 +34,10 @@ import { modelQuestionsForRun, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../launch-
 
 import { routeNativeExecution } from './node.js';
 import { assertNativeWorkerSnapshot, nativeWorkerLiveStatus } from './worker-control.js';
-import { NativeWorkerOperationUncertainError } from './worker-error.js';
+import {
+  NativeReviewerEmptyThreadError,
+  NativeWorkerOperationUncertainError,
+} from './worker-error.js';
 import { prepareNativeWorkerLaunch } from './worker-launch.js';
 
 /** Run Resume preserves a live worker; a stopped worker resumes its exact saved conversation. */
@@ -149,7 +152,7 @@ async function resumeNativeWorkerExclusive(
     !context ||
     !binding?.generation ||
     binding.releasedAt ||
-    (!binding.acceptedAt && options?.purpose !== 'handoff') ||
+    (!binding.acceptedAt && options?.purpose !== 'handoff' && options?.purpose !== 'review') ||
     !context.runnerSessionId ||
     !context.runner ||
     !context.model ||
@@ -249,6 +252,22 @@ async function resumeNativeWorkerExclusive(
       throw new Error('Native worker generation changed without a recorded recovery intent');
   };
   verify(snapshot.session);
+  if (
+    context.role === 'review' &&
+    !completion &&
+    snapshot.session.nativeSessionHasInput === false &&
+    snapshot.session.processStopped === true &&
+    ['closed', 'failed'].includes(snapshot.session.state) &&
+    snapshot.pendingRequests.length === 0
+  ) {
+    // Input intent is journaled before the runner write. Explicit false is proof of
+    // no user context; missing evidence or uncertain delivery must keep the guard.
+    throw new NativeReviewerEmptyThreadError();
+  }
+  if (!binding.acceptedAt && options?.purpose !== 'handoff')
+    throw new Error(
+      'Native worker recovery requires its original task, accepted command and launch settings',
+    );
   if (completion && snapshot.session.processStopped && !snapshot.session.capabilities.resume)
     throw new Error('Native reviewer completion cannot resume this saved conversation');
   const monitorOutputs = run.steps.find((step) => step.name === 'monitor')?.outputs;
