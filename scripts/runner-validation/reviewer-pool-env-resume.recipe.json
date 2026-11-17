@@ -1,13 +1,13 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
-  "title": "Retained native reviewer survives unrelated pool environment changes",
+  "title": "Retained static native reviewer survives an unrelated project environment change",
   "workflow": {
     "entry": "live-resume",
     "nodes": {
       "live-resume": {
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/reviewer-pool-env-resume.mts",
-        "intent": "Run a real native reviewer twice through an isolated gateway, change ASDF pool settings between rounds and require the same retained conversation under a new accepted task lease.",
+        "intent": "Run two real static-code native reviewer rounds through the slot-based pipeline. Add only ASDF_NODEJS_LEGACY_FILE_DYNAMIC_STRATEGY=latest_installed to the private project's command_env between rounds, as in the recorded incident; require the same retained conversation and a new accepted task lease.",
         "next": "done"
       },
       "done": {
