@@ -1105,8 +1105,14 @@ test(
   async (t) => {
     const fixture = mkdtempSync(path.join(QUALITY_DIR, '.tmux-sandbox-fixture-'));
     const report = path.join(fixture, 'pids.json');
-    t.after(() => {
-      // The runner should have stopped it; this only covers a failed assertion.
+    let runner;
+    t.after(async () => {
+      // The runner should have stopped both; this covers a failed assertion.
+      if (runner && runner.exitCode === null && runner.signalCode === null) {
+        const reaped = new Promise((resolve) => runner.once('close', resolve));
+        runner.kill('SIGKILL');
+        await reaped;
+      }
       const pids = existsSync(report) ? JSON.parse(readFileSync(report, 'utf8')) : {};
       if (pids.descendant) {
         try {
@@ -1116,6 +1122,7 @@ test(
           if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
         }
       }
+      if (pids.tmp) rmSync(path.dirname(path.dirname(pids.tmp)), { recursive: true, force: true });
       rmSync(fixture, { recursive: true, force: true });
     });
     writeFileSync(path.join(fixture, 'tsconfig.json'), '{}');
@@ -1131,7 +1138,7 @@ test('leaves a descendant behind', () => {
   const script = "const fs = require('node:fs'); setInterval(() => fs.mkdirSync(process.env.TMPDIR + '/still-writing', { recursive: true }), 20);";
   const child = spawn(process.execPath, ['-e', script], { stdio: 'inherit' });
   child.unref();
-  writeFileSync(${JSON.stringify(report)}, JSON.stringify({ test: process.pid, descendant: child.pid, tmp: process.env.TMPDIR }));
+  writeFileSync(${JSON.stringify(report)}, JSON.stringify({ test: process.pid, launcher: process.ppid, descendant: child.pid, tmp: process.env.TMPDIR }));
 });
 `,
     );
@@ -1139,7 +1146,7 @@ test('leaves a descendant behind', () => {
       path.join(fixture, 'src', 'b.test.ts'),
       "import test from 'node:test';\ntest('b', () => {});\n",
     );
-    const runner = spawn(
+    runner = spawn(
       process.execPath,
       [RUNNER_PATH, '--cwd', fixture, '--tsconfig', 'tsconfig.json', '--workers', '2', 'src'],
       { stdio: 'ignore' },
@@ -1161,15 +1168,25 @@ test('leaves a descendant behind', () => {
     }
     assert.ok(existsSync(report), 'the fixture test never started');
     const pids = JSON.parse(readFileSync(report, 'utf8'));
-    // Wait for the test process itself to exit, leaving only the descendant.
-    for (let i = 0; i < 300 && alive(pids.test); i += 1) {
+    // Wait until the runner has reaped the launcher (yarn), the process it
+    // tracks: only the descendant is left, holding the output pipes.
+    for (let i = 0; i < 300 && (alive(pids.test) || alive(pids.launcher)); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
     assert.equal(alive(pids.test), false, 'the test process never exited');
+    assert.equal(alive(pids.launcher), false, 'the runner never reaped the launcher');
     assert.equal(alive(pids.descendant), true, `the descendant ${pids.descendant} is running`);
 
     runner.kill('SIGTERM');
-    assert.equal(await closed, 'SIGTERM');
+    let shutdownTimer;
+    const shutdown = await Promise.race([
+      closed,
+      new Promise((resolve) => {
+        shutdownTimer = setTimeout(() => resolve('still running'), 15_000);
+      }),
+    ]);
+    clearTimeout(shutdownTimer);
+    assert.equal(shutdown, 'SIGTERM');
     for (let i = 0; i < 100 && alive(pids.descendant); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
