@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -139,6 +139,15 @@ platforms: [cli]
     log: async (event, detail) => console.log(event, JSON.stringify(detail ?? {})),
   });
   const active = stack;
+  // Managed review support is bundled from this fixture, so its runtime scripts
+  // must be concrete copies inside the owned root, like the framework scripts.
+  const runtimeScripts = path.join(active.fixture, packages / agent - runtime / scripts);
+  assert.equal(await realpath(path.dirname(runtimeScripts)), path.dirname(runtimeScripts));
+  await rm(runtimeScripts, { recursive: true, force: true });
+  await cp(path.join(root, packages / agent - runtime / scripts), runtimeScripts, {
+    recursive: true,
+    dereference: true,
+  });
   const health = await poll(
     'first live node pressure sample',
     async () => {
@@ -389,6 +398,9 @@ platforms: [cli]
     ),
   );
   console.log('PASS', created.id, next.sessionId);
+} catch (error) {
+  await writeFile(path.join(evidence, proof - error.txt), String(error));
+  throw error;
 } finally {
   await cleanup();
 }
