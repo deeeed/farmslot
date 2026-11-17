@@ -1,0 +1,1 @@
+- Publication opens its own PR instead of pushing the approved head onto a merged PR's branch when a run reuses a branch whose PR already merged; a PR this run published, or one merged out-of-band at a head this run approved or reviewed, still links.

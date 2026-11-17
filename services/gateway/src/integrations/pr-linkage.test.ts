@@ -20,6 +20,7 @@ let cached: number | null;
 let bound: number[];
 let requests: string[][];
 let metadataFailure: Error | undefined;
+let restPull: Record<string, unknown> | null;
 mock.module('./github-bindings-cache.js', {
   namedExports: {
     getBinding: () => cached,
@@ -52,6 +53,7 @@ const fakeGithub = fakeGitHubService(clientModule.github, {
   },
   rest: async (_method: string, path: string, _opts?: RestServiceOpts) => {
     requests.push(['api', path]);
+    if (restPull && path.includes('/pulls/')) return restPull;
     return { state: 'closed', head: { ref: 'fix/reused' } };
   },
 });
@@ -68,6 +70,73 @@ beforeEach(() => {
   bound = [];
   requests = [];
   metadataFailure = undefined;
+  restPull = null;
+});
+
+const readyAtHead = (headSha: string) => [
+  {
+    id: 'publication',
+    type: 'engine_human_gate' as const,
+    title: 'Publish',
+    description: '',
+    actions: [],
+    createdAt: '2026-11-17T00:00:00Z',
+    payload: {
+      kind: 'ready' as const,
+      prNumber: null,
+      repo: 'owner/repo',
+      branch: 'fix/reused',
+      workerReport: '',
+      diffStat: { files: 1, additions: 1, deletions: 1 },
+      prPackage: makeReadyGatePackage({ headSha }),
+    },
+  },
+];
+
+test('publication refuses a historical merged PR on a reused branch', async () => {
+  candidate = { number: 388, state: 'MERGED', headRefOid: unrelatedHead };
+  const run = makeRun({ branch: 'fix/reused', prNumber: undefined });
+  assert.equal(await findPRNumber(run, 'owner/repo', { noRetry: true, excludeMerged: true }), null);
+  assert.deepEqual(bound, []);
+});
+
+test('publication links its own PR merged out-of-band at the approved head', async () => {
+  candidate = { number: 388, state: 'MERGED', headRefOid: head };
+  const run = makeRun({
+    branch: 'fix/reused',
+    prNumber: candidate.number,
+    decisions: readyAtHead(head),
+  });
+  assert.equal(
+    await findPRNumber(run, 'owner/repo', { noRetry: true, excludeMerged: true }),
+    candidate.number,
+  );
+});
+
+test('publication refuses a merged PR named by the run ticket', async () => {
+  candidate = { number: 388, state: 'MERGED', headRefOid: unrelatedHead };
+  // The REST pull payload reports a merged PR as closed with merged_at set.
+  restPull = {
+    number: 388,
+    state: 'closed',
+    merged_at: '2026-11-17T21:04:00Z',
+    head: { sha: unrelatedHead },
+  };
+  const run = makeRun({ branch: 'fix/reused', prNumber: undefined, ticketOrPr: 'owner/repo#388' });
+  assert.equal(await findPRNumber(run, 'owner/repo', { noRetry: true, excludeMerged: true }), null);
+  assert.deepEqual(bound, []);
+});
+
+test('a merged PR named by the run ticket still links outside publication', async () => {
+  candidate = { number: 388, state: 'MERGED', headRefOid: unrelatedHead };
+  restPull = {
+    number: 388,
+    state: 'closed',
+    merged_at: '2026-11-17T21:04:00Z',
+    head: { sha: unrelatedHead },
+  };
+  const run = makeRun({ branch: 'fix/reused', prNumber: undefined, ticketOrPr: 'owner/repo#388' });
+  assert.equal(await findPRNumber(run, 'owner/repo', { noRetry: true }), 388);
 });
 
 test('branch fallback ignores an unrelated closed PR after the open lookup misses', async () => {

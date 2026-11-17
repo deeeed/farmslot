@@ -40,8 +40,12 @@ function publishedByRun(run: Run, ciRepo: string, pr: Record<string, unknown>): 
   );
 }
 
+// `gh pr view/list` report a merged PR as state MERGED; the REST pull payload
+// reports state `closed` with `merged_at` set, so both shapes are read here.
 function isMergedPR(pr: Record<string, unknown>): boolean {
-  return pr.state === 'MERGED' || (pr.mergedAt != null && pr.mergedAt !== '');
+  if (pr.state === 'MERGED') return true;
+  const mergedAt = pr.mergedAt ?? pr.merged_at;
+  return mergedAt != null && mergedAt !== '';
 }
 
 function canBindPR(
@@ -51,15 +55,23 @@ function canBindPR(
   options?: { excludeMerged?: boolean },
 ): boolean {
   // TAT-4644: branch names are deterministic, so a reused branch still carries
-  // its old merged PR. Publication must open a PR of its own instead of pushing
-  // the new head onto a merged PR's branch — unless this run published it.
-  if (options?.excludeMerged && isMergedPR(pr) && !publishedByRun(run, ciRepo, pr)) {
+  // its old merged PR. For publication a merged PR is held to the same proof of
+  // ownership as a closed one — this run published it, or its head is a head
+  // this run had approved or reviewed. A historical merge satisfies neither, so
+  // publication opens its own PR; the run's own PR, merged mid-publication by
+  // an out-of-band merge, still links on retry instead of being duplicated.
+  const mergedTarget = options?.excludeMerged === true && isMergedPR(pr);
+  if (pr.state !== 'CLOSED' && !mergedTarget) return true;
+  const bindable = ownedByRun(run, ciRepo, pr);
+  if (mergedTarget && !bindable) {
     console.log(
       `[pr-linkage] skipping merged PR #${String(pr.number)} runId=${run.id.slice(0, 8)} branch=${run.branch ?? '<empty>'}`,
     );
-    return false;
   }
-  if (pr.state !== 'CLOSED') return true;
+  return bindable;
+}
+
+function ownedByRun(run: Run, ciRepo: string, pr: Record<string, unknown>): boolean {
   if (publishedByRun(run, ciRepo, pr)) return true;
   if (!pr.headRefOid) return false;
   const oid = pr.headRefOid as string;
@@ -98,11 +110,28 @@ export async function findPRNumber(
     if (isFollowUpFlow(run.flowType)) return refNum;
     if (refRepo === ciRepo) {
       try {
-        const verify = await github.rest<{ number?: number }>(
-          'GET',
-          `repos/${refRepo}/pulls/${refNum}`,
-        );
-        if (verify.number === refNum) return refNum;
+        const verify = await github.rest<{
+          number?: number;
+          state?: string;
+          merged_at?: string | null;
+          head?: { sha?: string };
+        }>('GET', `repos/${refRepo}/pulls/${refNum}`);
+        if (verify.number === refNum) {
+          // A dev / fix-bug run can be dispatched with a merged PR URL as its
+          // context. Publication must not push its work onto that PR.
+          if (!options?.excludeMerged) return refNum;
+          const candidate = {
+            number: refNum,
+            state: verify.merged_at
+              ? 'MERGED'
+              : String(verify.state ?? '').toLowerCase() === 'closed'
+                ? 'CLOSED'
+                : 'OPEN',
+            headRefOid: verify.head?.sha,
+            mergedAt: verify.merged_at ?? null,
+          };
+          if (canBindPR(run, ciRepo, candidate, options)) return refNum;
+        }
       } catch (err) {
         console.warn(
           `[pr-linkage] gh api verify failed runId=${run.id.slice(0, 8)} pr=${refNum}: ${(err as Error).message.slice(0, 200)}`,
@@ -113,14 +142,25 @@ export async function findPRNumber(
 
   // 2. Worker-written TASK.md marker.
   if (run.taskFile && existsSync(run.taskFile)) {
+    let marked: number | null = null;
     try {
       const content = await readFile(run.taskFile, 'utf-8');
       const m = content.match(/PR_NUMBER:\s*(\d+)/);
-      if (m) return parseInt(m[1], 10);
+      if (m) marked = parseInt(m[1], 10);
     } catch (err) {
       console.warn(
         `[pr-linkage] TASK.md read failed runId=${run.id.slice(0, 8)}: ${(err as Error).message}`,
       );
+    }
+    if (marked !== null) {
+      if (!options?.excludeMerged) return marked;
+      // Publication revalidates the marker for the same reason it revalidates a
+      // saved PR number, and an unavailable read stops it rather than falling
+      // through to discovery and creating a duplicate.
+      const marker = await github.prView(ciRepo, marked, ['number', 'state', 'headRefOid'], {
+        force: true,
+      });
+      if (canBindPR(run, ciRepo, marker, options)) return marked;
     }
   }
 
