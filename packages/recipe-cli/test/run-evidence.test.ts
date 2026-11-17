@@ -2121,9 +2121,18 @@ describe('live adapter scripts', () => {
       path.join(dir, 'probe.mjs'),
       `import value from 'helper-pkg';\nconsole.log(value);\n`,
     );
-    // Files written before the build, whose folders the first build must not read as changing.
+    // Inputs and folders predate the build, even when fixture writes share its millisecond.
     const earlier = new Date(Date.now() - 60_000);
-    for (const entry of [pkg, path.dirname(pkg), dir, path.dirname(dir), root]) {
+    for (const entry of [
+      path.join(pkg, 'package.json'),
+      path.join(pkg, 'index.js'),
+      path.join(dir, 'probe.mjs'),
+      pkg,
+      path.dirname(pkg),
+      dir,
+      path.dirname(dir),
+      root,
+    ]) {
       fs.utimesSync(entry, earlier, earlier);
     }
     const recorder = new CallTimingRecorder();
