@@ -37,6 +37,13 @@ repeats the first.
 | Prepare Git commands                   | `git.<sequence>.<operation>` prepare substeps (below)                                                      | Heaviest so far: clear index flags 24 s, checkout default 18 s, reset default 18 s, reset head 16 s (2 runs) | None yet; cost is counted as processes and Git calls per step                                                                    | Runtime performance lane |
 | Slot release time                      | Not recorded: `slot.release` prints phase times to the console only                                        | Unmeasured                                                                                                   | None until it is recorded                                                                                                        | Runtime performance lane |
 
+Terminal cleanup keeps the childless worker-pane path unchanged. A worker-free,
+owned pane with shell children adds one PID-scoped `lsof` read, one leaf identity
+and argv read, and a fresh runner-descendant probe before accepting the chain.
+It adds no Git calls, writes, polling or retries. The exact bash-to-idle-zsh
+regression and nine refusal cases pass with mocked exec; the 113-test teardown
+suite takes 13.1 s locally. These fixture timings are not live release latency.
+
 Cached paint starts at foreground demand, before lookup/hydration, and ends after
 the subscriber's queued render and data frame. Refresh timing stays separate.
 Read counters include cache source, age, stale/blocking state and opaque per-query
