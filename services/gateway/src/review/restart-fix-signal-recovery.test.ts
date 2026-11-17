@@ -5,7 +5,9 @@ import { type AgentContext, FLOW_STEPS, type Run } from '@farmslot/protocol';
 
 import '../runtime/mock-pty.test-support.js';
 
+import type { RawProjectJson } from '../core/config.js';
 import type { RunRecoveryCollaborators } from '../run-engine/recovery.js';
+import { partialNodeFixture } from '../runners/partial-node.test-support.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
 // TAT-4033 6148c5e5: the worker's report opened an output review at 16:57Z, then the review
@@ -48,6 +50,10 @@ const tmuxInput: string[] = [];
 let onRespawn = (_command: string) => {};
 let checklistRestores = 0;
 let stagedLaunch = '';
+let relaunchEnvironment: RawProjectJson['command_env'];
+let relaunchCommand: string | undefined;
+let rawRelaunchCommand = '';
+let relaunchProbe: ((command: string) => string) | undefined;
 mock.module('../core/tmux-launch-script.js', {
   namedExports: {
     writeTmuxLaunchScript: async (_vars: unknown, _target: string, command: string) => {
@@ -62,7 +68,9 @@ mock.module('../core/config.js', {
   namedExports: {
     ...config,
     loadSlotVars: async () => vars,
-    loadProjectVars: async () => ({ projectJson: { review: { enabled: true, max_retries: 2 } } }),
+    loadProjectVars: async () => ({
+      projectJson: { command_env: relaunchEnvironment, review: { enabled: true, max_retries: 2 } },
+    }),
   },
 });
 const execution = await import('../core/exec.js');
@@ -185,7 +193,37 @@ mock.module('../tasks/watcher.js', {
 });
 const preflight = await import('../run-engine/worker-launch-preflight.js');
 mock.module('../run-engine/worker-launch-preflight.js', {
-  namedExports: { ...preflight, admitWorkerLaunch: async () => async () => {} },
+  namedExports: {
+    ...preflight,
+    admitWorkerLaunch: async (input: { wrapCommand?: (command: string) => string }) => {
+      relaunchProbe = input.wrapCommand;
+      return async () => {};
+    },
+  },
+});
+const originalTmux = await import('../core/tmux.js');
+mock.module('../core/tmux.js', {
+  namedExports: {
+    ...originalTmux,
+    respawnTmuxWindowWithCommand: async (
+      ...args: Parameters<typeof originalTmux.respawnTmuxWindowWithCommand>
+    ) => {
+      if (relaunchCommand !== undefined) {
+        rawRelaunchCommand = args[2];
+        await args[3]?.beforeRespawn?.();
+        return;
+      }
+      return originalTmux.respawnTmuxWindowWithCommand(...args);
+    },
+  },
+});
+const launchCommands = await import('../runners/launch-command.js');
+mock.module('../runners/launch-command.js', {
+  namedExports: {
+    ...launchCommands,
+    buildLaunchCommand: (...args: Parameters<typeof launchCommands.buildLaunchCommand>) =>
+      relaunchCommand ?? launchCommands.buildLaunchCommand(...args),
+  },
 });
 const nodeSupport = await import('../node-support/ensure.js');
 mock.module('../node-support/ensure.js', {
@@ -777,3 +815,31 @@ test(
     assert.deepEqual(delays, [500]);
   },
 );
+
+for (const site of ['probe', 'spawn'] as const) {
+  test(`review-fix relaunch ${site} uses project policy to resolve partial Node`, async (t) => {
+    const run = await reviewFixRunAtReload(t, 'tmux', 'pi');
+    const node = partialNodeFixture(t);
+    const original = { ...vars };
+    t.after(() => {
+      Object.assign(vars, original);
+      relaunchEnvironment = undefined;
+      relaunchCommand = undefined;
+      rawRelaunchCommand = '';
+      relaunchProbe = undefined;
+    });
+    vars.remoteRepo = node.repo;
+    vars.repo = node.repo;
+    relaunchEnvironment = node.commandEnv;
+    relaunchCommand = node.command;
+    paneCommand = 'pi-coding-agent';
+    withPrimaryWorker(run.id);
+    assert.equal(await relaunchWorkerForFix(vars, 'pi', 'local/model', run.id), true);
+    assert.ok(relaunchProbe);
+    const result = node.execute(
+      site === 'probe' ? relaunchProbe(node.command) : rawRelaunchCommand,
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), 'v22.22.1');
+  });
+}

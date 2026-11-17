@@ -67,6 +67,7 @@ import {
   buildLaunchCommand,
   modelQuestionsForRun,
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
+  wrapWorkerShellCommand,
 } from '../runners/launch-command.js';
 import { runnerActivityIsBusy } from '../runners/observability-files.js';
 import { isObservabilityReadingAuthoritative } from '../runners/observability-send-decision.js';
@@ -88,7 +89,6 @@ import {
   runnerProcessPatternSource,
   runnerRetainedSessionHandoff,
   type RunnerSendRecoveryContext,
-  WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
 import { scriptedRelaunchOptions } from '../runners/scripted-config.js';
 import {
@@ -447,6 +447,14 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
   const run = getRun(runId);
   if (!run) return false;
   const vars = await loadSlotVars(slotId);
+  const projectVars = await loadProjectVars(run.project);
+  const workerShell = (command: string) =>
+    wrapWorkerShellCommand(command, {
+      vars,
+      projectVars,
+      projectJson: projectVars.projectJson,
+      runDomain: run.domain,
+    });
   const runner = normalizeRunner(run.metrics.runner);
   const model = run.metrics.model ?? 'unknown';
   const primaryTarget = await resolveAgentTarget(slotId, { runId, role: 'primary' });
@@ -459,8 +467,9 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
   const assertPreflightCurrent = await admitWorkerLaunch({
     runId,
     vars,
+    projectVars,
     supportDir: nodeSupport?.supportDir,
-    wrapCommand: (command) => `${WORKER_ENV_PREFIX} && ${withMachineEnv(command, vars)}`,
+    wrapCommand: (command) => workerShell(withMachineEnv(command, vars)),
   });
   const workerTarget = await ensureTmuxTargetReadyForRelaunch(
     vars,
@@ -482,7 +491,7 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
     supportDir: nodeSupport?.supportDir,
     modelQuestions: modelQuestionsForRun(run),
   });
-  launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
+  launchCmd = workerShell(launchCmd);
 
   await respawnTmuxWindowWithCommand(vars, workerTarget, launchCmd, {
     preserveWindowAfterExit: true,
