@@ -162,6 +162,8 @@ mock.module('../core/index.js', {
     },
     resetSlotIf: async (_id: string, predicate: (row: Record<string, unknown>) => boolean) => {
       if (!slotRow || !predicate(slotRow)) return false;
+      if (expectRecipeCollectionBeforeReady)
+        assert(!recipeBucketsPresent, 'Owned recipe output must be retained before readiness');
       slotRow = {
         ...slotRow,
         lifecycle: 'ready',
@@ -471,6 +473,24 @@ mock.module('../evals/blind-trial.js', {
     },
   },
 });
+let expectRecipeCollectionBeforeReady = false;
+let recipeBucketsPresent = false;
+let recipeCollections = 0;
+let recipeArchiveError: Error | null = null;
+const recipeArtifacts = await import('./recipe-artifacts.js');
+mock.module('./recipe-artifacts.js', {
+  namedExports: {
+    ...recipeArtifacts,
+    archiveRunRecipeArtifacts: async (_run: Run, beforeRemove: () => Promise<void>) => {
+      if (!recipeBucketsPresent) return;
+      await beforeRemove();
+      assert.equal(slotRow?.phase, 'releasing');
+      recipeCollections++;
+      if (recipeArchiveError) throw recipeArchiveError;
+      recipeBucketsPresent = false;
+    },
+  },
+});
 const {
   slotTeardownBlocker,
   stopRunOwnedTmuxAndWatches,
@@ -494,6 +514,10 @@ const run = makeCleanupRun({
 const reaps = () => commands.filter((cmd) => cmd.includes(`identityfile='${IDENTITY}'`));
 
 beforeEach(() => {
+  expectRecipeCollectionBeforeReady = false;
+  recipeBucketsPresent = false;
+  recipeCollections = 0;
+  recipeArchiveError = null;
   configuredCdpPort = '9542';
   blindRestores = [];
   blindRestoreResult = null;
@@ -1878,8 +1902,11 @@ test('done cleanup attempts safe checkout return after resource shutdown', async
 
 test('failed cleanup retains its checkout until archive rather than resetting it', async () => {
   run.status = 'failed';
+  recipeBucketsPresent = true;
   await releaseCompletedRunSlot(run);
   assert.equal(idleReturnCalls, 0);
+  assert.equal(recipeCollections, 0);
+  assert.equal(recipeBucketsPresent, true);
 });
 
 test('a confirmed pre-worker failure returns its parked checkout before publishing ready', async () => {
@@ -1901,9 +1928,12 @@ test('a confirmed pre-worker failure returns its parked checkout before publishi
 
 test('a dispatch failure after a launch attempt retains the checkout for replay', async () => {
   run.status = 'failed';
+  recipeBucketsPresent = true;
   run.steps = [{ name: 'dispatch', status: 'failed', outputs: { failedPhase: 'worker-launch' } }];
   await releaseCompletedRunSlot(run);
   assert.equal(idleReturnCalls, 0);
+  assert.equal(recipeCollections, 0);
+  assert.equal(recipeBucketsPresent, true);
 });
 
 test('a pre-worker idle-return failure stays held instead of publishing a ready task branch', async () => {
@@ -2000,11 +2030,14 @@ test('pre-worker cleanup cannot return a foreign owner to idle', async () => {
 for (const reason of ['dirty files', 'unpushed commits'])
   test(`done cleanup retains ${reason} without retrying recovery`, async () => {
     run.status = 'done';
+    recipeBucketsPresent = true;
     idleReturnResult = { kind: 'local-work', reason };
     const result = await releaseCompletedRunSlot(run);
     assert.equal(result.released, true);
     assert.equal(slotRow?.current_run_id, null);
     assert.equal(idleReturnCalls, 1);
+    assert.equal(recipeCollections, 0);
+    assert.equal(recipeBucketsPresent, true);
   });
 test('done cleanup preserves an unfinished recovery hold', async () => {
   run.status = 'done';
@@ -2072,4 +2105,54 @@ test('interrupted-release inspection leaves managed daemons and browser sessions
     false,
   );
   assert.equal(providerCleanups, 0);
+});
+
+test('pinned successor reclaims a cancelled capsule before first output only after recipe collection', async () => {
+  asFinishedBlindTrial();
+  delete run.engineState!.evalExperiment!.blind!.firstOutput;
+  expectRecipeCollectionBeforeReady = true;
+  recipeBucketsPresent = true;
+  const cancel = defaultCancelCollaborators();
+  await cancel.releaseCapabilities(run);
+  await cancel.releaseSlot(run);
+  assertKeptForReplay();
+  assert.equal(recipeCollections, 0, 'replay-held cancellation keeps recipe output');
+  assert.equal(recipeBucketsPresent, true);
+  otherRuns = [
+    {
+      ...run,
+      id: 'requester',
+      status: 'slot-finding',
+      steps: [{ name: 'find-slot', status: 'running' }],
+    },
+  ];
+  assert.equal(await reclaimCancelledSlot(SLOT_ID, 'requester'), true);
+  assert.equal(recipeCollections, 1);
+  assert.equal(recipeBucketsPresent, false);
+  assert.equal(slotRow?.lifecycle, 'ready');
+  assert.deepEqual(blindRestores, [RUN_ID]);
+  assert.equal(idleReturnCalls, 0, 'collection does not depend on an optional idle recovery');
+});
+
+test('failed recipe retention keeps a cancelled capsule fenced away from its successor', async () => {
+  asFinishedBlindTrial();
+  delete run.engineState!.evalExperiment!.blind!.firstOutput;
+  expectRecipeCollectionBeforeReady = true;
+  recipeBucketsPresent = true;
+  const cancel = defaultCancelCollaborators();
+  await cancel.releaseCapabilities(run);
+  await cancel.releaseSlot(run);
+  otherRuns = [
+    {
+      ...run,
+      id: 'requester',
+      status: 'slot-finding',
+      steps: [{ name: 'find-slot', status: 'running' }],
+    },
+  ];
+  recipeArchiveError = new Error('recipe archive unavailable');
+  await assert.rejects(reclaimCancelledSlot(SLOT_ID, 'requester'), /recipe archive unavailable/);
+  assert.equal(recipeCollections, 1);
+  assert.equal(recipeBucketsPresent, true);
+  assert.equal(slotRow?.lifecycle, 'held');
 });

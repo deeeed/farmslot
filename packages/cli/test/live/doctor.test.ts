@@ -59,6 +59,9 @@ test('public conformance reuses identical parameters and refuses a changed invoc
 
 test('public live doctor retains real smoke and cleanup proof for one disposable headless checkout', async (t) => {
   const { root, write } = fixture(t);
+  const authorLedger = '{"author":"unchanged"}\n';
+  write('artifacts/worker/artifacts/acceptance-status.json', authorLedger);
+  write('artifacts/worker/artifacts/latest-valid-recipe-run.json', '{"runId":"author"}\n');
   write('manifests/headless.action-manifest.json', manifest);
   write('recipes/headless/smoke.recipe.json', {
     $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
@@ -126,6 +129,17 @@ test('public live doctor retains real smoke and cleanup proof for one disposable
     { timeoutMs: 30000, publicBin: true },
   );
   assert.equal(result.status, 0, JSON.stringify(result.envelope));
+  assert.equal(
+    fs.readFileSync(path.join(root, 'artifacts/worker/artifacts/acceptance-status.json'), 'utf8'),
+    authorLedger,
+  );
+  assert.equal(
+    fs.readFileSync(
+      path.join(root, 'artifacts/worker/artifacts/latest-valid-recipe-run.json'),
+      'utf8',
+    ),
+    '{"runId":"author"}\n',
+  );
   const { report } = result.envelope.data;
   assert.equal(report.mode, 'live');
   assert.equal(fs.existsSync(path.join(root, 'owned.txt')), false);

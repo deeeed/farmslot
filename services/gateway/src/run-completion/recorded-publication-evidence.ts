@@ -34,7 +34,8 @@ import {
   sha256Text,
   verifyReadyGateSelectedEvidenceFiles,
 } from './ready-gate-package.js';
-import { readRetainedRunText } from './retained-artifacts.js';
+import { readRetainedRunText, retainedTaskActionInputs } from './retained-artifacts.js';
+import { taskActionInputReferences } from './task-action-inputs.js';
 
 const SELECTION_MANIFEST_PATH = 'artifacts/evidence-manifest.json';
 
@@ -278,11 +279,12 @@ async function frozenPublicationTextClosure(
     bundleRef,
     headSha ?? null,
     comparison,
+    'published',
   );
   // This inventory is the frozen publication closure, not the task's historical
   // artifacts. Media pixels retain their existing visual-review requirements.
-  // Additional recipe roots were validated above even though only the selected ledger
-  // is returned as verdict authority.
+  // The publication scope includes additional packages without promoting their ledgers
+  // to acceptance authority in the default selected-attempt reader.
   const textPrefixes = [
     ...new Set([
       ...sources.map(({ artifactPrefix }) => artifactPrefix),
@@ -363,6 +365,15 @@ export async function verifyFrozenPublicationEvidence(
     headSha,
     comparison,
   );
+  const actionInputs = await retainedTaskActionInputs(
+    run,
+    bundleRef,
+    sources.flatMap(({ input }) => taskActionInputReferences(input.summary)),
+  );
+  if (!actionInputs.available)
+    throw new Error(
+      `Cannot publish recipe: retained task-action implementation is missing for ${actionInputs.actions.flatMap(({ actionNames }) => actionNames).join(', ')}.`,
+    );
   for (const source of sources) {
     const issues = validateRecordedEvidencePackage(source.input).findings.filter(
       (finding) => finding.severity === 'error',

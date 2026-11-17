@@ -5,6 +5,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import fsPromises from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, test } from 'node:test';
@@ -17,6 +18,11 @@ import {
   type RecipeNodeEvent,
 } from '@farmslot/adapter-sdk';
 import {
+  buildHandoffMetadata,
+  builtinTerminalContract,
+  writeTaskDir,
+} from '@farmslot/agent-runtime';
+import {
   type RecipeActionManifestDocument,
   validateRecipeActionManifestDocument,
 } from '@farmslot/protocol';
@@ -28,6 +34,10 @@ import {
   type RecipeRecordingOptions,
   type RecipeRunResult,
 } from '@farmslot/recipe-runner';
+import {
+  parseRecipeArtifactOwner,
+  recipeArtifactOperation,
+} from '@farmslot/recipe-runner/runtime/artifact-owner';
 import { processIdentity } from '@farmslot/recipe-runner/runtime/operation';
 
 import {
@@ -3851,8 +3861,15 @@ describe('call', () => {
         'set RECIPE_TASK_DIR/FARMSLOT_TASK_DIR inside the checkout or pass --artifacts-dir <path>',
     });
     const explicit = tempRoot('recipe-cli-call-explicit-');
-    const pinned = await capture(() =>
+    const unbound = await capture(() =>
       handleCall([...args, '--artifacts-dir', explicit], callOptions),
+    );
+    const refusal = lastJson(unbound.stdout).error;
+    assert(isRecord(refusal));
+    assert.equal(refusal.code, 'RECIPE_TASK_UNBOUND');
+    delete process.env.FARMSLOT_TASK_DIR;
+    const pinned = await capture(() =>
+      handleCall([...args, '--artifacts-dir', explicit, '--unbound'], callOptions),
     );
     assert.equal(path.dirname(String(lastJson(pinned.stdout).summaryPath)), explicit);
   });
@@ -4777,3 +4794,97 @@ describe('the resolved context in discovery envelopes', () => {
     }
   });
 });
+
+for (const command of ['call', 'run'] as const) {
+  test(`${command} records checkout recipe ownership without binding diagnostic proof`, async (t) => {
+    const target = checkout();
+    // Normal farm preparation excludes its task scaffold from product source.
+    fs.appendFileSync(path.join(target, '.git/info/exclude'), '\n.task/\n');
+    const previousTaskFile = process.env.FARMSLOT_TASK_FILE;
+    t.after(() => {
+      if (previousTaskFile === undefined) delete process.env.FARMSLOT_TASK_FILE;
+      else process.env.FARMSLOT_TASK_FILE = previousTaskFile;
+    });
+    const taskDir = path.join(target, '.task', 'fix', 'recipe-owner');
+    const contract = builtinTerminalContract('dev');
+    const handoff = buildHandoffMetadata({
+      attemptId: 'finished-recipe-owner',
+      surface: 'farmslot',
+      project: 'fixture',
+      flow: 'dev',
+      title: 'Own checkout recipe evidence',
+      sourceKind: 'text',
+      terminalContract: contract,
+    });
+    const task = await writeTaskDir({
+      taskDir,
+      taskMarkdown: '# Fixture task\n',
+      checklistMarkdown: null,
+      handoff,
+      terminalContract: contract,
+    });
+    process.env.FARMSLOT_TASK_FILE = task.taskDocument;
+    delete process.env.RECIPE_TASK_DIR;
+    delete process.env.FARMSLOT_TASK_DIR;
+    const common = ['--adapter', 'web', '--target', target, '--heal', 'off', '--json'];
+    const result = await capture(() =>
+      command === 'call'
+        ? handleCall(['shop.ping', 'mode=fast', ...common], callOptions)
+        : handleRun(
+            [recipeFile(target, { done: { action: 'end', status: 'pass' } }), ...common],
+            runOptions,
+          ),
+    );
+    assert.equal(result.value, 0, [...result.stderr, ...result.stdout].join('\n'));
+    const root = path.join(target, 'temp', 'recipe', command === 'call' ? 'calls' : 'runs');
+    const buckets = fs.readdirSync(root);
+    assert.equal(buckets.length, 1);
+    const invocation: unknown = JSON.parse(
+      fs.readFileSync(path.join(root, buckets[0]!, 'recipe-invocation.json'), 'utf8'),
+    );
+    assert(isRecord(invocation) && typeof invocation.recipeRunId === 'string');
+    const file = path.join(taskDir, 'artifacts/recipe-ownership', invocation.recipeRunId + '.json');
+    assert.equal(
+      fs.existsSync(file),
+      true,
+      'SDK records the task receipt before producing recipe evidence',
+    );
+    const owner: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert(isRecord(owner));
+    assert.equal(owner.schemaVersion, 1);
+    assert.equal(owner.runId, handoff.attemptId);
+    assert.equal(owner.taskFile, '.task/fix/recipe-owner/TASK.md');
+    assert.equal(owner.recipeRunId, invocation.recipeRunId);
+    assert.equal(
+      owner.relative,
+      path.posix.join('temp/recipe', command === 'call' ? 'calls' : 'runs', buckets[0]!),
+    );
+    assert.equal(
+      parseRecipeArtifactOwner({ ...owner, unknownProtection: true }),
+      null,
+      'unknown ownership metadata does not authorize cleanup',
+    );
+    assert.equal(
+      fs.existsSync(path.join(taskDir, 'artifacts', 'acceptance-status.json')),
+      false,
+      'diagnostic ownership does not register a task proof',
+    );
+    const reads = t.mock.method(fsPromises, 'readdir');
+    const inventory = await recipeArtifactOperation({
+      kind: 'inventory',
+      repo: target,
+      runId: handoff.attemptId,
+      taskFiles: ['.task/fix/recipe-owner/TASK.md'],
+      fileList: path.join(target, 'retention-files'),
+      maxBytes: 1024 * 1024,
+    });
+    assert(Array.isArray(inventory));
+    assert.equal(inventory.length, 1);
+    const globalRoots = ['calls', 'runs'].map((kind) => path.join(target, 'temp', 'recipe', kind));
+    assert.equal(
+      reads.mock.calls.filter((call) => globalRoots.includes(String(call.arguments[0]))).length,
+      0,
+      'release lookup never enumerates slot-wide recipe history',
+    );
+  });
+}

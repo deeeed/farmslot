@@ -391,6 +391,8 @@ Options:
   --library <name=path>          Override a recipe library (default: [])
   --target <path>                Checkout to execute against
   --artifacts-dir <path>         Artifact directory for this execution
+  --unbound                      Diagnostic execution without task acceptance; task
+                                 directory variables must be unset
   --action-manifest <path>       Select an action manifest
   --heal <policy>                Healing policy (choices: "off", "infra-only", "auto")
   --hud <mode>                   Evidence HUD (choices: "show", "hide")
@@ -588,6 +590,8 @@ Options:
   --library <name=path>          Override a recipe library (default: [])
   --target <path>                Checkout to execute against
   --artifacts-dir <path>         Artifact directory for this execution
+  --unbound                      Diagnostic execution without task acceptance; task
+                                 directory variables must be unset
   --action-manifest <path>       Select an action manifest
   --heal <policy>                Healing policy (choices: "off", "infra-only", "auto")
   --hud <mode>                   Evidence HUD (choices: "show", "hide")

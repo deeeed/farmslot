@@ -96,6 +96,7 @@ export type {
 } from '@farmslot/recipe-runner';
 
 /** Node-only retained package reader; portable validation lives at ./evidence. */
+export type { SourceFingerprintInputs } from './types.js';
 export {
   readRecordedEvidencePackage,
   type RecordedEvidencePackageReadCheck,

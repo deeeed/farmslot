@@ -140,11 +140,24 @@ This is the only layout the task writer produces. One flow keeps its own pairing
   assets/                          ticket attachments
   artifacts/                       worker output: reports, recipes, evidence; sandbox.json readiness record
     acceptance-status.json         acceptance-criteria ledger; written by `farmslot-agent ac` and recipe runs
+    task-actions/                  task-local executable inputs retained with recipe proof
+      manifests/*.json             action-manifest-v1 declarations
+      actions/**                   implementations and their contained helpers
   subtasks/                        child checklist units, written only by mark sub
     index.json                     registry of registered units (id, parent step, paths, source digests)
     <id>.md                        child checklist, materialized from a skill, template, or inline text
     <id>-SIGNAL.json               child signal (WorkerSignal + the parent link)
 ```
+
+## Typed path authority and task actions
+
+`@farmslot/protocol/task-layout` owns the typed task-relative paths and references to their file-format contracts. Gateway staging, mirror, retention and family inheritance consume this catalog for task-local action inputs. Schema references reuse the existing payload owners and validators.
+
+Task action manifests live at `artifacts/task-actions/manifests/`, with implementations and helpers under `artifacts/task-actions/actions/`. This is the single active action root. The full captured input tree and its recorded library digest travel with the proof; publication refuses missing or changed implementations and names the affected actions.
+
+A historical follow-up may have no captured inputs at the canonical location. Its `inputs/inherited-context.json` then carries `taskActionInputGaps`: the source run, canonical path, action names grouped under their recorded library digest, and `reauthor-and-revalidate` with `proofReuseEligible: false`. The task can start and retains the original acceptance obligations, but cannot inherit that proof or select its old evidence package as fresh proof. The worker must create canonical inputs and execute new validation. A digest mismatch or damaged captured file remains a hard refusal.
+
+Old root-layout files and publication decisions remain immutable and readable as historical artifacts. They are not an alternate implementation root. Inherited task files retain the existing read-only archive and owner-writable delivery policy. Task actions are named in the run report for manual harness triage.
 
 ## Producers and consumers
 
@@ -304,7 +317,7 @@ Both surfaces produce the same task directory. Without the control plane (an eng
 
 | Layer                     | Producer                                  | Files                                                                                                                                                                                                                                                                                                                                                                                                           | Surfaces                                                                                                   |
 | ------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Worker outputs            | the agent following `CHECKLIST.md`        | outcome file (`pr-description.md`, `report.md`, `no-change-report.md`), `learnings.md`, `recipe.json`, `recipe-run/`, `recipe-coverage.md`, `recipe-quality.json`, `evidence-manifest.json`, `validation-summary.{json,md}`, before/after media, tool logs (`coverage.log`, `jest.log`, …); `subtasks/index.json`, `subtasks/<id>.md`, `subtasks/<id>-SIGNAL.json` through `mark sub`                           | both, same names                                                                                           |
+| Worker outputs            | the agent following `CHECKLIST.md`        | outcome file (`pr-description.md`, `report.md`, `no-change-report.md`), `learnings.md`, `recipe.json`, `recipe-runs/<attempt>/`, `recipe-coverage.md`, `recipe-quality.json`, `evidence-manifest.json`, `validation-summary.{json,md}`, before/after media, tool logs (`coverage.log`, `jest.log`, …); `subtasks/index.json`, `subtasks/<id>.md`, `subtasks/<id>-SIGNAL.json` through `mark sub`                | both, same names                                                                                           |
 | Harness readiness records | the project harness during preparation    | `sandbox.md`, `doctor-fix.json`, `status.json`, `launch-verify.txt`, `fixtures-set.txt`, `verify.json`; task-local provider lock                                                                                                                                                                                                                                                                                | skill today; the farm prepares the same environment in `preflight.sh` without leaving these records (open) |
 | Gateway-owned             | the gateway, on the orchestrator copy     | `diff.txt`, `diff.txt.previous.*`, `diff-stat.json`, `session-metrics.json`, `workflow.mmd`, `pr-package.json`, `pr-package.md`, `publication-gate-<slug>.md` (slug: letters, digits, dashes), and per review round `<n>` (digits): `self-review-<n>/`, `self-review-<n>.json`, `self-review-<n>.md`, `independent-review-<n>/`, `independent-review-<n>.json`, `independent-review-<n>.md`, `review-loop-<n>/` | Farmslot only                                                                                              |
 | Review-loop outputs       | reviewer roles on the slot, change ledger | `review-feedback.<context>.md`, `review-result.<context>.json`, `iteration-diff*.{json,txt}`                                                                                                                                                                                                                                                                                                                    | Farmslot only                                                                                              |
@@ -367,3 +380,11 @@ inferred completed run. A watch retains its bound run through task-file cleanup.
 Task ownership accepts the recorded `checkoutRoot` or `identity.target` exactly,
 after realpath normalization. This lets a registered nested app and its checkout
 inspect their bound task without treating sibling paths as the same app.
+
+### Checkout recipe artifact ownership
+
+After writing its canonical invocation, the SDK records `<task>/artifacts/recipe-ownership/<recipeRunId>.json` for checkout-local `temp/recipe/calls/<call>` and `temp/recipe/runs/<attempt>` packages. It records schema version 1, the initialized task's `runId`, checkout-relative `taskFile` and bucket path, and the invocation's `recipeRunId`. This attributes diagnostic output without registering acceptance claims or selecting task proof. Release reads only that task's receipts, never the slot-wide recipe history, and verifies the bucket still contains the named invocation.
+
+Full release and direct terminal teardown collect only receipts matching their terminal, non-reloadable task/run owner, before publishing slot readiness. Direct teardown preserves task inputs and runner observations. Automatic cleanup that retains a failed checkout or local work also retains its recipe output; explicit non-replay reclamation can collect it. It retains all owned package bytes in the private run archive, then rechecks the release fence, task identity and package snapshot before removal. `keepWork`, protected publication/replay states, foreign or unknown receipts, links, nested checkouts, and changed evidence preserve the affected source. Legacy output without ownership is not reassigned by timestamps or filenames.
+
+The receipt codec and node batch transport live at `@farmslot/recipe-runner/runtime/artifact-owner`. The SDK's artifact writer and Gateway's existing scaffolding collector are its consumers. No CLI command, flag, RPC method or proof-binding policy is added. Calls without an initialized worker identity remain unowned and are preserved.

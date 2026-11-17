@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 
 import { isTicketMarkerCommit } from '../../../services/gateway/src/run-completion/baseline-debug-marker.js';
 import {
@@ -95,14 +95,17 @@ test('fixture is a direct marker-only child, followed by a separate fix', async 
   assert.equal(fixtureGit(repo, 'show', `${headSha}:source.mjs`).includes('BUG_MARKER'), false);
 });
 
-test('console.log prescribed by the template reaches the gateway and is refused', async (t) => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'marker-console-'));
+/**
+ * Run the whole contract against a template that prescribes `call`, so the
+ * canary keeps measuring what it was built to measure: whether the form the
+ * template tells the worker to write is the form the gateway admits.
+ */
+async function markerContractForTemplateCall(t: TestContext, call: string) {
+  const dir = await mkdtemp(path.join(tmpdir(), 'marker-form-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  const changed = template.replace('DevLogger.log', 'console.log');
+  const changed = template.replace('DevLogger.log', call);
   const cook = path.join(dir, 'cook');
-  const { baseSha, markerSha, patch } = await createMarkerRepo(cook, markerTemplateStep(changed));
-  assert.match(patch, /\+  console\.log\('\[MANUAL-000180\] BUG_MARKER: sum subtracts'\)$/);
-  assert.equal(await isTicketMarkerCommit(patch, baseSha, markerSha, MARKER_TICKET), false);
+  const direct = await createMarkerRepo(cook, markerTemplateStep(changed));
   const templates = path.join(cook, 'references/templates/fix-bug');
   await mkdir(templates, { recursive: true });
   await writeFile(path.join(templates, 'mobile.md'), changed);
@@ -114,7 +117,44 @@ test('console.log prescribed by the template reaches the gateway and is refused'
   });
   const check = await runMarkerContract(path.join(dir, 'evidence'));
   const fixture = JSON.parse(await readFile(path.join(check.evidence!, 'fixture.json'), 'utf8'));
+  return { direct, check, fixture };
+}
+
+test('console.log prescribed by the template is admitted end to end', async (t) => {
+  // This case used to assert the opposite, pinning the gateway to DevLogger.log
+  // alone. That is what refused every real marker: the Terminal template
+  // prescribes console.log and a Mobile file without a logger must add its
+  // import, so no template could produce a marker the gateway accepted. The
+  // canary's job is template/gateway AGREEMENT, so console.log now has to pass.
+  const { direct, check, fixture } = await markerContractForTemplateCall(t, 'console.log');
+  assert.match(direct.patch, /\+  console\.log\('\[MANUAL-000180\] BUG_MARKER: sum subtracts'\)$/);
+  assert.equal(
+    await isTicketMarkerCommit(direct.patch, direct.baseSha, direct.markerSha, MARKER_TICKET),
+    true,
+  );
   assert.match(fixture.patch, /\+  console\.log\(/);
+  assert.equal(
+    await isTicketMarkerCommit(fixture.patch, fixture.baseSha, fixture.markerSha, MARKER_TICKET),
+    true,
+  );
+  assert.equal(check.status, 'pass', check.error);
+});
+
+test('a logger no template prescribes still reaches the gateway and is refused', async (t) => {
+  // The drift this canary exists to catch: a template edited to a form the
+  // gateway does not admit must fail the publish, with the same refusal. This
+  // one still RUNS — the gateway refuses it for logging through a property
+  // chain rather than one of the three prescribed logger names, not because the
+  // fixture cannot execute it.
+  const { direct, check, fixture } = await markerContractForTemplateCall(
+    t,
+    'globalThis.console.log',
+  );
+  assert.match(direct.patch, /\+  globalThis\.console\.log\(/);
+  assert.equal(
+    await isTicketMarkerCommit(direct.patch, direct.baseSha, direct.markerSha, MARKER_TICKET),
+    false,
+  );
   assert.equal(
     await isTicketMarkerCommit(fixture.patch, fixture.baseSha, fixture.markerSha, MARKER_TICKET),
     false,

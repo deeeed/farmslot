@@ -21,6 +21,7 @@ import {
   type RunDecision,
   type RunGetResult,
   type RunListResult,
+  type RunListRow,
   type RunRecipeRunsForRunParams,
   type RunRecipeRunsForRunResult,
   type RunRereviewLatestHeadResult,
@@ -61,6 +62,7 @@ import { getResourceWorkspaceKey } from '../../resource-cache.js';
 import { type AppState, getState, subscribe } from '../../state.js';
 import { copyTextToClipboard } from '../../utils/clipboard.js';
 import { progressReadNotice } from '../../utils/progress-read-status.js';
+import { resourcePresentationChanged } from '../../utils/resource-presentation.js';
 import { hashParams, navigateHash } from '../../utils/url-state.js';
 import {
   type AcceptanceEvidenceOpen,
@@ -196,14 +198,18 @@ import {
 
 @customElement('run-detail')
 export class RunDetail extends RunDetailState {
-  @state() private _runObservation: ResourceQueryState<RunGetResult> = { status: 'loading' };
-  @state() private _recipeObservation: ResourceQueryState<RunRecipeRunsForRunResult> = {
+  @state({ hasChanged: resourcePresentationChanged })
+  private _runObservation: ResourceQueryState<RunGetResult> = { status: 'loading' };
+  @state({ hasChanged: resourcePresentationChanged })
+  private _recipeObservation: ResourceQueryState<RunRecipeRunsForRunResult> = {
     status: 'loading',
   };
-  @state() private _progressObservation: ResourceQueryState<TaskProgressResult> = {
+  @state({ hasChanged: resourcePresentationChanged })
+  private _progressObservation: ResourceQueryState<TaskProgressResult> = {
     status: 'loading',
   };
-  @state() private _selectedProgressObservation: ResourceQueryState<TaskProgressResult> = {
+  @state({ hasChanged: resourcePresentationChanged })
+  private _selectedProgressObservation: ResourceQueryState<TaskProgressResult> = {
     status: 'loading',
   };
   private _viewWorkspaceKey?: string;
@@ -213,7 +219,8 @@ export class RunDetail extends RunDetailState {
   private readonly detailQuery = new ResourceQueryController<RunGetResult>(this, (state) => {
     this._runObservation = state;
   });
-  @state() private _snapshotObservation: ResourceQueryState<RunGetResult> = { status: 'loading' };
+  @state({ hasChanged: resourcePresentationChanged })
+  private _snapshotObservation: ResourceQueryState<RunGetResult> = { status: 'loading' };
   private readonly snapshotQuery = new ResourceQueryController<RunGetResult>(this, (state) => {
     this._snapshotObservation = state;
   });
@@ -224,9 +231,7 @@ export class RunDetail extends RunDetailState {
     },
   );
   private readonly siblingQuery = new ResourceQueryController<RunListResult>(this, (state) => {
-    this.siblings = sortRunsForFamilyView(
-      (state.data?.runs ?? []).filter((run) => run.id !== this.runId),
-    );
+    this._applySiblings(state.data?.runs ?? []);
   });
   private readonly progressQuery = new ResourceQueryController<TaskProgressResult>(
     this,
@@ -261,7 +266,11 @@ export class RunDetail extends RunDetailState {
     ) {
       this.syncRun(getState());
     }
-    if (changed.has('_recipeObservation')) this._acceptRecipeObservation(this._recipeObservation);
+    if (
+      changed.has('_recipeObservation') ||
+      (changed.has('_now') && this.recipeQuery.failingSince !== undefined)
+    )
+      this._acceptRecipeObservation(this._recipeObservation);
     if (changed.has('_progressObservation') || (changed.has('_now') && this._taskProgressLoading))
       this._acceptProgressObservation();
     if (changed.has('_selectedProgressObservation')) this._acceptSelectedProgressObservation();
@@ -389,7 +398,16 @@ export class RunDetail extends RunDetailState {
     window.addEventListener('hashchange', this._onHashChange);
     this.unsub = subscribe((s) => this._syncState(s));
     this._clock = setInterval(() => {
-      this._now = Date.now();
+      const now = Date.now();
+      const recipeGraceChanged =
+        readFailureText(this.recipeQuery, now) !== readFailureText(this.recipeQuery, this._now);
+      if (
+        this._taskProgressLoading ||
+        recipeGraceChanged ||
+        this.run?.status === 'ci-watching' ||
+        (this.run && pendingCITimeoutDecision(this.run))
+      )
+        this._now = now;
       this._maybeRefreshLiveTimeoutPrStatus();
     }, 1000);
   }
@@ -424,6 +442,8 @@ export class RunDetail extends RunDetailState {
     }
     this._syncLiveArtifacts();
     this._focusSharedPanel();
+    if (changed.has('run') && this.run)
+      this.dispatchEvent(new CustomEvent('run-detail-rendered', { bubbles: true, composed: true }));
   }
 
   private _focusSharedPanel() {
@@ -532,7 +552,9 @@ export class RunDetail extends RunDetailState {
       this._directRunUnavailable = false;
       this._directRunRefreshing = false;
       this._taskProgressLoading = false;
+      this._presentedProgressData = undefined;
       this.taskProgress = null;
+      this.liveSpend = null;
       this.acceptanceStatus = null;
       this.acceptanceCriteria = null;
       this.acceptanceStatusError = null;
@@ -1024,11 +1046,18 @@ export class RunDetail extends RunDetailState {
     return this._closingOutput || (!this.mockData && !this.detailQuery.ready);
   }
 
+  private _applySiblings(rows: RunListRow[]): void {
+    const next = sortRunsForFamilyView(rows.filter((row) => row.id !== this.runId));
+    if (
+      next.length !== this.siblings.length ||
+      next.some((row, index) => row !== this.siblings[index])
+    )
+      this.siblings = next;
+  }
+
   private fetchSiblings(run: Run): void {
     this.siblingQuery.setQuery(resourceQuery(Methods.RUN_LIST, { familyId: run.familyId }));
-    this.siblings = sortRunsForFamilyView(
-      (this.siblingQuery.state.data?.runs ?? []).filter((row) => row.id !== run.id),
-    );
+    this._applySiblings(this.siblingQuery.state.data?.runs ?? []);
   }
 
   private _onHashChange = () => {
@@ -1248,12 +1277,18 @@ export class RunDetail extends RunDetailState {
     this._acceptProgressObservation();
   }
 
+  private _presentedProgressData?: TaskProgressResult;
+
   private _acceptProgressObservation(): void {
     if (this.mockData) return;
     const query = this.progressQuery.belongsToWorkspace ? this.progressQuery : undefined;
     const data = query?.state.data;
     const ledger = acceptanceLedgerRead(query, this._now);
-    this.taskProgress = taskProgressWithStepDetails(data?.structured, data?.markdown) ?? null;
+    if (data !== this._presentedProgressData || !data) {
+      this._presentedProgressData = data;
+      this.taskProgress = taskProgressWithStepDetails(data?.structured, data?.markdown) ?? null;
+    }
+    this.liveSpend = data?.liveSpend ?? null;
     this.acceptanceStatus = data?.acceptanceStatus ?? null;
     this.acceptanceCriteria = data?.acceptanceCriteria ?? null;
     this.acceptanceStatusError = ledger.error;
@@ -1793,6 +1828,7 @@ export class RunDetail extends RunDetailState {
       prStatus: this.prStatus,
       siblings: this.siblings,
       taskProgress: this.taskProgress,
+      liveSpend: this.liveSpend,
       taskProgressNotice: progressReadNotice(
         this._progressObservation,
         gateway.connectionState === 'connected',
@@ -1888,7 +1924,7 @@ export class RunDetail extends RunDetailState {
           poking: this._ciPoking,
           pokeStatus: this._ciPokeStatus,
           onPokeNow: () => void this._pokeCIWatch(run.id),
-          now: this._now,
+          now: Date.now(),
         }),
       _renderRunEvidence: (run) => this._renderRunEvidence(run),
       _renderEvidenceOverlay: (run) => renderEvidenceLightbox(this._runEvidenceContext(run)),

@@ -53,7 +53,8 @@ export async function fetchSlotViewRepoPath(view: SlotView, machine: string): Pr
 
 /** Binds the slot's resources; the next list may open the resource panel, as a slot load did. */
 function bindSlotViewResources(view: SlotView): void {
-  view._resourcesMayOpenPanel = true;
+  // The URL owns visibility; a late resource list must not open and then close it.
+  view._resourcesMayOpenPanel = Boolean(view._requestedResourceFromUrl());
   view._resourcesQuery.setQuery(
     resourceQuery<ResourceListResult>(Methods.RESOURCE_LIST, { slotId: view.slotId }),
   );

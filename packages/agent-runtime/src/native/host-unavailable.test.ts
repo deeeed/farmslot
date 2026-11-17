@@ -7,6 +7,7 @@ import test from 'node:test';
 
 import { Methods } from '@farmslot/protocol/rpc';
 
+import { NativeSessionClient } from './client.js';
 import {
   isNativeHostNotReadyError,
   isNativeHostUnavailableError,
@@ -26,15 +27,14 @@ const sourceUnavailable = () =>
 
 /** Only what each route reaches before it fails; everything else is unused here. */
 function clientThatCannotReachItsHost(failure: Error) {
-  return {
-    executionNodeId: 'local',
-    list: async () => {
+  return new (class extends NativeSessionClient {
+    override async list(): Promise<never> {
       throw failure;
-    },
-    ensureWorker: async () => {
+    }
+    override async ensureWorker(): Promise<never> {
       throw failure;
-    },
-  } as never;
+    }
+  })('/unused-native-host-fixture');
 }
 
 const worker = (failure: Error) =>

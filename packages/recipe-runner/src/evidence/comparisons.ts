@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import fs from 'node:fs';
 import { promisify } from 'node:util';
 
 import {
@@ -9,6 +10,12 @@ import {
 } from '@farmslot/protocol';
 
 import { copyFileWithinRoots, statFileWithinRoot } from '../core/path.js';
+import {
+  currentSourceWitness,
+  preparedSourceValueAsync,
+  sourceGitRoot,
+  sourceWitnessSupportsOutputs,
+} from '../runtime/source-witness.js';
 
 import { validateRecordedEvidencePackage } from './package.js';
 import { readRecordedEvidencePackage } from './read-package.js';
@@ -20,6 +27,41 @@ export async function observeRecipeCaptureSource(projectRoot: string): Promise<{
   sourceCommit?: string;
   sourceDirty?: boolean;
 }> {
+  const view = currentSourceWitness();
+  const root = sourceGitRoot(projectRoot);
+  if (
+    !view?.reusable ||
+    !root ||
+    root !== fs.realpathSync(projectRoot) ||
+    !view.supportedRoots.has(root)
+  )
+    return freshRecipeCaptureSource(projectRoot);
+  const outputs = view.supportedRoots.get(root)!;
+  view.checkpoint('capture-source');
+  if (!sourceWitnessSupportsOutputs(root, outputs)) return freshRecipeCaptureSource(projectRoot);
+  return preparedSourceValueAsync(
+    projectRoot,
+    { kind: 'capture-source' },
+    () => freshRecipeCaptureSource(projectRoot),
+    (value) => {
+      if (typeof value !== 'object' || value === null) return undefined;
+      if ('sourceCommit' in value && typeof value.sourceCommit !== 'string') return undefined;
+      if ('sourceDirty' in value && typeof value.sourceDirty !== 'boolean') return undefined;
+      return {
+        ...('sourceCommit' in value && typeof value.sourceCommit === 'string'
+          ? { sourceCommit: value.sourceCommit }
+          : {}),
+        ...('sourceDirty' in value && typeof value.sourceDirty === 'boolean'
+          ? { sourceDirty: value.sourceDirty }
+          : {}),
+      };
+    },
+  );
+}
+
+async function freshRecipeCaptureSource(
+  projectRoot: string,
+): Promise<{ sourceCommit?: string; sourceDirty?: boolean }> {
   try {
     const { stdout } = await execute(
       'git',

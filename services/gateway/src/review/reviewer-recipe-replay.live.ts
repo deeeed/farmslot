@@ -41,8 +41,25 @@ test('a passing review can replay a recipe without changing its reviewed worker 
     driver,
     `import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { resolveRecipeExecutionArtifacts } from ${JSON.stringify(pathToFileURL(path.join(farmslotRoot(), 'packages/recipe-cli/src/harness/commands/run.ts')).href)};
+import { setHarnessContext } from ${JSON.stringify(pathToFileURL(path.join(farmslotRoot(), 'packages/recipe-cli/src/harness/context-state.ts')).href)};
+import { sourceSnapshot } from ${JSON.stringify(pathToFileURL(path.join(farmslotRoot(), 'packages/recipe-cli/src/harness/execution-provenance.ts')).href)};
 const args = process.argv.slice(2);
+setHarnessContext({
+  target: {value: args[0], source: 'flag', detail: '--target'},
+  project: {
+    name: 'review-replay', source: 'flag', root: args[0],
+    configPath: path.join(args[0], 'project.json'), checkoutRoot: args[0],
+    runtimeDir: 'temp/recipe/runtime', farmRuntimeDir: 'runtime', artifactDir: args[1],
+    provider: {
+      ref: import.meta.url, module: fileURLToPath(import.meta.url),
+      export: 'createProvider', root: path.dirname(fileURLToPath(import.meta.url)), authority: 'configured',
+      identity: sourceSnapshot(path.dirname(fileURLToPath(import.meta.url))),
+    },
+    libraries: [],
+  },
+});
 const flag = args.indexOf('--artifacts-dir');
 const explicit = flag < 0 ? undefined : args[flag + 1];
 const { taskDir, artifactsDir } = resolveRecipeExecutionArtifacts(args[0], explicit, {
@@ -60,7 +77,15 @@ console.log(JSON.stringify({ taskDir, artifactsDir }));
   const rule = reviewerScratchRule(run.id, 'full-live');
   const wrapper = /```sh\n([\s\S]*?)\n```/.exec(rule)?.[1];
   // Before the fix the contract supplies no wrapper, so the copied worker command binds the task.
-  const command = [process.execPath, '--import', import.meta.resolve('tsx'), driver, repo]
+  const taskStorage = path.relative(repo, path.resolve(task, '../..'));
+  const command = [
+    process.execPath,
+    '--import',
+    import.meta.resolve('tsx'),
+    driver,
+    repo,
+    taskStorage,
+  ]
     .map(shellQuote)
     .join(' ');
   const { stdout } = await execFileAsync(

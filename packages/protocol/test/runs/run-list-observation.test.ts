@@ -81,3 +81,16 @@ test('an unsupported gateway remains visible as unsupported even when it supplie
   assert.equal(result.status, 'unsupported');
   assert.equal(result.data?.runs.length, 1);
 });
+
+test('metadata-only checks reuse merged run data while advancing the read metadata', () => {
+  const active = snapshot('ready', [row('same', 'monitoring', '2026-11-17T00:00:00Z')], 10);
+  const history = snapshot('ready', [], 10);
+  const before = mergeRunListObservations(active, history);
+  const after = mergeRunListObservations(
+    { ...active, observedAt: 20 },
+    { ...history, observedAt: 20 },
+  );
+  assert.equal(after.data, before.data);
+  assert.equal(after.observedAt, 20);
+  assert.notEqual(after, before);
+});

@@ -10,6 +10,7 @@ import {
   resolvedRecipeArtifactPath,
 } from '@farmslot/protocol';
 
+import { recordRecipeArtifactOwner } from '../../bin/recipe-artifact-owner.cjs';
 import {
   assertRecipeArtifactDestinationAvailable,
   occupiedRecipeArtifactsError,
@@ -83,6 +84,7 @@ export class JsonArtifactWriter implements ArtifactWriter {
 
   async writeInvocation(invocation: RecipeInvocationDocument): Promise<void> {
     await writeJsonWithinRoot(this.#artifactsDir, 'recipe-invocation.json', invocation);
+    await recordRecipeArtifactOwner(this.#artifactsDir, invocation.recipeRunId);
     this.register({
       path: 'recipe-invocation.json',
       type: 'json',

@@ -29,6 +29,8 @@ export function connectSlotView(view: SlotView): void {
   if (saved && EDITORS.some((editor) => editor.id === saved)) view._editor = saved as EditorId;
 
   restoreSlotViewLayout(view);
+  // A pinned run's drawer is already known before any run/recipe read finishes.
+  if (view._getHashParam('runId')) view._reviewPanelOpen = true;
   if (view._getHashParam('activity') === 'info') {
     view._activity = 'info';
     view._sidebarOpen = true;

@@ -6,14 +6,21 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { gitDiffArgs } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
+import { preparedSourceValue } from '@farmslot/recipe-runner';
 
 import {
   checkFingerprintBaseline,
   type FingerprintCheck,
   recordFingerprintBaseline,
 } from './fingerprint-baseline.js';
+
+const implementation = createHash('sha256')
+  .update(fs.readFileSync(fileURLToPath(import.meta.url)))
+  .update(fs.readFileSync(fileURLToPath(new URL('../package.json', import.meta.url))))
+  .digest('hex');
 
 export interface SourceInputs {
   /** Source files and directories relative to the project root. */
@@ -23,6 +30,16 @@ export interface SourceInputs {
 }
 
 export function sourceFingerprint(projectRoot: string, inputs: SourceInputs): string {
+  return preparedSourceValue(
+    projectRoot,
+    { kind: 'mobile-source', implementation, inputs },
+    () => freshSourceFingerprint(projectRoot, inputs),
+    (value) => (typeof value === 'string' ? value : undefined),
+    inputs.envFiles,
+  );
+}
+
+function freshSourceFingerprint(projectRoot: string, inputs: SourceInputs): string {
   const hash = createHash('sha256');
   const observed = sourceStatus(projectRoot, inputs.paths);
   const head = observed?.head ?? gitHead(projectRoot);

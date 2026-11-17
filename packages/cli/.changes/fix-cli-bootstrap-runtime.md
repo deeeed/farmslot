@@ -1,0 +1,1 @@
+- Avoid interpreter-copy I/O in the CLI managed-runtime bootstrap fixture while preserving runtime, signal and exit assertions.

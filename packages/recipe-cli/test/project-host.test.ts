@@ -7,6 +7,7 @@ import { test, type TestContext } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import type { ProjectConfig } from '@farmslot/protocol';
+import { currentSourceWitness } from '@farmslot/recipe-runner';
 
 import { runTaskDir } from '../src/harness/acceptance-ledger.js';
 import { harnessAdapters } from '../src/harness/adapters.js';
@@ -75,8 +76,36 @@ const invocationContract: CommandContract = {
   minimumPositionals: 1,
 };
 
+test('unbound execution refuses configured task storage outside temp/tasks', async (t) => {
+  const options = fixture(t);
+  const project = options.projects[0]!;
+  project.config.paths.artifactDir = '.task';
+  fs.mkdirSync(path.join(options.cwd, '.task'));
+  const previous = [process.env.RECIPE_TASK_DIR, process.env.FARMSLOT_TASK_DIR];
+  delete process.env.RECIPE_TASK_DIR;
+  delete process.env.FARMSLOT_TASK_DIR;
+  t.after(() => {
+    for (const [index, key] of ['RECIPE_TASK_DIR', 'FARMSLOT_TASK_DIR'].entries()) {
+      if (previous[index] === undefined) delete process.env[key];
+      else process.env[key] = previous[index];
+    }
+  });
+  await withProjectRecipeHost({ ...options, command: 'run' }, async () => {
+    assert.throws(
+      () => resolveRecipeExecutionArtifacts(options.cwd, undefined, { fresh: 'runs/one' }),
+      /Task storage exists at .*\/\.task/u,
+    );
+  });
+});
+
 test('project execution leaves task attempt allocation to run/call and keeps other defaults', async (t) => {
   const options = fixture(t);
+  const previousCache = process.env.FARMSLOT_RECIPE_CACHE_DIR;
+  process.env.FARMSLOT_RECIPE_CACHE_DIR = fixture(t).cwd;
+  t.after(() => {
+    if (previousCache === undefined) delete process.env.FARMSLOT_RECIPE_CACHE_DIR;
+    else process.env.FARMSLOT_RECIPE_CACHE_DIR = previousCache;
+  });
   const previousTask = process.env.RECIPE_TASK_DIR;
   const task = path.join(options.cwd, 'temp/tasks/validation');
   fs.mkdirSync(path.join(task, 'artifacts'), { recursive: true });
@@ -87,6 +116,7 @@ test('project execution leaves task attempt allocation to run/call and keeps oth
   });
   for (const command of ['run', 'call']) {
     await withProjectRecipeHost({ ...options, command }, async ({ cli }) => {
+      assert.ok(currentSourceWitness());
       assert.equal(cli.artifactsDir, undefined);
       const destination = resolveRecipeExecutionArtifacts(options.cwd, undefined, {
         fresh: 'runs/one',
@@ -108,6 +138,7 @@ test('project execution leaves task attempt allocation to run/call and keeps oth
   }
   for (const command of ['doctor', 'launch', 'stop']) {
     await withProjectRecipeHost({ ...options, command }, async ({ cli }) => {
+      assert.equal(currentSourceWitness(), undefined);
       assert.equal(cli.artifactsDir, path.join(options.cwd, 'artifacts'));
     });
   }
@@ -725,65 +756,93 @@ for (const command of ['doctor', 'run'])
   });
 
 test('provider actions exclude explicit execution artifacts but still reject source edits', async (t) => {
-  const options = fixture(t);
-  const providerFile = path.join(options.cwd, 'provider.mjs');
-  fs.writeFileSync(
-    providerFile,
-    fs
-      .readFileSync(providerFile, 'utf8')
-      .replace(
-        'semantic: [],',
-        "semantic: ['example.ping'], adapters: async () => [{action: 'example.ping', execute: async () => ({output: {pong:true}})}],",
-      ),
-  );
-  const manifest = JSON.parse(
-    fs.readFileSync(new URL('./fixtures/proof.action-manifest.json', import.meta.url), 'utf8'),
-  );
-  manifest.actions['example.ping'] = {
-    description: 'Read provider state.',
-    execution_capabilities: ['host-read-export'],
-    examples: [{ action: 'example.ping', intent: 'Read provider state.', next: 'done' }],
-    schema: { type: 'object', properties: {}, additionalProperties: false },
-  };
-  const artifactsDir = path.join(options.cwd, 'execution-output');
-  await withProjectRecipeHost(
-    {
-      ...options,
-      command: 'run',
-      tokens: ['--artifacts-dir', artifactsDir],
-      options: { artifactsDir },
-    },
-    async ({ engine }) => {
-      const runner = await engine.createRunner('headless', manifest, {
-        actionSources: new Map(),
-        trustTaskActions: false,
-        autoHud: false,
-      });
-      const request = {
-        projectRoot: options.cwd,
-        artifactsDir,
-        recipeDocument: {
-          $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-          workflow: {
-            entry: 'ping',
-            nodes: {
-              ping: { action: 'example.ping', intent: 'Read provider state.', next: 'done' },
-              done: { action: 'end', status: 'pass' },
+  for (const packaged of [false, true]) {
+    const options = fixture(t);
+    const providerFile = packaged
+      ? path.join(options.cwd, 'node_modules/example-provider/provider.mjs')
+      : path.join(options.cwd, 'provider.mjs');
+    if (packaged) {
+      fs.mkdirSync(path.dirname(providerFile), { recursive: true });
+      fs.renameSync(path.join(options.cwd, 'provider.mjs'), providerFile);
+      fs.writeFileSync(
+        path.join(path.dirname(providerFile), 'package.json'),
+        JSON.stringify({
+          name: 'example-provider',
+          version: '1.0.0',
+          type: 'module',
+          exports: './provider.mjs',
+        }),
+      );
+      const config = options.projects[0]!.config;
+      assert.ok(config.recipe);
+      config.recipe.provider = { module: 'example-provider', package: 'example-provider' };
+    }
+    fs.writeFileSync(
+      providerFile,
+      fs
+        .readFileSync(providerFile, 'utf8')
+        .replace(
+          'semantic: [],',
+          "semantic: ['example.ping'], adapters: async () => [{action: 'example.ping', execute: async () => ({output: {pong:true}})}],",
+        ),
+    );
+    const manifest = JSON.parse(
+      fs.readFileSync(new URL('./fixtures/proof.action-manifest.json', import.meta.url), 'utf8'),
+    );
+    manifest.actions['example.ping'] = {
+      description: 'Read provider state.',
+      execution_capabilities: ['host-read-export'],
+      examples: [{ action: 'example.ping', intent: 'Read provider state.', next: 'done' }],
+      schema: { type: 'object', properties: {}, additionalProperties: false },
+    };
+    const artifactsDir = path.join(options.cwd, 'execution-output');
+    await withProjectRecipeHost(
+      {
+        ...options,
+        command: 'run',
+        tokens: ['--artifacts-dir', artifactsDir],
+        options: { artifactsDir },
+      },
+      async ({ engine }) => {
+        const runner = await engine.createRunner('headless', manifest, {
+          actionSources: new Map(),
+          trustTaskActions: false,
+          autoHud: false,
+        });
+        const request = {
+          projectRoot: options.cwd,
+          artifactsDir,
+          recipeDocument: {
+            $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+            workflow: {
+              entry: 'ping',
+              nodes: {
+                ping: { action: 'example.ping', intent: 'Read provider state.', next: 'done' },
+                done: { action: 'end', status: 'pass' },
+              },
             },
           },
-        },
-      };
-      const result = await runner.run(request);
-      assert.equal(result.status, 'pass', fs.readFileSync(result.tracePath, 'utf8'));
-      fs.appendFileSync(providerFile, '\n// Actual provider source edit.\n');
-      const changed = await runner.run({
-        ...request,
-        artifactsDir: path.join(artifactsDir, 'second'),
-      });
-      assert.equal(changed.status, 'fail');
-      assert.match(fs.readFileSync(changed.tracePath, 'utf8'), /changed after the execution plan/);
-    },
-  );
+        };
+        const result = await runner.run(request);
+        assert.equal(result.status, 'pass', fs.readFileSync(result.tracePath, 'utf8'));
+        assert.equal(
+          currentSourceWitness()?.reusable,
+          packaged,
+          JSON.stringify(currentSourceWitness()?.fallbacks),
+        );
+        fs.appendFileSync(providerFile, '\n// Actual provider source edit.\n');
+        const changed = await runner.run({
+          ...request,
+          artifactsDir: path.join(artifactsDir, 'second'),
+        });
+        assert.equal(changed.status, 'fail');
+        assert.match(
+          fs.readFileSync(changed.tracePath, 'utf8'),
+          /changed after the execution plan/,
+        );
+      },
+    );
+  }
 });
 
 test('normalized provider runtimes retain the selected platform in report identity', async (t) => {

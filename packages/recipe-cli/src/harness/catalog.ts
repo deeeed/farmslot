@@ -65,6 +65,7 @@ export function createRuntimeRecipeCatalog({
         action,
         namespace: bundledLibrary.actionNamespace,
         implementationRoot: source.implementationRoot,
+        required: source.tier === 'task',
         allowRuntimeImports:
           source.trust === 'trusted' || (source.tier === 'task' && options.trustTaskActions),
       });

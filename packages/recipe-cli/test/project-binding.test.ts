@@ -7,6 +7,7 @@ import { afterEach, beforeEach, test } from 'node:test';
 
 import { createAdapterRegistry } from '@farmslot/adapter-sdk';
 import type { ProjectConfig } from '@farmslot/protocol';
+import { withPreparedSourceWitness } from '@farmslot/recipe-runner';
 
 import { configureHarnessAdapters, harnessAdapters } from '../src/harness/adapters.js';
 import { loadProjectProvider, resolveProjectContext } from '../src/harness/context.js';
@@ -219,18 +220,23 @@ test('ambiguous apps and incompatible runtime targets refuse', async () => {
 });
 
 test('provider source drift and forged report authority refuse before import', async () => {
-  const directory = root();
-  const config = project(directory);
-  const context = await resolveProjectContext({
-    tokens: [],
-    cwd: directory,
-    projects: [{ config, root: directory }],
-    load: { env: {} },
+  process.env.FARMSLOT_RECIPE_CACHE_DIR = root();
+  await withPreparedSourceWitness(async () => {
+    const directory = root();
+    const config = project(directory);
+    const context = await resolveProjectContext({
+      tokens: [],
+      cwd: directory,
+      projects: [{ config, root: directory }],
+      load: { env: {} },
+    });
+    write(directory, 'provider.mjs', 'throw new Error("changed code must not execute");');
+    await assert.rejects(loadProjectProvider(context), { code: 'PROVIDER_SOURCE_CHANGED' });
+    await assert.rejects(loadProjectProvider(structuredClone(context)), {
+      code: 'PROVIDER_MISSING',
+    });
+    assert.equal(globals.bindingImports, 0);
   });
-  write(directory, 'provider.mjs', 'throw new Error("changed code must not execute");');
-  await assert.rejects(loadProjectProvider(context), { code: 'PROVIDER_SOURCE_CHANGED' });
-  await assert.rejects(loadProjectProvider(structuredClone(context)), { code: 'PROVIDER_MISSING' });
-  assert.equal(globals.bindingImports, 0);
 });
 
 test('a fresh binding cannot label previously imported provider code with a changed identity', async () => {

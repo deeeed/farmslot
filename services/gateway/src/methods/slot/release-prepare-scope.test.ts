@@ -178,13 +178,21 @@ const fakeMutation: typeof parking.executeParkedGitMutation = async (
   _options,
   _capture,
   command,
-) => execForTest(vars, command);
+) => ({ ...(await execForTest(vars, command)), state: 'fixture' });
+const fakeSavedMutation: typeof parking.executeSavedGitMutation = async (
+  vars,
+  _options,
+  _capture,
+  _expectedState,
+  command,
+) => ({ ...(await execForTest(vars, command)), state: 'fixture' });
 mock.module('../../host-services/parked-work.js', {
   namedExports: {
     ...parking,
     parkGitWork: fakePark,
     readParkedGitWork: fakeInventory,
     executeParkedGitMutation: fakeMutation,
+    executeSavedGitMutation: fakeSavedMutation,
   },
 });
 

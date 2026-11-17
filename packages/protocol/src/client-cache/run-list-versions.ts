@@ -9,7 +9,7 @@ import {
   sortRunList,
 } from '../runs/run-list-filter.js';
 
-import type { ResourceReadStamp } from './keys.js';
+import { canonicalResourceJson, type ResourceReadStamp } from './keys.js';
 import { resourceQuery } from './registry.js';
 import { type RunDetailTarget, runDetailTarget } from './run-details.js';
 import type { ResourceRowsMerge, StoredResourceRows } from './store.js';
@@ -95,6 +95,7 @@ export function isRunListCollectionRead(params: unknown): boolean {
  */
 export class RunListCollection {
   private order: string[] = [];
+  private readonly views = new Map<string, RunListResult>();
   private readonly rows = new Map<string, HeldRow>();
   /** Rows removed from memory whose deletion no merge has stored yet. */
   private readonly unstoredDeletes = new Set<string>();
@@ -159,6 +160,7 @@ export class RunListCollection {
     const reply = await this.options.request({ versions: true, ...flags }, signal);
     if (signal.aborted) throw new Error('Run list read superseded');
     const result = reply.data;
+    this.views.clear();
     const versions = result.versions ?? [];
     const listed = new Map(versions.map(({ id, version }) => [id, version]));
     // Rule 3: only the version reply decides which rows exist.
@@ -216,6 +218,7 @@ export class RunListCollection {
   }
 
   private put(run: RunListRow, version: string): void {
+    this.views.clear();
     const projection = runListProjection(run);
     this.rows.set(run.id, {
       version,
@@ -280,6 +283,7 @@ export class RunListCollection {
 
   /** A cold start's stored collection; it stays stale until a version reply lists every row. */
   hydrate(stored: StoredResourceRows): boolean {
+    this.views.clear();
     if (!stored.entry || this.held) return this.held;
     this.data = stored.entry.data as RunListCollectionData;
     // A version reply carries each summary exactly when it was asked for.
@@ -307,6 +311,9 @@ export class RunListCollection {
   /** A run.list view: rows and totals from projections; undefined when it needs its own read. */
   view(params: RunListParams): RunListResult | undefined {
     if (!this.data) return undefined;
+    const key = canonicalResourceJson(params);
+    const held = this.views.get(key);
+    if (held) return held;
     const projections = this.order.flatMap((id) => {
       const row = this.rows.get(id);
       return row ? [row.projection] : [];
@@ -317,7 +324,7 @@ export class RunListCollection {
       return body ? [body] : [];
     });
     if (!params.includeFamilySummaries && !params.includeProjectAnalytics)
-      return { runs, totalCount: page.totalCount };
+      return this.rememberView(key, { runs, totalCount: page.totalCount });
     // Summaries read payload values the list trim drops, so only the gateway computes them.
     const flags = runListSummaryFlags(params);
     if (
@@ -329,13 +336,20 @@ export class RunListCollection {
       !this.data.summaryMeta
     )
       return undefined;
-    return {
+    return this.rememberView(key, {
       runs,
       totalCount: page.totalCount,
       summaryMeta: this.data.summaryMeta,
       ...(params.includeFamilySummaries ? { familySummaries: this.data.familySummaries } : {}),
       ...(params.includeProjectAnalytics ? { projectAnalytics: this.data.projectAnalytics } : {}),
-    };
+    });
+  }
+
+  private rememberView(key: string, view: RunListResult): RunListResult {
+    if (this.views.size >= 100 && !this.views.has(key))
+      this.views.delete(this.views.keys().next().value!);
+    this.views.set(key, view);
+    return view;
   }
 
   /** Every live run's projection, newest first; undefined without a collection. */
@@ -361,6 +375,7 @@ export class RunListCollection {
 
   /** Forget everything: a new store, owner or refusal. A running read is abandoned. */
   clear(): void {
+    this.views.clear();
     this.inflight?.controller.abort();
     this.inflight = undefined;
     this.order = [];

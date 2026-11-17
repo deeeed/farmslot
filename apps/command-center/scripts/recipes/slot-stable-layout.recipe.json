@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Stable live slot layout during data arrivals and refresh",
+  "description": "Read only. Select a connected owned Agent Chrome tab on a live slot/run and authenticated automation profile. FARMSLOT_SLOT_LAYOUT_{TAB,SLOT,RUN,OUTPUT}, FARMSLOT_CDP_PORT. Captures actual browser video, reads run.get, reloads the page, and verifies geometry and mounted element identities. No worker, lifecycle action or UI state injection. The reload observer is installed before document loading; a narrow health-strip overflow check uses real wheel input and verifies hidden scrollbars keep the text readable. The same samples assert no flashing in observed sub-second read cycles, compact themed notice styling and Load run matching History. Refresh notices wait one second; real errors remain visible during retry.",
+  "workflow": {
+    "entry": "stable-slot",
+    "nodes": {
+      "stable-slot": {
+        "action": "command",
+        "cmd": "node --import tsx apps/command-center/scripts/prove-slot-stable-layout.mjs",
+        "timeout_ms": 180000,
+        "intent": "Prove stable geometry from first paint, no fast-refresh flashing, styled notices/Load run and readable scrolling health information.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

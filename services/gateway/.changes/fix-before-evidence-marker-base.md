@@ -1,0 +1,2 @@
+- Before evidence may match any pre-work base the run recorded, not only the review snapshot's base, so a baseline recorded on the head the worker was dispatched from is no longer refused after a review loop moves that snapshot forward.
+- A BUG_MARKER baseline is admitted in the forms the fix-bug templates prescribe — `DevLogger.log`, `Logger.log`, `console.log` — together with the logger import a file without a logger has to add.

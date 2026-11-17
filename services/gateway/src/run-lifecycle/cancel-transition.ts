@@ -321,7 +321,10 @@ export function defaultCancelCollaborators({
           releaseBlocker = await restoreFinishedBlindTrialGit(run);
           if (releaseBlocker) await recordSlotTeardownSkipped(run, releaseBlocker);
         }
-        const kept = await releaseRunSlotOwnership(run, fence, releaseBlocker, { keepForReplay });
+        const kept = await releaseRunSlotOwnership(run, fence, releaseBlocker, {
+          keepForReplay,
+          collectRecipes: !keepForReplay,
+        });
         if (releaseBlocker) return { skipped: releaseBlocker };
         if (!kept) return { skipped: 'Slot ownership changed during cancellation' };
         const blindCandidate = Boolean(run.engineState?.evalExperiment?.blind?.firstOutput);
