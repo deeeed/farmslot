@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -96,6 +96,9 @@ test('the consumer command fails on real input drift and on missing documentatio
   const refused = spawnSync(process.execPath, [script, file], { encoding: 'utf8' });
   assert.equal(refused.status, 1);
   assert.match(refused.stderr, /task-dir.html:1: undefined task path artifacts\/recipe-run/);
+  const linked = path.join(root, 'linked-check.mjs');
+  await symlink(script, linked);
+  assert.equal(spawnSync(process.execPath, [linked, file]).status, 1);
   assert.notEqual(spawnSync(process.execPath, [script, path.join(root, 'absent.md')]).status, 0);
 });
 

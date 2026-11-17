@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Check task-relative paths in Markdown and HTML against the protocol contract.
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -125,6 +125,10 @@ async function main(files) {
   process.exitCode = issues ? 1 : 0;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (
+  process.argv[1] &&
+  process.argv[1] !== '-' &&
+  (await realpath(process.argv[1])) === fileURLToPath(import.meta.url)
+) {
   await main(process.argv.slice(2));
 }
