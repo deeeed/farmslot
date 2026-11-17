@@ -2,10 +2,13 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rename, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { claudeResumeUnavailableReason } from '../../../packages/agent-runtime/src/native/claude.js';
+import { resolveNativeExecutable } from '../../../packages/agent-runtime/src/native/manager.js';
 
 import {
   isRecord,
@@ -47,6 +50,13 @@ await writeFile(
     2,
   ),
 );
+const poolPolicyFile = process.env.FARMSLOT_REVIEW_PROOF_POOL_CONFIG;
+assert.ok(poolPolicyFile, 'FARMSLOT_REVIEW_PROOF_POOL_CONFIG must name the real node pool');
+const poolPolicyBytes = await readFile(poolPolicyFile);
+const poolPolicy: unknown = JSON.parse(poolPolicyBytes.toString('utf8'));
+assert.ok(isRecord(poolPolicy) && typeof poolPolicy.claude_path === 'string');
+const claudePath = poolPolicy.claude_path;
+assert.ok(path.isAbsolute(claudePath), 'the real node pool must select an absolute executable');
 const reaper = startReaper();
 let stack: RemoteNodeStack | undefined;
 let runId: string | undefined;
@@ -122,11 +132,39 @@ try {
       CLAUDE_CODE_OAUTH_TOKEN: undefined,
       CLAUDE_CODE_USE_BEDROCK: undefined,
       CLAUDE_CODE_USE_VERTEX: undefined,
-      CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR ?? path.join(homedir(), '.claude'),
+      CLAUDE_CONFIG_DIR: path.join(homedir(), '.claude'),
     },
     log: async (event, detail) => console.log(event, JSON.stringify(detail ?? {})),
   });
   const active = stack;
+  // This proof runs on the execution node. Use the host's own resolver before
+  // starting a reviewer, then require its actual session readback to agree.
+  const runnerPreflight = await resolveNativeExecutable(
+    claudePath,
+    active.slotRepo(REVIEW_PROJECT + '-1'),
+  );
+  assert.equal(runnerPreflight.executable, await realpath(claudePath));
+  assert.equal(claudeResumeUnavailableReason(runnerPreflight.version), undefined);
+  for (const directory of ['pool', 'node-pool']) {
+    const file = path.join(active.fixture, directory, REVIEW_PROJECT + '.json');
+    const pool = JSON.parse(await readFile(file, 'utf8'));
+    await writeFile(file + '.next', JSON.stringify({ ...pool, claude_path: claudePath }, null, 2));
+    await rename(file + '.next', file);
+  }
+  await active.call('fleet.refresh');
+  await writeFile(
+    path.join(evidence, 'production-runner-selection.json'),
+    JSON.stringify(
+      {
+        source: path.resolve(poolPolicyFile),
+        sha256: createHash('sha256').update(poolPolicyBytes).digest('hex'),
+        claude_path: claudePath,
+        resolvedBeforeRoundOne: runnerPreflight,
+      },
+      null,
+      2,
+    ),
+  );
   const health = await poll(
     'first live node pressure sample',
     async () => {
@@ -182,6 +220,20 @@ try {
     300_000,
   );
   await writeFile(path.join(evidence, 'first.json'), JSON.stringify(first, null, 2));
+  const firstBinding = first.context.nativeSession!;
+  const firstNative = await active.call<NativeSessionReadResult>('native.session.read', {
+    sessionId: firstBinding.sessionId,
+    executionNodeId: firstBinding.executionNodeId,
+    worker: {
+      runId,
+      contextId: first.context.id,
+      generation: firstBinding.generation,
+      leaseId: firstBinding.leaseId,
+    },
+  });
+  assert.equal(firstNative.session.executable, runnerPreflight.executable);
+  assert.equal(firstNative.session.version, runnerPreflight.version);
+  await writeFile(path.join(evidence, 'first-native.json'), JSON.stringify(firstNative, null, 2));
   const taskRoot = path.join(
     active.slotRepo(REVIEW_PROJECT + '-1'),
     path.dirname(first.context.taskFile!),
@@ -280,6 +332,8 @@ try {
     assert.ok(snapshot.cursor > cursor, 'owned history cursor must advance');
     events.push(...snapshot.events);
   }
+  assert.equal(snapshot.session.executable, runnerPreflight.executable);
+  assert.equal(snapshot.session.version, runnerPreflight.version);
   assert.equal(snapshot.session.nativeSessionId, first.context.runnerSessionId);
   assert.equal(snapshot.session.workerLaunchDigest, resumed.nativeSession!.launchDigest);
   const command = snapshot.commands.find(
@@ -307,6 +361,8 @@ try {
         runnerSessionId: resumed.runnerSessionId,
         firstLease: first.context.nativeSession!.leaseId,
         secondLease: resumed.nativeSession!.leaseId,
+        executable: snapshot.session.executable,
+        version: snapshot.session.version,
         accepted: true,
         published: false,
       },
