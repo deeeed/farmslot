@@ -117,7 +117,9 @@ export function withPublicationProvenance(run: Run, body: string): string {
         'Reason:',
         markdownFence(approval.reason, 'text'),
         '',
-        'Accepted findings:',
+        'Publication review policy was explicitly overridden for this package.',
+        '',
+        accepted.findings.length ? 'Accepted findings:' : 'No open review findings were recorded.',
         ...accepted.findings.map(
           (finding) =>
             `- ${plain(finding.file)}${finding.line ? `:${finding.line}` : ''}: ${plain(finding.description)} (review ${plain(finding.reviewId)})`,

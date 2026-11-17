@@ -640,6 +640,31 @@ still protect what a reviewer cannot judge.
 - The CLI, Command Center and Companion list the action through that rule, show
   the open findings and ask for the reason before submitting.
 
+### Amendment 8 clarification: reachable person policy override, 2026-11-17
+
+**Status:** Accepted by the lead under Arthur's instruction, 2026-11-17.
+
+This supersedes Amendment 8's required-review-count and non-empty-finding
+availability restrictions and its exclusion of publishing runs held at REVIEW.
+A publishing review ending with issues or stopped by its round budget proceeds
+to the human publication gate. The retained result and refusal stay truthful;
+there is no automatic publication, fabricated pass or budget extension.
+Artifact-only result decisions and hard recovery failures keep their semantics.
+
+After at least one valid structured current-package review, a person may use
+the existing `approve-publish-unresolved` action to override review policy, with
+or without open findings. Every completed review at that package still needs
+its own valid result. The checked set and digest may describe no open findings.
+Existing person authority, written reason, package/head binding, resolve-time
+checks, replay checks and published disclosure remain required.
+
+The action can combine with the existing expressly attestable evidence-policy
+reasons under Amendment 10, with explicit evidence consent and both receipts.
+Base conflicts, missing or invalid completed review artifacts, stale/failed
+deterministic checks, unreadable or changed evidence, secrets and active or
+unconfirmed work are not policy exceptions. Keep each blocking reason visible.
+No new action id, RPC, receipt store or automation authority is introduced.
+
 ### Amendment 8 clarification: claim confirmation settles evidence findings, 2026-10-21
 
 **Status:** Accepted decision (lead, delegated amendment authority, 2026-10-21).

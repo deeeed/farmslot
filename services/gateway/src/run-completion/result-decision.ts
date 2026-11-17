@@ -158,7 +158,6 @@ function decisionReason(
   const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;
   if (stoppedAt === 'review') {
     const budgetStop = reviewBudgetStopReason(run);
-    if (budgetStop) return budgetStop;
     const review = run.steps.find((step) => step.name === PipelineSteps.REVIEW)?.outputs;
     const attempts =
       typeof review?.retryCount === 'number' && typeof review.maxRetries === 'number'
@@ -168,6 +167,7 @@ function decisionReason(
       typeof review?.fixDeliveryFailure === 'string'
         ? ` The fix was not delivered: ${review.fixDeliveryFailure}`
         : '';
+    if (budgetStop) return undelivered ? `${undelivered.trim()} ${budgetStop}` : budgetStop;
     return `Review found ${plural(findings?.length ?? 0, 'issue')}${attempts}.${undelivered}`;
   }
   const step = stoppedAt === 'complete' ? 'COMPLETE' : 'FINALIZE';

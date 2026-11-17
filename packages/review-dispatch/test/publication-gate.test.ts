@@ -862,7 +862,11 @@ test('what blocks publish: one plain action per criterion, findings and spent ro
   };
   const blockers = publicationGateBlockers({
     view: {
-      reviewIssues: [],
+      reviewIssues: [
+        { file: 'src/a.ts', description: 'First finding' },
+        { file: 'src/b.ts', description: 'Second finding' },
+        { file: 'src/c.ts', description: 'Third finding' },
+      ],
       primaryActions: [],
       claims: [
         claim('AC-1', 'Proven', 'proven'),
@@ -884,10 +888,14 @@ test('what blocks publish: one plain action per criterion, findings and spent ro
     blockers.map((blocker) => [blocker.message, blocker.actions[0]?.label ?? null]),
     [
       ['AC-3 · Missing: AC-3 text', 'Skip this criterion…'],
-      ['Review found 3 issues.', 'Accept findings…'],
+      ['Review found 3 issues', 'See findings'],
       ['CI parity failed.', null],
       ['No review rounds left (3 of 3 used).', 'Give it another round'],
     ],
+  );
+  assert.deepEqual(
+    blockers[1]?.actions.map((action) => action.label),
+    ['See findings', 'Accept findings…'],
   );
   assert.equal(anotherReviewRoundView({ used: 3, limit: 3 }, '').canConfirm, false);
   // A ready or resolved gate lists nothing.
@@ -1066,7 +1074,7 @@ test('the mixed gate shows one combined approval with both scopes and one writte
   };
   const pending = publicationGateView(input);
   assert.equal(pending.combinedApproval, true);
-  assert.equal(pending.approval?.label, 'Accept findings, attest evidence and publish');
+  assert.equal(pending.approval?.label, 'Override review policy, attest evidence and publish');
   assert.deepEqual(pending.findings, readiness.findings);
   assert.deepEqual(pending.evidencePolicyReasons, evidenceOnly.reasons);
   assert.equal(pending.attestation, null);
@@ -1244,3 +1252,57 @@ test('each AC row names its recording, and a replaced recording never reads as a
     ['', '', '', '', '', 'Earlier proof · abcdef1'],
   );
 });
+
+for (const combined of [false, true])
+  test(`the person review-policy override stays visible with an empty checked set, combined=${combined}`, () => {
+    const readiness: RunGateReadiness = {
+      state: 'not-ready',
+      identity: { runId: 'run', generation: 1 },
+      findings: [],
+      findingsDigest: 'sha256:checked-empty',
+      reasons: [
+        {
+          code: 'review-result-required',
+          prerequisite: 'review',
+          message: 'Configured review count is not satisfied',
+          allowedReviewOverrides: [APPROVE_PUBLISH_UNRESOLVED_ACTION],
+        },
+        ...(combined ? evidenceOnly.reasons : []),
+      ],
+    };
+    const actions = [
+      {
+        id: APPROVE_PUBLISH_UNRESOLVED_ACTION,
+        label: 'Override review policy and publish',
+        style: 'danger' as const,
+      },
+      { id: 'hold', label: 'Hold', style: 'secondary' as const },
+    ];
+    const offered = publicationGateView({ actions, readiness });
+    assert.equal(offered.acceptFindings?.id, APPROVE_PUBLISH_UNRESOLVED_ACTION);
+    assert.match(offered.acceptFindings?.label ?? '', /Override review policy/);
+    const approving = publicationGateView({
+      actions,
+      readiness,
+      acceptingFindings: true,
+      attestationReason: 'The person approves the policy exception.',
+    });
+    assert.equal(approving.approval?.id, APPROVE_PUBLISH_UNRESOLVED_ACTION);
+    assert.equal(approving.blockedReason, '');
+    assert.equal(approving.combinedApproval, combined);
+    const hard = publicationGateView({
+      actions,
+      readiness: {
+        ...readiness,
+        reasons: [
+          ...readiness.reasons,
+          {
+            code: 'base-merge-conflict',
+            prerequisite: 'lifecycle',
+            message: 'Resolve src/conflict.ts first',
+          },
+        ],
+      },
+    });
+    assert.equal(hard.acceptFindings, null);
+  });
