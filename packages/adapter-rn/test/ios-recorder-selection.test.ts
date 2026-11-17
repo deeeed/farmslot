@@ -190,28 +190,34 @@ test('a shutdown namesake cannot supply the selected simulator window', async (t
   assert.equal((await active.stop()).segments[0]?.recorder?.name, 'simctl');
 });
 
-test('segment rotation retains the helper backend; a new recording may select native', async (t) => {
-  const f = fixture(t, { windows: [visible] });
-  const recorder = createIosSimulatorVideoRecorder('sim-1');
-  const first = await recorder.start(f.request);
-  assert.equal(typeof first.snapshot, 'function');
-  await first.stop();
-  fs.writeFileSync(
-    path.join(f.dir, 'config.json'),
-    JSON.stringify({ windows: [], nativeBusy: true }),
-  );
-  const rotated = await recorder.start({
-    ...f.request,
-    outputPath: path.join(f.dir, 'run-segment-1.mp4'),
-  });
-  assert.equal(typeof rotated.snapshot, 'function');
-  await rotated.snapshot?.(path.join(f.dir, 'segment.png'));
-  assert.equal(fs.readFileSync(path.join(f.dir, 'segment.png'), 'utf8'), 'unit snapshot');
-  assert.equal((await rotated.stop()).segments[0]?.recorder?.name, 'capture-helper');
-  fs.writeFileSync(path.join(f.dir, 'config.json'), JSON.stringify({ windows: [] }));
-  const next = await recorder.start(f.request);
-  assert.equal((await next.stop()).segments[0]?.recorder?.name, 'simctl');
-});
+test(
+  'segment rotation retains the helper backend; a new recording may select native',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const f = fixture(t, { windows: [visible] });
+    const recorder = createIosSimulatorVideoRecorder('sim-1');
+    const first = await recorder.start(f.request);
+    assert.equal(typeof first.snapshot, 'function');
+    await waitForFile(f.request.outputPath);
+    await first.stop();
+    fs.writeFileSync(
+      path.join(f.dir, 'config.json'),
+      JSON.stringify({ windows: [], nativeBusy: true }),
+    );
+    const rotated = await recorder.start({
+      ...f.request,
+      outputPath: path.join(f.dir, 'run-segment-1.mp4'),
+    });
+    assert.equal(typeof rotated.snapshot, 'function');
+    await waitForFile(path.join(f.dir, 'run-segment-1.mp4'));
+    await rotated.snapshot?.(path.join(f.dir, 'segment.png'));
+    assert.equal(fs.readFileSync(path.join(f.dir, 'segment.png'), 'utf8'), 'unit snapshot');
+    assert.equal((await rotated.stop()).segments[0]?.recorder?.name, 'capture-helper');
+    fs.writeFileSync(path.join(f.dir, 'config.json'), JSON.stringify({ windows: [] }));
+    const next = await recorder.start(f.request);
+    assert.equal((await next.stop()).segments[0]?.recorder?.name, 'simctl');
+  },
+);
 
 test('startup timeout waits for SIGINT cleanup and reports a retained client PID', async (t) => {
   const f = fixture(t, { windows: [], noFirstFrame: true, ignoreInterrupt: true });
@@ -225,17 +231,22 @@ test('startup timeout waits for SIGINT cleanup and reports a retained client PID
   await waitForFile(path.join(f.dir, 'alive'));
 });
 
-test('booted sentinel resolves the only booted simulator among available devices', async (t) => {
-  const f = fixture(t, {
-    windows: [visible],
-    devices: [
-      { udid: 'sim-1', name: 'Own', state: 'Booted' },
-      { udid: 'shutdown', name: 'Other', state: 'Shutdown' },
-    ],
-  });
-  const active = await createIosSimulatorVideoRecorder('booted').start({
-    ...f.request,
-    target: { kind: 'simulator', device: 'booted' },
-  });
-  assert.equal((await active.stop()).segments[0]?.recorder?.name, 'capture-helper');
-});
+test(
+  'booted sentinel resolves the only booted simulator among available devices',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const f = fixture(t, {
+      windows: [visible],
+      devices: [
+        { udid: 'sim-1', name: 'Own', state: 'Booted' },
+        { udid: 'shutdown', name: 'Other', state: 'Shutdown' },
+      ],
+    });
+    const active = await createIosSimulatorVideoRecorder('booted').start({
+      ...f.request,
+      target: { kind: 'simulator', device: 'booted' },
+    });
+    await waitForFile(f.request.outputPath);
+    assert.equal((await active.stop()).segments[0]?.recorder?.name, 'capture-helper');
+  },
+);
