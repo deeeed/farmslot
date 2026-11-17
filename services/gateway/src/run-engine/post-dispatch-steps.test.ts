@@ -3009,6 +3009,9 @@ for (const scenario of [
 
 test('an undelivered fix becomes a visible result decision with its findings preserved', async (t) => {
   const runId = await publicationGateRun(t, {});
+  updateRun(runId, {
+    ...recordedReviewRounds(Array.from({ length: 5 }, (_, i) => `undelivered-spent-${i}`)),
+  });
   const issues = [{ file: 'a.ts', line: 1, description: 'Retained finding' }];
   let held: ResultDecisionHoldError | undefined;
   try {

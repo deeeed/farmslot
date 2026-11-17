@@ -862,7 +862,11 @@ test('what blocks publish: one plain action per criterion, findings and spent ro
   };
   const blockers = publicationGateBlockers({
     view: {
-      reviewIssues: [],
+      reviewIssues: [
+        { file: 'src/a.ts', description: 'First finding' },
+        { file: 'src/b.ts', description: 'Second finding' },
+        { file: 'src/c.ts', description: 'Third finding' },
+      ],
       primaryActions: [],
       claims: [
         claim('AC-1', 'Proven', 'proven'),
@@ -884,10 +888,14 @@ test('what blocks publish: one plain action per criterion, findings and spent ro
     blockers.map((blocker) => [blocker.message, blocker.actions[0]?.label ?? null]),
     [
       ['AC-3 · Missing: AC-3 text', 'Skip this criterion…'],
-      ['Review found 3 issues.', 'Override review policy…'],
+      ['Review found 3 issues', 'See findings'],
       ['CI parity failed.', null],
       ['No review rounds left (3 of 3 used).', 'Give it another round'],
     ],
+  );
+  assert.deepEqual(
+    blockers[1]?.actions.map((action) => action.label),
+    ['See findings', 'Accept findings…'],
   );
   assert.equal(anotherReviewRoundView({ used: 3, limit: 3 }, '').canConfirm, false);
   // A ready or resolved gate lists nothing.

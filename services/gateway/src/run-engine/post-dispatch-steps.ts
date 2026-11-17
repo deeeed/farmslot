@@ -982,6 +982,7 @@ export async function executeReviewStep(
   } catch (error) {
     if (
       error instanceof ResultDecisionHoldError &&
+      !error.stepOutputs.fixDeliveryFailure &&
       requiresPublicationApproval(getRun(runId) ?? current) &&
       error.stepOutputs.reviewLaunchRejection &&
       typeof error.stepOutputs.reviewLaunchRejection === 'object' &&
