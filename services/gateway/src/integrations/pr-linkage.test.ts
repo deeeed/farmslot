@@ -188,6 +188,28 @@ test("the merged-PR probe reports this run's own PR merged out-of-band", async (
   assert.equal(await findMergedPRNumber(run, 'owner/repo', head), 388);
 });
 
+// A dev run's review minimum is 0, so a package can reach the gate with no
+// review snapshot and no ready decision. A squash merge leaves the PR's head
+// ref at the package head, which is the only proof available here.
+test('the merged-PR probe reports a merged package head with no review record', async () => {
+  candidate = { number: 388, state: 'MERGED', headRefOid: head };
+  const run = makeRun({ branch: 'fix/reused', prNumber: undefined, decisions: [] });
+  assert.equal(await findMergedPRNumber(run, 'owner/repo', head), 388);
+});
+
+test('publication links a merged package head with no review record', async () => {
+  candidate = { number: 388, state: 'MERGED', headRefOid: head };
+  const run = makeRun({ branch: 'fix/reused', prNumber: undefined, decisions: [] });
+  assert.equal(
+    await findPRNumber(run, 'owner/repo', {
+      noRetry: true,
+      excludeMerged: true,
+      publicationHeadSha: head,
+    }),
+    388,
+  );
+});
+
 // Without a package head the probe has nothing to compare, so only a recorded
 // publication of its own counts; the gate must not guess.
 test('the merged-PR probe stays quiet when no package head is known', async () => {
