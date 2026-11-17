@@ -1,0 +1,1 @@
+- Check real task-layout references and source-document mutations against the shared protocol contract in docs CI.

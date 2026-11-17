@@ -1,0 +1,1 @@
+- Add a read-only browser proof that run navigation drops the previous checklist's URL choices.

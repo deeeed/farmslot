@@ -444,6 +444,10 @@
     "./scripts/literal-replacement.mjs": {
       "types": "./scripts/literal-replacement.d.mts",
       "default": "./scripts/literal-replacement.mjs"
+    },
+    "./scripts/check-task-layout-docs.mjs": {
+      "types": "./scripts/check-task-layout-docs.d.mts",
+      "default": "./scripts/check-task-layout-docs.mjs"
     }
   },
   "scripts": {
@@ -501,7 +505,9 @@
     "recipe-shape.mjs",
     "recipe-shape.d.mts",
     "scripts/recipe-library-identity.mjs",
-    "scripts/recipe-library-identity.d.mts"
+    "scripts/recipe-library-identity.d.mts",
+    "scripts/check-task-layout-docs.mjs",
+    "scripts/check-task-layout-docs.d.mts"
   ],
   "publishConfig": {
     "access": "public"
