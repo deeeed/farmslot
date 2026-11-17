@@ -53,6 +53,15 @@ export async function slotCheck(
   params: SlotCheckParams,
   emit: EventEmitter,
 ): Promise<SlotCheckResult> {
+  if (params.force !== true) {
+    const fleet = await loadFleetStatus();
+    const slot = fleet.slots.find((slot) => slot.slot === params.slotId);
+    const runId = slot?.currentRunId ?? slot?.cleanupRunId ?? slot?.handoffRunId;
+    if (runId)
+      throw new Error(
+        `Slot ${params.slotId} is owned by run ${runId}; use --force for slot check.`,
+      );
+  }
   return withSlotSources(params.slotId, () => slotCheckWithSources(params, emit));
 }
 

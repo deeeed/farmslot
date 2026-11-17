@@ -1,0 +1,1 @@
+- Require `slot check --force` before running health hooks on a slot owned by a run.
