@@ -1,0 +1,1 @@
+- Bind task recipe reruns to their computed worker directory and keep standalone project-hook recipes isolated from inherited task acceptance.

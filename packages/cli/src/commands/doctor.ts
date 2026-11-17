@@ -529,15 +529,32 @@ export async function runProjectConformance(
               const exitCode = await shared.withCommandJournal(
                 'run',
                 ['run', ...parsed.positional],
-                () =>
-                  shared.handleRun([], {
-                    engine,
-                    parsed,
-                    librarySources,
-                    signal,
-                    stream,
-                    beforeResult: finalize,
-                  }),
+                async () => {
+                  const names = [
+                    'RECIPE_TASK_DIR',
+                    'FARMSLOT_TASK_DIR',
+                    'FARMSLOT_RECIPE_UNBOUND',
+                  ] as const;
+                  const previous = names.map((name) => [name, process.env[name]] as const);
+                  delete process.env.RECIPE_TASK_DIR;
+                  delete process.env.FARMSLOT_TASK_DIR;
+                  process.env.FARMSLOT_RECIPE_UNBOUND = '1';
+                  try {
+                    return await shared.handleRun([], {
+                      engine,
+                      parsed,
+                      librarySources,
+                      signal,
+                      stream,
+                      beforeResult: finalize,
+                    });
+                  } finally {
+                    for (const [name, value] of previous) {
+                      if (value === undefined) delete process.env[name];
+                      else process.env[name] = value;
+                    }
+                  }
+                },
                 { target: context.target.value, runtimeDir: context.project!.runtimeDir },
               );
               if (exitCode !== 0)
