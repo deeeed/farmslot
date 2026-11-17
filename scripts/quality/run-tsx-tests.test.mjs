@@ -20,12 +20,15 @@ import {
   assignments,
   buildArtifact,
   classifyTest,
+  DEFAULT_FILE_TIMEOUT_MS,
   discoverTests,
+  FILE_TIMEOUT_ENV,
   finish,
   knownLeakerNotice,
   parseArgs,
   parseShard,
   partitionTests,
+  resolveFileTimeout,
   resolveWorkers,
   selectShard,
   SERIAL_PRAGMA,
@@ -1097,6 +1100,105 @@ test(
 );
 
 test(
+  'an interrupted run stops a process group whose leader exited while a descendant holds its output',
+  { skip: process.platform === 'win32' },
+  async (t) => {
+    const fixture = mkdtempSync(path.join(QUALITY_DIR, '.tmux-sandbox-fixture-'));
+    const report = path.join(fixture, 'pids.json');
+    let runner;
+    t.after(async () => {
+      // The runner should have stopped both; this covers a failed assertion.
+      if (runner && runner.exitCode === null && runner.signalCode === null) {
+        const reaped = new Promise((resolve) => runner.once('close', resolve));
+        runner.kill('SIGKILL');
+        await reaped;
+      }
+      const pids = existsSync(report) ? JSON.parse(readFileSync(report, 'utf8')) : {};
+      if (pids.descendant) {
+        try {
+          process.kill(pids.descendant, 'SIGKILL');
+        } catch (error) {
+          // Already gone: the expected case.
+          if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
+        }
+      }
+      if (pids.tmp) rmSync(path.dirname(path.dirname(pids.tmp)), { recursive: true, force: true });
+      rmSync(fixture, { recursive: true, force: true });
+    });
+    writeFileSync(path.join(fixture, 'tsconfig.json'), '{}');
+    mkdirSync(path.join(fixture, 'src'));
+    // Two files make two buffered lanes. The descendant inherits this file's
+    // output pipes and keeps writing under its TMPDIR after the test exits.
+    writeFileSync(
+      path.join(fixture, 'src', 'a.test.ts'),
+      `import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import test from 'node:test';
+test('leaves a descendant behind', () => {
+  const script = "const fs = require('node:fs'); setInterval(() => fs.mkdirSync(process.env.TMPDIR + '/still-writing', { recursive: true }), 20);";
+  const child = spawn(process.execPath, ['-e', script], { stdio: 'inherit' });
+  child.unref();
+  writeFileSync(${JSON.stringify(report)}, JSON.stringify({ test: process.pid, launcher: process.ppid, descendant: child.pid, tmp: process.env.TMPDIR }));
+});
+`,
+    );
+    writeFileSync(
+      path.join(fixture, 'src', 'b.test.ts'),
+      "import test from 'node:test';\ntest('b', () => {});\n",
+    );
+    runner = spawn(
+      process.execPath,
+      [RUNNER_PATH, '--cwd', fixture, '--tsconfig', 'tsconfig.json', '--workers', '2', 'src'],
+      { stdio: 'ignore' },
+    );
+    const closed = new Promise((resolve) =>
+      runner.once('close', (_code, signal) => resolve(signal)),
+    );
+    const alive = (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'ESRCH') return false;
+        throw error;
+      }
+    };
+    for (let i = 0; i < 300 && !existsSync(report); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.ok(existsSync(report), 'the fixture test never started');
+    const pids = JSON.parse(readFileSync(report, 'utf8'));
+    // Wait until the runner has reaped the launcher (yarn), the process it
+    // tracks: only the descendant is left, holding the output pipes.
+    for (let i = 0; i < 300 && (alive(pids.test) || alive(pids.launcher)); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(alive(pids.test), false, 'the test process never exited');
+    assert.equal(alive(pids.launcher), false, 'the runner never reaped the launcher');
+    assert.equal(alive(pids.descendant), true, `the descendant ${pids.descendant} is running`);
+
+    runner.kill('SIGTERM');
+    let shutdownTimer;
+    const shutdown = await Promise.race([
+      closed,
+      new Promise((resolve) => {
+        shutdownTimer = setTimeout(() => resolve('still running'), 15_000);
+      }),
+    ]);
+    clearTimeout(shutdownTimer);
+    assert.equal(shutdown, 'SIGTERM');
+    for (let i = 0; i < 100 && alive(pids.descendant); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(alive(pids.descendant), false, 'the descendant outlived the interrupted run');
+    const runRoot = path.dirname(path.dirname(pids.tmp));
+    // Long enough for a surviving descendant to recreate its TMPDIR.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(existsSync(runRoot), false, 'the run directory was recreated');
+  },
+);
+
+test(
   'an interrupted run starts no further test file',
   { skip: process.platform === 'win32' },
   async (t) => {
@@ -1143,6 +1245,73 @@ test('b', () => writeFileSync(${JSON.stringify(second)}, ''));
     await new Promise((resolve) => setTimeout(resolve, 2500));
 
     assert.equal(existsSync(second), false, 'the interrupted run started another test file');
+  },
+);
+
+test('the per-file timeout defaults, and rejects values outside the timer range', () => {
+  assert.equal(resolveFileTimeout({}), DEFAULT_FILE_TIMEOUT_MS);
+  assert.equal(resolveFileTimeout({ [FILE_TIMEOUT_ENV]: '' }), DEFAULT_FILE_TIMEOUT_MS);
+  assert.equal(resolveFileTimeout({ [FILE_TIMEOUT_ENV]: '2500' }), 2500);
+  assert.equal(resolveFileTimeout({ [FILE_TIMEOUT_ENV]: '2147483647' }), 2147483647);
+  // 2147483648 is past Node's timer range, which would fire after 1 ms.
+  for (const bad of ['0', '-1', '1.5', 'soon', '2147483648']) {
+    assert.throws(
+      () => resolveFileTimeout({ [FILE_TIMEOUT_ENV]: bad }),
+      new RegExp(FILE_TIMEOUT_ENV),
+    );
+  }
+});
+
+test(
+  'a file held open by a child it started fails at the timeout, named, with the child killed',
+  { skip: process.platform === 'win32' },
+  (t) => {
+    const fixture = mkdtempSync(path.join(QUALITY_DIR, '.tmux-sandbox-fixture-'));
+    const pidFile = path.join(fixture, 'child.pid');
+    t.after(() => {
+      // The runner should have killed it; this only covers a failed assertion.
+      const pid = existsSync(pidFile) ? Number(readFileSync(pidFile, 'utf8')) : 0;
+      if (pid) {
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch (error) {
+          // Already gone: the expected case.
+          if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
+        }
+      }
+      rmSync(fixture, { recursive: true, force: true });
+    });
+    writeFileSync(path.join(fixture, 'tsconfig.json'), '{}');
+    mkdirSync(path.join(fixture, 'src'));
+    // The test passes, but the child it never stops keeps its process alive.
+    writeFileSync(
+      path.join(fixture, 'src', 'held.test.ts'),
+      `import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import test from 'node:test';
+test('starts a child and returns', () => {
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));
+});
+`,
+    );
+    const started = Date.now();
+    const run = spawnSync(
+      process.execPath,
+      [RUNNER_PATH, '--cwd', fixture, '--tsconfig', 'tsconfig.json', '--workers', '1', 'src'],
+      { encoding: 'utf8', env: { ...process.env, [FILE_TIMEOUT_ENV]: '2500' }, timeout: 60_000 },
+    );
+    const elapsed = Date.now() - started;
+
+    assert.equal(run.status, 1, run.stdout + run.stderr);
+    assert.match(
+      run.stderr,
+      /src\/held\.test\.ts did not finish within 2500 ms \(FARMSLOT_TSX_TEST_FILE_TIMEOUT_MS\); killed its process group/,
+    );
+    assert.ok(elapsed < 30_000, `the run took ${elapsed} ms`);
+    assert.ok(existsSync(pidFile), 'the fixture never started its child');
+    const pid = Number(readFileSync(pidFile, 'utf8'));
+    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' }, 'the child outlived its file');
   },
 );
 

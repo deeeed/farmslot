@@ -1,0 +1,1 @@
+- Keep live doctor conformance smoke independent of worker acceptance while restoring the caller's task environment afterward.
