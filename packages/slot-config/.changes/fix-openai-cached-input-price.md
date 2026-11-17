@@ -1,0 +1,1 @@
+- Codex session receipts price `gpt-6.1-sol`, and bill cached input at OpenAI's cached-input rate for the GPT-6 models, so a cache-heavy reviewer session costs what OpenAI charges rather than about ten times more.

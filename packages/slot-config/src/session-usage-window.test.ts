@@ -92,7 +92,8 @@ test('Codex resumed usage subtracts the pre-run cumulative reading for tokens, c
     output,
     /input_tokens=20\noutput_tokens=40\ncache_creation=0\ncache_read=10\nreasoning_output_tokens=20\ntotal_tokens=60\n/,
   );
-  assert.match(output, /cost_usd=0.0004400000/);
+  // 10 uncached at $2, 10 cached at $0.20, 40 output at $10 per 1M.
+  assert.match(output, /cost_usd=0.0004220000/);
   await f.write([prior, reading('2026-01-02T00:01:00Z', 10, 20), warm]);
   await assert.rejects(f.measure, /cumulative usage reset/);
 });
