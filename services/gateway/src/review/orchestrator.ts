@@ -41,7 +41,7 @@ import {
   upsertAgentContext,
 } from '../agents/contexts.js';
 import { signalFromAttempt } from '../agents/runtime-recovery.js';
-import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
+import { loadProjectVars, loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { withMachineEnv } from '../core/project-env.js';
 import { onSlotReset } from '../core/state.js';
@@ -61,6 +61,7 @@ import {
   buildLaunchCommand,
   modelQuestionsForRun,
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
+  wrapWorkerShellCommand,
 } from '../runners/launch-command.js';
 import { resumeNativeWorker } from '../runners/native/worker-recovery.js';
 import { readLaunchAckSignalSnapshot } from '../runners/prompt-delivery-evidence.js';
@@ -73,7 +74,6 @@ import {
   runnerRetainedSessionHandoff,
   runnerSupportsInteractivePrompt,
   runnerSupportsModel,
-  WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
 import { scriptedRelaunchOptions } from '../runners/scripted-config.js';
 import { resolvePersistedRunnerSessionBinding } from '../runners/session-process.js';
@@ -3502,6 +3502,14 @@ export async function relaunchWorkerForFix(
   }
   const resolved = await resolveAgentTarget(vars.slotId, { runId, role: 'primary' });
   const parentRun = getRun(runId);
+  const projectVars = await loadProjectVars(parentRun?.project ?? vars.projectName);
+  const workerShell = (command: string) =>
+    wrapWorkerShellCommand(command, {
+      vars,
+      projectVars,
+      projectJson: projectVars.projectJson,
+      runDomain: parentRun?.domain,
+    });
   const effectiveModel = resolveWorkerModel(parentRun, runner, model);
   const roleWindowName =
     parentRun?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(parentRun?.flowType))
@@ -3512,8 +3520,9 @@ export async function relaunchWorkerForFix(
   const assertPreflightCurrent = await admitWorkerLaunch({
     runId,
     vars,
+    projectVars,
     supportDir: nodeSupport?.supportDir,
-    wrapCommand: (command) => `${WORKER_ENV_PREFIX} && ${withMachineEnv(command, vars)}`,
+    wrapCommand: (command) => workerShell(withMachineEnv(command, vars)),
   });
   const workerTarget = await ensureTmuxTargetReadyForRelaunch(
     vars,
@@ -3571,7 +3580,7 @@ export async function relaunchWorkerForFix(
     replacesAttempt && fixContext?.signalFile
       ? `rm -f ${shellQuote(fixContext.signalFile)} && `
       : '';
-  launchCmd = `${WORKER_ENV_PREFIX} && ${clearReplacedSignal}${launchCmd}`;
+  launchCmd = workerShell(`${clearReplacedSignal}${launchCmd}`);
   // Restart recovery reads this to tell what the worker holds: a send reaches disk before the
   // respawn, and the old worker's stays until the respawn has replaced it. The old worker's mark
   // start can have moved the attempt since the snapshot above.
