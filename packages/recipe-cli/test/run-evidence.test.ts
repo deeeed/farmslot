@@ -2106,7 +2106,7 @@ describe('live adapter scripts', () => {
     assert.match((await prepare())?.sourceText ?? '', /from beside the action/u);
   });
 
-  test('reuses a bundle whose bare import resolves to a package at the library root', async () => {
+  test('reuses a bundle whose bare import resolves to a package at the library root', async (t) => {
     const root = tempRoot('bare-import-adapter-');
     const dir = path.join(root, 'web', 'team');
     const pkg = path.join(root, 'node_modules', 'helper-pkg');
@@ -2135,6 +2135,10 @@ describe('live adapter scripts', () => {
     ]) {
       fs.utimesSync(entry, earlier, earlier);
     }
+    // Missing ancestor manifests also inspect shared temp folders. Keep this positive
+    // reuse case's build clock beyond unrelated writes there; race cases below use real time.
+    const buildStart = Date.now() + 60_000;
+    t.mock.method(Date, 'now', () => buildStart);
     const recorder = new CallTimingRecorder();
     const prepare = () =>
       withCallTimings(recorder, () =>

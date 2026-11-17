@@ -1,0 +1,1 @@
+- Control the bare-import reuse fixture's clock so unrelated ancestor-directory writes cannot make it flaky.
