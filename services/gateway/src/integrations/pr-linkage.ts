@@ -33,11 +33,34 @@ export function initPrLinkage(broadcast: BroadcastFn): void {
 // Delays between the 4 attempts: 0s, 5s, 20s, 65s cumulative.
 const RETRY_DELAYS_MS = [5_000, 15_000, 45_000];
 
-function canBindPR(run: Run, ciRepo: string, pr: Record<string, unknown>): boolean {
-  if (pr.state !== 'CLOSED') return true;
+function publishedByRun(run: Run, ciRepo: string, pr: Record<string, unknown>): boolean {
   const key = monitoredPRKey({ host: 'github.com', repo: ciRepo, number: pr.number as number });
-  if (run.prPublications?.some(({ pr: published }) => monitoredPRKey(published) === key))
-    return true;
+  return (
+    run.prPublications?.some(({ pr: published }) => monitoredPRKey(published) === key) ?? false
+  );
+}
+
+function isMergedPR(pr: Record<string, unknown>): boolean {
+  return pr.state === 'MERGED' || (pr.mergedAt != null && pr.mergedAt !== '');
+}
+
+function canBindPR(
+  run: Run,
+  ciRepo: string,
+  pr: Record<string, unknown>,
+  options?: { excludeMerged?: boolean },
+): boolean {
+  // TAT-4644: branch names are deterministic, so a reused branch still carries
+  // its old merged PR. Publication must open a PR of its own instead of pushing
+  // the new head onto a merged PR's branch — unless this run published it.
+  if (options?.excludeMerged && isMergedPR(pr) && !publishedByRun(run, ciRepo, pr)) {
+    console.log(
+      `[pr-linkage] skipping merged PR #${String(pr.number)} runId=${run.id.slice(0, 8)} branch=${run.branch ?? '<empty>'}`,
+    );
+    return false;
+  }
+  if (pr.state !== 'CLOSED') return true;
+  if (publishedByRun(run, ciRepo, pr)) return true;
   if (!pr.headRefOid) return false;
   const oid = pr.headRefOid as string;
   if (
@@ -60,7 +83,7 @@ function canBindPR(run: Run, ciRepo: string, pr: Record<string, unknown>): boole
 export async function findPRNumber(
   run: Run,
   ciRepo: string,
-  options?: { noRetry?: boolean },
+  options?: { noRetry?: boolean; excludeMerged?: boolean },
 ): Promise<number | null> {
   // 1. ticketOrPr may encode the PR number. For follow-up flows
   //    (review-pr / pr-complete / update-branch) the dispatch validator guarantees
@@ -108,7 +131,7 @@ export async function findPRNumber(
     const linked = await github.prView(ciRepo, run.prNumber, ['number', 'state', 'headRefOid'], {
       force: true,
     });
-    if (canBindPR(run, ciRepo, linked)) return run.prNumber;
+    if (canBindPR(run, ciRepo, linked, options)) return run.prNumber;
   }
 
   // 3. gh pr list --head <branch> with exponential backoff (4 attempts, 5s/15s/45s).
@@ -175,7 +198,7 @@ export async function findPRNumber(
       { force: true },
     );
     const pr = prs[0];
-    if (pr && canBindPR(run, ciRepo, pr)) {
+    if (pr && canBindPR(run, ciRepo, pr, options)) {
       setBinding(run.branch, ciRepo, pr.number as number);
       return pr.number as number;
     }
