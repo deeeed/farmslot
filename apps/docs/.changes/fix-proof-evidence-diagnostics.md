@@ -1,0 +1,1 @@
+- Document artifact indexing paths and JSON proof categories, and clarify the shipped file-content assertion support.

@@ -59,10 +59,14 @@ only when the test passes. Adjust the command and expectation to the actual clai
 }
 ```
 
-Today `command` alone and `assert_file contains` are not proof-eligible. The
-approved expansion of file assertions remains implementation work. Existing
-`assert_output`, `assert_json` and eligible `ui.wait_for` assertions supply
-observation-bound expectations.
+A command alone is not proof. `assert_file` with a non-empty `contains` can prove
+file content from its retained expectation and match result, without an indexed
+artifact; existence-only checks remain ineligible. `assert_json` claim proof
+requires an artifact whose path exactly matches the literal assertion path and
+whose category is `proof`. String entries passed to `index_artifacts` leave that
+category unset. See [JSON artifact proof](../guides/write-a-recipe.md#json-artifact-proof)
+for path resolution and a complete node example. `assert_output` and eligible
+`ui.wait_for` assertions also supply observation-bound expectations.
 
 ## Reading a recorded package
 
