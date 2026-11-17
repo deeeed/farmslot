@@ -178,6 +178,13 @@ Independent replay wrappers set `FARMSLOT_RECIPE_UNBOUND=1` on their existing
 invocation, without capability discovery or another process; old harnesses ignore
 that explicit diagnostic setting. Task directory variables must still be unset.
 
+Live doctor scopes three environment variables in its existing CLI process.
+Task reruns export their computed worker binding in the existing execution shell;
+neither adds a process or Git invocation. Standalone hosted recipe hooks reuse
+their Bash launcher through `env`; legacy compound hook strings use one extra
+Bash invocation per hook to isolate the diagnostic environment. That work is
+constant per hook, never per recipe node or retained run.
+
 The harness lane owns this candidate. Target zero traced framework Git starts in
 unchanged calls, including bootstrap and capture provenance; user-authored Git
 commands are separate work. A prepared record is reused only after fresh file

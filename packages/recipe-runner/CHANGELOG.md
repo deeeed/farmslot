@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- mm-harness 0.96.29 consumes runner 0.46.22 and CLI 0.35.16 for explicit task binding, isolated diagnostics, required task-script lookup and exact claim-conflict messages.
+
 - mm-harness 0.96.28 refuses unavailable configured Mobile slot devices instead of selecting another connected device; shared runner code and dependency pins are unchanged.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
