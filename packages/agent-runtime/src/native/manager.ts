@@ -1413,14 +1413,16 @@ export class NativeSessionManager {
   }
   private snapshot(
     record: Pick<SessionRecord, 'info'> &
-      Partial<Pick<SessionRecord, 'context' | 'workerLeaseError'>>,
+      Partial<Pick<SessionRecord, 'context' | 'workerLeaseError' | 'reservationError'>>,
   ): NativeSessionInfo {
     const unavailable = adapters[record.info.runner]?.adapter.resumeUnavailableReason?.(
       record.info.version,
     );
     return {
       ...record.info,
-      ...(!record.workerLeaseError && record.context?.workerLaunchDigest?.startsWith('reviewer-v1:')
+      ...(!record.workerLeaseError &&
+      !record.reservationError &&
+      record.context?.workerLaunchDigest?.startsWith('reviewer-v1:')
         ? { workerLaunchDigest: record.context.workerLaunchDigest }
         : {}),
       capabilities: {
