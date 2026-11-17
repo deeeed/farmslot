@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 import {
   currentSourceWitness,
@@ -84,6 +85,72 @@ test('reuses prepared values across invocations and refreshes all three boundari
     assert.equal(f.read(), 'original');
   });
   assert.equal(f.computations(), 1);
+});
+
+test('mixed implementations retain independent warm records and fresh source checks', async () => {
+  const f = fixture();
+  const implementations = await Promise.all(
+    ['1.0.0', '1.0.1'].map(async (version) => {
+      const directory = path.join(path.dirname(f.root), version);
+      const source = path.join(directory, 'src/runtime/source-witness.ts');
+      fs.mkdirSync(path.dirname(source), { recursive: true });
+      fs.copyFileSync(new URL('./source-witness.ts', import.meta.url), source);
+      fs.writeFileSync(
+        path.join(directory, 'package.json'),
+        JSON.stringify({ type: 'module', version }),
+      );
+      const api: typeof import('./source-witness.js') = await import(pathToFileURL(source).href);
+      const computations = { source: 0, metadata: 0 };
+      return {
+        computations,
+        read: () =>
+          api.withPreparedSourceWitness(async () => {
+            assert.ok(api.sourceWitnessSupportsOutputs(f.root, [path.join(f.root, 'temp')]));
+            const source = api.preparedSourceValue(
+              f.root,
+              'source',
+              () => {
+                computations.source++;
+                return f.git('hash-object', 'source.txt').toString().trim();
+              },
+              (value) => (typeof value === 'string' ? value : undefined),
+            );
+            const head = api.preparedMetadataValue(
+              f.root,
+              'head',
+              () => {
+                computations.metadata++;
+                return f.git('rev-parse', 'HEAD').toString().trim();
+              },
+              (value) => (typeof value === 'string' ? value : undefined),
+            );
+            return { source, head };
+          }),
+      };
+    }),
+  );
+  const initial = {
+    source: f.git('hash-object', 'source.txt').toString().trim(),
+    head: f.git('rev-parse', 'HEAD').toString().trim(),
+  };
+  for (let round = 0; round < 2; round++)
+    for (const implementation of implementations)
+      assert.deepEqual(await implementation.read(), initial);
+  for (const implementation of implementations)
+    assert.deepEqual(implementation.computations, { source: 1, metadata: 1 });
+
+  fs.writeFileSync(path.join(f.root, 'source.txt'), 'modified');
+  const changed = { ...initial, source: f.git('hash-object', 'source.txt').toString().trim() };
+  for (const implementation of implementations) {
+    assert.deepEqual(await implementation.read(), changed);
+    assert.deepEqual(implementation.computations, { source: 2, metadata: 1 });
+  }
+  f.git('commit', '--allow-empty', '-qm', 'new HEAD');
+  changed.head = f.git('rev-parse', 'HEAD').toString().trim();
+  for (const implementation of implementations) {
+    assert.deepEqual(await implementation.read(), changed);
+    assert.deepEqual(implementation.computations, { source: 3, metadata: 2 });
+  }
 });
 
 test('detects unstaged edits even when mtime is restored', async () => {
