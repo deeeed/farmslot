@@ -2,3 +2,4 @@
 - The publication gate no longer offers Close as Shipped for a merged PR this run did not ship: a reused branch's historical merge would have marked the run shipped against work it never did.
 - A merged PR counts as this run's shipment only when the published head is what merged, so a run that reviewed a PR at one head and fixed findings on top no longer binds the PR merged at the older head.
 - Close as Shipped re-proves the run's saved PR number against the head it is closing, so a number persisted by an earlier gate cannot record the run as published against a PR that merged an older head.
+- A close-as-shipped whose merged-PR probe cannot answer leaves the run retryable instead of completing it as unshipped, and an unproven merged link is cleared so `run adopt-published-pr` can record what actually shipped.

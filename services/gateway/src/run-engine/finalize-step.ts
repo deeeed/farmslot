@@ -376,21 +376,33 @@ export async function executeFinalizeStep(
       detail: 'Branch already merged — linking PR and skipping publication',
     });
     if (ciRepo) {
-      const { findMergedPRNumber, persistRunPrNumber } =
+      const { findMergedPRNumber, mergedLinkIsStale, persistRunPrNumber } =
         await import('../integrations/pr-linkage.js');
+      const packageHeadSha = (await readPreparedPackage(current))?.headSha;
       // A saved prNumber is not proof. An earlier gate persists the probe's
       // answer and never replaces it, so the field can name a PR that merged
       // an older head while the branch has moved on — closing against it would
       // record the run as shipped work that the merged PR does not contain.
       // The link is re-proved here against the head being closed, exactly as
       // the gate and publishCompletionPackage prove theirs.
-      publishedPrNumber = await findMergedPRNumber(
-        current,
-        ciRepo,
-        (await readPreparedPackage(current))?.headSha,
-      );
+      // An unreachable probe is unknown, not "nothing shipped": it throws here
+      // so the run stays retryable rather than settling on a guess.
+      publishedPrNumber = await findMergedPRNumber(current, ciRepo, packageHeadSha, {
+        onProbeError: 'throw',
+      });
       if (publishedPrNumber && publishedPrNumber !== current.prNumber)
         await persistRunPrNumber(current.id, publishedPrNumber);
+      if (!publishedPrNumber && (await mergedLinkIsStale(current, ciRepo, packageHeadSha))) {
+        // Nothing proved a shipment and the saved number names a merged PR this
+        // package did not ship. Clearing it is what makes the run adoptable:
+        // adopt-published-pr refuses while a different number is linked.
+        emitWithBroadcast('substep', {
+          name: 'close-as-shipped',
+          detail: `Clearing unproven link to PR #${current.prNumber} before completing`,
+        });
+        updateRun(runId, { prNumber: undefined });
+        await refreshRunLinks(runId);
+      }
     }
     if (publishedPrNumber) {
       // Only claim publication when a PR is actually linked; the zero-ahead

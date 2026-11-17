@@ -283,6 +283,7 @@ export async function findMergedPRNumber(
   run: Run,
   ciRepo: string,
   publicationHeadSha?: string | null,
+  options?: { onProbeError?: 'null' | 'throw' },
 ): Promise<number | null> {
   if (!run.branch) return null;
   try {
@@ -312,11 +313,39 @@ export async function findMergedPRNumber(
     }
     return pr.number as number;
   } catch (err) {
+    // The gate treats an unreachable probe as "no out-of-band merge" and still
+    // offers review and publication. A caller that is about to RECORD what
+    // shipped cannot: unknown is not the same as nothing, so it asks to throw
+    // and stays retryable instead of settling the run on a guess.
+    if (options?.onProbeError === 'throw') throw err;
     console.warn(
       `[pr-linkage] merged-PR probe failed runId=${run.id.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
     );
     return null;
   }
+}
+
+/**
+ * Whether the run's saved PR number is stale discovery linkage: a MERGED PR
+ * that this package did not ship.
+ *
+ * An earlier gate persists the number its probe proved and never replaces it,
+ * so the field outlives the head it was proved against. Left in place it is not
+ * merely wrong but blocking: `adopt-published-pr` refuses a different number
+ * ("The run already links a different PR"), so the operator cannot record what
+ * actually shipped. An OPEN saved PR is live publication state, never stale.
+ */
+export async function mergedLinkIsStale(
+  run: Run,
+  ciRepo: string,
+  publicationHeadSha?: string | null,
+): Promise<boolean> {
+  if (!run.prNumber || run.prNumber <= 0) return false;
+  const saved = await github.prView(ciRepo, run.prNumber, ['number', 'state', 'headRefOid'], {
+    force: true,
+  });
+  if (!isMergedPR(saved)) return false;
+  return !shippedThisPackage(run, ciRepo, saved, publicationHeadSha);
 }
 
 function withProbeTimeout<T>(probe: Promise<T>): Promise<T> {

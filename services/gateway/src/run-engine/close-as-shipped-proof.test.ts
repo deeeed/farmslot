@@ -18,15 +18,31 @@ const shippedPrNumber = 400;
 
 const probeCalls: { prNumber: number | undefined; headSha: string | undefined }[] = [];
 let probeResult: number | null = shippedPrNumber;
+let probeError: Error | undefined;
+let savedLinkIsStale = false;
+const staleChecks: (string | undefined)[] = [];
 const persisted: number[] = [];
 
 const linkage = await import('../integrations/pr-linkage.js');
 mock.module('../integrations/pr-linkage.js', {
   namedExports: {
     ...linkage,
-    findMergedPRNumber: async (run: { prNumber?: number }, _repo: string, headSha?: string) => {
+    findMergedPRNumber: async (
+      run: { prNumber?: number },
+      _repo: string,
+      headSha?: string,
+      options?: { onProbeError?: 'null' | 'throw' },
+    ) => {
       probeCalls.push({ prNumber: run.prNumber, headSha });
+      if (probeError) {
+        if (options?.onProbeError === 'throw') throw probeError;
+        return null;
+      }
       return probeResult;
+    },
+    mergedLinkIsStale: async (_run: unknown, _repo: string, headSha?: string) => {
+      staleChecks.push(headSha);
+      return savedLinkIsStale;
     },
     // Delegates, so the assertions see the real persisted state.
     persistRunPrNumber: async (runId: string, prNumber: number) => {
@@ -55,6 +71,7 @@ const closeAsShipped: RunDecision = {
 const finalize = async (t: { after: (fn: () => void) => void }) => {
   probeCalls.length = 0;
   persisted.length = 0;
+  staleChecks.length = 0;
   const run = createRun({
     flowType: 'fix-bug',
     mode: 'autonomous',
@@ -69,7 +86,7 @@ const finalize = async (t: { after: (fn: () => void) => void }) => {
     prNumber: stalePrNumber,
     decisions: [closeAsShipped],
   });
-  const context = {
+  const context: FinalizeStepContext = {
     broadcastFn: () => {},
     latestResolvedHumanGateDecision,
     loadProjectVarsOrNull: async () => ({
@@ -78,13 +95,15 @@ const finalize = async (t: { after: (fn: () => void) => void }) => {
     readPreparedPackage: async () => makeReadyGatePackage({ headSha: packageHead }),
     refreshRunLinks: async () => {},
     stepPartialIO: new Map(),
-  } as unknown as FinalizeStepContext;
+  };
   await executeFinalizeStep(run.id, context);
   return run;
 };
 
 test('close-as-shipped re-proves a saved PR number against the head it is closing', async (t) => {
   probeResult = shippedPrNumber;
+  probeError = undefined;
+  savedLinkIsStale = false;
   const run = await finalize(t);
   assert.deepEqual(
     probeCalls,
@@ -102,6 +121,8 @@ test('close-as-shipped re-proves a saved PR number against the head it is closin
 
 test('close-as-shipped claims no publication when nothing proves it shipped', async (t) => {
   probeResult = null;
+  probeError = undefined;
+  savedLinkIsStale = false;
   const run = await finalize(t);
   assert.equal(probeCalls.length, 1);
   assert.deepEqual(persisted, []);
@@ -110,4 +131,38 @@ test('close-as-shipped claims no publication when nothing proves it shipped', as
     'published_ready',
     'a stale saved number must not become a publication claim',
   );
+});
+
+// adopt-published-pr refuses while the run links a different PR, so leaving an
+// unproven merged number behind does not just mislabel the run: it stops the
+// operator recording what actually shipped.
+test('close-as-shipped clears an unproven merged link so the run stays adoptable', async (t) => {
+  probeResult = null;
+  probeError = undefined;
+  savedLinkIsStale = true;
+  const run = await finalize(t);
+  assert.deepEqual(staleChecks, [packageHead]);
+  assert.equal(getRun(run.id)?.prNumber, undefined);
+  assert.notEqual(getRun(run.id)?.engineState?.publishGate?.publicationStatus, 'published_ready');
+});
+
+test('close-as-shipped keeps a live PR link that is not a stale merge', async (t) => {
+  probeResult = null;
+  probeError = undefined;
+  savedLinkIsStale = false;
+  const run = await finalize(t);
+  assert.equal(
+    getRun(run.id)?.prNumber,
+    stalePrNumber,
+    'an open saved PR is live publication state, not stale discovery linkage',
+  );
+});
+
+// Unknown is not "nothing shipped": settling the run on an unreachable probe is
+// how a wrong attribution becomes permanent.
+test('close-as-shipped stays retryable when the probe cannot answer', async (t) => {
+  probeResult = null;
+  probeError = new Error('merged-PR probe timed out after 15000ms');
+  savedLinkIsStale = false;
+  await assert.rejects(finalize(t), /probe timed out/);
 });
