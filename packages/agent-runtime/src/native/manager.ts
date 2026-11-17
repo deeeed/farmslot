@@ -1411,12 +1411,18 @@ export class NativeSessionManager {
       },
     });
   }
-  private snapshot(record: Pick<SessionRecord, 'info'>): NativeSessionInfo {
+  private snapshot(
+    record: Pick<SessionRecord, 'info'> &
+      Partial<Pick<SessionRecord, 'context' | 'workerLeaseError'>>,
+  ): NativeSessionInfo {
     const unavailable = adapters[record.info.runner]?.adapter.resumeUnavailableReason?.(
       record.info.version,
     );
     return {
       ...record.info,
+      ...(!record.workerLeaseError && record.context?.workerLaunchDigest?.startsWith('reviewer-v1:')
+        ? { workerLaunchDigest: record.context.workerLaunchDigest }
+        : {}),
       capabilities: {
         ...record.info.capabilities,
         // A host property, not the runner's: this host removes any session's queued input.
@@ -1477,7 +1483,18 @@ export class NativeSessionManager {
       limit,
       generation,
     );
-    return { ...result, session: this.snapshot({ info: result.session }) };
+    return {
+      ...result,
+      session: this.snapshot({
+        ...record,
+        info: result.session,
+        context:
+          result.session.workerLeaseId === record.info.workerLeaseId &&
+          result.session.generation === record.info.generation
+            ? record.context
+            : undefined,
+      }),
+    };
   }
   async setApprovalMode(
     owner: string,

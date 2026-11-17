@@ -41,6 +41,7 @@ let snapshot: NativeSessionReadResult;
 let loseReply: 'resume' | 'send' | undefined;
 let afterRead: (() => Promise<void>) | undefined;
 let preparedLaunch: NativeWorkerLaunch = launch;
+let hostLaunch: NativeWorkerLaunch = launch;
 const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
 mock.module('../../core/index.js', {
   namedExports: {
@@ -78,12 +79,14 @@ mock.module('./node.js', {
         return structuredClone(snapshot);
       }
       if (method === NATIVE_WORKER_RESUME) {
+        assert.deepEqual(params.launch, hostLaunch);
         assert.equal(params.resumeSessionId, 'saved-conversation');
         snapshot.session = {
           ...snapshot.session,
-          generation: 'resumed',
+          generation: snapshot.session.generation === 'resumed' ? 'resumed-again' : 'resumed',
           state: 'idle',
           processStopped: false,
+          workerLaunchDigest: nativeWorkerLaunchDigest(hostLaunch),
         };
         if (loseReply === 'resume') {
           loseReply = undefined;
@@ -123,6 +126,7 @@ async function fixture(t: TestContext, stopped: boolean) {
   loseReply = undefined;
   afterRead = undefined;
   preparedLaunch = launch;
+  hostLaunch = launch;
   const previous = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
   process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = principal.id;
   t.after(() => {
@@ -368,4 +372,38 @@ test('a changed slot owner prevents completion recovery', async (t) => {
   };
   await assert.rejects(resume(), /ownership changed/);
   assert.equal(calls.filter((call) => call.method !== Methods.NATIVE_SESSION_READ).length, 0);
+});
+
+test('legacy recovery stores reviewer identity for another stopped recovery after a pool edit', async (t) => {
+  const { run, context, resume } = await fixture(t, true);
+  preparedLaunch = { ...launch, reviewerEnvironmentKeys: ['CODEX_HOME'] };
+  hostLaunch = preparedLaunch;
+  await resume();
+  const saved = getRun(run.id)!.agentContexts![0]!;
+  assert.equal(saved.nativeSession!.launchDigest, nativeWorkerLaunchDigest(preparedLaunch));
+  const restored = structuredClone(saved);
+  restored.nativeCommandId = 'second-completion';
+  restored.nativeCommandText = 'Complete the retained checklist';
+  restored.nativeSession = { ...restored.nativeSession!, closedAt: new Date().toISOString() };
+  updateRun(run.id, { agentContexts: [restored] });
+  snapshot.session = { ...snapshot.session, state: 'closed', processStopped: true };
+  snapshot.commands = [];
+  preparedLaunch = {
+    ...preparedLaunch,
+    environment: {
+      set: { ASDF_DATA_DIR: '/tools/asdf', ASDF_CONFIG_FILE: '/tools/asdfrc' },
+      unset: [],
+    },
+  };
+  hostLaunch = preparedLaunch;
+  await resumeNativeWorker(run.id, {
+    purpose: 'review',
+    contextId: context.id,
+    commandId: restored.nativeCommandId,
+    text: restored.nativeCommandText,
+  });
+  const after = getRun(run.id)!.agentContexts![0]!;
+  assert.equal(after.runnerSessionId, 'saved-conversation');
+  assert.equal(after.nativeSession!.generation, 'resumed-again');
+  assert.equal(after.nativeSession!.launchDigest, nativeWorkerLaunchDigest(preparedLaunch));
 });

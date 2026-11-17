@@ -320,3 +320,56 @@ test('warm reviewer compatibility ignores ASDF pool changes while keeping the re
     .launch;
   assert.notEqual(nativeWorkerLaunchDigest(changedCredential), nativeWorkerLaunchDigest(before));
 });
+
+test('Claude cloud-provider identity binds selected cloud credentials and provider switches', async () => {
+  const prepare = async (machineEnv: Record<string, string>) =>
+    (
+      await prepareNativeWorkerLaunch({
+        vars: makeVars({ machineEnv }),
+        project: {},
+        runner: 'claude',
+        model: 'opus',
+        role: 'review',
+        reviewValidationDepth: 'full-live',
+        safetyTier: 'sandboxed',
+        taskDir: 'tasks/proof',
+        leaseId: 'proof-lease',
+        sessionId: 'proof-session',
+        prepareAccount: false,
+      })
+    ).launch;
+  const cases = [
+    { selector: 'CLAUDE_CODE_USE_BEDROCK', credential: 'AWS_PROFILE' },
+    { selector: 'CLAUDE_CODE_USE_BEDROCK', credential: 'AWS_SECRET_ACCESS_KEY' },
+    { selector: 'CLAUDE_CODE_USE_VERTEX', credential: 'GOOGLE_APPLICATION_CREDENTIALS' },
+    { selector: 'CLAUDE_CODE_USE_FOUNDRY', credential: 'ANTHROPIC_FOUNDRY_API_KEY' },
+  ];
+  for (const { selector, credential } of cases) {
+    const before = await prepare({ [selector]: '1', [credential]: 'old-account' });
+    const changed = await prepare({ [selector]: '1', [credential]: 'new-account' });
+    assert.notEqual(
+      nativeWorkerLaunchDigest(before),
+      nativeWorkerLaunchDigest(changed),
+      credential,
+    );
+    assert.notEqual(
+      nativeWorkerLaunchDigest(before),
+      nativeWorkerLaunchDigest(await prepare({ [credential]: 'old-account' })),
+      selector,
+    );
+    assert.equal(
+      nativeWorkerLaunchDigest(before),
+      nativeWorkerLaunchDigest(
+        await prepare({
+          [selector]: '1',
+          [credential]: 'old-account',
+          ASDF_DATA_DIR: '/tool-update',
+        }),
+      ),
+    );
+  }
+  assert.equal(
+    nativeWorkerLaunchDigest(await prepare({ AWS_PROFILE: 'unselected-old' })),
+    nativeWorkerLaunchDigest(await prepare({ AWS_PROFILE: 'unselected-new' })),
+  );
+});

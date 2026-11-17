@@ -18,6 +18,7 @@ import { NativeSessionManager } from './manager.js';
 import {
   nativeWorkerEnvironment,
   type NativeWorkerLaunch,
+  nativeWorkerLaunchDigest,
   nativeWorkerProjectToolsFirst,
 } from './worker-launch.js';
 
@@ -122,6 +123,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   );
   assert.equal(fromJournal.id, session.id);
   assert.equal(fromJournal.generation, session.generation);
+  assert.equal(fromJournal.workerLaunchDigest, nativeWorkerLaunchDigest(toolChange));
   const path = readFileSync(pathFile, 'utf8').split(delimiter);
   assert.deepEqual(path.slice(0, 2), [join(asdf, 'shims'), runnerDirectory]);
 });
@@ -366,6 +368,10 @@ test('reviewer identity ignores tool environment but refuses credentials, binary
     { ...launch, filesystemPolicy: { readOnlyRoots: ['/repo'], writableRoots: ['/output'] } },
   ])
     assert.equal(nativeWorkerLaunchMatchesDigest(digest, changed), false);
+  assert.throws(
+    () => decodeNativeWorkerLaunch({ ...launch, reviewerEnvironmentKeys: [] }),
+    /reviewer environment identity/,
+  );
   const legacy = { ...launch, reviewerEnvironmentKeys: undefined };
   const legacyDigest = nativeWorkerLaunchDigest(legacy);
   assert.equal(nativeWorkerLaunchMatchesDigest(legacyDigest, launch), true);

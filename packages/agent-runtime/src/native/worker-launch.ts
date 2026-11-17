@@ -183,7 +183,9 @@ export function decodeNativeWorkerLaunch(value: unknown): NativeWorkerLaunch {
   const reviewerEnvironmentKeys = launch.reviewerEnvironmentKeys;
   if (
     reviewerEnvironmentKeys !== undefined &&
-    (!Array.isArray(reviewerEnvironmentKeys) || !reviewerEnvironmentKeys.every(validName))
+    (!Array.isArray(reviewerEnvironmentKeys) ||
+      !reviewerEnvironmentKeys.length ||
+      !reviewerEnvironmentKeys.every(validName))
   )
     throw new Error('Invalid reviewer environment identity');
   if (

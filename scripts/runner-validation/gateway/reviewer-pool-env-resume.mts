@@ -6,7 +6,12 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { NodeHealthResult, Run } from '../../../packages/protocol/src/index.js';
+import {
+  isRecord,
+  type NativeSessionReadResult,
+  type NodeHealthResult,
+  type Run,
+} from '../../../packages/protocol/src/index.js';
 import {
   projectPacks,
   REVIEW_PROJECT,
@@ -46,20 +51,38 @@ try {
     projects: (holds) =>
       projectPacks(holds)
         .filter((pack) => pack.name === REVIEW_PROJECT)
-        .map((pack) => ({
-          ...pack,
-          projectJson: {
-            ...pack.projectJson,
-            review: {
-              enabled: true,
-              runner: 'claude',
-              model: 'opus',
-              mode: 'warm',
-              max_retries: 1,
-              review_timeout_min: 10,
+        .map((pack) => {
+          const scripted = pack.projectJson.scripted;
+          assert.ok(
+            isRecord(scripted) && isRecord(scripted.commands) && isRecord(scripted.commands.work),
+          );
+          const work = scripted.commands.work;
+          assert.ok(typeof work.command === 'string');
+          const producerDone = path.join(holds, 'producer-complete');
+          const phaseCheck = 'if [ -e "$task/artifacts/pr-description.md" ]; then';
+          assert.ok(work.command.includes(phaseCheck));
+          const command =
+            work.command.replace(phaseCheck, `if [ -e '${producerDone}' ]; then`) +
+            `\ntouch '${producerDone}'`;
+          return {
+            ...pack,
+            projectJson: {
+              ...pack.projectJson,
+              scripted: {
+                ...scripted,
+                commands: { ...scripted.commands, work: { ...work, command } },
+              },
+              review: {
+                enabled: true,
+                runner: 'claude',
+                model: 'opus',
+                mode: 'warm',
+                max_retries: 1,
+                review_timeout_min: 10,
+              },
             },
-          },
-        })),
+          };
+        }),
     seeds: { [REVIEW_PROJECT]: SEED },
     slotFiles: slotCli(root),
     cliSnapshots: path.join(evidence, 'cli-snapshots'),
@@ -93,6 +116,7 @@ try {
   await writeFile(path.join(active.holds, 'fix'), 'hold the real fix before its completion signal');
   const created = await active.call<{ run: Run }>('run.create', {
     ...reviewRunParams(REVIEW_PROJECT + '-1'),
+    reviewValidationDepth: 'full-live',
     reviewSequence: [reviewer],
   });
   runId = created.run.id;
@@ -157,10 +181,7 @@ try {
   assert.notEqual(resumed.nativeSession!.leaseId, first.context.nativeSession!.leaseId);
   assert.ok(resumed.nativeSession!.acceptedAt);
   assert.ok(resumed.nativeSession!.launchDigest?.startsWith('reviewer-v1:'));
-  const snapshot = await active.call<{
-    session: { nativeSessionId: string };
-    commands: Array<{ commandId: string; accepted: boolean }>;
-  }>('native.session.read', {
+  const snapshot = await active.call<NativeSessionReadResult>('native.session.read', {
     sessionId: resumed.nativeSession!.sessionId,
     executionNodeId: resumed.nativeSession!.executionNodeId,
     worker: {
@@ -171,6 +192,7 @@ try {
     },
   });
   assert.equal(snapshot.session.nativeSessionId, first.context.runnerSessionId);
+  assert.equal(snapshot.session.workerLaunchDigest, resumed.nativeSession!.launchDigest);
   assert.ok(
     snapshot.commands.some(
       (command) => command.commandId === resumed.nativeSession!.commandId && command.accepted,
@@ -184,6 +206,7 @@ try {
         pass: true,
         runId,
         poolEnvironmentChanged: true,
+        confirmedDigest: snapshot.session.workerLaunchDigest,
         nativeSessionId: resumed.nativeSession!.sessionId,
         runnerSessionId: resumed.runnerSessionId,
         firstLease: first.context.nativeSession!.leaseId,

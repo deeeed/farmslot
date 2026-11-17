@@ -78,10 +78,6 @@ export async function prepareNativeWorkerLaunch(input: {
   });
   // Static reviewers need the selected home and pool for retained marker commands.
   // Unrelated pool tool selections must not change their launch identity.
-  const reviewerKeys = reviewerLaunchEnvironmentKeys(runner, input.model, {
-    ...environment.set,
-    ...vars.machineEnv,
-  });
   const machineHome = vars.machineEnv?.FARMSLOT_HOME;
   const machinePool = vars.machineEnv?.FARMSLOT_POOL_DIR;
   const machineEnv = machineShellEnv(
@@ -90,9 +86,6 @@ export async function prepareNativeWorkerLaunch(input: {
           machine: vars.machine,
           host: vars.host,
           machineEnv: {
-            ...Object.fromEntries(
-              Object.entries(vars.machineEnv ?? {}).filter(([name]) => reviewerKeys.includes(name)),
-            ),
             ...(machineHome === undefined ? {} : { FARMSLOT_HOME: machineHome }),
             ...(machinePool === undefined ? {} : { FARMSLOT_POOL_DIR: machinePool }),
           },
