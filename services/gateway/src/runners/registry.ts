@@ -256,6 +256,8 @@ function blindProviderEnvironment(model: string): readonly string[] {
 }
 
 export interface RunnerDefinition {
+  /** Configuration and endpoint variables that affect a retained native reviewer. */
+  reviewResumeEnvironment?: readonly string[];
   /** Environment required by this runner's selected model, for blind workers only. */
   blindModelEnvironment?: (
     model?: string | null,
@@ -440,6 +442,7 @@ const CLAUDE_MODEL_PREFIXES = /^(claude|opus|sonnet|haiku|fable)\b/i;
 
 export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   claude: {
+    reviewResumeEnvironment: ['CLAUDE_CONFIG_DIR', 'CLAUDE_SECURESTORAGE_CONFIG_DIR'],
     usesObservabilityBundle: true,
     supportsInitialPromptArg: true,
     id: 'claude',
@@ -504,6 +507,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     mobileKeyProfile: RUNNER_MOBILE_KEY_PROFILES.claude,
   },
   codex: {
+    reviewResumeEnvironment: ['CODEX_HOME'],
     usesObservabilityBundle: true,
     id: 'codex',
     blindModelEnvironment: () => [
@@ -575,6 +579,13 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     mobileKeyProfile: RUNNER_MOBILE_KEY_PROFILES.codex,
   },
   cursor: {
+    reviewResumeEnvironment: [
+      'HOME',
+      'CURSOR_CONFIG_DIR',
+      'CURSOR_DATA_DIR',
+      'XDG_CONFIG_HOME',
+      'XDG_DATA_HOME',
+    ],
     usesObservabilityBundle: true,
     id: 'cursor',
     blindModelEnvironment: () => ['CURSOR_API_KEY', 'CURSOR_AUTH_TOKEN'],
@@ -651,6 +662,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     mobileKeyProfile: RUNNER_MOBILE_KEY_PROFILES.cursor,
   },
   grok: {
+    reviewResumeEnvironment: ['GROK_HOME', 'GROK_BASE_URL', 'XAI_BASE_URL'],
     usesObservabilityBundle: true,
     id: 'grok',
     blindModelEnvironment: () => ['GROK_API_KEY', 'XAI_API_KEY'],
@@ -704,6 +716,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     mobileKeyProfile: RUNNER_MOBILE_KEY_PROFILES.grok,
   },
   pi: {
+    reviewResumeEnvironment: ['PI_CODING_AGENT_DIR'],
     usesObservabilityBundle: true,
     reviewObservabilityDir: (taskDir) => path.posix.join(taskDir, '.observability'),
     id: 'pi',
@@ -777,6 +790,14 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     mobileKeyProfile: RUNNER_MOBILE_KEY_PROFILES.pi,
   },
   opencode: {
+    reviewResumeEnvironment: [
+      'OPENCODE_CONFIG',
+      'OPENCODE_CONFIG_DIR',
+      'OPENCODE_CONFIG_CONTENT',
+      'OPENCODE_AUTH_CONTENT',
+      'XDG_CONFIG_HOME',
+      'XDG_DATA_HOME',
+    ],
     id: 'opencode',
     blindModelEnvironment: (model) => blindProviderEnvironment(model ?? ''),
     sessionContinuation: { native: true, terminal: null },
@@ -4502,4 +4523,20 @@ export function stripRunnerNoise(content: string, runnerId?: string | null): str
 /** Workflow policy consumes adapter capability, independently of the producing worker transport. */
 export function runnerNativeResultSchemas(runner: string): readonly NativeResultSchema[] {
   return nativeRunnerDefinitions[runner]?.adapter.capabilities.structuredResultSchemas ?? [];
+}
+
+/** The same runner capability selects credentials at launch and binds reviewer reuse. */
+export function reviewerLaunchEnvironmentKeys(
+  runner: string,
+  model: string,
+  environment: NodeJS.ProcessEnv,
+): string[] {
+  const definition = getRunnerDefinition(runner);
+  return [
+    ...new Set([
+      'HOME',
+      ...(definition.reviewResumeEnvironment ?? []),
+      ...(definition.blindModelEnvironment?.(model, environment) ?? []),
+    ]),
+  ].sort();
 }

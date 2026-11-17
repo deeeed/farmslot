@@ -67,6 +67,61 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     await manager.closeWorker('owner', session.id, session.generation, launch.leaseId);
     rmSync(root, { recursive: true, force: true });
   });
+  const reviewerLaunch: NativeWorkerLaunch = { ...launch, reviewerEnvironmentKeys: ['CODEX_HOME'] };
+  await manager.ensure(
+    'owner',
+    { sessionId: session.id, runner: 'codex', cwd: root },
+    reviewerLaunch,
+  );
+  const toolChange: NativeWorkerLaunch = {
+    ...reviewerLaunch,
+    environment: {
+      ...launch.environment,
+      set: {
+        ...launch.environment.set,
+        ASDF_DATA_DIR: join(root, 'other-asdf'),
+        ASDF_CONFIG_FILE: join(root, 'asdfrc'),
+      },
+    },
+  };
+  const reused = await manager.ensure(
+    'owner',
+    { sessionId: session.id, runner: 'codex', cwd: root },
+    toolChange,
+  );
+  assert.equal(reused.id, session.id);
+  assert.equal(reused.generation, session.generation);
+  assert.equal(reused.nativeSessionId, session.nativeSessionId);
+  await assert.rejects(
+    manager.ensure(
+      'owner',
+      { sessionId: session.id, runner: 'codex', cwd: root },
+      {
+        ...toolChange,
+        environment: {
+          ...toolChange.environment,
+          set: { ...toolChange.environment.set, CODEX_HOME: join(root, 'another-account') },
+        },
+      },
+    ),
+    /worker launch configuration/,
+  );
+  await assert.rejects(
+    manager.ensure(
+      'owner',
+      { sessionId: session.id, runner: 'codex', model: 'other-model', cwd: root },
+      toolChange,
+    ),
+    /model/,
+  );
+  const restored = new NativeSessionManager(join(root, 'state'));
+  const fromJournal = await restored.ensure(
+    'owner',
+    { sessionId: session.id, runner: 'codex', cwd: root },
+    toolChange,
+  );
+  assert.equal(fromJournal.id, session.id);
+  assert.equal(fromJournal.generation, session.generation);
   const path = readFileSync(pathFile, 'utf8').split(delimiter);
   assert.deepEqual(path.slice(0, 2), [join(asdf, 'shims'), runnerDirectory]);
 });
@@ -261,4 +316,66 @@ test('an autonomous run turns model questions off without changing the launch di
       () => decodeNativeWorkerLaunch({ ...launch, modelQuestions }),
       /model questions setting/,
     );
+});
+
+test('reviewer identity ignores tool environment but refuses credentials, binary and execution changes', async () => {
+  const { nativeWorkerLaunchDigest, nativeWorkerLaunchMatchesDigest, decodeNativeWorkerLaunch } =
+    await import('./worker-launch.js');
+  const launch: NativeWorkerLaunch = {
+    leaseId: randomUUID(),
+    executable: '/runner',
+    safetyTier: 'sandboxed',
+    reviewerEnvironmentKeys: ['ANTHROPIC_API_KEY', 'CLAUDE_CONFIG_DIR'],
+    environment: {
+      set: { ANTHROPIC_API_KEY: 'synthetic-key', CLAUDE_CONFIG_DIR: '/account' },
+      unset: [],
+    },
+  };
+  const digest = nativeWorkerLaunchDigest(launch);
+  const toolChange = {
+    ...launch,
+    environment: {
+      set: { ...launch.environment.set, ASDF_DATA_DIR: '/tools', ASDF_CONFIG_FILE: '/config' },
+      unset: ['UNRELATED_TOOL'],
+    },
+  };
+  assert.equal(nativeWorkerLaunchDigest(toolChange), digest);
+  assert.equal(nativeWorkerLaunchMatchesDigest(digest, toolChange), true);
+  assert.deepEqual(
+    decodeNativeWorkerLaunch(launch).reviewerEnvironmentKeys,
+    launch.reviewerEnvironmentKeys,
+  );
+  for (const changed of [
+    { ...launch, executable: '/other-runner' },
+    { ...launch, accountLabel: 'other-account' },
+    { ...launch, safetyTier: 'dangerous' as const },
+    { ...launch, effort: 'high' },
+    { ...launch, reviewerEnvironmentKeys: [] },
+    {
+      ...launch,
+      environment: {
+        set: { ...launch.environment.set, ANTHROPIC_API_KEY: 'other-key' },
+        unset: [],
+      },
+    },
+    {
+      ...launch,
+      environment: { set: { ...launch.environment.set, CLAUDE_CONFIG_DIR: '/other' }, unset: [] },
+    },
+    { ...launch, environment: { set: {}, unset: ['ANTHROPIC_API_KEY'] } },
+    { ...launch, filesystemPolicy: { readOnlyRoots: ['/repo'], writableRoots: ['/output'] } },
+  ])
+    assert.equal(nativeWorkerLaunchMatchesDigest(digest, changed), false);
+  const legacy = { ...launch, reviewerEnvironmentKeys: undefined };
+  const legacyDigest = nativeWorkerLaunchDigest(legacy);
+  assert.equal(nativeWorkerLaunchMatchesDigest(legacyDigest, launch), true);
+  assert.equal(nativeWorkerLaunchMatchesDigest(legacyDigest, toolChange), false);
+  assert.notEqual(
+    nativeWorkerLaunchDigest({ ...toolChange, reviewerEnvironmentKeys: undefined }),
+    legacyDigest,
+  );
+  assert.throws(
+    () => decodeNativeWorkerLaunch({ ...launch, reviewerEnvironmentKeys: ['not-a-variable'] }),
+    /reviewer environment identity/,
+  );
 });

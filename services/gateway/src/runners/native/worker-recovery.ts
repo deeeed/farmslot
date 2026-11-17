@@ -4,7 +4,7 @@ import path from 'node:path';
 import { NATIVE_WORKER_RESUME, NATIVE_WORKER_SEND } from '@farmslot/agent-runtime/native';
 import {
   type NativeWorkerLaunch,
-  nativeWorkerLaunchDigest,
+  nativeWorkerLaunchMatchesDigest,
 } from '@farmslot/agent-runtime/native/worker-launch';
 import {
   isTerminalRunStatus,
@@ -404,7 +404,8 @@ async function resumeNativeWorkerExclusive(
         });
   if (
     prepared.launch.leaseId !== binding.leaseId ||
-    nativeWorkerLaunchDigest(prepared.launch) !== binding.launchDigest ||
+    !binding.launchDigest ||
+    !nativeWorkerLaunchMatchesDigest(binding.launchDigest, prepared.launch) ||
     (snapshot.session.cwd !== vars.remoteRepo &&
       !(
         options?.purpose === 'parking' &&

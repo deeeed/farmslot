@@ -15,6 +15,7 @@ import {
 import { nativeRunnerDefinitions } from '@farmslot/agent-runtime/native/registry';
 import {
   nativeWorkerLaunchDigest,
+  nativeWorkerLaunchMatchesDigest,
   validateNativeWorkerFilesystemPolicy,
 } from '@farmslot/agent-runtime/native/worker-launch';
 import {
@@ -50,7 +51,7 @@ import {
   resolveRunnerEffort,
   taskRecipeTrustEnvironment,
 } from '../launch-command.js';
-import { runnerSupportsEffort } from '../registry.js';
+import { reviewerLaunchEnvironmentKeys, runnerSupportsEffort } from '../registry.js';
 
 import { validateNativeRunner } from './manager.js';
 import { routeNativeExecution } from './node.js';
@@ -351,6 +352,7 @@ export async function launchReviewWorkspaceWorker(input: {
     leaseId: binding.leaseId,
     ...(executable ? { executable } : {}),
     environment,
+    reviewerEnvironmentKeys: reviewerLaunchEnvironmentKeys(runner, model, environment.set),
     safetyTier: 'sandboxed',
     ...(modelQuestions ? { modelQuestions } : {}),
     effort,
@@ -360,7 +362,7 @@ export async function launchReviewWorkspaceWorker(input: {
     },
   };
   const digest = nativeWorkerLaunchDigest(launch);
-  if (binding.launchDigest && binding.launchDigest !== digest)
+  if (binding.launchDigest && !nativeWorkerLaunchMatchesDigest(binding.launchDigest, launch))
     throw new Error('Static review launch configuration changed during retry');
   context = await saveContext(
     run.id,

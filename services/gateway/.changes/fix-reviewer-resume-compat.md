@@ -1,0 +1,1 @@
+- Preserve retained reviewer sessions across unrelated pool environment changes while keeping runner, credential, execution-policy and native lease compatibility checks.

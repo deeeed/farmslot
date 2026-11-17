@@ -11,7 +11,10 @@ import {
   type NativeWorkerCancelResult,
 } from '@farmslot/agent-runtime/native';
 import { effectiveModelQuestions } from '@farmslot/agent-runtime/native/model-questions';
-import { nativeWorkerLaunchDigest } from '@farmslot/agent-runtime/native/worker-launch';
+import {
+  nativeWorkerLaunchDigest,
+  nativeWorkerLaunchMatchesDigest,
+} from '@farmslot/agent-runtime/native/worker-launch';
 import {
   type AgentContext,
   type AgentRole,
@@ -684,7 +687,10 @@ export async function dispatchNativeWorker(input: {
     });
   }
   const digest = nativeWorkerLaunchDigest(prepared.launch);
-  if (binding.launchDigest && binding.launchDigest !== digest)
+  if (
+    binding.launchDigest &&
+    !nativeWorkerLaunchMatchesDigest(binding.launchDigest, prepared.launch)
+  )
     throw new Error('Native worker launch configuration changed; explicit recovery is required');
   const save = async (next: NativeWorkerSessionBinding, patch: Partial<AgentContext> = {}) => {
     const saved = await upsertAgentContext(
@@ -707,7 +713,11 @@ export async function dispatchNativeWorker(input: {
               latest.nativeSession.generation !== next.generation) ||
             (latest.nativeSession.launchDigest &&
               next.launchDigest &&
-              latest.nativeSession.launchDigest !== next.launchDigest)
+              latest.nativeSession.launchDigest !== next.launchDigest &&
+              !(
+                next.launchDigest === digest &&
+                nativeWorkerLaunchMatchesDigest(latest.nativeSession.launchDigest, prepared.launch)
+              ))
           )
             throw new Error('Native worker generation or launch configuration changed');
           return {

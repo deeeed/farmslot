@@ -64,6 +64,7 @@ import {
   nativeWorkerEnvironment,
   type NativeWorkerLaunch,
   nativeWorkerLaunchDigest,
+  nativeWorkerLaunchMatchesDigest,
   nativeWorkerProjectToolsFirst,
   type NativeWorkerResumeParams,
   validateNativeWorkerFilesystemPolicy,
@@ -511,11 +512,20 @@ export class NativeSessionManager {
       if (previous.info.workerLeaseId !== workerLaunch?.leaseId)
         throw new Error('Worker recovery must preserve its task lease');
       const currentContext = executionContext(workerLaunch, params.runner, profile);
+      if (
+        workerLaunch?.reviewerEnvironmentKeys &&
+        (!previous.context.workerLaunchDigest ||
+          !nativeWorkerLaunchMatchesDigest(previous.context.workerLaunchDigest, workerLaunch))
+      )
+        throw new Error('Worker recovery must preserve its reviewer launch identity');
+      const previousContext = workerLaunch?.reviewerEnvironmentKeys
+        ? { ...previous.context, workerLaunchDigest: currentContext.workerLaunchDigest }
+        : previous.context;
       const ambientHome =
         (workerLaunch ? nativeWorkerEnvironment(workerLaunch) : process.env).HOME ?? homedir();
       if (
-        JSON.stringify(previous.context) !== JSON.stringify(currentContext) &&
-        !transport.canResumeExecutionContext?.(previous.context, currentContext, ambientHome)
+        JSON.stringify(previousContext) !== JSON.stringify(currentContext) &&
+        !transport.canResumeExecutionContext?.(previousContext, currentContext, ambientHome)
       )
         throw new Error('Resume must preserve the native account execution context');
       if (relocation) {
@@ -558,6 +568,13 @@ export class NativeSessionManager {
       params.cwd,
       environment,
     );
+    if (
+      previous &&
+      workerLaunch?.reviewerEnvironmentKeys &&
+      (previous.info.executable !== resolved.executable ||
+        previous.info.version !== resolved.version)
+    )
+      throw new Error('Reviewer recovery must preserve the resolved runner binary');
     const unavailable = transport.adapter.resumeUnavailableReason?.(resolved.version);
     if (params.resumeSessionId && unavailable) throw new Error(unavailable);
     let filesystemPolicy = workerLaunch?.filesystemPolicy;
@@ -842,8 +859,10 @@ export class NativeSessionManager {
     if (!workerLaunch && params.effort !== undefined && record.info.effort !== params.effort)
       throw new Error('Reserved sessionId launch configuration differs: effort');
     if (
-      record.context.workerLaunchDigest !==
-      (workerLaunch ? nativeWorkerLaunchDigest(workerLaunch) : undefined)
+      workerLaunch
+        ? !record.context.workerLaunchDigest ||
+          !nativeWorkerLaunchMatchesDigest(record.context.workerLaunchDigest, workerLaunch)
+        : record.context.workerLaunchDigest !== undefined
     )
       throw new Error(
         'Reserved sessionId launch configuration differs: worker launch configuration',
@@ -851,11 +870,13 @@ export class NativeSessionManager {
     const profile = params.profileId
       ? requireNativeProfile(params.profileId, params.runner)
       : undefined;
-    if (
-      JSON.stringify(record.context) !==
-      JSON.stringify(executionContext(workerLaunch, params.runner, profile))
-    )
+    const currentContext = executionContext(workerLaunch, params.runner, profile);
+    const previousContext = workerLaunch
+      ? { ...record.context, workerLaunchDigest: currentContext.workerLaunchDigest }
+      : record.context;
+    if (JSON.stringify(previousContext) !== JSON.stringify(currentContext))
       throw new Error('Reserved sessionId launch configuration differs: account execution context');
+    if (workerLaunch) this.upgradeWorkerLaunchDigest(record, workerLaunch);
     return record;
   }
 
@@ -1112,7 +1133,8 @@ export class NativeSessionManager {
     if (record.workerLeaseError) throw record.workerLeaseError;
     if (
       record.info.generation !== generation ||
-      record.context.workerLaunchDigest !== nativeWorkerLaunchDigest(launch)
+      !record.context.workerLaunchDigest ||
+      !nativeWorkerLaunchMatchesDigest(record.context.workerLaunchDigest, launch)
     )
       throw new Error('Native worker handoff must preserve generation and launch configuration');
     const stopped =
@@ -1124,7 +1146,10 @@ export class NativeSessionManager {
       record.info.workerModelQuestions !== effectiveModelQuestions(launch.modelQuestions)
     )
       throw new Error('Native worker question tool changed; stop and resume with a fresh launch');
-    if (record.info.workerLeaseId === launch.leaseId) return this.snapshot(record);
+    if (record.info.workerLeaseId === launch.leaseId) {
+      this.upgradeWorkerLaunchDigest(record, launch);
+      return this.snapshot(record);
+    }
     this.assertWorkerLease(owner, id, generation, leaseId);
     if (
       (record.info.state !== 'idle' && !stopped) ||
@@ -1138,6 +1163,7 @@ export class NativeSessionManager {
       );
     record.workerHistory.assertNewLease(launch.leaseId);
     record.info.workerLeaseId = launch.leaseId;
+    record.context.workerLaunchDigest = nativeWorkerLaunchDigest(launch);
     try {
       this.persist(record);
     } catch (error) {
@@ -1146,6 +1172,19 @@ export class NativeSessionManager {
       throw error;
     }
     return this.snapshot(record);
+  }
+
+  /** Matching the legacy full launch is the only authority to upgrade its journal digest. */
+  private upgradeWorkerLaunchDigest(record: SessionRecord, launch: NativeWorkerLaunch): void {
+    const digest = nativeWorkerLaunchDigest(launch);
+    if (record.context.workerLaunchDigest === digest) return;
+    record.context.workerLaunchDigest = digest;
+    try {
+      this.persist(record);
+    } catch (error) {
+      record.workerLeaseError = error instanceof Error ? error : new Error(String(error));
+      throw error;
+    }
   }
 
   private append(record: SessionRecord, event: NativeEventInput): void {

@@ -227,7 +227,7 @@ test('review launch identity ignores unrelated pool selections and keeps explici
     nativeWorkerLaunchDigest((await prepare('old', 'primary')).launch),
     nativeWorkerLaunchDigest((await prepare('new', 'primary')).launch),
   );
-  assert.notEqual(
+  assert.equal(
     nativeWorkerLaunchDigest((await prepare('old', 'review', 'full-live')).launch),
     nativeWorkerLaunchDigest((await prepare('new', 'review', 'full-live')).launch),
   );
@@ -287,4 +287,36 @@ test('native pi workers carry pool reasoning limits after project defaults and u
   assert.equal(launch.environment.set[name], limits);
   assert.ok(!launch.environment.unset.includes(name));
   assert.equal(nativeWorkerEnvironment(launch)[name], limits);
+});
+
+test('warm reviewer compatibility ignores ASDF pool changes while keeping the reviewer tool environment', async () => {
+  const prepare = (machineEnv: Record<string, string>) =>
+    prepareNativeWorkerLaunch({
+      vars: makeVars({ machineEnv }),
+      project: {},
+      runner: 'claude',
+      model: 'opus',
+      role: 'review',
+      reviewValidationDepth: 'full-live',
+      safetyTier: 'sandboxed',
+      taskDir: 'tasks/proof',
+      leaseId: 'proof-lease',
+      sessionId: 'proof-session',
+      prepareAccount: false,
+    });
+  const before = (await prepare({ ANTHROPIC_API_KEY: 'synthetic-key' })).launch;
+  const toolEnvironments: Record<string, string>[] = [
+    { ASDF_DATA_DIR: '/tools/asdf', ASDF_CONFIG_FILE: '/tools/asdfrc' },
+    { ASDF_DATA_DIR: '/other/asdf', ASDF_CONFIG_FILE: '/other/asdfrc' },
+    {},
+  ];
+  for (const toolEnv of toolEnvironments) {
+    const after = (await prepare({ ANTHROPIC_API_KEY: 'synthetic-key', ...toolEnv })).launch;
+    for (const [name, value] of Object.entries(toolEnv))
+      assert.equal(after.environment.set[name], value);
+    assert.equal(nativeWorkerLaunchDigest(after), nativeWorkerLaunchDigest(before));
+  }
+  const changedCredential = (await prepare({ ANTHROPIC_API_KEY: 'different-synthetic-key' }))
+    .launch;
+  assert.notEqual(nativeWorkerLaunchDigest(changedCredential), nativeWorkerLaunchDigest(before));
 });

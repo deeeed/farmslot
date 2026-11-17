@@ -24,7 +24,11 @@ import {
 import { shellQuote } from '../../core/tmux.js';
 import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
 import { resolveRunnerEffort, taskRecipeTrustEnvironment } from '../launch-command.js';
-import { normalizeRunner, runnerSupportsEffort } from '../registry.js';
+import {
+  normalizeRunner,
+  reviewerLaunchEnvironmentKeys,
+  runnerSupportsEffort,
+} from '../registry.js';
 import { buildRunnerObservabilityInstallCommand } from '../runner-observability.js';
 import { resolveRunnerAccountForDispatch } from '../status-provider.js';
 
@@ -74,6 +78,10 @@ export async function prepareNativeWorkerLaunch(input: {
   });
   // Static reviewers need the selected home and pool for retained marker commands.
   // Unrelated pool tool selections must not change their launch identity.
+  const reviewerKeys = reviewerLaunchEnvironmentKeys(runner, input.model, {
+    ...environment.set,
+    ...vars.machineEnv,
+  });
   const machineHome = vars.machineEnv?.FARMSLOT_HOME;
   const machinePool = vars.machineEnv?.FARMSLOT_POOL_DIR;
   const machineEnv = machineShellEnv(
@@ -82,6 +90,9 @@ export async function prepareNativeWorkerLaunch(input: {
           machine: vars.machine,
           host: vars.host,
           machineEnv: {
+            ...Object.fromEntries(
+              Object.entries(vars.machineEnv ?? {}).filter(([name]) => reviewerKeys.includes(name)),
+            ),
             ...(machineHome === undefined ? {} : { FARMSLOT_HOME: machineHome }),
             ...(machinePool === undefined ? {} : { FARMSLOT_POOL_DIR: machinePool }),
           },
@@ -173,6 +184,15 @@ export async function prepareNativeWorkerLaunch(input: {
       leaseId: input.leaseId,
       ...(executable ? { executable } : {}),
       environment,
+      ...(input.role === 'review'
+        ? {
+            reviewerEnvironmentKeys: reviewerLaunchEnvironmentKeys(
+              runner,
+              input.model,
+              environment.set,
+            ),
+          }
+        : {}),
       safetyTier: input.safetyTier,
       ...(input.role === 'review' ? { approvalPolicy: 'never' } : {}),
       ...(input.modelQuestions ? { modelQuestions: input.modelQuestions } : {}),
