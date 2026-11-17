@@ -306,6 +306,8 @@ export async function sendCiFixNudge(input: {
   retryable: boolean;
   deferredReason: string | null;
   turnToken?: string;
+  /** The delivery respawned the runner, so the retained binding names the replaced session. */
+  runnerReplaced?: true;
   retainedSession: ReturnType<typeof resolveCiFixRetainedSession>;
 }> {
   const retainedSession = resolveCiFixRetainedSession(input.run);
@@ -364,6 +366,7 @@ export async function sendCiFixNudge(input: {
     retryable: delivery.delivered || delivery.retryable !== false,
     deferredReason: delivery.delivered ? null : delivery.reason,
     ...(delivery.delivered && delivery.turnToken ? { turnToken: delivery.turnToken } : {}),
+    ...(delivery.delivered && delivery.runnerReplaced ? { runnerReplaced: true as const } : {}),
     retainedSession,
   };
 }
@@ -542,13 +545,20 @@ export async function getSlotHeadSha(slotId: string): Promise<string | null> {
   }
 }
 
-/** Bind the accepted CI-fix delivery and its primary worker to the same exact pane. */
+/**
+ * Bind the accepted CI-fix delivery and its primary worker to the same exact pane. `replaced` is
+ * the binding of a runner the delivery respawned: it is cleared and never captured again.
+ */
 export async function recordCiFixRunnerSession(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runId: string,
   runner: string,
   workerTarget: string,
+  { replaced }: { replaced?: { runnerSessionId: string; runnerSessionPath: string } } = {},
 ): Promise<void> {
+  const relaunchWorkerRole = primaryRoleForFlow(getRun(runId)?.flowType);
+  if (replaced && getRun(runId)?.agentContexts?.some((ctx) => ctx.role === relaunchWorkerRole))
+    await upsertAgentContext(runId, relaunchWorkerRole, clearedRunnerSessionContextPatch());
   const deliveryPane = await resolveExactTmuxWindowPane(vars, workerTarget);
   const relaunched = await captureAndRecordRunnerSession({
     vars,
@@ -556,10 +566,14 @@ export async function recordCiFixRunnerSession(
     runId,
     role: 'ci-fix',
     captureLabel: 'ci fix relaunch',
-    capture: { paneId: deliveryPane?.paneId ?? null, slotId: vars.slotId },
+    capture: {
+      paneId: deliveryPane?.paneId ?? null,
+      slotId: vars.slotId,
+      excludedSessionId: replaced?.runnerSessionId,
+      excludedSessionPath: replaced?.runnerSessionPath,
+    },
   });
   const relaunchedRun = getRun(runId);
-  const relaunchWorkerRole = primaryRoleForFlow(relaunchedRun?.flowType);
   // Never fabricate a worker context the dispatch did not create.
   if (relaunchedRun?.agentContexts?.some((ctx) => ctx.role === relaunchWorkerRole)) {
     await recordRunnerSessionForRole({
@@ -992,6 +1006,7 @@ async function attemptInlineCIFix(
       );
     let retainedSession = resolveCiFixRetainedSession(run);
     let acceptedTurnToken: string | undefined;
+    let runnerReplaced = false;
     let ciPromptSendAttempted = Boolean(recoveredContext?.promptDeliveryStartedAt);
     let sendOutcomeUnknown = false;
     let possiblePromptMutations = 0;
@@ -1084,6 +1099,7 @@ async function attemptInlineCIFix(
           console.warn(`[ci-monitor] run ${runId.slice(0, 8)} — ${lastDeferredReason}`);
         }
         sent = initialDelivery.sent;
+        runnerReplaced = initialDelivery.runnerReplaced === true;
         let ciDeliveryTerminal = !initialDelivery.retryable;
         acceptedTurnToken = initialDelivery.turnToken;
         if (!sent && !ciDeliveryTerminal) {
@@ -1126,6 +1142,7 @@ async function attemptInlineCIFix(
               possiblePromptMutations = 0;
               ciDeliveryTerminal ||= !retryDelivery.retryable;
               acceptedTurnToken = retryDelivery.turnToken ?? acceptedTurnToken;
+              if (retryDelivery.sent) runnerReplaced = retryDelivery.runnerReplaced === true;
               return retryDelivery.sent;
             },
             rediscover: (storedTarget) =>
@@ -1204,13 +1221,15 @@ async function attemptInlineCIFix(
       runner,
       model: run?.metrics.model ?? null,
       target: { session, window: null, pane: null, target: workerTarget },
-      ...(runnerSessionContextPatch(
-        {
-          runnerSessionId: retainedSession.binding?.runnerSessionId ?? null,
-          runnerSessionPath: retainedSession.binding?.runnerSessionPath ?? null,
-        },
-        'retained CI fix worker session',
-      ) ?? clearedRunnerSessionContextPatch()),
+      ...((runnerReplaced
+        ? null
+        : runnerSessionContextPatch(
+            {
+              runnerSessionId: retainedSession.binding?.runnerSessionId ?? null,
+              runnerSessionPath: retainedSession.binding?.runnerSessionPath ?? null,
+            },
+            'retained CI fix worker session',
+          )) ?? clearedRunnerSessionContextPatch()),
       promptDeliveryStartedAt:
         recoveredContext?.promptDeliveryStartedAt ?? new Date().toISOString(),
       deliveryBaselineRef: beforeSha,
@@ -1218,12 +1237,15 @@ async function attemptInlineCIFix(
     });
     ciFixContextStarted = true;
     if (ciFixContext) await watchContext(slotId, ciFixContext);
-    if (!retainedSession.binding && !unconfirmedPromptSend) {
+    if ((!retainedSession.binding || runnerReplaced) && !unconfirmedPromptSend) {
       // No retained binding means `relaunchWorkerSession` respawned the runner,
-      // so this delivery owns a brand-new session that no earlier capture can
-      // supply. Attribute it to the delivery pane and bind both the ci-fix role
-      // and the worker role that now shares the pane.
-      await recordCiFixRunnerSession(vars, runId, runner, workerTarget);
+      // and `runnerReplaced` means the delivery itself respawned it with the
+      // prompt. Either way this delivery owns a brand-new session that no
+      // earlier capture can supply. Attribute it to the delivery pane and bind
+      // both the ci-fix role and the worker role that now shares the pane.
+      await recordCiFixRunnerSession(vars, runId, runner, workerTarget, {
+        replaced: runnerReplaced ? (retainedSession.binding ?? undefined) : undefined,
+      });
     }
     mergeCIWatchOutputPatch(runId, {
       phase: 'waiting_for_worker',

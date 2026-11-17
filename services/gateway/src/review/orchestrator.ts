@@ -3068,6 +3068,7 @@ async function sendOwnedFeedbackToWorker(
     let terminalRetainedHoldReason: string | null = null;
     let runnerOutOfQuota: string | null = null;
     let structuredDeliveryAccepted = false;
+    let runnerReplaced = false;
     let acceptedTurnToken: string | undefined;
     let acceptedDeliveryStartedAt: string | undefined;
     let acceptedGeneration: number | undefined;
@@ -3141,6 +3142,7 @@ async function sendOwnedFeedbackToWorker(
         promptSendAttempted || retained.delivered || retained.sendAttempted === true;
       if (retained.delivered) {
         structuredDeliveryAccepted = retained.acknowledgement === 'structured';
+        runnerReplaced = retained.runnerReplaced === true;
         acceptedTurnToken = retained.turnToken;
         acceptedDeliveryStartedAt = deliveryStartedAt;
         acceptedGeneration = deliveryGeneration;
@@ -3233,7 +3235,7 @@ async function sendOwnedFeedbackToWorker(
         `${failureSummary} (${fixTaskFile}).${retainedSummary} Pane re-resolution found no accepting runner pane in session ${session} (windows seen: ${seenSummary}). Escape: replay the review step after restoring runner observability.`,
       );
     }
-    await recordReviewFixRunnerSession(vars, runId, runner, workerTarget);
+    await recordReviewFixRunnerSession(vars, runId, runner, workerTarget, { runnerReplaced });
     if (structuredDeliveryAccepted) {
       if (acceptedTurnToken && acceptedDeliveryStartedAt && acceptedGeneration !== undefined)
         await rememberReviewFixTurn(
@@ -3361,15 +3363,17 @@ async function workerAcknowledgesFixTask(signalChanged: () => Promise<boolean>):
 /**
  * Bind the review-fix role to the runner session that just accepted the
  * fix prompt. A retained worker keeps its own session, so the fix role adopts
- * it; a fix relaunch respawned the runner, so the new session is captured
- * against the delivery pane and bound to the worker role as well — that role's
- * previous binding was cleared by the respawn and would otherwise stay empty.
+ * it. A fix relaunch, or a delivery that respawned the runner with the prompt
+ * (`runnerReplaced`), started a new session: it is captured against the
+ * delivery pane and bound to the worker role as well, so each fix round's
+ * session gets its own usage receipt on the run.
  */
 export async function recordReviewFixRunnerSession(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runId: string,
   runner: string,
   deliveryTarget: string,
+  { runnerReplaced = false }: { runnerReplaced?: boolean } = {},
 ): Promise<void> {
   const latest = getRun(runId);
   const workerRole = primaryRoleForFlow(latest?.flowType);
@@ -3381,7 +3385,7 @@ export async function recordReviewFixRunnerSession(
       runnerSessionPath: workerContext?.runnerSessionPath,
     },
   ]);
-  if (retained.binding) {
+  if (retained.binding && !runnerReplaced) {
     await recordRunnerSessionForRole({
       runId,
       role: 'review-fix',
@@ -3390,6 +3394,13 @@ export async function recordReviewFixRunnerSession(
     });
     return;
   }
+  if (runnerReplaced) {
+    // The bound session no longer receives the prompt. A capture that finds no transcript yet
+    // must leave the roles unbound, not on the replaced session.
+    await upsertAgentContext(runId, 'review-fix', clearedRunnerSessionContextPatch());
+    if (workerContext)
+      await upsertAgentContext(runId, workerRole, clearedRunnerSessionContextPatch());
+  }
   const deliveryPane = await resolveExactTmuxWindowPane(vars, deliveryTarget);
   const relaunched = await captureAndRecordRunnerSession({
     vars,
@@ -3397,7 +3408,12 @@ export async function recordReviewFixRunnerSession(
     runId,
     role: 'review-fix',
     captureLabel: 'review fix relaunch',
-    capture: { paneId: deliveryPane?.paneId ?? null, slotId: vars.slotId },
+    capture: {
+      paneId: deliveryPane?.paneId ?? null,
+      slotId: vars.slotId,
+      excludedSessionId: retained.binding?.runnerSessionId,
+      excludedSessionPath: retained.binding?.runnerSessionPath,
+    },
   });
   if (workerContext) {
     await recordRunnerSessionForRole({

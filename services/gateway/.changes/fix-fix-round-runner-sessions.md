@@ -1,0 +1,1 @@
+- A review-fix or CI-fix round that respawns its runner with the prompt (pi, Cursor) now records the new runner session instead of the replaced worker session, so each round's tokens and cost roll up into the run total.
