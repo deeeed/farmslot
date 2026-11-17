@@ -373,3 +373,30 @@ test('Claude cloud-provider identity binds selected cloud credentials and provid
     nativeWorkerLaunchDigest(await prepare({ AWS_PROFILE: 'unselected-new' })),
   );
 });
+
+test('static reviewer compatibility survives the recorded project ASDF setting', async () => {
+  const prepare = (set: Record<string, string>) =>
+    prepareNativeWorkerLaunch({
+      vars: makeVars(),
+      project: { command_env: { set } },
+      runner: 'codex',
+      model: 'gpt-6.1-sol',
+      role: 'review',
+      reviewValidationDepth: 'static-code',
+      safetyTier: 'dangerous',
+      effort: 'high',
+      taskDir: 'tasks/proof',
+      leaseId: 'proof-lease',
+      sessionId: 'proof-session',
+      prepareAccount: false,
+    });
+  const before = (await prepare({})).launch;
+  const after = (await prepare({ ASDF_NODEJS_LEGACY_FILE_DYNAMIC_STRATEGY: 'latest_installed' }))
+    .launch;
+  assert.equal(after.environment.set.ASDF_NODEJS_LEGACY_FILE_DYNAMIC_STRATEGY, 'latest_installed');
+  assert.equal(
+    nativeWorkerEnvironment(after).ASDF_NODEJS_LEGACY_FILE_DYNAMIC_STRATEGY,
+    'latest_installed',
+  );
+  assert.equal(nativeWorkerLaunchDigest(after), nativeWorkerLaunchDigest(before));
+});

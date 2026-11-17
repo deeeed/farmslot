@@ -112,6 +112,10 @@ try {
     reaper,
     gatewayEnv: { FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'refuse' },
     nodeEnv: {
+      // Use normal retained task/configuration copies. Scripted installed-input
+      // reuse requires the live project bytes to stay fixed for the whole stack.
+      // The slot shim delegates to command mode, which needs no scenario flag.
+      FARMSLOT_ENABLE_SCRIPTED_SCENARIOS: '0',
       ANTHROPIC_API_KEY: undefined,
       ANTHROPIC_AUTH_TOKEN: undefined,
       ANTHROPIC_BASE_URL: undefined,
@@ -178,6 +182,14 @@ try {
     300_000,
   );
   await writeFile(path.join(evidence, 'first.json'), JSON.stringify(first, null, 2));
+  const taskRoot = path.join(
+    active.slotRepo(REVIEW_PROJECT + '-1'),
+    path.dirname(first.context.taskFile!),
+  );
+  const taskProvenance = JSON.parse(
+    await readFile(path.join(taskRoot, 'artifacts/harness-provenance.json'), 'utf8'),
+  );
+  assert.equal(taskProvenance.source.kind, 'task-retained');
   assert.equal(first.context.reviewValidationDepth, 'static-code');
   assert.equal(first.context.nativeSession!.safetyTier, safetyTier);
   const projectFile = path.join(active.fixture, 'projects', REVIEW_PROJECT, 'project.json');
@@ -288,6 +300,7 @@ try {
         runId,
         projectCommandEnvironmentChanged: envChange,
         poolFilesUnchanged: true,
+        taskInputPolicy: taskProvenance.source.kind,
         launchPath: 'runNativeReviewAgent/dispatchNativeWorker/prepareNativeWorkerLaunch',
         confirmedDigest: snapshot.session.workerLaunchDigest,
         nativeSessionId: resumed.nativeSession!.sessionId,
