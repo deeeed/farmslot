@@ -24,8 +24,11 @@ test('artifact replay guardrails omit the comparison lines when no base is known
   // name it: the template's own main-relative commands must be rewritten, not
   // left standing beside a guardrail that contradicts them.
   assert.equal(/git diff main/.test(rendered), false, rendered.slice(0, 600));
-  assert.equal(/git log (?:main|HEAD\.\.main)/.test(rendered), false, rendered.slice(0, 600));
   assert.ok(rendered.includes('git diff'));
+  // A range instruction is dropped, not answered with a different range: a step
+  // that counts or records `git log -n 20 HEAD` would report the wrong commits.
+  assert.equal(/git log/.test(rendered), false, rendered.slice(0, 600));
+  assert.equal(rendered.includes('Then read'), false, 'the whole range line goes');
   // A bare `git diff` is the working-tree instruction and is fine; what must
   // never appear is a command whose ref argument is missing or a placeholder.
   assert.equal(/git (?:diff|log)\s+(?:`|$|\.\.)/m.test(rendered), false, rendered.slice(0, 600));

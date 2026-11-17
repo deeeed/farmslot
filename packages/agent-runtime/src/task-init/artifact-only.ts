@@ -119,14 +119,22 @@ export function applyArtifactOnlyTaskPolicy(
     /git diff main\.\.HEAD/g,
     literalReplacement(hasBase ? `git diff ${replayBase}` : 'git diff'),
   );
-  result = result.replace(
-    /git log main\.\.HEAD/g,
-    literalReplacement(hasBase ? `git log ${replayBase}..HEAD` : 'git log -n 20 HEAD'),
-  );
-  result = result.replace(
-    /git log HEAD\.\.main/g,
-    literalReplacement(hasBase ? `git log HEAD..${replayBase}` : 'git log -n 20 HEAD'),
-  );
+  if (hasBase) {
+    result = result.replace(
+      /git log main\.\.HEAD/g,
+      literalReplacement(`git log ${replayBase}..HEAD`),
+    );
+    result = result.replace(
+      /git log HEAD\.\.main/g,
+      literalReplacement(`git log HEAD..${replayBase}`),
+    );
+  } else {
+    // A commit range has no honest substitute without a base: `git log -n 20
+    // HEAD` would make a step that counts, pipes or records the range report
+    // twenty commits of HEAD instead, and `HEAD..main` loses its meaning
+    // altogether. Drop the instruction rather than answer it wrongly.
+    result = result.replace(/^.*git log (?:main\.\.HEAD|HEAD\.\.main).*(?:\r?\n|$)/gm, '');
+  }
   result = result.replace(/commit\/push approval/g, 'artifact-only completion approval');
   result = result.replace(
     /- \[ \] \*\*(\d+)\. On approval — commit, push, update PR:\*\*[\s\S]*?(?=\s*Write completion signal:|\n- \[ \] \*\*\d+\.)/g,
