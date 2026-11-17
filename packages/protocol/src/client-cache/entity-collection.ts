@@ -266,7 +266,7 @@ export class EntityCollection<T> {
       this.need(id);
       return false;
     }
-    this.rows.set(id, { entity: value, version });
+    if (this.rows.get(id)?.version !== version) this.rows.set(id, { entity: value, version });
     this.listed?.set(id, version);
     this.pending.delete(id);
     this.unstored.add(id);

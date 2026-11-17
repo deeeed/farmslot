@@ -11,10 +11,8 @@ export function renderSlotViewShellStyles(): string {
         font-family: ${fonts.mono};
       }
 
-      /* Health arrives after the slot identity; reserve its one-line strip. */
       slot-view .sv-preconditions {
-        height: 17px;
-        flex: 0 0 17px;
+        flex: none;
         overflow-x: auto;
         overflow-y: hidden;
         scrollbar-width: none;

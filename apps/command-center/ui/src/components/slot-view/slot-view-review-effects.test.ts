@@ -57,6 +57,7 @@ const {
 const { committedReviewBranchDiffRequest } = await import('./slot-view-branch-model.js');
 
 class DeferredWorkspaceReads {
+  version = 0;
   private adopt?: (value: unknown) => void;
   read<T>(_method: string, _params: unknown, apply: (value: T) => void): Promise<T> {
     this.adopt = (value) => apply(value as T);
@@ -72,6 +73,10 @@ class DeferredWorkspaceReads {
   }
   publish(value: unknown): void {
     this.adopt?.(value);
+  }
+  retries = 0;
+  async retry(): Promise<void> {
+    this.retries++;
   }
   drop(): void {}
 }
@@ -514,4 +519,76 @@ test('an unsupported PR lookup settles recovery without a failure or base correc
   });
   assert.equal(view._branchDiffBase, 'main');
   assert.equal(view.branchDiffReloads, reloads);
+});
+
+test('a poll of the same branch keeps its observed read and held files in place', async () => {
+  const view = makeView();
+  const first = loadSlotViewBranchDiff(asView(view));
+  const repeated = loadSlotViewBranchDiff(asView(view));
+  const readCount = pending.length;
+  for (const read of pending.splice(0))
+    read.resolve({
+      base: 'main',
+      head: 'feat/x',
+      files: [{ path: 'held.ts' }],
+      totalAdditions: 1,
+      totalDeletions: 0,
+    });
+  await Promise.all([first, repeated]);
+  assert.equal(readCount, 1, 'Only one read observes the same branch');
+  const held = view._branchDiffFiles;
+  await loadSlotViewBranchDiff(asView(view));
+  assert.equal(pending.length, 0, 'A settled read stays subscribed');
+  assert.equal(view._branchDiffLoading, false);
+  assert.equal(view._branchDiffFiles, held);
+  view._workspaceReads.publish({
+    base: 'main',
+    head: 'feat/y',
+    files: [{ path: 'changed.ts' }],
+    totalAdditions: 2,
+    totalDeletions: 0,
+  });
+  assert.deepEqual(view._branchDiffFiles, [{ path: 'changed.ts' }]);
+});
+
+test('retrying a failed branch retries its existing observation', async () => {
+  const view = makeView();
+  const first = loadSlotViewBranchDiff(asView(view));
+  pending.shift()?.reject(new Error('read failed'));
+  await first;
+  const retry = loadSlotViewBranchDiff(asView(view));
+  for (const read of pending.splice(0))
+    read.resolve({ base: 'main', head: 'feat/x', files: [], totalAdditions: 0, totalDeletions: 0 });
+  await retry;
+  assert.equal(view._workspaceReads.retries, 1);
+  view._workspaceReads.publish({
+    base: 'main',
+    head: 'feat/x',
+    files: [{ path: 'recovered.ts' }],
+    totalAdditions: 1,
+    totalDeletions: 0,
+  });
+  assert.equal(view._branchDiffError, null);
+  assert.deepEqual(view._branchDiffFiles, [{ path: 'recovered.ts' }]);
+});
+
+test('a cleared workspace opens the same branch again', async () => {
+  const view = makeView();
+  const first = loadSlotViewBranchDiff(asView(view));
+  pending
+    .shift()
+    ?.resolve({ base: 'main', head: 'feat/x', files: [], totalAdditions: 0, totalDeletions: 0 });
+  await first;
+  view._workspaceReads.version++;
+  const reopened = loadSlotViewBranchDiff(asView(view));
+  assert.equal(pending.length, 1);
+  pending.shift()?.resolve({
+    base: 'main',
+    head: 'feat/y',
+    files: [{ path: 'fresh.ts' }],
+    totalAdditions: 1,
+    totalDeletions: 0,
+  });
+  await reopened;
+  assert.deepEqual(view._branchDiffFiles, [{ path: 'fresh.ts' }]);
 });
