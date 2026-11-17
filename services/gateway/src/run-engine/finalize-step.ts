@@ -375,17 +375,22 @@ export async function executeFinalizeStep(
       name: 'close-as-shipped',
       detail: 'Branch already merged — linking PR and skipping publication',
     });
-    if (!publishedPrNumber && ciRepo) {
+    if (ciRepo) {
       const { findMergedPRNumber, persistRunPrNumber } =
         await import('../integrations/pr-linkage.js');
-      // The probe links a merged PR only when this package is what shipped, so
-      // it needs the approved head the gate was deciding about.
+      // A saved prNumber is not proof. An earlier gate persists the probe's
+      // answer and never replaces it, so the field can name a PR that merged
+      // an older head while the branch has moved on — closing against it would
+      // record the run as shipped work that the merged PR does not contain.
+      // The link is re-proved here against the head being closed, exactly as
+      // the gate and publishCompletionPackage prove theirs.
       publishedPrNumber = await findMergedPRNumber(
         current,
         ciRepo,
         (await readPreparedPackage(current))?.headSha,
       );
-      if (publishedPrNumber) await persistRunPrNumber(current.id, publishedPrNumber);
+      if (publishedPrNumber && publishedPrNumber !== current.prNumber)
+        await persistRunPrNumber(current.id, publishedPrNumber);
     }
     if (publishedPrNumber) {
       // Only claim publication when a PR is actually linked; the zero-ahead
