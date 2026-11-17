@@ -423,9 +423,17 @@ function makeArtifactOnlyReplayRun(): Pick<
   };
 }
 
-function makeArtifactOnlyReplayRunWithoutStartRef(): Pick<
+function makeArtifactOnlyReplayRunWithoutStartRef(
+  overrides: Partial<Pick<Run, 'preWorkBaseSha' | 'worktreeHeadAtDispatch'>> = {},
+): Pick<
   Run,
-  'completionPolicy' | 'flowType' | 'lane' | 'startRef' | 'engineState'
+  | 'completionPolicy'
+  | 'flowType'
+  | 'lane'
+  | 'startRef'
+  | 'engineState'
+  | 'preWorkBaseSha'
+  | 'worktreeHeadAtDispatch'
 > {
   return {
     flowType: 'fix-bug',
@@ -433,6 +441,9 @@ function makeArtifactOnlyReplayRunWithoutStartRef(): Pick<
     completionPolicy: 'artifact-only',
     startRef: undefined,
     engineState: undefined,
+    preWorkBaseSha: undefined,
+    worktreeHeadAtDispatch: undefined,
+    ...overrides,
   };
 }
 
@@ -709,11 +720,30 @@ test('artifact-only task policy strips publishing instructions without startRef'
 
   const safe = applyReplayForRun(template, makeArtifactOnlyReplayRunWithoutStartRef());
 
-  assert.match(safe, /selected reference\/base/);
+  // This assertion used to require the `selected reference/base` placeholder,
+  // which is what eval run 9317844e shipped into TASK.md and what sent its
+  // worker searching git history for that ref.
+  assert.doesNotMatch(safe, /selected reference\/base/);
+  assert.match(safe, /No replay base was recorded for it/);
   assert.doesNotMatch(safe, /Ignore injected recipe-harness overlay paths/);
   assert.doesNotMatch(safe, /gh pr create/i);
   assert.doesNotMatch(safe, /git push/i);
   assert.doesNotMatch(safe, /create a draft PR/i);
+  assert.doesNotThrow(() => assertArtifactOnlyTaskGuard(safe));
+});
+
+test('artifact-only task policy names the dispatch base when startRef is absent', () => {
+  const base = '49426fdf906f2663d8306a299aad94f77f6ca323';
+  const template = ['# Worker: Bugfix', '', 'Inspect `git diff main...HEAD`.'].join('\n');
+
+  const safe = applyReplayForRun(
+    template,
+    makeArtifactOnlyReplayRunWithoutStartRef({ worktreeHeadAtDispatch: base }),
+  );
+
+  assert.match(safe, new RegExp(`comparison replay from \`${base}\``));
+  assert.match(safe, new RegExp(`git diff ${base}`));
+  assert.doesNotMatch(safe, /git diff main\.\.\.HEAD/);
   assert.doesNotThrow(() => assertArtifactOnlyTaskGuard(safe));
 });
 

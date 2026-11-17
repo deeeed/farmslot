@@ -419,11 +419,29 @@ export function renderCommentSummary(rows: CommentRow[]): string {
 }
 
 export function artifactOnlyReplayForRun(
-  run: Pick<Run, 'completionPolicy' | 'flowType' | 'lane' | 'startRef' | 'engineState'>,
+  run: Pick<
+    Run,
+    | 'completionPolicy'
+    | 'flowType'
+    | 'lane'
+    | 'startRef'
+    | 'engineState'
+    | 'preWorkBaseSha'
+    | 'worktreeHeadAtDispatch'
+  >,
 ): TaskInitSpec['artifactOnlyReplay'] {
   if (!shouldApplyArtifactOnlyTaskPolicy(run)) return undefined;
   return {
-    base: run.startRef?.resolvedSha ?? run.startRef?.requestedRef ?? 'selected reference/base',
+    // A comparison replay dispatched without an explicit startRef still has a
+    // base: the commit it was dispatched from. Eval run 9317844e had startRef
+    // null and shipped the old `selected reference/base` placeholder into
+    // TASK.md, which sent the worker searching git history for that ref.
+    base:
+      run.startRef?.resolvedSha ??
+      run.startRef?.requestedRef ??
+      run.preWorkBaseSha ??
+      run.worktreeHeadAtDispatch ??
+      undefined,
     ...(run.engineState?.evalExperiment
       ? {
           ignoredPaths: [

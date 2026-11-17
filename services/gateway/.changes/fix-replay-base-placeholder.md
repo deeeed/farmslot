@@ -1,0 +1,1 @@
+- An artifact-only comparison replay takes its base from the run's recorded pre-work base or dispatch head when no startRef was given, instead of writing the literal `selected reference/base` into TASK.md and sending the worker searching git history for that ref.
