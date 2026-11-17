@@ -1,0 +1,1 @@
+- Make the native recorder diagnostic test handle SIGINT directly instead of depending on Bash foreground-child scheduling.
