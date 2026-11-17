@@ -1733,3 +1733,28 @@ test('a valid failed comparison dependency remains inside the head closure witho
     'failed',
   );
 });
+
+test('frozen publication refuses an action whose canonical implementation was never captured', async (t) => {
+  const f = await fixture(t);
+  const file = path.join(f.root, 'summary.json');
+  const parsed: unknown = JSON.parse(await readFile(file, 'utf8'));
+  assert.ok(parsed && typeof parsed === 'object' && !Array.isArray(parsed));
+  const summary = {
+    ...parsed,
+    taskActions: [
+      { action: 'task.read_text', official: false, digest: `sha256:${'a'.repeat(64)}` },
+    ],
+  };
+  const bytes = JSON.stringify(summary);
+  await writeFile(file, bytes);
+  const summaryEntry = f.artifacts.find(({ path: file }) => file.endsWith('/summary.json'));
+  assert.ok(summaryEntry);
+  summaryEntry.sha256 = digest(Buffer.from(bytes));
+  await retainRunFixture(f.run);
+  const inventory = await buildPackageEvidenceManifest(f.taskDir, f.artifacts, f.manifest);
+  await retainRunFixture(f.run);
+  await assert.rejects(
+    verifyFrozenPublicationEvidence(f.run, inventory, ['artifacts/recipe-run/proof.png']),
+    /Cannot publish recipe.*task-action.*task.read_text/,
+  );
+});

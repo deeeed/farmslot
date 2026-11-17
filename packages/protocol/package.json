@@ -29,6 +29,11 @@
       "import": "./dist/checklist-target.js",
       "default": "./dist/checklist-target.js"
     },
+    "./task-layout": {
+      "types": "./dist/task-layout.d.ts",
+      "import": "./dist/task-layout.js",
+      "default": "./dist/task-layout.js"
+    },
     "./explicit-dev-host": {
       "types": "./dist/explicit-dev-host.d.ts",
       "import": "./dist/explicit-dev-host.js",

@@ -57,8 +57,11 @@ test('refreshArtifactMirror preserves gateway-owned review artifacts while clear
   await writeFile(taskFile, '# mirror test\n');
   await writeFile(path.join(workerTaskDir, 'TASK.md'), '# mirror test\n');
   await writeFile(path.join(workerTaskDir, 'REVIEW-FIX.md'), '# Final fix\n- [x] **1. done**\n');
-  await mkdir(path.join(workerTaskDir, 'task-actions/actions'), { recursive: true });
-  await writeFile(path.join(workerTaskDir, 'task-actions/actions/probe.cjs'), 'worker action\n');
+  await mkdir(path.join(workerTaskDir, 'artifacts/task-actions/actions'), { recursive: true });
+  await writeFile(
+    path.join(workerTaskDir, 'artifacts/task-actions/actions/probe.cjs'),
+    'worker action\n',
+  );
   await writeFile(path.join(workerTaskDir, 'artifacts/report.md'), 'worker report\n');
   await writeFile(path.join(workerTaskDir, 'artifacts/after.png'), 'fresh worker image\n');
   await mkdir(path.join(workerTaskDir, 'artifacts/publication-packages'), { recursive: true });
@@ -143,7 +146,7 @@ test('refreshArtifactMirror preserves gateway-owned review artifacts while clear
   assert.equal(copied >= 2, true);
   assert.equal(existsSync(path.join(taskDir, 'artifacts/after.png')), true);
   assert.equal(
-    await readFile(path.join(taskDir, 'task-actions/actions/probe.cjs'), 'utf8'),
+    await readFile(path.join(taskDir, 'artifacts/task-actions/actions/probe.cjs'), 'utf8'),
     'worker action\n',
   );
   assert.equal(existsSync(path.join(taskDir, 'artifacts/review-2.json')), true);
@@ -256,12 +259,12 @@ test('refreshArtifactMirror preserves gateway-owned review artifacts while clear
   );
   const refresh = () =>
     refreshArtifactMirror(makeRun({ id: testId, project: 'farmslot-farm', slotId, taskFile }));
-  await rm(path.join(workerTaskDir, 'task-actions/actions/probe.cjs'));
+  await rm(path.join(workerTaskDir, 'artifacts/task-actions/actions/probe.cjs'));
   await refresh();
-  assert.equal(existsSync(path.join(taskDir, 'task-actions/actions/probe.cjs')), false);
-  await rm(path.join(workerTaskDir, 'task-actions'), { recursive: true });
+  assert.equal(existsSync(path.join(taskDir, 'artifacts/task-actions/actions/probe.cjs')), false);
+  await rm(path.join(workerTaskDir, 'artifacts/task-actions'), { recursive: true });
   await refresh();
-  assert.equal(existsSync(path.join(taskDir, 'task-actions')), false);
+  assert.equal(existsSync(path.join(taskDir, 'artifacts/task-actions')), false);
 });
 
 // Local-branch integrity for refreshArtifactMirror (fs.copyFile). Remote multi-chunk
@@ -669,6 +672,8 @@ test('publication preflight admits a clean base-commit before attempt the run ha
     JSON.stringify({ version: 1, artifacts: [{ path: 'before.png', type: 'screenshot' }] }),
   );
   await put(`${before}/before.png`, 'before');
+  await put(`${before}/summary.json`, JSON.stringify({ taskActions: [] }));
+  await put(`${selected}/summary.json`, JSON.stringify({ taskActions: [] }));
   const provenance = { schemaVersion: 1, git_ref: baseSha, dirty: false, branch: 'detached' };
   await put(`${before}/product-provenance.json`, JSON.stringify(provenance));
   await put(
@@ -700,6 +705,17 @@ test('publication preflight admits a clean base-commit before attempt the run ha
       publicationBaselineContext(uncaptured, inventory),
     ),
   );
+  await put(
+    `${selected}/summary.json`,
+    JSON.stringify({
+      taskActions: [{ action: 'task.read_text', digest: `sha256:${'a'.repeat(64)}` }],
+    }),
+  );
+  await assert.rejects(
+    refreshArtifactMirror(uncaptured, { forPublication: true }),
+    /Cannot publish recipe.*task-action.*task.read_text/,
+  );
+  await put(`${selected}/summary.json`, JSON.stringify({ taskActions: [] }));
   // A dirty before attempt is still refused on the worker, before the mirror changes.
   await put(`${before}/product-provenance.json`, JSON.stringify({ ...provenance, dirty: true }));
   await assert.rejects(
@@ -1145,4 +1161,23 @@ test('refreshArtifactMirror fails fast on an oversized package, listing the five
   );
   assert.equal(existsSync(path.join(taskDir, 'artifacts/report.md')), false);
   assert.equal(existsSync(path.join(taskDir, 'artifacts/previous.md')), true);
+});
+
+test('recipe replay delivers canonical task actions and modes in its input batch', async (t) => {
+  const { taskDir, workerArtifacts, run } = await publishPackageFixture(t, 'task-action-replay');
+  const { loadSlotVars } = await import('../core/config.js');
+  const { pushRunRecipeToSlot } = await import('./artifact-mirror.js');
+  const { stat } = await import('node:fs/promises');
+  const relative = 'task-actions/actions/mobile/task/probe.mjs';
+  await mkdir(path.join(taskDir, 'artifacts', path.dirname(relative)), { recursive: true });
+  const source = path.join(taskDir, 'artifacts', relative);
+  await writeFile(source, 'export default () => true;\n', { mode: 0o750 });
+  await writeFile(path.join(taskDir, 'artifacts/recipe.json'), '{}');
+  assert.ok(run.slotId);
+  assert.equal(await pushRunRecipeToSlot(run, await loadSlotVars(run.slotId)), 2);
+  assert.equal(
+    await readFile(path.join(workerArtifacts, relative), 'utf8'),
+    'export default () => true;\n',
+  );
+  assert.equal((await stat(path.join(workerArtifacts, relative))).mode & 0o777, 0o750);
 });

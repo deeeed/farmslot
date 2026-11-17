@@ -1,8 +1,8 @@
-import { access, copyFile, cp, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { access, copyFile, cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { type FlowType, isRecord, type Run, type RunCreateParams } from '@farmslot/protocol';
-import { digestRecipeLibrary, readRecipeLibraryManifest } from '@farmslot/recipe-runner';
+import { TASK_DIRECTORY_LAYOUT, type TaskActionInputGap } from '@farmslot/protocol/task-layout';
 
 import { makeOwnerWritable, replaceReadOnlyDestination } from '../core/owned-copy.js';
 import {
@@ -10,12 +10,11 @@ import {
   invalidateLiveRecipeContextMemo,
 } from '../live-recipe/context.js';
 import {
-  readRetainedRunText,
   retainedArtifactRun,
-  retainedRecipeRunSummaries,
-  retainedRunArtifactManifest,
-  selectedRetainedRecipeGroup,
+  retainedTaskActionInputs,
+  type RetainedTaskActionInputState,
 } from '../run-completion/retained-artifacts.js';
+import { taskActionInputsAvailable } from '../run-completion/task-action-inputs.js';
 import { getAllRuns, listRuns } from '../runs/store.js';
 
 export const FOLLOW_UP_SCOPE_VERDICTS = [
@@ -89,6 +88,7 @@ export interface FamilyContextManifest {
   requiredScopeVerdicts: FollowUpScopeVerdict[];
   provenancePolicy: 'resolve-materialize-reference';
   inheritedArtifacts: FamilyArtifactManifestEntry[];
+  taskActionInputGaps?: TaskActionInputGap[];
   generatedAt: string;
 }
 
@@ -128,9 +128,9 @@ const FAMILY_ARTIFACT_SPECS: readonly FamilyArtifactSpec[] = [
     key: 'task-actions',
     label: 'Task-local recipe actions',
     kind: 'directory',
-    sourceRelativePath: 'task-actions',
-    materializedRelativePath: 'inputs/inherited/task-actions',
-    seedCurrentRelativePath: 'task-actions',
+    sourceRelativePath: TASK_DIRECTORY_LAYOUT.taskActions.relativePath,
+    materializedRelativePath: TASK_DIRECTORY_LAYOUT.inheritedTaskActions.relativePath,
+    seedCurrentRelativePath: TASK_DIRECTORY_LAYOUT.taskActions.relativePath,
   },
   {
     key: 'recipe-library',
@@ -432,7 +432,8 @@ async function buildArtifactCandidates(
     candidates.push({ tier, sourcePath, sourceRunId });
   };
 
-  addCandidate('task-local-inherited', path.join(taskAbsDir, spec.materializedRelativePath));
+  if (spec.key !== 'task-actions')
+    addCandidate('task-local-inherited', path.join(taskAbsDir, spec.materializedRelativePath));
 
   const currentRunTaskDir = await runTaskDir(run);
   if (currentRunTaskDir)
@@ -585,6 +586,16 @@ export async function materializeInheritedContext(
     generatedAt: new Date().toISOString(),
   };
 
+  const actionInputsBySource = new Map<string, Promise<RetainedTaskActionInputState>>();
+  const inputsFor = (source: Run): Promise<RetainedTaskActionInputState> => {
+    let inputs = actionInputsBySource.get(source.id);
+    if (!inputs) {
+      inputs = retainedTaskActionInputs(source);
+      actionInputsBySource.set(source.id, inputs);
+    }
+    return inputs;
+  };
+
   for (const spec of FAMILY_ARTIFACT_SPECS) {
     const candidates = await buildArtifactCandidates(run, taskAbsDir, relevantRuns, spec);
     const attempts: FamilyArtifactManifestEntry['attempts'] = [];
@@ -592,9 +603,9 @@ export async function materializeInheritedContext(
 
     const kind: 'file' | 'directory' = spec.kind ?? 'file';
     for (const candidate of candidates) {
-      const recipeSource = manifest.inheritedArtifacts.find(
-        (entry) => entry.artifact === 'recipe',
-      )?.sourceRunId;
+      const recipeSource =
+        manifest.inheritedArtifacts.find((entry) => entry.artifact === 'recipe')?.sourceRunId ??
+        run.parentRunId;
       if (spec.key === 'task-actions' && recipeSource && candidate.sourceRunId !== recipeSource)
         continue;
       const exists = await artifactSourceExists(candidate.sourcePath, kind);
@@ -609,15 +620,8 @@ export async function materializeInheritedContext(
       const materializedPath = path.join(taskAbsDir, spec.materializedRelativePath);
       if (spec.key === 'task-actions' && candidate.sourceRunId) {
         const source = relevantRuns.find((entry) => entry.id === candidate.sourceRunId)!;
-        const files = (await retainedRunArtifactManifest(source)).filter((entry) =>
-          entry.path.startsWith('task-actions/'),
-        );
-        if (!files.length)
-          throw new Error(
-            `Cannot inherit recipe: task-actions were not retained for ${source.id}.`,
-          );
-        // The hash reader qualifies every file before executable inputs are copied.
-        for (const file of files) await readRetainedRunText(source, file.path);
+        // Qualify the frozen closure, not merely a directory currently present on disk.
+        if (!(await inputsFor(source)).available) continue;
       }
       if (candidate.sourcePath !== materializedPath) {
         await copyArtifactSource(candidate.sourcePath, materializedPath, kind);
@@ -661,43 +665,64 @@ export async function materializeInheritedContext(
 
   const recipe = manifest.inheritedArtifacts.find((entry) => entry.artifact === 'recipe');
   const actions = manifest.inheritedArtifacts.find((entry) => entry.artifact === 'task-actions');
-  if (recipe?.status === 'resolved') {
+  if (recipe?.status === 'resolved' || run.parentRunId) {
     const source = relevantRuns.find(
-      (entry) => entry.id === (recipe.sourceRunId ?? run.parentRunId),
+      (entry) => entry.id === (recipe?.sourceRunId ?? run.parentRunId),
     );
     if (source) {
-      const { inventory, summaries } = await retainedRecipeRunSummaries(source);
-      const selected = selectedRetainedRecipeGroup(summaries)?.raw;
-      const required =
-        isRecord(selected) && Array.isArray(selected.taskActions)
-          ? selected.taskActions.filter(
-              (entry): entry is Record<string, unknown> =>
-                isRecord(entry) && typeof entry.action === 'string',
-            )
-          : [];
-      if (actions?.status === 'missing') {
-        const names = required.length
-          ? required.map((entry) => entry.action)
-          : inventory
-              .filter((entry) => entry.path.startsWith('task-actions/'))
-              .map((entry) => entry.path);
-        if (names.length)
+      const inputs = await inputsFor(source);
+      if (!inputs.available) {
+        manifest.taskActionInputGaps = [
+          {
+            sourceRunId: source.id,
+            canonicalPath: TASK_DIRECTORY_LAYOUT.taskActions.relativePath,
+            libraries: inputs.actions,
+            reason: 'not-retained-at-canonical-path',
+            requiredAction: 'reauthor-and-revalidate',
+            proofReuseEligible: false,
+          },
+        ];
+      } else if (recipe?.status === 'resolved' && inputs.actions.length) {
+        if (
+          actions?.status === 'missing' ||
+          !(await taskActionInputsAvailable(taskAbsDir, inputs.actions))
+        )
           throw new Error(
-            `Cannot inherit recipe: retained task-actions/ for ${source.id} are missing: ${names.join(', ')}.`,
-          );
-      } else if (required.length) {
-        const root = path.join(taskAbsDir, 'task-actions');
-        const digest = await digestRecipeLibrary(root, await readRecipeLibraryManifest(root));
-        if (required.some((entry) => entry.digest !== digest))
-          throw new Error(
-            `Cannot inherit recipe: retained task-actions/ implementation for ${source.id} does not match the recorded recipe run.`,
+            `Cannot inherit recipe: retained task-actions implementation is missing for ${source.id}.`,
           );
       }
     }
   }
 
+  if (manifest.taskActionInputGaps?.length) {
+    // Only remove the gateway's inherited selection, never the child's own fresh attempt.
+    const pointerFile = path.join(taskAbsDir, TASK_DIRECTORY_LAYOUT.selectedRecipeRun.relativePath);
+    let pointerText: string | null;
+    try {
+      pointerText = await readFile(pointerFile, 'utf8');
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      pointerText = null;
+    }
+    if (pointerText !== null) {
+      const pointer: unknown = JSON.parse(pointerText);
+      if (isRecord(pointer) && pointer.source === 'inherited-family-package')
+        await rm(pointerFile, { force: true });
+    }
+    await rm(path.join(taskAbsDir, TASK_DIRECTORY_LAYOUT.inheritedEvidenceManifest.relativePath), {
+      force: true,
+    });
+  }
+
   manifest.inheritedArtifacts.push(
-    await materializeInheritedEvidencePackage(run, taskAbsDir, relevantRuns),
+    manifest.taskActionInputGaps?.length
+      ? {
+          artifact: 'evidence-package',
+          label: 'Recipe evidence package',
+          status: 'missing',
+          attempts: [],
+        }
+      : await materializeInheritedEvidencePackage(run, taskAbsDir, relevantRuns),
   );
 
   await writeFile(
@@ -751,6 +776,20 @@ export function buildFollowUpScopeContractSection(
     '### Missing inherited artifacts',
     missingArtifacts,
     '',
+    ...(manifest.taskActionInputGaps?.length
+      ? [
+          '### Task-action inputs require fresh proof',
+          ...manifest.taskActionInputGaps.flatMap((gap) => [
+            `Parent ${gap.sourceRunId} has no retained implementations at ${gap.canonicalPath}. Historical files at other locations remain unchanged.`,
+            ...gap.libraries.map(
+              ({ actionNames, expectedLibraryDigest }) =>
+                `- Actions: ${actionNames.join(', ')}; original library digest: ${expectedLibraryDigest ?? 'unavailable'}`,
+            ),
+            `Re-author the missing actions under ${TASK_DIRECTORY_LAYOUT.taskActions.relativePath}, then execute and validate a new recipe attempt. The parent proof is ineligible for reuse.`,
+          ]),
+          '',
+        ]
+      : []),
     '### Required follow-up scope output',
     `Before completion, write ${taskDir}/artifacts/family-scope.json with JSON containing:`,
     '- `originalFamilyScopeSummary`',

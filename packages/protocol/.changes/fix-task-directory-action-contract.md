@@ -1,0 +1,1 @@
+- Add the typed task-directory path and file-format reference contract, with one canonical artifacts/task-actions root and library-grouped missing-input gaps.

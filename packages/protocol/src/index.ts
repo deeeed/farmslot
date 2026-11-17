@@ -69,6 +69,7 @@ export * from './surfaces/command-center.js';
 export * from './surfaces/eval-view-state.js';
 export * from './surfaces/run-view-state.js';
 export * from './surfaces/view-state.js';
+export * from './task-layout.js';
 export * from './text-order.js';
 export * from './transport/events.js';
 export * from './transport/frames.js';

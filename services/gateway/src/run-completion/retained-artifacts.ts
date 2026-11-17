@@ -23,6 +23,7 @@ import {
 } from '@farmslot/protocol';
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { strictTaskRelativePathFromFarmslotRoot } from '@farmslot/protocol/runs/portable-bundle';
+import { TASK_DIRECTORY_LAYOUT, type TaskActionInputLibrary } from '@farmslot/protocol/task-layout';
 import {
   type AcquisitionTaskDirToken,
   archiveRunBundleMedia,
@@ -82,6 +83,8 @@ import {
   runTaskDirectories,
   shouldUseIsolatedRunsDir,
 } from '../runs/store.js';
+
+import { taskActionInputReferences, taskActionInputsAvailable } from './task-action-inputs.js';
 
 export interface RunArtifactAcquisition {
   readonly media: ArtifactRef[];
@@ -628,7 +631,10 @@ export async function retainCapturedRunArtifacts(input: {
   const taskDir = input.sourceRef
     ? await retainedRunTaskDirectory(input.run, input.sourceRef)
     : path.dirname(input.run.taskFile);
-  for (const directory of ['inputs', 'task-actions']) {
+  for (const directory of [
+    TASK_DIRECTORY_LAYOUT.inputs.relativePath,
+    TASK_DIRECTORY_LAYOUT.taskActions.relativePath,
+  ]) {
     try {
       for (const entry of await readdir(path.join(taskDir, directory), {
         recursive: true,
@@ -639,15 +645,26 @@ export async function retainCapturedRunArtifacts(input: {
           .relative(taskDir, path.join(entry.parentPath, entry.name))
           .split(path.sep)
           .join('/');
-        if (!artifacts.some((artifact) => artifact.path === file))
+        const actionInfo =
+          directory === TASK_DIRECTORY_LAYOUT.taskActions.relativePath
+            ? await stat(path.join(taskDir, file))
+            : undefined;
+        const previous = artifacts.findIndex((artifact) => artifact.path === file);
+        if (previous < 0)
           artifacts.push({
             path: file,
             purpose: 'task-input',
-            ...(directory === 'task-actions'
+            ...(directory === TASK_DIRECTORY_LAYOUT.taskActions.relativePath
               ? { sha256: await sha256File(path.join(taskDir, file)) }
               : {}),
-            sizeBytes: (await stat(path.join(taskDir, file))).size,
+            sizeBytes: actionInfo?.size ?? (await stat(path.join(taskDir, file))).size,
           });
+        else if (directory === TASK_DIRECTORY_LAYOUT.taskActions.relativePath)
+          artifacts[previous] = {
+            ...artifacts[previous],
+            sha256: await sha256File(path.join(taskDir, file)),
+            sizeBytes: actionInfo?.size ?? (await stat(path.join(taskDir, file))).size,
+          };
       }
     } catch (error) {
       if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
@@ -674,19 +691,24 @@ export async function retainCapturedRunArtifacts(input: {
     artifacts
       .filter(
         (artifact, index) =>
-          index >= input.artifacts.length || GATEWAY_OWNED_DIFF_ARTIFACT_PATHS.has(artifact.path),
+          index >= input.artifacts.length ||
+          GATEWAY_OWNED_DIFF_ARTIFACT_PATHS.has(artifact.path) ||
+          artifact.path.startsWith(`${TASK_DIRECTORY_LAYOUT.taskActions.relativePath}/`),
       )
       .sort((a, b) => a.path.localeCompare(b.path))
-      .map(async ({ path: file, sha256 }) => [
-        file,
-        sha256 ??
-          (await sha256File(
-            path.join(
-              input.gatewayFiles?.includes(file) ? path.dirname(input.run.taskFile!) : taskDir,
-              file,
-            ),
-          )),
-      ]),
+      .map(async ({ path: file, sha256 }) => {
+        const identity = [
+          file,
+          sha256 ??
+            (await sha256File(
+              path.join(
+                input.gatewayFiles?.includes(file) ? path.dirname(input.run.taskFile!) : taskDir,
+                file,
+              ),
+            )),
+        ];
+        return identity;
+      }),
   );
   return materializeRunBundle({
     store,
@@ -872,6 +894,43 @@ export async function retainedRecipeRunSummaries(run: Run, ref = retainedRunBund
     summaries.push({ root, raw, recipeRunId, promoted });
   }
   return { inventory, summaries };
+}
+
+/** Qualify frozen executable inputs before inheriting either code or acceptance. */
+export interface RetainedTaskActionInputState {
+  actions: TaskActionInputLibrary[];
+  available: boolean;
+}
+
+export async function retainedTaskActionInputs(
+  run: Run,
+  ref = retainedRunBundleRef(run),
+  references?: readonly TaskActionInputLibrary[],
+): Promise<RetainedTaskActionInputState> {
+  const selected = references === undefined ? await retainedRecipeRunSummaries(run, ref) : null;
+  const actions = selected
+    ? taskActionInputReferences(selectedRetainedRecipeGroup(selected.summaries)?.raw)
+    : [...(references ?? [])];
+  if (!actions.length) return { actions, available: true };
+  const inventory = selected?.inventory ?? (await retainedRunArtifactManifest(run, ref));
+  const files = inventory.filter(({ path: file }) =>
+    file.startsWith(`${TASK_DIRECTORY_LAYOUT.taskActions.relativePath}/`),
+  );
+  if (!files.length) return { actions, available: false };
+  for (const file of files) {
+    try {
+      await readRetainedRunText(run, file.path, ref);
+    } catch (error) {
+      throw new Error(
+        `Task-action input read failed for ${actions.flatMap(({ actionNames }) => actionNames).join(', ')}: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+  }
+  const taskDir = await retainedRunTaskDirectory(run, ref);
+  if (!(await taskActionInputsAvailable(taskDir, actions)))
+    throw new Error(`Captured task-action inputs are missing for ${run.id}.`);
+  return { actions, available: true };
 }
 
 // A retained bundle is content-addressed. Each read still checks every retained file (one stat
