@@ -12,7 +12,7 @@ export async function runScenario(c) {
       await c.answer(run, true);
       return (
         run.reviewRoundAdmissions?.length === round &&
-        run.status === 'blocked' &&
+        ['blocked', 'human-gating'].includes(run.status) &&
         run.decisions.some(
           (decision) => !decision.resolvedAt && decision.type === 'engine_review_complete',
         )
@@ -45,23 +45,49 @@ export async function runScenario(c) {
   const headSha = c.git('rev-parse', 'HEAD');
   const branch = c.git('branch', '--show-current');
   const capped = await c.wait(
-    'round five retains the result for an operator decision',
+    'round five retains findings at the publication gate',
     async (run) => {
       await c.answer(run, true);
-      return run.reviewRoundAdmissions?.length === 5 && run.status === 'needs-decision';
+      return (
+        run.reviewRoundAdmissions?.length === 5 &&
+        run.status === 'blocked' &&
+        run.decisions.some(
+          (decision) => !decision.resolvedAt && decision.type === 'engine_human_gate',
+        )
+      );
     },
   );
   const review = capped.steps.find((step) => step.name === 'review');
-  assert.equal(review?.status, 'failed');
+  assert.equal(review?.status, 'done');
   assert.equal(review.outputs?.verdict, 'issues');
-  assert.equal(review.outputs?.reviewLaunchRejection?.code, 'REVIEW_ROUND_LIMIT_REACHED');
-  assert.equal(review.outputs.reviewLaunchRejection.details.reviewRoundBudget.remaining, 0);
+  // Publishing budget stops belong to the human gate. Artifact-only runs use a
+  // result decision; this publishing fixture must preserve findings without a pass.
   const decision = capped.decisions.find((decision) => !decision.resolvedAt);
-  assert.equal(decision?.type, 'engine_result_decision');
-  assert.equal(decision.payload?.kind, 'result-decision');
-  assert.equal(decision.payload.stoppedAt, 'review');
+  assert.equal(decision?.type, 'engine_human_gate');
+  assert.equal(decision.payload?.publicationStatus, 'not_published');
+  assert.equal(decision.payload?.reviewRoundBudget?.used, 5);
+  assert.equal(decision.payload.reviewRoundBudget.limit, 5);
+  assert.equal(decision.payload.reviewRoundBudget.remaining, 0);
+  assert.equal(decision.payload.gateReadiness?.state, 'not-ready');
+  assert.ok(
+    decision.payload.gateReadiness.reasons.some((reason) => reason.code === 'review-fix-required'),
+    'spent rounds must not clear the unresolved findings',
+  );
+  assert.ok(
+    decision.payload.reviews.some(
+      (review) => review.unresolvedCount > 0 && review.issues?.length > 0,
+    ),
+    'the publication decision retains the findings',
+  );
   const assertRetained = async (run) => {
-    assert.equal(run.status, 'needs-decision');
+    assert.ok(['blocked', 'human-gating'].includes(run.status));
+    assert.ok(
+      run.decisions.some(
+        (decision) => !decision.resolvedAt && decision.type === 'engine_human_gate',
+      ),
+      'the same publication gate still awaits an operator',
+    );
+    assert.equal(run.reviewRoundAdmissions?.length, 5);
     assert.equal(run.slotId, c.slotId);
     assert.equal(c.git('rev-parse', 'HEAD'), headSha);
     assert.equal(c.git('branch', '--show-current'), branch);
@@ -92,7 +118,15 @@ export async function runScenario(c) {
     scopeBrief: 'One further static review of the fixture revision.',
   });
   assert.equal(grant.budget.remaining, 1);
-  await assertRetained(await c.get());
+  const extended = await c.wait('the granted budget re-presents the publication gate', (run) =>
+    run.decisions.some(
+      (decision) =>
+        !decision.resolvedAt &&
+        decision.type === 'engine_human_gate' &&
+        decision.payload?.reviewRoundBudget?.remaining === 1,
+    ),
+  );
+  await assertRetained(extended);
   await c.replay('review');
   const recovered = await c.wait('round six completes', async (run) => {
     await c.answer(run, false);
