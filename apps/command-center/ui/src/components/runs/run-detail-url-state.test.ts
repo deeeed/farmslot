@@ -241,3 +241,9 @@ test('choosing another step closes the file the last step had open; history entr
   const runOwned = '#run/run-1?step=write-task&artifactRun=run-1&artifact=artifacts%2Fa.log';
   assert.match(runDetailStepHash('run-1', 'monitor', runOwned), /artifact=artifacts%2Fa\.log/);
 });
+
+test('returning from standalone detail drops its run-owned progress expansion state', () => {
+  const hash =
+    '#run/current?subtasks=!current%3Aworker&stepDetails=current%3A6&projects=cc&panels=sidebar';
+  assert.equal(runInventoryHashFromDetail(hash), '#runs?projects=cc&panels=sidebar');
+});

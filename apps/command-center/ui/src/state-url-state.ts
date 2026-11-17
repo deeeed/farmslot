@@ -37,6 +37,8 @@ const RUN_DETAIL_PARAMS = [
   'panels',
   'round',
   'workers',
+  'subtasks',
+  'stepDetails',
   'file',
   'modal',
   'diffArtifact',
