@@ -30,7 +30,7 @@ async function fixture() {
     projectJson: {
       execution_templates: {},
       static_review: { template_id: 'review-pr/default', instruction_files: ['review-guide.md'] },
-      // Two read-only references and one key that is the slot's own checkout, so a
+      // Read-only references and one key that is the slot's own checkout, so a
       // test can tell apart what belongs in the task inputs.
       reference_repos: {
         mobile: {

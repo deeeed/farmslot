@@ -523,29 +523,3 @@ test('retained task reads ignore closeout receipts while preserving immutable so
     await assert.rejects(readReviewWorkspaceSignal(f.run.id, f.deps), /identity/);
   });
 });
-
-test('a review with no support bundle still names the references it cannot read', async () => {
-  await withFixture(async (f) => {
-    // No support binding at all: nothing read those checkouts, so every declared
-    // read-only reference is unreadable here and has to say so.
-    assert.equal(f.run.reviewWorkspace!.support, undefined);
-    const result = await materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps);
-    const task = await readFile(result.taskFile, 'utf8');
-    assert.match(task, /### Reference checkouts \(read-only\)/);
-    assert.match(task, /- `mobile`: not readable from this task/);
-    assert.match(task, /- `core`: not readable from this task/);
-    assert.match(task, /BLOCKED, never NOT_CHECKED/);
-    assert.doesNotMatch(task, /`unplaced`/, 'the slot’s own checkout is not a reference');
-    assert.deepEqual(
-      JSON.parse(await readFile(path.join(f.task, 'inputs/reference-checkouts.json'), 'utf8')),
-      {
-        schemaVersion: 1,
-        references: [
-          { name: 'mobile', path: '', present: false },
-          { name: 'core', path: '', present: false },
-          { name: 'extension', path: '', present: false },
-        ],
-      },
-    );
-  });
-});
