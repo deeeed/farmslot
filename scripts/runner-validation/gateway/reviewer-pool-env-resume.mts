@@ -1,7 +1,7 @@
 // Real native repeat-review through the gateway; only GitHub reads use a loopback fixture.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -9,14 +9,12 @@ import { fileURLToPath } from 'node:url';
 
 import {
   isRecord,
-  type AgentContext,
   type NativeSessionReadResult,
   type NodeHealthResult,
   type Run,
 } from '../../../packages/protocol/src/index.js';
 import { projectPacks, REVIEW_PROJECT, SEED } from '../canary/fixtures.mjs';
 import { cleanupOnExit, poll, startReaper } from '../lib/isolated-stack.mjs';
-import { writeNativeFixtureTask } from '../lib/native-task.mjs';
 import { type RemoteNodeStack, startRemoteNodeStack } from '../lib/remote-node-stack.mjs';
 import {
   startReviewProviderFixture,
@@ -101,6 +99,19 @@ try {
             default_safety_tier: safetyTier,
             ci: { repo: 'example/app' },
             review: { enabled: false },
+            static_review: { template_id: 'review-pr/retained-proof', instruction_files: [] },
+          },
+          files: {
+            ...pack.files,
+            'templates/shared/review-pr/retained-proof.md': `---
+platforms: [cli]
+---
+# Retained native review proof
+
+- [ ] Start this task through its mark helper, then mark step 1.
+- [ ] Inspect the frozen diff and record your real assessment in artifacts/review-draft.md. Mark step 2. For the INITIAL request stop here, end your turn and wait. Leave the parent task running; do not complete the checklist or author the final report yet.
+- [ ] ONLY after the explicit operator continuation, preserve your assessment, finish all generated report and coverage requirements from TASK.md, and complete through mark complete --mark-last.
+`,
           },
         })),
     seeds: { [REVIEW_PROJECT]: { ...SEED, 'fixture.txt': 'Initial fixture.\n' } },
@@ -178,76 +189,42 @@ try {
       ],
     }),
   );
-  const token = randomUUID();
-  const reports =
-    'In this task directory write artifacts/review.md with Recommendation: COMMENT, explicitly describing a transport-continuity check rather than a review of the upstream PR. Write artifacts/line-comments.json as {"recommendation":"COMMENT","comments":[]} and artifacts/learnings.md. Use this task mark helper after each step, then mark complete --mark-last. Do not publish, commit, contact services or edit other files.';
-  const firstTask = path.join(
-    active.fixture,
-    'projects',
-    REVIEW_PROJECT,
-    'tasks/review-pr',
-    'first-' + Date.now(),
-    'TASK.md',
-  );
-  await writeNativeFixtureTask(
-    firstTask,
-    '# Worker: review-pr\n\n## Checklist\n\n- [ ] Read fixture.txt and write artifacts/memory.txt in THIS task directory containing exactly ' +
-      token +
-      '.\n- [ ] Write the local review artifacts and complete this task.\n\n' +
-      reports,
-    REVIEW_PROJECT,
-  );
-  const parameters = {
-    flowType: 'review-pr',
-    project: REVIEW_PROJECT,
-    ticketOrPr: 'example/app#42',
-    slotId: REVIEW_PROJECT + '-1',
-    allowedSlots: [REVIEW_PROJECT + '-1'],
-    runner: 'claude',
-    model: 'opus',
-    mode: 'interactive',
-    skipPrepare: true,
-    safetyTier,
-    completionPolicy: 'artifact-only',
-    lane: 'comparison',
-    variant: 'pool-env-' + Date.now(),
-    branch: 'reviewed',
-  };
-  const first = (
-    await active.call<{ run: Run }>('run.createNative', { ...parameters, taskFile: firstTask })
-  ).run;
-  await writeFile(path.join(evidence, 'first-run-id'), first.id);
-  const read = async (runId: string) => (await active.call<{ run: Run }>('run.get', { runId })).run;
-  const completed = async (runId: string) =>
-    poll(
-      'native review completion ' + runId,
-      async () => {
-        const run = await read(runId);
-        await writeFile(path.join(evidence, 'last-run.json'), JSON.stringify(run, null, 2));
-        assert.ok(!['failed', 'blocked', 'cancelled'].includes(run.status), run.error);
-        return run.status === 'done' ? run : undefined;
-      },
-      240_000,
+  for (const directory of ['pool', 'node-pool']) {
+    const file = path.join(active.fixture, directory, REVIEW_PROJECT + '.json');
+    const pool = JSON.parse(await readFile(file, 'utf8'));
+    await writeFile(
+      file + '.next',
+      JSON.stringify({ ...pool, review_workspaces: { max_concurrent: 1 } }, null, 2),
     );
-  const firstDone = await completed(first.id);
-  const prior = context(firstDone);
-  assert.equal(prior.nativeSession!.safetyTier, safetyTier);
-  assert.equal(
-    prior.reviewValidationDepth,
-    undefined,
-    'primary review uses its normal pool environment, not the base-pipeline static filter',
-  );
-  assert.equal(firstDone.reviewResult?.recommendation, 'COMMENT');
-  const marker = path.join(cwd, path.dirname(prior.taskFile!), 'artifacts/memory.txt');
-  assert.equal((await readFile(marker, 'utf8')).trim(), token);
-  const nativeRead = async (runId: string, value: AgentContext) => {
-    const binding = value.nativeSession!;
+    await rename(file + '.next', file);
+  }
+  await active.call('fleet.refresh');
+  const created = (
+    await active.call<{ run: Run }>('run.create', {
+      flowType: 'review-pr',
+      project: REVIEW_PROJECT,
+      ticketOrPr: 'example/app#42',
+      reviewWorkspaceTarget: { machine: 'reviewer-env-proof' },
+      transport: 'native',
+      runner: 'claude',
+      model: 'opus',
+      mode: 'autonomous',
+      reviewMode: 'cold',
+      reviewAutoFinish: false,
+      completionPolicy: 'artifact-only',
+    })
+  ).run;
+  await writeFile(path.join(evidence, 'run-id'), created.id);
+  const read = async () => (await active.call<{ run: Run }>('run.get', { runId: created.id })).run;
+  const nativeRead = async (run: Run) => {
+    const reviewer = context(run);
+    const binding = reviewer.nativeSession!;
     const request = {
       sessionId: binding.sessionId,
       executionNodeId: binding.executionNodeId,
       worker: {
-        runId,
-        contextId: value.id,
+        runId: run.id,
+        contextId: reviewer.id,
         generation: binding.generation,
         leaseId: binding.leaseId,
       },
@@ -266,16 +243,63 @@ try {
     }
     return { ...page, events };
   };
-  let stopped = await nativeRead(first.id, prior);
-  if (!stopped.session.processStopped) {
-    await active.call('slot.release', { slotId: REVIEW_PROJECT + '-1', keepWork: true });
-    stopped = await nativeRead(first.id, prior);
-  }
-  assert.equal(stopped.session.processStopped, true);
-  await writeFile(
-    path.join(evidence, 'first.json'),
-    JSON.stringify({ run: firstDone, context: prior, native: stopped }, null, 2),
+  const first = await poll(
+    'materialized initial reviewer turn and draft',
+    async () => {
+      const run = await read();
+      await writeFile(path.join(evidence, 'last-run.json'), JSON.stringify(run, null, 2));
+      assert.ok(!['failed', 'cancelled', 'blocked'].includes(run.status), run.error);
+      const reviewer = run.agentContexts?.find((item) => item.id === 'review');
+      if (!reviewer?.nativeSession?.acceptedAt || !reviewer.runnerSessionId || !run.reviewWorkspace)
+        return undefined;
+      const native = await nativeRead(run);
+      const command = native.commands.find(
+        (item) => item.commandId === reviewer.nativeSession!.commandId,
+      );
+      if (native.session.state !== 'idle' || command?.outcome !== 'completed') return undefined;
+      const draftPath = path.join(run.reviewWorkspace.taskPath, 'artifacts/review-draft.md');
+      const draft = await readFile(draftPath, 'utf8');
+      assert.ok(draft.trim());
+      assert.equal(
+        run.reviewResult,
+        undefined,
+        'first phase must stop without a validated verdict',
+      );
+      return { run, reviewer, native, draftPath, draft };
+    },
+    240_000,
   );
+  const firstBinding = first.reviewer.nativeSession!;
+  assert.equal(first.run.slotId, null);
+  assert.equal(first.native.session.nativeSessionHasInput, true);
+  assert.equal(first.native.session.workerLaunchDigest, firstBinding.launchDigest);
+  await writeFile(path.join(evidence, 'first.json'), JSON.stringify(first, null, 2));
+  const closed = await active.call<{ session: NativeSessionReadResult['session'] }>(
+    'native.session.close',
+    {
+      sessionId: firstBinding.sessionId,
+      executionNodeId: firstBinding.executionNodeId,
+      worker: {
+        runId: created.id,
+        contextId: first.reviewer.id,
+        generation: firstBinding.generation,
+        leaseId: firstBinding.leaseId,
+      },
+    },
+  );
+  assert.equal(closed.session.processStopped, true);
+  const failed = await poll(
+    'genuine stopped incomplete review retained for recovery',
+    async () => {
+      const run = await read();
+      return run.status === 'failed' ? run : undefined;
+    },
+    30_000,
+  );
+  assert.equal(failed.reviewResult, undefined);
+  assert.ok(failed.reviewWorkspace && !failed.reviewWorkspace.cleanedAt);
+  assert.equal(failed.reviewWorkspace.workspaceId, first.run.reviewWorkspace!.workspaceId);
+  await writeFile(path.join(evidence, 'stopped.json'), JSON.stringify(failed, null, 2));
   const envChange = {
     ASDF_DATA_DIR: path.join(homedir(), '.asdf'),
     ASDF_CONFIG_FILE: path.join(active.fixture, 'proof-asdfrc'),
@@ -292,103 +316,71 @@ try {
   }
   await active.call('fleet.refresh');
   await writeFile(path.join(evidence, 'pool-change.json'), JSON.stringify(envChange, null, 2));
-  const secondTask = path.join(
-    active.fixture,
-    'projects',
-    REVIEW_PROJECT,
-    'tasks/review-pr',
-    'second-' + Date.now(),
-    'TASK.md',
-  );
-  await writeNativeFixtureTask(
-    secondTask,
-    '# Worker: review-pr\n\n## Checklist\n\n- [ ] Write artifacts/memory.txt in THIS task directory with the exact token from the first task, using conversation memory. Do not read previous tasks, artifacts or transcripts.\n- [ ] Write the local review artifacts and complete this task.\n\n' +
-      reports,
-    REVIEW_PROJECT,
-  );
-  const second = (
-    await active.call<{ run: Run }>('run.createNative', {
-      ...parameters,
-      parentRunId: first.id,
-      familyId: firstDone.familyId,
-      taskFile: secondTask,
-    })
-  ).run;
-  await writeFile(path.join(evidence, 'second-run-id'), second.id);
-  const choosing = await poll(
-    'normal repeat-review continuation decision',
-    async () => {
-      const run = await read(second.id);
-      assert.ok(!['failed', 'cancelled', 'blocked'].includes(run.status), run.error);
-      return run.decisions.some(
-        (decision) => !decision.resolvedAt && decision.type === 'engine_review_continuation',
-      )
-        ? run
-        : undefined;
-    },
-    90_000,
-  );
-  const decision = choosing.decisions.find(
-    (item) => !item.resolvedAt && item.type === 'engine_review_continuation',
-  )!;
-  await active.call('run.resolveDecision', {
-    runId: second.id,
-    decisionId: decision.id,
-    actionId: 'reuse-incremental-static',
+  await active.call('run.replayStep', {
+    runId: created.id,
+    stepName: 'dispatch',
+    triggeredBy: 'operator',
   });
-  const secondDone = await completed(second.id);
-  const next = context(secondDone);
-  assert.equal(secondDone.repeatReviewContext?.priorRunId, first.id);
-  const continuation = secondDone.repeatReviewContext;
-  const sessionTrace = continuation?.session;
-  assert.ok(sessionTrace);
-  assert.equal(sessionTrace.mode, 'warm');
-  assert.equal(sessionTrace.continuity, 'resumed');
-  assert.equal(next.nativeSession!.sessionId, prior.nativeSession!.sessionId);
-  assert.equal(next.runnerSessionId, prior.runnerSessionId);
-  assert.notEqual(next.nativeSession!.leaseId, prior.nativeSession!.leaseId);
-  assert.notEqual(next.nativeSession!.generation, prior.nativeSession!.generation);
-  assert.equal(next.nativeSession!.safetyTier, safetyTier);
-  assert.ok(next.nativeSession!.acceptedAt);
-  const after = await nativeRead(second.id, next);
-  assert.equal(after.session.nativeSessionId, prior.runnerSessionId);
-  assert.equal(after.session.workerLaunchDigest, next.nativeSession!.launchDigest);
-  assert.equal(after.commands.length, 1);
-  assert.equal(after.commands[0]!.accepted, true);
-  assert.equal(
-    (
-      await readFile(path.join(cwd, path.dirname(next.taskFile!), 'artifacts/memory.txt'), 'utf8')
-    ).trim(),
-    token,
+  const resumed = await poll(
+    'resumed native reviewer completes the real continuation',
+    async () => {
+      const run = await read();
+      await writeFile(path.join(evidence, 'last-run.json'), JSON.stringify(run, null, 2));
+      assert.ok(!['failed', 'cancelled', 'blocked'].includes(run.status), run.error);
+      const reviewer = run.agentContexts?.find((item) => item.id === 'review');
+      if (
+        !reviewer?.nativeSession?.acceptedAt ||
+        reviewer.nativeSession.commandId === firstBinding.commandId
+      )
+        return undefined;
+      const native = await nativeRead(run);
+      const command = native.commands.find(
+        (item) => item.commandId === reviewer.nativeSession!.commandId,
+      );
+      if (command?.outcome !== 'completed' || !command.accepted || !run.reviewResult)
+        return undefined;
+      return { run, reviewer, native, command };
+    },
+    240_000,
   );
-  const original = await nativeRead(first.id, prior);
-  assert.deepEqual(original.events, stopped.events);
-  assert.deepEqual(original.commands, stopped.commands);
+  const next = resumed.reviewer.nativeSession!;
+  assert.equal(next.sessionId, firstBinding.sessionId);
+  assert.equal(resumed.reviewer.runnerSessionId, first.reviewer.runnerSessionId);
+  assert.equal(
+    next.leaseId,
+    firstBinding.leaseId,
+    'retained repair preserves its original task lease',
+  );
+  assert.notEqual(next.generation, firstBinding.generation);
+  assert.equal(next.launchDigest, firstBinding.launchDigest);
+  assert.equal(resumed.native.session.workerLaunchDigest, next.launchDigest);
+  assert.equal(resumed.run.reviewWorkspace!.workspaceId, first.run.reviewWorkspace!.workspaceId);
+  assert.equal(resumed.run.reviewWorkspace!.checkoutPath, first.run.reviewWorkspace!.checkoutPath);
+  assert.equal(resumed.run.reviewWorkspace!.taskPath, first.run.reviewWorkspace!.taskPath);
+  assert.equal(await readFile(first.draftPath, 'utf8'), first.draft);
   const providerAfter = JSON.parse(await readFile(providerState, 'utf8'));
   assert.equal(providerAfter.posts, 0);
   assert.equal(providerAfter.slotReport, undefined);
   assert.equal(providerAfter.slotComments, undefined);
   assert.equal(providerAfter.viewedMutations, undefined);
-  await writeFile(
-    path.join(evidence, 'second.json'),
-    JSON.stringify({ run: secondDone, context: next, native: after }, null, 2),
-  );
+  await writeFile(path.join(evidence, 'second.json'), JSON.stringify(resumed, null, 2));
   await writeFile(
     path.join(evidence, 'proof.json'),
     JSON.stringify(
       {
         pass: true,
-        firstRunId: first.id,
-        secondRunId: second.id,
-        nativeSessionId: next.nativeSession!.sessionId,
-        runnerSessionId: next.runnerSessionId,
-        firstLease: prior.nativeSession!.leaseId,
-        secondLease: next.nativeSession!.leaseId,
-        confirmedDigest: after.session.workerLaunchDigest,
-        policyTier: safetyTier,
+        runId: created.id,
+        nativeSessionId: next.sessionId,
+        runnerSessionId: resumed.reviewer.runnerSessionId,
+        taskLease: next.leaseId,
+        firstGeneration: firstBinding.generation,
+        resumedGeneration: next.generation,
+        confirmedDigest: resumed.native.session.workerLaunchDigest,
+        workspaceId: resumed.run.reviewWorkspace!.workspaceId,
         poolEnvironmentChanged: true,
-        continuity: sessionTrace.continuity,
-        accepted: true,
+        continuation: 'retained-dispatch-replay',
+        accepted: resumed.command.accepted,
+        completed: resumed.command.outcome === 'completed',
         providerPosts: providerAfter.posts,
         published: false,
       },
@@ -396,7 +388,7 @@ try {
       2,
     ),
   );
-  console.log('PASS', first.id, second.id, next.nativeSession!.sessionId);
+  console.log('PASS', created.id, next.sessionId);
 } finally {
   await cleanup();
 }
