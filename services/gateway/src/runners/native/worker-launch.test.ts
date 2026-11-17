@@ -227,7 +227,7 @@ test('review launch identity ignores unrelated pool selections and keeps explici
     nativeWorkerLaunchDigest((await prepare('old', 'primary')).launch),
     nativeWorkerLaunchDigest((await prepare('new', 'primary')).launch),
   );
-  assert.notEqual(
+  assert.equal(
     nativeWorkerLaunchDigest((await prepare('old', 'review', 'full-live')).launch),
     nativeWorkerLaunchDigest((await prepare('new', 'review', 'full-live')).launch),
   );
@@ -287,4 +287,116 @@ test('native pi workers carry pool reasoning limits after project defaults and u
   assert.equal(launch.environment.set[name], limits);
   assert.ok(!launch.environment.unset.includes(name));
   assert.equal(nativeWorkerEnvironment(launch)[name], limits);
+});
+
+test('warm reviewer compatibility ignores ASDF pool changes while keeping the reviewer tool environment', async () => {
+  const prepare = (machineEnv: Record<string, string>) =>
+    prepareNativeWorkerLaunch({
+      vars: makeVars({ machineEnv }),
+      project: {},
+      runner: 'claude',
+      model: 'opus',
+      role: 'review',
+      reviewValidationDepth: 'full-live',
+      safetyTier: 'sandboxed',
+      taskDir: 'tasks/proof',
+      leaseId: 'proof-lease',
+      sessionId: 'proof-session',
+      prepareAccount: false,
+    });
+  const before = (await prepare({ ANTHROPIC_API_KEY: 'synthetic-key' })).launch;
+  const toolEnvironments: Record<string, string>[] = [
+    { ASDF_DATA_DIR: '/tools/asdf', ASDF_CONFIG_FILE: '/tools/asdfrc' },
+    { ASDF_DATA_DIR: '/other/asdf', ASDF_CONFIG_FILE: '/other/asdfrc' },
+    {},
+  ];
+  for (const toolEnv of toolEnvironments) {
+    const after = (await prepare({ ANTHROPIC_API_KEY: 'synthetic-key', ...toolEnv })).launch;
+    for (const [name, value] of Object.entries(toolEnv))
+      assert.equal(after.environment.set[name], value);
+    assert.equal(nativeWorkerLaunchDigest(after), nativeWorkerLaunchDigest(before));
+  }
+  const changedCredential = (await prepare({ ANTHROPIC_API_KEY: 'different-synthetic-key' }))
+    .launch;
+  assert.notEqual(nativeWorkerLaunchDigest(changedCredential), nativeWorkerLaunchDigest(before));
+});
+
+test('Claude cloud-provider identity binds selected cloud credentials and provider switches', async () => {
+  const prepare = async (machineEnv: Record<string, string>) =>
+    (
+      await prepareNativeWorkerLaunch({
+        vars: makeVars({ machineEnv }),
+        project: {},
+        runner: 'claude',
+        model: 'opus',
+        role: 'review',
+        reviewValidationDepth: 'full-live',
+        safetyTier: 'sandboxed',
+        taskDir: 'tasks/proof',
+        leaseId: 'proof-lease',
+        sessionId: 'proof-session',
+        prepareAccount: false,
+      })
+    ).launch;
+  const cases = [
+    { selector: 'CLAUDE_CODE_USE_BEDROCK', credential: 'AWS_PROFILE' },
+    { selector: 'CLAUDE_CODE_USE_BEDROCK', credential: 'AWS_SECRET_ACCESS_KEY' },
+    { selector: 'CLAUDE_CODE_USE_VERTEX', credential: 'GOOGLE_APPLICATION_CREDENTIALS' },
+    { selector: 'CLAUDE_CODE_USE_FOUNDRY', credential: 'ANTHROPIC_FOUNDRY_API_KEY' },
+  ];
+  for (const { selector, credential } of cases) {
+    const before = await prepare({ [selector]: '1', [credential]: 'old-account' });
+    const changed = await prepare({ [selector]: '1', [credential]: 'new-account' });
+    assert.notEqual(
+      nativeWorkerLaunchDigest(before),
+      nativeWorkerLaunchDigest(changed),
+      credential,
+    );
+    assert.notEqual(
+      nativeWorkerLaunchDigest(before),
+      nativeWorkerLaunchDigest(await prepare({ [credential]: 'old-account' })),
+      selector,
+    );
+    assert.equal(
+      nativeWorkerLaunchDigest(before),
+      nativeWorkerLaunchDigest(
+        await prepare({
+          [selector]: '1',
+          [credential]: 'old-account',
+          ASDF_DATA_DIR: '/tool-update',
+        }),
+      ),
+    );
+  }
+  assert.equal(
+    nativeWorkerLaunchDigest(await prepare({ AWS_PROFILE: 'unselected-old' })),
+    nativeWorkerLaunchDigest(await prepare({ AWS_PROFILE: 'unselected-new' })),
+  );
+});
+
+test('static reviewer compatibility survives the recorded project ASDF setting', async () => {
+  const prepare = (set: Record<string, string>) =>
+    prepareNativeWorkerLaunch({
+      vars: makeVars(),
+      project: { command_env: { set } },
+      runner: 'codex',
+      model: 'gpt-6.1-sol',
+      role: 'review',
+      reviewValidationDepth: 'static-code',
+      safetyTier: 'dangerous',
+      effort: 'high',
+      taskDir: 'tasks/proof',
+      leaseId: 'proof-lease',
+      sessionId: 'proof-session',
+      prepareAccount: false,
+    });
+  const before = (await prepare({})).launch;
+  const after = (await prepare({ ASDF_NODEJS_LEGACY_FILE_DYNAMIC_STRATEGY: 'latest_installed' }))
+    .launch;
+  assert.equal(after.environment.set.ASDF_NODEJS_LEGACY_FILE_DYNAMIC_STRATEGY, 'latest_installed');
+  assert.equal(
+    nativeWorkerEnvironment(after).ASDF_NODEJS_LEGACY_FILE_DYNAMIC_STRATEGY,
+    'latest_installed',
+  );
+  assert.equal(nativeWorkerLaunchDigest(after), nativeWorkerLaunchDigest(before));
 });

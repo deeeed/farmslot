@@ -15,6 +15,7 @@ import {
 import { nativeRunnerDefinitions } from '@farmslot/agent-runtime/native/registry';
 import {
   nativeWorkerLaunchDigest,
+  nativeWorkerLaunchMatchesDigest,
   validateNativeWorkerFilesystemPolicy,
 } from '@farmslot/agent-runtime/native/worker-launch';
 import {
@@ -50,7 +51,7 @@ import {
   resolveRunnerEffort,
   taskRecipeTrustEnvironment,
 } from '../launch-command.js';
-import { runnerSupportsEffort } from '../registry.js';
+import { reviewerLaunchEnvironmentKeys, runnerSupportsEffort } from '../registry.js';
 
 import { validateNativeRunner } from './manager.js';
 import { routeNativeExecution } from './node.js';
@@ -189,6 +190,7 @@ async function saveContext(
             existing.nativeSession.leaseId !== expected.leaseId ||
             existing.nativeSession.generation !== expected.generation ||
             existing.nativeSession.closedAt !== expected.closedAt ||
+            existing.nativeSession.launchDigest !== expected.launchDigest ||
             existing.nativeSession.releasedAt)
         )
           throw new Error('Static review worker changed before persistence');
@@ -351,6 +353,7 @@ export async function launchReviewWorkspaceWorker(input: {
     leaseId: binding.leaseId,
     ...(executable ? { executable } : {}),
     environment,
+    reviewerEnvironmentKeys: reviewerLaunchEnvironmentKeys(runner, model, environment.set),
     safetyTier: 'sandboxed',
     ...(modelQuestions ? { modelQuestions } : {}),
     effort,
@@ -360,14 +363,26 @@ export async function launchReviewWorkspaceWorker(input: {
     },
   };
   const digest = nativeWorkerLaunchDigest(launch);
-  if (binding.launchDigest && binding.launchDigest !== digest)
-    throw new Error('Static review launch configuration changed during retry');
+  let confirmedDigest: string | undefined;
+  if (binding.launchDigest && !nativeWorkerLaunchMatchesDigest(binding.launchDigest, launch)) {
+    if (!launch.reviewerEnvironmentKeys || binding.launchDigest.startsWith('reviewer-v1:'))
+      throw new Error('Static review launch configuration changed during retry');
+    const observed = (await route(
+      binding.ownerPrincipalId,
+      NATIVE_WORKER_READ,
+      target(binding),
+    )) as NativeSessionReadResult;
+    assertNativeWorkerSnapshot(binding, observed);
+    if (observed.session.workerLaunchDigest !== digest)
+      throw new Error('Static review launch configuration changed during retry');
+    confirmedDigest = digest;
+  }
   context = await saveContext(
     run.id,
     {
       nativeSession: {
         ...binding,
-        launchDigest: digest,
+        launchDigest: confirmedDigest ?? binding.launchDigest ?? digest,
         launchRequestedAt: binding.launchRequestedAt ?? new Date().toISOString(),
       },
     },
@@ -410,27 +425,28 @@ export async function launchReviewWorkspaceWorker(input: {
       }
     }
   }
-  const created = continueLive
-    ? { session: continueLive }
-    : ((await route(
-        binding.ownerPrincipalId,
-        input.resumeCommandId ? NATIVE_WORKER_RESUME : NATIVE_WORKER_ENSURE,
-        {
-          ...target(binding),
-          ...nativeProfileSessionParams(binding.profile),
-          runner,
-          model,
-          cwd: workspace.checkoutPath,
-          launch,
-          ...(input.resumeCommandId
-            ? {
-                generation: binding.recovery?.fromGeneration ?? binding.generation,
-                commandId: input.resumeCommandId,
-                resumeSessionId,
-              }
-            : {}),
-        },
-      )) as { session: NativeSessionInfo });
+  const created =
+    continueLive && continueLive.workerLaunchDigest === digest
+      ? { session: continueLive }
+      : ((await route(
+          binding.ownerPrincipalId,
+          input.resumeCommandId && !continueLive ? NATIVE_WORKER_RESUME : NATIVE_WORKER_ENSURE,
+          {
+            ...target(binding),
+            ...nativeProfileSessionParams(binding.profile),
+            runner,
+            model,
+            cwd: workspace.checkoutPath,
+            launch,
+            ...(input.resumeCommandId && !continueLive
+              ? {
+                  generation: binding.recovery?.fromGeneration ?? binding.generation,
+                  commandId: input.resumeCommandId,
+                  resumeSessionId,
+                }
+              : {}),
+          },
+        )) as { session: NativeSessionInfo });
   assertNativeWorkerSnapshot({ ...binding, generation: created.session.generation }, {
     session: created.session,
   } as NativeSessionReadResult);
@@ -457,6 +473,7 @@ export async function launchReviewWorkspaceWorker(input: {
       nativeSession: {
         ...binding,
         generation: created.session.generation,
+        launchDigest: created.session.workerLaunchDigest === digest ? digest : binding.launchDigest,
         ...(input.resumeCommandId
           ? {
               commandId: input.resumeCommandId,

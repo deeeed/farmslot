@@ -1,0 +1,1 @@
+- Expose the native host's confirmed worker launch digest so retained reviewers can safely reconcile compatibility upgrades after a lost reply.

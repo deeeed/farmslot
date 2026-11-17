@@ -67,27 +67,36 @@ test('failed initial reservation remains an error on retry and never launches a 
   const fixture = setup();
   const manager = new NativeSessionManager(fixture.root);
   const params = { sessionId: randomUUID(), runner: 'codex', cwd: fixture.cwd };
+  const launch = {
+    leaseId: randomUUID(),
+    safetyTier: 'sandboxed' as const,
+    reviewerEnvironmentKeys: ['CODEX_HOME'],
+    environment: { set: {}, unset: [] },
+  };
   const journal = join(fixture.root, `${params.sessionId}.journal`);
   // A real filesystem refusal before any runner launch. Repairing the path must not
   // turn the same host's uncertain reservation into a successful starting session.
   mkdirSync(journal);
   try {
-    await assert.rejects(manager.ensure('owner', params), { code: 'EISDIR' });
+    await assert.rejects(manager.ensure('owner', params, launch), { code: 'EISDIR' });
     rmSync(journal, { recursive: true });
-    await assert.rejects(manager.ensure('owner', params), { code: 'EISDIR' });
+    await assert.rejects(manager.ensure('owner', params, launch), { code: 'EISDIR' });
     const failed = manager.list('owner')[0]!;
     assert.equal(failed.state, 'failed');
+    assert.equal(failed.workerLaunchDigest, undefined);
+    assert.equal(manager.read('owner', params.sessionId).session.workerLaunchDigest, undefined);
     assert.equal(failed.processPid, undefined);
     assert.equal(failed.nativeSessionId, '');
     assert.equal(existsSync(journal), false);
     const reloaded = new NativeSessionManager(fixture.root);
     assert.equal(reloaded.list('owner').length, 0, 'A failed open wrote no durable reservation');
-    const created = await reloaded.ensure('owner', params);
+    const created = await reloaded.ensure('owner', params, launch);
     assert.equal(created.id, params.sessionId);
     assert.equal(created.state, 'idle');
-    await reloaded.close('owner', created.id);
+    await reloaded.closeWorker('owner', created.id, created.generation, launch.leaseId);
   } finally {
-    for (const session of manager.list('owner')) await manager.close('owner', session.id);
+    for (const session of manager.list('owner'))
+      await manager.closeWorker('owner', session.id, session.generation, launch.leaseId);
     fixture.restore();
   }
 });
@@ -96,21 +105,29 @@ test('an uncertain reservation fsync remains failed after retry and journal relo
   const fixture = setup();
   const manager = new NativeSessionManager(fixture.root);
   const params = { sessionId: randomUUID(), runner: 'codex', cwd: fixture.cwd };
+  const launch = {
+    leaseId: randomUUID(),
+    safetyTier: 'sandboxed' as const,
+    reviewerEnvironmentKeys: ['CODEX_HOME'],
+    environment: { set: {}, unset: [] },
+  };
   const fault = t.mock.method(fs, 'fsyncSync', () => {
     throw Object.assign(new Error('Reservation fsync failed'), { code: 'EIO' });
   });
   syncBuiltinESMExports();
   try {
-    await assert.rejects(manager.ensure('owner', params), { code: 'EIO' });
+    await assert.rejects(manager.ensure('owner', params, launch), { code: 'EIO' });
     fault.mock.restore();
     syncBuiltinESMExports();
     assert.ok(existsSync(join(fixture.root, `${params.sessionId}.journal`)));
-    await assert.rejects(manager.ensure('owner', params), { code: 'EIO' });
+    await assert.rejects(manager.ensure('owner', params, launch), { code: 'EIO' });
     const failed = manager.list('owner')[0]!;
     assert.equal(failed.state, 'failed');
+    assert.equal(failed.workerLaunchDigest, undefined);
+    assert.equal(manager.read('owner', params.sessionId).session.workerLaunchDigest, undefined);
     assert.equal(failed.processPid, undefined);
     const reloaded = new NativeSessionManager(fixture.root);
-    const retried = await reloaded.ensure('owner', params);
+    const retried = await reloaded.ensure('owner', params, launch);
     assert.equal(retried.id, params.sessionId);
     assert.equal(retried.generation, failed.generation);
     assert.equal(retried.state, 'failed');

@@ -1,10 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 
-import { NATIVE_WORKER_RESUME, NATIVE_WORKER_SEND } from '@farmslot/agent-runtime/native';
+import {
+  NATIVE_WORKER_ENSURE,
+  NATIVE_WORKER_RESUME,
+  NATIVE_WORKER_SEND,
+} from '@farmslot/agent-runtime/native';
 import {
   type NativeWorkerLaunch,
   nativeWorkerLaunchDigest,
+  nativeWorkerLaunchMatchesDigest,
 } from '@farmslot/agent-runtime/native/worker-launch';
 import {
   isTerminalRunStatus,
@@ -213,6 +218,7 @@ async function resumeNativeWorkerExclusive(
   };
   const save = async (patch: Partial<NativeWorkerSessionBinding>) => {
     await admit();
+    const previousDigest = binding!.launchDigest;
     const saved = await upsertAgentContext(
       runId,
       context.role,
@@ -225,6 +231,7 @@ async function resumeNativeWorkerExclusive(
             !latest?.nativeSession ||
             latest.nativeSession.generation !== binding!.generation ||
             latest.nativeSession.leaseId !== binding!.leaseId ||
+            latest.nativeSession.launchDigest !== binding!.launchDigest ||
             latest.nativeSession.releasedAt
           )
             throw new Error('Native worker recovery binding changed');
@@ -233,6 +240,23 @@ async function resumeNativeWorkerExclusive(
       },
     );
     binding = structuredClone(saved!.nativeSession!);
+    const latestRun = getRun(runId)!;
+    const handle = latestRun.park?.recoveryHandle;
+    if (
+      patch.launchDigest &&
+      patch.launchDigest !== previousDigest &&
+      handle?.version === 2 &&
+      handle.nativeSessionId === binding.sessionId &&
+      handle.leaseId === binding.leaseId &&
+      handle.launchDigest === previousDigest
+    ) {
+      updateRun(runId, {
+        park: {
+          ...latestRun.park!,
+          recoveryHandle: { ...handle, launchDigest: patch.launchDigest },
+        },
+      });
+    }
     await persistRunNow(getRun(runId)!, 'native worker recovery');
   };
   await admit();
@@ -421,9 +445,17 @@ async function resumeNativeWorkerExclusive(
           prepareAccount: false,
           domain: resolveEffectiveDomain(run.domain, vars.domain),
         });
+  const digest = nativeWorkerLaunchDigest(prepared.launch);
+  verify(snapshot.session);
   if (
     prepared.launch.leaseId !== binding.leaseId ||
-    nativeWorkerLaunchDigest(prepared.launch) !== binding.launchDigest ||
+    !binding.launchDigest ||
+    (!nativeWorkerLaunchMatchesDigest(binding.launchDigest, prepared.launch) &&
+      !(
+        prepared.launch.reviewerEnvironmentKeys &&
+        !binding.launchDigest.startsWith('reviewer-v1:') &&
+        snapshot.session.workerLaunchDigest === digest
+      )) ||
     (snapshot.session.cwd !== vars.remoteRepo &&
       !(
         options?.purpose === 'parking' &&
@@ -502,10 +534,38 @@ async function resumeNativeWorkerExclusive(
   }
   if (snapshot.session.generation === intent.fromGeneration && !intent.continueLive)
     throw new Error('Native recovery did not establish a new process generation');
-  if (snapshot.session.generation !== binding.generation)
+  // A live legacy session may need an idempotent ENSURE to commit its identity upgrade.
+  if (
+    intent.continueLive &&
+    prepared.launch.reviewerEnvironmentKeys &&
+    binding.launchDigest !== digest &&
+    snapshot.session.workerLaunchDigest !== digest
+  ) {
+    await admit();
+    const ensured = (await routeNativeExecution(binding.ownerPrincipalId, NATIVE_WORKER_ENSURE, {
+      ...sessionTarget,
+      ...nativeProfileSessionParams(binding.profile),
+      runner: context.runner,
+      model: context.model,
+      resultSchema: binding.resultSchema,
+      cwd: vars.remoteRepo,
+      launch: prepared.launch,
+    })) as { session: NativeSessionInfo };
+    verify(ensured.session);
+    snapshot = { ...snapshot, session: ensured.session };
+  }
+  const confirmedDigest =
+    snapshot.session.workerLaunchDigest === digest ? digest : binding.launchDigest;
+  if (
+    snapshot.session.generation !== binding.generation ||
+    confirmedDigest !== binding.launchDigest
+  )
     await save({
       generation: snapshot.session.generation,
-      closedAt: snapshot.session.processStopped ? new Date().toISOString() : undefined,
+      launchDigest: confirmedDigest,
+      ...(snapshot.session.generation !== binding.generation
+        ? { closedAt: snapshot.session.processStopped ? new Date().toISOString() : undefined }
+        : {}),
     });
   if (
     !['idle', 'running', 'waiting'].includes(snapshot.session.state) ||

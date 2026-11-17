@@ -11,7 +11,10 @@ import {
   type NativeWorkerCancelResult,
 } from '@farmslot/agent-runtime/native';
 import { effectiveModelQuestions } from '@farmslot/agent-runtime/native/model-questions';
-import { nativeWorkerLaunchDigest } from '@farmslot/agent-runtime/native/worker-launch';
+import {
+  nativeWorkerLaunchDigest,
+  nativeWorkerLaunchMatchesDigest,
+} from '@farmslot/agent-runtime/native/worker-launch';
 import {
   type AgentContext,
   type AgentRole,
@@ -684,8 +687,27 @@ export async function dispatchNativeWorker(input: {
     });
   }
   const digest = nativeWorkerLaunchDigest(prepared.launch);
-  if (binding.launchDigest && binding.launchDigest !== digest)
-    throw new Error('Native worker launch configuration changed; explicit recovery is required');
+  let confirmedDigest: string | undefined;
+  if (
+    binding.launchDigest &&
+    !nativeWorkerLaunchMatchesDigest(binding.launchDigest, prepared.launch)
+  ) {
+    // Reconcile a lost upgrade reply only from the same host owner, generation and task lease.
+    if (!prepared.launch.reviewerEnvironmentKeys || binding.launchDigest.startsWith('reviewer-v1:'))
+      throw new Error('Native worker launch configuration changed; explicit recovery is required');
+    const observed = (await routeNativeExecution(
+      binding.ownerPrincipalId,
+      Methods.NATIVE_SESSION_READ,
+      target(binding),
+    )) as NativeSessionReadResult;
+    const observedLease = observed.session.workerLeaseId;
+    if (!observedLease || ![binding.leaseId, binding.handoffFrom?.leaseId].includes(observedLease))
+      throw new Error('Native worker task lease changed');
+    checkedSession(observed.session, { ...binding, leaseId: observedLease });
+    if (observed.session.workerLaunchDigest !== digest)
+      throw new Error('Native worker launch configuration changed; explicit recovery is required');
+    confirmedDigest = digest;
+  }
   const save = async (next: NativeWorkerSessionBinding, patch: Partial<AgentContext> = {}) => {
     const saved = await upsertAgentContext(
       run.id,
@@ -696,7 +718,8 @@ export async function dispatchNativeWorker(input: {
           checkRun();
           if (
             latest?.nativeSession?.sessionId !== binding.sessionId ||
-            latest.nativeSession.leaseId !== binding.leaseId
+            latest.nativeSession.leaseId !== binding.leaseId ||
+            latest.nativeSession.launchDigest !== binding.launchDigest
           )
             throw new Error('Native worker binding changed before persistence');
           if (
@@ -707,7 +730,8 @@ export async function dispatchNativeWorker(input: {
               latest.nativeSession.generation !== next.generation) ||
             (latest.nativeSession.launchDigest &&
               next.launchDigest &&
-              latest.nativeSession.launchDigest !== next.launchDigest)
+              latest.nativeSession.launchDigest !== next.launchDigest &&
+              !(next.launchDigest === digest && confirmedDigest === digest))
           )
             throw new Error('Native worker generation or launch configuration changed');
           return {
@@ -729,7 +753,7 @@ export async function dispatchNativeWorker(input: {
   };
   await save({
     ...binding,
-    launchDigest: digest,
+    launchDigest: confirmedDigest ?? binding.launchDigest ?? digest,
     accountLabel: prepared.accountLabel,
     effort: prepared.launch.effort,
     safetyTier: prepared.launch.safetyTier,
@@ -812,8 +836,13 @@ export async function dispatchNativeWorker(input: {
         },
       )) as { session: NativeSessionInfo };
       checkedSession(transferred.session, binding);
+      if (transferred.session.workerLaunchDigest === digest) confirmedDigest = digest;
       await finishNativeHandoffSource(run.id, binding, vars.slotId);
-      await save({ ...binding, handoffCompletedAt: new Date().toISOString() });
+      await save({
+        ...binding,
+        launchDigest: confirmedDigest ?? binding.launchDigest,
+        handoffCompletedAt: new Date().toISOString(),
+      });
     } catch (error) {
       throw new NativeWorkerOperationUncertainError(
         'handoff',
@@ -904,8 +933,13 @@ export async function dispatchNativeWorker(input: {
       'Native worker reservation is terminal. Explicit recovery is required.',
       undefined,
     );
+  if (info.workerLaunchDigest === digest) confirmedDigest = digest;
   await save(
-    { ...binding, generation: info.generation },
+    {
+      ...binding,
+      generation: info.generation,
+      launchDigest: confirmedDigest ?? binding.launchDigest,
+    },
     {
       runnerSessionId: info.nativeSessionId,
       runnerSessionPath: info.nativeSessionPath ?? null,

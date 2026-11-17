@@ -207,6 +207,8 @@ export interface NativeProcessExitEvidence {
 }
 
 export interface NativeSessionInfo extends Partial<NativeProcessExitEvidence> {
+  /** Host-journal-confirmed reviewer identity. Absent on legacy hosts or uncertain writes. */
+  workerLaunchDigest?: string;
   /** Durable maintenance receipts. Pending operations are reconciled, never replayed. */
   contextCompactions?: NativeContextCompactionRecord[];
   id: string;

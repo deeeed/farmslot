@@ -1,0 +1,1 @@
+- Preserve retained reviewer conversations across unrelated project command_env changes, including ASDF tool settings, while keeping runner, credential, execution-policy and native lease compatibility checks.
