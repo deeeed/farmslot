@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.17 - 2026-11-17
+
+- Align exact dependency pins with the implementation-isolated prepared-cache release.
+
 ## 0.35.16 - 2026-11-17
 
 - Refuse unbound recipe execution in checkouts with task storage unless explicit diagnostic mode is selected, with a same-invocation task-binding recovery command; reject conflicting bound-task and diagnostic options.

@@ -1,1 +1,0 @@
-- Isolate prepared source, metadata and output-support cache records by implementation so mixed versions keep warm checks without weakening source freshness.
