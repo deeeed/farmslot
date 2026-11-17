@@ -187,14 +187,19 @@ export function registerSlotCommand(program: Command): void {
     .command('check')
     .description('Check slot health')
     .argument('[id]', 'Slot ID; defaults to the slot for the current working directory')
-    .action(async (id: string | undefined, _opts: unknown, cmd: Command) => {
+    .option('--force', 'Allow health hooks on a slot owned by a run')
+    .action(async (id: string | undefined, opts: { force?: boolean }, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
       const emit = createEmitter(output, cmd);
       try {
         const slotId = resolveSlotId(id);
         const result = await withProgress(
           `Checking ${slotId}`,
-          () => client.call<SlotCheckResult>('slot.check', { slotId }),
+          () =>
+            client.call<SlotCheckResult>('slot.check', {
+              slotId,
+              ...(opts.force ? { force: true } : {}),
+            }),
           !emit.machine,
         );
         if (emit.machine) {

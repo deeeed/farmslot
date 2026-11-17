@@ -68,6 +68,8 @@ export interface ProjectRuntime<
   diagnostics?: AdapterDiagnostics;
   // Source fingerprint of the checkout root, when the platform has its own.
   sourceFingerprint?(root: string): string;
+  /** Complete source selection and additional file inputs used by the fingerprint. */
+  sourceFingerprintInputs?(root: string): SourceFingerprintInputs;
   // `launch` for this platform. The command owns the shared grammar (--heal,
   // adapter resolution, the checkout lock, the --json-stream envelope); the
   // platform owns the rest and returns the exit code.
@@ -95,6 +97,14 @@ export interface ProjectRuntime<
   // What `doctor`, `status` and `prepare` report and do beyond the shared steps.
   // Absent: the shared checks only, no devices, no repairs.
   readiness?: AdapterReadiness;
+}
+
+/** Inputs consumed by a platform's source fingerprint. */
+export interface SourceFingerprintInputs {
+  /** Git-selected source paths, or source paths in a directory delivery. */
+  paths: readonly string[];
+  /** All additional regular-file bytes, including inputs excluded by Git. */
+  envFiles: readonly string[];
 }
 
 /** What `doctor`, `status` and `prepare` ask a platform. Every member is optional. */

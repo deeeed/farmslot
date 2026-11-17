@@ -1,0 +1,2 @@
+- Mirror, retain, replay and inherit task-local recipe actions from the canonical task-directory contract; refuse publication when captured implementations are missing or changed.
+- Let follow-ups with missing historical canonical inputs start with a recorded gap and re-author instructions, while excluding the original proof from reuse and preserving immutable legacy artifacts.

@@ -49,6 +49,7 @@ export function parseArgs(argv: string[], parse: ParseArgsOptions = {}): ParsedA
     'record',
     'plan',
     'proof',
+    'unbound',
     'list',
     'describe',
     'raw',

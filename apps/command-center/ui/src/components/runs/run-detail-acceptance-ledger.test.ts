@@ -3,7 +3,7 @@ import { mock, test } from 'node:test';
 
 import { LitElement, type ReactiveControllerHost } from 'lit';
 
-import type { TaskProgressResult } from '@farmslot/protocol';
+import type { RunRecipeRunsForRunResult, TaskProgressResult } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { installFakeGateway } from '../../testing/fake-gateway.js';
@@ -63,6 +63,9 @@ test('the acceptance panel names no superseded ledger read for the grace period'
     resourceQuery<TaskProgressResult>('task.progress', { slotId: 'slot-1', runId: 'run-1' }),
   );
   Object.defineProperty(view, 'progressQuery', { value: progress });
+  Object.defineProperty(view, 'recipeQuery', {
+    value: new ResourceQueryController<RunRecipeRunsForRunResult>(host),
+  });
   progress.hostConnected();
   await flush();
   const socket = fake.sockets.at(-1)!;

@@ -2,6 +2,7 @@ import type { GitDiffResult } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
 import { navigateHash } from '../../utils/url-state.js';
+import { browserViewState } from '../../utils/view-state.js';
 import type { ResourcePanel } from '../resources/resource-panel.js';
 import { WorkspaceReadCancelledError } from '../workspace/workspace-reads.js';
 
@@ -27,6 +28,7 @@ import {
   requestedResourceFromHash,
   requestedReviewDrawerModeFromHash,
   requestedRunFromHash,
+  slotSessionField,
   slotViewHash,
 } from './slot-view-url-state.js';
 
@@ -86,6 +88,7 @@ export function syncSlotViewUrlState(view: SlotView, contextId?: string): void {
     activity: view._sidebarOpen && view._activity === 'info' ? 'info' : undefined,
     runId: runForUrl,
     contextId: contextId ?? getSlotViewHashParam('contextId') ?? undefined,
+    sessionView: browserViewState.get(slotSessionField),
     file: fileForUrl,
     resource: view._resourcePanelOpen ? (resourceForUrl ?? '') : '',
     recipeRun: view._selectedRecipeRunId,

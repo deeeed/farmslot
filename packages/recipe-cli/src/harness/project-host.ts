@@ -8,7 +8,7 @@ import {
   type RecipeEngine,
 } from '@farmslot/adapter-sdk';
 import { isRecord } from '@farmslot/protocol';
-import type { RecipeLibrarySource } from '@farmslot/recipe-runner';
+import { type RecipeLibrarySource, withPreparedSourceWitness } from '@farmslot/recipe-runner';
 import { assertRecipeActive } from '@farmslot/recipe-runner/adapters/core';
 
 import { configureHarnessAdapters, harnessAdapters } from './adapters.js';
@@ -93,6 +93,17 @@ export function withProjectRecipeHost<T>(
 
 /** The single composition implementation, after fresh or retained binding selection. */
 export function withProjectRecipeHostContext<T>(
+  options: ProjectRecipeHostOptions,
+  invoke: (host: ProjectRecipeHost) => Promise<T>,
+  sourceCeiling?: string,
+): Promise<T> {
+  const invokeHost = () => projectRecipeHostContext(options, invoke, sourceCeiling);
+  return options.command === 'run' || options.command === 'call'
+    ? withPreparedSourceWitness(invokeHost)
+    : invokeHost();
+}
+
+function projectRecipeHostContext<T>(
   options: ProjectRecipeHostOptions,
   invoke: (host: ProjectRecipeHost) => Promise<T>,
   sourceCeiling?: string,

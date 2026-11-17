@@ -9,6 +9,7 @@ import {
   type HumanPublicationAdoptionReceipt,
   isRecord,
   isRunArtifactMediaPath,
+  PipelineSteps,
   type ReadyGatePrPackage,
   RecordedEvidenceReadError,
   type ReviewDiffSnapshot,
@@ -828,6 +829,16 @@ export interface ResolvedPublicationManifest {
 /** Existing run capture authority, separate from the selected head's claims. */
 export interface PublicationBaselineContext {
   baseSha?: string;
+  /**
+   * Every pre-work base this run RECORDED, any of which before evidence may match.
+   *
+   * One value was not enough: a review loop moves the review snapshot's base
+   * forward to the previously reviewed head, so a baseline recorded on the head
+   * the worker was dispatched from — the unchanged base the templates tell it
+   * to record on — stopped matching the single expected value and the publish
+   * refused. These are recorded facts of the run, never caller input.
+   */
+  beforeBaseShas?: readonly string[];
   /** Verified marker-only baseline; never waives dirty, branch or after-evidence checks. */
   markerBaseline?: ReturnType<typeof markerBaselineVerifier>;
   /** Full comparison captured for this publication, never a warm review delta. */
@@ -875,6 +886,43 @@ export function capturedBeforeAttemptAttestations(
   );
 }
 
+/**
+ * Steps whose replay re-reads HEAD, so `worktreeHeadAtDispatch` after one of
+ * them may name a commit that already contains the fix.
+ */
+const DISPATCH_BASELINE_STEPS: ReadonlySet<string> = new Set([
+  PipelineSteps.FIND_SLOT,
+  PipelineSteps.GRADE,
+  PipelineSteps.WRITE_TASK,
+  PipelineSteps.PREPARE,
+  PipelineSteps.DISPATCH,
+]);
+
+/**
+ * The value to freeze as this run's pre-work base, or undefined to leave it unset.
+ *
+ * An ABSENT field does not prove a first dispatch. A run that existed before
+ * the field, replayed at `prepare`, reaches dispatch with the fix already
+ * committed, and seeding there would freeze a post-fix commit as the pre-work
+ * base — laundering exactly what the field exists to prevent. The same goes for
+ * a run whose baseline was recorded by a retained-delivery path that writes
+ * only `worktreeHeadAtDispatch`. So the seed is taken only when nothing has
+ * been dispatched yet and no replay of dispatch, or of a step before it, has
+ * happened; an ambiguous legacy run stays unbackfilled and keeps the
+ * narrower fallback in `publicationBaselineContext`.
+ */
+export function preWorkBaseSeed(
+  run: Pick<Run, 'preWorkBaseSha' | 'worktreeHeadAtDispatch' | 'recoveryAttempts'> | undefined,
+  worktreeHeadAtDispatch: string,
+): string | undefined {
+  if (run?.preWorkBaseSha || run?.worktreeHeadAtDispatch) return undefined;
+  if (
+    (run?.recoveryAttempts ?? []).some((attempt) => DISPATCH_BASELINE_STEPS.has(attempt.stepName))
+  )
+    return undefined;
+  return /^[a-f0-9]{40}$/iu.test(worktreeHeadAtDispatch) ? worktreeHeadAtDispatch : undefined;
+}
+
 export function publicationBaselineContext(
   run: Run,
   inventory: readonly ArtifactRef[] | null = run.output?.artifactManifest ?? [],
@@ -892,9 +940,45 @@ export function publicationBaselineContext(
     /^[a-f0-9]{40}$/iu.test(snapshot.headSha)
       ? snapshot.baseSha
       : undefined;
+  // The ref the run was created from. A replay re-resolves it against the
+  // commit the run already recorded (`run-engine/dispatch-lifecycle-steps.ts`),
+  // so it names the same commit for the life of the run: a pre-work identity
+  // nothing later moves. Set only by the flows that record one.
+  const startBase =
+    typeof run.startRef?.resolvedSha === 'string' &&
+    /^[a-f0-9]{40}$/iu.test(run.startRef.resolvedSha)
+      ? run.startRef.resolvedSha
+      : undefined;
+  // The head of the FIRST dispatch, written once and never rewritten.
+  const preWorkBase =
+    typeof run.preWorkBaseSha === 'string' && /^[a-f0-9]{40}$/iu.test(run.preWorkBaseSha)
+      ? run.preWorkBaseSha
+      : undefined;
+  // `worktreeHeadAtDispatch` is NOT immutable: a later prepare overwrites it
+  // with whatever HEAD is then (`methods/dispatch/execute.ts`), so after a
+  // re-dispatch it can name a POST-fix commit, which must never pass as a
+  // pre-work base — that is what the attestation path is for. Runs first
+  // dispatched before `preWorkBaseSha` existed have no frozen record, so for
+  // those it stands in only while no replay of dispatch, or of a step before
+  // it, has had a chance to move it.
+  const dispatchMoved = (run.recoveryAttempts ?? []).some((attempt) =>
+    DISPATCH_BASELINE_STEPS.has(attempt.stepName),
+  );
+  const dispatchBase =
+    preWorkBase === undefined &&
+    !dispatchMoved &&
+    typeof run.worktreeHeadAtDispatch === 'string' &&
+    /^[a-f0-9]{40}$/iu.test(run.worktreeHeadAtDispatch)
+      ? run.worktreeHeadAtDispatch
+      : undefined;
   return {
     markerBaseline: markerBaselineVerifier(run, inventory),
-    baseSha: fullReviewBase ?? run.worktreeHeadAtDispatch ?? undefined,
+    baseSha: fullReviewBase ?? preWorkBase ?? dispatchBase ?? startBase,
+    beforeBaseShas: [
+      ...new Set(
+        [fullReviewBase, preWorkBase, startBase, dispatchBase].filter((sha) => sha !== undefined),
+      ),
+    ],
     comparison,
     branch: run.branch,
     inventory,
@@ -1076,11 +1160,27 @@ export async function assertPublicationManifestOwnership(
                 );
               headSha = selected.git_ref;
             }
-            const expectedSha = beforeOnly
-              ? mergedBefore && comparison?.headSha === headSha
-                ? comparison.baseSha
-                : baseline?.baseSha
-              : headSha;
+            // Before evidence may match ANY base this run recorded before the
+            // work started, not one chosen value: the review loop moves the
+            // review base forward, and a baseline recorded on the dispatch head
+            // is exactly what the fix-bug templates ask the worker for.
+            const beforeBases = beforeOnly
+              ? (baseline?.beforeBaseShas?.length
+                  ? baseline.beforeBaseShas
+                  : baseline?.baseSha
+                    ? [baseline.baseSha]
+                    : []
+                ).concat(
+                  mergedBefore && comparison?.headSha === headSha && comparison?.baseSha
+                    ? [comparison.baseSha]
+                    : [],
+                )
+              : [];
+            const matchedBase =
+              typeof provenance.git_ref === 'string'
+                ? beforeBases.find((base) => base === provenance.git_ref)
+                : undefined;
+            const expectedSha = beforeOnly ? (matchedBase ?? baseline?.baseSha) : headSha;
             // An attestation of this exact attempt manifest waives only the baseline match.
             const attested =
               beforeOnly &&
@@ -1088,21 +1188,34 @@ export async function assertPublicationManifestOwnership(
               admittedBeforeAttemptAttestations(baseline.attestations, (root) =>
                 root === directory ? manifestDigest : undefined,
               ).length > 0;
-            const markerBaseline =
+            // The templates have the worker commit a BUG_MARKER before it
+            // records the baseline, so the baseline legitimately sits one
+            // commit past a recorded base. Each candidate gets the hatch: the
+            // marker's parent is whichever base the worker actually started on.
+            let markerBaseline = false;
+            if (
               beforeOnly &&
               !attested &&
-              expectedSha &&
+              !matchedBase &&
               typeof provenance.git_ref === 'string' &&
-              provenance.git_ref !== expectedSha &&
               provenance.dirty === false &&
               (!baseline?.branch ||
                 provenance.branch === baseline.branch ||
-                provenance.branch === 'detached') &&
-              (await baseline?.markerBaseline?.(provenance.git_ref, expectedSha, io, artifactsDir));
+                provenance.branch === 'detached')
+            ) {
+              for (const base of beforeBases) {
+                if (await baseline?.markerBaseline?.(provenance.git_ref, base, io, artifactsDir)) {
+                  markerBaseline = true;
+                  break;
+                }
+              }
+            }
+            const gitRefInvalid = beforeOnly
+              ? !matchedBase && !markerBaseline
+              : !expectedSha || provenance.git_ref !== expectedSha;
             const invalidProvenanceField =
               !attested &&
-              (((!expectedSha || (provenance.git_ref !== expectedSha && !markerBaseline)) &&
-                'git_ref') ||
+              ((gitRefInvalid && 'git_ref') ||
                 (provenance.dirty !== false && 'dirty') ||
                 (baseline?.branch &&
                   provenance.branch !== baseline.branch &&

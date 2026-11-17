@@ -106,3 +106,14 @@ export class CommandCenterPersonSessionStorage implements PersonSessionStorage {
     this.expected = serialized;
   }
 }
+
+/** Keep a previously signed-in implicit endpoint when a new dev default is introduced. */
+export function retainedImplicitPersonGatewayUrls(
+  current: string[],
+  previous: string[],
+  hasSelectedCredentials = false,
+): string[] {
+  if (hasSelectedCredentials) return current;
+  if (new CommandCenterPersonSessionStorage(current).required) return current;
+  return new CommandCenterPersonSessionStorage(previous).required ? previous : current;
+}

@@ -1,0 +1,1 @@
+- Add an explicit host terminal beside native conversations and preserve that choice across reloads without changing the selected worker.

@@ -6,6 +6,18 @@ All notable changes to `@farmslot/adapter-node` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.8.24 - 2026-11-17
+
+- Align exact dependency pins with the implementation-isolated prepared-cache release.
+
+## 0.8.23 - 2026-11-17
+
+- Align exact dependency pins with the task-bound recipe evidence producer patch.
+
+## 0.8.22 - 2026-11-16
+
+- Align exact dependencies with the prepared-source-witness patch cohort.
+
 ## 0.8.21 - 2026-11-16
 
 - Align exact package dependencies with the protocol 0.87.0 and adapter SDK 0.28.0 cohort.

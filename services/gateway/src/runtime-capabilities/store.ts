@@ -49,6 +49,18 @@ export interface RuntimeCapabilityStoreSnapshot {
 export interface RuntimeCapabilityFenceEntry {
   id: string;
   at: string;
+  /**
+   * An owner entry a FAMILY sweep wrote for someone else's cleanup.
+   *
+   * Provenance decides what retires the entry. An owner's own cleanup (`false`)
+   * is retired only by a durable replay, whatever its current posture says. A
+   * sweep-written entry yields to a run the store still vouches for as live,
+   * because that run never ended. Absent on entries written before this
+   * distinction existed: those are read as sweep-written, which is the recovery
+   * for the live runs the old family cleanup fenced, and they age out with the
+   * fence TTL.
+   */
+  viaFamily?: boolean;
 }
 
 export const RUNTIME_CAPABILITY_TERMINAL_LEASE_LIMIT = 1_000;

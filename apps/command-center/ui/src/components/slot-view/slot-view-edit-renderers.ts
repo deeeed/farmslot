@@ -1,5 +1,9 @@
 import { html, nothing } from 'lit';
 
+import { Methods } from '@farmslot/protocol';
+
+import { AVAILABLE_AFTER_REFRESH } from '../shared/read-notice-delay.js';
+
 import type { SlotView } from './slot-view.js';
 import {
   copySlotViewDraft,
@@ -24,8 +28,19 @@ const SAVE_STATE_LABELS = {
 /** The editor header's save control, or why the file is read-only (decision 4). */
 export function renderSlotViewSaveControl(view: SlotView) {
   const path = view._activeFile;
-  if (!slotViewEditable(view, path)) {
-    const reason = view._isLive ? (slotViewReadOnly(view, path) ?? 'hash') : 'offline';
+  const editable = slotViewEditable(view, path);
+  const reason = editable
+    ? undefined
+    : view._isLive
+      ? (slotViewReadOnly(view, path) ?? 'hash')
+      : 'offline';
+  const fileRead =
+    !editable && reason === 'hash'
+      ? view._workspaceReads.stateOf(Methods.FS_READ, { slotId: view.slotId, path })
+      : undefined;
+  const refreshing =
+    !editable && reason === 'hash' && fileRead?.data !== undefined && fileRead?.status !== 'ready';
+  if (!editable && !refreshing) {
     return html`<span
       class="sv-read-only"
       data-testid="editor-read-only"
@@ -41,9 +56,9 @@ export function renderSlotViewSaveControl(view: SlotView) {
     <button
       class="sv-save-btn ${view._saveFeedback}"
       data-testid="file-save"
-      ?disabled=${view._saveFeedback === 'saving'}
+      ?disabled=${refreshing || view._saveFeedback === 'saving'}
       @click=${view._saveFile}
-      title="Save (writes to disk)"
+      title=${refreshing ? AVAILABLE_AFTER_REFRESH : 'Save (writes to disk)'}
     >
       ${view._saveFeedback === 'saving'
         ? 'Saving...'

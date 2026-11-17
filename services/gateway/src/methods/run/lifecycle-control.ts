@@ -491,6 +491,7 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
     fence = await fenceRunSlotCleanup(run, blocker);
     const { broadcastEvent } = await import('../../server.js');
     const released = await releaseRunSlotOwnership(run, fence, blocker, {
+      collectRecipes: returnsToIdle && !checkoutHasLocalWork,
       stopUnconfirmed: !workerBlocker && unconfirmedStops.length > 0,
     });
     if (released && returnsToIdle && !checkoutHasLocalWork) {

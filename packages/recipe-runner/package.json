@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/recipe-runner",
-  "version": "0.46.20",
+  "version": "0.46.23",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -114,6 +114,10 @@
       "types": "./dist/evidence/index.d.ts",
       "import": "./dist/evidence/index.js",
       "default": "./dist/evidence/index.js"
+    },
+    "./runtime/artifact-owner": {
+      "types": "./bin/recipe-artifact-owner.d.cts",
+      "default": "./bin/recipe-artifact-owner.cjs"
     }
   },
   "scripts": {
@@ -165,6 +169,8 @@
     "README.md",
     "LICENSE",
     "bin/**/*.mjs",
+    "bin/**/*.cjs",
+    "bin/**/*.d.cts",
     "visual-review/**/*.mjs",
     "visual-review/**/*.d.mts",
     "dist/**/*.js",

@@ -70,7 +70,10 @@ import {
   resolveGatewayWebSocketUrls,
   setGatewayMemoryAuth,
 } from './gateway-url.js';
-import { CommandCenterPersonSessionStorage } from './person-session-storage.js';
+import {
+  CommandCenterPersonSessionStorage,
+  retainedImplicitPersonGatewayUrls,
+} from './person-session-storage.js';
 
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'auth_required';
 type EventCallback<T = unknown> = (payload: T) => void;
@@ -175,14 +178,14 @@ function resolveBrowserGatewayConnection(): BrowserGatewayConnection {
   const storedGatewayUrl = localStorage.getItem(GATEWAY_URL_STORAGE_KEY);
   const storedSource = localStorage.getItem(GATEWAY_SOURCE_STORAGE_KEY);
   const devGatewayPort = env.DEV ? env.VITE_FARMSLOT_DEV_GATEWAY_PORT : undefined;
-  const urls = resolveGatewayWebSocketUrls(
+  let urls = resolveGatewayWebSocketUrls(
     env.VITE_FARMSLOT_GATEWAY_URL,
     location,
     storedCandidates,
     storedGatewayUrl,
     devGatewayPort,
   );
-  const source = resolveGatewayConnectionSource(
+  let source = resolveGatewayConnectionSource(
     env.VITE_FARMSLOT_GATEWAY_URL,
     location,
     storedCandidates,
@@ -190,6 +193,22 @@ function resolveBrowserGatewayConnection(): BrowserGatewayConnection {
     storedSource,
     devGatewayPort,
   );
+  if (
+    source === 'implicit' &&
+    devGatewayPort &&
+    !hosted.code &&
+    !hosted.token &&
+    !hosted.password
+  ) {
+    // The pre-LAN dev UI used its own /ws proxy. Keep that saved login at its
+    // original endpoint rather than sending its refresh credential to a new URL.
+    const previous = resolveGatewayWebSocketUrls(undefined, location);
+    const retained = retainedImplicitPersonGatewayUrls(urls, previous, Boolean(token || password));
+    if (retained !== urls) {
+      urls = retained;
+      source = 'stored';
+    }
+  }
   return {
     urls,
     source,
@@ -770,6 +789,11 @@ export class GatewayClient {
     this.epoch += 1;
     this.lastAuthError = null;
     this.authBlocked = false;
+    if (this.source === 'implicit' && (this.auth.token || this.auth.password)) {
+      // A verified sign-in selects this endpoint even if discovery defaults change later.
+      this.source = 'stored';
+      this.persistConnection();
+    }
     this.setState('connected', undefined, true);
   }
 

@@ -12,6 +12,7 @@ import type {
 
 import '../runtime/mock-pty.test-support.js';
 
+import { buildRunRecord } from '../runs/store.js';
 import {
   RuntimeCapabilityRegistry,
   type WarmSweepSummary,
@@ -23,6 +24,7 @@ import {
   completeGrantedClaim,
   type DeviceTargetGuardDeps,
   hasHadTerminalCleanup,
+  isLiveCapabilityOwner,
   reservationSettlement,
   runtimeCapabilityRecoveryStartedAt,
   runtimeCapabilityStopWarm,
@@ -63,6 +65,66 @@ test('same-run prepare replay supersedes stale terminal posture without reviving
     }),
     true,
   );
+});
+
+test('a run held for a decision is vouched for as live, a settled or paused one is not', () => {
+  // The run a sibling's close must not strip: still active, holding a result
+  // decision, its providers stopped by its own operator-wait posture.
+  const held = {
+    status: 'needs-decision',
+    resourcePosture: { posture: 'operator-wait', updatedAt: '2026-11-16T17:16:43.510Z' },
+  } as Run;
+  assert.equal(isLiveCapabilityOwner(held), true);
+  for (const status of ['done', 'failed', 'cancelled', 'paused'] as const) {
+    assert.equal(isLiveCapabilityOwner({ ...held, status }), false);
+  }
+});
+
+test('an unsettled completion-prerequisite failure keeps its retained resources', () => {
+  // r1 (Codex): these runs retain their worker and their providers on purpose.
+  // Treating every `failed` status as settled let a sibling's close strip them.
+  const retained: Run = {
+    ...buildRunRecord({ project: 'test-project', ticketOrPr: 'TEST-1', flowType: 'fix-bug' }),
+    status: 'failed',
+    steps: [
+      {
+        name: 'complete',
+        status: 'failed',
+        outputs: {
+          gatePrerequisiteRefusal:
+            'Artifact mirror refresh failed; cannot build an authoritative publish package',
+        },
+      },
+    ],
+  };
+  assert.equal(hasHadTerminalCleanup(retained), false);
+  assert.equal(isLiveCapabilityOwner(retained), true);
+  assert.equal(isLiveCapabilityOwner({ ...retained, status: 'done' } as Run), false);
+});
+
+test('a run whose own providers were torn down at terminal is not live', () => {
+  const run = {
+    status: 'blocked',
+    resourcePosture: { posture: 'terminal', updatedAt: '2026-11-16T17:16:43.510Z' },
+  } as Run;
+  assert.equal(hasHadTerminalCleanup(run), true);
+  assert.equal(
+    isLiveCapabilityOwner(run),
+    false,
+    'terminal posture outranks a non-terminal status',
+  );
+  const replayed = {
+    ...run,
+    recoveryAttempts: [
+      {
+        stepName: 'prepare',
+        startedAt: '2026-11-16T18:00:00.000Z',
+        status: 'started',
+        triggeredBy: 'operator',
+      },
+    ],
+  } as Run;
+  assert.equal(isLiveCapabilityOwner(replayed), true, 'a durable replay revives the owner');
 });
 
 const PARAMS = { slotId: 'slot-a', capabilityId: 'metro' };

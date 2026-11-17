@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Run detail keeps its viewing position across live reads and reload",
+  "description": "Read only against an existing run. Select an owned Agent Chrome tab and set FARMSLOT_CDP_PORT, FARMSLOT_RUN_LAYOUT_TAB, FARMSLOT_RUN_LAYOUT_RUN and FARMSLOT_RUN_LAYOUT_OUTPUT. Use TSX_TSCONFIG_PATH=services/gateway/tsconfig.json. Brings the page to the foreground and scrolls the timeline into view before recording. Captures arrivals and a real reload, including the new document. Checks visible viewport anchors, component identity and transient notice presence after frame updates; retains raw off-screen geometry separately because live history may grow. Takes no run or slot action and injects no application data.",
+  "workflow": {
+    "entry": "stable-run-detail",
+    "nodes": {
+      "stable-run-detail": {
+        "action": "command",
+        "cmd": "node --import tsx apps/command-center/scripts/prove-run-detail-stable-layout.mjs",
+        "timeout_ms": 180000,
+        "intent": "Record an existing live run, preserve a nonzero viewing position through reload, and prove visible layout and notices stay stable.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

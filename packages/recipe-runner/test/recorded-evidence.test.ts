@@ -105,6 +105,12 @@ test('file-content proof uses its executed read without an indexed artifact', ()
   const input = { ...base, nodes: fileNodes, trace };
   assert.equal(potentiallyEligibleProof('file', fileNodes), true);
   assert.equal(deriveRecipeClaims(input)[0]?.verdict, 'proven');
+  const nonProofFile = deriveRecipeClaims({
+    ...input,
+    artifacts: [{ path: 'state.log', type: 'log', category: 'validation' }],
+  })[0]!;
+  assert.equal(nonProofFile.verdict, 'proven');
+  assert.equal(nonProofFile.note, undefined);
   const failed = {
     nodeId: 'file',
     action: 'assert_file',
@@ -193,6 +199,95 @@ test('file existence, blank expectations and old unobserved outputs cannot prove
     })[0]?.verdict,
     'missing',
   );
+});
+
+const jsonProofNodes = new Map<string, ProofNode>([
+  [
+    'check_json',
+    {
+      action: 'assert_json',
+      path: 'evidence/state.json',
+      assert: { path: '$.ready', operator: 'eq', value: true },
+      proves: ['AC1'],
+    },
+  ],
+]);
+const jsonProofTrace = [
+  { nodeId: 'check_json', action: 'assert_json', ok: true, output: { matched: true } },
+];
+
+for (const [name, artifacts, detail] of [
+  ['not indexed', [], 'not indexed'],
+  [
+    'validation category',
+    [{ path: 'evidence/state.json', type: 'json', category: 'validation' }],
+    'validation',
+  ],
+  ['unset category', [{ path: 'evidence/state.json', type: 'json' }], 'unset'],
+  [
+    'different literal path',
+    [{ path: 'evidence/other-state.json', type: 'json', category: 'proof' }],
+    'not indexed',
+  ],
+] satisfies [string, DeriveRecipeClaimsInput['artifacts'], string][]) {
+  test(`missing JSON proof names its unbound node, literal path and category: ${name}`, () => {
+    const claim = deriveRecipeClaims({
+      ...base,
+      nodes: jsonProofNodes,
+      trace: jsonProofTrace,
+      artifacts,
+    })[0]!;
+    assert.equal(claim.verdict, 'missing');
+    assert.deepEqual(claim.assertionIndices, []);
+    assert.ok(claim.note?.startsWith('A required executed expectation is missing.'));
+    assert.ok(claim.note.includes('check_json'));
+    assert.ok(claim.note.includes('evidence/state.json'));
+    assert.ok(claim.note.includes('category "proof"'));
+    assert.ok(claim.note.includes(detail));
+  });
+}
+
+test('indexed literal JSON proof retains its verdict and never needs a missing note', () => {
+  const input: DeriveRecipeClaimsInput = {
+    ...base,
+    nodes: jsonProofNodes,
+    trace: jsonProofTrace,
+    artifacts: [{ path: 'evidence/state.json', type: 'json', category: 'proof' }],
+  };
+  const claim = deriveRecipeClaims(input)[0]!;
+  assert.equal(claim.verdict, 'proven');
+  assert.deepEqual(claim.assertionIndices, [0]);
+  assert.equal(claim.note, undefined);
+  assert.equal(
+    deriveRecipeClaims({
+      ...input,
+      trace: [{ ...jsonProofTrace[0]!, ok: false, cause_class: 'subject' }],
+    })[0]?.verdict,
+    'failed',
+  );
+  assert.equal(
+    deriveRecipeClaims({ ...input, trace: [] })[0]?.note,
+    'A required executed expectation is missing.',
+  );
+});
+
+test('composed missing JSON proof names the qualified child assertion', () => {
+  const child = { ...jsonProofNodes.get('check_json')!, proves: undefined };
+  const claim = deriveRecipeClaims({
+    ...base,
+    nodes: new Map<string, ProofNode>([
+      ['check', { action: 'call', ref: 'child', proves: ['AC1'] }],
+      ['check/check_json', child],
+    ]),
+    trace: [
+      { ...jsonProofTrace[0]!, nodeId: 'check/check_json' },
+      { nodeId: 'check', action: 'call', ok: true, output: {} },
+    ],
+  })[0]!;
+  assert.equal(claim.verdict, 'missing');
+  assert.ok(claim.note?.includes('check/check_json'));
+  assert.ok(claim.note.includes('evidence/state.json'));
+  assert.ok(claim.note.includes('category "proof"'));
 });
 
 test('an executed observation-bound expectation derives state proof, not action success', () => {
@@ -518,6 +613,28 @@ test('task registration retains required unmentioned claims and rejects invented
         new Map(),
       ),
     /without an observation-bound expectation/,
+  );
+});
+
+test('claim conflicts show registered and supplied text without weakening verbatim matching', () => {
+  const supplied = 'The counter is one. ';
+  const registered = 'The counter is one.';
+  assert.throws(
+    () =>
+      planRecipeEvidence(
+        {
+          proofTargets: [{ id: 'AC1', claim: supplied }],
+          workflow: { nodes: Object.fromEntries(nodes) },
+        },
+        new Map(),
+        [{ id: 'AC1', claim: registered }],
+      ),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes(`Registered: ${JSON.stringify(registered)}`) &&
+      error.message.includes(`Supplied: ${JSON.stringify(supplied)}`) &&
+      error.message.includes(`- Registered: ${JSON.stringify(registered)}`) &&
+      error.message.includes(`+ Supplied: ${JSON.stringify(supplied)}`),
   );
 });
 

@@ -7,6 +7,13 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import {
+  currentSourceWitness,
+  preparedMetadataValue,
+  sourceGitRoot,
+  sourceWitnessReuseActive,
+} from '@farmslot/recipe-runner';
+
 import { countCallWork } from './call-timings.js';
 
 // The farm's Git rules (the gateway's farm-git and review-workspace inspection apply them too).
@@ -42,6 +49,13 @@ const topLevels = new Map<string, string | null>();
 /** The real path of the Git work tree `dir` is in, or undefined outside one; read once per process. */
 export function gitTopLevel(dir: string): string | undefined {
   const key = path.resolve(dir);
+  if (
+    sourceWitnessReuseActive() &&
+    !process.env.GIT_DIR &&
+    !process.env.GIT_WORK_TREE &&
+    !process.env.GIT_COMMON_DIR
+  )
+    return sourceGitRoot(key);
   if (!topLevels.has(key)) {
     let topLevel: string | null = null;
     try {
@@ -58,10 +72,19 @@ export function gitTopLevel(dir: string): string | undefined {
 
 const origins = new Map<string, string>();
 
-/** The checkout's origin URL, or '' when it is not a Git checkout or has none; read once per process. */
+/** The origin URL, bound to prepared inputs or cached per process outside execution. */
 export function gitOriginUrl(dir: string): string {
   const key = path.resolve(dir);
-  if (!origins.has(key)) {
+  return preparedMetadataValue(
+    key,
+    { kind: 'git-origin' },
+    () => freshGitOriginUrl(key),
+    (value) => (typeof value === 'string' ? value : undefined),
+  );
+}
+
+function freshGitOriginUrl(key: string): string {
+  if (currentSourceWitness() || !origins.has(key)) {
     let origin = '';
     try {
       origin = readGit(key, ['config', '--get', 'remote.origin.url']).toString('utf8').trim();
@@ -85,10 +108,15 @@ function isGitRefusal(error: unknown): boolean {
  * unborn branch, a symbolic ref chain, another ref store); `git rev-parse` decides then.
  */
 export function readHeadCommit(topLevel: string): string | undefined {
+  if (process.env.GIT_COMMON_DIR) return undefined;
   const gitDir = repositoryDir(topLevel);
   if (!gitDir) return undefined;
   const commonDir = readText(path.join(gitDir, 'commondir'));
-  const shared = commonDir ? path.resolve(gitDir, commonDir.trim()) : gitDir;
+  const shared = process.env.GIT_COMMON_DIR
+    ? path.resolve(topLevel, process.env.GIT_COMMON_DIR)
+    : commonDir
+      ? path.resolve(gitDir, commonDir.trim())
+      : gitDir;
   const head = readText(path.join(gitDir, 'HEAD'))?.trim();
   if (!head) return undefined;
   if (!head.startsWith('ref: ')) return isCommitId(head) ? head : undefined;
@@ -106,7 +134,33 @@ export function readHeadCommit(topLevel: string): string | undefined {
   return undefined;
 }
 
+/** Prepared runner identity; unsupported ref stores keep Git's verified answer. */
+export function preparedHeadCommit(directory: string): string | undefined {
+  const known = sourceGitRoot(directory);
+  if (!known && !process.env.GIT_DIR && !process.env.GIT_WORK_TREE && !process.env.GIT_COMMON_DIR)
+    return undefined;
+  const result = preparedMetadataValue(
+    directory,
+    { kind: 'head-commit' },
+    () => {
+      const root = gitTopLevel(directory);
+      if (!root) return null;
+      const head = readHeadCommit(root);
+      if (head) return head;
+      try {
+        return readGit(directory, ['rev-parse', '--verify', 'HEAD']).toString('utf8').trim();
+      } catch (error) {
+        if (isGitRefusal(error)) return null;
+        throw error;
+      }
+    },
+    (value) => (value === null || typeof value === 'string' ? value : undefined),
+  );
+  return result ?? undefined;
+}
+
 function repositoryDir(topLevel: string): string | undefined {
+  if (process.env.GIT_DIR) return path.resolve(topLevel, process.env.GIT_DIR);
   const dotGit = path.join(topLevel, '.git');
   let stat: fs.Stats;
   try {

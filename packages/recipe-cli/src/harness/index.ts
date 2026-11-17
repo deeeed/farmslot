@@ -274,6 +274,7 @@ export {
   sourceSnapshot,
   writeExecutionProvenance,
 } from './execution-provenance.js';
+export { preparedHeadCommit, readHeadCommit } from './git-read.js';
 export {
   createHarnessCli,
   type HarnessCli,
@@ -515,3 +516,4 @@ export {
   type RecipeTrustFailure,
   recipeTrustFailure,
 } from './trust.js';
+export { sourceGitRoot } from '@farmslot/recipe-runner';

@@ -1,0 +1,1 @@
+- `Run.preWorkBaseSha` records the slot HEAD a run was first dispatched from, written once and never rewritten, so recorded before evidence has a base no later prepare can move.

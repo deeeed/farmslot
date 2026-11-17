@@ -31,6 +31,19 @@ test('recipe run exposes exact-plan trust controls', () => {
   );
 });
 
+test('project recipe run and call expose explicit unbound diagnostics', () => {
+  const program = new Command();
+  registerRecipeCommand(program);
+  const recipe = program.commands.find((command) => command.name() === 'recipe');
+  for (const name of ['run', 'call']) {
+    const command = recipe?.commands.find((entry) => entry.name() === name);
+    const unbound = command?.options.find((option) => option.long === '--unbound');
+    assert.ok(unbound, name);
+    assert.equal(unbound.required, false);
+    assert.equal(unbound.optional, false);
+  }
+});
+
 test('recipe run blocks an untrusted command until the exact plan is approved', () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'farmslot-cli-recipe-trust-'));
   const recipePath = path.join(root, 'recipe.json');

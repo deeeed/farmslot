@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,36 +8,48 @@ import { test } from 'node:test';
 import { createIosSimulatorVideoRecorder } from '../src/simctl-video-recorder.js';
 
 // An xcrun stand-in: recordVideo reports an error, then exits cleanly on SIGINT
-// without ever writing the output file.
+// without ever writing the output file. It records its pid for the teardown and
+// exits on its own after about 10 s, so a stub teardown missed cannot outlive it.
 const XCRUN = String.raw`#!/bin/bash
+echo "$$" > "$(dirname "$0")/pid"
 trap 'exit 0' INT
 echo 'Error: no display attached' >&2
 : > "$(dirname "$0")/ready"
-while :; do sleep 0.02; done
+while ((SECONDS < 10)); do sleep 0.02; done
 `;
 
 test('a clean stop without an output file names the exit and simctl stderr', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'simctl-recorder-test-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   fs.writeFileSync(path.join(dir, 'xcrun'), XCRUN, { mode: 0o755 });
   const savedPath = process.env.PATH;
   process.env.PATH = `${dir}${path.delimiter}${savedPath ?? ''}`;
   t.after(() => {
     process.env.PATH = savedPath;
+    // A stub still running keeps this file's process alive, so a failed
+    // assertion would hang the suite: stop the fixture's own process first.
+    const pidFile = path.join(dir, 'pid');
+    const pid = fs.existsSync(pidFile) ? fs.readFileSync(pidFile, 'utf8').trim() : '';
+    const command = pid
+      ? spawnSync('ps', ['-p', pid, '-o', 'command='], { encoding: 'utf8' }).stdout
+      : '';
+    try {
+      if (command.includes(path.join(dir, 'xcrun'))) process.kill(Number(pid), 'SIGKILL');
+    } catch (error) {
+      // The stub can exit between its ownership probe and the signal.
+      if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
   });
-  t.mock.timers.enable({ apis: ['setTimeout'] });
 
-  const recorder = createIosSimulatorVideoRecorder('sim-1');
-  const starting = recorder.start({
+  // Real timers: stop()'s bound must fire if the stub ignores SIGINT.
+  const recorder = createIosSimulatorVideoRecorder('sim-1', { stopTimeoutMs: 2_000 });
+  const recording = await recorder.start({
     target: { kind: 'simulator', device: 'sim-1' },
     outputPath: path.join(dir, 'recording.mp4'),
     nodeId: 'run',
     record: 'full_run',
   });
-  // start() waits 250ms for an early exit before handing back the recording.
-  t.mock.timers.tick(250);
-  const recording = await starting;
-  // Date is not mocked: bound the wait for the stub to install its trap.
+  // Bound the wait for the stub to install its trap.
   const readyBy = Date.now() + 5_000;
   while (!fs.existsSync(path.join(dir, 'ready'))) {
     assert.ok(Date.now() < readyBy, 'the xcrun stub never became ready');

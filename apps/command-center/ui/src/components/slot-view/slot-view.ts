@@ -54,6 +54,7 @@ import {
   isRecoveryEpochCurrent,
   waitForRecoveryHydration,
 } from '../../utils/reconnect.js';
+import { browserViewState } from '../../utils/view-state.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import { renderSlotPreparePreconditionStrip } from '../shared/slot-prepare-precondition-strip.js';
@@ -225,6 +226,7 @@ import {
   requestedRecipeViewerModeFromHash,
   requestedResourceFromHash,
   requestedReviewDrawerModeFromHash,
+  slotSessionField,
 } from './slot-view-url-state.js';
 
 @customElement('slot-view')
@@ -321,6 +323,7 @@ export class SlotView extends SlotViewRecipePresenter {
   }
 
   disconnectedCallback() {
+    this._recoveryNotice.clear();
     clearTimeout(this._autosaveTimer);
     this._unsubDrafts?.();
     super.disconnectedCallback();
@@ -329,6 +332,13 @@ export class SlotView extends SlotViewRecipePresenter {
 
   willUpdate(changed: Map<string, unknown>) {
     handleSlotViewWillUpdate(this, changed);
+    if (changed.has('slotId')) this._recoveryNotice.clear();
+    this._recoveryNotice.update(
+      this._isRecoveryBlocked && this._recoveryPhase !== 'error'
+        ? { kind: 'saved', text: 'Loading workspace…' }
+        : undefined,
+    );
+
     if (['slotId', '_slot', '_linkedRun', 'fileEntries'].some((key) => changed.has(key)))
       bindSlotViewTaskProgress(this);
   }
@@ -482,7 +492,7 @@ export class SlotView extends SlotViewRecipePresenter {
   }
 
   _selectAgentContext(ctx: AgentContextSummary): void {
-    this._tmuxSessionSelection = null;
+    browserViewState.set(slotSessionField, 'worker');
     // Unavailable means the live tmux pane is not attachable — operators can still
     // select the context to open history / inspect metadata for that reviewer tab.
     this._selectedAgentContextId = ctx.id;
@@ -941,10 +951,16 @@ export class SlotView extends SlotViewRecipePresenter {
 
   private _renderProgressStatus() {
     const active = this._progressQuery.belongsToWorkspace && Boolean(this._slot?.taskFile);
+    const notice = active
+      ? progressReadNotice(this._progressObservation, gateway.connectionState === 'connected')
+      : undefined;
     return html`<progress-read-status
-      .notice=${active
-        ? progressReadNotice(this._progressObservation, gateway.connectionState === 'connected')
-        : undefined}
+      data-read-status="progress"
+      .scopeKey=${`${this.slotId}:${this._linkedRun?.id ?? ''}`}
+      .delayRefresh=${true}
+      .notice=${notice?.kind === 'saved' && gateway.connectionState === 'connected'
+        ? { ...notice, text: 'Refreshing progress…' }
+        : notice}
       .retry=${() => void this._progressQuery.retry()}
       .connected=${gateway.connectionState === 'connected'}
     ></progress-read-status>`;
@@ -964,17 +980,19 @@ export class SlotView extends SlotViewRecipePresenter {
     return html`
       ${renderSlotViewStyles(this._recoveryPhase)}
       ${renderSlotViewHeader(this, { slot, hasSlotData, hasResources, lcColor })}
-      ${hasSlotData
-        ? renderSlotPreparePreconditionStrip({
-            slot,
-            slotBranch: this._git?.branch ?? slot?.branch,
-            activePrepareLabel:
-              this._activePrepare &&
-              (this._activePrepare.running || this._activePrepare.exitCode !== null)
-                ? this._activePrepare.label
-                : '',
-          })
-        : nothing}
+      <div class="sv-preconditions" tabindex="0" aria-label="Slot health">
+        ${hasSlotData
+          ? renderSlotPreparePreconditionStrip({
+              slot,
+              slotBranch: this._git?.branch ?? slot?.branch,
+              activePrepareLabel:
+                this._activePrepare &&
+                (this._activePrepare.running || this._activePrepare.exitCode !== null)
+                  ? this._activePrepare.label
+                  : '',
+            })
+          : nothing}
+      </div>
       ${renderSlotPrepareBanner(this)} ${this._renderProgressStatus()}
       ${renderSlotViewBody(this, { hasResources })}
       <slot-history-modal

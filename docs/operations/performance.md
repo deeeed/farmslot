@@ -168,3 +168,74 @@ fresh target selection, collection order, deadlines, custom-script/absent-broker
 fallback and no replay after an uncertain destructive collection. Verify complete
 recipes and recording when changing those contracts. Do not add polling or
 per-call work proportional to accumulated runs or artifacts.
+
+## Prepared recipe source witnesses
+
+Task binding must not scan retained task history. Bound executions and explicit
+`--unbound` diagnostics need no task-storage lookup; otherwise one filesystem
+metadata check detects task storage. This adds no process or Git invocation.
+Independent replay wrappers set `FARMSLOT_RECIPE_UNBOUND=1` on their existing
+invocation, without capability discovery or another process; old harnesses ignore
+that explicit diagnostic setting. Task directory variables must still be unset.
+
+Live doctor scopes three environment variables in its existing CLI process.
+Task reruns export their computed worker binding in the existing execution shell;
+neither adds a process or Git invocation. Standalone hosted recipe hooks reuse
+their Bash launcher through `env`; legacy compound hook strings use one extra
+Bash invocation per hook to isolate the diagnostic environment. That work is
+constant per hook, never per recipe node or retained run.
+
+The harness lane owns this candidate. Target zero traced framework Git starts in
+unchanged calls, including bootstrap and capture provenance; user-authored Git
+commands are separate work. A prepared record is reused only after fresh file
+witnesses at source, provider-authority and capture boundaries. Retained output
+history must stay outside validation. Unsupported output layouts retain fresh
+legacy checks and must not gain a history scan. No persistent call server is used.
+
+`summary.json.sourceWitness` reports wall/CPU time and source-file/directory
+counts for each physical-root validation, tagged by checkpoint and boundary.
+Cold preparation and refresh counts remain separate from warm measurements.
+The recorded call profiler covers direct children and the runner-revision shell
+call; `work.git` is a narrower counter. Parent-Node CPU remains diagnostic when
+work moves from Git children into the witness. Wall and total descendant CPU
+qualify the comparison.
+
+Preliminary matched candidate measurements against published harness 0.96.26,
+recording/healing off, five calls per action with the first discarded:
+
+| Case              | Outer wall ms before / after | Total CPU ms before / after | Attributed children before / after | Git work before / after |
+| ----------------- | ---------------------------: | --------------------------: | ---------------------------------: | ----------------------: |
+| Core command      |                    640 / 525 |                   840 / 660 |                             19 / 1 |                  17 / 0 |
+| Mobile unlock     |                  2910 / 2635 |                 2815 / 1995 |                             27 / 5 |                  17 / 0 |
+| Mobile screenshot |                  2695 / 2580 |                 3010 / 2170 |                             31 / 7 |                  17 / 0 |
+| Mobile positions  |                  1945 / 1560 |                 2630 / 1695 |                             27 / 5 |                  17 / 0 |
+
+All warm traced Git starts were zero. Core cold preparation used 16 Git starts.
+These are candidate references under recorded host load, not new shared canary
+baselines. Final provider-freshness closeout, Extension proof and exact-head
+review remain required. The alert is any warm framework Git start, history-sized
+validation work, lost drift refusal, or a wall/total-CPU regression beyond the
+accepted comparison budget. File-witness cost must remain below the replaced
+Git/provenance work. Improve the declared input owner and shared projections;
+do not remove freshness or evidence observations to make the count pass.
+
+Prepared source, metadata and output-support records include the implementation
+hash in their filename. Different implementations can share the default cache
+directory without evicting each other's records. Each implementation still
+validates fresh source witnesses; its first preparation remains cold.
+
+Mixed-version Core command canary, five samples per variant with the first
+discarded, recording/healing off, and an old-version peer before each target call:
+
+| Metric                                      |   Before / after filename isolation | Alert threshold                                    | Owner        |
+| ------------------------------------------- | ----------------------------------: | -------------------------------------------------- | ------------ |
+| Maximum warm traced Git starts              |                              18 / 0 | Any warm framework Git start with unchanged inputs | Harness lane |
+| Maximum warm attributed children / Git work |     19 / 1 children; 7 / 0 Git work | Any increase over the accepted case budget         | Harness lane |
+| Outer wall / total CPU warm medians         | 725 / 585 ms wall; 925 / 750 ms CPU | Existing 120% comparison budget                    | Harness lane |
+
+These are preview measurements on the released 0.96.29 package graph with only
+the compiled cache-key fix changed. Node load declined from 16.4–19.2 before to
+12.5–14.6 after; timings are observations, not an isolated speedup claim. The
+default cache, physical checkout, action and shared canary baseline stayed the
+same. Keep the key bound to implementation and physical root; never remove
+source validation or partition by task/run to avoid the mixed-version case.

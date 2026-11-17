@@ -1,0 +1,1 @@
+- Document how release retains and clears task-owned recipe output.

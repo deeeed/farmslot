@@ -172,7 +172,7 @@ export function reviewerScratchRule(
     '  local artifacts\n' +
     '  mkdir -p "$root" || return\n' +
     '  artifacts="$(mktemp -d "$root/recipe-run.XXXXXX")" || return\n' +
-    '  env -u RECIPE_TASK_DIR -u FARMSLOT_TASK_DIR "$@" --artifacts-dir "$artifacts"\n' +
+    '  env -u RECIPE_TASK_DIR -u FARMSLOT_TASK_DIR FARMSLOT_RECIPE_UNBOUND=1 "$@" --artifacts-dir "$artifacts"\n' +
     '}\n' +
     '```'
   );

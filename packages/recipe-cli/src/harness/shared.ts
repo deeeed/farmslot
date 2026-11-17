@@ -353,6 +353,7 @@ export function usageOut(
   command: string,
   message: string,
   userAction: string,
+  code = 'USAGE',
 ): number {
   if (json) {
     console.log(
@@ -363,7 +364,7 @@ export function usageOut(
           ...harnessContextField(),
           status: 'fail',
           exitCode: EXIT.usage,
-          error: { code: 'USAGE', message, userAction },
+          error: { code, message, userAction },
         },
         null,
         2,

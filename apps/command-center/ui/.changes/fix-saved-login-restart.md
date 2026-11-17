@@ -1,0 +1,1 @@
+- Preserve verified browser gateway selection across UI default changes and gateway restarts, restoring existing implicit device sign-ins.

@@ -151,6 +151,7 @@ interface SeedRow {
 class SpecView<T, M> implements EntityView {
   hydratedFrom?: object;
   private meta?: M;
+  private displayed?: { rows: T[]; metaJson: string; current: boolean; data: unknown };
   private metaUnstored = false;
   /** Stored bytes per row, for the collection entry's size. */
   private readonly rowBytes = new Map<string, number>();
@@ -261,7 +262,22 @@ class SpecView<T, M> implements EntityView {
     const rows = this.collection.assemble();
     if (!rows || this.meta === undefined) return undefined;
     const current = this.collection.current;
-    return { data: this.spec.answer(rows, this.meta, current), current };
+    const metaJson = canonicalResourceJson(this.meta);
+    const previous = this.displayed;
+    if (
+      !previous ||
+      previous.current !== current ||
+      previous.metaJson !== metaJson ||
+      previous.rows.length !== rows.length ||
+      rows.some((row, index) => row !== previous.rows[index])
+    )
+      this.displayed = {
+        rows,
+        metaJson,
+        current,
+        data: this.spec.answer(rows, this.meta, current),
+      };
+    return { data: this.displayed!.data, current };
   }
 
   hydrate(stored: StoredResourceRows): void {
@@ -307,6 +323,7 @@ class SpecView<T, M> implements EntityView {
 
   clear(): void {
     this.collection.clear();
+    this.displayed = undefined;
     this.meta = undefined;
     this.metaUnstored = false;
     this.metaPatches.clear();
