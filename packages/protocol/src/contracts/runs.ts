@@ -3293,6 +3293,18 @@ export interface Run {
   readOnly?: boolean;
   /** Slot HEAD SHA captured at dispatch (after prepare) — base for per-run iteration diff. */
   worktreeHeadAtDispatch?: string | null;
+  /**
+   * The slot HEAD this run was FIRST dispatched from, written once and never
+   * rewritten (ADR-062 Amendment 19).
+   *
+   * `worktreeHeadAtDispatch` is the current dispatch baseline and a later
+   * prepare overwrites it with whatever HEAD is then, so after a re-dispatch it
+   * can name a commit that already contains the run's own fix. Recorded
+   * evidence needs a base no later work can move: before evidence may match
+   * this, while matching a moved dispatch head would let a post-fix capture
+   * pass as the baseline. Absent on runs first dispatched before this existed.
+   */
+  preWorkBaseSha?: string | null;
 }
 
 export type { RunImportProvenance } from './run-bundles.js';

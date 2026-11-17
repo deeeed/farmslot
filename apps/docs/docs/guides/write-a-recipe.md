@@ -83,10 +83,47 @@ For a log criterion, read the application's log with `command` and follow it wit
 not the command's exit code alone. Navigation and screenshots cannot replace an
 assertion of non-UI state.
 
-File-content claim proof through `assert_file` with `contains` is defined in
+`assert_file` with a non-empty `contains` checks a project-relative file and
+retains the path, expected text and actual match. Its executed content check can
+prove a state claim without an indexed artifact or a `proof` category. Existence
+alone does not prove contents. See
 [Amendment 5](../reference/recipe-protocol-v1.md#amendment-5-file-content-proof-assertions).
-Until supporting packages ship, use the executed log-read and output-assertion
-pattern. A file's existence alone does not prove its contents.
+
+## JSON artifact proof
+
+`index_artifacts` copies `projectRoot/<path>` to `artifactsDir/<path>`, preserving
+subdirectories, and registers that relative path. `assert_json` also reads the
+project-relative file. To use its result as claim proof, the attempt's manifest
+must contain the exact literal `assert_json.path` with `category: "proof"`.
+
+For a declared `AC-1` and a generated `reports/state.json`, add these entries to
+`workflow.nodes`, ending at your existing `done` node:
+
+```json
+{
+  "index-state": {
+    "action": "index_artifacts",
+    "artifacts": [{ "path": "reports/state.json", "type": "json", "category": "proof" }],
+    "intent": "Retain the generated state report",
+    "next": "check-state"
+  },
+  "check-state": {
+    "action": "assert_json",
+    "path": "reports/state.json",
+    "assert": { "path": "$.ready", "operator": "eq", "value": true },
+    "proves": ["AC-1"],
+    "intent": "Confirm the report records ready state",
+    "next": "done"
+  }
+}
+```
+
+The retained copy is `artifactsDir/reports/state.json`, not
+`artifactsDir/state.json`. Indexing a string such as `"reports/state.json"` leaves
+its category unset; `category: "validation"` is also insufficient for JSON claim
+proof. Use the exact registered spelling in `assert_json.path`: indexing
+`./reports/state.json` normalizes the manifest path to `reports/state.json`, so
+that is the literal assertion path to use.
 
 ## Validate
 

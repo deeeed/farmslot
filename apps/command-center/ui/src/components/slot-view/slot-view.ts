@@ -54,6 +54,7 @@ import {
   isRecoveryEpochCurrent,
   waitForRecoveryHydration,
 } from '../../utils/reconnect.js';
+import { browserViewState } from '../../utils/view-state.js';
 import { DiffTestFilterController } from '../shared/diff-test-filter-controller.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 import { renderSlotPreparePreconditionStrip } from '../shared/slot-prepare-precondition-strip.js';
@@ -225,6 +226,7 @@ import {
   requestedRecipeViewerModeFromHash,
   requestedResourceFromHash,
   requestedReviewDrawerModeFromHash,
+  slotSessionField,
 } from './slot-view-url-state.js';
 
 @customElement('slot-view')
@@ -490,7 +492,7 @@ export class SlotView extends SlotViewRecipePresenter {
   }
 
   _selectAgentContext(ctx: AgentContextSummary): void {
-    this._tmuxSessionSelection = null;
+    browserViewState.set(slotSessionField, 'worker');
     // Unavailable means the live tmux pane is not attachable — operators can still
     // select the context to open history / inspect metadata for that reviewer tab.
     this._selectedAgentContextId = ctx.id;

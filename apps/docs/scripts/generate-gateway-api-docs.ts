@@ -103,6 +103,9 @@ function gatewayCapabilitiesSnapshot(): GatewayCapabilitiesSnapshot {
         category: method.split('.')[0] ?? 'misc',
         safetyTier: inferSafetyTier(method),
         summary: `${titleCase(method)} gateway method.`,
+        ...(method === Methods.SLOT_CHECK
+          ? { paramsType: 'SlotCheckParams', resultType: 'SlotCheckResult' }
+          : {}),
       })),
     events: Object.values(Events)
       .filter((event): event is string => typeof event === 'string')

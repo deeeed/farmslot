@@ -1,0 +1,2 @@
+- A run's terminal capability cleanup no longer releases or fences a family sibling the run store still vouches for as live, so closing one comparison run leaves an active sibling's providers and permits intact.
+- The family terminal fence is read against the requesting run's current liveness, which lets an entry already on disk stop refusing a run that never ended, and owner entries now record whether a sibling's sweep or the run's own cleanup wrote them: only a durable replay retires its own.

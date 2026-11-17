@@ -1,4 +1,12 @@
+import { viewChoiceField } from '@farmslot/protocol';
+
 import { buildHash, getHashParam, hashRoute } from '../../utils/url-state.js';
+
+export type SlotSessionChoice = 'worker' | 'host';
+export const slotSessionField = viewChoiceField<SlotSessionChoice>('session', 'worker', [
+  'worker',
+  'host',
+]);
 
 export type RecipeEvidenceMode = 'all' | 'node';
 export type RecipeViewerMode = 'single' | 'compare';
@@ -9,6 +17,7 @@ export interface SlotViewUrlState {
   activity?: 'info';
   runId?: string;
   contextId?: string;
+  sessionView?: SlotSessionChoice;
   file?: string;
   resource?: string;
   recipeRun?: string;
@@ -34,6 +43,7 @@ export function slotViewHash(state: SlotViewUrlState): string {
   if (state.activity === 'info') params.set('activity', 'info');
   if (state.runId) params.set('runId', state.runId);
   if (state.contextId) params.set('contextId', state.contextId);
+  slotSessionField.write(params, state.sessionView ?? 'worker');
   if (state.file) params.set('file', state.file);
   if (state.resource) params.set('resource', state.resource);
   if (state.recipeRun) params.set('recipeRun', state.recipeRun);

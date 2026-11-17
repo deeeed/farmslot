@@ -1,0 +1,1 @@
+- Document the explicit override for checks on owned slots and expose its typed gateway parameters.

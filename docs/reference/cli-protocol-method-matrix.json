@@ -1336,7 +1336,8 @@
     },
     "slot.check": {
       "surface": "typed-command",
-      "command": "farmslot slot"
+      "command": "farmslot slot",
+      "note": "Owned slots refuse before source sync and health hooks unless `slot check --force` is explicit."
     },
     "slot.cleanup": {
       "surface": "rpc-only",
