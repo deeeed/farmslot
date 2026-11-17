@@ -76,6 +76,28 @@ const invocationContract: CommandContract = {
   minimumPositionals: 1,
 };
 
+test('unbound execution refuses configured task storage outside temp/tasks', async (t) => {
+  const options = fixture(t);
+  const project = options.projects[0]!;
+  project.config.paths.artifactDir = '.task';
+  fs.mkdirSync(path.join(options.cwd, '.task'));
+  const previous = [process.env.RECIPE_TASK_DIR, process.env.FARMSLOT_TASK_DIR];
+  delete process.env.RECIPE_TASK_DIR;
+  delete process.env.FARMSLOT_TASK_DIR;
+  t.after(() => {
+    for (const [index, key] of ['RECIPE_TASK_DIR', 'FARMSLOT_TASK_DIR'].entries()) {
+      if (previous[index] === undefined) delete process.env[key];
+      else process.env[key] = previous[index];
+    }
+  });
+  await withProjectRecipeHost({ ...options, command: 'run' }, async () => {
+    assert.throws(
+      () => resolveRecipeExecutionArtifacts(options.cwd, undefined, { fresh: 'runs/one' }),
+      /Task storage exists at .*\/\.task/u,
+    );
+  });
+});
+
 test('project execution leaves task attempt allocation to run/call and keeps other defaults', async (t) => {
   const options = fixture(t);
   const previousCache = process.env.FARMSLOT_RECIPE_CACHE_DIR;

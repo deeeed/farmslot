@@ -214,6 +214,10 @@ export function registerProjectExecutionCommand(
     )
       .option('--target <path>', 'Checkout to execute against')
       .option('--artifacts-dir <path>', 'Artifact directory for this execution')
+      .option(
+        '--unbound',
+        'Diagnostic execution without task acceptance; task directory variables must be unset',
+      )
       .option('--action-manifest <path>', 'Select an action manifest')
       .addOption(
         new Option('--heal <policy>', 'Healing policy').choices(['off', 'infra-only', 'auto']),
@@ -302,6 +306,7 @@ export function registerProjectExecutionCommand(
         const flags = new Set([
           '--project-root',
           '--artifacts-dir',
+          '--unbound',
           '--action-manifest',
           '--adapter',
           '--library-source',

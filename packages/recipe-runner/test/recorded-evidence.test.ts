@@ -521,6 +521,28 @@ test('task registration retains required unmentioned claims and rejects invented
   );
 });
 
+test('claim conflicts show registered and supplied text without weakening verbatim matching', () => {
+  const supplied = 'The counter is one. ';
+  const registered = 'The counter is one.';
+  assert.throws(
+    () =>
+      planRecipeEvidence(
+        {
+          proofTargets: [{ id: 'AC1', claim: supplied }],
+          workflow: { nodes: Object.fromEntries(nodes) },
+        },
+        new Map(),
+        [{ id: 'AC1', claim: registered }],
+      ),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes(`Registered: ${JSON.stringify(registered)}`) &&
+      error.message.includes(`Supplied: ${JSON.stringify(supplied)}`) &&
+      error.message.includes(`- Registered: ${JSON.stringify(registered)}`) &&
+      error.message.includes(`+ Supplied: ${JSON.stringify(supplied)}`),
+  );
+});
+
 test('only the code review proves a review claim; it is never missing and no node proves it', () => {
   const review = {
     id: 'AC2',

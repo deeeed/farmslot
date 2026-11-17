@@ -1,0 +1,1 @@
+- Refresh the generated Recipe CLI reference with explicit unbound diagnostic execution and task-environment requirements.

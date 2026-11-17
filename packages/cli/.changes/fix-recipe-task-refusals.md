@@ -1,0 +1,1 @@
+- Expose explicit `--unbound` diagnostics on project recipe runs and calls so shared task-binding refusals have a usable recovery path.
