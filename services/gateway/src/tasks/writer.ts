@@ -419,29 +419,19 @@ export function renderCommentSummary(rows: CommentRow[]): string {
 }
 
 export function artifactOnlyReplayForRun(
-  run: Pick<
-    Run,
-    | 'completionPolicy'
-    | 'flowType'
-    | 'lane'
-    | 'startRef'
-    | 'engineState'
-    | 'preWorkBaseSha'
-    | 'worktreeHeadAtDispatch'
-  >,
+  run: Pick<Run, 'completionPolicy' | 'flowType' | 'lane' | 'startRef' | 'engineState'>,
 ): TaskInitSpec['artifactOnlyReplay'] {
   if (!shouldApplyArtifactOnlyTaskPolicy(run)) return undefined;
   return {
-    // A comparison replay dispatched without an explicit startRef still has a
-    // base: the commit it was dispatched from. Eval run 9317844e had startRef
-    // null and shipped the old `selected reference/base` placeholder into
-    // TASK.md, which sent the worker searching git history for that ref.
-    base:
-      run.startRef?.resolvedSha ??
-      run.startRef?.requestedRef ??
-      run.preWorkBaseSha ??
-      run.worktreeHeadAtDispatch ??
-      undefined,
+    // Only an authoritative base is named. `startRef` is frozen with this task
+    // input; `preWorkBaseSha` and `worktreeHeadAtDispatch` are not candidates
+    // here, because WRITE_TASK runs before PREPARE and DISPATCH record them
+    // (FLOW_STEPS), so at this point they are empty on a fresh run — and on a
+    // replayed dispatch `worktreeHeadAtDispatch` can have moved past the
+    // candidate's own commits, which would silently exclude them from the
+    // comparison. Eval run 9317844e shipped the `selected reference/base`
+    // placeholder instead, and its worker searched git history for that ref.
+    base: run.startRef?.resolvedSha ?? run.startRef?.requestedRef ?? undefined,
     ...(run.engineState?.evalExperiment
       ? {
           ignoredPaths: [

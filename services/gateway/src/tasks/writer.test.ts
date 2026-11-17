@@ -423,17 +423,9 @@ function makeArtifactOnlyReplayRun(): Pick<
   };
 }
 
-function makeArtifactOnlyReplayRunWithoutStartRef(
-  overrides: Partial<Pick<Run, 'preWorkBaseSha' | 'worktreeHeadAtDispatch'>> = {},
-): Pick<
+function makeArtifactOnlyReplayRunWithoutStartRef(): Pick<
   Run,
-  | 'completionPolicy'
-  | 'flowType'
-  | 'lane'
-  | 'startRef'
-  | 'engineState'
-  | 'preWorkBaseSha'
-  | 'worktreeHeadAtDispatch'
+  'completionPolicy' | 'flowType' | 'lane' | 'startRef' | 'engineState'
 > {
   return {
     flowType: 'fix-bug',
@@ -441,9 +433,6 @@ function makeArtifactOnlyReplayRunWithoutStartRef(
     completionPolicy: 'artifact-only',
     startRef: undefined,
     engineState: undefined,
-    preWorkBaseSha: undefined,
-    worktreeHeadAtDispatch: undefined,
-    ...overrides,
   };
 }
 
@@ -732,18 +721,23 @@ test('artifact-only task policy strips publishing instructions without startRef'
   assert.doesNotThrow(() => assertArtifactOnlyTaskGuard(safe));
 });
 
-test('artifact-only task policy names the dispatch base when startRef is absent', () => {
-  const base = '49426fdf906f2663d8306a299aad94f77f6ca323';
-  const template = ['# Worker: Bugfix', '', 'Inspect `git diff main...HEAD`.'].join('\n');
+// With no base to name, the guardrails forbid `main` as the baseline, so the
+// template's own main-relative commands must be rewritten too — otherwise the
+// task tells the worker to use the baseline the preamble just ruled out.
+test('artifact-only task policy leaves no main-relative comparison without a base', () => {
+  const template = [
+    '# Worker: Bugfix',
+    '',
+    'Inspect `git diff main...HEAD`.',
+    'Read `git log main..HEAD`.',
+    '- Resolve locally.',
+  ].join('\n');
 
-  const safe = applyReplayForRun(
-    template,
-    makeArtifactOnlyReplayRunWithoutStartRef({ worktreeHeadAtDispatch: base }),
-  );
+  const safe = applyReplayForRun(template, makeArtifactOnlyReplayRunWithoutStartRef());
 
-  assert.match(safe, new RegExp(`comparison replay from \`${base}\``));
-  assert.match(safe, new RegExp(`git diff ${base}`));
-  assert.doesNotMatch(safe, /git diff main\.\.\.HEAD/);
+  assert.doesNotMatch(safe, /git diff main/);
+  assert.doesNotMatch(safe, /git log main/);
+  assert.match(safe, /No replay base was recorded for it/);
   assert.doesNotThrow(() => assertArtifactOnlyTaskGuard(safe));
 });
 

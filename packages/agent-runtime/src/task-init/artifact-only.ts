@@ -99,29 +99,34 @@ export function applyArtifactOnlyTaskPolicy(
     ),
   );
 
-  // Every rewrite below names the base, so each one is skipped when there is
-  // none: the template's own wording stands rather than a dangling `git diff `.
-  if (hasBase) {
-    result = result.replace(
-      /or create it from `[^`]+` if needed\./g,
-      literalReplacement(
-        `or verify it was prepared from replay base \`${replayBase}\`; do not recreate it from \`main\`.`,
-      ),
-    );
-    result = result.replace(
-      /git diff main\.\.\.HEAD/g,
-      literalReplacement(`git diff ${replayBase}`),
-    );
-    result = result.replace(/git diff main\.\.HEAD/g, literalReplacement(`git diff ${replayBase}`));
-    result = result.replace(
-      /git log main\.\.HEAD/g,
-      literalReplacement(`git log ${replayBase}..HEAD`),
-    );
-    result = result.replace(
-      /git log HEAD\.\.main/g,
-      literalReplacement(`git log HEAD..${replayBase}`),
-    );
-  }
+  // The template's own instructions compare against `main`, which the
+  // guardrails above forbid. With a base they are rewritten to it; without one
+  // they are rewritten to the working tree, because leaving them would tell the
+  // worker to use the very baseline the preamble just ruled out.
+  result = result.replace(
+    /or create it from `[^`]+` if needed\./g,
+    literalReplacement(
+      hasBase
+        ? `or verify it was prepared from replay base \`${replayBase}\`; do not recreate it from \`main\`.`
+        : 'or verify it was prepared by this run; do not recreate it from `main`.',
+    ),
+  );
+  result = result.replace(
+    /git diff main\.\.\.HEAD/g,
+    literalReplacement(hasBase ? `git diff ${replayBase}` : 'git diff'),
+  );
+  result = result.replace(
+    /git diff main\.\.HEAD/g,
+    literalReplacement(hasBase ? `git diff ${replayBase}` : 'git diff'),
+  );
+  result = result.replace(
+    /git log main\.\.HEAD/g,
+    literalReplacement(hasBase ? `git log ${replayBase}..HEAD` : 'git log -n 20 HEAD'),
+  );
+  result = result.replace(
+    /git log HEAD\.\.main/g,
+    literalReplacement(hasBase ? `git log HEAD..${replayBase}` : 'git log -n 20 HEAD'),
+  );
   result = result.replace(/commit\/push approval/g, 'artifact-only completion approval');
   result = result.replace(
     /- \[ \] \*\*(\d+)\. On approval — commit, push, update PR:\*\*[\s\S]*?(?=\s*Write completion signal:|\n- \[ \] \*\*\d+\.)/g,
