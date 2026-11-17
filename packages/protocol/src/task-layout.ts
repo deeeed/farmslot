@@ -69,6 +69,182 @@ function entry<const Path extends string>(
 
 /** There is one active task-action root; inherited copies are context, not fallback roots. */
 export const TASK_DIRECTORY_LAYOUT = Object.freeze({
+  // Existing worker and control-plane outputs named by the layout references.
+  runtimeCapabilities: entry(
+    'inputs/runtime-capability-catalog.json',
+    'taskInput',
+    'file',
+    'Configured provider and owner metadata; grants no capability lease.',
+  ),
+  recipeRunSummary: entry(
+    'artifacts/recipe-runs/{attempt}/summary.json',
+    'taskInput',
+    'pattern',
+    'Immutable execution summary within one recipe attempt.',
+  ),
+  validationSummary: entry(
+    'artifacts/validation-summary.md',
+    'task',
+    'file',
+    'Worker validation summary read during completion.',
+  ),
+  coverageLog: entry(
+    'artifacts/coverage.log',
+    'artifact',
+    'file',
+    'Optional worker-selected coverage command log.',
+  ),
+  jestLog: entry(
+    'artifacts/jest.log',
+    'artifact',
+    'file',
+    'Optional worker-selected Jest command log.',
+  ),
+  afterVideo: entry(
+    'artifacts/after.mp4',
+    'artifact',
+    'file',
+    'After-change proof recording named by the recipe validation example.',
+  ),
+  diff: entry('artifacts/diff.txt', 'artifact', 'file', 'Gateway-written publishable source diff.'),
+  diffStat: entry(
+    'artifacts/diff-stat.json',
+    'taskInput',
+    'file',
+    'Gateway-written structured source diff statistics.',
+  ),
+  previousDiff: entry(
+    'artifacts/diff.txt.previous.{revision}',
+    'artifact',
+    'pattern',
+    'Preserved prior diff named by timestamp and unique revision.',
+  ),
+  iterationDiff: entry(
+    'artifacts/iteration-diff.txt',
+    'artifact',
+    'file',
+    'Source diff for the current worker iteration.',
+  ),
+  iterationDiffStat: entry(
+    'artifacts/iteration-diff-stat.json',
+    'taskInput',
+    'file',
+    'Structured diff statistics for the current iteration.',
+  ),
+  sessionMetrics: entry(
+    'artifacts/session-metrics.json',
+    'taskInput',
+    'file',
+    'Recorded worker session and usage metrics.',
+  ),
+  workflowDiagram: entry(
+    'artifacts/workflow.mmd',
+    'artifact',
+    'file',
+    'Gateway-rendered workflow diagram.',
+  ),
+  publicationPackage: entry(
+    'artifacts/pr-package.json',
+    'taskInput',
+    'file',
+    'Frozen publication package and its selected evidence.',
+  ),
+  publicationPackageReport: entry(
+    'artifacts/pr-package.md',
+    'task',
+    'file',
+    'Human-readable publication package summary.',
+  ),
+  publicationGateReport: entry(
+    'artifacts/publication-gate-{slug}.md',
+    'task',
+    'pattern',
+    'Recorded publication gate result for one action and timestamp.',
+  ),
+  reviewRound: entry(
+    'artifacts/review-{round}',
+    'collection',
+    'pattern',
+    'Gateway-owned numbered review records.',
+  ),
+  reviewRoundJson: entry(
+    'artifacts/review-{round}.json',
+    'taskInput',
+    'pattern',
+    'Structured numbered review result.',
+  ),
+  reviewRoundReport: entry(
+    'artifacts/review-{round}.md',
+    'task',
+    'pattern',
+    'Human-readable numbered review result.',
+  ),
+  reviewLoop: entry(
+    'artifacts/review-loop-{round}',
+    'collection',
+    'pattern',
+    'Gateway-owned numbered review-loop records.',
+  ),
+  pipelineReviewLoop: entry(
+    'artifacts/pipeline-review-loop-{round}',
+    'collection',
+    'pattern',
+    'Default pipeline reviewer output directory.',
+  ),
+  reviewFeedback: entry(
+    'artifacts/review-feedback.md',
+    'task',
+    'file',
+    'Unscoped feedback retained by existing review flows.',
+  ),
+  scopedReviewFeedback: entry(
+    'artifacts/review-feedback.{context}.md',
+    'task',
+    'pattern',
+    'Feedback bound to one reviewer context.',
+  ),
+  reviewResult: entry(
+    'artifacts/review-result.json',
+    'taskInput',
+    'file',
+    'Structured result for an unscoped review workspace.',
+  ),
+  scopedReviewResult: entry(
+    'artifacts/review-result.{context}.json',
+    'taskInput',
+    'pattern',
+    'Structured result bound to one reviewer context.',
+  ),
+  publicationPackages: entry(
+    'artifacts/publication-packages',
+    'collection',
+    'directory',
+    'Retained publication package revisions.',
+  ),
+  publicationEvidence: entry(
+    'artifacts/pr-package-evidence',
+    'collection',
+    'directory',
+    'Evidence selected for the publication package.',
+  ),
+  baselineMarkerVerification: entry(
+    'artifacts/baseline-marker-verification',
+    'collection',
+    'directory',
+    'Gateway verification of the baseline task marker.',
+  ),
+  taskWorkerMirror: entry(
+    'TASK.md.worker',
+    'task',
+    'file',
+    'Gateway copy of the worker task document; never sent back to the worker.',
+  ),
+  checklistWorkerMirror: entry(
+    'CHECKLIST.md.worker',
+    'checklist',
+    'file',
+    'Gateway copy of worker checklist progress; never sent back.',
+  ),
   // Documented task-local files. Purposes describe existing producers, not new workflow steps.
   harnessShim: entry(
     'mm-harness',

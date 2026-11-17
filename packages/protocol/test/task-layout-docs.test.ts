@@ -118,3 +118,33 @@ test('known task filenames cannot hide under an unrecognized parent directory', 
     [],
   );
 });
+
+test('all documented task-root spellings refuse undeclared paths', () => {
+  for (const value of [
+    '<TASK_DIR>/artifacts/recipe-run',
+    'RECIPE_TASK_DIR/inputs/unregistered.json',
+  ]) {
+    assert.ok(paths('`' + value + '`').length > 0, value);
+  }
+});
+
+test('proof paths inside spaced code spans are checked', () => {
+  assert.deepEqual(paths('Record `PROOF: artifacts/not-in-contract.json` before continuing.'), [
+    'artifacts/not-in-contract.json',
+  ]);
+});
+
+test('a task tree cannot declare unnamed inputs with an ellipsis', () => {
+  assert.deepEqual(paths('<task>/\n  inputs/\n    …    flow-specific inputs'), ['inputs/…']);
+});
+
+test('JSON descriptions and repo-relative task locations are not partial task paths', () => {
+  assert.deepEqual(
+    paths('The index is `{"packages":{"<case id>":"<package dir relative to artifacts/>"}}`.'),
+    [],
+  );
+  assert.deepEqual(paths('Run `temp/tasks/recipe-cook/<task>/mark start`.'), []);
+  assert.deepEqual(paths('Write `{"output":"artifacts/not-in-contract.json"}`.'), [
+    'artifacts/not-in-contract.json',
+  ]);
+});

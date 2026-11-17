@@ -1,1 +1,1 @@
-- Check task-directory reference paths against the protocol contract in docs CI.
+- Check real task-layout references and source-document mutations against the shared protocol contract in docs CI.

@@ -22,7 +22,8 @@ const patterns = entries.map(
         .join('')}$`,
     ),
 );
-const root = String.raw`(?:<task(?:-dir)?>|\{\{TASK_DIR\}\}|\$\{TASK_DIR\}|\$TASK_DIR)`;
+const root = String.raw`(?:<task(?:-dir)?>|<(?:RECIPE_)?TASK_DIR>|\{\{TASK_DIR\}\}|\$\{(?:RECIPE_)?TASK_DIR\}|\$(?:RECIPE_)?TASK_DIR|(?:RECIPE_)?TASK_DIR)`;
+const containsTaskRoot = new RegExp(`${root}/`);
 const rooted = new RegExp(`${root}/([^\\s\x60";)]*)`, 'g');
 const taskRelative = /^(?:artifacts|inputs|assets|subtasks|task-actions)(?:\/|$)/;
 const decode = (text) =>
@@ -50,13 +51,19 @@ export function taskPaths(document) {
       add(match[1]);
     }
     for (const match of originalLine.matchAll(/`([^`\n]+)`|<code>([^<\n]+)<\/code>/g)) {
-      const value = match[1] ?? match[2];
-      const namedFile =
-        /^[A-Za-z0-9_.-]+\//.test(value) && filenames.has(path.posix.basename(value));
-      if ((taskRelative.test(value) || namedFile) && !/\s/.test(value))
-        add(value.replace(/^\.\//, ''));
+      const span = match[1] ?? match[2];
+      const tokens = /^\s*(?:\{|\[\s*[\{"])/.test(span)
+        ? [...span.matchAll(/"(?:\\.|[^"\\])*"/g)].map((value) => JSON.parse(value[0]))
+        : span.split(/\s+/);
+      for (const raw of tokens) {
+        const value = raw.replace(/^[(["']+/, '').replace(/[\],;:"')]+$/, '');
+        if (containsTaskRoot.test(value)) continue;
+        const namedFile =
+          /^[A-Za-z0-9_.-]+\//.test(value) && filenames.has(path.posix.basename(value));
+        if (taskRelative.test(value) || namedFile) add(value.replace(/^\.\//, ''));
+      }
     }
-    if (/^\s*(?:<pre><code>)?<task>\/$/.test(line.replace(/^.*<pre><code>/, ''))) {
+    if (new RegExp(`^\\s*${root}/$`).test(line.replace(/^.*<pre><code>/, ''))) {
       tree = [];
       continue;
     }
@@ -79,7 +86,6 @@ export function taskPaths(document) {
     if (indent > (tree.at(-1)?.indent ?? 0) + 2) continue;
     while (tree.length && tree.at(-1).indent >= indent) tree.pop();
     for (const name of row[2].split(/,\s*/)) {
-      if (name === '…' || name === '...') continue;
       const relativePath = [...tree.map((entry) => entry.name), name].join('/');
       add(relativePath);
       if (name.endsWith('/')) tree.push({ indent, name: name.slice(0, -1) });

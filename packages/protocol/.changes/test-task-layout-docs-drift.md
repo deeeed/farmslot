@@ -1,1 +1,1 @@
-- Add a task-directory documentation check that reports undefined paths in skills Markdown and harness HTML against the shared layout contract.
+- Define documented task paths and purposes, and share an exact path check for skills Markdown and harness HTML without directory-wide allowances.
