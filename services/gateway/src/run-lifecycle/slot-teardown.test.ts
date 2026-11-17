@@ -55,6 +55,9 @@ let logTailArgsExitCode = 0;
 let devServerLog: string | undefined;
 /** The pane process's own command line, as `ps` reports it. */
 let paneLaunch = '';
+let shellChildFiles = '';
+let shellChildIdentity = '';
+let shellChildProbeExit = 0;
 let runnerProbe: RunnerDescendantPidProbe = { state: 'absent' };
 let runnerProbePids: string[] = [];
 let runUpdates: Partial<Run>[] = [];
@@ -209,6 +212,10 @@ mock.module('../core/index.js', {
       if (cmd.startsWith(': farmslot-owned-process-reap'))
         return { stdout: reapBrowserSession(cmd), stderr: '', exitCode: 0 };
       if (cmd.includes('list-panes -a')) return { stdout: tmuxInventory, stderr: '', exitCode: 0 };
+      if (cmd.startsWith('lsof -a -p '))
+        return { stdout: shellChildFiles, stderr: '', exitCode: shellChildProbeExit };
+      if (cmd.startsWith('ps -ww -o pid=,ppid=,pgid=,lstart=,command= -p'))
+        return { stdout: shellChildIdentity, stderr: '', exitCode: shellChildProbeExit };
       if (cmd.startsWith('ps -ww -o args= -p'))
         return { stdout: logTailArgs, stderr: '', exitCode: logTailArgsExitCode };
       if (cmd.startsWith('ps -ww -o command= -p'))
@@ -550,6 +557,9 @@ beforeEach(() => {
   logTailArgsExitCode = 0;
   devServerLog = '{{runtime_dir}}/dev-server.log';
   paneLaunch = '';
+  shellChildFiles = '';
+  shellChildIdentity = '';
+  shellChildProbeExit = 0;
   run.agentContexts = [];
   run.taskFile = null;
   runnerProbe = { state: 'absent' };
@@ -2156,3 +2166,62 @@ test('failed recipe retention keeps a cancelled capsule fenced away from its suc
   assert.equal(recipeBucketsPresent, true);
   assert.equal(slotRow?.lifecycle, 'held');
 });
+
+function idleShellChild() {
+  run.status = 'failed';
+  run.agentContexts = [
+    {
+      id: 'dev',
+      role: 'dev',
+      label: 'Dev',
+      status: 'failed',
+      runId: RUN_ID,
+      slotId: SLOT_ID,
+      runner: 'pi',
+      target: { session: 'mmt-1', window: 'dev', pane: '1', paneId: '%254', target: 'mmt-1:dev' },
+    },
+  ];
+  tmuxInventory = `mmt-1${TMUX_FIELD_SEPARATOR}%254${TMUX_FIELD_SEPARATOR}6774${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}/slot${TMUX_FIELD_SEPARATOR}$2${TMUX_FIELD_SEPARATOR}1791363049${TMUX_FIELD_SEPARATOR}dev\n`;
+  rawProcessCensus = `6774 1 6774 ${STARTED} /bin/bash\n6864 6774 6864 ${STARTED} /opt/homebrew/bin/zsh\n`;
+  cwdProcessCensus = 'p6774\nn/slot\np6864\nn/slot\n';
+  shellChildFiles =
+    'p6774\nfcwd\ntDIR\nn/slot\nf0\ntCHR\nn/dev/ttys004\np6864\nfcwd\ntDIR\nn/slot\nf0\ntCHR\nn/dev/ttys004\n';
+  shellChildIdentity = `6864 6774 6864 ${STARTED} /opt/homebrew/bin/zsh -l\n`;
+}
+
+test('a worker-free recorded bash pane with an idle interactive zsh child does not strand cleanup', async () => {
+  idleShellChild();
+  assert.equal(await slotTeardownBlocker(run), null);
+  assert.ok(runnerProbePids.includes('6774'));
+});
+
+for (const problem of [
+  'runner child',
+  'unknown child',
+  'noninteractive shell',
+  'outside cwd',
+  'missing cwd',
+  'non-tty stdin',
+  'changed identity',
+  'changed parent',
+  'unreadable probe',
+] as const) {
+  test(`an idle-shell allowance still refuses ${problem}`, async () => {
+    idleShellChild();
+    if (problem === 'runner child') runnerProbe = { state: 'present', pid: '6864' };
+    if (problem === 'unknown child')
+      rawProcessCensus += `7000 6864 6864 ${STARTED} /usr/bin/python3\n`;
+    if (problem === 'noninteractive shell')
+      shellChildIdentity = `6864 6774 6864 ${STARTED} /bin/zsh -c work\n`;
+    if (problem === 'outside cwd')
+      shellChildFiles = shellChildFiles.replaceAll('n/slot', 'n/another-checkout');
+    if (problem === 'missing cwd') shellChildFiles = 'p6864\nf0\ntCHR\nn/dev/ttys004\n';
+    if (problem === 'non-tty stdin') shellChildFiles = shellChildFiles.replaceAll('tCHR', 'tFIFO');
+    if (problem === 'changed identity')
+      shellChildIdentity = shellChildIdentity.replace('08:48:13', '08:48:14');
+    if (problem === 'changed parent')
+      shellChildIdentity = shellChildIdentity.replace('6864 6774', '6864 1');
+    if (problem === 'unreadable probe') shellChildProbeExit = 1;
+    assert.ok(await slotTeardownBlocker(run));
+  });
+}
