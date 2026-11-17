@@ -939,7 +939,7 @@ function recordFile(root: string): string {
   return path.join(
     home,
     'prepared-sources',
-    createHash('sha256').update(root).digest('hex') + '.json',
+    createHash('sha256').update(implementation).update(root).digest('hex') + '.json',
   );
 }
 
