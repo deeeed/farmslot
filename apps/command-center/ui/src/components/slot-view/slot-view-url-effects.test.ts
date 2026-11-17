@@ -14,6 +14,7 @@ test('late slot work cannot overwrite another route or a replacement view', (t) 
   const previousHistory = Object.getOwnPropertyDescriptor(globalThis, 'history');
   const location = { hash: '#runs?run=new-run' };
   const writes: string[] = [];
+  const writtenParams = () => new URLSearchParams(writes.at(-1)?.split('?')[1]);
   Object.defineProperty(globalThis, 'location', { configurable: true, value: location });
   Object.defineProperty(globalThis, 'history', {
     configurable: true,
@@ -47,4 +48,8 @@ test('late slot work cannot overwrite another route or a replacement view', (t) 
   syncSlotViewUrlState(view);
   assert.equal(writes.at(-1), '#slot/runner-1?file=new.ts');
   assert.equal(writes.length, 2);
+  location.hash = '#slot/runner-1?session=host&contextId=native-worker';
+  syncSlotViewUrlState(view);
+  assert.equal(writtenParams().get('session'), 'host');
+  assert.equal(writtenParams().get('contextId'), 'native-worker');
 });
