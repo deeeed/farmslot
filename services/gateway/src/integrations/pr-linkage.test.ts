@@ -45,6 +45,10 @@ const fakeGithub = fakeGitHubService(clientModule.github, {
     if (params.head) args.push('--head', params.head);
     requests.push(args);
     const hasAll = params.state === 'all';
+    if (params.state === 'merged')
+      return candidate.state === 'MERGED'
+        ? [{ number: candidate.number, state: candidate.state, headRefOid: candidate.headRefOid }]
+        : [];
     if (hasAll || candidate.state === 'OPEN')
       return [
         { number: candidate.number, state: candidate.state, headRefOid: candidate.headRefOid },
@@ -61,7 +65,7 @@ mock.module('./github-client.js', {
   namedExports: { ...clientModule, github: fakeGithub },
 });
 after(() => mock.restoreAll());
-const { findPRNumber } = await import('./pr-linkage.js');
+const { findPRNumber, findMergedPRNumber } = await import('./pr-linkage.js');
 const { makeRun, makeReadyGatePackage } = await import('../run-engine/test-fixtures.js');
 
 beforeEach(() => {
@@ -125,6 +129,32 @@ test('publication refuses a merged PR named by the run ticket', async () => {
   const run = makeRun({ branch: 'fix/reused', prNumber: undefined, ticketOrPr: 'owner/repo#388' });
   assert.equal(await findPRNumber(run, 'owner/repo', { noRetry: true, excludeMerged: true }), null);
   assert.deepEqual(bound, []);
+});
+
+// The gate offers close-as-shipped as its primary action from this probe, so a
+// historical merged PR here marks the run shipped against work it never did.
+test('the merged-PR probe ignores a historical merged PR on a reused branch', async () => {
+  candidate = { number: 388, state: 'MERGED', headRefOid: unrelatedHead };
+  const run = makeRun({ branch: 'fix/reused', prNumber: undefined });
+  assert.equal(await findMergedPRNumber(run, 'owner/repo'), null);
+});
+
+test("the merged-PR probe reports this run's own PR merged out-of-band", async () => {
+  candidate = { number: 388, state: 'MERGED', headRefOid: head };
+  const run = makeRun({ branch: 'fix/reused', prNumber: undefined, decisions: readyAtHead(head) });
+  assert.equal(await findMergedPRNumber(run, 'owner/repo'), 388);
+});
+
+test('the merged-PR probe reports a PR this run published', async () => {
+  candidate = { number: 388, state: 'MERGED', headRefOid: unrelatedHead };
+  const run = makeRun({ branch: 'fix/reused', prNumber: undefined });
+  run.prPublications = [
+    {
+      pr: { host: 'github.com', repo: 'owner/repo', number: 388 },
+      publishedAt: run.createdAt,
+    },
+  ];
+  assert.equal(await findMergedPRNumber(run, 'owner/repo'), 388);
 });
 
 test('a merged PR named by the run ticket still links outside publication', async () => {

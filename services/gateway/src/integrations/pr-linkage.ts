@@ -40,12 +40,11 @@ function publishedByRun(run: Run, ciRepo: string, pr: Record<string, unknown>): 
   );
 }
 
-// `gh pr view/list` report a merged PR as state MERGED; the REST pull payload
-// reports state `closed` with `merged_at` set, so both shapes are read here.
+// `gh pr view/list` report a merged PR as state MERGED. The REST pull payload
+// reports `closed` with `merged_at` set instead, so the one caller that reads
+// REST normalizes to this shape before asking.
 function isMergedPR(pr: Record<string, unknown>): boolean {
-  if (pr.state === 'MERGED') return true;
-  const mergedAt = pr.mergedAt ?? pr.merged_at;
-  return mergedAt != null && mergedAt !== '';
+  return pr.state === 'MERGED';
 }
 
 function canBindPR(
@@ -264,14 +263,26 @@ export async function findMergedPRNumber(run: Run, ciRepo: string): Promise<numb
     const prs = await withProbeTimeout(
       github.prListFields(
         ciRepo,
-        ['number'],
+        ['number', 'state', 'headRefOid'],
         { head: run.branch, state: 'merged', limit: 1 },
         {
           force: true,
         },
       ),
     );
-    return prs.length > 0 ? (prs[0].number as number) : null;
+    const pr = prs[0];
+    if (!pr) return null;
+    // A reused branch name keeps its old merged PR, and close-as-shipped is the
+    // gate's primary action: offering it for a historical merge would mark the
+    // run shipped against work it never did and leave its own commits without
+    // a PR (TAT-4644). Only this run's own shipment counts as shipped.
+    if (!ownedByRun(run, ciRepo, pr)) {
+      console.log(
+        `[pr-linkage] merged PR #${String(pr.number)} is not this run's shipment runId=${run.id.slice(0, 8)} branch=${run.branch}`,
+      );
+      return null;
+    }
+    return pr.number as number;
   } catch (err) {
     console.warn(
       `[pr-linkage] merged-PR probe failed runId=${run.id.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
