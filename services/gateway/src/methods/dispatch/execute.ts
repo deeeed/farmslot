@@ -1635,12 +1635,15 @@ export async function dispatchExecute(
       const { assertInheritedPrCommitsSigned } =
         await import('../../run-completion/commit-signatures.js');
       await assertInheritedPrCommitsSigned(dispatchRun, vars, worktreeHeadAtDispatch);
+      const { preWorkBaseSeed } = await import('../../run-completion/publication-artifacts.js');
+      // Write-once, and only on a PROVEN first delivery: recorded before
+      // evidence needs a base no later prepare can move out from under it, and
+      // a run that already dispatched once cannot prove this head predates its
+      // own work.
+      const preWorkBaseSha = preWorkBaseSeed(dispatchRun, worktreeHeadAtDispatch);
       updateRunStore(params.runId, {
         worktreeHeadAtDispatch,
-        // Write-once: the FIRST dispatch is the only one that happened before
-        // any of this run's own work, so recorded before evidence has a base
-        // that no later prepare can move out from under it.
-        ...(dispatchRun?.preWorkBaseSha ? {} : { preWorkBaseSha: worktreeHeadAtDispatch }),
+        ...(preWorkBaseSha ? { preWorkBaseSha } : {}),
       });
     }
   }

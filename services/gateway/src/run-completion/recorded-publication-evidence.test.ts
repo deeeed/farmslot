@@ -34,6 +34,7 @@ const { expandPublicationEvidenceSelection, readEvidenceManifest, publishSelecte
   await import('./publication-artifacts.js');
 const {
   capturedBeforeAttemptAttestations,
+  preWorkBaseSeed,
   publicationBaselineContext,
   resolvePublicationManifest,
 } = await import('./publication-artifacts.js');
@@ -909,6 +910,80 @@ test('before evidence on the dispatch base survives a review base moved to the r
     baseline,
   );
   assert.ok(inventory.some((entry) => entry.path === `artifacts/${f.baselineRoot}/proof.png`));
+});
+
+test('the pre-work base is frozen only on a proven first delivery', async (t) => {
+  // r2 (Codex): an absent field does not prove a first dispatch. A run that
+  // predates the field, replayed at prepare, reaches dispatch with the fix
+  // already committed; seeding there would freeze a post-fix commit. Same for a
+  // retained-delivery path that writes only worktreeHeadAtDispatch.
+  const head = 'f'.repeat(40);
+  assert.equal(preWorkBaseSeed(undefined, head), head, 'a run with nothing dispatched yet freezes');
+  assert.equal(preWorkBaseSeed({}, head), head);
+  assert.equal(
+    preWorkBaseSeed({ worktreeHeadAtDispatch: 'a'.repeat(40) }, head),
+    undefined,
+    'a run that already dispatched cannot prove this head predates its work',
+  );
+  assert.equal(
+    preWorkBaseSeed({ preWorkBaseSha: 'a'.repeat(40) }, head),
+    undefined,
+    'the frozen value is never rewritten',
+  );
+  assert.equal(
+    preWorkBaseSeed(
+      {
+        recoveryAttempts: [
+          {
+            id: 'a1',
+            attempt: 1,
+            stepName: 'prepare',
+            startedAt: '2026-11-17T01:00:00.000Z',
+            status: 'started',
+            triggeredBy: 'operator',
+          },
+        ],
+      },
+      head,
+    ),
+    undefined,
+    'a replay of prepare re-reads HEAD, so this one is not provably pre-work',
+  );
+  assert.equal(preWorkBaseSeed(undefined, 'not-a-sha'), undefined);
+
+  // Through the publication path: a frozen base is what before evidence matches.
+  const f = await baselineFixture(t);
+  f.run.preWorkBaseSha = f.provenance.git_ref;
+  const review = f.run.steps.find((step) => step.name === 'review');
+  assert.ok(review);
+  review.outputs = {
+    mode: 'cold',
+    reviewSnapshot: {
+      source: 'local-git',
+      baseRef: 'origin/main',
+      baseSha: 'e'.repeat(40),
+      headRef: f.run.branch,
+      headSha: 'f'.repeat(40),
+      capturedAt: '2026-11-16T14:34:00.000Z',
+    },
+  };
+  // A replay that moved the mutable field cannot take the frozen base with it.
+  f.run.worktreeHeadAtDispatch = 'd'.repeat(40);
+  f.run.recoveryAttempts = [
+    {
+      id: 'a2',
+      attempt: 1,
+      stepName: 'dispatch',
+      startedAt: '2026-11-17T01:00:00.000Z',
+      status: 'started',
+      triggeredBy: 'operator',
+    },
+  ];
+  await retainRunFixture(f.run);
+  const baseline = publicationBaselineContext(f.run);
+  assert.ok(baseline.beforeBaseShas?.includes(f.provenance.git_ref));
+  assert.ok(!baseline.beforeBaseShas?.includes('d'.repeat(40)));
+  assert.ok(await resolvePublicationManifest(f.taskDir, undefined, undefined, 1, baseline));
 });
 
 test('a dispatch replay disqualifies the dispatch head as a before base', async (t) => {

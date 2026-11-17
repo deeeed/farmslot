@@ -898,6 +898,31 @@ const DISPATCH_BASELINE_STEPS: ReadonlySet<string> = new Set([
   PipelineSteps.DISPATCH,
 ]);
 
+/**
+ * The value to freeze as this run's pre-work base, or undefined to leave it unset.
+ *
+ * An ABSENT field does not prove a first dispatch. A run that existed before
+ * the field, replayed at `prepare`, reaches dispatch with the fix already
+ * committed, and seeding there would freeze a post-fix commit as the pre-work
+ * base — laundering exactly what the field exists to prevent. The same goes for
+ * a run whose baseline was recorded by a retained-delivery path that writes
+ * only `worktreeHeadAtDispatch`. So the seed is taken only when nothing has
+ * been dispatched yet and no replay of dispatch, or of a step before it, has
+ * happened; an ambiguous legacy run stays unbackfilled and keeps the
+ * narrower fallback in `publicationBaselineContext`.
+ */
+export function preWorkBaseSeed(
+  run: Pick<Run, 'preWorkBaseSha' | 'worktreeHeadAtDispatch' | 'recoveryAttempts'> | undefined,
+  worktreeHeadAtDispatch: string,
+): string | undefined {
+  if (run?.preWorkBaseSha || run?.worktreeHeadAtDispatch) return undefined;
+  if (
+    (run?.recoveryAttempts ?? []).some((attempt) => DISPATCH_BASELINE_STEPS.has(attempt.stepName))
+  )
+    return undefined;
+  return /^[a-f0-9]{40}$/iu.test(worktreeHeadAtDispatch) ? worktreeHeadAtDispatch : undefined;
+}
+
 export function publicationBaselineContext(
   run: Run,
   inventory: readonly ArtifactRef[] | null = run.output?.artifactManifest ?? [],
