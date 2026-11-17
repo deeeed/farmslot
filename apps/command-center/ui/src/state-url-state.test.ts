@@ -15,7 +15,7 @@ test('F414 selecting and closing a run retain shell choices while clearing detai
     ['location', 'history'].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
   );
   const location = {
-    hash: '#runs?run=old&panels=sidebar,monitor-details&sidebarWidth=320&file=old.ts',
+    hash: '#runs?run=old&panels=sidebar,monitor-details&sidebarWidth=320&file=old.ts&subtasks=%21old%3Aworker&stepDetails=old%3A6',
   };
   const current = () => new URLSearchParams(location.hash.split('?')[1]);
   const modes: string[] = [];
@@ -43,6 +43,8 @@ test('F414 selecting and closing a run retain shell choices while clearing detai
   assert.equal(current().get('run'), 'next');
   assert.equal(current().get('panels'), 'sidebar');
   assert.equal(current().get('file'), null);
+  assert.equal(current().get('subtasks'), null);
+  assert.equal(current().get('stepDetails'), null);
   writeRunsHashState({}, 'replace');
   assert.equal(current().get('run'), null);
   assert.equal(current().get('panels'), 'sidebar');
@@ -124,4 +126,23 @@ test('changing embedded runs or returning to the list clears artifact browser ch
   );
   assert.equal(runsHashWithState({ run: 'run-2' }, hash), '#runs?run=run-2&projects=cc');
   assert.equal(runsHashWithState({ run: '', tab: 'all' }, hash), '#runs?projects=cc&runsTab=all');
+});
+
+test('selecting another run or closing detail drops run-owned progress expansion state', () => {
+  const hash =
+    '#runs?run=old&subtasks=!old%3Aworker&stepDetails=older%3A6&projects=cc&panels=sidebar&sidebarWidth=320';
+  for (const run of ['next', '']) {
+    const next = runsHashWithState({ run }, hash);
+    assert.ok(next);
+    const params = new URLSearchParams(next.split('?')[1]);
+    assert.equal(params.get('subtasks'), null);
+    assert.equal(params.get('stepDetails'), null);
+    assert.equal(params.get('projects'), 'cc');
+    assert.equal(params.get('sidebarWidth'), '320');
+  }
+});
+
+test('refreshing the same run retains its progress expansion choices', () => {
+  const hash = '#runs?run=current&subtasks=%21current%3Aworker&stepDetails=current%3A6';
+  assert.equal(runsHashWithState({ run: 'current' }, hash), hash);
 });
