@@ -132,9 +132,14 @@ test('accepting review findings needs the checked findings and yields only the r
     { id: 'hold' },
   ];
   assert.equal(acceptReviewFindingsAvailable(accepting), true);
+  assert.equal(
+    acceptReviewFindingsAvailable({ ...accepting, findings: [] }),
+    true,
+    'a checked empty set can carry a review-policy exception',
+  );
   assert.deepEqual(gateActionsForReadiness(actions, accepting), actions.slice(1));
   for (const withheld of [
-    { ...accepting, findings: [] },
+    { ...accepting, findings: undefined },
     { ...accepting, findingsDigest: undefined },
     {
       ...accepting,
@@ -234,9 +239,14 @@ test('one combined approval accepts findings and attests only the accompanying e
     );
     assert.ok(gateReasonsForAction(withheld, APPROVE_PUBLISH_UNRESOLVED_ACTION).length > 0, code);
   }
+  assert.equal(
+    acceptReviewFindingsAvailable({ ...combined, findings: [] }),
+    true,
+    'the checked empty set also combines with explicit evidence policy consent',
+  );
   for (const withheld of [
     { ...combined, state: 'collecting' as const },
-    { ...combined, findings: [] },
+    { ...combined, findings: undefined },
     { ...combined, findingsDigest: undefined },
     {
       ...combined,

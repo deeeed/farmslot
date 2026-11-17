@@ -78,9 +78,10 @@ callers are refused.
 Outside the combined approval below, it yields only `review-fix-required` and
 `review-result-required`. Every other reason, including `review-result-invalid`,
 still refuses it. It is available only
-when the required number of reviews returned a valid structured result for the
-prepared package, every review reporting an open finding at the head returned
-one, at least one finding is open and no fix or review is running. Then the
+when at least one review returned a valid structured result for the current
+prepared package and every completed review at that package has a valid result.
+The person may override the configured review count or accept open findings. No
+fix or review may be running. The checked finding set may be empty. Then the
 readiness carries `findings` (each with its review id, file, line and
 description) and their `findingsDigest`. `@farmslot/protocol`'s
 `gateActionsForReadiness` and `acceptReviewFindingsAvailable` are the one
@@ -90,18 +91,21 @@ The request carries `reason` and the `findingsDigest` the client showed. Resolve
 and the finalize recheck refuse when the head's open findings have a different
 digest. The publication approval records the accepted findings and digest, the
 reason, the package head and the approver, and the published PR body discloses
-them under "Accepted review findings".
+them under "Accepted review findings", explicitly disclosing the review-policy
+exception even when the checked finding set is empty.
 
 ### Combined findings acceptance and evidence attestation
 
 When readiness is `not-ready`, the gateway MAY offer one combined
 `approve-publish-unresolved` action only if checked findings and their
-`findingsDigest` exist, at least one `review-fix-required` reason explicitly
+`findingsDigest` exist, at least one review-policy reason explicitly
 allows that action, at least one attestable evidence-policy reason exists, and
 every reason belongs to those two groups. Attestable evidence reasons retain
 the existing `evidence-policy-unsatisfied` category and its `execution-verdict`,
-`claim-verdict` or `criterion-binding` policy. `review-result-required`, invalid
-reviews, missing media, secret-scan findings, deterministic failures, stale or
+`claim-verdict` or `criterion-binding` policy. Only explicitly permitted
+`review-fix-required` and `review-result-required` reasons yield to the person.
+Invalid or missing completed review results, missing media, secret-scan findings,
+deterministic failures, stale or
 unknown inputs and progressing work MUST NOT be waived by this combination.
 
 The shared availability and action-reason helpers MUST apply that exact rule at
@@ -620,6 +624,20 @@ or equal completion times retain their findings. Passing counts require a
 reviewer session and captured head, counting each session once, including when
 no prepared package is available. Historical rows remain visible. Stored
 verdicts and publication prerequisites keep their existing meaning.
+
+### Review policy stops still reach the publication gate
+
+A publishing run whose review completes with issues, or whose next review is
+refused because its round budget is spent, MUST continue to its human publication
+gate. Preserve the review output and budget refusal; never invent a passing
+verdict or add review rounds. The gate offers the explicit person policy
+override only after current-package review results and all hard prerequisites
+are checked. Artifact-only runs retain their result decision. A blocked review
+or unconfirmed fix delivery retains its existing recovery boundary.
+
+Base merge conflicts, stale or failed deterministic receipts, changed source,
+invalid evidence bytes, secret findings and unconfirmed or active work still
+withhold publication and keep their reason visible.
 
 ## Public surface
 

@@ -3120,12 +3120,13 @@ test('a failed reviewer leaves its selected row available to engine failure reco
   );
 });
 
-test('spent review admission retains a delivered result for the operator instead of failing it', async (t) => {
+test('artifact-only spent review admission retains a delivered result for the operator instead of failing it', async (t) => {
   const runId = await publicationGateRun(t, {});
   const current = getRun(runId)!;
   updateRun(runId, {
     ...recordedReviewRounds(Array.from({ length: 5 }, (_, i) => `spent-${i}`)),
     status: 'reviewing',
+    completionPolicy: 'artifact-only',
     output: {
       workerFinished: true,
       capturedAt: new Date().toISOString(),
@@ -3176,7 +3177,7 @@ test('spent review admission retains a delivered result for the operator instead
     },
     'review',
   );
-  assert.match(decision.description ?? '', /five review rounds/);
+  assert.match(decision.description ?? '', /All 5 review rounds.*artifact-only/);
   assert(decision.payload?.kind === 'result-decision');
   assert.equal(
     decision.payload.actions.find((action) => action.id === 'accept-result')?.available,
@@ -3197,6 +3198,7 @@ for (const mode of ['autonomous', 'interactive'] as const)
     const runId = await publicationGateRun(t, {});
     updateRun(runId, {
       mode,
+      completionPolicy: 'artifact-only',
       ...recordedReviewRounds(Array.from({ length: 5 }, (_, i) => `spent-${i}`)),
       output: {
         workerFinished: true,
@@ -3239,7 +3241,7 @@ for (const mode of ['autonomous', 'interactive'] as const)
       },
       'review',
     );
-    assert.match(decision.description ?? '', /five review rounds/);
+    assert.match(decision.description ?? '', /All 5 review rounds.*artifact-only/);
     assert(decision.payload?.kind === 'result-decision');
     assert.equal(
       decision.payload.actions.find((action) => action.id === 'accept-result')?.available,
@@ -3375,3 +3377,39 @@ test('an eval judge skipped by config completes the review step without a failur
   assert.equal(io.outputs?.verdict, undefined);
   assert.equal(context.stepPartialIO.size, 0);
 });
+
+for (const outcome of ['issues', 'admission-stop'] as const)
+  test(`a publishing review ${outcome} at its budget cap reaches the human gate`, async (t) => {
+    const runId = await publicationGateRun(t, {});
+    updateRun(runId, {
+      ...recordedReviewRounds(Array.from({ length: 5 }, (_, i) => `spent-gate-${i}`)),
+      output: {
+        workerFinished: true,
+        capturedAt: new Date().toISOString(),
+        artifactManifest: [],
+        manifestDigest: 'a'.repeat(64),
+        reportPath: 'artifacts/report.md',
+      },
+    });
+    const io = await executeReviewStep(runId, {
+      ...restartReplayContext(),
+      executeReviewForRun: async () => {
+        if (outcome === 'admission-stop') await assertReviewRoundAvailable(getRun(runId)!);
+        return {
+          verdict: 'issues',
+          issues: [{ file: 'src/example.ts', description: 'Person decides at publication' }],
+          retryCount: 4,
+          maxRetries: 4,
+        };
+      },
+    });
+    assert.equal(
+      getRun(runId)?.decisions.some(({ type }) => type === 'engine_result_decision'),
+      false,
+    );
+    if (outcome === 'issues') assert.equal(io.outputs?.verdict, 'issues', 'never invent a pass');
+    else {
+      assert.equal(io.outputs?.verdict, undefined, 'a denied launch is not a new review result');
+      assert.ok(io.outputs?.reviewLaunchRejection);
+    }
+  });
