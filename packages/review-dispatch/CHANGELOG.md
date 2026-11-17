@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.25.9 - 2026-11-17
+
+- Align exact dependency pins with the task-bound recipe evidence producer patch.
+
 ## 0.25.8 - 2026-11-16
 
 - Use the installed protocol's PI effort default when a native host omits it, and show only supported defaults in pickers.

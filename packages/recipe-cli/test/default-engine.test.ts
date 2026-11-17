@@ -5,6 +5,7 @@ import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 
 import {
+  type ActionCapabilitySource,
   ADAPTER_SDK_VERSION,
   createAdapterRegistry,
   createDefaultRecipeEngine,
@@ -98,6 +99,69 @@ const runnerOptions = (
     ReturnType<ReturnType<typeof createRuntimeRecipeCatalog>['resolveActionManifest']>
   >['actionSources'],
 ) => ({ actionSources, trustTaskActions: false, autoHud: false });
+
+test('a missing task action implementation names its root and expected script path', async (t) => {
+  const { root, catalog } = setup(t, {});
+  const implementationRoot = path.join(root, 'task-actions', 'actions');
+  const source: ActionCapabilitySource = {
+    name: 'task',
+    tier: 'task',
+    manifestPath: path.join(root, 'task-actions/manifests/probe.action-manifest.json'),
+    implementationRoot,
+    trust: 'unknown',
+  };
+  await assert.rejects(
+    catalog.resolveActionAdapter!(
+      'example.probe',
+      source,
+      runnerOptions(new Map([['example.probe', source]])),
+    ),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes(implementationRoot) &&
+      error.message.includes(path.join(implementationRoot, 'api/example/probe.mjs')),
+  );
+});
+
+test('complete-manifest validation reports an unused task declaration missing its script', async (t) => {
+  const selected = 'example.selected';
+  const unused = 'example.unused';
+  const { root, engine } = setup(t, {
+    [selected]: declaration(selected),
+    [unused]: declaration(unused),
+  });
+  const implementationRoot = path.join(root, 'task-actions/actions');
+  fs.mkdirSync(path.join(implementationRoot, 'api/example'), { recursive: true });
+  fs.writeFileSync(
+    path.join(implementationRoot, 'api/example/selected.mjs'),
+    'export const value = 1;',
+  );
+  const source: ActionCapabilitySource = {
+    name: 'task',
+    tier: 'task',
+    trust: 'unknown',
+    implementationRoot,
+    manifestPath: path.join(root, 'task-actions/manifests/probe.action-manifest.json'),
+  };
+  const actionSources = new Map([
+    [selected, source],
+    [unused, source],
+  ]);
+  const manifest: RecipeActionManifestDocument = {
+    $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+    actions: {
+      [selected]: declaration(selected),
+      [unused]: declaration(unused),
+    },
+  };
+  await assert.rejects(
+    engine.createRunner('api', manifest, {
+      ...runnerOptions(actionSources),
+      plannedActions: [selected],
+    }),
+    /No live script implements example.unused/u,
+  );
+});
 
 test('authored teardown streams a real child with its fresh graph signal after cancellation', async (t) => {
   const controller = new AbortController();

@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.31.24 - 2026-11-17
+
+- Align exact dependency pins with the task-bound recipe evidence producer patch.
+
 ## 0.31.23 - 2026-11-16
 
 - Reuse unchanged Mobile source fingerprints behind fresh source witnesses, including ignored environment-file inputs.

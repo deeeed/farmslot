@@ -14,7 +14,15 @@ import {
 } from '@farmslot/recipe-runner';
 
 import { type ActionCapabilityRefusal, missingActionCapabilities } from '../../action-catalog.js';
-import { recordRecipeAcceptance, registeredTaskClaims, runTaskDir } from '../acceptance-ledger.js';
+import {
+  type RecipeExecutionCommand,
+  RecipeTaskBindingConflictError,
+  RecipeTaskBindingRequiredError,
+  recordRecipeAcceptance,
+  registeredTaskClaims,
+  requireRecipeTaskBinding,
+  runTaskDir,
+} from '../acceptance-ledger.js';
 import { harnessAdapter } from '../adapters.js';
 import {
   actionLibraryContextArgs,
@@ -490,17 +498,18 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
       target,
       optionString(options, 'artifactsDir'),
       runAttemptLayout(attempt),
+      { unbound: optionFlag(options, 'unbound'), command: 'run' },
     );
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const failure = recipeArtifactsFailure(error);
     return emitRunUsageError(
       jsonOutput,
       stream,
       adapter,
       validated.recipeFile,
-      'ARTIFACT_DIR_INVALID',
-      message,
-      'set RECIPE_TASK_DIR/FARMSLOT_TASK_DIR inside the checkout or pass --artifacts-dir <path>',
+      failure.code,
+      failure.message,
+      failure.userAction,
     );
   }
   const { artifactsDir, taskDir, claims } = artifactContext;
@@ -870,13 +879,42 @@ export interface RecipeExecutionArtifacts {
   claims: RecipeEngineRunOptions['claims'];
 }
 
+interface RecipeArtifactsFailure {
+  code: string;
+  message: string;
+  userAction: string;
+}
+
+interface RecipeArtifactsOptions {
+  unbound?: boolean;
+  command?: RecipeExecutionCommand;
+}
+
+export function recipeArtifactsFailure(error: unknown): RecipeArtifactsFailure {
+  return error instanceof RecipeTaskBindingRequiredError ||
+    error instanceof RecipeTaskBindingConflictError
+    ? error
+    : {
+        code: 'ARTIFACT_DIR_INVALID',
+        message: error instanceof Error ? error.message : String(error),
+        userAction:
+          'set RECIPE_TASK_DIR/FARMSLOT_TASK_DIR inside the checkout or pass --artifacts-dir <path>',
+      };
+}
+
 /** Bind artifacts and task claims once, under each command's usage-error handling. */
 export function resolveRecipeExecutionArtifacts(
   target: string,
   explicit: string | undefined,
   layout: RecipeArtifactsLayout,
+  options: RecipeArtifactsOptions = {},
 ): RecipeExecutionArtifacts {
-  const taskDir = runTaskDir(target, explicit !== undefined);
+  const taskDir = requireRecipeTaskBinding(
+    target,
+    explicit !== undefined,
+    options.unbound ?? false,
+    options.command ?? 'run',
+  );
   return {
     artifactsDir:
       explicit !== undefined ? path.resolve(explicit) : layoutArtifactsDir(target, taskDir, layout),
@@ -1099,16 +1137,18 @@ async function handleRunPlan<TMutation, TAllowlist extends ConsoleAllowlist>(
       {
         fresh: 'runs/planned',
       },
+      { unbound: optionFlag(options, 'unbound'), command: 'run' },
     );
   } catch (error) {
+    const failure = recipeArtifactsFailure(error);
     return emitPlanFailure(
       jsonOutput,
       stream,
       adapter,
       recipeFile,
-      'ARTIFACT_DIR_INVALID',
-      error instanceof Error ? error.message : String(error),
-      'set RECIPE_TASK_DIR/FARMSLOT_TASK_DIR inside the checkout or pass --artifacts-dir <path>',
+      failure.code,
+      failure.message,
+      failure.userAction,
     );
   }
   const { artifactsDir, claims } = artifactContext;
