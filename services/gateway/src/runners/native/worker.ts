@@ -10,7 +10,10 @@ import {
   NATIVE_WORKER_TRANSFER,
   type NativeWorkerCancelResult,
 } from '@farmslot/agent-runtime/native';
-import { isNativeHostUnavailableError } from '@farmslot/agent-runtime/native/host-unavailable';
+import {
+  isNativeHostNotReadyError,
+  isNativeHostUnavailableError,
+} from '@farmslot/agent-runtime/native/host-unavailable';
 import { effectiveModelQuestions } from '@farmslot/agent-runtime/native/model-questions';
 import { nativeWorkerLaunchDigest } from '@farmslot/agent-runtime/native/worker-launch';
 import {
@@ -870,10 +873,12 @@ export async function dispatchNativeWorker(input: {
   // anything. Only the first such failure earns the wait.
   let hostWaited = false;
   for (;;) {
+    let readingHostState = false;
     try {
       // A durable reservation is not proof ENSURE reached the host. On an
       // unconfirmed attempt, inspect structured host state before any creation.
       if (input.beforeFreshLaunch && !binding.generation && !binding.handoffFrom) {
+        readingHostState = true;
         const listed = (await routeNativeExecution(
           binding.ownerPrincipalId,
           Methods.NATIVE_SESSION_LIST,
@@ -881,6 +886,7 @@ export async function dispatchNativeWorker(input: {
             executionNodeId: binding.executionNodeId,
           },
         )) as NativeSessionListResult;
+        readingHostState = false;
         const retainedSession = listed.sessions.find((session) => session.id === binding.sessionId);
         hostLacksReservation = !retainedSession && !listed.unavailableExecutionNodes?.length;
         await admission();
@@ -903,13 +909,15 @@ export async function dispatchNativeWorker(input: {
       info = checkedSession(created.session, binding);
       break;
     } catch (error) {
-      // Only a live start that never became ready earns the retry. A passive read's
-      // NATIVE_SOURCE_UNAVAILABLE is also pre-send, but the observation layer raises
-      // that same code after a read whose source changed, and ENSURE is a mutation:
-      // it is never replayed on a maybe.
-      if (!hostWaited && isNativeHostUnavailableError(error)) {
+      // A failed preflight LIST can be read again before ENSURE. Once past that
+      // read, only a live start that never became ready proves nothing was sent:
+      // ENSURE must not be replayed on NATIVE_SOURCE_UNAVAILABLE.
+      const hostNotReady = readingHostState
+        ? isNativeHostNotReadyError(error)
+        : isNativeHostUnavailableError(error);
+      if (!hostWaited && hostNotReady) {
         hostWaited = true;
-        // A live start that never became ready throws before any socket write.
+        // Either the preflight failed or the live start sent nothing.
         ensureSent = false;
         try {
           await waitForNativeHostReady({

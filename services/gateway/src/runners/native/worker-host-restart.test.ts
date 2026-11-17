@@ -96,7 +96,12 @@ mock.module('./node.js', {
         // The host is down for the launch's own preflight and for the probes after it.
         if (hostDown > 0) {
           hostDown -= 1;
-          throw nativeHostUnavailableError('/root/host.log');
+          throw Object.assign(
+            new Error('Native host unavailable; refresh it from the login context'),
+            {
+              code: 'NATIVE_SOURCE_UNAVAILABLE',
+            },
+          );
         }
         return { sessions: session ? [session] : [] };
       }
@@ -290,4 +295,13 @@ test('a refusal that is not a host that never answered is not waited out', async
   await assert.rejects(dispatch(), /belongs to another execution context/);
   assert.equal(ensures(), 1);
   assert.equal(clock, 0, 'nothing is spent waiting');
+});
+
+test('a SOURCE failure from ENSURE is not retried as a passive preflight read', async () => {
+  ensureFailure = Object.assign(new Error('Native source changed after a request'), {
+    code: 'NATIVE_SOURCE_UNAVAILABLE',
+  });
+  await assert.rejects(dispatch(), /Native source changed after a request/);
+  assert.equal(ensures(), 1);
+  assert.equal(clock, 0, 'a possibly served mutation must not be retried');
 });
