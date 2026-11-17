@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.48.6 - 2026-11-17
+
+- Align exact dependency pins with the implementation-isolated prepared-cache release.
+
 ## 0.48.5 - 2026-11-17
 
 - Align exact dependency pins with the task-bound recipe evidence producer patch.

@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.31.25 - 2026-11-17
+
+- Align exact dependency pins with the implementation-isolated prepared-cache release.
+
 ## 0.31.24 - 2026-11-17
 
 - Align exact dependency pins with the task-bound recipe evidence producer patch.
