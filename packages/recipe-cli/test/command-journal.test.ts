@@ -15,6 +15,27 @@ import { configureHarnessHost, harnessHost } from '../src/harness/host.js';
 const originalStdoutWrite = process.stdout.write;
 const originalStderrWrite = process.stderr.write;
 
+/**
+ * The cap tests print 2-3 MB each. The journal tees to the writer in place
+ * when it starts, so a sink keeps that out of the job log while the operation
+ * log still records every byte. The real writers return before any cleanup.
+ */
+async function withoutTestOutput<T>(run: () => Promise<T>): Promise<T> {
+  const sink = ((...args: unknown[]) => {
+    const callback = args.find((arg) => typeof arg === 'function');
+    if (callback) (callback as () => void)();
+    return true;
+  }) as typeof process.stdout.write;
+  process.stdout.write = sink;
+  process.stderr.write = sink;
+  try {
+    return await run();
+  } finally {
+    process.stdout.write = originalStdoutWrite;
+    process.stderr.write = originalStderrWrite;
+  }
+}
+
 test('later lifecycle commands retain the last proof under the resolved checkout journal', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'project-journal-'));
   const previous = harnessHost();
@@ -173,16 +194,18 @@ test('an operation log stops at its cap and says what it dropped', async (t) => 
   const cap = 2 * 1024 * 1024;
   const line = `${'x'.repeat(64 * 1024 - 1)}\n`;
 
-  await withCommandJournal(
-    'run',
-    ['run', 'verbose'],
-    async () => {
-      // Comfortably past the cap, in whole chunks.
-      for (let written = 0; written < cap + 512 * 1024; written += line.length)
-        process.stdout.write(line);
-      return 0;
-    },
-    { target: root, runtimeDir: 'runtime' },
+  await withoutTestOutput(() =>
+    withCommandJournal(
+      'run',
+      ['run', 'verbose'],
+      async () => {
+        // Comfortably past the cap, in whole chunks.
+        for (let written = 0; written < cap + 512 * 1024; written += line.length)
+          process.stdout.write(line);
+        return 0;
+      },
+      { target: root, runtimeDir: 'runtime' },
+    ),
   );
 
   const operations = path.join(root, 'runtime', 'operations');
@@ -214,15 +237,17 @@ test('a single write larger than the cap keeps the part that fits', async (t) =>
   configureHarnessHost({ ...previous, journaledCommands: ['run'] });
   const cap = 2 * 1024 * 1024;
 
-  await withCommandJournal(
-    'run',
-    ['run', 'one-big-leaf'],
-    async () => {
-      // One write, well past the cap, as a failing leaf's combined output.
-      process.stderr.write(`${'leaf output line\n'.repeat(Math.ceil((cap * 1.5) / 17))}`);
-      return 1;
-    },
-    { target: root, runtimeDir: 'runtime' },
+  await withoutTestOutput(() =>
+    withCommandJournal(
+      'run',
+      ['run', 'one-big-leaf'],
+      async () => {
+        // One write, well past the cap, as a failing leaf's combined output.
+        process.stderr.write(`${'leaf output line\n'.repeat(Math.ceil((cap * 1.5) / 17))}`);
+        return 1;
+      },
+      { target: root, runtimeDir: 'runtime' },
+    ),
   );
 
   const operations = path.join(root, 'runtime', 'operations');
@@ -254,24 +279,26 @@ test('the cap keeps whole lines and never splits a character', async (t) => {
   configureHarnessHost({ ...previous, journaledCommands: ['run'] });
   const cap = 2 * 1024 * 1024;
 
-  await withCommandJournal(
-    'run',
-    ['run', 'edges'],
-    async () => {
-      // Fill in whole lines, then trim the room down to 8 bytes exactly, so
-      // the writes that follow are larger than what is left.
-      const line = `${'y'.repeat(31)}\n`;
-      const fill = Math.floor(cap / line.length) - 1;
-      process.stdout.write(line.repeat(fill));
-      const gap = cap - fill * line.length - 8;
-      process.stdout.write(`${'z'.repeat(gap - 1)}\n`);
-      // Each of these crosses the cap, and no newline falls inside the 8 bytes
-      // of room, so each is withheld whole rather than cut to a fragment.
-      process.stdout.write('tail without a line break\n');
-      process.stdout.write(`${'é'.repeat(8)}\n`);
-      return 0;
-    },
-    { target: root, runtimeDir: 'runtime' },
+  await withoutTestOutput(() =>
+    withCommandJournal(
+      'run',
+      ['run', 'edges'],
+      async () => {
+        // Fill in whole lines, then trim the room down to 8 bytes exactly, so
+        // the writes that follow are larger than what is left.
+        const line = `${'y'.repeat(31)}\n`;
+        const fill = Math.floor(cap / line.length) - 1;
+        process.stdout.write(line.repeat(fill));
+        const gap = cap - fill * line.length - 8;
+        process.stdout.write(`${'z'.repeat(gap - 1)}\n`);
+        // Each of these crosses the cap, and no newline falls inside the 8 bytes
+        // of room, so each is withheld whole rather than cut to a fragment.
+        process.stdout.write('tail without a line break\n');
+        process.stdout.write(`${'é'.repeat(8)}\n`);
+        return 0;
+      },
+      { target: root, runtimeDir: 'runtime' },
+    ),
   );
 
   const operations = path.join(root, 'runtime', 'operations');
@@ -314,23 +341,25 @@ test('a withheld write cannot stand the log on a half-written character', async 
   configureHarnessHost({ ...previous, journaledCommands: ['run'] });
   const cap = 2 * 1024 * 1024;
 
-  await withCommandJournal(
-    'run',
-    ['run', 'split-character'],
-    async () => {
-      const line = `${'y'.repeat(31)}\n`;
-      const fill = Math.floor(cap / line.length) - 1;
-      process.stdout.write(line.repeat(fill));
-      // Leave 4 bytes of room, then fit a buffer whose last byte opens a
-      // two-byte character: exactly the state a pipe boundary leaves behind.
-      const gap = cap - fill * line.length - 4;
-      process.stdout.write(`${'z'.repeat(gap - 1)}\n`);
-      process.stdout.write(Buffer.from([0x61, 0x62, 0xc3]));
-      // The bytes that would complete it, in a write that crosses the cap.
-      process.stdout.write(Buffer.from([0xa9, 0x0a, 0x63, 0x64, 0x0a]));
-      return 0;
-    },
-    { target: root, runtimeDir: 'runtime' },
+  await withoutTestOutput(() =>
+    withCommandJournal(
+      'run',
+      ['run', 'split-character'],
+      async () => {
+        const line = `${'y'.repeat(31)}\n`;
+        const fill = Math.floor(cap / line.length) - 1;
+        process.stdout.write(line.repeat(fill));
+        // Leave 4 bytes of room, then fit a buffer whose last byte opens a
+        // two-byte character: exactly the state a pipe boundary leaves behind.
+        const gap = cap - fill * line.length - 4;
+        process.stdout.write(`${'z'.repeat(gap - 1)}\n`);
+        process.stdout.write(Buffer.from([0x61, 0x62, 0xc3]));
+        // The bytes that would complete it, in a write that crosses the cap.
+        process.stdout.write(Buffer.from([0xa9, 0x0a, 0x63, 0x64, 0x0a]));
+        return 0;
+      },
+      { target: root, runtimeDir: 'runtime' },
+    ),
   );
 
   const operations = path.join(root, 'runtime', 'operations');
