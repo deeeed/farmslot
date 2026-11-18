@@ -1,1 +1,0 @@
-- Repair a stale node pack catalog once before writing a task, and refuse with both template hashes if the node still differs from the gateway.

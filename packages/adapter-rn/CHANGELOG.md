@@ -6,6 +6,12 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.31.27 - 2026-11-18
+
+- Align exact internal dependencies with the protocol 0.88.0 release cohort consumed by mm-harness 0.96.33.
+- Prefer capture-helper for a uniquely visible selected iOS simulator window; preserve native simctl recording for unavailable/headless capture and stop it with a bounded SIGINT wait without force-killing the client.
+- Make the native recorder diagnostic test handle SIGINT directly instead of depending on Bash foreground-child scheduling.
+
 ## 0.31.26 - 2026-11-17
 
 - Align exact dependency pins with the JSON proof diagnostic release.

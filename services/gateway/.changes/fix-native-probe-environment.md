@@ -1,1 +1,0 @@
-- Apply the resolved worker environment before native launch probes so partial Node declarations resolve consistently.

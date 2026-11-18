@@ -1,1 +1,0 @@
-- Start a fresh reviewer with a recorded reason when recovery proves the stopped thread never received input; retain guards for submitted and unknown threads.

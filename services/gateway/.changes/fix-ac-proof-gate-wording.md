@@ -1,1 +1,0 @@
-- TASK.md goldens match the acceptance sentence: an AC awaiting review after recorded proof, and a review-mode AC, may reach the gate and still do not grant approval; a missing AC is incomplete, so run it, and only the authorized person records UNTESTABLE at the gate.

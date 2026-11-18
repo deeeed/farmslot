@@ -1,1 +1,0 @@
-- Expose the explicit person review-policy override for checked current-package reviews while preserving hard prerequisites and evidence consent.

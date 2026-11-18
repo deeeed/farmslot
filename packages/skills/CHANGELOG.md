@@ -6,6 +6,10 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.13.16 - 2026-11-18
+
+- Align exact internal dependencies with the protocol 0.88.0 release cohort consumed by mm-harness 0.96.33.
+
 ## 0.13.15 - 2026-11-17
 
 - Align exact dependency pins with the JSON proof diagnostic release.

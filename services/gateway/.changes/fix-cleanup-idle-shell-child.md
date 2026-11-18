@@ -1,1 +1,0 @@
-- Allow a verified idle interactive shell child in a worker-free owned pane to settle terminal cleanup; live runners and unknown processes still refuse cleanup.

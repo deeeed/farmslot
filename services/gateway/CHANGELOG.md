@@ -6,6 +6,38 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.39.7 - 2026-11-18
+
+- Bind task recipe reruns to their computed worker directory and keep standalone project-hook recipes isolated from inherited task acceptance.
+- `task.progress` reports live spend for the viewed agent session. It reads only the transcript bytes appended since the last read, at most once per session every 15 s however many viewers poll, beside the existing reads: no new RPC, poll, process or Git call.
+- TASK.md goldens match the acceptance sentence: an AC awaiting review after recorded proof, and a review-mode AC, may reach the gate and still do not grant approval; a missing AC is incomplete, so run it, and only the authorized person records UNTESTABLE at the gate.
+- Before evidence may match any pre-work base the run recorded, not only the review snapshot's base, so a baseline recorded on the head the worker was dispatched from is no longer refused after a review loop moves that snapshot forward.
+- A BUG_MARKER baseline is admitted in the forms the fix-bug templates prescribe — `DevLogger.log`, `Logger.log`, `console.log` — together with the logger import a file without a logger has to add.
+- Admit a dev Command Center page origin only when NODE_ENV is development, the host passes the shared dev host filter, and the port is VITE_PORT. Exact FARMSLOT_GATEWAY_ALLOWED_ORIGINS entries still work. Every other origin stays refused.
+- Allow a verified idle interactive shell child in a worker-free owned pane to settle terminal cleanup; live runners and unknown processes still refuse cleanup.
+- Admit listed dev Command Center page origins only when FARMSLOT_DEV_UI_ORIGINS is 1. The dev stack sets that flag and does not export NODE_ENV. An installed gateway keeps refusing those origins.
+- Start a fresh reviewer with a recorded reason when recovery proves the stopped thread never received input; retain guards for submitted and unknown threads.
+- A run's terminal capability cleanup no longer releases or fences a family sibling the run store still vouches for as live, so closing one comparison run leaves an active sibling's providers and permits intact.
+- The family terminal fence is read against the requesting run's current liveness, which lets an entry already on disk stop refusing a run that never ended, and owner entries now record whether a sibling's sweep or the run's own cleanup wrote them: only a durable replay retires its own.
+- A review-fix or CI-fix round that respawns its runner with the prompt (pi, Cursor) now records the new runner session instead of the replaced worker session, and slot release recovers any worker session still unrecorded, also when a run ends before finalize, so each round's tokens and cost roll up into the run total.
+- Keep person publication overrides reachable after review-policy or budget stops, retaining audited reasons and every hard publication guard.
+- Live spend splits by checklist step while the run is still working: task.progress takes the marks from the checklist it just read, since the run records them only when the worker signals.
+- Apply the resolved worker environment before native launch probes so partial Node declarations resolve consistently.
+- Repair a stale node pack catalog once before writing a task, and refuse with both template hashes if the node still differs from the gateway.
+- Let Pi checklist marks wait for long deterministic checks without a fixed tool timeout, while preserving cancellation and check failures.
+- A PI launch, repair worker, review, and reload use high thinking when effort is omitted. An explicit level, including xhigh, stays as selected.
+- Keep independent reviewer recipe replays unbound through a scoped diagnostic environment setting, preserving scratch output and worker acceptance evidence across old and new harness versions.
+- Apply the retained project and domain environment to review-fix and inline CI worker relaunch probes and spawned shells.
+- Retain and clear finished workers' owned recipe outputs on release while preserving parked, replayable and unowned work.
+- Preserve the validated reviewer lineage and failed fix receipts when replaying an interrupted review loop.
+- Initialize the real idle-resource reaper before testing polling concurrency under a held transition.
+- Preserve retained reviewer conversations across unrelated project command_env changes, including ASDF tool settings, while keeping runner, credential, execution-policy and native lease compatibility checks.
+- Refuse slot checks before source activation when a current, cleanup or handoff run owns the slot, unless explicitly forced.
+- Mirror, retain, replay and inherit task-local recipe actions from the canonical task-directory contract; refuse publication when captured implementations are missing or changed.
+- Let follow-ups with missing historical canonical inputs start with a recorded gap and re-author instructions, while excluding the original proof from reuse and preserving immutable legacy artifacts.
+- Prepare parks prior work once per prepare instead of before every guarded Git command. Later commands only check that nothing else wrote since the previous one (stat-cache status, flags and HEAD) and park again when something did, when the slot owner changed, or when a command targets a tree the first capture did not cover. A snapshot no longer re-hashes every tracked file a second time to force-add paths it already staged.
+- A force-new-branch prepare without a linked worktree recreates its local work branch in one guarded step (`git branch -D` then `git checkout -b`, from the clean default branch) instead of first checking the default branch out a second time, and reads whether origin has the work branch from its fetch instead of a separate `ls-remote`. The commands, order and refusals are otherwise main's.
+
 ## 0.39.6 - 2026-11-16
 
 - A run create task note is frozen on the run and appended to the generated TASK.md as one Note section.

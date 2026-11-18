@@ -1,1 +1,0 @@
-- Keep equal cached read and collection data by identity so background checks do not redraw unchanged views; retain persistence and freshness checks.
