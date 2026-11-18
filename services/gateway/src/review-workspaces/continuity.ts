@@ -4,7 +4,7 @@ import {
   type Run,
   type RunReviewResult,
 } from '@farmslot/protocol';
-import { resolveReviewMode } from '@farmslot/review-dispatch';
+import { defaultEffortForRunner, resolveReviewMode } from '@farmslot/review-dispatch';
 
 import { reviewPRIdentity } from '../review/pr-identity.js';
 import { incrementalReviewAvailable } from '../run-engine/engine-decisions.js';
@@ -65,6 +65,22 @@ export function rereviewWorkspaceReviewer(run: Run) {
   if (!['done', 'failed', 'blocked'].includes(run.status)) return undefined;
   if (run.status === 'blocked' && !run.reviewWorkspace?.executionStoppedAt) return undefined;
   return matchingWorkspaceReviewer(run, run);
+}
+
+/** Select the effort before either managed workspace transport starts its reviewer. */
+export function workspaceReviewDispatchEffort(run: Run): string | undefined {
+  if (
+    run.effort != null ||
+    run.metrics.runner !== 'claude' ||
+    run.agentContexts?.some((context) => context.id === 'review')
+  ) {
+    return run.effort;
+  }
+  const session = run.repeatReviewContext?.session;
+  if (resolveReviewMode({ run }) === 'warm' || session?.fallback) {
+    return session?.effort ?? undefined;
+  }
+  return defaultEffortForRunner('claude', run.metrics.model) ?? undefined;
 }
 
 /** Follow only stopped, no-verdict transfers; the validated baseline remains unchanged. */

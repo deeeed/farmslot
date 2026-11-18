@@ -5,7 +5,11 @@ import type { RepeatReviewContext, ReviewWorkspaceBinding, Run } from '@farmslot
 
 import { assertPrimaryReviewContext } from '../run-engine/review-plan.js';
 
-import { configureWorkspaceContinuity, resolveWorkspaceContinuationSource } from './continuity.js';
+import {
+  configureWorkspaceContinuity,
+  resolveWorkspaceContinuationSource,
+  workspaceReviewDispatchEffort,
+} from './continuity.js';
 
 const prior = {
   id: 'prior',
@@ -130,6 +134,36 @@ test('an explicit Claude effort can retry a stopped successor that inherited it'
     () => resolveWorkspaceContinuationSource(retry, baseline, read, 'lineage'),
     /retained workspace is held by its successor/,
   );
+});
+
+test('workspace dispatch defaults only a fresh Claude review', () => {
+  const fresh: Run = {
+    ...current,
+    reviewMode: 'cold',
+    metrics: { ...current.metrics, runner: 'claude', model: 'sonnet' },
+  };
+  assert.equal(workspaceReviewDispatchEffort(fresh), 'medium');
+  assert.equal(workspaceReviewDispatchEffort({ ...fresh, effort: 'high' }), 'high');
+  assert.equal(
+    workspaceReviewDispatchEffort({ ...fresh, agentContexts: prior.agentContexts }),
+    undefined,
+  );
+  assert.equal(workspaceReviewDispatchEffort({ ...fresh, reviewMode: 'warm' }), undefined);
+  const fallback: RepeatReviewContext = {
+    ...context(),
+    mode: 'cold',
+    session: {
+      mode: 'cold',
+      continuity: 'fresh',
+      effort: null,
+      fallback: { reason: 'retention-expired', detail: 'expired', comparedRanges: [] },
+    },
+  };
+  assert.equal(
+    workspaceReviewDispatchEffort({ ...fresh, repeatReviewContext: fallback }),
+    undefined,
+  );
+  assert.equal(workspaceReviewDispatchEffort({ ...current, reviewMode: 'cold' }), undefined);
 });
 
 test('verified WARM workspace continuity retains exact PR lineage, session and last head', () => {
