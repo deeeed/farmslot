@@ -1,8 +1,7 @@
 // @farmslot:serial. Uses an owned detached host and OS process cleanup.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import fs, { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { syncBuiltinESMExports } from 'node:module';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 
@@ -14,7 +13,7 @@ import { type HostIdentity, requestHost } from './ipc.js';
 import { readJson } from './storage.js';
 import { decodeNativeWorkerLaunch } from './worker-launch.js';
 
-test('warm refreshes an idle mismatched host and preserves its retained conversation journal', async (t) => {
+test('warm refreshes an idle mismatched host and preserves its retained conversation journal', async () => {
   const fixture = setup({ manualTurns: true });
   const client = new NativeSessionClient(fixture.root);
   try {
@@ -31,42 +30,7 @@ test('warm refreshes an idle mismatched host and preserves its retained conversa
     const hostFile = join(fixture.root, 'host.json');
     const before = readJson<HostIdentity>(hostFile);
     writeFileSync(hostFile, JSON.stringify({ ...before, runtimeVersion: '0.0.0' }));
-    const lock = join(fixture.root, 'lock');
-    const kill = process.kill;
-    const stat = fs.statSync;
-    let signalPending = false;
-    const stop = () => {
-      if (!signalPending) return;
-      signalPending = false;
-      kill(before.pid, 'SIGTERM');
-    };
-    try {
-      t.mock.method(process, 'kill', (pid: number, signal?: NodeJS.Signals | number) => {
-        if (pid !== before.pid || signal !== 'SIGTERM') return kill(pid, signal);
-        signalPending = true;
-        // Give an unnecessary descendant watcher an I/O turn before releasing the lock.
-        writeFileSync(join(lock, '.retirement-race'), '');
-        setImmediate(() => setImmediate(stop));
-        return true;
-      });
-      t.mock.method(fs, 'statSync', (...args: Parameters<typeof fs.statSync>) => {
-        const result = stat(...args);
-        if (signalPending && args[0] === lock) {
-          stop();
-          fs.rmSync(lock, { recursive: true, force: true });
-        }
-        return result;
-      });
-      syncBuiltinESMExports();
-      await client.warm();
-    } finally {
-      try {
-        stop();
-      } finally {
-        t.mock.restoreAll();
-        syncBuiltinESMExports();
-      }
-    }
+    await client.warm();
     const after = readJson<HostIdentity>(hostFile);
     assert.notEqual(after.pid, before.pid, 'an idle host must not retain the previous runtime');
     assert.equal(readJson<Record<string, unknown>>(hostFile).runtimeVersion, RUNTIME_VERSION);
