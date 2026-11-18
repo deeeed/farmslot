@@ -111,14 +111,18 @@ function workerChecklistMarks(run: Run, row: RunnerSessionUsage) {
   )
     return undefined;
   const context = run.agentContexts?.find((item) => row.contextIds?.includes(item.id));
-  // Transcripts, not receipts: a pending receipt of a launch that never started has none.
+  // Transcripts, not receipts: a pending launch has neither a path nor a conversation id, while a
+  // native conversation can be known by its id before its path is recorded.
   const transcripts = new Set(
     (run.sessionUsage ?? [])
       .filter(
         (other) =>
           other.role === row.role && other.contextIds?.some((id) => row.contextIds?.includes(id)),
       )
-      .flatMap((other) => (other.runnerSessionPath ? [other.runnerSessionPath] : [])),
+      .flatMap((other) => {
+        const transcript = other.runnerSessionPath ?? other.runnerSessionId;
+        return transcript ? [transcript] : [];
+      }),
   );
   return receiptChecklistMarks(run, context, Math.max(1, transcripts.size));
 }

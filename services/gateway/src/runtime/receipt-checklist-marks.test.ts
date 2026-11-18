@@ -192,6 +192,19 @@ test('a long rule title is cut to the receipt title budget', () => {
   const [first] = receiptChecklistMarks(run, context);
   assert.equal(first.label.length, RECEIPT_CHILD_TITLE_CHARS);
   assert.ok(first.label.endsWith('…'));
+  // An emoji just before the cut stays whole.
+  run.metrics.subtasks![0].checklistTiming!.events = [
+    {
+      stepNumber: 1,
+      label: `${'y'.repeat(60)}🧪🧪 and more text past the limit`,
+      checkedAt: at(20),
+    },
+  ];
+  const [cut] = receiptChecklistMarks(run, context);
+  // encodeURIComponent throws on half an emoji (a lone surrogate).
+  assert.ok(encodeURIComponent(cut.label).length > 0);
+  assert.ok(cut.label.includes('🧪🧪'));
+  assert.ok(cut.label.endsWith('…'));
 });
 
 test('live progress keeps the parent marks only', () => {
