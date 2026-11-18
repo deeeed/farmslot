@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { gzipSync } from 'node:zlib';
 
 import { isMainModule } from './lib/step-timing.mjs';
 import { ownerOf, readGraph, selectAffectedTests } from './affected-tests.mjs';
@@ -460,6 +461,13 @@ export function prChangedFiles(root, pullRequest) {
   return result.stdout.split('\0').filter(Boolean);
 }
 
+export function inlinePlanOutput(json) {
+  const encoded = gzipSync(json).toString('base64');
+  // Leave room below Linux's 128 KiB per-environment-entry limit. Larger plans
+  // keep using the retained artifact, with the same receipt validation.
+  return encoded.length <= 96 * 1024 ? encoded : '';
+}
+
 if (isMainModule(import.meta.url)) {
   const root = process.cwd();
   const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
@@ -516,7 +524,10 @@ if (isMainModule(import.meta.url)) {
   });
   if (replay) plan.replayPr = Number(replay);
   mkdirSync('.cache/pr-ci', { recursive: true });
-  writeFileSync('.cache/pr-ci/plan.json', `${JSON.stringify(plan, null, 2)}\n`);
+  const json = `${JSON.stringify(plan, null, 2)}\n`;
+  writeFileSync('.cache/pr-ci/plan.json', json);
+  const inlinePlan = inlinePlanOutput(json);
+  if (inlinePlan) appendFileSync(process.env.GITHUB_OUTPUT, `inline_plan=${inlinePlan}\n`);
   appendFileSync(
     process.env.GITHUB_OUTPUT,
     `matrix=${JSON.stringify({ include: plan.jobs.map(({ id, tasks }) => ({ id, lint: tasks.some((task) => task.id === 'guard-lint') })) })}\n`,
