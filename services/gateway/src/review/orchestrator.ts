@@ -31,6 +31,7 @@ import {
   executionModelFromSelection,
   parseReviewSelection,
   resolveReviewMode,
+  workerModelFromSelection,
 } from '@farmslot/review-dispatch';
 
 import {
@@ -477,12 +478,17 @@ async function executeOwnedReview(
   const mode = evalJudge
     ? 'cold'
     : resolveReviewMode({ explicitMode: options.mode, defaultMode: config.mode });
-  const effort = executionModelFromSelection({
+  const effortSelection = {
     runner: reviewRunner,
     model,
     effort: requestedEffort ?? null,
     mode,
-  }).effort;
+  };
+  // Warm keeps the recorded effort, including an unset Claude launch. Cold fills the catalog default.
+  const effort =
+    mode === 'warm'
+      ? workerModelFromSelection(effortSelection).effort
+      : executionModelFromSelection(effortSelection).effort;
   const primaryContext = run.reviewContext ?? run.prWork?.review?.options.reviewContext;
   const reviewId = evalJudge
     ? `eval-first-output-${runId}`

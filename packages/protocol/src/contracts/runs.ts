@@ -3916,6 +3916,9 @@ export const DEFAULT_TASK_DIR = '.task';
  * dispatch path — verify all `DEFAULT_CLAUDE_MODEL` callers when touching it. */
 export const DEFAULT_CLAUDE_MODEL = 'opus';
 
+/** Claude CLI `--effort` levels. Review admission and native launch share this list. */
+export const CLAUDE_CLI_EFFORTS: readonly string[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+
 /** Default Codex model used when no slot/task/project/user override is set. */
 export const DEFAULT_CODEX_MODEL = 'gpt-6.1-sol';
 

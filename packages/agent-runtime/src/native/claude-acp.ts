@@ -1,3 +1,5 @@
+import { CLAUDE_CLI_EFFORTS } from '@farmslot/protocol';
+
 import { observeClaudeAccount } from './account-claude.js';
 import {
   AccountProbeError,
@@ -9,7 +11,7 @@ import { createAcpAdapter } from './acp.js';
 import { claudeHeadlessDisallowedTools, claudeHeadlessEnvironment } from './claude-headless.js';
 import type { NativeAdapter } from './types.js';
 
-export const CLAUDE_ACP_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+export const CLAUDE_ACP_EFFORTS: readonly string[] = CLAUDE_CLI_EFFORTS;
 
 export function claudeAcpBinary(environment: NodeJS.ProcessEnv = process.env): string {
   return environment.FARMSLOT_CLAUDE_ACP_EXECUTABLE || 'claude-agent-acp';

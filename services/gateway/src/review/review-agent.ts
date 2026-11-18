@@ -23,7 +23,11 @@ import {
   renderReviewResultInstructions,
   type ReviewRecommendation,
 } from '@farmslot/protocol/review-approval-policy.cjs';
-import { executionModelFromSelection, reviewArtifactDir } from '@farmslot/review-dispatch';
+import {
+  executionModelFromSelection,
+  reviewArtifactDir,
+  workerModelFromSelection,
+} from '@farmslot/review-dispatch';
 
 import { markAgentContextStatus, upsertAgentContext } from '../agents/contexts.js';
 import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
@@ -1148,12 +1152,12 @@ export async function runReviewAgent(
       'missing-session',
       'WARM requires the reviewId of the lineage being continued',
     );
-  const resolvedEffort = executionModelFromSelection({
-    runner,
-    model,
-    effort: effort ?? null,
-    mode,
-  }).effort;
+  const effortSelection = { runner, model, effort: effort ?? null, mode };
+  // Warm keeps the recorded effort, including an unset Claude launch. Cold fills the catalog default.
+  const resolvedEffort =
+    mode === 'warm'
+      ? workerModelFromSelection(effortSelection).effort
+      : executionModelFromSelection(effortSelection).effort;
   // Only already-admitted tmux attempts may finish on their original transport.
   // Every new pipeline admission uses the native reviewer contract.
   const retainedTmux = selectRecoverableReviewContext(getRun(_runId)?.agentContexts ?? [], {

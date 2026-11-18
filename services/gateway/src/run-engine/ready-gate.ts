@@ -37,6 +37,7 @@ import {
   executionModelFromSelection,
   parseReviewRequestContext,
   reviewContextFromRequest,
+  workerModelFromSelection,
 } from '@farmslot/review-dispatch';
 
 import { getProjectField, loadSlotVars } from '../core/config.js';
@@ -610,7 +611,8 @@ export async function executePublishGateReviewPlan(
       reviewResult = await executeReview(runId, slotId, {
         reviewRunner: requestedRunner,
         model: execution.model,
-        effort: execution.effort,
+        effort:
+          planStep.mode === 'warm' ? workerModelFromSelection(planStep).effort : execution.effort,
         validationDepth,
         artifactScope: reviewId,
         reviewId: lineageId ?? reviewId,

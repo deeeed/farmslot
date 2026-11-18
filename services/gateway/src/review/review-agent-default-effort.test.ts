@@ -109,3 +109,61 @@ test('WARM runner-default effort agrees at gate preflight and reviewer delivery'
   assert.equal(deliveredEffort, execution.effort);
   resetWarmReviewerSessionsForTest();
 });
+
+test('a pre-upgrade claude review keeps an unset effort through warm preflight and delivery', async () => {
+  resetWarmReviewerSessionsForTest();
+  registerWarmReviewerSession({
+    runId: run.id,
+    reviewId: 'review-legacy',
+    familyId: warmLineageScope(run),
+    project: run.project,
+    ownerPrincipalId: run.nativeOwnerPrincipalId,
+    transport: 'native',
+    taskDir: '/tmp/review',
+    artifactScope: 'review-legacy',
+    runner: 'claude',
+    model: 'opus',
+    effort: null,
+    repository: 'owner/repo',
+    prNumber: 42,
+    contextId: 'review-context',
+    windowName: 'review-context',
+    slotId: 'review-slot',
+    runnerSessionId: 'retained-session',
+    runnerSessionPath: null,
+    lastLoopNumber: 1,
+    lastReviewedHeadSha: 'prior-head',
+  });
+  assert.doesNotThrow(() =>
+    assertWarmReviewRequestAvailable(
+      run,
+      {
+        runner: 'claude',
+        model: 'opus',
+        effort: null,
+        mode: 'warm',
+        context: {
+          reviewLineages: [{ repository: 'owner/repo', prNumber: 42, reviewId: 'review-legacy' }],
+        },
+      },
+      [run],
+    ),
+  );
+  await runReviewAgent(
+    {} as Parameters<typeof runReviewAgent>[0],
+    'claude',
+    'opus',
+    '/tmp/review',
+    'review-slot',
+    run.id,
+    100,
+    1,
+    'static-code',
+    'review-legacy',
+    'warm',
+    null,
+    'review-legacy',
+  );
+  assert.equal(deliveredEffort, null);
+  resetWarmReviewerSessionsForTest();
+});

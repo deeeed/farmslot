@@ -517,7 +517,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
       models: [...RUNNER_PICKER_MODELS.claude],
       modes: ['default'],
       efforts: [...CLAUDE_ACP_EFFORTS],
-      defaultEffort: 'medium',
+      // Chat submits no effort. The label stays on that omission, not the review default.
+      defaultEffort: null,
     },
     defaultLaunchMode: 'interactive',
     headlessPrintExecutables: ['claude'],

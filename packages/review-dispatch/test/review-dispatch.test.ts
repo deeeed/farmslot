@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   assertPRExecutionProfile,
   assertPRReviewOptions,
+  CLAUDE_CLI_EFFORTS,
   DEFAULT_CODEX_EFFORT,
   DEFAULT_GROK_EFFORT,
   DEFAULT_PI_THINKING,
@@ -36,6 +37,7 @@ import {
   reviewRequestFromSequence,
   reviewSequenceForExecution,
   reviewSequenceFromRequest,
+  workerModelFromSelection,
 } from '../src/index.js';
 
 const cold: ReviewSelection = {
@@ -158,6 +160,33 @@ test('a claude opus medium review is admitted and an omitted effort is medium', 
     () => assertReviewSelection({ runner: 'claude', model: 'opus', effort: 'ultra', mode: 'cold' }),
     /Unsupported review effort for claude: ultra/,
   );
+  assert.deepEqual(
+    createReviewDispatchCatalog().runners.find((runner) => runner.id === 'claude')?.efforts,
+    [...CLAUDE_CLI_EFFORTS],
+  );
+});
+
+test('an omitted claude worker effort stays unset and native chat does not advertise medium', () => {
+  const omitted = { runner: 'claude', model: 'opus', effort: null, mode: 'cold' as const };
+  assert.equal(executionModelFromSelection(omitted).effort, 'medium');
+  assert.equal(workerModelFromSelection(omitted).effort, null);
+  assert.equal(workerModelFromSelection({ ...omitted, effort: 'high' }).effort, 'high');
+  assert.equal(
+    workerModelFromSelection({ runner: 'codex', model: null, effort: null, mode: 'cold' }).effort,
+    DEFAULT_CODEX_EFFORT,
+  );
+  assert.equal(workerModelFromSelection({ ...omitted, mode: 'warm' }).effort, null);
+  const chat = catalogForNativeRunners([
+    {
+      runner: 'claude',
+      models: ['opus'],
+      defaultModel: 'opus',
+      modes: ['default'],
+      efforts: [...CLAUDE_CLI_EFFORTS],
+      defaultEffort: null,
+    },
+  ]);
+  assert.equal(chat.runners[0]?.defaultEffort, null);
 });
 
 test('catalog validation accepts registered custom runners and refuses unsupported efforts', () => {

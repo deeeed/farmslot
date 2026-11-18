@@ -27,6 +27,7 @@ import {
   resolveReviewMode,
   reviewContextFromRequest,
   reviewSequenceFromRequest,
+  workerModelFromSelection,
 } from '@farmslot/review-dispatch';
 
 import {
@@ -421,7 +422,8 @@ export function assertWarmReviewRequestAvailable(
         artifactScope: lineage.reviewId,
         runner: execution.runner,
         model: execution.model,
-        effort: execution.effort,
+        // The recorded row effort. An omitted Claude effort stays unset; Codex still fills high.
+        effort: workerModelFromSelection(row).effort,
         ...identity,
       },
       runs,

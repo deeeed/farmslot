@@ -1,1 +1,1 @@
-- A native Claude reviewer launch passes the selected effort, the same levels a Claude worker already accepts, and defaults to medium.
+- A fresh Claude review defaults to medium and passes that effort to the native reviewer. Warm continuation and Claude workers keep an omitted effort unset. Native chat does not advertise medium for that omission.

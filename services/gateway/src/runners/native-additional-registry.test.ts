@@ -64,6 +64,7 @@ test('Claude Code ACP uses the common native lifecycle with explicit model, effo
   assert.equal(runnerSupportsEffort('claude-acp', 'haiku', 'low'), true);
   assert.equal(runnerSupportsNativeTaskReuse('claude-acp'), true);
   assert.equal(getRunnerDefinition('claude').nativeTransport, 'claude-stream-json');
+  assert.equal(getRunnerDefinition('claude').nativeChoices?.defaultEffort, null);
 });
 
 test('a native-only agent is refused before constructing a terminal command', () => {
