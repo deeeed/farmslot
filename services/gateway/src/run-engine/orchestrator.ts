@@ -96,7 +96,7 @@ import {
 import { withRunSessionUsageContext } from '../runtime/run-session-usage-context.js';
 import { captureRunSourceOwnerFence } from '../sources/run-fence.js';
 import { SourceAdmissionRefusal, SourcePlanRestart, withRunSources } from '../sources/runtime.js';
-import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
+import { isNoCodeTerminalDisposition, releasedNoChangeChecks } from '../tasks/worker-signals.js';
 import { schedulerTick } from '../work-graph/store.js';
 
 import { retainedMaintenanceStepOutputs } from './branch-maintenance.js';
@@ -927,7 +927,10 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       detail: undefined,
       outputs: resumedWorkerFinding
         ? { ...previousOutputs, awaitingOperator: false }
-        : retainedMaintenanceStepOutputs(stepName, previousOutputs),
+        : stepName === S.COMPLETE &&
+            previousOutputs?.slotDisposition === 'no-change-release-pending'
+          ? previousOutputs
+          : retainedMaintenanceStepOutputs(stepName, previousOutputs),
       completedAt: undefined,
       durationMs: undefined,
       ...stepEntryTiming(current, stepName),
@@ -2204,6 +2207,7 @@ async function executeNoChangeGate(runId: string): Promise<void> {
     evidence: current.metrics.terminalEvidence,
     report,
     artifactManifest,
+    skippedLocalCheck: releasedNoChangeChecks(current)?.some((check) => check.status === 'missing'),
   });
 
   const actionId = await createEngineDecision(

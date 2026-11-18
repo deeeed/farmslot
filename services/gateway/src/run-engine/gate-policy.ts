@@ -444,6 +444,7 @@ export function buildNoChangeGateInputs(args: {
   evidence?: WorkerTerminalEvidence;
   report?: string | null;
   artifactManifest?: EvidenceManifestEntry[];
+  skippedLocalCheck?: boolean;
 }): { desc: string; payload: NoChangeGatePayload } {
   const { disposition, ticketOrPr, monitorReason, evidence, report, artifactManifest } = args;
   const evidenceLines = [
@@ -454,6 +455,9 @@ export function buildNoChangeGateInputs(args: {
   const desc = [
     `Worker reported **${noChangeDispositionLabel(disposition)}** for ${ticketOrPr}.`,
     monitorReason ? `Worker reason: ${monitorReason}` : null,
+    args.skippedLocalCheck
+      ? 'Changed-file CI was skipped. The checkout was clean at the dispatch commit. Accepting closes the run on its no-change report.'
+      : null,
     evidenceLines.length ? `Evidence:\n${evidenceLines.join('\n')}` : 'Evidence: none reported.',
     report ? `\nReport excerpt:\n\n${report.slice(0, 600)}` : null,
   ]
