@@ -114,14 +114,19 @@ export function runProgressSummary(
 ): RunProgressSummary | null {
   if (!showsRunProgress(run)) return null;
   const step = run.steps.find((item) => item.status === 'running');
-  // A checklist can be held from an earlier attempt. Only the monitor's recorded
-  // completion can explain why this run is still on its monitor step.
-  const signal = step?.name === 'monitor' ? step.outputs?.workerSignal : undefined;
+  // A blocked run may have stopped at monitor after recording a worker finish.
+  const signalStep =
+    step ??
+    (run.status === 'blocked'
+      ? run.steps.filter((item) => item.status === 'done' || item.status === 'failed').at(-1)
+      : undefined);
+  const signal = signalStep?.name === 'monitor' ? signalStep.outputs?.workerSignal : undefined;
   const workerFinished =
     signal &&
     typeof signal === 'object' &&
     'status' in signal &&
     (signal.status === 'complete' || signal.status === 'done');
+  const finishCue = step ? 'Worker finished; monitor has not advanced' : 'Worker finished';
   const lastMs = lastProgressMs(run);
   // Every run has createdAt; a record without one valid timestamp has no clock to show.
   if (!Number.isFinite(lastMs)) return null;
@@ -158,12 +163,12 @@ export function runProgressSummary(
     const elapsed = formatElapsed(lastProgressAt, nowMs);
     return summary(
       'stale',
-      `Stale · no progress for ${elapsed}${workerFinished ? ' · Worker finished; monitor has not advanced' : ''}`,
+      `Stale · no progress for ${elapsed}${workerFinished ? ` · ${finishCue}` : ''}`,
     );
   }
   if (isSettledBlockedRun(run)) return null;
   if (activity) return summary('step', activity);
-  if (workerFinished) return summary('step', 'Worker finished; monitor has not advanced');
+  if (workerFinished) return summary('step', finishCue);
   return step
     ? summary('step', step.detail ? `${step.name}: ${step.detail}` : step.name)
     : summary('none', '');
