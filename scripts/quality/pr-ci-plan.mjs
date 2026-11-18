@@ -29,29 +29,19 @@ export function balance(items, count, weight = () => 1) {
   return bins.map(({ items: assigned }) => assigned);
 }
 
-const PR_MATRIX_LIMIT = 24;
-const FULL_GATEWAY_SHARDS = 16;
-const EXTRA_GATEWAY_SHARDS = 4;
-const EXPANDED_GATEWAY_BUDGET = 105;
+// Three broad PR matrices leave four of the observed 40 hosted slots for setup and gates.
+const PR_MATRIX_LIMIT = 12;
 
 /** Fill existing test jobs before paying for another runner and setup. */
 export function packPrTasks(jobs, tasks, budget = 120, maxJobs = PR_MATRIX_LIMIT) {
   const pooled = jobs.map((job) => ({ ...job, tasks: [...job.tasks] }));
-  const isolated = new Set();
+  const cost = (job) => job.tasks.reduce((seconds, entry) => seconds + entry.seconds, 0);
   let next = 0;
   for (const task of [...tasks].sort((a, b) => b.seconds - a.seconds || a.id.localeCompare(b.id))) {
-    const available = pooled.filter((job) => !isolated.has(job.id));
-    const candidates = available.length || pooled.length < maxJobs ? available : [...pooled];
-    const cost = (job) => job.tasks.reduce((seconds, entry) => seconds + entry.seconds, 0);
-    candidates.sort((a, b) => cost(a) - cost(b) || a.id.localeCompare(b.id));
-    let job = candidates[0];
-    if (
-      !job ||
-      (pooled.length < maxJobs && (task.seconds > budget || cost(job) + task.seconds > budget))
-    ) {
+    let job = [...pooled].sort((a, b) => cost(a) - cost(b) || a.id.localeCompare(b.id))[0];
+    if (!job || (pooled.length < maxJobs && cost(job) + task.seconds > budget)) {
       job = { id: `checks-${++next}`, tasks: [] };
       pooled.push(job);
-      if (task.seconds > budget) isolated.add(job.id);
     }
     job.tasks.push(task);
   }
@@ -149,7 +139,6 @@ export function createPrPlan({
   lanes ??= new Map(selected.map((file) => [file, 'serial']));
   const tasks = [];
   const seedJobs = [];
-  let expandGateway;
   const assigned = new Set();
   function splitTests(id, dir, count, tsconfig, workers, runnerDir = dir) {
     const suite = selected.filter(
@@ -179,14 +168,11 @@ export function createPrPlan({
     if (id === 'gateway') {
       const full =
         suite.length === [...eligible].filter((file) => file.startsWith(`${dir}/`)).length;
-      const limit = full ? count : Math.min(count, 12);
       let shards = full ? Math.min(count, suite.length) : 1;
       const distribute = (size) => balanceTestShards(suite, size, workers, durations, lanes);
       chunks = distribute(shards);
-      while (shards < Math.min(limit, suite.length) && chunks.some(({ ms }) => ms > 120_000))
+      while (shards < Math.min(count, suite.length) && chunks.some(({ ms }) => ms > 120_000))
         chunks = distribute(++shards);
-      if (full && count === FULL_GATEWAY_SHARDS && shards === count)
-        expandGateway = (extra) => toJobs(distribute(count + extra));
     } else
       chunks = balance(suite, count, (file) => durations[file] ?? 1500).map((files) => ({
         files,
@@ -195,7 +181,6 @@ export function createPrPlan({
     seedJobs.push(...toJobs(chunks));
     suite.forEach((file) => assigned.add(file));
   }
-  splitTests('gateway', 'services/gateway', ciOnly ? 1 : FULL_GATEWAY_SHARDS, 'tsconfig.json', 4);
   splitTests(
     'command-center-ui',
     'apps/command-center/ui',
@@ -206,6 +191,9 @@ export function createPrPlan({
   );
   if (changed?.some(isCiControlFile) && !affected.has('@farmslot/run-bundle'))
     splitTests('run-bundle-smoke', 'packages/run-bundle', 1, 'tsconfig.json', 2);
+  // Keep one slot for the longest workspace command or a batch of guards.
+  const gatewaySlots = ciOnly ? 1 : PR_MATRIX_LIMIT - seedJobs.length - 1;
+  splitTests('gateway', 'services/gateway', gatewaySlots, 'tsconfig.json', 4);
   for (const workspace of workspaces) {
     if (!affected.has(workspace.name)) continue;
     const pkg = JSON.parse(readFileSync(path.join(root, workspace.dir, 'package.json'), 'utf8'));
@@ -443,21 +431,7 @@ export function createPrPlan({
     }
     task.seconds = Math.max(1, Math.ceil(ms / 1000));
   }
-  let jobs = packPrTasks(seedJobs, tasks);
-  const spare = PR_MATRIX_LIMIT - jobs.length;
-  // Use idle matrix capacity only after other work has a slot. Repack the
-  // same tasks with headroom for underestimates so a typecheck cannot put a
-  // full-sized gateway shard back on the critical path.
-  if (expandGateway && spare >= 2 && !tasks.some(({ seconds }) => seconds > 120)) {
-    jobs = packPrTasks(
-      [
-        ...expandGateway(Math.min(spare, EXTRA_GATEWAY_SHARDS)),
-        ...seedJobs.filter(({ id }) => !id.startsWith('gateway-')),
-      ],
-      tasks,
-      EXPANDED_GATEWAY_BUDGET,
-    );
-  }
+  const jobs = packPrTasks(seedJobs, tasks);
   const owners = new Map(selected.map((file) => [file, new Set()]));
   for (const task of jobs.flatMap((job) => job.tasks))
     for (const file of [...(task.tests ?? []), ...task.args]) owners.get(file)?.add(task.id);
