@@ -1,0 +1,191 @@
+import assert from 'node:assert/strict';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+
+import {
+  isRecipeFlowUpdate,
+  RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+  type RecipeActionManifestDocument,
+  type RecipeFlowUpdate,
+} from '@farmslot/protocol';
+
+import { createStandardCoreAdapters } from '../src/adapters/core.js';
+import { createRecipeRunner } from '../src/core/runner.js';
+import type { SummaryDocument } from '../src/core/types.js';
+
+import { inner, root, unit } from './flow.fixture.js';
+
+const manifest: RecipeActionManifestDocument = {
+  $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+  actions: {
+    command: {
+      description: 'Observe actual output',
+      schema: {
+        type: 'object',
+        properties: { cmd: { type: 'string' } },
+        additionalProperties: false,
+      },
+      examples: [{ action: 'command', intent: 'Observe', cmd: 'printf OK', next: 'done' }],
+    },
+    assert_output: {
+      description: 'Check observed output',
+      schema: {
+        type: 'object',
+        properties: {
+          source: { type: 'string' },
+          stream: { type: 'string' },
+          contains: { type: 'string' },
+        },
+        additionalProperties: false,
+      },
+      examples: [
+        {
+          action: 'assert_output',
+          intent: 'Verify',
+          source: 'observe',
+          contains: 'OK',
+          next: 'done',
+        },
+      ],
+    },
+    wait: {
+      description: 'A fixture action',
+      schema: { type: 'object', properties: {}, additionalProperties: false },
+      examples: [{ action: 'wait', intent: 'Observe fixture state', next: 'done' }],
+    },
+    switch: {
+      description: 'Select fixture branch',
+      result_cases: ['yes', 'no'],
+      schema: { type: 'object', properties: {}, additionalProperties: false },
+      examples: [{ action: 'switch', intent: 'Choose fixture branch', next: 'done' }],
+    },
+    'app.hud': {
+      description: 'Observe HUD updates',
+      schema: { type: 'object', properties: {}, additionalProperties: false },
+      examples: [{ action: 'app.hud', intent: 'Show fixture progress', next: 'done' }],
+    },
+    call: {
+      description: 'Call a fixture',
+      examples: [{ action: 'call', intent: 'Call fixture', ref: 'fixture.inner', next: 'done' }],
+    },
+    end: { description: 'Finish', examples: [{ action: 'end', status: 'pass' }] },
+  },
+};
+
+for (const scenario of ['yes', 'no', 'failure', 'partial'] as const) {
+  const branch = scenario === 'no' ? 'no' : 'yes';
+  test(`real runner publishes global ${scenario} progress on existing HUD updates and final summary`, async (t) => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'recipe-flow-'));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const library = path.join(dir, 'library');
+    await mkdir(path.join(library, 'recipes/fixture'), { recursive: true });
+    const document = (value: Record<string, unknown>) => ({
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      description: 'Composed flow renderer fixture',
+      ...value,
+    });
+    await writeFile(
+      path.join(library, 'recipes/fixture/inner.recipe.json'),
+      JSON.stringify(
+        document(
+          scenario === 'failure'
+            ? {
+                ...inner,
+                workflow: {
+                  ...inner.workflow,
+                  nodes: {
+                    ...inner.workflow.nodes,
+                    read: { ...inner.workflow.nodes.read, contains: 'MISSING' },
+                  },
+                },
+              }
+            : inner,
+        ),
+      ),
+    );
+    await writeFile(
+      path.join(library, 'recipes/fixture/unit.recipe.json'),
+      JSON.stringify(document(unit)),
+    );
+    const updates: RecipeFlowUpdate[] = [];
+    const runner = createRecipeRunner({
+      actionManifest: manifest,
+      defaultSource: { kind: 'operator', trust: 'trusted' },
+      adapters: [
+        ...createStandardCoreAdapters({ actions: ['command', 'assert_output'] }).map((adapter) => ({
+          ...adapter,
+          source: { kind: 'bundled' as const, trust: 'trusted' as const },
+        })),
+        ...['wait', 'switch', 'app.hud'].map((action) => ({
+          action,
+          source: { kind: 'bundled', trust: 'trusted' },
+          async execute(node) {
+            if (action === 'app.hud') {
+              const flow = node.recipe_flow;
+              assert.ok(
+                isRecipeFlowUpdate(flow),
+                'existing HUD event must carry qualified SDK progress',
+              );
+              updates.push(structuredClone(flow));
+            }
+            return action === 'switch' ? { case: branch } : {};
+          },
+        })),
+      ],
+    });
+    const result = await runner.run({
+      recipeDocument: document(root),
+      projectRoot: dir,
+      artifactsDir: path.join(dir, 'output'),
+      librarySources: [{ root: library, provenance: { kind: 'library', trust: 'trusted' } }],
+      recordVideo: false,
+      ...(scenario === 'partial' ? { stopAfterNode: 'first' } : {}),
+      recordingReason: 'SDK composition/progress fixture has no UI actions',
+    });
+    assert.equal(result.status, scenario === 'failure' ? 'fail' : 'pass');
+    const summary: SummaryDocument = JSON.parse(await readFile(result.summaryPath, 'utf8'));
+    assert.ok(summary.flow);
+    assert.equal(summary.flow.recipeRunId, summary.recipeRunId);
+    const full = scenario === 'yes' || scenario === 'no';
+    assert.equal(summary.flow.progress.total, full ? (branch === 'yes' ? 11 : 12) : null);
+    assert.equal(summary.flow.progress.remaining, full ? 0 : null);
+    assert.equal(
+      summary.flow.progress.completed,
+      full ? (branch === 'yes' ? 11 : 12) : scenario === 'partial' ? 5 : 4,
+    );
+    if (full)
+      assert.equal(
+        updates.find((update) => update.activeId === 'second/nested/read')!.progress.current,
+        6,
+      );
+    assert.ok(updates.some((update) => update.progress.total === null));
+    if (scenario === 'partial')
+      assert.ok(
+        updates.every((update) => update.progress.total === null),
+        'partial updates never claim a full denominator',
+      );
+    assert.equal(updates.at(-1)!.progress.total, summary.flow.progress.total);
+    const resolution = JSON.parse(
+      await readFile(path.join(dir, 'output/recipe-resolution.json'), 'utf8'),
+    );
+    assert.ok(
+      resolution.flow.nodes.some((node: { id: string }) => node.id === 'second/nested/read'),
+    );
+    assert.deepEqual(
+      resolution.flow.nodes.find((node: { id: string }) => node.id === 'first/nested/read')
+        .claimIds,
+      ['first/nested/AC-1'],
+    );
+    if (process.env.FARMSLOT_FLOW_FIXTURE_DIR) {
+      const target = path.join(process.env.FARMSLOT_FLOW_FIXTURE_DIR, scenario);
+      await mkdir(target, { recursive: true });
+      await cp(path.join(dir, 'output'), target, { recursive: true });
+      await writeFile(
+        path.join(process.env.FARMSLOT_FLOW_FIXTURE_DIR, scenario + '-hud-updates.json'),
+        JSON.stringify(updates, null, 2),
+      );
+    }
+  });
+}
