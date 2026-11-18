@@ -580,10 +580,16 @@ async function persistGateWaitStart(
   runId: string,
   waitingSinceMs: number,
   decisionId: string,
-  windowStartedAtMs?: number,
+  options: { windowStartedAtMs?: number; generation?: number } = {},
 ): Promise<void> {
   const run = getRun(runId);
   if (!run) return;
+  const { windowStartedAtMs, generation } = options;
+  // A retired loop is about to be refused its card anyway (createBlockedDecision
+  // checks the same generation), and a marker for a card that never appears is
+  // a wait nothing will ever answer: the next restart would credit every minute
+  // since it was written.
+  if (generation !== undefined && (run.engineState?.generation ?? 0) !== generation) return;
   // A card can be raised before the first poll has persisted any monitor state
   // (a runner failure observed on the first observation). Returning here would
   // leave that wait unmarked, so the state is seeded instead.
@@ -624,19 +630,29 @@ async function commitGateWait(
     lastPollAt: new Date(windowStartedAtMs ?? Date.now()).toISOString(),
     startedAt: new Date(windowStartedAtMs ?? Date.now()).toISOString(),
   };
-  // Credit belongs to a window. A replayed monitor that reset the clock owns the
-  // accounting now, and this loop's total was measured against a window nobody
-  // is in, so writing it would charge the new window for the old one's cards.
-  if (!monitorWindowMatches(prev, windowStartedAtMs)) return;
-  // Only the wait that opened a card may drop its marker. A replayed monitor can
-  // raise its own card while this loop is still unwinding, and clearing that
-  // replacement's marker would lose the restart credit it is holding open. The
-  // total is still worth storing: within one window the credit only grows.
+  // Two separate questions, and conflating them left orphan markers behind.
+  //
+  // The MARKER belongs to a decision: only the wait that opened a card may drop
+  // its marker, and it has to drop it wherever the window has gone since. A card
+  // this loop raised and then had refused — a retired generation — would
+  // otherwise leave a marker nothing answers, and the next restart would credit
+  // every minute since it was written.
+  //
+  // The CREDIT belongs to a window: a replayed monitor that reset the clock owns
+  // the accounting now, and this loop's total was measured against a window
+  // nobody is in, so writing it would charge the new window for the old one's
+  // cards. Within one window the credit only grows, so the larger total is live.
   const ownsMarker = ownedDecisionId === undefined || prev.gateWaitDecisionId === ownedDecisionId;
-  const gateWaitMs = ownsMarker ? totalMs : Math.max(prev.gateWaitMs ?? 0, totalMs);
+  const sameWindow = monitorWindowMatches(prev, windowStartedAtMs);
+  const gateWaitMs = !sameWindow
+    ? (prev.gateWaitMs ?? 0)
+    : ownsMarker
+      ? totalMs
+      : Math.max(prev.gateWaitMs ?? 0, totalMs);
   const settled = ownsMarker ? { gateWaitStartedAt: undefined, gateWaitDecisionId: undefined } : {};
-  if (prev.gateWaitMs === gateWaitMs && (!ownsMarker || prev.gateWaitStartedAt === undefined))
-    return;
+  const dropsMarker =
+    ownsMarker && (prev.gateWaitStartedAt !== undefined || prev.gateWaitDecisionId !== undefined);
+  if (prev.gateWaitMs === gateWaitMs && !dropsMarker) return;
   updateRun(runId, { monitorState: { ...prev, gateWaitMs, ...settled } });
   await persistRunNow(getRun(runId)!, 'gate wait settled');
 }
@@ -1217,9 +1233,17 @@ export async function monitorRun(
     question?: HandoffQuestionProbe,
   ) => {
     const waitingSince = Date.now();
+    // The card's id is allocated here, not inside the decision, so the wait
+    // marker and the card an operator answers carry the same identity. (The
+    // `id` parameter is the run.) Without that, Extend — which can only name
+    // the decision it resolves — never matches the marker it should clear.
+    const decisionId = randomUUID();
     // Persisted before the wait, so a restart while the operator is still
     // reading the card can credit the slice this process never finished.
-    await persistGateWaitStart(runId, waitingSince, id, monitorState?.startedAt);
+    await persistGateWaitStart(runId, waitingSince, decisionId, {
+      windowStartedAtMs: monitorState?.startedAt,
+      generation,
+    });
     try {
       return await createBlockedDecision(
         id,
@@ -1228,13 +1252,14 @@ export async function monitorRun(
         actions,
         { signal, generation },
         question,
+        decisionId,
       );
     } finally {
       gateWait.ms += Date.now() - waitingSince;
       // One durable write: the credit lands with the marker's removal, and only
       // the marker this wait wrote is removed.
       await commitGateWait(runId, gateWait.ms, {
-        ownedDecisionId: id,
+        ownedDecisionId: decisionId,
         windowStartedAtMs: monitorState?.startedAt,
       });
       // The worker was idle for as long as the card was up, and that idleness
@@ -2115,15 +2140,20 @@ export async function monitorRun(
 
       // 4. Persist monitor state to Run (survives gateway restart)
       const currentForPersist = getRun(runId);
-      // A replayed monitor that reset the clock owns this run's monitor state
-      // now. This loop's snapshot — window start, nudge view, gate credit —
+      // A replayed monitor owns this run's monitor state now. This loop's
+      // snapshot — window start, nudge view, gate credit, progress timestamps —
       // describes a window nobody is in, so publishing it would hand the
-      // replacement the retiring loop's accounting: its fresh window charged for
-      // cards it never showed. The loop keeps observing until it unwinds; it just
-      // stops writing.
+      // replacement the retiring loop's accounting: a fresh window charged for
+      // cards it never showed, or a restored old progress timestamp that makes
+      // the replacement skip its own snapshots. The loop keeps observing until it
+      // unwinds; it just stops writing.
+      //
+      // Replay clears monitorState outright and takes a new generation, so an
+      // absent state is not proof that this loop may write: the generation is.
       const ownsMonitorState =
-        !currentForPersist?.monitorState ||
-        monitorWindowMatches(currentForPersist.monitorState, state.startedAt);
+        (currentForPersist?.engineState?.generation ?? 0) === generation &&
+        (!currentForPersist?.monitorState ||
+          monitorWindowMatches(currentForPersist.monitorState, state.startedAt));
       if (currentForPersist && ownsMonitorState) {
         const structuredProgressAt = new Date(state.lastStructuredProgressAt).toISOString();
         const announceProgress = structuredProgressMovedMinute(
@@ -3055,13 +3085,20 @@ export async function pollRunBudgetGuard(params: {
   const current = getRun(params.runId);
   if (!current) throw new Error(`Run disappeared during budget poll: ${params.runId}`);
   const now = new Date().toISOString();
+  // This guard owns its delivery and usage state and nothing else. Rebuilding
+  // the record from a field list dropped whatever it does not name — the
+  // operator-wait and gate-wait accounting, including the open-card marker — and
+  // stamped the window from this caller's memory, which hands a retiring loop's
+  // window back to a run a replay has already moved on. Keep the record and
+  // override only what this tick produced.
+  const prev = current.monitorState;
   updateRun(params.runId, {
     monitorState: {
+      ...prev,
       nudgeCount: current.metrics.nudgeCount,
       lastPollAt: now,
-      startedAt: params.monitorStartedAt ?? current.monitorState?.startedAt ?? now,
-      lastPaneHash: current.monitorState?.lastPaneHash,
-      lastStructuredProgressAt: current.monitorState?.lastStructuredProgressAt,
+      // The persisted window first: whoever owns the state owns its clock.
+      startedAt: prev?.startedAt ?? params.monitorStartedAt ?? now,
       budgetDelivery: tick.delivery,
       budgetUsage: tick.budgetUsage,
     },
@@ -3331,6 +3368,8 @@ async function createBlockedDecision(
   ],
   owner: { signal: AbortSignal; generation: number },
   question?: HandoffQuestionProbe,
+  /** Pre-allocated so a caller can record the card's identity before it exists. */
+  decisionId: string = randomUUID(),
 ): Promise<string> {
   const run = getRun(runId);
   if (!run) throw new Error('Run not found');
@@ -3365,7 +3404,7 @@ async function createBlockedDecision(
       : undefined;
 
   const decision: RunDecision = {
-    id: randomUUID(),
+    id: decisionId,
     type: `monitor_${reason}`,
     title: `Run ${runId.slice(0, 8)} — ${reason.replace('_', ' ')}`,
     description:

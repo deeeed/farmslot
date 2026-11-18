@@ -40,6 +40,7 @@ import {
   type MonitorObservations,
   monitorRun,
   persistMonitorWindowStart,
+  pollRunBudgetGuard,
   resolveMonitorDecision,
 } from './run-monitor.js';
 import { deleteTestRunIfPresent } from './test-fixtures.js';
@@ -65,7 +66,7 @@ const signal = (status: WorkerSignal['status']): WorkerSignal => ({
  * monitor starts: charged to the worker, a 2 s answer ends a 1.5 s window; not
  * charged, the window still has most of its 1.5 s left.
  */
-async function fixture(t: test.TestContext) {
+async function fixture(t: test.TestContext, options: { usageBudget?: boolean } = {}) {
   const project = `unavailable-continue-${randomUUID()}`;
   const projectDir = path.join(farmslotRoot(), 'projects', project);
   const poolFile = path.join(farmslotRoot(), 'pool', `${project}.json`);
@@ -103,6 +104,9 @@ async function fixture(t: test.TestContext) {
         total_timeout_min: 1.5 / 60,
         stuck_timeout_min: 0.5 / 60,
         max_nudges: 0,
+        // Opt-in: a soft turn budget makes every poll run the budget guard,
+        // which has its own monitorState write.
+        ...(options.usageBudget ? { flows: { dev: { max_turns: 80 } } } : {}),
       },
     }),
   );
@@ -714,5 +718,167 @@ test('extending from a card clears that card’s marker and no other', async (t)
     getRun(f.run.id)?.monitorState?.gateWaitStartedAt,
     openedAt,
     'another card is still open; its marker is what credits that wait after a restart',
+  );
+});
+
+// Codex r5 on #2322, first major: the marker recorded the *run* id, because the
+// decision wrapper's first parameter is the run and the card's own UUID was
+// allocated inside createBlockedDecision. Extend can only name the decision it
+// resolves, so it never matched, and the card it answered kept an open marker
+// that the next restart credited in full.
+test(
+  'the open-wait marker names the card an operator can answer',
+  { timeout: 15_000 },
+  async (t) => {
+    const f = await fixture(t);
+    const execution = f.start();
+    await until(() => f.card() !== undefined);
+    await until(() => getRun(f.run.id)?.monitorState?.gateWaitDecisionId !== undefined, 1_000);
+
+    assert.equal(
+      getRun(f.run.id)?.monitorState?.gateWaitDecisionId,
+      f.card()!.id,
+      'the marker must name the decision, or nothing an operator presses can clear it',
+    );
+    void execution;
+  },
+);
+
+// Codex r5, second major: settlement skipped the whole write when the window had
+// moved on, so a card whose wait this loop owned kept its marker — a wait
+// nothing would ever answer. The marker is owned by its decision and the credit
+// by its window, and those are now decided separately.
+test(
+  'settling a card drops its own marker even after the window moved on',
+  { timeout: 15_000 },
+  async (t) => {
+    const f = await fixture(t);
+    const execution = f.start();
+    await until(() => f.card() !== undefined);
+    const unavailable = f.card()!.id;
+    await until(() => getRun(f.run.id)?.monitorState?.gateWaitStartedAt !== undefined, 1_000);
+
+    // A replacement replays and resets the clock while this card is still up.
+    const held = getRun(f.run.id)!.monitorState!;
+    updateRun(f.run.id, {
+      monitorState: {
+        ...held,
+        startedAt: new Date(Date.now() + 1_000).toISOString(),
+        gateWaitMs: 0,
+      },
+    });
+
+    f.restoreRunner();
+    resolveMonitorDecision(unavailable, 'continue');
+    await until(() => getRun(f.run.id)?.monitorState?.gateWaitStartedAt === undefined);
+
+    const settled = getRun(f.run.id)?.monitorState;
+    assert.equal(
+      settled?.gateWaitStartedAt,
+      undefined,
+      'the answered card must not keep an open marker; a restart would credit it forever',
+    );
+    assert.equal(settled?.gateWaitDecisionId, undefined, 'the marker identity goes with it');
+    assert.equal(
+      settled?.gateWaitMs,
+      0,
+      'the credit still belongs to the window it was measured in, which is not this one',
+    );
+    void execution;
+  },
+);
+
+// Codex r5, second half of that major: replay clears monitorState and takes a
+// new generation. Treating an absent state as "nobody owns this" let the
+// retiring loop republish its own snapshot — including the old progress
+// timestamp, which makes the replacement skip its own progress events.
+test(
+  'a retired monitor does not republish monitor state a replay cleared',
+  { timeout: 15_000 },
+  async (t) => {
+    const f = await fixture(t);
+    let polls = 0;
+    const execution = f.start({
+      violations: async () => {
+        polls += 1;
+        return [];
+      },
+    });
+    // Clear the runner failure first, so the loop is polling normally rather
+    // than sitting on its card when the replay lands.
+    await until(() => f.card() !== undefined);
+    f.restoreRunner();
+    resolveMonitorDecision(f.card()!.id, 'continue');
+    await until(() => polls > 0, 2_000);
+
+    // Exactly what replay writes: state gone, generation moved on.
+    const run = getRun(f.run.id)!;
+    updateRun(f.run.id, {
+      monitorState: undefined,
+      engineState: { ...run.engineState, generation: (run.engineState?.generation ?? 0) + 1 },
+    });
+    const observedBefore = polls;
+    await until(() => polls > observedBefore + 1);
+
+    assert.ok(
+      polls > observedBefore + 1,
+      `the retired monitor must poll again for this case to say anything: ${polls} vs ${observedBefore}`,
+    );
+    assert.equal(
+      getRun(f.run.id)?.monitorState,
+      undefined,
+      'a retired monitor must not recreate the state a replay cleared for its replacement',
+    );
+    void execution;
+  },
+);
+
+// Grok r5 on #2322: the usage-budget guard has its own monitorState write, and
+// it rebuilt the record from a field list. Everything it does not name — the
+// operator-wait and gate-wait accounting, including an open card's marker — was
+// dropped on every tick of any flow with a soft budget, and the window was
+// stamped from the calling loop's memory, which hands a retiring loop's window
+// back to a run a replay has already moved on. The fence on the snapshot write
+// cannot help: this write runs first and restores its own ownership.
+test('the budget guard keeps the gate-wait accounting it does not own', async (t) => {
+  const f = await fixture(t, { usageBudget: true });
+  const openedAt = new Date(Date.now() - 30_000).toISOString();
+  const replacementWindow = new Date(Date.now() - 5_000).toISOString();
+  updateRun(f.run.id, {
+    monitorState: {
+      nudgeCount: 0,
+      lastPollAt: replacementWindow,
+      startedAt: replacementWindow,
+      operatorWaitMs: 7_000,
+      gateWaitMs: 4_000,
+      gateWaitStartedAt: openedAt,
+      gateWaitDecisionId: 'open-card',
+    },
+  });
+
+  await pollRunBudgetGuard({
+    runId: f.run.id,
+    slotId: f.slotId,
+    maxTurns: 80,
+    maxTotalTokens: null,
+    // The window this caller remembers is an older one, as a retiring loop's is.
+    monitorStartedAt: new Date(Date.now() - 90_000).toISOString(),
+    agentStatus: 'working',
+    sendNudge: false,
+  });
+
+  const state = getRun(f.run.id)?.monitorState;
+  assert.equal(
+    state?.gateWaitStartedAt,
+    openedAt,
+    'a budget tick must not drop an open card\u2019s marker; the next restart charges that wait to the worker',
+  );
+  assert.equal(state?.gateWaitDecisionId, 'open-card', 'nor the identity that owns it');
+  assert.equal(state?.gateWaitMs, 4_000, 'nor the credit already settled in this window');
+  assert.equal(state?.operatorWaitMs, 7_000, 'nor the worker\u2019s own operator wait');
+  assert.equal(
+    state?.startedAt,
+    replacementWindow,
+    'the persisted window owns the clock; a caller\u2019s remembered window must not replace it',
   );
 });
