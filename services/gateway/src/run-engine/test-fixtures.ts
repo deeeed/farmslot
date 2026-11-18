@@ -191,9 +191,10 @@ export async function deleteTestRunIfPresent(runId: string): Promise<void> {
     updateRun(runId, { status: 'cancelled' });
   }
 
-  // Stop queued writes from recreating storage while the fixture root is removed.
-  await persistRunNow(run);
   await deleteRun(runId);
+  // After eviction this is a write-chain barrier, without writing another run record.
+  // Wait before the caller removes its root, since queued mkdirs can recreate storage.
+  await persistRunNow(run);
 }
 
 /** Capture fixture bytes explicitly before exercising production readers. */

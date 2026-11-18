@@ -967,7 +967,7 @@ test('a task ownership change during ticket loading refuses without admitting th
   assert.equal(await readFile(path.join(taskDir, 'inputs/handoff.json'), 'utf8'), original);
 });
 
-test('fixture deletion drains queued run writes before removing storage', async (t) => {
+test('fixture deletion drains queued run writes before releasing storage', async (t) => {
   const { run } = await fixture(t, false);
   updateRun(run.id, { status: 'cancelled' });
   const { emitAnalyticsForTerminalRun } = await import('../runs/analytics.js');
@@ -981,10 +981,8 @@ test('fixture deletion drains queued run writes before removing storage', async 
   const runsDir = path.join(root, 'runs');
   const runFile = path.join(runsDir, `${run.id}.json`);
   let mkdirFinished = false;
-  let removedBeforeMkdir = false;
   let unlinkObserved = false;
   const originalMkdir = fs.mkdir;
-  const originalUnlink = fs.unlink;
   t.mock.method(fs, 'mkdir', async (...args: Parameters<typeof fs.mkdir>) => {
     if (args[0] === runsDir) {
       started();
@@ -996,13 +994,11 @@ test('fixture deletion drains queued run writes before removing storage', async 
       if (args[0] === runsDir) mkdirFinished = true;
     }
   });
-  t.mock.method(fs, 'unlink', async (...args: Parameters<typeof fs.unlink>) => {
-    if (args[0] === runFile) {
-      unlinkObserved = true;
-      removedBeforeMkdir = !mkdirFinished;
-    }
-    return originalUnlink(...args);
+  // Keep deletion's independent I/O immediate so only the held writer orders completion.
+  t.mock.method(fs, 'unlink', async (file: Parameters<typeof fs.unlink>[0]) => {
+    if (file === runFile) unlinkObserved = true;
   });
+  t.mock.method(fs, 'rm', async () => {});
   syncBuiltinESMExports();
   try {
     updateRun(run.id, { summary: 'Queued fixture write' });
@@ -1011,7 +1007,7 @@ test('fixture deletion drains queued run writes before removing storage', async 
     setImmediate(release);
     await deleting;
     assert.equal(unlinkObserved, true);
-    assert.equal(removedBeforeMkdir, false, 'deletion must wait for queued persistence');
+    assert.equal(mkdirFinished, true, 'cleanup must wait for queued persistence');
     assert.equal(getRun(run.id), undefined);
   } finally {
     release();
