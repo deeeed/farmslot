@@ -888,27 +888,6 @@ test('reloadRunnerForPark fails closed when the persisted session path is gone',
   assert.equal(respawned, false);
 });
 
-test('reloadRunnerForPark refuses an empty path-based transcript before respawn', async () => {
-  const result = await reloadRunnerForPark(
-    { vars, recoveryHandle: { ...handle, runnerId: 'pi' }, initialPrompt: 'Continue' },
-    {
-      exec: async (_vars, command) => ({
-        exitCode: command.includes('test -s') ? 1 : 0,
-        stdout: command.includes('display-message') ? EXACT_PANE_ROW : '',
-        stderr: '',
-      }),
-      findRunnerPid: async () => '',
-      probeRunnerPid: paneStopped,
-      respawnPane: async () => assert.fail('An empty Pi transcript must not launch a new session'),
-      writePromptSentinel: async () => ({ digest: 'digest', sentAt: 100 }),
-      capturePromptBaseline: async () => 100,
-      sleep: async () => {},
-    },
-  );
-  assert.equal(result.ok, false);
-  assert.equal(result.status, 'session-unavailable');
-});
-
 test('reloadRunnerForPark rejects an empty continuation prompt before respawn', async () => {
   let respawned = false;
   const result = await reloadRunnerForPark(

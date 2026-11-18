@@ -20,7 +20,6 @@ import { ensureWorkerContinuationReady } from './continuation-ready.js';
 import {
   blindLaunchEnvironment,
   buildRunnerSessionReloadCommand,
-  guardedSessionReloadCommand,
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
 } from './launch-command.js';
 import { writeRunnerPromptSentinel } from './observability-sentinel.js';
@@ -39,7 +38,6 @@ import {
 import {
   findRunnerDescendantPid,
   probeRunnerDescendantPid,
-  resumableSessionContentProbeCommand,
   resumableSessionProbeCommand,
   RUNNER_PROCESS_PROBE_TIMEOUT_MS,
   RunnerProcessProbeError,
@@ -198,9 +196,7 @@ export async function inspectRunnerRecovery(
   }
   const probe = await deps.exec(
     options.vars,
-    definition.sessionContinuation.terminal?.sessionReference === 'path'
-      ? resumableSessionContentProbeCommand(options.recoveryHandle.sessionPath)
-      : resumableSessionProbeCommand(options.recoveryHandle.sessionPath),
+    resumableSessionProbeCommand(options.recoveryHandle.sessionPath),
     { timeout: sessionPathBudget },
   );
   if (probe.exitCode !== 0) {
@@ -827,7 +823,7 @@ export async function reloadRunnerForPark(
     }
     promptAcceptanceBaselineMs = baseline;
     await ensureNodeSupportBundle(options.vars, handle.runtimeDir ?? '.agent');
-    const reloadCommand = buildRunnerSessionReloadCommand(
+    command = `${WORKER_ENV_PREFIX} && ${buildRunnerSessionReloadCommand(
       options.vars,
       runnerId,
       handle.model,
@@ -842,11 +838,7 @@ export async function reloadRunnerForPark(
         blindTrialBoundary: options.blindTrialBoundary,
         modelQuestions: options.modelQuestions,
       },
-    );
-    const guarded = guardedSessionReloadCommand(runnerId, reloadCommand, {
-      sessionPath: handle.sessionPath,
-    });
-    command = `${WORKER_ENV_PREFIX} && ${guarded}`;
+    )}`;
     await deps.respawnPane(options.vars, target, command, {
       preservePaneAfterExit: true,
       blindEnvironment: options.blindTrialBoundary
