@@ -1,0 +1,1 @@
+- Drain pending run writes before fixture teardown to prevent intermittent test cleanup failures.

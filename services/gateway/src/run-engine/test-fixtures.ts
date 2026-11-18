@@ -10,7 +10,7 @@ import {
 } from '@farmslot/protocol';
 
 import { retainFixtureTask } from '../../../../packages/run-bundle/src/retained.test-support.js';
-import { deleteRun, getRun, updateRun } from '../runs/store.js';
+import { deleteRun, getRun, persistRunNow, updateRun } from '../runs/store.js';
 
 export const RECIPE_HARNESS_PROJECT_CONFIG = {
   eval_harnesses: {
@@ -192,6 +192,9 @@ export async function deleteTestRunIfPresent(runId: string): Promise<void> {
   }
 
   await deleteRun(runId);
+  // After eviction this is a write-chain barrier, without writing another run record.
+  // Wait before the caller removes its root, since queued mkdirs can recreate storage.
+  await persistRunNow(run);
 }
 
 /** Capture fixture bytes explicitly before exercising production readers. */
