@@ -8,6 +8,9 @@ import { buildGatewayPairingQrPayload } from '@farmslot/protocol';
 import { forgetLastPairing } from '../../lib/gateway-pairing-claim';
 
 const effects: Array<() => void | (() => void)> = [];
+const refs: Array<{ current: unknown }> = [];
+let refIndex = 0;
+let cameraRequests = 0;
 let buttons: AlertButton[] = [];
 const dismissed: string[] = [];
 const params: Array<{ payload: string }> = [];
@@ -43,7 +46,7 @@ const connection = {
 mock.module('react', {
   namedExports: {
     useEffect: (effect: () => void | (() => void)) => effects.push(effect),
-    useRef: (current: unknown) => ({ current }),
+    useRef: (current: unknown) => (refs[refIndex++] ??= { current }),
     useState: (value: unknown) => [value, () => undefined],
   },
 });
@@ -57,7 +60,13 @@ mock.module('expo-router', {
 });
 mock.module('expo-camera', {
   namedExports: {
-    useCameraPermissions: () => [null, () => assert.fail('Cancel cannot request a camera')],
+    useCameraPermissions: () => [
+      null,
+      async () => {
+        cameraRequests++;
+        return { granted: true };
+      },
+    ],
   },
 });
 mock.module('expo-constants', { defaultExport: { expoConfig: { extra: {} } } });
@@ -96,14 +105,21 @@ test.before(async () => {
   ({ useNativeConnectionController } = await import('./use-native-connection-controller'));
 });
 
+function renderConnection(pairingLink?: string) {
+  effects.length = 0;
+  refIndex = 0;
+  useNativeConnectionController({ pairingLink });
+  effects.forEach((effect) => effect());
+}
+
 function cancelPairing() {
   forgetLastPairing();
-  effects.length = 0;
+  refs.length = 0;
+  cameraRequests = 0;
   dismissed.length = 0;
   params.length = 0;
   buttons = [];
-  useNativeConnectionController({ pairingLink: pairingPayload });
-  effects.forEach((effect) => effect());
+  renderConnection(pairingPayload);
   const cancel = buttons.find((action) => action.text === 'Cancel');
   assert.ok(cancel?.onPress);
   cancel.onPress();
@@ -111,14 +127,20 @@ function cancelPairing() {
 
 test('cancel returns a paired profile to its connected workspace', () => {
   connection.status = 'connected';
+  connection.profiles = [profile];
   cancelPairing();
   assert.deepEqual(dismissed, ['/(tabs)/runs']);
   assert.deepEqual(params, []);
 });
 
-test('cancel consumes the request when the connection screen must stay open', () => {
+test('cancel clears an unpaired setup link without opening the camera', () => {
   connection.status = 'disconnected';
+  connection.profiles = [];
   cancelPairing();
-  assert.deepEqual(dismissed, []);
   assert.deepEqual(params, [{ payload: '' }]);
+
+  // The route turns an empty payload into an absent pairing link on the next render.
+  renderConnection(params[0]?.payload || undefined);
+  assert.deepEqual(dismissed, []);
+  assert.equal(cameraRequests, 0);
 });
