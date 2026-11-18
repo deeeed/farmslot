@@ -3093,12 +3093,9 @@ export async function pollBudgetGuardStep(params: {
   };
 }
 
-/**
- * Production budget tick: resolve the run's live session, execute the bounded
- * guard, and durably persist warning/delivery state before returning. Scripted
- * runner validation calls this same entry point against a real runner session.
- */
-export async function pollRunBudgetGuard(params: {
+const budgetNudgesInFlight = new Set<string>();
+
+interface RunBudgetGuardPoll {
   runId: string;
   slotId: string;
   maxTurns: number | null;
@@ -3112,7 +3109,33 @@ export async function pollRunBudgetGuard(params: {
   generation?: number;
   agentStatus: AgentLiveStatus;
   sendNudge: boolean;
-}): Promise<PollBudgetGuardStepResult> {
+}
+
+/**
+ * Production budget tick: resolve the run's live session, execute the bounded
+ * guard, and durably persist warning/delivery state before returning. Scripted
+ * runner validation calls this same entry point against a real runner session.
+ */
+export async function pollRunBudgetGuard(
+  params: RunBudgetGuardPoll,
+  pollBudget = pollBudgetGuardStep,
+): Promise<PollBudgetGuardStepResult> {
+  // Pause can leave a send unwinding as Resume starts another monitor. Keep
+  // this run's send slot until the first transport outcome is persisted.
+  const ownsSend = params.sendNudge && !budgetNudgesInFlight.has(params.runId);
+  if (ownsSend) budgetNudgesInFlight.add(params.runId);
+  try {
+    return await pollRunBudgetGuardState(params, pollBudget, ownsSend);
+  } finally {
+    if (ownsSend) budgetNudgesInFlight.delete(params.runId);
+  }
+}
+
+async function pollRunBudgetGuardState(
+  params: RunBudgetGuardPoll,
+  pollBudget: typeof pollBudgetGuardStep,
+  sendNudge: boolean,
+): Promise<PollBudgetGuardStepResult> {
   const run = getRun(params.runId);
   if (!run) throw new Error(`Run not found: ${params.runId}`);
   const monitorStateAtStart = run.monitorState;
@@ -3142,7 +3165,7 @@ export async function pollRunBudgetGuard(params: {
     persistedBefore.attempts > callerDelivery.attempts
       ? persistedBefore
       : callerDelivery;
-  const tick = await pollBudgetGuardStep({
+  const tick = await pollBudget({
     runId: params.runId,
     slotId: params.slotId,
     flowType: run.flowType,
@@ -3158,7 +3181,7 @@ export async function pollRunBudgetGuard(params: {
     budgetUsage:
       params.budgetUsage ?? monitorStateAtStart?.budgetUsage ?? emptyBudgetUsageSampleState(),
     agentStatus: params.agentStatus,
-    sendNudge: params.sendNudge,
+    sendNudge,
     deliverNudge: (...args) => {
       const state = getRun(params.runId)?.monitorState;
       if (state) {

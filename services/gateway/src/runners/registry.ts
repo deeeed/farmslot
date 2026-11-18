@@ -2023,6 +2023,23 @@ export function runnerPaneComposerDraftState(
 ): ComposerDraftState {
   const composerPane = runnerPaneWithoutPromptSuggestion(pane);
   if (paneShowsBusyComposer(composerPane)) return 'draft';
+  if (normalizeRunner(runnerId) === 'pi') {
+    // Pi draws an unlabeled editor above its directory and context footer.
+    // Parse only this input frame for the pre-send guard, never turn state.
+    const lines = composerPane.trimEnd().split('\n');
+    const footer = lines.map((line) => /^\s*~?\//.test(line)).lastIndexOf(true);
+    if (footer < 3 || !/(?:^|\s)(?:\d+(?:\.\d+)?%|\?)\/\d/.test(lines[footer + 1] ?? ''))
+      return 'unknown';
+    const bottom = lines[footer - 1]?.trimEnd();
+    if (!bottom || !/^─{8,}$/.test(bottom)) return 'unknown';
+    const top = lines
+      .slice(0, footer - 1)
+      .flatMap((line, index) => (line.trimEnd() === bottom ? [index] : []));
+    if (top.length !== 1 || top[0]! >= footer - 2) return 'unknown';
+    return lines.slice(top[0]! + 1, footer - 1).some((line) => line.trim().length > 0)
+      ? 'draft'
+      : 'empty';
+  }
   const markers = normalizeRunner(runnerId) === 'codex' ? ['›', '❯'] : ['❯', '›'];
   const lines = composerPane
     .split('\n')

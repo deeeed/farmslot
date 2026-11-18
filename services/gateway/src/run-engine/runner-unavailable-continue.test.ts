@@ -41,6 +41,7 @@ import {
   type MonitorObservations,
   monitorRun,
   persistMonitorWindowStart,
+  pollBudgetGuardStep,
   pollRunBudgetGuard,
   prepareWarmBudgetBaselineForHandoff,
   resolveMonitorDecision,
@@ -1043,6 +1044,69 @@ test('a settled delivery on the run wins over a caller snapshot that predates it
     'the warning was already delivered to this pane; the replacement must not start from `ok`',
   );
   assert.equal(tick.delivery.attempts, 1, 'and it keeps the attempt that was spent');
+});
+
+test('overlapping monitors cannot both spend the final budget attempt', async (t) => {
+  const f = await fixture(t, { usageBudget: true });
+  const run = getRun(f.run.id)!;
+  const initial = {
+    ...run.monitorState!,
+    budgetDelivery: {
+      phase: 'breach-pending' as const,
+      pendingMessage: 'Budget exceeded',
+      operatorMessage: null,
+      attempts: 2,
+    },
+  };
+  updateRun(f.run.id, { monitorState: initial });
+  const previousGeneration = run.engineState?.generation ?? 0;
+  let enter!: () => void;
+  let release!: () => void;
+  let nextSample!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const nextSampled = new Promise<void>((resolve) => {
+    nextSample = resolve;
+  });
+  let samples = 0;
+  let sends = 0;
+  const poll = async (params: Parameters<typeof pollBudgetGuardStep>[0]) => {
+    if (++samples === 2) nextSample();
+    if (params.sendNudge) {
+      sends += 1;
+      enter();
+      await released;
+    }
+    const tick = await pollBudgetGuardStep({ ...params, sendNudge: false });
+    return params.sendNudge
+      ? { ...tick, delivery: { ...params.delivery, phase: 'abandoned' as const, attempts: 3 } }
+      : tick;
+  };
+  const params = {
+    runId: f.run.id,
+    slotId: f.slotId,
+    maxTurns: 80,
+    maxTotalTokens: null,
+    monitorStartedAt: initial.startedAt,
+    delivery: initial.budgetDelivery,
+    generation: previousGeneration,
+    agentStatus: 'working' as const,
+    sendNudge: true,
+  };
+  const previous = pollRunBudgetGuard(params, poll);
+  await entered;
+  const nextGeneration = previousGeneration + 1;
+  updateRun(f.run.id, { engineState: { ...run.engineState, generation: nextGeneration } });
+  const next = pollRunBudgetGuard({ ...params, generation: nextGeneration }, poll);
+  await nextSampled;
+  release();
+  await Promise.all([previous, next]);
+  assert.equal(sends, 1);
+  assert.equal(getRun(f.run.id)?.monitorState?.budgetDelivery?.attempts, 3);
 });
 
 test('a retired poll preserves the replacement monitor spent attempts', async (t) => {

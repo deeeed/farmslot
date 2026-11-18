@@ -2886,6 +2886,27 @@ describe('runnerPaneComposerDraftState (ADR-032 Phase 3A fail-closed composer re
     assert.equal(runnerPaneComposerDraftState('', 'claude'), 'unknown');
   });
 
+  it('checks the framed Pi editor without using the previous turn as input', () => {
+    const rule = '─'.repeat(40);
+    const footer = '~/repo\n↑1 ↓1 5.9%/128k (auto) fixture-model\nfs idle';
+    assert.equal(
+      runnerPaneComposerDraftState(`Error: previous turn\n${rule}\n\n${rule}\n${footer}`, 'pi'),
+      'empty',
+    );
+    assert.equal(
+      runnerPaneComposerDraftState(`${rule}\npending draft\n${rule}\n${footer}`, 'pi'),
+      'draft',
+    );
+    assert.equal(
+      runnerPaneComposerDraftState(`${rule}\npending draft\n${rule}\n\n${rule}\n${footer}`, 'pi'),
+      'unknown',
+    );
+    assert.equal(
+      runnerPaneComposerDraftState(`${rule}\n\n${rule}\nold scrollback`, 'pi'),
+      'unknown',
+    );
+  });
+
   it('reports draft for a busy/queued composer', () => {
     assert.equal(runnerPaneComposerDraftState('· Composing…\n❯\n', 'claude'), 'draft');
   });
