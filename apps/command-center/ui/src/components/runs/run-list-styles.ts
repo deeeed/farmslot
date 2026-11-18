@@ -353,9 +353,6 @@ export const runListStyles = css`
   .run-row-affordances .run-progress.gate {
     color: ${unsafeCSS(colors.accent)};
   }
-  .run-row-affordances .run-progress.stale {
-    color: ${unsafeCSS(colors.statusWarn)};
-  }
   .run-row-affordances .inline-action {
     background: transparent;
     border: 1px solid ${unsafeCSS(colors.statusWarn)}66;

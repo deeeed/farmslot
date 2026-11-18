@@ -11,7 +11,6 @@ import {
   type RunStatus,
   slotMachineMap,
   type SlotStatus,
-  type TaskProgressStructured,
 } from '@farmslot/protocol';
 import { isSettledBlockedRun, selectRunList, TERMINAL_RUN_STATUSES } from '@farmslot/protocol';
 import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
@@ -23,6 +22,7 @@ import { compareInventoryValues, sortInventoryRows } from '../shared/work-invent
 import { familyLearningTimeAgo } from './family-observability-run-detail-renderers.js';
 import { type RunInventorySortKey, runInventorySortValue } from './run-list-inventory.js';
 import type { SortOption, StatusFilter, TabFilter } from './run-list-state.js';
+import { formatElapsed } from './run-utils.js';
 
 /** Runs the gateway lets `run.archive` evict: terminal, or blocked with nothing left to advance. */
 export function isArchivableRun(
@@ -47,8 +47,8 @@ export function activeRunsForGlobalFilters(
   });
 }
 
-/** An unblocked run with no progress for this long is shown as stale. */
-export const RUN_STALE_AFTER_MS = 60 * 60_000;
+/** Flag a run after this much idle time outside an operator wait. */
+export const RUN_STALE_AFTER_MS = 20 * 60_000;
 
 export interface RunProgressSummary {
   /** Latest real progress: a step, a decision, a run start or CI-watch progress. */
@@ -81,9 +81,8 @@ function heldAtMs(step: Run['steps'][number]): number {
 }
 
 // `updatedAt` moves on every write (tags, metrics, agent contexts), so it is not
-// progress. Neither is a running step's `startedAt`: a gateway restart re-enters
-// the step and rewrites it. Its real start is a status change, the previous
-// step's completion or the decision that released it; a Resume is a status change.
+// progress. Recovery can rewrite a running step's start, even on rows without
+// a status transition. Count the recorded step progress or a durable boundary.
 function lastProgressMs(run: ProgressRun): number {
   const stamps = [
     run.createdAt,
@@ -92,35 +91,38 @@ function lastProgressMs(run: ProgressRun): number {
     run.ciWatchState?.lastProgressAt,
     // Structured runner activity while the worker is monitored.
     run.monitorState?.lastStructuredProgressAt,
-    ...run.steps.flatMap((step) =>
-      step.status === 'running' ? [] : [step.startedAt, step.completedAt],
-    ),
+    ...run.steps.flatMap((step) => [
+      step.lastProgressAt,
+      step.status !== 'running' ? step.startedAt : undefined,
+      step.completedAt,
+    ]),
     ...run.decisions.flatMap((decision) => [decision.createdAt, decision.resolvedAt]),
   ].map((stamp) => (stamp ? Date.parse(stamp) : NaN));
   const held = run.steps.filter((step) => step.outputs?.awaitingOperator === true).map(heldAtMs);
   return Math.max(...[...stamps, ...held].filter(Number.isFinite));
 }
 
-/** Runs that can still move: not terminal, and not blocked with nothing left to advance. */
-export function showsRunProgress(
-  run: Pick<Run, 'status' | 'steps'> & { decisions?: ReadonlyArray<{ resolvedAt?: string }> },
-): boolean {
-  return !TERMINAL_STATUSES.has(run.status) && !isSettledBlockedRun(run);
+/** A blocked run can still be stale after its worker has stopped. */
+export function showsRunProgress(run: Pick<Run, 'status'>): boolean {
+  return !TERMINAL_STATUSES.has(run.status);
 }
 
 /** Whether an active run is moving, waiting on the operator, or stale. */
 export function runProgressSummary(
   run: ProgressRun,
   nowMs = Date.now(),
-  taskProgress?: TaskProgressStructured,
 ): RunProgressSummary | null {
+  if (!showsRunProgress(run)) return null;
   const step = run.steps.find((item) => item.status === 'running');
-  const finishedMs =
-    step?.name === 'monitor' ? Date.parse(taskProgress?.timing?.finishedAt ?? '') : NaN;
-  const lastMs = Math.max(
-    lastProgressMs(run),
-    Number.isFinite(finishedMs) ? finishedMs : -Infinity,
-  );
+  // A checklist can be held from an earlier attempt. Only the monitor's recorded
+  // completion can explain why this run is still on its monitor step.
+  const signal = step?.name === 'monitor' ? step.outputs?.workerSignal : undefined;
+  const workerFinished =
+    signal &&
+    typeof signal === 'object' &&
+    'status' in signal &&
+    (signal.status === 'complete' || signal.status === 'done');
+  const lastMs = lastProgressMs(run);
   // Every run has createdAt; a record without one valid timestamp has no clock to show.
   if (!Number.isFinite(lastMs)) return null;
   const lastProgressAt = new Date(lastMs).toISOString();
@@ -134,7 +136,8 @@ export function runProgressSummary(
   const pending = run.decisions.find((decision) => !decision.resolvedAt);
   // A blocked run's reason heads its detail; the list names what the run waits on.
   const activity = run.status === 'blocked' ? undefined : deriveRunLifecycleView(run).activityLabel;
-  if (activity) return summary(run.status === 'fixing' ? 'step' : 'gate', activity);
+  if ((run.waitingForOperator || run.status === 'needs-decision') && activity)
+    return summary('gate', activity);
   if (pending) {
     const action = pending.actions.find((item) => item.style === 'primary') ?? pending.actions[0];
     return summary('gate', action ? `${pending.title} → ${action.label}` : pending.title);
@@ -143,20 +146,24 @@ export function runProgressSummary(
   if (step?.outputs?.awaitingOperator === true)
     return summary('gate', step.detail ?? 'Waiting for operator action');
   if (run.status === 'paused') return summary('gate', 'Paused');
+  if (run.status === 'human-gating' || run.status === 'needs-decision')
+    return summary('gate', activity ?? 'Waiting for a decision');
   // Blocked with nothing running or pending but not settled: an uncertain prompt
   // delivery or worker operation is held for the operator to reconcile.
   if (run.status === 'blocked' && !step && !isSettledBlockedRun(run)) {
     const held = run.steps.find((item) => item.status === 'failed');
     return summary('gate', held?.detail ?? 'Waiting for the operator to reconcile the worker');
   }
-  const stale = nowMs - lastMs >= RUN_STALE_AFTER_MS;
-  if (Number.isFinite(finishedMs))
+  if (nowMs - lastMs > RUN_STALE_AFTER_MS) {
+    const elapsed = formatElapsed(lastProgressAt, nowMs);
     return summary(
-      stale ? 'stale' : 'step',
-      `${stale ? 'Stale: ' : ''}Worker finished; monitor has not advanced`,
+      'stale',
+      `Stale · no progress for ${elapsed}${workerFinished ? ' · Worker finished; monitor has not advanced' : ''}`,
     );
-  if (stale)
-    return summary('stale', `Stale: no progress for ${lastProgressAgo.replace(/ ago$/u, '')}`);
+  }
+  if (isSettledBlockedRun(run)) return null;
+  if (activity) return summary('step', activity);
+  if (workerFinished) return summary('step', 'Worker finished; monitor has not advanced');
   return step
     ? summary('step', step.detail ? `${step.name}: ${step.detail}` : step.name)
     : summary('none', '');
