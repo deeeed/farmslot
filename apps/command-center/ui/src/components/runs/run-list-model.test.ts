@@ -539,6 +539,45 @@ test('run progress keeps a recorded worker finish through monitor replay and rea
   assertMatchKind(nextStep, 'step', 'review');
 });
 
+test('a stale blocked run shows a recorded worker finish only if it stopped at monitor', () => {
+  // The worker completed at 13:14, then push verification blocked the run at 13:22.
+  const stoppedAt = '2026-11-18T13:22:00.000Z';
+  const now = Date.parse('2026-11-18T13:56:00.000Z');
+  const monitor = {
+    name: 'monitor',
+    status: 'done' as const,
+    completedAt: stoppedAt,
+    outputs: {
+      workerSignal: {
+        status: 'complete',
+        timestamp: '2026-11-18T13:14:00.000Z',
+        attemptId: 'worker',
+      },
+      pushVerification: { verified: false, aborted: false },
+    },
+  };
+  const review = { name: 'review', status: 'skipped' as const };
+  const complete = { name: 'complete', status: 'pending' as const };
+  const blocked = run('blocked-worker', {
+    status: 'blocked',
+    statusChangedAt: stoppedAt,
+    steps: [monitor, review, complete],
+  });
+  const finished = summarize(blocked, now);
+  assertMatchKind(finished, 'stale', 'Stale · no progress for 34m · Worker finished');
+  assert.equal(finished.lastProgressAt, stoppedAt);
+  assert.equal(runProgressSummary(blocked, Date.parse(stoppedAt) + 20 * 60_000), null);
+
+  for (const steps of [
+    [monitor, { ...review, status: 'failed' as const }, complete],
+    [monitor, { ...review, status: 'running' as const }, complete],
+    [{ ...monitor, outputs: { workerSignal: { status: 'blocked' } } }, review, complete],
+    [{ ...monitor, outputs: undefined }, review, complete],
+  ]) {
+    assertMatchKind(summarize({ ...blocked, steps }, now), 'stale', 'Stale · no progress for 34m');
+  }
+});
+
 test('run progress: a restart re-entering a step is not progress; a Resume is', () => {
   const now = Date.parse('2026-05-14T03:00:00.000Z');
   const ciWatch = (statusChangedAt: string) =>
