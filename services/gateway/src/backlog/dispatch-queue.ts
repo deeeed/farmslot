@@ -1579,6 +1579,16 @@ async function selectQueuedReviewWorkspace(
         { ...choice, model: execution.model },
         ownerId,
         admission.executionNodeId,
+        undefined,
+        // One placed machine is this item's launch, so a host restarting on it is
+        // worth the rest of this claim. While candidates are still being priced,
+        // an unavailable host yields to the next choice instead of holding them all.
+        candidates.length === 1 && item.reviewWorkspaceTarget
+          ? Math.max(0, Date.parse(claim.expiresAt) - Date.now())
+          : 0,
+        // A claim taken over elsewhere ends the wait: the dispatcher is single
+        // flight, so probing on for a claim we lost holds every other item.
+        () => assertQueueClaimHeld(claim, 'native-host-wait'),
       );
       eligible = true;
       assertQueueClaimHeld(claim, 'workspace-selection');

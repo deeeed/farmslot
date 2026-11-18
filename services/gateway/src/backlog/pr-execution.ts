@@ -76,6 +76,9 @@ export async function resolvePRExecution(
           model: executionModelFromSelection(choice).model,
         };
         const admission = await inspectReviewWorkspaceTarget(target, context.ownerId);
+        // Every authorized choice is priced for one list of options, so this keeps the
+        // default of no host wait: a restarting host loses its place here instead of
+        // making the operator wait once per machine.
         await assertReviewNativeRunnerHealthy(target, context.ownerId, admission.executionNodeId);
         supported.push(choice);
       } catch (error) {
