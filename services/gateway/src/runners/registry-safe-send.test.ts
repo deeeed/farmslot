@@ -2773,11 +2773,19 @@ test('Pi retry receipt is pinned to both the saved conversation and the failed t
 test('Pi refuses to touch the pane when the retained conversation changes before input', async (t) => {
   const observer = getRunnerObservability('pi');
   assert.ok(observer);
-  const original = observer.getSessionDeliveryState;
-  observer.getSessionDeliveryState = async () => null;
-  t.after(() => {
-    observer.getSessionDeliveryState = original;
-  });
+  const original = {
+    getSessionDeliveryState: observer.getSessionDeliveryState,
+    capturePromptAcceptanceBaseline: observer.capturePromptAcceptanceBaseline,
+  };
+  let switched = false;
+  observer.getSessionDeliveryState = async () =>
+    switched ? null : { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  observer.capturePromptAcceptanceBaseline = async () => {
+    switched = true;
+    return Date.now();
+  };
+  t.after(() => Object.assign(observer, original));
+
   callOrder.length = 0;
   assert.equal(
     await submitRunnerPrompt(vars, target, 'pi', message, {

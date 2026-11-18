@@ -2916,6 +2916,16 @@ describe('runnerPaneComposerDraftState (ADR-032 Phase 3A fail-closed composer re
     );
   });
 
+  it('never uses a previously failed Pi prompt as buffered input', () => {
+    const rule = '─'.repeat(40);
+    const previous = 'Continue the task';
+    const footer = '~/repo\n↑1 ↓1 5.9%/128k (auto) fixture-model';
+    const failed = `${previous}\nError: timeout\n${rule}\n\n${rule}\n${footer}`;
+    assert.equal(runnerPaneHasBufferedInstruction(failed, previous, 'pi'), false);
+    const waiting = `${rule}\n ${previous}\n${rule}\n${footer}`;
+    assert.equal(runnerPaneHasBufferedInstruction(waiting, previous, 'pi'), true);
+  });
+
   it('reports draft for a busy/queued composer', () => {
     assert.equal(runnerPaneComposerDraftState('· Composing…\n❯\n', 'claude'), 'draft');
   });

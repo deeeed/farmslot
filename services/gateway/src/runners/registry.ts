@@ -2035,6 +2035,32 @@ export function paneShowsBusyComposer(pane: string): boolean {
  */
 export type ComposerDraftState = 'draft' | 'empty' | 'unknown';
 
+function readPiComposer(pane: string): string | null {
+  // Pi draws an unlabeled editor above its directory and context footer.
+  // The cursor cell confirms which blank frame is live when scrollback also has rails.
+  const rawLines = pane.trimEnd().split('\n');
+  const lines = runnerPaneWithoutPromptSuggestion(pane).trimEnd().split('\n');
+  const footer = lines.map((line) => /^\s*~?\//.test(line)).lastIndexOf(true);
+  if (footer < 3 || !/(?:^|\s)(?:\d+(?:\.\d+)?%|\?)\/\d/.test(lines[footer + 1] ?? '')) return null;
+  const bottom = lines[footer - 1]?.trimEnd();
+  if (!bottom || !/^─{8,}$/.test(bottom)) return null;
+  const candidates = lines
+    .slice(0, footer - 1)
+    .flatMap((line, index) => (line.trimEnd() === bottom ? [index] : []));
+  const top = candidates.at(-1);
+  if (top === undefined || top >= footer - 2) return null;
+  const input = lines.slice(top + 1, footer - 1);
+  if (candidates.length > 1 && !input.some((line) => line.trim().length > 0)) {
+    // A shell command can draw the same rails in the preceding transcript.
+    // Pi indents and wraps editor input. An unindented full-width rail cannot
+    // be a draft row. Require the reverse-video caret in the nearest blank
+    // frame before permitting input when earlier rails are ambiguous.
+    const caret = rawLines[top + 1] ?? '';
+    if (input.length !== 1 || !/^\s*\x1b\[(?:0;)?7m \x1b\[0m\s*$/.test(caret)) return null;
+  }
+  return input.join('\n').trim();
+}
+
 export function runnerPaneComposerDraftState(
   pane: string,
   runnerId?: string | null,
@@ -2042,31 +2068,8 @@ export function runnerPaneComposerDraftState(
   const composerPane = runnerPaneWithoutPromptSuggestion(pane);
   if (paneShowsBusyComposer(composerPane)) return 'draft';
   if (normalizeRunner(runnerId) === 'pi') {
-    // Pi draws an unlabeled editor above its directory and context footer.
-    // The cursor cell confirms which blank frame is live when scrollback also has rails.
-    const rawLines = pane.trimEnd().split('\n');
-    const lines = composerPane.trimEnd().split('\n');
-    const footer = lines.map((line) => /^\s*~?\//.test(line)).lastIndexOf(true);
-    if (footer < 3 || !/(?:^|\s)(?:\d+(?:\.\d+)?%|\?)\/\d/.test(lines[footer + 1] ?? ''))
-      return 'unknown';
-    const bottom = lines[footer - 1]?.trimEnd();
-    if (!bottom || !/^─{8,}$/.test(bottom)) return 'unknown';
-    const candidates = lines
-      .slice(0, footer - 1)
-      .flatMap((line, index) => (line.trimEnd() === bottom ? [index] : []));
-    const top = candidates.at(-1);
-    if (top === undefined || top >= footer - 2) return 'unknown';
-    const input = lines.slice(top + 1, footer - 1);
-    if (input.some((line) => line.trim().length > 0)) return 'draft';
-    if (candidates.length > 1) {
-      // A shell command can draw the same rails in the preceding transcript.
-      // Pi indents and wraps editor input. An unindented full-width rail cannot
-      // be a draft row. Require the reverse-video caret in the nearest blank
-      // frame before permitting input when earlier rails are ambiguous.
-      const caret = rawLines[top + 1] ?? '';
-      if (input.length !== 1 || !/^\s*\x1b\[(?:0;)?7m \x1b\[0m\s*$/.test(caret)) return 'unknown';
-    }
-    return 'empty';
+    const input = readPiComposer(pane);
+    return input === null ? 'unknown' : input ? 'draft' : 'empty';
   }
   const markers = normalizeRunner(runnerId) === 'codex' ? ['›', '❯'] : ['❯', '›'];
   const lines = composerPane
@@ -2337,6 +2340,10 @@ export function runnerPaneHasBufferedInstruction(
   message: string,
   runnerId?: string | null,
 ): boolean {
+  if (normalizeRunner(runnerId) === 'pi') {
+    const input = readPiComposer(pane);
+    return !!input && normalizeInstructionText(input) === normalizeInstructionText(message);
+  }
   if (runnerPaneShowsSubmittedInstruction(pane, message, runnerId)) return false;
   if (runnerPaneHasPendingInstruction(pane, message, runnerId)) return true;
   if (normalizeRunner(runnerId) === 'claude') return false;
@@ -3017,7 +3024,11 @@ async function pasteRunnerPromptInput(
   target: string,
   runner: string,
   message: string,
-  observation: { beforeInput?: () => Promise<void>; afterSubmit?: () => Promise<void> } = {},
+  observation: {
+    beforeInput?: () => Promise<void>;
+    verifyInputTarget?: () => Promise<void>;
+    afterSubmit?: () => Promise<void>;
+  } = {},
 ): Promise<ExecResult> {
   let inputStarted = false;
   let pasteCompleted = false;
@@ -3031,6 +3042,7 @@ async function pasteRunnerPromptInput(
           if (!inputStarted) {
             await observation.beforeInput?.();
             await promptMutationStore.getStore()?.started();
+            await observation.verifyInputTarget?.();
           }
           inputStarted = true;
           return command;
@@ -3093,21 +3105,7 @@ export async function submitRunnerPrompt(
         // These callbacks run inside the resolved pane's existing paste queue. Another send
         // must not take its clock boundary or type while this receipt is still pending.
         beforeInput: async () => {
-          if (retainedSession && runner === 'pi') {
-            const live = await observability.getSessionDeliveryState(
-              vars,
-              target,
-              retainedSession.sessionId,
-              retainedSession.sessionPath,
-            );
-            if (live?.confidence !== 'high' || live.value === 'unknown') {
-              boundaryUnavailable = true;
-              throw new Error('The retained runner session is no longer in this pane');
-            }
-          } else {
-            retainedSession ??=
-              (await observability.getSessionBinding?.(vars, target)) ?? undefined;
-          }
+          retainedSession ??= (await observability.getSessionBinding?.(vars, target)) ?? undefined;
           const captured = await captureRunnerPromptAcceptanceBaseline(vars, target, runner);
           if (captured === null) {
             boundaryUnavailable = true;
@@ -3115,6 +3113,22 @@ export async function submitRunnerPrompt(
           }
           sinceMs = captured;
         },
+        verifyInputTarget:
+          runner === 'pi'
+            ? async () => {
+                if (!retainedSession) return;
+                const live = await observability.getSessionDeliveryState(
+                  vars,
+                  target,
+                  retainedSession.sessionId,
+                  retainedSession.sessionPath,
+                );
+                if (live?.confidence !== 'high' || live.value === 'unknown') {
+                  boundaryUnavailable = true;
+                  throw new Error('The retained runner session is no longer in this pane');
+                }
+              }
+            : undefined,
         afterSubmit: async () => {
           // A bare Enter can submit an existing draft, but its text is unknown here.
           if (!message.trim()) return;
