@@ -115,35 +115,42 @@ export async function sendBackCompletion(
     delivery = undefined;
   if (delivery && (delivery.slotId !== slotId || delivery.contextId !== context.id || !recorded.ok))
     throw new Error('The retained completion feedback belongs to another worker');
-  // A changed note is refused while the retained delivery may be in the worker's
-  // hands, and `startedAt` is that line — not `confirmed`.
+  // A changed note used to be refused for any retained delivery, which left run
+  // 09501e29 with no move at all: its feedback was typed into the pane
+  // (`startedAt` set) but never confirmed, the worker never wrote a new signal,
+  // and its card was answered another way — so the instruction could neither be
+  // retried (its card is gone) nor replaced (this refusal). Every later
+  // send-back that worded its feedback differently was refused, permanently.
   //
-  // `recordPending` writes `startedAt` before the transport call and only a
-  // `not-attempted` outcome clears it, so a retained delivery that still carries
-  // one was typed into a composer, or durably queued on a native host, and its
-  // text can arrive later. Replacing it there would put two versions of the same
-  // feedback in front of the worker, in queue order, with nothing that says the
-  // second supersedes the first.
+  // What replacing has to answer for is the worker seeing two versions of the
+  // same feedback: `recordPending` writes `startedAt` before the transport call
+  // and only a `not-attempted` outcome clears it, so a delivery carrying one was
+  // typed into a composer or durably queued, and its text can still arrive.
   //
-  // Without `startedAt` nothing was ever handed over, so there is nothing to
-  // reconcile — and refusing left the operator no move at all: on run 09501e29 a
-  // delivery that was never attempted, whose card was then answered another way,
-  // refused every later send-back that worded its feedback differently,
-  // permanently. Its instruction can only be retried for a card that no longer
-  // exists, so a new note replaces it.
+  // So the replacement says so in band. A delivery that was handed over is
+  // withdrawn by name in the new instruction, and the run records what it
+  // replaced; one that was never attempted is simply dropped. A CONFIRMED
+  // delivery still refuses: the worker is known to be working from that wording,
+  // and the operator reconciles it rather than withdrawing it underneath them.
+  let superseded: CompletionDelivery | undefined;
   if (delivery && note !== undefined && note !== delivery.note) {
-    if (delivery.confirmed || delivery.startedAt !== undefined)
+    if (delivery.confirmed)
       throw new Error(
         'Reconcile the retained completion feedback before changing its operator note',
       );
+    if (delivery.startedAt !== undefined) superseded = delivery;
     console.warn(
-      `[send-back] run ${run.id.slice(0, 8)} — replacing untouched feedback ${delivery.key} with this card's note; its delivery was never attempted`,
+      `[send-back] run ${run.id.slice(0, 8)} — ${superseded ? 'withdrawing' : 'dropping'} feedback ${delivery.key} in favour of this card's note`,
     );
     delivery = undefined;
   }
   const probe = await probeWorkerSignalForRun(run.id, slotId, context);
+  // A withdrawn delivery leaves the same stale signal behind it: the worker
+  // never wrote a new one, which is why its instruction was still outstanding.
+  // Replacing that instruction is exactly the case that has to be allowed to
+  // proceed on it, so the withdrawal keeps the allowance the retry had.
   const resumingStale =
-    delivery &&
+    (delivery || superseded) &&
     recorded.ok &&
     probe.code === 'stale' &&
     probe.signal?.timestamp === recorded.signal.timestamp &&
@@ -165,6 +172,13 @@ export async function sendBackCompletion(
     confirmed: false,
     ...(note ? { note } : {}),
     text: [
+      // Named, not just "ignore the previous message": the earlier text may
+      // arrive after this one, so the worker needs to recognise which to drop.
+      ...(superseded
+        ? [
+            `An earlier instruction for this task is withdrawn. If a message arrives, or has arrived, that says "Completion was refused" and${superseded.note ? ` carries the operator feedback "${superseded.note}"` : ' carries no operator feedback'}, ignore it and follow this one instead.`,
+          ]
+        : []),
       'Completion was refused. Fix the following problem in this task:',
       feedback,
       ...(note ? [`Operator feedback: ${note}`] : []),
@@ -187,6 +201,34 @@ export async function sendBackCompletion(
           ...previousOutputs,
           completionSendBackSignal: baseline,
           completionSendBackDelivery: next,
+          // History, so a run that was told two things shows both: the withdrawn
+          // instruction is otherwise overwritten and only the log would know.
+          ...(superseded
+            ? {
+                completionSendBackWithdrawn: [
+                  // This runs for each persist of the same send-back (pending,
+                  // then delivered), so the entry is replaced, not stacked.
+                  ...(Array.isArray(previousOutputs?.completionSendBackWithdrawn)
+                    ? previousOutputs.completionSendBackWithdrawn.filter(
+                        (entry) =>
+                          !(
+                            entry &&
+                            typeof entry === 'object' &&
+                            'key' in entry &&
+                            (entry as { key?: unknown }).key === superseded.key
+                          ),
+                      )
+                    : []),
+                  {
+                    key: superseded.key,
+                    ...(superseded.note ? { note: superseded.note } : {}),
+                    startedAt: superseded.startedAt,
+                    withdrawnAt: new Date().toISOString(),
+                    withdrawnBy: next.key,
+                  },
+                ],
+              }
+            : {}),
         },
       });
       try {

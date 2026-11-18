@@ -1146,12 +1146,15 @@ test('a send-back is not blocked forever by an unattempted delivery of an answer
   });
 });
 
-// The other side of that line, which both reviewers asked for: a retained
-// delivery that was typed, submitted or durably queued carries `startedAt`, and
-// its text can still reach the worker. Replacing it would put two versions of
-// the same feedback in front of the worker in queue order, so a changed note
-// still refuses there and the operator reconciles instead.
-test('a changed note still refuses a delivery that was already handed over', async () => {
+// Codex r2 on #2354 read the real run record: 09501e29's delivery has
+// `startedAt: 1794973740931` and the archived transcript shows the instruction
+// reached the worker as a user message, so the incident is on the *guarded*
+// side of a `startedAt` test, not the untouched side. My r1 premise was wrong.
+// The worker also never wrote a newer signal, so the "operation is over" rule
+// never fires either: the instruction can be neither retried (its card is gone)
+// nor replaced. What replacement owes is telling the worker which message to
+// follow, so a handed-over delivery is withdrawn by name in the new text.
+test('a handed-over delivery is withdrawn by name when the next card changes the note', async () => {
   await heldQa();
   delivery = 'queued';
   await assert.rejects(
@@ -1159,7 +1162,7 @@ test('a changed note still refuses a delivery that was already handed over', asy
       runId: run.id,
       decisionId: pending().id,
       actionId: 'send-back',
-      reason: 'First note.',
+      reason: 'Keep the video.',
     }),
     /delivery is queued/,
   );
@@ -1168,18 +1171,57 @@ test('a changed note still refuses a delivery that was already handed over', asy
   assert.ok(handed && typeof handed === 'object' && 'startedAt' in handed);
   assert.ok(
     (handed as { startedAt?: number }).startedAt,
-    'a queued delivery keeps its window: the text is in the host queue',
+    'the first delivery was handed over: that is the case this covers',
   );
 
+  // The card is answered another way and the hold comes back, with no new worker
+  // signal — exactly 09501e29's state.
   delivery = 'confirmed';
-  currentSignal = { ...priorSignal, timestamp: '2026-10-28T00:16:01.000Z' };
+  run.decisions = [await buildResultDecision(run, 'complete')];
+  const second = pending().id;
+  await resolveResultDecision({
+    runId: run.id,
+    decisionId: second,
+    actionId: 'send-back',
+    reason: 'Replace the video.',
+  });
+
+  const sent = feedback.at(-1);
+  assert.equal(sent?.key, `completion-send-back:${second}`, 'the new card owns the delivery');
+  assert.match(sent?.text ?? '', /An earlier instruction for this task is withdrawn/);
+  assert.match(
+    sent?.text ?? '',
+    /carries the operator feedback "Keep the video\."/,
+    'the withdrawal names the instruction it replaces, since that text can still arrive',
+  );
+  assert.match(sent?.text ?? '', /Replace the video\./);
+  const withdrawn = run.steps.find((step) => step.name === S.DISPATCH)?.outputs
+    ?.completionSendBackWithdrawn;
+  assert.ok(Array.isArray(withdrawn) && withdrawn.length === 1, 'the run records what it withdrew');
+});
+
+// A confirmed delivery still refuses: the worker is known to be working from
+// that wording, so the operator reconciles rather than withdrawing it underneath.
+test('a changed note still refuses a confirmed delivery', async () => {
+  await heldQa();
+  await resolveResultDecision({
+    runId: run.id,
+    decisionId: pending().id,
+    actionId: 'send-back',
+    reason: 'First note.',
+  });
+  const saved = run.steps.find((step) => step.name === S.DISPATCH)?.outputs
+    ?.completionSendBackDelivery;
+  assert.ok(saved && typeof saved === 'object' && 'confirmed' in saved);
+  assert.equal(saved.confirmed, true);
+
   run.decisions = [await buildResultDecision(run, 'complete')];
   await assert.rejects(
     resolveResultDecision({
       runId: run.id,
       decisionId: pending().id,
       actionId: 'send-back',
-      reason: 'Second note, while the first may still arrive.',
+      reason: 'Second note.',
     }),
     /Reconcile the retained completion feedback/,
   );
