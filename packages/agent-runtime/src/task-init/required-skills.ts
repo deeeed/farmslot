@@ -8,6 +8,8 @@ import path from 'node:path';
 
 import {
   type FrozenRequiredSkill,
+  parseReviewRulePack,
+  type RequiredSkillReview,
   type RequiredSkillRule,
   type RequiredSkillsConfig,
   type RequiredSkillSelectionInput,
@@ -18,6 +20,7 @@ export interface SelectedRequiredSkill {
   name: string;
   rules: string[];
   files: string[];
+  review?: RequiredSkillReview;
 }
 
 export interface RequiredSkillSelection {
@@ -67,6 +70,13 @@ export function selectRequiredSkills(
       const entry = skills.get(skill.name) ?? { name: skill.name, rules: [], files: [] };
       if (!entry.rules.includes(rule.id)) entry.rules.push(rule.id);
       for (const file of skill.files) if (!entry.files.includes(file)) entry.files.push(file);
+      if (skill.review) {
+        if (entry.review && JSON.stringify(entry.review) !== JSON.stringify(skill.review))
+          throw new RequiredSkillsError(
+            `Required skill ${skill.name} declares two different review packs (rules ${[...entry.rules].join(', ')}); declare one.`,
+          );
+        entry.review = skill.review;
+      }
       skills.set(skill.name, entry);
     }
   }
@@ -81,6 +91,36 @@ function digest(repoRoot: string, relative: string): string | null {
   const file = path.join(repoRoot, relative);
   if (!existsSync(file) || !statSync(file).isFile()) return null;
   return createHash('sha256').update(readFileSync(file)).digest('hex');
+}
+
+/**
+ * Digest and validate a declared pack from one read, or null when it is not
+ * installed. A declared pack that cannot be used never falls back to the
+ * generic review.
+ */
+function readPack(
+  repoRoot: string,
+  relative: string,
+): { sha256: string; problem: string | null } | null {
+  const file = path.join(repoRoot, relative);
+  if (!existsSync(file) || !statSync(file).isFile()) return null;
+  const bytes = readFileSync(file);
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  let value: unknown;
+  try {
+    value = JSON.parse(bytes.toString('utf8'));
+  } catch {
+    return { sha256, problem: 'is not valid JSON' };
+  }
+  try {
+    parseReviewRulePack(value);
+    return { sha256, problem: null };
+  } catch (error) {
+    return {
+      sha256,
+      problem: `is invalid: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
 }
 
 /** Freeze the selection against the checkout; refuses when any required file is absent. */
@@ -99,11 +139,26 @@ export function freezeRequiredSkills(
       if (sha256 === null) missing.push(relative);
       return { path: relative, sha256: sha256 ?? '' };
     });
+    let review: FrozenRequiredSkill['review'];
+    if (skill.review) {
+      const relative = skillPath(config, skill.name, skill.review.pack);
+      const pack = readPack(repoRoot, relative);
+      if (pack === null) missing.push(relative);
+      else {
+        if (pack.problem)
+          gaps.push(`Required skill ${skill.name} review pack ${relative} ${pack.problem}.`);
+        review = {
+          pack: { path: relative, sha256: pack.sha256 },
+          client: skill.review.client,
+          level: skill.review.level,
+        };
+      }
+    }
     if (missing.length)
       gaps.push(
         `Required skill ${skill.name} (rule ${skill.rules.join(', ')}) is not installed: missing ${missing.join(', ')}.`,
       );
-    return { name: skill.name, rules: skill.rules, files };
+    return { name: skill.name, rules: skill.rules, files, ...(review ? { review } : {}) };
   });
   if (gaps.length) throw new RequiredSkillsError(`${gaps.join(' ')} ${REQUIRED_SKILLS_REPAIR}`);
   return {
@@ -118,7 +173,7 @@ export function freezeRequiredSkills(
 export function checkRequiredSkills(repoRoot: string, set: RequiredSkillSet): RequiredSkillsCheck {
   const missing: RequiredSkillGap[] = [];
   for (const skill of set.skills)
-    for (const file of skill.files) {
+    for (const file of skill.review ? [...skill.files, skill.review.pack] : skill.files) {
       const sha256 = digest(repoRoot, file.path);
       if (sha256 !== file.sha256)
         missing.push({
