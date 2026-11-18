@@ -53,6 +53,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/ci-setup
         with:
+          reuse-validated-install: 'true'
           lint-cache: ${{ matrix.lint && 'true' || 'false' }}
       - uses: actions/download-artifact@v4
         with:
@@ -77,10 +78,10 @@ jobs:
     name: ${{ github.event_name == 'workflow_dispatch' && 'Replay results' || 'PR quality gates' }}
     if: always()
     needs: [prepare, checks]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-slim
     timeout-minutes: 5
     steps:
-      # Receipt verification uses only built-in Node modules and these two files.
+      # Receipt verification uses only built-in Node modules and the sparse checkout.
       - uses: actions/checkout@v6
         with:
           sparse-checkout: |
