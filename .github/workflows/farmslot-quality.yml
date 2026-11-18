@@ -25,6 +25,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
+      inline_plan: ${{ steps.plan.outputs.inline_plan }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -56,12 +57,14 @@ jobs:
           reuse-validated-install: 'true'
           lint-cache: ${{ matrix.lint && 'true' || 'false' }}
       - uses: actions/download-artifact@v4
+        if: needs.prepare.outputs.inline_plan == ''
         with:
           name: pr-ci-plan
           path: .cache/pr-ci
       - name: Run assigned checks once
         env:
           CI_JOB_ID: ${{ matrix.id }}
+          CI_INLINE_PR_PLAN: ${{ needs.prepare.outputs.inline_plan }}
         run: node scripts/quality/pr-ci-run.mjs "$CI_JOB_ID"
       - name: Retain check receipts and test timings
         if: always()
@@ -90,6 +93,7 @@ jobs:
             /scripts/quality/lib/latest-attempts.mjs
           sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@v4
+        if: needs.prepare.outputs.inline_plan == ''
         with:
           name: pr-ci-plan
           path: .cache/pr-ci
@@ -100,6 +104,7 @@ jobs:
       - name: Require every selected check and test receipt
         env:
           CI_MATRIX_RESULT: ${{ needs.checks.result }}
+          CI_INLINE_PR_PLAN: ${{ needs.prepare.outputs.inline_plan }}
         run: |
           node --version
           node scripts/quality/pr-ci-run.mjs verify

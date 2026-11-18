@@ -5,6 +5,7 @@ import {
   balance,
   balanceTestShards,
   estimateTestMs,
+  inlinePlanOutput,
   packPrTasks,
   withoutBuilds,
 } from './pr-ci-plan.mjs';
@@ -351,15 +352,23 @@ test('PR scope excludes main advances present in the synthetic merge checkout', 
   );
 });
 
-test('worker scopes the selection filter to suite commands and clears it for CI contracts', async (t) => {
+test('large encoded plans fall back to artifact transport', async () => {
+  const { randomBytes } = await import('node:crypto');
+  assert.equal(
+    inlinePlanOutput(JSON.stringify({ fixture: randomBytes(100_000).toString('base64') })),
+    '',
+  );
+});
+
+test('inline plan works without an artifact and keeps selection scoped to suite commands', async (t) => {
   const { spawnSync } = await import('node:child_process');
-  const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } = await import('node:fs');
+  const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, renameSync, rmSync } =
+    await import('node:fs');
   const { tmpdir } = await import('node:os');
   const path = await import('node:path');
   const { fileURLToPath } = await import('node:url');
   const root = mkdtempSync(path.join(tmpdir(), 'ci-worker-env-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  mkdirSync(path.join(root, '.cache/pr-ci'), { recursive: true });
   const tasks = [
     {
       id: 'contract',
@@ -367,7 +376,7 @@ test('worker scopes the selection filter to suite commands and clears it for CI 
       args: [
         process.execPath,
         '-e',
-        "require('node:assert/strict').equal(process.env.FARMSLOT_CI_TEST_SELECTION, undefined); require('node:assert/strict').equal(process.env.FARMSLOT_QUALITY_TIMINGS_DIR, undefined); require('node:fs').writeFileSync(process.argv[1], JSON.stringify({ status: 'failed', files: [] }))",
+        "require('node:assert/strict').equal(process.env.FARMSLOT_CI_TEST_SELECTION, undefined); require('node:assert/strict').equal(process.env.FARMSLOT_QUALITY_TIMINGS_DIR, undefined); require('node:assert/strict').equal(process.env.CI_INLINE_PR_PLAN, undefined); require('node:fs').writeFileSync(process.argv[1], JSON.stringify({ status: 'failed', files: [] }))",
         path.join(root, '.cache/pr-ci/timings/contract/tsx-tests-fixture.json'),
       ],
     },
@@ -382,25 +391,33 @@ test('worker scopes the selection filter to suite commands and clears it for CI 
       ],
     },
   ];
-  writeFileSync(
-    path.join(root, '.cache/pr-ci/plan.json'),
-    JSON.stringify({ selected: [], jobs: [{ id: 'environment', tasks }] }),
-  );
-  const result = spawnSync(
-    process.execPath,
-    [fileURLToPath(new URL('./pr-ci-run.mjs', import.meta.url)), 'environment'],
-    {
-      cwd: root,
-      encoding: 'utf8',
-      env: { ...process.env, FARMSLOT_CI_TEST_SELECTION: 'inherited-filter.json' },
-    },
-  );
+  const json = JSON.stringify({ selected: [], jobs: [{ id: 'environment', tasks }] });
+  const worker = fileURLToPath(new URL('./pr-ci-run.mjs', import.meta.url));
+  const env = { ...process.env, CI_INLINE_PR_PLAN: inlinePlanOutput(json) };
+  const result = spawnSync(process.execPath, [worker, 'environment'], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...env, FARMSLOT_CI_TEST_SELECTION: 'inherited-filter.json' },
+  });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.equal(
     JSON.parse(readFileSync(path.join(root, '.cache/pr-ci/receipts/environment.json'), 'utf8'))
       .status,
     'ok',
   );
+  const results = path.join(root, '.cache/pr-ci/results/pr-ci-environment-attempt-1');
+  mkdirSync(results, { recursive: true });
+  renameSync(path.join(root, '.cache/pr-ci/receipts'), path.join(results, 'receipts'));
+  for (const inline of [env.CI_INLINE_PR_PLAN, '']) {
+    if (!inline) writeFileSync(path.join(root, '.cache/pr-ci/plan.json'), json);
+    const verified = spawnSync(process.execPath, [worker, 'verify'], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...env, CI_INLINE_PR_PLAN: inline, CI_MATRIX_RESULT: 'success' },
+    });
+    assert.equal(verified.status, 0, verified.stdout + verified.stderr);
+    assert.match(verified.stdout, /Verified 1 jobs/);
+  }
 });
 
 test('script batches keep native Node tests separate from typed tests', async () => {
