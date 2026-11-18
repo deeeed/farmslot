@@ -287,13 +287,11 @@ test('a skip can never cover another family: one family per step, one step per f
   );
 });
 
-test('a family missing from the checklist is refused unless another client overlay holds it', () => {
+test('a selected family must have its step; a skipped one the checklist lacks gets a visible step', () => {
   const withoutPro = CHECKLIST.replace('#pro-mode-ui-gating', '#elsewhere');
-  assert.throws(
-    () => markUnselectedFamilies(withoutPro, pack, REVIEW, SELECTION),
-    /no step linking references\/shared\.md#pro-mode-ui-gating, which this mobile review needs/,
-  );
-  // On a core review the mobile-only family belongs to the mobile overlay: absent and unselected is fine.
+  // On a core review the mobile-only family lives in the mobile overlay. It is
+  // not dropped: it gets an optional step carrying the reason, and later steps
+  // are renumbered so mark targets stay positional.
   const core = { ...REVIEW, client: 'core' } as const;
   const coreSelection = selectionFor(
     [
@@ -302,7 +300,12 @@ test('a family missing from the checklist is refused unless another client overl
     ],
     { client: 'core' },
   );
-  assert.equal(markUnselectedFamilies(withoutPro, pack, core, coreSelection), withoutPro);
+  const marked = markUnselectedFamilies(withoutPro, pack, core, coreSelection);
+  assert.match(
+    marked,
+    /^- \[ \] 2\. Blocking review checks\n {2}Every confirmed violation is blocking\. See references\/shared\.md#blocking-review-checks\n- \[ \] 3\. Pro Mode UI Gating \[OPTIONAL: not selected: no core areas\]\n {2}Not in the core checklist\. See references\/shared\.md#pro-mode-ui-gating\n- \[ \] 4\. Pro Mode UI Gating\n/m,
+  );
+  assert.match(marked, /^- \[ \] 5\. Write the verdict$/m);
   assert.throws(
     () =>
       markUnselectedFamilies(
@@ -311,14 +314,13 @@ test('a family missing from the checklist is refused unless another client overl
         core,
         coreSelection,
       ),
-    /no step linking references\/shared\.md#blocking-review-checks, which this core review needs/,
+    /no step linking references\/shared\.md#blocking-review-checks, which this core review selected/,
   );
 });
 
-test('the existing mark --skip records the selector reason beside the skipped family', () => {
+function markRun(checklist: string, skipStep: number, reason: string, steps: number) {
   const dir = mkdtempSync(path.join(tmpdir(), 'farmslot-review-rules-mark-'));
   try {
-    const checklist = markUnselectedFamilies(CHECKLIST, pack, REVIEW, SELECTION);
     mkdirSync(path.join(dir, 'inputs'), { recursive: true });
     writeFileSync(path.join(dir, 'CHECKLIST.md'), checklist);
     writeFileSync(
@@ -335,19 +337,45 @@ test('the existing mark --skip records the selector reason beside the skipped fa
     const refused = mark('2', '--skip', 'small diff');
     assert.notEqual(refused.status, 0, 'a selected family is not optional');
     assert.match(refused.stderr, /step 2 is not declared optional, so it cannot be skipped/);
-    assert.equal(mark('2').status, 0);
-    const skipped = mark('3', '--skip', `selector: ${REASON}`);
-    assert.equal(skipped.status, 0, skipped.stderr);
-    assert.equal(mark('4').status, 0, 'the skip unblocks the next step');
+    for (let step = 2; step <= steps; step += 1) {
+      const result = step === skipStep ? mark(String(step), '--skip', reason) : mark(String(step));
+      assert.equal(result.status, 0, result.stderr);
+    }
     const events = JSON.parse(readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8')).checklistTiming
       .events as { stepNumber: number; skipped?: boolean; reason?: string }[];
-    assert.deepEqual(
-      events
-        .filter((event) => event.skipped === true)
-        .map(({ stepNumber, reason }) => ({ stepNumber, reason })),
-      [{ stepNumber: 3, reason: `selector: ${REASON}` }],
-    );
+    return events
+      .filter((event) => event.skipped === true)
+      .map(({ stepNumber, reason: recorded }) => ({ stepNumber, reason: recorded }));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+test('the existing mark --skip records the selector reason beside the skipped family', () => {
+  assert.deepEqual(
+    markRun(
+      markUnselectedFamilies(CHECKLIST, pack, REVIEW, SELECTION),
+      3,
+      `selector: ${REASON}`,
+      4,
+    ),
+    [{ stepNumber: 3, reason: `selector: ${REASON}` }],
+  );
+  // The core case: the step added for the mobile overlay's family is skipped the same way.
+  const core = { ...REVIEW, client: 'core' } as const;
+  const checklist = markUnselectedFamilies(
+    CHECKLIST.replace('#pro-mode-ui-gating', '#elsewhere'),
+    pack,
+    core,
+    selectionFor(
+      [
+        { id: 'blocking-review-checks', selected: true, reason: 'always' },
+        { id: 'pro-mode-ui-gating', selected: false, reason: 'no core areas' },
+      ],
+      { client: 'core' },
+    ),
+  );
+  assert.deepEqual(markRun(checklist, 3, 'selector: no core areas', 5), [
+    { stepNumber: 3, reason: 'selector: no core areas' },
+  ]);
 });

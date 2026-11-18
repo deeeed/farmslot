@@ -88,7 +88,7 @@ A reviewer may check more families than were selected, never fewer.
 
 A family that is not selected stays in the checklist. `markUnselectedFamilies` appends `[OPTIONAL: not selected: <reason>]` to its step, the template-declared optional step of ADR-064 Amendment 7, so the worker records it with the existing `./mark N --skip "<reason>"`. A selected family cannot be skipped.
 
-Steps come from the shared checklist parser; a step is its row plus its detail lines. Each step links at most one family, and each family is linked by at most one step, so a skip never covers another family. A family with no step is refused unless it is not selected and its areas name no paths for this client, which means another client's overlay holds it.
+Steps come from the shared checklist parser; a step is its row plus its detail lines. Each step links at most one family, and each family is linked by at most one step, so a skip never covers another family. A selected family with no step is refused. An unselected family the checklist does not carry, because another client's overlay holds it, gets an optional step after the last family step, so every skipped family stays visible with its reason. A numbered checklist is renumbered by position.
 
 A selector is enabled for a pack only after shadow runs beside the full checklist show it selects every family behind a confirmed blocking finding on the project's replay set, and at least 95% of the families behind all confirmed findings. A model selector is chosen from the review-dispatch catalog, may only add families to the deterministic selection, and is measured on the same replay set.
 
@@ -108,7 +108,7 @@ There is no review-specific marking tool, store or view:
 - `kind`: `add`, `edit`, `merge`, `retire` or `stale`;
 - the family (required except for `add`);
 - `source`: `finding`, `miss`, `audit` or `stale-check`;
-- `evidence`: refs, each with a `file:line` or `file:start-end` location, required for a finding or a miss;
+- `evidence`: refs, each with a `file:line` or `file:start-end` location (lines from 1, range in order), required for a finding or a miss;
 - `confirmation`: `fix`, `accepted-finding`, `second-check` or `stale-check`;
 - the proposed change and the net rule count;
 - a decision that carries a one-line reason once it is made.

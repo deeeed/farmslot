@@ -220,6 +220,13 @@ test('a rule proposal carries its evidence, confirmation, net rule count and a r
   assert.equal(proposal.kind, 'edit');
 
   const base = { ...proposal } as Record<string, unknown>;
+  assert.deepEqual(
+    parseReviewRuleProposal({
+      ...base,
+      evidence: [{ ref: 'MetaMask/metamask-mobile#123', location: 'app/main.ts:42-48' }],
+    }).evidence,
+    [{ ref: 'MetaMask/metamask-mobile#123', location: 'app/main.ts:42-48' }],
+  );
   const cases: [Record<string, unknown>, RegExp][] = [
     [{ ...base, kind: 'append' }, /proposal\.kind must be one of/],
     [{ ...base, family: undefined }, /proposal\.family is required for an edit/],
@@ -237,10 +244,12 @@ test('a rule proposal carries its evidence, confirmation, net rule count and a r
       { ...base, bar: { recurrence: 'recurring', examined: [] } },
       /proposal\.bar\.examined must list the family ids checked for coverage/,
     ],
-    [
-      { ...base, evidence: [{ ref: 'MetaMask/metamask-mobile#123', location: 'x.ts' }] },
-      /proposal\.evidence\[0\]\.location must be file:line or file:start-end/,
-    ],
+    ...['x.ts', 'app/main.ts:0', 'app/main.ts:42-2'].map(
+      (location): [Record<string, unknown>, RegExp] => [
+        { ...base, evidence: [{ ref: 'MetaMask/metamask-mobile#123', location }] },
+        /proposal\.evidence\[0\]\.location must be file:line or file:start-end/,
+      ],
+    ),
     [{ ...base, netRuleDelta: 0.5 }, /proposal\.netRuleDelta must be an integer/],
     [
       { ...base, decision: { status: 'approved', reason: 'kept\nand more' } },

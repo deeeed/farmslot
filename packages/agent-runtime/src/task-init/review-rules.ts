@@ -50,9 +50,11 @@ function linksFamily(text: string, family: ReviewRuleFamily): boolean {
  *
  * Steps come from the shared checklist parser, and a step is its row plus its
  * detail lines. Each step links at most one family, and each family is linked
- * by at most one step, so a skip can never cover another family. A family with
- * no step is accepted only when it is not selected and its areas name no paths
- * for this client, i.e. another client's overlay holds it.
+ * by at most one step, so a skip can never cover another family. A selected
+ * family must have its step. An unselected family the checklist does not carry
+ * (another client's overlay holds it) gets an optional step after the last
+ * family step, so every skipped family stays visible with its reason. Numbered
+ * checklists are renumbered by position.
  */
 export function markUnselectedFamilies(
   checklist: string,
@@ -64,8 +66,10 @@ export function markUnselectedFamilies(
     sha256: review.pack.sha256,
     client: review.client,
   });
+  const items = enumerateChecklistCheckboxes(checklist);
   const steps = new Map<string, { stepNumber: number; lineIndex: number }>();
-  for (const item of enumerateChecklistCheckboxes(checklist)) {
+  let lastFamilyLine = -1;
+  for (const item of items) {
     const text = `${item.rawLabel}\n${item.detail ?? ''}`;
     const linked = pack.families.filter((family) => linksFamily(text, family));
     if (linked.length > 1)
@@ -80,24 +84,50 @@ export function markUnselectedFamilies(
         `Family ${family.id} is linked by checklist steps ${owner.stepNumber} and ${item.stepNumber}; one step covers a family.`,
       );
     steps.set(family.id, { stepNumber: item.stepNumber, lineIndex: item.lineIndex });
+    lastFamilyLine = item.lineIndex;
   }
 
   const lines = checklist.split('\n');
   const families = new Map(pack.families.map((family) => [family.id, family]));
+  const added: string[] = [];
   for (const entry of selection.families) {
     const family = families.get(entry.id)!;
     const step = steps.get(entry.id);
-    if (!step) {
-      const elsewhere = 'paths' in family.areas && !(selection.client in family.areas.paths);
-      if (entry.selected || !elsewhere)
-        throw new Error(
-          `The checklist has no step linking ${family.file}#${family.id}, which this ${selection.client} review needs.`,
-        );
+    const optional = `[OPTIONAL: not selected: ${entry.reason}]`;
+    if (step) {
+      if (!entry.selected)
+        lines[step.lineIndex] = `${lines[step.lineIndex]!.trimEnd()} ${optional}`;
       continue;
     }
-    if (entry.selected) continue;
-    lines[step.lineIndex] =
-      `${lines[step.lineIndex]!.trimEnd()} [OPTIONAL: not selected: ${entry.reason}]`;
+    if (entry.selected)
+      throw new Error(
+        `The checklist has no step linking ${family.file}#${family.id}, which this ${selection.client} review selected.`,
+      );
+    added.push(
+      `- [ ] ${family.title} ${optional}`,
+      `  Not in the ${selection.client} checklist. See ${family.file}#${family.id}`,
+    );
+  }
+  if (added.length) {
+    if (lastFamilyLine === -1)
+      throw new Error('The checklist links no family, so skipped families have no place to go.');
+    let at = lastFamilyLine + 1;
+    while (at < lines.length && /^\s+\S/.test(lines[at]!)) at += 1;
+    lines.splice(at, 0, ...added);
+  }
+  const marked = lines.join('\n');
+  return added.length && items.some((item) => /^\d+\.\s/.test(item.rawLabel))
+    ? renumber(marked)
+    : marked;
+}
+
+/** Give every checklist row its position number, after rows were inserted. */
+function renumber(checklist: string): string {
+  const lines = checklist.split('\n');
+  for (const item of enumerateChecklistCheckboxes(checklist)) {
+    const line = lines[item.lineIndex]!;
+    const box = line.match(/^(\s*- \[[ xX]\]\s*)(?:\d+\.\s+)?/)!;
+    lines[item.lineIndex] = `${box[1]}${item.stepNumber}. ${line.slice(box[0].length)}`;
   }
   return lines.join('\n');
 }

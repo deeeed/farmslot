@@ -118,8 +118,12 @@ export interface ReviewRuleProposal {
 
 const ANCHOR = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const SHA256 = /^[0-9a-f]{64}$/;
-/** `path/to/file.ts:42` or `path/to/file.ts:42-48`. */
-const FILE_LINE = /^\S+:\d+(?:-\d+)?$/;
+/** `path/to/file.ts:42` or `path/to/file.ts:42-48`: lines from 1, a range in order. */
+function isFileLine(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  const match = /^\S+:([1-9]\d*)(?:-([1-9]\d*))?$/.exec(value);
+  return !!match && (match[2] === undefined || Number(match[2]) >= Number(match[1]));
+}
 
 function oneLine(value: unknown, field: string): string {
   if (typeof value !== 'string' || !value.trim() || /[\r\n]/.test(value))
@@ -335,7 +339,7 @@ export function parseReviewRuleProposal(value: unknown, field = 'proposal'): Rev
     if (item.location === undefined && (source === 'finding' || source === 'miss'))
       throw new Error(`${at}.location (file:line) is required for a ${source}`);
     if (item.location === undefined) return { ref };
-    if (typeof item.location !== 'string' || !FILE_LINE.test(item.location))
+    if (typeof item.location !== 'string' || !isFileLine(item.location))
       throw new Error(`${at}.location must be file:line or file:start-end`);
     return { ref, location: item.location };
   });
