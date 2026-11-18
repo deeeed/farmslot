@@ -65,6 +65,7 @@ import {
   withRequiredRunnerInstall,
   withRunnerObservabilityInstall,
 } from './runner-observability.js';
+import { resumableSessionContentProbeCommand } from './session-process.js';
 
 const CODEX_PLUGIN_HOOK_ARGS =
   ' "$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2"';
@@ -342,6 +343,31 @@ export function runnerSessionContinuationArgs(
       `[launch-command] runner '${runner}' resumes by its saved session file, and this session has no recorded path; the command falls back to its id and may open a new conversation`,
     );
   return capability.args(sessionId, sessionPath ?? undefined);
+}
+
+/**
+ * Prefix a resume command with a check of its own saved transcript.
+ *
+ * For a runner that resumes by file, a path whose file is gone or empty is not
+ * an error: it opens a new conversation there, which then passes every liveness
+ * check and looks like the old session restored. A command that may run much
+ * later — pasted by an operator, replayed by a step — has to prove the state is
+ * still there at the moment it runs, not when it was built.
+ */
+export function guardedSessionReloadCommand(
+  runner: string,
+  command: string,
+  options: { sessionPath?: string | null } = {},
+): string {
+  const { sessionPath } = options;
+  if (!sessionPath) return command;
+  const capability = getRunnerDefinition(normalizeRunner(runner)).sessionContinuation.terminal;
+  if (capability?.sessionReference !== 'path') return command;
+  assertSafeRunnerArgumentValue('sessionPath', sessionPath);
+  const refusal = shellQuote(
+    `Saved ${runner} session ${sessionPath} is missing, unreadable or empty; resuming here would start a new conversation. Restore the transcript first.`,
+  );
+  return `{ ${resumableSessionContentProbeCommand(sessionPath)}; } || { echo ${refusal} >&2; exit 1; } && ${command}`;
 }
 
 function renderSessionContinuationArgs(args: readonly string[]): string {

@@ -854,9 +854,16 @@ export async function restoreTmuxWorker(
         resumableSessionContentProbeCommand(sessionBinding.runnerSessionPath),
         { timeout: 15_000 },
       );
-      if (saved.exitCode !== 0)
+      // `test` answers 1 for "not there"; anything else is the probe itself
+      // failing (an unreachable node, a timeout), which says nothing about the
+      // transcript and must not be reported as damage.
+      if (saved.exitCode === 1)
         throw new Error(
           `Cannot reload ${runner} session ${sessionBinding.runnerSessionId}: its saved session at ${sessionBinding.runnerSessionPath} is missing, unreadable or empty. Restore the transcript before reloading; launching here would start a new conversation and report it as the old one.`,
+        );
+      if (saved.exitCode !== 0)
+        throw new Error(
+          `Cannot verify the saved ${runner} session at ${sessionBinding.runnerSessionPath} on ${params.slotId}: the probe exited ${saved.exitCode}${saved.stderr?.trim() ? ` (${saved.stderr.trim().slice(0, 200)})` : ''}. The session binding is unchanged; retry the reload.`,
         );
     }
     const blindTrialBoundary = blindTrialWorkerBoundary(run, selected.role);

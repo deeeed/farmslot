@@ -34,6 +34,7 @@ import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 import { execNativeNodeArgv } from './native/node.js';
 import {
   buildInteractiveRefinementRunnerCommand,
+  guardedSessionReloadCommand,
   interactiveRunnerExecutable,
   modelQuestionsEnvironment,
   modelQuestionsForRun,
@@ -337,7 +338,16 @@ export async function reviewTmuxOperation(
     });
     if (!command) throw new Error('Runner does not support terminal review');
     Object.assign(input, {
-      command,
+      // A resume may be replayed long after the reviewer pane died. For a runner
+      // that resumes by file, the command checks the saved transcript when it
+      // runs: a missing or empty one would otherwise open a new conversation and
+      // report the old reviewer as continued.
+      command:
+        action === 'resume'
+          ? guardedSessionReloadCommand(runner, command, {
+              sessionPath: reviewContext?.runnerSessionPath,
+            })
+          : command,
       executable,
       prompt,
       environment,

@@ -893,3 +893,37 @@ test('run.sessionCommand refuses to reopen a pi session with no saved file', asy
     'the refusal must name the incomplete binding, not emit a command pi cannot use',
   );
 });
+
+// Codex r2 on #2347: the reopen command is pasted by hand, possibly long after
+// it was built. Handed a path whose transcript has since been moved, pi opens a
+// *new* conversation there, the pane is live, and the operator believes the
+// session was restored. The command now proves the file is there when it runs.
+test('the pi reopen command checks its saved session file before resuming', async () => {
+  const sessionPath = '/Users/deeeed/.pi/agent/sessions/x/2026-11-18T03-34-24-255Z_01a1ecb8.jsonl';
+  const run = codexWorkerRun({
+    metrics: { nudgeCount: 0, model: 'auto', runner: 'pi' },
+    agentContexts: [
+      agentContext({
+        runner: 'pi',
+        model: 'auto',
+        runnerSessionId: '2026-11-18T03-34-24-255Z_01a1ecb8',
+        runnerSessionPath: sessionPath,
+      }),
+    ],
+  });
+  const result = await runSessionCommand({ runId: run.id }, deps(run));
+  assert.equal(result.supported, true);
+  if (!result.supported) return;
+  const guardAt = result.reopenCommand.indexOf('test -r');
+  const resumeAt = result.reopenCommand.indexOf('--session');
+  assert.ok(guardAt >= 0, `the command must check the transcript: ${result.reopenCommand}`);
+  assert.ok(
+    resumeAt > guardAt,
+    'the check has to come before the resume, or the new conversation is already open',
+  );
+  assert.match(
+    result.reopenCommand,
+    /missing, unreadable or empty/,
+    'and say why it refused, since an operator reads this output',
+  );
+});

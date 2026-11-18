@@ -161,7 +161,9 @@ mock.module('../core/exec.js', {
           stderr: '',
         };
       }
-      if (command.startsWith('test -e ')) {
+      // Both probe forms the gateway uses: existence, and the content check that
+      // also refuses an empty transcript.
+      if (command.startsWith('test -e ') || command.startsWith('test -r ')) {
         return {
           exitCode: sessionPathExists ? 0 : 1,
           stdout: '',
@@ -1281,7 +1283,7 @@ test('retained resume defers to safe-send when the session file is gone', async 
   assert.deepEqual(result, {
     delivered: false,
     disposition: 'safe-send',
-    reason: 'Retained claude session path is unavailable: /sessions/missing.jsonl',
+    reason: 'Retained claude session file is unavailable or empty: /sessions/missing.jsonl',
   });
   assert.equal(
     commands.some((command) => command.includes('respawn-window')),

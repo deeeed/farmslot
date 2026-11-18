@@ -30,6 +30,7 @@ import { blindTrialWorkerBoundary } from '../../evals/blind-git.js';
 import {
   buildOperatorPasteableCommand,
   buildRunnerSessionReloadCommand,
+  guardedSessionReloadCommand,
   runnerSupportsSessionReload,
 } from '../../runners/launch-command.js';
 import { getRunnerDefinition, isKnownRunner, normalizeRunner } from '../../runners/registry.js';
@@ -300,9 +301,16 @@ export async function runSessionCommand(
         : {}),
     },
   );
+  // The command is pasted by hand, possibly much later, so it checks the saved
+  // transcript itself: a runner that resumes by file opens a *new* conversation
+  // at a path whose file is gone or empty, and the operator would see a live
+  // pane and believe the session was restored.
+  const guarded = guardedSessionReloadCommand(runner, rawReopenCommand, {
+    sessionPath: binding.binding.runnerSessionPath,
+  });
   // Operator-facing: this string is pasted into whatever interactive shell the
   // operator has, so it must survive zsh/bash history expansion.
-  const reopenCommand = buildOperatorPasteableCommand(rawReopenCommand);
+  const reopenCommand = buildOperatorPasteableCommand(guarded);
 
   const tmuxTarget = context.target?.target ?? null;
   // A context recorded before role-scoped targets (or one whose target was
