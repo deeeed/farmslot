@@ -159,6 +159,66 @@ test('materialization ignores an execution-only pool and preserves frozen guidan
   });
 });
 
+// ADR-0073 Amendment 1: a static review's rule pack comes from the project installation,
+// is validated before the task exists, and is frozen with its digest in the handoff.
+test('a static review freezes its declared rule pack from the project installation', async () => {
+  await withFixture(async (f) => {
+    const pack = `${JSON.stringify({
+      schemaVersion: 1,
+      id: 'fixture',
+      source: { repository: 'owner/fixture', revision: 'r1' },
+      families: [
+        {
+          id: 'fsr-01',
+          title: 'A rule',
+          file: 'review-guide.md',
+          areas: { paths: { fixture: ['**'] } },
+          status: 'active',
+          class: 'blocking',
+          rules: [{ label: 'A rule', why: 'run 1 failed' }],
+        },
+      ],
+    })}\n`;
+    await writeFile(path.join(f.project.projectFixturesDir, 'review-pack.json'), pack);
+    f.project.projectJson.static_review = {
+      ...f.project.projectJson.static_review,
+      rule_pack: { pack: 'review-pack.json', client: 'fixture', level: 'static' },
+    };
+    await materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps);
+    assert.equal(
+      await readFile(path.join(f.task, 'inputs/instructions/review-pack.json'), 'utf8'),
+      pack,
+    );
+    const handoff = JSON.parse(await readFile(path.join(f.task, 'inputs/handoff.json'), 'utf8'));
+    assert.deepEqual(handoff.reviewRulePack, {
+      pack: { path: 'inputs/instructions/review-pack.json', sha256: digest(pack) },
+      client: 'fixture',
+      level: 'static',
+    });
+  });
+});
+
+test('a static review refuses a declared rule pack that is missing or invalid', async () => {
+  for (const [content, message] of [
+    [undefined, /Static review rule pack review-pack\.json is not installed/],
+    ['{not json', /Static review rule pack review-pack\.json is not valid JSON/],
+    [
+      JSON.stringify({ schemaVersion: 2 }),
+      /Static review rule pack review-pack\.json is invalid: pack\.schemaVersion must be 1/,
+    ],
+  ] as const) {
+    await withFixture(async (f) => {
+      if (content !== undefined)
+        await writeFile(path.join(f.project.projectFixturesDir, 'review-pack.json'), content);
+      f.project.projectJson.static_review = {
+        ...f.project.projectJson.static_review,
+        rule_pack: { pack: 'review-pack.json', client: 'fixture', level: 'static' },
+      };
+      await assert.rejects(materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps), message);
+    });
+  }
+});
+
 test('tmux startup requires a fresh signal belonging to its reviewer attempt', async () => {
   await withFixture(async (f) => {
     f.run.transport = 'tmux';

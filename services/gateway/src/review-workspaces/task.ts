@@ -18,8 +18,11 @@ import { readCoveragePolicy } from '@farmslot/agent-runtime/scripts/review-cover
 import {
   ACCEPTANCE_STATUS_ARTIFACT,
   enumerateChecklistCheckboxes,
+  type FrozenReviewRulePack,
   isRecord,
   isTerminalRunStatus,
+  parseReviewRuleDeclaration,
+  parseReviewRulePack,
   type ReviewInterdiffReceipt,
   type ReviewWorkspaceBinding,
   type ReviewWorkspaceSubject,
@@ -386,6 +389,45 @@ export async function materializeReviewWorkspaceTask(
         ...(await collectSupportFiles(absolute, path.posix.join('inputs/instructions', relative))),
       );
     }
+    // ADR-0073 Amendment 1: a pack declared on the static review comes from the project
+    // installation, like its instruction files. It is validated before the task exists and
+    // frozen with its digest; a declared pack that cannot be used refuses the review.
+    let reviewRulePack: FrozenReviewRulePack | undefined;
+    const rulePack = project.projectJson.static_review?.rule_pack;
+    if (rulePack !== undefined) {
+      const declared = parseReviewRuleDeclaration(rulePack, 'static_review.rule_pack');
+      const absolute = path.resolve(project.projectFixturesDir, declared.pack);
+      if (!within(project.projectFixturesDir, absolute))
+        throw new Error('Static review rule pack escapes project fixtures');
+      const refuse = (problem: string) =>
+        new Error(`Static review rule pack ${declared.pack} ${problem}`);
+      let text: string;
+      try {
+        text = await readFile(absolute, 'utf8');
+      } catch {
+        throw refuse('is not installed in the project fixtures');
+      }
+      let value: unknown;
+      try {
+        value = JSON.parse(text);
+      } catch (error) {
+        throw refuse(
+          `is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      try {
+        parseReviewRulePack(value);
+      } catch (error) {
+        throw refuse(`is invalid: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      const relative = path.posix.join('inputs/instructions', declared.pack);
+      guidance.push(...(await collectSupportFiles(absolute, relative)));
+      reviewRulePack = {
+        pack: { path: relative, sha256: sha256(text) },
+        client: declared.client,
+        level: declared.level,
+      };
+    }
     const guidanceManifest = guidance.map((file) => ({
       path: file.relativePath,
       sha256: file.sha256,
@@ -509,6 +551,7 @@ export async function materializeReviewWorkspaceTask(
         selectionReason: 'frozen-run-selection',
       },
     });
+    if (reviewRulePack) handoff.reviewRulePack = reviewRulePack;
     // Every reference the project declares read-only, whether or not this review's
     // support environment binds it. The support binding is the only reader of those
     // checkouts, so a declared one it did not bind is unreadable here — and the

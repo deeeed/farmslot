@@ -11,11 +11,11 @@ Farmslot defines how a project's review rules are described, selected for a diff
 
 A project picks its level. A lower level loses nothing a higher one adds on top.
 
-| Level            | Declared by                                        | What the review does                                                                                                                                                                                     |
-| ---------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1, generic       | nothing                                            | The [generic method](#generic-method).                                                                                                                                                                   |
-| 2, static pack   | a required skill's `review` with `level: "static"` | The generic method, plus every family of the pack considered, with an outcome per rule.                                                                                                                  |
-| 3, full Farmslot | a required skill's `review` with `level: "full"`   | Level 2, with each family as a marked, timed checklist step, a per-diff [selection](#selection) whose skipped families stay visible, and [proposals](#proposals) from findings, misses and stale checks. |
+| Level            | Declared by                               | What the review does                                                                                                                                                                                     |
+| ---------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1, generic       | nothing                                   | The [generic method](#generic-method).                                                                                                                                                                   |
+| 2, static pack   | a pack declaration with `level: "static"` | The generic method, plus every family of the pack considered, with an outcome per rule.                                                                                                                  |
+| 3, full Farmslot | a pack declaration with `level: "full"`   | Level 2, with each family as a marked, timed checklist step, a per-diff [selection](#selection) whose skipped families stay visible, and [proposals](#proposals) from findings, misses and stale checks. |
 
 A required skill that declares a pack MUST have that pack installed and valid. Task init refuses with `REQUIRED_SKILL_MISSING` otherwise; it never falls back to level 1. One review runs one pack: task init also refuses a set in which two skills declare a pack, or one skill declares two different packs.
 
@@ -75,6 +75,17 @@ A project declares its pack on the review skill in `project.json` `required_skil
 ```
 
 Task init freezes the pack's digest with the skill into `inputs/handoff.json` `requiredSkills`, so the dev worker's self-review and the pipeline review read the same pack.
+
+A project whose rules come from its own installation, not from a skill installed in the checkout, declares the pack on its static review, beside the instruction files it already ships:
+
+```json
+"static_review": {
+  "instruction_files": ["runtime/review-quality.md"],
+  "rule_pack": { "pack": "runtime/review-pack.json", "client": "farmslot", "level": "static" }
+}
+```
+
+The path is relative to the project fixtures. Building the static review task validates the pack, copies it into `inputs/instructions/` and records it in `inputs/handoff.json` as `reviewRulePack`, with its digest. A missing or invalid pack refuses the review. Branches and checkouts under review are not involved, so a branch cut before the pack existed still reviews normally.
 
 ## Selection
 

@@ -59,13 +59,20 @@ export interface RequiredSkillFile {
   sha256: string;
 }
 
+/** A declared rule pack frozen with its digest: on a required skill, or in a static review's handoff. */
+export interface FrozenReviewRulePack {
+  pack: RequiredSkillFile;
+  client: string;
+  level: RequiredSkillReviewLevel;
+}
+
 export interface FrozenRequiredSkill {
   name: string;
   /** Rule ids that required this skill. */
   rules: string[];
   files: RequiredSkillFile[];
   /** The declared rule pack, validated and frozen with its digest. */
-  review?: { pack: RequiredSkillFile; client: string; level: RequiredSkillReviewLevel };
+  review?: FrozenReviewRulePack;
 }
 
 /** The frozen set, recorded once at task init. */
@@ -88,7 +95,11 @@ function stringList(value: unknown, field: string): string[] {
   return value as string[];
 }
 
-function parseReview(value: unknown, field: string): RequiredSkillReview {
+/**
+ * Validates a rule pack declaration: on a required skill (`review`) or on a
+ * project's static review (`static_review.rule_pack`). Throws with the field.
+ */
+export function parseReviewRuleDeclaration(value: unknown, field: string): RequiredSkillReview {
   const review = record(value, field);
   onlyKeys(review, ['pack', 'client', 'level'], field);
   if (typeof review.pack !== 'string' || !isRelativeSafePath(review.pack))
@@ -150,7 +161,11 @@ export function parseRequiredSkillsConfig(
         if (!isRelativeSafePath(file))
           throw new Error(`${skillField}.files entry "${file}" must be skill-relative`);
       if (skill.review === undefined) return { name: skill.name, files };
-      return { name: skill.name, files, review: parseReview(skill.review, `${skillField}.review`) };
+      return {
+        name: skill.name,
+        files,
+        review: parseReviewRuleDeclaration(skill.review, `${skillField}.review`),
+      };
     });
     return { id: rule.id, ...(when ? { when } : {}), skills };
   });
