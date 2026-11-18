@@ -589,3 +589,40 @@ test('retained local_check declarations refuse publication without a checkout or
   );
   await assert.rejects(validateDeterministicChecksForRun(run), /slot is missing/);
 });
+
+// Codex r1 on #2358: the CLI waiver alone does not let the incident's run
+// finish. `fix-bug` reaches COMPLETE before the human gate, and the gateway
+// re-validates the same receipts there, so a replay of c2821858 would be
+// refused again — with the fix already on main and nothing left to reproduce.
+// A no-code disposition waives a *missing* receipt on this side too.
+test('a no-change run is not refused for a receipt it never owed', async (t) => {
+  const { root, run } = await task(t);
+  await writeFile(path.join(root, 'CHECKLIST.md'), '- [ ] CI [DETERMINISTIC: ci.local_check]\n');
+  await writeFile(
+    path.join(root, 'inputs', 'worker-terminal-contract.json'),
+    JSON.stringify({
+      deterministicChecks: [
+        {
+          checklist: 'CHECKLIST.md',
+          stepNumber: 1,
+          reference: 'ci.local_check',
+          command: 'true',
+        },
+      ],
+    }),
+  );
+
+  // The fix-path run still owes it, and says so.
+  await assert.rejects(validateDeterministicChecksForRun(run), /require the run checkout/);
+
+  for (const disposition of ['already_fixed', 'not_reproducible'] as const) {
+    assert.deepEqual(
+      await validateDeterministicChecksForRun({
+        ...run,
+        metrics: { ...run.metrics, disposition },
+      } as Run),
+      [],
+      `a ${disposition} exit changed nothing, so it owes no changed-file receipt`,
+    );
+  }
+});
