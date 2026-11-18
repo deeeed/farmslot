@@ -502,3 +502,41 @@ test(
     void execution;
   },
 );
+
+// Codex r1, third part of FSR-04: settlement was not bound to the marker it
+// owned. A replayed monitor raises its own card while the previous loop is
+// still unwinding its `finally`; that loop then cleared the replacement's
+// marker, so a restart during the second card charged its whole wait to the
+// worker — the first defect again, one card along.
+test(
+  'answering a card leaves a replacement monitor’s open marker alone',
+  { timeout: 15_000 },
+  async (t) => {
+    const f = await fixture(t);
+    const execution = f.start();
+    await until(() => f.card() !== undefined);
+    const unavailable = f.card()!.id;
+    await until(() => getRun(f.run.id)?.monitorState?.gateWaitStartedAt !== undefined, 1_000);
+
+    // A newer wait's marker, as a replayed monitor would have written it.
+    const replacementMarker = new Date(Date.now() + 1_000).toISOString();
+    const held = getRun(f.run.id)!.monitorState!;
+    updateRun(f.run.id, { monitorState: { ...held, gateWaitStartedAt: replacementMarker } });
+
+    f.restoreRunner();
+    resolveMonitorDecision(unavailable, 'continue');
+    await until(() => (getRun(f.run.id)?.monitorState?.gateWaitMs ?? 0) > 0);
+
+    const settled = getRun(f.run.id)?.monitorState;
+    assert.equal(
+      settled?.gateWaitStartedAt,
+      replacementMarker,
+      'a settling wait must not drop a marker it did not write; the newer card still needs it',
+    );
+    assert.ok(
+      (settled?.gateWaitMs ?? 0) > 0,
+      `the answered wait's own credit is still stored: gateWaitMs=${settled?.gateWaitMs}`,
+    );
+    void execution;
+  },
+);

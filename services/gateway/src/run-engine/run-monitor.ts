@@ -586,19 +586,25 @@ async function persistGateWaitStart(
 async function commitGateWait(
   runId: string,
   totalMs: number,
-  windowStartedAtMs?: number,
+  options: { ownedMarker?: string; windowStartedAtMs?: number } = {},
 ): Promise<void> {
   const run = getRun(runId);
   if (!run) return;
+  const { ownedMarker, windowStartedAtMs } = options;
   const prev = run.monitorState ?? {
     nudgeCount: run.metrics.nudgeCount,
     lastPollAt: new Date(windowStartedAtMs ?? Date.now()).toISOString(),
     startedAt: new Date(windowStartedAtMs ?? Date.now()).toISOString(),
   };
-  if (prev.gateWaitMs === totalMs && prev.gateWaitStartedAt === undefined) return;
-  updateRun(runId, {
-    monitorState: { ...prev, gateWaitMs: totalMs, gateWaitStartedAt: undefined },
-  });
+  // Only the wait that wrote a marker may drop it. A replayed monitor can raise
+  // its own card while this loop is still unwinding, and clearing that
+  // replacement's marker would lose the restart credit it is holding open. The
+  // total is still worth storing, since the credit only ever grows.
+  const ownsMarker = ownedMarker === undefined || prev.gateWaitStartedAt === ownedMarker;
+  const gateWaitMs = ownsMarker ? totalMs : Math.max(prev.gateWaitMs ?? 0, totalMs);
+  const gateWaitStartedAt = ownsMarker ? undefined : prev.gateWaitStartedAt;
+  if (prev.gateWaitMs === gateWaitMs && prev.gateWaitStartedAt === gateWaitStartedAt) return;
+  updateRun(runId, { monitorState: { ...prev, gateWaitMs, gateWaitStartedAt } });
   await persistRunNow(getRun(runId)!, 'gate wait settled');
 }
 
@@ -1178,8 +1184,12 @@ export async function monitorRun(
       );
     } finally {
       gateWait.ms += Date.now() - waitingSince;
-      // One durable write: the credit lands with the marker's removal.
-      await commitGateWait(runId, gateWait.ms, monitorState?.startedAt);
+      // One durable write: the credit lands with the marker's removal, and only
+      // the marker this wait wrote is removed.
+      await commitGateWait(runId, gateWait.ms, {
+        ownedMarker: new Date(waitingSince).toISOString(),
+        windowStartedAtMs: monitorState?.startedAt,
+      });
       // The worker was idle for as long as the card was up, and that idleness
       // is ours, not its. Without this the next poll can see a stuck window
       // that elapsed entirely while a human was reading, and spend a nudge in
@@ -1324,7 +1334,7 @@ export async function monitorRun(
     );
     // Store the recovered slice before anything else can fail: another restart
     // in this window would otherwise drop it with the marker.
-    await commitGateWait(runId, gateWait.ms);
+    await commitGateWait(runId, gateWait.ms, { ownedMarker: persisted?.gateWaitStartedAt });
   }
   const restoredBudgetUsage = restoreBudgetUsageState(persisted?.budgetUsage);
 
