@@ -15,7 +15,12 @@
 // keeping the step outputs list surfaces read and the small ones, and leaving the heavy
 // keys out of decisions, the publish gate, agent contexts, metrics, the ticket, the review
 // result and the review subject. `trimRunForList` is kept as the version basis.
-import type { Run, RunDecision, RunDecisionPayload } from '../contracts/runs.js';
+import {
+  PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
+  type Run,
+  type RunDecision,
+  type RunDecisionPayload,
+} from '../contracts/runs.js';
 import { utf8ByteLength } from '../utf8-byte-length.js';
 
 import { CI_SNAPSHOT_TRIM_KEY } from './ci-decision-context.js';
@@ -190,7 +195,7 @@ function smallOutput(value: unknown): unknown {
  * surface reads keeps the bounded shape its views read: slot resolution and run activity
  * (dispatch keys); the mini pipeline's tone and step tooltip (`verdict`, `reviewVerdict`,
  * `maxRetriesExhausted`, `packageHash`, `reviewSatisfied`, `resolvedAction`,
- * `publicationStatus`); the CI watch line and the CI-fix checklist (ci-watch keys); the
+ * `publicationStatus`, review round-limit code); the CI watch line and the CI-fix checklist (ci-watch keys); the
  * active and split-view filters, which test only whether a completion prerequisite was
  * refused (`gatePrerequisiteRefusal`); the diff stat an older client's eval catalog reads
  * (`diffStat`). Any other key is served whole when it is small (see smallOutput).
@@ -212,6 +217,16 @@ function listStepOutput(key: string, value: unknown): unknown {
       return value;
     case 'gatePrerequisiteRefusal':
       return presenceOutput(value);
+    case 'reviewLaunchRejection': {
+      const small = smallOutput(value);
+      if (small !== undefined) return small;
+      if (
+        isKeyed(value) &&
+        value.code === PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.roundLimitReached
+      )
+        return { code: value.code };
+      return undefined;
+    }
     case 'verdict':
     case 'reviewVerdict':
     case 'maxRetriesExhausted':
