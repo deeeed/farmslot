@@ -73,7 +73,10 @@ import { projectTaskRoots } from '../core/config.js';
 import { redactStepOutputCommands } from '../core/credential-redaction.js';
 import { isGatewayTestProcess, isolatedTestPath } from '../core/isolated-test-path.js';
 import { readSlotField } from '../core/state.js';
-import { assertStorageVolumePresent } from '../core/storage-volume.js';
+import {
+  assertGatewayStorageAvailable,
+  assertStorageVolumePresent,
+} from '../core/storage-volume.js';
 import { isValidSafetyTier } from '../fleet/state.js';
 import { invalidateLiveRecipeContextMemo } from '../live-recipe/context.js';
 import { invalidateRecipeRunGroupCache } from '../methods/filesystem.js';
@@ -1257,6 +1260,7 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
 }
 
 export function createRun(params: RunCreateParams, options?: RunRecordBuildOptions): Run {
+  assertGatewayStorageAvailable();
   if (params.flowType === 'review-pr') assertReviewWorkspaceAdmissionOpen(params);
   const run = buildRunRecord(params, options);
   if (runs.has(run.id)) throw new Error('Run creation identity is already registered');
