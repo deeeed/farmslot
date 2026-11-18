@@ -225,9 +225,9 @@ export function formatDuration(ms?: number): string {
   return `${m}m ${s % 60}s`;
 }
 
-export function formatElapsed(startedAt?: string): string {
+export function formatElapsed(startedAt?: string, nowMs = Date.now()): string {
   if (!startedAt) return '';
-  const ms = Date.now() - new Date(startedAt).getTime();
+  const ms = nowMs - new Date(startedAt).getTime();
   const m = Math.floor(ms / 60000);
   if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60);

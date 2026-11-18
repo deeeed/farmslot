@@ -1,0 +1,1 @@
+- Recognize the Codex composer when its model and directory footer is the only status row.

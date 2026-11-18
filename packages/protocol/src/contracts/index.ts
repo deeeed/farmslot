@@ -34,6 +34,7 @@ export * from './required-skills.js';
 export * from './resource-posture.js';
 export * from './resources.js';
 export * from './review-publication.js';
+export * from './review-rules.js';
 export * from './review-workspace.js';
 export * from './reviews.js';
 export * from './roadmap.js';

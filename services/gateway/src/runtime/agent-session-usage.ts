@@ -9,9 +9,9 @@ import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { recoveredWorkerSessionReceipt, upsertSessionUsage } from './agent-session-rows.js';
 import { extractNativeAgentSessionUsage, nativeRunUsageWindow } from './native-session-usage.js';
 import {
-  contextChecklistMarks,
   extractRunnerSessionUsage,
   extractRunWorkerSessionUsage,
+  receiptChecklistMarks,
   unavailableRunnerSessionUsage,
 } from './session-usage.js';
 import { workspaceUsageMetrics } from './session-usage-result.js';
@@ -101,8 +101,30 @@ function completedMeasurement(
 /** Run metrics hold the worker checklist's marks; other roles' sessions are not split by them. */
 function workerChecklistMarks(run: Run, row: RunnerSessionUsage) {
   if (row.role !== primaryRoleForFlow(run.flowType)) return undefined;
+  // A warm tmux reviewer resumes the earlier review's transcript, whose calls would land in this
+  // review's first step. Its session stays unsplit, as before marks were kept.
+  if (
+    !row.slotId &&
+    !row.nativeSession &&
+    run.reviewWorkspace &&
+    run.repeatReviewContext?.mode === 'warm'
+  )
+    return undefined;
   const context = run.agentContexts?.find((item) => row.contextIds?.includes(item.id));
-  return contextChecklistMarks(run, context);
+  // Transcripts, not receipts: a pending launch has neither a path nor a conversation id, while a
+  // native conversation can be known by its id before its path is recorded.
+  const transcripts = new Set(
+    (run.sessionUsage ?? [])
+      .filter(
+        (other) =>
+          other.role === row.role && other.contextIds?.some((id) => row.contextIds?.includes(id)),
+      )
+      .flatMap((other) => {
+        const transcript = other.runnerSessionPath ?? other.runnerSessionId;
+        return transcript ? [transcript] : [];
+      }),
+  );
+  return receiptChecklistMarks(run, context, Math.max(1, transcripts.size));
 }
 
 async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSessionUsage> {

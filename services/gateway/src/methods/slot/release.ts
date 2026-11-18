@@ -212,27 +212,32 @@ export async function slotRelease(
   // The reconciler's only view of a live teardown is the registry. Without
   // this, a release that outlived the stale-fence bound would be reclaimed
   // mid-teardown, now that refresh keeps the fence stamp it ages.
-  let recoverTimeout: ((confirmed: boolean) => Promise<void>) | undefined;
+  let recoverFailure: ((confirmed: boolean, reason: string) => Promise<void>) | undefined;
   const teardown = withTerminalTeardown(
     params.slotId,
     () =>
       slotReleaseImpl(params, emit, options, (recover) => {
-        recoverTimeout = recover;
+        recoverFailure = recover;
       }),
     params.keepWarm ? null : undefined,
-  )
-    .catch(async (error: unknown) => {
-      if (error instanceof TerminalTeardownTimeoutError && recoverTimeout) {
-        const recover = recoverTimeout;
-        try {
-          await withoutCleanupSignal(() => recover(error.closeoutConfirmed));
-        } catch (recoveryError) {
-          throw new AggregateError(
-            [error, recoveryError],
-            'Terminal timeout and release-fence settlement failed',
-          );
-        }
+    async (confirmed, error) => {
+      if (!recoverFailure) return;
+      const recover = recoverFailure;
+      try {
+        const reason =
+          error instanceof TerminalTeardownTimeoutError
+            ? 'Cleanup timed out'
+            : `Cleanup failed: ${error instanceof Error ? error.message : String(error)}`;
+        await withoutCleanupSignal(() => recover(confirmed, reason));
+      } catch (recoveryError) {
+        throw new AggregateError(
+          [error, recoveryError],
+          'Terminal teardown and release-fence settlement failed',
+        );
       }
+    },
+  )
+    .catch((error: unknown) => {
       // A bound teardown losing its claim is an expected no-op for archive and
       // replay rollback. The new owner's workspace has already been left alone.
       if (error instanceof BoundReleaseClaimLostError)
@@ -521,7 +526,9 @@ async function slotReleaseImpl(
   params: SlotReleaseParams,
   emit: EventEmitter,
   options?: SlotReleaseOptions,
-  registerTimeoutRecovery?: (recover: (confirmed: boolean) => Promise<void>) => void,
+  registerFailureRecovery?: (
+    recover: (confirmed: boolean, reason: string) => Promise<void>,
+  ) => void,
 ): Promise<SlotReleaseResult> {
   const preflight = await releasePreflight(params, options, 1);
   assertCleanupCurrent();
@@ -652,8 +659,11 @@ async function slotReleaseImpl(
           };
           const epoch = Number(slot.slot_epoch) || 0;
           const priorCleanupOwner = slot.cleanup_run_id ?? null;
+          const priorStopUnconfirmed = Boolean(slot[SLOT_CLEANUP_STOP_UNCONFIRMED]);
           // Register before the marker commit: its await can finish after the deadline.
-          registerTimeoutRecovery?.(async (confirmed) => {
+          registerFailureRecovery?.(async (confirmed, reason) => {
+            // This attempt cannot confirm a previous attempt's command closeout.
+            const stopConfirmed = confirmed && !priorStopUnconfirmed;
             await updateSlotStatusIf(
               params.slotId,
               (current) =>
@@ -669,16 +679,16 @@ async function slotReleaseImpl(
               {
                 lifecycle: 'held',
                 phase: 'occupied',
-                current_run_id: confirmed ? (params.expectedRunId ?? owner) : null,
-                ...(!confirmed
+                current_run_id: stopConfirmed ? (params.expectedRunId ?? owner) : null,
+                ...(!stopConfirmed
                   ? {
-                      cleanup_run_id: params.expectedRunId ?? owner,
+                      cleanup_run_id: params.expectedRunId ?? owner ?? priorCleanupOwner,
                       [SLOT_CLEANUP_STOP_UNCONFIRMED]: true,
                     }
                   : {}),
-                held_reason: confirmed
-                  ? 'Cleanup timed out; retry release or replay the run.'
-                  : 'Cleanup stop is unconfirmed; inspect the slot and retry release.',
+                held_reason: stopConfirmed
+                  ? `${reason}; retry release or replay the run.`
+                  : `${reason}. Cleanup stop is unconfirmed; inspect the slot and retry release.`,
                 [SLOT_RELEASING_SINCE]: null,
               },
             );

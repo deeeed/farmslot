@@ -67,6 +67,11 @@ export const runDetailStyles = css`
     font-size: 11px;
     font-weight: 700;
   }
+  .run-stale {
+    margin-bottom: ${unsafeCSS(spacing.sm)};
+    color: ${unsafeCSS(colors.textSecondary)};
+    font-size: 11px;
+  }
   .run-activity-label {
     flex: 1 1 0;
     max-width: max-content;

@@ -44,6 +44,12 @@ It adds no Git calls, writes, polling or retries. The exact bash-to-idle-zsh
 regression and nine refusal cases pass with mocked exec; the 113-test teardown
 suite takes 13.1 s locally. These fixture timings are not live release latency.
 
+A failed slot release now aborts and drains its existing owned cleanup commands
+before settling its durable fence to held. Successful releases add no processes,
+Git calls, node requests, timers or history scans. Failure adds one guarded status
+update and uses the existing 10 s closeout bound. Warm recycle retains its phase
+budgets and now uses the same cancellation scope.
+
 Cached paint starts at foreground demand, before lookup/hydration, and ends after
 the subscriber's queued render and data frame. Refresh timing stays separate.
 Read counters include cache source, age, stale/blocking state and opaque per-query

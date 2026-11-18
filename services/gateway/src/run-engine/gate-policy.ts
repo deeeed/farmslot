@@ -31,6 +31,8 @@ import {
 } from '@farmslot/protocol';
 import { publicationReviewBlockingReason, resolveReviewMode } from '@farmslot/review-dispatch';
 
+import { isReliableInterdiff } from '../review/interdiff.js';
+
 export { publicationReviewBlockingReason } from '@farmslot/review-dispatch';
 
 import { REQUESTED_REVIEW_SOURCE, reviewLoopNumberFromId } from '../quality/review-sources.js';
@@ -675,8 +677,17 @@ function reviewSnapshotDiffMatchesPackage(
         !!snapshot.diffHash &&
         session?.lastReviewedHeadSha === compared.headSha &&
         deltaFallback.comparedRanges.at(-1) === `${compared.baseSha}..${compared.headSha}`
-      : snapshot.baseRef === preparedSnapshot.baseRef &&
-        snapshot.baseSha === session?.lastReviewedHeadSha;
+      : snapshot.interdiff
+        ? isReliableInterdiff(snapshot.interdiff) &&
+          snapshot.interdiff.oldHeadSha === session?.lastReviewedHeadSha &&
+          snapshot.interdiff.newHeadSha === snapshot.headSha &&
+          snapshot.interdiff.newBaseSha === snapshot.baseSha &&
+          snapshot.baseSha === preparedSnapshot.baseSha &&
+          !!snapshot.diffHash &&
+          snapshot.diffHash === preparedSnapshot.diffHash &&
+          !!snapshot.interdiff.rangeDiffHash
+        : snapshot.baseRef === preparedSnapshot.baseRef &&
+          snapshot.baseSha === session?.lastReviewedHeadSha;
     return (
       snapshot.source !== 'unavailable' &&
       session?.mode === review.mode &&

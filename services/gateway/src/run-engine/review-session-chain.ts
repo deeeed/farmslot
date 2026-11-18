@@ -1,13 +1,12 @@
 import {
   isTerminalRunStatus,
-  parseGitHubRef,
   type ReviewSessionRefusalReason,
   type ReviewSessionTrace,
   type Run,
 } from '@farmslot/protocol';
 import { resolveReviewMode } from '@farmslot/review-dispatch';
 
-import { primaryReviewedHeadForSession } from '../review/session-mode.js';
+import { primaryReviewedHeadForSession, reviewPRIdentity } from '../review/session-mode.js';
 import { runnerSupportsSessionContinuation } from '../runners/registry.js';
 import {
   deliverPromptToRetainedRunnerSession,
@@ -101,18 +100,18 @@ export function resolveRepeatReviewResumePlan(
       prior.prWork.review.profile !== requested.profile)
   )
     return { kind: 'refused', reason: 'missing-session' };
-  const currentRef = current.prWork?.pr ?? parseGitHubRef(current.ticketOrPr);
-  const priorRef = prior.prWork?.pr ?? parseGitHubRef(prior.ticketOrPr);
+  const currentRef = reviewPRIdentity({ ticketOrPr: current.ticketOrPr, prWork: current.prWork });
+  const priorRef = reviewPRIdentity({ ticketOrPr: prior.ticketOrPr, prWork: prior.prWork });
   if (
     !currentRef ||
-    currentRef.repo.toLowerCase() !== context.repository.toLowerCase() ||
-    currentRef.number !== context.prNumber
+    currentRef.repository.toLowerCase() !== context.repository.toLowerCase() ||
+    currentRef.prNumber !== context.prNumber
   )
     return { kind: 'refused', reason: 'pr-mismatch' };
   if (
     !priorRef ||
-    priorRef.repo.toLowerCase() !== context.repository.toLowerCase() ||
-    priorRef.number !== context.prNumber ||
+    priorRef.repository.toLowerCase() !== context.repository.toLowerCase() ||
+    priorRef.prNumber !== context.prNumber ||
     context.chainId !== (prior.repeatReviewContext?.chainId ?? prior.id)
   ) {
     return { kind: 'refused', reason: 'pr-mismatch' };
@@ -130,11 +129,11 @@ export function resolveRepeatReviewResumePlan(
   if (!native && prior.transport === 'native')
     return { kind: 'refused', reason: 'missing-session' };
   if (native) {
-    const requestedRef = parseGitHubRef(current.ticketOrPr);
+    const requestedRef = reviewPRIdentity({ ticketOrPr: current.ticketOrPr });
     if (
       !requestedRef ||
-      requestedRef.repo.toLowerCase() !== context.repository.toLowerCase() ||
-      requestedRef.number !== context.prNumber ||
+      requestedRef.repository.toLowerCase() !== context.repository.toLowerCase() ||
+      requestedRef.prNumber !== context.prNumber ||
       context.priorFamilyId !== prior.familyId
     )
       return { kind: 'refused', reason: 'missing-session' };

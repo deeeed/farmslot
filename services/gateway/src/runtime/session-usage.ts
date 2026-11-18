@@ -137,6 +137,62 @@ export function contextChecklistMarks(
   );
 }
 
+/**
+ * At most this many child rows split a receipt, each titled in at most RECEIPT_CHILD_TITLE_CHARS,
+ * so the receipt stays well inside the 64 KiB usage read.
+ */
+export const RECEIPT_CHILD_MARK_LIMIT = 30;
+export const RECEIPT_CHILD_TITLE_CHARS = 80;
+
+function childTitle(id: string, row: number, label: string): string {
+  // The mark writer keeps a numbered row's own number in its label.
+  const title = `${id} ${/^\d+[.)] /.test(label) ? label : `${row}. ${label}`}`;
+  // Cut on character boundaries, so an emoji is never split in half.
+  const characters = [...new Intl.Segmenter().segment(title)].map((part) => part.segment);
+  return characters.length > RECEIPT_CHILD_TITLE_CHARS
+    ? `${characters.slice(0, RECEIPT_CHILD_TITLE_CHARS - 1).join('')}…`
+    : title;
+}
+
+/**
+ * The marks a measured session is split at: the worker checklist's marks, plus the row marks of
+ * each child checklist that a parent step ran (`metrics.subtasks`), so that parent step splits by
+ * the child's rows. A child row's segment carries its parent's step number and a
+ * `<child> <row>. <label>` title. Live progress keeps the parent marks only.
+ */
+export function receiptChecklistMarks(
+  run: Run,
+  context: AgentContext | undefined = checklistTimingContext(run, 'CHECKLIST.md'),
+  /** Transcripts measured for this context: a relaunched worker leaves more than one. */
+  sessionsInContext = 1,
+): ChecklistMark[] {
+  const parents = contextChecklistMarks(run, context);
+  // Each transcript of a relaunched context gets these marks, and an earlier transcript's calls
+  // fall before this attempt's first mark: they stay on the parent step, not on one rule.
+  if (sessionsInContext > 1) return parents;
+  const startedAt = context?.attemptStartedAt ?? context?.startedAt;
+  const source = run.metrics.checklistTiming?.source ?? 'CHECKLIST.md';
+  const children = (run.metrics.subtasks ?? []).flatMap((child) =>
+    child.parent.checklist === source
+      ? checklistMarks(checklistTimingForAttempt(child.checklistTiming, startedAt)).map((mark) => ({
+          ...mark,
+          stepNumber: child.parent.stepNumber,
+          label: childTitle(child.id, mark.stepNumber, mark.label),
+        }))
+      : [],
+  );
+  if (children.length > RECEIPT_CHILD_MARK_LIMIT) return parents;
+  // One boundary per step and instant: of rows marked in the same millisecond, or a last row and
+  // the parent step it closes (`mark sub <id> complete --mark-last`), the child's last row stays.
+  const byInstant = new Map<string, ChecklistMark>();
+  for (const mark of [...parents, ...children])
+    byInstant.set(`${mark.stepNumber}\u0000${mark.checkedAt}`, mark);
+  // At one instant an earlier step closes before a later step's row.
+  return [...byInstant.values()].sort(
+    (a, b) => Date.parse(a.checkedAt) - Date.parse(b.checkedAt) || a.stepNumber - b.stepNumber,
+  );
+}
+
 /** Sums the sessions' tool usage only when every session reported it. */
 function totalToolUsage(usages: RunnerSessionUsage[]): ToolUsage | null {
   const counted = usages.map((usage) => usage.toolUsage);
@@ -169,7 +225,11 @@ export async function extractRunWorkerSessionUsage(
           row.runner === run.metrics.runner && row.runnerSessionId === session.runnerSessionId,
       );
       const nativeSession = receipt?.nativeSession ?? context?.nativeSession;
-      const marks = contextChecklistMarks(run, context);
+      const marks = receiptChecklistMarks(
+        run,
+        context,
+        unique.filter((other) => other.contextId === session.contextId).length,
+      );
       let usageWindow: SessionUsageWindow | undefined;
       if (nativeSession) {
         try {
@@ -336,7 +396,7 @@ export async function projectArchivedRunnerUsage(storedRun: Run): Promise<Run> {
       {},
       undefined,
       undefined,
-      contextChecklistMarks(run),
+      receiptChecklistMarks(run),
     );
     // A resumed review transcript is a chain total, not this generation's usage.
     if (usesReviewChainSessionTotal(run)) return run;

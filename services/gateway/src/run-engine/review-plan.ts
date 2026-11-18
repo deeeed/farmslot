@@ -6,7 +6,6 @@ import {
   effectiveRequiredReviewCount,
   isQualifyingReview,
   isRecord,
-  parseGitHubRef,
   PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   qualifyingPassingReviews,
   type ReviewLineageOption,
@@ -521,14 +520,14 @@ export function assertPrimaryReviewContext(
       'the requested primary review lineage is missing or ambiguous',
     );
   if (input.flowType !== 'review-pr') return;
-  const pr = input.prWork?.pr ?? parseGitHubRef(input.ticketOrPr);
+  const pr = reviewPRIdentity({ ticketOrPr: input.ticketOrPr, prWork: input.prWork });
   if (
     !pr ||
     bindings.some(
       (binding) =>
         !binding.repository ||
-        binding.repository.toLowerCase() !== pr.repo.toLowerCase() ||
-        binding.prNumber !== pr.number,
+        binding.repository.toLowerCase() !== pr.repository.toLowerCase() ||
+        binding.prNumber !== pr.prNumber,
     )
   )
     throw new WarmReviewRefusal(
