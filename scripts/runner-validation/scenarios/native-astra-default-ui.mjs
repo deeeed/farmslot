@@ -54,6 +54,9 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
     );
   const rememberReceipt = (receipt) => {
     if (receipt?.id && !target) target = { executionNodeId: receipt.node, sessionId: receipt.id };
+    if (!target) return;
+    report.sessionId = target.sessionId;
+    report.executionNodeId = target.executionNodeId;
   };
   const noteUnresolved = (snapshot) => {
     rememberReceipt(snapshot);
@@ -73,9 +76,9 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
   };
   // Return an id still in the book without deleting it. Delete only after close, or when the
   // attempt finished with no session id. A lost CDP reply can call this again.
-  const releaseLaunch = (knownId, closed) =>
+  const releaseLaunch = (knownId, closed, unknownAcked) =>
     view(
-      `const token=${JSON.stringify(launchToken)};const known=${JSON.stringify(knownId)};const closed=${closed ? 'true' : 'false'};const book=document.__nativeLaunchBook;if(!book)return {released:true,id:""};if(book.token!==token&&!book.receipts?.[token]&&book.pending?.[token]===undefined)return {released:true,id:""};if(book.token===token&&book.view&&(book.originalRequest||book.request))book.view.api.request=book.originalRequest||book.request;const receipt=book.receipts?.[token]??null;const id=receipt?.id??"";const flag=book.pending?.[token];const pending=flag===true?"pending":flag==="unknown"?"unknown":flag===false?"idle":"unknown";const error=receipt?.error??"";if(id&&!(id===known&&closed))return {released:false,hold:true,id,node:receipt.node??"",runner:receipt.runner??"",cwd:receipt.cwd??"",pending,error};if(!id&&flag===true)return {released:false,hold:true,id:"",node:"",runner:"",cwd:"",pending:"pending",error};const settled=book.settled??(book.settled={});settled[token]=true;if(book.receipts)delete book.receipts[token];if(book.pending)delete book.pending[token];if(book.token===token){delete book.view;delete book.request;delete book.token;}if(book.receipts&&!Object.keys(book.receipts).length&&book.pending&&!Object.keys(book.pending).length&&!book.view)delete document.__nativeLaunchBook;return {released:true,id,pending,error};`,
+      `const token=${JSON.stringify(launchToken)};const known=${JSON.stringify(knownId)};const closed=${closed ? 'true' : 'false'};const unknownAcked=${unknownAcked ? 'true' : 'false'};const book=document.__nativeLaunchBook;if(!book)return {released:true,id:""};if(book.token!==token&&!book.receipts?.[token]&&book.pending?.[token]===undefined)return {released:true,id:""};if(book.token===token&&book.view&&(book.originalRequest||book.request))book.view.api.request=book.originalRequest||book.request;const receipt=book.receipts?.[token]??null;const id=receipt?.id??"";const flag=book.pending?.[token];const pending=flag===true?"pending":flag==="unknown"?"unknown":flag===false?"idle":"unknown";const error=receipt?.error??"";if(id&&!(id===known&&closed))return {released:false,hold:true,id,node:receipt.node??"",runner:receipt.runner??"",cwd:receipt.cwd??"",pending,error};if(!id&&flag===true){const finished=book.finished??(book.finished={});finished[token]=true;return {released:false,hold:true,id:"",node:"",runner:"",cwd:"",pending:"pending",error};}if(!id&&flag==="unknown"&&unknownAcked!==true)return {released:false,hold:true,id:"",node:"",runner:"",cwd:"",pending:"unknown",error};const settled=book.settled??(book.settled={});settled[token]=true;if(book.receipts)delete book.receipts[token];if(book.pending)delete book.pending[token];if(book.token===token){delete book.view;delete book.request;delete book.token;}if(book.receipts&&!Object.keys(book.receipts).length&&book.pending&&!Object.keys(book.pending).length&&!book.view)delete document.__nativeLaunchBook;return {released:true,id,pending,error};`,
     );
   try {
     assert.equal(process.env.FARMSLOT_GATEWAY, 'ws://127.0.0.1:18777');
@@ -122,7 +125,7 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
     // Arm before the click eval. A lost CDP reply can still leave a receipt to close.
     armed = true;
     view(
-      `const method=${JSON.stringify(Methods.NATIVE_SESSION_CREATE)};const cwd=${JSON.stringify(fixture)};const token=${JSON.stringify(launchToken)};const button=root?.querySelector('[data-testid="native-create"]');if(!button||button.disabled)throw Error('Control unavailable');const book=document.__nativeLaunchBook??(document.__nativeLaunchBook={});const receipts=book.receipts??(book.receipts={});const pending=book.pending??(book.pending={});const request=view.api.request.bind(view.api);if(!book.originalRequest)book.originalRequest=request;book.request=book.originalRequest;book.view=view;book.token=token;view.api.request=async(...args)=>{const [name,params]=args;const mine=name===method&&!params?.resumeSessionId&&params?.cwd===cwd&&params?.runner==='codex'&&(params?.executionNodeId??'local')==='local'&&book.token===token;if(mine){view.api.request=book.originalRequest;pending[token]=true;}try{const result=await request(...args);const session=result?.session;if(mine&&session?.id&&!receipts[token]&&book.settled?.[token]!==true)receipts[token]={id:session.id,node:session.executionNodeId,runner:session.runner,cwd:session.cwd};return result;}catch(error){if(mine&&book.settled?.[token]!==true){pending[token]='unknown';if(!receipts[token])receipts[token]={id:'',error:String(error?.message??error)};}throw error;}finally{if(mine&&book.settled?.[token]!==true&&pending[token]===true)pending[token]=false;}};button.click();return {clicked:true};`,
+      `const method=${JSON.stringify(Methods.NATIVE_SESSION_CREATE)};const closeMethod=${JSON.stringify(Methods.NATIVE_SESSION_CLOSE)};const cwd=${JSON.stringify(fixture)};const token=${JSON.stringify(launchToken)};const button=root?.querySelector('[data-testid="native-create"]');if(!button||button.disabled)throw Error('Control unavailable');const book=document.__nativeLaunchBook??(document.__nativeLaunchBook={});const receipts=book.receipts??(book.receipts={});const pending=book.pending??(book.pending={});const request=view.api.request.bind(view.api);if(!book.originalRequest)book.originalRequest=request;book.request=book.originalRequest;book.view=view;book.token=token;view.api.request=async(...args)=>{const [name,params]=args;const mine=name===method&&!params?.resumeSessionId&&params?.cwd===cwd&&params?.runner==='codex'&&(params?.executionNodeId??'local')==='local'&&book.token===token;if(mine){view.api.request=book.originalRequest;pending[token]=true;}try{const result=await request(...args);const session=result?.session;if(mine&&session?.id&&!receipts[token]&&book.settled?.[token]!==true){receipts[token]={id:session.id,node:session.executionNodeId,runner:session.runner,cwd:session.cwd};if(book.finished?.[token]===true){try{await request(closeMethod,{executionNodeId:session.executionNodeId,sessionId:session.id})}catch(closeError){receipts[token].closeError=String(closeError?.message??closeError)}}}return result;}catch(error){if(mine&&book.settled?.[token]!==true){pending[token]='unknown';if(!receipts[token])receipts[token]={id:'',error:String(error?.message??error)};}throw error;}finally{if(mine&&book.settled?.[token]!==true&&pending[token]===true)pending[token]=false;}};button.click();return {clicked:true};`,
     );
     const created = await wait(readLaunchReceipt, (value) => Boolean(value.id), timeoutMs);
     rememberReceipt(created);
@@ -253,9 +256,29 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
         report.pass = false;
         if (!report.receiptError) report.receiptError = error.message;
       }
+    let unknownAcked = false;
+    const acceptRelease = (snapshot) => {
+      noteUnresolved(snapshot);
+      if (snapshot?.pending === 'unknown') unknownAcked = true;
+    };
+    const releaseNow = () =>
+      releaseLaunch(target?.sessionId ?? '', report.stopped === true, unknownAcked);
+    const releaseSafely = () => {
+      if (!browser || !armed) return;
+      try {
+        acceptRelease(releaseNow());
+      } catch {
+        try {
+          acceptRelease(releaseNow());
+        } catch (retryError) {
+          report.pass = false;
+          if (!report.releaseError) report.releaseError = retryError.message;
+        }
+      }
+    };
     if (browser && armed && !target)
       try {
-        noteUnresolved(releaseLaunch('', false));
+        acceptRelease(releaseLaunch('', false, false));
       } catch (error) {
         report.pass = false;
         if (!report.releaseError) report.releaseError = error.message;
@@ -271,27 +294,19 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
         report.closeError = error.message;
       }
     };
-    const releaseKnown = () => {
-      if (!browser || !armed) return;
-      try {
-        // Delete the receipt only after close, or when this attempt has no session id.
-        // A second call is safe when the first reply was lost.
-        noteUnresolved(releaseLaunch(target?.sessionId ?? '', report.stopped === true));
-      } catch {
-        try {
-          noteUnresolved(releaseLaunch(target?.sessionId ?? '', report.stopped === true));
-        } catch (retryError) {
-          report.pass = false;
-          if (!report.releaseError) report.releaseError = retryError.message;
-        }
-      }
-    };
     closeTarget();
-    releaseKnown();
+    releaseSafely();
     // The release above can be the first copy of an id when the earlier read was lost.
     if (target && !report.stopped) {
       closeTarget();
-      releaseKnown();
+      releaseSafely();
+    }
+    // A create failure stays in the book until this report has copied its cause.
+    if (unknownAcked) releaseSafely();
+    if (target && !report.stopped) {
+      report.pass = false;
+      report.sessionId = target.sessionId;
+      report.executionNodeId = target.executionNodeId;
     }
   }
   const outPath = writeEvidence(report, SCENARIO_ID, report.runner, outDir);
