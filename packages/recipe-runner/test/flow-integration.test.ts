@@ -74,7 +74,16 @@ const manifest: RecipeActionManifestDocument = {
   },
 };
 
-for (const scenario of ['yes', 'no', 'failure', 'partial'] as const) {
+for (const scenario of [
+  'yes',
+  'no',
+  'failure',
+  'partial',
+  'terminal',
+  'resolution',
+  'cancelled',
+  'hud_failure',
+] as const) {
   const branch = scenario === 'no' ? 'no' : 'yes';
   test(`real runner publishes global ${scenario} progress on existing HUD updates and final summary`, async (t) => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'recipe-flow-'));
@@ -109,6 +118,33 @@ for (const scenario of ['yes', 'no', 'failure', 'partial'] as const) {
       path.join(library, 'recipes/fixture/unit.recipe.json'),
       JSON.stringify(document(unit)),
     );
+    const simple =
+      scenario === 'terminal' || scenario === 'resolution' || scenario === 'hud_failure';
+    const scenarioRoot = simple
+      ? {
+          ...root,
+          workflow: {
+            entry: scenario === 'terminal' ? 'done' : 'work',
+            teardown: 'cleanup',
+            nodes: {
+              ...(scenario === 'terminal'
+                ? {}
+                : {
+                    work: {
+                      action: 'command',
+                      intent: 'Use observed fixture data',
+                      cmd: scenario === 'resolution' ? '{{outputs.missing.cmd}}' : 'printf OK',
+                      next: 'done',
+                    },
+                  }),
+              done: { action: 'end', status: scenario === 'terminal' ? 'fail' : 'pass' },
+              cleanup: root.workflow.nodes.cleanup,
+              clean: root.workflow.nodes.clean,
+            },
+          },
+        }
+      : root;
+    let failHud = scenario === 'hud_failure';
     const updates: RecipeFlowUpdate[] = [];
     const runner = createRecipeRunner({
       actionManifest: manifest,
@@ -129,6 +165,10 @@ for (const scenario of ['yes', 'no', 'failure', 'partial'] as const) {
                 'existing HUD event must carry qualified SDK progress',
               );
               updates.push(structuredClone(flow));
+              if (failHud && node.status === 'pass') {
+                failHud = false;
+                throw new Error('Fixture HUD delivery failed after the completed action');
+              }
             }
             return action === 'switch' ? { case: branch } : {};
           },
@@ -136,25 +176,35 @@ for (const scenario of ['yes', 'no', 'failure', 'partial'] as const) {
       ],
     });
     const result = await runner.run({
-      recipeDocument: document(root),
+      recipeDocument: document(scenarioRoot),
       projectRoot: dir,
       artifactsDir: path.join(dir, 'output'),
       librarySources: [{ root: library, provenance: { kind: 'library', trust: 'trusted' } }],
       recordVideo: false,
       ...(scenario === 'partial' ? { stopAfterNode: 'first' } : {}),
+      ...(scenario === 'cancelled'
+        ? { signal: AbortSignal.abort(new Error('Fixture cancelled before first action')) }
+        : {}),
       recordingReason: 'SDK composition/progress fixture has no UI actions',
     });
-    assert.equal(result.status, scenario === 'failure' ? 'fail' : 'pass');
+    assert.equal(result.status, ['yes', 'no', 'partial'].includes(scenario) ? 'pass' : 'fail');
     const summary: SummaryDocument = JSON.parse(await readFile(result.summaryPath, 'utf8'));
     assert.ok(summary.flow);
     assert.equal(summary.flow.recipeRunId, summary.recipeRunId);
     const full = scenario === 'yes' || scenario === 'no';
     assert.equal(summary.flow.progress.total, full ? (branch === 'yes' ? 11 : 12) : null);
     assert.equal(summary.flow.progress.remaining, full ? 0 : null);
-    assert.equal(
-      summary.flow.progress.completed,
-      full ? (branch === 'yes' ? 11 : 12) : scenario === 'partial' ? 5 : 4,
-    );
+    const counts = {
+      yes: 11,
+      no: 12,
+      failure: 4,
+      partial: 5,
+      terminal: 1,
+      resolution: 1,
+      cancelled: 1,
+      hud_failure: 2,
+    };
+    assert.equal(summary.flow.progress.completed, counts[scenario]);
     if (full)
       assert.equal(
         updates.find((update) => update.activeId === 'second/nested/read')!.progress.current,
@@ -166,18 +216,30 @@ for (const scenario of ['yes', 'no', 'failure', 'partial'] as const) {
         updates.every((update) => update.progress.total === null),
         'partial updates never claim a full denominator',
       );
+    if (['terminal', 'resolution', 'cancelled', 'hud_failure'].includes(scenario)) {
+      const cleanupUpdates = updates.filter((update) => update.activeId === 'cleanup');
+      assert.ok(cleanupUpdates.length >= 2);
+      assert.ok(
+        cleanupUpdates.every(
+          (update) => update.progress.total === null && update.progress.remaining === null,
+        ),
+        'a non-pass main graph never publishes an exact cleanup denominator',
+      );
+    }
     assert.equal(updates.at(-1)!.progress.total, summary.flow.progress.total);
     const resolution = JSON.parse(
       await readFile(path.join(dir, 'output/recipe-resolution.json'), 'utf8'),
     );
-    assert.ok(
-      resolution.flow.nodes.some((node: { id: string }) => node.id === 'second/nested/read'),
-    );
-    assert.deepEqual(
-      resolution.flow.nodes.find((node: { id: string }) => node.id === 'first/nested/read')
-        .claimIds,
-      ['first/nested/AC-1'],
-    );
+    if (!simple) {
+      assert.ok(
+        resolution.flow.nodes.some((node: { id: string }) => node.id === 'second/nested/read'),
+      );
+      assert.deepEqual(
+        resolution.flow.nodes.find((node: { id: string }) => node.id === 'first/nested/read')
+          .claimIds,
+        ['first/nested/AC-1'],
+      );
+    }
     if (process.env.FARMSLOT_FLOW_FIXTURE_DIR) {
       const target = path.join(process.env.FARMSLOT_FLOW_FIXTURE_DIR, scenario);
       await mkdir(target, { recursive: true });

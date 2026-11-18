@@ -101,6 +101,8 @@ export function buildRecipeInvocationTree(
 }
 
 export interface RecipeFlowProjection {
+  /** A non-pass graph outcome makes subsequent cleanup totals unknown. */
+  invalidate(): RecipeFlowUpdate;
   start(id: string, phase?: 'main' | 'teardown'): RecipeFlowUpdate;
   complete(id: string, ok: boolean, next?: string): RecipeFlowUpdate;
   finish(status: 'pass' | 'fail' | 'unknown', partial?: boolean): RecipeFlowUpdate;
@@ -171,6 +173,11 @@ export function createRecipeFlowProjection(
     },
   });
   return {
+    invalidate() {
+      interrupted = true;
+      total = null;
+      return snapshot();
+    },
     start(id, phase = 'main') {
       const node = nodes.get(id)!;
       phases.set(id, phase);

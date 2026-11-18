@@ -486,6 +486,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
   const mainStatus = await withRecipeExecutionSignal(options.signal, () =>
     runGraph(graph.entry, graph.mainNodeCount, options.stopAfterNode, options.signal),
   );
+  if (mainStatus !== 'pass') options.flow?.invalidate();
   const teardownSignal = options.signal ? new AbortController().signal : undefined;
   const teardownEntry = graph.teardownEntry;
   const teardownStatus = teardownEntry
