@@ -68,3 +68,9 @@ test('a shortcut footer from an older inline frame cannot hide the current Codex
   ].join('\n');
   assert.equal(runnerPaneBufferedInstruction(tail), 'Current operator draft');
 });
+
+test('shortcut or context wording on the Codex prompt row does not end the draft', () => {
+  const draft = 'Explain the context left indicator';
+  const tail = `› ${draft}\n\n  GPT-6.2-Sol high · /tmp/codex-enter-proof`;
+  assert.equal(runnerPaneBufferedInstruction(tail), draft);
+});
