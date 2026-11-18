@@ -1344,8 +1344,8 @@ export async function monitorRun(
         // resume it stays there until some later violation happens to nudge it,
         // which is how 5424deb9 was re-blocked 11 s after Continue with its
         // session untouched.
-        if (await deliverRunnerResume(error.message, error.observedAt))
-          answeredFailureAt = error.observedAt;
+        await deliverRunnerResume(error.message, error.observedAt);
+        answeredFailureAt = error.observedAt;
       }
     }
   };
@@ -1379,7 +1379,7 @@ export async function monitorRun(
    * `runner_unavailable` card used to fall through with nothing sent, so the
    * pane kept whatever half-finished turn it died on.
    */
-  const deliverRunnerResume = async (message: string, failedAt?: number): Promise<boolean> => {
+  const deliverRunnerResume = async (message: string, failedAt?: number): Promise<void> => {
     const context = currentMonitorContext();
     // Not sendNudge: a provider outage the operator already fixed is not the
     // worker stalling, so it must not spend the stuck/idle escalation budget.
@@ -1413,7 +1413,7 @@ export async function monitorRun(
       console.warn(
         `[run-monitor] run ${runId.slice(0, 8)} — runner resume could not be sent: ${(error as Error).message}`,
       );
-      return false;
+      return;
     }
     if (delivery === 'not-attempted') {
       // Nothing reached the pane. Say so rather than leaving the operator to
@@ -1421,10 +1421,9 @@ export async function monitorRun(
       console.warn(
         `[run-monitor] run ${runId.slice(0, 8)} — runner resume not delivered (${delivery}); the worker may still be waiting on its failed turn`,
       );
-      return false;
+      return;
     }
     snapshots.push({ timestamp: new Date().toISOString(), trigger: 'nudge' });
-    return true;
   };
 
   // Restore from persisted state if available (gateway restart recovery)
