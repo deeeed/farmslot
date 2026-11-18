@@ -50,7 +50,7 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
   const launchToken = randomUUID();
   const readLaunchReceipt = () =>
     view(
-      `const token=${JSON.stringify(launchToken)};const box=view?.__launchReceipts??{};return box[token]??{id:""};`,
+      `const token=${JSON.stringify(launchToken)};const box=document.__nativeLaunchBook?.receipts??{};return box[token]??{id:""};`,
     );
   const rememberReceipt = (receipt) => {
     if (receipt?.id && !target) target = { executionNodeId: receipt.node, sessionId: receipt.id };
@@ -100,7 +100,7 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
     // Arm before the click eval. A lost CDP reply can still leave a receipt to close.
     armed = true;
     view(
-      `const method=${JSON.stringify(Methods.NATIVE_SESSION_CREATE)};const cwd=${JSON.stringify(fixture)};const token=${JSON.stringify(launchToken)};const receipts=view.__launchReceipts??(view.__launchReceipts={});const pending=view.__launchPending??(view.__launchPending={});const request=view.api.request.bind(view.api);view.__launchRequest=request;view.__launchToken=token;view.api.request=async(...args)=>{const [name,params]=args;const mine=name===method&&!params?.resumeSessionId&&params?.cwd===cwd&&params?.runner==='codex'&&(params?.executionNodeId??'local')==='local'&&view.__launchToken===token;if(mine){view.api.request=request;pending[token]=true;}try{const result=await request(...args);const session=result?.session;if(mine&&session?.id&&!receipts[token])receipts[token]={id:session.id,node:session.executionNodeId,runner:session.runner,cwd:session.cwd};return result;}catch(error){if(mine){pending[token]='unknown';if(!receipts[token])receipts[token]={id:'',error:String(error?.message??error)};}throw error;}finally{if(mine&&pending[token]===true)pending[token]=false;}};const button=root?.querySelector('[data-testid="native-create"]');if(!button||button.disabled)throw Error('Control unavailable');button.click();return {clicked:true};`,
+      `const method=${JSON.stringify(Methods.NATIVE_SESSION_CREATE)};const cwd=${JSON.stringify(fixture)};const token=${JSON.stringify(launchToken)};const book=document.__nativeLaunchBook??(document.__nativeLaunchBook={});const receipts=book.receipts??(book.receipts={});const pending=book.pending??(book.pending={});const request=view.api.request.bind(view.api);book.request=request;book.view=view;book.token=token;view.api.request=async(...args)=>{const [name,params]=args;const mine=name===method&&!params?.resumeSessionId&&params?.cwd===cwd&&params?.runner==='codex'&&(params?.executionNodeId??'local')==='local'&&book.token===token;if(mine){view.api.request=request;pending[token]=true;}try{const result=await request(...args);const session=result?.session;if(mine&&session?.id&&!receipts[token])receipts[token]={id:session.id,node:session.executionNodeId,runner:session.runner,cwd:session.cwd};return result;}catch(error){if(mine){pending[token]='unknown';if(!receipts[token])receipts[token]={id:'',error:String(error?.message??error)};}throw error;}finally{if(mine&&pending[token]===true)pending[token]=false;}};const button=root?.querySelector('[data-testid="native-create"]');if(!button||button.disabled)throw Error('Control unavailable');button.click();return {clicked:true};`,
     );
     const created = await wait(readLaunchReceipt, (value) => Boolean(value.id), timeoutMs);
     rememberReceipt(created);
@@ -186,7 +186,7 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
     if (browser)
       try {
         view(
-          `const token=${JSON.stringify(launchToken)};if(view?.__launchToken===token&&view.__launchRequest){view.api.request=view.__launchRequest;return {restored:true}}return {restored:false};`,
+          `const token=${JSON.stringify(launchToken)};const book=document.__nativeLaunchBook;if(book?.token===token&&book.view&&book.request){book.view.api.request=book.request;return {restored:true}}return {restored:false};`,
         );
       } catch (error) {
         report.pass = false;
@@ -195,7 +195,7 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
     if (browser && armed && !target) {
       // One snapshot carries the receipt and the pending flag. The poll stops at one deadline.
       const deadline = Date.now() + 5000;
-      const stateBody = `const token=${JSON.stringify(launchToken)};const receipt=(view?.__launchReceipts??{})[token]??null;const pending=(view?.__launchPending??{})[token];return {id:receipt?.id??"",node:receipt?.node??"",runner:receipt?.runner??"",cwd:receipt?.cwd??"",pending:pending===true?"pending":pending==="unknown"?"unknown":"idle",error:receipt?.error??""};`;
+      const stateBody = `const token=${JSON.stringify(launchToken)};const book=document.__nativeLaunchBook;if(!book?.receipts||!book.pending)return {id:"",node:"",runner:"",cwd:"",pending:"unknown",error:"launch record missing"};const receipt=book.receipts[token]??null;const flag=book.pending[token];return {id:receipt?.id??"",node:receipt?.node??"",runner:receipt?.runner??"",cwd:receipt?.cwd??"",pending:flag===true?"pending":flag==="unknown"?"unknown":flag===false?"idle":"unknown",error:receipt?.error??""};`;
       let snapshot = null;
       let snapshotError = null;
       while (!target && Date.now() < deadline) {
@@ -207,7 +207,10 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
           rememberReceipt(snapshot);
         } catch (error) {
           snapshotError = error;
-          break;
+          const retryPause = Math.min(500, deadline - Date.now());
+          if (retryPause <= 0) break;
+          await new Promise((resolve) => setTimeout(resolve, retryPause));
+          continue;
         }
         if (target) break;
         const pause = Math.min(500, deadline - Date.now());
