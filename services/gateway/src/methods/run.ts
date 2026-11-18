@@ -93,6 +93,7 @@ import { resolveCIDecision } from '../ci-monitor/service.js';
 import { getProjectField, loadProjectVars, loadSlotVars, SlotConfigError } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
+import { assertGatewayStorageAvailable } from '../core/storage-volume.js';
 import { shellQuote } from '../core/tmux.js';
 import { buildFollowUpLineage, isFollowUpFlow } from '../family-observability/context.js';
 import { findFollowUpParentRun } from '../family-observability/state.js';
@@ -451,6 +452,7 @@ export async function runCreate(
 ): Promise<RunCreateResult> {
   assertValidTicketData(params.ticketData);
   if ('sourceProvenance' in params) throw new Error('Source provenance is gateway-owned');
+  assertGatewayStorageAvailable();
   return useReviewWorkspaceStorage(() =>
     withTaskAdmission(params.taskFile, () =>
       withSourceCreationPlan(params, options, (plan, seal, runId) =>
