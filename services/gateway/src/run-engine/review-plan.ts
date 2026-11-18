@@ -114,13 +114,18 @@ export function remainingExplicitReviewPlan(
   let completed = 0;
   for (const selection of plan) {
     const execution = executionModelFromSelection(selection);
-    const omittedClaude = selection.runner === 'claude' && (selection.effort ?? null) === null;
+    const planOmitted = (selection.effort ?? null) === null;
+    const omittedClaude = selection.runner === 'claude' && planOmitted;
+    // An omitted row compares through the catalog default. An explicit row does not
+    // treat a missing effort as that default.
+    const effortMatches = planOmitted
+      ? (review: ReviewStatus) => (review.effort ?? execution.effort) === execution.effort
+      : (review: ReviewStatus) => review.effort != null && review.effort === execution.effort;
     const index = passing.findIndex(
       (review) =>
         normalizeRunner(review.runner) === normalizeRunner(selection.runner) &&
         (review.model ?? execution.model) === execution.model &&
-        (omittedClaude ||
-          (review.effort !== null && (review.effort ?? execution.effort) === execution.effort)),
+        (omittedClaude || effortMatches(review)),
     );
     if (index < 0) break;
     passing.splice(index, 1);

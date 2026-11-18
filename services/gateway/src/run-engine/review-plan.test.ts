@@ -353,6 +353,21 @@ test('an omitted Claude plan row accepts the effort the session recorded', () =>
   assert.equal(remainingExplicitReviewPlan([{ ...row, effort: 'high' }], [unset]).length, 1);
 });
 
+test('an omitted Codex plan row accepts a review recorded with no effort', () => {
+  const row: ReviewSelection = { runner: 'codex', model: null, effort: null, mode: 'cold' };
+  const recorded = {
+    ...passing('codex-unset', 'session-codex-unset'),
+    model: null,
+    effort: null,
+  };
+  const missing = { ...recorded };
+  delete missing.effort;
+  assert.deepEqual(remainingExplicitReviewPlan([row], [recorded]), []);
+  assert.deepEqual(remainingExplicitReviewPlan([row], [missing]), []);
+  assert.equal(remainingExplicitReviewPlan([{ ...row, effort: 'high' }], [recorded]).length, 1);
+  assert.equal(remainingExplicitReviewPlan([{ ...row, effort: 'high' }], [missing]).length, 1);
+});
+
 test('explicit sequence matches each session only once and preserves order', () => {
   assert.deepEqual(
     remainingExplicitReviewPlan(
