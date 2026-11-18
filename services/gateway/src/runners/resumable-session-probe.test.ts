@@ -15,6 +15,7 @@ import { promisify } from 'node:util';
 import {
   resumableSessionContentProbeCommand,
   resumableSessionProbeCommand,
+  resumableSessionProbeOutcome,
 } from './session-process.js';
 
 const run = promisify(execFile);
@@ -69,4 +70,31 @@ test('the content probe survives a path with spaces and quotes', async (t) => {
   await writeFile(saved, 'x\n');
 
   assert.equal(await probe(resumableSessionContentProbeCommand(saved)), 0);
+});
+
+// Codex r4 on #2347: a node at its process or descriptor limit answers exit 1
+// too — `spawn sh EAGAIN`, `EMFILE` — and reading that as a missing transcript
+// tells an operator their work is gone when the node was only busy. Both the
+// recovery and review-resume callers read this one answer.
+test('a probe that could not run is not a missing transcript', () => {
+  assert.equal(resumableSessionProbeOutcome({ exitCode: 0 }), 'present');
+  assert.equal(resumableSessionProbeOutcome({ exitCode: 1, stderr: '' }), 'absent');
+  for (const stderr of [
+    'spawn sh EAGAIN',
+    'sh: EMFILE: too many open files',
+    'fork: Cannot allocate memory',
+    'sh: cannot fork',
+    'ENFILE',
+  ])
+    assert.equal(
+      resumableSessionProbeOutcome({ exitCode: 1, stderr }),
+      'unavailable',
+      `a shell that could not start is not an answer about the file: ${stderr}`,
+    );
+  // Any other exit is the probe failing, whatever it printed.
+  assert.equal(
+    resumableSessionProbeOutcome({ exitCode: 255, stderr: 'ssh: connect' }),
+    'unavailable',
+  );
+  assert.equal(resumableSessionProbeOutcome({ exitCode: 126 }), 'unavailable');
 });

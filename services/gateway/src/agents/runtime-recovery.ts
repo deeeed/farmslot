@@ -62,6 +62,7 @@ import {
   resolveRunnerSessionBinding,
   resolveRunRetainedSessionBinding,
   resumableSessionContentProbeCommand,
+  resumableSessionProbeOutcome,
 } from '../runners/session-process.js';
 import { getRun, listRuns, updateRun, updateRunAgentContexts } from '../runs/store.js';
 import { normalizeWorkerSignal, parseStrictIsoMs } from '../tasks/worker-signals.js';
@@ -854,19 +855,12 @@ export async function restoreTmuxWorker(
         resumableSessionContentProbeCommand(sessionBinding.runnerSessionPath),
         { timeout: 15_000 },
       );
-      // `test` answers 1 for "not there". Anything else — and a shell that could
-      // not even spawn, which also exits 1 with its reason on stderr — is the
-      // probe failing, not the transcript: an unreachable node, a timeout, a node
-      // at its process limit (`spawn EAGAIN`). That says nothing about the file.
-      const probeFailed =
-        saved.exitCode !== 0 &&
-        (saved.exitCode !== 1 ||
-          /\b(?:EAGAIN|ENOMEM|E2BIG|cannot (?:fork|allocate))\b/i.test(saved.stderr ?? ''));
-      if (!probeFailed && saved.exitCode === 1)
+      const outcome = resumableSessionProbeOutcome(saved);
+      if (outcome === 'absent')
         throw new Error(
           `Cannot reload ${runner} session ${sessionBinding.runnerSessionId}: its saved session at ${sessionBinding.runnerSessionPath} is missing, unreadable or empty. Restore the transcript before reloading; launching here would start a new conversation and report it as the old one.`,
         );
-      if (probeFailed)
+      if (outcome === 'unavailable')
         throw new Error(
           `Cannot verify the saved ${runner} session at ${sessionBinding.runnerSessionPath} on ${params.slotId}: the probe exited ${saved.exitCode}${saved.stderr?.trim() ? ` (${saved.stderr.trim().slice(0, 200)})` : ''}. The session binding is unchanged; retry the reload.`,
         );

@@ -41,7 +41,10 @@ import {
   workspaceTerminalSessionCreateArgv,
 } from './launch-command.js';
 import { getRunnerDefinition } from './registry.js';
-import { resumableSessionContentProbeCommand } from './session-process.js';
+import {
+  resumableSessionContentProbeCommand,
+  resumableSessionProbeOutcome,
+} from './session-process.js';
 
 export const REVIEW_STARTUP_TIMEOUT_MS = 300_000;
 
@@ -396,16 +399,19 @@ export async function reviewTmuxOperation(
   // window and reported `resumed: true` while that pane exits. So the same check
   // runs here first, through the same channel, and the refusal is the caller's.
   if (action === 'resume' && reviewSessionPath) {
-    const probe = ['sh', '-c', resumableSessionContentProbeCommand(reviewSessionPath)];
+    // /bin/sh, not `sh`: the same interpreter the pane itself runs, with no
+    // dependence on this process's PATH.
+    const probe = ['/bin/sh', '-c', resumableSessionContentProbeCommand(reviewSessionPath)];
     const saved =
       w.executionNodeId === 'local'
         ? await execFileArgv(probe, { timeout: 15000 })
         : await execNativeNodeArgv(run.nativeOwnerPrincipalId!, w.machine, probe, 15000);
-    if (saved.exitCode === 1)
+    const outcome = resumableSessionProbeOutcome(saved);
+    if (outcome === 'absent')
       throw new Error(
         `The retained reviewer session at ${reviewSessionPath} is missing, unreadable or empty; resuming would start a new conversation. Restore it, or validate the repaired output through monitor replay.`,
       );
-    if (saved.exitCode !== 0)
+    if (outcome === 'unavailable')
       throw new Error(
         `Cannot verify the retained reviewer session at ${reviewSessionPath}: the probe exited ${saved.exitCode}${saved.stderr?.trim() ? ` (${saved.stderr.trim().slice(0, 200)})` : ''}. Nothing was relaunched; retry.`,
       );
