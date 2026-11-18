@@ -1,0 +1,1 @@
+- `farmslot task mark` verifies the task's retained tooling once per mark instead of twice. Each pass hashes the pinned CLI and provider, about 36,000 files on a MetaMask task.

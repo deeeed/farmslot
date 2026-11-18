@@ -452,6 +452,57 @@ test('retained provider gates survive a provider update and ordinary source edit
   });
 });
 
+test('a mark hashes its retained tooling once', async (t) => {
+  const f = fixture(t);
+  await withProjectRecipeHost(f.options, async (host) =>
+    retainTaskExecution(
+      f.taskDir,
+      await projectTaskExecution(host, {
+        executable: path.join(f.installed, 'farmslot'),
+        packageRoot: f.installed,
+        distributionRoot: f.installed,
+      }),
+    ),
+  );
+  fs.writeFileSync(path.join(f.taskDir, 'allowed'), 'yes');
+  const { pin } = verifySelectedTask(f.taskDir);
+  // Every verification pass reads the pinned executable; count one pass, then a whole mark.
+  const read = fs.readFileSync;
+  const reads = t.mock.method(fs, 'readFileSync', (...args: Parameters<typeof fs.readFileSync>) =>
+    read(...args),
+  );
+  const executableReads = () =>
+    reads.mock.calls.filter((call) => {
+      const file = String(call.arguments[0]);
+      return file.startsWith(`${pin}${path.sep}`) && path.basename(file) === 'farmslot';
+    }).length;
+  verifySelectedTask(f.taskDir);
+  const onePass = executableReads();
+  assert.ok(onePass > 0);
+  reads.mock.resetCalls();
+  // As `farmslot task mark` does: verify, then run the gate under that receipt.
+  const receipt = verifySelectedTask(f.taskDir);
+  const marked = await withTaskProjectHost(
+    f.options,
+    f.taskDir,
+    async ({ provider }) =>
+      handleChecklist(['mark', f.taskDir, '1'], provider.commandOptions?.task),
+    receipt,
+  );
+  assert.equal(marked, 0);
+  assert.equal(executableReads(), onePass);
+  // A receipt for another binding is refused before the provider loads.
+  await assert.rejects(
+    withTaskProjectHost(
+      f.options,
+      f.taskDir,
+      async () => assert.fail('provider ran under another binding'),
+      { ...receipt, bindingIdentity: { ...receipt.bindingIdentity!, project: 'other' } },
+    ),
+    { code: 'TASK_BINDING_CHANGED' },
+  );
+});
+
 test('a shared library checkout moved during the run leaves the task on its pinned copy', async (t) => {
   const f = fixture(t);
   // A shared library checkout like ~/dev/metamask/experimental-metamask-recipe-perps.

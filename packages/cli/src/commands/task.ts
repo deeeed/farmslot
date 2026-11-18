@@ -129,6 +129,7 @@ export async function runTaskCommand(
           throw shared.usageError('The selected provider does not declare task gates.');
         return shared.handleChecklist([action, ...argv], policy);
       },
+      receipt,
     );
   }
   const host = await projectRecipeHostOptions('task', undefined, options);
