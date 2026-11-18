@@ -2,7 +2,7 @@
 // could not be posted because the PR head moved.
 //
 // A verified retained lineage is required before replacing the parent. A live
-// slot takes a chained WARM run; otherwise the same lineage goes through intake.
+// slot or workspace takes a chained WARM run; other cases go through intake.
 import {
   DEFAULT_PR_REVIEW_OPTIONS,
   isTerminalRunStatus,
@@ -24,7 +24,10 @@ import {
   rereviewTarget,
 } from '../../pr-rules/rereview-request.js';
 import { WarmReviewRefusal } from '../../review/session-mode.js';
-import { bindWorkspaceReviewResult } from '../../review-workspaces/continuity.js';
+import {
+  bindWorkspaceReviewResult,
+  compatibleWorkspaceReviewer,
+} from '../../review-workspaces/continuity.js';
 import {
   automatedRepeatReviewSelection,
   buildRepeatReviewContext,
@@ -48,6 +51,7 @@ import {
   persistRunNow,
   updateRun,
 } from '../../runs/store.js';
+import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { withSourcePlanning } from '../../sources/runtime.js';
 import { submitRereviewRequest } from '../pr-rules.js';
 
@@ -88,6 +92,8 @@ async function rereviewWithSources(
 ): Promise<RunRereviewLatestHeadResult> {
   let run = getRun(params.runId)!;
   assertRereviewable(run);
+  const parentGeneration = run.engineState?.generation ?? 0;
+  if (run.reviewWorkspaceTarget) assertNativeRunOwner(run);
   if (run.reviewWorkspaceTarget && run.reviewResult) {
     const result = bindWorkspaceReviewResult(run, run.reviewResult);
     if (!run.reviewResult.session && result.session) {
@@ -101,6 +107,7 @@ async function rereviewWithSources(
   // seeds the warm continuation.
   const live = await fetchGitHubPR(`${target.repo}#${target.number}`);
   const slot = liveReviewSessionSlot(run, (await loadFleetStatus()).slots);
+  const workspace = run.reviewWorkspaceTarget;
   const runner = run.metrics.runner;
   const model = run.metrics.model;
   const reviewContext = reviewRequestContextForRun({ ...run, decisions: run.decisions ?? [] });
@@ -111,10 +118,10 @@ async function rereviewWithSources(
     );
   assertPrimaryReviewContext({ ...run, reviewMode: 'warm', reviewContext });
   // The stale review is the prior round, the live head is the target, and the
-  // reviewer keeps its session. The context reads only the prior run, so its
-  // ancestry lookup runs before the child exists.
+  // reviewer keeps its session. Workspace preparation qualifies the immutable
+  // comparison before delivering the new task.
   const context =
-    slot && runner && model
+    (slot || workspace) && runner && model
       ? automatedRepeatReviewSelection(
           buildRepeatReviewContext(
             { ...run, reviewContext },
@@ -125,7 +132,8 @@ async function rereviewWithSources(
               prNumber: target.number,
               headSha: live.headSha,
             },
-            getAllRuns(),
+            // Workspace preparation will freeze full family evidence before dispatch.
+            workspace ? [run] : getAllRuns(),
           ),
           {
             ...DEFAULT_PR_REVIEW_OPTIONS,
@@ -140,6 +148,17 @@ async function rereviewWithSources(
   const parent = getRun(run.id);
   if (!parent) throw new Error(`Run not found: ${params.runId}`);
   assertRereviewable(parent);
+  if ((parent.engineState?.generation ?? 0) !== parentGeneration)
+    throw new Error('Review changed during re-review admission');
+  if (workspace) {
+    assertNativeRunOwner(parent);
+    const retained = compatibleWorkspaceReviewer(parent, parent);
+    if (!retained || retained.reviewId !== reviewContext.reviewLineages[0]?.reviewId)
+      throw new WarmReviewRefusal(
+        'session-unavailable',
+        'no verified retained workspace reviewer for this lineage',
+      );
+  }
 
   // A second click while the first chained round is still going returns it.
   // No await follows this check before the new child carries the head it matches.
@@ -159,35 +178,54 @@ async function rereviewWithSources(
       reviewerHistory,
     );
 
-  if (!slot || !runner || !model || !context) {
+  if ((!slot && !workspace) || !runner || !model || !context) {
     const intake = await submitRereviewRequest(run, fallbackRepo, live.headSha);
     const latestParent = getRun(parent.id);
     if (latestParent) await supersedeBlockedReview(latestParent, 'via review intake');
     return { mode: 'review-intake', ...intake };
   }
 
-  const child = createRun({
-    flowType: 'review-pr',
-    project: run.project,
-    // Original casing for display; the continuation context compares
-    // repositories lower-cased, as engine-decisions does.
-    ticketOrPr: `${target.repo}#${target.number}`,
-    slotId: slot.slot,
-    branch: run.branch ?? undefined,
-    model,
-    runner,
-    effort: run.effort,
-    mode: 'autonomous',
-    safetyTier: run.safetyTier,
-    // Keep the parent's completion policy: the operator was trying to post
-    // this review, so the child must offer the same posting gate.
-    completionPolicy: run.completionPolicy,
-    reviewMode: context.mode,
-    reviewContext,
-    prNumber: target.number,
-    ...buildFollowUpLineage(run),
-    ...buildFollowUpClassification(run),
-  });
+  const child = createRun(
+    {
+      flowType: 'review-pr',
+      project: run.project,
+      // Original casing for display; the continuation context compares
+      // repositories lower-cased, as engine-decisions does.
+      ticketOrPr: `${target.repo}#${target.number}`,
+      ...(workspace
+        ? {
+            reviewWorkspaceTarget: workspace,
+            transport: run.transport,
+            nativeProfile: run.nativeProfile,
+            reviewAutoFinish: false,
+          }
+        : { slotId: slot!.slot }),
+      branch: run.branch ?? undefined,
+      model,
+      runner,
+      effort: run.effort,
+      mode: 'autonomous',
+      safetyTier: run.safetyTier,
+      // Keep the parent's completion policy: the operator was trying to post
+      // this review, so the child must offer the same posting gate.
+      completionPolicy: run.completionPolicy,
+      reviewMode: context.mode,
+      reviewContext,
+      prNumber: target.number,
+      ...buildFollowUpLineage(run),
+      ...buildFollowUpClassification(run),
+    },
+    workspace
+      ? {
+          delegatedReviewOwner: parent.nativeOwnerPrincipalId,
+          workflowExecution: {
+            workspacePolicy: { kind: 'exact', machine: workspace.machine },
+            transport: run.transport ?? 'tmux',
+            models: [{ runner, model, effort: run.effort ?? null, mode: context.mode }],
+          },
+        }
+      : undefined,
+  );
   updateRun(child.id, {
     repeatReviewContext: context,
     reviewMode: context.mode,
@@ -196,7 +234,7 @@ async function rereviewWithSources(
   applyChainedRunEngineFlags(child.id, { skipPrepare: true, warmSessionReuse: true });
   await supersedeBlockedReview(parent, child.id);
   console.log(
-    `[run] re-review ${run.id.slice(0, 8)} → ${child.id.slice(0, 8)} on ${slot.slot}: warm handoff to the retained ${runner} session, ${context.priorReviewedHeadSha?.slice(0, 7) ?? '?'} → ${live.headSha.slice(0, 7)}`,
+    `[run] re-review ${run.id.slice(0, 8)} → ${child.id.slice(0, 8)} on ${workspace?.machine ?? slot!.slot}: warm handoff to the retained ${runner} session, ${context.priorReviewedHeadSha?.slice(0, 7) ?? '?'} → ${live.headSha.slice(0, 7)}`,
   );
   startRun(child.id).catch((err) => {
     console.error(

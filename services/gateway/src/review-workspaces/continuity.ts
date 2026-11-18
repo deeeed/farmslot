@@ -1,13 +1,12 @@
 import {
   isTerminalRunStatus,
-  parseGitHubPullUrl,
-  parseGitHubRef,
   type RepeatReviewContext,
   type Run,
   type RunReviewResult,
 } from '@farmslot/protocol';
 import { resolveReviewMode } from '@farmslot/review-dispatch';
 
+import { reviewPRIdentity } from '../review/pr-identity.js';
 import { incrementalReviewAvailable } from '../run-engine/engine-decisions.js';
 import { runnerSupportsSessionContinuation } from '../runners/registry.js';
 import { runPrincipalOwner, samePrincipalOwner } from '../security/work-originator.js';
@@ -157,15 +156,15 @@ export function configureWorkspaceContinuity(
     throw new Error(
       `WARM review unavailable: ${context.warmUnavailableReason ?? 'missing prior reviewed head'}`,
     );
-  const priorPr = prior.prWork?.pr ?? parseGitHubRef(prior.ticketOrPr);
-  const requestedPr = run.prWork?.pr ?? parseGitHubRef(run.ticketOrPr);
+  const priorPr = reviewPRIdentity({ ticketOrPr: prior.ticketOrPr, prWork: prior.prWork });
+  const requestedPr = reviewPRIdentity({ ticketOrPr: run.ticketOrPr, prWork: run.prWork });
   if (
     !priorPr ||
     !requestedPr ||
-    priorPr.repo.toLowerCase() !== context.repository.toLowerCase() ||
-    requestedPr.repo.toLowerCase() !== context.repository.toLowerCase() ||
-    priorPr.number !== context.prNumber ||
-    requestedPr.number !== context.prNumber
+    priorPr.repository.toLowerCase() !== context.repository.toLowerCase() ||
+    requestedPr.repository.toLowerCase() !== context.repository.toLowerCase() ||
+    priorPr.prNumber !== context.prNumber ||
+    requestedPr.prNumber !== context.prNumber
   )
     throw new Error('WARM review unavailable: repository/PR mismatch');
   const reviewer = compatibleWorkspaceReviewer(run, prior);
@@ -231,11 +230,11 @@ export function configureWorkspaceContinuity(
 export function bindWorkspaceReviewResult(run: Run, result: RunReviewResult): RunReviewResult {
   const reviewer = run.agentContexts?.find((context) => context.id === 'review');
   const subject = run.reviewWorkspaceSubject;
-  const pr = run.prWork?.pr ?? parseGitHubRef(run.ticketOrPr) ?? parseGitHubPullUrl(run.ticketOrPr);
+  const pr = reviewPRIdentity({ ticketOrPr: run.ticketOrPr, prWork: run.prWork });
   if (!reviewer?.reviewId || !reviewer.runnerSessionId || !subject || !pr) return result;
   if (
     result.reviewSnapshot?.source === 'unavailable' ||
-    pr.repo.toLowerCase() !== subject.repository.toLowerCase() ||
+    pr.repository.toLowerCase() !== subject.repository.toLowerCase() ||
     (result.reviewSnapshot?.headSha && result.reviewSnapshot.headSha !== subject.headSha)
   )
     throw new Error('Reviewer result does not match its frozen repository/head');
@@ -263,7 +262,7 @@ export function bindWorkspaceReviewResult(run: Run, result: RunReviewResult): Ru
       reviewId: reviewer.reviewId,
       sessionId: reviewer.runnerSessionId,
       repository: subject.repository,
-      prNumber: pr.number,
+      prNumber: pr.prNumber,
       lastReviewedHeadSha: subject.headSha,
       runner: reviewer.runner ?? undefined,
       model: reviewer.model,

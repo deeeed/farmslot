@@ -4,6 +4,9 @@ import test, { beforeEach, mock } from 'node:test';
 import type { Run, RunCreateParams } from '@farmslot/protocol';
 
 import * as github from '../../external/github.js';
+import type { RunRecordBuildOptions } from '../../runs/store.js';
+
+import { makeRun } from './test-fixtures.js';
 
 const priorHead = '5f85b47bfa4f7d8ec1888605f0cd2f025fffb804';
 const liveHead = 'da6b612ef57bc81a6c14bc873810b66ee0720eb0';
@@ -16,8 +19,11 @@ let ancestor = true;
 let holdHistory = false;
 let historyCalls = 0;
 let releaseHistory: () => void = () => {};
+let liveSlotAvailable = true;
+const creationOptions: Array<RunRecordBuildOptions | undefined> = [];
 
-const prior = {
+const prior: Run = {
+  ...makeRun(),
   id: 'prior-review',
   familyId: 'family-1',
   familyRootTicketOrPr: 'owner/repo#42',
@@ -29,7 +35,7 @@ const prior = {
   slotId: 'slot-1',
   steps: [],
   decisions: [],
-  metrics: { runner: 'codex', model: 'gpt-6-astra' },
+  metrics: { ...makeRun().metrics, runner: 'codex', model: 'gpt-6-astra' },
   effort: 'high',
   agentContexts: [
     {
@@ -51,9 +57,6 @@ const prior = {
     },
   ],
   reviewResult: {
-    kind: 'review',
-    prNumber: 42,
-    repo: 'owner/repo',
     recommendation: 'request changes',
     reviewMd: 'review.md',
     session: {
@@ -65,7 +68,7 @@ const prior = {
       prNumber: 42,
       lastReviewedHeadSha: priorHead,
     },
-    lineComments: [{ path: 'src/a.ts', line: 7, body: 'Fix this.', severity: 'blocking' }],
+    lineComments: [{ path: 'src/a.ts', line: 7, body: 'Fix this.', severity: 'blocker' }],
     reviewSnapshot: {
       source: 'github-pr',
       capturedAt: '2026-10-05T09:00:00.000Z',
@@ -73,7 +76,7 @@ const prior = {
     },
   },
   createdAt: '2026-10-05T09:00:00.000Z',
-} as unknown as Run;
+};
 runs.set(prior.id, prior);
 
 mock.module('../../external/github.js', {
@@ -105,13 +108,15 @@ mock.module('../../fleet/state.js', {
     ...fleet,
     loadProjectConfig: async () => ({ ci: { repo: 'owner/repo' } }),
     loadFleetStatus: async () => ({
-      slots: [
-        {
-          slot: 'slot-1',
-          agent: 'working',
-          agentContexts: [{ runId: prior.id, role: 'review' }],
-        },
-      ],
+      slots: liveSlotAvailable
+        ? [
+            {
+              slot: 'slot-1',
+              agent: 'working',
+              agentContexts: [{ runId: prior.id, role: 'review' }],
+            },
+          ]
+        : [],
     }),
   },
 });
@@ -134,9 +139,40 @@ mock.module('../../runs/store.js', {
       return [...runs.values()];
     },
     listRuns: () => ({ runs: [...runs.values()] }),
-    createRun: (params: RunCreateParams) => {
+    createRun: (params: RunCreateParams, options?: RunRecordBuildOptions) => {
+      creationOptions.push(options);
       assertPrimaryReviewContext(params);
-      const run = { ...params, id: `child-${runs.size}`, status: 'created' } as unknown as Run;
+      const run: Run = {
+        ...makeRun({
+          id: `child-${runs.size}`,
+          project: params.project,
+          flowType: params.flowType,
+          ticketOrPr: params.ticketOrPr,
+          familyId: params.familyId,
+          parentRunId: params.parentRunId,
+          familyRootTicketOrPr: params.familyRootTicketOrPr,
+          lane: params.lane,
+          variant: params.variant,
+          mode: params.mode,
+        }),
+        status: 'slot-finding',
+        slotId: params.slotId ?? null,
+        branch: params.branch ?? null,
+        transport: params.transport,
+        reviewWorkspaceTarget: params.reviewWorkspaceTarget,
+        reviewMode: params.reviewMode,
+        reviewContext: params.reviewContext,
+        effort: params.effort,
+        reviewAutoFinish: params.reviewAutoFinish,
+        completionPolicy: params.completionPolicy,
+        nativeOwnerPrincipalId: options?.delegatedReviewOwner,
+        createdByPrincipalId: options?.delegatedReviewOwner,
+        metrics: {
+          ...makeRun().metrics,
+          runner: params.runner ?? null,
+          model: params.model ?? null,
+        },
+      };
       runs.set(run.id, run);
       return run;
     },
@@ -168,12 +204,27 @@ mock.module('../pr-rules.js', {
   },
 });
 
+const owners = await import('../../security/native-worker-owner.js');
+let denyWorkspaceOwner = false;
+mock.module('../../security/native-worker-owner.js', {
+  namedExports: {
+    ...owners,
+    assertNativeRunOwner: () => {
+      if (denyWorkspaceOwner) throw new Error('Workspace owner refused');
+    },
+  },
+});
+
 const { runRereviewLatestHead } = await import('./rereview.js');
 const { assertPrimaryReviewContext } = await import('../../run-engine/review-plan.js');
 const { resetWarmReviewerSessionsForTest } = await import('../../review/session-mode.js');
 
 beforeEach(() => {
   runs.clear();
+  workspaceIntakeRuns.length = 0;
+  denyWorkspaceOwner = false;
+  creationOptions.length = 0;
+  liveSlotAvailable = true;
   runs.set(prior.id, { ...prior });
   ancestryCalls = 0;
   ancestor = true;
@@ -344,11 +395,13 @@ test('a parent cancelled during the PR metadata lookup gets no warm re-review', 
   assert.equal(runs.get(prior.id)!.status, 'cancelled');
 });
 
-test('slotless rereview repairs structured legacy lineage and submits WARM through normal intake', async () => {
-  workspaceIntakeRuns.length = 0;
-  runs.set(prior.id, {
+function workspacePrior(): Run {
+  return {
     ...prior,
     status: 'done',
+    transport: 'tmux',
+    nativeOwnerPrincipalId: 'review-owner',
+    createdByPrincipalId: 'review-owner',
     slotId: null,
     reviewWorkspaceTarget: { machine: 'review-node' },
     reviewWorkspace: {
@@ -369,18 +422,97 @@ test('slotless rereview repairs structured legacy lineage and submits WARM throu
       body: '',
       capturedAt: '2026-11-06T01:00:00Z',
     },
-    reviewResult: { ...prior.reviewResult!, session: undefined },
+    reviewAutoFinish: true,
+    reviewResult: prior.reviewResult,
     agentContexts: [{ ...prior.agentContexts![0], id: 'review', slotId: null }],
+  };
+}
+
+test('slotless rereview repairs retained lineage and starts directly without discovery filters', async () => {
+  workspaceIntakeRuns.length = 0;
+  const workspace = workspacePrior();
+  runs.set(prior.id, {
+    ...workspace,
+    reviewResult: { ...workspace.reviewResult!, session: undefined },
   });
   const result = await runRereviewLatestHead({ runId: prior.id });
-  assert.equal(result.mode, 'review-intake');
-  assert.equal(workspaceIntakeRuns.length, 1);
-  assert.equal(workspaceIntakeRuns[0].reviewResult?.session?.sessionId, 'prior-session');
-  assert.equal(workspaceIntakeRuns[0].reviewResult?.session?.reviewId, 'review-lineage');
-  assert.equal(workspaceIntakeRuns[0].reviewResult?.session?.lastReviewedHeadSha, priorHead);
+  assert.equal(result.mode, 'warm-handoff');
+  assert.equal(workspaceIntakeRuns.length, 0);
+  const child = runs.get(result.runId!)!;
+  assert.equal(child.slotId, null);
+  assert.deepEqual(child.reviewWorkspaceTarget, { machine: 'review-node' });
+  assert.equal(child.transport, 'tmux');
+  assert.equal(child.reviewMode, 'warm');
+  assert.equal(child.reviewAutoFinish, false);
+  assert.equal(child.parentRunId, prior.id);
+  assert.equal(child.reviewContext?.reviewLineages[0]?.reviewId, 'review-lineage');
+  assert.equal(creationOptions[0]?.delegatedReviewOwner, 'review-owner');
+  assert.deepEqual(creationOptions[0]?.workflowExecution, {
+    workspacePolicy: { kind: 'exact', machine: 'review-node' },
+    transport: 'tmux',
+    models: [{ runner: 'codex', model: 'gpt-6-astra', effort: 'high', mode: 'warm' }],
+  });
+  assert.equal(runs.get(prior.id)!.reviewResult?.session?.sessionId, 'prior-session');
+  assert.equal(runs.get(prior.id)!.reviewResult?.session?.reviewId, 'review-lineage');
+  assert.equal(runs.get(prior.id)!.reviewResult?.session?.lastReviewedHeadSha, priorHead);
   assert.equal(
     ancestryCalls,
     0,
     'slotless continuation is validated by the workspace intake/launch path',
   );
+});
+
+test('concurrent workspace re-review clicks create one unpublished child', async () => {
+  runs.set(prior.id, workspacePrior());
+  holdMetadata = true;
+  const a = runRereviewLatestHead({ runId: prior.id });
+  const b = runRereviewLatestHead({ runId: prior.id });
+  while (metadataCalls < 2) await new Promise((resolve) => setImmediate(resolve));
+  releaseMetadata();
+  const [first, second] = await Promise.all([a, b]);
+  assert.equal(first.runId, second.runId);
+  assert.equal(runs.size, 2);
+  assert.equal(workspaceIntakeRuns.length, 0);
+  assert.equal(runs.get(first.runId!)!.reviewAutoFinish, false);
+});
+
+test('a foreign workspace owner cannot create a re-review or change its parent', async () => {
+  runs.set(prior.id, workspacePrior());
+  denyWorkspaceOwner = true;
+  await assert.rejects(runRereviewLatestHead({ runId: prior.id }), /Workspace owner refused/);
+  assert.equal(runs.size, 1);
+  assert.equal(runs.get(prior.id)!.status, 'done');
+  assert.equal(metadataCalls, 0);
+});
+
+test('an unavailable workspace reviewer refuses before creating a child', async () => {
+  runs.set(prior.id, { ...workspacePrior(), agentContexts: [] });
+  await assert.rejects(
+    runRereviewLatestHead({ runId: prior.id }),
+    /verified retained workspace reviewer/,
+  );
+  assert.equal(runs.size, 1);
+  assert.equal(runs.get(prior.id)!.status, 'done');
+  assert.equal(workspaceIntakeRuns.length, 0);
+});
+
+test('an inactive legacy slot still uses normal review intake', async () => {
+  liveSlotAvailable = false;
+  const result = await runRereviewLatestHead({ runId: prior.id });
+  assert.equal(result.mode, 'review-intake');
+  assert.equal(workspaceIntakeRuns.length, 1);
+  assert.equal(runs.size, 1);
+});
+
+test('a workspace replay during metadata lookup keeps ownership and starts no child', async () => {
+  runs.set(prior.id, workspacePrior());
+  holdMetadata = true;
+  const pending = runRereviewLatestHead({ runId: prior.id });
+  while (!metadataCalls) await new Promise((resolve) => setImmediate(resolve));
+  const current = runs.get(prior.id)!;
+  runs.set(prior.id, { ...current, engineState: { ...current.engineState, generation: 1 } });
+  releaseMetadata();
+  await assert.rejects(pending, /changed during re-review admission/);
+  assert.equal(runs.size, 1);
+  assert.equal(runs.get(prior.id)!.status, 'done');
 });
