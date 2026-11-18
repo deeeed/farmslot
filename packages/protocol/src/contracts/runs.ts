@@ -2371,8 +2371,43 @@ export interface RunMonitorState {
   lastStructuredProgressAt?: string;
   /** Confirmed operator wait time excluded from the monitor's execution timeout. */
   operatorWaitMs?: number;
+  /**
+   * Time the monitor itself spent blocked on a decision card, excluded from the
+   * execution timeout.
+   *
+   * Separate from {@link operatorWaitMs}, which is recomputed each poll from the
+   * worker's own `waitingForOperator` signal and so cannot carry a wait the
+   * gateway owns. A run that sat on a `runner unavailable` card for a minute had
+   * that minute charged to the worker's monitoring window, and was re-blocked as
+   * "interactive handoff exceeded 90 min" seconds after Continue.
+   */
+  gateWaitMs?: number;
+  /**
+   * When the monitor started waiting on the card it is on now, written before
+   * the wait and cleared when it ends.
+   *
+   * A restart while an operator is still reading a card would otherwise lose
+   * that whole slice: the monitor only adds a wait to {@link gateWaitMs} once it
+   * finishes, so without this the recovered loop charges the time it was down to
+   * the worker and can re-block the run immediately.
+   */
+  gateWaitStartedAt?: string;
+  /**
+   * The decision {@link gateWaitStartedAt} belongs to.
+   *
+   * The marker alone cannot say whose wait it is, and more than one monitor can
+   * be alive for a run — a replayed loop raises its own card while the retiring
+   * one unwinds. Whatever ends a wait (its own settlement, or an operator
+   * extending the window from the card) may only clear the marker of the
+   * decision it actually answered.
+   */
+  gateWaitDecisionId?: string;
   /** Inactivity grace after explicit resume; this is not worker progress. */
   operatorResumedAt?: string;
+  /** A fresh transcript baseline gets a new ID, independent of the timeout clock. */
+  budgetWindowId?: string;
+  /** ID of the accounting window that produced the persisted delivery state. */
+  budgetDeliveryWindow?: string;
   /** True after a one-shot usage-budget warning was emitted for this monitor session. */
   budgetWarned?: boolean;
   /** True after a budget nudge was confirmed delivered (may retry while false). */
