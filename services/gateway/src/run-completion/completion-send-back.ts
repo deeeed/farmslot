@@ -115,8 +115,25 @@ export async function sendBackCompletion(
     delivery = undefined;
   if (delivery && (delivery.slotId !== slotId || delivery.contextId !== context.id || !recorded.ok))
     throw new Error('The retained completion feedback belongs to another worker');
-  if (delivery && note !== undefined && note !== delivery.note)
-    throw new Error('Reconcile the retained completion feedback before changing its operator note');
+  // A changed note against a CONFIRMED delivery is still refused: the worker has
+  // the old wording and is working from it, so the operator must reconcile the
+  // two rather than leave two versions of the same feedback in play.
+  //
+  // Against an UNCONFIRMED one there is nothing to reconcile — nothing is known
+  // to have reached the worker — and refusing left the operator no move at all:
+  // on run 09501e29 a delivery that came back unconfirmed, whose card was then
+  // answered another way, refused every later send-back that worded its feedback
+  // differently, permanently. The new note replaces the intent instead.
+  if (delivery && note !== undefined && note !== delivery.note) {
+    if (delivery.confirmed)
+      throw new Error(
+        'Reconcile the retained completion feedback before changing its operator note',
+      );
+    console.warn(
+      `[send-back] run ${run.id.slice(0, 8)} — replacing unconfirmed feedback ${delivery.key} with this card's note; nothing is known to have reached the worker`,
+    );
+    delivery = undefined;
+  }
   const probe = await probeWorkerSignalForRun(run.id, slotId, context);
   const resumingStale =
     delivery &&

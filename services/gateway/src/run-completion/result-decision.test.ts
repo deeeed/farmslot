@@ -1083,3 +1083,58 @@ test('publishing review holds without a budget refusal keep their existing accep
     false,
   );
 });
+
+// Run 09501e29: a send-back whose feedback delivery came back unconfirmed left a
+// retained delivery with `confirmed: false`. Its decision was then answered
+// another way, so nothing would ever retry that exact instruction — and every
+// later send-back carrying a different operator note was refused with
+// "Reconcile the retained completion feedback before changing its operator
+// note". There was no reconciling move available to the operator: the retained
+// delivery named a decision that no longer existed. An unconfirmed delivery is
+// not evidence the worker was told anything, so a later card supersedes it.
+test('a send-back is not blocked forever by an unconfirmed delivery of an answered card', async () => {
+  await heldQa();
+  delivery = 'unconfirmed';
+  await assert.rejects(
+    resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'First note.',
+    }),
+    /delivery is unconfirmed/,
+  );
+  const stale = run.steps.find((step) => step.name === S.DISPATCH)?.outputs
+    ?.completionSendBackDelivery;
+  assert.ok(stale && typeof stale === 'object' && 'confirmed' in stale);
+  assert.equal(stale.confirmed, false, 'the retained delivery was never confirmed');
+
+  // That card is answered and gone; the worker wrote a fresh terminal signal,
+  // the hold comes back as a new decision, and the operator words the feedback
+  // differently this time.
+  delivery = 'confirmed';
+  currentSignal = { ...priorSignal, timestamp: '2026-10-28T00:16:01.000Z' };
+  run.decisions = [await buildResultDecision(run, 'complete')];
+  const second = pending().id;
+  assert.notEqual(
+    `completion-send-back:${second}`,
+    (stale as { key?: string }).key,
+    'the new card is a different decision; this case is about the old one',
+  );
+
+  await resolveResultDecision({
+    runId: run.id,
+    decisionId: second,
+    actionId: 'send-back',
+    reason: 'Second note, after the first delivery was never confirmed.',
+  });
+
+  const delivered = feedback.at(-1);
+  assert.equal(delivered?.key, `completion-send-back:${second}`, 'the new card owns the delivery');
+  assert.match(delivered?.text ?? '', /Second note/);
+  assert.deepEqual(replays.at(-1), {
+    runId: run.id,
+    stepName: 'monitor',
+    triggeredBy: 'operator',
+  });
+});
