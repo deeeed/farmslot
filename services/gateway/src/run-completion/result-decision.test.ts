@@ -1084,17 +1084,19 @@ test('publishing review holds without a budget refusal keep their existing accep
   );
 });
 
-// Run 09501e29: a send-back whose feedback delivery came back unconfirmed left a
-// retained delivery with `confirmed: false`. Its decision was then answered
-// another way, so nothing would ever retry that exact instruction — and every
-// later send-back carrying a different operator note was refused with
+// Run 09501e29: a send-back whose feedback was never attempted left a retained
+// delivery with `confirmed: false` and no `startedAt`. Its decision was then
+// answered another way, so nothing would ever retry that exact instruction —
+// and every later send-back carrying a different operator note was refused with
 // "Reconcile the retained completion feedback before changing its operator
-// note". There was no reconciling move available to the operator: the retained
-// delivery named a decision that no longer existed. An unconfirmed delivery is
-// not evidence the worker was told anything, so a later card supersedes it.
-test('a send-back is not blocked forever by an unconfirmed delivery of an answered card', async () => {
+// note", with no reconciling move available: the retained delivery named a
+// decision that no longer existed. Nothing was ever handed to the worker there,
+// so a later card's note replaces it. A delivery that *was* handed over (any
+// `startedAt`: typed, submitted, or queued on a native host) still refuses,
+// because its text can still arrive — Codex and Grok both named that line.
+test('a send-back is not blocked forever by an unattempted delivery of an answered card', async () => {
   await heldQa();
-  delivery = 'unconfirmed';
+  delivery = 'not-attempted';
   await assert.rejects(
     resolveResultDecision({
       runId: run.id,
@@ -1102,12 +1104,17 @@ test('a send-back is not blocked forever by an unconfirmed delivery of an answer
       actionId: 'send-back',
       reason: 'First note.',
     }),
-    /delivery is unconfirmed/,
+    /delivery is not-attempted/,
   );
   const stale = run.steps.find((step) => step.name === S.DISPATCH)?.outputs
     ?.completionSendBackDelivery;
   assert.ok(stale && typeof stale === 'object' && 'confirmed' in stale);
   assert.equal(stale.confirmed, false, 'the retained delivery was never confirmed');
+  assert.equal(
+    (stale as { startedAt?: number }).startedAt,
+    undefined,
+    'and was never handed to the worker, which is what makes it replaceable',
+  );
 
   // That card is answered and gone; the worker wrote a fresh terminal signal,
   // the hold comes back as a new decision, and the operator words the feedback
@@ -1137,4 +1144,43 @@ test('a send-back is not blocked forever by an unconfirmed delivery of an answer
     stepName: 'monitor',
     triggeredBy: 'operator',
   });
+});
+
+// The other side of that line, which both reviewers asked for: a retained
+// delivery that was typed, submitted or durably queued carries `startedAt`, and
+// its text can still reach the worker. Replacing it would put two versions of
+// the same feedback in front of the worker in queue order, so a changed note
+// still refuses there and the operator reconciles instead.
+test('a changed note still refuses a delivery that was already handed over', async () => {
+  await heldQa();
+  delivery = 'queued';
+  await assert.rejects(
+    resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'First note.',
+    }),
+    /delivery is queued/,
+  );
+  const handed = run.steps.find((step) => step.name === S.DISPATCH)?.outputs
+    ?.completionSendBackDelivery;
+  assert.ok(handed && typeof handed === 'object' && 'startedAt' in handed);
+  assert.ok(
+    (handed as { startedAt?: number }).startedAt,
+    'a queued delivery keeps its window: the text is in the host queue',
+  );
+
+  delivery = 'confirmed';
+  currentSignal = { ...priorSignal, timestamp: '2026-10-28T00:16:01.000Z' };
+  run.decisions = [await buildResultDecision(run, 'complete')];
+  await assert.rejects(
+    resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'Second note, while the first may still arrive.',
+    }),
+    /Reconcile the retained completion feedback/,
+  );
 });
