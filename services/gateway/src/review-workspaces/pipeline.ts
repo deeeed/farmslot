@@ -950,7 +950,7 @@ async function executeOwnedReviewWorkspaceStep(
       }
       const current = currentWorkspaceRun(runId, generation);
       const effort = workspaceReviewDispatchEffort(current);
-      if (effort !== current.effort) {
+      if (effort != null && effort !== current.effort) {
         await persistRunNow(updateRun(runId, { effort }), 'workspace reviewer launch effort');
         check();
       }

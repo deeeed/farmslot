@@ -42,13 +42,25 @@ mock.module('./support.js', {
 const nativeWorkspace = await import('../runners/native/review-workspace.js');
 let launches = 0;
 let launchFailure: Error | undefined;
+const launchEfforts = new Map<string, string | undefined>();
 mock.module('../runners/native/review-workspace.js', {
   namedExports: {
     ...nativeWorkspace,
-    launchReviewWorkspaceWorker: async () => {
+    launchReviewWorkspaceWorker: async ({ runId }: { runId: string }) => {
       launches++;
+      launchEfforts.set(runId, getRun(runId)?.effort);
       if (launchFailure) throw launchFailure;
       return { session: { id: 'reviewer-session', generation: 'reviewer-generation' } };
+    },
+  },
+});
+const tmuxWorkspace = await import('../runners/review-tmux.js');
+mock.module('../runners/review-tmux.js', {
+  namedExports: {
+    ...tmuxWorkspace,
+    launchReviewTmux: async (runId: string) => {
+      launchEfforts.set(runId, getRun(runId)?.effort);
+      return {};
     },
   },
 });
@@ -58,7 +70,7 @@ const { deleteTestRunIfPresent } = await import('../run-engine/test-fixtures.js'
 const { reviewRoundAdmissionId, runReviewRoundBudget } =
   await import('../review/review-round-budget.js');
 
-function workspaceRun(t: TestContext) {
+function workspaceRun(t: TestContext, transport: 'native' | 'tmux' = 'native') {
   const created = createRun(
     {
       flowType: 'review-pr',
@@ -66,7 +78,7 @@ function workspaceRun(t: TestContext) {
       ticketOrPr: 'REVIEW-DISPATCH',
       runner: 'grok',
       model: 'grok-4.7',
-      transport: 'native',
+      transport,
       reviewWorkspaceTarget: { machine: 'review-node' },
     },
     { nativeOwnerPrincipalId: 'review-owner' },
@@ -100,6 +112,7 @@ function workspaceRun(t: TestContext) {
   });
   t.after(async () => {
     launchFailure = undefined;
+    launchEfforts.delete(run.id);
     updateRun(run.id, {
       reviewWorkspace: { ...run.reviewWorkspace!, cleanedAt: new Date().toISOString() },
     });
@@ -147,4 +160,17 @@ test('a replay at a new generation dispatches a new round and records which gene
   assert.deepEqual(run.reviewRoundAdmissions, [f.round(0), f.round(1)]);
   assert.equal(run.engineState?.workspaceReviewDispatchGeneration, 1);
   assert.equal(launches - before, 2);
+});
+
+test('a fresh cold Claude dispatch supplies medium to both workspace launchers', async (t) => {
+  for (const transport of ['native', 'tmux'] as const) {
+    const f = workspaceRun(t, transport);
+    updateRun(f.run.id, {
+      effort: undefined,
+      metrics: { ...f.run.metrics, runner: 'claude', model: 'sonnet' },
+      reviewMode: 'cold',
+    });
+    await f.dispatch(0);
+    assert.equal(launchEfforts.get(f.run.id), 'medium', transport);
+  }
 });
