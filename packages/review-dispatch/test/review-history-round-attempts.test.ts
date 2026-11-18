@@ -212,3 +212,66 @@ test('two known worker turns remain separate fixes even when both leave the same
     2,
   );
 });
+
+for (const variant of [
+  { name: 'one missing worker context', firstContext: true, reusedPath: false },
+  { name: 'both worker contexts missing', firstContext: false, reusedPath: false },
+  { name: 'both contexts missing with a reused path', firstContext: false, reusedPath: true },
+  { name: 'reused artifact path with a later receipt', firstContext: true, reusedPath: true },
+]) {
+  test(`separate unchanged-head fixes survive ${variant.name}`, () => {
+    const run = structuredClone(reviewHistoryBdcbd42f);
+    const review = run.engineState?.publishGate?.reviews?.[0];
+    const actor = run.agentContexts?.find(
+      (entry) => entry.role === 'review' && entry.status === 'complete',
+    );
+    assert(review?.attempts?.length === 2 && actor);
+    const [firstReview, firstAcceptance] = review.attempts;
+    const secondReview = {
+      ...structuredClone(firstReview),
+      loopNumber: 2,
+      startedAt: '2026-11-18T03:43:00.000Z',
+      completedAt: '2026-11-18T03:45:00.000Z',
+      timeline: [],
+    };
+    const secondAcceptance = structuredClone(firstAcceptance);
+    assert(secondAcceptance.fixDelta);
+    secondAcceptance.loopNumber = 3;
+    secondAcceptance.completedAt = '2026-11-18T03:50:00.000Z';
+    secondAcceptance.fixDelta.capturedAt = secondAcceptance.completedAt;
+    if (!variant.reusedPath)
+      secondAcceptance.fixDelta.diffPath = 'artifacts/pipeline-review-loop-3/fix-delta.diff';
+    secondAcceptance.timeline = [
+      {
+        kind: 'worker-fix',
+        loopNumber: 3,
+        startedAt: secondReview.completedAt,
+        completedAt: secondAcceptance.completedAt,
+      },
+    ];
+    review.attempts.push(secondReview, secondAcceptance);
+    run.steps[0].outputs = { reviewId: review.id, attempts: review.attempts };
+    if (!variant.firstContext)
+      run.agentContexts = run.agentContexts?.filter((entry) => entry.role !== 'review-fix');
+    run.agentContexts?.push({
+      ...actor,
+      id: 'second-real-review',
+      reviewLoopNumber: 2,
+      startedAt: secondReview.startedAt,
+      attemptStartedAt: secondReview.startedAt,
+      completedAt: secondReview.completedAt,
+    });
+    const history = reviewHistoryView(run);
+    assert.equal(history.roundCount, 2);
+    assert.deepEqual(
+      history.cards.map((card) => card.fixes.length),
+      [1, 1],
+    );
+    const keys = history.events.filter((event) => event.kind === 'fix').map((event) => event.key);
+    assert.equal(new Set(keys).size, 2, 'distinct fixes keep independent inspection state');
+    assert.deepEqual(
+      history.events.filter((event) => event.kind === 'fix').map((event) => event.fix.label),
+      ['Fix after round 1', 'Fix after round 2'],
+    );
+  });
+}

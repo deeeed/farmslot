@@ -60,6 +60,30 @@ export function compareReviewHistoryRounds(a: ReviewHistoryRound, b: ReviewHisto
   return time(a).localeCompare(time(b)) || a.loopNumber - b.loopNumber;
 }
 
+/** A SHA pair identifies a code comparison, not a worker's evidence-only fix. */
+function sameFixReference(left: ReviewHistoryRound, right: ReviewHistoryRound): boolean {
+  if (left.reviewId !== right.reviewId) return false;
+  if (left.fixContextKey && right.fixContextKey) return left.fixContextKey === right.fixContextKey;
+  const a = left.fixReceipt;
+  const b = right.fixReceipt;
+  if (a && b)
+    return Boolean(
+      a.capturedAt &&
+      a.capturedAt === b.capturedAt &&
+      (!a.diffPath || !b.diffPath || a.diffPath === b.diffPath),
+    );
+  // Missing worker/receipt identity cannot make two recorded fixes the same turn.
+  if (left.fixContextKey || right.fixContextKey) return false;
+  // Legacy head comparisons have no worker receipt; associate those inferred references only.
+  return Boolean(
+    (left.fixBaseSha &&
+      left.fixHeadSha &&
+      left.fixBaseSha === right.fixBaseSha &&
+      left.fixHeadSha === right.fixHeadSha) ||
+    (left.fixDiffPath && left.fixDiffPath === right.fixDiffPath),
+  );
+}
+
 /** A replay keeps its own event, even if the engine resets the charged loop number. */
 export function reviewHistoryTimeline(
   run: Run,
@@ -76,9 +100,11 @@ export function reviewHistoryTimeline(
       // Artifact hydration may replace a pathname with a Git alias for the same code fix.
       const key = round.fixContextKey
         ? `${round.reviewId}:fix:${round.fixContextKey}`
-        : round.fixBaseSha && round.fixHeadSha
-          ? `${round.reviewId}:fix:${round.fixBaseSha}:${round.fixHeadSha}`
-          : (round.fixDiffPath ?? `${round.reviewId}:fix:${round.key}`);
+        : round.fixReceipt
+          ? `${round.reviewId}:fix:receipt:${round.fixReceipt.capturedAt ? JSON.stringify([round.fixReceipt.diffPath, round.fixReceipt.capturedAt]) : round.key}`
+          : round.fixBaseSha && round.fixHeadSha
+            ? `${round.reviewId}:fix:${round.fixBaseSha}:${round.fixHeadSha}`
+            : (round.fixDiffPath ?? `${round.reviewId}:fix:${round.key}`);
       const previous = sources
         .slice(0, sourceIndex)
         .filter((entry) => !fixReceipts.includes(entry));
@@ -94,23 +120,8 @@ export function reviewHistoryTimeline(
         prior.at(-1) ??
         previous.at(-1);
       let fix = fixes.find((entry) => {
-        if (entry.key === key) return true;
         const source = fixSources.get(entry);
-        // A retry can carry the same delta after its timing window has advanced.
-        // Two known worker turns remain distinct, even for an unchanged evidence-only head.
-        if (
-          !source ||
-          source.reviewId !== round.reviewId ||
-          (source.fixContextKey && round.fixContextKey)
-        )
-          return false;
-        return Boolean(
-          (round.fixBaseSha &&
-            round.fixHeadSha &&
-            source.fixBaseSha === round.fixBaseSha &&
-            source.fixHeadSha === round.fixHeadSha) ||
-          (round.fixDiffPath && source.fixDiffPath === round.fixDiffPath),
-        );
+        return source && sameFixReference(source, round);
       });
       if (!fix) {
         fix = {

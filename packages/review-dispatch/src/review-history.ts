@@ -97,6 +97,11 @@ export function mergeReviewHistoryArtifacts(
   };
 }
 
+export interface ReviewHistoryFixReceipt {
+  diffPath: string | null;
+  capturedAt: string | null;
+}
+
 export interface ReviewHistoryRound {
   key: string;
   reviewId: string;
@@ -133,6 +138,7 @@ export interface ReviewHistoryRound {
   }>;
   reviewRange: string;
   fixContextKey?: string | null;
+  fixReceipt?: ReviewHistoryFixReceipt | null;
   fixRange: string | null;
   fixStat: string | null;
   fixDurationMs: number | null;
@@ -672,6 +678,7 @@ export function reviewHistoryView(
         fixContextKey: completedFix
           ? `${completedFix.id}:${completedFix.startedAt ?? completedFix.attemptStartedAt}`
           : null,
+        fixReceipt: fix ? { diffPath: text(fix.diffPath), capturedAt: text(fix.capturedAt) } : null,
         fixRange: range(fixBaseSha, fixHeadSha),
         fixStat: fixStat(fix),
         fixDurationMs:
