@@ -72,16 +72,9 @@ export async function withTerminalTeardown<T>(
   slotId: string,
   operation: () => Promise<T>,
   timeoutMs: number | null = TERMINAL_TEARDOWN_TIMEOUT_MS,
+  onFailureCloseout?: (confirmed: boolean) => void,
 ): Promise<T> {
-  // A warm recycle re-prepares under its existing phase budgets.
-  if (timeoutMs === null && !cleanupSignal()) {
-    beginTerminalTeardown(slotId);
-    try {
-      return await operation();
-    } finally {
-      endTerminalTeardown(slotId);
-    }
-  }
+  // Warm recycle keeps its existing phase budgets, but still owns cancellable work.
   const commands: CleanupCommands = { pending: new Set(), unconfirmed: false };
   const controller = new AbortController();
   const signal = cleanupSignal(controller.signal)!;
@@ -101,16 +94,25 @@ export async function withTerminalTeardown<T>(
   beginTerminalTeardown(slotId);
   try {
     signal.throwIfAborted();
-    return await Promise.race([withCleanupSignal(signal, operation, commands), aborted]);
+    return await Promise.race([
+      withCleanupSignal(signal, async () => operation(), commands),
+      aborted,
+    ]);
+  } catch (error) {
+    // An ordinary failure must fence late work just as a deadline does.
+    controller.abort(error);
+    throw error;
   } finally {
     clearTimeout(timer);
     signal.removeEventListener('abort', rejectAborted);
-    if (
-      signal.aborted &&
-      !(await drainCleanupCommands(commands)) &&
-      signal.reason instanceof TerminalTeardownTimeoutError
-    )
-      signal.reason.closeoutConfirmed = false;
+    if (signal.aborted) {
+      let confirmed = await drainCleanupCommands(commands);
+      if (signal.reason instanceof TerminalTeardownTimeoutError) {
+        signal.reason.closeoutConfirmed &&= confirmed;
+        confirmed = signal.reason.closeoutConfirmed;
+      }
+      onFailureCloseout?.(confirmed);
+    }
     endTerminalTeardown(slotId);
   }
 }

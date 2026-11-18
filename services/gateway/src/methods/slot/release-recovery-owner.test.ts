@@ -176,6 +176,93 @@ async function seedDeadline() {
   );
 }
 
+for (const keepWarm of [false, true]) {
+  test(`a failed release settles its fence and permits an owner retry, warm=${keepWarm}`, async () => {
+    await seedDeadline();
+    const failure = new Error('Cannot fetch the default branch (exit 128)');
+    afterMarker = async () => {
+      throw failure;
+    };
+    const params = {
+      slotId: 'owned-recovery',
+      expectedRunId: owner.id,
+      keepWork: true,
+      preserveAgents: true,
+      keepWarm,
+    };
+    await assert.rejects(
+      slotRelease(params, () => {}),
+      (error) => error === failure,
+    );
+    const held = await readRow();
+    assert.equal(held.lifecycle, 'held');
+    assert.equal(held.phase, 'occupied');
+    assert.equal(held.current_run_id, owner.id);
+    assert.equal(held.slot_epoch, 7);
+    assert.equal(held.releasing_since, null);
+    assert.match(String(held.held_reason), /Cannot fetch the default branch.*retry release/i);
+    assert.equal(isTerminalTeardownInFlight('owned-recovery'), false);
+    afterMarker = async () => {};
+    const retried = await slotRelease({ ...params, keepWarm: false }, () => {});
+    assert.equal(retried.released, true);
+    assert.equal((await readRow()).lifecycle, 'ready');
+  });
+}
+
+test('an ordinary command failure retains unconfirmed cleanup ownership', async () => {
+  await seedDeadline();
+  const failure = new Error('transport closeout unconfirmed');
+  afterMarker = async () => {
+    await trackCleanupCommand(Promise.reject(failure));
+  };
+  await assert.rejects(
+    slotRelease(
+      {
+        slotId: 'owned-recovery',
+        expectedRunId: owner.id,
+        keepWork: true,
+        preserveAgents: true,
+      },
+      () => {},
+    ),
+    (error) => error === failure,
+  );
+  const held = await readRow();
+  assert.equal(held.lifecycle, 'held');
+  assert.equal(held.phase, 'occupied');
+  assert.equal(held.current_run_id, null);
+  assert.equal(held.cleanup_run_id, owner.id);
+  assert.equal(held.cleanup_stop_unconfirmed, true);
+  assert.match(String(held.held_reason), /unconfirmed/);
+  assert.equal(replaySlotReclaimCheck(held, owner.id).ok, false);
+});
+
+for (const successor of [{ slot_epoch: 8 }, { current_run_id: 'successor' }]) {
+  test(`ordinary release failure preserves successor ${JSON.stringify(successor)}`, async () => {
+    await seedDeadline();
+    const failure = new Error('fetch failed after claim changed');
+    let expected: Awaited<ReturnType<typeof readRow>>;
+    afterMarker = async () => {
+      await core.updateSlotStatus('owned-recovery', successor);
+      expected = await readRow();
+      throw failure;
+    };
+    await assert.rejects(
+      slotRelease(
+        {
+          slotId: 'owned-recovery',
+          expectedRunId: owner.id,
+          keepWork: true,
+          preserveAgents: true,
+        },
+        () => {},
+      ),
+      (error) => error === failure,
+    );
+    assert.deepEqual(await readRow(), expected!);
+  });
+}
+
 test(
   'unconfirmed command closeout retains a cleanup hold instead of admitting replay',
   { timeout: 4000 },
