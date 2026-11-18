@@ -84,7 +84,7 @@ test('grouped rows retain an intermediate summary absent from the family heading
   }
 });
 
-test('the row retains worker completion through refresh and clears it on a same-slot replay', async (t) => {
+test('cached checklist completion leaves the run clock alone through refresh and replay', async (t) => {
   installFakeGateway(t);
   t.mock.method(Date, 'now', () => Date.parse('2026-11-05T12:00:00.000Z'));
   const { RunList } = await import('./run-list.js');
@@ -92,7 +92,10 @@ test('the row retains worker completion through refresh and clears it on a same-
     ...run('active', 'Worker just finished', 5),
     status: 'monitoring',
     slotId: 'test-slot',
-    steps: [{ name: 'monitor', status: 'running', startedAt: '2026-11-05T11:00:00.000Z' }],
+    steps: [
+      { name: 'dispatch', status: 'done', completedAt: '2026-11-05T11:00:00.000Z' },
+      { name: 'monitor', status: 'running', startedAt: '2026-11-05T11:00:00.000Z' },
+    ],
   };
   const target = runChecklistProgressTarget(row);
   assert(target);
@@ -125,8 +128,8 @@ test('the row retains worker completion through refresh and clears it on a same-
   for (const status of ['ready', 'stale'] as const) {
     state.status = status;
     const text = litText(view.renderCard(row, false));
-    assert.match(text, /last progress 5m ago · Worker finished; monitor has not advanced/);
-    assert.doesNotMatch(text, /Stale · no progress/);
+    assert.match(text, /Stale · no progress for 1h 0m/);
+    assert.doesNotMatch(text, /Worker finished; monitor/);
   }
 
   const replay: Run = {

@@ -1410,7 +1410,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
 function renderRunDetailHeader(ctx: RunDetailViewContext, r: RunListRow, detail: Run | null) {
   const sc = runStatusColor(r.status);
   const activityLabel = runDetailHeaderModel(r).activityLabel;
-  const progress = runProgressSummary(r, Date.now(), ctx.taskProgress ?? undefined);
+  const progress = runProgressSummary(r);
   const disposition = dispositionLabel(r.metrics.disposition);
   const actionsBlocked = ctx._actionsBlocked() || !detail;
   const ticketUrl = ticketUrlForRun(r.ticketOrPr, r, ctx.siblings);

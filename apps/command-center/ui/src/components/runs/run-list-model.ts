@@ -11,8 +11,6 @@ import {
   type RunStatus,
   slotMachineMap,
   type SlotStatus,
-  type TaskProgressStructured,
-  workerRoleForFlow,
 } from '@farmslot/protocol';
 import { isSettledBlockedRun, selectRunList, TERMINAL_RUN_STATUSES } from '@farmslot/protocol';
 import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
@@ -62,17 +60,14 @@ export interface RunProgressSummary {
 }
 
 type ProgressRun = Pick<
-  RunListRow,
+  Run,
   | 'status'
-  | 'flowType'
-  | 'agentContexts'
   | 'statusChangedAt'
   | 'createdAt'
   | 'startedAt'
   | 'steps'
   | 'ciWatchState'
   | 'monitorState'
-  | 'recoveryAttempts'
   | 'waitingForOperator'
 > & {
   decisions: ReadonlyArray<RunListDecision>;
@@ -107,39 +102,6 @@ function lastProgressMs(run: ProgressRun): number {
   return Math.max(...[...stamps, ...held].filter(Number.isFinite));
 }
 
-/** A same-slot replay can briefly read the previous checklist from the cache. */
-function monitorAttemptTiming(run: ProgressRun) {
-  const dispatch = run.steps.find((step) => step.name === 'dispatch');
-  const workerRole = workerRoleForFlow(run.flowType);
-  const replay = run.recoveryAttempts?.at(-1);
-  const monitorReplayMs = Date.parse(replay?.stepName === 'monitor' ? replay.startedAt : '');
-  const dispatchMs = Date.parse(dispatch?.startedAt ?? dispatch?.completedAt ?? '');
-  let startedMs = Number.isFinite(dispatchMs) ? dispatchMs : -Infinity;
-  let adoptedSignalMs = -Infinity;
-  for (const context of run.agentContexts ?? []) {
-    if (context.role !== workerRole && context.role !== 'primary') continue;
-    const launchMs = Date.parse(context.attemptStartedAt ?? context.startedAt ?? '');
-    if (Number.isFinite(launchMs)) startedMs = Math.max(startedMs, launchMs);
-    // Monitor replay can adopt a running mark before the watcher updates the launch time.
-    // A runtime reattachment observes the session and writes lastSignalAt and updatedAt together.
-    if (
-      Number.isFinite(monitorReplayMs) &&
-      context.status === 'working' &&
-      context.signalAttemptId &&
-      context.lastSignalAt !== context.updatedAt
-    ) {
-      const signalMs = Date.parse(context.lastSignalAt ?? '');
-      if (Number.isFinite(signalMs)) adoptedSignalMs = Math.max(adoptedSignalMs, signalMs);
-    }
-  }
-  // Keep the replay boundary even after a runtime inspection replaces the adopted mark.
-  const replayFloorMs = Number.isFinite(adoptedSignalMs) ? adoptedSignalMs : monitorReplayMs;
-  return {
-    startedMs,
-    finishFloorMs: Number.isFinite(replayFloorMs) ? Math.max(startedMs, replayFloorMs) : startedMs,
-  };
-}
-
 /** A blocked run can still be stale after its worker has stopped. */
 export function showsRunProgress(run: Pick<Run, 'status'>): boolean {
   return !TERMINAL_STATUSES.has(run.status);
@@ -149,20 +111,18 @@ export function showsRunProgress(run: Pick<Run, 'status'>): boolean {
 export function runProgressSummary(
   run: ProgressRun,
   nowMs = Date.now(),
-  taskProgress?: TaskProgressStructured,
 ): RunProgressSummary | null {
   if (!showsRunProgress(run)) return null;
   const step = run.steps.find((item) => item.status === 'running');
-  const monitor = step?.name === 'monitor';
-  const attempt = monitor ? monitorAttemptTiming(run) : undefined;
-  const recordedFinishMs = monitor ? Date.parse(taskProgress?.timing?.finishedAt ?? '') : NaN;
+  // A checklist can be held from an earlier attempt. Only the monitor's recorded
+  // completion can explain why this run is still on its monitor step.
+  const signal = step?.name === 'monitor' ? step.outputs?.workerSignal : undefined;
   const workerFinished =
-    Number.isFinite(recordedFinishMs) && recordedFinishMs >= (attempt?.finishFloorMs ?? -Infinity);
-  const lastMs = Math.max(
-    lastProgressMs(run),
-    attempt?.startedMs ?? -Infinity,
-    workerFinished ? recordedFinishMs : -Infinity,
-  );
+    signal &&
+    typeof signal === 'object' &&
+    'status' in signal &&
+    (signal.status === 'complete' || signal.status === 'done');
+  const lastMs = lastProgressMs(run);
   // Every run has createdAt; a record without one valid timestamp has no clock to show.
   if (!Number.isFinite(lastMs)) return null;
   const lastProgressAt = new Date(lastMs).toISOString();

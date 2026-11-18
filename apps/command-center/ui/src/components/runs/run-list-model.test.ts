@@ -6,7 +6,6 @@ import {
   runElapsedTimeView,
   runListProjection,
   type RunListRow,
-  type TaskProgressStructured,
 } from '@farmslot/protocol';
 import { runActivityView } from '@farmslot/review-dispatch';
 
@@ -465,141 +464,79 @@ test('run progress: stale after 20 minutes while CI progress keeps it current', 
   assert.equal(ciProgress.lastProgressAgo, '10m ago');
 });
 
-test('run progress: an observed finished worker waits for its monitor to advance', () => {
+test('run progress keeps a recorded worker finish through monitor replay and reattachment', () => {
+  const complete = '2026-11-18T13:14:00.000Z';
+  const replay = '2026-11-18T13:22:00.000Z';
+  const reattach = '2026-11-18T13:28:00.000Z';
   const monitoring = run('signal-waiting', {
     status: 'monitoring',
-    statusChangedAt: '2026-05-14T10:00:00.000Z',
-    steps: [{ name: 'monitor', status: 'running', startedAt: '2026-05-14T13:19:00.000Z' }],
-  });
-  const taskProgress: TaskProgressStructured = {
-    schema: { flowType: 'fix-bug', title: 'Task', totalSteps: 1, phases: [] },
-    phases: [],
-    completedSteps: 1,
-    totalSteps: 1,
-    currentPhase: null,
-    currentStep: null,
-    timing: {
-      schemaVersion: 1,
-      events: [],
-      startedAt: '2026-05-14T10:00:00.000Z',
-      finishedAt: '2026-05-14T13:14:00.000Z',
-    },
-  };
-  const waiting = summarize(monitoring, Date.parse('2026-05-14T13:33:00.000Z'), taskProgress);
-  assert.equal(waiting.kind, 'step');
-  assert.equal(waiting.text, 'Worker finished; monitor has not advanced');
-  assert.equal(waiting.lastProgressAgo, '19m ago');
-
-  const replayed = summarize(
-    {
-      ...monitoring,
-      agentContexts: [
-        {
-          id: 'fix-bug',
-          role: 'fix-bug',
-          label: 'Current worker',
-          status: 'working',
-          runId: monitoring.id,
-          slotId: monitoring.slotId,
-          startedAt: '2026-05-14T10:00:00.000Z',
-          attemptStartedAt: '2026-05-14T13:20:00.000Z',
+    statusChangedAt: replay,
+    steps: [
+      {
+        name: 'monitor',
+        status: 'running',
+        startedAt: replay,
+        outputs: {
+          workerSignal: { status: 'complete', timestamp: complete, attemptId: 'current' },
         },
-      ],
-    },
-    Date.parse('2026-05-14T13:36:00.000Z'),
-    taskProgress,
-  );
-  assertMatchKind(replayed, 'step', 'monitor');
-  assert.equal(replayed.lastProgressAgo, '16m ago');
-
-  const worker: NonNullable<Run['agentContexts']>[number] = {
-    id: 'fix-bug',
-    role: 'fix-bug',
-    label: 'Worker',
-    status: 'working',
-    runId: monitoring.id,
-    slotId: monitoring.slotId,
-    attemptStartedAt: '2026-05-14T10:00:00.000Z',
-    signalAttemptId: 'reopened',
-    lastSignalAt: '2026-05-14T13:21:00.000Z',
-  };
-  const adopted: Run = {
-    ...monitoring,
-    statusChangedAt: '2026-05-14T13:22:00.000Z',
-    agentContexts: [worker],
+      },
+    ],
+    agentContexts: [
+      {
+        id: 'fix-bug',
+        role: 'fix-bug',
+        label: 'Worker',
+        status: 'working',
+        runId: 'signal-waiting',
+        slotId: null,
+        signalAttemptId: 'current',
+        attemptStartedAt: '2026-11-18T13:00:00.000Z',
+        lastSignalAt: complete,
+      },
+    ],
     recoveryAttempts: [
       {
-        id: 'monitor-replay',
+        id: 'replay',
         attempt: 1,
         stepName: 'monitor',
-        startedAt: '2026-05-14T13:22:00.000Z',
+        startedAt: replay,
         status: 'started',
         triggeredBy: 'operator',
       },
     ],
+  });
+  const after = {
+    ...monitoring,
+    steps: [{ ...monitoring.steps[0], startedAt: reattach }],
+    agentContexts: monitoring.agentContexts?.map((context) => ({
+      ...context,
+      lastSignalAt: reattach,
+      updatedAt: reattach,
+    })),
   };
-  const now = Date.parse('2026-05-14T13:33:00.000Z');
-  assertMatchKind(summarize(adopted, now, taskProgress), 'step', 'monitor');
-  const nextMark: Run = {
-    ...adopted,
-    agentContexts: [{ ...worker, lastSignalAt: '2026-05-14T13:24:00.000Z' }],
-  };
-  assertMatchKind(summarize(nextMark, now, taskProgress), 'step', 'monitor');
-
-  const originalFinish = summarize(
+  for (const row of [monitoring, after]) {
+    const progress = summarize(row, Date.parse('2026-11-18T13:33:00.000Z'));
+    assertMatchKind(progress, 'step', 'Worker finished; monitor has not advanced');
+    assert.equal(progress.lastProgressAt, replay);
+    const stale = summarize(row, Date.parse('2026-11-18T13:43:00.000Z'));
+    assertMatchKind(
+      stale,
+      'stale',
+      'Stale · no progress for 21m · Worker finished; monitor has not advanced',
+    );
+  }
+  const nextStep = summarize(
     {
-      ...adopted,
-      agentContexts: [{ ...worker, lastSignalAt: '2026-05-14T13:14:00.000Z' }],
+      ...after,
+      status: 'reviewing',
+      steps: [
+        { ...after.steps[0], status: 'done' },
+        { name: 'review', status: 'running' },
+      ],
     },
-    now,
-    taskProgress,
+    Date.parse('2026-11-18T13:33:00.000Z'),
   );
-  assertMatchKind(originalFinish, 'step', 'Worker finished; monitor has not advanced');
-
-  const newProgress: TaskProgressStructured = {
-    ...taskProgress,
-    timing: {
-      schemaVersion: 1,
-      events: [],
-      startedAt: worker.lastSignalAt,
-      finishedAt: '2026-05-14T13:25:00.000Z',
-    },
-  };
-  const reattachment: Run = {
-    ...adopted,
-    agentContexts: [
-      {
-        ...worker,
-        lastSignalAt: '2026-05-14T13:28:00.000Z',
-        updatedAt: '2026-05-14T13:28:00.000Z',
-      },
-    ],
-    steps: [{ name: 'monitor', status: 'running', startedAt: '2026-05-14T13:28:00.000Z' }],
-  };
-  assertMatchKind(summarize(reattachment, now, taskProgress), 'step', 'monitor');
-  const reattached = summarize(reattachment, now, newProgress);
-  assertMatchKind(reattached, 'step', 'Worker finished; monitor has not advanced');
-  assert.equal(reattached.lastProgressAt, '2026-05-14T13:25:00.000Z');
-
-  const stalled = summarize(monitoring, Date.parse('2026-05-14T15:14:00.000Z'), taskProgress);
-  assert.equal(stalled.kind, 'stale');
-  assert.equal(
-    stalled.text,
-    'Stale · no progress for 2h 0m · Worker finished; monitor has not advanced',
-  );
-  assert.equal(stalled.lastProgressAgo, '2h ago');
-
-  const missing = summarize(monitoring, Date.parse('2026-05-14T13:36:00.000Z'));
-  assert.equal(missing.text, 'Stale · no progress for 3h 36m');
-  assert.equal(
-    summarize(
-      { ...monitoring, status: 'reviewing', steps: [{ name: 'review', status: 'running' }] },
-      Date.parse('2026-05-14T13:36:00.000Z'),
-      taskProgress,
-    ).text,
-    'Stale · no progress for 3h 36m',
-    'a completed worker checklist does not describe the subsequent reviewer',
-  );
+  assertMatchKind(nextStep, 'step', 'review');
 });
 
 test('run progress: a restart re-entering a step is not progress; a Resume is', () => {
