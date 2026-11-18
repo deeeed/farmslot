@@ -238,6 +238,15 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
         report.pass = false;
         report.closeError = error.message;
       }
+    if (browser)
+      try {
+        view(
+          `const token=${JSON.stringify(launchToken)};const book=document.__nativeLaunchBook;if(!book)return {released:false};if(book.receipts)delete book.receipts[token];if(book.pending)delete book.pending[token];if(book.token===token){delete book.view;delete book.request;delete book.token;}if(book.receipts&&!Object.keys(book.receipts).length&&book.pending&&!Object.keys(book.pending).length&&!book.view)delete document.__nativeLaunchBook;return {released:true};`,
+        );
+      } catch (error) {
+        report.pass = false;
+        report.releaseError = error.message;
+      }
   }
   const outPath = writeEvidence(report, SCENARIO_ID, report.runner, outDir);
   return { scenario: SCENARIO_ID, runner: report.runner, pass: report.pass, report, outPath };
