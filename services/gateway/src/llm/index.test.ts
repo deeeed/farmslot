@@ -238,21 +238,22 @@ test('other reasoning providers keep implicit thinking disabled and accept expli
   assert.deepEqual(observed, [undefined, undefined, undefined, 'high']);
 });
 
-test('Astra without matching provider auth never falls back to another CLI for call or chat', async () => {
-  const provider = '__no_astra_provider_auth__';
-  await assert.rejects(
-    callLLM({ provider, model: 'gpt-6.2-astra', userPrompt: 'hello' }),
-    /CLI fallback disabled/,
-  );
-  await assert.rejects(
-    callLLMChat({
-      provider,
-      model: 'gpt-6.2-astra',
-      messages: [{ role: 'user', content: 'hello' }],
-    }),
-    /CLI fallback disabled/,
-  );
-});
+for (const model of ['gpt-6.2-astra', 'gpt-6-astra'])
+  test(`Astra ${model} without matching provider auth never falls back to another CLI`, async () => {
+    const provider = '__no_astra_provider_auth__';
+    await assert.rejects(
+      callLLM({ provider, model, userPrompt: 'hello' }),
+      /CLI fallback disabled/,
+    );
+    await assert.rejects(
+      callLLMChat({
+        provider,
+        model,
+        messages: [{ role: 'user', content: 'hello' }],
+      }),
+      /CLI fallback disabled/,
+    );
+  });
 
 for (const stream of [false, true])
   test(`helper usage retains all tool rounds with explicit pricing, streaming=${stream}`, async () => {

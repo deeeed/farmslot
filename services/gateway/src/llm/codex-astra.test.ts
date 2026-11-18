@@ -4,7 +4,13 @@ import test from 'node:test';
 import { createModels, getSupportedThinkingLevels } from '@earendil-works/pi-ai';
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
 
-import { CODEX_ASTRA_MODEL, registerCodexAstra, reportedLlmCost } from './codex-astra.js';
+import {
+  CODEX_ASTRA_MODEL,
+  CODEX_PREVIOUS_ASTRA_MODEL,
+  registerCodexAstra,
+  reportedLlmCost,
+  requiresExactAstraProvider,
+} from './codex-astra.js';
 import { llmDefaultsForProvider } from './config.js';
 
 test('Astra supplements the same Codex provider and keeps all authentication/stream functions', () => {
@@ -29,6 +35,25 @@ test('Astra supplements the same Codex provider and keeps all authentication/str
     models.getModels(provider.id).filter((model) => model.id === CODEX_ASTRA_MODEL).length,
     1,
   );
+  const previous = models.getModel(provider.id, CODEX_PREVIOUS_ASTRA_MODEL)!;
+  assert.equal(previous.name, 'GPT-6 Astra');
+  assert.equal(previous.api, 'openai-codex-responses');
+  assert.equal(previous.contextWindow, 272_000);
+  assert.equal(previous.maxTokens, 128_000);
+  assert.equal(previous.cost.input, 10);
+  assert.equal(previous.cost.output, 50);
+  assert.equal(previous.cost.cacheRead, 1);
+  assert.equal(previous.cost.cacheWrite, 12.5);
+  assert.deepEqual(previous.cost.tiers, [
+    { inputTokensAbove: 272_000, input: 20, output: 75, cacheRead: 2, cacheWrite: 25 },
+  ]);
+  assert.equal(
+    models.getModels(provider.id).filter((model) => model.id === CODEX_PREVIOUS_ASTRA_MODEL).length,
+    1,
+  );
+  assert.equal(requiresExactAstraProvider(CODEX_ASTRA_MODEL), true);
+  assert.equal(requiresExactAstraProvider(CODEX_PREVIOUS_ASTRA_MODEL), true);
+  assert.equal(requiresExactAstraProvider('gpt-6.2-sol'), false);
 });
 
 test('an upstream Astra descriptor stays authoritative and missing providers are not created', () => {

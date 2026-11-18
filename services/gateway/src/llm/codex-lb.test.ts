@@ -4,7 +4,7 @@ import test from 'node:test';
 import { createModels } from '@earendil-works/pi-ai';
 
 import { resolveAuth } from './auth-resolve.js';
-import { CODEX_ASTRA_MODEL, reportedLlmCost } from './codex-astra.js';
+import { CODEX_ASTRA_MODEL, CODEX_PREVIOUS_ASTRA_MODEL, reportedLlmCost } from './codex-astra.js';
 import { CODEX_LB_BASE_URL, registerCodexLb } from './codex-lb.js';
 import { llmDefaultsForProvider } from './config.js';
 import { callLLM, callLLMChat } from './index.js';
@@ -18,6 +18,10 @@ test('explicit LB provider sends Responses requests only to loopback with client
   const model = models.getModel('codex-lb', CODEX_ASTRA_MODEL)!;
   assert.equal(model.api, 'openai-responses');
   assert.equal(model.baseUrl, CODEX_LB_BASE_URL);
+  const previous = models.getModel('codex-lb', CODEX_PREVIOUS_ASTRA_MODEL)!;
+  assert.equal(previous.id, 'gpt-6-astra');
+  assert.equal(previous.cost.input, 10);
+  assert.equal(previous.baseUrl, CODEX_LB_BASE_URL);
   const fetch = globalThis.fetch;
   const seen: { url: string; authorization: string | null; body: Record<string, any> }[] = [];
   t.after(() => {
