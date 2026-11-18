@@ -313,42 +313,44 @@ test('an ordinary command failure retains unconfirmed cleanup ownership', async 
   assert.equal(replaySlotReclaimCheck(held, owner.id).ok, false);
 });
 
-test('a failed retry cannot confirm an earlier release stop', async () => {
-  await seedDeadline();
-  const first = new Error('transport closeout unconfirmed');
-  const second = new Error('Cannot fetch the default branch (exit 128)');
-  const params = {
-    slotId: 'owned-recovery',
-    expectedRunId: owner.id,
-    keepWork: true,
-    preserveAgents: true,
-  };
-  afterMarker = async () => {
-    await trackCleanupCommand(Promise.reject(first));
-  };
-  await assert.rejects(
-    slotRelease(params, () => {}),
-    (error) => error === first,
-  );
-  assert.equal((await readRow()).cleanup_stop_unconfirmed, true);
-  afterMarker = async () => {
-    throw second;
-  };
-  await assert.rejects(
-    slotRelease(params, () => {}),
-    (error) => error === second,
-  );
-  const held = await readRow();
-  assert.equal(held.lifecycle, 'held');
-  assert.equal(held.current_run_id, null);
-  assert.equal(held.cleanup_run_id, owner.id);
-  assert.equal(held.cleanup_stop_unconfirmed, true);
-  assert.equal(replaySlotReclaimCheck(held, owner.id).ok, false);
-  assert.match(String(held.held_reason), /unconfirmed/);
-  afterMarker = async () => {};
-  assert.equal((await slotRelease(params, () => {})).released, true);
-  assert.equal((await readRow()).cleanup_stop_unconfirmed, null);
-});
+for (const ownerBoundRetry of [true, false]) {
+  test(`a failed retry keeps prior stop and owner, ownerBoundRetry=${ownerBoundRetry}`, async () => {
+    await seedDeadline();
+    const first = new Error('transport closeout unconfirmed');
+    const second = new Error('Cannot fetch the default branch (exit 128)');
+    const params = {
+      slotId: 'owned-recovery',
+      expectedRunId: owner.id,
+      keepWork: true,
+      preserveAgents: true,
+    };
+    afterMarker = async () => {
+      await trackCleanupCommand(Promise.reject(first));
+    };
+    await assert.rejects(
+      slotRelease(params, () => {}),
+      (error) => error === first,
+    );
+    assert.equal((await readRow()).cleanup_stop_unconfirmed, true);
+    afterMarker = async () => {
+      throw second;
+    };
+    await assert.rejects(
+      slotRelease({ ...params, expectedRunId: ownerBoundRetry ? owner.id : undefined }, () => {}),
+      (error) => error === second,
+    );
+    const held = await readRow();
+    assert.equal(held.lifecycle, 'held');
+    assert.equal(held.current_run_id, null);
+    assert.equal(held.cleanup_run_id, owner.id);
+    assert.equal(held.cleanup_stop_unconfirmed, true);
+    assert.equal(replaySlotReclaimCheck(held, owner.id).ok, false);
+    assert.match(String(held.held_reason), /unconfirmed/);
+    afterMarker = async () => {};
+    assert.equal((await slotRelease(params, () => {})).released, true);
+    assert.equal((await readRow()).cleanup_stop_unconfirmed, null);
+  });
+}
 
 for (const successor of [{ slot_epoch: 8 }, { current_run_id: 'successor' }]) {
   test(`ordinary release failure preserves successor ${JSON.stringify(successor)}`, async () => {

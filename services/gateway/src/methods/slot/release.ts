@@ -682,7 +682,7 @@ async function slotReleaseImpl(
                 current_run_id: stopConfirmed ? (params.expectedRunId ?? owner) : null,
                 ...(!stopConfirmed
                   ? {
-                      cleanup_run_id: params.expectedRunId ?? owner,
+                      cleanup_run_id: params.expectedRunId ?? owner ?? priorCleanupOwner,
                       [SLOT_CLEANUP_STOP_UNCONFIRMED]: true,
                     }
                   : {}),
