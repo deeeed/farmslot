@@ -1,6 +1,7 @@
 import { PipelineSteps, primaryRoleForFlow, type Run, type WorkerSignal } from '@farmslot/protocol';
 
 import { selectAgentContext } from '../agents/contexts.js';
+import { resolveNativeContext } from '../agents/native-context.js';
 import { readSlotField } from '../core/state.js';
 import { continuePRCompletionStep } from '../methods/run/replay-step.js';
 import { probeWorkerSignalForRun } from '../run-engine/run-monitor.js';
@@ -161,7 +162,12 @@ export async function sendBackCompletion(
   // original is reconciled.
   let superseded: CompletionDelivery | undefined;
   const retainedBefore = delivery;
+  const editing = !!delivery && note !== undefined && note !== delivery.note;
+  const native =
+    (replacement || editing) &&
+    (initial.transport === 'native' || resolveNativeContext(initial, context) !== null);
   if (replacement) {
+    if (native) throw new Error('A retained replacement cannot be delivered to a native worker');
     if (
       !delivery ||
       delivery.confirmed ||
@@ -176,12 +182,12 @@ export async function sendBackCompletion(
       );
     superseded = delivery;
     delivery = replacement.delivery;
-  } else if (delivery && note !== undefined && note !== delivery.note) {
+  } else if (delivery && editing) {
     if (delivery.confirmed)
       throw new Error(
         'Reconcile the retained completion feedback before changing its operator note',
       );
-    if (delivery.startedAt !== undefined && initial.transport === 'native')
+    if (delivery.startedAt !== undefined && native)
       throw new Error(
         'The retained completion feedback is queued on the worker host and cannot be withdrawn; reconcile it before changing its operator note',
       );
@@ -238,8 +244,13 @@ export async function sendBackCompletion(
   };
   const persistDelivery = (next: CompletionDelivery, reason: string, clearStartedAt?: number) =>
     withRunTransition(run.id, async () => {
-      const latest = await assertOwner();
-      const step = latest.steps.find((entry) => entry.name === PipelineSteps.DISPATCH)!;
+      // A proved untouched edit can be cleared after a generation change.
+      // Its exact key and timestamp below must still match the saved candidate.
+      const latest =
+        superseded && clearStartedAt !== undefined ? getRun(run.id) : await assertOwner();
+      if (!latest || latest.readOnly) return;
+      const step = latest.steps.find((entry) => entry.name === PipelineSteps.DISPATCH);
+      if (!step) return;
       const previousOutputs = step.outputs;
       if (clearStartedAt !== undefined) {
         const saved = superseded

@@ -59,6 +59,10 @@ export async function deliverOperatorInstruction(
   assertCurrent();
   const native = resolveNativeContext(run, context);
   if (native) {
+    if (beforeInput)
+      throw new OperatorInstructionNotAttemptedError(
+        'Edited feedback requires a retained terminal worker',
+      );
     const commandId =
       nativeCommandId ?? nativeWorkerInstructionCommandId(run.id, native.binding, key, text);
     const pendingRecovery = native.binding.recovery;
@@ -130,21 +134,30 @@ export async function deliverOperatorInstruction(
     assertCurrent();
     if (inspection.liveTarget.state === 'stopped' && observeSince === undefined) {
       reloadAttempted = true;
+      let refusedBeforeInput = false;
       const resumed = await reloadRunnerForPark({
         vars,
         recoveryHandle: handle,
         initialPrompt: text,
         beforeRespawn: beforeInput
           ? async () => {
-              assertCurrent();
-              await beforeInput();
-              assertCurrent();
+              try {
+                assertCurrent();
+                await beforeInput();
+                assertCurrent();
+              } catch (error) {
+                refusedBeforeInput = true;
+                throw error;
+              }
             }
           : assertCurrent,
         blindTrialBoundary: blindTrialWorkerBoundary(run, context.role),
         modelQuestions: modelQuestionsForRun(run),
       });
-      if (!resumed.ok) throw new Error(resumed.error);
+      if (!resumed.ok) {
+        if (refusedBeforeInput) throw new OperatorInstructionNotAttemptedError(resumed.error);
+        throw new Error(resumed.error);
+      }
       return 'confirmed';
     }
     const send = () =>
