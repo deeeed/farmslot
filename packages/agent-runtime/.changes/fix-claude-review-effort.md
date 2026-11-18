@@ -1,0 +1,1 @@
+- Claude ACP effort checks use the shared `CLAUDE_CLI_EFFORTS` list.

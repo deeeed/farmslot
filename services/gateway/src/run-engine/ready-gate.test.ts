@@ -515,6 +515,30 @@ test('publish-gate review orchestration preserves a recoverable gate and launche
   );
 });
 
+test('a cold omitted Claude gate row stays omitted for the production caller', async (t) => {
+  const plan = [{ runner: 'claude' as const, model: 'opus', effort: null, mode: 'cold' as const }];
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-GATE-CLAUDE-OMITTED',
+    runner: 'claude',
+    slotId: 'test-gate-claude-omitted-slot',
+  });
+  t.after(async () => deleteTestRunIfPresent(run.id));
+  const calls: Array<{ effort?: string | null }> = [];
+  await executePublishGateReviewPlan(run.id, 'test-gate-claude-omitted-slot', plan, 'human-gate', {
+    assertLaunchAllowed: async () => {},
+    executeReview: async (_runId, _slotId, options) => {
+      assert.ok(options);
+      calls.push(options);
+      return { verdict: 'pass' as const, issues: [], retryCount: 0 };
+    },
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.effort ?? null, null);
+});
+
 test('at the no-verdict cap an automatic gate plan launches no reviewer; an operator request does', async (t) => {
   const plan = [{ runner: 'codex' as const, model: null, effort: null, mode: 'cold' as const }];
   const run = createRun({

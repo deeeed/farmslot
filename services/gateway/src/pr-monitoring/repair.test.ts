@@ -161,6 +161,33 @@ test('an omitted pi repair effort is high', async (t) => {
   assert.equal(executionModelFromSelection({ ...selection, effort: 'xhigh' }).effort, 'xhigh');
 });
 
+test('an omitted claude repair effort stays unset', async (t) => {
+  const selection = { runner: 'claude', model: 'opus', effort: null, mode: 'cold' as const };
+  const profile = { ...execution, models: [selection] };
+  const { store, monitor } = await fixture(t, profile);
+  const dispatcher = new PRRepairDispatcher(
+    store,
+    {
+      refresh: async () => {
+        const current = store.get(monitor.id, 'owner');
+        await store.observe(monitor.id, 'owner', current.revision, { observation: observation() });
+        return store.get(monitor.id, 'owner');
+      },
+    },
+    () => true,
+    () => {},
+    async () => ({ choices: [{ slotId: 'repair-slot', ...selection }], errors: [] }),
+    async () => {},
+  );
+  await dispatcher.reconcile();
+  const item = getQueueSnapshot().find((entry) => entry.prWork?.sourceId === monitor.id)!;
+  assert.equal(item.effort, undefined);
+  assert.equal(executionModelFromSelection(selection).effort, 'medium');
+  const selected = { ...item, slotId: 'repair-slot' };
+  await dispatcher.refreshBeforeCreate(selected);
+  assert.doesNotThrow(() => dispatcher.assertCurrent(selected));
+});
+
 test('manual repair rejects workspace review authority without mutating the monitor', async (t) => {
   const { store, monitor } = await fixture(t);
   const before = store.get(monitor.id, 'owner');

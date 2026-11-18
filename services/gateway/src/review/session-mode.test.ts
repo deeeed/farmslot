@@ -200,6 +200,21 @@ test("a lineage's latest row is found by its lineage id, under any row id", () =
   assert.equal(latestReviewOfLineage(reviews, 'pipeline-review-rev-a'), undefined);
 });
 
+test('an omitted Claude effort keeps the effort recorded on the retained session', () => {
+  registerWarmReviewerSession({ ...session, runner: 'claude', model: 'opus', effort: 'medium' });
+  const claimed = claimWarmReviewerSession({
+    ...scope,
+    runner: 'claude',
+    model: 'opus',
+    effort: null,
+  });
+  assert.equal(claimed?.effort, 'medium');
+  assert.throws(
+    () => claimWarmReviewerSession({ ...scope, runner: 'claude', model: 'opus', effort: 'low' }),
+    /effort-mismatch/,
+  );
+});
+
 test('busy WARM and unsupported model/effort changes visibly refuse', () => {
   registerWarmReviewerSession(session);
   assert.throws(() => claimWarmReviewerSession({ ...scope, model: 'different' }), /model-mismatch/);

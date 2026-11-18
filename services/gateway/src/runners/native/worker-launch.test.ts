@@ -194,6 +194,23 @@ for (const [runner, model, effort, executable] of [
   });
 }
 
+test('a claude review launch keeps a selected medium effort', async () => {
+  const { launch } = await prepareNativeWorkerLaunch({
+    vars: makeVars(),
+    project: {},
+    runner: 'claude',
+    model: 'opus',
+    effort: 'medium',
+    role: 'review',
+    safetyTier: 'sandboxed',
+    taskDir: 'tasks/proof',
+    leaseId: 'proof-lease',
+    sessionId: 'proof-session',
+    prepareAccount: false,
+  });
+  assert.equal(launch.effort, 'medium');
+});
+
 test('review launch identity ignores unrelated pool selections and keeps explicit project settings', async () => {
   const prepare = (
     version: string,

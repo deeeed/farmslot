@@ -1860,6 +1860,10 @@ export async function dispatchExecute(
     pane: null,
     target: workerTarget,
   };
+  const launchedEffort: string | null =
+    repeatReviewResumePlan.kind === 'resume' && runner === 'claude' && (effort ?? null) === null
+      ? (repeatReviewResumePlan.binding.effort ?? null)
+      : effort || null;
   if (params.runId && currentRun) {
     // Reconciliation keeps a saved session over the one it observes, and reopen falls back to the
     // metrics: an interrupted attempt must not leave either pointing at the previous session.
@@ -1880,6 +1884,7 @@ export async function dispatchExecute(
       signalFile: `${workerTaskDir}/SIGNAL.json`,
       runner,
       model,
+      effort: launchedEffort,
       modelQuestions: effectiveModelQuestionsForRun(currentRun),
       target: primaryTarget,
     });
@@ -1949,7 +1954,10 @@ export async function dispatchExecute(
   // it reaches disk before the launch or keys that hand the task over.
   let promptDeliveryMarked = false;
   const persistPromptDeliveryMarker = async (promptDeliveryStartedAt: string | undefined) => {
-    await upsertAgentContext(params.runId!, workerRole, { promptDeliveryStartedAt });
+    await upsertAgentContext(params.runId!, workerRole, {
+      promptDeliveryStartedAt,
+      effort: launchedEffort,
+    });
     const { persistRunNow } = await import('../../runs/store.js');
     await persistRunNow(getRun(params.runId!)!, 'dispatch prompt delivery');
     promptDeliveryMarked = promptDeliveryStartedAt !== undefined;
@@ -2002,12 +2010,16 @@ export async function dispatchExecute(
         `Resuming reviewer session ${binding.runnerSessionId} from run ${binding.priorRunId.slice(0, 8)}...`,
       );
       options.onLaunchAttempt?.();
+      const resumeEffort =
+        runner === 'claude' && (effort ?? null) === null
+          ? (repeatReviewResumePlan.binding.effort ?? null)
+          : (effort ?? null);
       const attempt = await attemptRepeatReviewResume(repeatReviewResumePlan, runner, {
         vars,
         target: workerTarget,
         model,
         prompt: taskPrompt,
-        effort,
+        effort: resumeEffort,
         safetyTier,
         modelQuestions: modelQuestionsForRun(currentRun),
         runtimeDir: projectVars?.runtimeDir,
@@ -2032,6 +2044,7 @@ export async function dispatchExecute(
           priorRunId: binding.priorRunId,
           priorSessionId: binding.runnerSessionId,
           sessionId: binding.runnerSessionId,
+          effort: resumeEffort,
         });
       } else if (attempt.kind === 'refused') {
         throw new Error(
@@ -2055,6 +2068,7 @@ export async function dispatchExecute(
           priorRunId: binding.priorRunId,
           priorSessionId: binding.runnerSessionId,
           sessionId: binding.runnerSessionId,
+          effort: resumeEffort,
         });
         step('warn', attempt.reason);
       }
@@ -2326,6 +2340,7 @@ export async function dispatchExecute(
         signalFile: `${workerTaskDir}/SIGNAL.json`,
         runner,
         model,
+        effort: launchedEffort,
         target: primaryTarget,
         ...(runnerSessionContextPatch(sessionMeta, 'dispatch launch') ??
           clearedRunnerSessionContextPatch()),

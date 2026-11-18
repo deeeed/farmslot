@@ -97,7 +97,21 @@ export function preferRetainedReviewer(
       if (!compatibleWorkspaceReviewer(workspaceRun, prior)) return [];
       configureWorkspaceContinuity(workspaceRun, prior, selected, undefined, runs);
       if (selected.session?.fallback?.reason === 'retention-expired')
-        return [{ ...choice, mode: 'cold' as const }];
+        return [
+          {
+            ...choice,
+            mode: 'cold' as const,
+            // The retained reviewer's effort, which `configureWorkspaceContinuity`
+            // just resolved onto the fallback session. An omitted request has none
+            // of its own — a Claude reviewer is compatible with any recorded effort
+            // precisely so the recorded one carries — and dropping it here launched
+            // the next review at the runner's default, which is the loss this whole
+            // change exists to stop. An explicit effort stays as asked.
+            ...(choice.effort == null && selected.session.effort != null
+              ? { effort: selected.session.effort }
+              : {}),
+          },
+        ];
       return selected.session?.continuity === 'resumed' || Boolean(selected.session?.fallback)
         ? [choice]
         : [];

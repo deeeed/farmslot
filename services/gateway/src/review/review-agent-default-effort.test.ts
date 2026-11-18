@@ -4,7 +4,10 @@ import test, { mock } from 'node:test';
 import { executionModelFromSelection } from '@farmslot/review-dispatch';
 
 import { makeRun } from '../run-engine/test-fixtures.js';
+import { makeVars } from '../runners/test-fixtures.js';
 import * as store from '../runs/store.js';
+
+import { resolveNativeReviewLaunchEffort } from './review-agent.js';
 
 const selection = { runner: 'codex', model: null, effort: null, mode: 'warm' as const };
 const execution = executionModelFromSelection(selection);
@@ -57,6 +60,51 @@ const { assertWarmReviewRequestAvailable } = await import('../run-engine/review-
 const { registerWarmReviewerSession, resetWarmReviewerSessionsForTest, warmLineageScope } =
   await import('./session-mode.js');
 
+test('recovery keeps the recorded Claude effort and a fresh launch fills medium', () => {
+  assert.equal(
+    resolveNativeReviewLaunchEffort({
+      requestedEffort: null,
+      runner: 'claude',
+      model: 'opus',
+      retained: null,
+      recovering: true,
+      contextEffort: 'high',
+    }),
+    'high',
+  );
+  assert.equal(
+    resolveNativeReviewLaunchEffort({
+      requestedEffort: null,
+      runner: 'claude',
+      model: 'opus',
+      retained: null,
+      recovering: true,
+      contextEffort: null,
+    }),
+    null,
+  );
+  assert.equal(
+    resolveNativeReviewLaunchEffort({
+      requestedEffort: null,
+      runner: 'claude',
+      model: 'opus',
+      retained: { effort: 'high' },
+      recovering: false,
+    }),
+    'high',
+  );
+  assert.equal(
+    resolveNativeReviewLaunchEffort({
+      requestedEffort: null,
+      runner: 'claude',
+      model: 'opus',
+      retained: null,
+      recovering: false,
+    }),
+    'medium',
+  );
+});
+
 test('WARM runner-default effort agrees at gate preflight and reviewer delivery', async () => {
   resetWarmReviewerSessionsForTest();
   registerWarmReviewerSession({
@@ -92,7 +140,7 @@ test('WARM runner-default effort agrees at gate preflight and reviewer delivery'
     ),
   );
   await runReviewAgent(
-    {} as Parameters<typeof runReviewAgent>[0],
+    makeVars(),
     execution.runner,
     execution.model,
     '/tmp/review',
@@ -107,5 +155,63 @@ test('WARM runner-default effort agrees at gate preflight and reviewer delivery'
     'review-default',
   );
   assert.equal(deliveredEffort, execution.effort);
+  resetWarmReviewerSessionsForTest();
+});
+
+test('a pre-upgrade claude review keeps an unset effort through warm preflight and delivery', async () => {
+  resetWarmReviewerSessionsForTest();
+  registerWarmReviewerSession({
+    runId: run.id,
+    reviewId: 'review-legacy',
+    familyId: warmLineageScope(run),
+    project: run.project,
+    ownerPrincipalId: run.nativeOwnerPrincipalId,
+    transport: 'native',
+    taskDir: '/tmp/review',
+    artifactScope: 'review-legacy',
+    runner: 'claude',
+    model: 'opus',
+    effort: null,
+    repository: 'owner/repo',
+    prNumber: 42,
+    contextId: 'review-context',
+    windowName: 'review-context',
+    slotId: 'review-slot',
+    runnerSessionId: 'retained-session',
+    runnerSessionPath: null,
+    lastLoopNumber: 1,
+    lastReviewedHeadSha: 'prior-head',
+  });
+  assert.doesNotThrow(() =>
+    assertWarmReviewRequestAvailable(
+      run,
+      {
+        runner: 'claude',
+        model: 'opus',
+        effort: null,
+        mode: 'warm',
+        context: {
+          reviewLineages: [{ repository: 'owner/repo', prNumber: 42, reviewId: 'review-legacy' }],
+        },
+      },
+      [run],
+    ),
+  );
+  await runReviewAgent(
+    makeVars(),
+    'claude',
+    'opus',
+    '/tmp/review',
+    'review-slot',
+    run.id,
+    100,
+    1,
+    'static-code',
+    'review-legacy',
+    'warm',
+    null,
+    'review-legacy',
+  );
+  assert.equal(deliveredEffort, null);
   resetWarmReviewerSessionsForTest();
 });

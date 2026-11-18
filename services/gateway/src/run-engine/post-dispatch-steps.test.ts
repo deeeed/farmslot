@@ -3146,6 +3146,34 @@ test('an undelivered fix becomes a visible result decision with its findings pre
   assert.deepEqual(decision.payload.findings, issues);
 });
 
+test('a cold omitted Claude review stays omitted for the production caller', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-CLAUDE-OMITTED-EFFORT',
+    slotId: 'remote-mobile-2',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  const selection: ReviewSelection = {
+    runner: 'claude',
+    model: 'opus',
+    effort: null,
+    mode: 'cold',
+  };
+  updateRunStep(run.id, 'review', { inputs: { reviewSelection: selection } });
+  const calls: ReviewOptions[] = [];
+  await executeReviewStep(run.id, {
+    ...restartReplayContext(),
+    executeReviewForRun: async (_run, _slot, options = {}) => {
+      calls.push(options);
+      return { verdict: 'pass', retryCount: 0 };
+    },
+  });
+  assert.equal(calls[0]?.reviewRunner, 'claude');
+  assert.equal(calls[0]?.effort ?? null, null);
+});
+
 test('an explicit replay reviewer overrides the original dispatch row and project defaults', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',

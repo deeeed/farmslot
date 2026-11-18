@@ -26,6 +26,7 @@ import {
   resolveReviewMode,
   reviewContextFromRequest,
   reviewSequenceFromRequest,
+  workerModelFromSelection,
 } from '@farmslot/review-dispatch';
 
 import {
@@ -113,11 +114,18 @@ export function remainingExplicitReviewPlan(
   let completed = 0;
   for (const selection of plan) {
     const execution = executionModelFromSelection(selection);
+    const planOmitted = (selection.effort ?? null) === null;
+    const omittedClaude = selection.runner === 'claude' && planOmitted;
+    // An omitted row compares through the catalog default. An explicit row does not
+    // treat a missing effort as that default.
+    const effortMatches = planOmitted
+      ? (review: ReviewStatus) => (review.effort ?? execution.effort) === execution.effort
+      : (review: ReviewStatus) => review.effort != null && review.effort === execution.effort;
     const index = passing.findIndex(
       (review) =>
         normalizeRunner(review.runner) === normalizeRunner(selection.runner) &&
         (review.model ?? execution.model) === execution.model &&
-        (review.effort ?? execution.effort) === execution.effort,
+        (omittedClaude || effortMatches(review)),
     );
     if (index < 0) break;
     passing.splice(index, 1);
@@ -420,7 +428,8 @@ export function assertWarmReviewRequestAvailable(
         artifactScope: lineage.reviewId,
         runner: execution.runner,
         model: execution.model,
-        effort: execution.effort,
+        // The recorded row effort. An omitted Claude effort stays unset; Codex still fills high.
+        effort: workerModelFromSelection(row).effort,
         ...identity,
       },
       runs,

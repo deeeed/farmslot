@@ -31,6 +31,7 @@ import {
   executionModelFromSelection,
   parseReviewSelection,
   resolveReviewMode,
+  workerModelFromSelection,
 } from '@farmslot/review-dispatch';
 
 import {
@@ -426,6 +427,13 @@ export async function executeReview(
   return result;
 }
 
+function effortRecordedByReview(
+  result: { session?: { effort?: string | null } | null },
+  requested: string | null,
+): string | null {
+  return result.session && 'effort' in result.session ? (result.session.effort ?? null) : requested;
+}
+
 async function executeOwnedReview(
   runId: string,
   slotId: string,
@@ -477,12 +485,18 @@ async function executeOwnedReview(
   const mode = evalJudge
     ? 'cold'
     : resolveReviewMode({ explicitMode: options.mode, defaultMode: config.mode });
-  const effort = executionModelFromSelection({
+  const effortSelection = {
     runner: reviewRunner,
     model,
     effort: requestedEffort ?? null,
     mode,
-  }).effort;
+  };
+  // Warm keeps the recorded effort. An omitted Claude effort stays omitted here so recovery
+  // can read the admitted context. A fresh Claude launch fills medium in the native resolver.
+  const effort =
+    mode === 'warm' || reviewRunner === 'claude'
+      ? (workerModelFromSelection(effortSelection).effort ?? null)
+      : (executionModelFromSelection(effortSelection).effort ?? null);
   const primaryContext = run.reviewContext ?? run.prWork?.review?.options.reviewContext;
   const reviewId = evalJudge
     ? `eval-first-output-${runId}`
@@ -695,7 +709,7 @@ async function executeOwnedReview(
         reason: 'no-feedback-file',
         runner: reviewRunner,
         model,
-        effort: effort,
+        effort: effortRecordedByReview(result, effort),
         retryCount: firstRetryCount,
         validationDepth,
         usage: result.usage,
@@ -733,7 +747,7 @@ async function executeOwnedReview(
         timeline: result.timeline,
         runner: reviewRunner,
         model,
-        effort: effort,
+        effort: effortRecordedByReview(result, effort),
         retryCount: firstRetryCount,
         ...(evalJudge ? { maxRetries: 0 } : {}),
         durationMs: Date.now() - start,
@@ -764,7 +778,7 @@ async function executeOwnedReview(
       usage: retryResult.attempts?.at(-1)?.usage ?? retryResult.usage,
       runner: reviewRunner,
       model,
-      effort: effort,
+      effort: effortRecordedByReview(retryResult, effort),
     };
   } finally {
     // Completed reviewer sessions can be explicitly continued from the human gate, but

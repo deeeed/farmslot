@@ -525,7 +525,13 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
       },
     },
     nativeTransport: 'claude-stream-json',
-    nativeChoices: { models: [...RUNNER_PICKER_MODELS.claude], modes: ['default'] },
+    nativeChoices: {
+      models: [...RUNNER_PICKER_MODELS.claude],
+      modes: ['default'],
+      efforts: [...CLAUDE_ACP_EFFORTS],
+      // Chat submits no effort. The label stays on that omission, not the review default.
+      defaultEffort: null,
+    },
     defaultLaunchMode: 'interactive',
     headlessPrintExecutables: ['claude'],
     headlessPrintFlags: ['-p', '--print'],
@@ -561,6 +567,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     // higher tiers via project.json `default_safety_tier`.
     defaultSafetyTier: 'sandboxed',
     defaultModel: DEFAULT_CLAUDE_MODEL,
+    acceptsEffort: (_model, effort) => CLAUDE_ACP_EFFORTS.includes(effort),
     acceptsModel: (model) => model === 'unknown' || CLAUDE_MODEL_PREFIXES.test(model),
     observabilityScope: 'event-driven',
     observabilityHeartbeatMs: 5000,
