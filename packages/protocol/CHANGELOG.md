@@ -6,6 +6,13 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.90.0 - 2026-11-18
+
+- Codex defaults to `gpt-6.2-sol`, including backlog and roadmap refinement. `gpt-6.2-sol` and `gpt-6.2-astra` are known models with the full reasoning set, and `gpt-6.1-sol` stays selectable.
+- Add optional active-invocation ancestry to recipe flow updates, with parent, root-based depth and labeled breadcrumbs while accepting older updates.
+- `parseReviewRuleDeclaration` is exported, and a project may declare its review rule pack on `static_review.rule_pack` (ADR-0073 Amendment 1). `FrozenReviewRulePack` names a declared pack frozen with its digest.
+- Keep the review round-limit rejection code in slim run rows when the rejection body is too large.
+
 ## 0.89.0 - 2026-11-18
 
 - Add the retained-artifact text-search RPC contract and shareable content-search preview fields.

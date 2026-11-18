@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.48.0 - 2026-11-18
+
+- Project invocation ancestry once from the prepared flow tree and carry labeled breadcrumbs on existing HUD flow updates, keeping repeated calls distinct.
+
 ## 0.47.0 - 2026-11-18
 
 - Share the prepared composed-recipe invocation tree and overall action progress, preserving repeated calls, branch uncertainty and teardown without counting containers twice.

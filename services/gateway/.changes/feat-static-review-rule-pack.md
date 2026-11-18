@@ -1,1 +1,0 @@
-- A static review with `static_review.rule_pack` validates the pack from the project installation before building the task, copies it into `inputs/instructions/` and records `reviewRulePack` with its digest in the handoff. A missing or invalid pack refuses the review.

@@ -6,6 +6,10 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.36.9 - 2026-11-18
+
+- Keep review holds and spent fix budgets amber in the Runs strip and pipeline graph.
+
 ## 0.36.8 - 2026-11-18
 
 - Search inside saved logs, Markdown and JSON, then preview a matching original line and restore it from a shared link.

@@ -1,1 +1,0 @@
-- Usage prices include GPT-6.2 Astra at $8 / $0.40 cached / $40 and GPT-6.2 Sol at $2 / $0.10 cached / $10, the published standard short-context rates. The GPT-6.1 Sol and GPT-6 Astra rows stay.

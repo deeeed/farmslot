@@ -6,6 +6,10 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.20.8 - 2026-11-18
+
+- Align the hosted command layer with protocol 0.90.0 and the ancestry SDK cohort.
+
 ## 0.20.7 - 2026-11-18
 
 - Add a read-only browser proof over a supported import of a real retained run for artifact content search.

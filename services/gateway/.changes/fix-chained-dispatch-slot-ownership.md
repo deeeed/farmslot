@@ -1,1 +1,0 @@
-- Allow a CI follow-up to start fresh when the parent worker exits by taking over its own slot reservation before launch.
