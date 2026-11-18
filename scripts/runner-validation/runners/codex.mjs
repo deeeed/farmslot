@@ -86,7 +86,7 @@ const CODEX_BIN = path.join(
   os.homedir(),
   '.npm-global/lib/node_modules/@openai/codex/bin/codex.js',
 );
-const DEFAULT_MODEL = 'gpt-6-astra';
+const DEFAULT_MODEL = 'gpt-6.2-astra';
 
 export function binaryPath() {
   return CODEX_BIN;
