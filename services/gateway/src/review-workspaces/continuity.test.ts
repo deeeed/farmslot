@@ -241,6 +241,54 @@ test('only expiry permits an explicit COLD fallback and preserves the prior line
   assert.equal(live.mode, 'warm');
 });
 
+test('an explicit cold launch does not copy an expired reviewer effort', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-06T01:00:00Z') });
+  const source = {
+    ...prior,
+    completedAt: '2026-11-01T00:00:00Z',
+    reviewWorkspace: { ...prior.reviewWorkspace!, retentionDays: 2 },
+    agentContexts: [
+      { ...prior.agentContexts![0], runner: 'codex', model: 'gpt-6.1-sol', effort: 'ultra' },
+    ],
+  } as Run;
+  const cold = {
+    ...current,
+    reviewMode: 'cold' as const,
+    metrics: { runner: 'claude', model: 'opus' },
+    reviewContext: {
+      reviewLineages: [{ reviewId: 'lineage', repository: 'example/app', prNumber: 42 }],
+    },
+  };
+  const omitted = context();
+  configureWorkspaceContinuity(cold, source, omitted);
+  assert.equal(omitted.session?.continuity, 'fresh');
+  assert.equal(omitted.session?.effort, null);
+  const explicit = context();
+  configureWorkspaceContinuity({ ...cold, effort: 'medium' }, source, explicit);
+  assert.equal(explicit.session?.effort, 'medium');
+});
+
+test('a warm expiry keeps the recorded reviewer effort', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-06T01:00:00Z') });
+  const source = {
+    ...prior,
+    completedAt: '2026-11-01T00:00:00Z',
+    reviewWorkspace: { ...prior.reviewWorkspace!, retentionDays: 2 },
+    agentContexts: [
+      { ...prior.agentContexts![0], runner: 'claude', model: 'opus', effort: 'medium' },
+    ],
+  } as Run;
+  const result = context();
+  configureWorkspaceContinuity(
+    { ...current, metrics: { runner: 'claude', model: 'opus' } },
+    source,
+    result,
+  );
+  assert.equal(result.mode, 'cold');
+  assert.match(result.session?.fallback?.detail ?? '', /expired/);
+  assert.equal(result.session?.effort, 'medium');
+});
+
 test('explicit cold after expiry may use another authorized machine while preserving the expiry reason', (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-06T00:00:00Z') });
   const result = context();
@@ -281,9 +329,17 @@ test('every resumable terminal adapter preserves the exact retained conversation
 test('an unsupported adapter keeps the delta and prior findings in a fresh session', () => {
   const source = {
     ...prior,
-    agentContexts: prior.agentContexts!.map((c) => ({ ...c, runner: 'opencode' })),
+    agentContexts: prior.agentContexts!.map((c) => ({
+      ...c,
+      runner: 'opencode',
+      effort: 'medium',
+    })),
   };
-  const run = { ...current, metrics: { runner: 'opencode', model: 'model' } };
+  const run = {
+    ...current,
+    effort: 'medium',
+    metrics: { runner: 'opencode', model: 'model' },
+  };
   const result = {
     ...context(),
     currentHeadSha: 'b'.repeat(40),
@@ -295,6 +351,7 @@ test('an unsupported adapter keeps the delta and prior findings in a fresh sessi
   assert.equal(result.session?.reviewId, 'lineage');
   assert.equal(result.session?.sessionId, undefined);
   assert.equal(result.session?.fallback?.reason, 'session-resume-unsupported');
+  assert.equal(result.session?.effort, 'medium');
   assert.deepEqual(result.session?.fallback?.comparedRanges, [
     `${'a'.repeat(40)}..${'b'.repeat(40)}`,
   ]);

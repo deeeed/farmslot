@@ -405,16 +405,17 @@ test('an adapter without continuation uses the verified delta even without a sav
       runner: 'opencode',
       runnerSessionId: null,
       runnerSessionPath: null,
+      effort: 'high',
     })),
   };
-  const plan = resolveRepeatReviewResumePlan(current, source, 'opencode', 'gpt-6-astra');
+  const plan = resolveRepeatReviewResumePlan(current, source, 'opencode', 'gpt-6-astra', 'high');
   assert.equal(plan.kind, 'delta-cold');
   if (plan.kind !== 'delta-cold') return;
   assert.equal(plan.trace.reviewId, 'review-lineage-1');
   assert.equal(plan.trace.fallback?.reason, 'session-resume-unsupported');
   assert.deepEqual(plan.trace.fallback?.comparedRanges, ['1111111..2222222']);
   assert.equal(plan.trace.sessionId, undefined);
-  assert.equal(plan.trace.effort ?? null, null);
+  assert.equal(plan.trace.effort, 'high');
 });
 
 test('retained review lineage normalizes both current and prior pull URLs', () => {

@@ -153,7 +153,8 @@ export function configureWorkspaceContinuity(
       repository: context.repository,
       prNumber: context.prNumber,
       lastReviewedHeadSha: context.priorReviewedHeadSha,
-      effort: reviewer.effort ?? null,
+      // An explicit cold launch uses its own effort. A warm expiry keeps the compatible reviewer.
+      effort: mode === 'cold' ? (run.effort ?? null) : (reviewer.effort ?? null),
       fallback: {
         reason: 'retention-expired',
         detail: `Retained reviewer expired at ${expiresAt}; starting a cold review.`,

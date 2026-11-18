@@ -1860,6 +1860,10 @@ export async function dispatchExecute(
     pane: null,
     target: workerTarget,
   };
+  const launchedEffort: string | null =
+    repeatReviewResumePlan.kind === 'resume' && runner === 'claude' && (effort ?? null) === null
+      ? (repeatReviewResumePlan.binding.effort ?? null)
+      : effort || null;
   if (params.runId && currentRun) {
     // Reconciliation keeps a saved session over the one it observes, and reopen falls back to the
     // metrics: an interrupted attempt must not leave either pointing at the previous session.
@@ -1880,6 +1884,7 @@ export async function dispatchExecute(
       signalFile: `${workerTaskDir}/SIGNAL.json`,
       runner,
       model,
+      effort: launchedEffort,
       modelQuestions: effectiveModelQuestionsForRun(currentRun),
       target: primaryTarget,
     });
@@ -1949,7 +1954,10 @@ export async function dispatchExecute(
   // it reaches disk before the launch or keys that hand the task over.
   let promptDeliveryMarked = false;
   const persistPromptDeliveryMarker = async (promptDeliveryStartedAt: string | undefined) => {
-    await upsertAgentContext(params.runId!, workerRole, { promptDeliveryStartedAt });
+    await upsertAgentContext(params.runId!, workerRole, {
+      promptDeliveryStartedAt,
+      effort: launchedEffort,
+    });
     const { persistRunNow } = await import('../../runs/store.js');
     await persistRunNow(getRun(params.runId!)!, 'dispatch prompt delivery');
     promptDeliveryMarked = promptDeliveryStartedAt !== undefined;
@@ -1985,7 +1993,6 @@ export async function dispatchExecute(
   const launchAckSinceMs = getRunnerDefinition(runner).requiresInitialPromptAck
     ? await readSlotClockMs(vars)
     : undefined;
-  let launchedEffort: string | null = effort || null;
   try {
     const roleWindowName = agentDispatchWindow(workerRole);
     const usesRoleWindow = Boolean(roleWindowName);
@@ -2007,7 +2014,6 @@ export async function dispatchExecute(
         runner === 'claude' && (effort ?? null) === null
           ? (repeatReviewResumePlan.binding.effort ?? null)
           : (effort ?? null);
-      launchedEffort = resumeEffort;
       const attempt = await attemptRepeatReviewResume(repeatReviewResumePlan, runner, {
         vars,
         target: workerTarget,
