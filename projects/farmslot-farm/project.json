@@ -22,7 +22,7 @@
       "execution": {
         "workspacePolicy": { "kind": "pool" },
         "transport": "native",
-        "models": [{ "runner": "codex", "model": "gpt-6.1-sol", "effort": "high", "mode": "cold" }]
+        "models": [{ "runner": "codex", "model": "gpt-6.2-sol", "effort": "high", "mode": "cold" }]
       },
       "review": { "mode": "cold", "publishReview": false }
     }
