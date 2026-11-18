@@ -11,6 +11,7 @@ import {
   fixtureGit,
   fixMarkerRepo,
   markerTemplateStep,
+  recordMarkerEvidence,
 } from './marker-contract-fixture.mjs';
 import { runMarkerContract } from './marker-contract.mjs';
 
@@ -138,6 +139,24 @@ test('console.log prescribed by the template is admitted end to end', async (t) 
     true,
   );
   assert.equal(check.status, 'pass', check.error);
+});
+
+test('Logger.log prescribed by Recipe Cook Mobile records a failing baseline and passing fix', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'marker-logger-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const step = markerTemplateStep(titledTemplate.replace('DevLogger.log', 'Logger.log'));
+  const taskDir = path.join(dir, 'task');
+  const fixture = await recordMarkerEvidence(path.join(dir, 'repo'), taskDir, step);
+  assert.match(fixture.patch, /\+  Logger\.log\('\[MANUAL-000180\] BUG_MARKER: sum subtracts'\)$/);
+  for (const [root, verdict] of [
+    [fixture.baselineRoot, 'failed'],
+    [fixture.headRoot, 'proven'],
+  ]) {
+    const claims = JSON.parse(
+      await readFile(path.join(taskDir, 'artifacts', root, 'acceptance-status.json'), 'utf8'),
+    );
+    assert.equal(claims.criteria[0]?.verdict, verdict);
+  }
 });
 
 test('a logger no template prescribes still reaches the gateway and is refused', async (t) => {
