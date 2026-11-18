@@ -123,15 +123,21 @@ function monitorAttemptTiming(run: ProgressRun) {
     // Monitor replay can adopt a running mark before the watcher updates the launch time.
     // A runtime reattachment observes the session and writes lastSignalAt and updatedAt together.
     if (
+      Number.isFinite(monitorReplayMs) &&
       context.status === 'working' &&
       context.signalAttemptId &&
       context.lastSignalAt !== context.updatedAt
     ) {
       const signalMs = Date.parse(context.lastSignalAt ?? '');
-      if (signalMs <= monitorReplayMs) adoptedSignalMs = Math.max(adoptedSignalMs, signalMs);
+      if (Number.isFinite(signalMs)) adoptedSignalMs = Math.max(adoptedSignalMs, signalMs);
     }
   }
-  return { startedMs, finishFloorMs: Math.max(startedMs, adoptedSignalMs) };
+  // Keep the replay boundary even after a runtime inspection replaces the adopted mark.
+  const replayFloorMs = Number.isFinite(adoptedSignalMs) ? adoptedSignalMs : monitorReplayMs;
+  return {
+    startedMs,
+    finishFloorMs: Number.isFinite(replayFloorMs) ? Math.max(startedMs, replayFloorMs) : startedMs,
+  };
 }
 
 /** A blocked run can still be stale after its worker has stopped. */

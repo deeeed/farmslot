@@ -540,6 +540,22 @@ test('run progress: an observed finished worker waits for its monitor to advance
   };
   const now = Date.parse('2026-05-14T13:33:00.000Z');
   assertMatchKind(summarize(adopted, now, taskProgress), 'step', 'monitor');
+  const nextMark: Run = {
+    ...adopted,
+    agentContexts: [{ ...worker, lastSignalAt: '2026-05-14T13:24:00.000Z' }],
+  };
+  assertMatchKind(summarize(nextMark, now, taskProgress), 'step', 'monitor');
+
+  const originalFinish = summarize(
+    {
+      ...adopted,
+      agentContexts: [{ ...worker, lastSignalAt: '2026-05-14T13:14:00.000Z' }],
+    },
+    now,
+    taskProgress,
+  );
+  assertMatchKind(originalFinish, 'step', 'Worker finished; monitor has not advanced');
+
   const newProgress: TaskProgressStructured = {
     ...taskProgress,
     timing: {
@@ -549,21 +565,19 @@ test('run progress: an observed finished worker waits for its monitor to advance
       finishedAt: '2026-05-14T13:25:00.000Z',
     },
   };
-  const reattached = summarize(
-    {
-      ...adopted,
-      agentContexts: [
-        {
-          ...worker,
-          lastSignalAt: '2026-05-14T13:28:00.000Z',
-          updatedAt: '2026-05-14T13:28:00.000Z',
-        },
-      ],
-      steps: [{ name: 'monitor', status: 'running', startedAt: '2026-05-14T13:28:00.000Z' }],
-    },
-    now,
-    newProgress,
-  );
+  const reattachment: Run = {
+    ...adopted,
+    agentContexts: [
+      {
+        ...worker,
+        lastSignalAt: '2026-05-14T13:28:00.000Z',
+        updatedAt: '2026-05-14T13:28:00.000Z',
+      },
+    ],
+    steps: [{ name: 'monitor', status: 'running', startedAt: '2026-05-14T13:28:00.000Z' }],
+  };
+  assertMatchKind(summarize(reattachment, now, taskProgress), 'step', 'monitor');
+  const reattached = summarize(reattachment, now, newProgress);
   assertMatchKind(reattached, 'step', 'Worker finished; monitor has not advanced');
   assert.equal(reattached.lastProgressAt, '2026-05-14T13:25:00.000Z');
 
