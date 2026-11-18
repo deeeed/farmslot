@@ -829,6 +829,7 @@ export async function reloadRunnerForPark(
       handle.model,
       handle.sessionId,
       {
+        sessionPath: handle.sessionPath,
         effort: handle.effort,
         safetyTier: handle.safetyTier,
         runtimeDir: handle.runtimeDir,
