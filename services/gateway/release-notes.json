@@ -4,7 +4,7 @@
   "items": [
     "Review holds and spent fix budgets stay amber instead of appearing as failures.",
     "The recipe SDK exposes labeled ancestry for nested and repeated calls.",
-    "Static reviews can load a project rule pack and freeze its required skills.",
+    "Static reviews can load a project rule pack and record its digest in the review handoff.",
     "Session recovery resumes PI workers by saved transcript and refuses missing or empty history.",
     "Publication verifies the selected recipe attempt's task actions while preserving older attempts."
   ]
