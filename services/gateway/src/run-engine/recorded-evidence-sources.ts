@@ -31,6 +31,12 @@ import {
 export interface RecordedEvidenceSource {
   input: RecordedEvidencePackageInput;
   artifactPrefix: string;
+  /**
+   * Set on the packages a publication carries alongside the attempt it selected.
+   * Absent means the selected attempt, which stays the authority for anything
+   * the retained bytes are measured against.
+   */
+  scope?: 'additional';
 }
 
 /** Canonical capture qualification, including retained repair-head exceptions. */
@@ -285,7 +291,9 @@ export async function readFrozenPublicationRecipeSources(
         external,
         bundleRef,
       );
-      additionalSources.push(...additional);
+      additionalSources.push(
+        ...additional.map((source) => ({ ...source, scope: 'additional' as const })),
+      );
       for (const source of additional) {
         if (validateRecordedEvidencePackage(source.input).status !== 'valid')
           throw new RecordedEvidenceReadError(

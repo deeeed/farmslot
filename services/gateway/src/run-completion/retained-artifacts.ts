@@ -906,29 +906,33 @@ export async function retainedTaskActionInputs(
   run: Run,
   ref = retainedRunBundleRef(run),
   references?: readonly TaskActionInputLibrary[],
+  /** Claims from attempts the publication did not select; presence-checked only. */
+  supersededReferences: readonly TaskActionInputLibrary[] = [],
 ): Promise<RetainedTaskActionInputState> {
   const selected = references === undefined ? await retainedRecipeRunSummaries(run, ref) : null;
   const actions = selected
     ? taskActionInputReferences(selectedRetainedRecipeGroup(selected.summaries)?.raw)
     : [...(references ?? [])];
-  if (!actions.length) return { actions, available: true };
+  const superseded = selected ? [] : [...supersededReferences];
+  const referenced = [...actions, ...superseded];
+  if (!referenced.length) return { actions, available: true };
   const inventory = selected?.inventory ?? (await retainedRunArtifactManifest(run, ref));
   const files = inventory.filter(({ path: file }) =>
     file.startsWith(`${TASK_DIRECTORY_LAYOUT.taskActions.relativePath}/`),
   );
-  if (!files.length) return { actions, available: false };
+  if (!files.length) return { actions: referenced, available: false };
   for (const file of files) {
     try {
       await readRetainedRunText(run, file.path, ref);
     } catch (error) {
       throw new Error(
-        `Task-action input read failed for ${actions.flatMap(({ actionNames }) => actionNames).join(', ')}: ${error instanceof Error ? error.message : String(error)}`,
+        `Task-action input read failed for ${referenced.flatMap(({ actionNames }) => actionNames).join(', ')}: ${error instanceof Error ? error.message : String(error)}`,
         { cause: error },
       );
     }
   }
   const taskDir = await retainedRunTaskDirectory(run, ref);
-  if (!(await taskActionInputsAvailable(taskDir, actions)))
+  if (!(await taskActionInputsAvailable(taskDir, actions, superseded)))
     throw new Error(`Captured task-action inputs are missing for ${run.id}.`);
   return { actions, available: true };
 }
