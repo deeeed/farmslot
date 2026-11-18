@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { Methods, NativeSessionEventTypes } from '@farmslot/protocol';
+import { nativeLaunchContextKey } from '@farmslot/review-dispatch';
 
 import { ROOT } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
@@ -66,8 +67,9 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
     );
     const defaults = view('return {runner:view.runner,model:view.model,mode:view.mode};');
     assert.deepEqual(defaults, { runner: 'codex', model: 'gpt-6.2-sol', mode: 'default' });
+    const launchKey = nativeLaunchContextKey({ cwd: fixture, executionNodeId: 'local' });
     const launch = view(
-      `const fixture=${JSON.stringify(fixture)};const options=[...root.querySelectorAll('[data-testid="native-context"] option')];const match=options.find((option)=>!option.disabled&&option.textContent.includes(fixture));return {value:match?.value??''};`,
+      `const key=${JSON.stringify(launchKey)};const match=[...root.querySelectorAll('[data-testid="native-context"] option')].find((option)=>!option.disabled&&option.value===key);return {value:match?.value??''};`,
     );
     assert.ok(launch.value, 'the fixture workspace is not in the native launch list');
     cdp('select', 'native', 'native-session-view >>> [data-testid="native-context"]', launch.value);
@@ -88,15 +90,21 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
       ),
     );
     click('[data-testid=native-create]');
-    const session = await wait(
+    const created = await wait(
       () =>
-        rpc(Methods.NATIVE_SESSION_LIST, { executionNodeId: 'local' }).sessions.find(
-          (item) => !existing.has(item.id) && item.runner === 'codex' && item.cwd === fixture,
+        view(
+          'const session=view?.session;return {id:session?.id??"",runner:session?.runner??"",cwd:session?.cwd??"",node:session?.executionNodeId??""};',
         ),
-      Boolean,
+      (value) =>
+        value.id &&
+        !existing.has(value.id) &&
+        value.runner === 'codex' &&
+        value.cwd === fixture &&
+        value.node === 'local',
       timeoutMs,
     );
-    target = { executionNodeId: 'local', sessionId: session.id };
+    target = { executionNodeId: created.node, sessionId: created.id };
+    const session = rpc(Methods.NATIVE_SESSION_READ, target).session;
     report.sessionId = session.id;
     assert.equal(session.model, 'gpt-6.2-sol');
     assert.equal(session.effort, 'high');
@@ -117,7 +125,10 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
     assert.ok(text.includes(word));
     assert.ok(!page.events.some((event) => event.type === NativeSessionEventTypes.TOOL_STARTED));
     await wait(
-      () => view(`return {shown:root?.textContent.includes(${JSON.stringify(word)})};`),
+      () =>
+        view(
+          `const word=${JSON.stringify(word)};const id=${JSON.stringify(session.id)};const rows=[...root.querySelectorAll('article.assistant:not([hidden]) .text')];return {shown:view?.session?.id===id&&rows.some((row)=>row.textContent.includes(word))};`,
+        ),
       (value) => value.shown,
       30000,
     );
