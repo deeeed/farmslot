@@ -14,6 +14,8 @@
  * See apps/docs/docs/reference/review-rule-packs.md.
  */
 
+import { isRelativeSafePath, onlyKeys, record, SKILL_NAME } from './skill-fields.js';
+
 export const REVIEW_RULE_STATUSES = ['active', 'proposed', 'stale', 'retired'] as const;
 export type ReviewRuleStatus = (typeof REVIEW_RULE_STATUSES)[number];
 
@@ -115,18 +117,14 @@ export interface ReviewRuleProposal {
 }
 
 const ANCHOR = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const SIMPLE_NAME = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 const SHA256 = /^[0-9a-f]{64}$/;
+/** `path/to/file.ts:42` or `path/to/file.ts:42-48`. */
+const FILE_LINE = /^\S+:\d+(?:-\d+)?$/;
 
-function record(value: unknown, field: string): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value))
-    throw new Error(`${field} must be an object`);
-  return value as Record<string, unknown>;
-}
-
-function onlyKeys(value: Record<string, unknown>, keys: readonly string[], field: string): void {
-  const extra = Object.keys(value).filter((key) => !keys.includes(key));
-  if (extra.length) throw new Error(`${field} has unsupported properties: ${extra.join(', ')}`);
+function oneLine(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !value.trim() || /[\r\n]/.test(value))
+    throw new Error(`${field} must be one non-empty line`);
+  return value.trim();
 }
 
 function text(value: unknown, field: string): string {
@@ -139,13 +137,6 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[], field: s
   if (typeof value !== 'string' || !(allowed as readonly string[]).includes(value))
     throw new Error(`${field} must be one of ${allowed.join(', ')}`);
   return value as T;
-}
-
-/** A path inside the skill directory: no absolute path, backslash or `.`/`..` segment. */
-export function isSkillRelativePath(value: unknown): value is string {
-  if (typeof value !== 'string' || !value || value.startsWith('/') || value.includes('\\'))
-    return false;
-  return value.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..');
 }
 
 function areas(value: unknown, field: string): ReviewRuleAreas {
@@ -162,7 +153,7 @@ function areas(value: unknown, field: string): ReviewRuleAreas {
   const out: Record<string, string[]> = {};
   for (const client of clients) {
     const globs = paths[client];
-    if (!SIMPLE_NAME.test(client))
+    if (!SKILL_NAME.test(client))
       throw new Error(`${field}.paths key "${client}" must be a simple name`);
     if (
       !Array.isArray(globs) ||
@@ -180,7 +171,7 @@ export function parseReviewRulePack(value: unknown, field = 'pack'): ReviewRuleP
   const pack = record(value, field);
   onlyKeys(pack, ['schemaVersion', 'id', 'source', 'families'], field);
   if (pack.schemaVersion !== 1) throw new Error(`${field}.schemaVersion must be 1`);
-  if (typeof pack.id !== 'string' || !SIMPLE_NAME.test(pack.id))
+  if (typeof pack.id !== 'string' || !SKILL_NAME.test(pack.id))
     throw new Error(`${field}.id must be a simple name`);
   const source = record(pack.source, `${field}.source`);
   onlyKeys(source, ['repository', 'revision'], `${field}.source`);
@@ -197,7 +188,7 @@ export function parseReviewRulePack(value: unknown, field = 'pack'): ReviewRuleP
       throw new Error(`${at}.id must be a lowercase anchor`);
     if (ids.has(family.id)) throw new Error(`${field} has duplicate family id "${family.id}"`);
     ids.add(family.id);
-    if (!isSkillRelativePath(family.file)) throw new Error(`${at}.file must be skill-relative`);
+    if (!isRelativeSafePath(family.file)) throw new Error(`${at}.file must be skill-relative`);
     if (!Array.isArray(family.rules)) throw new Error(`${at}.rules must be an array`);
     const rules = family.rules.map((rawRule, ruleIndex): ReviewRule => {
       const ruleAt = `${at}.rules[${ruleIndex}]`;
@@ -219,13 +210,23 @@ export function parseReviewRulePack(value: unknown, field = 'pack'): ReviewRuleP
   return { schemaVersion: 1, id: pack.id, source: { repository, revision }, families };
 }
 
+/** The frozen review inputs a selection must have been computed for. */
+export interface ReviewRuleSelectionBinding {
+  /** Digest of the frozen pack file. */
+  sha256: string;
+  /** The client the review skill declared. */
+  client: string;
+}
+
 /**
- * Validates a selection against its pack: every family that is not retired is
+ * Validates a selection against its pack and the frozen review inputs: it was
+ * computed for this pack digest and client, every family that is not retired is
  * named exactly once with a one-line reason, and `always` families are selected.
  */
 export function parseReviewRuleSelection(
   value: unknown,
   pack: ReviewRulePack,
+  binding: ReviewRuleSelectionBinding,
   field = 'selection',
 ): ReviewRuleSelection {
   const selection = record(value, field);
@@ -236,13 +237,21 @@ export function parseReviewRuleSelection(
   if (packRef.id !== pack.id) throw new Error(`${field}.pack.id must be "${pack.id}"`);
   if (typeof packRef.sha256 !== 'string' || !SHA256.test(packRef.sha256))
     throw new Error(`${field}.pack.sha256 must be a sha256 hex digest`);
+  if (packRef.sha256 !== binding.sha256)
+    throw new Error(
+      `${field} was computed for pack digest ${packRef.sha256}, not the frozen ${binding.sha256}`,
+    );
   const selector = record(selection.selector, `${field}.selector`);
   onlyKeys(selector, ['kind', 'id', 'version'], `${field}.selector`);
   const kind = oneOf(selector.kind, REVIEW_RULE_SELECTOR_KINDS, `${field}.selector.kind`);
   const selectorId = text(selector.id, `${field}.selector.id`);
   const version = text(selector.version, `${field}.selector.version`);
-  if (typeof selection.client !== 'string' || !SIMPLE_NAME.test(selection.client))
+  if (typeof selection.client !== 'string' || !SKILL_NAME.test(selection.client))
     throw new Error(`${field}.client must be a simple name`);
+  if (selection.client !== binding.client)
+    throw new Error(
+      `${field} was computed for client ${selection.client}, not the declared ${binding.client}`,
+    );
   if (!Array.isArray(selection.families)) throw new Error(`${field}.families must be an array`);
 
   const byId = new Map(pack.families.map((family) => [family.id, family]));
@@ -305,7 +314,7 @@ export function parseReviewRuleProposal(value: unknown, field = 'proposal'): Rev
     field,
   );
   if (proposal.schemaVersion !== 1) throw new Error(`${field}.schemaVersion must be 1`);
-  if (typeof proposal.pack !== 'string' || !SIMPLE_NAME.test(proposal.pack))
+  if (typeof proposal.pack !== 'string' || !SKILL_NAME.test(proposal.pack))
     throw new Error(`${field}.pack must be a simple name`);
   const kind = oneOf(proposal.kind, REVIEW_RULE_PROPOSAL_KINDS, `${field}.kind`);
   if (proposal.family === undefined && kind !== 'add')
@@ -325,9 +334,10 @@ export function parseReviewRuleProposal(value: unknown, field = 'proposal'): Rev
     const ref = text(item.ref, `${at}.ref`);
     if (item.location === undefined && (source === 'finding' || source === 'miss'))
       throw new Error(`${at}.location (file:line) is required for a ${source}`);
-    return item.location === undefined
-      ? { ref }
-      : { ref, location: text(item.location, `${at}.location`) };
+    if (item.location === undefined) return { ref };
+    if (typeof item.location !== 'string' || !FILE_LINE.test(item.location))
+      throw new Error(`${at}.location must be file:line or file:start-end`);
+    return { ref, location: item.location };
   });
   const confirmation = oneOf(
     proposal.confirmation,
@@ -358,8 +368,12 @@ export function parseReviewRuleProposal(value: unknown, field = 'proposal'): Rev
   const decision = record(proposal.decision, `${field}.decision`);
   onlyKeys(decision, ['status', 'reason'], `${field}.decision`);
   const status = oneOf(decision.status, REVIEW_RULE_DECISIONS, `${field}.decision.status`);
-  if (status !== 'pending' && (typeof decision.reason !== 'string' || !decision.reason.trim()))
+  if (status !== 'pending' && decision.reason === undefined)
     throw new Error(`${field}.decision.reason is required once decided`);
+  const reason =
+    decision.reason === undefined
+      ? undefined
+      : oneLine(decision.reason, `${field}.decision.reason`);
   return {
     schemaVersion: 1,
     pack: proposal.pack,
@@ -372,9 +386,6 @@ export function parseReviewRuleProposal(value: unknown, field = 'proposal'): Rev
     ...(bar ? { bar } : {}),
     change: text(proposal.change, `${field}.change`),
     netRuleDelta: proposal.netRuleDelta,
-    decision:
-      decision.reason === undefined
-        ? { status }
-        : { status, reason: text(decision.reason, `${field}.decision.reason`) },
+    decision: reason === undefined ? { status } : { status, reason },
   };
 }

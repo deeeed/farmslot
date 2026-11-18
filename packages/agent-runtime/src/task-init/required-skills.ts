@@ -73,7 +73,7 @@ export function selectRequiredSkills(
       if (skill.review) {
         if (entry.review && JSON.stringify(entry.review) !== JSON.stringify(skill.review))
           throw new RequiredSkillsError(
-            `Required skill ${skill.name} declares two different review packs (rules ${[...entry.rules].join(', ')}); declare one.`,
+            `Required skill ${skill.name} declares two different review packs (rules ${[...entry.rules].join(', ')}). Declare one in project.json required_skills.`,
           );
         entry.review = skill.review;
       }
@@ -109,8 +109,11 @@ function readPack(
   let value: unknown;
   try {
     value = JSON.parse(bytes.toString('utf8'));
-  } catch {
-    return { sha256, problem: 'is not valid JSON' };
+  } catch (error) {
+    return {
+      sha256,
+      problem: `is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    };
   }
   try {
     parseReviewRulePack(value);
@@ -130,6 +133,11 @@ export function freezeRequiredSkills(
   input: RequiredSkillSelectionInput,
 ): RequiredSkillSet {
   const selection = selectRequiredSkills(config, input);
+  const packs = selection.skills.filter((skill) => skill.review).map((skill) => skill.name);
+  if (packs.length > 1)
+    throw new RequiredSkillsError(
+      `Required skills ${packs.join(', ')} each declare a review pack, and one review runs one pack. Declare the pack on one skill in project.json required_skills.`,
+    );
   const gaps: string[] = [];
   const skills: FrozenRequiredSkill[] = selection.skills.map((skill) => {
     const missing: string[] = [];

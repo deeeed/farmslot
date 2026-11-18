@@ -5,6 +5,8 @@
  * and its pipeline review both read.
  */
 
+import { isRelativeSafePath, onlyKeys, record, SKILL_NAME } from './skill-fields.js';
+
 export interface RequiredSkillRuleMatch {
   flows?: string[];
   platforms?: string[];
@@ -76,13 +78,6 @@ export interface RequiredSkillSet {
   skills: FrozenRequiredSkill[];
 }
 
-const SAFE_NAME = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
-
-function relativeSafe(value: string): boolean {
-  if (!value || value.startsWith('/') || value.includes('\\')) return false;
-  return value.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..');
-}
-
 function stringList(value: unknown, field: string): string[] {
   if (
     !Array.isArray(value) ||
@@ -93,23 +88,12 @@ function stringList(value: unknown, field: string): string[] {
   return value as string[];
 }
 
-function record(value: unknown, field: string): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value))
-    throw new Error(`${field} must be an object`);
-  return value as Record<string, unknown>;
-}
-
-function onlyKeys(value: Record<string, unknown>, keys: readonly string[], field: string): void {
-  const extra = Object.keys(value).filter((key) => !keys.includes(key));
-  if (extra.length) throw new Error(`${field} has unsupported properties: ${extra.join(', ')}`);
-}
-
 function parseReview(value: unknown, field: string): RequiredSkillReview {
   const review = record(value, field);
   onlyKeys(review, ['pack', 'client', 'level'], field);
-  if (typeof review.pack !== 'string' || !relativeSafe(review.pack))
+  if (typeof review.pack !== 'string' || !isRelativeSafePath(review.pack))
     throw new Error(`${field}.pack must be skill-relative`);
-  if (typeof review.client !== 'string' || !SAFE_NAME.test(review.client))
+  if (typeof review.client !== 'string' || !SKILL_NAME.test(review.client))
     throw new Error(`${field}.client must be a simple name`);
   if (
     typeof review.level !== 'string' ||
@@ -130,7 +114,7 @@ export function parseRequiredSkillsConfig(
 ): RequiredSkillsConfig {
   const config = record(value, field);
   onlyKeys(config, ['root', 'rules'], field);
-  if (typeof config.root !== 'string' || !relativeSafe(config.root))
+  if (typeof config.root !== 'string' || !isRelativeSafePath(config.root))
     throw new Error(`${field}.root must be a checkout-relative directory`);
   if (!Array.isArray(config.rules) || config.rules.length === 0)
     throw new Error(`${field}.rules must be a non-empty array`);
@@ -139,7 +123,7 @@ export function parseRequiredSkillsConfig(
     const ruleField = `${field}.rules[${index}]`;
     const rule = record(raw, ruleField);
     onlyKeys(rule, ['id', 'when', 'skills'], ruleField);
-    if (typeof rule.id !== 'string' || !SAFE_NAME.test(rule.id))
+    if (typeof rule.id !== 'string' || !SKILL_NAME.test(rule.id))
       throw new Error(`${ruleField}.id must be a simple name`);
     if (ids.has(rule.id)) throw new Error(`${field} has duplicate rule id "${rule.id}"`);
     ids.add(rule.id);
@@ -159,11 +143,11 @@ export function parseRequiredSkillsConfig(
       const skillField = `${ruleField}.skills[${skillIndex}]`;
       const skill = record(rawSkill, skillField);
       onlyKeys(skill, ['name', 'files', 'review'], skillField);
-      if (typeof skill.name !== 'string' || !SAFE_NAME.test(skill.name))
+      if (typeof skill.name !== 'string' || !SKILL_NAME.test(skill.name))
         throw new Error(`${skillField}.name must be an installed skill directory name`);
       const files = stringList(skill.files, `${skillField}.files`);
       for (const file of files)
-        if (!relativeSafe(file))
+        if (!isRelativeSafePath(file))
           throw new Error(`${skillField}.files entry "${file}" must be skill-relative`);
       if (skill.review === undefined) return { name: skill.name, files };
       return { name: skill.name, files, review: parseReview(skill.review, `${skillField}.review`) };
@@ -191,7 +175,7 @@ export function isRequiredSkillSet(value: unknown): value is RequiredSkillSet {
   const isFile = (file: unknown) =>
     !!file &&
     typeof (file as RequiredSkillFile).path === 'string' &&
-    relativeSafe((file as RequiredSkillFile).path) &&
+    isRelativeSafePath((file as RequiredSkillFile).path) &&
     /^[0-9a-f]{64}$/.test((file as RequiredSkillFile).sha256);
   return set.skills.every((entry: unknown) => {
     const skill = entry as Record<string, unknown> | null;

@@ -3,7 +3,6 @@
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
-- A required review skill that declares a rule pack has the pack frozen with it, and task init refuses a missing or invalid pack instead of running the generic review. `reviewRuleLevel` reads the review level from the frozen set, and `markUnselectedFamilies` turns each family a selection skips into an optional step, recorded with the existing `mark N --skip`.
 
 ## 0.48.8 - 2026-11-18
 

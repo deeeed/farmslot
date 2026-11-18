@@ -15,7 +15,6 @@ import { fileURLToPath } from 'node:url';
 import {
   parseRequiredSkillsConfig,
   parseReviewRulePack,
-  parseReviewRuleSelection,
   type RequiredSkillsConfig,
 } from '@farmslot/protocol';
 
@@ -126,7 +125,8 @@ test('a declared pack is frozen with its skill and sets the review level', () =>
 test('a declared pack that is missing or invalid refuses prepare instead of falling back', () => {
   for (const [pack, message] of [
     [undefined, /missing \.agents\/skills\/mms-perps-review-pr\/references\/pack\.json/],
-    ['{not json', /review pack .*references\/pack\.json is not valid JSON/],
+    // The decoder's own diagnostic is kept, so a maintainer sees where the JSON breaks.
+    ['{not json', /review pack .*references\/pack\.json is not valid JSON: .*JSON/],
     [
       JSON.stringify({ ...PACK, schemaVersion: 2 }),
       /review pack .*references\/pack\.json is invalid: pack\.schemaVersion must be 1/,
@@ -147,6 +147,59 @@ test('a declared pack that is missing or invalid refuses prepare instead of fall
   }
 });
 
+test('one review runs one pack: two pack-declaring skills, or two packs on one skill, refuse prepare', () => {
+  const repo = checkout(`${JSON.stringify(PACK)}\n`);
+  try {
+    const other = path.join(repo, '.agents/skills/mms-core-review/references');
+    mkdirSync(other, { recursive: true });
+    writeFileSync(path.join(repo, '.agents/skills/mms-core-review/SKILL.md'), '# Core review\n');
+    writeFileSync(path.join(other, 'pack.json'), `${JSON.stringify({ ...PACK, id: 'core' })}\n`);
+    const competing = parseRequiredSkillsConfig({
+      root: '.agents/skills',
+      rules: [
+        { id: 'project', skills: [{ name: 'mms-core-review', files: ['SKILL.md'], review: FULL }] },
+        {
+          id: 'perps-review',
+          when: { domains: ['perps'] },
+          skills: [{ name: 'mms-perps-review-pr', files: ['SKILL.md'], review: FULL }],
+        },
+      ],
+    });
+    assert.throws(
+      () => freezeRequiredSkills(repo, competing, INPUT),
+      (error: unknown) =>
+        error instanceof RequiredSkillsError &&
+        /Required skills mms-core-review, mms-perps-review-pr each declare a review pack, and one review runs one pack/.test(
+          error.message,
+        ),
+    );
+    const twice = parseRequiredSkillsConfig({
+      root: '.agents/skills',
+      rules: [
+        { id: 'a', skills: [{ name: 'mms-perps-review-pr', files: ['SKILL.md'], review: FULL }] },
+        {
+          id: 'b',
+          skills: [
+            {
+              name: 'mms-perps-review-pr',
+              files: ['SKILL.md'],
+              review: { ...FULL, level: 'static' },
+            },
+          ],
+        },
+      ],
+    });
+    assert.throws(
+      () => freezeRequiredSkills(repo, twice, INPUT),
+      (error: unknown) =>
+        error instanceof RequiredSkillsError &&
+        /mms-perps-review-pr declares two different review packs/.test(error.message),
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 const CHECKLIST = [
   '# Perps static review',
   '',
@@ -161,22 +214,30 @@ const CHECKLIST = [
 
 const pack = parseReviewRulePack(PACK);
 const REASON = 'no changed file matches its mobile areas';
-const selection = parseReviewRuleSelection(
-  {
+const REVIEW = {
+  pack: { path: '.agents/skills/mms-perps-review-pr/references/pack.json', sha256: 'b'.repeat(64) },
+  client: 'mobile',
+  level: 'full',
+} as const;
+
+function selectionFor(families: unknown[], change: Record<string, unknown> = {}) {
+  return {
     schemaVersion: 1,
     pack: { id: 'perps', sha256: 'b'.repeat(64) },
     selector: { kind: 'deterministic', id: 'areas', version: '1' },
     client: 'mobile',
-    families: [
-      { id: 'blocking-review-checks', selected: true, reason: 'always' },
-      { id: 'pro-mode-ui-gating', selected: false, reason: REASON },
-    ],
-  },
-  pack,
-);
+    families,
+    ...change,
+  };
+}
+
+const SELECTION = selectionFor([
+  { id: 'blocking-review-checks', selected: true, reason: 'always' },
+  { id: 'pro-mode-ui-gating', selected: false, reason: REASON },
+]);
 
 test('a family the selection leaves out becomes an optional step carrying the reason', () => {
-  const marked = markUnselectedFamilies(CHECKLIST, pack, selection);
+  const marked = markUnselectedFamilies(CHECKLIST, pack, REVIEW, SELECTION);
   assert.match(marked, /^- \[ \] 2\. Blocking review checks$/m);
   assert.match(
     marked,
@@ -187,21 +248,77 @@ test('a family the selection leaves out becomes an optional step carrying the re
     CHECKLIST.split('\n').length,
     'only the family row changes',
   );
+});
+
+test('a selection for another pack revision or client grants no skip', () => {
   assert.throws(
     () =>
       markUnselectedFamilies(
-        CHECKLIST.replace('#pro-mode-ui-gating', '#elsewhere'),
+        CHECKLIST,
         pack,
-        selection,
+        { ...REVIEW, pack: { ...REVIEW.pack, sha256: 'd'.repeat(64) } },
+        SELECTION,
       ),
-    /checklist has no row linking references\/shared\.md#pro-mode-ui-gating/,
+    /selection was computed for pack digest b{64}, not the frozen d{64}/,
+  );
+  assert.throws(
+    () => markUnselectedFamilies(CHECKLIST, pack, { ...REVIEW, client: 'core' }, SELECTION),
+    /selection was computed for client mobile, not the declared core/,
+  );
+});
+
+test('a skip can never cover another family: one family per step, one step per family', () => {
+  // A selected row that cross-links the unselected family would otherwise become skippable.
+  const seeAlso = CHECKLIST.replace(
+    'Every confirmed violation is blocking.',
+    'Every confirmed violation is blocking; see also references/shared.md#pro-mode-ui-gating.',
+  );
+  assert.throws(
+    () => markUnselectedFamilies(seeAlso, pack, REVIEW, SELECTION),
+    /Checklist step 2 links families blocking-review-checks, pro-mode-ui-gating; a step covers one family/,
+  );
+  const twice = CHECKLIST.replace(
+    '- [ ] 4. Write the verdict',
+    '- [ ] 4. Write the verdict\n  Recheck references/shared.md#pro-mode-ui-gating.',
+  );
+  assert.throws(
+    () => markUnselectedFamilies(twice, pack, REVIEW, SELECTION),
+    /Family pro-mode-ui-gating is linked by checklist steps 3 and 4; one step covers a family/,
+  );
+});
+
+test('a family missing from the checklist is refused unless another client overlay holds it', () => {
+  const withoutPro = CHECKLIST.replace('#pro-mode-ui-gating', '#elsewhere');
+  assert.throws(
+    () => markUnselectedFamilies(withoutPro, pack, REVIEW, SELECTION),
+    /no step linking references\/shared\.md#pro-mode-ui-gating, which this mobile review needs/,
+  );
+  // On a core review the mobile-only family belongs to the mobile overlay: absent and unselected is fine.
+  const core = { ...REVIEW, client: 'core' } as const;
+  const coreSelection = selectionFor(
+    [
+      { id: 'blocking-review-checks', selected: true, reason: 'always' },
+      { id: 'pro-mode-ui-gating', selected: false, reason: 'no core areas' },
+    ],
+    { client: 'core' },
+  );
+  assert.equal(markUnselectedFamilies(withoutPro, pack, core, coreSelection), withoutPro);
+  assert.throws(
+    () =>
+      markUnselectedFamilies(
+        CHECKLIST.replace('#blocking-review-checks', '#elsewhere'),
+        pack,
+        core,
+        coreSelection,
+      ),
+    /no step linking references\/shared\.md#blocking-review-checks, which this core review needs/,
   );
 });
 
 test('the existing mark --skip records the selector reason beside the skipped family', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'farmslot-review-rules-mark-'));
   try {
-    const checklist = markUnselectedFamilies(CHECKLIST, pack, selection);
+    const checklist = markUnselectedFamilies(CHECKLIST, pack, REVIEW, SELECTION);
     mkdirSync(path.join(dir, 'inputs'), { recursive: true });
     writeFileSync(path.join(dir, 'CHECKLIST.md'), checklist);
     writeFileSync(
@@ -233,58 +350,4 @@ test('the existing mark --skip records the selector reason beside the skipped fa
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-});
-
-test('one review runs one pack: conflicting or competing pack declarations are refused', () => {
-  const twice = parseRequiredSkillsConfig({
-    root: '.agents/skills',
-    rules: [
-      { id: 'a', skills: [{ name: 'mms-perps-review-pr', files: ['SKILL.md'], review: FULL }] },
-      {
-        id: 'b',
-        skills: [
-          {
-            name: 'mms-perps-review-pr',
-            files: ['SKILL.md'],
-            review: { ...FULL, level: 'static' },
-          },
-        ],
-      },
-    ],
-  });
-  const repo = checkout(`${JSON.stringify(PACK)}\n`);
-  try {
-    assert.throws(
-      () => freezeRequiredSkills(repo, twice, INPUT),
-      (error: unknown) =>
-        error instanceof RequiredSkillsError &&
-        /mms-perps-review-pr declares two different review packs/.test(error.message),
-    );
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-  const file = { path: '.agents/skills/x/pack.json', sha256: 'c'.repeat(64) };
-  assert.throws(
-    () =>
-      reviewRuleLevel({
-        schemaVersion: 1,
-        selection: { flow: 'dev', platform: 'cli', domain: 'perps' },
-        rules: ['a', 'b'],
-        skills: [
-          {
-            name: 'x',
-            rules: ['a'],
-            files: [],
-            review: { pack: file, client: 'core', level: 'full' },
-          },
-          {
-            name: 'y',
-            rules: ['b'],
-            files: [],
-            review: { pack: file, client: 'core', level: 'full' },
-          },
-        ],
-      }),
-    /Required skills x, y each declare a review pack; one review runs one pack/,
-  );
 });

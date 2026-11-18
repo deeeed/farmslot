@@ -1,0 +1,1 @@
+- Add the review rule pack contracts (ADR-0073 Amendment 1): `parseReviewRulePack`, `parseReviewRuleSelection` (bound to the frozen pack digest and declared client) and `parseReviewRuleProposal`. A `required_skills` skill may declare `review: { pack, client, level }`, and the frozen skill carries the pack's digest.

@@ -5,7 +5,6 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
-- Add the review rule pack contracts (ADR-0073 Amendment 1): `parseReviewRulePack`, `parseReviewRuleSelection` and `parseReviewRuleProposal`. A `required_skills` skill may declare `review: { pack, client, level }`, and the frozen skill carries the pack's digest.
 
 ## 0.88.0 - 2026-11-18
 

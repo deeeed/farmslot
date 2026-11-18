@@ -92,6 +92,8 @@ test('an invalid pack is refused with the offending field', () => {
   );
 });
 
+const FROZEN = { sha256: 'a'.repeat(64), client: 'core' };
+
 function selectionInput(families: unknown[]): Record<string, unknown> {
   return {
     schemaVersion: 1,
@@ -113,6 +115,7 @@ test('a selection accounts for every family the pack still has, each with a reas
       },
     ]),
     pack,
+    FROZEN,
   );
   assert.deepEqual(
     selection.families.map((family) => [family.id, family.selected]),
@@ -123,12 +126,32 @@ test('a selection accounts for every family the pack still has, each with a reas
   );
 });
 
+test('a selection computed for another pack revision or client is refused', () => {
+  const families = [
+    { id: 'blocking-review-checks', selected: true, reason: 'always' },
+    { id: 'missing-numeric-data-stays-undefined', selected: false, reason: 'no core match' },
+  ];
+  assert.throws(
+    () =>
+      parseReviewRuleSelection(selectionInput(families), pack, {
+        ...FROZEN,
+        sha256: 'c'.repeat(64),
+      }),
+    /selection was computed for pack digest a{64}, not the frozen c{64}/,
+  );
+  assert.throws(
+    () => parseReviewRuleSelection({ ...selectionInput(families), client: 'mobile' }, pack, FROZEN),
+    /selection was computed for client mobile, not the declared core/,
+  );
+});
+
 test('a family missing from the selection is refused, so no rule leaves a review silently', () => {
   assert.throws(
     () =>
       parseReviewRuleSelection(
         selectionInput([{ id: 'blocking-review-checks', selected: true, reason: 'always' }]),
         pack,
+        FROZEN,
       ),
     /selection omits family "missing-numeric-data-stays-undefined"/,
   );
@@ -175,7 +198,7 @@ test('a selection is refused when it skips an always family, names an unknown on
     ],
   ];
   for (const [families, message] of cases)
-    assert.throws(() => parseReviewRuleSelection(selectionInput(families), pack), message);
+    assert.throws(() => parseReviewRuleSelection(selectionInput(families), pack, FROZEN), message);
 });
 
 test('a rule proposal carries its evidence, confirmation, net rule count and a reasoned decision', () => {
@@ -214,7 +237,15 @@ test('a rule proposal carries its evidence, confirmation, net rule count and a r
       { ...base, bar: { recurrence: 'recurring', examined: [] } },
       /proposal\.bar\.examined must list the family ids checked for coverage/,
     ],
+    [
+      { ...base, evidence: [{ ref: 'MetaMask/metamask-mobile#123', location: 'x.ts' }] },
+      /proposal\.evidence\[0\]\.location must be file:line or file:start-end/,
+    ],
     [{ ...base, netRuleDelta: 0.5 }, /proposal\.netRuleDelta must be an integer/],
+    [
+      { ...base, decision: { status: 'approved', reason: 'kept\nand more' } },
+      /proposal\.decision\.reason must be one non-empty line/,
+    ],
     [
       { ...base, decision: { status: 'rejected' } },
       /proposal\.decision\.reason is required once decided/,

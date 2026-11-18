@@ -1057,7 +1057,7 @@
                       "properties": {
                         "pack": {
                           "type": "string",
-                          "minLength": 1,
+                          "pattern": "^(?!/)(?!.*\\\\)(?!(?:.*/)?\\.{1,2}(?:/|$))(?!.*//)[^/].*[^/]$|^[^/\\\\.]$",
                           "description": "Pack file, relative to the installed skill directory, e.g. references/pack.json."
                         },
                         "client": {
