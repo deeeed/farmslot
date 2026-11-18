@@ -38,6 +38,8 @@ import {
 const runners = new Set(['codex', 'claude', 'cursor', 'gemini', 'grok']);
 const shellNames = new Set(['zsh', 'bash', 'sh', 'fish', 'dash']);
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// Codex can treat Enter as a pasted newline for 120 ms after a burst.
+const CODEX_COMPOSER_SETTLE_MS = 150;
 const hash = (text) => createHash('sha256').update(text).digest('hex');
 const quote = (text) => `'${text.replaceAll("'", "'\\''")}'`;
 
@@ -794,22 +796,30 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
             durableWrite(files.receipt, receipt);
           }
         }
+        const samePane = () =>
+          after.pane_id === before.pane_id && paneIdentity(after) === paneIdentity(before);
+        if (typed && runner === 'codex') await delay(CODEX_COMPOSER_SETTLE_MS);
         after = paneState(pane, runner, selection);
-        verification = after.pending_question
-          ? 'pending_question'
-          : after.state !== runner
-            ? 'wrong_runner'
-            : after.delivery_phase === 'busy' && !supportsMidTurnPrompt(runner)
-              ? 'busy'
-              : null;
-        if (!verification) {
-          tmux(['send-keys', '-t', pane, 'Enter']);
+        if (after.pending_question) verification = 'pending_question';
+        else if (after.state !== runner) verification = 'wrong_runner';
+        else if (runner === 'codex') {
+          if (!samePane()) verification = 'pane_changed';
+          else if (after.launch_blocker) verification = 'launch_blocker';
+          else if (after.queue_kind === 'runner-queue') verification = 'queued_input';
+          else if (!ownsComposer(after, runner, receipt)) verification = 'queue_buffer_unconfirmed';
+        } else if (after.delivery_phase === 'busy' && !supportsMidTurnPrompt(runner))
+          verification = 'busy';
+        const pressEnter = async () => {
+          tmux(['send-keys', '-t', runner === 'codex' ? after.pane_id : pane, 'Enter']);
           if (receipt) {
             receipt.submitted_at = Date.now();
             receipt.submit_key = 'Enter';
             durableWrite(files.receipt, receipt);
           }
-        }
+          // Read the first verification frame after Codex has had time to repaint.
+          if (runner === 'codex') await delay(CODEX_COMPOSER_SETTLE_MS);
+        };
+        if (!verification) await pressEnter();
         verification ||= 'unverified';
         let deadline = Date.now() + timeout;
         // A mid-turn Claude send is proven only by its transcript's queue records, which can
@@ -818,7 +828,8 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
           requiresNativeSession(runner) && before.delivery_phase !== 'idle'
             ? startedAt + queueProof
             : 0;
-        let retriedEnter = false;
+        let enterRetries = 0;
+        const maxEnterRetries = runner === 'codex' ? 2 : 1;
         let leftComposer = false;
         if (verification === 'unverified') {
           for (;;) {
@@ -861,7 +872,11 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
               verification = 'pending_question';
               break;
             }
-            if (after.state !== runner) break;
+            if (
+              after.state !== runner ||
+              (runner === 'codex' && (!samePane() || after.launch_blocker))
+            )
+              break;
             const pending = queuedPrompt(after, runner, receipt);
             if (pending) {
               evidence = {
@@ -879,17 +894,14 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
             const owned = ownsComposer(after, runner, receipt);
             if (!owned) leftComposer = true;
             if (
-              !retriedEnter &&
+              enterRetries < maxEnterRetries &&
               !flush &&
               !leftComposer &&
               !payload.startsWith('/goal ') &&
               owned
             ) {
-              retriedEnter = true;
-              tmux(['send-keys', '-t', pane, 'Enter']);
-              receipt.submit_key = 'Enter';
-              receipt.submitted_at = Date.now();
-              durableWrite(files.receipt, receipt);
+              enterRetries++;
+              await pressEnter();
               deadline = Date.now() + timeout;
               continue;
             }

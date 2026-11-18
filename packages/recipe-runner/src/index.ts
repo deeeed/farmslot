@@ -35,6 +35,12 @@ export {
   validateRecipeDependencyParams,
 } from './core/compose.js';
 export { RecipeExecutionError } from './core/failure.js';
+export {
+  buildRecipeInvocationTree,
+  type BuildRecipeInvocationTreeInput,
+  createRecipeFlowProjection,
+  type RecipeFlowProjection,
+} from './core/flow.js';
 export { extractWorkflowGraph, type WorkflowGraph } from './core/graph.js';
 export { redactRecipeParams } from './core/invocation.js';
 export type {
@@ -187,6 +193,10 @@ export {
 } from './runtime/source-witness.js';
 export { RECIPE_RUNNER_VERSION } from './version.js';
 export type {
+  RecipeFlowProgress,
+  RecipeFlowUpdate,
+  RecipeInvocationNode,
+  RecipeInvocationTree,
   RecipeResolutionDependency,
   RecipeResolutionDocument,
   RecipeResolutionEdge,

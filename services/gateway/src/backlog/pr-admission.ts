@@ -85,7 +85,9 @@ export function runOwnsPR(
       ref.repo.toLowerCase() === pr.repo.toLowerCase() &&
       ref.number === pr.number,
     );
-  const ref = PR_BOUND_FLOW_TYPES.has(run.flowType) ? parseGitHubRef(run.ticketOrPr) : null;
+  const ref = PR_BOUND_FLOW_TYPES.has(run.flowType)
+    ? (parseGitHubRef(run.ticketOrPr) ?? parseGitHubPullUrl(run.ticketOrPr))
+    : null;
   if (ref) return matches(ref);
   const links = (run.links ?? [])
     .map((link) => parseGitHubPullUrl(link.url))
@@ -101,7 +103,9 @@ export function runOwnsPR(
 
 /** Protect the inverse race too: manual/internal run creation cannot overtake active automation. */
 export function assertNoAutomatedPRConflict(params: RunCreateParams, runs: Run[]): void {
-  const ref = PR_BOUND_FLOW_TYPES.has(params.flowType) ? parseGitHubRef(params.ticketOrPr) : null;
+  const ref = PR_BOUND_FLOW_TYPES.has(params.flowType)
+    ? (parseGitHubRef(params.ticketOrPr) ?? parseGitHubPullUrl(params.ticketOrPr))
+    : null;
   if (!ref && params.prNumber === undefined) return;
   for (const run of runs) {
     if (!run.prWork || !hasUnsettledRunExecution(run)) continue;

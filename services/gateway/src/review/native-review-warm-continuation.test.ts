@@ -6,6 +6,7 @@ import {
   isReviewRoundNoVerdictSettlement,
   type Principal,
   type ReviewDiffSnapshot,
+  type ReviewInterdiffReceipt,
 } from '@farmslot/protocol';
 
 await import('../runtime/mock-pty.test-support.js');
@@ -37,6 +38,8 @@ let currentHead = head;
 let worktreeStatus = '';
 const noop = async () => {};
 // Scripted host behaviour; the run store, the session registry and the round budget are real.
+let feedbackPass = false;
+let rebaseQualification: 'reliable' | 'unreliable' | undefined;
 let ancestorExitCode = 0;
 /** How a retained reviewer's resume fails before it accepts the prompt. */
 let resumeFailure: 'handoff' | 'handoff-once' | 'delivery' | 'superseded' | null = null;
@@ -235,10 +238,13 @@ mock.module('../tasks/watcher.js', {
 mock.module('./feedback.js', {
   namedExports: {
     logRecommendationCorrection: () => {},
-    readReviewFeedback: async () => ({
-      verdict: 'issues',
-      issues: [{ file: 'a.ts', line: 3, description: 'finding' }],
-    }),
+    readReviewFeedback: async () =>
+      feedbackPass
+        ? { verdict: 'pass', issues: [] }
+        : {
+            verdict: 'issues',
+            issues: [{ file: 'a.ts', line: 3, description: 'finding' }],
+          },
   },
 });
 mock.module('./native-reviewer-approvals.js', {
@@ -304,20 +310,45 @@ mock.module('./snapshots.js', {
       _taskDir: string,
       _loopNumber: number,
       _scope: unknown,
-      range: { lastReviewedHeadSha: string },
+      range: { lastReviewedHeadSha: string; baseRef?: string },
     ) => {
       deltaCaptures.push(range.lastReviewedHeadSha);
+      const interdiff: ReviewInterdiffReceipt | undefined = rebaseQualification
+        ? {
+            version: 1,
+            oldBaseSha: 'a'.repeat(40),
+            oldHeadSha: range.lastReviewedHeadSha,
+            newBaseSha: 'b'.repeat(40),
+            newHeadSha: currentHead,
+            rangeDiffHash: 'f'.repeat(64),
+            qualification: rebaseQualification,
+            priorCommitCount: 4,
+            unmatchedOverlappingPairs: rebaseQualification === 'reliable' ? 0 : 2,
+            upstreamOverlapFiles: ['src/a.ts'],
+            deltaPaths: ['src/a.ts'],
+            ...(rebaseQualification === 'unreliable'
+              ? { reason: '2 overlapping unmatched pairs exceed 25% of 4 commits' }
+              : {}),
+          }
+        : undefined;
       return {
         snapshot: {
           source: 'local-git',
-          baseRef: range.lastReviewedHeadSha,
-          baseSha: range.lastReviewedHeadSha,
-          headSha: head,
+          baseRef: range.baseRef ?? 'main',
+          baseSha: interdiff?.newBaseSha ?? range.lastReviewedHeadSha,
+          headSha: currentHead,
+          ...(interdiff ? { interdiff, diffHash: 'f'.repeat(64) } : {}),
           diffPath: 'artifacts/review.diff',
           capturedAt: new Date().toISOString(),
         },
         artifactPaths: [],
-        comparedRanges: [`${range.lastReviewedHeadSha}..${head}`],
+        comparedRanges: interdiff
+          ? [
+              `${interdiff.oldBaseSha}..${interdiff.oldHeadSha}`,
+              `${interdiff.newBaseSha}..${interdiff.newHeadSha}`,
+            ]
+          : [`${range.lastReviewedHeadSha}..${currentHead}`],
+        ...(interdiff ? { rangeDiffPath: 'artifacts/review-range-diff.txt' } : {}),
       };
     },
     removeSlotFiles: noop,
@@ -362,6 +393,8 @@ async function prePublishRun(t: TestContext, ticketOrPr = 'WARM-PREPUBLISH') {
   process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = owner.id;
   resetWarmReviewerSessionsForTest();
   ancestorExitCode = 0;
+  rebaseQualification = undefined;
+  feedbackPass = false;
   currentHead = head;
   worktreeStatus = '';
   commandFailed = false;
@@ -488,7 +521,7 @@ test('a pre-publish reviewer registers its session and the WARM re-review contin
   assert.equal(second.session?.priorSessionId, first.reviewerSessionId);
   assert.equal(second.reviewerSessionId, first.reviewerSessionId);
   assert.equal(second.session?.fallback, undefined);
-  assert.deepEqual(deltaCaptures, []);
+  assert.deepEqual(deltaCaptures, [head]);
 });
 
 test('a validated pipeline reviewer survives a registry reset before its final review row exists', async (t) => {
@@ -505,18 +538,19 @@ test('a validated pipeline reviewer survives a registry reset before its final r
   assert.equal(second.reviewerSessionId, first.reviewerSessionId);
   assert.equal(dispatches[1]?.retainedFrom?.contextId, context.id);
   assert.equal(second.session?.fallback, undefined);
-  assert.deepEqual(deltaCaptures, []);
+  assert.deepEqual(deltaCaptures, [head]);
 });
 
 test('restart continues the latest validated pipeline session after a fresh delta fallback', async (t) => {
   const run = await prePublishRun(t);
   const first = await review(run.id);
-  ancestorExitCode = 1;
+  rebaseQualification = 'unreliable';
   currentHead = 'c'.repeat(40);
   const second = await reReview(run.id);
   const latest = reviewers(run.id).at(-1)!;
   assert.notEqual(second.reviewerSessionId, first.reviewerSessionId);
   ancestorExitCode = 0;
+  rebaseQualification = undefined;
   resetWarmReviewerSessionsForTest();
 
   const third = await reReview(run.id, { loopNumber: 3 });
@@ -585,14 +619,58 @@ test('a person asking for WARM without a retained session still sees the refusal
   assert.deepEqual(dispatches, []);
 });
 
-test('a head that no longer descends from the reviewed head falls back to the delta', async (t) => {
+test('a reliable rebase resumes the same reviewer with its pinned author interdiff', async (t) => {
   const run = await prePublishRun(t, published);
-  await review(run.id);
-  ancestorExitCode = 1;
+  const first = await review(run.id);
+  rebaseQualification = 'reliable';
+  feedbackPass = true;
   const result = await reReview(run.id);
-  assert.equal(result.session?.fallback?.reason, 'reviewed-head-not-ancestor');
+  assert.equal(result.mode, 'warm');
+  assert.equal(result.session?.continuity, 'resumed');
+  assert.equal(result.reviewerSessionId, first.reviewerSessionId);
+  assert.ok(dispatches[1]?.retainedFrom);
+  assert.ok(first.reviewSnapshot?.headSha);
+  assert.ok(result.reviewSnapshot?.headSha);
+  assert.equal(result.session?.lastReviewedHeadSha, first.reviewSnapshot.headSha);
+  const { buildPublishGateReviewStatus, reviewFinalSnapshotMatchesPreparedPackage } =
+    await import('../run-engine/gate-policy.js');
+  const status = buildPublishGateReviewStatus({
+    source: 'human-gate',
+    priorReviewCount: 0,
+    reviewResult: { ...result, runner: 'claude', retryCount: 0 },
+    requestedRunner: 'claude',
+    reviewId: result.reviewId,
+  });
+  assert.equal(
+    reviewFinalSnapshotMatchesPreparedPackage(status, {
+      headSha: result.reviewSnapshot.headSha,
+      reviewSnapshot: result.reviewSnapshot,
+    }),
+    true,
+  );
+  assert.equal(
+    reviewFinalSnapshotMatchesPreparedPackage(status, {
+      headSha: result.reviewSnapshot.headSha,
+      reviewSnapshot: { ...result.reviewSnapshot, diffHash: 'dirty-source' },
+    }),
+    false,
+  );
+  assert.match(
+    reviewerTask(run.id, dispatches[1]!.contextId),
+    /Author interdiff after the base moved/,
+  );
+});
+
+test('an unreliable rebase records its bounded cold fallback and keeps the review lineage', async (t) => {
+  const run = await prePublishRun(t, published);
+  const first = await review(run.id);
+  rebaseQualification = 'unreliable';
+  const result = await reReview(run.id);
+  assert.equal(result.mode, 'cold');
+  assert.equal(result.session?.fallback?.reason, 'interdiff-unreliable');
+  assert.equal(result.session?.reviewId, first.session?.reviewId);
   assert.equal(dispatches[1]?.retainedFrom, undefined);
-  assert.notEqual(result.reviewerSessionId, reviewers(run.id)[0]!.runnerSessionId);
+  assert.notEqual(result.reviewerSessionId, first.reviewerSessionId);
 });
 
 test('an uncertain handoff is reconciled under its same context before a cold fallback', async (t) => {
@@ -698,7 +776,7 @@ test('a delivery that may have reached the retained reviewer never starts a seco
   resumeFailure = 'delivery';
   await assert.rejects(reReview(run.id), NativeWorkerOperationUncertainError);
   assert.equal(dispatches.length, 2);
-  assert.deepEqual(deltaCaptures, []);
+  assert.deepEqual(deltaCaptures, [head]);
 });
 
 test('a superseded resume settles its round no-verdict instead of falling back', async (t) => {

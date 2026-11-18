@@ -80,6 +80,7 @@ const sidebars = {
         'reference/worker-run-finish',
         'reference/run-states-and-gate.generated',
         'reference/review-modes-warm-cold',
+        'reference/review-rule-packs',
         'reference/worker-artifacts-by-flow',
         'reference/template-variables.generated',
         'reference/worker-template-quality',

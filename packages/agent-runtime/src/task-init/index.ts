@@ -76,6 +76,7 @@ export {
   verifyTaskExecutionProvenance,
 } from './execution-provenance.js';
 export * from './required-skills.js';
+export * from './review-rules.js';
 export * from './task-document.js';
 export * from './write.js';
 // The renderer lives in protocol; re-exported so CLI wrappers reach it through the runtime entry.

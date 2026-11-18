@@ -74,17 +74,43 @@ function liveComposer(pane: string): LiveComposer | null {
       suggestion: Boolean(suggestion),
     };
   }
-  const footer = lines
-    .map((line) =>
-      /\? for shortcuts|\bcontext(?:\s+\d+%)?\s+left\b|\btab to queue message\b|← for agents|⚠\s+\d+\s+warnings?\b/i.test(
-        line,
-      ),
+  // A column-zero Codex prompt selects that gutter for the whole draft.
+  // Indented continuation text can contain either chevron.
+  const codexPrompt = lines.map((line) => /^›(?:\s|$)/.test(line)).lastIndexOf(true);
+  const composer =
+    codexPrompt !== -1
+      ? codexPrompt
+      : lines.map((line) => /^\s*❯(?:\s|$)/.test(line)).lastIndexOf(true);
+  if (composer === -1) return null;
+
+  const isStatusHint = (line: string) =>
+    /^\s*(?:\? for shortcuts|context(?:\s+\d+%)?\s+left|tab to queue message|← for agents|⚠\s+\d+\s+warnings?)(?:\s*$|\s+·| {2,})/i.test(
+      line,
+    );
+  // The model and directory row precedes any status hints in the current Codex
+  // layout. An earlier hint-shaped line may be literal text inside the draft.
+  const modelFooter = lines
+    .map(
+      (line, index) =>
+        index > composer &&
+        lines[index - 1]?.trim() === '' &&
+        /^ {2}[\w.-]+(?: [\w.-]+)? · (?:~?\/|~$)/.test(line),
     )
     .lastIndexOf(true);
-  const content = footer === -1 ? lines : lines.slice(0, footer);
-  const composer = content.map((line) => /^\s*[›❯](?:\s|$)/.test(line)).lastIndexOf(true);
-  if (composer === -1 || (footer === -1 && composer !== lines.length - 1)) return null;
-  const body = content.slice(composer);
+  // A legacy context row cannot authenticate a preceding model-like line.
+  // Do not cut the draft there or fall back to another cut in the same frame.
+  const legacyContextHint = /^\s*(?:\d+%\s+)?context(?:\s+\d+%)?\s+left\b/i;
+  if (
+    modelFooter !== -1 &&
+    lines.slice(modelFooter + 1).some((line) => !isStatusHint(line) || legacyContextHint.test(line))
+  )
+    return null;
+  const footer =
+    modelFooter !== -1
+      ? modelFooter
+      : lines.map((line, index) => index > composer && isStatusHint(line)).lastIndexOf(true);
+  if (footer === -1 && composer !== lines.length - 1) return null;
+  const body = lines.slice(composer, footer === -1 ? undefined : footer);
   // Only the bottom composer above the status footer is live input. Transcript prompts are history.
   const separator = body.map((line) => !line.trim()).lastIndexOf(true);
   const end = composer + (separator === -1 ? body.length : separator);

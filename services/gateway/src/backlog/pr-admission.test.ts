@@ -213,3 +213,34 @@ test('a discarded failed completion no longer owns its PR', async (t) => {
   assert.throws(() => updateRun(discarded.id, { status: 'slot-finding' }), /owned by run/);
   assert.equal(getRun(discarded.id)!.status, 'failed');
 });
+
+test('pull URLs and shorthand enforce the same PR ownership fence', () => {
+  const owner = { ...makeRun({ project: 'project', status: 'blocked' }), prWork: reference };
+  const request: RunCreateParams = {
+    project: 'project',
+    flowType: 'review-pr',
+    ticketOrPr: 'https://github.com/Owner/Repo/pull/42',
+  };
+  assert.throws(() => assertNoAutomatedPRConflict(request, [owner]), /owned by run/);
+  assert.doesNotThrow(() =>
+    assertNoAutomatedPRConflict(
+      { ...request, ticketOrPr: 'https://github.com/owner/other/pull/42', prNumber: 42 },
+      [owner],
+    ),
+  );
+  const manual = makeRun({
+    project: 'project',
+    flowType: 'review-pr',
+    ticketOrPr: request.ticketOrPr,
+    status: 'created',
+  });
+  assert.equal(runOwnsPR(manual, reference.pr), true);
+  assert.equal(
+    runOwnsPR(
+      { ...manual, ticketOrPr: 'https://github.com/owner/other/pull/42', prNumber: 42 },
+      reference.pr,
+      'project',
+    ),
+    false,
+  );
+});

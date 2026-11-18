@@ -516,3 +516,11 @@ silently changing capture providers mid-proof.
 Before side effects, a conforming runner validates the root document, manifest compatibility, library resolution, complete static call graph, parameters, and trust plan. It then executes the recipe and validates the resulting evidence package.
 
 Simple recipes need no composition, proof targets, or teardown. Use only what the claim requires.
+
+## Prepared invocation tree and progress
+
+`recipe-resolution.json.flow` is an optional version 1 `RecipeInvocationTree`: rootId and nodes. The reserved root ID is `$root`; authored IDs exclude `$` and `/`. Each node carries id, parentId, recipeRef, authored nodeId or null for the root, action, label, children, entry/teardown, next, cases/default and explicit claimIds. Child IDs use the existing `call-id/local-id` path. Consumers never infer a tree from trace ordering.
+
+`RecipeFlowUpdate` carries recipeRunId, rootId, activeId and progress. Progress contains current, completed, total, remaining and qualification (`exact` or `unknown`). current is the active executable action's one-based ordinal, or completed between actions. remaining includes the active action. Calls and end controls are not actions for these counters. Retries are action occurrences. Null totals/remaining preserve unresolved route lengths; failure and partial completion retain unknown qualification. The summary stores final progress at flow; existing HUD payloads carry the update at recipe_flow. The existing HUD progress fields remain compatible until consumers adopt the shared update.
+
+Tree construction happens once after static resolution. Updates use prepared route lengths and the bounded invocation ancestry; they do not scan prior trace entries or reload libraries. Labels and explicit claim bindings come from the resolved documents/evidence plan. Packages predating these optional fields have no prepared-flow data.

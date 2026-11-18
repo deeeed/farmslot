@@ -6,14 +6,10 @@
 // the dispatcher reuse the retained reviewer session and hand it only the new
 // diff plus the unresolved findings. The request goes through the same intake
 // as "Request review / QA", so admission, authorization and the queue apply.
-import {
-  parseGitHubRef,
-  type PRReviewRequest,
-  type Run,
-  type SlotStatus,
-} from '@farmslot/protocol';
+import { type PRReviewRequest, type Run, type SlotStatus } from '@farmslot/protocol';
 import { reviewRequestContextForRun } from '@farmslot/review-dispatch';
 
+import { reviewPRIdentity } from '../review/pr-identity.js';
 import { reviewWorkspaceExpiry } from '../review-workspaces/retention-policy.js';
 
 export interface RereviewTeamCandidate {
@@ -47,9 +43,9 @@ export function rereviewTarget(
   run: Pick<Run, 'ticketOrPr' | 'prNumber'>,
   fallbackRepo?: string,
 ): { repo: string; number: number } {
-  const ref = parseGitHubRef(run.ticketOrPr);
-  const repo = ref?.repo ?? fallbackRepo;
-  const number = run.prNumber ?? ref?.number;
+  const ref = reviewPRIdentity({ ticketOrPr: run.ticketOrPr });
+  const repo = ref?.repository ?? fallbackRepo;
+  const number = run.prNumber ?? ref?.prNumber;
   if (!repo || !number)
     throw new Error(`Run ${run.ticketOrPr} does not identify a GitHub PR to re-review`);
   return { repo, number };

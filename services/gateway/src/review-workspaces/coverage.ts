@@ -20,6 +20,7 @@ import {
 import { REVIEW_DIFF_SCOPE_RULE } from '@farmslot/agent-runtime/scripts/review-diff-scope.cjs';
 import type {
   EvidenceManifestEntry,
+  ReviewInterdiffReceipt,
   ReviewIssue,
   ReviewWorkspaceSubject,
   Run,
@@ -57,6 +58,7 @@ export interface PreparedReviewCoverage {
   packet?: WarmDeltaPacket;
 }
 export interface PrepareReviewCoverageInput {
+  interdiff?: ReviewInterdiffReceipt;
   run: Run;
   subject: ReviewWorkspaceSubject;
   instructionFiles: Array<{ path: string; sha256: string }>;
@@ -217,21 +219,25 @@ export async function prepareReviewCoverage(
     evidenceHashes: baseline?.identity.evidenceHashes ?? {},
   });
   const reusable = new Set(selected.reusable.map((row) => row.key));
-  const deltaPaths = (
-    await input.git([
-      'diff',
-      '--no-ext-diff',
-      '--no-renames',
-      '--name-only',
-      '-z',
-      context.priorReviewedHeadSha,
-      subject.headSha,
-      '--',
-    ])
-  )
-    .split('\0')
-    .filter(Boolean)
-    .map(relativeFile);
+  const deltaPaths = input.interdiff
+    ? input.interdiff.qualification === 'reliable'
+      ? input.interdiff.deltaPaths
+      : scopePaths
+    : (
+        await input.git([
+          'diff',
+          '--no-ext-diff',
+          '--no-renames',
+          '--name-only',
+          '-z',
+          context.priorReviewedHeadSha,
+          subject.headSha,
+          '--',
+        ])
+      )
+        .split('\0')
+        .filter(Boolean)
+        .map(relativeFile);
   const packet: WarmDeltaPacket = {
     schemaVersion: 1,
     runId: run.id,
@@ -239,9 +245,14 @@ export async function prepareReviewCoverage(
     chainId: context.chainId,
     reviewId: context.session?.reviewId,
     currentHeadSha: subject.headSha,
-    comparedRanges: context.session?.fallback?.comparedRanges ?? [
-      `${subject.baseSha}..${subject.headSha}`,
-    ],
+    comparedRanges: input.interdiff
+      ? [
+          ...(input.interdiff.oldBaseSha
+            ? [`${input.interdiff.oldBaseSha}..${input.interdiff.oldHeadSha}`]
+            : []),
+          `${input.interdiff.newBaseSha}..${input.interdiff.newHeadSha}`,
+        ]
+      : (context.session?.fallback?.comparedRanges ?? [`${subject.baseSha}..${subject.headSha}`]),
     scopePaths,
     deltaPaths,
     unresolvedFindings: context.unresolvedFindings,

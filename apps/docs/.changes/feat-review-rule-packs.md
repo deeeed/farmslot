@@ -1,0 +1,1 @@
+- Add the Review rule packs reference and the three review levels to the adoption path.
