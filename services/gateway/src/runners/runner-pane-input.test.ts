@@ -33,3 +33,43 @@ test('a wholly dim prompt row stays protected when its style is ambiguous', () =
   const row = `\x1b[2m${boxed('operator draft')}\x1b[0m`;
   assert.equal(runnerPaneBufferedInstruction(row), 'operator draft');
 });
+
+test('Codex 0.170 keeps its model and directory row when a draft hides the shortcuts', () => {
+  const tail = [
+    '› Previous submitted prompt',
+    '',
+    '› Current operator draft',
+    '',
+    '  GPT-6.2-Sol high · /private/tmp/codex-enter-proof',
+  ].join('\n');
+  assert.equal(runnerPaneBufferedInstruction(tail), 'Current operator draft');
+});
+
+test('the Codex model and directory row comes before its shortcut hints', () => {
+  const tail = [
+    '› Current operator draft',
+    '',
+    '  GPT-6.2-Sol high · /private/tmp/codex-enter-proof',
+    '  ← for agents · ? for shortcuts',
+  ].join('\n');
+  assert.equal(runnerPaneBufferedInstruction(tail), 'Current operator draft');
+});
+
+test('a shortcut footer from an older inline frame cannot hide the current Codex draft', () => {
+  const tail = [
+    '› Ask Codex to do anything',
+    '',
+    '  ← for agents · ? for shortcuts',
+    '',
+    '› Current operator draft',
+    '',
+    '  GPT-6.2-Sol high · /private/tmp/codex-enter-proof',
+  ].join('\n');
+  assert.equal(runnerPaneBufferedInstruction(tail), 'Current operator draft');
+});
+
+test('shortcut or context wording on the Codex prompt row does not end the draft', () => {
+  const draft = 'Explain the context left indicator';
+  const tail = `› ${draft}\n\n  GPT-6.2-Sol high · /tmp/codex-enter-proof`;
+  assert.equal(runnerPaneBufferedInstruction(tail), draft);
+});
