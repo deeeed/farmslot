@@ -20,11 +20,13 @@ import {
   enumerateChecklistCheckboxes,
   isRecord,
   isTerminalRunStatus,
+  type ReviewInterdiffReceipt,
   type ReviewWorkspaceBinding,
   type ReviewWorkspaceSubject,
   type Run,
   type RunReviewResult,
   type RunSubtaskMetrics,
+  TASK_DIRECTORY_LAYOUT,
   type WorkerSignal,
   type WorkerTerminalContractDocument,
   workspaceReviewRoundAdmissionId,
@@ -57,7 +59,10 @@ import { readLocalCommand } from '../host-services/read-command.js';
 import { collectSupportFiles } from '../node-support/files.js';
 import { normalizeReviewRecommendation, reviewPolicyFindings } from '../review/approval-policy.js';
 import { parseStructuredReviewFeedback } from '../review/feedback.js';
+import { applyInterdiffQualification, interdiffReviewScope } from '../review/interdiff.js';
 import { nextReviewBudgetScopeBrief, reviewPolicyRound } from '../review/review-round-budget.js';
+import { usesPreviousReviewDelta } from '../review/session-mode.js';
+import { reviewDeltaSinceReviewedHead } from '../review/snapshots.js';
 import {
   appendReviewFindingBodies,
   deriveReviewLineComments,
@@ -93,6 +98,7 @@ import { resolveReviewWorkspacePool } from './pool.js';
 
 const exec = promisify(execFile);
 const SUBJECT = 'inputs/review-subject.json';
+const INTERDIFF = TASK_DIRECTORY_LAYOUT.reviewInterdiff.relativePath;
 const RESULT = 'artifacts/review-result.json';
 /** The gateway's own filesystem, for the operator-visible copy of a review task. */
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
@@ -138,6 +144,7 @@ const defaults: Dependencies = {
   snapshotRoot: () => path.join(runsDirectory(), 'review-workspace-tasks'),
 };
 interface Snapshot {
+  interdiff?: ReviewInterdiffReceipt;
   version: 1;
   runId: string;
   workspace: NonNullable<Run['reviewWorkspace']>;
@@ -151,6 +158,7 @@ interface Snapshot {
 }
 
 export interface ReviewWorkspaceTaskLaunch {
+  interdiff?: ReviewInterdiffReceipt;
   prompt: string;
   taskFile: string;
   compaction?: ReviewCompactionPreparation;
@@ -381,6 +389,39 @@ export async function materializeReviewWorkspaceTask(
       path: file.relativePath,
       sha256: file.sha256,
     }));
+    const delta =
+      usesPreviousReviewDelta(run) && run.repeatReviewContext?.priorReviewedHeadSha
+        ? await reviewDeltaSinceReviewedHead(
+            async (command) => {
+              const workspace = run.reviewWorkspace!;
+              return workspace.executionNodeId === 'local'
+                ? readLocalCommand(command, {
+                    cwd: workspace.checkoutPath,
+                    timeout: 30000,
+                    maxBuffer: 5 * 1024 * 1024,
+                  })
+                : execNativeNodeArgv(
+                    run.nativeOwnerPrincipalId!,
+                    workspace.machine,
+                    ['bash', '-c', `cd ${shellQuote(workspace.checkoutPath)} && ${command}`],
+                    30000,
+                  );
+            },
+            {
+              lastReviewedHeadSha: run.repeatReviewContext.priorReviewedHeadSha,
+              priorBaseSha: run.repeatReviewContext.priorContributionBaseSha,
+              headSha: subject.headSha,
+              baseRef: subject.contributionBaseSha ?? subject.baseSha,
+            },
+          )
+        : undefined;
+    if (delta?.interdiff && run.repeatReviewContext) {
+      run.repeatReviewContext = applyInterdiffQualification(
+        run.repeatReviewContext,
+        delta.interdiff,
+      );
+      run.reviewMode = run.repeatReviewContext.mode;
+    }
     const coverage = await prepareReviewCoverage({
       run,
       subject,
@@ -388,6 +429,7 @@ export async function materializeReviewWorkspaceTask(
       viewDir: (id) => viewDirFor(id, deps),
       getPrior: async (id) => deps.getRun(id) ?? getRunWithArchived(id),
       git: (args) => coverageGit(run, args),
+      interdiff: delta?.interdiff,
     });
     if (coverage)
       terminalContract.commands.complete.artifacts.push(
@@ -414,7 +456,13 @@ export async function materializeReviewWorkspaceTask(
       ...(run.reviewWorkspace.support
         ? ['Frozen skills, libraries and reference checkouts: inputs/review-support.json.']
         : []),
-      `Review diff: git -C ${shellQuote(run.reviewWorkspace.checkoutPath)} ${GIT_DIFF_COMMAND.slice(4)} ${subject.baseSha}...${subject.headSha}`,
+      delta?.interdiff
+        ? interdiffReviewScope(
+            delta.interdiff,
+            INTERDIFF,
+            run.repeatReviewContext?.unresolvedFindings ?? [],
+          )
+        : `Review diff: git -C ${shellQuote(run.reviewWorkspace.checkoutPath)} ${GIT_DIFF_COMMAND.slice(4)} ${subject.baseSha}...${subject.headSha}`,
       coverage
         ? 'Whole-contribution inventory is frozen in inputs/instruction-manifest.json reviewCoverage.scopePaths; preserve all scope rows.'
         : `Whole-contribution inventory: git -C ${shellQuote(run.reviewWorkspace.checkoutPath)} diff --name-status ${subject.contributionBaseSha ?? subject.baseSha}...${subject.headSha}`,
@@ -508,7 +556,7 @@ export async function materializeReviewWorkspaceTask(
           TEMPLATE: run.executionTemplate!.id,
         },
         description: coverage?.packet
-          ? 'Validated WARM continuation. Frozen current scope and prior findings are in inputs/warm-delta.json; full PR facts remain in inputs/review-subject.json. Use baseline references only when needed, rather than reopening obsolete task directories.'
+          ? 'This continues the selected reviewer lineage. Frozen current scope and prior findings are in inputs/warm-delta.json; full PR facts remain in inputs/review-subject.json. Use baseline references only when needed, rather than reopening obsolete task directories.'
           : subject.body,
         acceptanceCriteria: [],
         addendum: instructions,
@@ -529,6 +577,15 @@ export async function materializeReviewWorkspaceTask(
       path.join(bundleDir, 'inputs/instruction-manifest.json'),
       `${JSON.stringify({ domain: run.domain ?? null, executionTemplate: run.executionTemplate, files: guidanceManifest, ...(coverage ? { reviewCoverage: coverage.policy } : {}) }, null, 2)}\n`,
     );
+    if (delta?.interdiff)
+      await writeFile(
+        path.join(bundleDir, INTERDIFF),
+        JSON.stringify(
+          { version: 1, receipt: delta.interdiff, rangeDiff: delta.rangeDiff ?? null },
+          null,
+          2,
+        ) + '\n',
+      );
     if (coverage?.priorIndexBytes)
       await writeFile(
         path.join(bundleDir, 'inputs/prior-review-coverage.json'),
@@ -555,6 +612,7 @@ export async function materializeReviewWorkspaceTask(
     );
     const files = await collectTaskBundle(bundleDir);
     snapshot = {
+      ...(delta?.interdiff ? { interdiff: delta.interdiff } : {}),
       version: 1,
       ...(coverage?.packet
         ? {
@@ -615,6 +673,7 @@ export async function materializeReviewWorkspaceTask(
   }
   return {
     prompt: snapshot.prompt,
+    ...(snapshot.interdiff ? { interdiff: snapshot.interdiff } : {}),
     taskFile: await materializeReviewViewer(run, bundleDir, deps),
     ...(snapshot.compaction ? { compaction: snapshot.compaction } : {}),
   };
@@ -900,7 +959,8 @@ export async function readReviewWorkspaceCompletion(
       lineComments,
       artifactManifest: await scanArtifacts(viewer),
       reviewSnapshot: {
-        baseSha: snapshot.subject.baseSha,
+        ...(snapshot.interdiff ? { interdiff: snapshot.interdiff } : {}),
+        baseSha: snapshot.interdiff?.newBaseSha ?? snapshot.subject.baseSha,
         headSha: snapshot.subject.headSha,
         headRef: snapshot.subject.branch,
         capturedAt: snapshot.subject.capturedAt,
@@ -915,7 +975,9 @@ export async function readReviewWorkspaceCompletion(
           : []),
         ...snapshot.files
           .filter((file) =>
-            ['inputs/warm-delta.json', 'inputs/prior-review-coverage.json'].includes(file.path),
+            ['inputs/warm-delta.json', 'inputs/prior-review-coverage.json', INTERDIFF].includes(
+              file.path,
+            ),
           )
           .map((file) => file.path),
       ],

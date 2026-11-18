@@ -64,6 +64,7 @@ import { unwatchContext } from '../tasks/watcher.js';
 
 import { finishReviewCleanup } from './cleanup.js';
 import { logRecommendationCorrection, readReviewFeedback } from './feedback.js';
+import { interdiffFallback, interdiffReviewScope } from './interdiff.js';
 import { continueNativeReviewCompletion } from './native-review-completion.js';
 import {
   assertNativeReviewOperationCurrent,
@@ -418,29 +419,25 @@ async function runNativeReviewAttempt(
         }
       }
       const baseRef = (await stackPrBase(original)) ?? original.repeatReviewContext?.baseRef;
-      if (
-        retained &&
-        (
-          await execOnSlot(
-            vars,
-            `git merge-base --is-ancestor ${shellQuote(retained.lastReviewedHeadSha)} HEAD`,
-            { timeout: 10_000 },
-          )
-        ).exitCode !== 0
-      )
-        fallBack(
-          new WarmReviewRefusal(
-            'reviewed-head-not-ancestor',
-            'the current head no longer descends from the last reviewed head',
-          ),
-        );
+      const deltaHead = retained?.lastReviewedHeadSha ?? input.rereview?.lastReviewedHeadSha;
+      const priorBaseSha =
+        input.rereview?.lastReviewedHeadSha === deltaHead
+          ? input.rereview?.priorBaseSha
+          : original.repeatReviewContext?.priorReviewedHeadSha === deltaHead
+            ? original.repeatReviewContext?.priorContributionBaseSha
+            : undefined;
       const delta =
-        fallback && !recovering
+        deltaHead && !recovering
           ? await captureReviewDeltaSnapshot(vars, taskDir, loopNumber, artifactScope, {
-              lastReviewedHeadSha: input.rereview!.lastReviewedHeadSha,
+              lastReviewedHeadSha: deltaHead,
+              priorBaseSha,
               baseRef,
             })
           : undefined;
+      const qualifiedFallback =
+        delta?.snapshot.interdiff && interdiffFallback(delta.snapshot.interdiff);
+      if (retained && qualifiedFallback)
+        fallBack(new WarmReviewRefusal(qualifiedFallback.reason, qualifiedFallback.detail));
       let comparedRanges = delta?.comparedRanges;
       const snapshot = recovering
         ? await readPersistedReviewSnapshot(vars, taskDir, loopNumber, artifactScope)
@@ -585,19 +582,35 @@ async function runNativeReviewAttempt(
         // What this document gives the reviewer; a pass records it (F42).
         await noteReviewInputsAtLaunch(runId);
         template = retained
-          ? continuationReviewScope({
-              priorHeadSha: retained.lastReviewedHeadSha,
-              currentHeadSha: snapshot.snapshot.headSha,
-              priorArtifactDir: `${retained.taskDir}/${reviewArtifactDir(retained.lastLoopNumber, retained.artifactScope)}`,
-            }) + template
+          ? (snapshot.snapshot.interdiff
+              ? interdiffReviewScope(
+                  snapshot.snapshot.interdiff,
+                  `${taskDir}/${delta?.rangeDiffPath}`,
+                  input.rereview?.priorIssues ??
+                    original.repeatReviewContext?.unresolvedFindings ??
+                    [],
+                )
+              : continuationReviewScope({
+                  priorHeadSha: retained.lastReviewedHeadSha,
+                  currentHeadSha: snapshot.snapshot.headSha,
+                  priorArtifactDir: `${retained.taskDir}/${reviewArtifactDir(retained.lastLoopNumber, retained.artifactScope)}`,
+                })) + template
           : fallback
-            ? deltaFallbackReviewScope({
-                reason: fallback.detail,
-                comparedRanges: comparedRanges!,
-                rangeDiffPath: delta?.rangeDiffPath && `${taskDir}/${delta.rangeDiffPath}`,
-                deltaUnavailable: delta?.deltaUnavailable,
-                priorIssues: input.rereview!.priorIssues,
-              }) + template
+            ? (snapshot.snapshot.interdiff
+                ? interdiffReviewScope(
+                    snapshot.snapshot.interdiff,
+                    `${taskDir}/${delta?.rangeDiffPath ?? snapshot.snapshot.diffPath}`,
+                    input.rereview?.priorIssues ??
+                      original.repeatReviewContext?.unresolvedFindings ??
+                      [],
+                  )
+                : deltaFallbackReviewScope({
+                    reason: fallback.detail,
+                    comparedRanges: comparedRanges!,
+                    rangeDiffPath: delta?.rangeDiffPath && `${taskDir}/${delta.rangeDiffPath}`,
+                    deltaUnavailable: delta?.deltaUnavailable,
+                    priorIssues: input.rereview!.priorIssues,
+                  })) + template
             : (original.engineState?.evalExperiment?.blind?.proof
                 ? `Judge the frozen proof output below against every ordered AC. The implementation is supplied input, not the worker's contribution. Read its exact QA base..head context and the recorded evidence files under ${taskDir}. Judge recipe quality, evidence fit, failures, missing coverage and each AC. Read recorded CI/receipts only. Never run tests, builds, recipes, installs or probes, and never request a product fix or worker retry.\n\nFrozen proof package:\n${await readProofOutput(original)}\n\n`
                 : original.engineState?.evalExperiment

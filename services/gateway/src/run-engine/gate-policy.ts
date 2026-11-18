@@ -1,3 +1,4 @@
+import { isReliableInterdiff } from '../review/interdiff.js';
 import {
   APPROVE_PUBLISH_ACTION,
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
@@ -667,8 +668,17 @@ function reviewSnapshotDiffMatchesPackage(
         !!snapshot.diffHash &&
         session?.lastReviewedHeadSha === compared.headSha &&
         deltaFallback.comparedRanges.at(-1) === `${compared.baseSha}..${compared.headSha}`
-      : snapshot.baseRef === preparedSnapshot.baseRef &&
-        snapshot.baseSha === session?.lastReviewedHeadSha;
+      : snapshot.interdiff
+        ? isReliableInterdiff(snapshot.interdiff) &&
+          snapshot.interdiff.oldHeadSha === session?.lastReviewedHeadSha &&
+          snapshot.interdiff.newHeadSha === snapshot.headSha &&
+          snapshot.interdiff.newBaseSha === snapshot.baseSha &&
+          snapshot.baseSha === preparedSnapshot.baseSha &&
+          !!snapshot.diffHash &&
+          snapshot.diffHash === preparedSnapshot.diffHash &&
+          !!snapshot.interdiff.rangeDiffHash
+        : snapshot.baseRef === preparedSnapshot.baseRef &&
+          snapshot.baseSha === session?.lastReviewedHeadSha;
     return (
       snapshot.source !== 'unavailable' &&
       session?.mode === review.mode &&

@@ -35,6 +35,7 @@ export const TASK_FILE_SCHEMAS = {
     reference: '@farmslot/agent-runtime/task-init#TaskExecutionProvenance',
   },
   taskInput: { format: 'json', reference: 'docs/reference/task-directory-contract.md' },
+  reviewInterdiff: { format: 'json', reference: '@farmslot/protocol#ReviewInterdiffDocument' },
   subtaskIndex: { format: 'json', reference: '@farmslot/protocol/checklist-target#SubtaskIndex' },
   recipe: { format: 'json', reference: 'https://farmslot.io/schemas/recipe-v1.schema.json' },
   actionManifest: {
@@ -69,6 +70,12 @@ function entry<const Path extends string>(
 
 /** There is one active task-action root; inherited copies are context, not fallback roots. */
 export const TASK_DIRECTORY_LAYOUT = Object.freeze({
+  reviewInterdiff: entry(
+    'inputs/review-interdiff.json',
+    'reviewInterdiff',
+    'file',
+    'Pinned author interdiff, reliability qualification and upstream overlap for a retained review.',
+  ),
   // Existing worker and control-plane outputs named by the layout references.
   runtimeCapabilities: entry(
     'inputs/runtime-capability-catalog.json',

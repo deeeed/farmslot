@@ -181,7 +181,7 @@ export function configureWorkspaceContinuity(
     .reviewWorkspace?.cleanedAt
     ? 'session-unavailable'
     : undefined;
-  if (!runnerSupportsSessionContinuation(run.metrics.runner, 'tmux'))
+  if (!fallbackReason && !runnerSupportsSessionContinuation(run.metrics.runner, 'tmux'))
     fallbackReason = 'session-resume-unsupported';
   if (fallbackReason) {
     const currentHead = context.currentHeadSha ?? subject?.headSha;

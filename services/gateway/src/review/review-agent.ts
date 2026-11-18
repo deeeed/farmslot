@@ -218,6 +218,7 @@ that range only when the delta invalidates a prior assumption, and explain why i
 export interface ReReviewContinuation {
   /** The lineage's last reviewed head. */
   lastReviewedHeadSha: string;
+  priorBaseSha?: string;
   /** The earlier findings, given to a fresh session when the retained one can't continue. */
   priorIssues: ReviewIssue[];
   /** The stopped, refunded attempt explicitly selected by its owning continuation. */
@@ -226,14 +227,23 @@ export interface ReReviewContinuation {
 
 /** A validated result with a recorded reviewed head makes the next review a re-review. */
 export function reReviewContinuation(
-  result: Pick<ReviewAgentResult, 'reviewId' | 'reviewSnapshot'> & { issues?: ReviewIssue[] },
+  result: Pick<ReviewAgentResult, 'reviewId' | 'reviewSnapshot'> &
+    Partial<Pick<ReviewAgentResult, 'mode' | 'session'>> & { issues?: ReviewIssue[] },
 ): ReReviewContinuation | undefined {
   const head =
     result.reviewSnapshot?.source === 'unavailable'
       ? undefined
       : result.reviewSnapshot?.headSha?.trim();
   return result.reviewId && head
-    ? { lastReviewedHeadSha: head, priorIssues: result.issues ?? [] }
+    ? {
+        lastReviewedHeadSha: head,
+        priorIssues: result.issues ?? [],
+        priorBaseSha:
+          result.reviewSnapshot?.interdiff?.newBaseSha ??
+          (result.mode === 'cold' && !result.session?.fallback
+            ? (result.reviewSnapshot?.baseSha ?? undefined)
+            : undefined),
+      }
     : undefined;
 }
 
