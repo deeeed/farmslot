@@ -53,6 +53,7 @@ await import('../../runtime/mock-pty.test-support.js');
 const core = await import('../../core/index.js');
 const releaseState = await import('../../core/state.js');
 let afterMarker = async (): Promise<void> => {};
+let beforeSettlement = async (): Promise<void> => {};
 let probeCalls = 0;
 let retryProbe: () => Promise<string | null> = async () => null;
 mock.module('../../core/index.js', {
@@ -68,6 +69,10 @@ mock.module('../../core/index.js', {
       if (command.startsWith('ps -axo') || command.startsWith('lsof -a -d cwd'))
         return { stdout: '', stderr: '', exitCode: 0 };
       return core.execOnSlot(...args);
+    },
+    updateSlotStatusIf: async (...args: Parameters<typeof core.updateSlotStatusIf>) => {
+      if (args[2].lifecycle === 'held') await beforeSettlement();
+      return core.updateSlotStatusIf(...args);
     },
     markSlotStatusIf: async (...args: Parameters<typeof core.markSlotStatusIf>) => {
       const result = await core.markSlotStatusIf(...args);
@@ -154,6 +159,7 @@ const readRow = async () => {
 async function seedDeadline() {
   store.updateRun(owner.id, { status: 'failed', completedAt: new Date().toISOString() });
   afterMarker = async () => {};
+  beforeSettlement = async () => {};
   reprepare = async () => {
     throw new Error('unexpected re-prepare');
   };
@@ -208,6 +214,76 @@ for (const keepWarm of [false, true]) {
     assert.equal((await readRow()).lifecycle, 'ready');
   });
 }
+
+test('a failed warm release owns the registry until durable settlement finishes', async (t) => {
+  await seedDeadline();
+  const entered = deferred(),
+    resume = deferred();
+  const failure = new Error('Cannot fetch the default branch (exit 128)');
+  afterMarker = async () => {
+    throw failure;
+  };
+  beforeSettlement = async () => {
+    entered.resolve();
+    await resume.promise;
+  };
+  const rejected = assert.rejects(
+    slotRelease(
+      {
+        slotId: 'owned-recovery',
+        expectedRunId: owner.id,
+        keepWork: true,
+        preserveAgents: true,
+        keepWarm: true,
+      },
+      () => {},
+    ),
+    (error) => error === failure,
+  );
+  t.after(async () => {
+    resume.resolve();
+    await rejected;
+  });
+  await entered.promise;
+  assert.equal((await readRow()).phase, 'releasing');
+  assert.equal(
+    isTerminalTeardownInFlight('owned-recovery'),
+    true,
+    'stale-fence reconciliation must see the release while its settlement is pending',
+  );
+  resume.resolve();
+  await rejected;
+  assert.equal((await readRow()).phase, 'occupied');
+  assert.equal(isTerminalTeardownInFlight('owned-recovery'), false);
+});
+
+test('failed fence settlement preserves both errors and releases its registry count', async () => {
+  await seedDeadline();
+  const failure = new Error('fetch failed'),
+    settlementFailure = new Error('status commit failed');
+  afterMarker = async () => {
+    throw failure;
+  };
+  beforeSettlement = async () => {
+    throw settlementFailure;
+  };
+  await assert.rejects(
+    slotRelease(
+      {
+        slotId: 'owned-recovery',
+        expectedRunId: owner.id,
+        keepWork: true,
+        preserveAgents: true,
+      },
+      () => {},
+    ),
+    (error) =>
+      error instanceof AggregateError &&
+      error.errors[0] === failure &&
+      error.errors[1] === settlementFailure,
+  );
+  assert.equal(isTerminalTeardownInFlight('owned-recovery'), false);
+});
 
 test('an ordinary command failure retains unconfirmed cleanup ownership', async () => {
   await seedDeadline();

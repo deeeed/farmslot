@@ -72,7 +72,7 @@ export async function withTerminalTeardown<T>(
   slotId: string,
   operation: () => Promise<T>,
   timeoutMs: number | null = TERMINAL_TEARDOWN_TIMEOUT_MS,
-  onFailureCloseout?: (confirmed: boolean) => void,
+  onFailureCloseout?: (confirmed: boolean, error: unknown) => void | Promise<void>,
 ): Promise<T> {
   // Warm recycle keeps its existing phase budgets, but still owns cancellable work.
   const commands: CleanupCommands = { pending: new Set(), unconfirmed: false };
@@ -105,14 +105,17 @@ export async function withTerminalTeardown<T>(
   } finally {
     clearTimeout(timer);
     signal.removeEventListener('abort', rejectAborted);
-    if (signal.aborted) {
-      let confirmed = await drainCleanupCommands(commands);
-      if (signal.reason instanceof TerminalTeardownTimeoutError) {
-        signal.reason.closeoutConfirmed &&= confirmed;
-        confirmed = signal.reason.closeoutConfirmed;
+    try {
+      if (signal.aborted) {
+        let confirmed = await drainCleanupCommands(commands);
+        if (signal.reason instanceof TerminalTeardownTimeoutError) {
+          signal.reason.closeoutConfirmed &&= confirmed;
+          confirmed = signal.reason.closeoutConfirmed;
+        }
+        await onFailureCloseout?.(confirmed, signal.reason);
       }
-      onFailureCloseout?.(confirmed);
+    } finally {
+      endTerminalTeardown(slotId);
     }
-    endTerminalTeardown(slotId);
   }
 }

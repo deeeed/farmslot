@@ -213,7 +213,6 @@ export async function slotRelease(
   // this, a release that outlived the stale-fence bound would be reclaimed
   // mid-teardown, now that refresh keeps the fence stamp it ages.
   let recoverFailure: ((confirmed: boolean, reason: string) => Promise<void>) | undefined;
-  let closeoutConfirmed = false;
   const teardown = withTerminalTeardown(
     params.slotId,
     () =>
@@ -221,26 +220,24 @@ export async function slotRelease(
         recoverFailure = recover;
       }),
     params.keepWarm ? null : undefined,
-    (confirmed) => {
-      closeoutConfirmed = confirmed;
+    async (confirmed, error) => {
+      if (!recoverFailure) return;
+      const recover = recoverFailure;
+      try {
+        const reason =
+          error instanceof TerminalTeardownTimeoutError
+            ? 'Cleanup timed out'
+            : `Cleanup failed: ${error instanceof Error ? error.message : String(error)}`;
+        await withoutCleanupSignal(() => recover(confirmed, reason));
+      } catch (recoveryError) {
+        throw new AggregateError(
+          [error, recoveryError],
+          'Terminal teardown and release-fence settlement failed',
+        );
+      }
     },
   )
-    .catch(async (error: unknown) => {
-      if (recoverFailure) {
-        const recover = recoverFailure;
-        try {
-          const reason =
-            error instanceof TerminalTeardownTimeoutError
-              ? 'Cleanup timed out'
-              : `Cleanup failed: ${error instanceof Error ? error.message : String(error)}`;
-          await withoutCleanupSignal(() => recover(closeoutConfirmed, reason));
-        } catch (recoveryError) {
-          throw new AggregateError(
-            [error, recoveryError],
-            'Terminal teardown and release-fence settlement failed',
-          );
-        }
-      }
+    .catch((error: unknown) => {
       // A bound teardown losing its claim is an expected no-op for archive and
       // replay rollback. The new owner's workspace has already been left alone.
       if (error instanceof BoundReleaseClaimLostError)
