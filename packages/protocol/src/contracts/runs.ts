@@ -2343,6 +2343,17 @@ export interface RunMonitorState {
   lastStructuredProgressAt?: string;
   /** Confirmed operator wait time excluded from the monitor's execution timeout. */
   operatorWaitMs?: number;
+  /**
+   * Time the monitor itself spent blocked on a decision card, excluded from the
+   * execution timeout.
+   *
+   * Separate from {@link operatorWaitMs}, which is recomputed each poll from the
+   * worker's own `waitingForOperator` signal and so cannot carry a wait the
+   * gateway owns. A run that sat on a `runner unavailable` card for a minute had
+   * that minute charged to the worker's monitoring window, and was re-blocked as
+   * "interactive handoff exceeded 90 min" seconds after Continue.
+   */
+  gateWaitMs?: number;
   /** Inactivity grace after explicit resume; this is not worker progress. */
   operatorResumedAt?: string;
   /** True after a one-shot usage-budget warning was emitted for this monitor session. */

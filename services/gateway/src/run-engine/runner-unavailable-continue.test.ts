@@ -49,16 +49,20 @@ const signal = (status: WorkerSignal['status']): WorkerSignal => ({
   status,
   attemptId: 'owned-attempt',
   role: 'dev',
-  contextId: 'worker',
+  contextId: 'dev',
   timestamp: new Date().toISOString(),
   ...(status === 'blocked' ? { reason: 'Needs a product decision' } : {}),
 });
 
 /**
- * A live pi worker whose last turn ended on a runner failure, on a run whose
- * monitoring window is nearly spent: 2.5 s into a 3 s total timeout, with no
- * structured activity for 10 s against a 1 s stuck window. One more second of
- * uncredited wall time ends the window.
+ * A live pi worker whose last turn ended on a runner failure, on a run with a
+ * 3 s monitoring window that starts now and no structured activity for 10 s
+ * against a 0.5 s stuck window.
+ *
+ * The window is deliberately shorter than the time the operator spends on the
+ * card, so whether it expires depends on the accounting and not on how fast the
+ * monitor starts: charged to the worker, a 2 s answer ends a 1.5 s window; not
+ * charged, the window still has most of its 1.5 s left.
  */
 async function fixture(t: test.TestContext) {
   const project = `unavailable-continue-${randomUUID()}`;
@@ -95,8 +99,8 @@ async function fixture(t: test.TestContext) {
       name: project,
       monitoring: {
         poll_interval_min: 1 / 60_000,
-        total_timeout_min: 3 / 60,
-        stuck_timeout_min: 1 / 60,
+        total_timeout_min: 1.5 / 60,
+        stuck_timeout_min: 0.5 / 60,
         max_nudges: 3,
       },
     }),
@@ -122,7 +126,9 @@ async function fixture(t: test.TestContext) {
     taskFile: path.join(taskDir, 'TASK.md'),
     agentContexts: [
       {
-        id: 'worker',
+        // The canonical context id for the dev role; a non-canonical pair is
+      // refused by resolveAgentTarget, which production never produces.
+      id: 'dev',
         role: 'dev',
         label: 'Worker',
         runner: 'pi',
@@ -138,8 +144,8 @@ async function fixture(t: test.TestContext) {
     ],
     monitorState: {
       nudgeCount: 0,
-      startedAt: new Date(Date.now() - 2_500).toISOString(),
-      lastPollAt: new Date(Date.now() - 2_500).toISOString(),
+      startedAt: new Date().toISOString(),
+      lastPollAt: new Date().toISOString(),
       lastStructuredProgressAt: new Date(Date.now() - 10_000).toISOString(),
     },
   });
@@ -159,11 +165,18 @@ async function fixture(t: test.TestContext) {
       ...(paneFailure ? { failure: paneFailure } : {}),
     }),
   };
+  // What reached the pane. The real send goes through tmux, which this isolated
+  // suite refuses, so delivery is injected and recorded instead.
+  const delivered: { message: string; role?: string; contextId?: string }[] = [];
   const start = () => {
     const observations: MonitorObservations = {
       workerStatus: (slot, runner, runId, role, contextId) =>
         checkAgentLive(slot, runner, runId, role, contextId, pane),
       violations: async () => [],
+      deliverResume: async (_runId, _slot, message, role, contextId) => {
+        delivered.push({ message, role, contextId });
+        return 'confirmed';
+      },
     };
     const execution = monitorRun(run.id, slotId, controller.signal, observations);
     executions.push(execution);
@@ -173,7 +186,7 @@ async function fixture(t: test.TestContext) {
   const restoreRunner = () => {
     paneFailure = undefined;
   };
-  return { run, slotId, start, card, restoreRunner, signalFile };
+  return { run, slotId, start, card, restoreRunner, delivered, signalFile };
 }
 
 /** Polls for a condition with a short ceiling; never a fixed wait. */
@@ -195,14 +208,28 @@ test(
 
     const nudgesBefore = getRun(f.run.id)?.metrics.nudgeCount ?? 0;
     resolveMonitorDecision(f.card()!.id, 'continue');
-    await until(() => (getRun(f.run.id)?.metrics.nudgeCount ?? 0) > nudgesBefore);
+    f.restoreRunner();
+    await writeFile(f.signalFile, JSON.stringify(signal('blocked')));
+    const result = await execution;
 
-    assert.ok(
-      (getRun(f.run.id)?.metrics.nudgeCount ?? 0) > nudgesBefore,
+    assert.equal(
+      f.delivered.length,
+      1,
       'Continue sent nothing to the idle pane: the worker stays stopped and the next poll re-blocks it (5424deb9)',
     );
-    await writeFile(f.signalFile, JSON.stringify(signal('blocked')));
-    await execution;
+    assert.match(f.delivered[0]!.message, /runner is available again/i);
+    assert.equal(f.delivered[0]!.contextId, 'dev', 'the resume goes to the worker that stopped');
+    assert.ok(
+      result.snapshots.some((snapshot) => snapshot.trigger === 'nudge'),
+      'a delivery the run does not record is invisible to anyone reading it afterwards',
+    );
+    // A provider outage the operator fixed is not the worker stalling, so the
+    // resume must not spend the stuck/idle escalation budget.
+    assert.equal(
+      getRun(f.run.id)?.metrics.nudgeCount ?? 0,
+      nudgesBefore,
+      'a resume that burns a nudge brings max_nudges forward every time a provider blips',
+    );
   },
 );
 
@@ -218,9 +245,9 @@ test(
     await until(() => f.card() !== undefined);
     const unavailable = f.card()!.id;
 
-    // The operator spends a second on the card — more than the 0.5 s this
-    // window had left of its 3 s — then fixes the provider and clicks Continue.
-    await until(() => false, 1_000);
+    // The operator spends longer on the card than the whole 1.5 s window, then
+    // fixes the provider and clicks Continue.
+    await until(() => false, 2_000);
     f.restoreRunner();
     resolveMonitorDecision(unavailable, 'continue');
 
@@ -231,15 +258,27 @@ test(
           !decision.resolvedAt &&
           (decision.type === 'monitor_interactive_handoff' || decision.type === 'monitor_timeout'),
       );
-    await until(() => timedOut() !== undefined);
+    // Charged to the worker, the very next poll ends the window, which is the
+    // 11-second re-block. Credited, the window still has most of its 1.5 s, so
+    // this watches only long enough to catch a premature card — a window that
+    // later expires on its own is the monitor working.
+    await until(() => timedOut() !== undefined, 200);
 
+    // The accounting itself, so the case does not rest on wall-clock margins:
+    // the wait is recorded as the monitor's own, not the worker's idleness.
+    assert.ok(
+      (getRun(f.run.id)?.monitorState?.gateWaitMs ?? 0) >= 2_000,
+      `the time on the card was not recorded as gate wait: gateWaitMs=${getRun(f.run.id)?.monitorState?.gateWaitMs}`,
+    );
     const blocked = timedOut();
     assert.equal(
       blocked,
       undefined,
-      `the run was re-blocked as ${blocked?.type} right after Continue: the second spent waiting for the operator was charged to the worker's monitoring window`,
+      `the run was re-blocked as ${blocked?.type} (${JSON.stringify(blocked?.description)}) right after Continue: the seconds spent waiting for the operator were charged to the worker's monitoring window`,
     );
-    await writeFile(f.signalFile, JSON.stringify(signal('blocked')));
-    await execution;
+    // Teardown ends the monitor (abort + resolve any open card + await). Waiting
+    // for it here instead would time the 1.5 s window expiring on its own, which
+    // this case has already finished asserting about.
+    void execution;
   },
 );

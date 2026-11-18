@@ -1056,6 +1056,8 @@ export interface MonitorObservations {
   waitForWorker?: typeof waitForWorkerStart;
   violations?: typeof detectViolations;
   question?: typeof readOpenWorkerQuestion;
+  /** Test seam for the resume that follows a cleared runner failure. */
+  deliverResume?: typeof sendOneShotWorkerInstruction;
 }
 
 export async function monitorRun(
@@ -1072,13 +1074,34 @@ export async function monitorRun(
   const waitForWorker = observations.waitForWorker ?? waitForWorkerStart;
   const observeViolations = observations.violations ?? detectViolations;
   const observeQuestion = observations.question ?? readOpenWorkerQuestion;
-  const createMonitorDecision = (
+  const deliverInstruction = observations.deliverResume ?? sendOneShotWorkerInstruction;
+  // Time spent waiting on a card the monitor raised is the monitor's own wait,
+  // not the worker going quiet, so it is excluded from the execution timeout.
+  // It cannot live in state.operatorWaitMs: that field is recomputed from the
+  // worker's waitingForOperator signal on every poll, so anything added to it is
+  // overwritten. Restored below from monitorState.gateWaitMs.
+  const gateWait = { ms: 0 };
+  const createMonitorDecision = async (
     id: string,
     reason: string,
     description: string,
     actions?: RunDecision['actions'],
     question?: HandoffQuestionProbe,
-  ) => createBlockedDecision(id, reason, description, actions, { signal, generation }, question);
+  ) => {
+    const waitingSince = Date.now();
+    try {
+      return await createBlockedDecision(
+        id,
+        reason,
+        description,
+        actions,
+        { signal, generation },
+        question,
+      );
+    } finally {
+      gateWait.ms += Date.now() - waitingSince;
+    }
+  };
   // A failure the runner itself reported (an expired login) waits for the operator in a
   // runner_unavailable decision with the worker kept, instead of failing the step (#1427, F328).
   // Continue answers that failed turn: its record stays until the next hook event, so it must not
@@ -1103,6 +1126,12 @@ export async function monitorRun(
           `${error.message} Restore the provider account or authentication in the retained runner pane, then choose Continue. The worktree and current task state are preserved.`,
         );
         if (actionId === 'abort') return 'aborted';
+        // Continue answers the failed turn, and answering it has to reach the
+        // worker. The pane is sitting on a turn that died mid-flight; without a
+        // resume it stays there until some later violation happens to nudge it,
+        // which is how 5424deb9 was re-blocked 11 s after Continue with its
+        // session untouched.
+        await deliverRunnerResume(error.message);
         answeredFailureAt = error.observedAt;
       }
     }
@@ -1130,8 +1159,58 @@ export async function monitorRun(
   const snapshots: MonitorSnapshot[] = [];
   let exitReason: MonitorResult['exitReason'] = 'worker-done';
 
+  /**
+   * Continue the worker after the operator cleared a runner failure.
+   *
+   * The stuck and idle branches deliver through `sendNudge`; a
+   * `runner_unavailable` card used to fall through with nothing sent, so the
+   * pane kept whatever half-finished turn it died on.
+   */
+  const deliverRunnerResume = async (message: string): Promise<void> => {
+    const context = currentMonitorContext();
+    // Not sendNudge: a provider outage the operator already fixed is not the
+    // worker stalling, so it must not spend the stuck/idle escalation budget.
+    //
+    // A delivery that throws must not end the monitor either: the operator has
+    // already cleared the failure, and a run that keeps being watched can still
+    // be resumed by hand, while a dead monitor cannot.
+    let delivery: WorkerInstructionDelivery = 'not-attempted';
+    try {
+      delivery = await deliverInstruction(
+        runId,
+        slotId,
+        buildNudgeMessage({
+          slotId,
+          role: context?.role,
+          contextId: context?.id,
+          type: 'error',
+          message,
+          nudgeSent: null,
+          timestamp: new Date().toISOString(),
+        }),
+        context?.role,
+        context?.id,
+      );
+    } catch (error) {
+      console.warn(
+        `[run-monitor] run ${runId.slice(0, 8)} — runner resume could not be sent: ${(error as Error).message}`,
+      );
+      return;
+    }
+    if (delivery === 'not-attempted') {
+      // Nothing reached the pane. Say so rather than leaving the operator to
+      // infer it from a run that does not move.
+      console.warn(
+        `[run-monitor] run ${runId.slice(0, 8)} — runner resume not delivered (${delivery}); the worker may still be waiting on its failed turn`,
+      );
+      return;
+    }
+    snapshots.push({ timestamp: new Date().toISOString(), trigger: 'nudge' });
+  };
+
   // Restore from persisted state if available (gateway restart recovery)
   const persisted = run.monitorState;
+  gateWait.ms = persisted?.gateWaitMs ?? 0;
   const restoredBudgetUsage = restoreBudgetUsageState(persisted?.budgetUsage);
 
   const state: MonitorState = persisted
@@ -1755,6 +1834,8 @@ export async function monitorRun(
             exitReason = 'aborted';
             return { pollCount, exitReason, violations: allViolations, snapshots };
           }
+          // Same as the observed-failure path: Continue has to reach the worker.
+          await deliverRunnerResume(v.message);
           continue;
         }
 
@@ -1875,6 +1956,7 @@ export async function monitorRun(
             lastPaneHash: state.lastPaneHash,
             lastStructuredProgressAt: structuredProgressAt,
             operatorWaitMs: state.operatorWaitMs,
+            gateWaitMs: gateWait.ms,
             ...(state.operatorResumedAt
               ? { operatorResumedAt: new Date(state.operatorResumedAt).toISOString() }
               : {}),
@@ -1895,7 +1977,7 @@ export async function monitorRun(
 
       // 5. Check total timeout. Elapsed time alone never stops a progressing worker:
       // it times out once it also has no structured activity for the stuck window.
-      const elapsed = Date.now() - state.startedAt - state.operatorWaitMs;
+      const elapsed = Date.now() - state.startedAt - state.operatorWaitMs - gateWait.ms;
       if (
         !waitingForOperator &&
         elapsed > config.totalTimeoutMs &&
@@ -2361,36 +2443,42 @@ function buildNudgeMessage(violation: MonitorViolation): string {
       return '[Orchestrator] Continue without waiting. Follow TASK.md exactly.';
     case 'budget':
       return buildUsageBudgetNudgeMessage(violation.message);
+    case 'error':
+      // The operator cleared the runner failure. The pane still holds the turn
+      // that died, so say what to do with it rather than just "continue".
+      return '[Orchestrator] The runner is available again. Continue the current task from where it stopped, per TASK.md; do not start over.';
     default:
       return '[Orchestrator] Continue working on the current task.';
   }
 }
 
 /**
- * Outcome of one budget-nudge delivery.
+ * Outcome of one one-shot pane instruction.
  *
  * `not-attempted` means the pane was never touched, so the attempt must not count
  * against MAX_BUDGET_NUDGE_ATTEMPTS — otherwise a few transient holds would burn the
  * cap and the worker would never hear about a real breach.
  */
-export type BudgetNudgeDelivery = 'confirmed' | 'attempted' | 'queued' | 'not-attempted';
+export type WorkerInstructionDelivery = 'confirmed' | 'attempted' | 'queued' | 'not-attempted';
 
 /**
- * One-shot budget warning into the worker pane. Does not increment metrics.nudgeCount
- * (stuck/idle max_nudges is a separate escalation budget).
+ * One-shot instruction into the worker pane: a usage-budget warning, or the
+ * resume that follows an operator clearing a runner failure. Does not increment
+ * metrics.nudgeCount (stuck/idle max_nudges is a separate escalation budget, and
+ * a provider outage the operator fixed must not burn it).
  *
  * Returns `confirmed` only when the instruction was accepted and submitted. Expected
  * unavailability (missing run, non-tmux-nudgeable runner) returns `not-attempted`
  * without throwing. Unexpected delivery failures propagate so callers do not stamp a
  * false nudgeSent.
  */
-export async function sendBudgetNudge(
+export async function sendOneShotWorkerInstruction(
   runId: string,
   slotId: string,
   message: string,
   role?: AgentRole,
   contextId?: string,
-): Promise<BudgetNudgeDelivery> {
+): Promise<WorkerInstructionDelivery> {
   const run = getRun(runId);
   if (!run) return 'not-attempted';
   if (!(await workerNudgesSupported(run, slotId))) {
@@ -2552,8 +2640,8 @@ export async function pollBudgetGuardStep(params: {
    * Optional local host stub for focused tests. Production monitor always loads real vars.
    */
   localVarsStub?: { host: string; machine: string; slotId: string; remoteRepo?: string };
-  /** Test seam for confirmed-delivery retry behavior; production uses sendBudgetNudge. */
-  deliverNudge?: typeof sendBudgetNudge;
+  /** Test seam for confirmed-delivery retry behavior; production uses sendOneShotWorkerInstruction. */
+  deliverNudge?: typeof sendOneShotWorkerInstruction;
   /** Test seam for the runner's turn state; production reads runner observability. */
   runnerMidTurnStub?: boolean;
 }): Promise<PollBudgetGuardStepResult> {
@@ -2662,7 +2750,7 @@ export async function pollBudgetGuardStep(params: {
         });
       } else if (run && !shouldSkipMonitorNudge(run, deliveryViolation, params.agentStatus)) {
         try {
-          const outcome = await (params.deliverNudge ?? sendBudgetNudge)(
+          const outcome = await (params.deliverNudge ?? sendOneShotWorkerInstruction)(
             params.runId,
             params.slotId,
             decision.message,
