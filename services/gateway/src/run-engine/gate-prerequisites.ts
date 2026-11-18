@@ -10,6 +10,7 @@ import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   COMBINED_FINDINGS_EVIDENCE_APPROVAL_ACTION,
   type DecisionAction,
+  type DeterministicChecklistCheck,
   digestRecipeDocument,
   EVIDENCE_ATTESTATION_ACTION,
   evidenceAttestationAvailable,
@@ -84,6 +85,7 @@ import {
   readAcceptanceStatusForDisplay,
   readHandoffAcceptanceCriteria,
 } from '../tasks/acceptance-status.js';
+import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 import {
   readFrozenWorkerTerminalContractForRun,
   validateDeterministicChecksForRun,
@@ -127,7 +129,7 @@ const loadInheritedAcceptance = lazyImport(
 );
 
 export interface GatePrerequisiteReaders {
-  deterministic(run: Run): Promise<unknown>;
+  deterministic(run: Run): Promise<DeterministicChecklistCheck[] | void>;
   acceptance(run: Run): Promise<GateAcceptanceRead>;
   progress(run: Run): Promise<RunProgressObservation>;
   qaCompletion(run: Run): ReturnType<typeof assertQaCompletion>;
@@ -612,6 +614,7 @@ export async function collectRunGateAssessment(
   acceptance?: AcceptanceStatusLedger;
   reviews?: ReviewStatus[];
   reviewPolicyRepairs?: ReviewStatus[];
+  deterministicChecks?: DeterministicChecklistCheck[];
 }> {
   const recordedReviews = run.engineState?.publishGate?.reviews ?? [];
   // Receipt-derived decorations are display data, never imported authority.
@@ -723,8 +726,9 @@ export async function collectRunGateAssessment(
         actionId: 'dismiss',
       });
   }
+  let deterministicChecks: DeterministicChecklistCheck[] | void = undefined;
   try {
-    await source.deterministic(artifactRun);
+    deterministicChecks = await source.deterministic(artifactRun);
   } catch {
     // The owner validator rejects absent/stale/failed receipts. Preserve that refusal.
     reasons.push({
@@ -1027,6 +1031,9 @@ export async function collectRunGateAssessment(
           }
         : {}),
     },
+    ...(deterministicChecks && isNoCodeTerminalDisposition(run.metrics.disposition)
+      ? { deterministicChecks }
+      : {}),
     ...(projected ? { acceptance: projected } : {}),
     ...(preparedPackage ? { reviews: run.engineState?.publishGate?.reviews } : {}),
     ...(reviewPolicyRepairs.length ? { reviewPolicyRepairs } : {}),
@@ -1068,11 +1075,9 @@ export async function assertRunGateReady(
   actionId?: string,
   /** The gate decision's payload: its recorded base conflict applies here as in its projection. */
   payload?: RunDecision['payload'],
-): Promise<RunGateReadiness> {
-  const readiness = withBaseMergeConflict(
-    await collectRunGateReadiness(run, preparedPackage),
-    payload,
-  );
+): Promise<RunGateReadiness & { deterministicChecks?: DeterministicChecklistCheck[] }> {
+  const assessed = await collectRunGateAssessment(run, preparedPackage);
+  const readiness = withBaseMergeConflict(assessed.readiness, payload);
   // Artifact-only comparison/eval settlement and QA completion retain unresolved claims as output.
   // This defers only their verdict policy, never package or execution integrity.
   const outputCompletion =
@@ -1101,7 +1106,9 @@ export async function assertRunGateReady(
     (actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION && !acceptReviewFindingsAvailable(readiness))
   )
     throw new RunGateNotReadyError(readiness, reasons);
-  return readiness;
+  return assessed.deterministicChecks
+    ? { ...readiness, deterministicChecks: assessed.deterministicChecks }
+    : readiness;
 }
 
 /** Accepted findings bind to the head's open findings at approval (ADR-065 Amendment 8). */

@@ -38,7 +38,7 @@ import {
 import { AcceptanceReadError, handoffListsAcceptanceCriteria } from './acceptance-status.js';
 import { agentRuntimeScriptForSlot } from './agent-runtime-script.js';
 import { subtaskTerminalRefusal } from './subtasks.js';
-import { isNoCodeTerminalDisposition } from './worker-signals.js';
+import { isNoCodeTerminalDisposition, releasedNoChangeChecks } from './worker-signals.js';
 
 const require = createRequire(import.meta.url);
 const {
@@ -70,6 +70,7 @@ const {
   templateUsesTerminalMark: (content: string) => boolean;
   deterministicChecks: {
     outputPrefix: string;
+    isMissingLocalCheck: (check: DeterministicChecklistCheck) => boolean;
     declarations: (markdown: string, checklist: string) => Array<{ stepNumber: number }>;
     freeze: (
       contract: WorkerTerminalContractDocument,
@@ -651,6 +652,8 @@ export async function validateDeterministicChecksForRun(
   // A scripted command run executes no checklist, so it owes no checklist receipt, even
   // when an older worker contract and CHECKLIST.md were frozen for it (ADR-043 Amendment 2).
   if (!run.taskFile || isArtifactOnlyScriptedCommandRun(run)) return [];
+  const completedChecks = releasedNoChangeChecks(run);
+  if (completedChecks) return completedChecks;
   const taskFile = deterministicChecklistTaskFileForPublication(run);
   const checklist = checklistBasenameFromTaskPath(taskFile);
   const input = checklist
@@ -697,20 +700,11 @@ export async function validateDeterministicChecksForRun(
     }
     return [];
   }
-  // A no-change exit (already fixed, not reproducible) changed nothing, so a
-  // changed-file check has nothing to validate, and its receipt can only be
-  // recorded by marking a step the order rule refuses without a reproduction
-  // that did not happen. Run c2821858 (TAT-4685) could not finish at all:
-  // `mark no-change` was refused by the artifact contract, and this gate refused
-  // the same run again at the completion step. Missing receipts are waived here
-  // too — a recorded receipt that failed or went stale still refuses below.
-  const noCodeExit = isNoCodeTerminalDisposition(run.metrics?.disposition);
-  if (!vars) {
-    if (noCodeExit) return [];
+  if (!vars)
     throw new Error(
       'Deterministic CI checks require the run checkout; slot is missing or unavailable',
     );
-  }
+  const noCodeExit = isNoCodeTerminalDisposition(run.metrics?.disposition);
   // CI receipts belong to this checkout. Acceptance has its own gate and may
   // come from a verified parent; re-running the entire terminal contract here
   // would incorrectly demand a second task-bound acceptance ledger.
@@ -718,9 +712,9 @@ export async function validateDeterministicChecksForRun(
   const checklists = [...new Set(declaredChecks.map((check) => check.checklist))];
   const evaluate = [
     'const {deterministicChecks}=require(process.argv[1]);',
-    "const allowMissing=process.argv[4]==='1';",
+    'const options=JSON.parse(process.argv[4]);',
     'const results=JSON.parse(process.argv[3]).map(c=>(',
-    '{...deterministicChecks.evaluate(process.argv[2],c,{allowMissing}),checklist:c}));',
+    '{...deterministicChecks.evaluate(process.argv[2],c,options),checklist:c}));',
     'process.stdout.write(JSON.stringify(results));',
     'process.exitCode=results.some(r=>r.issues.length)?1:0;',
   ].join('');
@@ -733,7 +727,13 @@ export async function validateDeterministicChecksForRun(
       shellQuote(checker),
       shellQuote(taskDir),
       shellQuote(JSON.stringify(checklists)),
-      shellQuote(noCodeExit ? '1' : '0'),
+      shellQuote(
+        JSON.stringify(
+          noCodeExit
+            ? { noChange: true, baseSha: run.preWorkBaseSha ?? run.worktreeHeadAtDispatch ?? null }
+            : {},
+        ),
+      ),
     ].join(' '),
     { timeout: 60_000, maxBuffer: 256 * 1024 },
   );
@@ -748,7 +748,11 @@ export async function validateDeterministicChecksForRun(
   if (
     !checks.length ||
     evaluated.some((item) => item.issues.length > 0) ||
-    checks.some((check) => check.status !== 'passed') ||
+    checks.some(
+      (check) =>
+        check.status !== 'passed' &&
+        !(noCodeExit && deterministicChecks.isMissingLocalCheck(check)),
+    ) ||
     declaredChecks.some(
       (expected) =>
         !checks.some(

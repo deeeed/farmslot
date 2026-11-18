@@ -24,8 +24,11 @@ const checker = path.resolve(__dirname, '../scripts/check-task-artifact-contract
 
 /** A fix-bug task whose checklist declares a deterministic changed-file check. */
 function task(t) {
-  const taskDir = mkdtempSync(path.join(tmpdir(), 'no-change-deterministic-'));
-  t.after(() => require('node:fs').rmSync(taskDir, { recursive: true, force: true }));
+  const checkout = mkdtempSync(path.join(tmpdir(), 'no-change-deterministic-'));
+  const taskDir = path.join(checkout, 'task');
+  t.after(() => require('node:fs').rmSync(checkout, { recursive: true, force: true }));
+  const git = spawnSync('git', ['init', '-q'], { cwd: checkout, encoding: 'utf8' });
+  assert.equal(git.status, 0, git.stderr);
   mkdirSync(path.join(taskDir, 'inputs'), { recursive: true });
   mkdirSync(path.join(taskDir, 'artifacts'), { recursive: true });
   const checklist = '## Checklist\n- [ ] 1. Changed-file CI [DETERMINISTIC: ci.local_check]\n';
@@ -60,7 +63,7 @@ function task(t) {
         '--terminal',
         terminal,
       ],
-      { encoding: 'utf8' },
+      { cwd: taskDir, encoding: 'utf8' },
     );
   return { taskDir, run };
 }

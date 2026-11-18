@@ -2,6 +2,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import {
   type ArtifactRef,
+  type DeterministicChecklistCheck,
   type DiffStat,
   Events,
   FLOW_STEPS,
@@ -1313,9 +1314,8 @@ export async function executeHumanGateStep(
     };
   }
 
-  // Update slot lifecycle so UI shows the slot is waiting for review while the
-  // worker runner stays attachable for operator Q&A.
-  if (current.slotId) {
+  // No-change COMPLETE can already have released the checkout.
+  if (current.slotId && !noChangeGate) {
     await markSlotBusy(current.slotId, 'review-gate', 'working');
     broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
   }
@@ -1714,8 +1714,8 @@ export async function executeHumanGateStep(
 
   const waitDurationMs = Date.now() - gateStart;
 
-  // Restore slot lifecycle after gate resolution; worker stays alive until finalize.
-  if (current.slotId) {
+  // Publication keeps its worker alive through finalize.
+  if (current.slotId && !noChangeGate) {
     await markSlotBusy(current.slotId, 'working', 'working');
     broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
   }
@@ -1784,6 +1784,7 @@ export async function executeCompleteStep(
   }
   // A refused completion must not strand a successful push behind stale ownership.
   const noCodeDisposition = isNoCodeTerminalDisposition(current.metrics.disposition);
+  let noChangeDeterministicChecks: DeterministicChecklistCheck[] | undefined;
   if (noCodeDisposition || ['blocked', 'failed'].includes(current.metrics.disposition ?? ''))
     await abandonBranchMaintenance(current);
   else await completeBranchMaintenance(current);
@@ -1809,6 +1810,7 @@ export async function executeCompleteStep(
           null,
           'complete',
         );
+        if (noCodeDisposition) noChangeDeterministicChecks = readiness.deterministicChecks;
         if (current.flowType === 'pr-complete' && current.acceptanceContractVersion === 1) {
           acceptanceIdentity = {
             generation: readiness.identity.generation,
@@ -1968,6 +1970,7 @@ export async function executeCompleteStep(
       prTitleUpdated: completion.prTitleUpdated,
       prMarkedReady: completion.prMarkedReady,
       retrospectiveCreated: completion.retrospectiveCreated,
+      ...(noChangeDeterministicChecks ? { noChangeDeterministicChecks } : {}),
       ...(completion.inheritedAcceptance
         ? { inheritedAcceptance: completion.inheritedAcceptance }
         : {}),

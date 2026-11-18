@@ -718,12 +718,8 @@ if (terminalCommand !== 'blocked') {
   if (checklists.size === 0) checklists.add(undefined);
   for (const checklist of checklists) {
     try {
-      // A no-change exit changed nothing, so a changed-file check has nothing to
-      // validate; its receipt can also only be recorded by marking a step the
-      // order rule refuses without a reproduction that did not happen. Receipts
-      // that were recorded are still judged.
       const result = deterministicChecks.evaluate(taskDir, checklist, {
-        allowMissing: terminalCommand === 'no-change',
+        noChange: terminalCommand === 'no-change',
       });
       if (!proofMeasurement) issues.push(...result.issues);
       deterministicResults.push(...result.checks);
