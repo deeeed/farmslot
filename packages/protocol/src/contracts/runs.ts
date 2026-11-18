@@ -2364,6 +2364,16 @@ export interface RunMonitorState {
    * the worker and can re-block the run immediately.
    */
   gateWaitStartedAt?: string;
+  /**
+   * The decision {@link gateWaitStartedAt} belongs to.
+   *
+   * The marker alone cannot say whose wait it is, and more than one monitor can
+   * be alive for a run — a replayed loop raises its own card while the retiring
+   * one unwinds. Whatever ends a wait (its own settlement, or an operator
+   * extending the window from the card) may only clear the marker of the
+   * decision it actually answered.
+   */
+  gateWaitDecisionId?: string;
   /** Inactivity grace after explicit resume; this is not worker progress. */
   operatorResumedAt?: string;
   /** True after a one-shot usage-budget warning was emitted for this monitor session. */

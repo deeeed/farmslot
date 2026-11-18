@@ -534,15 +534,34 @@ export function resolveMonitorDecision(decisionId: string, actionId: string): vo
  * An open card's marker is kept. The wait did not end because the window turned
  * over, and a restart reads that marker to credit the slice nothing was
  * watching; recovery caps it to the window, so it cannot over-credit.
+ *
+ * `closedDecisionId` is the card this reset answers — an operator extending the
+ * window from the card itself. That card's wait is over, so its marker goes;
+ * any other open card's marker stays. Without this, extending a re-presented
+ * handoff card that has no waiter left would leave a marker nothing will ever
+ * clear, and the next restart would credit every minute since the extension.
  */
-export function persistMonitorWindowStart(runId: string, startedAtMs: number = Date.now()): void {
+export function persistMonitorWindowStart(
+  runId: string,
+  startedAtMs: number = Date.now(),
+  options: { closedDecisionId?: string } = {},
+): void {
   const run = getRun(runId);
   if (!run) return;
   const startedAt = new Date(startedAtMs).toISOString();
   const prev = run.monitorState;
+  const closesOpenWait =
+    options.closedDecisionId !== undefined && prev?.gateWaitDecisionId === options.closedDecisionId;
   updateRun(runId, {
     monitorState: prev
-      ? { ...prev, startedAt, gateWaitMs: 0 }
+      ? {
+          ...prev,
+          startedAt,
+          gateWaitMs: 0,
+          ...(closesOpenWait
+            ? { gateWaitStartedAt: undefined, gateWaitDecisionId: undefined }
+            : {}),
+        }
       : {
           nudgeCount: run.metrics.nudgeCount,
           lastPollAt: startedAt,
@@ -560,6 +579,7 @@ export function persistMonitorWindowStart(runId: string, startedAtMs: number = D
 async function persistGateWaitStart(
   runId: string,
   waitingSinceMs: number,
+  decisionId: string,
   windowStartedAtMs?: number,
 ): Promise<void> {
   const run = getRun(runId);
@@ -573,7 +593,11 @@ async function persistGateWaitStart(
     startedAt: new Date(windowStartedAtMs ?? waitingSinceMs).toISOString(),
   };
   updateRun(runId, {
-    monitorState: { ...prev, gateWaitStartedAt: new Date(waitingSinceMs).toISOString() },
+    monitorState: {
+      ...prev,
+      gateWaitStartedAt: new Date(waitingSinceMs).toISOString(),
+      gateWaitDecisionId: decisionId,
+    },
   });
   await persistRunNow(getRun(runId)!, 'gate wait started');
 }
@@ -590,26 +614,45 @@ async function persistGateWaitStart(
 async function commitGateWait(
   runId: string,
   totalMs: number,
-  options: { ownedMarker?: string; windowStartedAtMs?: number } = {},
+  options: { ownedDecisionId?: string; windowStartedAtMs?: number } = {},
 ): Promise<void> {
   const run = getRun(runId);
   if (!run) return;
-  const { ownedMarker, windowStartedAtMs } = options;
+  const { ownedDecisionId, windowStartedAtMs } = options;
   const prev = run.monitorState ?? {
     nudgeCount: run.metrics.nudgeCount,
     lastPollAt: new Date(windowStartedAtMs ?? Date.now()).toISOString(),
     startedAt: new Date(windowStartedAtMs ?? Date.now()).toISOString(),
   };
-  // Only the wait that wrote a marker may drop it. A replayed monitor can raise
-  // its own card while this loop is still unwinding, and clearing that
+  // Credit belongs to a window. A replayed monitor that reset the clock owns the
+  // accounting now, and this loop's total was measured against a window nobody
+  // is in, so writing it would charge the new window for the old one's cards.
+  if (!monitorWindowMatches(prev, windowStartedAtMs)) return;
+  // Only the wait that opened a card may drop its marker. A replayed monitor can
+  // raise its own card while this loop is still unwinding, and clearing that
   // replacement's marker would lose the restart credit it is holding open. The
-  // total is still worth storing, since the credit only ever grows.
-  const ownsMarker = ownedMarker === undefined || prev.gateWaitStartedAt === ownedMarker;
+  // total is still worth storing: within one window the credit only grows.
+  const ownsMarker = ownedDecisionId === undefined || prev.gateWaitDecisionId === ownedDecisionId;
   const gateWaitMs = ownsMarker ? totalMs : Math.max(prev.gateWaitMs ?? 0, totalMs);
-  const gateWaitStartedAt = ownsMarker ? undefined : prev.gateWaitStartedAt;
-  if (prev.gateWaitMs === gateWaitMs && prev.gateWaitStartedAt === gateWaitStartedAt) return;
-  updateRun(runId, { monitorState: { ...prev, gateWaitMs, gateWaitStartedAt } });
+  const settled = ownsMarker ? { gateWaitStartedAt: undefined, gateWaitDecisionId: undefined } : {};
+  if (prev.gateWaitMs === gateWaitMs && (!ownsMarker || prev.gateWaitStartedAt === undefined))
+    return;
+  updateRun(runId, { monitorState: { ...prev, gateWaitMs, ...settled } });
   await persistRunNow(getRun(runId)!, 'gate wait settled');
+}
+
+/**
+ * Whether persisted monitor state still belongs to the window a caller measured.
+ *
+ * A caller with no window to name (startup recovery, which adopts whatever the
+ * persisted window is) matches by definition.
+ */
+function monitorWindowMatches(
+  state: { startedAt: string },
+  windowStartedAtMs: number | undefined,
+): boolean {
+  if (windowStartedAtMs === undefined) return true;
+  return state.startedAt === new Date(windowStartedAtMs).toISOString();
 }
 
 // ─── Main monitoring loop ───
@@ -1176,7 +1219,7 @@ export async function monitorRun(
     const waitingSince = Date.now();
     // Persisted before the wait, so a restart while the operator is still
     // reading the card can credit the slice this process never finished.
-    await persistGateWaitStart(runId, waitingSince, monitorState?.startedAt);
+    await persistGateWaitStart(runId, waitingSince, id, monitorState?.startedAt);
     try {
       return await createBlockedDecision(
         id,
@@ -1191,7 +1234,7 @@ export async function monitorRun(
       // One durable write: the credit lands with the marker's removal, and only
       // the marker this wait wrote is removed.
       await commitGateWait(runId, gateWait.ms, {
-        ownedMarker: new Date(waitingSince).toISOString(),
+        ownedDecisionId: id,
         windowStartedAtMs: monitorState?.startedAt,
       });
       // The worker was idle for as long as the card was up, and that idleness
@@ -1338,7 +1381,7 @@ export async function monitorRun(
     );
     // Store the recovered slice before anything else can fail: another restart
     // in this window would otherwise drop it with the marker.
-    await commitGateWait(runId, gateWait.ms, { ownedMarker: persisted?.gateWaitStartedAt });
+    await commitGateWait(runId, gateWait.ms, { ownedDecisionId: persisted?.gateWaitDecisionId });
   }
   const restoredBudgetUsage = restoreBudgetUsageState(persisted?.budgetUsage);
 
@@ -2072,7 +2115,16 @@ export async function monitorRun(
 
       // 4. Persist monitor state to Run (survives gateway restart)
       const currentForPersist = getRun(runId);
-      if (currentForPersist) {
+      // A replayed monitor that reset the clock owns this run's monitor state
+      // now. This loop's snapshot — window start, nudge view, gate credit —
+      // describes a window nobody is in, so publishing it would hand the
+      // replacement the retiring loop's accounting: its fresh window charged for
+      // cards it never showed. The loop keeps observing until it unwinds; it just
+      // stops writing.
+      const ownsMonitorState =
+        !currentForPersist?.monitorState ||
+        monitorWindowMatches(currentForPersist.monitorState, state.startedAt);
+      if (currentForPersist && ownsMonitorState) {
         const structuredProgressAt = new Date(state.lastStructuredProgressAt).toISOString();
         const announceProgress = structuredProgressMovedMinute(
           currentForPersist.monitorState?.lastStructuredProgressAt,
@@ -2087,13 +2139,17 @@ export async function monitorRun(
             lastStructuredProgressAt: structuredProgressAt,
             operatorWaitMs: state.operatorWaitMs,
             // This loop's view of the gate credit is a snapshot, not the only
-            // one: a replayed monitor can be holding a card open right now. Its
-            // marker has to survive this write, and the credit only ever grows
-            // within a window, so the larger total is the live one. A window
-            // reset writes 0 before this runs, so nothing is resurrected.
+            // one: a replayed monitor sharing this window can be holding a card
+            // open right now, and within one window the credit only grows, so the
+            // larger total is the live one. The window itself is fenced above.
             gateWaitMs: Math.max(gateWait.ms, currentForPersist.monitorState?.gateWaitMs ?? 0),
             ...(currentForPersist.monitorState?.gateWaitStartedAt
-              ? { gateWaitStartedAt: currentForPersist.monitorState.gateWaitStartedAt }
+              ? {
+                  gateWaitStartedAt: currentForPersist.monitorState.gateWaitStartedAt,
+                  ...(currentForPersist.monitorState.gateWaitDecisionId
+                    ? { gateWaitDecisionId: currentForPersist.monitorState.gateWaitDecisionId }
+                    : {}),
+                }
               : {}),
             ...(state.operatorResumedAt
               ? { operatorResumedAt: new Date(state.operatorResumedAt).toISOString() }

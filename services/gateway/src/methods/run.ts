@@ -2749,7 +2749,11 @@ export async function resolveRunDecision(
     const extendMonitorWindow =
       params.actionId === INTERACTIVE_HANDOFF_EXTEND_ACTION &&
       (decision.type === 'monitor_timeout' || interactiveHandoffAllowsExtend(decision));
-    if (extendMonitorWindow) persistMonitorWindowStart(params.runId);
+    // Extending from the card also ends that card's wait, so its open-wait
+    // marker goes with it. Any other card's marker stays: a monitor may still be
+    // holding one, and it is what credits that wait after a restart.
+    if (extendMonitorWindow)
+      persistMonitorWindowStart(params.runId, undefined, { closedDecisionId: params.decisionId });
     recordDecisionResolution(params.runId, params.decisionId, params.actionId);
     if (
       isPublishApprovalAction(params.actionId) &&

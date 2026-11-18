@@ -526,7 +526,15 @@ test(
     // A newer wait's marker, as a replayed monitor would have written it.
     const replacementMarker = new Date(Date.now() + 1_000).toISOString();
     const held = getRun(f.run.id)!.monitorState!;
-    updateRun(f.run.id, { monitorState: { ...held, gateWaitStartedAt: replacementMarker } });
+    // A replacement's wait is its own card, so it carries its own decision id:
+    // that identity is what settlement matches on.
+    updateRun(f.run.id, {
+      monitorState: {
+        ...held,
+        gateWaitStartedAt: replacementMarker,
+        gateWaitDecisionId: 'replacement-card',
+      },
+    });
 
     f.restoreRunner();
     resolveMonitorDecision(unavailable, 'continue');
@@ -563,7 +571,15 @@ test(
 
     const replacementMarker = new Date(Date.now() + 1_000).toISOString();
     const held = getRun(f.run.id)!.monitorState!;
-    updateRun(f.run.id, { monitorState: { ...held, gateWaitStartedAt: replacementMarker } });
+    // A replacement's wait is its own card, so it carries its own decision id:
+    // that identity is what settlement matches on.
+    updateRun(f.run.id, {
+      monitorState: {
+        ...held,
+        gateWaitStartedAt: replacementMarker,
+        gateWaitDecisionId: 'replacement-card',
+      },
+    });
 
     f.restoreRunner();
     resolveMonitorDecision(unavailable, 'continue');
@@ -611,5 +627,92 @@ test('a new monitoring window keeps the marker of a card still open', async (t) 
     state?.gateWaitStartedAt,
     openedAt,
     'the card is still open; its marker is what credits the wait after a restart',
+  );
+});
+
+// Codex r4 on #2322, first major: carrying the persisted credit forward with
+// Math.max is only sound inside one window. An operator replays monitor while
+// the old loop is still unwinding after Continue; the replacement resets the
+// clock and loads zero credit, and the retiring loop's next poll wrote its old
+// total into that fresh window. A later restart then delayed the timeout by a
+// card the new window never showed.
+test(
+  'a retiring monitor does not credit its old card to a replacement’s window',
+  { timeout: 15_000 },
+  async (t) => {
+    const f = await fixture(t);
+    // Polls are counted on the observation side: once the window is taken over,
+    // the retiring loop stops writing monitorState, so its own writes cannot be
+    // used to tell that it is still running.
+    let polls = 0;
+    const execution = f.start({
+      violations: async () => {
+        polls += 1;
+        return [];
+      },
+    });
+    await until(() => f.card() !== undefined);
+    const unavailable = f.card()!.id;
+    await until(() => getRun(f.run.id)?.monitorState?.gateWaitStartedAt !== undefined, 1_000);
+    f.restoreRunner();
+    resolveMonitorDecision(unavailable, 'continue');
+    await until(() => (getRun(f.run.id)?.monitorState?.gateWaitMs ?? 0) > 0);
+
+    // A replacement monitor replays and resets the clock: new window, no credit.
+    const replacementWindow = new Date(Date.now() + 1_000).toISOString();
+    const settled = getRun(f.run.id)!.monitorState!;
+    updateRun(f.run.id, {
+      monitorState: { ...settled, startedAt: replacementWindow, gateWaitMs: 0 },
+    });
+    const observedBefore = polls;
+    await until(() => polls > observedBefore + 1);
+
+    assert.ok(
+      polls > observedBefore + 1,
+      `the retiring monitor must poll again for this case to say anything: ${polls} vs ${observedBefore}`,
+    );
+    assert.equal(
+      getRun(f.run.id)?.monitorState?.gateWaitMs,
+      0,
+      'a window that showed no card must not inherit the previous window’s gate credit',
+    );
+    void execution;
+  },
+);
+
+// Codex r4, second major: Extend resolves the card it is raised from, so that
+// card's wait is over. Keeping its marker — which the window reset now does for
+// cards that are still open — left a marker nothing would ever clear on a
+// re-presented handoff with no waiter, and the next restart credited every
+// minute since the extension.
+test('extending from a card clears that card’s marker and no other', async (t) => {
+  const f = await fixture(t);
+  const openedAt = new Date(Date.now() - 30_000).toISOString();
+  const seed = (decisionId: string) =>
+    updateRun(f.run.id, {
+      monitorState: {
+        nudgeCount: 0,
+        lastPollAt: openedAt,
+        startedAt: openedAt,
+        gateWaitMs: 4_000,
+        gateWaitStartedAt: openedAt,
+        gateWaitDecisionId: decisionId,
+      },
+    });
+
+  seed('card-extended');
+  persistMonitorWindowStart(f.run.id, Date.now(), { closedDecisionId: 'card-extended' });
+  assert.equal(
+    getRun(f.run.id)?.monitorState?.gateWaitStartedAt,
+    undefined,
+    'the extended card is answered, so its wait must not stay open',
+  );
+
+  seed('card-still-open');
+  persistMonitorWindowStart(f.run.id, Date.now(), { closedDecisionId: 'card-extended' });
+  assert.equal(
+    getRun(f.run.id)?.monitorState?.gateWaitStartedAt,
+    openedAt,
+    'another card is still open; its marker is what credits that wait after a restart',
   );
 });
