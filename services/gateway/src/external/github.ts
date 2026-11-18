@@ -37,7 +37,7 @@ export async function fetchGitHubIssue(issueRef: string): Promise<Partial<RunTic
 
   const issue = await github.rest<GitHubIssue>('GET', `repos/${repo}/issues/${number}`);
   const body = issue.body || '';
-  const ac = acceptanceCriteriaFromMarkdown(body, ['acceptance criteria', 'expected behavior']);
+  const ac = acceptanceCriteriaFromMarkdown(body);
   const area = extractSection(body, ['affected area', 'component']);
   const steps = extractSection(body, ['steps to reproduce', 'repro steps']);
 

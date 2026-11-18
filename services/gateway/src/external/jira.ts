@@ -97,11 +97,7 @@ export async function fetchJiraIssue(
   // they nest under TASK.md's `## Description` (and a linked ticket's `### KEY`).
   const ticketMarkdown = ticketBodyToMarkdown(issue.fields.description);
   const description = ticketBodyToMarkdown(issue.fields.description, { headingOffset: 3 });
-  const ac = acceptanceCriteriaFromMarkdown(ticketMarkdown, [
-    'acceptance criteria',
-    'expected behavior',
-    'expected result',
-  ]);
+  const ac = acceptanceCriteriaFromMarkdown(ticketMarkdown);
   const area = extractSection(ticketMarkdown, ['affected area', 'component', 'affected component']);
   const steps = extractSection(ticketMarkdown, [
     'steps to reproduce',
