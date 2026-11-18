@@ -6,6 +6,7 @@ import type { ArtifactRef } from '@farmslot/protocol';
 
 export const MARKER_TICKET = 'MANUAL-000180';
 const source = `const DevLogger = { log() {} };
+const Logger = { log() {} };
 export function sum(a, b) {
   return a - b;
 }

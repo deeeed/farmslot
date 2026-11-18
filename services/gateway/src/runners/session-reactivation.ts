@@ -51,7 +51,7 @@ import {
   isRunnerAliveUnderPane,
   probeRunnerDescendantPid,
   resolveRunnerSessionBinding,
-  resumableSessionProbeCommand,
+  resumableSessionContentProbeCommand,
 } from './session-process.js';
 
 type SlotVars = Awaited<ReturnType<typeof loadSlotVars>>;
@@ -432,14 +432,18 @@ async function reactivateRunnerSessionWithPrompt(
         reason: `Retained ${runner} session ${options.sessionId} is ${state?.value ?? 'unknown'}; refusing to replace a session without structured terminal proof`,
       };
     }
-    const probe = await execOnSlot(options.vars, resumableSessionProbeCommand(sessionPath), {
+    // Content, not just existence: a failed copy leaves a zero-byte transcript
+    // beside a valid idle receipt, and a runner that resumes by file opens a new
+    // conversation there — whose own prompt acknowledgement then looks like
+    // continuity. An empty transcript is not a session to hand back.
+    const probe = await execOnSlot(options.vars, resumableSessionContentProbeCommand(sessionPath), {
       timeout: 10_000,
     });
     if (probe.exitCode !== 0) {
       return {
         delivered: false,
         disposition: 'safe-send',
-        reason: `Retained ${runner} session path is unavailable: ${sessionPath}`,
+        reason: `Retained ${runner} session file is unavailable or empty: ${sessionPath}`,
       };
     }
 
@@ -466,6 +470,9 @@ async function reactivateRunnerSessionWithPrompt(
       options.model,
       options.sessionId,
       {
+        // This path was just verified on the slot above; it is also the form a
+        // runner like pi needs to resume at all.
+        sessionPath,
         effort: options.effort,
         safetyTier: options.safetyTier,
         modelQuestions: options.modelQuestions,

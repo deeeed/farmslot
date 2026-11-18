@@ -829,3 +829,101 @@ for (const [runner, flag] of [
     assert(result.reopenCommand.includes(sessionId));
   });
 }
+
+// Run bdcbd42f: the reopen command pi was handed `--session
+// '2026-11-18T03-34-24-255Z_01a1ecb8-…'`, the session FILE STEM. pi's
+// `--session` takes `<path|id>`, so it answered "No session found matching …"
+// and exited; tmux then tore the session down within seconds and the worker
+// looked unrecoverable. The saved .jsonl path is already on the binding, and
+// substituting it resumes first try. The older assertion only checked that the
+// id appeared somewhere in the command, which a stem satisfies.
+test('run.sessionCommand resumes a pi worker by its saved session path', async () => {
+  const stem = '2026-11-18T03-34-24-255Z_01a1ecb8-4efe-75e4-816f-b3d37c109b81';
+  const sessionPath = `/Users/deeeed/.pi/agent/sessions/--Users-deeeed-dev-metamask-core-4--/${stem}.jsonl`;
+  const run = codexWorkerRun({
+    metrics: { nudgeCount: 0, model: 'auto', runner: 'pi' },
+    agentContexts: [
+      agentContext({
+        runner: 'pi',
+        model: 'auto',
+        runnerSessionId: stem,
+        runnerSessionPath: sessionPath,
+      }),
+    ],
+  });
+  const result = await runSessionCommand({ runId: run.id }, deps(run));
+  assert.equal(result.supported, true);
+  if (!result.supported) return;
+  assert.match(result.reopenCommand, /--session /);
+  assert.ok(
+    result.reopenCommand.includes(sessionPath),
+    `pi must be resumed by its saved session file: ${result.reopenCommand.slice(-200)}`,
+  );
+  assert.equal(
+    new RegExp(`--session\\s+'?${stem}'?(\\s|$)`).test(result.reopenCommand),
+    false,
+    'a bare session stem is not a path or an id, so pi cannot resolve it',
+  );
+});
+
+// Codex r1 on #2347 asked for a refusal when a pi context kept an id but no
+// path: handed the id, pi opens a *new* conversation at that name and every
+// liveness check then calls it restored. The binding resolver already refuses
+// that shape before any command is built, so this pins the existing behaviour
+// rather than adding a second check behind it.
+test('run.sessionCommand refuses to reopen a pi session with no saved file', async () => {
+  const run = codexWorkerRun({
+    metrics: { nudgeCount: 0, model: 'auto', runner: 'pi' },
+    agentContexts: [
+      agentContext({
+        runner: 'pi',
+        model: 'auto',
+        runnerSessionId: '2026-11-18T03-34-24-255Z_01a1ecb8',
+        runnerSessionPath: undefined,
+      }),
+    ],
+  });
+  const result = await runSessionCommand({ runId: run.id }, deps(run));
+  assert.equal(result.supported, false);
+  if (result.supported) return;
+  assert.equal(result.reason, 'session-not-captured');
+  assert.match(
+    result.detail ?? '',
+    /incomplete retained session metadata/,
+    'the refusal must name the incomplete binding, not emit a command pi cannot use',
+  );
+});
+
+// Codex r2 on #2347: the reopen command is pasted by hand, possibly long after
+// it was built. Handed a path whose transcript has since been moved, pi opens a
+// *new* conversation there, the pane is live, and the operator believes the
+// session was restored. The command now proves the file is there when it runs.
+test('the pi reopen command checks its saved session file before resuming', async () => {
+  const sessionPath = '/Users/deeeed/.pi/agent/sessions/x/2026-11-18T03-34-24-255Z_01a1ecb8.jsonl';
+  const run = codexWorkerRun({
+    metrics: { nudgeCount: 0, model: 'auto', runner: 'pi' },
+    agentContexts: [
+      agentContext({
+        runner: 'pi',
+        model: 'auto',
+        runnerSessionId: '2026-11-18T03-34-24-255Z_01a1ecb8',
+        runnerSessionPath: sessionPath,
+      }),
+    ],
+  });
+  const result = await runSessionCommand({ runId: run.id }, deps(run));
+  assert.equal(result.supported, true);
+  if (!result.supported) return;
+  const guardAt = result.reopenCommand.indexOf('test -r');
+  const resumeAt = result.reopenCommand.indexOf('--session');
+  assert.ok(guardAt >= 0, `the command must check the transcript: ${result.reopenCommand}`);
+  assert.ok(
+    resumeAt > guardAt,
+    'the check has to come before the resume, or the new conversation is already open',
+  );
+  assert.match(
+    result.reopenCommand,
+    /missing, unreadable or empty/,
+    'and say why it refused, since an operator reads this output',
+  );
+});
