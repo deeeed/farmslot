@@ -19,6 +19,7 @@ import { lazyImport } from '../core/lazy-import.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { fetchGitHubPR } from '../external/github.js';
 import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
+import { applyInterdiffQualification } from '../review/interdiff.js';
 import {
   admitReviewRound,
   recordReviewRoundVerdict,
@@ -27,7 +28,6 @@ import {
 import { isUncertainReviewerOperation } from '../review/terminal-result.js';
 import {
   buildRepeatReviewContext,
-  confirmIncrementalAncestry,
   findLatestPriorReviewRun,
   startsFreshReviewChain,
 } from '../run-engine/engine-decisions.js';
@@ -311,19 +311,17 @@ async function freezeSubject(
     }),
   );
   const context = prior
-    ? await confirmIncrementalAncestry(
-        buildRepeatReviewContext(
-          run,
-          prior,
-          {
-            project: run.project,
-            repository: reference.repo,
-            prNumber: reference.number,
-            headSha: pr.headSha,
-            baseRef: pr.baseRef,
-          },
-          allRuns,
-        ),
+    ? buildRepeatReviewContext(
+        run,
+        prior,
+        {
+          project: run.project,
+          repository: reference.repo,
+          prNumber: reference.number,
+          headSha: pr.headSha,
+          baseRef: pr.baseRef,
+        },
+        allRuns,
       )
     : undefined;
   currentWorkspaceRun(runId, generation);
@@ -343,7 +341,9 @@ async function freezeSubject(
     configureWorkspaceContinuity(run, savedPrior, context, subject, allRuns);
     if (
       (context.mode === 'warm' ||
-        (context.session?.fallback && context.session.fallback.reason !== 'retention-expired')) &&
+        (context.session?.fallback &&
+          context.session.fallback.reason !== 'retention-expired' &&
+          context.session.fallback.reason !== 'session-unavailable')) &&
       context.priorReviewedHeadSha
     )
       subject.baseSha = context.priorReviewedHeadSha;
@@ -813,8 +813,17 @@ async function executeOwnedReviewWorkspaceStep(
       check();
       const task = await materializeReviewWorkspaceTask(runId, run.reviewWorkspaceSubject);
       check();
+      const qualifiedContext =
+        task.interdiff && run.repeatReviewContext
+          ? applyInterdiffQualification(run.repeatReviewContext, task.interdiff)
+          : undefined;
       await persistRunNow(
-        updateRun(runId, { taskFile: task.taskFile }),
+        updateRun(runId, {
+          taskFile: task.taskFile,
+          ...(qualifiedContext
+            ? { repeatReviewContext: qualifiedContext, reviewMode: qualifiedContext.mode }
+            : {}),
+        }),
         'workspace review task path',
       );
       return { outputs: { taskFile: task.taskFile, template: getRun(runId)?.executionTemplate } };

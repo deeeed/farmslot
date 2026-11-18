@@ -432,11 +432,15 @@ Every other verification and admission requirement stays in force.
 - its session record is missing, or the runner can't resume it on this slot under the same result contract;
 - the requested model or effort differs from the session's recorded model or effort;
 - another lineage holds it;
-- the current head no longer descends from the lineage's last reviewed head.
+- the lineage's recorded Git objects are missing, or the rebase interdiff exceeds the reliability bound below. Non-ancestry alone does not make the retained session unavailable.
 
 **An unavailable session never stops a re-review.** The re-review runs COLD in a fresh session, scoped to the lineage's delta, with the earlier findings in its prompt. Like a WARM re-review, it keeps correctness checks on that delta. That fresh session becomes the lineage's retained session. The same applies when a resume fails to start: the same attempt runs the delta-scoped COLD under its admitted receipt. The review records why it ran COLD and the ranges it compared, and the gate shows both with that review.
 
 The delta is the change since the lineage's last reviewed head. After a rebase, it compares the branch's own change at both heads (`git range-diff`): the reviewed head against its merge-base with the base branch, and the current head against its current merge-base. Changes that came only from the base branch are left out.
+
+**Clarification, 2026-11-18: WARM after a rebase.** A reliable rebase delta resumes the same reviewer conversation. Prepare one pinned interdiff receipt for the old merge-base/head and new merge-base/head, reusing `reviewDeltaSinceReviewedHead`. Prefer the retained old base; recover it from verified Git objects when necessary. The receipt binds the range-diff and includes a short moved-base note with upstream-touched files overlapping the PR. The reviewer checks the author's interdiff; upstream-only changes are outside that scope.
+
+A rebase causes delta-scoped COLD only for missing Git objects or an unreliable interdiff: more than three unmatched overlapping old/new commit pairs, or more than 25% of the prior series. Pure added/dropped commits and upstream file overlap alone do not trigger COLD. Record the exact reason, ranges and counts. Transport/tool failures do not silently authorize a different review scope. Existing lineage, owner, session compatibility, model/effort and admission-budget guards remain in force.
 
 **A person's request.** Operator and person WARM re-reviews use the same delta fallback as automatic re-reviews. An unavailable session never turns such a request into a full-diff review. A legacy completed reviewer may supply the retained baseline when its validated verdict, reviewed head, provider session, owner, family and artifact scope bind it to that lineage. Missing newer validation timestamps or an older runtime review alias alone do not invalidate that provenance. A failed attempt before inspection does not replace that earlier validated baseline. If the binding transferred to that attempt, its gateway-owned no-verdict settlement permits resuming the same provider session from the earlier baseline.
 

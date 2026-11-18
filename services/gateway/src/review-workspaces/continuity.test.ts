@@ -84,9 +84,9 @@ test('unavailable WARM refuses instead of changing mode', () => {
     () =>
       configureWorkspaceContinuity(current, prior, {
         ...context(),
-        warmUnavailableReason: 'Rebased head',
+        priorReviewedHeadSha: undefined,
       }),
-    /Rebased head/,
+    /missing prior reviewed head/,
   );
 });
 
@@ -325,4 +325,11 @@ test('a stopped transferred attempt without a verdict keeps WARM and its validat
       /held by its successor/,
     );
   }
+});
+
+test('a historical ancestry diagnosis defers to pinned scope qualification', () => {
+  const result = { ...context(), warmUnavailableReason: 'Rebased head' };
+  configureWorkspaceContinuity(current, prior, result);
+  assert.equal(result.mode, 'warm');
+  assert.equal(result.session?.continuity, 'resumed');
 });

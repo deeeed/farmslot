@@ -18,6 +18,7 @@ import {
   normalizeExhaustedReviewContinuation,
   pendingReviewContinuation,
   publicationGateDecisionActions,
+  reviewFinalSnapshotMatchesPreparedPackage,
   shouldForceNoChangeHumanGate,
   staleReviewsAreEvidenceOnly,
   supersedeStaleHumanGateDecisions,
@@ -823,5 +824,93 @@ test('a pending continuation is offered only while a review round is available',
   assert.equal(
     gateReviewContinuation(reviews, { roundAvailable: true, headSha }),
     blockedFixGateReview,
+  );
+});
+
+test('a resumed rebase review matches only its pinned current contribution and prior head', () => {
+  const old = 'a'.repeat(40),
+    base = 'b'.repeat(40),
+    head = 'c'.repeat(40),
+    hash = 'd'.repeat(64);
+  const review = makeApprovingReview({
+    id: 'rebase-review',
+    mode: 'warm',
+    reviewerSessionId: 'same-session',
+    session: {
+      mode: 'warm',
+      continuity: 'resumed',
+      reviewId: 'rebase-review',
+      sessionId: 'same-session',
+      lastReviewedHeadSha: old,
+    },
+    reviewSnapshot: {
+      source: 'local-git',
+      baseRef: 'main',
+      baseSha: base,
+      headSha: head,
+      diffHash: hash,
+      capturedAt: '2026-11-18T00:00:00Z',
+      interdiff: {
+        version: 1,
+        oldBaseSha: 'e'.repeat(40),
+        oldHeadSha: old,
+        newBaseSha: base,
+        newHeadSha: head,
+        rangeDiffHash: 'f'.repeat(64),
+        qualification: 'reliable',
+        priorCommitCount: 4,
+        unmatchedOverlappingPairs: 0,
+        upstreamOverlapFiles: [],
+        deltaPaths: ['src/author.ts'],
+      },
+    },
+  });
+  const prepared = {
+    headSha: head,
+    reviewSnapshot: {
+      source: 'local-git' as const,
+      baseRef: 'main',
+      baseSha: base,
+      headSha: head,
+      diffHash: hash,
+      capturedAt: '2026-11-18T00:00:00Z',
+    },
+  };
+  assert.equal(reviewFinalSnapshotMatchesPreparedPackage(review, prepared), true);
+  const snapshot = review.reviewSnapshot!;
+  const receipt = snapshot.interdiff!;
+  assert.equal(
+    reviewFinalSnapshotMatchesPreparedPackage(
+      {
+        ...review,
+        reviewSnapshot: { ...snapshot, interdiff: { ...receipt, oldHeadSha: '9'.repeat(40) } },
+      },
+      prepared,
+    ),
+    false,
+  );
+  assert.equal(
+    reviewFinalSnapshotMatchesPreparedPackage(
+      { ...review, reviewSnapshot: { ...snapshot, diffHash: undefined } },
+      { ...prepared, reviewSnapshot: { ...prepared.reviewSnapshot, diffHash: undefined } },
+    ),
+    false,
+  );
+  assert.equal(
+    reviewFinalSnapshotMatchesPreparedPackage(
+      {
+        ...review,
+        reviewSnapshot: { ...snapshot, interdiff: { ...receipt, unmatchedOverlappingPairs: 2 } },
+      },
+      prepared,
+    ),
+    false,
+  );
+  assert.equal(
+    reviewFinalSnapshotMatchesPreparedPackage(
+      { ...review, session: { ...review.session!, continuity: 'fresh' } },
+      prepared,
+    ),
+    false,
   );
 });

@@ -2,11 +2,13 @@ import { GIT_DIFF_COMMAND } from '@farmslot/agent-runtime/scripts/git-diff.cjs';
 import {
   agentRoleWindow,
   DEFAULT_BRANCH,
+  isRecord,
   isReviewerWindowName,
   type ReviewAttempt,
   reviewDiffHash,
   type ReviewDiffSnapshot,
   type ReviewFixDeltaSnapshot,
+  type ReviewInterdiffReceipt,
   type ReviewMode,
   reviewSnapshotIdentityText,
 } from '@farmslot/protocol';
@@ -37,6 +39,7 @@ import {
   listRunnerSessionFiles,
 } from '../runners/session-process.js';
 
+import { interdiffCommand, type InterdiffInput, parseInterdiffReceipt } from './interdiff.js';
 import type { ReviewAgentResult } from './review-agent.js';
 
 const REVIEW_WINDOW = agentRoleWindow('review') ?? 'review';
@@ -200,10 +203,13 @@ export interface ReviewSnapshotRange {
   /** Omit mode to override only the base, retaining source filters and untracked identity. */
   mode?: ReviewMode;
   lastReviewedHeadSha?: string;
+  priorBaseSha?: string;
   baseRef?: string;
   committedBaseSha?: string;
   committedHeadSha?: string;
   frozenContribution?: FrozenReviewContribution;
+  interdiff?: ReviewInterdiffReceipt;
+  interdiffText?: string;
 }
 
 interface ReviewSnapshotDependencies {
@@ -215,7 +221,7 @@ export async function captureCurrentReviewSnapshot(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   range?: ReviewSnapshotRange,
   deps: ReviewSnapshotDependencies = { resolveContext: resolveReviewContext, exec: execOnSlot },
-): Promise<{ snapshot: ReviewDiffSnapshot; diffText?: string }> {
+): Promise<{ snapshot: ReviewDiffSnapshot; diffText?: string; interdiffText?: string }> {
   if (range?.frozenContribution) return range.frozenContribution;
   try {
     const pinned = range?.committedBaseSha && range?.committedHeadSha;
@@ -257,20 +263,28 @@ export async function captureCurrentReviewSnapshot(
       { timeout: 10_000 },
     );
     const headSha = headResult.stdout.trim();
-    const baseSha =
+    let baseSha =
       range?.mode === 'warm'
         ? range.lastReviewedHeadSha
         : (baseResult.stdout.trim().split('\n').at(-1)?.trim() ?? '');
     if (!baseSha || !/^[0-9a-f]{7,40}$/i.test(baseSha) || !/^[0-9a-f]{7,40}$/i.test(headSha))
       throw new Error('Review range requires valid immutable commit SHAs');
+    let interdiff = range?.interdiff;
+    let interdiffText = range?.interdiffText;
     if (range?.mode === 'warm') {
-      const ancestor = await deps.exec(
-        vars,
-        `git merge-base --is-ancestor ${shellQuote(baseSha)} ${shellQuote(headSha)}`,
-        { timeout: 10_000 },
+      const delta = await reviewDeltaSinceReviewedHead(
+        (command) =>
+          deps.exec(vars, command, { timeout: 30000, maxBuffer: REVIEW_DIFF_MAX_BUFFER }),
+        {
+          lastReviewedHeadSha: baseSha,
+          priorBaseSha: range?.priorBaseSha,
+          headSha,
+          baseRef,
+        },
       );
-      if (ancestor.exitCode !== 0)
-        throw new Error('Last reviewed head is not an ancestor of the current PR head');
+      interdiff = delta.interdiff;
+      interdiffText = delta.rangeDiff;
+      if (interdiff) baseSha = interdiff.newBaseSha;
     }
     // Every snapshot covers the complete committed PR diff, so a package and the
     // COLD/WARM reviews of its HEAD fingerprint the same change.
@@ -332,6 +346,7 @@ export async function captureCurrentReviewSnapshot(
     return {
       snapshot: {
         source: 'local-git',
+        ...(interdiff ? { interdiff } : {}),
         baseRef,
         baseSha,
         headRef: branchResult.stdout.trim() || null,
@@ -345,6 +360,7 @@ export async function captureCurrentReviewSnapshot(
       // identity manifest participates in diffHash and lives structurally in
       // the snapshot, not as non-diff trailer text.
       diffText: diff.stdout,
+      ...(interdiffText !== undefined ? { interdiffText } : {}),
     };
   } catch (err) {
     return {
@@ -372,10 +388,20 @@ export async function captureReviewSnapshot(
     if (captured.diffText !== undefined) {
       await writeLargeTextFileOnSlot(vars, `${taskDir}/${diffRel}`, captured.diffText);
     }
+    if (captured.interdiffText !== undefined)
+      await writeLargeTextFileOnSlot(
+        vars,
+        `${taskDir}/${artifactDir}/review-range-diff.txt`,
+        captured.interdiffText,
+      );
     await writeTextFileOnSlot(vars, `${taskDir}/${statRel}`, JSON.stringify(snapshot, null, 2));
     return {
       snapshot,
-      artifactPaths: [...(captured.diffText !== undefined ? [diffRel] : []), statRel],
+      artifactPaths: [
+        ...(captured.diffText !== undefined ? [diffRel] : []),
+        statRel,
+        ...(captured.interdiffText !== undefined ? [`${artifactDir}/review-range-diff.txt`] : []),
+      ],
     };
   } catch (err) {
     const snapshot = unavailableReviewSnapshot('slot-exec-error', (err as Error).message);
@@ -397,6 +423,7 @@ export interface ReviewDelta {
   comparedRanges: string[];
   /** The `git range-diff` output, present only after a rebase. */
   rangeDiff?: string;
+  interdiff?: ReviewInterdiffReceipt;
 }
 
 /**
@@ -406,30 +433,42 @@ export interface ReviewDelta {
  */
 export async function reviewDeltaSinceReviewedHead(
   exec: (command: string) => Promise<ExecResult>,
-  params: { lastReviewedHeadSha: string; headSha: string; baseRef: string },
+  params: InterdiffInput,
 ): Promise<ReviewDelta> {
-  const { lastReviewedHeadSha: last, headSha: head, baseRef } = params;
+  const result = await exec(interdiffCommand(params));
+  if (result.exitCode !== 0) throw new Error(result.stderr || 'Review interdiff inspection failed');
+  const data: unknown = JSON.parse(result.stdout);
   if (
-    (await exec(`git merge-base --is-ancestor ${shellQuote(last)} ${shellQuote(head)}`))
-      .exitCode === 0
+    !isRecord(data) ||
+    !Array.isArray(data.comparedRanges) ||
+    !data.comparedRanges.every((v) => typeof v === 'string')
   )
-    return { comparedRanges: [`${last}..${head}`] };
-  const mergeBase = async (sha: string) => {
-    const result = await exec(`git merge-base ${shellQuote(baseRef)} ${shellQuote(sha)}`);
-    const base = result.stdout.trim();
-    if (result.exitCode !== 0 || !/^[0-9a-f]{7,40}$/i.test(base))
-      throw new Error(
-        `${sha} has no merge-base with ${baseRef}: ${result.stderr || result.stdout}`,
-      );
-    return base;
+    throw new Error('Invalid review interdiff inspection result');
+  const interdiff = data.interdiff ? parseInterdiffReceipt(data.interdiff) : undefined;
+  if (interdiff) {
+    if (
+      !interdiff.oldHeadSha.startsWith(params.lastReviewedHeadSha) ||
+      !interdiff.newHeadSha.startsWith(params.headSha)
+    )
+      throw new Error('Pinned interdiff does not match the requested immutable heads');
+    const ranges = [
+      ...(interdiff.oldBaseSha ? [`${interdiff.oldBaseSha}..${interdiff.oldHeadSha}`] : []),
+      `${interdiff.newBaseSha}..${interdiff.newHeadSha}`,
+    ];
+    if (JSON.stringify(data.comparedRanges) !== JSON.stringify(ranges))
+      throw new Error('Interdiff ranges do not match its receipt');
+    if (
+      interdiff.qualification !== 'missing-objects' &&
+      (typeof data.rangeDiff !== 'string' ||
+        reviewDiffHash(data.rangeDiff) !== interdiff.rangeDiffHash)
+    )
+      throw new Error('Interdiff bytes do not match its pinned digest');
+  }
+  return {
+    comparedRanges: data.comparedRanges,
+    ...(typeof data.rangeDiff === 'string' ? { rangeDiff: data.rangeDiff } : {}),
+    ...(interdiff ? { interdiff } : {}),
   };
-  const comparedRanges = [`${await mergeBase(last)}..${last}`, `${await mergeBase(head)}..${head}`];
-  const rangeDiff = await exec(
-    `git range-diff --no-color ${comparedRanges.map(shellQuote).join(' ')}`,
-  );
-  if (rangeDiff.exitCode !== 0)
-    throw new Error(`git range-diff failed: ${rangeDiff.stderr || rangeDiff.stdout}`);
-  return { comparedRanges, rangeDiff: rangeDiff.stdout };
 }
 
 /**
@@ -442,7 +481,7 @@ export async function captureReviewDeltaSnapshot(
   taskDir: string,
   loopNumber: number,
   artifactScope: string | null | undefined,
-  range: { lastReviewedHeadSha: string; baseRef?: string },
+  range: { lastReviewedHeadSha: string; baseRef?: string; priorBaseSha?: string },
 ): Promise<{
   snapshot: ReviewDiffSnapshot;
   artifactPaths: string[];
@@ -457,26 +496,21 @@ export async function captureReviewDeltaSnapshot(
   if (head.exitCode !== 0 || !/^[0-9a-f]{7,40}$/i.test(headSha))
     throw new Error(`Review head is unavailable: ${head.stderr || head.stdout}`);
   const { baseRef } = await resolveReviewContext(vars, range.baseRef);
-  let delta: ReviewDelta;
-  let deltaUnavailable: string | undefined;
-  try {
-    delta = await reviewDeltaSinceReviewedHead(exec, {
-      lastReviewedHeadSha: range.lastReviewedHeadSha,
-      headSha,
-      baseRef,
-    });
-  } catch (error) {
-    // The reviewed head left the repository: the fallback still runs, on the whole change.
-    deltaUnavailable = (error as Error).message;
-    const base = await exec(`git merge-base ${shellQuote(baseRef)} ${shellQuote(headSha)}`);
-    if (base.exitCode !== 0) throw error;
-    delta = { comparedRanges: [`${base.stdout.trim()}..${headSha}`] };
-  }
+  const delta = await reviewDeltaSinceReviewedHead(exec, {
+    lastReviewedHeadSha: range.lastReviewedHeadSha,
+    priorBaseSha: range.priorBaseSha,
+    headSha,
+    baseRef,
+  });
+  const deltaUnavailable =
+    delta.interdiff?.qualification === 'missing-objects' ? delta.interdiff.reason : undefined;
   const current = delta.comparedRanges.at(-1)!;
   const captured = await captureReviewSnapshot(vars, taskDir, loopNumber, artifactScope, {
     baseRef: range.baseRef,
     committedBaseSha: current.slice(0, current.indexOf('..')),
     committedHeadSha: headSha,
+    interdiff: delta.interdiff,
+    interdiffText: delta.rangeDiff,
   });
   if (delta.rangeDiff === undefined)
     return {
@@ -485,10 +519,9 @@ export async function captureReviewDeltaSnapshot(
       ...(deltaUnavailable ? { deltaUnavailable } : {}),
     };
   const rangeDiffPath = `${reviewArtifactDir(loopNumber, artifactScope)}/review-range-diff.txt`;
-  await writeLargeTextFileOnSlot(vars, `${taskDir}/${rangeDiffPath}`, delta.rangeDiff);
   return {
     ...captured,
-    artifactPaths: [...captured.artifactPaths, rangeDiffPath],
+    artifactPaths: captured.artifactPaths,
     comparedRanges: delta.comparedRanges,
     rangeDiffPath,
   };

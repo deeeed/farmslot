@@ -181,7 +181,7 @@ export function configureWorkspaceContinuity(
     .reviewWorkspace?.cleanedAt
     ? 'session-unavailable'
     : undefined;
-  if (!runnerSupportsSessionContinuation(run.metrics.runner, 'tmux'))
+  if (!fallbackReason && !runnerSupportsSessionContinuation(run.metrics.runner, 'tmux'))
     fallbackReason = 'session-resume-unsupported';
   if (fallbackReason) {
     const currentHead = context.currentHeadSha ?? subject?.headSha;
@@ -224,7 +224,10 @@ export function configureWorkspaceContinuity(
   };
 }
 
-/** Bind only structured reviewer identity to the immutable subject that produced this result. */
+/**
+ * Bind a standalone report to its source and conversation. These results do not
+ * certify publication-package bytes; the last head anchors the next PR review.
+ */
 export function bindWorkspaceReviewResult(run: Run, result: RunReviewResult): RunReviewResult {
   const reviewer = run.agentContexts?.find((context) => context.id === 'review');
   const subject = run.reviewWorkspaceSubject;

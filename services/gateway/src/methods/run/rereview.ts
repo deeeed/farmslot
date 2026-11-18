@@ -28,7 +28,6 @@ import { bindWorkspaceReviewResult } from '../../review-workspaces/continuity.js
 import {
   automatedRepeatReviewSelection,
   buildRepeatReviewContext,
-  confirmIncrementalAncestry,
 } from '../../run-engine/engine-decisions.js';
 import { applyChainedRunEngineFlags, startRun } from '../../run-engine/orchestrator.js';
 import {
@@ -117,18 +116,16 @@ async function rereviewWithSources(
   const context =
     slot && runner && model
       ? automatedRepeatReviewSelection(
-          await confirmIncrementalAncestry(
-            buildRepeatReviewContext(
-              { ...run, reviewContext },
-              run,
-              {
-                project: run.project,
-                repository: target.repo.toLowerCase(),
-                prNumber: target.number,
-                headSha: live.headSha,
-              },
-              getAllRuns(),
-            ),
+          buildRepeatReviewContext(
+            { ...run, reviewContext },
+            run,
+            {
+              project: run.project,
+              repository: target.repo.toLowerCase(),
+              prNumber: target.number,
+              headSha: live.headSha,
+            },
+            getAllRuns(),
           ),
           {
             ...DEFAULT_PR_REVIEW_OPTIONS,
