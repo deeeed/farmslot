@@ -61,6 +61,7 @@ Every review, at every level:
 - `areas` is `{ "always": true }` for families every diff needs (blocking checks, cross-client parity), or path globs per client.
 - `status` is `active`, `proposed`, `stale` or `retired`. A retired family is out of every selection.
 - `class` is `blocking` or `advisory`.
+- `clients`, optional, names the clients whose review carries a family that lives in one client's overlay. A family without it is in every client's review.
 - `why` is the run, PR, incident or decision behind a rule. A rule with no recorded cause carries `pre-0073` until it is next edited.
 
 A project declares its pack on the review skill in `project.json` `required_skills`:
@@ -77,10 +78,10 @@ Task init freezes the pack's digest with the skill into `inputs/handoff.json` `r
 
 ## Selection
 
-`parseReviewRuleSelection(value, pack, { sha256, client })` validates what a selector returns for one diff: the pack id and digest, the selector's `kind` (`deterministic` or `model`), id and version, the client, and **every** family the pack has not retired, each `selected` or not with a one-line reason. It is refused when:
+`parseReviewRuleSelection(value, pack, { sha256, client })` validates what a selector returns for one diff: the pack id and digest, the selector's `kind` (`deterministic` or `model`), id and version, the client, and **every** family the client's review carries (not retired, and not held by another client's overlay), each `selected` or not with a one-line reason. It is refused when:
 
 - its digest or client differs from the frozen pack digest and the declared client;
-- it omits a family, or names an unknown or retired one;
+- it omits a family, or names an unknown or retired one or one another client's review carries;
 - a reason is missing, spans lines or contains square brackets;
 - it leaves out an `always` family.
 
@@ -88,7 +89,7 @@ A reviewer may check more families than were selected, never fewer.
 
 A family that is not selected stays in the checklist. `markUnselectedFamilies` appends `[OPTIONAL: not selected: <reason>]` to its step, the template-declared optional step of ADR-064 Amendment 7, so the worker records it with the existing `./mark N --skip "<reason>"`. A selected family cannot be skipped.
 
-Steps come from the shared checklist parser; a step is its row plus its detail lines. Each step links at most one family, and each family is linked by at most one step, so a skip never covers another family. A selected family with no step is refused. An unselected family the checklist does not carry, because another client's overlay holds it, gets an optional step after the last family step, so every skipped family stays visible with its reason. A numbered checklist is renumbered by position.
+Steps come from the shared checklist parser; a step is its row plus its detail lines. Each step links at most one family, and each family is linked by at most one step, so a skip never covers another family. Every family in the selection must have its step, selected or not; a checklist that lacks one is refused, because the checklist and its pack disagree. Marking only annotates rows. It never adds, moves or renumbers a step, so step numbers and the template's instructions stay as written.
 
 A selector is enabled for a pack only after shadow runs beside the full checklist show it selects every family behind a confirmed blocking finding on the project's replay set, and at least 95% of the families behind all confirmed findings. A model selector is chosen from the review-dispatch catalog, may only add families to the deterministic selection, and is measured on the same replay set.
 

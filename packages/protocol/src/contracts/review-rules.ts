@@ -44,6 +44,11 @@ export interface ReviewRuleFamily {
   class: ReviewRuleClass;
   /** The doc section the family checks against, as the family's `Docs:` line names it. */
   doc?: string;
+  /**
+   * The clients whose review carries this family, for a family in one
+   * client's overlay. Absent: every client's review carries it.
+   */
+  clients?: string[];
   rules: ReviewRule[];
 }
 
@@ -187,7 +192,19 @@ export function parseReviewRulePack(value: unknown, field = 'pack'): ReviewRuleP
   const families = pack.families.map((raw, index): ReviewRuleFamily => {
     const at = `${field}.families[${index}]`;
     const family = record(raw, at);
-    onlyKeys(family, ['id', 'title', 'file', 'areas', 'status', 'class', 'doc', 'rules'], at);
+    onlyKeys(
+      family,
+      ['id', 'title', 'file', 'areas', 'status', 'class', 'doc', 'clients', 'rules'],
+      at,
+    );
+    const clients = family.clients;
+    if (
+      clients !== undefined &&
+      (!Array.isArray(clients) ||
+        clients.length === 0 ||
+        clients.some((client) => typeof client !== 'string' || !SKILL_NAME.test(client)))
+    )
+      throw new Error(`${at}.clients must be a non-empty array of client names`);
     if (typeof family.id !== 'string' || !ANCHOR.test(family.id))
       throw new Error(`${at}.id must be a lowercase anchor`);
     if (ids.has(family.id)) throw new Error(`${field} has duplicate family id "${family.id}"`);
@@ -208,6 +225,7 @@ export function parseReviewRulePack(value: unknown, field = 'pack'): ReviewRuleP
       status: oneOf(family.status, REVIEW_RULE_STATUSES, `${at}.status`),
       class: oneOf(family.class, REVIEW_RULE_CLASSES, `${at}.class`),
       ...(family.doc !== undefined ? { doc: text(family.doc, `${at}.doc`) } : {}),
+      ...(clients !== undefined ? { clients: clients as string[] } : {}),
       rules,
     };
   });
@@ -222,10 +240,16 @@ export interface ReviewRuleSelectionBinding {
   client: string;
 }
 
+/** A family is in a client's review unless it is retired or another client's overlay holds it. */
+export function isReviewRuleFamilyInScope(family: ReviewRuleFamily, client: string): boolean {
+  return family.status !== 'retired' && (!family.clients || family.clients.includes(client));
+}
+
 /**
  * Validates a selection against its pack and the frozen review inputs: it was
- * computed for this pack digest and client, every family that is not retired is
- * named exactly once with a one-line reason, and `always` families are selected.
+ * computed for this pack digest and client, every family in that client's
+ * review is named exactly once with a one-line reason, and `always` families
+ * are selected.
  */
 export function parseReviewRuleSelection(
   value: unknown,
@@ -270,6 +294,10 @@ export function parseReviewRuleSelection(
       throw new Error(`${field} names family "${entry.id}", which the pack does not have`);
     if (family.status === 'retired')
       throw new Error(`${field} names family "${entry.id}", which the pack retired`);
+    if (!isReviewRuleFamilyInScope(family, binding.client))
+      throw new Error(
+        `${field} names family "${entry.id}", which the ${binding.client} review does not carry`,
+      );
     if (seen.has(entry.id)) throw new Error(`${field} names family "${entry.id}" twice`);
     seen.add(entry.id);
     if (typeof entry.selected !== 'boolean') throw new Error(`${at}.selected must be a boolean`);
@@ -285,7 +313,7 @@ export function parseReviewRuleSelection(
     return { id: entry.id, selected: entry.selected, reason: entry.reason.trim() };
   });
   for (const family of pack.families)
-    if (family.status !== 'retired' && !seen.has(family.id))
+    if (isReviewRuleFamilyInScope(family, binding.client) && !seen.has(family.id))
       throw new Error(`${field} omits family "${family.id}"`);
   return {
     schemaVersion: 1,

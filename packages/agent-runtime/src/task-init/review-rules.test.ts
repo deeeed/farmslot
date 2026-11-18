@@ -287,34 +287,85 @@ test('a skip can never cover another family: one family per step, one step per f
   );
 });
 
-test('a selected family must have its step; a skipped one the checklist lacks gets a visible step', () => {
-  const withoutPro = CHECKLIST.replace('#pro-mode-ui-gating', '#elsewhere');
-  // On a core review the mobile-only family lives in the mobile overlay. It is
-  // not dropped: it gets an optional step carrying the reason, and later steps
-  // are renumbered so mark targets stay positional.
+test('every family the client review carries must have its step; another client overlay is out of scope', () => {
+  // A stale overlay that lost a current-client family is refused, selected or not.
+  for (const selected of [true, false])
+    assert.throws(
+      () =>
+        markUnselectedFamilies(
+          CHECKLIST.replace('#pro-mode-ui-gating', '#elsewhere'),
+          pack,
+          REVIEW,
+          selectionFor([
+            { id: 'blocking-review-checks', selected: true, reason: 'always' },
+            { id: 'pro-mode-ui-gating', selected, reason: REASON },
+          ]),
+        ),
+      /no step linking references\/shared\.md#pro-mode-ui-gating, which the mobile review carries/,
+    );
+  // On a core review, a family only the mobile overlay carries is not part of
+  // the review at all: the core checklist has no row for it and needs none.
+  const mobileOnly = parseReviewRulePack({
+    ...PACK,
+    families: [PACK.families[0], { ...PACK.families[1], clients: ['mobile'] }],
+  });
+  const coreChecklist = CHECKLIST.replace(
+    /- \[ \] 3\. Pro Mode UI Gating\n.*\n- \[ \] 4\./,
+    '- [ ] 3.',
+  );
   const core = { ...REVIEW, client: 'core' } as const;
   const coreSelection = selectionFor(
-    [
-      { id: 'blocking-review-checks', selected: true, reason: 'always' },
-      { id: 'pro-mode-ui-gating', selected: false, reason: 'no core areas' },
-    ],
+    [{ id: 'blocking-review-checks', selected: true, reason: 'always' }],
     { client: 'core' },
   );
-  const marked = markUnselectedFamilies(withoutPro, pack, core, coreSelection);
-  assert.match(
-    marked,
-    /^- \[ \] 2\. Blocking review checks\n {2}Every confirmed violation is blocking\. See references\/shared\.md#blocking-review-checks\n- \[ \] 3\. Pro Mode UI Gating \[OPTIONAL: not selected: no core areas\]\n {2}Not in the core checklist\. See references\/shared\.md#pro-mode-ui-gating\n- \[ \] 4\. Pro Mode UI Gating\n/m,
+  assert.equal(
+    markUnselectedFamilies(coreChecklist, mobileOnly, core, coreSelection),
+    coreChecklist,
   );
-  assert.match(marked, /^- \[ \] 5\. Write the verdict$/m);
   assert.throws(
     () =>
       markUnselectedFamilies(
-        CHECKLIST.replace('#blocking-review-checks', '#elsewhere'),
-        pack,
+        coreChecklist,
+        mobileOnly,
         core,
-        coreSelection,
+        selectionFor(
+          [
+            { id: 'blocking-review-checks', selected: true, reason: 'always' },
+            { id: 'pro-mode-ui-gating', selected: false, reason: 'no core areas' },
+          ],
+          { client: 'core' },
+        ),
       ),
-    /no step linking references\/shared\.md#blocking-review-checks, which this core review selected/,
+    /names family "pro-mode-ui-gating", which the core review does not carry/,
+  );
+});
+
+test('marking only annotates rows: fenced and multi-paragraph details and bold labels stay intact', () => {
+  const rich = [
+    '# Review',
+    '',
+    '- [ ] **1. Blocking review checks**',
+    '  See references/shared.md#blocking-review-checks',
+    '',
+    '  ```text',
+    '  VERDICT: <verdict>',
+    '',
+    '  COMMIT: <sha>',
+    '  ```',
+    '- [ ] **2. Pro Mode UI Gating**',
+    '  Both gates. See references/shared.md#pro-mode-ui-gating',
+    '',
+    '  Record every rule outcome.',
+    '- [ ] **3. Write the verdict**',
+    '',
+  ].join('\n');
+  const marked = markUnselectedFamilies(rich, pack, REVIEW, SELECTION);
+  assert.equal(
+    marked,
+    rich.replace(
+      '- [ ] **2. Pro Mode UI Gating**',
+      `- [ ] **2. Pro Mode UI Gating** [OPTIONAL: not selected: ${REASON}]`,
+    ),
   );
 });
 
@@ -361,21 +412,4 @@ test('the existing mark --skip records the selector reason beside the skipped fa
     ),
     [{ stepNumber: 3, reason: `selector: ${REASON}` }],
   );
-  // The core case: the step added for the mobile overlay's family is skipped the same way.
-  const core = { ...REVIEW, client: 'core' } as const;
-  const checklist = markUnselectedFamilies(
-    CHECKLIST.replace('#pro-mode-ui-gating', '#elsewhere'),
-    pack,
-    core,
-    selectionFor(
-      [
-        { id: 'blocking-review-checks', selected: true, reason: 'always' },
-        { id: 'pro-mode-ui-gating', selected: false, reason: 'no core areas' },
-      ],
-      { client: 'core' },
-    ),
-  );
-  assert.deepEqual(markRun(checklist, 3, 'selector: no core areas', 5), [
-    { stepNumber: 3, reason: 'selector: no core areas' },
-  ]);
 });

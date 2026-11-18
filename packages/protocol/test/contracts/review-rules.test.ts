@@ -81,6 +81,10 @@ test('an invalid pack is refused with the offending field', () => {
     [withFamily({ class: 'nit' }), /families\[1\]\.class must be one of/],
     [withFamily({ rules: [{ label: 'No cause' }] }), /rules\[0\]\.why must be a non-empty/],
     [withFamily({ owner: 'perps' }), /families\[1\] has unsupported properties: owner/],
+    [
+      withFamily({ clients: [] }),
+      /families\[1\]\.clients must be a non-empty array of client names/,
+    ],
   ];
   for (const [input, message] of cases) assert.throws(() => parseReviewRulePack(input), message);
 
@@ -142,6 +146,27 @@ test('a selection computed for another pack revision or client is refused', () =
   assert.throws(
     () => parseReviewRuleSelection({ ...selectionInput(families), client: 'mobile' }, pack, FROZEN),
     /selection was computed for client mobile, not the declared core/,
+  );
+});
+
+test('a selection covers exactly the families its client review carries', () => {
+  const scoped = parseReviewRulePack(withFamily({ clients: ['mobile'] }));
+  const always = { id: 'blocking-review-checks', selected: true, reason: 'always' };
+  assert.equal(
+    parseReviewRuleSelection(selectionInput([always]), scoped, FROZEN).families.length,
+    1,
+  );
+  assert.throws(
+    () =>
+      parseReviewRuleSelection(
+        selectionInput([
+          always,
+          { id: 'missing-numeric-data-stays-undefined', selected: false, reason: 'not core' },
+        ]),
+        scoped,
+        FROZEN,
+      ),
+    /names family "missing-numeric-data-stays-undefined", which the core review does not carry/,
   );
 });
 

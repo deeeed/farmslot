@@ -46,15 +46,15 @@ function linksFamily(text: string, family: ReviewRuleFamily): boolean {
 /**
  * Mark each family the selection leaves out as an optional step carrying the
  * selector's reason. The selection must have been computed for the frozen pack
- * digest and declared client.
+ * digest and declared client, and covers exactly the families that client's
+ * review carries.
  *
  * Steps come from the shared checklist parser, and a step is its row plus its
- * detail lines. Each step links at most one family, and each family is linked
- * by at most one step, so a skip can never cover another family. A selected
- * family must have its step. An unselected family the checklist does not carry
- * (another client's overlay holds it) gets an optional step after the last
- * family step, so every skipped family stays visible with its reason. Numbered
- * checklists are renumbered by position.
+ * detail lines. Each step links at most one family, each family is linked by
+ * at most one step, and every family in the selection must have its step: the
+ * checklist and its pack disagree otherwise. Rows are only annotated, never
+ * added or renumbered, so step numbers and the template's instructions stay
+ * exactly as written.
  */
 export function markUnselectedFamilies(
   checklist: string,
@@ -66,10 +66,8 @@ export function markUnselectedFamilies(
     sha256: review.pack.sha256,
     client: review.client,
   });
-  const items = enumerateChecklistCheckboxes(checklist);
   const steps = new Map<string, { stepNumber: number; lineIndex: number }>();
-  let lastFamilyLine = -1;
-  for (const item of items) {
+  for (const item of enumerateChecklistCheckboxes(checklist)) {
     const text = `${item.rawLabel}\n${item.detail ?? ''}`;
     const linked = pack.families.filter((family) => linksFamily(text, family));
     if (linked.length > 1)
@@ -84,50 +82,20 @@ export function markUnselectedFamilies(
         `Family ${family.id} is linked by checklist steps ${owner.stepNumber} and ${item.stepNumber}; one step covers a family.`,
       );
     steps.set(family.id, { stepNumber: item.stepNumber, lineIndex: item.lineIndex });
-    lastFamilyLine = item.lineIndex;
   }
 
   const lines = checklist.split('\n');
   const families = new Map(pack.families.map((family) => [family.id, family]));
-  const added: string[] = [];
   for (const entry of selection.families) {
     const family = families.get(entry.id)!;
     const step = steps.get(entry.id);
-    const optional = `[OPTIONAL: not selected: ${entry.reason}]`;
-    if (step) {
-      if (!entry.selected)
-        lines[step.lineIndex] = `${lines[step.lineIndex]!.trimEnd()} ${optional}`;
-      continue;
-    }
-    if (entry.selected)
+    if (!step)
       throw new Error(
-        `The checklist has no step linking ${family.file}#${family.id}, which this ${selection.client} review selected.`,
+        `The checklist has no step linking ${family.file}#${family.id}, which the ${selection.client} review carries.`,
       );
-    added.push(
-      `- [ ] ${family.title} ${optional}`,
-      `  Not in the ${selection.client} checklist. See ${family.file}#${family.id}`,
-    );
-  }
-  if (added.length) {
-    if (lastFamilyLine === -1)
-      throw new Error('The checklist links no family, so skipped families have no place to go.');
-    let at = lastFamilyLine + 1;
-    while (at < lines.length && /^\s+\S/.test(lines[at]!)) at += 1;
-    lines.splice(at, 0, ...added);
-  }
-  const marked = lines.join('\n');
-  return added.length && items.some((item) => /^\d+\.\s/.test(item.rawLabel))
-    ? renumber(marked)
-    : marked;
-}
-
-/** Give every checklist row its position number, after rows were inserted. */
-function renumber(checklist: string): string {
-  const lines = checklist.split('\n');
-  for (const item of enumerateChecklistCheckboxes(checklist)) {
-    const line = lines[item.lineIndex]!;
-    const box = line.match(/^(\s*- \[[ xX]\]\s*)(?:\d+\.\s+)?/)!;
-    lines[item.lineIndex] = `${box[1]}${item.stepNumber}. ${line.slice(box[0].length)}`;
+    if (!entry.selected)
+      lines[step.lineIndex] =
+        `${lines[step.lineIndex]!.trimEnd()} [OPTIONAL: not selected: ${entry.reason}]`;
   }
   return lines.join('\n');
 }
