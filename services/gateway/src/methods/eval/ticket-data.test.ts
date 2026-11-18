@@ -46,3 +46,10 @@ test('frozen proof criteria take precedence and are copied', () => {
   assert.equal(criteria.length, 2);
   assert.deepEqual(buildBlindTicketData('AC1: Do not infer this.', []).acceptanceCriteria, []);
 });
+
+test('blind ticket retains an authored British expected-outcome section', () => {
+  const ticket = buildBlindTicketData(
+    'Fix the dialog.\n\n## Expected behaviour\nThe dialog remains dismissible.\n\n## Actual behaviour\nThe dialog blocks the form.',
+  );
+  assert.deepEqual(ticket.acceptanceCriteria, ['The dialog remains dismissible.']);
+});

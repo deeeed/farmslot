@@ -410,27 +410,40 @@ function normalizeTitle(title: string): string {
     .toLowerCase();
 }
 
+interface MarkdownSection {
+  body: string;
+  start: number;
+  end: number;
+}
+
 /**
- * The body of the first section whose heading is one of `names` (case-, emoji-
+ * The first body for each section name in `names` (case-, emoji-
  * and punctuation-insensitive; a trailing parenthetical is ignored), up to the
  * next heading of the same or a higher level. Also accepts a plain
  * `Acceptance criteria:` line when the ticket has no headings. Lines inside
  * fenced code never start or end a section.
  */
-function matchingSection(markdown: string, names: string[]): string | undefined {
+function matchingSections(markdown: string, names: string[]): Map<string, MarkdownSection> {
   const lines = markdown.split('\n');
   const fenced = fencedLines(lines);
   const wanted = names.map((name) => name.toLowerCase());
   const headings = lines
     .map((line, index) => (fenced[index] ? null : headingAt(line, index)))
     .filter((heading): heading is Heading => heading !== null);
+  const sections = new Map<string, MarkdownSection>();
   for (const name of wanted) {
     const start = headings.find((heading) => normalizeTitle(heading.title) === name);
     if (start) {
       const end = headings.find(
         (heading) => heading.index > start.index && heading.level <= start.level,
       );
-      return trimBlankLines(lines.slice(start.index + 1, end ? end.index : lines.length));
+      const endIndex = end?.index ?? lines.length;
+      sections.set(name, {
+        body: trimBlankLines(lines.slice(start.index + 1, endIndex)),
+        start: start.index,
+        end: endIndex,
+      });
+      continue;
     }
     // No heading: a line that is just the label, e.g. "Acceptance criteria:".
     const label = lines.findIndex(
@@ -445,15 +458,20 @@ function matchingSection(markdown: string, names: string[]): string | undefined 
         (line, index) =>
           index > label && !fenced[index] && (headingAt(line, index) !== null || isLabel(line)),
       );
-      return trimBlankLines(lines.slice(label + 1, next >= 0 ? next : lines.length));
+      const endIndex = next >= 0 ? next : lines.length;
+      sections.set(name, {
+        body: trimBlankLines(lines.slice(label + 1, endIndex)),
+        start: label,
+        end: endIndex,
+      });
     }
   }
-  return undefined;
+  return sections;
 }
 
 /** The existing string-only API preserves absent-section behavior for callers. */
 export function extractSection(markdown: string, names: string[]): string {
-  return matchingSection(markdown, names) ?? '';
+  return matchingSections(markdown, names).values().next().value?.body ?? '';
 }
 
 // Drop blank lines at both ends but keep indentation: an indented list stays indented.
@@ -525,13 +543,35 @@ export function sectionItems(section: string): string[] {
   return items.map((item) => item.join('\n')).filter(Boolean);
 }
 
-/** Explicit sections win; otherwise accept authored AC-number paragraphs. */
+const AUTHORED_CRITERIA_SECTIONS = ['acceptance criteria', 'added acceptance criteria'];
+const CRITERIA_SECTIONS = [
+  ...AUTHORED_CRITERIA_SECTIONS,
+  'expected behavior',
+  'expected behaviour',
+  'expected result',
+  'expected',
+];
+
+/** Authored sections win over expected outcomes and AC-number paragraphs. */
 export function acceptanceCriteriaFromMarkdown(
   markdown: string,
-  names = ['acceptance criteria', 'expected behavior', 'expected result'],
+  names = CRITERIA_SECTIONS,
 ): string[] {
-  const section = matchingSection(markdown, names);
-  if (section !== undefined) return sectionItems(section);
+  const sections = matchingSections(markdown, names);
+  const authored = [...sections]
+    .filter(([name]) => AUTHORED_CRITERIA_SECTIONS.includes(name))
+    .map(([, section]) => section);
+  if (authored.length) {
+    // A nested added section is already part of its parent's body.
+    return authored
+      .filter(
+        (section) =>
+          !authored.some((other) => other.start < section.start && section.end <= other.end),
+      )
+      .flatMap((section) => sectionItems(section.body));
+  }
+  const section = sections.values().next().value;
+  if (section !== undefined) return sectionItems(section.body);
 
   const lines = markdown.split(/\r?\n/);
   const fenced = fencedLines(lines);
