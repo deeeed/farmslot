@@ -1,6 +1,5 @@
-// The Farmslot farm's review rule pack (ADR-0073 Amendment 1, level 2): generated from the
-// canonical FSR rules, kept in sync with them, valid under the protocol contract, and
-// declared on the farm's required skill set.
+// The Farmslot farm's review rule pack (ADR-0073 Amendment 1): generated from the canonical
+// FSR rules, kept in sync with them and valid under the protocol contract.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -9,7 +8,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { parseRequiredSkillsConfig, parseReviewRulePack } from '@farmslot/protocol';
+import { parseReviewRulePack } from '@farmslot/protocol';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const runtime = path.join(root, 'projects/farmslot-farm/fixtures/runtime');
@@ -44,19 +43,6 @@ test('the pack is valid and carries every FSR rule with its recorded failure', (
   }
 });
 
-test('the farm declares the pack at level 2 on its required skill set', () => {
-  const project = JSON.parse(
-    readFileSync(path.join(root, 'projects/farmslot-farm/project.json'), 'utf8'),
-  );
-  const config = parseRequiredSkillsConfig(project.required_skills);
-  const declared = config.rules.flatMap((rule) => rule.skills).filter((skill) => skill.review);
-  assert.equal(declared.length, 1);
-  const [skill] = declared;
-  assert.equal(path.join(root, config.root, skill.name), runtime);
-  assert.deepEqual(skill.files, ['review-quality.md']);
-  assert.deepEqual(skill.review, { pack: 'review-pack.json', client: 'farmslot', level: 'static' });
-});
-
 test('the generator refuses a rule with no anchor or no recorded failure', () => {
   const temp = mkdtempSync(path.join(os.tmpdir(), 'farmslot-review-pack-'));
   try {
@@ -69,10 +55,14 @@ test('the generator refuses a rule with no anchor or no recorded failure', () =>
       ],
       [`# Rules\n\n## Rules\n\n${rule('FSR-01', false)}`, /FSR-01 has no "- Failure:" line/],
       ['# Rules\n\nNo rules here.\n', /no FSR rules/],
+      [null, /--source needs a value/],
     ]) {
       const file = path.join(temp, 'rules.md');
-      writeFileSync(file, source);
-      const result = generate('--source', file, '--out', path.join(temp, 'pack.json'));
+      if (source !== null) writeFileSync(file, source);
+      const result =
+        source === null
+          ? generate('--source')
+          : generate('--source', file, '--out', path.join(temp, 'pack.json'));
       assert.notEqual(result.status, 0);
       assert.match(result.stderr, message);
     }

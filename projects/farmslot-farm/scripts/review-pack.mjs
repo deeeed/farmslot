@@ -12,17 +12,19 @@ import { fileURLToPath } from 'node:url';
 
 const runtime = fileURLToPath(new URL('../fixtures/runtime/', import.meta.url));
 const args = process.argv.slice(2);
-const option = (name, fallback) => {
-  const index = args.indexOf(name);
-  return index === -1 ? fallback : path.resolve(args[index + 1]);
-};
-const source = option('--source', path.join(runtime, 'review-quality.md'));
-const out = option('--out', path.join(runtime, 'review-pack.json'));
-
 function fail(message) {
   console.error(message);
   process.exit(1);
 }
+const option = (name, fallback) => {
+  const index = args.indexOf(name);
+  if (index === -1) return fallback;
+  const value = args[index + 1];
+  if (!value || value.startsWith('--')) fail(`${name} needs a value`);
+  return path.resolve(value);
+};
+const source = option('--source', path.join(runtime, 'review-quality.md'));
+const out = option('--out', path.join(runtime, 'review-pack.json'));
 
 const text = fs.readFileSync(source, 'utf8');
 const headings = [...text.matchAll(/^### (FSR-\d+)\. (.+)$/gm)];
