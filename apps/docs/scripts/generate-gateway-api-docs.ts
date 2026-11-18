@@ -106,7 +106,7 @@ function gatewayCapabilitiesSnapshot(): GatewayCapabilitiesSnapshot {
         ...(method === Methods.SLOT_CHECK
           ? { paramsType: 'SlotCheckParams', resultType: 'SlotCheckResult' }
           : method === Methods.RUN_SEARCH_ARTIFACTS
-            ? { paramsType: 'RunSearchArtifactsParams', resultType: 'RunSearchArtifactsResult' }
+            ? { paramsType: 'RunArtifactSearchParams', resultType: 'RunArtifactSearchResult' }
             : {}),
       })),
     events: Object.values(Events)
