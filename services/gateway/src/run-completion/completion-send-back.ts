@@ -132,11 +132,23 @@ export async function sendBackCompletion(
   // replaced; one that was never attempted is simply dropped. A CONFIRMED
   // delivery still refuses: the worker is known to be working from that wording,
   // and the operator reconciles it rather than withdrawing it underneath them.
+  //
+  // A NATIVE host is the exception. There a handed-over command sits in a durable
+  // queue that nothing may cancel (`worker-input` refuses to cancel a
+  // Farmslot-issued command), so the withdrawn turn can still run, finish and
+  // write its own terminal signal — and a withdrawal in the text of a message
+  // that arrives after it does not help. That one keeps refusing until the
+  // original is reconciled.
   let superseded: CompletionDelivery | undefined;
+  const retainedBefore = delivery;
   if (delivery && note !== undefined && note !== delivery.note) {
     if (delivery.confirmed)
       throw new Error(
         'Reconcile the retained completion feedback before changing its operator note',
+      );
+    if (delivery.startedAt !== undefined && initial.transport === 'native')
+      throw new Error(
+        'The retained completion feedback is queued on the worker host and cannot be withdrawn; reconcile it before changing its operator note',
       );
     if (delivery.startedAt !== undefined) superseded = delivery;
     console.warn(
@@ -145,12 +157,16 @@ export async function sendBackCompletion(
     delivery = undefined;
   }
   const probe = await probeWorkerSignalForRun(run.id, slotId, context);
-  // A withdrawn delivery leaves the same stale signal behind it: the worker
-  // never wrote a new one, which is why its instruction was still outstanding.
-  // Replacing that instruction is exactly the case that has to be allowed to
-  // proceed on it, so the withdrawal keeps the allowance the retry had.
+  // A withdrawn or dropped delivery leaves the same stale signal behind it: the
+  // worker never wrote a new one, which is why its instruction was still
+  // outstanding. Replacing that instruction is exactly the case that has to be
+  // allowed to proceed on it, so the allowance follows whatever was retained
+  // when this send-back started — not only the copy that survived. Keying it on
+  // `superseded` alone stranded the next edit: a replacement that never reached
+  // the composer leaves nothing retained, and the operator's next attempt then
+  // failed on the signal probe instead of sending.
   const resumingStale =
-    (delivery || superseded) &&
+    retainedBefore &&
     recorded.ok &&
     probe.code === 'stale' &&
     probe.signal?.timestamp === recorded.signal.timestamp &&

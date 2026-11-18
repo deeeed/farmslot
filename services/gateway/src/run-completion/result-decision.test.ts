@@ -1226,3 +1226,67 @@ test('a changed note still refuses a confirmed delivery', async () => {
     /Reconcile the retained completion feedback/,
   );
 });
+
+// Codex r3 on #2354, first major: on a native host the handed-over command sits
+// in a durable queue that nothing may cancel, so the withdrawn turn can still
+// run, finish and write its own terminal signal — and a withdrawal carried in a
+// message that arrives afterwards does not help. That case keeps refusing.
+test('a queued native delivery cannot be withdrawn by a changed note', async () => {
+  await heldQa();
+  run.transport = 'native';
+  delivery = 'queued';
+  await assert.rejects(
+    resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'Keep the video.',
+    }),
+    /delivery is queued/,
+  );
+
+  delivery = 'confirmed';
+  run.decisions = [await buildResultDecision(run, 'complete')];
+  await assert.rejects(
+    resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'Replace the video.',
+    }),
+    /queued on the worker host and cannot be withdrawn/,
+  );
+});
+
+// Codex r3, second major: a replacement that never reaches the composer leaves
+// nothing retained, so keying the stale-signal allowance on the withdrawal
+// stranded the operator's next edit — it failed on the signal probe instead of
+// sending. The allowance follows what was retained when the send-back started.
+test('a further note edit still sends after a replacement that was never attempted', async () => {
+  await heldQa();
+  delivery = 'not-attempted';
+  await assert.rejects(
+    resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'First note.',
+    }),
+    /delivery is not-attempted/,
+  );
+
+  // The operator edits the note again. The previous attempt left an untouched
+  // delivery behind, and this one has to be able to proceed on the same signal.
+  delivery = 'confirmed';
+  run.decisions = [await buildResultDecision(run, 'complete')];
+  const third = pending().id;
+  await resolveResultDecision({
+    runId: run.id,
+    decisionId: third,
+    actionId: 'send-back',
+    reason: 'Second note.',
+  });
+
+  assert.equal(feedback.at(-1)?.key, `completion-send-back:${third}`);
+  assert.match(feedback.at(-1)?.text ?? '', /Second note\./);
+});
