@@ -339,6 +339,7 @@ export const Methods = {
   RUN_CREATE: 'run.create',
   RUN_CREATE_NATIVE: 'run.createNative',
   RUN_GET: 'run.get',
+  RUN_SEARCH_ARTIFACTS: 'run.searchArtifacts',
   RUN_CONTEXT_BUNDLE: 'run.contextBundle',
   RUN_RECOVERY_PROPOSAL: 'run.recoveryProposal',
   RUN_LIST: 'run.list',

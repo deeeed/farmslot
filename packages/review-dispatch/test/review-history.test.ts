@@ -320,19 +320,15 @@ test('a same-round infrastructure retry keeps the failure and presents the curre
     ],
   };
   const history = reviewHistoryView(current);
-  assert.equal(
-    history.roundCount,
-    2,
-    'both attempts stay visible without changing the engine budget',
-  );
-  assert.equal(history.checks[0].rounds[0].verdict, 'failed');
-  const row = history.checks[0].rounds[1];
+  assert.equal(history.roundCount, 1, 'infrastructure attempts stay inside their charged round');
+  const row = history.checks[0].rounds[0];
+  assert.equal(row.earlierAttempts[0].status, 'failed');
   assert.equal(row.verdict, 'pending');
   assert.equal(row.startedAt, '2026-10-21T11:00:00Z');
   assert.equal(row.unresolvedCount, null);
   assert.equal(row.findingsLabel, 'Review is running. Findings appear when it finishes.');
   assert.equal(row.loopNumber, 5);
-  assert.equal(row.roundNumber, 2);
+  assert.equal(row.roundNumber, 1);
 });
 
 test('recorded priority prefixes provide severity and exact sentence titles without protocol fields', () => {
@@ -633,16 +629,16 @@ test('a retained warm startup failure cannot inherit the replacement cold pass a
   };
   const history = reviewHistoryView(current);
   const rows = history.checks[0].rounds;
-  assert.equal(rows.length, 4);
+  assert.equal(rows.length, 3);
   assert.equal(
     rows[1].verdict,
     'Result not recorded',
     "a later pass is not the previous round's result",
   );
-  assert.equal(rows[2].verdict, 'failed');
-  assert.match(rows[2].failureReason ?? '', /launch configuration changed/);
-  assert.equal(rows[3].verdict, 'pass');
-  assert.equal(rows[3].mode, 'cold');
+  assert.equal(rows[2].earlierAttempts[0].status, 'failed');
+  assert.match(rows[2].earlierAttempts[0].failureReason ?? '', /launch configuration changed/);
+  assert.equal(rows[2].verdict, 'pass');
+  assert.equal(rows[2].mode, 'cold');
 });
 
 test('a slot-free review gate uses its saved structured result, frozen source and completed monitor timing', () => {

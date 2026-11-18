@@ -1,0 +1,1 @@
+- Add the retained-artifact text-search RPC contract and shareable content-search preview fields.

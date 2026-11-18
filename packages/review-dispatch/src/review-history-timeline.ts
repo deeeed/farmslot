@@ -10,6 +10,8 @@ export interface ReviewHistoryFix {
   durationMs: number | null;
   running: boolean;
   range: string | null;
+  baseSha?: string | null;
+  headSha?: string | null;
   stat: string | null;
   files: string[];
   diffPath: string | null;
@@ -25,6 +27,32 @@ export type ReviewHistoryEvent =
   | { kind: 'fix'; key: string; roundKey: string; at: string | null; fix: ReviewHistoryFix }
   | { kind: 'gate'; key: string; at: string | null; label: string };
 
+interface ReviewHistoryDiff {
+  path: string;
+  base: string | null;
+  head: string | null;
+}
+
+/** Load the diffs of visible review and fix events, including fixes with no following reviewer. */
+export function reviewHistoryDiffs(events: ReviewHistoryEvent[]): ReviewHistoryDiff[] {
+  const diffs: ReviewHistoryDiff[] = [];
+  for (const event of events) {
+    if (event.kind === 'review' && event.round.diffPath)
+      diffs.push({
+        path: event.round.diffPath,
+        base: event.round.reviewBaseSha,
+        head: event.round.headSha,
+      });
+    else if (event.kind === 'fix' && event.fix.diffPath)
+      diffs.push({
+        path: event.fix.diffPath,
+        base: event.fix.baseSha ?? null,
+        head: event.fix.headSha ?? null,
+      });
+  }
+  return diffs;
+}
+
 /** A completed result without a start belongs at its completion, never before the first round. */
 export function compareReviewHistoryRounds(a: ReviewHistoryRound, b: ReviewHistoryRound): number {
   const time = (round: ReviewHistoryRound) => round.startedAt ?? round.completedAt ?? '\uffff';
@@ -32,22 +60,54 @@ export function compareReviewHistoryRounds(a: ReviewHistoryRound, b: ReviewHisto
   return time(a).localeCompare(time(b)) || a.loopNumber - b.loopNumber;
 }
 
+/** A SHA pair identifies a code comparison, not a worker's evidence-only fix. */
+function sameFixReference(left: ReviewHistoryRound, right: ReviewHistoryRound): boolean {
+  if (left.reviewId !== right.reviewId) return false;
+  if (left.fixContextKey && right.fixContextKey) return left.fixContextKey === right.fixContextKey;
+  const a = left.fixReceipt;
+  const b = right.fixReceipt;
+  if (a && b)
+    return Boolean(
+      a.capturedAt &&
+      a.capturedAt === b.capturedAt &&
+      (!a.diffPath || !b.diffPath || a.diffPath === b.diffPath),
+    );
+  // Missing worker/receipt identity cannot make two recorded fixes the same turn.
+  if (left.fixContextKey || right.fixContextKey) return false;
+  // Legacy head comparisons have no worker receipt; associate those inferred references only.
+  return Boolean(
+    (left.fixBaseSha &&
+      left.fixHeadSha &&
+      left.fixBaseSha === right.fixBaseSha &&
+      left.fixHeadSha === right.fixHeadSha) ||
+    (left.fixDiffPath && left.fixDiffPath === right.fixDiffPath),
+  );
+}
+
 /** A replay keeps its own event, even if the engine resets the charged loop number. */
 export function reviewHistoryTimeline(
   run: Run,
   rounds: ReviewHistoryRound[],
+  fixReceipts: ReviewHistoryRound[] = [],
 ): ReviewHistoryEvent[] {
   const ordered = [...rounds].sort(compareReviewHistoryRounds);
   const events: ReviewHistoryEvent[] = [];
   const fixes: ReviewHistoryFix[] = [];
-  for (const [roundIndex, round] of ordered.entries()) {
+  const fixSources = new Map<ReviewHistoryFix, ReviewHistoryRound>();
+  const sources = [...ordered, ...fixReceipts].sort(compareReviewHistoryRounds);
+  for (const [sourceIndex, round] of sources.entries()) {
     if (round.hasFix) {
       // Artifact hydration may replace a pathname with a Git alias for the same code fix.
-      const key =
-        round.fixBaseSha && round.fixHeadSha
-          ? `${round.reviewId}:fix:${round.fixBaseSha}:${round.fixHeadSha}`
-          : (round.fixDiffPath ?? `${round.reviewId}:fix:${round.key}`);
-      const previous = ordered.slice(0, roundIndex);
+      const key = round.fixContextKey
+        ? `${round.reviewId}:fix:${round.fixContextKey}`
+        : round.fixReceipt
+          ? `${round.reviewId}:fix:receipt:${round.fixReceipt.capturedAt ? JSON.stringify([round.fixReceipt.diffPath, round.fixReceipt.capturedAt]) : round.key}`
+          : round.fixBaseSha && round.fixHeadSha
+            ? `${round.reviewId}:fix:${round.fixBaseSha}:${round.fixHeadSha}`
+            : (round.fixDiffPath ?? `${round.reviewId}:fix:${round.key}`);
+      const previous = sources
+        .slice(0, sourceIndex)
+        .filter((entry) => !fixReceipts.includes(entry));
       const prior = previous.filter((entry) => entry.reviewId === round.reviewId);
       const trigger =
         [...previous]
@@ -59,7 +119,10 @@ export function reviewHistoryTimeline(
         [...prior].reverse().find((entry) => entry.verdict === 'issues') ??
         prior.at(-1) ??
         previous.at(-1);
-      let fix = fixes.find((entry) => entry.key === key);
+      let fix = fixes.find((entry) => {
+        const source = fixSources.get(entry);
+        return source && sameFixReference(source, round);
+      });
       if (!fix) {
         fix = {
           key,
@@ -71,6 +134,8 @@ export function reviewHistoryTimeline(
           durationMs: round.fixDurationMs,
           running: false,
           range: round.fixRange,
+          baseSha: round.fixBaseSha,
+          headSha: round.fixHeadSha,
           stat: round.fixStat,
           files: round.fixFiles,
           diffPath: round.fixDiffPath,
@@ -80,6 +145,7 @@ export function reviewHistoryTimeline(
           diffError: round.fixDiffError,
           verifiedAt: round.fixReconstructed ? round.startedAt : null,
         };
+        fixSources.set(fix, round);
         fixes.push(fix);
         events.push({
           kind: 'fix',
@@ -90,6 +156,7 @@ export function reviewHistoryTimeline(
         });
       }
     }
+    if (fixReceipts.includes(round)) continue;
     events.push({
       kind: 'review',
       key: round.key,

@@ -323,6 +323,10 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'run.resolveDecision': { classification: 'admin' },
   'run.resume': { classification: 'admin' },
   'run.reviewVisualClaim': { classification: 'admin' },
+  'run.searchArtifacts': {
+    classification: 'admin',
+    reason: 'reads retained run artifact contents',
+  },
   'run.sessionCommand': { classification: 'admin' },
   'run.slotHistory': { classification: 'admin' },
   'run.tags.list': { classification: 'admin' },

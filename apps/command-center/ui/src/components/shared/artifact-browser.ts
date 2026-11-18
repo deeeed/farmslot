@@ -2,9 +2,12 @@ import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
 import './media-lightbox.js';
+import './artifact-content-search.js';
+import './artifact-content-preview.js';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
 import { formatBytes } from '../../utils/format.js';
+import { gatewayHttpOrigin } from '../../utils/gateway-origin.js';
 import {
   ARTIFACT_TYPES,
   type ArtifactType,
@@ -17,6 +20,7 @@ import {
   artifactBrowserKeyAction,
   type ArtifactBrowserKeyFile,
   artifactBrowserKeyFiles,
+  artifactBrowserMatches,
   artifactBrowserNodeKey,
   artifactBrowserQueryTerms,
   type ArtifactBrowserRow,
@@ -106,9 +110,25 @@ export class ArtifactBrowser extends LitElement {
     );
   }
 
-  private selectFile(index: number, preview = this.view.preview, replace = false): void {
+  private selectFile(
+    index: number,
+    preview = this.view.preview,
+    replace = false,
+    line?: number,
+    bundleDigest?: string,
+    contentSha256?: string,
+  ): void {
     if (!this.viewState) this.localSelected = index;
-    this.updateView({ path: this.artifacts[index]?.path ?? null, preview }, replace);
+    this.updateView(
+      {
+        path: this.artifacts[index]?.path ?? null,
+        preview,
+        ...(line !== undefined || this.view.line !== undefined
+          ? { line, bundleDigest, contentSha256 }
+          : {}),
+      },
+      replace,
+    );
   }
 
   static styles = css`
@@ -360,6 +380,21 @@ export class ArtifactBrowser extends LitElement {
       return html`<div class="preview empty" role="status">
         File unavailable: ${this.viewState.path}
       </div>`;
+    if (this.view.contentQuery !== undefined && !this.view.line)
+      return html`<div class="preview empty">Select a matching line to preview it.</div>`;
+    if (this.view.contentQuery !== undefined && this.view.line && this.selected !== null) {
+      const file = this.artifacts[this.selected];
+      const url = new URL(this.artifactHref?.(this.selected) ?? '', gatewayHttpOrigin());
+      if (this.view.bundleDigest) url.searchParams.set('bundleDigest', this.view.bundleDigest);
+      if (this.view.contentSha256) url.searchParams.set('v', this.view.contentSha256);
+      return html`<artifact-content-preview
+        class="preview"
+        .url=${url.toString()}
+        .path=${file.path}
+        .line=${this.view.line}
+        .sha256=${this.view.contentSha256 ?? ''}
+      ></artifact-content-preview>`;
+    }
     return html`<media-lightbox
       class="preview"
       embedded
@@ -448,6 +483,26 @@ export class ArtifactBrowser extends LitElement {
     )}</mark>${name.slice(start + term.length)}`;
   }
 
+  private renderContentSearchToggle() {
+    return html`<button
+      class="chip"
+      data-testid="artifact-search-toggle"
+      aria-pressed=${this.view.contentQuery !== undefined}
+      @click=${() =>
+        this.updateView(
+          {
+            contentQuery: this.view.contentQuery === undefined ? '' : undefined,
+            line: undefined,
+            bundleDigest: undefined,
+            contentSha256: undefined,
+          },
+          true,
+        )}
+    >
+      Search contents
+    </button>`;
+  }
+
   private renderToolbar(shown: number) {
     const counts = workspaceArtifactTypeCounts(this.artifacts);
     return html`<div class="toolbar">
@@ -461,6 +516,7 @@ export class ArtifactBrowser extends LitElement {
           this.updateView({ query: (event.target as HTMLInputElement).value }, true)}
         @keydown=${(event: KeyboardEvent) => this.onSearchKey(event)}
       />
+      ${this.renderContentSearchToggle()}
       <div class="chips" role="group" aria-label="File types">
         ${ARTIFACT_TYPES.filter((type) => counts[type] > 0 || this.types.has(type)).map(
           (type) =>
@@ -597,20 +653,48 @@ export class ArtifactBrowser extends LitElement {
     const rows = artifactBrowserRows(tree, this.isOpen);
     const focusedRow = this.focusedRow(rows);
     const browse = html`
-      ${this.renderKeyFiles()}
-      ${this.artifacts.length >= TOOLBAR_MIN_FILES || this.filtering
+      ${this.view.contentQuery === undefined ? this.renderKeyFiles() : nothing}
+      ${this.artifacts.length >= TOOLBAR_MIN_FILES ||
+      this.filtering ||
+      this.view.contentQuery !== undefined
         ? this.renderToolbar(tree.fileCount)
-        : nothing}
-      ${rows.length
-        ? html`<ul
-            class="tree"
-            role="tree"
-            aria-label="Files"
-            @keydown=${(event: KeyboardEvent) => this.onTreeKey(event, rows)}
-          >
-            ${rows.map((row, index) => this.renderRow(row, index === focusedRow))}
-          </ul>`
-        : html`<div class="empty">No files match.</div>`}
+        : this.artifacts.length
+          ? this.renderContentSearchToggle()
+          : nothing}
+      ${this.view.contentQuery !== undefined
+        ? html`<artifact-content-search
+            .links=${this.artifacts.flatMap((file, index) =>
+              artifactBrowserMatches(file, { query: this.query, types: this.types })
+                ? [this.artifactHref?.(index) ?? '']
+                : [],
+            )}
+            .query=${this.view.contentQuery}
+            @content-search-query=${(event: CustomEvent<{ query: string }>) =>
+              this.updateView({ contentQuery: event.detail.query, line: undefined }, true)}
+            @content-search-open=${(
+              event: CustomEvent<{
+                path: string;
+                line: number;
+                bundleDigest: string;
+                sha256?: string;
+              }>,
+            ) => {
+              const hit = event.detail;
+              const index = this.artifacts.findIndex((file) => file.path === hit.path);
+              if (index >= 0)
+                this.selectFile(index, true, false, hit.line, hit.bundleDigest, hit.sha256);
+            }}
+          ></artifact-content-search>`
+        : rows.length
+          ? html`<ul
+              class="tree"
+              role="tree"
+              aria-label="Files"
+              @keydown=${(event: KeyboardEvent) => this.onTreeKey(event, rows)}
+            >
+              ${rows.map((row, index) => this.renderRow(row, index === focusedRow))}
+            </ul>`
+          : html`<div class="empty">No files match.</div>`}
     `;
     const selected = this.currentSelection();
     if (this.wide)

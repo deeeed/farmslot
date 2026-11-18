@@ -15,7 +15,17 @@ export interface RunDetailArtifactSelection {
 }
 
 const STEP_PARAM = 'step';
-const [BROWSER_QUERY, BROWSER_TYPES, BROWSER_FILE, BROWSER_PREVIEW] = ARTIFACT_BROWSER_PARAMS;
+const [
+  BROWSER_QUERY,
+  BROWSER_TYPES,
+  BROWSER_FILE,
+  BROWSER_PREVIEW,
+  BROWSER_SEARCH,
+  BROWSER_CONTENT,
+  BROWSER_LINE,
+  BROWSER_BUNDLE,
+  BROWSER_SHA,
+] = ARTIFACT_BROWSER_PARAMS;
 
 export function artifactBrowserViewFromRunDetailHash(
   hash: string = location.hash,
@@ -24,6 +34,15 @@ export function artifactBrowserViewFromRunDetailHash(
   const path = params.get(BROWSER_FILE) || null;
   const requestedTypes = new Set((params.get(BROWSER_TYPES) ?? '').split(','));
   return {
+    ...(params.get(BROWSER_SEARCH) === 'contents'
+      ? { contentQuery: params.get(BROWSER_CONTENT) ?? '' }
+      : {}),
+    ...(Number.isSafeInteger(Number(params.get(BROWSER_LINE))) &&
+    Number(params.get(BROWSER_LINE)) > 0
+      ? { line: Number(params.get(BROWSER_LINE)) }
+      : {}),
+    ...(params.get(BROWSER_BUNDLE) ? { bundleDigest: params.get(BROWSER_BUNDLE)! } : {}),
+    ...(params.get(BROWSER_SHA) ? { contentSha256: params.get(BROWSER_SHA)! } : {}),
     query: params.get(BROWSER_QUERY) ?? '',
     types: new Set(ARTIFACT_TYPES.filter((type) => requestedTypes.has(type))),
     path,
@@ -37,6 +56,16 @@ export function runDetailArtifactBrowserHash(
   hash: string = location.hash,
 ): string {
   const { route, params } = parseHashRoute(hash);
+  for (const [key, value] of [
+    [BROWSER_SEARCH, view.contentQuery !== undefined ? 'contents' : undefined],
+    [BROWSER_CONTENT, view.contentQuery],
+    [BROWSER_LINE, view.line ? String(view.line) : undefined],
+    [BROWSER_BUNDLE, view.bundleDigest],
+    [BROWSER_SHA, view.contentSha256],
+  ]) {
+    if (value) params.set(key!, value);
+    else params.delete(key!);
+  }
   if (view.query) params.set(BROWSER_QUERY, view.query);
   else params.delete(BROWSER_QUERY);
   const types = ARTIFACT_TYPES.filter((type) => view.types.has(type));
