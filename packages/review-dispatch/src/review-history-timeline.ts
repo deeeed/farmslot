@@ -10,6 +10,8 @@ export interface ReviewHistoryFix {
   durationMs: number | null;
   running: boolean;
   range: string | null;
+  baseSha?: string | null;
+  headSha?: string | null;
   stat: string | null;
   files: string[];
   diffPath: string | null;
@@ -24,6 +26,32 @@ export type ReviewHistoryEvent =
   | { kind: 'review'; key: string; at: string | null; round: ReviewHistoryRound }
   | { kind: 'fix'; key: string; roundKey: string; at: string | null; fix: ReviewHistoryFix }
   | { kind: 'gate'; key: string; at: string | null; label: string };
+
+interface ReviewHistoryDiff {
+  path: string;
+  base: string | null;
+  head: string | null;
+}
+
+/** Load the diffs of visible review and fix events, including fixes with no following reviewer. */
+export function reviewHistoryDiffs(events: ReviewHistoryEvent[]): ReviewHistoryDiff[] {
+  const diffs: ReviewHistoryDiff[] = [];
+  for (const event of events) {
+    if (event.kind === 'review' && event.round.diffPath)
+      diffs.push({
+        path: event.round.diffPath,
+        base: event.round.reviewBaseSha,
+        head: event.round.headSha,
+      });
+    else if (event.kind === 'fix' && event.fix.diffPath)
+      diffs.push({
+        path: event.fix.diffPath,
+        base: event.fix.baseSha ?? null,
+        head: event.fix.headSha ?? null,
+      });
+  }
+  return diffs;
+}
 
 /** A completed result without a start belongs at its completion, never before the first round. */
 export function compareReviewHistoryRounds(a: ReviewHistoryRound, b: ReviewHistoryRound): number {
@@ -76,6 +104,8 @@ export function reviewHistoryTimeline(
           durationMs: round.fixDurationMs,
           running: false,
           range: round.fixRange,
+          baseSha: round.fixBaseSha,
+          headSha: round.fixHeadSha,
           stat: round.fixStat,
           files: round.fixFiles,
           diffPath: round.fixDiffPath,

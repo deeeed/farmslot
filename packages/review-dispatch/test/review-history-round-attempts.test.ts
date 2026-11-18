@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { reviewHistoryIdentity, reviewHistoryView } from '../src/review-history.js';
+import type { GitDiffParams } from '@farmslot/protocol';
+
+import {
+  loadReviewHistoryArtifacts,
+  reviewHistoryIdentity,
+  reviewHistoryView,
+} from '../src/review-history.js';
 
 import { reviewHistoryBdcbd42f } from './fixtures/review-history-bdcbd42f.js';
 
@@ -94,4 +100,72 @@ test('recorded startup reasons remain attached to each failed attempt and invali
     reviewHistoryView(run).checks[0].rounds[0].earlierAttempts[0].failureReason,
     first.error,
   );
+});
+
+test('fix-only receipts load their frozen Git diff without inventing another review', async () => {
+  const run = structuredClone(reviewHistoryBdcbd42f);
+  const requests: GitDiffParams[] = [];
+  const loaded = await loadReviewHistoryArtifacts(
+    run,
+    async () => null,
+    undefined,
+    async (params) => {
+      requests.push(params);
+      return params.base === params.head ? '' : 'diff --git a/review.ts b/review.ts';
+    },
+  );
+  const history = reviewHistoryView(run, loaded);
+  assert.equal(history.roundCount, 1);
+  const fix = history.cards[0].fixes[0];
+  assert.equal(fix.diffText, '', 'empty frozen comparison is loaded, not disabled as unavailable');
+  assert(requests.some((entry) => entry.base === entry.head));
+});
+
+test('fix-only retained diffs are loaded when the live checkout is no longer available', async () => {
+  const run = structuredClone(reviewHistoryBdcbd42f);
+  run.status = 'done';
+  const path = 'artifacts/pipeline-review-loop-2/fix-delta.diff';
+  const loaded = await loadReviewHistoryArtifacts(run, async (name) =>
+    name === path ? 'retained fix diff' : null,
+  );
+  assert.equal(reviewHistoryView(run, loaded).cards[0].fixes[0].diffText, 'retained fix diff');
+});
+
+test('a completed worker fix survives a failed next launch followed by a same-loop retry', () => {
+  const run = structuredClone(reviewHistoryBdcbd42f);
+  const review = run.engineState?.publishGate?.reviews?.[0];
+  const completed = run.agentContexts?.find(
+    (actor) => actor.role === 'review' && actor.status === 'complete',
+  );
+  const fixActor = run.agentContexts?.find((actor) => actor.role === 'review-fix');
+  assert(review?.attempts && completed && fixActor);
+  review.attempts = review.attempts.slice(0, 1);
+  run.steps[0].outputs = { reviewId: review.id, attempts: review.attempts, timeline: [] };
+  run.agentContexts = [
+    completed,
+    fixActor,
+    {
+      ...completed,
+      id: 'failed-after-fix',
+      status: 'failed',
+      reviewLoopNumber: 2,
+      startedAt: '2026-11-18T03:42:00.000Z',
+      completedAt: '2026-11-18T03:42:30.000Z',
+    },
+    {
+      ...completed,
+      id: 'retry-after-fix',
+      status: 'working',
+      reviewLoopNumber: 2,
+      startedAt: '2026-11-18T03:43:00.000Z',
+      attemptStartedAt: '2026-11-18T03:43:00.000Z',
+      completedAt: undefined,
+    },
+  ];
+  const history = reviewHistoryView(run);
+  assert.equal(history.roundCount, 2);
+  assert.equal(history.checks[0].rounds[1].earlierAttempts.length, 1);
+  assert.equal(history.cards[0].fixes.length, 1);
+  assert.equal(history.cards[0].fixes[0].label, 'Fix after round 1');
+  assert.equal(history.cards[0].fixes[0].durationMs, 469562);
 });

@@ -24,6 +24,7 @@ import { sameReviewAttemptReceipt } from './review-attempt-receipt.js';
 import { groupReviewHistoryAttempts, isFixOnlyReviewReceipt } from './review-history-attempts.js';
 import {
   compareReviewHistoryRounds,
+  reviewHistoryDiffs,
   reviewHistoryRoundCards,
   reviewHistoryTimeline,
 } from './review-history-timeline.js';
@@ -745,9 +746,11 @@ export function reviewHistoryView(
       };
     });
     fixReceipts.push(...projected.filter((_, index) => sources[index].fixOnly));
-    const rounds = groupReviewHistoryAttempts(
+    const grouped = groupReviewHistoryAttempts(
       projected.filter((_, index) => !sources[index].fixOnly).sort(compareReviewHistoryRounds),
     );
+    const rounds = grouped.rounds;
+    fixReceipts.push(...grouped.fixReceipts);
     if (!rounds.length) continue;
     const latest = rounds.at(-1)!;
     const reviewerActive = actors.some((context) =>
@@ -878,6 +881,8 @@ function historyAttemptIdentity(value: unknown) {
 /** Refresh on retained round changes, without rereading files for unrelated run heartbeats. */
 export function reviewHistoryIdentity(run: Run): string {
   return JSON.stringify([
+    // Prior manifests omitted fix-only diffs; their cached completeness cannot be reused.
+    'review-history-v2',
     run.id,
     run.reviewResult,
     run.artifactBundle?.bundleDigest,
@@ -1039,19 +1044,14 @@ export async function loadReviewHistoryArtifacts(
   }
   if (readDiff && metadata['history:git']) {
     const requests = new Map<string, GitDiffParams>();
-    for (const round of reviewHistoryView(run, metadata).checks.flatMap((check) => check.rounds)) {
-      for (const [path, base, head] of [
-        [round.diffPath, round.reviewBaseSha, round.headSha],
-        [round.fixDiffPath, round.fixBaseSha, round.fixHeadSha],
-      ]) {
-        if (path?.startsWith('history:git:') && base && head)
-          requests.set(path, {
-            slotId: run.slotId ?? '',
-            ...(run.slotId ? {} : { runId: run.id }),
-            base,
-            head,
-          });
-      }
+    for (const diff of reviewHistoryDiffs(reviewHistoryView(run, metadata).events)) {
+      if (diff.path.startsWith('history:git:') && diff.base && diff.head)
+        requests.set(diff.path, {
+          slotId: run.slotId ?? '',
+          ...(run.slotId ? {} : { runId: run.id }),
+          base: diff.base,
+          head: diff.head,
+        });
     }
     const entries = [...requests];
     const results = await Promise.allSettled(entries.map(([, params]) => readDiff(params)));
@@ -1066,13 +1066,9 @@ export async function loadReviewHistoryArtifacts(
   // Reuse each platform's existing diff viewer for changed files, instead of another diff parser.
   const diffs = [
     ...new Set(
-      reviewHistoryView(run, metadata).checks.flatMap((check) =>
-        check.rounds.flatMap((round) =>
-          [round.fixDiffPath, round.diffPath]
-            .filter((path) => !path?.startsWith('history:'))
-            .filter((path): path is string => Boolean(path)),
-        ),
-      ),
+      reviewHistoryDiffs(reviewHistoryView(run, metadata).events)
+        .map((diff) => diff.path)
+        .filter((path) => !path.startsWith('history:')),
     ),
   ];
   return { ...metadata, ...(await readPaths(diffs)) };

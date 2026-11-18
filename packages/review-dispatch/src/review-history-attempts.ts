@@ -15,8 +15,12 @@ export function isFixOnlyReviewReceipt(value: unknown): boolean {
 }
 
 /** Failed launches precede the reviewer in the same round; completed verdicts never collapse. */
-export function groupReviewHistoryAttempts(rows: ReviewHistoryRound[]): ReviewHistoryRound[] {
+export function groupReviewHistoryAttempts(rows: ReviewHistoryRound[]): {
+  rounds: ReviewHistoryRound[];
+  fixReceipts: ReviewHistoryRound[];
+} {
   const rounds: ReviewHistoryRound[] = [];
+  const fixReceipts: ReviewHistoryRound[] = [];
   for (const row of rows) {
     const previous = rounds.at(-1);
     if (previous?.verdict === 'failed' && previous.loopNumber === row.loopNumber) {
@@ -32,9 +36,10 @@ export function groupReviewHistoryAttempts(rows: ReviewHistoryRound[]): ReviewHi
           durationMs: previous.durationMs,
         },
       ];
+      if (previous.hasFix) fixReceipts.push(previous);
       rounds.pop();
     }
     rounds.push(row);
   }
-  return rounds;
+  return { rounds, fixReceipts };
 }

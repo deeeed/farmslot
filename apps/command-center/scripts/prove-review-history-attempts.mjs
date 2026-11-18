@@ -96,11 +96,30 @@ try {
     const fixShot = await page.session.call('Page.captureScreenshot', { format: 'png' });
     await writeFile(path.join(output, 'after-fix.png'), Buffer.from(fixShot.data, 'base64'));
   }
+  let diff;
+  if (phase === 'after') {
+    await page.click('[data-fix] > summary');
+    const available = await page.evaluate(
+      `(()=>{${walk}const panel=all.find(e=>e.localName==='review-history-panel');const button=panel?.shadowRoot?.querySelector('[data-fix] button');return Boolean(button && !button.disabled)})()`,
+    );
+    assert(available, 'Following-fix diff control must be available');
+    await page.click('[data-fix] button');
+    const end = Date.now() + 15000;
+    for (;;) {
+      diff = await page.evaluate(
+        `(()=>{${walk}const modal=all.find(e=>e.localName==='diff-viewer-modal' && e.open);return modal ? {opened:true,path:modal.title,bytes:modal.diffText?.length} : null})()`,
+      );
+      if (diff?.opened && typeof diff.bytes === 'number') break;
+      assert(Date.now() < end, 'Following-fix comparison did not open');
+      await delay(50);
+    }
+    await page.click('.dvm-close');
+  }
   const result = await inspect();
   assert.deepEqual(errors, []);
   await writeFile(
     path.join(output, phase + '.json'),
-    JSON.stringify({ status: 'PASS', phase, result, errors }, null, 2) + '\n',
+    JSON.stringify({ status: 'PASS', phase, result, diff, errors }, null, 2) + '\n',
   );
 } finally {
   page.close();
