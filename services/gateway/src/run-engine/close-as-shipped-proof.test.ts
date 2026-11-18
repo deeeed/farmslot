@@ -3,6 +3,8 @@ import { mock, test } from 'node:test';
 
 import type { RunDecision } from '@farmslot/protocol';
 
+import { GatewayMethodError } from '../core/method-error.js';
+
 import type { FinalizeStepContext } from './finalize-step.js';
 
 await import('../runtime/mock-pty.test-support.js');
@@ -20,6 +22,7 @@ const probeCalls: { prNumber: number | undefined; headSha: string | undefined }[
 let probeResult: number | null = shippedPrNumber;
 let probeError: Error | undefined;
 let savedLinkIsStale = false;
+let staleCheckError: Error | undefined;
 const staleChecks: (string | undefined)[] = [];
 const persisted: number[] = [];
 
@@ -42,6 +45,7 @@ mock.module('../integrations/pr-linkage.js', {
     },
     mergedLinkIsStale: async (_run: unknown, _repo: string, headSha?: string) => {
       staleChecks.push(headSha);
+      if (staleCheckError) throw staleCheckError;
       return savedLinkIsStale;
     },
     // Delegates, so the assertions see the real persisted state.
@@ -108,6 +112,7 @@ test('close-as-shipped re-proves a saved PR number against the head it is closin
   probeResult = shippedPrNumber;
   probeError = undefined;
   savedLinkIsStale = false;
+  staleCheckError = undefined;
   const run = await finalize(t);
   assert.deepEqual(
     probeCalls,
@@ -127,6 +132,7 @@ test('close-as-shipped claims no publication when nothing proves it shipped', as
   probeResult = null;
   probeError = undefined;
   savedLinkIsStale = false;
+  staleCheckError = undefined;
   const run = await finalize(t);
   assert.equal(probeCalls.length, 1);
   assert.deepEqual(persisted, []);
@@ -144,6 +150,7 @@ test('close-as-shipped clears an unproven merged link so the run stays adoptable
   probeResult = null;
   probeError = undefined;
   savedLinkIsStale = true;
+  staleCheckError = undefined;
   const run = await finalize(t);
   assert.deepEqual(staleChecks, [packageHead]);
   assert.equal(getRun(run.id)?.prNumber, undefined);
@@ -154,6 +161,7 @@ test('close-as-shipped keeps a live PR link that is not a stale merge', async (t
   probeResult = null;
   probeError = undefined;
   savedLinkIsStale = false;
+  staleCheckError = undefined;
   const run = await finalize(t);
   assert.equal(
     getRun(run.id)?.prNumber,
@@ -168,6 +176,7 @@ test('close-as-shipped makes no publication claim without a ci repo', async (t) 
   probeResult = shippedPrNumber;
   probeError = undefined;
   savedLinkIsStale = false;
+  staleCheckError = undefined;
   const run = await finalizeWithoutCiRepo(t);
   assert.deepEqual(probeCalls, []);
   assert.equal(getRun(run.id)?.prNumber, stalePrNumber);
@@ -180,9 +189,37 @@ test('close-as-shipped makes no publication claim without a ci repo', async (t) 
 
 // Unknown is not "nothing shipped": settling the run on an unreachable probe is
 // how a wrong attribution becomes permanent.
-test('close-as-shipped stays retryable when the probe cannot answer', async (t) => {
+//
+// The refusal has to be RUN_GATE_NOT_READY, not an ordinary failure. An
+// ordinary error fails finalize, and terminal cleanup can release the slot —
+// after which replay cannot reclaim it and adoption still refuses a run whose
+// saved number names a different PR, so "retryable" would be retryable in name
+// only.
+test('close-as-shipped holds the run when the probe cannot answer', async (t) => {
   probeResult = null;
   probeError = new Error('merged-PR probe timed out after 15000ms');
   savedLinkIsStale = false;
-  await assert.rejects(finalize(t), /probe timed out/);
+  staleCheckError = undefined;
+  const error = await finalize(t).then(
+    () => undefined,
+    (reason: unknown) => reason,
+  );
+  assert.ok(error instanceof GatewayMethodError, `expected a gate refusal, got ${String(error)}`);
+  assert.equal(error.code, 'RUN_GATE_NOT_READY');
+  assert.match(error.message, /probe timed out/);
+});
+
+// The stale-link check is a second GitHub read on the same path, so it needs
+// the same hold: a timeout there must not complete or fail the run either.
+test('close-as-shipped holds the run when the stale-link read cannot answer', async (t) => {
+  probeResult = null;
+  probeError = undefined;
+  staleCheckError = new Error('prView failed: 502 Bad Gateway');
+  const error = await finalize(t).then(
+    () => undefined,
+    (reason: unknown) => reason,
+  );
+  assert.ok(error instanceof GatewayMethodError, `expected a gate refusal, got ${String(error)}`);
+  assert.equal(error.code, 'RUN_GATE_NOT_READY');
+  assert.match(error.message, /502 Bad Gateway/);
 });

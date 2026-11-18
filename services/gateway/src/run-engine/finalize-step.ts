@@ -15,6 +15,7 @@ import {
 import { farmslotRoot, getProjectField, loadSlotVars } from '../core/config.js';
 import { execLocal, execOnSlot, isLocal } from '../core/exec.js';
 import { markRunSlotHeld } from '../core/index.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import { SSH_CONNECT_SHELL_OPTIONS } from '../core/ssh-options.js';
 import { shellQuote } from '../core/tmux.js';
 import { usesNodeLink } from '../fleet/node-link-policy.js';
@@ -389,14 +390,37 @@ export async function executeFinalizeStep(
       // record the run as shipped work that the merged PR does not contain.
       // The link is re-proved here against the head being closed, exactly as
       // the gate and publishCompletionPackage prove theirs.
-      // An unreachable probe is unknown, not "nothing shipped": it throws here
-      // so the run stays retryable rather than settling on a guess.
-      publishedPrNumber = await findMergedPRNumber(current, ciRepo, packageHeadSha, {
-        onProbeError: 'throw',
-      });
+      // An unreachable probe is unknown, not "nothing shipped": it refuses here
+      // so the run stays retryable rather than settling on a guess. The refusal
+      // is RUN_GATE_NOT_READY, not an ordinary failure: an ordinary error fails
+      // finalize, and terminal cleanup can then release the slot this run needs
+      // to replay, while adoption still refuses a run whose saved number names
+      // a different PR. This is the same hold the inherited-acceptance
+      // publication prerequisite uses (orchestrator.ts, step 3).
+      const probeOrHold = async <T>(probe: () => Promise<T>): Promise<T> => {
+        try {
+          return await probe();
+        } catch (error) {
+          throw new GatewayMethodError(
+            'RUN_GATE_NOT_READY',
+            `The merged-PR link for this package could not be proved: ${error instanceof Error ? error.message : String(error)}`,
+            {
+              details: { prNumber: current.prNumber ?? null, headSha: packageHeadSha ?? null },
+              userAction:
+                'Restore GitHub access, then replay finalize on this run. Its checkout and package are preserved.',
+            },
+          );
+        }
+      };
+      publishedPrNumber = await probeOrHold(() =>
+        findMergedPRNumber(current, ciRepo, packageHeadSha, { onProbeError: 'throw' }),
+      );
       if (publishedPrNumber && publishedPrNumber !== current.prNumber)
         await persistRunPrNumber(current.id, publishedPrNumber);
-      if (!publishedPrNumber && (await mergedLinkIsStale(current, ciRepo, packageHeadSha))) {
+      if (
+        !publishedPrNumber &&
+        (await probeOrHold(() => mergedLinkIsStale(current, ciRepo, packageHeadSha)))
+      ) {
         // Nothing proved a shipment and the saved number names a merged PR this
         // package did not ship. Clearing it is what makes the run adoptable:
         // adopt-published-pr refuses while a different number is linked.
