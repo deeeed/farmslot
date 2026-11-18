@@ -1,0 +1,1 @@
+- Allow a clean no-change exit when changed-file CI never ran. Failed or stale receipts still block.

@@ -1,0 +1,1 @@
+- Carry the validated no-change result into the operator gate after releasing the checkout.

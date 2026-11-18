@@ -188,3 +188,37 @@ test('slotless workspace policy accepts two days and an absolute execution-node 
     );
   }
 });
+
+// ADR-0073 Amendment 1: a project whose review rules come from its installation, not a
+// required skill, declares its rule pack on the static review beside its instruction files.
+test('static-review config accepts a rule pack declaration and refuses a malformed one', () => {
+  assert.deepEqual(
+    normalizeRawStaticReview(
+      {
+        instruction_files: ['runtime/review-quality.md'],
+        rule_pack: { pack: 'runtime/review-pack.json', client: 'farmslot', level: 'static' },
+      },
+      'project.json',
+    ),
+    {
+      instructionFiles: ['runtime/review-quality.md'],
+      rulePack: { pack: 'runtime/review-pack.json', client: 'farmslot', level: 'static' },
+    },
+  );
+  for (const [rulePack, message] of [
+    [
+      { pack: '../review-pack.json', client: 'farmslot', level: 'static' },
+      /rule_pack\.pack must be skill-relative/,
+    ],
+    [
+      { pack: 'runtime/review-pack.json', client: 'farmslot', level: 'living' },
+      /rule_pack\.level must be static or full/,
+    ],
+    [
+      { pack: 'runtime/review-pack.json', level: 'static' },
+      /rule_pack\.client must be a simple name/,
+    ],
+    ['runtime/review-pack.json', /rule_pack must be an object/],
+  ] as const)
+    assert.throws(() => normalizeRawStaticReview({ rule_pack: rulePack }, 'project.json'), message);
+});

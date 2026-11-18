@@ -9,7 +9,10 @@ import type {
   RunDecision,
   RunDecisionPayload,
 } from '../../src/contracts/index.js';
-import { hasUnsettledRunExecution } from '../../src/contracts/runs.js';
+import {
+  hasUnsettledRunExecution,
+  PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
+} from '../../src/contracts/runs.js';
 import { runListEvidenceSummary, summarizeRunEvidence } from '../../src/runs/evidence-summary.js';
 import {
   LIST_CHECK_NAME_MAX_CHARS,
@@ -802,6 +805,26 @@ test('a row whose only loss is step outputs reads as trimmed; one that lost noth
   assert.equal(trimRunForList(stepOnly).steps[0]?.outputsTrimmed, undefined);
   runListRow(stepOnly);
   assert.equal(runListVersion(trimRunForList(stepOnly)), basis);
+});
+
+test('a large review round limit keeps only its code needed by the Runs strip', () => {
+  const code = PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.roundLimitReached;
+  const small = { code, message: 'Review budget spent' };
+  assert.deepEqual(listStepOutputs({ reviewLaunchRejection: small }), {
+    reviewLaunchRejection: small,
+  });
+  assert.deepEqual(listStepOutputs({ reviewLaunchRejection: { ...small, details: big } }), {
+    reviewLaunchRejection: { code },
+  });
+  assert.deepEqual(
+    listStepOutputs({
+      reviewLaunchRejection: {
+        code: PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.launchRejected,
+        message: big,
+      },
+    }),
+    {},
+  );
 });
 
 test('list rows cap long CI check names and fix labels, and mark the step trimmed', () => {

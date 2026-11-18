@@ -14,14 +14,15 @@
   },
   "static_review": {
     "template_id": "review-pr/static",
-    "instruction_files": ["runtime/review-quality.md"]
+    "instruction_files": ["runtime/review-quality.md"],
+    "rule_pack": { "pack": "runtime/review-pack.json", "client": "farmslot", "level": "static" }
   },
   "workflow_defaults": {
     "review-pr": {
       "execution": {
         "workspacePolicy": { "kind": "pool" },
         "transport": "native",
-        "models": [{ "runner": "codex", "model": "gpt-6.1-sol", "effort": "high", "mode": "cold" }]
+        "models": [{ "runner": "codex", "model": "gpt-6.2-sol", "effort": "high", "mode": "cold" }]
       },
       "review": { "mode": "cold", "publishReview": false }
     }

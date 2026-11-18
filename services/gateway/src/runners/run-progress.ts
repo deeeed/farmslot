@@ -15,6 +15,7 @@ import { loadSlotVars } from '../core/config.js';
 import { lazyImport } from '../core/lazy-import.js';
 import { nativeFixTurnIsActive } from '../review/native-fix.js';
 import { runnerTurnLeaseIsActive } from '../review/worker-lifecycle.js';
+import { releasedNoChangeChecks } from '../tasks/worker-signals.js';
 
 import { readReviewWorkspaceWorker } from './native/review-workspace.js';
 import { nativeWorkerLiveStatus, readNativeWorkerSnapshot } from './native/worker-control.js';
@@ -245,6 +246,7 @@ export async function readRunProgress(
   run: Run,
   overrides: Partial<RunProgressReaders> = {},
 ): Promise<RunProgressObservation> {
+  if (releasedNoChangeChecks(run)) return { kind: 'idle' };
   const source = { ...progressReaders, ...overrides };
   const ownedRunner = run.agentContexts?.some(contextHasRunnerBinding);
   const uncertainDelivery = run.steps.some(

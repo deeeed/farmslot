@@ -184,7 +184,7 @@ export class RunPipelineMini extends LitElement {
               detail: segment.detail,
               outputs: segment.outputs,
             },
-            { runError: this.run?.error },
+            { runError: this.run?.error, run: this.run },
           );
           const toneClass = tone === 'warn' ? 'warn' : segment.status;
           return html`

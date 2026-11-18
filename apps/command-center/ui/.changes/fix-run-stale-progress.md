@@ -1,1 +1,0 @@
-- Show how long a run has gone without progress after 20 minutes in Runs and the run sidebar. Keep operator waits clear of the stale label.

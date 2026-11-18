@@ -1,1 +1,0 @@
-- Avoid transient lock-directory watch errors while refreshing idle native hosts.

@@ -1,5 +1,7 @@
 import {
+  type DeterministicChecklistCheck,
   isTerminalWorkerSignal,
+  type Run,
   type WorkerSignal,
   type WorkerTerminalDisposition,
 } from '@farmslot/protocol';
@@ -52,6 +54,15 @@ export function isNoCodeTerminalDisposition(
   disposition: WorkerTerminalDisposition | null | undefined,
 ): disposition is 'already_fixed' | 'not_reproducible' {
   return disposition === 'already_fixed' || disposition === 'not_reproducible';
+}
+
+/** The gateway validated these checks before COMPLETE released the checkout and worker. */
+export function releasedNoChangeChecks(run: Run): DeterministicChecklistCheck[] | undefined {
+  if (!isNoCodeTerminalDisposition(run.metrics?.disposition)) return undefined;
+  const step = run.steps?.find((entry) => entry.name === 'complete' && entry.status === 'done');
+  if (step?.outputs?.slotDisposition !== 'released') return undefined;
+  const checks = step.outputs.noChangeDeterministicChecks;
+  return Array.isArray(checks) ? checks : undefined;
 }
 
 function invalidNoChangeSignal(signal: WorkerSignal, reason: string): WorkerSignal {

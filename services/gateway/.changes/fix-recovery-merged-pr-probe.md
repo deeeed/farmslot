@@ -1,2 +1,0 @@
-- A momentary GitHub failure in the merged-PR proof Close as Shipped runs is retried once before anyone is asked, and when it still cannot answer the refusal names the supported retry (`run.replayStep finalize`) in the message the run and its decision card show, so the run is never held with no visible way forward.
-- Clearing an unproven merged link now removes only the run's PR link instead of rewriting the whole list, so a ticket's own issue link survives on a run whose links cannot be recomputed without a PR number.

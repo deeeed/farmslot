@@ -178,14 +178,31 @@ test('directory-changing scripts execute in the same location after decompositio
   assert.equal(decomposed.stdout, original.stdout);
 });
 
-test('main matrix and nightly audit are separate; nightly failures have a visible alert', () => {
+test('full runs queue without cancellation and leave hosted slots for PR work', () => {
   const main = readFileSync(path.join(root, '.github/workflows/farmslot-full-quality.yml'), 'utf8');
+  const quality = readFileSync(path.join(root, '.github/workflows/farmslot-quality.yml'), 'utf8');
+  const hygiene = readFileSync(path.join(root, '.github/workflows/repository-hygiene.yml'), 'utf8');
+  assert.match(
+    main,
+    / {2}group: full-quality\r?\n {2}cancel-in-progress: false\r?\n {2}queue: max/,
+  );
+  assert.match(main, /max-parallel: \${{ github\.event_name == 'push' && 12 \|\| 4 }}/);
+  assert.doesNotMatch(main, /continue-on-error: true|schedule:/);
+  assert.match(
+    quality,
+    /group:.*github\.event\.pull_request\.number.*\n {2}cancel-in-progress: true/,
+  );
+  assert.match(
+    hygiene,
+    /group:.*github\.event\.pull_request\.number.*\n {2}cancel-in-progress: \${{ github\.event_name == 'pull_request' }}/,
+  );
+});
+
+test('nightly audit failures have a visible alert', () => {
   const nightly = readFileSync(
     path.join(root, '.github/workflows/farmslot-nightly-parity.yml'),
     'utf8',
   );
-  assert.match(main, /max-parallel: 15/);
-  assert.doesNotMatch(main, /continue-on-error: true|schedule:/);
   assert.match(nightly, /schedule:/);
   for (const command of [
     'yarn ci:local',

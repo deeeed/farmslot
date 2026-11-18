@@ -1,0 +1,1 @@
+- Dismissing a pairing link keeps your saved gateway and returns you to your connected workspace.

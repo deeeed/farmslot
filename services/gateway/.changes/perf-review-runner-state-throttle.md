@@ -1,1 +1,0 @@
-- A tmux static review now rereads its runner state every 10 seconds instead of on every 1-second signal poll, cutting the review node's runner-file reads about tenfold while a review runs.
