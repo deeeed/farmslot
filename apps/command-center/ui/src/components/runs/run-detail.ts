@@ -184,6 +184,7 @@ import {
   selectedStepNameFromRunDetailHash,
   STEP_ARTIFACT_VIEW,
 } from './run-detail-url-state.js';
+import { showsRunProgress } from './run-list-model.js';
 import {
   acceptanceRowHeldRunId,
   publicationReviewStepForName,
@@ -401,9 +402,15 @@ export class RunDetail extends RunDetailState {
       const now = Date.now();
       const recipeGraceChanged =
         readFailureText(this.recipeQuery, now) !== readFailureText(this.recipeQuery, this._now);
+      const displayedRun = this.run ?? this.standInRow;
+      const progressMinuteChanged =
+        displayedRun &&
+        showsRunProgress(displayedRun) &&
+        Math.floor(now / 60_000) !== Math.floor(this._now / 60_000);
       if (
         this._taskProgressLoading ||
         recipeGraceChanged ||
+        progressMinuteChanged ||
         this.run?.status === 'ci-watching' ||
         (this.run && pendingCITimeoutDecision(this.run))
       )

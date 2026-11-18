@@ -1,0 +1,1 @@
+- Retain failed slot releases with their error and a supported retry instead of leaving an abandoned release in progress.

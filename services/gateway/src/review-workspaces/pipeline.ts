@@ -19,6 +19,7 @@ import { lazyImport } from '../core/lazy-import.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { fetchGitHubPR } from '../external/github.js';
 import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
+import { applyInterdiffQualification } from '../review/interdiff.js';
 import {
   admitReviewRound,
   recordReviewRoundVerdict,
@@ -27,7 +28,6 @@ import {
 import { isUncertainReviewerOperation } from '../review/terminal-result.js';
 import {
   buildRepeatReviewContext,
-  confirmIncrementalAncestry,
   findLatestPriorReviewRun,
   startsFreshReviewChain,
 } from '../run-engine/engine-decisions.js';
@@ -48,6 +48,7 @@ import { getRunnerDefinition } from '../runners/registry.js';
 import {
   observeReviewPromptAcceptance,
   observeReviewRunnerState,
+  type ReviewRunnerState,
 } from '../runners/review-startup.js';
 import {
   launchReviewTmux,
@@ -97,6 +98,9 @@ import {
 
 // The retention module reaches this one through the orchestrator (a cycle).
 const loadRetention = lazyImport(() => import('./retention.js'));
+
+/** How long a tmux reviewer's runner-state reading stays current in the monitor loop. */
+export const REVIEW_RUNNER_STATE_INTERVAL_MS = 10_000;
 
 interface ReviewOutputRepair {
   requestedAt: string;
@@ -307,19 +311,17 @@ async function freezeSubject(
     }),
   );
   const context = prior
-    ? await confirmIncrementalAncestry(
-        buildRepeatReviewContext(
-          run,
-          prior,
-          {
-            project: run.project,
-            repository: reference.repo,
-            prNumber: reference.number,
-            headSha: pr.headSha,
-            baseRef: pr.baseRef,
-          },
-          allRuns,
-        ),
+    ? buildRepeatReviewContext(
+        run,
+        prior,
+        {
+          project: run.project,
+          repository: reference.repo,
+          prNumber: reference.number,
+          headSha: pr.headSha,
+          baseRef: pr.baseRef,
+        },
+        allRuns,
       )
     : undefined;
   currentWorkspaceRun(runId, generation);
@@ -339,7 +341,9 @@ async function freezeSubject(
     configureWorkspaceContinuity(run, savedPrior, context, subject, allRuns);
     if (
       (context.mode === 'warm' ||
-        (context.session?.fallback && context.session.fallback.reason !== 'retention-expired')) &&
+        (context.session?.fallback &&
+          context.session.fallback.reason !== 'retention-expired' &&
+          context.session.fallback.reason !== 'session-unavailable')) &&
       context.priorReviewedHeadSha
     )
       subject.baseSha = context.priorReviewedHeadSha;
@@ -809,8 +813,17 @@ async function executeOwnedReviewWorkspaceStep(
       check();
       const task = await materializeReviewWorkspaceTask(runId, run.reviewWorkspaceSubject);
       check();
+      const qualifiedContext =
+        task.interdiff && run.repeatReviewContext
+          ? applyInterdiffQualification(run.repeatReviewContext, task.interdiff)
+          : undefined;
       await persistRunNow(
-        updateRun(runId, { taskFile: task.taskFile }),
+        updateRun(runId, {
+          taskFile: task.taskFile,
+          ...(qualifiedContext
+            ? { repeatReviewContext: qualifiedContext, reviewMode: qualifiedContext.mode }
+            : {}),
+        }),
         'workspace review task path',
       );
       return { outputs: { taskFile: task.taskFile, template: getRun(runId)?.executionTemplate } };
@@ -1088,6 +1101,13 @@ async function executeOwnedReviewWorkspaceStep(
           return null;
         }
       };
+      // Runner state only reports a failed or still-starting turn, and each reading costs
+      // runner-file reads on the review node. The 1 s loop keeps polling the signal, and
+      // rereads runner state when acceptance changes, startup looks blocked, the reading
+      // ages out, or the monitor deadline is near (a failure must win over a timeout).
+      let runnerState: ReviewRunnerState | null = null;
+      let runnerStateKey: string | undefined;
+      let runnerStateAt = 0;
       while (Date.now() < deadline) {
         check();
         await progress.publish();
@@ -1190,10 +1210,22 @@ async function executeOwnedReviewWorkspaceStep(
               },
             };
           }
-          const runnerState = await observe(() =>
-            observeReviewRunnerState(currentWorkspaceRun(runId, generation), acceptance),
-          );
-          check();
+          const stateKey = acceptance
+            ? `${acceptance.sessionId}:${acceptance.turnToken ?? ''}:${acceptance.observedAt}`
+            : '';
+          if (
+            stateKey !== runnerStateKey ||
+            startup === 'blocked' ||
+            Date.now() - runnerStateAt >= REVIEW_RUNNER_STATE_INTERVAL_MS ||
+            deadline - Date.now() <= REVIEW_RUNNER_STATE_INTERVAL_MS
+          ) {
+            runnerState = await observe(() =>
+              observeReviewRunnerState(currentWorkspaceRun(runId, generation), acceptance),
+            );
+            check();
+            runnerStateKey = stateKey;
+            runnerStateAt = Date.now();
+          }
           if (runnerState?.failure) {
             await upsertAgentContext(runId, 'review', { id: 'review', status: 'failed' });
             throw new RunnerExecutionError(runnerState.failure);

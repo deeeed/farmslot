@@ -180,7 +180,7 @@ test('captureReviewInputArtifactsForRun writes PR input metadata, diff, and stat
   assert.equal(diffStat.headSha, 'head-sha');
 });
 
-test('incremental review input captures the exact prior-head to current-head range', async () => {
+test('warm intake captures the current author contribution before local interdiff preparation', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'review-input-incremental-'));
   const calls: string[] = [];
   const run = makeRun({
@@ -220,26 +220,24 @@ test('incremental review input captures the exact prior-head to current-head ran
       headSha: 'current-head',
       number: 123,
     }),
-    fetchPRDiffFiles: async () => {
-      calls.push('cold');
-      return [];
-    },
-    fetchGitHubCompareFiles: async (repo, baseSha, headSha) => {
-      calls.push(`${repo}:${baseSha}..${headSha}`);
+    fetchPRDiffFiles: async (repo, number, opts) => {
+      calls.push(`${repo}#${number}:${opts?.baseSha}..${opts?.headSha}`);
       return [
         { filename: 'src/delta.ts', status: 'modified', additions: 3, deletions: 1, patch: '@@' },
       ];
     },
   });
 
-  assert.deepEqual(calls, ['owner/repo:prior-head..current-head']);
+  assert.deepEqual(calls, ['owner/repo#123:base-sha..current-head']);
   const commit = JSON.parse(await readFile(path.join(dir, 'inputs/commit.json'), 'utf-8'));
   assert.equal(commit.reviewMode, 'warm');
-  assert.equal(commit.baseSha, 'prior-head');
+  assert.equal(commit.baseSha, 'base-sha');
+  assert.equal(commit.reviewInputScope, 'contribution');
   assert.equal(commit.headSha, 'current-head');
   const stat = JSON.parse(await readFile(path.join(dir, 'inputs/diff-stat.json'), 'utf-8'));
   assert.equal(stat.reviewMode, 'warm');
-  assert.equal(stat.baseSha, 'prior-head');
+  assert.equal(stat.baseSha, 'base-sha');
+  assert.equal(stat.reviewInputScope, 'contribution');
   assert.equal(stat.headSha, 'current-head');
 });
 
@@ -1055,4 +1053,81 @@ test('numstat parser rejects patch lines, including tabbed source content', () =
   const mixed =
     '1\t1\ttracked.ts\ndiff --git a/tracked.ts b/tracked.ts\n@@ -1 +1 @@\n+1\t2\tcode\n0\t0\t\n-\t-\tasset.bin\n';
   assert.deepEqual(parseGitNumstat(mixed), { files: 2, additions: 1, deletions: 1 });
+});
+
+test('a legacy warm prior..head cache is replaced with current author input', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'warm-input-cache-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  await mkdir(path.join(dir, 'inputs'));
+  await writeFile(path.join(dir, 'inputs/diff.txt'), 'upstream noise from legacy compare');
+  await writeFile(
+    path.join(dir, 'inputs/diff-stat.json'),
+    JSON.stringify({
+      source: 'artifact',
+      available: true,
+      kind: 'review-input',
+      files: 1,
+      additions: 1,
+      deletions: 0,
+      baseSha: 'prior-head',
+      headSha: 'current-head',
+      reviewMode: 'warm',
+      capturedAt: new Date().toISOString(),
+    }),
+  );
+  const run = makeRun({
+    flowType: 'review-pr',
+    ticketOrPr: 'owner/repo#123',
+    prNumber: 123,
+    taskFile: path.join(dir, 'TASK.md'),
+    reviewMode: 'warm',
+    repeatReviewContext: {
+      version: 1,
+      chainId: 'prior',
+      generation: 2,
+      priorRunId: 'prior',
+      priorFamilyId: 'family-1',
+      repository: 'owner/repo',
+      prNumber: 123,
+      priorReviewedHeadSha: 'prior-head',
+      currentHeadSha: 'current-head',
+      verdict: 'issues',
+      unresolvedFindings: [],
+      artifactRefs: [],
+      farmslotEvidenceRefs: [],
+      mode: 'warm',
+      validationDepth: 'static-code',
+    },
+  });
+  let calls = 0;
+  await captureReviewInputArtifactsForRun(run, {
+    fetchGitHubPR: async () => ({
+      branch: 'feature',
+      title: 'PR',
+      body: '',
+      baseRef: 'main',
+      baseSha: 'base-sha',
+      headSha: 'current-head',
+      number: 123,
+    }),
+    fetchPRDiffFiles: async () => {
+      calls += 1;
+      return [
+        {
+          filename: 'src/author.ts',
+          status: 'modified',
+          additions: 1,
+          deletions: 0,
+          patch: '@@ author only',
+        },
+      ];
+    },
+  });
+  assert.equal(calls, 1);
+  const bytes = await readFile(path.join(dir, 'inputs/diff.txt'), 'utf8');
+  assert.match(bytes, /author only/);
+  assert.doesNotMatch(bytes, /upstream noise/);
+  const metadata = JSON.parse(await readFile(path.join(dir, 'inputs/diff-stat.json'), 'utf8'));
+  assert.equal(metadata.reviewInputScope, 'contribution');
+  assert.equal(metadata.baseSha, 'base-sha');
 });

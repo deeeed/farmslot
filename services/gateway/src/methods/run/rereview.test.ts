@@ -8,7 +8,9 @@ import * as github from '../../external/github.js';
 const priorHead = '5f85b47bfa4f7d8ec1888605f0cd2f025fffb804';
 const liveHead = 'da6b612ef57bc81a6c14bc873810b66ee0720eb0';
 const runs = new Map<string, Run>();
-let releaseAncestry: () => void = () => {};
+let releaseMetadata: () => void = () => {};
+let metadataCalls = 0;
+let holdMetadata = false;
 let ancestryCalls = 0;
 let ancestor = true;
 let holdHistory = false;
@@ -77,17 +79,20 @@ runs.set(prior.id, prior);
 mock.module('../../external/github.js', {
   namedExports: {
     ...github,
-    fetchGitHubPR: async () => ({ headSha: liveHead, baseSha: 'b'.repeat(40), number: 42 }),
-    // Hold every ancestry lookup until both clicks are waiting on GitHub.
+    fetchGitHubPR: async () => {
+      metadataCalls += 1;
+      if (holdMetadata)
+        await new Promise<void>((resolve) => {
+          const previous = releaseMetadata;
+          releaseMetadata = () => {
+            previous();
+            resolve();
+          };
+        });
+      return { headSha: liveHead, baseSha: 'b'.repeat(40), number: 42 };
+    },
     isGitHubAncestor: async () => {
       ancestryCalls += 1;
-      await new Promise<void>((resolve) => {
-        const previous = releaseAncestry;
-        releaseAncestry = () => {
-          previous();
-          resolve();
-        };
-      });
       return ancestor;
     },
   },
@@ -172,18 +177,21 @@ beforeEach(() => {
   runs.set(prior.id, { ...prior });
   ancestryCalls = 0;
   ancestor = true;
-  releaseAncestry = () => {};
+  releaseMetadata = () => {};
+  metadataCalls = 0;
+  holdMetadata = false;
   holdHistory = false;
   historyCalls = 0;
   releaseHistory = () => {};
   resetWarmReviewerSessionsForTest();
 });
 
-test('a retried click during ancestry lookup reuses the WARM child with its primary lineage', async () => {
+test('a retried click during PR metadata lookup reuses the WARM child with its primary lineage', async () => {
+  holdMetadata = true;
   const first = runRereviewLatestHead({ runId: prior.id });
   const second = runRereviewLatestHead({ runId: prior.id });
-  while (ancestryCalls < 2) await new Promise((resolve) => setImmediate(resolve));
-  releaseAncestry();
+  while (metadataCalls < 2) await new Promise((resolve) => setImmediate(resolve));
+  releaseMetadata();
   const [a, b] = await Promise.all([first, second]);
 
   const children = [...runs.values()].filter((run) => run.parentRunId === prior.id);
@@ -200,11 +208,12 @@ test('a retried click during ancestry lookup reuses the WARM child with its prim
 });
 
 test('concurrent clicks waiting on archive history create only one WARM child', async () => {
+  holdMetadata = true;
   holdHistory = true;
   const first = runRereviewLatestHead({ runId: prior.id });
   const second = runRereviewLatestHead({ runId: prior.id });
-  while (ancestryCalls < 2) await new Promise((resolve) => setImmediate(resolve));
-  releaseAncestry();
+  while (metadataCalls < 2) await new Promise((resolve) => setImmediate(resolve));
+  releaseMetadata();
   while (historyCalls < 2) await new Promise((resolve) => setImmediate(resolve));
   releaseHistory();
   const results = await Promise.allSettled([first, second]);
@@ -217,6 +226,7 @@ test('concurrent clicks waiting on archive history create only one WARM child', 
 });
 
 test('a standalone posting decision supplies retained provenance without a publication registry', async () => {
+  holdMetadata = true;
   runs.set(prior.id, {
     ...prior,
     reviewResult: undefined,
@@ -233,8 +243,8 @@ test('a standalone posting decision supplies retained provenance without a publi
     ],
   });
   const click = runRereviewLatestHead({ runId: prior.id });
-  while (ancestryCalls < 1) await new Promise((resolve) => setImmediate(resolve));
-  releaseAncestry();
+  while (metadataCalls < 1) await new Promise((resolve) => setImmediate(resolve));
+  releaseMetadata();
   const result = await click;
   assert.equal(result.mode, 'warm-handoff');
   assert.equal(
@@ -244,6 +254,7 @@ test('a standalone posting decision supplies retained provenance without a publi
 });
 
 test('ambiguous standalone session evidence refuses before replacing the parent', async () => {
+  holdMetadata = true;
   runs.set(prior.id, {
     ...prior,
     agentContexts: [
@@ -270,8 +281,8 @@ test('ambiguous standalone session evidence refuses before replacing the parent'
   });
   const click = runRereviewLatestHead({ runId: prior.id });
   const refused = assert.rejects(click, /ambiguous session provenance/);
-  while (ancestryCalls < 1) await new Promise((resolve) => setImmediate(resolve));
-  releaseAncestry();
+  while (metadataCalls < 1) await new Promise((resolve) => setImmediate(resolve));
+  releaseMetadata();
   await refused;
   assert.equal(runs.size, 1);
   assert.equal(runs.get(prior.id)!.status, 'blocked');
@@ -291,36 +302,39 @@ test('missing or ambiguous lineage preserves the parent without creating a child
 });
 
 test('unavailable retained session refuses before superseding the parent', async () => {
+  holdMetadata = true;
   resetWarmReviewerSessionsForTest();
   runs.set(prior.id, { ...prior, agentContexts: [] });
   const click = runRereviewLatestHead({ runId: prior.id });
   const refused = assert.rejects(click, /no verified retained session/);
-  while (ancestryCalls < 1) await new Promise((resolve) => setImmediate(resolve));
-  releaseAncestry();
+  while (metadataCalls < 1) await new Promise((resolve) => setImmediate(resolve));
+  releaseMetadata();
   await refused;
   assert.equal(runs.size, 1);
   assert.equal(runs.get(prior.id)!.status, 'blocked');
 });
 
-test('a rebased head refuses WARM without changing the parent', async () => {
+test('a rebased head creates a WARM candidate without an ancestry refusal', async () => {
   ancestor = false;
+  holdMetadata = true;
   const click = runRereviewLatestHead({ runId: prior.id });
-  const refused = assert.rejects(click, /WARM review unavailable.*not an ancestor/);
-  while (ancestryCalls < 1) await new Promise((resolve) => setImmediate(resolve));
-  releaseAncestry();
-  await refused;
-  assert.equal(runs.size, 1);
-  assert.equal(runs.get(prior.id)!.status, 'blocked');
+  while (metadataCalls < 1) await new Promise((resolve) => setImmediate(resolve));
+  releaseMetadata();
+  const result = await click;
+  assert.equal(result.mode, 'warm-handoff');
+  assert.equal(runs.get(result.runId!)?.reviewMode, 'warm');
+  assert.equal(ancestryCalls, 0, 'local immutable interdiff qualification owns rebase scope');
 });
 
-test('a parent cancelled during the ancestry lookup gets no warm re-review', async () => {
+test('a parent cancelled during the PR metadata lookup gets no warm re-review', async () => {
+  holdMetadata = true;
   for (const id of [...runs.keys()]) if (id !== prior.id) runs.delete(id);
   runs.set(prior.id, { ...prior, status: 'blocked' } as Run);
-  ancestryCalls = 0;
+  metadataCalls = 0;
   const click = runRereviewLatestHead({ runId: prior.id });
-  while (ancestryCalls < 1) await new Promise((resolve) => setImmediate(resolve));
+  while (metadataCalls < 1) await new Promise((resolve) => setImmediate(resolve));
   runs.set(prior.id, { ...runs.get(prior.id)!, status: 'cancelled' } as Run);
-  releaseAncestry();
+  releaseMetadata();
   await assert.rejects(click, /is cancelled/);
   assert.equal(
     [...runs.values()].filter((run) => run.parentRunId === prior.id).length,

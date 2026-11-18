@@ -321,6 +321,9 @@ mock.module('../runs/store.js', {
     getRun,
     updateRun,
     deleteRun: () => {},
+    persistRunNow: () => {
+      throw new Error('Unexpected run persistence in CI fix-scope fixture');
+    },
     clearRunActiveTaskFile: () => {},
     updateRunStep: (_id: string, name: string, patch: Partial<Run['steps'][number]>) => {
       const step = currentRun.steps.find((s) => s.name === name);

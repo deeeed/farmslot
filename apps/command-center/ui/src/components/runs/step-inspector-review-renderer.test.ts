@@ -139,3 +139,30 @@ test('a finding opens its reviewed source independently of the diff', () => {
   if (typeof click === 'function') click();
   assert.deepEqual(selected, ['order.ts:462']);
 });
+
+test('startup retries stay inside their review round with times and retained reasons', () => {
+  const text = litText(
+    renderReviewAttempt(
+      round({
+        earlierAttempts: [
+          {
+            key: 'failed-launch',
+            status: 'failed',
+            runner: 'codex',
+            model: 'model',
+            startedAt: '2026-11-18T03:10:39.158Z',
+            durationMs: 62824,
+            failureReason: 'Native-host version mismatch',
+          },
+        ],
+      }),
+      false,
+      () => undefined,
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  assert.match(text, /Earlier attempts · 1 failed/);
+  assert.match(text, /Native-host version mismatch/);
+  assert.match(text, /codex \/ model · failed/);
+});
