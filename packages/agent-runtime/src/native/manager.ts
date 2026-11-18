@@ -271,6 +271,7 @@ export class NativeSessionManager {
         record.sending ||
         record.configuring ||
         record.compacting ||
+        record.turnEnd ||
         record.pendingRequests.size
       )
         return false;
