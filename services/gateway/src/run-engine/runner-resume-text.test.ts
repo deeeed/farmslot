@@ -1,3 +1,4 @@
+// @farmslot:serial — writes a pool row for the slot the real sender resolves.
 // The resume Continue sends has to arrive as itself. The first version of this
 // fix reused the budget helper, which rewrapped every message as
 // "[Orchestrator] USAGE BUDGET WARNING: ... Complete or block the current
