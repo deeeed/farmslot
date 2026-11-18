@@ -23,7 +23,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { WorkerSignal } from '@farmslot/protocol';
+import type { MonitorViolation, WorkerSignal } from '@farmslot/protocol';
 
 import '../runtime/mock-pty.test-support.js';
 
@@ -101,7 +101,7 @@ async function fixture(t: test.TestContext) {
         poll_interval_min: 1 / 60_000,
         total_timeout_min: 1.5 / 60,
         stuck_timeout_min: 0.5 / 60,
-        max_nudges: 3,
+        max_nudges: 0,
       },
     }),
   );
@@ -174,7 +174,7 @@ async function fixture(t: test.TestContext) {
     role?: string;
     contextId?: string;
   }[] = [];
-  const start = () => {
+  const start = (overrides: Partial<MonitorObservations> = {}) => {
     const observations: MonitorObservations = {
       workerStatus: (slot, runner, runId, role, contextId) =>
         checkAgentLive(slot, runner, runId, role, contextId, pane),
@@ -184,7 +184,10 @@ async function fixture(t: test.TestContext) {
         return 'confirmed';
       },
     };
-    const execution = monitorRun(run.id, slotId, controller.signal, observations);
+    const execution = monitorRun(run.id, slotId, controller.signal, {
+      ...observations,
+      ...overrides,
+    });
     executions.push(execution);
     return execution;
   };
@@ -306,7 +309,8 @@ test(
       getRun(f.run.id)?.monitorState?.lastStructuredProgressAt ?? new Date().toISOString(),
     );
 
-    await until(() => false, 1_000);
+    // No wait needed: the fixture already stamps the worker's last progress 10 s
+    // in the past, which is the comparison this case makes.
     f.restoreRunner();
     resolveMonitorDecision(unavailable, 'continue');
     await until(() => (getRun(f.run.id)?.monitorState?.operatorResumedAt ?? '') !== '');
@@ -332,9 +336,19 @@ test(
   { timeout: 15_000 },
   async (t) => {
     const f = await fixture(t);
-    const interrupted = new Date(Date.now() - 5_000).toISOString();
+    // A card opens inside a window that is already running, so the window start
+    // has to predate the marker: the credit is capped at the window's own
+    // elapsed time, which is what stops a backwards clock step from driving the
+    // timeout check negative.
     const before = getRun(f.run.id)!.monitorState!;
-    updateRun(f.run.id, { monitorState: { ...before, gateWaitStartedAt: interrupted } });
+    const interrupted = new Date(Date.now() - 5_000).toISOString();
+    updateRun(f.run.id, {
+      monitorState: {
+        ...before,
+        startedAt: new Date(Date.now() - 30_000).toISOString(),
+        gateWaitStartedAt: interrupted,
+      },
+    });
     // The provider is already restored, so the recovered loop polls normally
     // instead of blocking on a fresh card before it can persist anything.
     f.restoreRunner();
@@ -346,10 +360,51 @@ test(
       (getRun(f.run.id)?.monitorState?.gateWaitMs ?? 0) >= 5_000,
       `the interrupted card's wait was not credited: gateWaitMs=${getRun(f.run.id)?.monitorState?.gateWaitMs}`,
     );
-    assert.equal(
+    // The recovered loop may already be on a card of its own (this window is
+    // deliberately spent), so what matters is that the interrupted marker is
+    // gone rather than that no marker exists: crediting it twice is the bug.
+    assert.notEqual(
       getRun(f.run.id)?.monitorState?.gateWaitStartedAt,
+      interrupted,
+      'the interrupted marker must not survive, or every later restart counts the same wait again',
+    );
+    void execution;
+  },
+);
+
+// A max-nudges card is the opposite case: the worker is already stuck, Continue
+// means "resume nudging", and handing it a fresh stuck window would silence both
+// the next nudge and the timeout card for another full window.
+test(
+  'answering a max_nudges card does not restart the inactivity window',
+  { timeout: 15_000 },
+  async (t) => {
+    const f = await fixture(t);
+    // No runner failure: the stuck violation is what raises a card here.
+    f.restoreRunner();
+    const stuck: MonitorViolation = {
+      slotId: f.slotId,
+      role: 'dev',
+      contextId: 'dev',
+      type: 'stuck',
+      message: 'No structured runner activity for 21 minutes',
+      nudgeSent: null,
+      timestamp: new Date().toISOString(),
+    };
+    const execution = f.start({ violations: async () => [stuck] });
+    await until(() => f.card() !== undefined);
+    assert.equal(f.card()?.type, 'monitor_max_nudges');
+
+    // The grace, if granted, is written by the poll persist that follows the
+    // answer, so the case has to see that persist land or it asserts nothing.
+    const polledAt = getRun(f.run.id)?.monitorState?.lastPollAt;
+    resolveMonitorDecision(f.card()!.id, 'continue');
+    await until(() => getRun(f.run.id)?.monitorState?.lastPollAt !== polledAt);
+
+    assert.equal(
+      getRun(f.run.id)?.monitorState?.operatorResumedAt,
       undefined,
-      'the open-card marker must be cleared once credited, or every later restart counts it again',
+      'a stuck worker must not be granted inactivity grace by the card raised about it being stuck',
     );
     void execution;
   },

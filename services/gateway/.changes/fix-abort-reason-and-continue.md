@@ -3,3 +3,4 @@
 - The resume and the usage-budget warning no longer share one message wrapper: the one-shot pane sender now carries the caller's exact text, dedup key and channel, so a worker resumed after a provider outage is no longer told to mark the checklist item it is still working on.
 - Answering a monitor card also restarts the inactivity window, so a card the operator spent longer than the stuck timeout on does not spend a nudge in the same poll as the answer.
 - A card still open when the gateway restarts has its wait credited when the monitor comes back, and a new monitoring window starts with no gate credit carried into it.
+- The inactivity grace an answered card grants is withheld from a max-nudges card, where the worker is already stuck and Continue means resume nudging rather than wait another full stuck window.

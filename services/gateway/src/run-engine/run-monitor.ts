@@ -1083,6 +1083,16 @@ export interface MonitorObservations {
   deliverResume?: typeof sendOneShotWorkerInstruction;
 }
 
+/**
+ * Cards whose wait must NOT grant the worker a fresh stuck window.
+ *
+ * A max-nudges card is raised because the worker is already stuck; Continue
+ * resets the nudge count so nudging resumes, and treating the operator's
+ * reading time as inactivity grace would silence both the next nudge and the
+ * timeout card for another full stuck window.
+ */
+const STUCK_GRACE_EXEMPT_DECISIONS = new Set(['max_nudges']);
+
 export async function monitorRun(
   runId: string,
   slotId: string,
@@ -1132,9 +1142,14 @@ export async function monitorRun(
       clearGateWaitStart(runId);
       // The worker was idle for as long as the card was up, and that idleness
       // is ours, not its. Without this the next poll can see a stuck window
-      // that elapsed entirely while a human was reading, and spend a nudge (or
-      // open a max_nudges card) in the same iteration as the answer.
-      if (monitorState) monitorState.operatorResumedAt = Date.now();
+      // that elapsed entirely while a human was reading, and spend a nudge in
+      // the same iteration as the answer.
+      //
+      // Not for `max_nudges`: there the worker is already stuck, Continue means
+      // "resume nudging", and granting it a fresh stuck window would stop both
+      // the next nudge and the timeout card for another full window.
+      if (monitorState && !STUCK_GRACE_EXEMPT_DECISIONS.has(reason))
+        monitorState.operatorResumedAt = Date.now();
     }
   };
   // A failure the runner itself reported (an expired login) waits for the operator in a
@@ -1258,7 +1273,15 @@ export async function monitorRun(
     ? Date.parse(persisted.gateWaitStartedAt)
     : Number.NaN;
   if (Number.isFinite(interruptedGateWaitAt)) {
-    gateWait.ms += Math.max(0, Date.now() - interruptedGateWaitAt);
+    // Capped at the window itself: a marker written before the current window
+    // (a clock stepped backwards between the two writes, then corrected) would
+    // otherwise credit more than the window has elapsed and drive the timeout
+    // check negative, so the run would never time out.
+    const windowStartedAt = Date.parse(persisted?.startedAt ?? '') || Date.now();
+    gateWait.ms += Math.min(
+      Math.max(0, Date.now() - interruptedGateWaitAt),
+      Math.max(0, Date.now() - windowStartedAt),
+    );
     clearGateWaitStart(runId);
   }
   const restoredBudgetUsage = restoreBudgetUsageState(persisted?.budgetUsage);
