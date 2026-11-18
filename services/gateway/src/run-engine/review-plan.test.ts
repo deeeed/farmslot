@@ -355,12 +355,12 @@ test('an omitted Claude plan row accepts the effort the session recorded', () =>
 
 test('an omitted Codex plan row accepts a review recorded with no effort', () => {
   const row: ReviewSelection = { runner: 'codex', model: null, effort: null, mode: 'cold' };
-  const recorded = {
+  const recorded: ReviewStatus = {
     ...passing('codex-unset', 'session-codex-unset'),
     model: null,
     effort: null,
   };
-  const missing = { ...recorded };
+  const missing: ReviewStatus = { ...recorded };
   delete missing.effort;
   assert.deepEqual(remainingExplicitReviewPlan([row], [recorded]), []);
   assert.deepEqual(remainingExplicitReviewPlan([row], [missing]), []);
