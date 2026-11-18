@@ -79,6 +79,25 @@ export function renderReviewAttempt(
           </div>`
         : nothing}
       ${round.usageLabel ? html`<div class="review-loop-meta">${round.usageLabel}</div>` : nothing}
+      ${round.earlierAttempts.length
+        ? html`<details
+            class="review-launch-attempts"
+            ${viewDetails(`review-attempts:${round.key}`)}
+          >
+            <summary>Earlier attempts · ${round.earlierAttempts.length} failed</summary>
+            ${round.earlierAttempts.map(
+              (attempt) =>
+                html`<div class="review-loop-meta" data-attempt=${attempt.key}>
+                  ${attempt.startedAt
+                    ? new Date(attempt.startedAt).toLocaleString()
+                    : 'Start not recorded'}
+                  · ${attempt.runner} / ${attempt.model} · ${attempt.status}
+                  ${attempt.durationMs !== null ? ` · ${formatDuration(attempt.durationMs)}` : ''}
+                  <div>${attempt.failureReason ?? 'Failure reason not recorded'}</div>
+                </div>`,
+            )}
+          </details>`
+        : nothing}
       ${round.findings.map(
         (finding) =>
           html`<article class="review-loop-issue" data-finding=${finding.id}>

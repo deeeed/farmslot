@@ -36,18 +36,23 @@ export function compareReviewHistoryRounds(a: ReviewHistoryRound, b: ReviewHisto
 export function reviewHistoryTimeline(
   run: Run,
   rounds: ReviewHistoryRound[],
+  fixReceipts: ReviewHistoryRound[] = [],
 ): ReviewHistoryEvent[] {
   const ordered = [...rounds].sort(compareReviewHistoryRounds);
   const events: ReviewHistoryEvent[] = [];
   const fixes: ReviewHistoryFix[] = [];
-  for (const [roundIndex, round] of ordered.entries()) {
+  const sources = [...ordered, ...fixReceipts].sort(compareReviewHistoryRounds);
+  for (const [sourceIndex, round] of sources.entries()) {
     if (round.hasFix) {
       // Artifact hydration may replace a pathname with a Git alias for the same code fix.
-      const key =
-        round.fixBaseSha && round.fixHeadSha
+      const key = round.fixContextKey
+        ? `${round.reviewId}:fix:${round.fixContextKey}`
+        : round.fixBaseSha && round.fixHeadSha
           ? `${round.reviewId}:fix:${round.fixBaseSha}:${round.fixHeadSha}`
           : (round.fixDiffPath ?? `${round.reviewId}:fix:${round.key}`);
-      const previous = ordered.slice(0, roundIndex);
+      const previous = sources
+        .slice(0, sourceIndex)
+        .filter((entry) => !fixReceipts.includes(entry));
       const prior = previous.filter((entry) => entry.reviewId === round.reviewId);
       const trigger =
         [...previous]
@@ -90,6 +95,7 @@ export function reviewHistoryTimeline(
         });
       }
     }
+    if (fixReceipts.includes(round)) continue;
     events.push({
       kind: 'review',
       key: round.key,
