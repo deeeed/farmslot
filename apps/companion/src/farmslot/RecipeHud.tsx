@@ -3,7 +3,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { RecipeHud as SharedRecipeHud, type RecipeHudProps } from '@farmslot/adapter-rn/recipe-hud';
 
-import { formatRecipeHudIntent } from './recipe-hud-state';
+import { formatRecipeHudIntent, formatRecipeHudOpeningBadge } from './recipe-hud-state';
 
 export type {
   FarmslotRecipeHudState,
@@ -35,6 +35,7 @@ export function RecipeHud(props: Readonly<RecipeHudProps>): React.ReactElement |
       {...props}
       text={{
         ...props.text,
+        badge: (state) => props.text?.badge?.(state) ?? formatRecipeHudOpeningBadge(state),
         intent: (state) => formatRecipeHudIntent(state, props.text?.intent?.(state)),
       }}
       styles={{ ...props.styles, container: [placement, props.styles?.container] }}

@@ -3,7 +3,11 @@ import test from 'node:test';
 
 import type { RecipeFlowUpdate } from '@farmslot/protocol/recipe';
 
-import { formatRecipeHudIntent, normalizeHudState } from './recipe-hud-state';
+import {
+  formatRecipeHudIntent,
+  formatRecipeHudOpeningBadge,
+  normalizeHudState,
+} from './recipe-hud-state';
 
 const flow: RecipeFlowUpdate = {
   version: 1,
@@ -34,7 +38,7 @@ test('Companion HUD keeps SDK ancestry and uses SDK progress instead of legacy t
   assert.equal(hud.recipeFlow, flow);
   assert.equal(
     formatRecipeHudIntent(hud),
-    'Check the Review queue · Recipe › Repeat checkout › Open Review',
+    'Repeat checkout › Open Review · Check the Review queue',
   );
   assert.equal(hud.currentStep, 4);
   assert.equal(hud.totalSteps, undefined);
@@ -62,4 +66,21 @@ test('Companion HUD retains legacy and final captions', () => {
   assert.equal(completion.currentStep, 11);
   assert.equal(completion.totalSteps, 11);
   assert.equal(formatRecipeHudIntent(completion), 'Recipe completed');
+});
+
+test('Companion HUD shows exact opening progress and puts call identity before long captions', () => {
+  const intent =
+    'Inspect the complete timeline of terminal updates before opening the selected Review queue item';
+  const hud = normalizeHudState({
+    intent,
+    recipe_flow: {
+      ...flow,
+      progress: { current: 0, completed: 0, total: 11, remaining: 11, qualification: 'exact' },
+    },
+  });
+  assert.equal(hud.currentStep, 0);
+  assert.equal(formatRecipeHudOpeningBadge(hud), '0/11');
+  assert.equal(formatRecipeHudOpeningBadge(normalizeHudState({ recipe_flow: flow })), '');
+  assert.equal(formatRecipeHudIntent(hud), `Repeat checkout › Open Review · ${intent}`);
+  assert.equal(formatRecipeHudIntent(hud, 'Open Review'), 'Repeat checkout · Open Review');
 });

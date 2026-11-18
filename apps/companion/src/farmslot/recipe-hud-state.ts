@@ -12,7 +12,15 @@ export function formatRecipeHudIntent(
 ): string {
   const breadcrumbs = state.recipeFlow?.ancestry?.breadcrumbs;
   if (!breadcrumbs || breadcrumbs.length < 2) return intent;
-  return `${intent} · ${breadcrumbs.map(({ label }) => label).join(' › ')}`;
+  const calls = breadcrumbs.slice(1).map(({ label }) => label);
+  if (calls.at(-1) === intent) calls.pop();
+  return calls.length ? `${calls.join(' › ')} · ${intent}` : intent;
+}
+
+export function formatRecipeHudOpeningBadge(state: CompanionRecipeHudState): string {
+  const progress = state.recipeFlow?.progress;
+  // The shared native counter omits zero, so show an exact opening count as a badge.
+  return progress?.current === 0 && progress.total !== null ? `0/${progress.total}` : '';
 }
 
 export function normalizeHudState(

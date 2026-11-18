@@ -454,6 +454,11 @@ export function commandCenterHudNode(node) {
   if (!ancestry || ancestry.breadcrumbs.length < 2) return updated;
 
   const path = ancestry.breadcrumbs.map(({ label }) => label).join(' › ');
+  if (typeof node.error === 'string' && node.error.trim()) {
+    // The CDP renderer gives the detail row to errors.
+    const intent = node.intent ?? node.text ?? node.node_id ?? node.recipe_flow.activeId;
+    return { ...updated, intent: `${intent} · ${path}` };
+  }
   const detail =
     node.display?.showDetail === true && typeof node.detail === 'string'
       ? `${path} · ${node.detail}`

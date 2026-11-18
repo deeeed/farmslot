@@ -423,6 +423,15 @@ test('Command Center HUD uses SDK ancestry and leaves unknown totals open', () =
   assert.equal(shown.detail, 'Recipe › Repeat checkout › Open Review');
   assert.equal(shown.display.showDetail, true);
 
+  const failed = commandCenterHudNode({
+    ...node,
+    intent: 'Open Review',
+    status: 'fail',
+    error: 'Review failed',
+  });
+  assert.equal(failed.intent, 'Open Review · Recipe › Repeat checkout › Open Review');
+  assert.equal(failed.error, 'Review failed');
+
   const completion = commandCenterHudNode({
     ...node,
     progress: { complete: true },
