@@ -11,6 +11,7 @@ import {
   freezeRequiredSkills,
   type HandoffMetadata,
   projectWorkerTemplateSource,
+  REFERENCE_CHECKOUTS_INPUT,
   REQUIRED_SKILLS_REPAIR,
   RequiredSkillsError,
   resolveConfiguredExecutionTemplateSources,
@@ -552,6 +553,9 @@ export async function runHostedTaskInit(inputFile: string): Promise<TaskInitResu
         terminalContract: path.join(taskDir, 'inputs/worker-terminal-contract.json'),
         bugInput: fs.existsSync(path.join(taskDir, 'inputs/bug-input.json'))
           ? path.join(taskDir, 'inputs/bug-input.json')
+          : null,
+        referenceCheckouts: fs.existsSync(path.join(taskDir, REFERENCE_CHECKOUTS_INPUT))
+          ? path.join(taskDir, REFERENCE_CHECKOUTS_INPUT)
           : null,
         executionTemplate: metadata.executionTemplate,
         handoffMetadata: metadata,

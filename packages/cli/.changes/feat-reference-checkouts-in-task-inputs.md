@@ -1,0 +1,1 @@
+- Preserve the reference-checkout input path when reusing a retained task.

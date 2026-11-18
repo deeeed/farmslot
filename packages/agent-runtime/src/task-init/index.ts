@@ -50,6 +50,8 @@ import {
   type HandoffExecutionTemplate,
   type HandoffMetadata,
   type HandoffSourceKind,
+  type ReferenceCheckout,
+  renderReferenceCheckoutInputs,
 } from './task-document.js';
 import {
   buildMarkShim,
@@ -142,6 +144,12 @@ export interface TaskInitSpec {
     linkedDescriptionsMarkdown?: string;
     commentSummaryMarkdown?: string;
   };
+  /**
+   * Read-only checkouts of other codebases this task is compared against, already
+   * resolved on the machine that runs it. Listed in the task document and frozen in
+   * `inputs/reference-checkouts.json` for a worker or check that reads them by path.
+   */
+  referenceCheckouts?: ReadonlyArray<ReferenceCheckout>;
   handoff: {
     surface: string;
     project: string;
@@ -257,6 +265,9 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
     : scriptedCommand
       ? null
       : (operatorPlan ?? renderedTemplate);
+  // An operator plan is the task document itself, so the shared Inputs builder never
+  // runs for it. The reference checkouts still have to reach that worker: the paths,
+  // the read-only rule and the blocked-not-unchecked rule are appended below.
   let taskMarkdown =
     spec.authored?.taskMarkdown ??
     (operatorPlan !== undefined
@@ -277,7 +288,14 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
             ? renderTemplatePlaceholders(spec.addendum, vars, 'Task document addendum')
             : null,
           hasTicketData: spec.bugInput !== undefined,
+          ...(spec.referenceCheckouts?.length
+            ? { referenceCheckouts: spec.referenceCheckouts }
+            : {}),
         }));
+  if (operatorPlan !== undefined && spec.referenceCheckouts?.length && !spec.authored)
+    taskMarkdown = `${taskMarkdown.trimEnd()}\n\n## Inputs\n\n${renderReferenceCheckoutInputs(
+      spec.referenceCheckouts,
+    ).join('\n')}\n`;
   if (operatorPlan !== undefined && spec.modePreamble)
     taskMarkdown = taskMarkdown.replace(
       /^(#.+\n)/,
@@ -350,6 +368,7 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
     handoff: handoffMetadata,
     terminalContract,
     bugInput: spec.bugInput,
+    ...(spec.referenceCheckouts?.length ? { referenceCheckouts: spec.referenceCheckouts } : {}),
     deterministicCommands: vars,
   });
   return {
