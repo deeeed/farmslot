@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import {
   HANDOFF_INPUT,
@@ -416,13 +417,25 @@ function retainedSource(receipt: TaskExecutionProvenance, file: string): string 
   return retainedSourceFor(receipt.retainedInputs, file) ?? file;
 }
 
+/**
+ * `verified` is the receipt this command already took from `verifySelectedTask(taskDir)`.
+ * Verification hashes every retained input (the CLI installation and the provider, tens of
+ * thousands of files), so a mark that already verified must not hash them a second time.
+ */
 export async function withTaskProjectHost<T>(
   options: ProjectRecipeHostOptions,
   taskDir: string,
   invoke: (host: ProjectRecipeHost) => Promise<T>,
+  verified?: TaskExecutionProvenance,
 ): Promise<T> {
   const selection = readSelection(taskDir);
-  const receipt = verifyTaskExecutionProvenance(taskDir, selection.identity);
+  if (verified && !isDeepStrictEqual(verified.bindingIdentity, selection.identity))
+    throw new ProjectBindingError(
+      'TASK_BINDING_CHANGED',
+      'The verified receipt belongs to a different task binding.',
+      'verify this task again',
+    );
+  const receipt = verified ?? verifyTaskExecutionProvenance(taskDir, selection.identity);
   const selected = selection.identity;
   if (
     !selected ||
