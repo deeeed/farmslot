@@ -28,6 +28,7 @@ let afterWait: (() => void) | undefined;
 let reviewerExists = true;
 let runnerFailure: string | null = null;
 let runnerStartupPending = false;
+let runnerStateReads = 0;
 let acceptance: RunnerPromptAcceptance | null = null;
 let monitorTimeout: number | undefined;
 mock.method(Date, 'now', () => clock);
@@ -87,10 +88,10 @@ mock.module('../runners/review-startup.js', {
   namedExports: {
     ...startup,
     observeReviewPromptAcceptance: async () => acceptance,
-    observeReviewRunnerState: async () => ({
-      failure: runnerFailure,
-      startupPending: runnerStartupPending,
-    }),
+    observeReviewRunnerState: async () => {
+      runnerStateReads++;
+      return { failure: runnerFailure, startupPending: runnerStartupPending };
+    },
   },
 });
 const terminal = await import('../runners/review-tmux.js');
@@ -235,8 +236,12 @@ mock.module('../runners/native/review-workspace.js', {
     }),
   },
 });
-const { executeReviewWorkspaceStep, teardownReviewWorkspace, retainsInvalidReviewOutput } =
-  await import('./pipeline.js');
+const {
+  executeReviewWorkspaceStep,
+  REVIEW_RUNNER_STATE_INTERVAL_MS,
+  teardownReviewWorkspace,
+  retainsInvalidReviewOutput,
+} = await import('./pipeline.js');
 
 beforeEach(() => {
   nativeRepairCommand = undefined;
@@ -245,6 +250,7 @@ beforeEach(() => {
   reviewerExists = true;
   runnerFailure = null;
   runnerStartupPending = false;
+  runnerStateReads = 0;
   acceptance = null;
   monitorTimeout = undefined;
   terminalFailure = undefined;
@@ -642,6 +648,40 @@ test('a static reviewer with an open tmux session surfaces its terminal runner f
   assert.equal(reviewerExists, true, 'session existence must not hide a failed turn');
   assert.equal(getRun(run.id)?.agentContexts?.[0].status, 'failed');
   assert.equal(getRun(run.id)?.reviewResult, undefined);
+});
+
+test('a working tmux reviewer reads its runner state once per interval, not on every signal poll', async (t) => {
+  const { run } = await fixture(t);
+  const started = clock;
+  updateRun(run.id, { status: 'monitoring' });
+  updateRunStep(run.id, PipelineSteps.MONITOR, { startedAt: new Date(started).toISOString() });
+  acceptance = {
+    runner: 'claude',
+    deliveryStartedAt: run.agentContexts![0].promptDeliveryStartedAt!,
+    sessionId: 'original-session',
+    sessionPath: '/fixture/session.jsonl',
+    observedAt: started,
+    turnToken: 'original-session:1',
+  };
+  let polls = 0;
+  afterWait = () => {
+    polls++;
+    if (clock - started < 60_000) return;
+    signal = {
+      status: 'complete',
+      outcome: 'success',
+      attemptId: 'original-attempt',
+      timestamp: new Date(clock).toISOString(),
+    };
+    afterWait = undefined;
+  };
+  await executeReviewWorkspaceStep(run.id, PipelineSteps.MONITOR, 0, () => {});
+  assert.equal(getRun(run.id)?.reviewResult?.recommendation, 'APPROVE');
+  assert(polls >= 60, `the signal is still polled every second (${polls} polls)`);
+  assert(
+    runnerStateReads <= 60_000 / REVIEW_RUNNER_STATE_INTERVAL_MS + 1,
+    `${runnerStateReads} runner-state reads in ${polls} polls`,
+  );
 });
 
 test('the first Pi request and its stalled retry stay monitored without a task mark, then fail', async (t) => {

@@ -48,6 +48,7 @@ import { getRunnerDefinition } from '../runners/registry.js';
 import {
   observeReviewPromptAcceptance,
   observeReviewRunnerState,
+  type ReviewRunnerState,
 } from '../runners/review-startup.js';
 import {
   launchReviewTmux,
@@ -97,6 +98,9 @@ import {
 
 // The retention module reaches this one through the orchestrator (a cycle).
 const loadRetention = lazyImport(() => import('./retention.js'));
+
+/** How long a tmux reviewer's runner-state reading stays current in the monitor loop. */
+export const REVIEW_RUNNER_STATE_INTERVAL_MS = 10_000;
 
 interface ReviewOutputRepair {
   requestedAt: string;
@@ -1088,6 +1092,12 @@ async function executeOwnedReviewWorkspaceStep(
           return null;
         }
       };
+      // Runner state only reports a failed or still-starting turn, and each reading costs
+      // runner-file reads on the review node. The 1 s loop keeps polling the signal, and
+      // rereads runner state when acceptance changes, startup looks blocked, or this ages out.
+      let runnerState: ReviewRunnerState | null = null;
+      let runnerStateKey: string | undefined;
+      let runnerStateAt = 0;
       while (Date.now() < deadline) {
         check();
         await progress.publish();
@@ -1190,10 +1200,21 @@ async function executeOwnedReviewWorkspaceStep(
               },
             };
           }
-          const runnerState = await observe(() =>
-            observeReviewRunnerState(currentWorkspaceRun(runId, generation), acceptance),
-          );
-          check();
+          const stateKey = acceptance
+            ? `${acceptance.sessionId}:${acceptance.turnToken ?? ''}:${acceptance.observedAt}`
+            : '';
+          if (
+            stateKey !== runnerStateKey ||
+            startup === 'blocked' ||
+            Date.now() - runnerStateAt >= REVIEW_RUNNER_STATE_INTERVAL_MS
+          ) {
+            runnerState = await observe(() =>
+              observeReviewRunnerState(currentWorkspaceRun(runId, generation), acceptance),
+            );
+            check();
+            runnerStateKey = stateKey;
+            runnerStateAt = Date.now();
+          }
           if (runnerState?.failure) {
             await upsertAgentContext(runId, 'review', { id: 'review', status: 'failed' });
             throw new RunnerExecutionError(runnerState.failure);
