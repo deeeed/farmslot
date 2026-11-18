@@ -33,3 +33,14 @@ test('a wholly dim prompt row stays protected when its style is ambiguous', () =
   const row = `\x1b[2m${boxed('operator draft')}\x1b[0m`;
   assert.equal(runnerPaneBufferedInstruction(row), 'operator draft');
 });
+
+test('Codex 0.170 keeps its model and directory row when a draft hides the shortcuts', () => {
+  const tail = [
+    '› Previous submitted prompt',
+    '',
+    '› Current operator draft',
+    '',
+    '  GPT-6.2-Sol high · /private/tmp/codex-enter-proof',
+  ].join('\n');
+  assert.equal(runnerPaneBufferedInstruction(tail), 'Current operator draft');
+});

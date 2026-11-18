@@ -74,13 +74,18 @@ function liveComposer(pane: string): LiveComposer | null {
       suggestion: Boolean(suggestion),
     };
   }
-  const footer = lines
+  let footer = lines
     .map((line) =>
       /\? for shortcuts|\bcontext(?:\s+\d+%)?\s+left\b|\btab to queue message\b|← for agents|⚠\s+\d+\s+warnings?\b/i.test(
         line,
       ),
     )
     .lastIndexOf(true);
+  // Codex 0.170 hides the shortcut row while editing but still renders its
+  // final model · directory row below a blank separator.
+  const last = lines.at(-1);
+  if (last && lines.at(-2)?.trim() === '' && /^ {2}[\w.-]+(?: [\w.-]+)? · (?:~?\/|~$)/.test(last))
+    footer = lines.length - 1;
   const content = footer === -1 ? lines : lines.slice(0, footer);
   const composer = content.map((line) => /^\s*[›❯](?:\s|$)/.test(line)).lastIndexOf(true);
   if (composer === -1 || (footer === -1 && composer !== lines.length - 1)) return null;

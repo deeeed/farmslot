@@ -43,7 +43,9 @@ function fixture(t) {
     if (args[0] === 'load-buffer') pasted = options.input;
     if (args[0] === 'paste-buffer') {
       pastedAt = Date.now();
-      process.env.TMUX_PANE_STATE_TAIL_CAPTURE = capturedPaste ?? `› ${pasted}\n\ncontext left\n`;
+      process.env.TMUX_PANE_STATE_TAIL_CAPTURE =
+        (typeof capturedPaste === 'function' ? capturedPaste(pasted) : capturedPaste) ??
+        `› ${pasted}\n\ncontext left\n`;
     }
     if (args[0] === 'send-keys' && !drop)
       process.env.TMUX_PANE_STATE_TAIL_CAPTURE = capturedSubmit
@@ -90,7 +92,7 @@ test('the captured rate-limit choice blocks delivery without selecting a model',
 
 test('the captured postponed follow-up is not delivered and never receives Tab', async (t) => {
   const f = fixture(t);
-  f.setCapturedPanes(captured('clipped-composer'), () => captured('queued-followup'));
+  f.setCapturedPanes(`› ${captured('payload')}\n\ncontext left`, () => captured('queued-followup'));
   const result = await send('%1', 'codex', captured('payload'));
   assert.equal(result.submitted, false);
   assert.equal(result.verification, 'not_sent');
@@ -106,13 +108,14 @@ test('a captured composer is never verified merely because its message prefix is
   f.setCapturedPanes(captured('clipped-composer'), () => captured('clipped-composer'));
   const result = await send('%1', 'codex', captured('payload'));
   assert.equal(result.submitted, false);
-  assert.equal(result.verification, 'unverified');
+  assert.equal(result.verification, 'queue_buffer_unconfirmed');
   assert.equal(result.evidence, null);
   assert.equal(
     fs.readdirSync(f.dir).some((name) => name.endsWith('.json')),
     true,
   );
   assert.equal(f.keys.filter((args) => args[0] === 'paste-buffer').length, 1);
+  assert.equal(f.keys.filter((args) => args[0] === 'send-keys').length, 0);
 });
 
 test('a working composer left after Enter receives one more Enter and verifies steering', async (t) => {
@@ -189,6 +192,33 @@ test('an emptied Codex composer stops retries while delivery proof is unavailabl
   assert.equal(result.submitted, false);
   assert.equal(f.keys.filter(([command]) => command === 'send-keys').length, 1);
 });
+
+for (const [change, expected] of [
+  ['foreign draft', 'queue_buffer_unconfirmed'],
+  ['foreign queue', 'queued_input'],
+  ['replaced pane process', 'pane_changed'],
+]) {
+  test(`Codex presses no Enter when a ${change} appears while the paste settles`, async (t) => {
+    const f = fixture(t);
+    const message = 'Driver-owned idle prompt';
+    const draft = `› ${message}\n\ncontext left`;
+    f.setCapturedPanes(() => {
+      const timer = setTimeout(() => {
+        if (change === 'replaced pane process')
+          process.env.TMUX_PANE_STATE_PROCESS_STARTED_AT = '2';
+        else if (change === 'foreign queue')
+          process.env.TMUX_PANE_STATE_TAIL_CAPTURE = `• Queued follow-up inputs\n  ↳ foreign\n\n${draft}`;
+        else process.env.TMUX_PANE_STATE_TAIL_CAPTURE = '› Operator draft\n\ncontext left';
+      }, 20);
+      t.after(() => clearTimeout(timer));
+      return draft;
+    });
+    const result = await send('%1', 'codex', message);
+    assert.equal(result.verification, expected);
+    assert.equal(result.submitted, false);
+    assert.equal(f.keys.filter(([command]) => command === 'send-keys').length, 0);
+  });
+}
 
 test('a Codex steering handoff pulled back with ⇧← loses its proof for status and ACK', async (t) => {
   const f = fixture(t);
@@ -323,13 +353,13 @@ for (const delivered of [true, false]) {
   });
 }
 
-test('the captured clipped composer can deliver an Enter steering preview without a native binding', async (t) => {
+test('the captured clipped steering preview can prove an Enter send of a fully owned draft', async (t) => {
   const f = fixture(t);
   const steering = captured('queued-followup').replace(
     'Queued follow-up inputs',
     'Messages to be submitted after next tool call',
   );
-  f.setCapturedPanes(captured('clipped-composer'), () => steering);
+  f.setCapturedPanes(`› ${captured('payload')}\n\ncontext left`, () => steering);
   const result = await send('%1', 'codex', captured('payload'));
   assert.equal(result.submitted, true);
   assert.equal(result.evidence.source, 'runner-steering');

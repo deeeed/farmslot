@@ -796,29 +796,30 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
             durableWrite(files.receipt, receipt);
           }
         }
+        const samePane = () =>
+          after.pane_id === before.pane_id && paneIdentity(after) === paneIdentity(before);
         if (typed && runner === 'codex') await delay(CODEX_COMPOSER_SETTLE_MS);
         after = paneState(pane, runner, selection);
-        verification = after.pending_question
-          ? 'pending_question'
-          : after.state !== runner
-            ? 'wrong_runner'
-            : runner === 'codex' &&
-                (after.pane_id !== before.pane_id || paneIdentity(after) !== paneIdentity(before))
-              ? 'pane_changed'
-              : after.launch_blocker
-                ? 'launch_blocker'
-                : after.delivery_phase === 'busy' && !supportsMidTurnPrompt(runner)
-                  ? 'busy'
-                  : null;
-        const pressEnter = () => {
+        if (after.pending_question) verification = 'pending_question';
+        else if (after.state !== runner) verification = 'wrong_runner';
+        else if (runner === 'codex') {
+          if (!samePane()) verification = 'pane_changed';
+          else if (after.launch_blocker) verification = 'launch_blocker';
+          else if (after.queue_kind === 'runner-queue') verification = 'queued_input';
+          else if (!ownsComposer(after, runner, receipt)) verification = 'queue_buffer_unconfirmed';
+        } else if (after.delivery_phase === 'busy' && !supportsMidTurnPrompt(runner))
+          verification = 'busy';
+        const pressEnter = async () => {
           tmux(['send-keys', '-t', runner === 'codex' ? after.pane_id : pane, 'Enter']);
           if (receipt) {
             receipt.submitted_at = Date.now();
             receipt.submit_key = 'Enter';
             durableWrite(files.receipt, receipt);
           }
+          // Read the first verification frame after Codex has had time to repaint.
+          if (runner === 'codex') await delay(CODEX_COMPOSER_SETTLE_MS);
         };
-        if (!verification) pressEnter();
+        if (!verification) await pressEnter();
         verification ||= 'unverified';
         let deadline = Date.now() + timeout;
         // A mid-turn Claude send is proven only by its transcript's queue records, which can
@@ -871,7 +872,11 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
               verification = 'pending_question';
               break;
             }
-            if (after.state !== runner || after.launch_blocker) break;
+            if (
+              after.state !== runner ||
+              (runner === 'codex' && (!samePane() || after.launch_blocker))
+            )
+              break;
             const pending = queuedPrompt(after, runner, receipt);
             if (pending) {
               evidence = {
@@ -888,26 +893,22 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
             // Text that left the composer and came back was pulled back for editing: no Enter.
             const owned = ownsComposer(after, runner, receipt);
             if (!owned) leftComposer = true;
-            const canRetry =
+            if (
               enterRetries < maxEnterRetries &&
               !flush &&
               !leftComposer &&
               !payload.startsWith('/goal ') &&
-              owned;
-            const retryAt =
-              canRetry && runner === 'codex'
-                ? (receipt.submitted_at ?? 0) + CODEX_COMPOSER_SETTLE_MS
-                : 0;
-            if (canRetry && Date.now() >= retryAt) {
+              owned
+            ) {
               enterRetries++;
-              pressEnter();
+              await pressEnter();
               deadline = Date.now() + timeout;
               continue;
             }
-            // One last read at the deadline, including the wait for a settled owned draft.
-            const left = Math.max(deadline, queueDeadline, retryAt) - Date.now();
+            // One last read at the deadline, never a sleep past it.
+            const left = Math.max(deadline, queueDeadline) - Date.now();
             if (left <= 0) break;
-            await delay(Math.min(left, Date.now() < Math.max(deadline, retryAt) ? 40 : 250));
+            await delay(Math.min(left, Date.now() < deadline ? 40 : 250));
           }
           if (
             verification === 'unverified' &&
