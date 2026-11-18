@@ -1313,8 +1313,59 @@ test('a withdrawal that was not delivered leaves the original retryable', async 
     ?.completionSendBackDelivery;
   assert.ok(original && typeof original === 'object' && 'key' in original);
 
-  // The replacement cannot be delivered: the composer is busy with the old text.
+  // The first worker produced a new signal before the replacement was offered.
+  // A composer hold must preserve both the original intent and its signal floor.
+  currentSignal = { ...priorSignal, timestamp: '2026-10-28T00:17:00.000Z' };
+  delivery = 'not-attempted';
+  run.decisions = [await buildResultDecision(run, 'complete')];
+  await assert.rejects(
+    resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'Replace the video.',
+    }),
+    /delivery is not-attempted/,
+  );
+
+  const retained = run.steps.find((step) => step.name === S.DISPATCH)?.outputs
+    ?.completionSendBackDelivery;
+  assert.deepEqual(
+    retained,
+    original,
+    'the original instruction must still be the retained one, or nothing can submit it',
+  );
+  assert.deepEqual(
+    run.steps.find((step) => step.name === S.DISPATCH)?.outputs?.completionSendBackSignal,
+    priorSignal,
+  );
+  const withdrawn = run.steps.find((step) => step.name === S.DISPATCH)?.outputs
+    ?.completionSendBackWithdrawn;
+  assert.ok(
+    !Array.isArray(withdrawn) || withdrawn.length === 0,
+    'and nothing is recorded as withdrawn, because nothing was',
+  );
+});
+
+test('an uncertain edit keeps its delivery window until it can be confirmed', async () => {
+  await heldQa();
+  delivery = 'queued';
+  await assert.rejects(
+    resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'Keep the video.',
+    }),
+    /delivery is queued/,
+  );
+  const dispatchOutputs = () => run.steps.find((step) => step.name === S.DISPATCH)?.outputs;
+  const original = dispatchOutputs()?.completionSendBackDelivery;
   delivery = 'unconfirmed';
+  afterDelivery = () => {
+    assert.deepEqual(dispatchOutputs()?.completionSendBackDelivery, original);
+    assert.equal(dispatchOutputs()?.completionSendBackWithdrawn, undefined);
+  };
   run.decisions = [await buildResultDecision(run, 'complete')];
   await assert.rejects(
     resolveResultDecision({
@@ -1325,18 +1376,21 @@ test('a withdrawal that was not delivered leaves the original retryable', async 
     }),
     /delivery is unconfirmed/,
   );
+  const edited = feedback.at(-1);
+  assert.ok(edited);
 
-  const retained = run.steps.find((step) => step.name === S.DISPATCH)?.outputs
-    ?.completionSendBackDelivery;
-  assert.deepEqual(
-    retained,
-    original,
-    'the original instruction must still be the retained one, or nothing can submit it',
-  );
-  const withdrawn = run.steps.find((step) => step.name === S.DISPATCH)?.outputs
-    ?.completionSendBackWithdrawn;
-  assert.ok(
-    !Array.isArray(withdrawn) || withdrawn.length === 0,
-    'and nothing is recorded as withdrawn, because nothing was',
-  );
+  afterDelivery = undefined;
+  delivery = 'confirmed';
+  run.decisions = [await buildResultDecision(run, 'complete')];
+  await resolveResultDecision({
+    runId: run.id,
+    decisionId: pending().id,
+    actionId: 'send-back',
+    reason: 'Replace the video.',
+  });
+
+  assert.equal(feedback.at(-1)?.key, edited.key);
+  assert.equal(typeof feedback.at(-1)?.observeSince, 'number');
+  const withdrawn = dispatchOutputs()?.completionSendBackWithdrawn;
+  assert.ok(Array.isArray(withdrawn) && withdrawn.length === 1);
 });

@@ -1,4 +1,4 @@
-import { PipelineSteps, primaryRoleForFlow, type Run } from '@farmslot/protocol';
+import { PipelineSteps, primaryRoleForFlow, type Run, type WorkerSignal } from '@farmslot/protocol';
 
 import { selectAgentContext } from '../agents/contexts.js';
 import { readSlotField } from '../core/state.js';
@@ -24,10 +24,7 @@ interface CompletionDelivery {
   note?: string;
 }
 
-function savedDelivery(run: Run): CompletionDelivery | undefined {
-  const value = run.steps.find((step) => step.name === PipelineSteps.DISPATCH)?.outputs
-    ?.completionSendBackDelivery;
-  if (value === undefined) return undefined;
+function parseDelivery(value: unknown): CompletionDelivery {
   if (
     !value ||
     typeof value !== 'object' ||
@@ -58,6 +55,24 @@ function savedDelivery(run: Run): CompletionDelivery | undefined {
       : {}),
     ...('note' in value && typeof value.note === 'string' ? { note: value.note } : {}),
   };
+}
+
+function savedDelivery(run: Run): CompletionDelivery | undefined {
+  const value = run.steps.find((step) => step.name === PipelineSteps.DISPATCH)?.outputs
+    ?.completionSendBackDelivery;
+  return value === undefined ? undefined : parseDelivery(value);
+}
+
+function savedReplacement(
+  outputs: Run['steps'][number]['outputs'],
+): { delivery: CompletionDelivery; signal: WorkerSignal } | undefined {
+  const value = outputs?.completionSendBackReplacement;
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object' || !('delivery' in value) || !('signal' in value))
+    throw new Error('The retained replacement feedback intent is invalid');
+  const signal = normalizeWorkerSignal(value.signal);
+  if (!signal.ok) throw new Error('The retained replacement feedback signal is invalid');
+  return { delivery: parseDelivery(value.delivery), signal: signal.signal };
 }
 
 /** Deliver the refusal once, then resume the retained monitor on a new signal. */
@@ -100,6 +115,7 @@ export async function sendBackCompletion(
   const initial = await assertOwner();
   const dispatch = initial.steps.find((step) => step.name === PipelineSteps.DISPATCH)!;
   const recorded = normalizeWorkerSignal(dispatch.outputs?.completionSendBackSignal);
+  const replacement = savedReplacement(dispatch.outputs);
   const monitor = initial.steps.find((step) => step.name === PipelineSteps.MONITOR)!;
   const consumed = normalizeWorkerSignal(monitor.outputs?.workerSignal);
   let delivery = savedDelivery(initial);
@@ -141,7 +157,22 @@ export async function sendBackCompletion(
   // original is reconciled.
   let superseded: CompletionDelivery | undefined;
   const retainedBefore = delivery;
-  if (delivery && note !== undefined && note !== delivery.note) {
+  if (replacement) {
+    if (
+      !delivery ||
+      delivery.confirmed ||
+      replacement.delivery.confirmed ||
+      replacement.delivery.slotId !== slotId ||
+      replacement.delivery.contextId !== context.id
+    )
+      throw new Error('The retained replacement feedback belongs to another worker or delivery');
+    if (note !== undefined && note !== replacement.delivery.note)
+      throw new Error(
+        'Reconcile the pending replacement feedback before changing its operator note',
+      );
+    superseded = delivery;
+    delivery = replacement.delivery;
+  } else if (delivery && note !== undefined && note !== delivery.note) {
     if (delivery.confirmed)
       throw new Error(
         'Reconcile the retained completion feedback before changing its operator note',
@@ -152,7 +183,7 @@ export async function sendBackCompletion(
       );
     if (delivery.startedAt !== undefined) superseded = delivery;
     console.warn(
-      `[send-back] run ${run.id.slice(0, 8)} — ${superseded ? 'withdrawing' : 'dropping'} feedback ${delivery.key} in favour of this card's note`,
+      `[send-back] run ${run.id.slice(0, 8)} — preparing replacement for feedback ${delivery.key}`,
     );
     delivery = undefined;
   }
@@ -180,7 +211,8 @@ export async function sendBackCompletion(
     parseStrictIsoMs(probe.signal.timestamp) === null
   )
     throw new Error(`Cannot establish the worker signal before send-back: ${probe.message}`);
-  const baseline = delivery && recorded.ok ? recorded.signal : probe.signal;
+  const baseline =
+    replacement?.signal ?? (delivery && recorded.ok ? recorded.signal : probe.signal);
   delivery ??= {
     key: completionSendBackCommandId(decisionId),
     slotId,
@@ -207,46 +239,49 @@ export async function sendBackCompletion(
       const step = latest.steps.find((entry) => entry.name === PipelineSteps.DISPATCH)!;
       const previousOutputs = step.outputs;
       if (clearStartedAt !== undefined) {
-        const saved = savedDelivery(latest);
+        const saved = superseded
+          ? savedReplacement(previousOutputs)?.delivery
+          : savedDelivery(latest);
         if (!saved || saved.key !== next.key || saved.startedAt !== clearStartedAt) return;
         const { startedAt: _startedAt, ...untouched } = saved;
         next = untouched;
       }
-      updateRunStep(run.id, PipelineSteps.DISPATCH, {
-        outputs: {
-          ...previousOutputs,
-          completionSendBackSignal: baseline,
-          completionSendBackDelivery: next,
-          // History, so a run that was told two things shows both: the withdrawn
-          // instruction is otherwise overwritten and only the log would know.
-          ...(superseded
-            ? {
-                completionSendBackWithdrawn: [
-                  // This runs for each persist of the same send-back (pending,
-                  // then delivered), so the entry is replaced, not stacked.
-                  ...(Array.isArray(previousOutputs?.completionSendBackWithdrawn)
-                    ? previousOutputs.completionSendBackWithdrawn.filter(
-                        (entry) =>
-                          !(
-                            entry &&
-                            typeof entry === 'object' &&
-                            'key' in entry &&
-                            (entry as { key?: unknown }).key === superseded.key
-                          ),
-                      )
-                    : []),
-                  {
-                    key: superseded.key,
-                    ...(superseded.note ? { note: superseded.note } : {}),
-                    startedAt: superseded.startedAt,
-                    withdrawnAt: new Date().toISOString(),
-                    withdrawnBy: next.key,
-                  },
-                ],
-              }
-            : {}),
-        },
-      });
+      // Keep the original instruction and signal floor until the replacement
+      // is confirmed. A lost reply preserves the candidate for observe-only
+      // retry. An untouched composer hold clears only the candidate.
+      if (superseded && !next.confirmed) {
+        updateRunStep(run.id, PipelineSteps.DISPATCH, {
+          outputs: {
+            ...previousOutputs,
+            completionSendBackReplacement:
+              clearStartedAt === undefined ? { delivery: next, signal: baseline } : undefined,
+          },
+        });
+      } else {
+        const history = previousOutputs?.completionSendBackWithdrawn;
+        updateRunStep(run.id, PipelineSteps.DISPATCH, {
+          outputs: {
+            ...previousOutputs,
+            completionSendBackSignal: baseline,
+            completionSendBackDelivery: next,
+            ...(superseded
+              ? {
+                  completionSendBackReplacement: undefined,
+                  completionSendBackWithdrawn: [
+                    ...(Array.isArray(history) ? history : []),
+                    {
+                      key: superseded.key,
+                      ...(superseded.note ? { note: superseded.note } : {}),
+                      startedAt: superseded.startedAt,
+                      withdrawnAt: new Date().toISOString(),
+                      withdrawnBy: next.key,
+                    },
+                  ],
+                }
+              : {}),
+          },
+        });
+      }
       try {
         await persistRunNow(getRun(run.id)!, reason);
       } catch (error) {
@@ -254,50 +289,6 @@ export async function sendBackCompletion(
         throw error;
       }
     });
-  /**
-   * Put a withdrawn instruction back exactly as it was.
-   *
-   * Overwriting the saved record is what makes a withdrawal durable, and until
-   * the replacement is confirmed that is premature: on Claude and pi the
-   * operator send is hook-only, so a composer still holding the old text makes
-   * the new send hold rather than type over it — and the retry that would have
-   * submitted the old text is gone, because the saved text no longer matches the
-   * buffer. Restoring leaves the world as it was: same note retries, same
-   * instruction submits.
-   */
-  const restoreSuperseded = async (replacementKey: string) => {
-    if (!superseded) return;
-    const restored = superseded;
-    await withRunTransition(run.id, async () => {
-      const latest = await assertOwner();
-      const step = latest.steps.find((entry) => entry.name === PipelineSteps.DISPATCH)!;
-      const previousOutputs = step.outputs;
-      const history = Array.isArray(previousOutputs?.completionSendBackWithdrawn)
-        ? previousOutputs.completionSendBackWithdrawn.filter(
-            (entry) =>
-              !(
-                entry &&
-                typeof entry === 'object' &&
-                'withdrawnBy' in entry &&
-                (entry as { withdrawnBy?: unknown }).withdrawnBy === replacementKey
-              ),
-          )
-        : [];
-      updateRunStep(run.id, PipelineSteps.DISPATCH, {
-        outputs: {
-          ...previousOutputs,
-          completionSendBackDelivery: restored,
-          ...(history.length
-            ? { completionSendBackWithdrawn: history }
-            : { completionSendBackWithdrawn: undefined }),
-        },
-      });
-      await persistRunNow(getRun(run.id)!, 'withdrawn completion feedback restored');
-    });
-    console.warn(
-      `[send-back] run ${run.id.slice(0, 8)} — replacement ${replacementKey} was not delivered; feedback ${restored.key} is retained again`,
-    );
-  };
   if (!delivery.confirmed) {
     const intent = delivery;
     const result = await deliverOperatorInstructionWithIntent(
@@ -314,10 +305,8 @@ export async function sendBackCompletion(
           persistDelivery(intent, 'untouched completion feedback can retry', startedAt),
       },
     );
-    if (result.delivery !== 'confirmed') {
-      await restoreSuperseded(intent.key);
+    if (result.delivery !== 'confirmed')
       throw new Error(`Completion feedback delivery is ${result.delivery}; the run remains held.`);
-    }
     delivery = { ...intent, startedAt: result.startedAt, confirmed: true };
     await persistDelivery(delivery, 'completion feedback delivered');
   }
