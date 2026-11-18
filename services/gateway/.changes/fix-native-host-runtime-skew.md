@@ -1,0 +1,1 @@
+- Preserve native runtime-version skew errors from execution nodes so reviewers see the upgrade refusal reason.

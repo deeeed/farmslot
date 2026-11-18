@@ -87,6 +87,7 @@ const socket = join(socketDirectory(root), 's');
 privateDirectory(socketDirectory(root));
 durableWrite(join(root, 'host.json'), {
   runtimeVersion: RUNTIME_VERSION,
+  supportsRuntimeUpgrade: true,
   supportsApprovalMode: true,
   supportsStandaloneDelegation: true,
   conversationStreaming: 1,

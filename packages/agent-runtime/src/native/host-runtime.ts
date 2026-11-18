@@ -1,21 +1,20 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, watch } from 'node:fs';
+import { existsSync, watch } from 'node:fs';
 import { join } from 'node:path';
-
-import { isRecord } from '@farmslot/protocol';
 
 import { RUNTIME_VERSION } from '../version.js';
 
-import type { HostIdentity } from './ipc.js';
+import { NATIVE_HOST_VERSION_SKEW } from './host-unavailable.js';
+import { type HostIdentity, requestHost } from './ipc.js';
 import { readJson, type RecordedProcess, recordedProcessAlive } from './storage.js';
 
 export function nativeHostVersionSkew(host: HostIdentity) {
   return Object.assign(
     new Error(
       `Native host runtime version skew: node ${RUNTIME_VERSION}, host ${host.runtimeVersion ?? 'unknown (legacy)'}. ` +
-        'Existing sessions remain available. Finish or close them, then redeploy the node to refresh its idle native host.',
+        'Existing sessions remain available. Finish or close them, then redeploy. Legacy hosts without an upgrade fence require the documented controlled native-host refresh.',
     ),
-    { code: 'NATIVE_HOST_VERSION_SKEW' },
+    { code: NATIVE_HOST_VERSION_SKEW },
   );
 }
 
@@ -23,24 +22,11 @@ export function assertNativeHostRuntime(host: HostIdentity): void {
   if (host.runtimeVersion !== RUNTIME_VERSION) throw nativeHostVersionSkew(host);
 }
 
-/** Lifecycle only, before the node registers: no new admissions can race this census. */
+/** Lifecycle only: stop only after the running host atomically fences its admissions. */
 export async function retireIdleNativeHost(root: string, host: HostIdentity): Promise<boolean> {
-  // Legacy hosts have no version or idle RPC. Read their durable stop evidence once at startup;
-  // never repair/truncate journals, infer a stop from a missing process, or scan on admission.
-  const sessions = join(root, 'sessions');
-  if (existsSync(sessions)) {
-    for (const name of readdirSync(sessions).filter((name) => name.endsWith('.journal'))) {
-      const text = readFileSync(join(sessions, name), 'utf8');
-      if (!text) continue;
-      if (!text.endsWith('\n')) return false;
-      let info: Record<string, unknown> | undefined;
-      for (const line of text.split('\n').filter(Boolean)) {
-        const entry: unknown = JSON.parse(line);
-        if (isRecord(entry) && isRecord(entry.info)) info = entry.info;
-      }
-      if (!info || info.processStopped !== true) return false;
-    }
-  }
+  // Only the running host can fence admissions and account for launches before their
+  // first reservation. A legacy journal census cannot establish quiescence.
+  if (!host.supportsRuntimeUpgrade) return false;
   const supervisor = readJson<RecordedProcess>(join(root, 'lock', 'owner.json'));
   const worker = readJson<RecordedProcess>(join(root, 'worker.json'));
   if (
@@ -50,17 +36,21 @@ export async function retireIdleNativeHost(root: string, host: HostIdentity): Pr
     !recordedProcessAlive(supervisor) ||
     !recordedProcessAlive(worker)
   )
-    throw new Error('Native host upgrade refused: process ownership is unconfirmed');
+    return false;
   const command = execFileSync('ps', ['-p', String(supervisor.pid), '-o', 'command='], {
     encoding: 'utf8',
     timeout: 5_000,
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
-  if (!command.includes('/native/supervisor.') || !command.endsWith(` ${root}`))
-    throw new Error('Native host upgrade refused: supervisor does not own this state directory');
+  if (!command.includes('/native/supervisor.') || !command.endsWith(` ${root}`)) return false;
   const current = readJson<HostIdentity>(join(root, 'host.json'));
-  if (current.pid !== host.pid || current.token !== host.token)
-    throw new Error('Native host changed during upgrade; retry the node deployment');
+  if (current.pid !== host.pid || current.token !== host.token) return false;
+
+  const prepared = await requestHost<{ idle: boolean }>(host, {
+    method: 'prepareUpgrade',
+    owner: 'node-runtime-upgrade',
+  });
+  if (prepared.idle !== true) return false;
 
   await new Promise<void>((resolve, reject) => {
     let settled = false;
@@ -84,10 +74,10 @@ export async function retireIdleNativeHost(root: string, host: HostIdentity): Pr
       }
     };
     const watcher = watch(root, { recursive: true }, check);
-    const timeout = setTimeout(
-      () => finish(new Error('Native host cleanup timed out; no replacement was started')),
-      10_000,
-    );
+    const timeout = setTimeout(() => {
+      check();
+      if (!settled) finish(new Error('Native host cleanup timed out; no replacement was started'));
+    }, 10_000);
     watcher.once('error', finish);
     try {
       process.kill(supervisor.pid, 'SIGTERM');
