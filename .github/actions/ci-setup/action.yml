@@ -4,6 +4,9 @@ inputs:
   lint-cache:
     description: This job owns the repository lint cache
     default: 'false'
+  reuse-validated-install:
+    description: Reuse the exact installed tree after the prepare job validates Yarn
+    default: 'false'
 runs:
   using: composite
   steps:
@@ -33,7 +36,16 @@ runs:
         path: ${{ steps.cache-paths.outputs.dependencies }}
         key: install-v1-${{ runner.os }}-${{ runner.arch }}-node22.23.4-${{ hashFiles('yarn.lock', 'package.json', 'apps/*/package.json', 'apps/command-center/ui/package.json', 'packages/*/package.json', 'services/*/package.json', '.yarnrc.yml', 'scripts/yarn-*.cjs', 'services/gateway/scripts/fix-node-pty-spawn-helper.mjs') }}
     - shell: bash
-      run: yarn install --immutable
+      env:
+        REUSE_VALIDATED_INSTALL: ${{ inputs.reuse-validated-install }}
+        INSTALL_CACHE_HIT: ${{ steps.dependencies.outputs.cache-hit }}
+      run: |
+        if [[ "$REUSE_VALIDATED_INSTALL" == true && "$INSTALL_CACHE_HIT" == true ]] &&
+           [[ -s .yarn/install-state.gz && -s node_modules/.yarn-state.yml ]]; then
+          echo "Reusing the exact prepared Yarn install"
+        else
+          yarn install --immutable
+        fi
     # Publish prerequisites before long full-suite jobs, so other PRs can restore
     # the default-branch cache as soon as setup passes.
     - if: steps.dependencies.outputs.cache-hit != 'true'

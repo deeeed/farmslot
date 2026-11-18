@@ -1048,6 +1048,28 @@
                       "minItems": 1,
                       "description": "Files to load, relative to the installed skill directory.",
                       "items": { "type": "string", "minLength": 1 }
+                    },
+                    "review": {
+                      "type": "object",
+                      "description": "ADR-0073 Amendment 1: this review skill's rule pack, frozen with the skill. Task init refuses a missing or invalid pack instead of falling back to the generic review. See apps/docs/docs/reference/review-rule-packs.md.",
+                      "additionalProperties": false,
+                      "required": ["pack", "client", "level"],
+                      "properties": {
+                        "pack": {
+                          "type": "string",
+                          "pattern": "^(?!/)(?!.*\\\\)(?!(?:.*/)?\\.{1,2}(?:/|$))(?!.*//)[^/].*[^/]$|^[^/\\\\.]$",
+                          "description": "Pack file, relative to the installed skill directory, e.g. references/pack.json."
+                        },
+                        "client": {
+                          "type": "string",
+                          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+                          "description": "The client whose pack areas apply, e.g. core or mobile."
+                        },
+                        "level": {
+                          "enum": ["static", "full"],
+                          "description": "static (level 2) checks every family; full (level 3) adds per-diff selection, marked families and the curated loop."
+                        }
+                      }
                     }
                   }
                 }
