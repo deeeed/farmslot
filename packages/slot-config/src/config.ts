@@ -256,7 +256,19 @@ export interface RawProjectJson {
   external?: { mock_mode?: boolean; fixtures_dir?: string };
   reference_repos?: Record<
     string,
-    { repo_url: string; local_name: string; branch?: string; required_paths?: string[] }
+    {
+      repo_url: string;
+      local_name: string;
+      branch?: string;
+      /**
+       * A read-only codebase the worker compares against. Listed in the task inputs
+       * with its revision. Without this flag the key is the slot's own second
+       * checkout — a tree its own checklist installs and boots — and stays out of
+       * that list, because a worker must not be told it is read-only.
+       */
+      read_only?: boolean;
+      required_paths?: string[];
+    }
   >;
   paths?: { runtime_dir?: string; artifact_dir?: string; recipe_dir?: string };
   vars?: Record<string, string>;

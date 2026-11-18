@@ -457,11 +457,40 @@ export async function materializeReviewWorkspaceTask(
         selectionReason: 'frozen-run-selection',
       },
     });
+    // Every reference the project declares read-only, whether or not this review's
+    // support environment binds it. The support binding is the only reader of those
+    // checkouts, so a declared one it did not bind is unreadable here — and the
+    // reviewer has to see that, or an unread comparison passes as nothing to compare.
+    // A key that is the slot's own checkout is not a reference and is left out.
+    const declaredReadOnly = Object.entries(project.projectJson.reference_repos ?? {})
+      .filter(([, reference]) => reference?.read_only === true)
+      .map(([name]) => name);
+    const boundReferences = new Map(
+      (run.reviewWorkspace.support?.references ?? []).map((reference) => [
+        reference.name,
+        reference,
+      ]),
+    );
+    const reviewReferences = declaredReadOnly.length
+      ? declaredReadOnly.map((name) => {
+          const bound = boundReferences.get(name);
+          return {
+            name,
+            path: bound?.path ?? '',
+            present: Boolean(bound) && !bound!.missing,
+            ...(bound?.headSha && !bound.missing ? { headSha: bound.headSha } : {}),
+            // A dirty tree is not described by its revision; the reviewer has to know.
+            ...(bound?.dirty ? { dirty: true } : {}),
+          };
+        })
+      : undefined;
     await writeTaskDir({
       taskDir: bundleDir,
       checklistMarkdown: selected.markdown,
       terminalContract,
       handoff,
+      // The document names this file, so the bundle has to carry it.
+      ...(reviewReferences ? { referenceCheckouts: reviewReferences } : {}),
       markCommand: `node ${quoteMarkCommandWord(path.posix.join(taskDir, 'inputs/runtime/node_modules/@farmslot/agent-runtime/scripts/mark-checklist-step.cjs'))}`,
       taskMarkdown: buildTaskDocument({
         flowType: 'review-pr',
@@ -484,6 +513,10 @@ export async function materializeReviewWorkspaceTask(
         acceptanceCriteria: [],
         addendum: instructions,
         hasTicketData: false,
+        // The support binding already read these on the execution node. Listing them
+        // in the document, absent ones included, is what makes a comparison the
+        // reviewer cannot read a blocked row instead of a silent omission.
+        ...(reviewReferences ? { referenceCheckouts: reviewReferences } : {}),
       }),
     });
     await writeFile(path.join(bundleDir, SUBJECT), `${JSON.stringify(subject, null, 2)}\n`);

@@ -29,6 +29,30 @@ export function balance(items, count, weight = () => 1) {
   return bins.map(({ items: assigned }) => assigned);
 }
 
+/** Fill existing test jobs before paying for another runner and setup. */
+export function packPrTasks(jobs, tasks, budget = 120, maxJobs = 24) {
+  const pooled = jobs.map((job) => ({ ...job, tasks: [...job.tasks] }));
+  const isolated = new Set();
+  let next = 0;
+  for (const task of [...tasks].sort((a, b) => b.seconds - a.seconds || a.id.localeCompare(b.id))) {
+    const available = pooled.filter((job) => !isolated.has(job.id));
+    const candidates = available.length || pooled.length < maxJobs ? available : [...pooled];
+    const cost = (job) => job.tasks.reduce((seconds, entry) => seconds + entry.seconds, 0);
+    candidates.sort((a, b) => cost(a) - cost(b) || a.id.localeCompare(b.id));
+    let job = candidates[0];
+    if (
+      !job ||
+      (pooled.length < maxJobs && (task.seconds > budget || cost(job) + task.seconds > budget))
+    ) {
+      job = { id: `checks-${++next}`, tasks: [] };
+      pooled.push(job);
+      if (task.seconds > budget) isolated.add(job.id);
+    }
+    job.tasks.push(task);
+  }
+  return pooled;
+}
+
 /** Match the runner: mocks/serial first, then four sorted round-robin lanes. */
 export function estimateTestMs(files, workers, durations, lanes) {
   let sequential = 0;
@@ -119,7 +143,7 @@ export function createPrPlan({
   // serial execution rather than rereading sources or assuming concurrency.
   lanes ??= new Map(selected.map((file) => [file, 'serial']));
   const tasks = [];
-  const jobs = [];
+  let jobs = [];
   const assigned = new Set();
   function splitTests(id, dir, count, tsconfig, workers, runnerDir = dir) {
     const suite = selected.filter(
@@ -378,9 +402,14 @@ export function createPrPlan({
   ];
   let scriptIndex = 0;
   for (const [files, args] of scriptGroups) {
-    for (const chunk of balance(files, Math.min(4, files.length))) {
+    for (const chunk of balance(
+      files,
+      Math.min(4, files.length),
+      (file) => durations[file] ?? 1500,
+    )) {
+      const costs = chunk.map((file) => durations[file] ?? 1500);
       const seconds =
-        2 + Math.ceil(chunk.reduce((ms, file) => ms + (durations[file] ?? 1500), 0) / 2000);
+        2 + Math.ceil(Math.max(...costs, costs.reduce((ms, value) => ms + value, 0) / 2) / 1000);
       tasks.push(command(`other-selected-tests-${++scriptIndex}`, [...args, ...chunk], seconds));
       chunk.forEach((file) => assigned.add(file));
     }
@@ -403,21 +432,7 @@ export function createPrPlan({
     }
     task.seconds = Math.max(1, Math.ceil(ms / 1000));
   }
-  // Keep the expensive whole-program analysis independent of cheap guards.
-  // Adding even one small task to it spends the PR's remaining wall budget.
-  const isolated = tasks.filter((task) => task.seconds > 120);
-  for (const [index, task] of isolated.entries())
-    jobs.push({ id: `checks-${index + 1}`, tasks: [task] });
-  const grouped = tasks.filter((task) => task.seconds <= 120);
-  for (const [index, chunk] of balance(
-    grouped,
-    Math.min(
-      8 - isolated.length,
-      Math.max(1, Math.ceil(grouped.reduce((total, task) => total + task.seconds, 0) / 120)),
-    ),
-    (task) => task.seconds,
-  ).entries())
-    jobs.push({ id: `checks-${isolated.length + index + 1}`, tasks: chunk });
+  jobs = packPrTasks(jobs, tasks);
   const owners = new Map(selected.map((file) => [file, new Set()]));
   for (const task of jobs.flatMap((job) => job.tasks))
     for (const file of [...(task.tests ?? []), ...task.args]) owners.get(file)?.add(task.id);

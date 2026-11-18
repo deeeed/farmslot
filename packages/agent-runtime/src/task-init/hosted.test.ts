@@ -222,3 +222,53 @@ test('an interactive operator plan is a worker checklist too: a scripted-command
   assert.equal(contract.deterministicChecks, undefined, 'no gate frozen from the operator plan');
   assert.doesNotMatch(await readFile(result.taskDocument, 'utf8'), /DETERMINISTIC/);
 });
+
+test('declared reference checkouts reach the task document and a frozen input', async (t) => {
+  const input = await spec(t);
+  const result = await taskInit({
+    ...input,
+    referenceCheckouts: [
+      { name: 'mobile', path: '/dev/metamask/mobile-ref', present: true, headSha: 'aaa111' },
+      { name: 'extension', path: '/dev/metamask/extension-ref', present: false },
+    ],
+  });
+  const document = await readFile(result.taskDocument, 'utf8');
+  assert.match(document, /### Reference checkouts \(read-only\)/);
+  assert.match(document, /- `mobile`: `\/dev\/metamask\/mobile-ref` at `aaa111`/);
+  assert.match(document, /- `extension`: not readable from this task/);
+  assert.ok(result.referenceCheckouts, 'the input file is written');
+  assert.deepEqual(JSON.parse(await readFile(result.referenceCheckouts!, 'utf8')), {
+    schemaVersion: 1,
+    references: [
+      { name: 'mobile', path: '/dev/metamask/mobile-ref', present: true, headSha: 'aaa111' },
+      // Absent is recorded, not dropped: a comparison nobody can read is blocked.
+      { name: 'extension', path: '/dev/metamask/extension-ref', present: false },
+    ],
+  });
+});
+
+test('a task with no declared references writes no reference input', async (t) => {
+  const result = await taskInit(await spec(t));
+  assert.equal(result.referenceCheckouts, null);
+  assert.doesNotMatch(await readFile(result.taskDocument, 'utf8'), /Reference checkouts/);
+});
+
+test('an operator plan is the task document too, so it carries the reference checkouts', async (t) => {
+  const input = await spec(t);
+  const result = await taskInit({
+    ...input,
+    operatorPlan: '# Operator plan\n- [ ] Compare against Mobile\n',
+    referenceCheckouts: [
+      { name: 'mobile', path: '/dev/metamask/mobile-ref', present: true, headSha: 'aaa111' },
+    ],
+  });
+  const document = await readFile(result.taskDocument, 'utf8');
+  assert.match(
+    document,
+    /### Reference checkouts \(read-only\)/,
+    'the paths reach this worker too',
+  );
+  assert.match(document, /- `mobile`: `\/dev\/metamask\/mobile-ref` at `aaa111`/);
+  assert.match(document, /never write, build or install in them/);
+  assert.ok(result.referenceCheckouts, 'and the input file is still written');
+});
