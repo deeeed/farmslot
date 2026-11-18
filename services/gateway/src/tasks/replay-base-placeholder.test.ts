@@ -27,8 +27,9 @@ const { artifactOnlyReplayForRun } = await import('./writer.js');
 const frozenBase = '49426fdf906f2663d8306a299aad94f77f6ca323';
 
 // The function reads exactly these fields, so the fixture is that projection
-// rather than a stand-in for a whole Run: anything recorded later cannot be
-// passed in at all.
+// rather than a stand-in for a whole Run. The parameter's own Pick is what
+// keeps later-recorded fields unreadable inside the function; naming the
+// projection here only keeps each case honest about what it supplies.
 type ReplayRun = Parameters<typeof artifactOnlyReplayForRun>[0];
 type EvalExperimentState = NonNullable<Run['engineState']>['evalExperiment'];
 
