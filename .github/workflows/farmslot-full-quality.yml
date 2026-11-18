@@ -57,8 +57,8 @@ jobs:
       FARMSLOT_TSX_TEST_WORKERS: '2'
     strategy:
       fail-fast: false
-      # Leave room for affected PR matrices on the shared hosted pool.
-      max-parallel: 4
+      # Give main a wider matrix while keeping other full triggers at four.
+      max-parallel: ${{ github.event_name == 'push' && 12 || 4 }}
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v6

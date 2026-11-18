@@ -186,7 +186,7 @@ test('full runs queue without cancellation and leave hosted slots for PR work', 
     main,
     / {2}group: full-quality\r?\n {2}cancel-in-progress: false\r?\n {2}queue: max/,
   );
-  assert.match(main, /max-parallel: 4/);
+  assert.match(main, /max-parallel: \${{ github\.event_name == 'push' && 12 \|\| 4 }}/);
   assert.doesNotMatch(main, /continue-on-error: true|schedule:/);
   assert.match(
     quality,
