@@ -4,3 +4,4 @@
 - Answering a monitor card also restarts the inactivity window, so a card the operator spent longer than the stuck timeout on does not spend a nudge in the same poll as the answer.
 - A card still open when the gateway restarts has its wait credited when the monitor comes back, and a new monitoring window starts with no gate credit carried into it.
 - The inactivity grace an answered card grants is withheld from a max-nudges card, where the worker is already stuck and Continue means resume nudging rather than wait another full stuck window.
+- The gate-wait credit and its open-card marker are stored in one durable write, and a card raised before the first poll persist seeds the monitor state rather than going unmarked, so a restart while a card is open or a resume is being delivered cannot charge that wait to the worker.

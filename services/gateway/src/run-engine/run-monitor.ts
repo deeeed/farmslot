@@ -547,20 +547,59 @@ export function persistMonitorWindowStart(runId: string, startedAtMs: number = D
   });
 }
 
-/** Record that the monitor is waiting on a card, before it blocks on it. */
-function persistGateWaitStart(runId: string, waitingSinceMs: number): void {
-  const prev = getRun(runId)?.monitorState;
-  if (!prev) return;
+/**
+ * Record that the monitor is waiting on a card, before it blocks on it.
+ *
+ * Written through to disk: the whole point of the marker is to survive a
+ * process that does not come back, and `updateRun` alone only changes memory.
+ */
+async function persistGateWaitStart(
+  runId: string,
+  waitingSinceMs: number,
+  windowStartedAtMs?: number,
+): Promise<void> {
+  const run = getRun(runId);
+  if (!run) return;
+  // A card can be raised before the first poll has persisted any monitor state
+  // (a runner failure observed on the first observation). Returning here would
+  // leave that wait unmarked, so the state is seeded instead.
+  const prev = run.monitorState ?? {
+    nudgeCount: run.metrics.nudgeCount,
+    lastPollAt: new Date(windowStartedAtMs ?? waitingSinceMs).toISOString(),
+    startedAt: new Date(windowStartedAtMs ?? waitingSinceMs).toISOString(),
+  };
   updateRun(runId, {
     monitorState: { ...prev, gateWaitStartedAt: new Date(waitingSinceMs).toISOString() },
   });
+  await persistRunNow(getRun(runId)!, 'gate wait started');
 }
 
-/** The card is answered; its wait is now folded into `gateWaitMs`. */
-function clearGateWaitStart(runId: string): void {
-  const prev = getRun(runId)?.monitorState;
-  if (!prev?.gateWaitStartedAt) return;
-  updateRun(runId, { monitorState: { ...prev, gateWaitStartedAt: undefined } });
+/**
+ * Store the accumulated wait and drop the open-card marker in ONE durable write.
+ *
+ * Clearing the marker first and leaving `gateWaitMs` to the next poll's persist
+ * loses the credit to any restart in between — which is exactly the window the
+ * marker exists to cover. Storing the total in the same write means a recovered
+ * monitor either sees the marker (and credits the slice itself) or sees the
+ * total that already includes it, never neither.
+ */
+async function commitGateWait(
+  runId: string,
+  totalMs: number,
+  windowStartedAtMs?: number,
+): Promise<void> {
+  const run = getRun(runId);
+  if (!run) return;
+  const prev = run.monitorState ?? {
+    nudgeCount: run.metrics.nudgeCount,
+    lastPollAt: new Date(windowStartedAtMs ?? Date.now()).toISOString(),
+    startedAt: new Date(windowStartedAtMs ?? Date.now()).toISOString(),
+  };
+  if (prev.gateWaitMs === totalMs && prev.gateWaitStartedAt === undefined) return;
+  updateRun(runId, {
+    monitorState: { ...prev, gateWaitMs: totalMs, gateWaitStartedAt: undefined },
+  });
+  await persistRunNow(getRun(runId)!, 'gate wait settled');
 }
 
 // ─── Main monitoring loop ───
@@ -1127,7 +1166,7 @@ export async function monitorRun(
     const waitingSince = Date.now();
     // Persisted before the wait, so a restart while the operator is still
     // reading the card can credit the slice this process never finished.
-    persistGateWaitStart(runId, waitingSince);
+    await persistGateWaitStart(runId, waitingSince, monitorState?.startedAt);
     try {
       return await createBlockedDecision(
         id,
@@ -1139,7 +1178,8 @@ export async function monitorRun(
       );
     } finally {
       gateWait.ms += Date.now() - waitingSince;
-      clearGateWaitStart(runId);
+      // One durable write: the credit lands with the marker's removal.
+      await commitGateWait(runId, gateWait.ms, monitorState?.startedAt);
       // The worker was idle for as long as the card was up, and that idleness
       // is ours, not its. Without this the next poll can see a stuck window
       // that elapsed entirely while a human was reading, and spend a nudge in
@@ -1282,7 +1322,9 @@ export async function monitorRun(
       Math.max(0, Date.now() - interruptedGateWaitAt),
       Math.max(0, Date.now() - windowStartedAt),
     );
-    clearGateWaitStart(runId);
+    // Store the recovered slice before anything else can fail: another restart
+    // in this window would otherwise drop it with the marker.
+    await commitGateWait(runId, gateWait.ms);
   }
   const restoredBudgetUsage = restoreBudgetUsageState(persisted?.budgetUsage);
 

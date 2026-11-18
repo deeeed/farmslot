@@ -174,6 +174,8 @@ async function fixture(t: test.TestContext) {
     role?: string;
     contextId?: string;
   }[] = [];
+  /** Drop the seeded monitor state, as a run whose first poll has not persisted yet. */
+  const clearMonitorState = () => updateRun(run.id, { monitorState: undefined });
   const start = (overrides: Partial<MonitorObservations> = {}) => {
     const observations: MonitorObservations = {
       workerStatus: (slot, runner, runId, role, contextId) =>
@@ -195,7 +197,7 @@ async function fixture(t: test.TestContext) {
   const restoreRunner = () => {
     paneFailure = undefined;
   };
-  return { run, slotId, start, card, restoreRunner, delivered, signalFile };
+  return { run, slotId, start, card, restoreRunner, clearMonitorState, delivered, signalFile };
 }
 
 /** Polls for a condition with a short ceiling; never a fixed wait. */
@@ -437,6 +439,65 @@ test(
     assert.ok(
       credited <= 10_000,
       `the credit was not capped at the window: gateWaitMs=${credited} for a 2 s window, so elapsed goes negative and the run stops timing out`,
+    );
+    void execution;
+  },
+);
+
+// Codex r1 on #2322: clearing the marker and storing the credit were two
+// writes, and only the marker write happened when the card was answered — the
+// total waited for the next poll's persist. A restart in between (a resume
+// delivery that hangs, a second card) dropped the credit the marker existed to
+// protect. Both now land in one durable write, so a recovered monitor sees
+// either the marker or a total that already includes it.
+test(
+  'answering a card stores the credit in the same write that drops the marker',
+  { timeout: 15_000 },
+  async (t) => {
+    const f = await fixture(t);
+    const execution = f.start();
+    await until(() => f.card() !== undefined);
+    const unavailable = f.card()!.id;
+    await until(() => getRun(f.run.id)?.monitorState?.gateWaitStartedAt !== undefined, 1_000);
+
+    assert.ok(
+      getRun(f.run.id)?.monitorState?.gateWaitStartedAt,
+      'the open-card marker must be recorded before the monitor blocks on the card',
+    );
+    f.restoreRunner();
+    resolveMonitorDecision(unavailable, 'continue');
+    await until(() => getRun(f.run.id)?.monitorState?.gateWaitStartedAt === undefined);
+
+    const settled = getRun(f.run.id)?.monitorState;
+    assert.equal(settled?.gateWaitStartedAt, undefined, 'the marker is dropped on the answer');
+    assert.ok(
+      (settled?.gateWaitMs ?? 0) > 0,
+      `the credit must already be stored when the marker goes, or a restart here loses it: gateWaitMs=${settled?.gateWaitMs}`,
+    );
+    void execution;
+  },
+);
+
+// Codex r1, second half of FSR-04: the persistence helpers returned early when
+// a run had no monitorState yet, and every existing fixture seeds it. A card
+// raised before the first poll persists — a runner failure on the first
+// observation, which is this run's own shape — left the wait unmarked, so a
+// restart during it charged the whole card to the worker.
+test(
+  'a card raised before the first poll persist still records its wait',
+  { timeout: 15_000 },
+  async (t) => {
+    const f = await fixture(t);
+    f.clearMonitorState();
+    assert.equal(getRun(f.run.id)?.monitorState, undefined, 'the run starts with no monitor state');
+
+    const execution = f.start();
+    await until(() => f.card() !== undefined);
+    await until(() => getRun(f.run.id)?.monitorState?.gateWaitStartedAt !== undefined, 1_000);
+
+    assert.ok(
+      getRun(f.run.id)?.monitorState?.gateWaitStartedAt,
+      'an unmarked card means a restart during it charges the operator wait to the worker',
     );
     void execution;
   },
