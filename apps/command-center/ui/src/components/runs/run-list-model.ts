@@ -72,6 +72,7 @@ type ProgressRun = Pick<
   | 'steps'
   | 'ciWatchState'
   | 'monitorState'
+  | 'recoveryAttempts'
   | 'waitingForOperator'
 > & {
   decisions: ReadonlyArray<RunListDecision>;
@@ -107,16 +108,30 @@ function lastProgressMs(run: ProgressRun): number {
 }
 
 /** A same-slot replay can briefly read the previous checklist from the cache. */
-function monitorAttemptStartMs(run: ProgressRun): number {
+function monitorAttemptTiming(run: ProgressRun) {
   const dispatch = run.steps.find((step) => step.name === 'dispatch');
   const workerRole = workerRoleForFlow(run.flowType);
-  const launchTimes = [
-    dispatch?.startedAt ?? dispatch?.completedAt,
-    ...(run.agentContexts ?? [])
-      .filter((context) => context.role === workerRole || context.role === 'primary')
-      .map((context) => context.attemptStartedAt ?? context.startedAt),
-  ].map((stamp) => Date.parse(stamp ?? ''));
-  return Math.max(...launchTimes.filter(Number.isFinite));
+  const replay = run.recoveryAttempts?.at(-1);
+  const monitorReplayMs = Date.parse(replay?.stepName === 'monitor' ? replay.startedAt : '');
+  const dispatchMs = Date.parse(dispatch?.startedAt ?? dispatch?.completedAt ?? '');
+  let startedMs = Number.isFinite(dispatchMs) ? dispatchMs : -Infinity;
+  let adoptedSignalMs = -Infinity;
+  for (const context of run.agentContexts ?? []) {
+    if (context.role !== workerRole && context.role !== 'primary') continue;
+    const launchMs = Date.parse(context.attemptStartedAt ?? context.startedAt ?? '');
+    if (Number.isFinite(launchMs)) startedMs = Math.max(startedMs, launchMs);
+    // Monitor replay can adopt a running mark before the watcher updates the launch time.
+    // A runtime reattachment observes the session and writes lastSignalAt and updatedAt together.
+    if (
+      context.status === 'working' &&
+      context.signalAttemptId &&
+      context.lastSignalAt !== context.updatedAt
+    ) {
+      const signalMs = Date.parse(context.lastSignalAt ?? '');
+      if (signalMs <= monitorReplayMs) adoptedSignalMs = Math.max(adoptedSignalMs, signalMs);
+    }
+  }
+  return { startedMs, finishFloorMs: Math.max(startedMs, adoptedSignalMs) };
 }
 
 /** A blocked run can still be stale after its worker has stopped. */
@@ -133,12 +148,13 @@ export function runProgressSummary(
   if (!showsRunProgress(run)) return null;
   const step = run.steps.find((item) => item.status === 'running');
   const monitor = step?.name === 'monitor';
-  const attemptStartedMs = monitor ? monitorAttemptStartMs(run) : -Infinity;
+  const attempt = monitor ? monitorAttemptTiming(run) : undefined;
   const recordedFinishMs = monitor ? Date.parse(taskProgress?.timing?.finishedAt ?? '') : NaN;
-  const workerFinished = Number.isFinite(recordedFinishMs) && recordedFinishMs >= attemptStartedMs;
+  const workerFinished =
+    Number.isFinite(recordedFinishMs) && recordedFinishMs >= (attempt?.finishFloorMs ?? -Infinity);
   const lastMs = Math.max(
     lastProgressMs(run),
-    attemptStartedMs,
+    attempt?.startedMs ?? -Infinity,
     workerFinished ? recordedFinishMs : -Infinity,
   );
   // Every run has createdAt; a record without one valid timestamp has no clock to show.

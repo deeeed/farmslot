@@ -512,6 +512,61 @@ test('run progress: an observed finished worker waits for its monitor to advance
   assertMatchKind(replayed, 'step', 'monitor');
   assert.equal(replayed.lastProgressAgo, '16m ago');
 
+  const worker: NonNullable<Run['agentContexts']>[number] = {
+    id: 'fix-bug',
+    role: 'fix-bug',
+    label: 'Worker',
+    status: 'working',
+    runId: monitoring.id,
+    slotId: monitoring.slotId,
+    attemptStartedAt: '2026-05-14T10:00:00.000Z',
+    signalAttemptId: 'reopened',
+    lastSignalAt: '2026-05-14T13:21:00.000Z',
+  };
+  const adopted: Run = {
+    ...monitoring,
+    statusChangedAt: '2026-05-14T13:22:00.000Z',
+    agentContexts: [worker],
+    recoveryAttempts: [
+      {
+        id: 'monitor-replay',
+        attempt: 1,
+        stepName: 'monitor',
+        startedAt: '2026-05-14T13:22:00.000Z',
+        status: 'started',
+        triggeredBy: 'operator',
+      },
+    ],
+  };
+  const now = Date.parse('2026-05-14T13:33:00.000Z');
+  assertMatchKind(summarize(adopted, now, taskProgress), 'step', 'monitor');
+  const newProgress: TaskProgressStructured = {
+    ...taskProgress,
+    timing: {
+      schemaVersion: 1,
+      events: [],
+      startedAt: worker.lastSignalAt,
+      finishedAt: '2026-05-14T13:25:00.000Z',
+    },
+  };
+  const reattached = summarize(
+    {
+      ...adopted,
+      agentContexts: [
+        {
+          ...worker,
+          lastSignalAt: '2026-05-14T13:28:00.000Z',
+          updatedAt: '2026-05-14T13:28:00.000Z',
+        },
+      ],
+      steps: [{ name: 'monitor', status: 'running', startedAt: '2026-05-14T13:28:00.000Z' }],
+    },
+    now,
+    newProgress,
+  );
+  assertMatchKind(reattached, 'step', 'Worker finished; monitor has not advanced');
+  assert.equal(reattached.lastProgressAt, '2026-05-14T13:25:00.000Z');
+
   const stalled = summarize(monitoring, Date.parse('2026-05-14T15:14:00.000Z'), taskProgress);
   assert.equal(stalled.kind, 'stale');
   assert.equal(
