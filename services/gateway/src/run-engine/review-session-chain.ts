@@ -170,7 +170,11 @@ export function resolveRepeatReviewResumePlan(
     };
   }
   if (model && reviewer.model !== model) return { kind: 'refused', reason: 'model-mismatch' };
-  if ((effort ?? null) !== (reviewer.effort ?? null))
+  // An omitted Claude effort means the recorded launch, including a pre-upgrade unset effort.
+  if (
+    (effort ?? null) !== (reviewer.effort ?? null) &&
+    !(runner === 'claude' && (effort ?? null) === null)
+  )
     return { kind: 'refused', reason: 'effort-mismatch' };
   const reviewedHead = context.priorReviewedHeadSha;
   const headProvenance =

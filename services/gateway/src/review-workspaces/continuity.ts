@@ -49,7 +49,8 @@ export function compatibleWorkspaceReviewer(run: WorkspaceReviewerRun, prior: Ru
     run.project === prior.project &&
     reviewer?.role === 'review' &&
     reviewer.status === 'complete' &&
-    (reviewer.effort ?? null) === (run.effort ?? null) &&
+    ((reviewer.effort ?? null) === (run.effort ?? null) ||
+      (reviewer.runner === 'claude' && (run.effort ?? null) === null)) &&
     prior.reviewWorkspace?.machine === run.reviewWorkspaceTarget?.machine &&
     reviewer?.runner === run.metrics.runner &&
     reviewer.model === run.metrics.model;

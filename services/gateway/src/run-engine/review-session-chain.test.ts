@@ -304,6 +304,20 @@ test('COLD never resolves a retained session, and WARM without head evidence ref
     kind: 'refused',
     reason: 'effort-mismatch',
   });
+  const claudePrior: Run = {
+    ...prior,
+    agentContexts: [
+      { ...prior.agentContexts![0], runner: 'claude', model: 'opus', effort: 'medium' },
+    ],
+  };
+  assert.equal(
+    resolveRepeatReviewResumePlan(current, claudePrior, 'claude', 'opus', null).kind,
+    'resume',
+  );
+  assert.deepEqual(resolveRepeatReviewResumePlan(current, claudePrior, 'claude', 'opus', 'low'), {
+    kind: 'refused',
+    reason: 'effort-mismatch',
+  });
   assert.deepEqual(
     resolveRepeatReviewResumePlan({ ...current, ticketOrPr: 'deeeed/farmslot#2' }, prior, 'codex'),
     { kind: 'refused', reason: 'pr-mismatch' },

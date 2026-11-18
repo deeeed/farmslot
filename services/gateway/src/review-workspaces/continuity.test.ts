@@ -46,6 +46,27 @@ const context = () =>
     session: { reviewId: 'lineage' },
   }) as RepeatReviewContext;
 
+test('an omitted Claude effort keeps the recorded workspace reviewer', () => {
+  const claudePrior = {
+    ...prior,
+    agentContexts: [
+      { ...prior.agentContexts![0], runner: 'claude', model: 'opus', effort: 'medium' },
+    ],
+  } as Run;
+  const claudeCurrent = {
+    ...current,
+    effort: null,
+    metrics: { runner: 'claude', model: 'opus' },
+  } as Run;
+  const result = context();
+  configureWorkspaceContinuity(claudeCurrent, claudePrior, result);
+  assert.equal(result.session?.continuity, 'resumed');
+  assert.throws(
+    () => configureWorkspaceContinuity({ ...claudeCurrent, effort: 'low' }, claudePrior, context()),
+    /WARM review unavailable/,
+  );
+});
+
 test('verified WARM workspace continuity retains exact PR lineage, session and last head', () => {
   const result = context();
   configureWorkspaceContinuity(current, prior, result);
