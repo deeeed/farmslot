@@ -74,22 +74,6 @@ function codexAstraDescriptor<TApi extends 'openai-codex-responses' | 'openai-re
   };
 }
 
-export function codexAstraModel<TApi extends 'openai-codex-responses' | 'openai-responses'>(
-  provider: string,
-  api: TApi,
-  baseUrl: string,
-): Model<TApi> {
-  return codexAstraDescriptor(CURRENT_ASTRA, provider, api, baseUrl);
-}
-
-export function previousCodexAstraModel<TApi extends 'openai-codex-responses' | 'openai-responses'>(
-  provider: string,
-  api: TApi,
-  baseUrl: string,
-): Model<TApi> {
-  return codexAstraDescriptor(PREVIOUS_ASTRA, provider, api, baseUrl);
-}
-
 export function codexAstraModels<TApi extends 'openai-codex-responses' | 'openai-responses'>(
   provider: string,
   api: TApi,

@@ -15,7 +15,11 @@ import { rpc, wait } from './native-worker-lifecycle.mjs';
 export const SCENARIO_ID = 'native-astra-default-ui';
 export const RUNNER_AGNOSTIC = true;
 
-/** New UI defaults, a real native turn and the official runner's own reasoning metadata. */
+/**
+ * Standalone native screen, not the Co-Pilot launcher.
+ * The screen defaults to gpt-6.2-sol at the Codex runner effort, high.
+ * LLM copilot config stays gpt-6.2-astra at low, checked before the turn.
+ */
 export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
   if (!explicit) return { scenario: SCENARIO_ID, runner: 'codex', pass: true, skipped: true };
   const report = { runner: 'codex', pass: false, checks: [] };
@@ -48,16 +52,28 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
     await wait(
       () =>
         view(
-          `return {ready:Boolean(view?.catalog&&root?.querySelector('[data-testid="native-new"]'))};`,
+          'return {ready:Boolean(view?.catalog&&(view.session||root?.querySelector(\'[data-testid="native-prompt"]\')))};',
         ),
       (value) => value.ready,
       30000,
     );
     const current = view('return {selected:!!view?.session};');
     if (current.selected) click('[data-testid=native-new]');
+    await wait(
+      () => view('return {ready:!!root?.querySelector(\'[data-testid="native-prompt"]\')};'),
+      (value) => value.ready,
+      30000,
+    );
     const defaults = view('return {runner:view.runner,model:view.model,mode:view.mode};');
     assert.deepEqual(defaults, { runner: 'codex', model: 'gpt-6.2-sol', mode: 'default' });
-    cdp('select', 'native', 'native-session-view >>> [data-testid="native-context"]', fixture);
+    const launch = view(
+      `const fixture=${JSON.stringify(fixture)};const options=[...root.querySelectorAll('[data-testid="native-context"] option')];const match=options.find((option)=>!option.disabled&&option.textContent.includes(fixture));return {value:match?.value??''};`,
+    );
+    assert.ok(launch.value, 'the fixture workspace is not in the native launch list');
+    cdp('select', 'native', 'native-session-view >>> [data-testid="native-context"]', launch.value);
+    const word = `SOL_HIGH_${randomUUID().replaceAll('-', '')}`;
+    const prompt = `Reply exactly ${word}. Do not use tools, edit files, contact services, or run commands.`;
+    cdp('fill', 'native', 'native-session-view >>> [data-testid="native-prompt"]', prompt);
     await wait(
       () =>
         view(
@@ -83,32 +99,8 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
     target = { executionNodeId: 'local', sessionId: session.id };
     report.sessionId = session.id;
     assert.equal(session.model, 'gpt-6.2-sol');
-    assert.equal(session.effort, 'low');
+    assert.equal(session.effort, 'high');
     assert.equal(session.workerManaged, undefined);
-    await wait(
-      () =>
-        view(
-          `const input=root?.querySelector('[data-testid="native-message"]');return {ready:view?.session?.id===${JSON.stringify(session.id)}&&!!input&&!input.disabled&&input.getClientRects().length>0};`,
-        ),
-      (value) => value.ready,
-      30000,
-    );
-    const word = `ASTRA_LOW_${randomUUID().replaceAll('-', '')}`;
-    cdp(
-      'fill',
-      'native',
-      'native-session-view >>> [data-testid="native-message"]',
-      `Reply exactly ${word}. Do not use tools, edit files, contact services, or run commands.`,
-    );
-    await wait(
-      () =>
-        view(
-          'return {ready:!!root?.querySelector("[data-testid=native-send]")&&!root.querySelector("[data-testid=native-send]").disabled};',
-        ),
-      (value) => value.ready,
-      30000,
-    );
-    click('[data-testid=native-send]');
     const page = await wait(
       () => rpc(Methods.NATIVE_SESSION_READ, target),
       (page) =>
@@ -117,7 +109,7 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
       timeoutMs,
     );
     assert.equal(page.commands.length, 1);
-    assert.equal(page.session.effort, 'low');
+    assert.equal(page.session.effort, 'high');
     const text = page.events
       .filter((event) => event.type === NativeSessionEventTypes.TEXT_DELTA)
       .map((event) => event.text)
@@ -154,7 +146,7 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
       30000,
     );
     assert.equal(context.model, 'gpt-6.2-sol');
-    assert.equal(context.effort, 'low');
+    assert.equal(context.effort, 'high');
     assert.equal(context.cwd, fixture);
     report.native = {
       sessionId: page.session.nativeSessionId,
@@ -163,10 +155,10 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
       rollout: path.basename(files[0]),
     };
     report.checks.push(
-      'New Copilot UI defaults create Astra/low, the real native turn completes without tools, the reply renders, and the official rollout records low effort',
+      `Native screen defaults create ${context.model} at ${context.effort}. LLM copilot config stays gpt-6.2-astra at low. The turn completes without tools, the reply renders, and the rollout records that effort`,
     );
     fs.mkdirSync(outDir, { recursive: true });
-    cdp('screenshot', 'native', path.join(outDir, 'astra-low.png'));
+    cdp('screenshot', 'native', path.join(outDir, 'sol-high.png'));
     report.pass = true;
   } catch (error) {
     report.error = error.message;
