@@ -44,7 +44,15 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
     );
   let target;
   let browser = false;
+  let armed = false;
   const launchToken = randomUUID();
+  const readLaunchReceipt = () =>
+    view(
+      `const token=${JSON.stringify(launchToken)};const box=view?.__launchReceipts??{};return box[token]??{id:""};`,
+    );
+  const rememberReceipt = (receipt) => {
+    if (receipt?.id && !target) target = { executionNodeId: receipt.node, sessionId: receipt.id };
+  };
   try {
     assert.equal(process.env.FARMSLOT_GATEWAY, 'ws://127.0.0.1:18777');
     assert.equal(process.env.FARMSLOT_CDP_PORT, '19323');
@@ -88,25 +96,11 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
       30000,
     );
     view(
-      `const method=${JSON.stringify(Methods.NATIVE_SESSION_CREATE)};const cwd=${JSON.stringify(fixture)};const token=${JSON.stringify(launchToken)};view.__launchReceipt=null;view.__launchToken=token;const request=view.api.request.bind(view.api);view.__launchRequest=request;view.api.request=async(...args)=>{const [name,params]=args;const mine=view.__launchToken===token&&name===method&&!params?.resumeSessionId&&params?.cwd===cwd&&params?.runner==='codex'&&(params?.executionNodeId??'local')==='local';if(mine)view.api.request=request;const result=await request(...args);const session=result?.session;if(mine&&session?.id&&!view.__launchReceipt)view.__launchReceipt={id:session.id,node:session.executionNodeId,runner:session.runner,cwd:session.cwd};return result;};const button=root?.querySelector('[data-testid="native-create"]');if(!button||button.disabled)throw Error('Control unavailable');button.click();return {clicked:true};`,
+      `const method=${JSON.stringify(Methods.NATIVE_SESSION_CREATE)};const cwd=${JSON.stringify(fixture)};const token=${JSON.stringify(launchToken)};const receipts=view.__launchReceipts??(view.__launchReceipts={});const pending=view.__launchPending??(view.__launchPending={});const request=view.api.request.bind(view.api);view.__launchRequest=request;view.__launchToken=token;view.api.request=async(...args)=>{const [name,params]=args;const mine=name===method&&!params?.resumeSessionId&&params?.cwd===cwd&&params?.runner==='codex'&&(params?.executionNodeId??'local')==='local'&&view.__launchToken===token;if(mine){view.api.request=request;pending[token]=true;}let result;try{result=await request(...args);}finally{if(mine)pending[token]=false;}const session=result?.session;if(mine&&session?.id&&!receipts[token])receipts[token]={id:session.id,node:session.executionNodeId,runner:session.runner,cwd:session.cwd};return result;};const button=root?.querySelector('[data-testid="native-create"]');if(!button||button.disabled)throw Error('Control unavailable');button.click();return {clicked:true};`,
     );
-    let created;
-    try {
-      created = await wait(
-        () => view('return view.__launchReceipt??{id:""};'),
-        (value) => Boolean(value.id),
-        timeoutMs,
-      );
-    } catch (error) {
-      try {
-        const late = view('return view.__launchReceipt??{id:""};');
-        if (late.id) target = { executionNodeId: late.node, sessionId: late.id };
-      } catch (readError) {
-        report.receiptError = readError.message;
-      }
-      throw error;
-    }
-    target = { executionNodeId: created.node, sessionId: created.id };
+    armed = true;
+    const created = await wait(readLaunchReceipt, (value) => Boolean(value.id), timeoutMs);
+    rememberReceipt(created);
     assert.equal(created.runner, 'codex');
     assert.equal(created.cwd, fixture);
     assert.equal(created.node, 'local');
@@ -193,7 +187,36 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
         );
       } catch (error) {
         report.pass = false;
-        report.cleanupError = error.message;
+        report.restoreError = error.message;
+      }
+    if (browser && armed && !target)
+      try {
+        rememberReceipt(await wait(readLaunchReceipt, (value) => Boolean(value.id), 5000));
+      } catch (error) {
+        try {
+          rememberReceipt(readLaunchReceipt());
+        } catch (readError) {
+          report.pass = false;
+          report.receiptError = readError.message;
+        }
+        if (!target) {
+          try {
+            const state = view(
+              `const token=${JSON.stringify(launchToken)};return {pending:view?.__launchPending?.[token]===true};`,
+            );
+            if (state.pending) {
+              report.pass = false;
+              report.unresolvedCreate =
+                'native.session.create was still in flight after the cleanup wait';
+            }
+          } catch (readError) {
+            report.pass = false;
+            report.receiptError = report.receiptError
+              ? `${report.receiptError}; ${readError.message}`
+              : readError.message;
+          }
+        }
+        report.cleanupWaitError = error.message;
       }
     if (target)
       try {
@@ -202,7 +225,7 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
         report.stopped = true;
       } catch (error) {
         report.pass = false;
-        report.cleanupError = error.message;
+        report.closeError = error.message;
       }
   }
   const outPath = writeEvidence(report, SCENARIO_ID, report.runner, outDir);
