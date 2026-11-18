@@ -8,6 +8,7 @@ import {
   reviewHistoryIdentity,
   reviewHistoryView,
 } from '../src/review-history.js';
+import { reviewHistoryTimeline } from '../src/review-history-timeline.js';
 
 import { reviewHistoryBdcbd42f } from './fixtures/review-history-bdcbd42f.js';
 
@@ -131,41 +132,83 @@ test('fix-only retained diffs are loaded when the live checkout is no longer ava
   assert.equal(reviewHistoryView(run, loaded).cards[0].fixes[0].diffText, 'retained fix diff');
 });
 
-test('a completed worker fix survives a failed next launch followed by a same-loop retry', () => {
+for (const retainedDelta of [false, true]) {
+  test(`a completed worker fix survives a same-loop retry, retained delta ${retainedDelta}`, () => {
+    const run = structuredClone(reviewHistoryBdcbd42f);
+    const review = run.engineState?.publishGate?.reviews?.[0];
+    const completed = run.agentContexts?.find(
+      (actor) => actor.role === 'review' && actor.status === 'complete',
+    );
+    const fixActor = run.agentContexts?.find((actor) => actor.role === 'review-fix');
+    assert(review?.attempts && completed && fixActor);
+    review.attempts = review.attempts.slice(0, 1);
+    run.steps[0].outputs = { reviewId: review.id, attempts: review.attempts, timeline: [] };
+    run.agentContexts = [
+      completed,
+      fixActor,
+      {
+        ...completed,
+        id: 'failed-after-fix',
+        status: 'failed',
+        reviewLoopNumber: 2,
+        startedAt: '2026-11-18T03:42:00.000Z',
+        completedAt: '2026-11-18T03:42:30.000Z',
+      },
+      {
+        ...completed,
+        id: 'retry-after-fix',
+        status: 'working',
+        reviewLoopNumber: 2,
+        startedAt: '2026-11-18T03:43:00.000Z',
+        attemptStartedAt: '2026-11-18T03:43:00.000Z',
+        completedAt: undefined,
+      },
+    ];
+    const history = reviewHistoryView(
+      run,
+      retainedDelta
+        ? {
+            'artifacts/pipeline-review-loop-2/fix-delta-stat.json': {
+              content: JSON.stringify({
+                source: 'local-git',
+                baseSha: completed.deliveryBaselineRef,
+                headSha: completed.deliveryBaselineRef,
+                fixBaseSha: completed.deliveryBaselineRef,
+                fixHeadSha: completed.deliveryBaselineRef,
+                diffPath: 'artifacts/pipeline-review-loop-2/fix-delta.diff',
+                capturedAt: fixActor.completedAt,
+              }),
+            },
+          }
+        : {},
+    );
+    assert.equal(history.roundCount, 2);
+    assert.equal(history.checks[0].rounds[1].earlierAttempts.length, 1);
+    assert.equal(history.cards[0].fixes.length, 1);
+    assert.equal(history.cards[0].fixes[0].label, 'Fix after round 1');
+    assert.equal(history.cards[0].fixes[0].durationMs, 469562);
+  });
+}
+
+test('two known worker turns remain separate fixes even when both leave the same head unchanged', () => {
   const run = structuredClone(reviewHistoryBdcbd42f);
-  const review = run.engineState?.publishGate?.reviews?.[0];
-  const completed = run.agentContexts?.find(
-    (actor) => actor.role === 'review' && actor.status === 'complete',
-  );
-  const fixActor = run.agentContexts?.find((actor) => actor.role === 'review-fix');
-  assert(review?.attempts && completed && fixActor);
-  review.attempts = review.attempts.slice(0, 1);
-  run.steps[0].outputs = { reviewId: review.id, attempts: review.attempts, timeline: [] };
-  run.agentContexts = [
-    completed,
-    fixActor,
-    {
-      ...completed,
-      id: 'failed-after-fix',
-      status: 'failed',
-      reviewLoopNumber: 2,
-      startedAt: '2026-11-18T03:42:00.000Z',
-      completedAt: '2026-11-18T03:42:30.000Z',
-    },
-    {
-      ...completed,
-      id: 'retry-after-fix',
-      status: 'working',
-      reviewLoopNumber: 2,
-      startedAt: '2026-11-18T03:43:00.000Z',
-      attemptStartedAt: '2026-11-18T03:43:00.000Z',
-      completedAt: undefined,
-    },
+  const original = reviewHistoryView(run).checks[0].rounds[0];
+  const rounds = [
+    original,
+    ...[1, 2].map((index) => ({
+      ...original,
+      key: `review-${index + 1}`,
+      roundNumber: index + 1,
+      startedAt: `2026-11-18T03:${index === 1 ? '43' : '53'}:00.000Z`,
+      hasFix: true,
+      fixContextKey: `worker-fix-${index}`,
+      fixBaseSha: original.headSha,
+      fixHeadSha: original.headSha,
+      fixDiffPath: 'retained/reused-fix.diff',
+    })),
   ];
-  const history = reviewHistoryView(run);
-  assert.equal(history.roundCount, 2);
-  assert.equal(history.checks[0].rounds[1].earlierAttempts.length, 1);
-  assert.equal(history.cards[0].fixes.length, 1);
-  assert.equal(history.cards[0].fixes[0].label, 'Fix after round 1');
-  assert.equal(history.cards[0].fixes[0].durationMs, 469562);
+  assert.equal(
+    reviewHistoryTimeline(run, rounds).filter((event) => event.kind === 'fix').length,
+    2,
+  );
 });

@@ -69,6 +69,7 @@ export function reviewHistoryTimeline(
   const ordered = [...rounds].sort(compareReviewHistoryRounds);
   const events: ReviewHistoryEvent[] = [];
   const fixes: ReviewHistoryFix[] = [];
+  const fixSources = new Map<ReviewHistoryFix, ReviewHistoryRound>();
   const sources = [...ordered, ...fixReceipts].sort(compareReviewHistoryRounds);
   for (const [sourceIndex, round] of sources.entries()) {
     if (round.hasFix) {
@@ -92,7 +93,25 @@ export function reviewHistoryTimeline(
         [...prior].reverse().find((entry) => entry.verdict === 'issues') ??
         prior.at(-1) ??
         previous.at(-1);
-      let fix = fixes.find((entry) => entry.key === key);
+      let fix = fixes.find((entry) => {
+        if (entry.key === key) return true;
+        const source = fixSources.get(entry);
+        // A retry can carry the same delta after its timing window has advanced.
+        // Two known worker turns remain distinct, even for an unchanged evidence-only head.
+        if (
+          !source ||
+          source.reviewId !== round.reviewId ||
+          (source.fixContextKey && round.fixContextKey)
+        )
+          return false;
+        return Boolean(
+          (round.fixBaseSha &&
+            round.fixHeadSha &&
+            source.fixBaseSha === round.fixBaseSha &&
+            source.fixHeadSha === round.fixHeadSha) ||
+          (round.fixDiffPath && source.fixDiffPath === round.fixDiffPath),
+        );
+      });
       if (!fix) {
         fix = {
           key,
@@ -115,6 +134,7 @@ export function reviewHistoryTimeline(
           diffError: round.fixDiffError,
           verifiedAt: round.fixReconstructed ? round.startedAt : null,
         };
+        fixSources.set(fix, round);
         fixes.push(fix);
         events.push({
           kind: 'fix',
