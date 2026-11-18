@@ -24,20 +24,22 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
   if (!explicit) return { scenario: SCENARIO_ID, runner: 'codex', pass: true, skipped: true };
   const { nativeLaunchContextKey } = await import('@farmslot/review-dispatch');
   const report = { runner: 'codex', pass: false, checks: [] };
-  const cdp = (...args) =>
+  const cdpCall = (timeoutMs, args) =>
     JSON.parse(
       execFileSync(
         process.execPath,
         [path.join(ROOT, 'apps/command-center/scripts/cdp.mjs'), ...args],
-        { cwd: ROOT, env: process.env, encoding: 'utf8', timeout: 30000 },
+        { cwd: ROOT, env: process.env, encoding: 'utf8', timeout: timeoutMs },
       ),
     );
-  const view = (body) =>
-    cdp(
+  const cdp = (...args) => cdpCall(30000, args);
+  const viewWithin = (timeoutMs, body) =>
+    cdpCall(timeoutMs, [
       'eval',
       'native',
       `const view=document.querySelector('native-session-view');const root=view?.shadowRoot;${body}`,
-    );
+    ]);
+  const view = (body) => viewWithin(30000, body);
   const click = (selector) =>
     view(
       `const button=root?.querySelector(${JSON.stringify(selector)});if(!button||button.disabled)throw Error('Control unavailable');button.click();return {clicked:true};`,
@@ -95,10 +97,11 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
       (value) => value.ready,
       30000,
     );
-    view(
-      `const method=${JSON.stringify(Methods.NATIVE_SESSION_CREATE)};const cwd=${JSON.stringify(fixture)};const token=${JSON.stringify(launchToken)};const receipts=view.__launchReceipts??(view.__launchReceipts={});const pending=view.__launchPending??(view.__launchPending={});const request=view.api.request.bind(view.api);view.__launchRequest=request;view.__launchToken=token;view.api.request=async(...args)=>{const [name,params]=args;const mine=name===method&&!params?.resumeSessionId&&params?.cwd===cwd&&params?.runner==='codex'&&(params?.executionNodeId??'local')==='local'&&view.__launchToken===token;if(mine){view.api.request=request;pending[token]=true;}let result;try{result=await request(...args);}finally{if(mine)pending[token]=false;}const session=result?.session;if(mine&&session?.id&&!receipts[token])receipts[token]={id:session.id,node:session.executionNodeId,runner:session.runner,cwd:session.cwd};return result;};const button=root?.querySelector('[data-testid="native-create"]');if(!button||button.disabled)throw Error('Control unavailable');button.click();return {clicked:true};`,
-    );
+    // Arm before the click eval. A lost CDP reply can still leave a receipt to close.
     armed = true;
+    view(
+      `const method=${JSON.stringify(Methods.NATIVE_SESSION_CREATE)};const cwd=${JSON.stringify(fixture)};const token=${JSON.stringify(launchToken)};const receipts=view.__launchReceipts??(view.__launchReceipts={});const pending=view.__launchPending??(view.__launchPending={});const request=view.api.request.bind(view.api);view.__launchRequest=request;view.__launchToken=token;view.api.request=async(...args)=>{const [name,params]=args;const mine=name===method&&!params?.resumeSessionId&&params?.cwd===cwd&&params?.runner==='codex'&&(params?.executionNodeId??'local')==='local'&&view.__launchToken===token;if(mine){view.api.request=request;pending[token]=true;}try{const result=await request(...args);const session=result?.session;if(mine&&session?.id&&!receipts[token])receipts[token]={id:session.id,node:session.executionNodeId,runner:session.runner,cwd:session.cwd};return result;}catch(error){if(mine){pending[token]='unknown';if(!receipts[token])receipts[token]={id:'',error:String(error?.message??error)};}throw error;}finally{if(mine&&pending[token]===true)pending[token]=false;}};const button=root?.querySelector('[data-testid="native-create"]');if(!button||button.disabled)throw Error('Control unavailable');button.click();return {clicked:true};`,
+    );
     const created = await wait(readLaunchReceipt, (value) => Boolean(value.id), timeoutMs);
     rememberReceipt(created);
     assert.equal(created.runner, 'codex');
@@ -189,35 +192,40 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
         report.pass = false;
         report.restoreError = error.message;
       }
-    if (browser && armed && !target)
-      try {
-        rememberReceipt(await wait(readLaunchReceipt, (value) => Boolean(value.id), 5000));
-      } catch (error) {
+    if (browser && armed && !target) {
+      // One snapshot carries the receipt and the pending flag. The poll stops at one deadline.
+      const deadline = Date.now() + 5000;
+      const stateBody = `const token=${JSON.stringify(launchToken)};const receipt=(view?.__launchReceipts??{})[token]??null;const pending=(view?.__launchPending??{})[token];return {id:receipt?.id??"",node:receipt?.node??"",runner:receipt?.runner??"",cwd:receipt?.cwd??"",pending:pending===true?"pending":pending==="unknown"?"unknown":"idle",error:receipt?.error??""};`;
+      let snapshot = null;
+      let snapshotError = null;
+      while (!target && Date.now() < deadline) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
         try {
-          rememberReceipt(readLaunchReceipt());
-        } catch (readError) {
-          report.pass = false;
-          report.receiptError = readError.message;
+          snapshot = viewWithin(remaining, stateBody);
+          snapshotError = null;
+          rememberReceipt(snapshot);
+        } catch (error) {
+          snapshotError = error;
+          break;
         }
-        if (!target) {
-          try {
-            const state = view(
-              `const token=${JSON.stringify(launchToken)};return {pending:view?.__launchPending?.[token]===true};`,
-            );
-            if (state.pending) {
-              report.pass = false;
-              report.unresolvedCreate =
-                'native.session.create was still in flight after the cleanup wait';
-            }
-          } catch (readError) {
-            report.pass = false;
-            report.receiptError = report.receiptError
-              ? `${report.receiptError}; ${readError.message}`
-              : readError.message;
-          }
-        }
-        report.cleanupWaitError = error.message;
+        if (target) break;
+        const pause = Math.min(500, deadline - Date.now());
+        if (pause <= 0) break;
+        await new Promise((resolve) => setTimeout(resolve, pause));
       }
+      if (!target && (snapshot?.pending === 'pending' || snapshot?.pending === 'unknown')) {
+        report.pass = false;
+        report.unresolvedCreate =
+          snapshot.pending === 'unknown'
+            ? `native.session.create outcome is unknown${snapshot.error ? `: ${snapshot.error}` : ''}`
+            : 'native.session.create was still in flight after the cleanup wait';
+      }
+      if (snapshotError) {
+        report.pass = false;
+        report.receiptError = snapshotError.message;
+      }
+    }
     if (target)
       try {
         rpc(Methods.NATIVE_SESSION_CLOSE, target);
