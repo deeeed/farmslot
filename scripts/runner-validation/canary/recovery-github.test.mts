@@ -12,6 +12,7 @@ import {
   githubPrChecksOp,
   githubPrCommentOp,
   githubPrEditOp,
+  githubPrListFieldsOp,
   githubPrViewOp,
 } from '../../../services/gateway/src/integrations/github-operations.js';
 
@@ -82,6 +83,34 @@ test('recovery CI reads use the HTTP fixture without a keyring and reject unknow
     assert.deepEqual(status.errors, []);
     assert.match(status.prStateStdout, /^OPEN\t/);
     assert.match(status.checksStdout, new RegExp(`fixture\\t${bucket}\\t`));
+  }
+  // The merged-PR probe finalize runs before Close as Shipped (#2303). It is a
+  // PullRequestList query, which the fixture did not answer, so interrupted
+  // teardown failed the recovery matrix on 'Unsupported recovery GitHub
+  // operation: POST /graphql' (run 26c8347c, deploy aefea1e6).
+  for (const number of [101, 102] as const) {
+    const merged = await githubPrListFieldsOp(
+      'fixture/recovery',
+      ['number', 'state', 'headRefOid'],
+      { head: `fix/recovery-${number}`, state: 'merged', limit: 1 },
+      {},
+    );
+    assert.deepEqual(
+      merged.data,
+      [],
+      'nothing merged out of band in the recovery matrix, so the probe must answer empty rather than fail',
+    );
+    const open = await githubPrListFieldsOp(
+      'fixture/recovery',
+      ['number', 'state', 'headRefOid'],
+      { head: `fix/recovery-${number}`, limit: 1 },
+      {},
+    );
+    assert.deepEqual(
+      open.data,
+      [{ number, state: 'OPEN', headRefOid: heads.get(number) }],
+      'the same query is how discovery finds this run’s own open PR',
+    );
   }
   assert.equal(keyring.mock.callCount(), 0);
   const unknown = await fetch(`${fixture.origin}/repos/other/private/pulls/1`);

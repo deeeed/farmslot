@@ -1,4 +1,5 @@
 import { mkdir, writeFile } from 'node:fs/promises';
+import { setTimeout as delay } from 'node:timers/promises';
 import path from 'node:path';
 
 import {
@@ -55,6 +56,7 @@ import {
   validatePackageApprovalSelection,
 } from './gate-policy.js';
 import { assertAcceptedFindingsCurrent, assertRunGateReady } from './gate-prerequisites.js';
+import { dropRunPrLink as defaultDropRunPrLink } from './run-links.js';
 import { assertPublicationFinalization } from './publication-finalization.js';
 import { requiresPublicationApproval } from './publication-policy.js';
 import { runSupersededSince } from './run-generation.js';
@@ -81,11 +83,18 @@ export interface FinalizeStepContext {
     runId?: string,
   ) => Promise<LoadedProjectVars | null>;
   readPreparedPackage: (current: Run) => Promise<ReadyGatePrPackage | undefined>;
-  refreshRunLinks: (runId: string, options?: { allowEmpty?: boolean }) => Promise<void>;
+  refreshRunLinks: (runId: string) => Promise<void>;
+  /** Defaults to the real link drop; injected only by tests that observe it. */
+  dropRunPrLink?: (runId: string) => Promise<void>;
+  /** Retry backoff for the merged-PR proof reads; tests set it to 0. */
+  probeRetryDelayMs?: number;
   stepPartialIO: Map<string, StepIO>;
 }
 
 const S = PipelineSteps;
+
+/** One retry before a person is involved; a GitHub 5xx is usually momentary. */
+const PROBE_RETRY_DELAY_MS = 1_000;
 
 /**
  * Records on the Ready gate decision the title and body publication posted, so
@@ -161,6 +170,8 @@ export async function executeFinalizeStep(
     loadProjectVarsOrNull,
     readPreparedPackage,
     refreshRunLinks,
+    dropRunPrLink,
+    probeRetryDelayMs,
     stepPartialIO,
   } = context;
   const current = getRun(runId)!;
@@ -397,19 +408,39 @@ export async function executeFinalizeStep(
       // to replay, while adoption still refuses a run whose saved number names
       // a different PR. This is the same hold the inherited-acceptance
       // publication prerequisite uses (orchestrator.ts, step 3).
+      //
+      // A 5xx or a dropped connection is the common real failure here, so the
+      // read is retried once before a person is involved at all. The retry
+      // instruction is in the message, not only in `userAction`: the message is
+      // what becomes the run's error and the decision card's description, so
+      // leaving it out is what would strand the run with no visible way back.
       const probeOrHold = async <T>(probe: () => Promise<T>): Promise<T> => {
-        try {
-          return await probe();
-        } catch (error) {
-          throw new GatewayMethodError(
-            'RUN_GATE_NOT_READY',
-            `The merged-PR link for this package could not be proved: ${error instanceof Error ? error.message : String(error)}`,
-            {
-              details: { prNumber: current.prNumber ?? null, headSha: packageHeadSha ?? null },
-              userAction:
-                'Restore GitHub access, then replay finalize on this run. Its checkout and package are preserved.',
-            },
-          );
+        for (let attempt = 0; ; attempt++) {
+          try {
+            return await probe();
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (attempt === 0) {
+              console.warn(
+                `[run-engine] run ${runId.slice(0, 8)} — merged-PR proof read failed, retrying once: ${message}`,
+              );
+              await delay(probeRetryDelayMs ?? PROBE_RETRY_DELAY_MS);
+              continue;
+            }
+            throw new GatewayMethodError(
+              'RUN_GATE_NOT_READY',
+              `The merged-PR link for this package could not be proved: ${message}. Restore GitHub access, then replay the finalize step on this run; its slot, checkout and prepared package are preserved.`,
+              {
+                details: {
+                  prNumber: current.prNumber ?? null,
+                  headSha: packageHeadSha ?? null,
+                  retry: { method: 'run.replayStep', stepName: 'finalize' },
+                },
+                userAction:
+                  'Restore GitHub access, then replay the finalize step on this run. Its checkout and package are preserved.',
+              },
+            );
+          }
         }
       };
       publishedPrNumber = await probeOrHold(() =>
@@ -429,11 +460,9 @@ export async function executeFinalizeStep(
           detail: `Clearing unproven link to PR #${current.prNumber} before completing`,
         });
         updateRun(runId, { prNumber: undefined });
-        // allowEmpty: a run whose ticket is a backlog id or GitHub issue
-        // recomputes to no links at all once the number is gone, and the
-        // default refresh keeps the old list — including the PR link that
-        // makes adopt-published-pr refuse the PR that actually shipped.
-        await refreshRunLinks(runId, { allowEmpty: true });
+        // The number alone is not the whole link: adopt-published-pr also
+        // refuses a run whose links still name another PR.
+        await (dropRunPrLink ?? defaultDropRunPrLink)(runId);
       }
     }
     if (publishedPrNumber) {

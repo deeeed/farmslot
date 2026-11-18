@@ -77,6 +77,43 @@ function answer(holds: string, method: string, pathname: string, payload: unknow
   }
   if (pathname === '/graphql' && method === 'POST' && isRecord(payload)) {
     const variables = payload.variables;
+    // Branch-scoped PR lookup: discovery's own open PR, and the merged-PR probe
+    // finalize runs before offering Close as Shipped. Both are PullRequestList
+    // in production (github-operations.ts), so the fixture answers the same
+    // query rather than a REST stand-in. The fixture's PRs are open and nothing
+    // merges out of band here, so a MERGED/CLOSED state filter is empty.
+    if (
+      typeof payload.query === 'string' &&
+      /query PullRequestList\(/.test(payload.query) &&
+      isRecord(variables) &&
+      variables.owner === 'fixture' &&
+      (variables.repo ?? variables.name) === 'recovery'
+    ) {
+      const states = Array.isArray(variables.state)
+        ? variables.state.filter((state): state is string => typeof state === 'string')
+        : ['OPEN'];
+      const head = typeof variables.headBranch === 'string' ? variables.headBranch : undefined;
+      const base = typeof variables.baseBranch === 'string' ? variables.baseBranch : undefined;
+      const nodes = states.includes('OPEN')
+        ? [101, 102]
+            .map((number) => pullRequest(holds, number))
+            .filter((pr) => head === undefined || pr.headRefName === head)
+            .filter((pr) => base === undefined || pr.baseRefName === base)
+            .map((pr) => ({ ...pr, author: { login: 'fixture' } }))
+        : [];
+      return {
+        data: {
+          repository: {
+            pullRequests: {
+              totalCount: nodes.length,
+              nodes,
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+          },
+          rateLimit: { cost: 1 },
+        },
+      };
+    }
     const reviewQuery =
       typeof payload.query === 'string' &&
       (payload.query.includes('reviewThreads(first:') ||
