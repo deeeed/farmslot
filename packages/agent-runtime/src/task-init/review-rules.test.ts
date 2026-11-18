@@ -313,6 +313,7 @@ test('every family the client review carries must have its step; another client 
     /- \[ \] 3\. Pro Mode UI Gating\n.*\n- \[ \] 4\./,
     '- [ ] 3.',
   );
+  assert.doesNotMatch(coreChecklist, /#pro-mode-ui-gating/);
   const core = { ...REVIEW, client: 'core' } as const;
   const coreSelection = selectionFor(
     [{ id: 'blocking-review-checks', selected: true, reason: 'always' }],

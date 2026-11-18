@@ -149,8 +149,24 @@ test('a selection computed for another pack revision or client is refused', () =
   );
 });
 
+test('clients can never contradict areas: no narrowing an always family or a client with paths', () => {
+  assert.throws(
+    () => parseReviewRulePack(withFamily({ clients: ['mobile'] })),
+    /families\[1\]\.areas name core, which pack\.families\[1\]\.clients leaves out of the family's reviews/,
+  );
+  const input = packInput();
+  const families = input.families as Record<string, unknown>[];
+  families[0] = { ...families[0], clients: ['mobile'] };
+  assert.throws(
+    () => parseReviewRulePack(input),
+    /families\[0\]\.clients cannot narrow an always family, which every review carries/,
+  );
+});
+
 test('a selection covers exactly the families its client review carries', () => {
-  const scoped = parseReviewRulePack(withFamily({ clients: ['mobile'] }));
+  const scoped = parseReviewRulePack(
+    withFamily({ clients: ['mobile'], areas: { paths: { mobile: ['app/**/Perps/**'] } } }),
+  );
   const always = { id: 'blocking-review-checks', selected: true, reason: 'always' };
   assert.equal(
     parseReviewRuleSelection(selectionInput([always]), scoped, FROZEN).families.length,

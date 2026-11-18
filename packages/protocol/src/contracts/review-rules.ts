@@ -217,11 +217,25 @@ export function parseReviewRulePack(value: unknown, field = 'pack'): ReviewRuleP
       onlyKeys(rule, ['label', 'why'], ruleAt);
       return { label: text(rule.label, `${ruleAt}.label`), why: text(rule.why, `${ruleAt}.why`) };
     });
+    const familyAreas = areas(family.areas, `${at}.areas`);
+    // Membership and areas must agree, so `clients` can never drop a family
+    // from a review its own areas say it applies to.
+    if (clients !== undefined) {
+      if ('always' in familyAreas)
+        throw new Error(`${at}.clients cannot narrow an always family, which every review carries`);
+      const outside = Object.keys(familyAreas.paths).filter(
+        (client) => !(clients as string[]).includes(client),
+      );
+      if (outside.length)
+        throw new Error(
+          `${at}.areas name ${outside.join(', ')}, which ${at}.clients leaves out of the family's reviews`,
+        );
+    }
     return {
       id: family.id,
       title: text(family.title, `${at}.title`),
       file: family.file,
-      areas: areas(family.areas, `${at}.areas`),
+      areas: familyAreas,
       status: oneOf(family.status, REVIEW_RULE_STATUSES, `${at}.status`),
       class: oneOf(family.class, REVIEW_RULE_CLASSES, `${at}.class`),
       ...(family.doc !== undefined ? { doc: text(family.doc, `${at}.doc`) } : {}),
@@ -241,7 +255,7 @@ export interface ReviewRuleSelectionBinding {
 }
 
 /** A family is in a client's review unless it is retired or another client's overlay holds it. */
-export function isReviewRuleFamilyInScope(family: ReviewRuleFamily, client: string): boolean {
+function isReviewRuleFamilyInScope(family: ReviewRuleFamily, client: string): boolean {
   return family.status !== 'retired' && (!family.clients || family.clients.includes(client));
 }
 

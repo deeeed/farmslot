@@ -64,7 +64,7 @@ Every review, at every level:
 - `areas` is `{ "always": true }` for families every diff needs (blocking checks, cross-client parity), or path globs per client.
 - `status` is `active`, `proposed`, `stale` or `retired`. A retired family is out of every selection.
 - `class` is `blocking` or `advisory`.
-- `clients`, optional, names the clients whose review carries a family that lives in one client's overlay. A family without it is in every client's review.
+- `clients`, optional, names the clients whose review carries a family that lives in one client's overlay. A family without it is in every client's review. It can never contradict `areas`: an `always` family takes no `clients`, and every client with path globs must be listed.
 - `why` is the run, PR, incident or decision behind a rule. A rule with no recorded cause carries `pre-0073` until it is next edited.
 
 A project declares its pack on the review skill in `project.json` `required_skills`:
