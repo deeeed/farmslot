@@ -516,3 +516,37 @@ test('a workspace replay during metadata lookup keeps ownership and starts no ch
   assert.equal(runs.size, 1);
   assert.equal(runs.get(prior.id)!.status, 'done');
 });
+
+test('a blocked workspace with a completed stopped reviewer creates a warm child', async () => {
+  const source = workspacePrior();
+  runs.set(prior.id, {
+    ...source,
+    status: 'blocked',
+    reviewWorkspace: {
+      ...source.reviewWorkspace!,
+      retainedAt: '2026-11-18T00:00:00Z',
+      executionStoppedAt: '2026-11-18T00:00:01Z',
+    },
+  });
+  const result = await runRereviewLatestHead({ runId: prior.id });
+  assert.equal(result.mode, 'warm-handoff');
+  assert.equal(workspaceIntakeRuns.length, 0);
+  assert.equal(runs.get(result.runId!)!.reviewMode, 'warm');
+  assert.equal(runs.get(result.runId!)!.reviewAutoFinish, false);
+  assert.equal(runs.get(prior.id)!.status, 'done');
+});
+
+test('a blocked workspace without confirmed execution stop retains its parent and creates no child', async () => {
+  const source = workspacePrior();
+  runs.set(prior.id, {
+    ...source,
+    status: 'blocked',
+    reviewWorkspace: { ...source.reviewWorkspace!, retainedAt: '2026-11-18T00:00:00Z' },
+  });
+  await assert.rejects(
+    runRereviewLatestHead({ runId: prior.id }),
+    /verified retained workspace reviewer/,
+  );
+  assert.equal(runs.size, 1);
+  assert.equal(runs.get(prior.id)!.status, 'blocked');
+});

@@ -267,6 +267,17 @@ test('native review continuity uses its owned stopped session without a tmux tra
       },
     },
   );
+  for (const currentTicket of ['deeeed/farmslot#1', 'https://github.com/deeeed/farmslot/pull/1'])
+    for (const priorTicket of ['deeeed/farmslot#1', 'https://github.com/deeeed/farmslot/pull/1'])
+      assert.equal(
+        resolveRepeatReviewResumePlan(
+          { ...nativeCurrent, ticketOrPr: currentTicket },
+          { ...nativePrior, ticketOrPr: priorTicket },
+          'codex',
+          'gpt-6-astra',
+        ).kind,
+        'native-resume',
+      );
   for (const wrong of [
     { ...nativeCurrent, nativeOwnerPrincipalId: 'other' },
     { ...nativeCurrent, ticketOrPr: 'deeeed/farmslot#2' },

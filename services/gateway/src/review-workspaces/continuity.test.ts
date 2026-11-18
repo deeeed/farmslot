@@ -68,6 +68,15 @@ test('unavailable WARM refuses instead of changing mode', () => {
     { ...prior, nativeOwnerPrincipalId: 'other' },
     { ...prior, project: 'other' },
     { ...prior, status: 'monitoring' },
+    {
+      ...prior,
+      status: 'blocked',
+      reviewWorkspace: {
+        ...prior.reviewWorkspace!,
+        retainedAt: '2026-11-18T00:00:00Z',
+        executionStoppedAt: '2026-11-18T00:00:01Z',
+      },
+    },
     { ...prior, ticketOrPr: 'example/foreign#42' },
     { ...prior, agentContexts: [] },
     { ...prior, agentContexts: [{ ...prior.agentContexts![0], reviewId: 'foreign' }] },

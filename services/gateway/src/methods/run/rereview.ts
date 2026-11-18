@@ -26,7 +26,7 @@ import {
 import { WarmReviewRefusal } from '../../review/session-mode.js';
 import {
   bindWorkspaceReviewResult,
-  compatibleWorkspaceReviewer,
+  rereviewWorkspaceReviewer,
 } from '../../review-workspaces/continuity.js';
 import {
   automatedRepeatReviewSelection,
@@ -152,7 +152,7 @@ async function rereviewWithSources(
     throw new Error('Review changed during re-review admission');
   if (workspace) {
     assertNativeRunOwner(parent);
-    const retained = compatibleWorkspaceReviewer(parent, parent);
+    const retained = rereviewWorkspaceReviewer(parent);
     if (!retained || retained.reviewId !== reviewContext.reviewLineages[0]?.reviewId)
       throw new WarmReviewRefusal(
         'session-unavailable',

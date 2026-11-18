@@ -29,8 +29,8 @@ type WorkspaceReviewerRun = Pick<
   | 'reviewContext'
 > & { metrics: Pick<Run['metrics'], 'runner' | 'model'> };
 
-/** Shared ownership and runner predicate for both legacy recovery and new-round reuse. */
-export function compatibleWorkspaceReviewer(run: WorkspaceReviewerRun, prior: Run) {
+/** Shared identity and stopped-reviewer metadata, independent of the lifecycle admission rule. */
+function matchingWorkspaceReviewer(run: WorkspaceReviewerRun, prior: Run) {
   const reviewer = prior.agentContexts?.find((candidate) => candidate.id === 'review');
   const owner = runPrincipalOwner(run);
   const priorOwner = runPrincipalOwner(prior);
@@ -42,7 +42,6 @@ export function compatibleWorkspaceReviewer(run: WorkspaceReviewerRun, prior: Ru
   const compatible =
     run.transport === 'tmux' &&
     prior.transport === 'tmux' &&
-    isTerminalRunStatus(prior.status) &&
     (!prior.reviewWorkspace?.retainedAt || !!prior.reviewWorkspace.executionStoppedAt) &&
     sameOwner &&
     run.project === prior.project &&
@@ -53,6 +52,18 @@ export function compatibleWorkspaceReviewer(run: WorkspaceReviewerRun, prior: Ru
     reviewer?.runner === run.metrics.runner &&
     reviewer.model === run.metrics.model;
   return compatible ? reviewer : undefined;
+}
+
+/** A continuation pairs only after its predecessor has actually reached a terminal state. */
+export function compatibleWorkspaceReviewer(run: WorkspaceReviewerRun, prior: Run) {
+  return isTerminalRunStatus(prior.status) ? matchingWorkspaceReviewer(run, prior) : undefined;
+}
+
+/** Posting can block after execution stops; re-review admission precedes superseding that block. */
+export function rereviewWorkspaceReviewer(run: Run) {
+  if (!['done', 'failed', 'blocked'].includes(run.status)) return undefined;
+  if (run.status === 'blocked' && !run.reviewWorkspace?.executionStoppedAt) return undefined;
+  return matchingWorkspaceReviewer(run, run);
 }
 
 /** Follow only stopped, no-verdict transfers; the validated baseline remains unchanged. */
