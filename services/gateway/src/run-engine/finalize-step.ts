@@ -15,6 +15,7 @@ import {
 import { farmslotRoot, getProjectField, loadSlotVars } from '../core/config.js';
 import { execLocal, execOnSlot, isLocal } from '../core/exec.js';
 import { markRunSlotHeld } from '../core/index.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import { SSH_CONNECT_SHELL_OPTIONS } from '../core/ssh-options.js';
 import { shellQuote } from '../core/tmux.js';
 import { usesNodeLink } from '../fleet/node-link-policy.js';
@@ -80,7 +81,7 @@ export interface FinalizeStepContext {
     runId?: string,
   ) => Promise<LoadedProjectVars | null>;
   readPreparedPackage: (current: Run) => Promise<ReadyGatePrPackage | undefined>;
-  refreshRunLinks: (runId: string) => Promise<void>;
+  refreshRunLinks: (runId: string, options?: { allowEmpty?: boolean }) => Promise<void>;
   stepPartialIO: Map<string, StepIO>;
 }
 
@@ -375,11 +376,65 @@ export async function executeFinalizeStep(
       name: 'close-as-shipped',
       detail: 'Branch already merged — linking PR and skipping publication',
     });
-    if (!publishedPrNumber && ciRepo) {
-      const { findMergedPRNumber, persistRunPrNumber } =
+    // Only a proved shipment is claimed as published. Without ci.repo there is
+    // nothing to prove it against, so a saved number stays a link and never
+    // becomes a publication claim.
+    publishedPrNumber = null;
+    if (ciRepo) {
+      const { findMergedPRNumber, mergedLinkIsStale, persistRunPrNumber } =
         await import('../integrations/pr-linkage.js');
-      publishedPrNumber = await findMergedPRNumber(current, ciRepo);
-      if (publishedPrNumber) await persistRunPrNumber(current.id, publishedPrNumber);
+      const packageHeadSha = (await readPreparedPackage(current))?.headSha;
+      // A saved prNumber is not proof. An earlier gate persists the probe's
+      // answer and never replaces it, so the field can name a PR that merged
+      // an older head while the branch has moved on — closing against it would
+      // record the run as shipped work that the merged PR does not contain.
+      // The link is re-proved here against the head being closed, exactly as
+      // the gate and publishCompletionPackage prove theirs.
+      // An unreachable probe is unknown, not "nothing shipped": it refuses here
+      // so the run stays retryable rather than settling on a guess. The refusal
+      // is RUN_GATE_NOT_READY, not an ordinary failure: an ordinary error fails
+      // finalize, and terminal cleanup can then release the slot this run needs
+      // to replay, while adoption still refuses a run whose saved number names
+      // a different PR. This is the same hold the inherited-acceptance
+      // publication prerequisite uses (orchestrator.ts, step 3).
+      const probeOrHold = async <T>(probe: () => Promise<T>): Promise<T> => {
+        try {
+          return await probe();
+        } catch (error) {
+          throw new GatewayMethodError(
+            'RUN_GATE_NOT_READY',
+            `The merged-PR link for this package could not be proved: ${error instanceof Error ? error.message : String(error)}`,
+            {
+              details: { prNumber: current.prNumber ?? null, headSha: packageHeadSha ?? null },
+              userAction:
+                'Restore GitHub access, then replay finalize on this run. Its checkout and package are preserved.',
+            },
+          );
+        }
+      };
+      publishedPrNumber = await probeOrHold(() =>
+        findMergedPRNumber(current, ciRepo, packageHeadSha, { onProbeError: 'throw' }),
+      );
+      if (publishedPrNumber && publishedPrNumber !== current.prNumber)
+        await persistRunPrNumber(current.id, publishedPrNumber);
+      if (
+        !publishedPrNumber &&
+        (await probeOrHold(() => mergedLinkIsStale(current, ciRepo, packageHeadSha)))
+      ) {
+        // Nothing proved a shipment and the saved number names a merged PR this
+        // package did not ship. Clearing it is what makes the run adoptable:
+        // adopt-published-pr refuses while a different number is linked.
+        emitWithBroadcast('substep', {
+          name: 'close-as-shipped',
+          detail: `Clearing unproven link to PR #${current.prNumber} before completing`,
+        });
+        updateRun(runId, { prNumber: undefined });
+        // allowEmpty: a run whose ticket is a backlog id or GitHub issue
+        // recomputes to no links at all once the number is gone, and the
+        // default refresh keeps the old list — including the PR link that
+        // makes adopt-published-pr refuse the PR that actually shipped.
+        await refreshRunLinks(runId, { allowEmpty: true });
+      }
     }
     if (publishedPrNumber) {
       // Only claim publication when a PR is actually linked; the zero-ahead

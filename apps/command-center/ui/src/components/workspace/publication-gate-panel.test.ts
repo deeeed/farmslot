@@ -138,7 +138,7 @@ test('combined confirmation names the findings and evidence-policy gap being att
       attestationReason: 'I accept and attest.',
     }),
   );
-  assert.match(text, /Accept findings, attest evidence and publish/);
+  assert.match(text, /Override review policy, attest evidence and publish/);
   assert.match(text, /Supply production-state proof or accept the gap/);
   assert.match(text, /The production-state evidence is missing/);
   assert.match(text, /combined-evidence-gaps/);

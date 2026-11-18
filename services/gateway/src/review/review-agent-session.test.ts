@@ -64,6 +64,7 @@ let captured: Awaited<ReturnType<typeof processes.captureRunnerSessionMetadata>>
   runnerSessionPath: '/resumed.jsonl',
 };
 let captureAttempts = 0;
+let captureOptions: Parameters<typeof processes.captureRunnerSessionMetadata>[3];
 let failNextCapture = false;
 let sentPrompts = 0;
 let usageSession: string | null | undefined;
@@ -122,8 +123,11 @@ mock.module('../runners/session-process.js', {
   namedExports: {
     ...processes,
     probeRunnerDescendantPid: async () => ({ state: 'present', pid: '2002' }),
-    captureRunnerSessionMetadata: async () => {
+    captureRunnerSessionMetadata: async (
+      ..._args: Parameters<typeof processes.captureRunnerSessionMetadata>
+    ) => {
       captureAttempts++;
+      captureOptions = _args[3];
       if (failNextCapture) {
         failNextCapture = false;
         throw new Error('transient session read timeout');
@@ -271,5 +275,94 @@ test('the CI-fix relaunch records the primary sibling before transcript creation
     const recorded = run.agentContexts!.find((entry) => entry.id === id);
     assert.equal(recorded?.target?.paneId, '%22', id);
     assert.equal(recorded?.runnerSessionId, null, id);
+  }
+});
+
+/** A dev run whose worker and fix role are both still bound to the replaced worker session. */
+function replacedWorkerRun(fixRole: 'review-fix' | 'ci-fix'): Run {
+  const worker: AgentContext = {
+    ...original,
+    id: 'dev',
+    role: 'dev',
+    runner: 'pi',
+    reviewId: undefined,
+    runnerSessionId: 'worker-session',
+    runnerSessionPath: '/worker.jsonl',
+    target: { session: 'slot-session', window: 'dev', pane: null, target: 'slot-session:dev' },
+  };
+  return {
+    ...makeRun({ slotId: vars.slotId, flowType: 'dev' }),
+    agentContexts: [worker, { ...worker, id: fixRole, role: fixRole }],
+  };
+}
+
+test('a review fix that respawned the runner binds the new session, not the retained one', async () => {
+  failNextCapture = false;
+  captureAttempts = 0;
+  captured = { runnerSessionId: 'fix-session', runnerSessionPath: '/fix.jsonl' };
+  run = replacedWorkerRun('review-fix');
+  const { recordReviewFixRunnerSession }: typeof import('./orchestrator.js') = await import(
+    new URL('./orchestrator.ts?session-regression', import.meta.url).href
+  );
+  await recordReviewFixRunnerSession(vars, run.id, 'pi', 'slot-session:dev', {
+    runnerReplaced: true,
+  });
+  assert.equal(captureAttempts, 1);
+  assert.equal(captureOptions?.excludedSessionId, 'worker-session');
+  assert.equal(captureOptions?.excludedSessionPath, '/worker.jsonl');
+  for (const id of ['dev', 'review-fix']) {
+    const recorded = run.agentContexts!.find((entry) => entry.id === id);
+    assert.equal(recorded?.runnerSessionId, 'fix-session', id);
+    assert.equal(recorded?.runnerSessionPath, '/fix.jsonl', id);
+  }
+});
+
+test('a respawned review fix with no transcript yet leaves no role on the replaced session', async () => {
+  failNextCapture = false;
+  captureAttempts = 0;
+  captured = { runnerSessionId: null, runnerSessionPath: null };
+  run = replacedWorkerRun('review-fix');
+  const { recordReviewFixRunnerSession }: typeof import('./orchestrator.js') = await import(
+    new URL('./orchestrator.ts?session-regression', import.meta.url).href
+  );
+  await recordReviewFixRunnerSession(vars, run.id, 'pi', 'slot-session:dev', {
+    runnerReplaced: true,
+  });
+  for (const id of ['dev', 'review-fix']) {
+    const recorded = run.agentContexts!.find((entry) => entry.id === id);
+    assert.equal(recorded?.runnerSessionId, null, id);
+    assert.equal(recorded?.runnerSessionPath, null, id);
+  }
+});
+
+test('a review fix delivered into the retained session keeps adopting it', async () => {
+  failNextCapture = false;
+  captureAttempts = 0;
+  captured = { runnerSessionId: 'fix-session', runnerSessionPath: '/fix.jsonl' };
+  run = replacedWorkerRun('review-fix');
+  const { recordReviewFixRunnerSession }: typeof import('./orchestrator.js') = await import(
+    new URL('./orchestrator.ts?session-regression', import.meta.url).href
+  );
+  await recordReviewFixRunnerSession(vars, run.id, 'claude', 'slot-session:dev');
+  assert.equal(captureAttempts, 0);
+  const fix = run.agentContexts!.find((entry) => entry.id === 'review-fix');
+  assert.equal(fix?.runnerSessionId, 'worker-session');
+});
+
+test('a CI fix that respawned the runner binds the new session to both roles', async () => {
+  failNextCapture = false;
+  captureAttempts = 0;
+  captured = { runnerSessionId: 'fix-session', runnerSessionPath: '/fix.jsonl' };
+  run = replacedWorkerRun('ci-fix');
+  const { recordCiFixRunnerSession }: typeof import('../ci-monitor/inline-fix.js') = await import(
+    new URL('../ci-monitor/inline-fix.ts?session-regression', import.meta.url).href
+  );
+  await recordCiFixRunnerSession(vars, run.id, 'pi', 'slot-session:dev', {
+    replaced: { runnerSessionId: 'worker-session', runnerSessionPath: '/worker.jsonl' },
+  });
+  assert.equal(captureOptions?.excludedSessionId, 'worker-session');
+  for (const id of ['dev', 'ci-fix']) {
+    const recorded = run.agentContexts!.find((entry) => entry.id === id);
+    assert.equal(recorded?.runnerSessionId, 'fix-session', id);
   }
 });

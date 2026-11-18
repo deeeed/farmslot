@@ -83,3 +83,20 @@ test('slot view hash writer centralizes active view state', () => {
   assert.equal(isSlotViewHashForSlot('demo', '#slot/demo/workspace?file=a'), true);
   assert.equal(isSlotViewHashForSlot('demo', '#runs?run=example'), false);
 });
+
+test('host terminal choice survives slot links without changing the selected worker', () => {
+  const selection = {
+    slotId: 'proof-slot',
+    runId: 'proof-run',
+    contextId: 'proof-worker',
+    sessionView: 'host' as const,
+  };
+  const hash = slotViewHash(selection);
+  assert.equal(getSlotViewHashParam('session', hash), 'host');
+  assert.equal(getSlotViewHashParam('contextId', hash), 'proof-worker');
+  assert.equal(getSlotViewHashParam('runId', hash), 'proof-run');
+  assert.equal(
+    getSlotViewHashParam('session', slotViewHash({ ...selection, sessionView: 'worker' as const })),
+    null,
+  );
+});

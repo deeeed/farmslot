@@ -33,7 +33,7 @@ Both tasks are **DO NOT MERGE** smoke work. Success means pipeline + evidence UX
 - Recipe example (Companion evidence): `docs/examples/recipes/farmslot/mobile-companion.recipe.json`
 - Recipe quality contract: `projects/farmslot-farm/fixtures/runtime/recipe-quality.md`
 - Tooling branch: `fix/farmslot-farm-worktree-deps-install` (`9dcc84e`…`563c7d5`)
-- Monitor checklist fix: `task.progress` reads `CHECKLIST.md` when present; autonomous `dev.md` uses `TASK.md` checkboxes
+- Monitor checklist fix: `task.progress` reads `<TASK_DIR>/CHECKLIST.md` when present; autonomous `dev.md` uses `<TASK_DIR>/TASK.md` checkboxes
 
 ## Phase 0 — Tooling green (blocker)
 
@@ -42,7 +42,7 @@ Do **not** dispatch Runs A/B until this phase is all green.
 Phase 0 is manual — run the commands below in order; do not dispatch until all exit 0. Budget ~2 minutes wall clock; bail if CDP login or capture-helper hangs (#132).
 
 - [ ] Merge or deploy `fix/farmslot-farm-worktree-deps-install` on the gateway host; restart gateway.
-- [ ] Fix video capture so proof runs exit **0** with `after.mp4` present (current failure: `recipe-run.mp4` ENOENT on `record.video`).
+- [ ] Fix video capture so proof runs exit **0** with `<TASK_DIR>/artifacts/after.mp4` present (current failure: `recipe-run.mp4` ENOENT on `record.video`).
 - [ ] Doctor passes on Command Center / ff-2 (re-resolves Chrome CDP PID; no stale listener):
   ```bash
   node apps/command-center/scripts/agentic/recipe-doctor.mjs \
@@ -61,7 +61,7 @@ Phase 0 is manual — run the commands below in order; do not dispatch until all
   ```
 - [ ] Trial runs cleared; slots idle; fresh dispatches only.
 
-**Phase 0 done when:** a manual proof run on #28 task artifacts produces `recipe-run/summary.json` with `"status": "pass"` **and** `artifacts/after.mp4` after `--task-dir` sync.
+**Phase 0 done when:** a manual proof run on #28 task artifacts produces `<TASK_DIR>/artifacts/recipe-runs/<attempt>/summary.json` with `"status": "pass"` **and** `<TASK_DIR>/artifacts/after.mp4` after `--task-dir` sync.
 
 ## Phase 1 — Run A: Command Center banner (#28)
 
@@ -95,13 +95,13 @@ Reuse existing `app-shell.ts` banner work when still valid; worker should not re
 
 ### Recipe + evidence (all must pass)
 
-- `artifacts/recipe.json` — adapt `docs/examples/recipes/farmslot/demo-red-banner.recipe.json`
+- `<TASK_DIR>/artifacts/recipe.json` — adapt `docs/examples/recipes/farmslot/demo-red-banner.recipe.json`
 - Fast regression run → exit 0
 - Proof run:
   ```bash
   bash projects/farmslot-farm/setup/validate-recipe.sh \
     --recipe <TASK_DIR>/artifacts/recipe.json \
-    --artifacts-dir <TASK_DIR>/artifacts/recipe-run \
+    --artifacts-dir <TASK_DIR>/artifacts/recipe-runs/<attempt> \
     --runtime-dir .sandbox/farmslot-farm/agent \
     --platform web --cdp-port 9323 --gateway-port 8809 \
     --slot-id macwork-ff-2 --slow 2000 --record-video=full-run --task-dir <TASK_DIR>
@@ -109,12 +109,12 @@ Reuse existing `app-shell.ts` banner work when still valid; worker should not re
 
 **Hard gates:**
 
-- `recipe-run/summary.json`: `"status": "pass"`, `"failed": 0`
-- Promoted under `artifacts/`: `before-*.png`, `after-*.png`, `after.mp4`
-- `evidence-manifest.json`, `recipe-coverage.md` (the gateway computes recipe-quality from recipe.json + coverage for this older plan; current ADR-034 workers that must emit `recipe-quality.json` should use `farmslot-agent recipe-quality build` instead of hand-authoring the schema)
+- `<TASK_DIR>/artifacts/recipe-runs/<attempt>/summary.json`: `"status": "pass"`, `"failed": 0`
+- Curated before/after images under `<TASK_DIR>/artifacts/`, selected explicitly by `<TASK_DIR>/artifacts/evidence-manifest.json`; the proof recording is `<TASK_DIR>/artifacts/after.mp4`.
+- `evidence-manifest.json`, `<TASK_DIR>/artifacts/recipe-coverage.md` (the gateway computes recipe-quality from recipe.json + coverage for this older plan; current ADR-034 workers that must emit `<TASK_DIR>/artifacts/recipe-quality.json` should use `farmslot-agent recipe-quality build` instead of hand-authoring the schema)
 - `node scripts/quality/check-task-artifact-contract.mjs <TASK_DIR> --require-recipe-coverage-if-recipe` → exit 0
-- `artifacts/pr-description.md` with Screenshots/Recordings placeholder
-- `artifacts/report.md` listing evidence paths
+- `<TASK_DIR>/artifacts/pr-description.md` with Screenshots/Recordings placeholder
+- `<TASK_DIR>/artifacts/report.md` listing evidence paths
 - Worker `./mark complete --mark-last`; **do not** `/exit` (gate-held session)
 
 ### UI / engine gates
@@ -171,12 +171,12 @@ Worktree: `farmslot-wt/farmslot-2` · gateway port **8809** · Metro **8879** ·
 
 ### Recipe + evidence
 
-- Task-local `artifacts/recipe.json` with companion `ui.navigate` / `ui.wait_for` / `ui.screenshot` nodes
+- Task-local `<TASK_DIR>/artifacts/recipe.json` with companion `ui.navigate` / `ui.wait_for` / `ui.screenshot` nodes
 - Proof run:
   ```bash
   bash projects/farmslot-farm/setup/validate-recipe.sh \
     --recipe <TASK_DIR>/artifacts/recipe.json \
-    --artifacts-dir <TASK_DIR>/artifacts/recipe-run \
+    --artifacts-dir <TASK_DIR>/artifacts/recipe-runs/<attempt> \
     --runtime-dir .sandbox/farmslot-farm/agent \
     --platform ios --metro-port 8879 --simulator fs-2 \
     --gateway-port 8809 --slot-id macwork-ff-2 \
@@ -195,19 +195,19 @@ After Run A is `done`, extend Run B recipe:
 
 ## Phase 3 — Program-level acceptance
 
-| #   | Criterion                                                                                   |
-| --- | ------------------------------------------------------------------------------------------- |
-| 1   | Two autonomous runs reach **`blocked`** at publication gate with gate invariants green      |
-| 2   | Both recipes: `summary.json` status `pass`, `failed: 0`                                     |
-| 3   | Both tasks: `after.mp4` + before/after PNGs under `artifacts/`                              |
-| 4   | Both: `check-task-artifact-contract.mjs` exit 0                                             |
-| 5   | After explicit approve: draft PRs on GitHub with embedded media from manifest               |
-| 6   | Publication gate approve succeeds without validation errors; then runs → `done` / `success` |
-| 7   | `yarn typecheck` clean in `apps/command-center` and `apps/companion` on respective branches |
-| 8   | No operator mid-run steering (autonomous only)                                              |
-| 9   | Monitor checklist advanced via `./mark` on `TASK.md`                                        |
-| 10  | Gateway logs: recipe/video failures surface as run `failed`, not silent pass                |
-| 11  | No terminal run reuse for gate proof; fresh dispatches only                                 |
+| #   | Criterion                                                                                      |
+| --- | ---------------------------------------------------------------------------------------------- |
+| 1   | Two autonomous runs reach **`blocked`** at publication gate with gate invariants green         |
+| 2   | Both recipes: `summary.json` status `pass`, `failed: 0`                                        |
+| 3   | Both tasks: `<TASK_DIR>/artifacts/after.mp4` + before/after PNGs under `<TASK_DIR>/artifacts/` |
+| 4   | Both: `check-task-artifact-contract.mjs` exit 0                                                |
+| 5   | After explicit approve: draft PRs on GitHub with embedded media from manifest                  |
+| 6   | Publication gate approve succeeds without validation errors; then runs → `done` / `success`    |
+| 7   | `yarn typecheck` clean in `apps/command-center` and `apps/companion` on respective branches    |
+| 8   | No operator mid-run steering (autonomous only)                                                 |
+| 9   | Monitor checklist advanced via `<TASK_DIR>/mark` on `<TASK_DIR>/TASK.md`                       |
+| 10  | Gateway logs: recipe/video failures surface as run `failed`, not silent pass                   |
+| 11  | No terminal run reuse for gate proof; fresh dispatches only                                    |
 
 ## Execution order
 

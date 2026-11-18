@@ -1,0 +1,1 @@
+- Publish scripted-session test prompts atomically to avoid partial JSON during acknowledgement checks.

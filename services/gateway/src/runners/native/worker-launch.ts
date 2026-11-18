@@ -24,7 +24,11 @@ import {
 import { shellQuote } from '../../core/tmux.js';
 import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
 import { resolveRunnerEffort, taskRecipeTrustEnvironment } from '../launch-command.js';
-import { normalizeRunner, runnerSupportsEffort } from '../registry.js';
+import {
+  normalizeRunner,
+  reviewerLaunchEnvironmentKeys,
+  runnerSupportsEffort,
+} from '../registry.js';
 import { buildRunnerObservabilityInstallCommand } from '../runner-observability.js';
 import { resolveRunnerAccountForDispatch } from '../status-provider.js';
 
@@ -173,6 +177,15 @@ export async function prepareNativeWorkerLaunch(input: {
       leaseId: input.leaseId,
       ...(executable ? { executable } : {}),
       environment,
+      ...(input.role === 'review'
+        ? {
+            reviewerEnvironmentKeys: reviewerLaunchEnvironmentKeys(
+              runner,
+              input.model,
+              environment.set,
+            ),
+          }
+        : {}),
       safetyTier: input.safetyTier,
       ...(input.role === 'review' ? { approvalPolicy: 'never' } : {}),
       ...(input.modelQuestions ? { modelQuestions: input.modelQuestions } : {}),

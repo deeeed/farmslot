@@ -499,7 +499,9 @@ export function publicationGateView(input: PublicationGateInput) {
         (accepting
           ? combinedApproval
             ? 'Publishing accepts the findings and attests the evidence-policy gaps.'
-            : 'Publishing accepts the open review findings.'
+            : input.readiness?.findings?.length === 0
+              ? 'Publishing overrides the configured review policy.'
+              : 'Publishing accepts the open review findings.'
           : attestation
             ? 'Evidence attestation is available.'
             : 'Ready to publish'),
@@ -507,7 +509,9 @@ export function publicationGateView(input: PublicationGateInput) {
       blockedReason ||
       (reasonRequired && !isValidEvidenceAttestationReason(draftReason)
         ? accepting
-          ? 'Enter a reason before accepting the findings.'
+          ? input.readiness?.findings?.length === 0
+            ? 'Enter a reason before overriding review policy.'
+            : 'Enter a reason before accepting the findings.'
           : 'Enter an attestation reason before approving.'
         : ''),
     approval,
@@ -716,7 +720,12 @@ export function publicationGateBlockers(input: {
     if (reason.code === 'review-fix-required' && input.view.acceptFindings)
       actions.push({
         kind: 'accept-findings',
-        label: findings.length === 1 ? 'Accept finding…' : 'Accept findings…',
+        label:
+          findings.length === 0
+            ? 'Override review policy…'
+            : findings.length === 1
+              ? 'Accept finding…'
+              : 'Accept findings…',
       });
     const request = input.view.primaryActions.find(
       (action) => action.id === 'request-review' && !action.disabledReason,

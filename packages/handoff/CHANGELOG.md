@@ -6,6 +6,10 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.4.8 - 2026-11-18
+
+- Align exact internal dependencies with the protocol 0.88.0 release cohort consumed by mm-harness 0.96.33.
+
 ## 0.4.7 - 2026-11-16
 
 - Align exact package dependencies with the protocol 0.87.0 and adapter SDK 0.28.0 cohort.

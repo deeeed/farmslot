@@ -15,11 +15,13 @@ import {
 } from '@farmslot/agent-runtime';
 import type { Run } from '@farmslot/protocol';
 
-import type { SlotVars } from '../core/config.js';
+import type { RawProjectJson, SlotVars } from '../core/config.js';
+import { partialNodeFixture } from '../runners/partial-node.test-support.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
 const root = mkdtempSync(path.join(tmpdir(), 'f415-completion-'));
 process.env.FARMSLOT_RUNS_DIR = path.join(root, 'runs');
+process.env.FARMSLOT_HOME = path.join(root, 'home');
 const templatePath = path.join(root, 'ci-fix.md');
 writeFileSync(
   templatePath,
@@ -50,6 +52,14 @@ let requiredFile: string | undefined;
 let captures = 0;
 let verificationRequest: CIFixScopeRequest | undefined;
 let onDelivery: (() => void) | undefined;
+let workerAlive = true;
+let relaunchEnvironment: RawProjectJson['command_env'];
+let relaunchCommand = '';
+let relaunchProbe: ((command: string) => string) | undefined;
+let spawnedCommand = '';
+let stopAtSpawn: Error | undefined;
+const originalLaunch = await import('../runners/launch-command.js');
+const originalRegistry = await import('../runners/registry.js');
 const execModule = await import('../core/exec.js');
 mock.module('../core/exec.js', {
   namedExports: {
@@ -58,7 +68,7 @@ mock.module('../core/exec.js', {
     execOnSlot: async (_vars: unknown, command: string) => {
       const ok = (stdout = '') => ({ exitCode: 0, stdout, stderr: '' });
       if (command.includes('rev-parse HEAD')) return ok(completed ? completionHead : initialHead);
-      if (command.includes('pane_current_command')) return ok('fixture');
+      if (command.includes('pane_current_command')) return ok(workerAlive ? 'fixture' : 'bash');
       if (command.includes('capture-ci-fix')) {
         captures++;
         return ok(
@@ -119,7 +129,7 @@ mock.module('../core/config.js', {
     loadSlotVars: async () => vars,
     loadProjectVars: async () => ({
       projectName: 'example-web-farm',
-      projectJson: {},
+      projectJson: { command_env: relaunchEnvironment },
       runtimeDir: '.agent',
       artifactDir: 'artifacts',
     }),
@@ -194,7 +204,10 @@ mock.module('../core/tmux.js', {
     shellQuote: (v: string) => "'" + v.replaceAll("'", "'\"'\"'") + "'",
     tmuxShellSnippet: (v: string) => v,
     TMUX_WINDOW_RESPAWN_SETTLE_MS: 0,
-    respawnTmuxWindowWithCommand: async () => {},
+    respawnTmuxWindowWithCommand: async (_vars: unknown, _target: string, command: string) => {
+      spawnedCommand = command;
+      if (stopAtSpawn) throw stopAtSpawn;
+    },
     resolveExactTmuxWindowPane: async () => ({ panePid: '123', pane: 'fixture:dev.0' }),
   },
 });
@@ -204,7 +217,7 @@ mock.module('../runners/registry.js', {
     getRunnerDefinition: () => ({ roleWindowStartupSettleMs: 0 }),
     runnerRetainedSessionHandoff: () => 'in-place',
     runnerProcessPatternSource: () => 'fixture',
-    WORKER_ENV_PREFIX: '',
+    WORKER_ENV_PREFIX: originalRegistry.WORKER_ENV_PREFIX,
     readRunnerActivityFromObservability: async () => null,
     resolvePrimaryWorkerTarget: async () => 'fixture:dev',
 
@@ -254,7 +267,7 @@ mock.module('../run-engine/branch-maintenance.js', {
 });
 mock.module('../runners/session-process.js', {
   namedExports: {
-    isRunnerAliveUnderPane: async () => true,
+    isRunnerAliveUnderPane: async () => workerAlive,
     resolveRunRetainedSessionBinding: () => ({
       binding: { runnerSessionId: 'fixture-session' },
       reason: null,
@@ -274,9 +287,18 @@ mock.module('../tasks/worker-terminal-contract.js', {
 });
 mock.module('../runners/launch-command.js', {
   namedExports: {
-    buildLaunchCommand: () => '',
+    buildLaunchCommand: () => relaunchCommand,
+    wrapWorkerShellCommand: originalLaunch.wrapWorkerShellCommand,
     modelQuestionsForRun: () => [],
     RUNNER_LAUNCH_READY_TIMEOUT_MS: 1,
+  },
+});
+mock.module('../run-engine/worker-launch-preflight.js', {
+  namedExports: {
+    admitWorkerLaunch: async (input: { wrapCommand?: (command: string) => string }) => {
+      relaunchProbe = input.wrapCommand;
+      return async () => {};
+    },
   },
 });
 mock.module('../node-support/ensure.js', {
@@ -637,3 +659,44 @@ test(
     assert.equal(verifications, 0);
   },
 );
+
+for (const site of ['probe', 'spawn'] as const) {
+  test(`inline CI relaunch ${site} uses project policy to resolve partial Node`, async (t) => {
+    const run = fixture();
+    run.mode = 'autonomous';
+    const node = partialNodeFixture(t);
+    const original = { ...vars };
+    const stop = new Error('stop after capturing the worker launch');
+    workerAlive = false;
+    stopAtSpawn = stop;
+    relaunchEnvironment = node.commandEnv;
+    relaunchCommand = node.command;
+    vars.remoteRepo = node.repo;
+    vars.repo = node.repo;
+    t.after(() => {
+      Object.assign(vars, original);
+      workerAlive = true;
+      stopAtSpawn = undefined;
+      relaunchEnvironment = undefined;
+      relaunchCommand = '';
+      relaunchProbe = undefined;
+      spawnedCommand = '';
+    });
+    await assert.rejects(
+      tryInlineCIFix(
+        run.id,
+        vars.slotId,
+        [],
+        ['typecheck'],
+        1,
+        'fixture/repo',
+        new AbortController().signal,
+      ),
+      (error: unknown) => error === stop,
+    );
+    assert.ok(relaunchProbe);
+    const observed = node.execute(site === 'probe' ? relaunchProbe(node.command) : spawnedCommand);
+    assert.equal(observed.status, 0, observed.stderr);
+    assert.equal(observed.stdout.trim(), 'v22.22.1');
+  });
+}

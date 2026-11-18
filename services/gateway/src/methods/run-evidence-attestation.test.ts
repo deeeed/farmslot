@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -608,4 +609,31 @@ test('changing the person before combined consumption leaves both receipts unwri
   assert.equal(saved.resolvedAt, undefined);
   assert.equal(saved.evidenceAttestation, undefined);
   assert.equal(saved.publicationApproval, undefined);
+});
+
+test('a reviewed policy shortfall with no open findings records the person override and empty checked digest', async (t) => {
+  const f = await acceptFixture(t);
+  f.readiness.findings = [];
+  f.readiness.findingsDigest = `sha256:${createHash('sha256').update('[]').digest('hex')}`;
+  f.readiness.reasons[0].message = 'Configured review count is not satisfied';
+  const result = await f.resolve(
+    {
+      ...f.params,
+      findingsDigest: f.readiness.findingsDigest,
+      reason: 'I reviewed the result and approve this policy exception.',
+    },
+    { authorizeEvidenceAttestation: () => approver },
+  );
+  const saved = result.run.decisions[0];
+  assert.equal(saved.resolvedAction, APPROVE_PUBLISH_UNRESOLVED_ACTION);
+  assert.deepEqual(saved.publicationApproval?.acceptedFindings, {
+    findings: [],
+    digest: f.readiness.findingsDigest,
+  });
+  assert.deepEqual(saved.publicationApproval?.approver, approver);
+  assertAcceptedFindingsCurrent(saved, f.readiness);
+  const body = withPublicationProvenance(result.run, '## Summary\n\nChange.');
+  assert.match(body, /Publication review policy was explicitly overridden/);
+  assert.match(body, /No open review findings were recorded/);
+  assert.match(body, /I reviewed the result and approve this policy exception/);
 });

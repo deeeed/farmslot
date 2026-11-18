@@ -65,6 +65,7 @@ import {
   isWithinPath,
   parseLsofNames,
   parseProcessCensus,
+  type ProcessCensusRow,
 } from './process-census.js';
 
 export interface RunSlotCleanupFence {
@@ -188,6 +189,81 @@ export interface SlotTeardownInspectionOptions {
   /** Observe an interrupted fence without stopping any worker or managed process. */
   inspectReleaseFence?: true;
 }
+/** A preserved worker window can finish as bash waiting on its interactive login shell. */
+async function idleOwnedShellChildren(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  repo: string,
+  root: ProcessCensusRow,
+  census: ProcessCensusRow[],
+): Promise<string[] | null> {
+  const chain = [root];
+  while (true) {
+    const parent = chain.at(-1)!;
+    if (!isShellProcessCommand(parent.command)) return null;
+    const children = census.filter((row) => row.parent === parent.pid);
+    if (!children.length) break;
+    if (children.length !== 1 || chain.some((row) => row.pid === children[0]!.pid)) return null;
+    chain.push(children[0]!);
+  }
+  const leaf = chain.at(-1)!;
+  const files = await execOnSlot(
+    vars,
+    `lsof -a -p ${shellQuote(chain.map((row) => row.pid).join(','))} -d cwd,0 -Fpnft 2>/dev/null`,
+    { cwd: '/', timeout: 15000 },
+  );
+  if (files.exitCode !== 0) return null;
+  const cwds = new Map<string, string>();
+  const terminals = new Set<string>();
+  let pid = '',
+    descriptor = '',
+    kind = '';
+  for (const line of files.stdout.split('\n')) {
+    if (line.startsWith('p')) pid = line.slice(1);
+    else if (line.startsWith('f')) {
+      descriptor = line.slice(1);
+      kind = '';
+    } else if (line.startsWith('t')) kind = line.slice(1);
+    else if (line.startsWith('n')) {
+      if (descriptor === 'cwd' && kind === 'DIR') cwds.set(pid, line.slice(1));
+      if (
+        /^0[ruw]*$/.test(descriptor) &&
+        kind === 'CHR' &&
+        /^\/dev\/(?:tty[^/]*|pts\/\d+)$/.test(line.slice(1))
+      )
+        terminals.add(pid);
+    }
+  }
+  if (chain.some((row) => !isWithinPath(repo, cwds.get(row.pid) ?? '')) || !terminals.has(leaf.pid))
+    return null;
+  const observed = await execOnSlot(
+    vars,
+    `ps -ww -o pid=,ppid=,pgid=,lstart=,command= -p ${shellQuote(leaf.pid)}`,
+    { cwd: '/', timeout: 15000 },
+  );
+  if (observed.exitCode !== 0) return null;
+  const rows = parseProcessCensus(observed.stdout);
+  const current = rows[0];
+  if (
+    rows.length !== 1 ||
+    !current ||
+    current.pid !== leaf.pid ||
+    current.parent !== leaf.parent ||
+    current.group !== leaf.group ||
+    current.identity !== leaf.identity
+  )
+    return null;
+  const [shell, ...flags] = current.command.trim().split(/\s+/);
+  if (
+    !shell ||
+    !isShellProcessCommand(shell) ||
+    flags.some((flag) => !/^-[il]+$/.test(flag) && flag !== '--login' && flag !== '--interactive')
+  )
+    return null;
+  // The longer observation must not turn an earlier absence into permission to stop a new worker.
+  if ((await probeRunnerDescendantPid(vars, root.pid)).state !== 'absent') return null;
+  return chain.slice(1).map((row) => row.pid);
+}
+
 export async function slotTeardownBlocker(
   run: Run,
   options: SlotTeardownInspectionOptions = {},
@@ -319,11 +395,21 @@ export async function slotTeardownBlocker(
     if (!logPath || args.exitCode !== 0 || tailedPath !== logPath)
       return `Dev-server log pane process ${panePid} is still occupied; cleanup deferred`;
   }
-  for (const panePid of ownedShells) {
+  const idleChildren = new Set<string>();
+  for (const panePid of [...ownedShells]) {
     const root = censusRows.find((row) => row.pid === panePid);
     if (!root) continue; // A preserved dead pane has no process left to classify.
-    if (!isShellProcessCommand(root.command) || censusRows.some((row) => row.parent === panePid))
+    if (!isShellProcessCommand(root.command))
       return `Recorded worker pane process ${panePid} is still occupied; cleanup deferred`;
+    if (censusRows.some((row) => row.parent === panePid)) {
+      const children = await idleOwnedShellChildren(vars, repo, root, censusRows);
+      if (!children)
+        return `Recorded worker pane process ${panePid} is still occupied; cleanup deferred`;
+      for (const child of children) {
+        ownedShells.add(child);
+        idleChildren.add(child);
+      }
+    }
   }
   // Pane ownership and shell quiescence must be proven before stopping a
   // managed daemon: an unrecorded worker for another task may share this home.
@@ -404,7 +490,13 @@ export async function slotTeardownBlocker(
   );
   if (census.stdout.trim() && livePids.size === 0)
     return 'Workspace process identity census is unreadable; slot teardown was skipped';
-  for (const [pid, cwd] of parseLsofNames(census.stdout)) {
+  const currentCwds = parseLsofNames(census.stdout);
+  for (const child of idleChildren) {
+    const cwd = currentCwds.find(([pid]) => pid === child)?.[1];
+    if (!cwd || !isWithinPath(repo, cwd))
+      return `Idle shell child ${child} changed workspace ownership; cleanup deferred`;
+  }
+  for (const [pid, cwd] of currentCwds) {
     if (
       isWithinPath(repo, cwd) &&
       livePids.has(pid) &&

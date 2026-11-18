@@ -144,9 +144,9 @@ export function publicationGateDecisionActions(opts: {
       ? [
           {
             id: APPROVE_PUBLISH_UNRESOLVED_ACTION,
-            label: 'Accept Review Findings and Publish',
+            label: 'Override review policy and publish',
             style: 'danger' as const,
-            description: `${exhausted ? `${reviewRetryCapReason(exhausted)} ` : ''}Publish this package with its open review findings accepted. Your reason, the findings and your identity appear in the PR. Every other prerequisite still applies.`,
+            description: `${exhausted ? `${reviewRetryCapReason(exhausted)} ` : ''}Publish this reviewed package despite review policy. Your reason, any accepted findings and your identity appear in the PR. Integrity, source, CI and lifecycle checks still apply.`,
           },
         ]
       : []),

@@ -53,7 +53,13 @@ import { readSlotRow, SLOT_PHASE_RELEASING } from '../../core/index.js';
 import { GatewayMethodError } from '../../core/method-error.js';
 import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
-import { pipelineReviewSelection, resolveReviewRunnerModel } from '../../review/orchestrator.js';
+import {
+  canRecoverReviewFixPass,
+  pipelineReviewSelection,
+  resolveReviewRunnerModel,
+  reviewSessionForReplay,
+} from '../../review/orchestrator.js';
+import { lineageContextForRun } from '../../review/session-mode.js';
 import { getReviewConfig } from '../../review/templates.js';
 import { useReviewWorkspaceStorage } from '../../review-workspaces/storage-use.js';
 import { captureRunOutput } from '../../run-completion/output.js';
@@ -1343,6 +1349,15 @@ async function replayRunStep(
       `runner '${replayRunner}' does not support model '${replayModel}' — pick a compatible replay override`,
     );
   }
+  const replaySession =
+    params.stepName === PS.REVIEW && !hasReviewerOverride
+      ? reviewSessionForReplay(existing, priorReviewSelection)
+      : undefined;
+  const recoveredFix = replaySession
+    ? existing.agentContexts?.find((context) =>
+        canRecoverReviewFixPass(context, replaySession.taskDir, replaySession.artifactScope, true),
+      )
+    : undefined;
   const replayReviewSelection = reviewOverride
     ? parseReviewSelection({
         runner: reviewOverride.reviewRunner,
@@ -1350,7 +1365,14 @@ async function replayRunStep(
         effort: null,
         mode: 'cold',
       })
-    : priorReviewSelection;
+    : replaySession
+      ? parseReviewSelection({
+          runner: replaySession.runner,
+          model: replaySession.model,
+          effort: replaySession.effort,
+          mode: 'warm',
+        })
+      : priorReviewSelection;
   const startedFromDone = existing.status === 'done';
   if (existing.output?.closedAt)
     throw new Error(
@@ -2347,7 +2369,8 @@ async function replayRunStep(
           if (reviewIdx >= 0 && targetIdx === reviewIdx) {
             const runForReviewFix = getRun(params.runId) ?? existing;
             // A replayed review adopts a fix pass its worker blocked and later finished.
-            blockedFixTaskFile = blockedReviewFixTaskFile(runForReviewFix);
+            blockedFixTaskFile =
+              blockedReviewFixTaskFile(runForReviewFix) ?? recoveredFix?.taskFile ?? undefined;
             const preserveReviewFix =
               hasActiveReviewFix(runForReviewFix) || blockedFixTaskFile !== undefined;
             const {
@@ -2762,6 +2785,14 @@ async function replayRunStep(
         : {}),
       ...(resetTerminalOutcome ? { reviewResult: undefined } : {}),
       engineState: engineStateForReplay,
+      ...(replaySession
+        ? {
+            reviewMode: 'warm',
+            reviewContext: {
+              reviewLineages: [lineageContextForRun(existing, replaySession.reviewId)],
+            },
+          }
+        : {}),
       metrics: resetMetrics,
       agentContexts: resetAgentContexts,
       monitorState: undefined,

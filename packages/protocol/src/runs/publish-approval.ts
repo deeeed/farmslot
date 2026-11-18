@@ -23,10 +23,10 @@ export const EVIDENCE_ATTESTATION_ACTION: DecisionAction = {
 /** Presentation of the existing findings approval when it also attests evidence. */
 export const COMBINED_FINDINGS_EVIDENCE_APPROVAL_ACTION: DecisionAction = {
   id: APPROVE_PUBLISH_UNRESOLVED_ACTION,
-  label: 'Accept findings, attest evidence and publish',
+  label: 'Override review policy, attest evidence and publish',
   style: 'danger',
   description:
-    'Accept the listed findings and evidence-policy gaps. Both decisions, your reason and identity appear in the PR.',
+    'Accept the checked findings and review/evidence-policy gaps. Both decisions, your reason and identity appear in the PR.',
 };
 
 export function isEvidencePolicyReason(reason: RunGatePrerequisiteReason): boolean {
@@ -43,7 +43,7 @@ function combinedFindingsEvidenceAvailable(readiness?: RunGateReadiness): boolea
   if (
     !readiness ||
     readiness.state !== 'not-ready' ||
-    !readiness.findings?.length ||
+    !readiness.findings ||
     !readiness.findingsDigest
   )
     return false;
@@ -77,7 +77,7 @@ export function acceptReviewFindingsAvailable(readiness?: RunGateReadiness): boo
   return (
     !!readiness &&
     readiness.state === 'not-ready' &&
-    !!readiness.findings?.length &&
+    !!readiness.findings &&
     !!readiness.findingsDigest &&
     gateReasonsForAction(readiness, APPROVE_PUBLISH_UNRESOLVED_ACTION).length === 0
   );

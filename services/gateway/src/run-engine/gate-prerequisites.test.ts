@@ -2272,3 +2272,184 @@ test('revalidation repairs a recorded round-nine advisory verdict without changi
   });
   assert.equal((await reviewsWithValidResults(run, async () => major))[0]?.verdict, 'issues');
 });
+
+for (const verdict of ['issues', 'pass'] as const)
+  test(`a person may override spent review policy after a current-head ${verdict} result`, async () => {
+    const { publicationGateDecisionActions } = await import('./gate-policy.js');
+    const prepared = makeReadyGatePackage({
+      reviewPolicy: { minimumReviews: 2, requestedBy: 'dispatch' },
+    });
+    const issues =
+      verdict === 'issues'
+        ? [
+            {
+              file: 'src/example.ts',
+              severity: 'minor',
+              description: 'Person can accept this finding',
+            },
+          ]
+        : [];
+    const review = certifyingReview(prepared, { verdict, unresolvedCount: issues.length });
+    const run = {
+      ...makeRun({ engineState: { publishGate: { reviews: [review] } } }),
+      ...recordedReviewRounds(['one', 'two', 'three', 'four', 'five']),
+    };
+    const readers = {
+      deterministic: passed,
+      acceptance: emptyAcceptance,
+      progress: idle,
+      selectedEvidence: passed,
+      reviewedInputsAwaitingReview: async () => null,
+      reviewResult: async () => JSON.stringify({ schemaVersion: 1, verdict, issues }),
+    };
+    const readiness = await collectRunGateReadiness(run, prepared, readers);
+    assert.ok(readiness.reasons.every(({ prerequisite }) => prerequisite === 'review'));
+    const definitions = publicationGateDecisionActions({
+      reviewSatisfied: false,
+      preparedPackage: prepared,
+      reviews: [review],
+    });
+    const projected = projectRunGateActions(definitions, readiness);
+    assert.ok(
+      projected.actions.some(({ id }) => id === APPROVE_PUBLISH_UNRESOLVED_ACTION),
+      JSON.stringify(projected.readiness),
+    );
+    assert.equal(readiness.findings?.length, issues.length);
+    assert.match(readiness.findingsDigest ?? '', /^sha256:[a-f0-9]{64}$/);
+    const conflicted: ReadyGatePayload = {
+      kind: 'ready',
+      prNumber: 1,
+      repo: 'example/repo',
+      branch: prepared.branch,
+      workerReport: 'Reviewed',
+      diffStat: prepared.diffStat,
+      prPackage: prepared,
+      mergeConflicts: true,
+      mergeConflictPaths: ['src/conflict.ts'],
+    };
+    const blocked = projectRunGateActions(definitions, readiness, conflicted);
+    assert.ok(!blocked.actions.some(({ id }) => id.startsWith('approve-publish')));
+    assert.match(
+      blocked.readiness.reasons.find(({ code }) => code === 'base-merge-conflict')?.message ?? '',
+      /src\/conflict.ts/,
+    );
+    const staleCi = await collectRunGateReadiness(run, prepared, {
+      ...readers,
+      deterministic: async () => {
+        throw new Error('Stale CI receipt');
+      },
+    });
+    assert.ok(
+      !projectRunGateActions(definitions, staleCi).actions.some(({ id }) =>
+        id.startsWith('approve-publish'),
+      ),
+    );
+    assert.ok(staleCi.reasons.some(({ code }) => code === 'deterministic-not-passed'));
+    const unreadable = certifyingReview(prepared, {
+      id: 'missing-result',
+      reviewerSessionId: 'other-session',
+      artifactPaths: ['artifacts/missing/review-result.json'],
+    });
+    const missingResult = await collectRunGateReadiness(
+      { ...run, engineState: { publishGate: { reviews: [review, unreadable] } } },
+      prepared,
+      {
+        ...readers,
+        reviewResult: async (_run, relative) =>
+          relative === 'artifacts/missing/review-result.json'
+            ? undefined
+            : JSON.stringify({ schemaVersion: 1, verdict, issues }),
+      },
+    );
+    assert.ok(
+      !projectRunGateActions(definitions, missingResult).actions.some(({ id }) =>
+        id.startsWith('approve-publish'),
+      ),
+      'missing structured review results are hard refusals, not policy exceptions',
+    );
+  });
+
+test('refresh restores the person override on the stored decision and keeps hard refusal reasons', async (t) => {
+  const { publicationGateDecisionActions } = await import('./gate-policy.js');
+  const prepared = makeReadyGatePackage({
+    reviewPolicy: { minimumReviews: 2, requestedBy: 'dispatch' },
+  });
+  const review = certifyingReview(prepared, { verdict: 'issues', unresolvedCount: 1 });
+  const run = createRun({
+    project: 'example-mobile-farm',
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    ticketOrPr: 'GATE-OVERRIDE',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  const definitions = publicationGateDecisionActions({
+    reviewSatisfied: false,
+    preparedPackage: prepared,
+    reviews: [review],
+  });
+  const payload: ReadyGatePayload = {
+    kind: 'ready',
+    prNumber: 1,
+    repo: 'example/repo',
+    branch: prepared.branch,
+    workerReport: 'Reviewed',
+    diffStat: prepared.diffStat,
+    prPackage: prepared,
+  };
+  const decision: RunDecision = {
+    id: randomUUID(),
+    type: 'engine_human_gate',
+    title: 'Publication',
+    description: 'Person decides',
+    createdAt: new Date().toISOString(),
+    actions: definitions.filter(({ id }) => id === 'hold' || id === 'request-review'),
+    context: { gateActions: definitions },
+    payload,
+  };
+  updateRun(run.id, {
+    status: 'human-gating',
+    engineState: { publishGate: { reviews: [review] } },
+    decisions: [decision],
+    ...recordedReviewRounds(['one', 'two', 'three', 'four', 'five']),
+  });
+  const readers = {
+    deterministic: passed,
+    acceptance: emptyAcceptance,
+    progress: idle,
+    selectedEvidence: passed,
+    reviewedInputsAwaitingReview: async () => null,
+    reviewResult: async () =>
+      JSON.stringify({
+        schemaVersion: 1,
+        verdict: 'issues',
+        issues: [{ file: 'src/example.ts', description: 'Person may accept', severity: 'minor' }],
+      }),
+  };
+  await refreshRunGateReadiness(getRun(run.id)!, readers);
+  assert.ok(
+    getRun(run.id)!.decisions[0].actions.some(({ id }) => id === APPROVE_PUBLISH_UNRESOLVED_ACTION),
+  );
+  const refreshed = getRun(run.id)!.decisions[0];
+  assert.ok(refreshed.payload?.kind === 'ready');
+  updateRun(run.id, {
+    decisions: [
+      {
+        ...refreshed,
+        payload: {
+          ...refreshed.payload,
+          mergeConflicts: true,
+          mergeConflictPaths: ['src/conflict.ts'],
+        },
+      },
+    ],
+  });
+  await refreshRunGateReadiness(getRun(run.id)!, readers);
+  const blocked = getRun(run.id)!.decisions[0];
+  assert.ok(!blocked.actions.some(({ id }) => id.startsWith('approve-publish')));
+  assert.ok(blocked.payload?.kind === 'ready');
+  assert.match(
+    blocked.payload.gateReadiness?.reasons.find(({ code }) => code === 'base-merge-conflict')
+      ?.message ?? '',
+    /src\/conflict.ts/,
+  );
+});

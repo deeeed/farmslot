@@ -41,7 +41,7 @@ import {
   upsertAgentContext,
 } from '../agents/contexts.js';
 import { signalFromAttempt } from '../agents/runtime-recovery.js';
-import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
+import { loadProjectVars, loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { withMachineEnv } from '../core/project-env.js';
 import { onSlotReset } from '../core/state.js';
@@ -61,6 +61,7 @@ import {
   buildLaunchCommand,
   modelQuestionsForRun,
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
+  wrapWorkerShellCommand,
 } from '../runners/launch-command.js';
 import { resumeNativeWorker } from '../runners/native/worker-recovery.js';
 import { readLaunchAckSignalSnapshot } from '../runners/prompt-delivery-evidence.js';
@@ -73,7 +74,6 @@ import {
   runnerRetainedSessionHandoff,
   runnerSupportsInteractivePrompt,
   runnerSupportsModel,
-  WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
 import { scriptedRelaunchOptions } from '../runners/scripted-config.js';
 import { resolvePersistedRunnerSessionBinding } from '../runners/session-process.js';
@@ -137,9 +137,13 @@ import {
 import {
   invalidateWarmReviewerSessions,
   invalidateWarmReviewerSessionsForSlot,
+  persistedWarmReviewerSession,
   reReviewOfStatus,
   reviewLineageId,
   shouldRetainCompletedReviewer,
+  warmLineageScope,
+  type WarmReviewerSession,
+  WarmReviewRefusal,
 } from './session-mode.js';
 import {
   captureCurrentHeadSha,
@@ -292,6 +296,51 @@ export function resolveReviewMaxRetries(opts: {
     : Math.max(0, Math.min(5, hasRequested ? requested : projectCap));
   if (!opts.resume || opts.publicationReview) return base;
   return Math.max((opts.priorRetryCount ?? 0) + 1, base);
+}
+
+/** A replay continues the last validated round, never the project's first-pass default. */
+export function reviewSessionForReplay(
+  run: Run,
+  selection?: ReviewSelection,
+  lineageId?: string,
+): WarmReviewerSession | undefined {
+  const context = [...(run.agentContexts ?? [])]
+    .reverse()
+    .find(
+      (candidate) =>
+        candidate.role === 'review' &&
+        (!lineageId || candidate.reviewId === lineageId) &&
+        (!selection ||
+          (candidate.runner === selection.runner &&
+            (!selection.model || candidate.model === selection.model))) &&
+        (candidate.reviewResultValidatedAt || candidate.status === 'complete'),
+    );
+  if (!context) return undefined;
+  if (!context.reviewId || !context.taskFile || !context.runner)
+    throw new WarmReviewRefusal('missing-session', 'the prior review round has no lineage binding');
+  const session = persistedWarmReviewerSession(
+    {
+      runId: run.id,
+      reviewId: context.reviewId,
+      project: run.project,
+      familyId: warmLineageScope(run),
+      ownerPrincipalId: context.nativeSession?.ownerPrincipalId ?? run.createdByPrincipalId ?? null,
+      ownerPrincipalGeneration: run.createdByPrincipalGeneration ?? 0,
+      transport: context.nativeSession ? 'native' : 'tmux',
+      taskDir: path.posix.dirname(context.taskFile),
+      artifactScope: context.artifactScope ?? null,
+      runner: context.runner,
+      model: context.model ?? '',
+      effort: context.effort ?? null,
+    },
+    run,
+  );
+  if (!session)
+    throw new WarmReviewRefusal(
+      'session-unavailable',
+      'the prior review round cannot be continued',
+    );
+  return session;
 }
 
 /** A replay's recorded row takes precedence over the original dispatch plan. */
@@ -1786,11 +1835,12 @@ export function canRecoverReviewFixPass(
     | undefined,
   taskDir: string,
   findingsArtifactScope?: string | null,
+  allowFailed = false,
 ): boolean {
   // A pass its worker blocked belongs only to its own findings generation: never to a
   // publication review or a Send back, and never through the legacy null-scope match.
   const matchesFindingsGeneration =
-    fixContext?.status === 'blocked'
+    fixContext?.status === 'blocked' || fixContext?.status === 'failed'
       ? (fixContext.artifactScope ?? null) === (findingsArtifactScope ?? null)
       : !findingsArtifactScope ||
         !fixContext?.artifactScope ||
@@ -1798,7 +1848,9 @@ export function canRecoverReviewFixPass(
   return (
     fixContext?.role === 'review-fix' &&
     // A worker that blocked mid-fix can reopen its attempt and finish (TAT-4006 7721a02b).
-    (fixContext.status === 'working' || fixContext.status === 'blocked') &&
+    (fixContext.status === 'working' ||
+      fixContext.status === 'blocked' ||
+      (allowFailed && fixContext.status === 'failed')) &&
     fixContext.taskFile === taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.checklist) &&
     fixContext.signalFile === taskDirRelPath(taskDir, REVIEW_FIX_CHECKLIST_TARGET.signal) &&
     matchesFindingsGeneration
@@ -2244,8 +2296,14 @@ async function recoverReviewFixPass({
   const recoveredRetryCount = Math.max(1, reservedFixPass?.retryCount ?? 1);
   const run = getRun(runId);
   const recoveryGeneration = run?.engineState?.generation ?? 0;
+  const recoverFailed =
+    mode === 'warm' &&
+    run?.agentContexts?.some(
+      (context) => context.role === 'review-fix' && context.status === 'failed',
+    ) &&
+    reviewSessionForReplay(run, undefined, reviewId ?? undefined)?.reviewId === reviewId;
   const fixContext = run?.agentContexts?.find((ctx) =>
-    canRecoverReviewFixPass(ctx, taskDir, findingsArtifactScope),
+    canRecoverReviewFixPass(ctx, taskDir, findingsArtifactScope, Boolean(recoverFailed)),
   );
   // Never recover from REVIEW-FIX-SIGNAL.json alone. That file is reused by every
   // review loop in the task dir, so a completed prior loop can otherwise masquerade as the
@@ -3068,6 +3126,7 @@ async function sendOwnedFeedbackToWorker(
     let terminalRetainedHoldReason: string | null = null;
     let runnerOutOfQuota: string | null = null;
     let structuredDeliveryAccepted = false;
+    let runnerReplaced = false;
     let acceptedTurnToken: string | undefined;
     let acceptedDeliveryStartedAt: string | undefined;
     let acceptedGeneration: number | undefined;
@@ -3141,6 +3200,7 @@ async function sendOwnedFeedbackToWorker(
         promptSendAttempted || retained.delivered || retained.sendAttempted === true;
       if (retained.delivered) {
         structuredDeliveryAccepted = retained.acknowledgement === 'structured';
+        runnerReplaced = retained.runnerReplaced === true;
         acceptedTurnToken = retained.turnToken;
         acceptedDeliveryStartedAt = deliveryStartedAt;
         acceptedGeneration = deliveryGeneration;
@@ -3233,7 +3293,7 @@ async function sendOwnedFeedbackToWorker(
         `${failureSummary} (${fixTaskFile}).${retainedSummary} Pane re-resolution found no accepting runner pane in session ${session} (windows seen: ${seenSummary}). Escape: replay the review step after restoring runner observability.`,
       );
     }
-    await recordReviewFixRunnerSession(vars, runId, runner, workerTarget);
+    await recordReviewFixRunnerSession(vars, runId, runner, workerTarget, { runnerReplaced });
     if (structuredDeliveryAccepted) {
       if (acceptedTurnToken && acceptedDeliveryStartedAt && acceptedGeneration !== undefined)
         await rememberReviewFixTurn(
@@ -3361,15 +3421,17 @@ async function workerAcknowledgesFixTask(signalChanged: () => Promise<boolean>):
 /**
  * Bind the review-fix role to the runner session that just accepted the
  * fix prompt. A retained worker keeps its own session, so the fix role adopts
- * it; a fix relaunch respawned the runner, so the new session is captured
- * against the delivery pane and bound to the worker role as well — that role's
- * previous binding was cleared by the respawn and would otherwise stay empty.
+ * it. A fix relaunch, or a delivery that respawned the runner with the prompt
+ * (`runnerReplaced`), started a new session: it is captured against the
+ * delivery pane and bound to the worker role as well, so each fix round's
+ * session gets its own usage receipt on the run.
  */
 export async function recordReviewFixRunnerSession(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runId: string,
   runner: string,
   deliveryTarget: string,
+  { runnerReplaced = false }: { runnerReplaced?: boolean } = {},
 ): Promise<void> {
   const latest = getRun(runId);
   const workerRole = primaryRoleForFlow(latest?.flowType);
@@ -3381,7 +3443,7 @@ export async function recordReviewFixRunnerSession(
       runnerSessionPath: workerContext?.runnerSessionPath,
     },
   ]);
-  if (retained.binding) {
+  if (retained.binding && !runnerReplaced) {
     await recordRunnerSessionForRole({
       runId,
       role: 'review-fix',
@@ -3390,6 +3452,13 @@ export async function recordReviewFixRunnerSession(
     });
     return;
   }
+  if (runnerReplaced) {
+    // The bound session no longer receives the prompt. A capture that finds no transcript yet
+    // must leave the roles unbound, not on the replaced session.
+    await upsertAgentContext(runId, 'review-fix', clearedRunnerSessionContextPatch());
+    if (workerContext)
+      await upsertAgentContext(runId, workerRole, clearedRunnerSessionContextPatch());
+  }
   const deliveryPane = await resolveExactTmuxWindowPane(vars, deliveryTarget);
   const relaunched = await captureAndRecordRunnerSession({
     vars,
@@ -3397,7 +3466,12 @@ export async function recordReviewFixRunnerSession(
     runId,
     role: 'review-fix',
     captureLabel: 'review fix relaunch',
-    capture: { paneId: deliveryPane?.paneId ?? null, slotId: vars.slotId },
+    capture: {
+      paneId: deliveryPane?.paneId ?? null,
+      slotId: vars.slotId,
+      excludedSessionId: retained.binding?.runnerSessionId,
+      excludedSessionPath: retained.binding?.runnerSessionPath,
+    },
   });
   if (workerContext) {
     await recordRunnerSessionForRole({
@@ -3428,6 +3502,14 @@ export async function relaunchWorkerForFix(
   }
   const resolved = await resolveAgentTarget(vars.slotId, { runId, role: 'primary' });
   const parentRun = getRun(runId);
+  const projectVars = await loadProjectVars(parentRun?.project ?? vars.projectName);
+  const workerShell = (command: string) =>
+    wrapWorkerShellCommand(command, {
+      vars,
+      projectVars,
+      projectJson: projectVars.projectJson,
+      runDomain: parentRun?.domain,
+    });
   const effectiveModel = resolveWorkerModel(parentRun, runner, model);
   const roleWindowName =
     parentRun?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(parentRun?.flowType))
@@ -3438,8 +3520,9 @@ export async function relaunchWorkerForFix(
   const assertPreflightCurrent = await admitWorkerLaunch({
     runId,
     vars,
+    projectVars,
     supportDir: nodeSupport?.supportDir,
-    wrapCommand: (command) => `${WORKER_ENV_PREFIX} && ${withMachineEnv(command, vars)}`,
+    wrapCommand: (command) => workerShell(withMachineEnv(command, vars)),
   });
   const workerTarget = await ensureTmuxTargetReadyForRelaunch(
     vars,
@@ -3497,7 +3580,7 @@ export async function relaunchWorkerForFix(
     replacesAttempt && fixContext?.signalFile
       ? `rm -f ${shellQuote(fixContext.signalFile)} && `
       : '';
-  launchCmd = `${WORKER_ENV_PREFIX} && ${clearReplacedSignal}${launchCmd}`;
+  launchCmd = workerShell(`${clearReplacedSignal}${launchCmd}`);
   // Restart recovery reads this to tell what the worker holds: a send reaches disk before the
   // respawn, and the old worker's stays until the respawn has replaced it. The old worker's mark
   // start can have moved the attempt since the snapshot above.

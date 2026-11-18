@@ -4,10 +4,18 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
-- mm-harness 0.96.29 consumes runner 0.46.22 and CLI 0.35.16 for explicit task binding, isolated diagnostics, required task-script lookup and exact claim-conflict messages.
-- mm-harness 0.96.28 refuses unavailable configured Mobile slot devices instead of selecting another connected device; shared runner code and dependency pins are unchanged.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.46.25 - 2026-11-18
+
+- mm-harness 0.96.33 consumes the protocol 0.88.0 cohort for iOS recorder recovery and retained reviewer compatibility; align the exact protocol dependency.
+
+## 0.46.24 - 2026-11-17
+
+- mm-harness 0.96.32 routes Mobile native wallet actions to the selected iOS or Android target and updates its native UI driver; recipe-runner 0.46.24 and the Farmslot cohort pins are unchanged.
+
+- Name the executed JSON assertion, literal artifact path and required proof category when claim evidence is unbound, preserving existing proof eligibility and verdicts.
+- mm-harness 0.96.31 consumes runner 0.46.24 and CLI 0.35.18 for unbound JSON proof diagnostics while preserving proof eligibility and verdicts.
 
 ## 0.46.23 - 2026-11-17
 
@@ -16,10 +24,14 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## 0.46.22 - 2026-11-17
 
+- mm-harness 0.96.29 consumes runner 0.46.22 and CLI 0.35.16 for explicit task binding, isolated diagnostics, required task-script lookup and exact claim-conflict messages.
+
 - Show registered and supplied acceptance text with a diff when a recipe claim conflicts with the task, preserving verbatim matching.
 - Record initialized worker ownership for generated recipe outputs without changing proof binding.
 
 ## 0.46.21 - 2026-11-16
+
+- mm-harness 0.96.28 refuses unavailable configured Mobile slot devices instead of selecting another connected device; shared runner code and dependency pins are unchanged.
 
 - Read bootstrap Git metadata without source-tree walks; unsupported source/output layouts and unavailable persistence retain fresh legacy validation.
 

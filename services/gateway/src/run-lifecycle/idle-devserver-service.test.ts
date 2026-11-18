@@ -517,7 +517,12 @@ test('WARM reservation carries the capped server through the actual claim and re
       assert.equal(alive, true);
     },
   });
-  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  // Cursor takes the handoff by respawning with the prompt in argv, so the session is new.
+  assert.deepEqual(result, {
+    delivered: true,
+    acknowledgement: 'structured',
+    runnerReplaced: true,
+  });
   assert.equal(promptDelivered, true);
   assert.equal(boots, 1);
   const restored = await realState.readSlotRow(vars.slotId);

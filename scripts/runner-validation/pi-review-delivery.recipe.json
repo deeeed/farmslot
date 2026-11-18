@@ -24,6 +24,13 @@
         "cmd": "node scripts/runner-validation/gateway/pi-review-delivery.mjs review-fix --complete",
         "timeout_ms": 60000,
         "intent": "Restart recovery settles the completed fix attempt from its actual identity.",
+        "next": "fix-round-receipts"
+      },
+      "fix-round-receipts": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/gateway/fix-round-usage.mjs",
+        "timeout_ms": 60000,
+        "intent": "Each respawned fix round binds its own session, so the worker session and every review-fix session carry measured receipts that roll into the run total. A round whose session was only recovered at slot release fails this node: the binding missed it.",
         "next": "delivery-isolation"
       },
       "delivery-isolation": {

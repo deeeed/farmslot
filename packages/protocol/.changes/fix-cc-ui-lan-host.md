@@ -1,1 +1,0 @@
-- Share the dev host filter used by the Command Center dev server and the gateway page-origin allowlist.

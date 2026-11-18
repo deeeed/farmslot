@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, test } from 'node:test';
+import { afterEach, beforeEach, describe, test, type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -1853,6 +1853,13 @@ describe('live adapter scripts', () => {
     else process.env.FARMSLOT_RECIPE_CACHE_DIR = cachedEnv;
   });
 
+  function controlBundleBuildClock(t: TestContext): void {
+    // Positive reuse fixtures do not edit inputs during a build, but shared temp
+    // ancestors can change. Race tests keep their own clocks and invalidation guards.
+    const buildStart = Date.now() + 60_000;
+    t.mock.method(Date, 'now', () => buildStart);
+  }
+
   function context(root: string) {
     return {
       nodeId: 'probe',
@@ -1991,13 +1998,14 @@ describe('live adapter scripts', () => {
     assert.deepEqual(executed?.result, { value: 'approved' });
   });
 
-  test('reuses a bundle until one of its inputs changes', async () => {
+  test('reuses a bundle until one of its inputs changes', async (t) => {
     const root = tempRoot('cached-adapter-');
     const actionPath = path.join(root, 'web', 'team', 'probe.mjs');
     const helperPath = path.join(root, 'web', 'team', 'helper.mjs');
     fs.mkdirSync(path.dirname(actionPath), { recursive: true });
     fs.writeFileSync(helperPath, 'export const value = 1;\n');
     fs.writeFileSync(actionPath, `import { value } from './helper.mjs';\nconsole.log(value);\n`);
+    controlBundleBuildClock(t);
     const recorder = new CallTimingRecorder();
     const prepare = () =>
       withCallTimings(recorder, () =>
@@ -2106,7 +2114,7 @@ describe('live adapter scripts', () => {
     assert.match((await prepare())?.sourceText ?? '', /from beside the action/u);
   });
 
-  test('reuses a bundle whose bare import resolves to a package at the library root', async () => {
+  test('reuses a bundle whose bare import resolves to a package at the library root', async (t) => {
     const root = tempRoot('bare-import-adapter-');
     const dir = path.join(root, 'web', 'team');
     const pkg = path.join(root, 'node_modules', 'helper-pkg');
@@ -2121,11 +2129,21 @@ describe('live adapter scripts', () => {
       path.join(dir, 'probe.mjs'),
       `import value from 'helper-pkg';\nconsole.log(value);\n`,
     );
-    // Files written before the build, whose folders the first build must not read as changing.
+    // Inputs and folders predate the build, even when fixture writes share its millisecond.
     const earlier = new Date(Date.now() - 60_000);
-    for (const entry of [pkg, path.dirname(pkg), dir, path.dirname(dir), root]) {
+    for (const entry of [
+      path.join(pkg, 'package.json'),
+      path.join(pkg, 'index.js'),
+      path.join(dir, 'probe.mjs'),
+      pkg,
+      path.dirname(pkg),
+      dir,
+      path.dirname(dir),
+      root,
+    ]) {
       fs.utimesSync(entry, earlier, earlier);
     }
+    controlBundleBuildClock(t);
     const recorder = new CallTimingRecorder();
     const prepare = () =>
       withCallTimings(recorder, () =>

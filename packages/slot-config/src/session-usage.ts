@@ -24,6 +24,7 @@ import {
   CLAUDE_PRICING,
   measureToolUsage,
   OPENAI_PRICING,
+  openaiCostUsd,
   toolUsageAdapter,
 } from '@farmslot/agent-runtime/tool-usage';
 
@@ -576,9 +577,11 @@ async function summarizeCodex(
     ([k]) => totals.model !== 'unknown' && totals.model.startsWith(k),
   )?.[1];
   if (prices) {
-    totals.cost_usd =
-      (totals.input_tokens * prices.input) / 1_000_000 +
-      (totals.output_tokens * prices.output) / 1_000_000;
+    totals.cost_usd = openaiCostUsd(prices, {
+      input: totals.input_tokens,
+      cachedInput: totals.cache_read,
+      output: totals.output_tokens,
+    });
   }
   return totals;
 }

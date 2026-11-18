@@ -910,6 +910,7 @@ export async function executeReviewStep(
   // The engine records partial I/O on failure; keep the selected reviewer for its next retry.
   stepPartialIO.set(runId, { inputs });
   const review = context.executeReviewForRun ?? executeReview;
+  let publicationReviewBudgetSpent = false;
   const executeReviewForRun: typeof executeReview = async (...args) => {
     let reviewed: ReviewResult;
     try {
@@ -927,6 +928,10 @@ export async function executeReviewStep(
       const latest = getRun(runId);
       const budget = latest && (await runReviewRoundBudget(latest));
       if (budget?.remaining === 0) {
+        if (latest && requiresPublicationApproval(latest) && !reviewed.fixDeliveryFailure) {
+          publicationReviewBudgetSpent = true;
+          return reviewed;
+        }
         const message = budget.diagnosis ?? 'Review budget exhausted; waiting for the operator.';
         throw new ResultDecisionHoldError(message, inputs, {
           ...reviewed,
@@ -958,20 +963,40 @@ export async function executeReviewStep(
   // A result decision's Send back continues from its recorded findings: the
   // worker gets them first, as Continue Fixing does, instead of a fresh review.
   const sendBack = evalJudge ? null : takeSendBackReview(runId);
-  let result: ReviewResult = await executeReviewForRun(
-    runId,
-    current.slotId,
-    sendBack
-      ? {
-          ...reviewer,
-          validationDepth: sendBack.validationDepth ?? validationDepth,
-          mode: reReviewMode(sendBack, mode),
-          reviewId: sendBack.reviewId ?? reviewId,
-          resumeFromResult: sendBack,
-        }
-      : { ...reviewer, validationDepth, mode, reviewId, ...(evalJudge ? { maxRetries: 0 } : {}) },
-  );
   const cliCommand = `farmslot rpc review.run '{"runId":"${runId}"}'`;
+  let result: ReviewResult;
+  try {
+    result = await executeReviewForRun(
+      runId,
+      current.slotId,
+      sendBack
+        ? {
+            ...reviewer,
+            validationDepth: sendBack.validationDepth ?? validationDepth,
+            mode: reReviewMode(sendBack, mode),
+            reviewId: sendBack.reviewId ?? reviewId,
+            resumeFromResult: sendBack,
+          }
+        : { ...reviewer, validationDepth, mode, reviewId, ...(evalJudge ? { maxRetries: 0 } : {}) },
+    );
+  } catch (error) {
+    if (
+      error instanceof ResultDecisionHoldError &&
+      !error.stepOutputs.fixDeliveryFailure &&
+      requiresPublicationApproval(getRun(runId) ?? current) &&
+      error.stepOutputs.reviewLaunchRejection &&
+      typeof error.stepOutputs.reviewLaunchRejection === 'object' &&
+      'code' in error.stepOutputs.reviewLaunchRejection &&
+      error.stepOutputs.reviewLaunchRejection.code ===
+        PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.roundLimitReached
+    ) {
+      // A budget stop is not a new review verdict. The publication gate checks the retained
+      // reviews and every hard prerequisite before offering a person any override.
+      stepPartialIO.delete(runId);
+      return { inputs, outputs: { ...error.stepOutputs, cliCommand } };
+    }
+    throw error;
+  }
   if (evalJudge) {
     const disabledByConfig = result.skipped && result.reason === 'disabled-for-project';
     if (
@@ -993,7 +1018,12 @@ export async function executeReviewStep(
     reviewed: ReviewResult,
     selected: Pick<ReviewOptions, 'reviewRunner' | 'model' | 'effort'> = reviewer,
   ): Promise<ReviewResult> => {
-    if (current.mode !== 'interactive' || reviewed.skipped || reviewed.verdict !== 'issues')
+    if (
+      publicationReviewBudgetSpent ||
+      current.mode !== 'interactive' ||
+      reviewed.skipped ||
+      reviewed.verdict !== 'issues'
+    )
       return reviewed;
     const issueCount = reviewed.issues?.length ?? 0;
     const issueList =
@@ -1078,6 +1108,15 @@ export async function executeReviewStep(
           ? ` after ${result.retryCount}/${result.maxRetries} fix attempts`
           : '';
       const reason = `Review found ${issueCount || 'one or more'} issue(s)${retriesLabel} in ${location}: ${message}`;
+      if (requiresPublicationApproval(getRun(runId) ?? current)) {
+        // The review completed with issues, not a pass. Publication still requires an explicit
+        // person choice at the human gate, including when the review budget is spent.
+        stepPartialIO.delete(runId);
+        return {
+          inputs: { ...inputs, enabled: true },
+          outputs: { ...result, cliCommand, maxRetriesExhausted: true },
+        };
+      }
       // A delivered result waits for a person instead of failing (ADR-065 Amendment 7).
       if (runDeliveredResult(getRun(runId) ?? current))
         throw new ResultDecisionHoldError(reason, inputs, {

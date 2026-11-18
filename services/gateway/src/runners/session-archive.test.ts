@@ -6,6 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import type { Run } from '@farmslot/protocol';
+
 import {
   archiveRun,
   createRun,
@@ -175,6 +177,39 @@ test('archives from metrics when agent contexts have no session path', async (t)
 
   const result = await archiveRunnerSessionsForSlotRelease({ vars: localVars, runId: run.id });
   assert.equal(result.captured, 1);
+});
+
+// A run whose review failed skips finalize, so slot release is the last worker discovery.
+test('slot release runs worker session discovery for a run that skipped finalize', async (t) => {
+  const { claudeSessionUsageProvider } = await import('./session-usage-provider.js');
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `ARCHIVE-${Date.now()}-discovery`,
+    runner: 'claude',
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, { slotId: 'test-slot', metrics: { ...run.metrics, runner: 'claude' } });
+  const discovered: string[] = [];
+  const recover = t.mock.method(claudeSessionUsageProvider, 'recoverSessions', async (r: Run) => {
+    discovered.push(r.id);
+    return [];
+  });
+
+  await archiveRunnerSessionsForSlotRelease({ vars: localVars, runId: run.id });
+  assert.deepEqual(discovered, [run.id]);
+  assert.equal(getRun(run.id)?.metrics.sessionUsageError, undefined);
+
+  recover.mock.mockImplementation(async () => {
+    throw new Error('slot unreachable');
+  });
+  const result = await archiveRunnerSessionsForSlotRelease({ vars: localVars, runId: run.id });
+  assert.equal(typeof result.summary, 'string', 'Release still finishes its archive pass');
+  assert.match(
+    getRun(run.id)?.metrics.sessionUsageError ?? '',
+    /discovery at slot release failed: slot unreachable/,
+  );
 });
 
 test('evicting a run deletes its session archive directory', async (t) => {

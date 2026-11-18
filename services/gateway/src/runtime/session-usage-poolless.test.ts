@@ -85,6 +85,7 @@ test('remote forced-path accounting bypasses an older node wrapper and requires 
   });
   assert.equal(usage.source, 'runner-transcript');
   assert.equal(usage.totalTokens, 30);
-  assert.equal(usage.costUsd, null);
+  // 10 input at $2, 20 output at $10 per 1M.
+  assert.equal(usage.costUsd, 0.00022);
   assert.equal(existsSync(marker), false);
 });

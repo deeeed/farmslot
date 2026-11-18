@@ -46,6 +46,7 @@ import {
   retryDeferredFixDelivery,
   ReviewFixDeliveryError,
   type ReviewRetryDeps,
+  reviewSessionForReplay,
   RunnerOutOfQuotaError,
   runReviewRetryLoop,
   shouldSkipForDisabledReviewConfig,
@@ -484,6 +485,69 @@ test('canRecoverReviewFixPass requires a working context for the current fix tas
     canRecoverReviewFixPass({ ...current, signalFile: null }, 'tasks/foo'),
     false,
     'legacy contexts without the scoped signal path are not valid recovery state',
+  );
+});
+
+test('failed review-fix recovery requires explicit verified-round recovery and its findings scope', () => {
+  const failed: AgentContext = {
+    id: 'review-fix',
+    runId: 'run-1',
+    slotId: 'slot-1',
+    role: 'review-fix',
+    label: 'Fix',
+    status: 'failed',
+    runner: 'pi',
+    model: 'litellm/deepseek-v4p1-flash',
+    taskFile: 'temp/tasks/demo/REVIEW-FIX.md',
+    signalFile: 'temp/tasks/demo/REVIEW-FIX-SIGNAL.json',
+    artifactScope: null,
+  };
+  assert.equal(canRecoverReviewFixPass(failed, 'temp/tasks/demo'), false);
+  assert.equal(canRecoverReviewFixPass(failed, 'temp/tasks/demo', null, true), true);
+  assert.equal(canRecoverReviewFixPass(failed, 'temp/tasks/demo', 'other-round', true), false);
+  assert.equal(canRecoverReviewFixPass(failed, 'temp/tasks/other', null, true), false);
+  assert.equal(
+    canRecoverReviewFixPass({ ...failed, status: 'complete' }, 'temp/tasks/demo', null, true),
+    false,
+  );
+});
+
+test('replay refuses a completed review without usable lineage instead of selecting COLD', () => {
+  const run = makeRun();
+  run.agentContexts = [
+    {
+      id: 'review',
+      runId: run.id,
+      slotId: run.slotId ?? null,
+      role: 'review',
+      label: 'Review',
+      status: 'complete',
+      runner: 'codex',
+      model: 'gpt-6.1-sol',
+      reviewLoopNumber: 1,
+    },
+  ];
+  assert.throws(() => reviewSessionForReplay(run), /prior review round has no lineage binding/);
+  assert.equal(
+    reviewSessionForReplay(run, {
+      runner: 'codex',
+      model: 'gpt-6-astra',
+      effort: null,
+      mode: 'cold',
+    }),
+    undefined,
+    'an explicit different reviewer remains selected',
+  );
+  run.agentContexts[0].reviewId = 'retained-lineage';
+  assert.equal(
+    reviewSessionForReplay(run, undefined, 'other-lineage'),
+    undefined,
+    'recovery cannot select an independent lineage',
+  );
+  assert.equal(
+    reviewSessionForReplay(makeRun()),
+    undefined,
+    'a first launch is not a replayed round',
   );
 });
 

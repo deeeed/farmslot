@@ -1,1 +1,0 @@
-- Keep Runs, slot workspaces, run details and pinned cards in place during unchanged background refreshes, and size empty status areas and run rows to their content.

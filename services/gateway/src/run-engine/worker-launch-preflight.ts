@@ -22,7 +22,7 @@ import {
   type SlotVars,
 } from '../core/config.js';
 import { EXEC_TIMEOUT_EXIT_CODE, execOnSlot } from '../core/exec.js';
-import { withMachineEnv } from '../core/project-env.js';
+import { applyProjectCommandEnv, withMachineEnv } from '../core/project-env.js';
 import { readSlotRow } from '../core/state.js';
 import { shellQuote } from '../core/tmux.js';
 import { getNode } from '../fleet/machine-registry.js';
@@ -204,7 +204,10 @@ export async function admitWorkerLaunch(
   const inShell = (command: string): string => {
     const body = `cd ${shellQuote(input.vars.remoteRepo)} && ${command}`;
     if (workerEnvironmentScript)
-      return `node ${shellQuote(workerEnvironmentScript)} ${shellQuote(JSON.stringify(input.environment))} /bin/sh -c ${shellQuote(body)}`;
+      return applyProjectCommandEnv(
+        { command_env: input.environment },
+        `node ${shellQuote(workerEnvironmentScript)} ${shellQuote(JSON.stringify(input.environment))} /bin/sh -c ${shellQuote(body)}`,
+      );
     if (input.wrapCommand) return input.wrapCommand(body);
     return wrapWorkerShellCommand(withMachineEnv(body, input.vars), {
       vars: input.vars,

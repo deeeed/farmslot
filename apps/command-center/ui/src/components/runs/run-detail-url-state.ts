@@ -162,6 +162,8 @@ export function runInventoryHashFromDetail(hash: string = location.hash): string
     'lightboxRecipeRunId',
     'evidencePreview',
     'step',
+    'subtasks',
+    'stepDetails',
     'artifactRun',
     'artifact',
     ARTIFACT_AC_PARAM,

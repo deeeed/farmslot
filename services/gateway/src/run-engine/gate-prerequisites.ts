@@ -11,7 +11,6 @@ import {
   COMBINED_FINDINGS_EVIDENCE_APPROVAL_ACTION,
   type DecisionAction,
   digestRecipeDocument,
-  effectiveRequiredReviewCount,
   EVIDENCE_ATTESTATION_ACTION,
   evidenceAttestationAvailable,
   gateActionsForReadiness,
@@ -536,21 +535,27 @@ export function applyValidatedReviewResults(
 }
 
 /**
- * The head's open findings, when the required reviews returned valid results for the package,
- * every entry the publication block counts at the head has its own valid structured result,
- * and no fix or review runs (ADR-065 Amendment 8). The findings are exactly those results' issues.
+ * Checked current-package findings after at least one valid review and no running work.
+ * The configured count is overridable; every completed current-package result and every
+ * open finding must remain verifiable (ADR-065 Amendment 8).
  */
 async function acceptableHeadFindings(
   run: Run,
   preparedPackage: ReadyGatePrPackage,
   validInputs: ReviewStatus[],
-  required: number,
   source: Pick<GatePrerequisiteReaders, 'reviewResult'>,
 ): Promise<GateReviewFinding[] | undefined> {
   const reviews = run.engineState?.publishGate?.reviews ?? [];
+  const validIds = new Set(validInputs.map(({ id }) => id));
   if (
+    reviews.some(
+      (review) =>
+        (review.verdict === 'pass' || review.verdict === 'issues') &&
+        publicationReviewMatchesPreparedPackage(review, preparedPackage) &&
+        !validIds.has(review.id),
+    ) ||
     validInputs.filter((review) => publicationReviewMatchesPreparedPackage(review, preparedPackage))
-      .length < required ||
+      .length === 0 ||
     reviewFixInProgress(run) ||
     reviews.some((review) => review.verdict === 'pending')
   )
@@ -582,7 +587,7 @@ async function acceptableHeadFindings(
       findings.push({ reviewId: review.id, ...issue });
     }
   }
-  return findings.length ? findings : undefined;
+  return findings;
 }
 
 /** Compose owner validators; absent validation is a refusal, never a success. */
@@ -898,7 +903,6 @@ export async function collectRunGateAssessment(
       minimumReviews: 1,
       requestedBy: 'dispatch' as const,
     };
-    const required = effectiveRequiredReviewCount(policy);
     const budget = await runReviewRoundBudget(run);
     const nextStep =
       budget.remaining !== 0
@@ -907,11 +911,10 @@ export async function collectRunGateAssessment(
           ? budget.diagnosis!
           : `Review budget ${budget.used}/${budget.limit} is exhausted. Ask the lead for a scoped extension, then use farmslot run extend-review-budget ${run.id} and request current-head reviews.`;
     const allowedReviewOverrides: string[] = [];
-    findings = reviewFixReason
-      ? await acceptableHeadFindings(run, preparedPackage, validInputs, required, source)
-      : undefined;
+    findings = await acceptableHeadFindings(run, preparedPackage, validInputs, source);
     if (findings) {
-      reviewFixReason!.allowedReviewOverrides = [APPROVE_PUBLISH_UNRESOLVED_ACTION];
+      if (reviewFixReason)
+        reviewFixReason.allowedReviewOverrides = [APPROVE_PUBLISH_UNRESOLVED_ACTION];
       allowedReviewOverrides.push(APPROVE_PUBLISH_UNRESOLVED_ACTION);
     }
     if (buildEvidenceRefreshAction(validReviews, preparedPackage))

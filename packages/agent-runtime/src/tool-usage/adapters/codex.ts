@@ -5,7 +5,7 @@
 // in `_call`, completed by `<type>_output` with the same call_id. Token counts are cumulative,
 // so each sample is the increase, priced from the static table by the turn's model. Each
 // context compaction is one top-level `compacted` record.
-import { OPENAI_PRICING } from '../prices.js';
+import { OPENAI_PRICING, openaiCostUsd } from '../prices.js';
 import {
   type CompactionEvent,
   dropStreamBefore,
@@ -57,7 +57,7 @@ function codexParser(): StreamParser {
   let model: string | undefined;
   // Once a rollout has native items they are the calls; dropping old ones must not switch back.
   let usesItems = false;
-  let previous = { total: 0, input: 0, output: 0 };
+  let previous = { total: 0, input: 0, cachedInput: 0, output: 0 };
   const parsed = { tools: items, tokens, compactions };
   const current = () => ({
     tools: usesItems ? items : pairToolEvents(calls, completions),
@@ -109,16 +109,18 @@ function codexParser(): StreamParser {
             ? Object.entries(OPENAI_PRICING).find(([key]) => model!.startsWith(key))?.[1]
             : undefined;
           const input = Math.max(0, count(usage.input_tokens) - previous.input);
+          const cachedInput = Math.max(0, count(usage.cached_input_tokens) - previous.cachedInput);
           const output = Math.max(0, count(usage.output_tokens) - previous.output);
           tokens.push({
             at,
             tokens: total - previous.total,
-            costUsd: prices ? (input * prices.input + output * prices.output) / 1_000_000 : null,
+            costUsd: prices ? openaiCostUsd(prices, { input, cachedInput, output }) : null,
           });
         }
         previous = {
           total: Math.max(previous.total, total),
           input: Math.max(previous.input, count(usage.input_tokens)),
+          cachedInput: Math.max(previous.cachedInput, count(usage.cached_input_tokens)),
           output: Math.max(previous.output, count(usage.output_tokens)),
         };
       }
