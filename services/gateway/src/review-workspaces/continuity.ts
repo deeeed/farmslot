@@ -101,7 +101,8 @@ export function resolveWorkspaceContinuationSource(
       !samePrincipalOwner(owner, successorOwner) ||
       successor.metrics.runner !== run.metrics.runner ||
       successor.metrics.model !== run.metrics.model ||
-      (successor.effort ?? null) !== (run.effort ?? null) ||
+      ((successor.effort ?? null) !== (run.effort ?? null) &&
+        !(run.metrics.runner === 'claude' && (run.effort ?? null) === null)) ||
       successor.repeatReviewContext?.session?.reviewId !== reviewer.reviewId ||
       successor.repeatReviewContext.session.priorSessionId !== reviewer.runnerSessionId
     )

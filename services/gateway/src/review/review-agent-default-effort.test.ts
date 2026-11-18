@@ -4,6 +4,7 @@ import test, { mock } from 'node:test';
 import { executionModelFromSelection } from '@farmslot/review-dispatch';
 
 import { makeRun } from '../run-engine/test-fixtures.js';
+import { makeVars } from '../runners/test-fixtures.js';
 import * as store from '../runs/store.js';
 
 import { resolveNativeReviewLaunchEffort } from './review-agent.js';
@@ -139,7 +140,7 @@ test('WARM runner-default effort agrees at gate preflight and reviewer delivery'
     ),
   );
   await runReviewAgent(
-    {} as Parameters<typeof runReviewAgent>[0],
+    makeVars(),
     execution.runner,
     execution.model,
     '/tmp/review',
@@ -197,7 +198,7 @@ test('a pre-upgrade claude review keeps an unset effort through warm preflight a
     ),
   );
   await runReviewAgent(
-    {} as Parameters<typeof runReviewAgent>[0],
+    makeVars(),
     'claude',
     'opus',
     '/tmp/review',

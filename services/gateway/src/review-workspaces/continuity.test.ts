@@ -345,4 +345,37 @@ test('a stopped transferred attempt without a verdict keeps WARM and its validat
       /held by its successor/,
     );
   }
+  const claudeCurrent = {
+    ...current,
+    id: 'next',
+    metrics: { runner: 'claude', model: 'opus' },
+  } as Run;
+  const claudeSource = {
+    ...source,
+    agentContexts: [
+      { ...source.agentContexts![0], runner: 'claude', model: 'opus', effort: 'high' },
+    ],
+  };
+  const claudeInterrupted = {
+    ...interrupted,
+    metrics: { runner: 'claude', model: 'opus' },
+    effort: 'high',
+    agentContexts: claudeSource.agentContexts,
+  } as Run;
+  const claudeResult = { ...context(), currentHeadSha: 'b'.repeat(40) };
+  configureWorkspaceContinuity(claudeCurrent, claudeSource, claudeResult, undefined, [
+    claudeInterrupted,
+  ]);
+  assert.equal(claudeResult.session?.continuity, 'resumed');
+  assert.throws(
+    () =>
+      configureWorkspaceContinuity(
+        { ...claudeCurrent, effort: 'low' },
+        claudeSource,
+        { ...context(), currentHeadSha: 'b'.repeat(40) },
+        undefined,
+        [claudeInterrupted],
+      ),
+    /WARM review unavailable/,
+  );
 });

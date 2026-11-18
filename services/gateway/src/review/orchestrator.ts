@@ -491,11 +491,12 @@ async function executeOwnedReview(
     effort: requestedEffort ?? null,
     mode,
   };
-  // Warm keeps the recorded effort, including an unset Claude launch. Cold fills the catalog default.
+  // Warm keeps the recorded effort. An omitted Claude effort stays omitted here so recovery
+  // can read the admitted context. A fresh Claude launch fills medium in the native resolver.
   const effort =
-    mode === 'warm'
-      ? workerModelFromSelection(effortSelection).effort
-      : executionModelFromSelection(effortSelection).effort;
+    mode === 'warm' || reviewRunner === 'claude'
+      ? (workerModelFromSelection(effortSelection).effort ?? null)
+      : (executionModelFromSelection(effortSelection).effort ?? null);
   const primaryContext = run.reviewContext ?? run.prWork?.review?.options.reviewContext;
   const reviewId = evalJudge
     ? `eval-first-output-${runId}`

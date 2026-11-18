@@ -24,6 +24,8 @@ export interface RepeatReviewResumeBinding {
   repository: string;
   prNumber: number;
   lastReviewedHeadSha: string;
+  /** Effort recorded on the retained reviewer. Null is an unset launch. */
+  effort: string | null;
 }
 
 export type RepeatReviewResumePlan =
@@ -246,6 +248,7 @@ export function resolveRepeatReviewResumePlan(
         priorRunId: prior.id,
         contextId: reviewer.id,
         runnerSessionId: reviewer.runnerSessionId,
+        effort: reviewer.effort ?? null,
       },
     };
   return {
@@ -259,6 +262,7 @@ export function resolveRepeatReviewResumePlan(
       contextId: reviewer.id,
       runnerSessionId: reviewer.runnerSessionId,
       runnerSessionPath: reviewer.runnerSessionPath!,
+      effort: reviewer.effort ?? null,
     },
   };
 }

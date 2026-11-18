@@ -120,7 +120,8 @@ export function remainingExplicitReviewPlan(
       (review) =>
         normalizeRunner(review.runner) === normalizeRunner(selection.runner) &&
         (review.model ?? execution.model) === execution.model &&
-        (omittedClaude || (review.effort ?? execution.effort) === execution.effort),
+        (omittedClaude ||
+          (review.effort !== null && (review.effort ?? execution.effort) === execution.effort)),
     );
     if (index < 0) break;
     passing.splice(index, 1);

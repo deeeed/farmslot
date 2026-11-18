@@ -1177,11 +1177,12 @@ export async function runReviewAgent(
       'WARM requires the reviewId of the lineage being continued',
     );
   const effortSelection = { runner, model, effort: effort ?? null, mode };
-  // Warm keeps the recorded effort, including an unset Claude launch. Cold fills the catalog default.
+  // Warm keeps the recorded effort. An omitted Claude effort stays omitted so a recovered
+  // context wins. A fresh Claude launch fills medium in the native resolver.
   const resolvedEffort =
-    mode === 'warm'
-      ? workerModelFromSelection(effortSelection).effort
-      : executionModelFromSelection(effortSelection).effort;
+    mode === 'warm' || runner === 'claude'
+      ? (workerModelFromSelection(effortSelection).effort ?? null)
+      : (executionModelFromSelection(effortSelection).effort ?? null);
   // Only already-admitted tmux attempts may finish on their original transport.
   // Every new pipeline admission uses the native reviewer contract.
   const retainedTmux = selectRecoverableReviewContext(getRun(_runId)?.agentContexts ?? [], {

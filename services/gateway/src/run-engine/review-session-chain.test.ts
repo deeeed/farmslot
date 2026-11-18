@@ -95,6 +95,7 @@ test('repeat review resumes only the exact prior reviewer binding', () => {
       contextId: 'review-context-1',
       runnerSessionId: 'session-1',
       runnerSessionPath: '/tmp/session-1.jsonl',
+      effort: null,
     },
   });
   assert.deepEqual(
@@ -264,6 +265,7 @@ test('native review continuity uses its owned stopped session without a tmux tra
         priorRunId: prior.id,
         contextId: prior.agentContexts![0].id,
         runnerSessionId: 'session-1',
+        effort: null,
       },
     },
   );

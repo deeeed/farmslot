@@ -186,6 +186,12 @@ async function reviewTerminalCompaction(
   return JSON.parse(result.stdout);
 }
 
+function continuedReviewEffort(run: Run, runner: string | null | undefined): string | null {
+  if (runner === 'claude' && (run.effort ?? null) === null)
+    return run.repeatReviewContext?.session?.effort ?? null;
+  return run.effort ?? null;
+}
+
 export function verifiedWarmReviewSessionId(run: Run): string | undefined {
   if (resolveReviewMode({ run }) !== 'warm') return undefined;
   const trace = run.repeatReviewContext?.session;
@@ -309,7 +315,7 @@ export async function reviewTmuxOperation(
       model: run.metrics.model,
       promptPath: path.posix.join(w.taskPath, '.terminal-prompt.txt'),
       repo: w.checkoutPath,
-      effort: run.effort,
+      effort: continuedReviewEffort(run, runner) ?? undefined,
       trustWorkspace: true,
       workspaceTrust: 'untrusted',
       reviewReadOnlyRoots: reviewWorkspaceReadOnlyRoots(w),
@@ -453,7 +459,7 @@ export async function launchReviewTmux(
     label: 'Review',
     runner: run.metrics.runner,
     model: run.metrics.model,
-    effort: run.effort,
+    effort: continuedReviewEffort(run, run.metrics.runner) ?? undefined,
     status: 'launching' as const,
     runnerSessionId,
     ...(runnerSessionPath ? { runnerSessionPath } : {}),

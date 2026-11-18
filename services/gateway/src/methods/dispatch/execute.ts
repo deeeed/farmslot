@@ -2002,12 +2002,16 @@ export async function dispatchExecute(
         `Resuming reviewer session ${binding.runnerSessionId} from run ${binding.priorRunId.slice(0, 8)}...`,
       );
       options.onLaunchAttempt?.();
+      const resumeEffort =
+        runner === 'claude' && (effort ?? null) === null
+          ? (repeatReviewResumePlan.binding.effort ?? null)
+          : (effort ?? null);
       const attempt = await attemptRepeatReviewResume(repeatReviewResumePlan, runner, {
         vars,
         target: workerTarget,
         model,
         prompt: taskPrompt,
-        effort,
+        effort: resumeEffort,
         safetyTier,
         modelQuestions: modelQuestionsForRun(currentRun),
         runtimeDir: projectVars?.runtimeDir,
@@ -2032,6 +2036,7 @@ export async function dispatchExecute(
           priorRunId: binding.priorRunId,
           priorSessionId: binding.runnerSessionId,
           sessionId: binding.runnerSessionId,
+          effort: resumeEffort,
         });
       } else if (attempt.kind === 'refused') {
         throw new Error(
@@ -2055,6 +2060,7 @@ export async function dispatchExecute(
           priorRunId: binding.priorRunId,
           priorSessionId: binding.runnerSessionId,
           sessionId: binding.runnerSessionId,
+          effort: resumeEffort,
         });
         step('warn', attempt.reason);
       }

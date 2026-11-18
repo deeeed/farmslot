@@ -350,6 +350,7 @@ test('an omitted Claude plan row accepts the effort the session recorded', () =>
     remainingExplicitReviewPlan([{ ...row, effort: 'high' }], [{ ...high, effort: 'low' }]).length,
     1,
   );
+  assert.equal(remainingExplicitReviewPlan([{ ...row, effort: 'high' }], [unset]).length, 1);
 });
 
 test('explicit sequence matches each session only once and preserves order', () => {
