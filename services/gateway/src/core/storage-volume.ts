@@ -7,6 +7,8 @@ import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import { resolveRunsDir, runBundleRetentionSettings } from '@farmslot/run-bundle';
 import { farmslotRoot } from '@farmslot/slot-config';
 
+import { GatewayMethodError } from './method-error.js';
+
 /** Resolve existing ancestors and dangling links without creating a replacement store. */
 function storagePath(target: string, links = 0): string {
   if (links > 40) throw new Error(`Too many storage symlinks: ${target}`);
@@ -116,4 +118,14 @@ export function gatewayStorageVolumeErrors(): string[] {
     const error = storageVolumeError(root);
     return error ? [error] : [];
   });
+}
+
+/** Admission must check the stores later task creation needs before registering a run. */
+export function assertGatewayStorageAvailable(): void {
+  const errors = gatewayStorageVolumeErrors();
+  if (errors.length)
+    throw new GatewayMethodError('STORAGE_UNAVAILABLE', errors.join('\n'), {
+      userAction: 'Mount or reconnect the configured storage volume, then retry run creation.',
+      details: { errors },
+    });
 }

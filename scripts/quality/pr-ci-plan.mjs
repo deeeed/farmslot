@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { gzipSync } from 'node:zlib';
 
 import { isMainModule } from './lib/step-timing.mjs';
 import { ownerOf, readGraph, selectAffectedTests } from './affected-tests.mjs';
@@ -27,6 +28,29 @@ export function balance(items, count, weight = () => 1) {
     bins[0].weight += weight(item);
   }
   return bins.map(({ items: assigned }) => assigned);
+}
+
+// Three broad PR matrices leave four of the observed 40 hosted slots for setup and gates.
+const PR_MATRIX_LIMIT = 12;
+// Broad plans may grow to fit the work. Keep a ceiling so one PR and the
+// 12-worker main matrix fit in the observed 40-runner pool.
+const PR_BROAD_MATRIX_LIMIT = 26;
+const PR_WORK_BUDGET_SECONDS = 125;
+
+/** Fill existing test jobs before paying for another runner and setup. */
+export function packPrTasks(jobs, tasks, budget = 120, maxJobs = PR_MATRIX_LIMIT) {
+  const pooled = jobs.map((job) => ({ ...job, tasks: [...job.tasks] }));
+  const cost = (job) => job.tasks.reduce((seconds, entry) => seconds + entry.seconds, 0);
+  let next = 0;
+  for (const task of [...tasks].sort((a, b) => b.seconds - a.seconds || a.id.localeCompare(b.id))) {
+    let job = [...pooled].sort((a, b) => cost(a) - cost(b) || a.id.localeCompare(b.id))[0];
+    if (!job || (pooled.length < maxJobs && cost(job) + task.seconds > budget)) {
+      job = { id: `checks-${++next}`, tasks: [] };
+      pooled.push(job);
+    }
+    job.tasks.push(task);
+  }
+  return pooled;
 }
 
 /** Match the runner: mocks/serial first, then four sorted round-robin lanes. */
@@ -119,48 +143,53 @@ export function createPrPlan({
   // serial execution rather than rereading sources or assuming concurrency.
   lanes ??= new Map(selected.map((file) => [file, 'serial']));
   const tasks = [];
-  const jobs = [];
-  const assigned = new Set();
+  const seedJobs = [];
+  const gatewayDir = 'services/gateway';
+  const gatewaySuite = selected.filter(
+    (file) => file.startsWith(`${gatewayDir}/`) && file.endsWith('.test.ts'),
+  );
+  const assigned = new Set(gatewaySuite);
   function splitTests(id, dir, count, tsconfig, workers, runnerDir = dir) {
     const suite = selected.filter(
       (file) => file.startsWith(`${dir}/`) && file.endsWith('.test.ts'),
     );
+    const toJobs = (chunks) =>
+      chunks.map(({ files: chunk, ms }, index) => {
+        const task = command(
+          `${id}-${index + 1}`,
+          [
+            'node',
+            'scripts/quality/run-tsx-tests.mjs',
+            '--cwd',
+            runnerDir,
+            '--tsconfig',
+            tsconfig,
+            '--workers',
+            String(workers),
+            ...chunk.map((file) => path.posix.relative(runnerDir, file)),
+          ],
+          Math.max(1, Math.ceil(ms / 1000)),
+        );
+        task.tests = chunk;
+        return { id: task.id, tasks: [task] };
+      });
     let chunks;
     if (id === 'gateway') {
       const full =
         suite.length === [...eligible].filter((file) => file.startsWith(`${dir}/`)).length;
-      const limit = full ? count : Math.min(count, 12);
       let shards = full ? Math.min(count, suite.length) : 1;
-      chunks = balanceTestShards(suite, shards, workers, durations, lanes);
-      while (shards < Math.min(limit, suite.length) && chunks.some(({ ms }) => ms > 120_000))
-        chunks = balanceTestShards(suite, ++shards, workers, durations, lanes);
+      const distribute = (size) => balanceTestShards(suite, size, workers, durations, lanes);
+      chunks = distribute(shards);
+      while (shards < Math.min(count, suite.length) && chunks.some(({ ms }) => ms > 120_000))
+        chunks = distribute(++shards);
     } else
       chunks = balance(suite, count, (file) => durations[file] ?? 1500).map((files) => ({
         files,
         ms: estimateTestMs(files, workers, durations, lanes),
       }));
-    for (const [index, { files: chunk, ms }] of chunks.entries()) {
-      const task = command(
-        `${id}-${index + 1}`,
-        [
-          'node',
-          'scripts/quality/run-tsx-tests.mjs',
-          '--cwd',
-          runnerDir,
-          '--tsconfig',
-          tsconfig,
-          '--workers',
-          String(workers),
-          ...chunk.map((file) => path.posix.relative(runnerDir, file)),
-        ],
-        Math.max(1, Math.ceil(ms / 1000)),
-      );
-      task.tests = chunk;
-      jobs.push({ id: task.id, tasks: [task] });
-      chunk.forEach((file) => assigned.add(file));
-    }
+    seedJobs.push(...toJobs(chunks));
+    suite.forEach((file) => assigned.add(file));
   }
-  splitTests('gateway', 'services/gateway', ciOnly ? 1 : 16, 'tsconfig.json', 4);
   splitTests(
     'command-center-ui',
     'apps/command-center/ui',
@@ -378,9 +407,14 @@ export function createPrPlan({
   ];
   let scriptIndex = 0;
   for (const [files, args] of scriptGroups) {
-    for (const chunk of balance(files, Math.min(4, files.length))) {
+    for (const chunk of balance(
+      files,
+      Math.min(4, files.length),
+      (file) => durations[file] ?? 1500,
+    )) {
+      const costs = chunk.map((file) => durations[file] ?? 1500);
       const seconds =
-        2 + Math.ceil(chunk.reduce((ms, file) => ms + (durations[file] ?? 1500), 0) / 2000);
+        2 + Math.ceil(Math.max(...costs, costs.reduce((ms, value) => ms + value, 0) / 2) / 1000);
       tasks.push(command(`other-selected-tests-${++scriptIndex}`, [...args, ...chunk], seconds));
       chunk.forEach((file) => assigned.add(file));
     }
@@ -403,21 +437,31 @@ export function createPrPlan({
     }
     task.seconds = Math.max(1, Math.ceil(ms / 1000));
   }
-  // Keep the expensive whole-program analysis independent of cheap guards.
-  // Adding even one small task to it spends the PR's remaining wall budget.
-  const isolated = tasks.filter((task) => task.seconds > 120);
-  for (const [index, task] of isolated.entries())
-    jobs.push({ id: `checks-${index + 1}`, tasks: [task] });
-  const grouped = tasks.filter((task) => task.seconds <= 120);
-  for (const [index, chunk] of balance(
-    grouped,
-    Math.min(
-      8 - isolated.length,
-      Math.max(1, Math.ceil(grouped.reduce((total, task) => total + task.seconds, 0) / 120)),
-    ),
-    (task) => task.seconds,
-  ).entries())
-    jobs.push({ id: `checks-${isolated.length + index + 1}`, tasks: chunk });
+  const gatewaySeconds = Math.ceil(estimateTestMs(gatewaySuite, 4, durations, lanes) / 1000);
+  const totalSeconds =
+    gatewaySeconds +
+    [...seedJobs.flatMap(({ tasks }) => tasks), ...tasks].reduce(
+      (sum, task) => sum + task.seconds,
+      0,
+    );
+  const maxJobs = ciOnly
+    ? PR_MATRIX_LIMIT
+    : Math.max(
+        PR_MATRIX_LIMIT,
+        Math.min(PR_BROAD_MATRIX_LIMIT, Math.ceil(totalSeconds / PR_WORK_BUDGET_SECONDS)),
+      );
+  // Reserve room for other commands before splitting gateway. Otherwise wide
+  // PRs fill the pool with gateway shards and stack long workspace suites.
+  const gatewayShare =
+    maxJobs > PR_MATRIX_LIMIT ? Math.ceil((gatewaySeconds * maxJobs) / totalSeconds) : maxJobs;
+  const gatewaySlots = ciOnly ? 1 : Math.min(maxJobs - seedJobs.length - 1, gatewayShare);
+  splitTests('gateway', gatewayDir, gatewaySlots, 'tsconfig.json', 4);
+  const jobs = packPrTasks(
+    seedJobs,
+    tasks,
+    maxJobs > PR_MATRIX_LIMIT ? PR_WORK_BUDGET_SECONDS : 120,
+    maxJobs,
+  );
   const owners = new Map(selected.map((file) => [file, new Set()]));
   for (const task of jobs.flatMap((job) => job.tasks))
     for (const file of [...(task.tests ?? []), ...task.args]) owners.get(file)?.add(task.id);
@@ -444,6 +488,13 @@ export function prChangedFiles(root, pullRequest) {
   );
   if (result.status !== 0) throw new Error(`Cannot determine PR changes: ${result.stderr}`);
   return result.stdout.split('\0').filter(Boolean);
+}
+
+export function inlinePlanOutput(json) {
+  const encoded = gzipSync(json).toString('base64');
+  // Leave room below Linux's 128 KiB per-environment-entry limit. Larger plans
+  // keep using the retained artifact, with the same receipt validation.
+  return encoded.length <= 96 * 1024 ? encoded : '';
 }
 
 if (isMainModule(import.meta.url)) {
@@ -502,7 +553,10 @@ if (isMainModule(import.meta.url)) {
   });
   if (replay) plan.replayPr = Number(replay);
   mkdirSync('.cache/pr-ci', { recursive: true });
-  writeFileSync('.cache/pr-ci/plan.json', `${JSON.stringify(plan, null, 2)}\n`);
+  const json = `${JSON.stringify(plan, null, 2)}\n`;
+  writeFileSync('.cache/pr-ci/plan.json', json);
+  const inlinePlan = inlinePlanOutput(json);
+  if (inlinePlan) appendFileSync(process.env.GITHUB_OUTPUT, `inline_plan=${inlinePlan}\n`);
   appendFileSync(
     process.env.GITHUB_OUTPUT,
     `matrix=${JSON.stringify({ include: plan.jobs.map(({ id, tasks }) => ({ id, lint: tasks.some((task) => task.id === 'guard-lint') })) })}\n`,

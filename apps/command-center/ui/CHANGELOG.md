@@ -6,6 +6,13 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.36.8 - 2026-11-18
+
+- Search inside saved logs, Markdown and JSON, then preview a matching original line and restore it from a shared link.
+- Show “Worker finished” on stale blocked runs when Monitor was the last step to run and recorded completion.
+- Show failed attempts, timestamps and recorded failure reasons inside the Review history round they belong to.
+- Show how long a run has gone without progress after 20 minutes in Runs and the run sidebar. Keep operator waits clear of the stale label.
+
 ## 0.36.7 - 2026-11-18
 
 - The checklist shows "Spent so far" (cost, tokens, tool calls, compactions) and a cost per step while a run works; the run-detail tool-usage panel shows compactions overall and per step.

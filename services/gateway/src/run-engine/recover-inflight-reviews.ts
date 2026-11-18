@@ -436,6 +436,7 @@ export function buildRecoveredReview(params: {
   );
   const previous = priorReviews.find((review) => review.id === reviewId);
   const retainedHead = previous?.reviewedHeadSha ?? previous?.reviewSnapshot?.headSha;
+  const priorHead = reviewSnapshot?.interdiff?.oldHeadSha ?? reviewSnapshot?.baseSha;
   // A new WARM launch can follow a COLD verdict. Its own retained session,
   // loop and captured base identify the continuation, not the older row's mode.
   const resumed =
@@ -443,7 +444,7 @@ export function buildRecoveredReview(params: {
     !!ctx.runnerSessionId &&
     ctx.runnerSessionId === previous.reviewerSessionId &&
     !!retainedHead &&
-    reviewSnapshot?.baseSha === retainedHead &&
+    priorHead === retainedHead &&
     (ctx.reviewLoopNumber ?? 0) > lastReviewAttemptLoop(previous);
   const mode = ctx.reviewFallback
     ? 'cold'
@@ -458,8 +459,7 @@ export function buildRecoveredReview(params: {
           continuity: mode === 'warm' ? ('resumed' as const) : ('fresh' as const),
           reviewId,
           sessionId: ctx.runnerSessionId,
-          lastReviewedHeadSha:
-            (mode === 'warm' ? reviewSnapshot.baseSha : reviewSnapshot.headSha) ?? undefined,
+          lastReviewedHeadSha: (mode === 'warm' ? priorHead : reviewSnapshot.headSha) ?? undefined,
           ...(mode === 'warm' ? { priorRunId: run.id, priorSessionId: ctx.runnerSessionId } : {}),
           fallback: ctx.reviewFallback,
         }

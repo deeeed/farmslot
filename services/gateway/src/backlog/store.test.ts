@@ -670,6 +670,8 @@ test('launch plan queues baseline first and materializes comparison candidates i
     resourceRevisions.revision(queueKey) > beforeStart.queue,
     'Materialized comparison candidates invalidate the queue',
   );
+  // The enqueue's background dispatcher can publish a waiting reason for the manual slot.
+  await queue.tryDispatchNext();
   const materializedRevision = resourceRevisions.revision(queueKey);
   await backlog.markBacklogRunStarted(enqueued.queueItem, baselineRun);
   assert.equal(

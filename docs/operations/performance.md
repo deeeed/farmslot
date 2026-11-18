@@ -44,6 +44,12 @@ It adds no Git calls, writes, polling or retries. The exact bash-to-idle-zsh
 regression and nine refusal cases pass with mocked exec; the 113-test teardown
 suite takes 13.1 s locally. These fixture timings are not live release latency.
 
+A failed slot release now aborts and drains its existing owned cleanup commands
+before settling its durable fence to held. Successful releases add no processes,
+Git calls, node requests, timers or history scans. Failure adds one guarded status
+update and uses the existing 10 s closeout bound. Warm recycle retains its phase
+budgets and now uses the same cancellation scope.
+
 Cached paint starts at foreground demand, before lookup/hydration, and ends after
 the subscriber's queued render and data frame. Refresh timing stays separate.
 Read counters include cache source, age, stale/blocking state and opaque per-query
@@ -262,3 +268,12 @@ inventory helper. Selection repeats at start so a doctor result cannot select a 
 Keep the lookup independent of run history, preserve stream snapshots/timing, and use the
 first-frame event for native readiness instead of a fixed delay. Do not reset a renderer to
 recover capture: that tears down its simulator.
+
+### Run admission storage checks
+
+Run creation checks the existing four configured gateway storage roots before planning and
+again immediately before inserting the record. The second check covers a volume lost during
+asynchronous planning. This adds bounded filesystem metadata work, with zero processes or Git
+calls and no run-history scan. Fleet monitoring checks the same roots at startup and on its
+existing poll, including while a previous fleet read remains in flight. It adds no timer and
+only broadcasts when the unavailable-storage message changes; recovery rearms the warning.

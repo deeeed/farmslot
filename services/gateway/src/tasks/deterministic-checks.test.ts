@@ -589,3 +589,23 @@ test('retained local_check declarations refuse publication without a checkout or
   );
   await assert.rejects(validateDeterministicChecksForRun(run), /slot is missing/);
 });
+
+test('an unvalidated no-change run cannot waive changed-file CI after losing its checkout', async (t) => {
+  const { root, run } = await task(t);
+  await writeFile(path.join(root, 'CHECKLIST.md'), '- [ ] CI [DETERMINISTIC: ci.local_check]\n');
+  await writeFile(
+    path.join(root, 'inputs/worker-terminal-contract.json'),
+    JSON.stringify({
+      deterministicChecks: [
+        { checklist: 'CHECKLIST.md', stepNumber: 1, reference: 'ci.local_check', command: 'true' },
+      ],
+    }),
+  );
+  await assert.rejects(
+    validateDeterministicChecksForRun({
+      ...run,
+      metrics: { ...run.metrics, disposition: 'already_fixed' },
+    }),
+    /require the run checkout/,
+  );
+});

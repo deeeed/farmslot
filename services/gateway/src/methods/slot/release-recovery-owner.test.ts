@@ -53,6 +53,7 @@ await import('../../runtime/mock-pty.test-support.js');
 const core = await import('../../core/index.js');
 const releaseState = await import('../../core/state.js');
 let afterMarker = async (): Promise<void> => {};
+let beforeSettlement = async (): Promise<void> => {};
 let probeCalls = 0;
 let retryProbe: () => Promise<string | null> = async () => null;
 mock.module('../../core/index.js', {
@@ -68,6 +69,10 @@ mock.module('../../core/index.js', {
       if (command.startsWith('ps -axo') || command.startsWith('lsof -a -d cwd'))
         return { stdout: '', stderr: '', exitCode: 0 };
       return core.execOnSlot(...args);
+    },
+    updateSlotStatusIf: async (...args: Parameters<typeof core.updateSlotStatusIf>) => {
+      if (args[2].lifecycle === 'held') await beforeSettlement();
+      return core.updateSlotStatusIf(...args);
     },
     markSlotStatusIf: async (...args: Parameters<typeof core.markSlotStatusIf>) => {
       const result = await core.markSlotStatusIf(...args);
@@ -154,6 +159,7 @@ const readRow = async () => {
 async function seedDeadline() {
   store.updateRun(owner.id, { status: 'failed', completedAt: new Date().toISOString() });
   afterMarker = async () => {};
+  beforeSettlement = async () => {};
   reprepare = async () => {
     throw new Error('unexpected re-prepare');
   };
@@ -174,6 +180,202 @@ async function seedDeadline() {
       ],
     }),
   );
+}
+
+for (const keepWarm of [false, true]) {
+  test(`a failed release settles its fence and permits an owner retry, warm=${keepWarm}`, async () => {
+    await seedDeadline();
+    const failure = new Error('Cannot fetch the default branch (exit 128)');
+    afterMarker = async () => {
+      throw failure;
+    };
+    const params = {
+      slotId: 'owned-recovery',
+      expectedRunId: owner.id,
+      keepWork: true,
+      preserveAgents: true,
+      keepWarm,
+    };
+    await assert.rejects(
+      slotRelease(params, () => {}),
+      (error) => error === failure,
+    );
+    const held = await readRow();
+    assert.equal(held.lifecycle, 'held');
+    assert.equal(held.phase, 'occupied');
+    assert.equal(held.current_run_id, owner.id);
+    assert.equal(held.slot_epoch, 7);
+    assert.equal(held.releasing_since, null);
+    assert.match(String(held.held_reason), /Cannot fetch the default branch.*retry release/i);
+    assert.equal(isTerminalTeardownInFlight('owned-recovery'), false);
+    afterMarker = async () => {};
+    const retried = await slotRelease({ ...params, keepWarm: false }, () => {});
+    assert.equal(retried.released, true);
+    assert.equal((await readRow()).lifecycle, 'ready');
+  });
+}
+
+test('a failed warm release owns the registry until durable settlement finishes', async (t) => {
+  await seedDeadline();
+  const entered = deferred(),
+    resume = deferred();
+  const failure = new Error('Cannot fetch the default branch (exit 128)');
+  afterMarker = async () => {
+    throw failure;
+  };
+  beforeSettlement = async () => {
+    entered.resolve();
+    await resume.promise;
+  };
+  const rejected = assert.rejects(
+    slotRelease(
+      {
+        slotId: 'owned-recovery',
+        expectedRunId: owner.id,
+        keepWork: true,
+        preserveAgents: true,
+        keepWarm: true,
+      },
+      () => {},
+    ),
+    (error) => error === failure,
+  );
+  t.after(async () => {
+    resume.resolve();
+    await rejected;
+  });
+  await entered.promise;
+  assert.equal((await readRow()).phase, 'releasing');
+  assert.equal(
+    isTerminalTeardownInFlight('owned-recovery'),
+    true,
+    'stale-fence reconciliation must see the release while its settlement is pending',
+  );
+  resume.resolve();
+  await rejected;
+  assert.equal((await readRow()).phase, 'occupied');
+  assert.equal(isTerminalTeardownInFlight('owned-recovery'), false);
+});
+
+test('failed fence settlement preserves both errors and releases its registry count', async () => {
+  await seedDeadline();
+  const failure = new Error('fetch failed'),
+    settlementFailure = new Error('status commit failed');
+  afterMarker = async () => {
+    throw failure;
+  };
+  beforeSettlement = async () => {
+    throw settlementFailure;
+  };
+  await assert.rejects(
+    slotRelease(
+      {
+        slotId: 'owned-recovery',
+        expectedRunId: owner.id,
+        keepWork: true,
+        preserveAgents: true,
+      },
+      () => {},
+    ),
+    (error) =>
+      error instanceof AggregateError &&
+      error.errors[0] === failure &&
+      error.errors[1] === settlementFailure,
+  );
+  assert.equal(isTerminalTeardownInFlight('owned-recovery'), false);
+});
+
+test('an ordinary command failure retains unconfirmed cleanup ownership', async () => {
+  await seedDeadline();
+  const failure = new Error('transport closeout unconfirmed');
+  afterMarker = async () => {
+    await trackCleanupCommand(Promise.reject(failure));
+  };
+  await assert.rejects(
+    slotRelease(
+      {
+        slotId: 'owned-recovery',
+        expectedRunId: owner.id,
+        keepWork: true,
+        preserveAgents: true,
+      },
+      () => {},
+    ),
+    (error) => error === failure,
+  );
+  const held = await readRow();
+  assert.equal(held.lifecycle, 'held');
+  assert.equal(held.phase, 'occupied');
+  assert.equal(held.current_run_id, null);
+  assert.equal(held.cleanup_run_id, owner.id);
+  assert.equal(held.cleanup_stop_unconfirmed, true);
+  assert.match(String(held.held_reason), /unconfirmed/);
+  assert.equal(replaySlotReclaimCheck(held, owner.id).ok, false);
+});
+
+for (const ownerBoundRetry of [true, false]) {
+  test(`a failed retry keeps prior stop and owner, ownerBoundRetry=${ownerBoundRetry}`, async () => {
+    await seedDeadline();
+    const first = new Error('transport closeout unconfirmed');
+    const second = new Error('Cannot fetch the default branch (exit 128)');
+    const params = {
+      slotId: 'owned-recovery',
+      expectedRunId: owner.id,
+      keepWork: true,
+      preserveAgents: true,
+    };
+    afterMarker = async () => {
+      await trackCleanupCommand(Promise.reject(first));
+    };
+    await assert.rejects(
+      slotRelease(params, () => {}),
+      (error) => error === first,
+    );
+    assert.equal((await readRow()).cleanup_stop_unconfirmed, true);
+    afterMarker = async () => {
+      throw second;
+    };
+    await assert.rejects(
+      slotRelease({ ...params, expectedRunId: ownerBoundRetry ? owner.id : undefined }, () => {}),
+      (error) => error === second,
+    );
+    const held = await readRow();
+    assert.equal(held.lifecycle, 'held');
+    assert.equal(held.current_run_id, null);
+    assert.equal(held.cleanup_run_id, owner.id);
+    assert.equal(held.cleanup_stop_unconfirmed, true);
+    assert.equal(replaySlotReclaimCheck(held, owner.id).ok, false);
+    assert.match(String(held.held_reason), /unconfirmed/);
+    afterMarker = async () => {};
+    assert.equal((await slotRelease(params, () => {})).released, true);
+    assert.equal((await readRow()).cleanup_stop_unconfirmed, null);
+  });
+}
+
+for (const successor of [{ slot_epoch: 8 }, { current_run_id: 'successor' }]) {
+  test(`ordinary release failure preserves successor ${JSON.stringify(successor)}`, async () => {
+    await seedDeadline();
+    const failure = new Error('fetch failed after claim changed');
+    let expected: Awaited<ReturnType<typeof readRow>>;
+    afterMarker = async () => {
+      await core.updateSlotStatus('owned-recovery', successor);
+      expected = await readRow();
+      throw failure;
+    };
+    await assert.rejects(
+      slotRelease(
+        {
+          slotId: 'owned-recovery',
+          expectedRunId: owner.id,
+          keepWork: true,
+          preserveAgents: true,
+        },
+        () => {},
+      ),
+      (error) => error === failure,
+    );
+    assert.deepEqual(await readRow(), expected!);
+  });
 }
 
 test(

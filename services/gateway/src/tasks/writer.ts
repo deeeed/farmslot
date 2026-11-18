@@ -73,6 +73,7 @@ import {
   slotWriteFileAtomic,
 } from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
+import { usesEvalTrialCapsule } from '../evals/trial-policy.js';
 import {
   buildFollowUpScopeContractSection,
   materializeInheritedContext,
@@ -115,6 +116,7 @@ import {
   writePlanningContextInput,
 } from './planning-context.js';
 import { buildQaTaskSection, writeQaInput } from './qa-input.js';
+import { resolveReferenceCheckouts } from './reference-checkouts.js';
 import { runContractSection, shouldApplyArtifactOnlyTaskPolicy } from './run-contract.js';
 import { stackSection } from './stack-section.js';
 import { renderAcceptanceCriteria, taskNoteSection } from './task-document.js';
@@ -423,7 +425,24 @@ export function artifactOnlyReplayForRun(
 ): TaskInitSpec['artifactOnlyReplay'] {
   if (!shouldApplyArtifactOnlyTaskPolicy(run)) return undefined;
   return {
-    base: run.startRef?.resolvedSha ?? run.startRef?.requestedRef ?? 'selected reference/base',
+    // Only a base this task input can prove is named. `startRef` is frozen
+    // here; a capsule blind trial's `blind.baseSha` is the commit prepare
+    // checks the capsule out at (dispatch-lifecycle-steps.ts, same
+    // usesEvalTrialCapsule condition), so it is the worker's actual starting
+    // point. `preWorkBaseSha` and `worktreeHeadAtDispatch` are NOT candidates:
+    // WRITE_TASK runs before PREPARE and DISPATCH record them (FLOW_STEPS), so
+    // they are empty here on a fresh run, and on a replayed dispatch
+    // `worktreeHeadAtDispatch` can have moved past the candidate's own commits,
+    // which would silently drop them from the comparison. Eval run 9317844e
+    // shipped the `selected reference/base` placeholder instead, and its worker
+    // searched git history for that ref.
+    base:
+      run.startRef?.resolvedSha ??
+      run.startRef?.requestedRef ??
+      (usesEvalTrialCapsule(run.engineState?.evalExperiment?.blind)
+        ? run.engineState?.evalExperiment?.blind?.baseSha
+        : undefined) ??
+      undefined,
     ...(run.engineState?.evalExperiment
       ? {
           ignoredPaths: [
@@ -1294,25 +1313,25 @@ export async function writeTaskFile(
     }
   }
 
-  // Resolve mobile reference repo path (for cross-codebase comparison steps in templates).
-  // Absence is valid for projects without a mobile reference checkout; malformed
-  // path/config errors should throw from their concrete operation instead of
-  // being hidden behind a blanket catch.
-  vars.MOBILE_REPO = '';
-  const parentDir = path.dirname(slotVars.remoteRepo);
-  const refName = (projectVars.projectJson as any)?.reference_repos?.mobile?.local_name as
-    | string
-    | undefined;
-  const candidates = refName
-    ? [path.join(parentDir, refName), path.join(parentDir, refName.replace(/-ref$/, '-1'))]
-    : [path.join(parentDir, 'example-mobile-1')];
-  for (const c of candidates) {
-    if (existsSync(c)) {
-      vars.MOBILE_REPO = c;
-      break;
-    }
+  // Read-only reference checkouts this task is compared against: one per
+  // `reference_repos` key, as a sibling of the slot checkout. Probed on the machine
+  // that runs the task, not on the gateway — a remote slot's siblings are not this
+  // host's. A key that machine has not cloned is reported absent and binds an empty
+  // path; it is never substituted with that project's slot checkout, which is a
+  // working tree other runs branch-switch and rewrite.
+  const referenceCheckouts = await resolveReferenceCheckouts(
+    slotVars,
+    projectVars.projectJson.reference_repos,
+    slotVars.remoteRepo,
+  );
+  for (const reference of referenceCheckouts) {
+    const bound = reference.present ? reference.path : '';
+    vars[`${reference.name}_repo`] = bound;
+    vars[`${reference.name.toUpperCase()}_REPO`] = bound;
   }
-  vars.mobile_repo = vars.MOBILE_REPO;
+  // Templates of projects that declare no mobile reference still render the variable.
+  vars.MOBILE_REPO ??= '';
+  vars.mobile_repo ??= vars.MOBILE_REPO;
 
   emit('substep', {
     name: 'render-template',
@@ -1457,6 +1476,7 @@ export async function writeTaskFile(
     taskDocumentAdditions,
     terminalContract,
     bugInput: run.ticketData ?? undefined,
+    ...(referenceCheckouts.length ? { referenceCheckouts } : {}),
     ...(splitChecklist
       ? {}
       : {

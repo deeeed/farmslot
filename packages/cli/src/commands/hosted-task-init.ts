@@ -11,6 +11,7 @@ import {
   freezeRequiredSkills,
   type HandoffMetadata,
   projectWorkerTemplateSource,
+  REFERENCE_CHECKOUTS_INPUT,
   REQUIRED_SKILLS_REPAIR,
   RequiredSkillsError,
   resolveConfiguredExecutionTemplateSources,
@@ -247,7 +248,11 @@ function isHostedRequest(value: unknown): value is HostedTaskInitRequest {
     !optional(task.terminalContract, terminalContract) ||
     !optional(
       task.artifactOnlyReplay,
-      (entry) => isRecord(entry) && string(entry.base) && optional(entry.ignoredPaths, strings),
+      // A replay whose run recorded no base declares none: the guardrails say
+      // so rather than naming a ref the worker cannot resolve. A present base
+      // must still be a string.
+      (entry) =>
+        isRecord(entry) && optional(entry.base, string) && optional(entry.ignoredPaths, strings),
     ) ||
     !optional(
       task.authored,
@@ -548,6 +553,9 @@ export async function runHostedTaskInit(inputFile: string): Promise<TaskInitResu
         terminalContract: path.join(taskDir, 'inputs/worker-terminal-contract.json'),
         bugInput: fs.existsSync(path.join(taskDir, 'inputs/bug-input.json'))
           ? path.join(taskDir, 'inputs/bug-input.json')
+          : null,
+        referenceCheckouts: fs.existsSync(path.join(taskDir, REFERENCE_CHECKOUTS_INPUT))
+          ? path.join(taskDir, REFERENCE_CHECKOUTS_INPUT)
           : null,
         executionTemplate: metadata.executionTemplate,
         handoffMetadata: metadata,

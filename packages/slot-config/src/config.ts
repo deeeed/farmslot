@@ -17,6 +17,7 @@ import {
   isValidDomainName,
   normalizeProjectWorkflowDefaults,
   parseRequiredSkillsConfig,
+  parseReviewRuleDeclaration,
   PHYSICAL_DEVICE_SLOT_POLICIES,
   type PhysicalDeviceSlotPolicy,
   type PoolSlotMode,
@@ -256,7 +257,19 @@ export interface RawProjectJson {
   external?: { mock_mode?: boolean; fixtures_dir?: string };
   reference_repos?: Record<
     string,
-    { repo_url: string; local_name: string; branch?: string; required_paths?: string[] }
+    {
+      repo_url: string;
+      local_name: string;
+      branch?: string;
+      /**
+       * A read-only codebase the worker compares against. Listed in the task inputs
+       * with its revision. Without this flag the key is the slot's own second
+       * checkout — a tree its own checklist installs and boots — and stays out of
+       * that list, because a worker must not be told it is read-only.
+       */
+      read_only?: boolean;
+      required_paths?: string[];
+    }
   >;
   paths?: { runtime_dir?: string; artifact_dir?: string; recipe_dir?: string };
   vars?: Record<string, string>;
@@ -315,6 +328,8 @@ export interface RawProjectJson {
     template_id?: string;
     /** Project-fixture files copied into a static review task as frozen reviewer guidance. */
     instruction_files?: string[];
+    /** Project-fixture rule pack frozen into the review handoff (ADR-0073 Amendment 1). */
+    rule_pack?: { pack: string; client: string; level: 'static' | 'full' };
   };
   hooks?: Record<string, string | Record<string, string>>;
   health?: Record<string, string>;
@@ -1104,12 +1119,29 @@ export function normalizeRawStaticReview(
   if (
     Object.keys(config).some(
       (key) =>
-        !['template_id', 'instruction_files', 'domain', 'support', 'workspace'].includes(key),
+        ![
+          'template_id',
+          'instruction_files',
+          'rule_pack',
+          'domain',
+          'support',
+          'workspace',
+        ].includes(key),
     )
   ) {
     throw new Error(
-      `${projectConfig}: static_review only accepts template_id, instruction_files, domain, support and workspace`,
+      `${projectConfig}: static_review only accepts template_id, instruction_files, rule_pack, domain, support and workspace`,
     );
+  }
+  let rulePack: import('@farmslot/protocol').RequiredSkillReview | undefined;
+  if (config.rule_pack !== undefined) {
+    try {
+      rulePack = parseReviewRuleDeclaration(config.rule_pack, 'static_review.rule_pack');
+    } catch (error) {
+      throw new Error(
+        `${projectConfig}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
   if (
     config.template_id !== undefined &&
@@ -1172,6 +1204,7 @@ export function normalizeRawStaticReview(
     ...(config.instruction_files !== undefined
       ? { instructionFiles: [...(config.instruction_files as string[])] }
       : {}),
+    ...(rulePack ? { rulePack } : {}),
   };
 }
 

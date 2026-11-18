@@ -718,7 +718,9 @@ if (terminalCommand !== 'blocked') {
   if (checklists.size === 0) checklists.add(undefined);
   for (const checklist of checklists) {
     try {
-      const result = deterministicChecks.evaluate(taskDir, checklist);
+      const result = deterministicChecks.evaluate(taskDir, checklist, {
+        noChange: terminalCommand === 'no-change',
+      });
       if (!proofMeasurement) issues.push(...result.issues);
       deterministicResults.push(...result.checks);
     } catch (error) {

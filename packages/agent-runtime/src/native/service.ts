@@ -9,6 +9,12 @@ import { Methods } from '@farmslot/protocol/rpc';
 
 import { nativeTurnDiff } from './checkpoint.js';
 import { type NativeSessionClient, observeExistingNativeHost } from './client.js';
+import {
+  NATIVE_HOST_UNAVAILABLE,
+  NATIVE_HOST_VERSION_SKEW,
+  NATIVE_SOURCE_UNAVAILABLE,
+  preservedNativeHostCode,
+} from './host-unavailable.js';
 import { NATIVE_PROFILE_METHODS, routeNativeProfile } from './profile-service.js';
 import { nativeWorkspaceChanges, nativeWorkspaceDiff, nativeWorkspaceList } from './workspace.js';
 import { readWorkspaceText } from './workspace-files.js';
@@ -17,7 +23,13 @@ export { parseNativeSessionRequester } from './requester.js';
 
 export class NativeSessionMethodError extends Error {
   constructor(
-    readonly code: 'INVALID_PARAMS' | 'NATIVE_SESSION_ERROR' | 'NOT_FOUND',
+    readonly code:
+      | 'INVALID_PARAMS'
+      | 'NATIVE_SESSION_ERROR'
+      | 'NOT_FOUND'
+      | typeof NATIVE_HOST_UNAVAILABLE
+      | typeof NATIVE_HOST_VERSION_SKEW
+      | typeof NATIVE_SOURCE_UNAVAILABLE,
     message: string,
   ) {
     super(message);
@@ -286,6 +298,11 @@ export async function routeNativeSession(
     if (error instanceof NativeSessionMethodError) throw error;
     if ((error as { code?: string }).code === 'NOT_FOUND')
       throw new NativeSessionMethodError('NOT_FOUND', (error as Error).message);
+    // A host that never answered is the caller's to wait out: flattening its code
+    // here leaves "nothing was sent" indistinguishable from a request that may have
+    // been served, and the caller refuses instead of waiting.
+    const preserved = preservedNativeHostCode(error);
+    if (preserved) throw new NativeSessionMethodError(preserved, (error as Error).message);
     throw new NativeSessionMethodError('NATIVE_SESSION_ERROR', (error as Error).message);
   }
 }

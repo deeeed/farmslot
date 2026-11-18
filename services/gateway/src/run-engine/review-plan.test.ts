@@ -613,3 +613,30 @@ test('an operator WARM request with a validated lineage and missing session admi
   assert.doesNotThrow(() => assertWarmReviewRequestAvailable(run, request, [run]));
   assert.equal(request.mode, 'warm', 'execution records the fallback, not the request');
 });
+
+test('WARM primary lineage treats GitHub pull URLs and shorthand as the same PR', async () => {
+  const { assertPrimaryReviewContext } = await import('./review-plan.js');
+  for (const ticketOrPr of ['owner/repo#42', 'https://github.com/owner/repo/pull/42']) {
+    const input = {
+      flowType: 'review-pr' as const,
+      ticketOrPr,
+      reviewMode: 'warm' as const,
+      reviewContext: {
+        reviewLineages: [{ repository: 'owner/repo', prNumber: 42, reviewId: 'retained-review' }],
+      },
+    };
+    assert.doesNotThrow(() => assertPrimaryReviewContext(input));
+    for (const binding of [
+      { repository: 'owner/foreign', prNumber: 42 },
+      { repository: 'owner/repo', prNumber: 43 },
+    ])
+      assert.throws(
+        () =>
+          assertPrimaryReviewContext({
+            ...input,
+            reviewContext: { reviewLineages: [{ ...binding, reviewId: 'retained-review' }] },
+          }),
+        /pr-mismatch/,
+      );
+  }
+});

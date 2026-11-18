@@ -1,0 +1,1 @@
+- Allow packs to declare sibling checkouts as read-only task references.

@@ -709,11 +709,35 @@ test('artifact-only task policy strips publishing instructions without startRef'
 
   const safe = applyReplayForRun(template, makeArtifactOnlyReplayRunWithoutStartRef());
 
-  assert.match(safe, /selected reference\/base/);
+  // This assertion used to require the `selected reference/base` placeholder,
+  // which is what eval run 9317844e shipped into TASK.md and what sent its
+  // worker searching git history for that ref.
+  assert.doesNotMatch(safe, /selected reference\/base/);
+  assert.match(safe, /No replay base was recorded for it/);
   assert.doesNotMatch(safe, /Ignore injected recipe-harness overlay paths/);
   assert.doesNotMatch(safe, /gh pr create/i);
   assert.doesNotMatch(safe, /git push/i);
   assert.doesNotMatch(safe, /create a draft PR/i);
+  assert.doesNotThrow(() => assertArtifactOnlyTaskGuard(safe));
+});
+
+// With no base to name, the guardrails forbid `main` as the baseline, so the
+// template's own main-relative commands must be rewritten too — otherwise the
+// task tells the worker to use the baseline the preamble just ruled out.
+test('artifact-only task policy leaves no main-relative comparison without a base', () => {
+  const template = [
+    '# Worker: Bugfix',
+    '',
+    'Inspect `git diff main...HEAD`.',
+    'Read `git log main..HEAD`.',
+    '- Resolve locally.',
+  ].join('\n');
+
+  const safe = applyReplayForRun(template, makeArtifactOnlyReplayRunWithoutStartRef());
+
+  assert.doesNotMatch(safe, /git diff main/);
+  assert.doesNotMatch(safe, /git log main/);
+  assert.match(safe, /No replay base was recorded for it/);
   assert.doesNotThrow(() => assertArtifactOnlyTaskGuard(safe));
 });
 

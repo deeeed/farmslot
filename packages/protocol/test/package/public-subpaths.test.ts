@@ -249,6 +249,7 @@ for (const [name, actual, expected] of [
       create: Methods.RUN_CREATE,
       createNative: Methods.RUN_CREATE_NATIVE,
       get: Methods.RUN_GET,
+      searchArtifacts: Methods.RUN_SEARCH_ARTIFACTS,
       list: Methods.RUN_LIST,
       slotHistory: Methods.RUN_SLOT_HISTORY,
       contextBundle: Methods.RUN_CONTEXT_BUNDLE,

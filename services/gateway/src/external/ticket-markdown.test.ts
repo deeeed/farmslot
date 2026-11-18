@@ -728,3 +728,99 @@ test('wiki and inherited Markdown remove only matching criterion Jira destinatio
   ])
     assert.equal(ticketBodyToMarkdown(source), source);
 });
+
+test('Jira registers a prose Expected behaviour section as an acceptance criterion', async (t) => {
+  const emailEnv = 'JIRA_BEHAVIOUR_TEST_EMAIL';
+  const apiTokenEnv = 'JIRA_BEHAVIOUR_TEST_TOKEN';
+  const previous = { [emailEnv]: process.env[emailEnv], [apiTokenEnv]: process.env[apiTokenEnv] };
+  t.after(() => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  process.env[emailEnv] = 'bot@example.test';
+  process.env[apiTokenEnv] = 'test-token';
+  t.mock.method(globalThis, 'fetch', async (input: Parameters<typeof globalThis.fetch>[0]) => {
+    assert.ok(String(input).startsWith('https://jira.example.test/rest/api/3/issue/ABC-4?'));
+    return new Response(
+      JSON.stringify({
+        key: 'ABC-4',
+        fields: {
+          summary: 'A dialog blocks the form',
+          description: doc(
+            heading(3, 'Impact'),
+            paragraph(text('The form cannot be used.')),
+            heading(3, 'Expected behaviour'),
+            paragraph(text('The dialog remains dismissible.')),
+            heading(3, 'Actual behaviour'),
+            paragraph(text('The dialog blocks the form.')),
+          ),
+          status: { name: 'To Do' },
+          issuetype: { name: 'Bug' },
+          labels: [],
+          components: [],
+          attachment: [],
+        },
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    );
+  });
+  const data = await fetchJiraIssue(
+    'ABC-4',
+    { baseUrl: 'https://jira.example.test', emailEnv, apiTokenEnv },
+    { includeComments: false },
+  );
+  assert.deepEqual(data.acceptanceCriteria, ['The dialog remains dismissible.']);
+});
+
+test('British expected-outcome headings are a fallback below explicit acceptance criteria', () => {
+  const expected =
+    '## Expected behaviour\nThe dialog remains dismissible.\n\n## Actual behaviour\nThe dialog blocks the form.';
+  assert.deepEqual(acceptanceCriteriaFromMarkdown(expected), ['The dialog remains dismissible.']);
+  assert.deepEqual(
+    acceptanceCriteriaFromMarkdown(
+      `${expected}\n\n## Acceptance Criteria\n- Keep the authored requirement.`,
+    ),
+    ['Keep the authored requirement.'],
+  );
+});
+
+test('observed Expected labels supply criteria only when no acceptance section is authored', () => {
+  const body = 'Expected:\nThe dialog remains dismissible.\n\nActual:\nThe dialog blocks the form.';
+  assert.deepEqual(acceptanceCriteriaFromMarkdown(body), ['The dialog remains dismissible.']);
+  assert.deepEqual(
+    acceptanceCriteriaFromMarkdown(
+      `${body}\n\n## Acceptance criteria\n- Keep the authored requirement.`,
+    ),
+    ['Keep the authored requirement.'],
+  );
+});
+
+test('an observed Added acceptance criteria section extends authored criteria in order', () => {
+  const body = [
+    '## Acceptance criteria',
+    '- Preserve the existing output.',
+    '## Scope extended',
+    'An additional supported case is required.',
+    '## Added acceptance criteria',
+    '- Include the added case.',
+    '- Cover it with a regression.',
+    '## Notes',
+    'Unrelated notes.',
+  ].join('\n');
+  assert.deepEqual(acceptanceCriteriaFromMarkdown(body), [
+    'Preserve the existing output.',
+    'Include the added case.',
+    'Cover it with a regression.',
+  ]);
+});
+
+test('nested added criteria retain their existing group and are not collected twice', () => {
+  const body =
+    '## Acceptance criteria\n- Preserve the existing output.\n### Added acceptance criteria\n- Include the added case.\n## Notes\nUnrelated notes.';
+  assert.deepEqual(acceptanceCriteriaFromMarkdown(body), [
+    'Preserve the existing output.',
+    'Added acceptance criteria: Include the added case.',
+  ]);
+});

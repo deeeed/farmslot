@@ -62,12 +62,17 @@ let fetchExitCode = 0;
 let ownedSupport = false;
 let ownedCleanupFailure = false;
 let onFixtures = async () => {};
+let beforeMark = async () => {};
 let moves = 0;
 let remoteReads = 0;
 const calls: string[] = [];
 mock.module('../../core/index.js', {
   namedExports: {
     ...core,
+    markSlotStatusIf: async (...args: Parameters<typeof core.markSlotStatusIf>) => {
+      await beforeMark();
+      return core.markSlotStatusIf(...args);
+    },
     loadProjectVars: async (name: string) => {
       const project = await core.loadProjectVars(name);
       return ownedSupport
@@ -325,6 +330,7 @@ beforeEach(async () => {
   moves = 0;
   calls.length = 0;
   onFixtures = async () => {};
+  beforeMark = async () => {};
   await seed();
 });
 
@@ -526,6 +532,92 @@ test('a terminal run pointer and stale working agent do not block recovery', asy
   const result = await recover();
   assert.equal(result.refreshed, true, result.detail);
 });
+test('an interrupted recovery can resume from a stale busy row with a failed owner', async (t) => {
+  const run = store.createRun({
+    project: 'example',
+    flowType: 'dev',
+    ticketOrPr: 'EXAMPLE-STALE-BUSY',
+    slotId: 'example-slot',
+  });
+  store.updateRun(run.id, { status: 'failed' });
+  t.after(() => store.deleteRun(run.id));
+  const parked = {
+    ref: 'refs/farmslot/parked/example-slot/prior/preserved',
+    branch: 'example-feature',
+    commits: 3,
+    kind: 'worktree' as const,
+  };
+  await seed({
+    current_run_id: run.id,
+    lifecycle: 'busy',
+    phase: 'working',
+    agent: 'working',
+    held_reason: 'Recovery cleanup: parked checkout retained',
+    workspace_recovery: { ...recovery, completed: ['inspect'], phase: 'cleanup', parked: [parked] },
+  });
+  branch = 'example-feature';
+  const result = await recover();
+  assert.equal(result.refreshed, true, result.detail);
+  assert.deepEqual(result.parked, [parked]);
+  assert.deepEqual(calls, ['release']);
+  assert.equal(branch, 'main');
+  const ready = await core.readSlotRow('example-slot');
+  assert.equal(ready?.lifecycle, 'ready');
+  assert.equal(ready?.current_run_id, null);
+  assert.equal(ready?.workspace_recovery, null);
+});
+
+test('a slot that becomes occupied before stale busy recovery remains untouched', async (t) => {
+  const run = store.createRun({
+    project: 'example',
+    flowType: 'dev',
+    ticketOrPr: 'EXAMPLE-OCCUPIED-RACE',
+    slotId: 'example-slot',
+  });
+  store.updateRun(run.id, { status: 'failed' });
+  t.after(() => store.deleteRun(run.id));
+  await seed({ current_run_id: run.id, lifecycle: 'busy', phase: 'working', agent: 'working' });
+  beforeMark = async () => {
+    await core.updateSlotStatus('example-slot', { phase: 'occupied' });
+  };
+  const result = await recover();
+  assert.equal(result.reason, 'identity-changed');
+  assert.deepEqual(calls, []);
+  const row = await core.readSlotRow('example-slot');
+  assert.equal(row?.phase, 'occupied');
+  assert.equal(row?.current_run_id, run.id);
+  assert.deepEqual(row?.workspace_recovery, recovery);
+});
+
+test('a stale busy row with a hold reason requires a matching recovery journal', async (t) => {
+  const run = store.createRun({
+    project: 'example',
+    flowType: 'dev',
+    ticketOrPr: 'EXAMPLE-NO-JOURNAL',
+    slotId: 'example-slot',
+  });
+  store.updateRun(run.id, { status: 'failed' });
+  t.after(() => store.deleteRun(run.id));
+  await seed({
+    current_run_id: run.id,
+    lifecycle: 'busy',
+    phase: 'working',
+    agent: 'idle',
+    workspace_recovery: null,
+    held_reason: 'Operator hold',
+  });
+  const expectedWorkspace = slotWorkspaceIdentity(
+    await inspectSlotWorkspace('example-slot', { timeoutMs: 120_000 }),
+  );
+  const result = await recover({ recover: false, expectedWorkspace });
+  assert.equal(result.reason, 'identity-changed');
+  assert.deepEqual(calls, []);
+  const row = await core.readSlotRow('example-slot');
+  assert.equal(row?.lifecycle, 'busy');
+  assert.equal(row?.current_run_id, run.id);
+  assert.equal(row?.held_reason, 'Operator hold');
+});
+
 test('a live run remains protected', async (t) => {
   const run = store.createRun({
     project: 'example',

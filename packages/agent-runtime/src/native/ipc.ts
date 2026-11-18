@@ -13,6 +13,7 @@ import type {
 } from '@farmslot/protocol';
 import { isNativeResultSchema } from '@farmslot/protocol/recipe/pipeline-visual-judgments';
 
+import { NATIVE_HOST_VERSION_SKEW } from './host-unavailable.js';
 import { parseNativeSessionRequester } from './requester.js';
 import {
   decodeNativeWorkerLaunch,
@@ -34,6 +35,9 @@ import {
 } from './worker-launch.js';
 
 export interface HostIdentity {
+  /** Version loaded by the detached supervisor, not its current files on disk. */
+  runtimeVersion?: string;
+  supportsRuntimeUpgrade?: boolean;
   supportsApprovalMode?: boolean;
   conversationStreaming?: 1;
   supportsStandaloneDelegation?: boolean;
@@ -51,6 +55,7 @@ export interface HostIdentity {
   socket: string;
 }
 export type HostRequest =
+  | { method: 'prepareUpgrade'; owner: string }
   | {
       method: typeof NATIVE_WORKER_COMPACT;
       owner: string;
@@ -200,7 +205,7 @@ export function decodeRequest(value: unknown): HostRequest {
   const p = object(value);
   const owner = string(p, 'owner');
   const method = p.method;
-  if (method === 'list') return { method, owner };
+  if (method === 'list' || method === 'prepareUpgrade') return { method, owner };
   if (
     method === 'create' ||
     method === 'ensure' ||
@@ -442,7 +447,9 @@ export function requestHost<T>(host: HostIdentity, request: HostRequest): Promis
         if (typeof result.error === 'string')
           throw Object.assign(
             new Error(result.error),
-            result.errorCode === 'NOT_FOUND' ? { code: 'NOT_FOUND' } : {},
+            result.errorCode === 'NOT_FOUND' || result.errorCode === NATIVE_HOST_VERSION_SKEW
+              ? { code: result.errorCode }
+              : {},
           );
         resolve(result.value as T);
       } catch (error) {

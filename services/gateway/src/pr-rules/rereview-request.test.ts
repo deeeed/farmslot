@@ -225,3 +225,11 @@ test('missing, unconfirmed or ambiguous retained lineage requests COLD', () => {
     assert.equal(request.execution?.models[0].mode, 'cold');
   }
 });
+
+test('rereview target uses the same identity for pull URLs and shorthand', () => {
+  for (const ticketOrPr of ['owner/repo#42', 'https://github.com/owner/repo/pull/42'])
+    assert.deepEqual(rereviewTarget({ ticketOrPr }, 'owner/other'), {
+      repo: 'owner/repo',
+      number: 42,
+    });
+});

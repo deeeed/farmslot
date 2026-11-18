@@ -13,7 +13,9 @@ import type {
   SlotStatus,
 } from '@farmslot/protocol';
 
+import { reportGatewayWarning } from '../chat/copilot-observer.js';
 import { projectTaskRoots } from '../core/config.js';
+import { gatewayStorageVolumeErrors } from '../core/storage-volume.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { backgroundHost, BackgroundHostError } from '../host-services/background/client.js';
 import { BACKGROUND_OPERATIONS } from '../host-services/background/protocol.js';
@@ -112,12 +114,23 @@ async function saveMonitorState(): Promise<void> {
 export function startMonitor(eventHandler: MonitorEventHandler): void {
   handler = eventHandler;
 
+  let lastStorageError = '';
+  const checkStorage = () => {
+    const error = gatewayStorageVolumeErrors().join('\n');
+    if (error && error !== lastStorageError)
+      reportGatewayWarning('storage.unavailable', error, 'error');
+    lastStorageError = error;
+  };
+  checkStorage();
+
   // Restore persisted state before starting loops
   loadMonitorState();
 
   // Fleet refresh loop. The read starts the refresh that keeps the fleet fresh, so a slow
   // violation scan skips later scans, never later reads.
   fleetTimer = setInterval(async () => {
+    // Storage must still alert while a slower fleet read remains in flight.
+    checkStorage();
     if (fleetPollInFlight) return;
     fleetPollInFlight = true;
     let fleet: FleetStatus;

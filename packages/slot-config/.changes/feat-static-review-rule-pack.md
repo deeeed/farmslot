@@ -1,0 +1,1 @@
+- `static_review.rule_pack` declares a project-fixture review rule pack; a malformed declaration fails project loading with the offending field.

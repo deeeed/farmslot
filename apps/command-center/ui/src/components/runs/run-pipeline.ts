@@ -88,6 +88,7 @@ import {
   renderReviewPipelineNode,
   type RunPipelineSpecialNodeRenderContext,
 } from './run-pipeline-special-node-renderers.js';
+import { pipelineStepTone } from './run-pipeline-status.js';
 import { runPipelineStyles } from './run-pipeline-styles.js';
 import {
   renderDefaultPipelineNode,
@@ -397,10 +398,16 @@ export class RunPipeline extends LitElement {
   private renderSvgContent(layout: PipelineLayout) {
     const nodeMap = new Map(layout.nodes.map((n) => [n.id, n]));
     const specialNodeContext = this._specialNodeContext();
+    const stepTone = (step: RunStep, status = this._vis(step)) =>
+      pipelineStepTone({ ...step, status }, { runError: this.run.error, run: this.run });
     return svg`
       ${renderPipelineDefs()}
       ${renderPipelineLanes(layout)}
-      ${layout.arrows.map((a, i) => renderPipelineArrow(a, this._vis(layout.nodes[i].step)))}
+      ${layout.arrows.map((a, i) => {
+        const step = layout.nodes[i].step;
+        const status = this._vis(step);
+        return renderPipelineArrow(a, status, stepTone(step, status));
+      })}
       ${layout.nodes.map(
         (n) => svg`
         <g class="pipeline-node" data-node-id=${n.id} data-status=${this._vis(n.step)}>
@@ -434,7 +441,7 @@ export class RunPipeline extends LitElement {
         </g>
       `,
       )}
-      ${renderReviewLoop(nodeMap, (step) => this._vis(step))}
+      ${renderReviewLoop(nodeMap, (step) => this._vis(step), stepTone)}
       ${renderPublicationReviewLoops(layout.nodes, (step) => this._vis(step))}
       ${renderPipelineDecisions(this.run, nodeMap)}
       ${renderPipelineFocus({

@@ -1131,7 +1131,7 @@ async function readExistingAvailableReviewInputArtifacts(
       return null;
     if (
       usesPreviousReviewDelta(run) &&
-      (parsed.baseSha !== run.repeatReviewContext?.priorReviewedHeadSha ||
+      (parsed.reviewInputScope !== 'contribution' ||
         parsed.headSha !== run.repeatReviewContext?.currentHeadSha)
     )
       return null;
@@ -1172,11 +1172,7 @@ async function readFreshReviewInputArtifacts(
       parsed.headSha !== run.repeatReviewContext.currentHeadSha
     )
       return null;
-    if (
-      usesPreviousReviewDelta(run) &&
-      parsed.baseSha !== run.repeatReviewContext?.priorReviewedHeadSha
-    )
-      return null;
+    if (usesPreviousReviewDelta(run) && parsed.reviewInputScope !== 'contribution') return null;
     if (!parsed.capturedAt) return null;
     const capturedAtMs = Date.parse(parsed.capturedAt);
     if (!Number.isFinite(capturedAtMs) || capturedAtMs > nowMs) return null;
@@ -1317,23 +1313,13 @@ async function captureReviewInputArtifactsForRunUnlocked(
             `Review head advanced from ${run.repeatReviewContext.currentHeadSha} to ${fetchedPr.headSha}; choose continuation again.`,
           );
         }
-        const incrementalBase = usesPreviousReviewDelta(run)
-          ? run.repeatReviewContext?.priorReviewedHeadSha
-          : undefined;
-        if (usesPreviousReviewDelta(run) && !incrementalBase)
-          throw new Error('WARM review unavailable: missing last reviewed head');
-        const fetchedFiles = incrementalBase
-          ? await (deps.fetchGitHubCompareFiles ?? fetchGitHubCompareFiles)(
-              prRef.repo,
-              incrementalBase,
-              fetchedPr.headSha,
-              { signal: controller.signal },
-            )
-          : await deps.fetchPRDiffFiles(prRef.repo, prRef.prNumber, {
-              baseSha: fetchedPr.baseSha,
-              headSha: fetchedPr.headSha,
-              signal: controller.signal,
-            });
+        // Intake carries only the PR's author contribution. The owned Git preparation
+        // pins the exact retained-session interdiff before any reviewer prompt is sent.
+        const fetchedFiles = await deps.fetchPRDiffFiles(prRef.repo, prRef.prNumber, {
+          baseSha: fetchedPr.baseSha,
+          headSha: fetchedPr.headSha,
+          signal: controller.signal,
+        });
         return { pr: fetchedPr, files: fetchedFiles };
       })(),
       captureTimeoutMs,
@@ -1343,15 +1329,12 @@ async function captureReviewInputArtifactsForRunUnlocked(
     const inputCommit: FamilyInputCommitMetadata = {
       repository: prRef.repo,
       prNumber: prRef.prNumber,
-      baseRef: usesPreviousReviewDelta(run)
-        ? run.repeatReviewContext?.priorReviewedHeadSha
-        : pr.baseRef,
-      baseSha: usesPreviousReviewDelta(run)
-        ? run.repeatReviewContext?.priorReviewedHeadSha
-        : pr.baseSha,
+      baseRef: pr.baseRef,
+      baseSha: pr.baseSha,
       headRef: pr.branch,
       headSha: pr.headSha,
       reviewMode: resolveReviewMode({ run }),
+      reviewInputScope: 'contribution',
       capturedAt: now,
       source: 'github-pr',
     };
@@ -1374,15 +1357,12 @@ async function captureReviewInputArtifactsForRunUnlocked(
       ...(stat.files > 0 ? { artifactPath: 'inputs/diff.txt' } : {}),
       repository: prRef.repo,
       prNumber: prRef.prNumber,
-      baseRef: usesPreviousReviewDelta(run)
-        ? run.repeatReviewContext?.priorReviewedHeadSha
-        : pr.baseRef,
-      baseSha: usesPreviousReviewDelta(run)
-        ? run.repeatReviewContext?.priorReviewedHeadSha
-        : pr.baseSha,
+      baseRef: pr.baseRef,
+      baseSha: pr.baseSha,
       headRef: pr.branch,
       headSha: pr.headSha,
       reviewMode: resolveReviewMode({ run }),
+      reviewInputScope: 'contribution',
       capturedAt: now,
       configSource: sourceFilterSettings.configSource,
       ...(sourceFilterSettings.configFallbackReason
@@ -1415,14 +1395,11 @@ async function captureReviewInputArtifactsForRunUnlocked(
       repository: prRef.repo,
       prNumber: prRef.prNumber,
       reviewMode: resolveReviewMode({ run }),
+      reviewInputScope: 'contribution',
       ...(pr
         ? {
-            baseRef: usesPreviousReviewDelta(run)
-              ? run.repeatReviewContext?.priorReviewedHeadSha
-              : pr.baseRef,
-            baseSha: usesPreviousReviewDelta(run)
-              ? run.repeatReviewContext?.priorReviewedHeadSha
-              : pr.baseSha,
+            baseRef: pr.baseRef,
+            baseSha: pr.baseSha,
             headRef: pr.branch,
             headSha: pr.headSha,
           }
@@ -1442,12 +1419,8 @@ async function captureReviewInputArtifactsForRunUnlocked(
           prNumber: prRef.prNumber,
           ...(pr
             ? {
-                baseRef: usesPreviousReviewDelta(run)
-                  ? run.repeatReviewContext?.priorReviewedHeadSha
-                  : pr.baseRef,
-                baseSha: usesPreviousReviewDelta(run)
-                  ? run.repeatReviewContext?.priorReviewedHeadSha
-                  : pr.baseSha,
+                baseRef: pr.baseRef,
+                baseSha: pr.baseSha,
                 headRef: pr.branch,
                 headSha: pr.headSha,
               }

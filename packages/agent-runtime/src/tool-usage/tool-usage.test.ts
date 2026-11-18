@@ -13,6 +13,7 @@ import {
   measureToolUsage,
   mergeToolUsage,
 } from './index.js';
+import { OPENAI_PRICING } from './prices.js';
 
 let dir = '';
 before(async () => {
@@ -400,6 +401,22 @@ test('live: codex bills cached input at the cached rate', () => {
   );
   // Each of the two samples: 100k uncached at $2, 900k cached at $0.10, 10k output at $10 per 1M.
   assert.equal(live.summary([])!.costUsd?.toFixed(4), '0.7800');
+});
+
+test('OpenAI GPT-5 and GPT-6 rows match the published standard short-context rates', () => {
+  assert.deepEqual(OPENAI_PRICING, {
+    'gpt-6.2-astra': { input: 8.0, cached_input: 0.4, output: 40.0 },
+    'gpt-6.2-sol': { input: 2.0, cached_input: 0.1, output: 10.0 },
+    'gpt-6-astra': { input: 10.0, cached_input: 1.0, output: 50.0 },
+    'gpt-6.1-sol': { input: 2.0, cached_input: 0.1, output: 10.0 },
+    'gpt-6-sol': { input: 2.0, cached_input: 0.2, output: 10.0 },
+    'gpt-5.6-sol': { input: 4.0, cached_input: 0.4, output: 20.0 },
+    'gpt-5.6-terra': { input: 2.0, cached_input: 0.2, output: 12.0 },
+    'gpt-5.6-luna': { input: 0.2, cached_input: 0.02, output: 1.2 },
+    'gpt-5.6': { input: 4.0, cached_input: 0.4, output: 20.0 },
+    'gpt-5.5': { input: 5.0, cached_input: 0.5, output: 30.0 },
+    'gpt-5.4': { input: 2.5, cached_input: 0.25, output: 15.0 },
+  });
 });
 
 test('live: a record timed inside a frozen step is added to that step, not lost', () => {

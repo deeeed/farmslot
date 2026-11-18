@@ -782,6 +782,10 @@ await test('estimateContextWindow prefers exact and longest model matches', () =
     'Astra context window did not resolve',
   );
   assert(
+    estimateContextWindow('codex:gpt-6.2-astra') === 272_000,
+    'GPT-6.2 Astra context window did not resolve',
+  );
+  assert(
     estimateContextWindow('openai:gpt-5.3-codex-spark') === 400_000,
     'spark model did not resolve',
   );

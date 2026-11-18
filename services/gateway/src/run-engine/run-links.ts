@@ -81,26 +81,31 @@ async function computeRunLinks(run: Run): Promise<RunLink[]> {
   }
   return links;
 }
-/**
- * Recompute and persist links on a run (call after ticketData/prNumber changes).
- *
- * An empty recompute is normally a lookup that came back thin — a missing
- * `ci.repo`, no Jira base URL — so the existing links are kept rather than
- * wiped. `allowEmpty` is for the caller that is deliberately removing a link:
- * clearing an unproven `prNumber` on a run whose ticket is a backlog id or a
- * GitHub issue recomputes to nothing, and keeping the old PR link there leaves
- * `run adopt-published-pr` refusing the PR that actually shipped.
- */
-export async function refreshRunLinks(
-  runId: string,
-  options?: { allowEmpty?: boolean },
-): Promise<void> {
+/** Recompute and persist links on a run (call after ticketData/prNumber changes). */
+export async function refreshRunLinks(runId: string): Promise<void> {
   const run = getRun(runId);
   if (!run) return;
   const links = await computeRunLinks(run);
-  if (links.length > 0 || options?.allowEmpty === true) {
+  if (links.length > 0) {
     updateRun(runId, { links });
   }
+}
+
+/**
+ * Remove the PR link from a run that no longer has a proved PR, then recompute.
+ *
+ * `refreshRunLinks` alone cannot do this: an empty recompute is normally a
+ * lookup that came back thin (a missing `ci.repo`, no Jira base URL), so it
+ * keeps the existing list — including a PR link whose number has just been
+ * cleared, which leaves `run adopt-published-pr` refusing the PR that actually
+ * shipped. Only the PR row is dropped, so a ticket's own issue link survives a
+ * recompute that can no longer regenerate it.
+ */
+export async function dropRunPrLink(runId: string): Promise<void> {
+  const run = getRun(runId);
+  if (!run) return;
+  updateRun(runId, { links: (run.links ?? []).filter((link) => link.label !== 'PR') });
+  await refreshRunLinks(runId);
 }
 
 /**

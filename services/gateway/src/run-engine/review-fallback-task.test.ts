@@ -134,7 +134,7 @@ for (const cached of [false, true]) {
           number: 42,
         }),
         fetchPRDiffFiles: async () => {
-          throw new Error('Full PR capture is forbidden');
+          throw new Error('Contribution capture temporarily unavailable');
         },
         fetchGitHubCompareFiles: async () => {
           throw new Error('Retained delta temporarily unavailable');
@@ -144,7 +144,7 @@ for (const cached of [false, true]) {
         await readFile(path.join(dir, 'inputs/diff-stat.json'), 'utf8'),
       );
       assert.equal(unavailable.available, false);
-      assert.equal(unavailable.baseSha, 'a'.repeat(40));
+      assert.equal(unavailable.baseSha, '0'.repeat(40));
     }
     const captures: string[] = [];
     await captureReviewInputArtifactsForRun(captureRun, {
@@ -158,41 +158,33 @@ for (const cached of [false, true]) {
         number: 42,
       }),
       fetchPRDiffFiles: async () => {
-        captures.push('full PR');
+        captures.push('current contribution');
         return [
           {
-            filename: 'src/full.ts',
+            filename: 'src/current.ts',
             status: 'modified',
             additions: 1,
             deletions: 0,
-            patch: '@@ full PR',
+            patch: '@@ current contribution',
           },
         ];
       },
-      fetchGitHubCompareFiles: async (repo, base, head) => {
-        captures.push(`${repo}:${base}..${head}`);
-        return [
-          {
-            filename: 'src/delta.ts',
-            status: 'modified',
-            additions: 1,
-            deletions: 0,
-            patch: '@@ saved delta',
-          },
-        ];
+      fetchGitHubCompareFiles: async () => {
+        throw new Error('Prior-head comparison must not become intake');
       },
     });
-    assert.deepEqual(captures, [`owner/repo:${'a'.repeat(40)}..${'b'.repeat(40)}`]);
+    assert.deepEqual(captures, ['current contribution']);
     const commit = JSON.parse(await readFile(path.join(dir, 'inputs/commit.json'), 'utf8'));
     const stat = JSON.parse(await readFile(path.join(dir, 'inputs/diff-stat.json'), 'utf8'));
     for (const metadata of [commit, stat]) {
-      assert.equal(metadata.baseSha, 'a'.repeat(40));
+      assert.equal(metadata.baseSha, '0'.repeat(40));
+      assert.equal(metadata.reviewInputScope, 'contribution');
       assert.equal(metadata.headSha, 'b'.repeat(40));
       assert.equal(metadata.reviewMode, 'cold');
     }
     const diff = await readFile(path.join(dir, 'inputs/diff.txt'), 'utf8');
-    assert(diff.includes('src/delta.ts'));
-    assert(!diff.includes('full PR'));
+    assert(diff.includes('src/current.ts'));
+    assert(!diff.includes('src/delta.ts'));
     const inputs = await writePreviousReviewInputs(dir, frozen);
     assert.equal(inputs.length, 2);
     const contract = buildReviewExecutionContract(frozen, inputs, []);

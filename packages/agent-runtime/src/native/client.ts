@@ -24,7 +24,15 @@ import type {
 } from '@farmslot/protocol';
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
+import { RUNTIME_VERSION } from '../version.js';
+
 import { subscribeHost } from './conversation-ipc.js';
+import {
+  assertNativeHostRuntime,
+  nativeHostVersionSkew,
+  retireIdleNativeHost,
+} from './host-runtime.js';
+import { nativeHostUnavailableError } from './host-unavailable.js';
 import { type HostIdentity, type HostRequest, requestHost } from './ipc.js';
 import { alive, privateDirectory, readJson } from './storage.js';
 import {
@@ -209,13 +217,14 @@ export class NativeSessionClient {
       if (exited && child.exitCode !== 0) break;
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
-    throw new Error(
-      `Native host unavailable; inspect ${join(this.root, 'host.log')}. No command was retried.`,
-    );
+    throw nativeHostUnavailableError(join(this.root, 'host.log'));
   }
   /** Explicit lifecycle operation. Deployment invokes it from the login/GUI context. */
   async warm(): Promise<void> {
-    await this.host();
+    const host = await this.host();
+    if (host.runtimeVersion === RUNTIME_VERSION) return;
+    if (!(await retireIdleNativeHost(this.root, host))) throw nativeHostVersionSkew(host);
+    assertNativeHostRuntime(await this.host());
   }
   private async call<T>(request: HostRequest): Promise<T> {
     const passive = request.method === 'list' || passiveHostReads.getStore() === true;
@@ -277,6 +286,16 @@ export class NativeSessionClient {
       throw new Error(
         'Native host upgrade required for conversation streaming before launching new work',
       );
+    if (
+      [
+        'create',
+        'ensure',
+        NATIVE_WORKER_ENSURE,
+        NATIVE_WORKER_RESUME,
+        NATIVE_WORKER_TRANSFER,
+      ].includes(request.method)
+    )
+      assertNativeHostRuntime(host);
     const result = await requestHost<T>(host, request);
     if ('params' in request && request.params.profileId) {
       const session = result as NativeSessionInfo;

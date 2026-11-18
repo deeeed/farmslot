@@ -31,6 +31,8 @@ import {
 } from '@farmslot/protocol';
 import { publicationReviewBlockingReason, resolveReviewMode } from '@farmslot/review-dispatch';
 
+import { isReliableInterdiff } from '../review/interdiff.js';
+
 export { publicationReviewBlockingReason } from '@farmslot/review-dispatch';
 
 import { REQUESTED_REVIEW_SOURCE, reviewLoopNumberFromId } from '../quality/review-sources.js';
@@ -442,6 +444,7 @@ export function buildNoChangeGateInputs(args: {
   evidence?: WorkerTerminalEvidence;
   report?: string | null;
   artifactManifest?: EvidenceManifestEntry[];
+  skippedLocalCheck?: boolean;
 }): { desc: string; payload: NoChangeGatePayload } {
   const { disposition, ticketOrPr, monitorReason, evidence, report, artifactManifest } = args;
   const evidenceLines = [
@@ -452,6 +455,9 @@ export function buildNoChangeGateInputs(args: {
   const desc = [
     `Worker reported **${noChangeDispositionLabel(disposition)}** for ${ticketOrPr}.`,
     monitorReason ? `Worker reason: ${monitorReason}` : null,
+    args.skippedLocalCheck
+      ? 'Changed-file CI was skipped. The checkout was clean at the dispatch commit. Accepting closes the run on its no-change report.'
+      : null,
     evidenceLines.length ? `Evidence:\n${evidenceLines.join('\n')}` : 'Evidence: none reported.',
     report ? `\nReport excerpt:\n\n${report.slice(0, 600)}` : null,
   ]
@@ -667,8 +673,17 @@ function reviewSnapshotDiffMatchesPackage(
         !!snapshot.diffHash &&
         session?.lastReviewedHeadSha === compared.headSha &&
         deltaFallback.comparedRanges.at(-1) === `${compared.baseSha}..${compared.headSha}`
-      : snapshot.baseRef === preparedSnapshot.baseRef &&
-        snapshot.baseSha === session?.lastReviewedHeadSha;
+      : snapshot.interdiff
+        ? isReliableInterdiff(snapshot.interdiff) &&
+          snapshot.interdiff.oldHeadSha === session?.lastReviewedHeadSha &&
+          snapshot.interdiff.newHeadSha === snapshot.headSha &&
+          snapshot.interdiff.newBaseSha === snapshot.baseSha &&
+          snapshot.baseSha === preparedSnapshot.baseSha &&
+          !!snapshot.diffHash &&
+          snapshot.diffHash === preparedSnapshot.diffHash &&
+          !!snapshot.interdiff.rangeDiffHash
+        : snapshot.baseRef === preparedSnapshot.baseRef &&
+          snapshot.baseSha === session?.lastReviewedHeadSha;
     return (
       snapshot.source !== 'unavailable' &&
       session?.mode === review.mode &&

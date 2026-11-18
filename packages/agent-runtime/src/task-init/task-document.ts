@@ -14,6 +14,7 @@ import {
   DEFAULT_BRANCH,
   EXECUTION_CHECKLIST_DOCUMENT,
   type ExecutionTemplateReference,
+  type FrozenReviewRulePack,
   normalizeAcceptanceCriteria,
   type RequiredSkillSet,
   type TemplateProvenance,
@@ -28,6 +29,8 @@ import { installedRuntimeScriptCommand, installedTaskCommands } from './runtime-
 
 export const HANDOFF_INPUT = 'inputs/handoff.json';
 export const BUG_INPUT = 'inputs/bug-input.json';
+/** Resolved read-only reference checkouts, for a worker or a check that reads them by path. */
+export const REFERENCE_CHECKOUTS_INPUT = 'inputs/reference-checkouts.json';
 /** Optional project-owned addendum rendered into TASK.md (relative to `templates/`). */
 export const TASK_DOCUMENT_ADDENDUM_TEMPLATE = 'task-document.md';
 
@@ -190,6 +193,53 @@ export interface TaskDocumentInput {
   /** Static review supplies its enforced completion command instead of development guidance. */
   completionInstructions?: string;
   hasTicketData: boolean;
+  /**
+   * Read-only checkouts of other codebases this task compares against, one per
+   * `reference_repos` key the project declares. An absent one is listed as absent:
+   * a comparison the worker cannot read is blocked, not unchecked.
+   */
+  referenceCheckouts?: ReadonlyArray<ReferenceCheckout>;
+}
+
+/** One `reference_repos` entry, resolved on the machine the task runs on. */
+export interface ReferenceCheckout {
+  /** The `reference_repos` key: `mobile`, `extension`, `core`. */
+  name: string;
+  path: string;
+  present: boolean;
+  /** The revision the worker cites. Absent when the checkout is not there to read. */
+  headSha?: string;
+  /** Uncommitted changes: the revision below does not describe what is on disk. */
+  dirty?: boolean;
+}
+
+/**
+ * The `## Inputs` lines for read-only reference checkouts, shared by both task
+ * documents so a worker reads the same rule on either surface. Empty when the
+ * project declares none. An absent checkout is named as absent: a comparison the
+ * worker cannot read is blocked, and silence would read as unchecked.
+ */
+export function renderReferenceCheckoutInputs(
+  references: ReadonlyArray<ReferenceCheckout> | undefined,
+): string[] {
+  if (!references?.length) return [];
+  return [
+    `- \`${path.basename(REFERENCE_CHECKOUTS_INPUT)}\` — the checkouts below, with the revision to cite`,
+    '',
+    '### Reference checkouts (read-only)',
+    '',
+    'Other codebases this task is compared against. Read them; never write, build or install in them, and never run their tooling: they are shared, and another run may be reading the same tree.',
+    '',
+    ...references.map((reference) =>
+      reference.present
+        ? `- \`${reference.name}\`: \`${reference.path}\`${reference.headSha ? ` at \`${reference.headSha}\`` : ''}${
+            reference.dirty
+              ? ' — uncommitted changes are present, so cite what you read, not that revision alone'
+              : ''
+          }`
+        : `- \`${reference.name}\`: not readable from this task — not cloned on this machine, no commit in it, or not bound to it. Record a comparison that needs it as BLOCKED, never NOT_CHECKED, and say so in the report.`,
+    ),
+  ];
 }
 
 /** Shared by split task documents and the gateway's lightweight raw templates. */
@@ -312,6 +362,7 @@ export function buildTaskDocument(input: TaskDocumentInput): string {
   if (input.hasTicketData) {
     sections.push(`- \`${path.basename(BUG_INPUT)}\` — full ticket data as fetched`);
   }
+  sections.push(...renderReferenceCheckoutInputs(input.referenceCheckouts));
   sections.push('');
   return sections.join('\n');
 }
@@ -366,6 +417,8 @@ export interface HandoffMetadata {
   templateProvenance?: Omit<TemplateProvenance, 'executionTemplate'>;
   /** ADR-049 Amendment 3: the one required skill set, frozen at task init; dev and review read it. */
   requiredSkills?: RequiredSkillSet;
+  /** A static review's rule pack from the project installation, frozen with its digest. */
+  reviewRulePack?: FrozenReviewRulePack;
 }
 
 export function buildHandoffMetadata(input: {

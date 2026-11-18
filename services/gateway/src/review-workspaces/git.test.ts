@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -57,19 +57,24 @@ mock.module('../core/exec.js', {
     },
   },
 });
+const store = await import('../runs/store.js');
 mock.module('../runs/store.js', {
-  namedExports: { getRunWithArchived: async () => run, getRun: () => run },
+  namedExports: { ...store, getRunWithArchived: async () => run, getRun: () => run },
 });
+const nativeOwner = await import('../security/native-worker-owner.js');
 mock.module('../security/native-worker-owner.js', {
   namedExports: {
+    ...nativeOwner,
     assertNativeRunOwner() {
       if (!authorized) throw new Error('Owner access revoked');
     },
   },
 });
 // The local and remote paths execute the same production Git wrapper over pipes.
+const nativeNode = await import('../runners/native/node.js');
 mock.module('../runners/native/node.js', {
   namedExports: {
+    ...nativeNode,
     execNativeNodeArgv() {
       throw new Error('Unexpected remote execution');
     },
@@ -307,3 +312,178 @@ test('cached frozen diffs still check ownership and exact commits', { timeout: 1
     authorized = true;
   }
 });
+
+for (const rebased of [true, false]) {
+  test(`a completed review opens its pinned contribution, rebased=${rebased}`, async () => {
+    const { withReviewWorkspaceTaskFixture } = await import('./task-fixture.test-support.js');
+    const { materializeReviewWorkspaceTask, readReviewWorkspaceCompletion } =
+      await import('./task.js');
+    await withReviewWorkspaceTaskFixture(async (f) => {
+      simulated = false;
+      authorized = true;
+      run = f.run;
+      run.transport = 'tmux';
+      const source = path.join(f.root, 'runs', run.id, 'source');
+      run.reviewWorkspace!.checkoutPath = source;
+      await mkdir(source, { recursive: true });
+      const git = (...args: string[]) =>
+        execFileSync(
+          'git',
+          [
+            '-c',
+            'user.email=fixture@example.test',
+            '-c',
+            'user.name=Fixture',
+            '-c',
+            'commit.gpgsign=false',
+            ...args,
+          ],
+          { cwd: source, encoding: 'utf8' },
+        ).trim();
+      git('init', '--quiet', '-b', 'main');
+      await writeFile(path.join(source, 'upstream.txt'), 'base\n');
+      git('add', '.');
+      git('commit', '-qm', 'test: base');
+      const oldBase = git('rev-parse', 'HEAD');
+      git('checkout', '-qb', 'author');
+      await writeFile(path.join(source, 'author.txt'), 'author\n');
+      git('add', '.');
+      git('commit', '-qm', 'test: author');
+      const oldHead = git('rev-parse', 'HEAD');
+      git('checkout', '-q', 'main');
+      await writeFile(path.join(source, 'upstream.txt'), 'upstream only\n');
+      git('commit', '-qam', 'test: upstream');
+      const newBase = git('rev-parse', 'HEAD');
+      git('checkout', '-q', 'author');
+      if (rebased) git('rebase', '-q', 'main');
+      await writeFile(path.join(source, 'author.txt'), 'author correction\n');
+      git('commit', '-qam', 'test: author correction');
+      Object.assign(f.subject, {
+        baseSha: rebased ? oldHead : oldBase,
+        contributionBaseSha: rebased ? newBase : oldBase,
+        headSha: git('rev-parse', 'HEAD'),
+      });
+      if (!rebased) {
+        run.reviewMode = 'cold';
+        run.repeatReviewContext!.mode = 'cold';
+        run.repeatReviewContext!.session = {
+          mode: 'cold',
+          continuity: 'fresh',
+          fallback: {
+            reason: 'session-unavailable',
+            detail: 'Retained workspace reclaimed',
+            comparedRanges: [`${oldHead}..${f.subject.headSha}`],
+          },
+        };
+      }
+      Object.assign(run.repeatReviewContext!, {
+        priorReviewedHeadSha: oldHead,
+        priorContributionBaseSha: oldBase,
+      });
+      await materializeReviewWorkspaceTask(run.id, f.subject, f.deps);
+      if (!rebased)
+        assert.match(
+          await readFile(path.join(f.task, 'TASK.md'), 'utf8'),
+          new RegExp(`${oldHead}\\.\\.${f.subject.headSha}`),
+        );
+      const startedAt = new Date().toISOString();
+      run.agentContexts = [
+        {
+          id: 'review',
+          role: 'review',
+          label: 'Review',
+          status: 'working',
+          slotId: null,
+          runId: run.id,
+          attemptStartedAt: startedAt,
+          promptDeliveryStartedAt: startedAt,
+        },
+      ];
+      const mark = (...args: string[]) =>
+        execFileSync(path.join(f.task, 'mark'), args, {
+          cwd: f.task,
+          env: { ...process.env, FARMSLOT_MARK_CMD: '' },
+          encoding: 'utf8',
+        });
+      mark('start');
+      run.agentContexts[0].signalAttemptId = JSON.parse(
+        await readFile(path.join(f.task, 'SIGNAL.json'), 'utf8'),
+      ).attemptId;
+      await writeFile(
+        path.join(f.task, 'artifacts/review.md'),
+        `VERDICT: APPROVE\nCOMMIT: ${f.subject.headSha}\nNo findings.\n`,
+      );
+      const policy = JSON.parse(
+        await readFile(path.join(f.task, 'inputs/instruction-manifest.json'), 'utf8'),
+      ).reviewCoverage;
+      const scopePaths: string[] = policy.scopePaths;
+      const coverage = {
+        schemaVersion: 1,
+        applicabilityChecked: true,
+        reuse: [],
+        rows: [
+          ...scopePaths.map((file) => ({
+            kind: 'scope',
+            path: file,
+            scope: 'Required Git fixture',
+            justification: 'Exercise completed review range',
+            sources: [file],
+            artifacts: [],
+          })),
+          ...[1, 2].map((stepNumber) => ({
+            kind: 'criterion',
+            unitId: 'root',
+            stepNumber,
+            outcome: 'PASS',
+            evidence: 'Fixture review of frozen author contribution',
+            sources: scopePaths,
+            artifacts: [],
+          })),
+        ],
+      };
+      await writeFile(
+        path.join(f.task, 'artifacts/review-result.json'),
+        JSON.stringify({ verdict: 'pass', recommendation: 'APPROVE', issues: [], coverage }),
+      );
+      await writeFile(path.join(f.task, 'artifacts/learnings.md'), '- No reusable learning.\n');
+      mark('1');
+      mark('complete', '--mark-last');
+      const completion = await readReviewWorkspaceCompletion(run.id, f.deps);
+      assert.ok(completion?.result);
+      run.reviewResult = completion.result;
+      const comparisonBase = rebased ? newBase : oldHead;
+      assert.equal(run.reviewResult.reviewSnapshot?.baseSha, comparisonBase);
+      const identity = {
+        owner: run.nativeOwnerPrincipalId,
+        project: run.project,
+        repositoryUrl: f.subject.repositoryUrl,
+      };
+      const cache = path.join(
+        f.root,
+        'repositories',
+        createHash('sha256').update(JSON.stringify(identity)).digest('hex'),
+      );
+      await mkdir(path.dirname(cache), { recursive: true });
+      execFileSync('git', ['clone', '--quiet', '--bare', source, cache]);
+      await writeFile(cache + '.json', JSON.stringify(identity));
+      const deps = await workspaceReviewGit({
+        runId: run.id,
+        slotId: '',
+        base: comparisonBase,
+        head: f.subject.headSha,
+      });
+      const diff = await deps.runCommand!(['diff', comparisonBase, f.subject.headSha, '--']);
+      assert.match(diff.stdout, /author/);
+      assert.doesNotMatch(diff.stdout, /upstream only/);
+      for (const base of [oldBase, 'f'.repeat(40)])
+        await assert.rejects(
+          workspaceReviewGit({ runId: run.id, slotId: '', base, head: f.subject.headSha }),
+          /frozen review commits/,
+        );
+      await assert.rejects(
+        workspaceReviewGit({ runId: run.id, slotId: '', base: comparisonBase, head: oldHead }),
+        /frozen review commits/,
+      );
+    });
+  });
+}

@@ -24,6 +24,7 @@ import {
   reviewHistoryIdentity,
   reviewHistoryView,
 } from './review-history.js';
+import { reviewHistoryDiffs } from './review-history-timeline.js';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -208,9 +209,7 @@ export function createReviewHistoryPrefetch(
           token: write.token,
         });
       const diffPaths = new Set(
-        reviewHistoryView(run, artifacts).checks.flatMap((check) =>
-          check.rounds.flatMap((round) => [round.diffPath, round.fixDiffPath]),
-        ),
+        reviewHistoryDiffs(reviewHistoryView(run, artifacts).events).map((diff) => diff.path),
       );
       const entries: HistoryContentEntry[] = [];
       const ordered = Object.entries(artifacts).sort(

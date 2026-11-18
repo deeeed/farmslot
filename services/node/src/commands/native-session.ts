@@ -50,6 +50,24 @@ export class NativeNodeSessions {
     );
   }
 
+  /** Before registration, refresh only a fully stopped host; a busy host keeps its sessions. */
+  async prepareRuntime(): Promise<void> {
+    if (!this.declaration) return;
+    try {
+      await this.client.warm();
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !('code' in error) ||
+        error.code !== 'NATIVE_HOST_VERSION_SKEW'
+      )
+        throw error;
+      // Keep reads and cleanup available. The client refuses new admissions until a later
+      // node restart can refresh the idle host; never kill a busy reviewer to deploy.
+      console.warn(error.message);
+    }
+  }
+
   /** Public target metadata only; never starts a host or exposes its IPC credential. */
   metadata(owner: string) {
     if (!this.declaration || owner !== this.declaration.ownerPrincipalId)

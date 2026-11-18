@@ -8,6 +8,7 @@ import type {
   RecipeExecutionCapability,
   RecipeExecutionPlan,
   RecipeFailureCause,
+  RecipeFlowUpdate,
   RecipeRecordingInterruption,
   RecipeRecordingTarget,
   RecipeResolutionDocument,
@@ -442,6 +443,7 @@ export interface TraceWriter {
 }
 
 export interface SummaryDocument {
+  flow?: RecipeFlowUpdate;
   hud?: RecipeHudUnavailable;
   recipeRunId?: string;
   /** Digest of the retained, redacted execution inputs when recorded. */

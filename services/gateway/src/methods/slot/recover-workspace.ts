@@ -228,6 +228,13 @@ export async function recoverSlotWorkspace(
         return (
           row.lifecycle === 'ready' ||
           (row.lifecycle === 'held' && !!existing) ||
+          // A stale busy row can retain a failed owner's recovery journal.
+          // The owner and journal guards above still decide who can resume it.
+          (row.lifecycle === 'busy' &&
+            row.phase === 'working' &&
+            !!workspace.terminalOwner &&
+            !!existing?.id &&
+            existing.id === workspace.recoveryId) ||
           (!!workspace.terminalOwner &&
             ['busy', 'held'].includes(String(row.lifecycle)) &&
             row.phase !== 'occupied' &&

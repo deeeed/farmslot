@@ -1184,4 +1184,5 @@ if (process.platform === 'darwin') {
   startScreenControlServer();
 }
 
+await nativeSessions.prepareRuntime();
 connect();

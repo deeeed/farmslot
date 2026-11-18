@@ -527,7 +527,9 @@ export type ReviewSessionRefusalReason =
   | 'session-busy'
   | 'session-unavailable'
   | 'retention-expired'
-  | 'reviewed-head-not-ancestor';
+  | 'reviewed-head-not-ancestor'
+  | 'reviewed-objects-unavailable'
+  | 'interdiff-unreliable';
 
 /** Why a re-review ran COLD in a fresh session, and the ranges it compared (ADR-063 Amendment 5). */
 export interface ReviewSessionFallback {
@@ -600,6 +602,8 @@ export interface RepeatReviewContext {
   repository: string;
   prNumber: number;
   priorReviewedHeadSha?: string;
+  /** Frozen prior contribution base/ref tip, resolved against the old head at preparation. */
+  priorContributionBaseSha?: string;
   currentHeadSha: string;
   baseRef?: string;
   verdict: string;
@@ -631,7 +635,31 @@ export interface EvidenceManifestEntry {
   sha256?: string;
 }
 
+/** Gateway-owned, pinned comparison of the author's patch series across a rebase. */
+export interface ReviewInterdiffReceipt {
+  version: 1;
+  oldBaseSha: string | null;
+  oldHeadSha: string;
+  newBaseSha: string;
+  newHeadSha: string;
+  rangeDiffHash: string | null;
+  qualification: 'reliable' | 'unreliable' | 'missing-objects';
+  priorCommitCount: number | null;
+  unmatchedOverlappingPairs: number | null;
+  upstreamOverlapFiles: string[];
+  deltaPaths: string[];
+  reason?: string;
+}
+
+/** Frozen task input: the receipt binds the raw author-series comparison bytes. */
+export interface ReviewInterdiffDocument {
+  version: 1;
+  receipt: ReviewInterdiffReceipt;
+  rangeDiff: string | null;
+}
+
 export interface ReviewDiffSnapshot {
+  interdiff?: ReviewInterdiffReceipt;
   baseRef?: string | null;
   baseSha?: string | null;
   headRef?: string | null;
@@ -3573,6 +3601,8 @@ export type FamilyDiffProvenanceSource = 'artifact' | 'legacy-step-output' | 'un
 export type FamilyDiffKind = 'contribution' | 'review-input' | 'legacy' | 'iteration';
 
 export interface FamilyDiffProvenance {
+  /** Intake inventory is the current PR contribution; correctness scope is pinned separately. */
+  reviewInputScope?: 'contribution';
   source: FamilyDiffProvenanceSource;
   available: boolean;
   files: number;
@@ -3633,6 +3663,7 @@ export function isFamilyDiffProvenance(value: unknown): value is FamilyDiffProve
     isOptionalString(rec.headRef) &&
     isOptionalString(rec.headSha) &&
     (rec.reviewMode == null || isReviewMode(rec.reviewMode)) &&
+    (rec.reviewInputScope == null || rec.reviewInputScope === 'contribution') &&
     isOptionalString(rec.capturedAt) &&
     isOptionalString(rec.configFallbackReason) &&
     isOptionalString(rec.configFallbackError) &&
@@ -3644,6 +3675,8 @@ export function isFamilyDiffProvenance(value: unknown): value is FamilyDiffProve
 }
 
 export interface FamilyInputCommitMetadata {
+  /** Intake inventory is the current PR contribution; correctness scope is pinned separately. */
+  reviewInputScope?: 'contribution';
   repository?: string;
   prNumber?: number;
   baseRef?: string;
@@ -3952,7 +3985,7 @@ export const DEFAULT_TASK_DIR = '.task';
 export const DEFAULT_CLAUDE_MODEL = 'opus';
 
 /** Default Codex model used when no slot/task/project/user override is set. */
-export const DEFAULT_CODEX_MODEL = 'gpt-6.1-sol';
+export const DEFAULT_CODEX_MODEL = 'gpt-6.2-sol';
 
 /** Reasoning efforts exposed by the Codex CLI, including max and ultra. */
 export const CODEX_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const;
@@ -3961,6 +3994,8 @@ export type CodexReasoningEffort = (typeof CODEX_REASONING_EFFORTS)[number];
 /** Model capabilities from the Codex CLI catalog. Unknown models keep the legacy levels. */
 export function codexReasoningEfforts(model?: string | null): readonly CodexReasoningEffort[] {
   switch (model) {
+    case 'gpt-6.2-astra':
+    case 'gpt-6.2-sol':
     case 'gpt-6-astra':
     case 'gpt-6.1-sol':
     case 'gpt-6-sol':

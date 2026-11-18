@@ -1,13 +1,12 @@
 import {
   isTerminalRunStatus,
-  parseGitHubPullUrl,
-  parseGitHubRef,
   type RepeatReviewContext,
   type Run,
   type RunReviewResult,
 } from '@farmslot/protocol';
 import { resolveReviewMode } from '@farmslot/review-dispatch';
 
+import { reviewPRIdentity } from '../review/pr-identity.js';
 import { incrementalReviewAvailable } from '../run-engine/engine-decisions.js';
 import { runnerSupportsSessionContinuation } from '../runners/registry.js';
 import { runPrincipalOwner, samePrincipalOwner } from '../security/work-originator.js';
@@ -30,8 +29,8 @@ type WorkspaceReviewerRun = Pick<
   | 'reviewContext'
 > & { metrics: Pick<Run['metrics'], 'runner' | 'model'> };
 
-/** Shared ownership and runner predicate for both legacy recovery and new-round reuse. */
-export function compatibleWorkspaceReviewer(run: WorkspaceReviewerRun, prior: Run) {
+/** Shared identity and stopped-reviewer metadata, independent of the lifecycle admission rule. */
+function matchingWorkspaceReviewer(run: WorkspaceReviewerRun, prior: Run) {
   const reviewer = prior.agentContexts?.find((candidate) => candidate.id === 'review');
   const owner = runPrincipalOwner(run);
   const priorOwner = runPrincipalOwner(prior);
@@ -43,7 +42,6 @@ export function compatibleWorkspaceReviewer(run: WorkspaceReviewerRun, prior: Ru
   const compatible =
     run.transport === 'tmux' &&
     prior.transport === 'tmux' &&
-    isTerminalRunStatus(prior.status) &&
     (!prior.reviewWorkspace?.retainedAt || !!prior.reviewWorkspace.executionStoppedAt) &&
     sameOwner &&
     run.project === prior.project &&
@@ -54,6 +52,18 @@ export function compatibleWorkspaceReviewer(run: WorkspaceReviewerRun, prior: Ru
     reviewer?.runner === run.metrics.runner &&
     reviewer.model === run.metrics.model;
   return compatible ? reviewer : undefined;
+}
+
+/** A continuation pairs only after its predecessor has actually reached a terminal state. */
+export function compatibleWorkspaceReviewer(run: WorkspaceReviewerRun, prior: Run) {
+  return isTerminalRunStatus(prior.status) ? matchingWorkspaceReviewer(run, prior) : undefined;
+}
+
+/** Posting can block after execution stops; re-review admission precedes superseding that block. */
+export function rereviewWorkspaceReviewer(run: Run) {
+  if (!['done', 'failed', 'blocked'].includes(run.status)) return undefined;
+  if (run.status === 'blocked' && !run.reviewWorkspace?.executionStoppedAt) return undefined;
+  return matchingWorkspaceReviewer(run, run);
 }
 
 /** Follow only stopped, no-verdict transfers; the validated baseline remains unchanged. */
@@ -157,15 +167,15 @@ export function configureWorkspaceContinuity(
     throw new Error(
       `WARM review unavailable: ${context.warmUnavailableReason ?? 'missing prior reviewed head'}`,
     );
-  const priorPr = prior.prWork?.pr ?? parseGitHubRef(prior.ticketOrPr);
-  const requestedPr = run.prWork?.pr ?? parseGitHubRef(run.ticketOrPr);
+  const priorPr = reviewPRIdentity({ ticketOrPr: prior.ticketOrPr, prWork: prior.prWork });
+  const requestedPr = reviewPRIdentity({ ticketOrPr: run.ticketOrPr, prWork: run.prWork });
   if (
     !priorPr ||
     !requestedPr ||
-    priorPr.repo.toLowerCase() !== context.repository.toLowerCase() ||
-    requestedPr.repo.toLowerCase() !== context.repository.toLowerCase() ||
-    priorPr.number !== context.prNumber ||
-    requestedPr.number !== context.prNumber
+    priorPr.repository.toLowerCase() !== context.repository.toLowerCase() ||
+    requestedPr.repository.toLowerCase() !== context.repository.toLowerCase() ||
+    priorPr.prNumber !== context.prNumber ||
+    requestedPr.prNumber !== context.prNumber
   )
     throw new Error('WARM review unavailable: repository/PR mismatch');
   const reviewer = compatibleWorkspaceReviewer(run, prior);
@@ -181,7 +191,7 @@ export function configureWorkspaceContinuity(
     .reviewWorkspace?.cleanedAt
     ? 'session-unavailable'
     : undefined;
-  if (!runnerSupportsSessionContinuation(run.metrics.runner, 'tmux'))
+  if (!fallbackReason && !runnerSupportsSessionContinuation(run.metrics.runner, 'tmux'))
     fallbackReason = 'session-resume-unsupported';
   if (fallbackReason) {
     const currentHead = context.currentHeadSha ?? subject?.headSha;
@@ -224,15 +234,18 @@ export function configureWorkspaceContinuity(
   };
 }
 
-/** Bind only structured reviewer identity to the immutable subject that produced this result. */
+/**
+ * Bind a standalone report to its source and conversation. These results do not
+ * certify publication-package bytes; the last head anchors the next PR review.
+ */
 export function bindWorkspaceReviewResult(run: Run, result: RunReviewResult): RunReviewResult {
   const reviewer = run.agentContexts?.find((context) => context.id === 'review');
   const subject = run.reviewWorkspaceSubject;
-  const pr = run.prWork?.pr ?? parseGitHubRef(run.ticketOrPr) ?? parseGitHubPullUrl(run.ticketOrPr);
+  const pr = reviewPRIdentity({ ticketOrPr: run.ticketOrPr, prWork: run.prWork });
   if (!reviewer?.reviewId || !reviewer.runnerSessionId || !subject || !pr) return result;
   if (
     result.reviewSnapshot?.source === 'unavailable' ||
-    pr.repo.toLowerCase() !== subject.repository.toLowerCase() ||
+    pr.repository.toLowerCase() !== subject.repository.toLowerCase() ||
     (result.reviewSnapshot?.headSha && result.reviewSnapshot.headSha !== subject.headSha)
   )
     throw new Error('Reviewer result does not match its frozen repository/head');
@@ -260,7 +273,7 @@ export function bindWorkspaceReviewResult(run: Run, result: RunReviewResult): Ru
       reviewId: reviewer.reviewId,
       sessionId: reviewer.runnerSessionId,
       repository: subject.repository,
-      prNumber: pr.number,
+      prNumber: pr.prNumber,
       lastReviewedHeadSha: subject.headSha,
       runner: reviewer.runner ?? undefined,
       model: reviewer.model,

@@ -3,6 +3,7 @@ import { createServer } from 'node:net';
 import { join } from 'node:path';
 
 import { NativeConversationSubscription } from './conversation.js';
+import { NATIVE_HOST_VERSION_SKEW } from './host-unavailable.js';
 import { authenticated, decodeRequest, type HostIdentity, object } from './ipc.js';
 import { NativeSessionManager } from './manager.js';
 import { privateDirectory, readJson } from './storage.js';
@@ -97,6 +98,9 @@ const server = createServer({ allowHalfOpen: true }, (socket) => {
         }
         let value: unknown;
         switch (p.method) {
+          case 'prepareUpgrade':
+            value = { idle: manager.prepareUpgrade() };
+            break;
           case NATIVE_WORKER_COMPACT:
             socket.setTimeout(185_000);
             value = await manager.compactWorker(
@@ -214,8 +218,10 @@ const server = createServer({ allowHalfOpen: true }, (socket) => {
           socket.end(
             JSON.stringify({
               error: error instanceof Error ? error.message : String(error),
-              ...((error as { code?: string }).code === 'NOT_FOUND'
-                ? { errorCode: 'NOT_FOUND' }
+              ...(error instanceof Error &&
+              'code' in error &&
+              (error.code === 'NOT_FOUND' || error.code === NATIVE_HOST_VERSION_SKEW)
+                ? { errorCode: error.code }
                 : {}),
             }),
           );

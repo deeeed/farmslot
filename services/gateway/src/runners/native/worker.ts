@@ -10,6 +10,10 @@ import {
   NATIVE_WORKER_TRANSFER,
   type NativeWorkerCancelResult,
 } from '@farmslot/agent-runtime/native';
+import {
+  isNativeHostNotReadyError,
+  isNativeHostUnavailableError,
+} from '@farmslot/agent-runtime/native/host-unavailable';
 import { effectiveModelQuestions } from '@farmslot/agent-runtime/native/model-questions';
 import {
   nativeWorkerLaunchDigest,
@@ -53,6 +57,7 @@ import { runTaskLibraries } from '../../tasks/pinned-libraries.js';
 import { unwatchContext, watchContext } from '../../tasks/watcher.js';
 import { modelQuestionsForRun, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../launch-command.js';
 
+import { waitForNativeHostReady } from './host-wait.js';
 import { routeNativeExecution } from './node.js';
 import { nativeReviewerOwner } from './review-owner.js';
 import { clearSettledWorkerError } from './worker-control.js';
@@ -396,6 +401,8 @@ export async function dispatchNativeWorker(input: {
   resultSchema?: import('@farmslot/protocol').NativeResultSchema;
   contextId?: string;
   allowOperatorWait?: boolean;
+  /** What this step has left for a restarting host. Defaults to the host wait ceiling. */
+  hostWaitBudgetMs?: number;
   initialPrompt?: string;
   retainedFrom?: NativeRetainedSource;
   taskFile: string;
@@ -888,44 +895,83 @@ export async function dispatchNativeWorker(input: {
     }
   }
   let info: NativeSessionInfo;
-  try {
-    // A durable reservation is not proof ENSURE reached the host. On an
-    // unconfirmed attempt, inspect structured host state before any creation.
-    if (input.beforeFreshLaunch && !binding.generation && !binding.handoffFrom) {
-      const listed = (await routeNativeExecution(
-        binding.ownerPrincipalId,
-        Methods.NATIVE_SESSION_LIST,
-        {
-          executionNodeId: binding.executionNodeId,
-        },
-      )) as NativeSessionListResult;
-      const retainedSession = listed.sessions.find((session) => session.id === binding.sessionId);
-      hostLacksReservation = !retainedSession && !listed.unavailableExecutionNodes?.length;
-      await admission();
-      if (listed.unavailableExecutionNodes?.length)
-        throw new Error('Native worker presence is unavailable; reconcile before launch');
-      if (retainedSession) checkedSession(retainedSession, binding);
-      else await input.beforeFreshLaunch();
-      await admission();
+  // A host that never answered was never sent anything, and a node deploy or a
+  // cleanup recovery takes the host away for seconds. Waiting for the next host and
+  // sending ENSURE again is still one launch: ENSURE is idempotent on this
+  // reservation, and the preflight below re-reads host state before it runs
+  // anything. Only the first such failure earns the wait.
+  let hostWaited = false;
+  for (;;) {
+    let readingHostState = false;
+    try {
+      // A durable reservation is not proof ENSURE reached the host. On an
+      // unconfirmed attempt, inspect structured host state before any creation.
+      if (input.beforeFreshLaunch && !binding.generation && !binding.handoffFrom) {
+        readingHostState = true;
+        const listed = (await routeNativeExecution(
+          binding.ownerPrincipalId,
+          Methods.NATIVE_SESSION_LIST,
+          {
+            executionNodeId: binding.executionNodeId,
+          },
+        )) as NativeSessionListResult;
+        readingHostState = false;
+        const retainedSession = listed.sessions.find((session) => session.id === binding.sessionId);
+        hostLacksReservation = !retainedSession && !listed.unavailableExecutionNodes?.length;
+        await admission();
+        if (listed.unavailableExecutionNodes?.length)
+          throw new Error('Native worker presence is unavailable; reconcile before launch');
+        if (retainedSession) checkedSession(retainedSession, binding);
+        else await input.beforeFreshLaunch();
+        await admission();
+      }
+      ensureSent = true;
+      const created = (await routeNativeExecution(binding.ownerPrincipalId, NATIVE_WORKER_ENSURE, {
+        ...target(binding),
+        ...nativeProfileSessionParams(binding.profile),
+        runner: input.runner,
+        model: input.model,
+        resultSchema: binding.resultSchema,
+        cwd: vars.remoteRepo,
+        launch: prepared.launch,
+      })) as { session: NativeSessionInfo };
+      info = checkedSession(created.session, binding);
+      break;
+    } catch (error) {
+      // A failed preflight LIST can be read again before ENSURE. Once past that
+      // read, only a live start that never became ready proves nothing was sent:
+      // ENSURE must not be replayed on NATIVE_SOURCE_UNAVAILABLE.
+      const hostNotReady = readingHostState
+        ? isNativeHostNotReadyError(error)
+        : isNativeHostUnavailableError(error);
+      if (!hostWaited && hostNotReady) {
+        hostWaited = true;
+        // Either the preflight failed or the live start sent nothing.
+        ensureSent = false;
+        try {
+          await waitForNativeHostReady({
+            owner: binding.ownerPrincipalId,
+            executionNodeId: binding.executionNodeId,
+            ...(input.hostWaitBudgetMs === undefined ? {} : { budgetMs: input.hostWaitBudgetMs }),
+            assertCurrent: admission,
+          });
+          continue;
+        } catch (waited) {
+          await refuseUnsentLaunch(waited);
+          throw new NativeWorkerOperationUncertainError(
+            'launch',
+            `Native worker launch is unconfirmed: ${(waited as Error).message}`,
+            waited,
+          );
+        }
+      }
+      await refuseUnsentLaunch(error);
+      throw new NativeWorkerOperationUncertainError(
+        'launch',
+        `Native worker launch is unconfirmed: ${(error as Error).message}`,
+        error,
+      );
     }
-    ensureSent = true;
-    const created = (await routeNativeExecution(binding.ownerPrincipalId, NATIVE_WORKER_ENSURE, {
-      ...target(binding),
-      ...nativeProfileSessionParams(binding.profile),
-      runner: input.runner,
-      model: input.model,
-      resultSchema: binding.resultSchema,
-      cwd: vars.remoteRepo,
-      launch: prepared.launch,
-    })) as { session: NativeSessionInfo };
-    info = checkedSession(created.session, binding);
-  } catch (error) {
-    await refuseUnsentLaunch(error);
-    throw new NativeWorkerOperationUncertainError(
-      'launch',
-      `Native worker launch is unconfirmed: ${(error as Error).message}`,
-      error,
-    );
   }
   if (info.state === 'closed' || info.state === 'failed')
     throw new NativeWorkerOperationUncertainError(

@@ -4,6 +4,16 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.49.0 - 2026-11-18
+
+- `task init` accepts `referenceCheckouts`: read-only checkouts of other codebases the task is compared against, already resolved by the caller. They are listed in the task document under `Reference checkouts (read-only)` with the revision to cite, and frozen in `inputs/reference-checkouts.json`. An absent one is recorded with `present: false` and named as absent in the document: a comparison nobody can read is blocked, and silence would read as unchecked. An operator plan bypasses the shared document builder, so the same list is appended to it.
+- A required review skill that declares a rule pack has the pack frozen with it. Task init refuses a missing or invalid pack, and two pack-declaring skills, instead of running the generic review. `reviewRuleLevel` reads the review level from the frozen set. `markUnselectedFamilies` turns each family a selection skips into an optional step, recorded with the existing `mark N --skip`: the selection must match the frozen pack and client, and each family the client review carries has exactly one step.
+- Avoid transient lock-directory watch errors while refreshing idle native hosts.
+- Refresh idle native hosts across runtime upgrades using a host-owned admission fence; keep busy or unconfirmed hosts readable and report version skew before new launches. Retained sessions remain intact, and unsupported launch errors name rejected fields without their values.
+- A live host start that never became ready throws with the code `NATIVE_HOST_UNAVAILABLE`, beside the `NATIVE_SOURCE_UNAVAILABLE` a passive read already raises. Both are thrown before any request reaches a host, so a caller that waits for a restarting host can tell "nothing was sent" from "this may have been served" without matching on message text. The message is unchanged.
+- Usage prices for GPT-5.4, GPT-5.5, and the GPT-5.6 family match OpenAI's published standard short-context rates, including cached input. GPT-5.6 Sol uses the promotional $4 / $20 rate.
+- Artifact-only replay guardrails state that no replay base was recorded and point at the working tree, and the template's own `main`-relative comparison commands are rewritten to match, so no instruction names the baseline the guardrails forbid. `ArtifactOnlyReplay.base` is now optional.
+
 ## 0.48.8 - 2026-11-18
 
 - Align exact internal dependencies with the protocol 0.88.0 release cohort consumed by mm-harness 0.96.33.

@@ -112,6 +112,10 @@ projects/farmslot-farm/fixtures/*
 projects/farmslot-farm/fixtures/runtime/*
 !projects/farmslot-farm/fixtures/runtime/recipe-quality.md
 !projects/farmslot-farm/fixtures/runtime/review-quality.md
+!projects/farmslot-farm/fixtures/runtime/review-pack.json
+!projects/farmslot-farm/scripts/
+projects/farmslot-farm/scripts/*
+!projects/farmslot-farm/scripts/review-pack.mjs
 !projects/farmslot-farm/setup/
 projects/farmslot-farm/setup/*
 !projects/farmslot-farm/setup/sandbox-dev.sh

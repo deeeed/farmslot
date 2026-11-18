@@ -142,6 +142,16 @@ branch. Merge required installation fixes before installing the release.
    a successful RPC check. On the first controlled native request, verify fresh
    supervisor/host identities from the upgraded node installation and the expected
    state directory; node protocol and CLI SHA checks alone cannot detect a reused host.
+   Node startup now compares its runtime with the version loaded by the detached
+   native supervisor, before registering with the gateway. A mismatched idle host
+   refreshes after its own atomic admission fence confirms no pending starts or live
+   sessions, through verified supervisor shutdown and confirmed cleanup. A busy or
+   unconfirmed host keeps its sessions and remains readable; new launches, resumes
+   and transfers fail with `NATIVE_HOST_VERSION_SKEW`. Finish/close that work and
+   redeploy the node to retry the refresh. A legacy host without the upgrade-fence
+   capability cannot certify quiescence: use the controlled drain and verified native
+   supervisor shutdown in step 2 once. Subsequent versioned hosts support automatic
+   idle refresh. Session journals and credentials stay in place.
 6. Resume native admissions and refresh downstream farm configurations only after
    these checks pass. Retain the previous CLI link and deployment revision for
    rollback. If checks fail, repeat the drain, node-service stop, verified native
