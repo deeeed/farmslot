@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.25.13 - 2026-11-18
+
+- Group failed reviewer starts within their review round, retain the completed review's findings, and show fix acceptance as a fix rather than a new review. Keep real replays separate and use the worker context for fix duration.
+
 ## 0.25.12 - 2026-11-18
 
 - Align exact internal dependencies with the protocol 0.88.0 release cohort consumed by mm-harness 0.96.33.

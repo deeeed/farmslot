@@ -1,1 +1,0 @@
-- Cost per step now splits a step that ran a child checklist by that checklist's rows, so a review shows what each rule it checked cost.

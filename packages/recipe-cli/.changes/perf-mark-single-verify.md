@@ -1,1 +1,0 @@
-- `withTaskProjectHost` accepts the receipt its caller already verified, so a task command hashes the retained tooling once instead of twice. A receipt for a different binding is refused.

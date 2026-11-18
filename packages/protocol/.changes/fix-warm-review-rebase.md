@@ -1,1 +1,0 @@
-- Preserve the reviewer conversation across reliable rebases using a pinned author interdiff; record bounded, qualified cold fallbacks without upstream-only review noise.

@@ -1,1 +1,0 @@
-- Search inside saved logs, Markdown and JSON, then preview a matching original line and restore it from a shared link.

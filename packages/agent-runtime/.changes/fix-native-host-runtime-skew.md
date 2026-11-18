@@ -1,1 +1,0 @@
-- Refresh idle native hosts across runtime upgrades using a host-owned admission fence; keep busy or unconfirmed hosts readable and report version skew before new launches. Retained sessions remain intact, and unsupported launch errors name rejected fields without their values.

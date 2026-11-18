@@ -1,1 +1,0 @@
-- Allow a parked workspace recovery to resume when a terminal owner leaves the slot marked busy.
