@@ -254,6 +254,50 @@ export async function sendBackCompletion(
         throw error;
       }
     });
+  /**
+   * Put a withdrawn instruction back exactly as it was.
+   *
+   * Overwriting the saved record is what makes a withdrawal durable, and until
+   * the replacement is confirmed that is premature: on Claude and pi the
+   * operator send is hook-only, so a composer still holding the old text makes
+   * the new send hold rather than type over it — and the retry that would have
+   * submitted the old text is gone, because the saved text no longer matches the
+   * buffer. Restoring leaves the world as it was: same note retries, same
+   * instruction submits.
+   */
+  const restoreSuperseded = async (replacementKey: string) => {
+    if (!superseded) return;
+    const restored = superseded;
+    await withRunTransition(run.id, async () => {
+      const latest = await assertOwner();
+      const step = latest.steps.find((entry) => entry.name === PipelineSteps.DISPATCH)!;
+      const previousOutputs = step.outputs;
+      const history = Array.isArray(previousOutputs?.completionSendBackWithdrawn)
+        ? previousOutputs.completionSendBackWithdrawn.filter(
+            (entry) =>
+              !(
+                entry &&
+                typeof entry === 'object' &&
+                'withdrawnBy' in entry &&
+                (entry as { withdrawnBy?: unknown }).withdrawnBy === replacementKey
+              ),
+          )
+        : [];
+      updateRunStep(run.id, PipelineSteps.DISPATCH, {
+        outputs: {
+          ...previousOutputs,
+          completionSendBackDelivery: restored,
+          ...(history.length
+            ? { completionSendBackWithdrawn: history }
+            : { completionSendBackWithdrawn: undefined }),
+        },
+      });
+      await persistRunNow(getRun(run.id)!, 'withdrawn completion feedback restored');
+    });
+    console.warn(
+      `[send-back] run ${run.id.slice(0, 8)} — replacement ${replacementKey} was not delivered; feedback ${restored.key} is retained again`,
+    );
+  };
   if (!delivery.confirmed) {
     const intent = delivery;
     const result = await deliverOperatorInstructionWithIntent(
@@ -270,8 +314,10 @@ export async function sendBackCompletion(
           persistDelivery(intent, 'untouched completion feedback can retry', startedAt),
       },
     );
-    if (result.delivery !== 'confirmed')
+    if (result.delivery !== 'confirmed') {
+      await restoreSuperseded(intent.key);
       throw new Error(`Completion feedback delivery is ${result.delivery}; the run remains held.`);
+    }
     delivery = { ...intent, startedAt: result.startedAt, confirmed: true };
     await persistDelivery(delivery, 'completion feedback delivered');
   }

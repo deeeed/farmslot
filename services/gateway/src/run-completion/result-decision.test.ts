@@ -1290,3 +1290,53 @@ test('a further note edit still sends after a replacement that was never attempt
   assert.equal(feedback.at(-1)?.key, `completion-send-back:${third}`);
   assert.match(feedback.at(-1)?.text ?? '', /Second note\./);
 });
+
+// Grok r3 and Codex r3 on #2354, same major: on Claude and pi the operator send
+// is hook-only, so a composer still holding the old text makes the replacement
+// *hold* rather than type over it. Overwriting the saved record before that is
+// known loses the retry that would have submitted the old text, and every later
+// attempt holds again — the worker never hears either message. A withdrawal only
+// becomes durable once its replacement is confirmed.
+test('a withdrawal that was not delivered leaves the original retryable', async () => {
+  await heldQa();
+  delivery = 'queued';
+  await assert.rejects(
+    resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'Keep the video.',
+    }),
+    /delivery is queued/,
+  );
+  const original = run.steps.find((step) => step.name === S.DISPATCH)?.outputs
+    ?.completionSendBackDelivery;
+  assert.ok(original && typeof original === 'object' && 'key' in original);
+
+  // The replacement cannot be delivered: the composer is busy with the old text.
+  delivery = 'unconfirmed';
+  run.decisions = [await buildResultDecision(run, 'complete')];
+  await assert.rejects(
+    resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'Replace the video.',
+    }),
+    /delivery is unconfirmed/,
+  );
+
+  const retained = run.steps.find((step) => step.name === S.DISPATCH)?.outputs
+    ?.completionSendBackDelivery;
+  assert.deepEqual(
+    retained,
+    original,
+    'the original instruction must still be the retained one, or nothing can submit it',
+  );
+  const withdrawn = run.steps.find((step) => step.name === S.DISPATCH)?.outputs
+    ?.completionSendBackWithdrawn;
+  assert.ok(
+    !Array.isArray(withdrawn) || withdrawn.length === 0,
+    'and nothing is recorded as withdrawn, because nothing was',
+  );
+});
