@@ -94,10 +94,27 @@ function digest(repoRoot: string, relative: string): string | null {
 }
 
 /**
- * Digest and validate a declared pack from one read, or null when it is not
- * installed. A declared pack that cannot be used never falls back to the
- * generic review.
+ * Why the bytes of a declared rule pack cannot be used, or null when they are a
+ * valid pack. The one validator for every declaration route: a required skill's
+ * pack and a static review's pack. A declared pack that cannot be used never
+ * falls back to the generic review.
  */
+export function reviewRulePackProblem(bytes: Buffer): string | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(bytes.toString('utf8'));
+  } catch (error) {
+    return `is not valid JSON: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  try {
+    parseReviewRulePack(value);
+    return null;
+  } catch (error) {
+    return `is invalid: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+/** Digest and validate a declared pack from one read, or null when it is not installed. */
 function readPack(
   repoRoot: string,
   relative: string,
@@ -105,25 +122,10 @@ function readPack(
   const file = path.join(repoRoot, relative);
   if (!existsSync(file) || !statSync(file).isFile()) return null;
   const bytes = readFileSync(file);
-  const sha256 = createHash('sha256').update(bytes).digest('hex');
-  let value: unknown;
-  try {
-    value = JSON.parse(bytes.toString('utf8'));
-  } catch (error) {
-    return {
-      sha256,
-      problem: `is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
-  try {
-    parseReviewRulePack(value);
-    return { sha256, problem: null };
-  } catch (error) {
-    return {
-      sha256,
-      problem: `is invalid: ${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
+  return {
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+    problem: reviewRulePackProblem(bytes),
+  };
 }
 
 /** Freeze the selection against the checkout; refuses when any required file is absent. */
