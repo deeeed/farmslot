@@ -1,0 +1,1 @@
+- Codex LB tiers and the Co-Pilot Astra default use `gpt-6.2-astra` at the published standard rates.

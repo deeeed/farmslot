@@ -73,7 +73,7 @@ export async function runScenario({ outDir, via }) {
     } else {
       const config = rpc('llm.config.get');
       assert.equal(config.defaultProvider, provider);
-      assert.equal(config.intelligenceModel, 'gpt-6-astra');
+      assert.equal(config.intelligenceModel, 'gpt-6.2-astra');
       assert.equal(config.intelligenceEffort, 'low');
       fs.writeFileSync(proof, JSON.stringify({ gatewayPid: pids[0], provider }), { mode: 0o600 });
       const result = rpc(
@@ -83,11 +83,11 @@ export async function runScenario({ outDir, via }) {
       );
       assert.equal(result.ok, true, result.error);
       assert.equal(result.provider, provider);
-      assert.equal(result.model, 'gpt-6-astra');
+      assert.equal(result.model, 'gpt-6.2-astra');
       assert.notEqual(result.source, 'cli');
       if (provider === 'codex-lb') assert.equal(result.source, 'env:CODEX_LB_API_KEY');
       assert.equal(result.usage?.provider, provider);
-      assert.equal(result.usage?.model, 'gpt-6-astra');
+      assert.equal(result.usage?.model, 'gpt-6.2-astra');
       assert.match(result.responsePreview ?? '', /\bOK\b/);
       assert.equal(result.usage?.costUsd, undefined, 'API list price is not subscription billing');
       assert.ok(result.usage?.inputTokens > 0 && result.usage?.outputTokens > 0);
@@ -99,7 +99,7 @@ export async function runScenario({ outDir, via }) {
       assert.ok(requests.length > 0);
       for (const request of requests) {
         assert.equal(request.provider, provider);
-        assert.equal(request.model, 'gpt-6-astra');
+        assert.equal(request.model, 'gpt-6.2-astra');
         assert.equal(request.effort, 'low');
         assert.equal(request.tools, 0);
         assert.equal(request.store, false);

@@ -241,11 +241,15 @@ test('other reasoning providers keep implicit thinking disabled and accept expli
 test('Astra without matching provider auth never falls back to another CLI for call or chat', async () => {
   const provider = '__no_astra_provider_auth__';
   await assert.rejects(
-    callLLM({ provider, model: 'gpt-6-astra', userPrompt: 'hello' }),
+    callLLM({ provider, model: 'gpt-6.2-astra', userPrompt: 'hello' }),
     /CLI fallback disabled/,
   );
   await assert.rejects(
-    callLLMChat({ provider, model: 'gpt-6-astra', messages: [{ role: 'user', content: 'hello' }] }),
+    callLLMChat({
+      provider,
+      model: 'gpt-6.2-astra',
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
     /CLI fallback disabled/,
   );
 });

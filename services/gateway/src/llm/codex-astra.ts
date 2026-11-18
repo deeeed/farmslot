@@ -1,6 +1,6 @@
 import type { Model, MutableModels } from '@earendil-works/pi-ai';
 
-export const CODEX_ASTRA_MODEL = 'gpt-6-astra';
+export const CODEX_ASTRA_MODEL = 'gpt-6.2-astra';
 
 /** Shared factual model metadata; provider and transport are always explicit. */
 export function codexAstraModel<TApi extends 'openai-codex-responses' | 'openai-responses'>(
@@ -10,7 +10,7 @@ export function codexAstraModel<TApi extends 'openai-codex-responses' | 'openai-
 ): Model<TApi> {
   return {
     id: CODEX_ASTRA_MODEL,
-    name: 'GPT-6 Astra',
+    name: 'GPT-6.2 Astra',
     api,
     provider,
     baseUrl,
@@ -28,16 +28,17 @@ export function codexAstraModel<TApi extends 'openai-codex-responses' | 'openai-
     // Codex 0.154.0's account-native catalog exposes an effective 272K window.
     // The API model advertises 1,050,000; do not promise that larger Codex allowance.
     contextWindow: 272_000,
-    // Official model ceiling and API list prices, checked 2026-09-14:
-    // https://developers.openai.com/api/docs/models/gpt-6-astra.md
+    // Official max output and standard list prices, checked 2026-11-18:
+    // https://developers.openai.com/api/docs/models/gpt-6.2-astra.md
+    // Cache write is the 30-minute short-context rate. The tier is input above 272K.
     // These rates are estimates only; they are not subscription billing evidence.
     maxTokens: 128_000,
     cost: {
-      input: 10,
-      output: 50,
-      cacheRead: 1,
-      cacheWrite: 12.5,
-      tiers: [{ inputTokensAbove: 272_000, input: 20, output: 75, cacheRead: 2, cacheWrite: 25 }],
+      input: 8,
+      output: 40,
+      cacheRead: 0.4,
+      cacheWrite: 10,
+      tiers: [{ inputTokensAbove: 272_000, input: 16, output: 60, cacheRead: 0.8, cacheWrite: 20 }],
     },
   };
 }

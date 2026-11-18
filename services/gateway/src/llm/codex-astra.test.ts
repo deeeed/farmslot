@@ -8,6 +8,7 @@ import { CODEX_ASTRA_MODEL, registerCodexAstra, reportedLlmCost } from './codex-
 import { llmDefaultsForProvider } from './config.js';
 
 test('Astra supplements the same Codex provider and keeps all authentication/stream functions', () => {
+  assert.equal(CODEX_ASTRA_MODEL, 'gpt-6.2-astra');
   const models = builtinModels();
   const before = models.getProvider('openai-codex')!;
   const existing = before.getModels();

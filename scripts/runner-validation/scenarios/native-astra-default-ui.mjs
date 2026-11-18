@@ -43,7 +43,7 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
     assert.equal(process.env.FARMSLOT_CDP_PORT, '19323');
     const fixture = fs.realpathSync(path.join(ROOT, 'temp/native-validation/g003-codex-fixture'));
     const config = rpc(Methods.LLM_CONFIG_GET);
-    assert.equal(config.copilotModel, 'gpt-6-astra');
+    assert.equal(config.copilotModel, 'gpt-6.2-astra');
     assert.equal(config.copilotEffort, 'low');
     await wait(
       () =>
@@ -56,7 +56,7 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
     const current = view('return {selected:!!view?.session};');
     if (current.selected) click('[data-testid=native-new]');
     const defaults = view('return {runner:view.runner,model:view.model,mode:view.mode};');
-    assert.deepEqual(defaults, { runner: 'codex', model: 'gpt-6-astra', mode: 'default' });
+    assert.deepEqual(defaults, { runner: 'codex', model: 'gpt-6.2-astra', mode: 'default' });
     cdp('select', 'native', 'native-session-view >>> [data-testid="native-context"]', fixture);
     await wait(
       () =>
@@ -82,7 +82,7 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
     );
     target = { executionNodeId: 'local', sessionId: session.id };
     report.sessionId = session.id;
-    assert.equal(session.model, 'gpt-6-astra');
+    assert.equal(session.model, 'gpt-6.2-astra');
     assert.equal(session.effort, 'low');
     assert.equal(session.workerManaged, undefined);
     await wait(
@@ -153,7 +153,7 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
       Boolean,
       30000,
     );
-    assert.equal(context.model, 'gpt-6-astra');
+    assert.equal(context.model, 'gpt-6.2-astra');
     assert.equal(context.effort, 'low');
     assert.equal(context.cwd, fixture);
     report.native = {
