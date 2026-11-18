@@ -21,8 +21,10 @@ import {
 } from '@farmslot/protocol';
 
 import { sameReviewAttemptReceipt } from './review-attempt-receipt.js';
+import { groupReviewHistoryAttempts, isFixOnlyReviewReceipt } from './review-history-attempts.js';
 import {
   compareReviewHistoryRounds,
+  reviewHistoryDiffs,
   reviewHistoryRoundCards,
   reviewHistoryTimeline,
 } from './review-history-timeline.js';
@@ -95,6 +97,11 @@ export function mergeReviewHistoryArtifacts(
   };
 }
 
+export interface ReviewHistoryFixReceipt {
+  diffPath: string | null;
+  capturedAt: string | null;
+}
+
 export interface ReviewHistoryRound {
   key: string;
   reviewId: string;
@@ -120,8 +127,18 @@ export interface ReviewHistoryRound {
   unresolvedLabel: string;
   findingsLabel: string;
   findings: ReviewHistoryFinding[];
-  earlierAttempts: Array<{ status: string; startedAt: string | null; durationMs: number | null }>;
+  earlierAttempts: Array<{
+    key: string;
+    status: string;
+    runner: string;
+    model: string;
+    failureReason: string | null;
+    startedAt: string | null;
+    durationMs: number | null;
+  }>;
   reviewRange: string;
+  fixContextKey?: string | null;
+  fixReceipt?: ReviewHistoryFixReceipt | null;
   fixRange: string | null;
   fixStat: string | null;
   fixDurationMs: number | null;
@@ -317,6 +334,7 @@ export function reviewHistoryView(
         : [],
     );
   const checks: ReviewHistoryCheck[] = [];
+  const fixReceipts: ReviewHistoryRound[] = [];
   const ids = [
     ...new Set([
       ...reviews.map((review) => review.id),
@@ -348,20 +366,32 @@ export function reviewHistoryView(
         ...stepAttempts.map((entry, index) => number(entry.loopNumber) ?? index + 1),
       ]),
     ].sort((a, b) => a - b);
-    // Replays can restart the loop counter. A context is an attempt, not another copy of loop 1.
+    // Infrastructure attempts share a charged loop; completed replays keep their own round.
     const sources = loops
-      .flatMap<{ loop: number; actor: AgentContext | undefined }>((loop) => {
+      .flatMap<{ loop: number; actor: AgentContext | undefined; fixOnly: boolean }>((loop) => {
         const matching = actors.filter((context) => context.reviewLoopNumber === loop);
-        return matching.length
-          ? matching.map((actor) => ({ loop, actor }))
-          : [{ loop, actor: undefined }];
+        const receipts = [
+          ...attempts.filter((entry) => entry.loopNumber === loop),
+          ...stepAttempts.filter(
+            (entry, index) => (number(entry.loopNumber) ?? index + 1) === loop,
+          ),
+        ];
+        return [
+          ...matching.map((actor) => ({ loop, actor, fixOnly: false })),
+          ...(!matching.length && receipts.some((entry) => !isFixOnlyReviewReceipt(entry))
+            ? [{ loop, actor: undefined, fixOnly: false }]
+            : []),
+          ...(receipts.some(isFixOnlyReviewReceipt)
+            ? [{ loop, actor: undefined, fixOnly: true }]
+            : []),
+        ];
       })
       .sort(
         (left, right) =>
           (left.actor?.startedAt ?? '').localeCompare(right.actor?.startedAt ?? '') ||
           left.loop - right.loop,
       );
-    const rounds = sources.map(({ loop, actor }): ReviewHistoryRound => {
+    const projected = sources.map(({ loop, actor, fixOnly }): ReviewHistoryRound => {
       const sameLoop = actors.filter((context) => context.reviewLoopNumber === loop);
       const ownsAttempt = (
         entry: { startedAt?: string; completedAt?: string; verdict?: string; headSha?: string },
@@ -390,24 +420,28 @@ export function reviewHistoryView(
         );
       };
       const recordedAttempt = attempts
-        .filter((entry) =>
-          ownsAttempt(
-            { ...entry, headSha: entry.reviewSnapshot?.headSha ?? undefined },
-            entry.loopNumber,
-          ),
+        .filter(
+          (entry) =>
+            isFixOnlyReviewReceipt(entry) === fixOnly &&
+            ownsAttempt(
+              { ...entry, headSha: entry.reviewSnapshot?.headSha ?? undefined },
+              entry.loopNumber,
+            ),
         )
         .at(-1);
       const recordedRaw = stepAttempts
-        .filter((entry, index) =>
-          ownsAttempt(
-            {
-              startedAt: text(entry.startedAt) ?? undefined,
-              completedAt: text(entry.completedAt) ?? undefined,
-              verdict: text(entry.verdict) ?? undefined,
-              headSha: text(record(entry.reviewSnapshot)?.headSha) ?? undefined,
-            },
-            number(entry.loopNumber) ?? index + 1,
-          ),
+        .filter(
+          (entry, index) =>
+            isFixOnlyReviewReceipt(entry) === fixOnly &&
+            ownsAttempt(
+              {
+                startedAt: text(entry.startedAt) ?? undefined,
+                completedAt: text(entry.completedAt) ?? undefined,
+                verdict: text(entry.verdict) ?? undefined,
+                headSha: text(record(entry.reviewSnapshot)?.headSha) ?? undefined,
+              },
+              number(entry.loopNumber) ?? index + 1,
+            ),
         )
         .at(-1);
       const newerActive =
@@ -465,13 +499,14 @@ export function reviewHistoryView(
         actor?.completedAt ??
         (staticResult ? run.steps.find((entry) => entry.name === 'monitor')?.completedAt : null) ??
         null;
+      const boundaryAt = startedAt ?? (fixOnly ? completedAt : null);
       const previousCompletedAt = actors
         .filter(
           (candidate) =>
             candidate.id !== actor?.id &&
             candidate.completedAt &&
-            startedAt &&
-            candidate.completedAt <= startedAt,
+            boundaryAt &&
+            candidate.completedAt <= boundaryAt,
         )
         .map((candidate) => candidate.completedAt)
         .filter((value): value is string => Boolean(value))
@@ -482,8 +517,8 @@ export function reviewHistoryView(
           (candidate) =>
             candidate.id !== actor?.id &&
             candidate.completedAt &&
-            startedAt &&
-            candidate.completedAt <= startedAt,
+            boundaryAt &&
+            candidate.completedAt <= boundaryAt,
         )
         .sort((left, right) => (left.completedAt ?? '').localeCompare(right.completedAt ?? ''))
         .at(-1);
@@ -509,7 +544,7 @@ export function reviewHistoryView(
           ? `history:git:${reviewBaseSha}:${headSha}.diff`
           : text(snapshot?.diffPath);
       const completedFix =
-        previousCompletedAt && startedAt
+        previousCompletedAt && boundaryAt
           ? (run.agentContexts ?? [])
               .filter(
                 (candidate) =>
@@ -517,7 +552,7 @@ export function reviewHistoryView(
                   (candidate.completedAt ?? text(fix?.capturedAt)) &&
                   (candidate.promptDeliveryStartedAt ?? candidate.startedAt ?? '') >
                     previousCompletedAt &&
-                  (candidate.completedAt ?? text(fix?.capturedAt) ?? '') <= startedAt,
+                  (candidate.completedAt ?? text(fix?.capturedAt) ?? '') <= boundaryAt,
               )
               .sort((left, right) =>
                 (left.completedAt ?? '').localeCompare(right.completedAt ?? ''),
@@ -525,13 +560,13 @@ export function reviewHistoryView(
               .at(-1)
           : undefined;
       const firstFix =
-        previousCompletedAt && startedAt
+        previousCompletedAt && boundaryAt
           ? run.agentContexts?.find(
               (candidate) =>
                 candidate.role === 'review-fix' &&
                 candidate.startedAt &&
                 candidate.startedAt > previousCompletedAt &&
-                candidate.startedAt <= startedAt,
+                candidate.startedAt <= boundaryAt,
             )
           : undefined;
       const segment = attempt?.timeline?.find((entry) => entry.kind === 'worker-fix');
@@ -640,9 +675,17 @@ export function reviewHistoryView(
           range(snapshot?.baseSha, snapshot?.headSha) ??
           actor?.deliveryBaselineRef?.slice(0, 7) ??
           'Head pending',
+        fixContextKey: completedFix
+          ? `${completedFix.id}:${completedFix.startedAt ?? completedFix.attemptStartedAt}`
+          : null,
+        fixReceipt: fix ? { diffPath: text(fix.diffPath), capturedAt: text(fix.capturedAt) } : null,
         fixRange: range(fixBaseSha, fixHeadSha),
         fixStat: fixStat(fix),
         fixDurationMs:
+          duration(
+            completedFix?.promptDeliveryStartedAt ?? completedFix?.startedAt ?? null,
+            completedFix?.completedAt ?? null,
+          ) ??
           segment?.durationMs ??
           number(rawSegment?.durationMs) ??
           duration(
@@ -657,6 +700,8 @@ export function reviewHistoryView(
             completedFix?.completedAt ?? text(fix?.capturedAt),
           ),
         fixStartedAt:
+          completedFix?.promptDeliveryStartedAt ??
+          completedFix?.startedAt ??
           segment?.startedAt ??
           text(rawSegment?.startedAt) ??
           completedFix?.promptDeliveryStartedAt ??
@@ -664,6 +709,7 @@ export function reviewHistoryView(
           firstFix?.startedAt ??
           null,
         fixCompletedAt:
+          completedFix?.completedAt ??
           segment?.completedAt ??
           text(rawSegment?.completedAt) ??
           completedFix?.completedAt ??
@@ -706,8 +752,13 @@ export function reviewHistoryView(
         ].flatMap((path) => (artifacts[path]?.error ? [artifacts[path].error!] : [])),
       };
     });
+    fixReceipts.push(...projected.filter((_, index) => sources[index].fixOnly));
+    const grouped = groupReviewHistoryAttempts(
+      projected.filter((_, index) => !sources[index].fixOnly).sort(compareReviewHistoryRounds),
+    );
+    const rounds = grouped.rounds;
+    fixReceipts.push(...grouped.fixReceipts);
     if (!rounds.length) continue;
-    rounds.sort(compareReviewHistoryRounds);
     const latest = rounds.at(-1)!;
     const reviewerActive = actors.some((context) =>
       ['launching', 'working', 'waiting'].includes(context.status),
@@ -741,7 +792,7 @@ export function reviewHistoryView(
   orderedRounds.forEach((round, index) => {
     round.roundNumber = index + 1;
   });
-  const events = reviewHistoryTimeline(run, orderedRounds);
+  const events = reviewHistoryTimeline(run, orderedRounds, fixReceipts);
   for (const round of orderedRounds) {
     const head = round.headSha;
     if (!head) continue;
@@ -837,6 +888,8 @@ function historyAttemptIdentity(value: unknown) {
 /** Refresh on retained round changes, without rereading files for unrelated run heartbeats. */
 export function reviewHistoryIdentity(run: Run): string {
   return JSON.stringify([
+    // Prior manifests omitted fix-only diffs; their cached completeness cannot be reused.
+    'review-history-v2',
     run.id,
     run.reviewResult,
     run.artifactBundle?.bundleDigest,
@@ -871,6 +924,7 @@ export function reviewHistoryIdentity(run: Run): string {
       .map((context) => [
         context.id,
         context.status,
+        context.error,
         context.reviewLoopNumber,
         context.reviewResultValidatedAt,
         context.reviewResultFile,
@@ -997,19 +1051,14 @@ export async function loadReviewHistoryArtifacts(
   }
   if (readDiff && metadata['history:git']) {
     const requests = new Map<string, GitDiffParams>();
-    for (const round of reviewHistoryView(run, metadata).checks.flatMap((check) => check.rounds)) {
-      for (const [path, base, head] of [
-        [round.diffPath, round.reviewBaseSha, round.headSha],
-        [round.fixDiffPath, round.fixBaseSha, round.fixHeadSha],
-      ]) {
-        if (path?.startsWith('history:git:') && base && head)
-          requests.set(path, {
-            slotId: run.slotId ?? '',
-            ...(run.slotId ? {} : { runId: run.id }),
-            base,
-            head,
-          });
-      }
+    for (const diff of reviewHistoryDiffs(reviewHistoryView(run, metadata).events)) {
+      if (diff.path.startsWith('history:git:') && diff.base && diff.head)
+        requests.set(diff.path, {
+          slotId: run.slotId ?? '',
+          ...(run.slotId ? {} : { runId: run.id }),
+          base: diff.base,
+          head: diff.head,
+        });
     }
     const entries = [...requests];
     const results = await Promise.allSettled(entries.map(([, params]) => readDiff(params)));
@@ -1024,13 +1073,9 @@ export async function loadReviewHistoryArtifacts(
   // Reuse each platform's existing diff viewer for changed files, instead of another diff parser.
   const diffs = [
     ...new Set(
-      reviewHistoryView(run, metadata).checks.flatMap((check) =>
-        check.rounds.flatMap((round) =>
-          [round.fixDiffPath, round.diffPath]
-            .filter((path) => !path?.startsWith('history:'))
-            .filter((path): path is string => Boolean(path)),
-        ),
-      ),
+      reviewHistoryDiffs(reviewHistoryView(run, metadata).events)
+        .map((diff) => diff.path)
+        .filter((path) => !path.startsWith('history:')),
     ),
   ];
   return { ...metadata, ...(await readPaths(diffs)) };
