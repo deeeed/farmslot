@@ -74,6 +74,32 @@ test('PR task packing fills spare test capacity, isolates long checks and bounds
   assert.equal(bounded.length, 24);
   assert.equal(bounded.flatMap(({ tasks }) => tasks).length, 30);
 });
+test('full gateway PRs can use spare matrix capacity without changing test ownership', async (t) => {
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const path = await import('node:path');
+  const { createPrPlan } = await import('./pr-ci-plan.mjs');
+  const root = mkdtempSync(path.join(tmpdir(), 'pr-gateway-shards-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = 'services/gateway';
+  mkdirSync(path.join(root, dir, 'src'), { recursive: true });
+  writeFileSync(path.join(root, dir, 'package.json'), '{}');
+  const testScript = 'node ../../scripts/quality/run-tsx-tests.mjs --cwd . src';
+  const workspaces = [{ dir, name: '@farmslot/gateway', dependencies: [], test: testScript }];
+  const selected = Array.from({ length: 40 }, (_, i) => `${dir}/src/file-${i}.test.ts`);
+  for (const file of selected) writeFileSync(path.join(root, file), '');
+  const input = { root, workspaces, selected, changed: [`${dir}/src/runtime.ts`] };
+  const gatewayJobs = (plan) => plan.jobs.filter(({ id }) => id.startsWith('gateway-'));
+  const plan = createPrPlan(input);
+  const shards = gatewayJobs(plan);
+  assert.equal(shards.length, 20);
+  assert.ok(plan.jobs.length <= 24);
+  assert.deepEqual(shards.flatMap(({ tasks }) => tasks[0].tests).sort(), [...selected].sort());
+  for (const file of selected) assert.match(plan.testOwners[file], /^gateway-\d+$/);
+  const longGuard = createPrPlan({ ...input, taskDurations: { 'guard-lint': { ms: 150_000 } } });
+  assert.equal(gatewayJobs(longGuard).length, 16);
+});
+
 test('native script batches retain the longest-file lower bound', async () => {
   const { createPrPlan } = await import('./pr-ci-plan.mjs');
   const file = 'scripts/deploy-node.test.mjs';

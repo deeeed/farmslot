@@ -29,8 +29,12 @@ export function balance(items, count, weight = () => 1) {
   return bins.map(({ items: assigned }) => assigned);
 }
 
+const PR_MATRIX_LIMIT = 24;
+const FULL_GATEWAY_SHARDS = 16;
+const EXTRA_GATEWAY_SHARDS = 4;
+
 /** Fill existing test jobs before paying for another runner and setup. */
-export function packPrTasks(jobs, tasks, budget = 120, maxJobs = 24) {
+export function packPrTasks(jobs, tasks, budget = 120, maxJobs = PR_MATRIX_LIMIT) {
   const pooled = jobs.map((job) => ({ ...job, tasks: [...job.tasks] }));
   const isolated = new Set();
   let next = 0;
@@ -143,48 +147,54 @@ export function createPrPlan({
   // serial execution rather than rereading sources or assuming concurrency.
   lanes ??= new Map(selected.map((file) => [file, 'serial']));
   const tasks = [];
-  let jobs = [];
+  const seedJobs = [];
+  let expandGateway;
   const assigned = new Set();
   function splitTests(id, dir, count, tsconfig, workers, runnerDir = dir) {
     const suite = selected.filter(
       (file) => file.startsWith(`${dir}/`) && file.endsWith('.test.ts'),
     );
+    const toJobs = (chunks) =>
+      chunks.map(({ files: chunk, ms }, index) => {
+        const task = command(
+          `${id}-${index + 1}`,
+          [
+            'node',
+            'scripts/quality/run-tsx-tests.mjs',
+            '--cwd',
+            runnerDir,
+            '--tsconfig',
+            tsconfig,
+            '--workers',
+            String(workers),
+            ...chunk.map((file) => path.posix.relative(runnerDir, file)),
+          ],
+          Math.max(1, Math.ceil(ms / 1000)),
+        );
+        task.tests = chunk;
+        return { id: task.id, tasks: [task] };
+      });
     let chunks;
     if (id === 'gateway') {
       const full =
         suite.length === [...eligible].filter((file) => file.startsWith(`${dir}/`)).length;
       const limit = full ? count : Math.min(count, 12);
       let shards = full ? Math.min(count, suite.length) : 1;
-      chunks = balanceTestShards(suite, shards, workers, durations, lanes);
+      const distribute = (size) => balanceTestShards(suite, size, workers, durations, lanes);
+      chunks = distribute(shards);
       while (shards < Math.min(limit, suite.length) && chunks.some(({ ms }) => ms > 120_000))
-        chunks = balanceTestShards(suite, ++shards, workers, durations, lanes);
+        chunks = distribute(++shards);
+      if (full && count === FULL_GATEWAY_SHARDS && shards === count)
+        expandGateway = (extra) => toJobs(distribute(count + extra));
     } else
       chunks = balance(suite, count, (file) => durations[file] ?? 1500).map((files) => ({
         files,
         ms: estimateTestMs(files, workers, durations, lanes),
       }));
-    for (const [index, { files: chunk, ms }] of chunks.entries()) {
-      const task = command(
-        `${id}-${index + 1}`,
-        [
-          'node',
-          'scripts/quality/run-tsx-tests.mjs',
-          '--cwd',
-          runnerDir,
-          '--tsconfig',
-          tsconfig,
-          '--workers',
-          String(workers),
-          ...chunk.map((file) => path.posix.relative(runnerDir, file)),
-        ],
-        Math.max(1, Math.ceil(ms / 1000)),
-      );
-      task.tests = chunk;
-      jobs.push({ id: task.id, tasks: [task] });
-      chunk.forEach((file) => assigned.add(file));
-    }
+    seedJobs.push(...toJobs(chunks));
+    suite.forEach((file) => assigned.add(file));
   }
-  splitTests('gateway', 'services/gateway', ciOnly ? 1 : 16, 'tsconfig.json', 4);
+  splitTests('gateway', 'services/gateway', ciOnly ? 1 : FULL_GATEWAY_SHARDS, 'tsconfig.json', 4);
   splitTests(
     'command-center-ui',
     'apps/command-center/ui',
@@ -432,7 +442,19 @@ export function createPrPlan({
     }
     task.seconds = Math.max(1, Math.ceil(ms / 1000));
   }
-  jobs = packPrTasks(jobs, tasks);
+  let jobs = packPrTasks(seedJobs, tasks);
+  const spare = PR_MATRIX_LIMIT - jobs.length;
+  // Use idle matrix capacity only after other work has a slot. Repack the
+  // same tasks after splitting gateway, including the short guards it can absorb.
+  if (expandGateway && spare >= 2 && !tasks.some(({ seconds }) => seconds > 120)) {
+    jobs = packPrTasks(
+      [
+        ...expandGateway(Math.min(spare, EXTRA_GATEWAY_SHARDS)),
+        ...seedJobs.filter(({ id }) => !id.startsWith('gateway-')),
+      ],
+      tasks,
+    );
+  }
   const owners = new Map(selected.map((file) => [file, new Set()]));
   for (const task of jobs.flatMap((job) => job.tasks))
     for (const file of [...(task.tests ?? []), ...task.args]) owners.get(file)?.add(task.id);
