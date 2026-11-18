@@ -3,6 +3,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { RecipeHud as SharedRecipeHud, type RecipeHudProps } from '@farmslot/adapter-rn/recipe-hud';
 
+import { formatRecipeHudIntent } from './recipe-hud-state';
+
 export type {
   FarmslotRecipeHudState,
   FarmslotRecipeHudStatus,
@@ -31,6 +33,10 @@ export function RecipeHud(props: Readonly<RecipeHudProps>): React.ReactElement |
   return (
     <SharedRecipeHud
       {...props}
+      text={{
+        ...props.text,
+        intent: (state) => formatRecipeHudIntent(state, props.text?.intent?.(state)),
+      }}
       styles={{ ...props.styles, container: [placement, props.styles?.container] }}
       onLayout={(event) => {
         setHeight(event.nativeEvent.layout.height);

@@ -15,6 +15,7 @@ import { createStandardCoreAdapters } from '@farmslot/recipe-runner/adapters/cor
 import {
   COMMAND_CENTER_RECIPE_SOURCE,
   commandCenterActionManifest,
+  commandCenterHudNode,
   commandCenterRecipeParams,
   recipeGraphUsesAnyAction,
   recipeUsesAnyAction,
@@ -393,4 +394,47 @@ test('Command Center rejects gestures not declared for the web adapter before CD
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('Command Center HUD uses SDK ancestry and leaves unknown totals open', () => {
+  const flow = {
+    version: 1,
+    recipeRunId: 'execution-1',
+    rootId: '$root',
+    activeId: 'repeat/child',
+    ancestry: {
+      parentId: 'repeat',
+      depth: 2,
+      breadcrumbs: [
+        { id: '$root', label: 'Recipe' },
+        { id: 'repeat', label: 'Repeat checkout' },
+        { id: 'repeat/child', label: 'Open Review' },
+      ],
+    },
+    progress: { current: 4, completed: 3, total: null, remaining: null, qualification: 'unknown' },
+  };
+  const legacy = { progress: { current: 1, total: 20 }, detail: 'Hidden details' };
+  assert.equal(commandCenterHudNode(legacy), legacy);
+  const node = { ...legacy, recipe_flow: flow, node_id: flow.activeId };
+  const shown = commandCenterHudNode(node);
+  assert.equal(shown.recipe_flow, flow);
+  assert.equal(shown.node_id, 'repeat/child');
+  assert.deepEqual(shown.progress, flow.progress);
+  assert.equal(shown.detail, 'Recipe › Repeat checkout › Open Review');
+  assert.equal(shown.display.showDetail, true);
+
+  const completion = commandCenterHudNode({
+    ...node,
+    progress: { complete: true },
+    recipe_flow: {
+      ...flow,
+      activeId: null,
+      ancestry: null,
+      progress: { current: 11, completed: 11, total: 11, remaining: 0, qualification: 'exact' },
+    },
+  });
+  assert.equal(completion.progress.complete, true);
+  assert.equal(completion.progress.total, 11);
+  assert.equal(completion.detail, legacy.detail);
+  assert.equal(completion.display, undefined);
 });
