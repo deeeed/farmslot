@@ -40,6 +40,8 @@ mock.module('../core/tmux-launch-script.js', {
 });
 let paneCount = 1;
 let sessionPathExists = true;
+/** The transcript exists but is empty, which the content probe must refuse. */
+let sessionPathEmpty = false;
 let promptAccepted = true;
 let promptAcceptedSequence: boolean[] | null = null;
 let promptAcceptedAt: number | null = null;
@@ -161,9 +163,13 @@ mock.module('../core/exec.js', {
           stderr: '',
         };
       }
-      if (command.startsWith('test -e ')) {
+      // Both probe forms the gateway uses: existence, and the content check that
+      // also refuses an empty transcript.
+      if (command.startsWith('test -e ') || command.startsWith('test -r ')) {
+        // `test -e` answers only existence; the content form also refuses empty.
+        const empty = sessionPathEmpty && command.startsWith('test -r ');
         return {
-          exitCode: sessionPathExists ? 0 : 1,
+          exitCode: sessionPathExists && !empty ? 0 : 1,
           stdout: '',
           stderr: '',
         };
@@ -1281,7 +1287,7 @@ test('retained resume defers to safe-send when the session file is gone', async 
   assert.deepEqual(result, {
     delivered: false,
     disposition: 'safe-send',
-    reason: 'Retained claude session path is unavailable: /sessions/missing.jsonl',
+    reason: 'Retained claude session file is unavailable or empty: /sessions/missing.jsonl',
   });
   assert.equal(
     commands.some((command) => command.includes('respawn-window')),
@@ -1514,3 +1520,95 @@ for (const runnerId of ['cursor', 'pi']) {
     );
   });
 }
+
+// Codex r1 on #2347: retained handoff verified the saved session file on the
+// slot and then dropped it, relaunching pi with the session *stem*. pi answers
+// "No session found matching ..." and exits, so a warm re-review on the retained
+// slot killed the old pane and left the next round with no reviewer.
+test('retained pi resume relaunches with the saved session file, not its stem', async (t) => {
+  commands.length = 0;
+  launchScripts.length = 0;
+  paneCount = 1;
+  sessionPathExists = true;
+  promptAccepted = true;
+  sessionState = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now() - 300_000,
+  };
+  t.after(() => {
+    promptAccepted = false;
+  });
+
+  const result = await deliverPromptToRetainedRunnerSession({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'pi',
+    sessionId: '2026-11-18T03-34-24-255Z_01a1ecb8',
+    sessionPath: '/sessions/2026-11-18T03-34-24-255Z_01a1ecb8.jsonl',
+    prompt: 'Read and execute TASK.md',
+    runtimeDir: '.farmslot/runtime/test-project',
+  });
+
+  assert.equal(result.delivered, true, `the resume must be delivered: ${JSON.stringify(result)}`);
+  // Shell nesting quotes the argument several times over, so this reads the
+  // order of the tokens rather than trying to match the quoting.
+  const joined = launchScripts.join('\n');
+  const flagAt = joined.indexOf('--session');
+  assert.ok(flagAt >= 0, 'the relaunch must carry pi\u2019s resume flag');
+  const pathAt = joined.indexOf('/sessions/2026-11-18T03-34-24-255Z_01a1ecb8.jsonl', flagAt);
+  assert.ok(
+    pathAt > flagAt && pathAt - flagAt < 40,
+    `pi must be relaunched by its saved file: ${joined.slice(flagAt, flagAt + 160)}`,
+  );
+  const stemOnly = new RegExp('--session[^\\n]{0,12}2026-11-18T03-34-24-255Z_01a1ecb8[^.]');
+  assert.equal(
+    stemOnly.test(joined),
+    false,
+    'a bare stem is neither a path nor an id pi can resolve',
+  );
+});
+
+// Codex r2 on #2347: a failed copy leaves a zero-byte transcript beside a valid
+// idle receipt. Existence passed, pi opened a new conversation at that name, and
+// the fresh pane's own prompt acknowledgement could then satisfy the continuity
+// check that was supposed to prove the old session came back.
+test('retained resume refuses a transcript that exists but is empty', async (t) => {
+  commands.length = 0;
+  launchScripts.length = 0;
+  paneCount = 1;
+  sessionPathExists = true;
+  sessionPathEmpty = true;
+  sessionState = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now() - 300_000,
+  };
+  t.after(() => {
+    sessionPathEmpty = false;
+  });
+
+  const result = await deliverPromptToRetainedRunnerSession({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'pi',
+    sessionId: '2026-11-18T03-34-24-255Z_01a1ecb8',
+    sessionPath: '/sessions/2026-11-18T03-34-24-255Z_01a1ecb8.jsonl',
+    prompt: 'Read and execute TASK.md',
+    runtimeDir: '.farmslot/runtime/test-project',
+  });
+
+  assert.equal(result.delivered, false);
+  assert.match(
+    result.reason ?? '',
+    /unavailable or empty/,
+    'the refusal must name the empty transcript, not hand back a new conversation',
+  );
+  assert.equal(
+    commands.some((command) => command.includes('respawn-window')),
+    false,
+    'and nothing may be relaunched',
+  );
+});
