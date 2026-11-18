@@ -83,6 +83,16 @@ Adopt the rest only when the workflow needs it:
 
 That is the full Farmslot framework path, but it is not the starting point.
 
+## Review levels
+
+Review rules adopt separately, at three levels. See [Review rule packs](../reference/review-rule-packs.md) for the contracts.
+
+1. **Generic.** No pack. Every review checks scope, each acceptance criterion against evidence, tests and changelog, then gives a verdict.
+2. **Static pack.** The project's rule pack is checked in full on every review, with an outcome per rule.
+3. **Full Farmslot.** Each rule family is a marked, timed step. A per-diff selection skips families with a visible reason. Findings and misses become rule proposals for a person to approve.
+
+Packs stay with the project. The same review skill still works without Farmslot.
+
 ## Rule of thumb
 
 If the first adoption step cannot be explained as “the agent made one PR easier to trust,” it is too big.

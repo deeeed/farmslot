@@ -23,6 +23,7 @@ async function main(): Promise<void> {
     'recipe-protocol-v1',
     'recipe-runner-protocol',
     'review-modes-warm-cold',
+    'review-rule-packs',
     'task-directory-contract',
   ];
 
