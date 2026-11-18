@@ -96,3 +96,32 @@ test('an action no manifest declares is still refused', async (t) => {
     /task\.dropped/,
   );
 });
+
+// Codex r4 and Grok r4 on #2337, same finding: unioning both sources read a
+// manifest the library has already superseded. Discovery keeps one file per
+// scope, so a replaced `web.action-manifest.json` declares nothing — and an
+// action whose implementation was deleted with it must not pass on the strength
+// of that leftover file.
+test('a manifest the actions map replaced no longer declares its actions', async (t) => {
+  const { taskDir, digest } = await library(t, {
+    'recipe-library.json': JSON.stringify({ actions: { web: 'manifests/current-web.json' } }),
+    'manifests/current-web.json': JSON.stringify(manifestDocument(['task.web_probe'])),
+    // Superseded by the map entry above: same scope, older file.
+    'manifests/web.action-manifest.json': JSON.stringify(manifestDocument(['task.read_text'])),
+    'actions/shared/web_probe/web_probe.mjs': 'export default () => "fixture";\n',
+  });
+
+  await assert.rejects(
+    taskActionInputsAvailable(taskDir, [
+      { actionNames: ['task.read_text'], expectedLibraryDigest: digest },
+    ]),
+    /task\.read_text/,
+  );
+  assert.equal(
+    await taskActionInputsAvailable(taskDir, [
+      { actionNames: ['task.web_probe'], expectedLibraryDigest: digest },
+    ]),
+    true,
+    'the mapped manifest is the live one for its scope',
+  );
+});

@@ -3,7 +3,14 @@ import { lstat, readdir, readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import { isRecord, TASK_DIRECTORY_LAYOUT, type TaskActionInputLibrary } from '@farmslot/protocol';
-import { digestRecipeLibrary, readRecipeLibraryManifest } from '@farmslot/recipe-runner';
+import {
+  digestRecipeLibrary,
+  readRecipeLibraryManifest,
+  type RecipeLibraryManifest,
+} from '@farmslot/recipe-runner';
+
+/** The convention discovery matches on; the capture group is the manifest's scope. */
+const ACTION_MANIFEST_FILE = /^([^/]+)\.action-manifest\.json$/u;
 
 export function taskActionInputReferences(summary: unknown): TaskActionInputLibrary[] {
   if (!isRecord(summary) || summary.taskActions === undefined) return [];
@@ -98,19 +105,15 @@ export async function taskActionInputsAvailable(
 /**
  * Every action name the retained library's own action manifests declare.
  *
- * Both sources, never one or the other: an `actions` map that names a
- * platform-scoped manifest does not retire the `manifests/` convention, and
- * discovery reads both, so a library with a partial map still declares its
- * shared actions.
+ * Exactly the files discovery would load, which is one manifest per scope:
+ * `manifests/<scope>.action-manifest.json` by convention, and an `actions` entry
+ * replaces that scope's file. Reading more than that lets a manifest the library
+ * has already superseded keep declaring an action whose implementation is gone,
+ * and turns an unrelated JSON file in the directory into a refusal.
  */
 async function declaredTaskActionNames(root: string): Promise<Set<string>> {
   const manifest = await readRecipeLibraryManifest(root);
-  const files = [
-    ...new Set([
-      ...Object.values(manifest?.actions ?? {}).map((file) => path.join(root, file)),
-      ...(await actionManifestFiles(root)),
-    ]),
-  ];
+  const files = await actionManifestFiles(root, manifest);
   const names = new Set<string>();
   for (const file of files) {
     let parsed: unknown;
@@ -130,24 +133,34 @@ async function declaredTaskActionNames(root: string): Promise<Set<string>> {
 }
 
 /**
- * The `manifests/` files discovery reads by convention.
+ * One action manifest per scope, as the harness's own library discovery selects
+ * them (`packages/recipe-cli/src/libraries.ts`): the `<scope>.action-manifest.json`
+ * convention, with an `actions` entry replacing its scope's file.
  *
- * Dotfiles are skipped for the same reason `digestRecipeLibrary` skips them:
- * they are not part of the library's content, so a half-written `.scratch.json`
- * left in the directory changes nothing and must not block a publication.
+ * Dotfiles never match the convention, which is also why `digestRecipeLibrary`
+ * skips them: a half-written `.scratch.json` is not part of the library and must
+ * not block a publication.
  */
-async function actionManifestFiles(root: string): Promise<string[]> {
+async function actionManifestFiles(
+  root: string,
+  manifest: RecipeLibraryManifest | undefined,
+): Promise<string[]> {
+  const byScope = new Map<string, string>();
   const manifests = path.join(root, 'manifests');
+  let entries: Dirent[] = [];
   try {
-    return (await readdir(manifests, { withFileTypes: true }))
-      .filter(
-        (entry) => entry.isFile() && entry.name.endsWith('.json') && !entry.name.startsWith('.'),
-      )
-      .map((entry) => path.join(manifests, entry.name));
+    entries = await readdir(manifests, { withFileTypes: true });
   } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return [];
-    throw error;
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
   }
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const scope = ACTION_MANIFEST_FILE.exec(entry.name)?.[1];
+    if (scope) byScope.set(scope, path.join(manifests, entry.name));
+  }
+  for (const [scope, file] of Object.entries(manifest?.actions ?? {}))
+    byScope.set(scope, path.resolve(root, file));
+  return [...byScope.values()];
 }
 
 export async function assertTaskActionInputsComplete(
