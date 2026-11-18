@@ -842,8 +842,15 @@ test('a replay during no-change diff capture keeps the old COMPLETE from persist
     slotId: slot,
     metrics: { ...run.metrics, disposition: 'already_fixed' },
   });
-  const diffStarted = Promise.withResolvers<void>();
-  const continueDiff = Promise.withResolvers<void>();
+  const deferred = () => {
+    let resolve = () => {};
+    const promise = new Promise<void>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  };
+  const diffStarted = deferred();
+  const continueDiff = deferred();
   t.after(() => continueDiff.resolve());
   const completing = executeCompleteStep(run.id, {
     ...restartReplayContext(),
