@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { setTimeout as delay } from 'node:timers/promises';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import {
   adoptedPublicationTarget,
@@ -56,10 +56,10 @@ import {
   validatePackageApprovalSelection,
 } from './gate-policy.js';
 import { assertAcceptedFindingsCurrent, assertRunGateReady } from './gate-prerequisites.js';
-import { dropRunPrLink as defaultDropRunPrLink } from './run-links.js';
 import { assertPublicationFinalization } from './publication-finalization.js';
 import { requiresPublicationApproval } from './publication-policy.js';
 import { runSupersededSince } from './run-generation.js';
+import { dropRunPrLink as defaultDropRunPrLink } from './run-links.js';
 import { createSubStepCollector } from './sub-step-collector.js';
 
 interface StepIO {
