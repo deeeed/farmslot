@@ -2893,6 +2893,15 @@ describe('runnerPaneComposerDraftState (ADR-032 Phase 3A fail-closed composer re
       runnerPaneComposerDraftState(`Error: previous turn\n${rule}\n\n${rule}\n${footer}`, 'pi'),
       'empty',
     );
+    const dimRail = '\x1b[2m' + rule;
+    const caret = '\x1b[0;7m \x1b[0m';
+    assert.equal(
+      runnerPaneComposerDraftState(
+        `${dimRail}\noutput\n${dimRail}\n\n${rule}\n${caret}\n${dimRail}\n${footer}`,
+        'pi',
+      ),
+      'empty',
+    );
     assert.equal(
       runnerPaneComposerDraftState(`${rule}\npending draft\n${rule}\n${footer}`, 'pi'),
       'draft',

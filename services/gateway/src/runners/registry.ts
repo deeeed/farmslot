@@ -2043,20 +2043,30 @@ export function runnerPaneComposerDraftState(
   if (paneShowsBusyComposer(composerPane)) return 'draft';
   if (normalizeRunner(runnerId) === 'pi') {
     // Pi draws an unlabeled editor above its directory and context footer.
-    // Parse only this input frame for the pre-send guard, never turn state.
+    // The cursor cell confirms which blank frame is live when scrollback also has rails.
+    const rawLines = pane.trimEnd().split('\n');
     const lines = composerPane.trimEnd().split('\n');
     const footer = lines.map((line) => /^\s*~?\//.test(line)).lastIndexOf(true);
     if (footer < 3 || !/(?:^|\s)(?:\d+(?:\.\d+)?%|\?)\/\d/.test(lines[footer + 1] ?? ''))
       return 'unknown';
     const bottom = lines[footer - 1]?.trimEnd();
     if (!bottom || !/^─{8,}$/.test(bottom)) return 'unknown';
-    const top = lines
+    const candidates = lines
       .slice(0, footer - 1)
       .flatMap((line, index) => (line.trimEnd() === bottom ? [index] : []));
-    if (top.length !== 1 || top[0]! >= footer - 2) return 'unknown';
-    return lines.slice(top[0]! + 1, footer - 1).some((line) => line.trim().length > 0)
-      ? 'draft'
-      : 'empty';
+    const top = candidates.at(-1);
+    if (top === undefined || top >= footer - 2) return 'unknown';
+    const input = lines.slice(top + 1, footer - 1);
+    if (input.some((line) => line.trim().length > 0)) return 'draft';
+    if (candidates.length > 1) {
+      // A shell command can draw the same rails in the preceding transcript.
+      // Pi indents and wraps editor input. An unindented full-width rail cannot
+      // be a draft row. Require the reverse-video caret in the nearest blank
+      // frame before permitting input when earlier rails are ambiguous.
+      const caret = rawLines[top + 1] ?? '';
+      if (input.length !== 1 || !/^\s*\x1b\[(?:0;)?7m \x1b\[0m\s*$/.test(caret)) return 'unknown';
+    }
+    return 'empty';
   }
   const markers = normalizeRunner(runnerId) === 'codex' ? ['›', '❯'] : ['❯', '›'];
   const lines = composerPane
@@ -3083,7 +3093,21 @@ export async function submitRunnerPrompt(
         // These callbacks run inside the resolved pane's existing paste queue. Another send
         // must not take its clock boundary or type while this receipt is still pending.
         beforeInput: async () => {
-          retainedSession ??= (await observability.getSessionBinding?.(vars, target)) ?? undefined;
+          if (retainedSession && runner === 'pi') {
+            const live = await observability.getSessionDeliveryState(
+              vars,
+              target,
+              retainedSession.sessionId,
+              retainedSession.sessionPath,
+            );
+            if (live?.confidence !== 'high' || live.value === 'unknown') {
+              boundaryUnavailable = true;
+              throw new Error('The retained runner session is no longer in this pane');
+            }
+          } else {
+            retainedSession ??=
+              (await observability.getSessionBinding?.(vars, target)) ?? undefined;
+          }
           const captured = await captureRunnerPromptAcceptanceBaseline(vars, target, runner);
           if (captured === null) {
             boundaryUnavailable = true;
@@ -3142,6 +3166,7 @@ async function submitRunnerInstruction(
   message: string,
   logPrefix: string,
   mode: 'send' | 'submit-existing',
+  retainedSession?: { sessionId: string; sessionPath: string },
 ): Promise<SubmitInstructionOutcome> {
   if (mode === 'submit-existing') {
     const pane = await captureTmuxPane(vars, target);
@@ -3155,6 +3180,7 @@ async function submitRunnerInstruction(
   }
   const outcome = await submitRunnerPrompt(vars, target, runner, message, {
     submitOnly: mode === 'submit-existing',
+    retainedSession,
   });
   return outcome === 'sent' ? 'ok' : outcome === 'held-untouched' ? 'not-buffered' : 'stuck';
 }
@@ -3256,7 +3282,25 @@ async function sendRunnerInstructionHookOnly(
         `[runner-observability] promptAccepted read failed for ${vars.slotId}: ${(error as Error).message}`,
       );
     }
-    if (promptReading?.value === true && promptReading.confidence === 'high') return true;
+    if (promptReading?.value === true && promptReading.confidence === 'high') {
+      if (!retainedSession || runner !== 'pi') return true;
+      const accepted = await readRunnerPromptAcceptance(
+        observability,
+        vars,
+        target,
+        message,
+        promptAcceptedSinceMs,
+        retainedSession,
+      );
+      if (
+        accepted?.value === true &&
+        accepted.confidence === 'high' &&
+        (observability.promptAcceptedInSession || accepted.sessionId === retainedSession.sessionId)
+      )
+        return true;
+      // A hook in a different session is not evidence about this instruction.
+      promptReading = null;
+    }
 
     let activity = await readRunnerActivityFromObservability(vars, target, runner);
     if (
@@ -3331,6 +3375,7 @@ async function sendRunnerInstructionHookOnly(
         message,
         logPrefix,
         'submit-existing',
+        runner === 'pi' ? retainedSession : undefined,
       );
       if (submitted === 'ok') return true;
       if (submitted === 'stuck') return false;
@@ -3358,7 +3403,15 @@ async function sendRunnerInstructionHookOnly(
     }
     // Composer proven empty (or nothing was pending) → type fresh.
     return (
-      (await submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send')) === 'ok'
+      (await submitRunnerInstruction(
+        vars,
+        target,
+        runner,
+        message,
+        logPrefix,
+        'send',
+        retainedSession,
+      )) === 'ok'
     );
   }
   if (sawHookDegraded) {
@@ -3476,7 +3529,8 @@ export async function sendRunnerInstructionSafely(
   // Hook digests are correlation-safe across a bounded retry window. Native
   // exact-text history is not: an identical operator nudge may be intentional,
   // so only a native acceptance from this send call can suppress it.
-  const hookPromptAcceptedSinceMs = computePromptAcceptedSinceMs(loopStartMs, effectiveTimeoutMs);
+  const hookPromptAcceptedSinceMs =
+    opts.acceptanceSinceMs ?? computePromptAcceptedSinceMs(loopStartMs, effectiveTimeoutMs);
   const promptAcceptedSinceMs = await captureRunnerPromptAcceptanceBaseline(
     vars,
     target,
