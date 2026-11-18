@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.47.0 - 2026-11-18
+
+- Share the prepared composed-recipe invocation tree and overall action progress, preserving repeated calls, branch uncertainty and teardown without counting containers twice.
+
 ## 0.46.25 - 2026-11-18
 
 - mm-harness 0.96.33 consumes the protocol 0.88.0 cohort for iOS recorder recovery and retained reviewer compatibility; align the exact protocol dependency.

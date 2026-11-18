@@ -12,7 +12,8 @@ on:
         type: string
 
 concurrency:
-  group: full-quality-${{ github.event_name == 'push' && 'main' || github.ref }}
+  # Full runs share capacity across refs and triggers. Keep every queued run.
+  group: full-quality
   cancel-in-progress: false
   queue: max
 
@@ -56,7 +57,8 @@ jobs:
       FARMSLOT_TSX_TEST_WORKERS: '2'
     strategy:
       fail-fast: false
-      max-parallel: 15
+      # Give main a wider matrix while keeping other full triggers at four.
+      max-parallel: ${{ github.event_name == 'push' && 12 || 4 }}
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v6

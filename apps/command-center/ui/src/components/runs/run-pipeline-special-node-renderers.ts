@@ -147,8 +147,11 @@ export function renderReviewPipelineNode(n: NodePos, ctx: RunPipelineSpecialNode
   const isPending = vis === 'pending';
   const isSkipped = vis === 'skipped';
   const isBlocked = vis === 'blocked';
-  // Shared tone map with mini (issues → orange unless maxRetriesExhausted).
-  const tone = pipelineStepTone({ ...step, status: vis }, { runError: ctx.run.error });
+  // The canvas and Runs strip share the review's recorded tone.
+  const tone = pipelineStepTone(
+    { ...step, status: vis },
+    { runError: ctx.run.error, run: ctx.run },
+  );
   const toneColors = pipelineToneFillStroke(tone);
 
   const fillColor =
@@ -239,16 +242,16 @@ export function renderReviewPipelineNode(n: NodePos, ctx: RunPipelineSpecialNode
             ? svg`
         <text class="node-meta" x="${n.w / 2}" y="27"
               text-anchor="middle" dominant-baseline="central"
-              fill="${pipelineToneColor('fail')}">
+              fill="${pipelineToneColor(tone)}">
           ! MAX RETRIES (${retryCount}${maxRetries !== undefined ? `/${maxRetries}` : ''})
         </text>
       `
-            : isFailed && verdict === 'issues'
+            : isFailed && tone === 'warn'
               ? svg`
         <text class="node-meta" x="${n.w / 2}" y="27"
               text-anchor="middle" dominant-baseline="central"
               fill="${pipelineToneColor(tone)}">
-          ! ISSUES${retryCount > 0 ? ` (${retryCount}x)` : ''}
+          ${verdict === 'issues' ? `! ISSUES${retryCount > 0 ? ` (${retryCount}x)` : ''}` : '! NEEDS DECISION'}
         </text>
       `
               : isDone && verdictColor
@@ -277,12 +280,12 @@ export function renderReviewPipelineNode(n: NodePos, ctx: RunPipelineSpecialNode
       `
                     : svg`
         ${
-          !isPending && !isDone
+          isRunning || (isFailed && tone === 'fail')
             ? svg`
           <text class="node-meta" x="${n.w / 2}" y="27"
                 text-anchor="middle" dominant-baseline="central"
-                fill="${stepStatusColor(vis)}">
-            ${isRunning ? '*' : isFailed ? 'x' : ''}
+                fill="${pipelineToneColor(tone)}">
+            ${isRunning ? '*' : 'x'}
           </text>
         `
             : nothing

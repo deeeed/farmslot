@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.19.24 - 2026-11-18
+
+- Update the exact dependency cohort for prepared recipe trees and overall progress.
+
 ## 0.19.23 - 2026-11-18
 
 - Align exact internal dependencies with the protocol 0.88.0 release cohort consumed by mm-harness 0.96.33.

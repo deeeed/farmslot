@@ -65,6 +65,7 @@ import {
   withRequiredRunnerInstall,
   withRunnerObservabilityInstall,
 } from './runner-observability.js';
+import { resumableSessionContentProbeCommand } from './session-process.js';
 
 const CODEX_PLUGIN_HOOK_ARGS =
   ' "$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2"';
@@ -316,13 +317,57 @@ export function workspaceTerminalSessionCreateArgv(runner: string, repo: string)
   return [resolveCursorAgentBinary(), '--trust', '--workspace', repo, 'create-chat'];
 }
 
-/** CLI syntax comes only from the runner's continuation declaration. */
-export function runnerSessionContinuationArgs(runner: string, sessionId: string): string[] {
+/**
+ * CLI syntax comes only from the runner's continuation declaration.
+ *
+ * `sessionPath` is the saved conversation file when one was captured. A runner
+ * whose resume flag takes a path (pi's `--session <path|id>`) needs it: its
+ * saved identity is the file stem, which is neither a path nor an id it can
+ * resolve, so handing over the id alone makes it exit with "No session found".
+ */
+export function runnerSessionContinuationArgs(
+  runner: string,
+  sessionId: string,
+  sessionPath?: string | null,
+): string[] {
   const capability = getRunnerDefinition(runner).sessionContinuation.terminal;
   if (!runnerSupportsSessionContinuation(runner, 'tmux') || !capability)
     throw new Error(`Runner '${runner}' cannot continue a terminal session`);
   assertSafeRunnerArgumentValue('sessionId', sessionId);
-  return capability.args(sessionId);
+  if (sessionPath) assertSafeRunnerArgumentValue('sessionPath', sessionPath);
+  // Handed its own saved id, pi opens a *new* conversation, which then passes
+  // every liveness check. Callers that can refuse do (reopen, recovery); this
+  // builder still emits the best command it can, but it says so.
+  if (capability.sessionReference === 'path' && !sessionPath)
+    console.warn(
+      `[launch-command] runner '${runner}' resumes by its saved session file, and this session has no recorded path; the command falls back to its id and may open a new conversation`,
+    );
+  return capability.args(sessionId, sessionPath ?? undefined);
+}
+
+/**
+ * Prefix a resume command with a check of its own saved transcript.
+ *
+ * For a runner that resumes by file, a path whose file is gone or empty is not
+ * an error: it opens a new conversation there, which then passes every liveness
+ * check and looks like the old session restored. A command that may run much
+ * later — pasted by an operator, replayed by a step — has to prove the state is
+ * still there at the moment it runs, not when it was built.
+ */
+export function guardedSessionReloadCommand(
+  runner: string,
+  command: string,
+  options: { sessionPath?: string | null } = {},
+): string {
+  const { sessionPath } = options;
+  if (!sessionPath) return command;
+  const capability = getRunnerDefinition(normalizeRunner(runner)).sessionContinuation.terminal;
+  if (capability?.sessionReference !== 'path') return command;
+  assertSafeRunnerArgumentValue('sessionPath', sessionPath);
+  const refusal = shellQuote(
+    `Saved ${runner} session ${sessionPath} is missing, unreadable or empty; resuming here would start a new conversation. Restore the transcript first.`,
+  );
+  return `{ ${resumableSessionContentProbeCommand(sessionPath)}; } || { echo ${refusal} >&2; exit 1; } && ${command}`;
 }
 
 function renderSessionContinuationArgs(args: readonly string[]): string {
@@ -424,6 +469,8 @@ export function buildInteractiveRefinementRunnerCommand(options: {
   shellEnvironmentNames?: string[];
   machine?: RawPoolJson;
   resumeSessionId?: string;
+  /** The saved conversation file of that session, for runners that resume by path. */
+  resumeSessionPath?: string | null;
   /** Argument switches only; the caller sets modelQuestionsEnvironment in the launch environment. */
   modelQuestions?: 'off';
 }): string | null {
@@ -437,7 +484,7 @@ export function buildInteractiveRefinementRunnerCommand(options: {
   const safetyFlags = runnerFlagsForTier(runnerId, options.safetyTier).map(shellQuote).join(' ');
   const resume = options.resumeSessionId
     ? renderSessionContinuationArgs(
-        runnerSessionContinuationArgs(runnerId, options.resumeSessionId),
+        runnerSessionContinuationArgs(runnerId, options.resumeSessionId, options.resumeSessionPath),
       )
     : '';
   const reviewFlags =
@@ -563,6 +610,11 @@ function codexStartupUpdateFlag(skip?: boolean): string {
 }
 
 interface RunnerSessionReloadOptions {
+  /**
+   * The saved conversation file, when the gateway captured one. Runners whose
+   * resume flag takes a path need it; the others ignore it.
+   */
+  sessionPath?: string | null;
   repo?: string;
   taskDir?: string;
   effort?: string | null;
@@ -627,7 +679,7 @@ export function buildRunnerSessionReloadCommand(
   assertRunnerTransport(runner, 'tmux');
   const repo = opts.repo ?? vars.remoteRepo;
   const tier = opts.safetyTier ?? runnerDefaultSafetyTier(runner);
-  const resumeArgs = runnerSessionContinuationArgs(runner, sessionId);
+  const resumeArgs = runnerSessionContinuationArgs(runner, sessionId, opts.sessionPath);
   const resume = renderSessionContinuationArgs(resumeArgs);
   const initialPrompt = opts.initialPrompt?.trim()
     ? ` ${shellQuote(opts.initialPrompt.trim())}`

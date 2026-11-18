@@ -430,6 +430,8 @@ export interface ProjectConfig {
   staticReview?: {
     templateId?: string;
     instructionFiles?: string[];
+    /** ADR-0073 Amendment 1: the review rule pack, a project-fixture file frozen into the review handoff. */
+    rulePack?: import('./required-skills.js').RequiredSkillReview;
     domain?: string;
     support?: import('./review-workspace.js').ReviewWorkspaceSupportConfig;
     workspace?: import('./review-workspace.js').ReviewWorkspacePolicy;

@@ -19,6 +19,7 @@ import {
   type RecipeClaimLedger,
   type RecipeEvidenceCaptureBinding,
   type RecipeExecutionPlan,
+  type RecipeFlowUpdate,
   type RecipeRecordingTimelineDocument,
   recipeRepairScopeDigest,
   type RecipeRepairSelection,
@@ -79,6 +80,7 @@ import {
   recipeFailureTraceFields,
   RUNTIME_CONNECTION_CLOSED,
 } from './failure.js';
+import { buildRecipeInvocationTree, createRecipeFlowProjection } from './flow.js';
 import { extractWorkflowGraph, type WorkflowGraph } from './graph.js';
 import { buildHudNode, mergeHudDisplay } from './hud.js';
 import { createRecipeInvocation } from './invocation.js';
@@ -354,6 +356,12 @@ class DefaultRecipeRunner implements RecipeRunner {
       ),
       request.claims,
     );
+    dependencyResolution.document.flow = buildRecipeInvocationTree({
+      rootRef,
+      root: recipe,
+      recipes: dependencyResolution.recipes,
+      claimProjections: evidencePlan.nodes,
+    });
     // Only here, before a run: re-deriving an existing recording must not refuse it.
     assertVisualClaimsObserveUi(evidencePlan);
     // Full-run capture binds before the first node that can prove something: a UI action or
@@ -428,6 +436,11 @@ class DefaultRecipeRunner implements RecipeRunner {
     enforceRecipeExecutionPlan(executionPlan, request, this.#blockedCapabilities);
     const startedAt = new Date();
     const recipeRunId = randomUUID();
+    const flow = createRecipeFlowProjection(
+      dependencyResolution.document.flow!,
+      recipeRunId,
+      request.stopAfterNode !== undefined,
+    );
     const runHud: RecipeHudOptions | false =
       this.#hud === false ? false : { ...this.#hud, display: { ...this.#hud?.display } };
     await mkdir(artifactsDir, { recursive: true });
@@ -561,6 +574,7 @@ class DefaultRecipeRunner implements RecipeRunner {
           actionManifest: this.#actionManifest,
           adapters: this.#adapters,
           traceWriter,
+          flow,
           claimProjections: evidencePlan.nodes,
           logger: this.#logger,
           defaultObserverRefs: this.#defaultObserverRefs,
@@ -688,7 +702,14 @@ class DefaultRecipeRunner implements RecipeRunner {
         try {
           await this.#publishRunHud(
             status,
-            { recipe, projectRoot, artifactsDir, env, outputs },
+            {
+              recipe,
+              projectRoot,
+              artifactsDir,
+              env,
+              outputs,
+              flow: flow.finish(status, request.stopAfterNode !== undefined),
+            },
             runHud,
           );
         } catch (error) {
@@ -953,6 +974,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     }
     const summary: SummaryDocument = {
       recipeRunId,
+      flow: flow.finish(status, request.stopAfterNode !== undefined),
       invocationDigest: digestRecipeDocument(invocation),
       status,
       ...summarizeTraceCounts(trace),
@@ -1431,6 +1453,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       recipe: unknown;
       index: number;
       total: number;
+      flow?: RecipeFlowUpdate;
       context: Parameters<ActionHandler['execute']>[1];
       error?: string;
     },
@@ -1468,6 +1491,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       recipe: unknown;
       index: number;
       total: number;
+      flow?: RecipeFlowUpdate;
       context: Parameters<ActionHandler['execute']>[1];
       error?: string;
     },
@@ -1489,6 +1513,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       artifactsDir: string;
       env: Record<string, string | undefined>;
       outputs: ReadonlyMap<string, unknown>;
+      flow?: RecipeFlowUpdate;
     },
     hud: RecipeHudOptions | false,
   ): Promise<void> {
@@ -1532,6 +1557,7 @@ class DefaultRecipeRunner implements RecipeRunner {
         text: status === 'pass' ? 'Recipe completed' : 'Recipe failed',
         display: hud ? hud.display : undefined,
         progress: { complete: true },
+        ...(request.flow ? { recipe_flow: request.flow } : {}),
       },
       context,
     );

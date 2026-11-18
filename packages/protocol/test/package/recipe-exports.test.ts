@@ -79,6 +79,7 @@ test('recipe module exposes only the public recipe protocol surface', async () =
     'isPipelineRepairVisualJudgments',
     'isPipelineRepairVisualReviewInput',
     'isPipelineVisualJudgments',
+    'isRecipeFlowUpdate',
     'isRecipeRepairScope',
     'isRecipeVisualCaptureAction',
     'isRecord',

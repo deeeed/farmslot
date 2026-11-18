@@ -10,6 +10,7 @@ import {
   APPROVE_PUBLISH_EVIDENCE_ATTESTED_ACTION,
   COMBINED_FINDINGS_EVIDENCE_APPROVAL_ACTION,
   type DecisionAction,
+  type DeterministicChecklistCheck,
   digestRecipeDocument,
   EVIDENCE_ATTESTATION_ACTION,
   evidenceAttestationAvailable,
@@ -84,6 +85,7 @@ import {
   readAcceptanceStatusForDisplay,
   readHandoffAcceptanceCriteria,
 } from '../tasks/acceptance-status.js';
+import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 import {
   readFrozenWorkerTerminalContractForRun,
   validateDeterministicChecksForRun,
@@ -126,9 +128,13 @@ const loadInheritedAcceptance = lazyImport(
   () => import('../run-completion/inherited-acceptance.js'),
 );
 
+interface GateAcceptanceOptions {
+  allowMissingLedger?: true;
+}
+
 export interface GatePrerequisiteReaders {
-  deterministic(run: Run): Promise<unknown>;
-  acceptance(run: Run): Promise<GateAcceptanceRead>;
+  deterministic(run: Run): Promise<DeterministicChecklistCheck[] | void>;
+  acceptance(run: Run, options?: GateAcceptanceOptions): Promise<GateAcceptanceRead>;
   progress(run: Run): Promise<RunProgressObservation>;
   qaCompletion(run: Run): ReturnType<typeof assertQaCompletion>;
   /** Retained ADR-062 inputs, bound to the publication or output inventory. */
@@ -163,7 +169,10 @@ const { acceptanceContractIssues } =
     ): string[];
   };
 
-export async function readGateAcceptance(run: Run): Promise<GateAcceptanceRead> {
+export async function readGateAcceptance(
+  run: Run,
+  options?: GateAcceptanceOptions,
+): Promise<GateAcceptanceRead> {
   // A scripted command run has no worker to record verdicts; its command result is its
   // whole proof (ADR-043 Amendment 2), so it carries no acceptance obligation.
   if (isArtifactOnlyScriptedCommandRun(run)) return { criteria: [], ledger: null, issues: [] };
@@ -246,7 +255,8 @@ export async function readGateAcceptance(run: Run): Promise<GateAcceptanceRead> 
       taskFile: path.join(taskDir, path.basename(run.taskFile)),
     });
     const contract: unknown = contractText ? JSON.parse(contractText) : null;
-    const options = {
+    if (options?.allowMissingLedger && !acceptance.ledger) return { ...acceptance, issues: [] };
+    const ledgerOptions = {
       allowWeak:
         isRecord(contract) &&
         isRecord(contract.acceptance) &&
@@ -259,7 +269,7 @@ export async function readGateAcceptance(run: Run): Promise<GateAcceptanceRead> 
     };
     return {
       ...acceptance,
-      issues: acceptanceContractIssues(taskDir, options),
+      issues: acceptanceContractIssues(taskDir, ledgerOptions),
       ...(inheritedSource ? { inheritedOriginals: inheritedSource } : {}),
     };
   } catch (error) {
@@ -612,6 +622,7 @@ export async function collectRunGateAssessment(
   acceptance?: AcceptanceStatusLedger;
   reviews?: ReviewStatus[];
   reviewPolicyRepairs?: ReviewStatus[];
+  deterministicChecks?: DeterministicChecklistCheck[];
 }> {
   const recordedReviews = run.engineState?.publishGate?.reviews ?? [];
   // Receipt-derived decorations are display data, never imported authority.
@@ -723,8 +734,9 @@ export async function collectRunGateAssessment(
         actionId: 'dismiss',
       });
   }
+  let deterministicChecks: DeterministicChecklistCheck[] | void = undefined;
   try {
-    await source.deterministic(artifactRun);
+    deterministicChecks = await source.deterministic(artifactRun);
   } catch {
     // The owner validator rejects absent/stale/failed receipts. Preserve that refusal.
     reasons.push({
@@ -734,8 +746,19 @@ export async function collectRunGateAssessment(
       actionId: 'hold',
     });
   }
+  // A clean no-change result is adjudicated from its report. There is no fix
+  // package or new acceptance claim to prove when the worker recorded no ledger.
+  const cleanNoChange =
+    !preparedPackage &&
+    isNoCodeTerminalDisposition(run.metrics.disposition) &&
+    deterministicChecks?.some(
+      (check) => check.reference === 'ci.local_check' && check.status === 'missing',
+    );
   let projected: AcceptanceStatusLedger | undefined;
-  let acceptance = await source.acceptance(artifactRun);
+  let acceptance = await source.acceptance(
+    artifactRun,
+    cleanNoChange ? { allowMissingLedger: true } : undefined,
+  );
   if (acceptance.error) {
     reasons.push({
       code: 'acceptance-unreadable',
@@ -757,7 +780,8 @@ export async function collectRunGateAssessment(
   if (
     !publicationFulfilled &&
     run.flowType !== 'pr-complete' &&
-    (acceptance.criteria.length || hasSelectedMedia)
+    (acceptance.criteria.length || hasSelectedMedia) &&
+    !(cleanNoChange && !acceptance.ledger)
   ) {
     if (!source.recordedEvidence) {
       reasons.push({
@@ -1027,6 +1051,9 @@ export async function collectRunGateAssessment(
           }
         : {}),
     },
+    ...(deterministicChecks && isNoCodeTerminalDisposition(run.metrics.disposition)
+      ? { deterministicChecks }
+      : {}),
     ...(projected ? { acceptance: projected } : {}),
     ...(preparedPackage ? { reviews: run.engineState?.publishGate?.reviews } : {}),
     ...(reviewPolicyRepairs.length ? { reviewPolicyRepairs } : {}),
@@ -1068,11 +1095,9 @@ export async function assertRunGateReady(
   actionId?: string,
   /** The gate decision's payload: its recorded base conflict applies here as in its projection. */
   payload?: RunDecision['payload'],
-): Promise<RunGateReadiness> {
-  const readiness = withBaseMergeConflict(
-    await collectRunGateReadiness(run, preparedPackage),
-    payload,
-  );
+): Promise<RunGateReadiness & { deterministicChecks?: DeterministicChecklistCheck[] }> {
+  const assessed = await collectRunGateAssessment(run, preparedPackage);
+  const readiness = withBaseMergeConflict(assessed.readiness, payload);
   // Artifact-only comparison/eval settlement and QA completion retain unresolved claims as output.
   // This defers only their verdict policy, never package or execution integrity.
   const outputCompletion =
@@ -1101,7 +1126,9 @@ export async function assertRunGateReady(
     (actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION && !acceptReviewFindingsAvailable(readiness))
   )
     throw new RunGateNotReadyError(readiness, reasons);
-  return readiness;
+  return assessed.deterministicChecks
+    ? { ...readiness, deterministicChecks: assessed.deterministicChecks }
+    : readiness;
 }
 
 /** Accepted findings bind to the head's open findings at approval (ADR-065 Amendment 8). */

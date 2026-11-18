@@ -22,6 +22,12 @@ export {
   type RecipeActionName,
   type RecipeArtifactPackageInput,
   type RecipeFailureCause,
+  type RecipeFlowProgress,
+  type RecipeFlowUpdate,
+  type RecipeInvocationAncestry,
+  type RecipeInvocationBreadcrumb,
+  type RecipeInvocationNode,
+  type RecipeInvocationTree,
   type RecipeObserverDeclaration,
   type RecipeResolutionDependency,
   type RecipeResolutionDocument,
@@ -69,6 +75,7 @@ export {
   validateRecipeClaimDeclarations,
   validateRecipeRecordingTarget,
 } from './evidence.js';
+export { isRecipeFlowUpdate } from './flow.js';
 export {
   HUD_COLORS,
   HUD_FINISHED_FONT_SIZE,

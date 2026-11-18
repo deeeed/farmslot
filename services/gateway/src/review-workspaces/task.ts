@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,6 +10,7 @@ import {
   buildHandoffMetadata,
   buildTaskDocument,
   quoteMarkCommandWord,
+  reviewRulePackProblem,
   writeTaskDir,
 } from '@farmslot/agent-runtime';
 import { durableWrite } from '@farmslot/agent-runtime/native/storage';
@@ -18,8 +19,10 @@ import { readCoveragePolicy } from '@farmslot/agent-runtime/scripts/review-cover
 import {
   ACCEPTANCE_STATUS_ARTIFACT,
   enumerateChecklistCheckboxes,
+  type FrozenReviewRulePack,
   isRecord,
   isTerminalRunStatus,
+  parseReviewRuleDeclaration,
   type ReviewInterdiffReceipt,
   type ReviewWorkspaceBinding,
   type ReviewWorkspaceSubject,
@@ -386,6 +389,51 @@ export async function materializeReviewWorkspaceTask(
         ...(await collectSupportFiles(absolute, path.posix.join('inputs/instructions', relative))),
       );
     }
+    // ADR-0073 Amendment 1: a pack declared on the static review comes from the project
+    // installation, like its instruction files. It is validated before the task exists and
+    // frozen with its digest; a declared pack that cannot be used refuses the review.
+    let reviewRulePack: FrozenReviewRulePack | undefined;
+    const rulePack = project.projectJson.static_review?.rule_pack;
+    if (rulePack !== undefined) {
+      const declared = parseReviewRuleDeclaration(rulePack, 'static_review.rule_pack');
+      const absolute = path.resolve(project.projectFixturesDir, declared.pack);
+      if (!within(project.projectFixturesDir, absolute))
+        throw new Error('Static review rule pack escapes project fixtures');
+      const refuse = (problem: string) =>
+        new Error(`Static review rule pack ${declared.pack} ${problem}`);
+      const relative = path.posix.join('inputs/instructions', declared.pack);
+      // Check the declared path is a regular file before collecting it, so a mistaken
+      // directory is refused without walking it. One read follows: the bytes validated
+      // here are the bytes retained and digested.
+      const readError = (error: unknown) =>
+        (error as NodeJS.ErrnoException).code === 'ENOENT'
+          ? refuse('is not installed in the project fixtures')
+          : refuse(`could not be read: ${error instanceof Error ? error.message : String(error)}`);
+      let entry: Awaited<ReturnType<typeof lstat>>;
+      try {
+        entry = await lstat(absolute);
+      } catch (error) {
+        throw readError(error);
+      }
+      if (!entry.isFile()) throw refuse('is not a regular file');
+      let files: Awaited<ReturnType<typeof collectSupportFiles>>;
+      try {
+        files = await collectSupportFiles(absolute, relative);
+      } catch (error) {
+        throw readError(error);
+      }
+      const file = files[0];
+      if (files.length !== 1 || !file || file.relativePath !== relative)
+        throw refuse('is not a regular file');
+      const problem = reviewRulePackProblem(Buffer.from(file.contentBase64, 'base64'));
+      if (problem) throw refuse(problem);
+      guidance.push(file);
+      reviewRulePack = {
+        pack: { path: relative, sha256: file.sha256 },
+        client: declared.client,
+        level: declared.level,
+      };
+    }
     const guidanceManifest = guidance.map((file) => ({
       path: file.relativePath,
       sha256: file.sha256,
@@ -509,6 +557,7 @@ export async function materializeReviewWorkspaceTask(
         selectionReason: 'frozen-run-selection',
       },
     });
+    if (reviewRulePack) handoff.reviewRulePack = reviewRulePack;
     // Every reference the project declares read-only, whether or not this review's
     // support environment binds it. The support binding is the only reader of those
     // checkouts, so a declared one it did not bind is unreadable here — and the

@@ -26,9 +26,11 @@ import {
   resolveTmuxSession,
   tmuxAttachCommandForTarget,
 } from '../../core/tmux.js';
+import { blindTrialWorkerBoundary } from '../../evals/blind-git.js';
 import {
   buildOperatorPasteableCommand,
   buildRunnerSessionReloadCommand,
+  guardedSessionReloadCommand,
   runnerSupportsSessionReload,
 } from '../../runners/launch-command.js';
 import { getRunnerDefinition, isKnownRunner, normalizeRunner } from '../../runners/registry.js';
@@ -278,12 +280,18 @@ export async function runSessionCommand(
     projectDefaultRaw: projectVars.projectJson.default_safety_tier,
   });
   const model = context.model ?? run.metrics.model ?? null;
+  const blindBoundary = blindTrialWorkerBoundary(run, role);
   const rawReopenCommand = deps.buildReloadCommand(
     vars,
     runner,
     model,
     binding.binding.runnerSessionId,
     {
+      sessionPath: binding.binding.runnerSessionPath,
+      // A blind-eval worker's transcript stays inside its trial boundary, pasted
+      // by hand or not. Before this command could resume pi at all, the question
+      // did not arise; now it can, so the boundary travels with it.
+      ...(blindBoundary ? { blindTrialBoundary: blindBoundary } : {}),
       effort: run.effort,
       runtimeDir,
       safetyTier,
@@ -293,9 +301,16 @@ export async function runSessionCommand(
         : {}),
     },
   );
+  // The command is pasted by hand, possibly much later, so it checks the saved
+  // transcript itself: a runner that resumes by file opens a *new* conversation
+  // at a path whose file is gone or empty, and the operator would see a live
+  // pane and believe the session was restored.
+  const guarded = guardedSessionReloadCommand(runner, rawReopenCommand, {
+    sessionPath: binding.binding.runnerSessionPath,
+  });
   // Operator-facing: this string is pasted into whatever interactive shell the
   // operator has, so it must survive zsh/bash history expansion.
-  const reopenCommand = buildOperatorPasteableCommand(rawReopenCommand);
+  const reopenCommand = buildOperatorPasteableCommand(guarded);
 
   const tmuxTarget = context.target?.target ?? null;
   // A context recorded before role-scoped targets (or one whose target was

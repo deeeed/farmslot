@@ -1,1 +1,0 @@
-- Refuse run creation with a clear storage error before registering a run when required gateway volumes are unavailable, and alert through fleet monitoring once per outage.

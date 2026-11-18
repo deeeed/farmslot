@@ -224,8 +224,20 @@ export interface RunnerSessionContinuation {
   /** Native protocol adapter implements exact saved-session loading. */
   native: boolean;
   terminal: {
-    /** Resume argv ending with the exact saved session ID. */
-    args: (sessionId: string) => string[];
+    /**
+     * Resume argv ending with the exact saved session reference.
+     *
+     * `sessionPath` is the saved conversation file when the gateway captured
+     * one. A runner whose resume flag takes `<path|id>` must prefer it: its
+     * saved identity is a file stem that the CLI cannot resolve on its own.
+     */
+    args: (sessionId: string, sessionPath?: string) => string[];
+    /**
+     * 'path' means the saved conversation file is the only form this runner can
+     * resolve, so a binding without one is refused instead of producing a
+     * command that silently starts a new conversation.
+     */
+    sessionReference?: 'path';
     workspace: 'retained' | 'current';
     reservation?: 'create-chat';
     /** Missing means unsupported on this transport. The adapter owns exact CLI syntax. */
@@ -787,7 +799,13 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     },
     sessionContinuation: {
       native: true,
-      terminal: { args: (sessionId) => ['--session', sessionId], workspace: 'retained' },
+      terminal: {
+        // `--session <path|id>`: the saved file when we have it. pi's session
+        // identity is the file stem, which it cannot resolve as either form.
+        args: (sessionId, sessionPath) => ['--session', sessionPath ?? sessionId],
+        sessionReference: 'path',
+        workspace: 'retained',
+      },
     },
     requiresInitialPromptAck: true,
     nativeTransport: 'pi-rpc',
@@ -1223,7 +1241,7 @@ export function runnerArgumentValueIsSafe(value: string | null | undefined): boo
 }
 
 export function assertSafeRunnerArgumentValue(
-  kind: 'model' | 'effort' | 'sessionId',
+  kind: 'model' | 'effort' | 'sessionId' | 'sessionPath',
   value: string | null | undefined,
 ): void {
   if (runnerArgumentValueIsSafe(value)) return;

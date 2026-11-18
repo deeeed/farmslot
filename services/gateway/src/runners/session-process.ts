@@ -285,6 +285,44 @@ export function resumableSessionProbeCommand(runnerSessionPath: string): string 
   return `test -e ${shellQuote(runnerSessionPath)}`;
 }
 
+/** What a completed probe says about the saved session, as distinct outcomes. */
+export type ResumableSessionProbeOutcome = 'present' | 'absent' | 'unavailable';
+
+/**
+ * Read a finished probe's exit, separating "the transcript is not there" from
+ * "the probe could not answer".
+ *
+ * `test` answers 1 for false, but so does a shell that could not start: a node at
+ * its process or descriptor limit prints `spawn sh EAGAIN` or `EMFILE` and exits
+ * 1 too. Reporting that as a missing transcript tells an operator their work is
+ * gone when the node was only busy, so the two are kept apart and both callers
+ * read the same answer.
+ */
+export function resumableSessionProbeOutcome(result: {
+  exitCode: number;
+  stderr?: string;
+}): ResumableSessionProbeOutcome {
+  if (result.exitCode === 0) return 'present';
+  const spawnFailure =
+    /\b(?:EAGAIN|EMFILE|ENFILE|ENOMEM|E2BIG|ENOEXEC)\b|cannot (?:fork|allocate|execute)/i.test(
+      result.stderr ?? '',
+    );
+  return result.exitCode === 1 && !spawnFailure ? 'absent' : 'unavailable';
+}
+
+/**
+ * Stricter form: the saved state must also be readable and carry content.
+ *
+ * A runner handed a path to a missing or empty transcript does not fail — pi
+ * starts a *new* conversation there — so a liveness check afterwards reports a
+ * reloaded session that has none of the work in it. A directory (Grok) only has
+ * to be readable.
+ */
+export function resumableSessionContentProbeCommand(runnerSessionPath: string): string {
+  const target = shellQuote(runnerSessionPath);
+  return `test -r ${target} && { test -s ${target} || test -d ${target}; }`;
+}
+
 export function buildRunnerSessionDiscoveryCommand(
   repo: string,
   runner: string,

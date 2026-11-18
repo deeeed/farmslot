@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-04-29
-- Updated: 2026-10-19
+- Updated: 2026-11-18
 
 ## Context
 
@@ -350,3 +350,21 @@ and `hudFinishedLine`. `HUD_INTENT_MAX_LINES` becomes a nominal 3 for web, and
 `HUD_NATIVE_INTENT_MAX_LINES` keeps native at 2. The web-dapp HUD, the CDP
 `app.hud` renderer and `@farmslot/adapter-rn/recipe-hud` follow the rule. No
 action, flag or recipe schema changes.
+
+## Amendment 8 (2026-11-18): Prepared invocation tree and overall progress
+
+Status: Accepted. Implements the approved composed-flow SDK split for the run evidence viewer, MANUAL-000187.
+
+The existing composition resolver supplies one prepared invocation tree. Root and call containers own their nested nodes; action IDs retain the executor's namespaced call path, so two calls of one recipe remain distinct. The tree retains main/teardown entry points, next/case/default edges, labels and explicit projected claim IDs in recipe-resolution.json.
+
+The recipe runner owns the incremental progress projection. Executable action occurrences count once; call containers and end controls add no count. Updates reuse the existing HUD delivery and execution events. The current active action ordinal and completed count are explicit. A total or remaining count is null while the selected path is unknown. Failure or partial execution cannot fabricate a completed denominator. Teardown is included, and a branch decision can qualify the remaining route without replaying trace history.
+
+The summary retains final progress with the recipe execution ID. Consumers key rows by recipeRunId and invocation ID; older packages without this data remain unavailable. Later approved pieces add ancestry, evidence view-model projection, qualified timing and structural inventory over this same tree. ADR-062 Amendment 23 and surface-specific renderers remain unchanged.
+
+## Amendment 9 (2026-11-19): Invocation ancestry projection
+
+Status: Accepted. Implements item 6 of the approved composed-flow SDK split for MANUAL-000187.
+
+The SDK projects parent, depth and labeled breadcrumbs from the same prepared invocation tree. The root has depth zero. Breadcrumbs retain each namespaced invocation ID and label, ordered from root through the selected invocation, so repeated calls remain distinct. The runner caches this projection once per prepared tree and supplies active ancestry on its existing flow updates. Consumers render that data without rebuilding ancestry or scanning execution history.
+
+Ancestry is an optional extension for older payloads. New updates carry null when no invocation is active. Progress qualifications and null totals remain unchanged. The prepared tree remains the common input for the later evidence view-model and timing work; no renderer or new event channel is introduced. ADR-062 Amendment 23 remains unchanged.
