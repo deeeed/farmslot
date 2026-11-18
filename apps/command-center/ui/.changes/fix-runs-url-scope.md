@@ -1,1 +1,0 @@
-- Clear checklist expansion choices when leaving a run so another run does not inherit its URL state.

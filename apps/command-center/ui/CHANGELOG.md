@@ -6,6 +6,22 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.36.7 - 2026-11-18
+
+- The checklist shows "Spent so far" (cost, tokens, tool calls, compactions) and a cost per step while a run works; the run-detail tool-usage panel shows compactions overall and per step.
+- Add an explicit host terminal beside native conversations and preserve that choice across reloads without changing the selected worker.
+- Show the active recorded child checklist beneath its parent progress in Run Detail, keeping parent and child counts separate.
+- Let the dev Command Center listen beyond localhost when FARMSLOT_UI_HOST and FARMSLOT_UI_ALLOWED_HOSTS are set. Allowed hosts use the same filter as the gateway, so a leading-dot wildcard, a star, or a host:port entry is dropped. In dev, the gateway URL uses the page hostname and the gateway port.
+- The run page (`#runs?run=`) shows "Spent so far" at the top of its step progress panel, and the cost in the panel summary while it is collapsed. The slot view keeps its own.
+- Show high as the omitted PI effort on every dispatch picker.
+- Keep Runs, slot workspaces, run details and pinned cards in place during unchanged background refreshes, and size empty status areas and run rows to their content.
+- Restore the selected run detail's viewing position after refresh and respect the viewer's own scrolling.
+- Clear checklist expansion choices when leaving a run so another run does not inherit its URL state.
+- Preserve verified browser gateway selection across UI default changes and gateway restarts, restoring existing implicit device sign-ins.
+- Keep History and Load run fixed in the slot header when run status and available actions change.
+- Keep the slot workspace steady and quiet during refresh, with styled controls and delayed notices.
+- Show the worker acknowledgement time above Run Detail checklist progress before the first checkbox is completed.
+
 ## 0.36.6 - 2026-11-16
 
 - Keep expected missing or pending observations neutral across run and slot panels, while preserving real read and ledger parse errors.

@@ -1,1 +1,0 @@
-- Show high as the omitted PI effort on every dispatch picker.

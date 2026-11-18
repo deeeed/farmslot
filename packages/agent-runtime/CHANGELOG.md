@@ -4,6 +4,15 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.48.8 - 2026-11-18
+
+- Align exact internal dependencies with the protocol 0.88.0 release cohort consumed by mm-harness 0.96.33.
+- The acceptance instruction says an AC awaiting review after recorded proof, and a review-mode AC, may reach the gate and still do not grant approval; a missing AC is incomplete, so run it, and only the authorized person records UNTESTABLE at the gate.
+- Preserve durable evidence that a fresh native thread has never received input, clearing it before any runner write.
+- A deploy now links `farmslot-agent` from the same snapshot as `farmslot` and removes any globally installed `@farmslot/*` package, so a worker that follows the engine's own instructions (`farmslot-agent task-init`, `farmslot-agent ac`) runs this revision instead of whatever npm installed globally. On one node that global copy was agent-runtime 0.4.0, predating every worker-side fix shipped since, which is how a worker reached mark behaviour the current wrapper refuses. A deploy fails loudly, rather than leaving a worker on a stale engine, if a global `@farmslot/*` package remains or either bin resolves outside the installed snapshot.
+- Codex live spend prices `gpt-6.1-sol`, and bills input served from the prompt cache at OpenAI's cached-input rate for the GPT-6 models instead of the full input rate, which overstated cache-heavy sessions about tenfold.
+- Preserve retained reviewer conversations across unrelated project command_env changes, including ASDF tool settings, while keeping runner, credential, execution-policy and native lease compatibility checks.
+
 ## 0.48.7 - 2026-11-17
 
 - Align exact dependency pins with the JSON proof diagnostic release.

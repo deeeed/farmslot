@@ -1,1 +1,0 @@
-- Let Pi checklist marks wait for long deterministic checks without a fixed tool timeout, while preserving cancellation and check failures.

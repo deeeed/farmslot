@@ -1,1 +1,0 @@
-- Live spend splits by checklist step while the run is still working: task.progress takes the marks from the checklist it just read, since the run records them only when the worker signals.

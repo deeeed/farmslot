@@ -1,1 +1,0 @@
-- Stabilize bare-import bundle reuse validation when fixture writes share the build timestamp.
