@@ -10,6 +10,7 @@ import {
   buildHandoffMetadata,
   buildTaskDocument,
   quoteMarkCommandWord,
+  reviewRulePackProblem,
   writeTaskDir,
 } from '@farmslot/agent-runtime';
 import { durableWrite } from '@farmslot/agent-runtime/native/storage';
@@ -22,7 +23,6 @@ import {
   isRecord,
   isTerminalRunStatus,
   parseReviewRuleDeclaration,
-  parseReviewRulePack,
   type ReviewInterdiffReceipt,
   type ReviewWorkspaceBinding,
   type ReviewWorkspaceSubject,
@@ -401,29 +401,26 @@ export async function materializeReviewWorkspaceTask(
         throw new Error('Static review rule pack escapes project fixtures');
       const refuse = (problem: string) =>
         new Error(`Static review rule pack ${declared.pack} ${problem}`);
-      let text: string;
+      const relative = path.posix.join('inputs/instructions', declared.pack);
+      // One read: the bytes validated here are the bytes retained and digested.
+      let files: Awaited<ReturnType<typeof collectSupportFiles>>;
       try {
-        text = await readFile(absolute, 'utf8');
-      } catch {
-        throw refuse('is not installed in the project fixtures');
-      }
-      let value: unknown;
-      try {
-        value = JSON.parse(text);
+        files = await collectSupportFiles(absolute, relative);
       } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT')
+          throw refuse('is not installed in the project fixtures');
         throw refuse(
-          `is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+          `could not be read: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
-      try {
-        parseReviewRulePack(value);
-      } catch (error) {
-        throw refuse(`is invalid: ${error instanceof Error ? error.message : String(error)}`);
-      }
-      const relative = path.posix.join('inputs/instructions', declared.pack);
-      guidance.push(...(await collectSupportFiles(absolute, relative)));
+      const [file] = files;
+      if (files.length !== 1 || file!.relativePath !== relative)
+        throw refuse('is not a single file');
+      const problem = reviewRulePackProblem(Buffer.from(file!.contentBase64, 'base64'));
+      if (problem) throw refuse(problem);
+      guidance.push(file!);
       reviewRulePack = {
-        pack: { path: relative, sha256: sha256(text) },
+        pack: { path: relative, sha256: file!.sha256 },
         client: declared.client,
         level: declared.level,
       };

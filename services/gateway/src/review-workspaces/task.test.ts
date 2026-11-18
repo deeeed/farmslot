@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
@@ -196,6 +196,36 @@ test('a static review freezes its declared rule pack from the project installati
       level: 'static',
     });
   });
+});
+
+test('a static review names the real cause when its rule pack is a directory or unreadable', async () => {
+  for (const [prepare, message] of [
+    [
+      (file: string) => mkdir(path.join(file, 'nested'), { recursive: true }),
+      /Static review rule pack review-pack\.json is not a single file/,
+    ],
+    [
+      async (file: string) => {
+        await writeFile(file, '{}');
+        await chmod(file, 0o000);
+      },
+      /Static review rule pack review-pack\.json could not be read: .*EACCES/,
+    ],
+  ] as const) {
+    await withFixture(async (f) => {
+      const file = path.join(f.project.projectFixturesDir, 'review-pack.json');
+      await prepare(file);
+      f.project.projectJson.static_review = {
+        ...f.project.projectJson.static_review,
+        rule_pack: { pack: 'review-pack.json', client: 'fixture', level: 'static' },
+      };
+      try {
+        await assert.rejects(materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps), message);
+      } finally {
+        await chmod(file, 0o755).catch(() => {});
+      }
+    });
+  }
 });
 
 test('a static review refuses a declared rule pack that is missing or invalid', async () => {
