@@ -2886,6 +2886,46 @@ describe('runnerPaneComposerDraftState (ADR-032 Phase 3A fail-closed composer re
     assert.equal(runnerPaneComposerDraftState('', 'claude'), 'unknown');
   });
 
+  it('checks the framed Pi editor without using the previous turn as input', () => {
+    const rule = '─'.repeat(40);
+    const footer = '~/repo\n↑1 ↓1 5.9%/128k (auto) fixture-model\nfs idle';
+    assert.equal(
+      runnerPaneComposerDraftState(`Error: previous turn\n${rule}\n\n${rule}\n${footer}`, 'pi'),
+      'empty',
+    );
+    const dimRail = '\x1b[2m' + rule;
+    const caret = '\x1b[0;7m \x1b[0m';
+    assert.equal(
+      runnerPaneComposerDraftState(
+        `${dimRail}\noutput\n${dimRail}\n\n${rule}\n${caret}\n${dimRail}\n${footer}`,
+        'pi',
+      ),
+      'empty',
+    );
+    assert.equal(
+      runnerPaneComposerDraftState(`${rule}\npending draft\n${rule}\n${footer}`, 'pi'),
+      'draft',
+    );
+    assert.equal(
+      runnerPaneComposerDraftState(`${rule}\npending draft\n${rule}\n\n${rule}\n${footer}`, 'pi'),
+      'unknown',
+    );
+    assert.equal(
+      runnerPaneComposerDraftState(`${rule}\n\n${rule}\nold scrollback`, 'pi'),
+      'unknown',
+    );
+  });
+
+  it('never uses a previously failed Pi prompt as buffered input', () => {
+    const rule = '─'.repeat(40);
+    const previous = 'Continue the task';
+    const footer = '~/repo\n↑1 ↓1 5.9%/128k (auto) fixture-model';
+    const failed = `${previous}\nError: timeout\n${rule}\n\n${rule}\n${footer}`;
+    assert.equal(runnerPaneHasBufferedInstruction(failed, previous, 'pi'), false);
+    const waiting = `${rule}\n ${previous}\n${rule}\n${footer}`;
+    assert.equal(runnerPaneHasBufferedInstruction(waiting, previous, 'pi'), true);
+  });
+
   it('reports draft for a busy/queued composer', () => {
     assert.equal(runnerPaneComposerDraftState('· Composing…\n❯\n', 'claude'), 'draft');
   });

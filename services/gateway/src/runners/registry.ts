@@ -2042,12 +2042,42 @@ export function paneShowsBusyComposer(pane: string): boolean {
  */
 export type ComposerDraftState = 'draft' | 'empty' | 'unknown';
 
+function readPiComposer(pane: string): string | null {
+  // Pi draws an unlabeled editor above its directory and context footer.
+  // The cursor cell confirms which blank frame is live when scrollback also has rails.
+  const rawLines = pane.trimEnd().split('\n');
+  const lines = runnerPaneWithoutPromptSuggestion(pane).trimEnd().split('\n');
+  const footer = lines.map((line) => /^\s*~?\//.test(line)).lastIndexOf(true);
+  if (footer < 3 || !/(?:^|\s)(?:\d+(?:\.\d+)?%|\?)\/\d/.test(lines[footer + 1] ?? '')) return null;
+  const bottom = lines[footer - 1]?.trimEnd();
+  if (!bottom || !/^─{8,}$/.test(bottom)) return null;
+  const candidates = lines
+    .slice(0, footer - 1)
+    .flatMap((line, index) => (line.trimEnd() === bottom ? [index] : []));
+  const top = candidates.at(-1);
+  if (top === undefined || top >= footer - 2) return null;
+  const input = lines.slice(top + 1, footer - 1);
+  if (candidates.length > 1 && !input.some((line) => line.trim().length > 0)) {
+    // A shell command can draw the same rails in the preceding transcript.
+    // Pi indents and wraps editor input. An unindented full-width rail cannot
+    // be a draft row. Require the reverse-video caret in the nearest blank
+    // frame before permitting input when earlier rails are ambiguous.
+    const caret = rawLines[top + 1] ?? '';
+    if (input.length !== 1 || !/^\s*\x1b\[(?:0;)?7m \x1b\[0m\s*$/.test(caret)) return null;
+  }
+  return input.join('\n').trim();
+}
+
 export function runnerPaneComposerDraftState(
   pane: string,
   runnerId?: string | null,
 ): ComposerDraftState {
   const composerPane = runnerPaneWithoutPromptSuggestion(pane);
   if (paneShowsBusyComposer(composerPane)) return 'draft';
+  if (normalizeRunner(runnerId) === 'pi') {
+    const input = readPiComposer(pane);
+    return input === null ? 'unknown' : input ? 'draft' : 'empty';
+  }
   const markers = normalizeRunner(runnerId) === 'codex' ? ['›', '❯'] : ['❯', '›'];
   const lines = composerPane
     .split('\n')
@@ -2317,6 +2347,10 @@ export function runnerPaneHasBufferedInstruction(
   message: string,
   runnerId?: string | null,
 ): boolean {
+  if (normalizeRunner(runnerId) === 'pi') {
+    const input = readPiComposer(pane);
+    return !!input && normalizeInstructionText(input) === normalizeInstructionText(message);
+  }
   if (runnerPaneShowsSubmittedInstruction(pane, message, runnerId)) return false;
   if (runnerPaneHasPendingInstruction(pane, message, runnerId)) return true;
   if (normalizeRunner(runnerId) === 'claude') return false;
@@ -2997,7 +3031,11 @@ async function pasteRunnerPromptInput(
   target: string,
   runner: string,
   message: string,
-  observation: { beforeInput?: () => Promise<void>; afterSubmit?: () => Promise<void> } = {},
+  observation: {
+    beforeInput?: () => Promise<void>;
+    verifyInputTarget?: () => Promise<void>;
+    afterSubmit?: () => Promise<void>;
+  } = {},
 ): Promise<ExecResult> {
   let inputStarted = false;
   let pasteCompleted = false;
@@ -3011,6 +3049,7 @@ async function pasteRunnerPromptInput(
           if (!inputStarted) {
             await observation.beforeInput?.();
             await promptMutationStore.getStore()?.started();
+            await observation.verifyInputTarget?.();
           }
           inputStarted = true;
           return command;
@@ -3081,6 +3120,22 @@ export async function submitRunnerPrompt(
           }
           sinceMs = captured;
         },
+        verifyInputTarget:
+          runner === 'pi'
+            ? async () => {
+                if (!retainedSession) return;
+                const live = await observability.getSessionDeliveryState(
+                  vars,
+                  target,
+                  retainedSession.sessionId,
+                  retainedSession.sessionPath,
+                );
+                if (live?.confidence !== 'high' || live.value === 'unknown') {
+                  boundaryUnavailable = true;
+                  throw new Error('The retained runner session is no longer in this pane');
+                }
+              }
+            : undefined,
         afterSubmit: async () => {
           // A bare Enter can submit an existing draft, but its text is unknown here.
           if (!message.trim()) return;
@@ -3132,6 +3187,7 @@ async function submitRunnerInstruction(
   message: string,
   logPrefix: string,
   mode: 'send' | 'submit-existing',
+  retainedSession?: { sessionId: string; sessionPath: string },
 ): Promise<SubmitInstructionOutcome> {
   if (mode === 'submit-existing') {
     const pane = await captureTmuxPane(vars, target);
@@ -3145,6 +3201,7 @@ async function submitRunnerInstruction(
   }
   const outcome = await submitRunnerPrompt(vars, target, runner, message, {
     submitOnly: mode === 'submit-existing',
+    retainedSession,
   });
   return outcome === 'sent' ? 'ok' : outcome === 'held-untouched' ? 'not-buffered' : 'stuck';
 }
@@ -3246,7 +3303,25 @@ async function sendRunnerInstructionHookOnly(
         `[runner-observability] promptAccepted read failed for ${vars.slotId}: ${(error as Error).message}`,
       );
     }
-    if (promptReading?.value === true && promptReading.confidence === 'high') return true;
+    if (promptReading?.value === true && promptReading.confidence === 'high') {
+      if (!retainedSession || runner !== 'pi') return true;
+      const accepted = await readRunnerPromptAcceptance(
+        observability,
+        vars,
+        target,
+        message,
+        promptAcceptedSinceMs,
+        retainedSession,
+      );
+      if (
+        accepted?.value === true &&
+        accepted.confidence === 'high' &&
+        (observability.promptAcceptedInSession || accepted.sessionId === retainedSession.sessionId)
+      )
+        return true;
+      // A hook in a different session is not evidence about this instruction.
+      promptReading = null;
+    }
 
     let activity = await readRunnerActivityFromObservability(vars, target, runner);
     if (
@@ -3321,6 +3396,7 @@ async function sendRunnerInstructionHookOnly(
         message,
         logPrefix,
         'submit-existing',
+        runner === 'pi' ? retainedSession : undefined,
       );
       if (submitted === 'ok') return true;
       if (submitted === 'stuck') return false;
@@ -3348,7 +3424,15 @@ async function sendRunnerInstructionHookOnly(
     }
     // Composer proven empty (or nothing was pending) → type fresh.
     return (
-      (await submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send')) === 'ok'
+      (await submitRunnerInstruction(
+        vars,
+        target,
+        runner,
+        message,
+        logPrefix,
+        'send',
+        retainedSession,
+      )) === 'ok'
     );
   }
   if (sawHookDegraded) {
@@ -3466,7 +3550,8 @@ export async function sendRunnerInstructionSafely(
   // Hook digests are correlation-safe across a bounded retry window. Native
   // exact-text history is not: an identical operator nudge may be intentional,
   // so only a native acceptance from this send call can suppress it.
-  const hookPromptAcceptedSinceMs = computePromptAcceptedSinceMs(loopStartMs, effectiveTimeoutMs);
+  const hookPromptAcceptedSinceMs =
+    opts.acceptanceSinceMs ?? computePromptAcceptedSinceMs(loopStartMs, effectiveTimeoutMs);
   const promptAcceptedSinceMs = await captureRunnerPromptAcceptanceBaseline(
     vars,
     target,

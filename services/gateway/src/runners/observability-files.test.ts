@@ -60,6 +60,20 @@ test('deriveRunnerActivity detects composing and tool-running from hooks', () =>
   assert.equal(toolRunning?.value, 'tool-running');
 });
 
+test('a failed turn is idle once its structured hook says the turn ended', () => {
+  for (const turnActive of [false, true]) {
+    const reading = deriveRunnerActivity(
+      [
+        { hook_event_name: 'UserPromptSubmit', observedAt: NOW - 2_000, session_id: 'pi' },
+        { hook_event_name: 'StopFailure', observedAt: NOW - 1_000, session_id: 'pi', turnActive },
+      ],
+      null,
+      NOW,
+    );
+    assert.equal(reading?.value, turnActive ? 'composing' : 'idle');
+  }
+});
+
 test('deriveRunnerActivity recognizes the structured idle notification type', () => {
   const reading = deriveRunnerActivity(
     [

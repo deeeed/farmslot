@@ -2740,3 +2740,58 @@ test('observe-only submission uses the exact retained native session instead of 
   assert.equal(confirmed, true);
   assert.equal(inSession.mock.callCount(), 1);
 });
+
+test('Pi retry receipt is pinned to both the saved conversation and the failed turn', async (t) => {
+  const observer = getRunnerObservability('pi');
+  assert.ok(observer);
+  const receiptTimes: number[] = [];
+  const retainedSession = { sessionId: 'owned-pi', sessionPath: '/owned/pi.jsonl' };
+  const failedAt = Date.now();
+  const original = {
+    promptAccepted: observer.promptAccepted,
+    promptAcceptedInSession: observer.promptAcceptedInSession,
+  };
+  observer.promptAccepted = async (_vars, _target, _digest, since) => {
+    receiptTimes.push(since);
+    return { value: true, source: 'hook', confidence: 'high', observedAt: since };
+  };
+  observer.promptAcceptedInSession = async (_vars, _target, id, sessionPath, _message, since) => {
+    assert.equal(id, retainedSession.sessionId);
+    assert.equal(sessionPath, retainedSession.sessionPath);
+    assert.equal(since, failedAt + 1);
+    return { value: true, source: 'signal', confidence: 'high', observedAt: since };
+  };
+  t.after(() => Object.assign(observer, original));
+  const accepted = await sendRunnerInstructionSafely(vars, target, 'pi', message, 'test', 50, {
+    acceptanceSinceMs: failedAt + 1,
+    retainedSession,
+  });
+  assert.equal(accepted, true);
+  assert.deepEqual(receiptTimes, [failedAt + 1]);
+});
+
+test('Pi refuses to touch the pane when the retained conversation changes before input', async (t) => {
+  const observer = getRunnerObservability('pi');
+  assert.ok(observer);
+  const original = {
+    getSessionDeliveryState: observer.getSessionDeliveryState,
+    capturePromptAcceptanceBaseline: observer.capturePromptAcceptanceBaseline,
+  };
+  let switched = false;
+  observer.getSessionDeliveryState = async () =>
+    switched ? null : { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  observer.capturePromptAcceptanceBaseline = async () => {
+    switched = true;
+    return Date.now();
+  };
+  t.after(() => Object.assign(observer, original));
+
+  callOrder.length = 0;
+  assert.equal(
+    await submitRunnerPrompt(vars, target, 'pi', message, {
+      retainedSession: { sessionId: 'old-pi', sessionPath: '/owned/old.jsonl' },
+    }),
+    'held-untouched',
+  );
+  assert.equal(callOrder.includes('tmux:send-literal'), false);
+});

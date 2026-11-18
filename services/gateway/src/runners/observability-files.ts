@@ -112,7 +112,7 @@ export function deriveRunnerActivity(
       lastPostToolUseAt = null;
     } else if (event === 'PostToolUse' || event === 'PostToolUseFailure') {
       lastPostToolUseAt = observedAt;
-    } else if (event === 'Stop') {
+    } else if (event === 'Stop' || (event === 'StopFailure' && record.turnActive === false)) {
       lastTurnStop = { observedAt, sessionId: record.session_id };
     } else if (event === 'SessionStart') {
       lastSessionStart = { observedAt, sessionId: record.session_id };
