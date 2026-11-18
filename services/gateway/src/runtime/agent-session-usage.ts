@@ -111,7 +111,11 @@ function workerChecklistMarks(run: Run, row: RunnerSessionUsage) {
   )
     return undefined;
   const context = run.agentContexts?.find((item) => row.contextIds?.includes(item.id));
-  return receiptChecklistMarks(run, context);
+  const sessionsInContext = (run.sessionUsage ?? []).filter(
+    (other) =>
+      other.role === row.role && other.contextIds?.some((id) => row.contextIds?.includes(id)),
+  ).length;
+  return receiptChecklistMarks(run, context, Math.max(1, sessionsInContext));
 }
 
 async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSessionUsage> {

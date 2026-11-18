@@ -6,7 +6,11 @@ import type { AgentContext } from '@farmslot/protocol';
 
 import { makeRun } from '../run-completion/test-fixtures.js';
 
-import { contextChecklistMarks, receiptChecklistMarks } from './session-usage.js';
+import {
+  contextChecklistMarks,
+  RECEIPT_CHILD_MARK_LIMIT,
+  receiptChecklistMarks,
+} from './session-usage.js';
 
 const T = Date.parse('2026-11-18T07:00:00Z');
 const at = (seconds: number) => new Date(T + seconds * 1000).toISOString();
@@ -121,6 +125,57 @@ test('a child closed with --mark-last ends its parent step on its own last row',
       [1, 'perps-shared 3. Confirm the verdict', 1],
       [2, '2. Complete the review', 1],
     ],
+  );
+});
+
+test("rows marked in one millisecond, and a step closing as the next step's row is marked, keep one boundary each in step order", () => {
+  const run = reviewRun();
+  const child = run.metrics.subtasks![0];
+  child.checklistTiming!.events.push(
+    { stepNumber: 3, label: '3) Confirm the verdict', checkedAt: at(45) },
+    { stepNumber: 4, label: 'Record the evidence', checkedAt: at(45) },
+  );
+  run.metrics.subtasks!.push({
+    ...child,
+    id: 'perps-client',
+    parent: { checklist: 'CHECKLIST.md', stepNumber: 2 },
+    checklistTiming: {
+      schemaVersion: 1,
+      events: [{ stepNumber: 1, label: 'Check the client', checkedAt: at(60) }],
+    },
+  });
+  const marks = receiptChecklistMarks(run, context);
+  assert.deepEqual(
+    marks.map((mark) => [mark.stepNumber, mark.label, (Date.parse(mark.checkedAt) - T) / 1000]),
+    [
+      [1, 'perps-shared 1. Record the review context', 20],
+      [1, 'perps-shared 2. Check the order flow', 40],
+      [1, 'perps-shared 4. Record the evidence', 45],
+      [1, '1. Run the shared checklist', 60],
+      [2, 'perps-client 1. Check the client', 60],
+      [2, '2. Complete the review', 120],
+    ],
+  );
+});
+
+test('a relaunched context or an oversized child keeps the parent marks', () => {
+  const parentsOnly = ['1. Run the shared checklist', '2. Complete the review'];
+  assert.deepEqual(
+    receiptChecklistMarks(reviewRun(), context, 2).map((mark) => mark.label),
+    parentsOnly,
+  );
+  const run = reviewRun();
+  run.metrics.subtasks![0].checklistTiming!.events = Array.from(
+    { length: RECEIPT_CHILD_MARK_LIMIT + 1 },
+    (_, index) => ({
+      stepNumber: index + 1,
+      label: `Row ${index + 1}`,
+      checkedAt: at(1 + index / 10),
+    }),
+  );
+  assert.deepEqual(
+    receiptChecklistMarks(run, context).map((mark) => mark.label),
+    parentsOnly,
   );
 });
 

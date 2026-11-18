@@ -181,8 +181,7 @@ export async function resolveNativeAgentSessionUsage(
       nativeSession.executionNodeId === 'local'
         ? await execute(process.execPath, argv.slice(1), {
             timeout: 30000,
-            // A receipt carries one segment per checklist and child-checklist row (400 rows at most).
-            maxBuffer: 1024 * 1024,
+            maxBuffer: 64 * 1024,
             env: { ...process.env, FORCE_COLOR: '0' },
             encoding: 'utf8',
           })

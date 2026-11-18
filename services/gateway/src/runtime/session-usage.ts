@@ -69,8 +69,7 @@ export async function extractRunnerSessionUsage({
       );
       const result = await execOnSlot(vars, argv.map(shellQuote).join(' '), {
         timeout: 30_000,
-        // A receipt carries one segment per checklist and child-checklist row (400 rows at most).
-        maxBuffer: 1024 * 1024,
+        maxBuffer: 64 * 1024,
         selectNodeSupport: false,
       });
       if (result.exitCode !== 0)
@@ -138,6 +137,9 @@ export function contextChecklistMarks(
   );
 }
 
+/** At most this many child rows split a receipt, so it stays within the node's output limits. */
+export const RECEIPT_CHILD_MARK_LIMIT = 100;
+
 /**
  * The marks a measured session is split at: the worker checklist's marks, plus the row marks of
  * each child checklist that a parent step ran (`metrics.subtasks`), so that parent step splits by
@@ -147,7 +149,13 @@ export function contextChecklistMarks(
 export function receiptChecklistMarks(
   run: Run,
   context: AgentContext | undefined = checklistTimingContext(run, 'CHECKLIST.md'),
+  /** Transcripts measured for this context: a relaunched worker leaves more than one. */
+  sessionsInContext = 1,
 ): ChecklistMark[] {
+  const parents = contextChecklistMarks(run, context);
+  // Each transcript of a relaunched context gets these marks, and an earlier transcript's calls
+  // fall before this attempt's first mark: they stay on the parent step, not on one rule.
+  if (sessionsInContext > 1) return parents;
   const startedAt = context?.attemptStartedAt ?? context?.startedAt;
   const source = run.metrics.checklistTiming?.source ?? 'CHECKLIST.md';
   const children = (run.metrics.subtasks ?? []).flatMap((child) =>
@@ -156,19 +164,20 @@ export function receiptChecklistMarks(
           ...mark,
           stepNumber: child.parent.stepNumber,
           // The mark writer keeps a numbered row's own number in its label.
-          label: `${child.id} ${mark.label.startsWith(`${mark.stepNumber}. `) ? mark.label : `${mark.stepNumber}. ${mark.label}`}`,
+          label: `${child.id} ${/^\d+[.)] /.test(mark.label) ? mark.label : `${mark.stepNumber}. ${mark.label}`}`,
         }))
       : [],
   );
-  // `mark sub <id> complete --mark-last` stamps the last child row and its parent step at once.
-  // That row closes the step: the parent mark would take the row's calls and share its segment key.
-  const closedByChild = new Set(
-    children.map((mark) => `${mark.stepNumber}\u0000${mark.checkedAt}`),
+  if (children.length > RECEIPT_CHILD_MARK_LIMIT) return parents;
+  // One boundary per step and instant: of rows marked in the same millisecond, or a last row and
+  // the parent step it closes (`mark sub <id> complete --mark-last`), the child's last row stays.
+  const byInstant = new Map<string, ChecklistMark>();
+  for (const mark of [...parents, ...children])
+    byInstant.set(`${mark.stepNumber}\u0000${mark.checkedAt}`, mark);
+  // At one instant an earlier step closes before a later step's row.
+  return [...byInstant.values()].sort(
+    (a, b) => Date.parse(a.checkedAt) - Date.parse(b.checkedAt) || a.stepNumber - b.stepNumber,
   );
-  const parents = contextChecklistMarks(run, context).filter(
-    (mark) => !closedByChild.has(`${mark.stepNumber}\u0000${mark.checkedAt}`),
-  );
-  return [...children, ...parents];
 }
 
 /** Sums the sessions' tool usage only when every session reported it. */
@@ -203,7 +212,11 @@ export async function extractRunWorkerSessionUsage(
           row.runner === run.metrics.runner && row.runnerSessionId === session.runnerSessionId,
       );
       const nativeSession = receipt?.nativeSession ?? context?.nativeSession;
-      const marks = receiptChecklistMarks(run, context);
+      const marks = receiptChecklistMarks(
+        run,
+        context,
+        unique.filter((other) => other.contextId === session.contextId).length,
+      );
       let usageWindow: SessionUsageWindow | undefined;
       if (nativeSession) {
         try {
