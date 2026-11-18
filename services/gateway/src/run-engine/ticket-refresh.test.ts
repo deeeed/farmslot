@@ -1011,8 +1011,11 @@ test('fixture deletion drains queued run writes before releasing storage', async
     assert.equal(getRun(run.id), undefined);
   } finally {
     release();
-    await persistRunNow(run);
-    t.mock.restoreAll();
-    syncBuiltinESMExports();
+    try {
+      await persistRunNow(run);
+    } finally {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    }
   }
 });
