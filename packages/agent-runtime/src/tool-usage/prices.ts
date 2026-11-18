@@ -29,6 +29,8 @@ export const OPENAI_PRICING: Record<string, OpenaiPricing> = {
   // https://developers.openai.com/api/docs/pricing
   // Standard short-context rates, USD per 1M tokens. Checked 2026-11-18.
   // GPT-5.6 Sol is the published promotional rate through 2026-11-30.
+  'gpt-6.2-astra': { input: 8.0, cached_input: 0.4, output: 40.0 },
+  'gpt-6.2-sol': { input: 2.0, cached_input: 0.1, output: 10.0 },
   'gpt-6-astra': { input: 10.0, cached_input: 1.0, output: 50.0 },
   'gpt-6.1-sol': { input: 2.0, cached_input: 0.1, output: 10.0 },
   'gpt-6-sol': { input: 2.0, cached_input: 0.2, output: 10.0 },

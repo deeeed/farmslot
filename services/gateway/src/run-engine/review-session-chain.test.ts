@@ -267,6 +267,17 @@ test('native review continuity uses its owned stopped session without a tmux tra
       },
     },
   );
+  for (const currentTicket of ['deeeed/farmslot#1', 'https://github.com/deeeed/farmslot/pull/1'])
+    for (const priorTicket of ['deeeed/farmslot#1', 'https://github.com/deeeed/farmslot/pull/1'])
+      assert.equal(
+        resolveRepeatReviewResumePlan(
+          { ...nativeCurrent, ticketOrPr: currentTicket },
+          { ...nativePrior, ticketOrPr: priorTicket },
+          'codex',
+          'gpt-6-astra',
+        ).kind,
+        'native-resume',
+      );
   for (const wrong of [
     { ...nativeCurrent, nativeOwnerPrincipalId: 'other' },
     { ...nativeCurrent, ticketOrPr: 'deeeed/farmslot#2' },
@@ -388,4 +399,18 @@ test('an adapter without continuation uses the verified delta even without a sav
   assert.equal(plan.trace.fallback?.reason, 'session-resume-unsupported');
   assert.deepEqual(plan.trace.fallback?.comparedRanges, ['1111111..2222222']);
   assert.equal(plan.trace.sessionId, undefined);
+});
+
+test('retained review lineage normalizes both current and prior pull URLs', () => {
+  for (const currentTicket of ['deeeed/farmslot#1', 'https://github.com/deeeed/farmslot/pull/1'])
+    for (const priorTicket of ['deeeed/farmslot#1', 'https://github.com/deeeed/farmslot/pull/1']) {
+      const { current, prior } = runs();
+      const result = resolveRepeatReviewResumePlan(
+        { ...current, ticketOrPr: currentTicket },
+        { ...prior, ticketOrPr: priorTicket },
+        'codex',
+      );
+      assert.equal(result.kind, 'resume');
+      if (result.kind === 'resume') assert.equal(result.binding.runnerSessionId, 'session-1');
+    }
 });

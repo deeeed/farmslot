@@ -19,6 +19,7 @@ import { lazyImport } from '../core/lazy-import.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { fetchGitHubPR } from '../external/github.js';
 import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
+import { applyInterdiffQualification } from '../review/interdiff.js';
 import {
   admitReviewRound,
   recordReviewRoundVerdict,
@@ -27,7 +28,6 @@ import {
 import { isUncertainReviewerOperation } from '../review/terminal-result.js';
 import {
   buildRepeatReviewContext,
-  confirmIncrementalAncestry,
   findLatestPriorReviewRun,
   startsFreshReviewChain,
 } from '../run-engine/engine-decisions.js';
@@ -71,6 +71,7 @@ import { captureRunSessionUsage } from '../runtime/agent-session-usage.js';
 import { workspaceTerminalOperation } from '../runtime/workspace-terminal.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 import { runPrincipalOwner, samePrincipalOwner } from '../security/work-originator.js';
+import { parseChecklistTiming } from '../tasks/checklist-timing.js';
 import { withSubtaskMetrics } from '../tasks/subtask-metrics.js';
 import { artifactContractWorkerInstruction } from '../tasks/worker-terminal-contract.js';
 
@@ -187,9 +188,14 @@ export async function recordWorkspaceReviewCompletion(
   runId: string,
   generation: number,
   reviewResult: NonNullable<Run['reviewResult']>,
-  deps: { collectSubtasks?: typeof collectReviewWorkspaceSubtaskMetrics } = {},
+  options: {
+    /** The reviewer's parent-checklist marks from its SIGNAL, as a slot run's completion keeps. */
+    checklistTiming?: WorkerSignal['checklistTiming'];
+    collectSubtasks?: typeof collectReviewWorkspaceSubtaskMetrics;
+  } = {},
 ): Promise<Run> {
-  const collectSubtasks = deps.collectSubtasks ?? collectReviewWorkspaceSubtaskMetrics;
+  const collectSubtasks = options.collectSubtasks ?? collectReviewWorkspaceSubtaskMetrics;
+  const timing = parseChecklistTiming(options.checklistTiming);
   let subtasks: Awaited<ReturnType<typeof collectReviewWorkspaceSubtaskMetrics>> = null;
   try {
     subtasks = await collectSubtasks(runId);
@@ -224,7 +230,14 @@ export async function recordWorkspaceReviewCompletion(
               },
             }
           : {}),
-        metrics: withSubtaskMetrics(run.metrics, subtasks),
+        // Per-step timing feeds the cost-per-step split of the reviewer's session.
+        metrics: withSubtaskMetrics(
+          {
+            ...run.metrics,
+            ...(timing ? { checklistTiming: timing } : {}),
+          },
+          subtasks,
+        ),
       });
     },
   );
@@ -311,19 +324,17 @@ async function freezeSubject(
     }),
   );
   const context = prior
-    ? await confirmIncrementalAncestry(
-        buildRepeatReviewContext(
-          run,
-          prior,
-          {
-            project: run.project,
-            repository: reference.repo,
-            prNumber: reference.number,
-            headSha: pr.headSha,
-            baseRef: pr.baseRef,
-          },
-          allRuns,
-        ),
+    ? buildRepeatReviewContext(
+        run,
+        prior,
+        {
+          project: run.project,
+          repository: reference.repo,
+          prNumber: reference.number,
+          headSha: pr.headSha,
+          baseRef: pr.baseRef,
+        },
+        allRuns,
       )
     : undefined;
   currentWorkspaceRun(runId, generation);
@@ -343,7 +354,9 @@ async function freezeSubject(
     configureWorkspaceContinuity(run, savedPrior, context, subject, allRuns);
     if (
       (context.mode === 'warm' ||
-        (context.session?.fallback && context.session.fallback.reason !== 'retention-expired')) &&
+        (context.session?.fallback &&
+          context.session.fallback.reason !== 'retention-expired' &&
+          context.session.fallback.reason !== 'session-unavailable')) &&
       context.priorReviewedHeadSha
     )
       subject.baseSha = context.priorReviewedHeadSha;
@@ -813,8 +826,17 @@ async function executeOwnedReviewWorkspaceStep(
       check();
       const task = await materializeReviewWorkspaceTask(runId, run.reviewWorkspaceSubject);
       check();
+      const qualifiedContext =
+        task.interdiff && run.repeatReviewContext
+          ? applyInterdiffQualification(run.repeatReviewContext, task.interdiff)
+          : undefined;
       await persistRunNow(
-        updateRun(runId, { taskFile: task.taskFile }),
+        updateRun(runId, {
+          taskFile: task.taskFile,
+          ...(qualifiedContext
+            ? { repeatReviewContext: qualifiedContext, reviewMode: qualifiedContext.mode }
+            : {}),
+        }),
         'workspace review task path',
       );
       return { outputs: { taskFile: task.taskFile, template: getRun(runId)?.executionTemplate } };
@@ -986,7 +1008,9 @@ async function executeOwnedReviewWorkspaceStep(
             'No complete saved review is available. Repair the retained artifacts and replay monitor, or replay dispatch to continue the original reviewer.',
             'review-incomplete',
           );
-        await recordWorkspaceReviewCompletion(runId, generation, completion.result);
+        await recordWorkspaceReviewCompletion(runId, generation, completion.result, {
+          checklistTiming: completion.signal.checklistTiming,
+        });
         emit(Events.RUN_UPDATED, { run: getRun(runId) });
         return {
           outputs: {
@@ -1190,7 +1214,9 @@ async function executeOwnedReviewWorkspaceStep(
                 'review findings ready',
               );
             }
-            await recordWorkspaceReviewCompletion(runId, generation, completion.result);
+            await recordWorkspaceReviewCompletion(runId, generation, completion.result, {
+              checklistTiming: completion.signal.checklistTiming,
+            });
             emit(Events.RUN_UPDATED, { run: getRun(runId) });
             return {
               outputs: {
@@ -1266,7 +1292,9 @@ async function executeOwnedReviewWorkspaceStep(
               'review-incomplete',
             );
           }
-          await recordWorkspaceReviewCompletion(runId, generation, completion.result);
+          await recordWorkspaceReviewCompletion(runId, generation, completion.result, {
+            checklistTiming: completion.signal.checklistTiming,
+          });
           emit(Events.RUN_UPDATED, { run: getRun(runId) });
           return {
             outputs: {

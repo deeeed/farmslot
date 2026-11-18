@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
@@ -157,6 +157,110 @@ test('materialization ignores an execution-only pool and preserves frozen guidan
     );
     assert.equal(await readReviewWorkspaceCompletion(f.run.id, f.deps), null);
   });
+});
+
+// ADR-0073 Amendment 1: a static review's rule pack comes from the project installation,
+// is validated before the task exists, and is frozen with its digest in the handoff.
+test('a static review freezes its declared rule pack from the project installation', async () => {
+  await withFixture(async (f) => {
+    const pack = `${JSON.stringify({
+      schemaVersion: 1,
+      id: 'fixture',
+      source: { repository: 'owner/fixture', revision: 'r1' },
+      families: [
+        {
+          id: 'fsr-01',
+          title: 'A rule',
+          file: 'review-guide.md',
+          areas: { paths: { fixture: ['**'] } },
+          status: 'active',
+          class: 'blocking',
+          rules: [{ label: 'A rule', why: 'run 1 failed' }],
+        },
+      ],
+    })}\n`;
+    await writeFile(path.join(f.project.projectFixturesDir, 'review-pack.json'), pack);
+    f.project.projectJson.static_review = {
+      ...f.project.projectJson.static_review,
+      rule_pack: { pack: 'review-pack.json', client: 'fixture', level: 'static' },
+    };
+    await materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps);
+    assert.equal(
+      await readFile(path.join(f.task, 'inputs/instructions/review-pack.json'), 'utf8'),
+      pack,
+    );
+    const handoff = JSON.parse(await readFile(path.join(f.task, 'inputs/handoff.json'), 'utf8'));
+    assert.deepEqual(handoff.reviewRulePack, {
+      pack: { path: 'inputs/instructions/review-pack.json', sha256: digest(pack) },
+      client: 'fixture',
+      level: 'static',
+    });
+  });
+});
+
+test('a static review refuses a rule pack path that is a directory without walking it', async () => {
+  await withFixture(async (f) => {
+    const directory = path.join(f.project.projectFixturesDir, 'review-pack.json');
+    await mkdir(directory);
+    // Walking the directory would fail on this dangling link with a different error,
+    // so the expected message proves the path was refused before any walk.
+    await symlink(path.join(directory, 'missing-target'), path.join(directory, 'dangling'));
+    f.project.projectJson.static_review = {
+      ...f.project.projectJson.static_review,
+      rule_pack: { pack: 'review-pack.json', client: 'fixture', level: 'static' },
+    };
+    await assert.rejects(
+      materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps),
+      /Static review rule pack review-pack\.json is not a regular file/,
+    );
+  });
+});
+
+// Root reads a mode-000 file, so the permission case only means something without it.
+test(
+  'a static review names the read error when its rule pack is unreadable',
+  { skip: process.getuid?.() === 0 },
+  async () => {
+    await withFixture(async (f) => {
+      const file = path.join(f.project.projectFixturesDir, 'review-pack.json');
+      await writeFile(file, '{}');
+      await chmod(file, 0o000);
+      f.project.projectJson.static_review = {
+        ...f.project.projectJson.static_review,
+        rule_pack: { pack: 'review-pack.json', client: 'fixture', level: 'static' },
+      };
+      try {
+        await assert.rejects(
+          materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps),
+          /Static review rule pack review-pack\.json could not be read: .*EACCES/,
+        );
+      } finally {
+        // Restore read access so the fixture can remove its temporary tree.
+        await chmod(file, 0o644);
+      }
+    });
+  },
+);
+
+test('a static review refuses a declared rule pack that is missing or invalid', async () => {
+  for (const [content, message] of [
+    [undefined, /Static review rule pack review-pack\.json is not installed/],
+    ['{not json', /Static review rule pack review-pack\.json is not valid JSON/],
+    [
+      JSON.stringify({ schemaVersion: 2 }),
+      /Static review rule pack review-pack\.json is invalid: pack\.schemaVersion must be 1/,
+    ],
+  ] as const) {
+    await withFixture(async (f) => {
+      if (content !== undefined)
+        await writeFile(path.join(f.project.projectFixturesDir, 'review-pack.json'), content);
+      f.project.projectJson.static_review = {
+        ...f.project.projectJson.static_review,
+        rule_pack: { pack: 'review-pack.json', client: 'fixture', level: 'static' },
+      };
+      await assert.rejects(materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps), message);
+    });
+  }
 });
 
 test('tmux startup requires a fresh signal belonging to its reviewer attempt', async () => {

@@ -7,7 +7,6 @@ import {
   isRecord,
   isTerminalRunStatus,
   type NativeContextCompactionRequest,
-  parseGitHubRef,
   type Run,
   type RunnerPromptAcceptance,
   type WorkerSignal,
@@ -18,6 +17,7 @@ import { upsertAgentContext } from '../agents/contexts.js';
 import { loadMachinePool, loadProjectVars } from '../core/config.js';
 import { execFileArgv } from '../core/exec.js';
 import { machineShellEnv, resolveProjectCommandEnv } from '../core/project-env.js';
+import { reviewPRIdentity } from '../review/pr-identity.js';
 import { WarmReviewRefusal } from '../review/session-mode.js';
 import {
   prepareReviewCompaction,
@@ -194,7 +194,7 @@ async function reviewTerminalCompaction(
 export function verifiedWarmReviewSessionId(run: Run): string | undefined {
   if (resolveReviewMode({ run }) !== 'warm') return undefined;
   const trace = run.repeatReviewContext?.session;
-  const pr = run.prWork?.pr ?? parseGitHubRef(run.ticketOrPr);
+  const pr = reviewPRIdentity({ ticketOrPr: run.ticketOrPr, prWork: run.prWork });
   if (
     !trace ||
     trace.mode !== 'warm' ||
@@ -210,8 +210,8 @@ export function verifiedWarmReviewSessionId(run: Run): string | undefined {
     );
   if (
     !pr ||
-    trace.repository?.toLowerCase() !== pr.repo.toLowerCase() ||
-    trace.prNumber !== pr.number
+    trace.repository?.toLowerCase() !== pr.repository.toLowerCase() ||
+    trace.prNumber !== pr.prNumber
   )
     throw new WarmReviewRefusal(
       'pr-mismatch',

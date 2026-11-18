@@ -5,6 +5,7 @@
 // - green (ok) / blue (running) / muted = success / in-flight / idle
 
 import type { RunListRow, RunStep, RunStepDisplayStatus, RunStepStatus } from '@farmslot/protocol';
+import { PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
 
@@ -23,7 +24,7 @@ export function publicationReviewVerdictStatus(verdict: string | null | undefine
 
 /**
  * Map independent-review verdict → visual tone.
- * issues → warn (orange, another review/fix loop is expected)
+ * issues or blocked → warn (rework or an operator decision is needed)
  * failed → fail (red, terminal)
  */
 export function publicationReviewVerdictTone(
@@ -32,7 +33,7 @@ export function publicationReviewVerdictTone(
   const v = (verdict ?? '').trim().toLowerCase();
   if (v === 'pass' || v === 'skipped') return 'ok';
   if (v === 'pending') return 'running';
-  if (v === 'issues') return 'warn';
+  if (v === 'issues' || v === 'blocked') return 'warn';
   if (v === 'failed') return 'fail';
   return 'muted';
 }
@@ -114,15 +115,14 @@ export function computePackageRefreshStatus(
 
 /**
  * Visual tone for any pipeline step/node (canvas + mini).
- * Prefer explicit verdict on outputs when present (publication reviews), but
- * review must honor maxRetriesExhausted before treating issues as orange.
+ * A review verdict can explain why the engine stopped a step.
  */
 export function pipelineStepTone(
   step: Pick<RunStep, 'name' | 'detail'> & {
     status: RunStepDisplayStatus;
     outputs?: Record<string, unknown> | null;
   },
-  opts?: { runError?: string | null },
+  opts?: { runError?: string | null; run?: Pick<RunListRow, 'status' | 'decisions'> },
 ): PipelineDisplayTone {
   // A blocked run's stopped step reads amber whatever its outputs record.
   if (step.status === 'blocked') return 'warn';
@@ -135,11 +135,39 @@ export function pipelineStepTone(
         : null;
   const verdictLower = (verdict ?? '').trim().toLowerCase();
 
-  // Review first: terminal exhaustion is red even when verdict is still "issues".
+  const rejection = outputs?.reviewLaunchRejection;
+  if (
+    step.name === 'review' &&
+    (step.status === 'failed' || step.status === 'done') &&
+    rejection &&
+    typeof rejection === 'object' &&
+    'code' in rejection &&
+    rejection.code === PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.roundLimitReached
+  )
+    return 'warn';
+
+  // A spent fix budget stops automated rework. The review can have found issues
+  // or stopped for the operator even if the engine records the step as failed.
   if (step.name === 'review' && step.status === 'failed') {
-    if (outputs?.maxRetriesExhausted === true) return 'fail';
-    if (verdictLower === 'issues' || /issues/i.test(step.detail ?? '')) return 'warn';
-    return 'fail';
+    if (verdictLower === 'issues' || verdictLower === 'blocked')
+      return publicationReviewVerdictTone(verdictLower);
+    // Slim list rows can omit the rejection body, but keep the decision's stopped step.
+    if (
+      !verdict &&
+      opts?.run?.status === 'needs-decision' &&
+      opts.run.decisions.some(
+        (decision) =>
+          !decision.resolvedAt &&
+          decision.payload?.kind === 'result-decision' &&
+          decision.payload.stoppedAt === 'review',
+      )
+    )
+      return 'warn';
+    if (!verdict && (outputs?.maxRetriesExhausted === true || /issues/i.test(step.detail ?? '')))
+      return 'warn';
+    return verdictLower === 'failed' || step.detail?.trim() || opts?.runError?.trim()
+      ? 'fail'
+      : 'muted';
   }
 
   if (verdict) return publicationReviewVerdictTone(verdict);

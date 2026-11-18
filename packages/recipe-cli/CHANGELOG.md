@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.20 - 2026-11-18
+
+- `withTaskProjectHost` accepts the receipt its caller already verified, so a task command hashes the retained tooling once instead of twice. A receipt for a different binding is refused.
+
 ## 0.35.19 - 2026-11-18
 
 - Align exact internal dependencies with the protocol 0.88.0 release cohort consumed by mm-harness 0.96.33.

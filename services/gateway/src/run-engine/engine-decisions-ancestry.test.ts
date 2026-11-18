@@ -3,28 +3,24 @@ import test, { mock } from 'node:test';
 
 import type { Run } from '@farmslot/protocol';
 
-import * as github from '../external/github.js';
+import { makeRun } from '../methods/run/test-fixtures.js';
 import * as store from '../runs/store.js';
 
 const runs = new Map<string, Run>();
 let release: () => void = () => {};
 let lookupStarted: () => void = () => {};
 
-mock.module('../external/github.js', {
-  namedExports: {
-    ...github,
-    isGitHubAncestor: async () => {
-      lookupStarted();
-      await new Promise<void>((resolve) => (release = resolve));
-      return false;
-    },
-  },
-});
 mock.module('../runs/store.js', {
   namedExports: {
     ...store,
     getRun: (id: string) => runs.get(id),
-    getAllRunsWithArchived: async () => [...runs.values()],
+    getAllRunsWithArchived: async () => {
+      lookupStarted();
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return [...runs.values()];
+    },
     listRuns: () => ({ runs: [...runs.values()] }),
     updateRun: (id: string, patch: Partial<Run>) => {
       const run = { ...runs.get(id)!, ...patch };
@@ -35,7 +31,7 @@ mock.module('../runs/store.js', {
 });
 const { handleRepeatReviewDecision } = await import('./engine-decisions.js');
 
-const prior = {
+const prior = makeRun({
   id: 'prior-review',
   familyId: 'family-1',
   flowType: 'review-pr',
@@ -44,11 +40,8 @@ const prior = {
   ticketOrPr: 'owner/repo#42',
   steps: [],
   decisions: [],
-  metrics: {},
+
   reviewResult: {
-    kind: 'review',
-    prNumber: 42,
-    repo: 'owner/repo',
     recommendation: 'request changes',
     reviewMd: 'review.md',
     lineComments: [],
@@ -60,38 +53,41 @@ const prior = {
   },
   createdAt: '2026-10-05T09:00:00.000Z',
   completedAt: '2026-10-05T10:00:00.000Z',
-} as unknown as Run;
+});
 
-for (const [label, interrupt] of [
-  ['cancel', { status: 'cancelled' }],
-  ['pause', { status: 'paused' }],
-  ['replay', { engineState: { generation: 2 } }],
-] as const) {
-  test(`a ${label} during the ancestry lookup leaves the run without a new decision`, async () => {
-    const current = {
-      ...prior,
-      id: 'current',
-      status: 'writing-task',
-      decisions: [],
-      reviewResult: undefined,
-      completedAt: undefined,
-      engineState: { generation: 1 },
-    } as unknown as Run;
-    runs.clear();
-    runs.set(prior.id, prior);
-    runs.set(current.id, current);
-    const started = new Promise<void>((resolve) => (lookupStarted = resolve));
-    const handled = handleRepeatReviewDecision(current.id, current, {
-      repository: 'owner/repo',
-      prNumber: 42,
-      headSha: 'da6b612ef57bc81a6c14bc873810b66ee0720eb0',
+for (const includePrior of [true, false]) {
+  for (const [label, interrupt] of [
+    ['cancel', { status: 'cancelled' }],
+    ['pause', { status: 'paused' }],
+    ['replay', { engineState: { generation: 2 } }],
+  ] as const) {
+    test(`a ${label} during the history lookup preserves ownership, prior=${includePrior}`, async () => {
+      const current: Run = {
+        ...prior,
+        id: 'current',
+        status: 'writing-task',
+        createdAt: '2026-10-05T11:00:00.000Z',
+        decisions: [],
+        reviewResult: undefined,
+        completedAt: undefined,
+        engineState: { generation: 1 },
+      };
+      runs.clear();
+      if (includePrior) runs.set(prior.id, prior);
+      runs.set(current.id, current);
+      const started = new Promise<void>((resolve) => (lookupStarted = resolve));
+      const handled = handleRepeatReviewDecision(current.id, current, {
+        repository: 'owner/repo',
+        prNumber: 42,
+        headSha: 'da6b612ef57bc81a6c14bc873810b66ee0720eb0',
+      });
+      await started;
+      runs.set(current.id, { ...runs.get(current.id)!, ...interrupt });
+      release();
+      await assert.rejects(handled, /changed during the review history lookup/);
+      const after = runs.get(current.id)!;
+      assert.deepEqual(after.decisions, []);
+      assert.equal(after.status, 'status' in interrupt ? interrupt.status : 'writing-task');
     });
-    await started;
-    runs.set(current.id, { ...runs.get(current.id)!, ...interrupt } as Run);
-    release();
-    await assert.rejects(handled, /changed during the review ancestry lookup/);
-    const after = runs.get(current.id)!;
-    assert.deepEqual(after.decisions, []);
-    assert.equal(after.status, 'status' in interrupt ? interrupt.status : 'writing-task');
-  });
+  }
 }

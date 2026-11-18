@@ -119,7 +119,9 @@ test('COLD captures the full immutable PR range; WARM uses exactly the verified 
     exec: async (_vars, command) => {
       commands.push(command);
       let stdout = '';
-      if (command === 'git rev-parse HEAD') stdout = head;
+      if (command.startsWith('node -e'))
+        stdout = JSON.stringify({ comparedRanges: [`${prior}..${head}`] });
+      else if (command === 'git rev-parse HEAD') stdout = head;
       else if (command.startsWith('git merge-base') && !command.includes('--is-ancestor'))
         stdout = base;
       else if (command.includes('--abbrev-ref')) stdout = 'feature';
@@ -145,7 +147,11 @@ test('COLD captures the full immutable PR range; WARM uses exactly the verified 
   );
   assert.equal(warm.snapshot.baseSha, prior);
   assert.equal(warm.snapshot.headSha, head);
-  assert.ok(commands.some((command) => command.includes(`--is-ancestor '${prior}' '${head}'`)));
+  assert.equal(
+    commands.filter((command) => command.startsWith('node -e')).length,
+    1,
+    'one batched immutable scope inspection',
+  );
   assert.ok(
     commands
       .filter((command) => command.startsWith(GIT_DIFF_COMMAND))
@@ -163,7 +169,7 @@ test('COLD captures the full immutable PR range; WARM uses exactly the verified 
     },
   );
   assert.equal(invalid.snapshot.source, 'unavailable');
-  assert.match(invalid.snapshot.error ?? '', /not an ancestor/);
+  assert.match(invalid.snapshot.error ?? '', /interdiff/);
 });
 
 // A real diff proves that source-only filters cannot hide changed documentation.

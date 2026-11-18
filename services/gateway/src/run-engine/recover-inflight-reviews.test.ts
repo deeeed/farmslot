@@ -1127,6 +1127,30 @@ test('restart recovery uses attempt ordinals in a later requested review', () =>
   assert.equal(recovered.session?.continuity, 'resumed');
   assert.equal(recovered.session?.lastReviewedHeadSha, previousHead);
   assert.equal(reviewFinalSnapshotMatchesPreparedPackage(recovered, pkg), true);
+  const rebased = buildRecoveredReview({
+    ...params,
+    reviewSnapshot: {
+      ...pkg.reviewSnapshot!,
+      interdiff: {
+        version: 1,
+        oldBaseSha: 'd'.repeat(40),
+        oldHeadSha: previousHead,
+        newBaseSha: pkg.reviewSnapshot!.baseSha!,
+        newHeadSha: pkg.headSha!,
+        rangeDiffHash: 'e'.repeat(64),
+        qualification: 'reliable',
+        priorCommitCount: 4,
+        unmatchedOverlappingPairs: 0,
+        upstreamOverlapFiles: [],
+        deltaPaths: ['a.ts'],
+      },
+    },
+  });
+  assert.ok(rebased);
+  assert.equal(rebased.mode, 'warm');
+  assert.equal(rebased.session?.lastReviewedHeadSha, previousHead);
+  assert.equal(rebased.reviewerSessionId, previous.reviewerSessionId);
+  assert.equal(reviewFinalSnapshotMatchesPreparedPackage(rebased, pkg), true);
   const appended = appendRecoveredContinuationAttempt(
     { ...previous, maxRetriesExhausted: true },
     recovered,

@@ -40,6 +40,17 @@ export function useNativeConnectionController(options: { pairingLink?: string } 
     setUrlInput: setUrl,
     setAdvancedGatewaySetupOpen: setManualOpen,
     onPaired: () => setPaired(true),
+    onPairingLinkCancelled: () => {
+      if (!alive.current) return;
+      const { status, workspaceAccess } = useConnectionStore.getState();
+      if (status === 'connected' && workspaceAccess !== 'none') {
+        router.dismissTo(workspaceHome(workspaceAccess));
+      } else {
+        // Consume the rejected route without treating it as a request to open the camera.
+        autoOpenedScanner.current = true;
+        router.setParams({ payload: '' });
+      }
+    },
   });
   openScannerRef.current = pairing.openPairingScanner;
   const pairFromLinkRef = useRef(pairing.pairFromLink);

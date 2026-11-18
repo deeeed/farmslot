@@ -27,8 +27,14 @@ export async function workspaceReviewGit(params: {
     throw new Error('Review source is unavailable');
   assertNativeRunOwner(run);
   const subject = run.reviewWorkspaceSubject;
+  const snapshot = run.reviewResult?.reviewSnapshot;
+  // Completion binds this range from the checksummed task, never from viewer input.
+  const baseSha =
+    snapshot?.source !== 'unavailable' && snapshot?.headSha === subject.headSha && snapshot.baseSha
+      ? snapshot.baseSha
+      : subject.baseSha;
   if (
-    (params.base !== undefined && params.base !== subject.baseSha) ||
+    (params.base !== undefined && params.base !== baseSha) ||
     (params.head !== undefined && params.head !== subject.headSha) ||
     (params.ref !== undefined && params.ref !== subject.headSha && !params.mergeBaseRef) ||
     params.target === 'worktree' ||
@@ -90,7 +96,7 @@ if(r.error)throw r.error;process.stdout.write(r.stdout.toString('utf8'));process
           ...input,
           cache,
           identity,
-          base: subject.baseSha,
+          base: baseSha,
           head: subject.headSha,
         }),
       ];

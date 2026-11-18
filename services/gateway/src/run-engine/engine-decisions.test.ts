@@ -13,7 +13,6 @@ import {
   buildRepeatReviewContext,
   collisionAutoResolveAction,
   collisionDecisionActions,
-  confirmIncrementalAncestry,
   findLatestPriorReviewRun,
   repeatReviewDecisionActions,
 } from './engine-decisions.js';
@@ -368,7 +367,7 @@ test('missing prior reviewed head disables only incremental continuation', () =>
   );
 });
 
-test('a rebased prior head refuses WARM and offers COLD', async () => {
+test('a recorded prior head remains a WARM candidate until pinned Git qualification', async () => {
   // MetaMask/metamask-mobile#36969: the author rebased between review generations.
   const priorHead = '5f85b47bfa4f7d8ec1888605f0cd2f025fffb804';
   const rebasedHead = 'da6b612ef57bc81a6c14bc873810b66ee0720eb0';
@@ -404,42 +403,14 @@ test('a rebased prior head refuses WARM and offers COLD', async () => {
       },
       [prior],
     );
-  const checked: string[] = [];
-  const isAncestor = async (repo: string, ancestor: string, head: string) => {
-    checked.push(`${repo} ${ancestor}...${head}`);
-    return head !== rebasedHead;
-  };
-
-  const rebased = await confirmIncrementalAncestry(build(rebasedHead), isAncestor);
-  assert.deepEqual(checked, [`metamask/metamask-mobile ${priorHead}...${rebasedHead}`]);
-  assert.equal(rebased.mode, 'warm');
-  assert.equal(rebased.mode, 'warm');
-  assert.equal(rebased.priorReviewedHeadSha, priorHead);
-  assert.match(rebased.warmUnavailableReason ?? '', /not an ancestor/);
-  assert.deepEqual(rebased.unresolvedFindings, [
-    { file: 'src/a.ts', line: 7, description: 'Fix this.' },
-  ]);
+  const context = build(rebasedHead);
+  assert.equal(context.mode, 'warm');
+  assert.equal(context.priorReviewedHeadSha, priorHead);
   assert.deepEqual(
-    repeatReviewDecisionActions(rebased).map((action) => action.id),
-    ['cold'],
+    repeatReviewDecisionActions(context).map((action) => action.id),
+    ['warm', 'cold'],
   );
-  const automated = automatedRepeatReviewSelection(rebased, { mode: 'cold' as const });
-  assert.equal(automated.mode, 'cold');
-  assert.deepEqual(automated.unresolvedFindings, []);
-
-  const descendant = build('b2cabb9ef367a86aeb273dbbf1a6b38e91852209');
-  assert.equal(await confirmIncrementalAncestry(descendant, isAncestor), descendant);
-  assert.equal(descendant.mode, 'warm');
-
-  const unverified = await confirmIncrementalAncestry(build(rebasedHead), async () => {
-    throw new Error('HTTP 404: No commit found');
-  });
-  assert.equal(unverified.mode, 'warm');
-  assert.match(unverified.warmUnavailableReason ?? '', /HTTP 404/);
-
-  checked.length = 0;
-  assert.equal(await confirmIncrementalAncestry(rebased, isAncestor), rebased);
-  assert.deepEqual(checked, [], 'an unavailable delta needs no second lookup');
+  assert.equal(automatedRepeatReviewSelection(context, { mode: 'warm' }).mode, 'warm');
 });
 
 test('full repeat-review selections always reset reviewer reasoning', () => {

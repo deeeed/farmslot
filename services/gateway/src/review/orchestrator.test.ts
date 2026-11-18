@@ -1126,7 +1126,7 @@ test('review runner defaults come from configuration unless the run selects one,
       { runner: 'claude', model: 'opus' },
       { reviewRunner: 'codex', model: null },
     ),
-    { reviewRunner: 'codex', model: 'gpt-6.1-sol' },
+    { reviewRunner: 'codex', model: 'gpt-6.2-sol' },
   );
   // ADR-063 Amendment 3: a dispatch sequence's row 1 wins over the project review config.
   assert.deepEqual(
@@ -1141,7 +1141,7 @@ test('review runner defaults come from configuration unless the run selects one,
 test('unqualified project models cannot change the default reviewer', () => {
   assert.deepEqual(resolveReviewRunnerModel({ model: 'opus' }), {
     reviewRunner: 'codex',
-    model: 'gpt-6.1-sol',
+    model: 'gpt-6.2-sol',
   });
   assert.throws(
     () => resolveReviewRunnerModel({ runner: 'codex', model: 'opus' }),
@@ -1153,7 +1153,7 @@ test('unqualified project models cannot change the default reviewer', () => {
   );
   assert.deepEqual(
     resolveReviewRunnerModel({ runner: 'claude', model: 'opus' }, { reviewRunner: 'codex' }),
-    { reviewRunner: 'codex', model: 'gpt-6.1-sol' },
+    { reviewRunner: 'codex', model: 'gpt-6.2-sol' },
   );
 });
 

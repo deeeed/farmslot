@@ -340,7 +340,7 @@ test('single-row execution has explicit effort defaults and shared project flow 
   );
   assert.deepEqual(
     executionModelFromSelection({ runner: 'codex', model: null, effort: null, mode: 'warm' }),
-    { runner: 'codex', model: 'gpt-6.1-sol', effort: 'high', mode: 'warm' },
+    { runner: 'codex', model: 'gpt-6.2-sol', effort: 'high', mode: 'warm' },
   );
   assert.throws(() => vm.addRow(), /at most 1/);
 });

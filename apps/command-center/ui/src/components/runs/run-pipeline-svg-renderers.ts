@@ -17,6 +17,7 @@ import {
   type NodePos,
   type PipelineLayout,
 } from './run-pipeline-model.js';
+import { type PipelineDisplayTone, pipelineToneColor } from './run-pipeline-status.js';
 import { formatDuration, stepNodeDurationLabel, stepStatusColor } from './run-utils.js';
 
 export function renderPipelineFocus(opts: {
@@ -52,6 +53,14 @@ export function renderPipelineFocus(opts: {
   `;
 }
 
+const arrowMarker: Record<PipelineDisplayTone, string> = {
+  ok: 'ah-done',
+  running: 'ah-running',
+  warn: 'ah-warn',
+  fail: 'ah-failed',
+  muted: 'ah-pending',
+};
+
 export function renderPipelineDefs() {
   return svg`
     <defs>
@@ -63,6 +72,9 @@ export function renderPipelineDefs() {
       </marker>
       <marker id="ah-pending" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
         <polygon points="0 0, 8 3, 0 6" fill="${colors.textMuted}44"/>
+      </marker>
+      <marker id="ah-warn" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+        <polygon points="0 0, 8 3, 0 6" fill="${pipelineToneColor('warn')}"/>
       </marker>
       <marker id="ah-failed" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
         <polygon points="0 0, 8 3, 0 6" fill="${colors.statusFail}"/>
@@ -97,22 +109,19 @@ export function renderPipelineLanes(layout: PipelineLayout) {
   `;
 }
 
-export function renderPipelineArrow(arrow: ArrowDef, visibleStatus: RunStepDisplayStatus) {
-  const markerMap: Record<string, string> = {
-    done: 'ah-done',
-    running: 'ah-running',
-    failed: 'ah-failed',
-    pending: 'ah-pending',
-  };
-  const colorMap: Record<string, string> = {
-    done: `${colors.statusOk}66`,
-    running: '#3b82f6',
-    failed: colors.statusFail,
-    skipped: `${colors.textMuted}55`,
-    pending: `${colors.textMuted}33`,
-  };
-  const marker = markerMap[visibleStatus] ?? 'ah-pending';
-  const color = colorMap[visibleStatus] ?? `${colors.textMuted}33`;
+export function renderPipelineArrow(
+  arrow: ArrowDef,
+  visibleStatus: RunStepDisplayStatus,
+  tone: PipelineDisplayTone,
+) {
+  const marker = arrowMarker[tone];
+  const base = pipelineToneColor(tone);
+  const color =
+    tone === 'ok'
+      ? `${base}66`
+      : tone === 'muted'
+        ? `${base}${visibleStatus === 'skipped' ? '55' : '33'}`
+        : base;
 
   return svg`
     <path d="${arrow.d}" class="arrow"
@@ -226,6 +235,7 @@ export function renderDefaultPipelineNode(node: NodePos, context: DefaultPipelin
 export function renderReviewLoop(
   nodeMap: Map<string, NodePos>,
   visibleStatus: (step: RunStep) => RunStepDisplayStatus,
+  stepTone: (step: RunStep) => PipelineDisplayTone,
 ) {
   const srNode = nodeMap.get('review');
   const monNode = nodeMap.get('monitor');
@@ -236,7 +246,6 @@ export function renderReviewLoop(
   const hasRetry = Number(outputs.retryCount ?? 0) > 0 || (step.detail ?? '').startsWith('Fix:');
   const vis = visibleStatus(step);
   const isRunning = vis === 'running';
-  const isDone = vis === 'done';
   const isPending = vis === 'pending';
 
   // Show loop when: retry happened, or currently in fix phase, or step is running (loop is possible)
@@ -248,7 +257,8 @@ export function renderReviewLoop(
   const arcTop = srNode.y - 24;
   const arcMidX = (monRight + srRight) / 2;
 
-  const loopColor = hasRetry ? (isDone ? colors.statusOk : '#3b82f6') : `${colors.textMuted}33`;
+  const tone = hasRetry ? stepTone(step) : 'muted';
+  const loopColor = hasRetry ? pipelineToneColor(tone) : `${colors.textMuted}33`;
   const dashArray = hasRetry ? 'none' : '4 3';
   const opacity = hasRetry ? 1 : 0.5;
 
@@ -261,7 +271,7 @@ export function renderReviewLoop(
                C ${srRight} ${arcTop}, ${monRight} ${arcTop}, ${monRight} ${srNode.y}"
             fill="none" stroke="${loopColor}" stroke-width="1.5"
             stroke-dasharray="${dashArray}"
-            marker-end="url(#ah-${hasRetry ? (isDone ? 'done' : 'running') : 'pending'})"/>
+            marker-end="url(#${arrowMarker[tone]})"/>
       ${
         hasRetry
           ? svg`

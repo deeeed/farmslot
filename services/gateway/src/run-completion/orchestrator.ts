@@ -53,9 +53,9 @@ import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import {
-  contextChecklistMarks,
   extractRunnerSessionUsage,
   extractRunWorkerSessionUsage,
+  receiptChecklistMarks,
   runnerUsageMetrics,
   usesReviewChainSessionTotal,
 } from '../runtime/session-usage.js';
@@ -333,7 +333,7 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
         runner: run.metrics.runner,
         runnerSessionId,
         runnerSessionPath,
-        checklistMarks: contextChecklistMarks(run),
+        checklistMarks: receiptChecklistMarks(run),
       }));
     const costUsd = usage.costUsd ?? null;
     const inputTokens = usage.inputTokens ?? null;
@@ -1454,6 +1454,7 @@ export async function createPrFromApprovedPackage(
   run: Run,
   ciRepo: string,
   prPackage: ReadyGatePrPackage,
+  emit: PublishProgressEmitter = () => {},
 ): Promise<number | null> {
   if (!run.slotId) throw new Error('cannot publish a local-first PR without an assigned slot');
   const vars = await loadSlotVars(run.slotId);
@@ -1477,8 +1478,9 @@ export async function createPrFromApprovedPackage(
   }
   if (!prPackage.branch?.trim()) throw new Error('approved package is missing a branch');
   await assertCommitSignatures(vars, `refs/remotes/origin/${base}`, prPackage.headSha || 'HEAD');
-  await pushPublicationBranch(run, prPackage.headSha, base, prPackage.branch);
+  await pushPublicationBranch(run, prPackage.headSha, base, prPackage.branch, emit);
 
+  emit('substep', { name: 'gh-pr-create', detail: `Opening draft PR for ${prPackage.branch}` });
   // Always create local-first PRs as draft while artifact upload/body rewrite is
   // still pending. Ready publication marks it ready only after the final body is
   // rewritten with uploaded evidence URLs.
@@ -1652,12 +1654,22 @@ export async function publishCompletionPackage(
     });
     if (!prNumber) {
       emit('substep', { name: 'create-pr', detail: `Creating draft PR on ${ciRepo}` });
-      prNumber = await createPrFromApprovedPackage(run, ciRepo, publicationPackage);
+      prNumber = await createPrFromApprovedPackage(run, ciRepo, publicationPackage, emit);
     } else {
-      await pushPublicationBranch(run, approvedPackage.headSha, baseBranch, approvedPackage.branch);
+      await pushPublicationBranch(
+        run,
+        approvedPackage.headSha,
+        baseBranch,
+        approvedPackage.branch,
+        emit,
+      );
     }
     if (!prNumber) throw new Error('publication could not resolve or create a PR number');
     flags.prNumber = prNumber;
+    emit('substep', {
+      name: 'record-pr',
+      detail: `Recording PR #${prNumber} and the worker report`,
+    });
     await persistRunPrNumber(runId, prNumber);
 
     const latestRun = getRun(runId) ?? run;
@@ -1762,8 +1774,16 @@ export async function publishCompletionPackage(
     const publicationStatus: PublicationStatus =
       target === 'ready' ? 'published_ready' : 'published_draft';
     flags.publicationStatus = publicationStatus;
+    emit('substep', {
+      name: 'verify-published-head',
+      detail: `Checking origin still has the published ${approvedPackage.branch}`,
+    });
     await assertPublicationRemoteHead(run, approvedPackage.headSha, approvedPackage.branch);
     flags.publishedHeadSha = approvedPackage.headSha;
+    emit('substep', {
+      name: 'record-publication',
+      detail: `Recording PR #${prNumber} as published`,
+    });
     await recordRunPRPublication(runId, ciRepo, prNumber, {
       gate: {
         publicationTarget: target,

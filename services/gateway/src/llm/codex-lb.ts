@@ -1,7 +1,7 @@
 import { createProvider, envApiKeyAuth, type MutableModels } from '@earendil-works/pi-ai';
 import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy';
 
-import { codexAstraModel } from './codex-astra.js';
+import { codexAstraModels } from './codex-astra.js';
 
 export const CODEX_LB_PROVIDER = 'codex-lb';
 // The LB's SDK-compatible route differs from the native Codex /backend-api/codex route.
@@ -17,7 +17,7 @@ export function registerCodexLb(models: MutableModels): void {
       name: 'Codex load balancer',
       baseUrl: CODEX_LB_BASE_URL,
       auth: { apiKey: envApiKeyAuth('Codex load balancer client key', ['CODEX_LB_API_KEY']) },
-      models: [codexAstraModel(CODEX_LB_PROVIDER, 'openai-responses', CODEX_LB_BASE_URL)],
+      models: codexAstraModels(CODEX_LB_PROVIDER, 'openai-responses', CODEX_LB_BASE_URL),
       api: openAIResponsesApi(),
     }),
   );

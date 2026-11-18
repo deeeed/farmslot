@@ -6,6 +6,11 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.20.7 - 2026-11-18
+
+- Add a read-only browser proof over a supported import of a real retained run for artifact content search.
+- Add a connected-browser proof for review rounds, failed attempts, retained findings and their following fix.
+
 ## 0.20.6 - 2026-11-18
 
 - Add an owned native-worker browser proof for host selection, reload, queued delivery and structured question answers.

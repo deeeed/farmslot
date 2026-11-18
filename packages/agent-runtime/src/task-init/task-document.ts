@@ -14,6 +14,7 @@ import {
   DEFAULT_BRANCH,
   EXECUTION_CHECKLIST_DOCUMENT,
   type ExecutionTemplateReference,
+  type FrozenReviewRulePack,
   normalizeAcceptanceCriteria,
   type RequiredSkillSet,
   type TemplateProvenance,
@@ -416,6 +417,8 @@ export interface HandoffMetadata {
   templateProvenance?: Omit<TemplateProvenance, 'executionTemplate'>;
   /** ADR-049 Amendment 3: the one required skill set, frozen at task init; dev and review read it. */
   requiredSkills?: RequiredSkillSet;
+  /** A static review's rule pack from the project installation, frozen with its digest. */
+  reviewRulePack?: FrozenReviewRulePack;
 }
 
 export function buildHandoffMetadata(input: {

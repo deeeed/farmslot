@@ -5,6 +5,7 @@ import {
   balance,
   balanceTestShards,
   estimateTestMs,
+  inlinePlanOutput,
   packPrTasks,
   withoutBuilds,
 } from './pr-ci-plan.mjs';
@@ -71,9 +72,59 @@ test('PR task packing fills spare test capacity, isolates long checks and bounds
     [],
     Array.from({ length: 30 }, (_, i) => ({ id: `${i}`, seconds: 150 })),
   );
-  assert.equal(bounded.length, 24);
+  assert.equal(bounded.length, 12);
   assert.equal(bounded.flatMap(({ tasks }) => tasks).length, 30);
 });
+test('at the matrix cap the smallest job takes the next task', () => {
+  const tasks = [180, 110, 75, 60, 45].map((seconds, i) => ({ id: `task-${i}`, seconds }));
+  const jobs = packPrTasks([], tasks, 120, 2);
+  assert.deepEqual(
+    jobs.map(({ tasks }) => tasks.map(({ seconds }) => seconds)),
+    [
+      [180, 60],
+      [110, 75, 45],
+    ],
+  );
+});
+test('full gateway PRs split large work without changing test ownership', async (t) => {
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const path = await import('node:path');
+  const { createPrPlan } = await import('./pr-ci-plan.mjs');
+  const root = mkdtempSync(path.join(tmpdir(), 'pr-gateway-shards-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = 'services/gateway';
+  mkdirSync(path.join(root, dir, 'src'), { recursive: true });
+  writeFileSync(
+    path.join(root, dir, 'package.json'),
+    JSON.stringify({ scripts: { typecheck: 'tsc --noEmit' } }),
+  );
+  const testScript = 'node ../../scripts/quality/run-tsx-tests.mjs --cwd . src';
+  const workspaces = [{ dir, name: '@farmslot/gateway', dependencies: [], test: testScript }];
+  const selected = Array.from({ length: 40 }, (_, i) => `${dir}/src/file-${i}.test.ts`);
+  for (const file of selected) writeFileSync(path.join(root, file), '');
+  const input = {
+    root,
+    workspaces,
+    selected,
+    changed: [`${dir}/src/runtime.ts`],
+    durations: Object.fromEntries(selected.map((file) => [file, 42_000])),
+    taskDurations: { 'types-@farmslot/gateway': { ms: 32_000 } },
+  };
+  const gatewayJobs = (plan) => plan.jobs.filter(({ id }) => id.startsWith('gateway-'));
+  const plan = createPrPlan(input);
+  const shards = gatewayJobs(plan);
+  assert.ok(shards.length > 11);
+  assert.ok(plan.jobs.length > 12 && plan.jobs.length <= 26);
+  assert.deepEqual(shards.flatMap(({ tasks }) => tasks[0].tests).sort(), [...selected].sort());
+  for (const file of selected) assert.match(plan.testOwners[file], /^gateway-\d+$/);
+  assert.equal(
+    plan.jobs.flatMap(({ tasks }) => tasks).filter(({ id }) => id === 'types-@farmslot/gateway')
+      .length,
+    1,
+  );
+});
+
 test('native script batches retain the longest-file lower bound', async () => {
   const { createPrPlan } = await import('./pr-ci-plan.mjs');
   const file = 'scripts/deploy-node.test.mjs';
@@ -124,7 +175,8 @@ test('full workspace inventory has one test owner and splits the critical app su
     durations: JSON.parse(readFileSync('scripts/quality/ci-test-durations.json', 'utf8')),
   });
   const tasks = plan.jobs.flatMap(({ tasks }) => tasks);
-  assert.equal(plan.jobs.filter(({ id }) => id.startsWith('gateway-')).length, 16);
+  assert.equal(plan.jobs.length, 26);
+  assert.ok(plan.jobs.filter(({ id }) => id.startsWith('gateway-')).length > 7);
   assert.equal(plan.jobs.filter(({ id }) => id.startsWith('command-center-ui-')).length, 4);
   const assigned = tasks.flatMap((task) => task.tests ?? []);
   assert.deepEqual(Object.keys(plan.testOwners).sort(), [...plan.selected].sort());
@@ -300,15 +352,23 @@ test('PR scope excludes main advances present in the synthetic merge checkout', 
   );
 });
 
-test('worker scopes the selection filter to suite commands and clears it for CI contracts', async (t) => {
+test('large encoded plans fall back to artifact transport', async () => {
+  const { randomBytes } = await import('node:crypto');
+  assert.equal(
+    inlinePlanOutput(JSON.stringify({ fixture: randomBytes(100_000).toString('base64') })),
+    '',
+  );
+});
+
+test('inline plan works without an artifact and keeps selection scoped to suite commands', async (t) => {
   const { spawnSync } = await import('node:child_process');
-  const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } = await import('node:fs');
+  const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, renameSync, rmSync } =
+    await import('node:fs');
   const { tmpdir } = await import('node:os');
   const path = await import('node:path');
   const { fileURLToPath } = await import('node:url');
   const root = mkdtempSync(path.join(tmpdir(), 'ci-worker-env-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  mkdirSync(path.join(root, '.cache/pr-ci'), { recursive: true });
   const tasks = [
     {
       id: 'contract',
@@ -316,7 +376,7 @@ test('worker scopes the selection filter to suite commands and clears it for CI 
       args: [
         process.execPath,
         '-e',
-        "require('node:assert/strict').equal(process.env.FARMSLOT_CI_TEST_SELECTION, undefined); require('node:assert/strict').equal(process.env.FARMSLOT_QUALITY_TIMINGS_DIR, undefined); require('node:fs').writeFileSync(process.argv[1], JSON.stringify({ status: 'failed', files: [] }))",
+        "require('node:assert/strict').equal(process.env.FARMSLOT_CI_TEST_SELECTION, undefined); require('node:assert/strict').equal(process.env.FARMSLOT_QUALITY_TIMINGS_DIR, undefined); require('node:assert/strict').equal(process.env.CI_INLINE_PR_PLAN, undefined); require('node:fs').writeFileSync(process.argv[1], JSON.stringify({ status: 'failed', files: [] }))",
         path.join(root, '.cache/pr-ci/timings/contract/tsx-tests-fixture.json'),
       ],
     },
@@ -331,25 +391,33 @@ test('worker scopes the selection filter to suite commands and clears it for CI 
       ],
     },
   ];
-  writeFileSync(
-    path.join(root, '.cache/pr-ci/plan.json'),
-    JSON.stringify({ selected: [], jobs: [{ id: 'environment', tasks }] }),
-  );
-  const result = spawnSync(
-    process.execPath,
-    [fileURLToPath(new URL('./pr-ci-run.mjs', import.meta.url)), 'environment'],
-    {
-      cwd: root,
-      encoding: 'utf8',
-      env: { ...process.env, FARMSLOT_CI_TEST_SELECTION: 'inherited-filter.json' },
-    },
-  );
+  const json = JSON.stringify({ selected: [], jobs: [{ id: 'environment', tasks }] });
+  const worker = fileURLToPath(new URL('./pr-ci-run.mjs', import.meta.url));
+  const env = { ...process.env, CI_INLINE_PR_PLAN: inlinePlanOutput(json) };
+  const result = spawnSync(process.execPath, [worker, 'environment'], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...env, FARMSLOT_CI_TEST_SELECTION: 'inherited-filter.json' },
+  });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.equal(
     JSON.parse(readFileSync(path.join(root, '.cache/pr-ci/receipts/environment.json'), 'utf8'))
       .status,
     'ok',
   );
+  const results = path.join(root, '.cache/pr-ci/results/pr-ci-environment-attempt-1');
+  mkdirSync(results, { recursive: true });
+  renameSync(path.join(root, '.cache/pr-ci/receipts'), path.join(results, 'receipts'));
+  for (const inline of [env.CI_INLINE_PR_PLAN, '']) {
+    if (!inline) writeFileSync(path.join(root, '.cache/pr-ci/plan.json'), json);
+    const verified = spawnSync(process.execPath, [worker, 'verify'], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...env, CI_INLINE_PR_PLAN: inline, CI_MATRIX_RESULT: 'success' },
+    });
+    assert.equal(verified.status, 0, verified.stdout + verified.stderr);
+    assert.match(verified.stdout, /Verified 1 jobs/);
+  }
 });
 
 test('script batches keep native Node tests separate from typed tests', async () => {

@@ -798,10 +798,47 @@ function readDeterministicChecks(taskDir, checklist, options = {}) {
   });
 }
 
-function evaluateDeterministicChecks(taskDir, checklist) {
+function isMissingLocalCheck(check) {
+  return (
+    check.reference === 'ci.local_check' && Boolean(check.command) && check.status === 'missing'
+  );
+}
+
+function assertNoChangeCheckout(taskDir, base) {
+  const checkout = deterministicCheckout(taskDir);
+  if (base !== undefined) {
+    if (!base) throw new Error('No-change CI waiver requires the recorded dispatch baseline');
+    const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: checkout, encoding: 'utf8' });
+    if (head.status !== 0 || head.stdout.trim() !== base)
+      throw new Error('No-change CI waiver requires HEAD to match the recorded dispatch baseline');
+  }
+  const relativeTask = path.relative(checkout, fs.realpathSync(taskDir));
+  const status = spawnSync(
+    'git',
+    [
+      '--no-optional-locks',
+      'status',
+      '--porcelain=v1',
+      '--untracked-files=all',
+      '--ignore-submodules=none',
+      '--',
+      '.',
+      ...(relativeTask && !relativeTask.startsWith('../') && relativeTask !== '..'
+        ? [`:(exclude,literal)${relativeTask}`]
+        : []),
+    ],
+    { cwd: checkout, encoding: 'utf8' },
+  );
+  if (status.status !== 0 || status.stdout)
+    throw new Error('No-change CI waiver requires a checkout without uncommitted source changes');
+}
+
+function evaluateDeterministicChecks(taskDir, checklist, options = {}) {
   const checks = readDeterministicChecks(taskDir, checklist);
+  const waive = options.noChange === true && checks.some(isMissingLocalCheck);
+  if (waive) assertNoChangeCheckout(taskDir, options.baseSha);
   const issues = checks
-    .filter((step) => step.status !== 'passed')
+    .filter((step) => step.status !== 'passed' && !(waive && isMissingLocalCheck(step)))
     .map(
       (step) =>
         `${step.checklist} step ${step.stepNumber} (${step.reference}): ${step.message || step.status}`,
@@ -821,6 +858,7 @@ const deterministicChecks = {
   read: readDeterministicChecks,
   issues: deterministicContractIssues,
   evaluate: evaluateDeterministicChecks,
+  isMissingLocalCheck,
 };
 
 /** Written by the scripted runner beside SIGNAL.json; the only proof a command run gives. */
