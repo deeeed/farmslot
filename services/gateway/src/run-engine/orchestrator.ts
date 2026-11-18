@@ -927,7 +927,10 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       detail: undefined,
       outputs: resumedWorkerFinding
         ? { ...previousOutputs, awaitingOperator: false }
-        : retainedMaintenanceStepOutputs(stepName, previousOutputs),
+        : stepName === S.COMPLETE &&
+            previousOutputs?.slotDisposition === 'no-change-release-pending'
+          ? previousOutputs
+          : retainedMaintenanceStepOutputs(stepName, previousOutputs),
       completedAt: undefined,
       durationMs: undefined,
       ...stepEntryTiming(current, stepName),

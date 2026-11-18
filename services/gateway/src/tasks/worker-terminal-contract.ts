@@ -730,7 +730,7 @@ export async function validateDeterministicChecksForRun(
       shellQuote(
         JSON.stringify(
           noCodeExit
-            ? { noChange: true, baseSha: run.preWorkBaseSha ?? run.worktreeHeadAtDispatch ?? null }
+            ? { noChange: true, baseSha: run.worktreeHeadAtDispatch ?? run.preWorkBaseSha ?? null }
             : {},
         ),
       ),

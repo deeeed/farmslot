@@ -33,7 +33,13 @@ import {
   reviewContextFromRequest,
 } from '@farmslot/review-dispatch';
 
-import { markSlotBusy, markSlotHeld, updateSlotStatusIf } from '../core/index.js';
+import {
+  markSlotBusy,
+  markSlotHeld,
+  ownsRunSlotCleanup,
+  readSlotRow,
+  updateSlotStatusIf,
+} from '../core/index.js';
 import { freezeBlindTrialFirstOutput } from '../evals/blind-trial.js';
 import {
   EVAL_WORKER_BLOCKED_OUTPUT,
@@ -87,7 +93,7 @@ import {
 } from '../run-completion/result-decision.js';
 import { retainRunArtifacts } from '../run-completion/retained-artifacts.js';
 import { readRunProgress } from '../runners/run-progress.js';
-import { getRun, updateRun, updateRunStep } from '../runs/store.js';
+import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
 import { collectRunSubtaskMetrics, withSubtaskMetrics } from '../tasks/subtask-metrics.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
@@ -1739,6 +1745,24 @@ export function isFlowTerminalStep(flowType: Run['flowType'], step: string): boo
   return steps[steps.length - 1] === step;
 }
 
+/** Retry only the release once the no-change completion has been persisted. */
+async function releaseNoChangeCompletion(run: Run, result: StepIO): Promise<StepIO> {
+  if (!run.slotId) throw new Error('No slot assigned');
+  const row = await readSlotRow(run.slotId);
+  if (runSupersededSince(getRun(run.id), run.engineState?.generation ?? 0))
+    throw new Error('Completion was superseded before slot release');
+  // A restart can land after release. Never run teardown against its successor.
+  let released = Boolean(row && !ownsRunSlotCleanup(row, run.id) && row.handoff_run_id !== run.id);
+  if (!released) {
+    const { releaseCompletedRunSlot } = await import('../methods/run/lifecycle-control.js');
+    released = (await releaseCompletedRunSlot(run)).released;
+  }
+  return {
+    ...result,
+    outputs: { ...result.outputs, slotDisposition: released ? 'released' : 'kept-shared-slot' },
+  };
+}
+
 export async function executeCompleteStep(
   runId: string,
   context: PostDispatchStepContext,
@@ -1763,6 +1787,17 @@ export async function executeCompleteStep(
     };
   }
   if (!current.slotId) throw new Error('No slot assigned');
+  const pendingRelease = current.steps.find((step) => step.name === S.COMPLETE);
+  if (
+    isNoCodeTerminalDisposition(current.metrics.disposition) &&
+    pendingRelease?.outputs?.slotDisposition === 'no-change-release-pending' &&
+    Array.isArray(pendingRelease.outputs.noChangeDeterministicChecks)
+  )
+    return releaseNoChangeCompletion(current, {
+      inputs: pendingRelease.inputs,
+      outputs: pendingRelease.outputs,
+    });
+
   // Record the verified Git result independently of acceptance/publication approval.
   const proofMeasurement = Boolean(current.engineState?.evalExperiment?.blind?.proof);
   if (!proofMeasurement && current.acceptanceRegistration?.units.some(({ result }) => !result)) {
@@ -1925,6 +1960,39 @@ export async function executeCompleteStep(
   // diffStat needs the slot's git tree; runs before slotRelease below.
   const diffStat = artifactOnlyDiff ?? (await getDiffStat(getRun(runId) ?? current));
   const finalizedEvalPackage = await finalizeEvalResultPackageForRun(getRun(runId) ?? current);
+  const cliCommand = `farmslot slot release ${current.slotId} --keep-warm`;
+  const outputs = {
+    prNumber: completion.prNumber,
+    ciRepo: completion.ciRepo,
+    publishedHeadSha: completion.publishedHeadSha,
+    artifactsCopied: completion.artifactsCopied,
+    prCommentPosted: completion.prCommentPosted,
+    prTitleUpdated: completion.prTitleUpdated,
+    prMarkedReady: completion.prMarkedReady,
+    retrospectiveCreated: completion.retrospectiveCreated,
+    ...(noChangeDeterministicChecks ? { noChangeDeterministicChecks } : {}),
+    ...(completion.inheritedAcceptance
+      ? { inheritedAcceptance: completion.inheritedAcceptance }
+      : {}),
+    artifacts: completion.artifacts,
+    cliCommand,
+    diffStat,
+    resultPackage: finalizedEvalPackage
+      ? {
+          packageId: finalizedEvalPackage.packageId,
+          packageHash: finalizedEvalPackage.packageHash,
+        }
+      : undefined,
+  };
+  if (noChangeDeterministicChecks && !isFlowTerminalStep(current.flowType, S.COMPLETE)) {
+    const pending = {
+      inputs,
+      outputs: { ...outputs, slotDisposition: 'no-change-release-pending' },
+    };
+    updateRunStep(runId, S.COMPLETE, pending);
+    await persistRunNow(getRun(runId)!, 'validated no-change completion before release');
+    return releaseNoChangeCompletion(current, pending);
+  }
   let slotDisposition: 'ci-watch' | 'released' | 'release-deferred' | 'kept-shared-slot';
 
   if (!noCodeDisposition && hasCIWatch && completion.prNumber && completion.ciRepo) {
@@ -1958,32 +2026,5 @@ export async function executeCompleteStep(
         : 'kept-shared-slot';
     }
   }
-  const cliCommand = `farmslot slot release ${current.slotId} --keep-warm`;
-  return {
-    inputs,
-    outputs: {
-      prNumber: completion.prNumber,
-      ciRepo: completion.ciRepo,
-      publishedHeadSha: completion.publishedHeadSha,
-      artifactsCopied: completion.artifactsCopied,
-      prCommentPosted: completion.prCommentPosted,
-      prTitleUpdated: completion.prTitleUpdated,
-      prMarkedReady: completion.prMarkedReady,
-      retrospectiveCreated: completion.retrospectiveCreated,
-      ...(noChangeDeterministicChecks ? { noChangeDeterministicChecks } : {}),
-      ...(completion.inheritedAcceptance
-        ? { inheritedAcceptance: completion.inheritedAcceptance }
-        : {}),
-      slotDisposition,
-      artifacts: completion.artifacts,
-      cliCommand,
-      diffStat,
-      resultPackage: finalizedEvalPackage
-        ? {
-            packageId: finalizedEvalPackage.packageId,
-            packageHash: finalizedEvalPackage.packageHash,
-          }
-        : undefined,
-    },
-  };
+  return { inputs, outputs: { ...outputs, slotDisposition } };
 }

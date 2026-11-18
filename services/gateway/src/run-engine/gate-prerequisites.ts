@@ -128,9 +128,13 @@ const loadInheritedAcceptance = lazyImport(
   () => import('../run-completion/inherited-acceptance.js'),
 );
 
+interface GateAcceptanceOptions {
+  allowMissingLedger?: true;
+}
+
 export interface GatePrerequisiteReaders {
   deterministic(run: Run): Promise<DeterministicChecklistCheck[] | void>;
-  acceptance(run: Run): Promise<GateAcceptanceRead>;
+  acceptance(run: Run, options?: GateAcceptanceOptions): Promise<GateAcceptanceRead>;
   progress(run: Run): Promise<RunProgressObservation>;
   qaCompletion(run: Run): ReturnType<typeof assertQaCompletion>;
   /** Retained ADR-062 inputs, bound to the publication or output inventory. */
@@ -165,7 +169,10 @@ const { acceptanceContractIssues } =
     ): string[];
   };
 
-export async function readGateAcceptance(run: Run): Promise<GateAcceptanceRead> {
+export async function readGateAcceptance(
+  run: Run,
+  options?: GateAcceptanceOptions,
+): Promise<GateAcceptanceRead> {
   // A scripted command run has no worker to record verdicts; its command result is its
   // whole proof (ADR-043 Amendment 2), so it carries no acceptance obligation.
   if (isArtifactOnlyScriptedCommandRun(run)) return { criteria: [], ledger: null, issues: [] };
@@ -248,7 +255,8 @@ export async function readGateAcceptance(run: Run): Promise<GateAcceptanceRead> 
       taskFile: path.join(taskDir, path.basename(run.taskFile)),
     });
     const contract: unknown = contractText ? JSON.parse(contractText) : null;
-    const options = {
+    if (options?.allowMissingLedger && !acceptance.ledger) return { ...acceptance, issues: [] };
+    const ledgerOptions = {
       allowWeak:
         isRecord(contract) &&
         isRecord(contract.acceptance) &&
@@ -261,7 +269,7 @@ export async function readGateAcceptance(run: Run): Promise<GateAcceptanceRead> 
     };
     return {
       ...acceptance,
-      issues: acceptanceContractIssues(taskDir, options),
+      issues: acceptanceContractIssues(taskDir, ledgerOptions),
       ...(inheritedSource ? { inheritedOriginals: inheritedSource } : {}),
     };
   } catch (error) {
@@ -738,8 +746,19 @@ export async function collectRunGateAssessment(
       actionId: 'hold',
     });
   }
+  // A clean no-change result is adjudicated from its report. There is no fix
+  // package or new acceptance claim to prove when the worker recorded no ledger.
+  const cleanNoChange =
+    !preparedPackage &&
+    isNoCodeTerminalDisposition(run.metrics.disposition) &&
+    deterministicChecks?.some(
+      (check) => check.reference === 'ci.local_check' && check.status === 'missing',
+    );
   let projected: AcceptanceStatusLedger | undefined;
-  let acceptance = await source.acceptance(artifactRun);
+  let acceptance = await source.acceptance(
+    artifactRun,
+    cleanNoChange ? { allowMissingLedger: true } : undefined,
+  );
   if (acceptance.error) {
     reasons.push({
       code: 'acceptance-unreadable',
@@ -761,7 +780,8 @@ export async function collectRunGateAssessment(
   if (
     !publicationFulfilled &&
     run.flowType !== 'pr-complete' &&
-    (acceptance.criteria.length || hasSelectedMedia)
+    (acceptance.criteria.length || hasSelectedMedia) &&
+    !(cleanNoChange && !acceptance.ledger)
   ) {
     if (!source.recordedEvidence) {
       reasons.push({

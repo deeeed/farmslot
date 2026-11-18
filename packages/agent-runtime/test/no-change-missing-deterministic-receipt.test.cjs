@@ -103,5 +103,5 @@ test('a recorded deterministic receipt that did not pass still refuses a no-chan
 
   const noChange = run('no-change');
   assert.equal(noChange.status, 1, 'a receipt that was recorded and failed is still a failure');
-  assert.match(noChange.stderr, /ci\.local_check/);
+  assert.match(noChange.stderr, /ci\.local_check.*Command did not pass, exit 2/);
 });

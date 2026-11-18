@@ -146,6 +146,9 @@ async function noChangeRun(t: TestContext) {
   git(root, 'init', '-q');
   await writeFile(path.join(root, 'source.txt'), 'main already has the fix\n');
   commit(root, 'main');
+  const preWorkBaseSha = git(root, 'rev-parse', 'HEAD');
+  await writeFile(path.join(root, 'source.txt'), 'the redispatch includes the fix\n');
+  commit(root, 'redispatch');
   const base = git(root, 'rev-parse', 'HEAD');
   await mkdir(path.join(taskDir, 'inputs'), { recursive: true });
   await writeFile(
@@ -163,7 +166,7 @@ async function noChangeRun(t: TestContext) {
     flowType: 'fix-bug',
     slotId: 'fixture',
     taskFile: path.join(taskDir, 'TASK.md'),
-    preWorkBaseSha: base,
+    preWorkBaseSha,
     worktreeHeadAtDispatch: base,
   });
   realCheck = true;

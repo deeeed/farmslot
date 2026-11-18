@@ -456,7 +456,7 @@ export function buildNoChangeGateInputs(args: {
     `Worker reported **${noChangeDispositionLabel(disposition)}** for ${ticketOrPr}.`,
     monitorReason ? `Worker reason: ${monitorReason}` : null,
     args.skippedLocalCheck
-      ? 'Changed-file CI was skipped. The checkout was clean at the dispatch commit.'
+      ? 'Changed-file CI was skipped. The checkout was clean at the dispatch commit. Accepting closes the run on its no-change report.'
       : null,
     evidenceLines.length ? `Evidence:\n${evidenceLines.join('\n')}` : 'Evidence: none reported.',
     report ? `\nReport excerpt:\n\n${report.slice(0, 600)}` : null,
