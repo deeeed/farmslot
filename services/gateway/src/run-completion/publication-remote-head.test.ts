@@ -382,6 +382,7 @@ test('local-first publication of an existing PR checks origin after the push and
     'verify-pushed-head',
     'record-pr',
     'verify-published-head',
+    'record-publication',
   ])
     assert.ok(phases.includes(phase), `${phase} is a recorded phase`);
 });

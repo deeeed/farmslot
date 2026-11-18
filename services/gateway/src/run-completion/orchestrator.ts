@@ -1780,6 +1780,10 @@ export async function publishCompletionPackage(
     });
     await assertPublicationRemoteHead(run, approvedPackage.headSha, approvedPackage.branch);
     flags.publishedHeadSha = approvedPackage.headSha;
+    emit('substep', {
+      name: 'record-publication',
+      detail: `Recording PR #${prNumber} as published`,
+    });
     await recordRunPRPublication(runId, ciRepo, prNumber, {
       gate: {
         publicationTarget: target,
