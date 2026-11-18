@@ -9,7 +9,7 @@ import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { recoveredWorkerSessionReceipt, upsertSessionUsage } from './agent-session-rows.js';
 import { extractNativeAgentSessionUsage, nativeRunUsageWindow } from './native-session-usage.js';
 import {
-  contextChecklistMarks,
+  receiptChecklistMarks,
   extractRunnerSessionUsage,
   extractRunWorkerSessionUsage,
   unavailableRunnerSessionUsage,
@@ -111,7 +111,7 @@ function workerChecklistMarks(run: Run, row: RunnerSessionUsage) {
   )
     return undefined;
   const context = run.agentContexts?.find((item) => row.contextIds?.includes(item.id));
-  return contextChecklistMarks(run, context);
+  return receiptChecklistMarks(run, context);
 }
 
 async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSessionUsage> {

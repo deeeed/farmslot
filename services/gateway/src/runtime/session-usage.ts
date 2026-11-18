@@ -137,6 +137,30 @@ export function contextChecklistMarks(
   );
 }
 
+/**
+ * The marks a measured session is split at: the worker checklist's marks, plus the row marks of
+ * each child checklist that a parent step ran (`metrics.subtasks`), so that parent step splits by
+ * the child's rows. A child row's segment carries its parent's step number and a
+ * `<child> <row>. <label>` title. Live progress keeps the parent marks only.
+ */
+export function receiptChecklistMarks(
+  run: Run,
+  context: AgentContext | undefined = checklistTimingContext(run, 'CHECKLIST.md'),
+): ChecklistMark[] {
+  const startedAt = context?.attemptStartedAt ?? context?.startedAt;
+  const source = run.metrics.checklistTiming?.source ?? 'CHECKLIST.md';
+  const children = (run.metrics.subtasks ?? []).flatMap((child) =>
+    child.parent.checklist === source
+      ? checklistMarks(checklistTimingForAttempt(child.checklistTiming, startedAt)).map((mark) => ({
+          ...mark,
+          stepNumber: child.parent.stepNumber,
+          label: `${child.id} ${mark.stepNumber}. ${mark.label}`,
+        }))
+      : [],
+  );
+  return [...contextChecklistMarks(run, context), ...children];
+}
+
 /** Sums the sessions' tool usage only when every session reported it. */
 function totalToolUsage(usages: RunnerSessionUsage[]): ToolUsage | null {
   const counted = usages.map((usage) => usage.toolUsage);
@@ -169,7 +193,7 @@ export async function extractRunWorkerSessionUsage(
           row.runner === run.metrics.runner && row.runnerSessionId === session.runnerSessionId,
       );
       const nativeSession = receipt?.nativeSession ?? context?.nativeSession;
-      const marks = contextChecklistMarks(run, context);
+      const marks = receiptChecklistMarks(run, context);
       let usageWindow: SessionUsageWindow | undefined;
       if (nativeSession) {
         try {
@@ -336,7 +360,7 @@ export async function projectArchivedRunnerUsage(storedRun: Run): Promise<Run> {
       {},
       undefined,
       undefined,
-      contextChecklistMarks(run),
+      receiptChecklistMarks(run),
     );
     // A resumed review transcript is a chain total, not this generation's usage.
     if (usesReviewChainSessionTotal(run)) return run;
