@@ -316,13 +316,25 @@ export function workspaceTerminalSessionCreateArgv(runner: string, repo: string)
   return [resolveCursorAgentBinary(), '--trust', '--workspace', repo, 'create-chat'];
 }
 
-/** CLI syntax comes only from the runner's continuation declaration. */
-export function runnerSessionContinuationArgs(runner: string, sessionId: string): string[] {
+/**
+ * CLI syntax comes only from the runner's continuation declaration.
+ *
+ * `sessionPath` is the saved conversation file when one was captured. A runner
+ * whose resume flag takes a path (pi's `--session <path|id>`) needs it: its
+ * saved identity is the file stem, which is neither a path nor an id it can
+ * resolve, so handing over the id alone makes it exit with "No session found".
+ */
+export function runnerSessionContinuationArgs(
+  runner: string,
+  sessionId: string,
+  sessionPath?: string | null,
+): string[] {
   const capability = getRunnerDefinition(runner).sessionContinuation.terminal;
   if (!runnerSupportsSessionContinuation(runner, 'tmux') || !capability)
     throw new Error(`Runner '${runner}' cannot continue a terminal session`);
   assertSafeRunnerArgumentValue('sessionId', sessionId);
-  return capability.args(sessionId);
+  if (sessionPath) assertSafeRunnerArgumentValue('sessionPath', sessionPath);
+  return capability.args(sessionId, sessionPath ?? undefined);
 }
 
 function renderSessionContinuationArgs(args: readonly string[]): string {
@@ -424,6 +436,8 @@ export function buildInteractiveRefinementRunnerCommand(options: {
   shellEnvironmentNames?: string[];
   machine?: RawPoolJson;
   resumeSessionId?: string;
+  /** The saved conversation file of that session, for runners that resume by path. */
+  resumeSessionPath?: string | null;
   /** Argument switches only; the caller sets modelQuestionsEnvironment in the launch environment. */
   modelQuestions?: 'off';
 }): string | null {
@@ -437,7 +451,7 @@ export function buildInteractiveRefinementRunnerCommand(options: {
   const safetyFlags = runnerFlagsForTier(runnerId, options.safetyTier).map(shellQuote).join(' ');
   const resume = options.resumeSessionId
     ? renderSessionContinuationArgs(
-        runnerSessionContinuationArgs(runnerId, options.resumeSessionId),
+        runnerSessionContinuationArgs(runnerId, options.resumeSessionId, options.resumeSessionPath),
       )
     : '';
   const reviewFlags =
@@ -563,6 +577,11 @@ function codexStartupUpdateFlag(skip?: boolean): string {
 }
 
 interface RunnerSessionReloadOptions {
+  /**
+   * The saved conversation file, when the gateway captured one. Runners whose
+   * resume flag takes a path need it; the others ignore it.
+   */
+  sessionPath?: string | null;
   repo?: string;
   taskDir?: string;
   effort?: string | null;
@@ -627,7 +646,7 @@ export function buildRunnerSessionReloadCommand(
   assertRunnerTransport(runner, 'tmux');
   const repo = opts.repo ?? vars.remoteRepo;
   const tier = opts.safetyTier ?? runnerDefaultSafetyTier(runner);
-  const resumeArgs = runnerSessionContinuationArgs(runner, sessionId);
+  const resumeArgs = runnerSessionContinuationArgs(runner, sessionId, opts.sessionPath);
   const resume = renderSessionContinuationArgs(resumeArgs);
   const initialPrompt = opts.initialPrompt?.trim()
     ? ` ${shellQuote(opts.initialPrompt.trim())}`

@@ -284,6 +284,7 @@ export async function runSessionCommand(
     model,
     binding.binding.runnerSessionId,
     {
+      sessionPath: binding.binding.runnerSessionPath,
       effort: run.effort,
       runtimeDir,
       safetyTier,

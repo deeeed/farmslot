@@ -850,6 +850,7 @@ export async function restoreTmuxWorker(
       selected.model ?? run.metrics.model,
       sessionBinding.runnerSessionId,
       {
+        sessionPath: sessionBinding.runnerSessionPath,
         effort: run.effort,
         runtimeDir,
         safetyTier,

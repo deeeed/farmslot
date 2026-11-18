@@ -829,3 +829,39 @@ for (const [runner, flag] of [
     assert(result.reopenCommand.includes(sessionId));
   });
 }
+
+// Run bdcbd42f: the reopen command pi was handed `--session
+// '2026-11-18T03-34-24-255Z_01a1ecb8-…'`, the session FILE STEM. pi's
+// `--session` takes `<path|id>`, so it answered "No session found matching …"
+// and exited; tmux then tore the session down within seconds and the worker
+// looked unrecoverable. The saved .jsonl path is already on the binding, and
+// substituting it resumes first try. The older assertion only checked that the
+// id appeared somewhere in the command, which a stem satisfies.
+test('run.sessionCommand resumes a pi worker by its saved session path', async () => {
+  const stem = '2026-11-18T03-34-24-255Z_01a1ecb8-4efe-75e4-816f-b3d37c109b81';
+  const sessionPath = `/Users/deeeed/.pi/agent/sessions/--Users-deeeed-dev-metamask-core-4--/${stem}.jsonl`;
+  const run = codexWorkerRun({
+    metrics: { nudgeCount: 0, model: 'auto', runner: 'pi' },
+    agentContexts: [
+      agentContext({
+        runner: 'pi',
+        model: 'auto',
+        runnerSessionId: stem,
+        runnerSessionPath: sessionPath,
+      }),
+    ],
+  });
+  const result = await runSessionCommand({ runId: run.id }, deps(run));
+  assert.equal(result.supported, true);
+  if (!result.supported) return;
+  assert.match(result.reopenCommand, /--session /);
+  assert.ok(
+    result.reopenCommand.includes(sessionPath),
+    `pi must be resumed by its saved session file: ${result.reopenCommand.slice(-200)}`,
+  );
+  assert.equal(
+    new RegExp(`--session\\s+'?${stem}'?(\\s|$)`).test(result.reopenCommand),
+    false,
+    'a bare session stem is not a path or an id, so pi cannot resolve it',
+  );
+});
