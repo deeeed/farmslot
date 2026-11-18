@@ -1,4 +1,4 @@
-import type { RunArtifactSearchParams } from '@farmslot/protocol';
+import { isRunArtifactSearchablePath, type RunArtifactSearchParams } from '@farmslot/protocol';
 
 /** Keep the search on exactly the retained source used by the artifact links. */
 export function artifactContentSearchParams(
@@ -19,6 +19,7 @@ export function artifactContentSearchParams(
     const runId = url.searchParams.get('runId');
     const path = url.searchParams.get('path');
     if (!runId || !path) return undefined;
+    if (!isRunArtifactSearchablePath(path)) continue;
     const bundleDigest = url.searchParams.get('bundleDigest') ?? undefined;
     const recipeRunId = url.searchParams.get('recipeRunId') ?? undefined;
     const decisionId = url.searchParams.get('decisionId') ?? undefined;
@@ -45,7 +46,15 @@ export function artifactContentSearchParams(
     }
     result.paths.push(path);
   }
-  if (result) result.paths = [...new Set(result.paths)].sort().slice(0, 500);
+  if (result) {
+    result.paths = [...new Set(result.paths)].sort().slice(0, 500);
+    if (result.versions)
+      result.versions = Object.fromEntries(
+        result.paths.flatMap((path) =>
+          result!.versions?.[path] ? [[path, result!.versions[path]]] : [],
+        ),
+      );
+  }
   return result;
 }
 

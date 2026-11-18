@@ -1011,6 +1011,20 @@ export interface RunLinkedTicketsSetResult {
   run: Run;
 }
 
+const ARTIFACT_SEARCH_TEXT_EXTENSIONS: ReadonlySet<string> = new Set([
+  'log',
+  'txt',
+  'md',
+  'markdown',
+  'json',
+  'jsonl',
+]);
+
+/** Shared client/server eligibility, applied before either side's file cap. */
+export function isRunArtifactSearchablePath(path: string): boolean {
+  return ARTIFACT_SEARCH_TEXT_EXTENSIONS.has(path.split('.').at(-1)?.toLowerCase() ?? '');
+}
+
 /** Bounded literal search of a run's retained text artifacts. */
 export interface RunArtifactSearchParams {
   runId: string;

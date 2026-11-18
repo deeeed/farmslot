@@ -98,7 +98,11 @@ export class ArtifactContentSearch extends LitElement {
         <button type="submit" ?disabled=${!this.draft.trim()}>Search</button>
       </form>
       ${!params
-        ? html`<p>Open one run's artifacts to search their contents.</p>`
+        ? html`<p>
+            ${this.links.length
+              ? 'Search text files from one saved artifact group.'
+              : 'No files match the path/type filters.'}
+          </p>`
         : !this.query.trim()
           ? html`<p>Search logs, Markdown and JSON.</p>`
           : !result

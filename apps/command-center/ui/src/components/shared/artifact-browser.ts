@@ -7,6 +7,7 @@ import './artifact-content-preview.js';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
 import { formatBytes } from '../../utils/format.js';
+import { gatewayHttpOrigin } from '../../utils/gateway-origin.js';
 import {
   ARTIFACT_TYPES,
   type ArtifactType,
@@ -383,7 +384,7 @@ export class ArtifactBrowser extends LitElement {
       return html`<div class="preview empty">Select a matching line to preview it.</div>`;
     if (this.view.contentQuery !== undefined && this.view.line && this.selected !== null) {
       const file = this.artifacts[this.selected];
-      const url = new URL(this.artifactHref?.(this.selected) ?? '', location.href);
+      const url = new URL(this.artifactHref?.(this.selected) ?? '', gatewayHttpOrigin());
       if (this.view.bundleDigest) url.searchParams.set('bundleDigest', this.view.bundleDigest);
       if (this.view.contentSha256) url.searchParams.set('v', this.view.contentSha256);
       return html`<artifact-content-preview

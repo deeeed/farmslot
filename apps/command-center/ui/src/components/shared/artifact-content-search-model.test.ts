@@ -71,3 +71,13 @@ test('line preview keeps original numbers while bounding large logs to 201 rows'
   assert.equal(preview.totalLines, 10000);
   assert.equal(preview.lines[8000 - preview.firstLine], 'line 8000');
 });
+
+test('text eligibility precedes the path cap and retains only selected path versions', () => {
+  const links = [
+    ...Array.from({ length: 500 }, (_, i) => `/api/run-artifact?runId=r&path=a${i}.png&v=image`),
+    '/api/run-artifact?runId=r&path=z.log&v=log',
+  ];
+  const params = artifactContentSearchParams('needle', links);
+  assert.deepEqual(params?.paths, ['z.log']);
+  assert.deepEqual(params?.versions, { 'z.log': 'log' });
+});

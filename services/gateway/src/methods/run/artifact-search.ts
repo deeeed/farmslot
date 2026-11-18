@@ -1,6 +1,5 @@
-import type { RunArtifactSearchResult } from '@farmslot/protocol';
+import { isRunArtifactSearchablePath, type RunArtifactSearchResult } from '@farmslot/protocol';
 
-const TEXT_EXTENSIONS = new Set(['log', 'txt', 'md', 'markdown', 'json', 'jsonl']);
 const MAX_FILES = 200;
 const MAX_FILE_BYTES = 512 * 1024;
 const MAX_TOTAL_BYTES = 5 * 1024 * 1024;
@@ -29,11 +28,8 @@ export async function searchArtifactText(
   };
   let bytes = 0,
     hits = 0;
-  const unique = [...new Set(paths)].filter((file) =>
-    TEXT_EXTENSIONS.has(file.split('.').at(-1)?.toLowerCase() ?? ''),
-  );
+  const unique = [...new Set(paths)].filter(isRunArtifactSearchablePath);
   for (const file of unique.slice(0, MAX_FILES)) {
-    if (!TEXT_EXTENSIONS.has(file.split('.').at(-1)?.toLowerCase() ?? '')) continue;
     try {
       const source = await document(file);
       if (source.bytes > MAX_FILE_BYTES || bytes + source.bytes > MAX_TOTAL_BYTES) {
