@@ -1,1 +1,0 @@
-- Usage prices for GPT-5.4, GPT-5.5, and the GPT-5.6 family match OpenAI's published standard short-context rates, including cached input. GPT-5.6 Sol uses the promotional $4 / $20 rate.

@@ -1,1 +1,0 @@
-- Group failed reviewer starts within their review round, retain the completed review's findings, and show fix acceptance as a fix rather than a new review. Keep real replays separate and use the worker context for fix duration.

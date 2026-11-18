@@ -6,6 +6,13 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.89.0 - 2026-11-18
+
+- Add the retained-artifact text-search RPC contract and shareable content-search preview fields.
+- Share the prepared composed-recipe invocation tree and overall action progress, preserving repeated calls, branch uncertainty and teardown without counting containers twice.
+- Add the review rule pack contracts (ADR-0073 Amendment 1): `parseReviewRulePack`, `parseReviewRuleSelection` (bound to the frozen pack digest and declared client, covering the families that client's review carries) and `parseReviewRuleProposal`. A `required_skills` skill may declare `review: { pack, client, level }`, and the frozen skill carries the pack's digest.
+- Preserve the reviewer conversation across reliable rebases using a pinned author interdiff; record bounded, qualified cold fallbacks without upstream-only review noise.
+
 ## 0.88.0 - 2026-11-18
 
 - `SessionToolUsage` and its segments carry `compactions` (null with a reason when the runner records none) and per-step `costUsd`; `task.progress` returns `liveSpend`, the viewed session's tokens, cost, compactions and tool calls so far, per checklist step.

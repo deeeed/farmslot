@@ -1,1 +1,0 @@
-- Stabilize the backlog handoff test by waiting for the dispatcher before checking queue revisions.

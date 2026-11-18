@@ -1181,3 +1181,128 @@ test('recipe replay delivers canonical task actions and modes in its input batch
   );
   assert.equal((await stat(path.join(workerArtifacts, relative))).mode & 0o777, 0o750);
 });
+
+// Run 09501e29 (TAT-4671): the worker's five task-local actions were retained and
+// the selected attempt (proof-09) referenced the current library, but publication
+// flattened the task-action references of EVERY publication root, so the earlier
+// attempts' stale digest (proof-04..07) was expected too. `expected.size !== 1`
+// then refused with "library digest does not match the recorded recipe: expected
+// <new>, <stale>, found <new>" — a run blocked by its own superseded evidence,
+// with the found digest matching the selected attempt. Only the selected latest
+// valid run's references may be validated; retained attempts are never pruned.
+test('publication validates the selected attempt’s task-action references only', async (t) => {
+  const { taskDir, workerArtifacts, put, run } = await publishPackageFixture(
+    t,
+    'mirror-selected-actions',
+  );
+  const selected = 'recipe-runs/head-attempt';
+  const superseded = 'recipe-runs/base-attempt';
+  await put(
+    'task-actions/manifests/terminal.action-manifest.json',
+    JSON.stringify({
+      $schema: 'action-manifest-v1',
+      actions: { 'container.inspect': { description: 'inspect' } },
+    }),
+  );
+  await put('task-actions/actions/terminal/container/inspect.mjs', 'export default () => true;\n');
+  const { digestRecipeLibrary, readRecipeLibraryManifest } =
+    await import('@farmslot/recipe-runner');
+  const libraryRoot = path.join(workerArtifacts, 'task-actions');
+  const digest = await digestRecipeLibrary(
+    libraryRoot,
+    await readRecipeLibraryManifest(libraryRoot),
+  );
+  await put(
+    'latest-valid-recipe-run.json',
+    JSON.stringify({ version: 1, runId: 'head-attempt', relativeArtifactRoot: selected }),
+  );
+  await put(`${selected}/evidence-manifest.json`, JSON.stringify({ version: 1, standalone: [] }));
+  await put(`${selected}/after.png`, 'after');
+  await put(
+    `${selected}/summary.json`,
+    JSON.stringify({ taskActions: [{ action: 'container.inspect', digest }] }),
+  );
+  // The superseded attempt ran before the library moved, so it records the old digest.
+  await put(
+    `${superseded}/artifact-manifest.json`,
+    JSON.stringify({ version: 1, artifacts: [{ path: 'before.png', type: 'screenshot' }] }),
+  );
+  await put(`${superseded}/before.png`, 'before');
+  await put(
+    `${superseded}/summary.json`,
+    JSON.stringify({
+      taskActions: [{ action: 'container.inspect', digest: `sha256:${'0'.repeat(64)}` }],
+    }),
+  );
+  const baseSha = 'a'.repeat(40);
+  await put(
+    `${superseded}/product-provenance.json`,
+    JSON.stringify({ schemaVersion: 1, git_ref: baseSha, dirty: false, branch: 'detached' }),
+  );
+  await put(
+    'evidence-manifest.json',
+    JSON.stringify({
+      version: 1,
+      before_after_pairs: [
+        { label: 'Screen', before: `${superseded}/before.png`, after: `${selected}/after.png` },
+      ],
+    }),
+  );
+
+  await refreshArtifactMirror(
+    { ...run, recordedEvidenceContractVersion: 1, worktreeHeadAtDispatch: baseSha },
+    { forPublication: true },
+  );
+
+  // Both attempts stay retained; only the selected one gates publication.
+  assert.equal(existsSync(path.join(taskDir, 'artifacts', superseded, 'before.png')), true);
+  assert.equal(existsSync(path.join(taskDir, 'artifacts', selected, 'after.png')), true);
+  assert.equal(
+    existsSync(path.join(taskDir, 'artifacts/task-actions/actions/terminal/container/inspect.mjs')),
+    true,
+  );
+});
+
+// The narrowing must not weaken the check it narrows: one attempt that records
+// two library digests for its own actions is still an incoherent claim.
+test('publication still refuses when the selected attempt itself spans two digests', async (t) => {
+  const { workerArtifacts, put, run } = await publishPackageFixture(t, 'mirror-selected-split');
+  const selected = 'recipe-runs/head-attempt';
+  await put(
+    'task-actions/manifests/terminal.action-manifest.json',
+    JSON.stringify({
+      $schema: 'action-manifest-v1',
+      actions: {
+        'container.inspect': { description: 'inspect' },
+        'container.kics': { description: 'kics' },
+      },
+    }),
+  );
+  await put('task-actions/actions/terminal/container/inspect.mjs', 'export default () => true;\n');
+  const { digestRecipeLibrary, readRecipeLibraryManifest } =
+    await import('@farmslot/recipe-runner');
+  const libraryRoot = path.join(workerArtifacts, 'task-actions');
+  const digest = await digestRecipeLibrary(
+    libraryRoot,
+    await readRecipeLibraryManifest(libraryRoot),
+  );
+  await put(
+    'latest-valid-recipe-run.json',
+    JSON.stringify({ version: 1, runId: 'head-attempt', relativeArtifactRoot: selected }),
+  );
+  await put(`${selected}/evidence-manifest.json`, JSON.stringify({ version: 1, standalone: [] }));
+  await put(
+    `${selected}/summary.json`,
+    JSON.stringify({
+      taskActions: [
+        { action: 'container.inspect', digest },
+        { action: 'container.kics', digest: `sha256:${'0'.repeat(64)}` },
+      ],
+    }),
+  );
+
+  await assert.rejects(
+    refreshArtifactMirror({ ...run, recordedEvidenceContractVersion: 1 }, { forPublication: true }),
+    /library digest does not match the recorded recipe/,
+  );
+});

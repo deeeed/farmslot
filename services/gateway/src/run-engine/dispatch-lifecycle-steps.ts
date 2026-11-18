@@ -1,11 +1,13 @@
-import { Events, type Run } from '@farmslot/protocol';
+import { Events, isTerminalRunStatus, type Run } from '@farmslot/protocol';
 
 import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execArgvOnSlot, execOnSlot, isLocal } from '../core/exec.js';
+import { claimSlotStatusIf, nextSlotEpoch, readSlotRow } from '../core/state.js';
 import { shellQuote } from '../core/tmux.js';
 import { prepareBlindTrialGit } from '../evals/blind-trial.js';
 import { usesEvalTrialCapsule } from '../evals/trial-policy.js';
 import { dispatchExecute, nudgeDispatch, warmSessionHandoffDispatch } from '../methods/dispatch.js';
+import { slotClaimBlockedByRelease } from '../methods/dispatch/slot-scoring.js';
 import { slotPrepare } from '../methods/slot.js';
 import { ensureFrozenQaSource } from '../qa/frozen-source.js';
 import {
@@ -13,6 +15,7 @@ import {
   WORKER_LAUNCH,
   workerMayHaveStarted,
 } from '../run-lifecycle/pre-worker-failure.js';
+import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import { assertRunnerLaunchPrerequisites } from '../runners/launch-command.js';
 import { nudgeNativeWorker } from '../runners/native/worker-nudge.js';
 import {
@@ -40,6 +43,7 @@ import { prepareConfiguredRunCapabilities } from './declared-capabilities.js';
 import { RETAINED_SESSION_HANDOFF_HOLD } from './errors.js';
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
 import { probeRemotePath } from './remote-probes.js';
+import { runSupersededSince } from './run-generation.js';
 import { prepareWarmBudgetBaselineForHandoff } from './run-monitor.js';
 import { ensureRunStack } from './stack-base.js';
 import { createSubStepCollector, type SubStepCollector } from './sub-step-collector.js';
@@ -601,6 +605,56 @@ export interface DispatchStepContext {
   blockedRunError: (message: string, reason: string) => Error;
 }
 
+/** Warm delivery consumes its reservation on success. A fresh launch needs its own claim first. */
+async function claimWarmFallbackSlot(run: Run, slotId: string): Promise<boolean> {
+  const generation = run.engineState?.generation ?? 0;
+  return withRunTransition(run.id, async () => {
+    const current = getRun(run.id);
+    if (!current || current.slotId !== slotId || runSupersededSince(current, generation))
+      return false;
+    const blockedSlot = (slot: Readonly<Record<string, unknown>>) =>
+      Boolean(
+        (slot.handoff_run_id && slot.handoff_run_id !== run.id) ||
+        slot.cleanup_run_id ||
+        slot.workspace_recovery ||
+        slot.lifecycle === 'disabled' ||
+        slot.lifecycle === 'manual' ||
+        slotClaimBlockedByRelease(slot),
+      );
+    const row = await readSlotRow(slotId);
+    if (row && blockedSlot(row)) return false;
+    // A replay or a completed release may already have left the slot owned by
+    // this run or free. The normal fresh launch path handles either state.
+    if (!row?.current_run_id || row.current_run_id === run.id) return true;
+    const parentId = current.parentRunId;
+    const fields: Record<string, unknown> = { current_run_id: run.id, handoff_run_id: null };
+    const claim = await claimSlotStatusIf(
+      slotId,
+      (slot) => {
+        const latest = getRun(run.id);
+        const parent = parentId ? getRun(parentId) : undefined;
+        if (
+          !parent ||
+          !isTerminalRunStatus(parent.status) ||
+          parent.slotId !== slotId ||
+          runSupersededSince(latest, generation) ||
+          latest?.slotId !== slotId ||
+          latest?.parentRunId !== parentId ||
+          slot.current_run_id !== parentId ||
+          slot.handoff_run_id !== run.id ||
+          blockedSlot(slot)
+        )
+          return false;
+        if (slot.idle_devserver_epoch === slot.slot_epoch && Array.isArray(slot.idle_devservers))
+          fields.idle_devserver_epoch = nextSlotEpoch(slot);
+        return true;
+      },
+      fields,
+    );
+    return claim.claimed;
+  });
+}
+
 export async function executeDispatchStep(
   runId: string,
   context: DispatchStepContext,
@@ -742,6 +796,11 @@ export async function executeDispatchStep(
         },
       });
     }
+    if (!(await claimWarmFallbackSlot(current, current.slotId)))
+      throw blockedRunError(
+        `Slot ${current.slotId}: the CI follow-up could not acquire its reserved slot for fresh dispatch`,
+        RETAINED_SESSION_HANDOFF_HOLD,
+      );
   }
 
   // Branch-affinity nudge — set by the wizard via run.create or by the decision card in

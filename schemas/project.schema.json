@@ -1110,6 +1110,21 @@
             "minLength": 1
           }
         },
+        "rule_pack": {
+          "type": "object",
+          "description": "ADR-0073 Amendment 1: the project's review rule pack, a file under the project's fixtures directory. A static review validates it before the task exists, refuses a missing or invalid pack, copies it into inputs/instructions and records its digest in the handoff as reviewRulePack. See apps/docs/docs/reference/review-rule-packs.md.",
+          "additionalProperties": false,
+          "required": ["pack", "client", "level"],
+          "properties": {
+            "pack": {
+              "type": "string",
+              "pattern": "^(?!/)(?!.*\\\\)(?!(?:.*/)?\\.{1,2}(?:/|$))(?!.*//)[^/].*[^/]$|^[^/\\\\.]$",
+              "description": "Pack file, relative to the project fixtures, e.g. runtime/review-pack.json."
+            },
+            "client": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$" },
+            "level": { "enum": ["static", "full"] }
+          }
+        },
         "domain": {
           "type": "string",
           "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$",

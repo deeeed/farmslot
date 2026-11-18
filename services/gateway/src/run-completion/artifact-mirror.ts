@@ -438,7 +438,10 @@ export async function refreshArtifactMirror(
   const workerTaskDir = path.join(vars.remoteRepo, taskDirName, taskRelDir);
   const workerArtifactsDir = path.join(workerTaskDir, 'artifacts');
   const localArtifactsDir = path.join(taskDir, 'artifacts');
-  let publicationRoots: string[] = [];
+  // The attempt the publication selected. Only its task-action references gate
+  // publication; the other retained roots are evidence, not the claim. They had
+  // no other reader here, so the flattened root list is gone with them.
+  let publicationSelectedRoot: string | null = null;
   if (options.forPublication) {
     const publication = await resolvePublicationManifest(
       workerTaskDir,
@@ -448,12 +451,7 @@ export async function refreshArtifactMirror(
       // Newly declared attempts are not in any earlier capture yet.
       publicationBaselineContext(run, null, options.publicationComparison),
     );
-    publicationRoots = [
-      ...new Set([
-        ...(publication?.selectedArtifactRoot ? [publication.selectedArtifactRoot] : []),
-        ...(publication?.additionalArtifactRoots ?? []),
-      ]),
-    ];
+    publicationSelectedRoot = publication?.selectedArtifactRoot ?? null;
   }
   const workerPointerPath = path.join(workerArtifactsDir, 'latest-valid-recipe-run.json');
   const workerPointerExists = await slotFileExists(vars, workerPointerPath);
@@ -698,14 +696,19 @@ export async function refreshArtifactMirror(
     invalidateLiveRecipeContextMemo(run.id);
 
     if (options.forPublication) {
+      // A superseded attempt records the library digest it ran against, so
+      // flattening every root made publication expect two digests and refuse a
+      // run whose selected attempt was correct (TAT-4671: expected <new>,
+      // <stale>, found <new>). Validate the selected attempt alone; retained
+      // attempts are never pruned to make this pass.
       const summaries: unknown[] = [];
-      for (const root of publicationRoots.length ? publicationRoots : ['']) {
+      for (const root of publicationSelectedRoot ? [publicationSelectedRoot] : ['']) {
         const summary = path.join(localArtifactsDir, root, 'summary.json');
         try {
           summaries.push(JSON.parse(await readFile(summary, 'utf8')));
         } catch (error) {
           if (
-            !publicationRoots.length &&
+            !publicationSelectedRoot &&
             error instanceof Error &&
             'code' in error &&
             error.code === 'ENOENT'

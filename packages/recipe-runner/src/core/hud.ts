@@ -1,4 +1,8 @@
-import { hudIntentDisplay, hudSecondaryText } from '@farmslot/protocol/recipe';
+import {
+  hudIntentDisplay,
+  hudSecondaryText,
+  type RecipeFlowUpdate,
+} from '@farmslot/protocol/recipe';
 
 import { isRecord } from './json.js';
 import type { RecipeHudDisplayOptions, RecipeHudOptions } from './types.js';
@@ -12,6 +16,7 @@ export function buildHudNode(
     recipe: unknown;
     index: number;
     total: number;
+    flow?: RecipeFlowUpdate;
     error?: string;
   },
   options: RecipeHudOptions | false | undefined,
@@ -27,6 +32,7 @@ export function buildHudNode(
   const detail = normalizeHudSecondary(hudDetail(event.node), text, flow);
   return {
     action: 'app.hud',
+    ...(event.flow ? { recipe_flow: event.flow } : {}),
     title,
     status,
     node_id: event.nodeId,

@@ -32,6 +32,10 @@ export function balance(items, count, weight = () => 1) {
 
 // Three broad PR matrices leave four of the observed 40 hosted slots for setup and gates.
 const PR_MATRIX_LIMIT = 12;
+// Broad plans may grow to fit the work. Keep a ceiling so one PR and the
+// 12-worker main matrix fit in the observed 40-runner pool.
+const PR_BROAD_MATRIX_LIMIT = 26;
+const PR_WORK_BUDGET_SECONDS = 125;
 
 /** Fill existing test jobs before paying for another runner and setup. */
 export function packPrTasks(jobs, tasks, budget = 120, maxJobs = PR_MATRIX_LIMIT) {
@@ -140,7 +144,11 @@ export function createPrPlan({
   lanes ??= new Map(selected.map((file) => [file, 'serial']));
   const tasks = [];
   const seedJobs = [];
-  const assigned = new Set();
+  const gatewayDir = 'services/gateway';
+  const gatewaySuite = selected.filter(
+    (file) => file.startsWith(`${gatewayDir}/`) && file.endsWith('.test.ts'),
+  );
+  const assigned = new Set(gatewaySuite);
   function splitTests(id, dir, count, tsconfig, workers, runnerDir = dir) {
     const suite = selected.filter(
       (file) => file.startsWith(`${dir}/`) && file.endsWith('.test.ts'),
@@ -192,9 +200,6 @@ export function createPrPlan({
   );
   if (changed?.some(isCiControlFile) && !affected.has('@farmslot/run-bundle'))
     splitTests('run-bundle-smoke', 'packages/run-bundle', 1, 'tsconfig.json', 2);
-  // Keep one slot for the longest workspace command or a batch of guards.
-  const gatewaySlots = ciOnly ? 1 : PR_MATRIX_LIMIT - seedJobs.length - 1;
-  splitTests('gateway', 'services/gateway', gatewaySlots, 'tsconfig.json', 4);
   for (const workspace of workspaces) {
     if (!affected.has(workspace.name)) continue;
     const pkg = JSON.parse(readFileSync(path.join(root, workspace.dir, 'package.json'), 'utf8'));
@@ -432,7 +437,31 @@ export function createPrPlan({
     }
     task.seconds = Math.max(1, Math.ceil(ms / 1000));
   }
-  const jobs = packPrTasks(seedJobs, tasks);
+  const gatewaySeconds = Math.ceil(estimateTestMs(gatewaySuite, 4, durations, lanes) / 1000);
+  const totalSeconds =
+    gatewaySeconds +
+    [...seedJobs.flatMap(({ tasks }) => tasks), ...tasks].reduce(
+      (sum, task) => sum + task.seconds,
+      0,
+    );
+  const maxJobs = ciOnly
+    ? PR_MATRIX_LIMIT
+    : Math.max(
+        PR_MATRIX_LIMIT,
+        Math.min(PR_BROAD_MATRIX_LIMIT, Math.ceil(totalSeconds / PR_WORK_BUDGET_SECONDS)),
+      );
+  // Reserve room for other commands before splitting gateway. Otherwise wide
+  // PRs fill the pool with gateway shards and stack long workspace suites.
+  const gatewayShare =
+    maxJobs > PR_MATRIX_LIMIT ? Math.ceil((gatewaySeconds * maxJobs) / totalSeconds) : maxJobs;
+  const gatewaySlots = ciOnly ? 1 : Math.min(maxJobs - seedJobs.length - 1, gatewayShare);
+  splitTests('gateway', gatewayDir, gatewaySlots, 'tsconfig.json', 4);
+  const jobs = packPrTasks(
+    seedJobs,
+    tasks,
+    maxJobs > PR_MATRIX_LIMIT ? PR_WORK_BUDGET_SECONDS : 120,
+    maxJobs,
+  );
   const owners = new Map(selected.map((file) => [file, new Set()]));
   for (const task of jobs.flatMap((job) => job.tasks))
     for (const file of [...(task.tests ?? []), ...task.args]) owners.get(file)?.add(task.id);
