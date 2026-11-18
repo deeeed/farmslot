@@ -83,12 +83,22 @@ test('full gateway PRs can use spare matrix capacity without changing test owner
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const dir = 'services/gateway';
   mkdirSync(path.join(root, dir, 'src'), { recursive: true });
-  writeFileSync(path.join(root, dir, 'package.json'), '{}');
+  writeFileSync(
+    path.join(root, dir, 'package.json'),
+    JSON.stringify({ scripts: { typecheck: 'tsc --noEmit' } }),
+  );
   const testScript = 'node ../../scripts/quality/run-tsx-tests.mjs --cwd . src';
   const workspaces = [{ dir, name: '@farmslot/gateway', dependencies: [], test: testScript }];
   const selected = Array.from({ length: 40 }, (_, i) => `${dir}/src/file-${i}.test.ts`);
   for (const file of selected) writeFileSync(path.join(root, file), '');
-  const input = { root, workspaces, selected, changed: [`${dir}/src/runtime.ts`] };
+  const input = {
+    root,
+    workspaces,
+    selected,
+    changed: [`${dir}/src/runtime.ts`],
+    durations: Object.fromEntries(selected.map((file) => [file, 42_000])),
+    taskDurations: { 'types-@farmslot/gateway': { ms: 32_000 } },
+  };
   const gatewayJobs = (plan) => plan.jobs.filter(({ id }) => id.startsWith('gateway-'));
   const plan = createPrPlan(input);
   const shards = gatewayJobs(plan);
@@ -96,7 +106,14 @@ test('full gateway PRs can use spare matrix capacity without changing test owner
   assert.ok(plan.jobs.length <= 24);
   assert.deepEqual(shards.flatMap(({ tasks }) => tasks[0].tests).sort(), [...selected].sort());
   for (const file of selected) assert.match(plan.testOwners[file], /^gateway-\d+$/);
-  const longGuard = createPrPlan({ ...input, taskDurations: { 'guard-lint': { ms: 150_000 } } });
+  const typeJob = plan.jobs.find(({ tasks }) =>
+    tasks.some(({ id }) => id === 'types-@farmslot/gateway'),
+  );
+  assert.ok(typeJob && !typeJob.id.startsWith('gateway-'));
+  const longGuard = createPrPlan({
+    ...input,
+    taskDurations: { ...input.taskDurations, 'guard-lint': { ms: 150_000 } },
+  });
   assert.equal(gatewayJobs(longGuard).length, 16);
 });
 

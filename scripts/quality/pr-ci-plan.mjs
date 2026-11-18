@@ -32,6 +32,7 @@ export function balance(items, count, weight = () => 1) {
 const PR_MATRIX_LIMIT = 24;
 const FULL_GATEWAY_SHARDS = 16;
 const EXTRA_GATEWAY_SHARDS = 4;
+const EXPANDED_GATEWAY_BUDGET = 105;
 
 /** Fill existing test jobs before paying for another runner and setup. */
 export function packPrTasks(jobs, tasks, budget = 120, maxJobs = PR_MATRIX_LIMIT) {
@@ -445,7 +446,8 @@ export function createPrPlan({
   let jobs = packPrTasks(seedJobs, tasks);
   const spare = PR_MATRIX_LIMIT - jobs.length;
   // Use idle matrix capacity only after other work has a slot. Repack the
-  // same tasks after splitting gateway, including the short guards it can absorb.
+  // same tasks with headroom for underestimates so a typecheck cannot put a
+  // full-sized gateway shard back on the critical path.
   if (expandGateway && spare >= 2 && !tasks.some(({ seconds }) => seconds > 120)) {
     jobs = packPrTasks(
       [
@@ -453,6 +455,7 @@ export function createPrPlan({
         ...seedJobs.filter(({ id }) => !id.startsWith('gateway-')),
       ],
       tasks,
+      EXPANDED_GATEWAY_BUDGET,
     );
   }
   const owners = new Map(selected.map((file) => [file, new Set()]));
