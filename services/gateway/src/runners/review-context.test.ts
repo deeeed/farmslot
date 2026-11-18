@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import os from 'node:os';
+import path from 'node:path';
 import { mock, test } from 'node:test';
 
 import type { AgentContext, Run } from '@farmslot/protocol';
@@ -26,8 +28,10 @@ const run: Run = {
 };
 run.metrics.runner = 'codex';
 run.metrics.model = 'gpt-6.1-sol';
+const realStore = await import('../runs/store.js');
 mock.module('../runs/store.js', {
   namedExports: {
+    ...realStore,
     getRun: () => run,
     getRunWithArchived: async () => run,
     getAllRuns: () => [run],
@@ -64,20 +68,31 @@ mock.module('../review-workspaces/skills.js', {
 mock.module('../review/session-mode.js', {
   namedExports: { WarmReviewRefusal: class extends Error {} },
 });
+const realProjectEnv = await import('../core/project-env.js');
 mock.module('../core/project-env.js', {
   namedExports: {
+    ...realProjectEnv,
     machineShellEnv: () => ({}),
     resolveProjectCommandEnv: () => ({ set: {}, unset: [] }),
   },
 });
+// Pass-through mocks: this suite only needs the pool and project reads stubbed,
+// and a partial namedExports set crashes whichever shard loads it as soon as
+// anything else in the graph imports another export (cx-ci saw gateway shard 10
+// fail on `farmslotRoot`, which core/state.ts reads at module load).
+const realConfig = await import('../core/config.js');
 mock.module('../core/config.js', {
   namedExports: {
+    ...realConfig,
+    farmslotRoot: () => path.join(os.tmpdir(), 'review-context-farmslot-root'),
     loadMachinePool: async () => ({ machine: 'local' }),
     loadProjectVars: async () => ({ projectJson: {} }),
   },
 });
+const realExec = await import('../core/exec.js');
 mock.module('../core/exec.js', {
   namedExports: {
+    ...realExec,
     execFileArgv: async () => ({
       exitCode: 0,
       stderr: '',
@@ -107,8 +122,10 @@ mock.module('./launch-command.js', {
     workspaceTerminalSessionCreateArgv: () => undefined,
   },
 });
+const realRegistry = await import('./registry.js');
 mock.module('./registry.js', {
   namedExports: {
+    ...realRegistry,
     getRunnerDefinition: () => ({
       sessionContinuation: { native: true, terminal: { workspace: 'current' } },
     }),
