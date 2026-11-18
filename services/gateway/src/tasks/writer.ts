@@ -73,6 +73,7 @@ import {
   slotWriteFileAtomic,
 } from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
+import { usesEvalTrialCapsule } from '../evals/trial-policy.js';
 import {
   buildFollowUpScopeContractSection,
   materializeInheritedContext,
@@ -424,7 +425,24 @@ export function artifactOnlyReplayForRun(
 ): TaskInitSpec['artifactOnlyReplay'] {
   if (!shouldApplyArtifactOnlyTaskPolicy(run)) return undefined;
   return {
-    base: run.startRef?.resolvedSha ?? run.startRef?.requestedRef ?? 'selected reference/base',
+    // Only a base this task input can prove is named. `startRef` is frozen
+    // here; a capsule blind trial's `blind.baseSha` is the commit prepare
+    // checks the capsule out at (dispatch-lifecycle-steps.ts, same
+    // usesEvalTrialCapsule condition), so it is the worker's actual starting
+    // point. `preWorkBaseSha` and `worktreeHeadAtDispatch` are NOT candidates:
+    // WRITE_TASK runs before PREPARE and DISPATCH record them (FLOW_STEPS), so
+    // they are empty here on a fresh run, and on a replayed dispatch
+    // `worktreeHeadAtDispatch` can have moved past the candidate's own commits,
+    // which would silently drop them from the comparison. Eval run 9317844e
+    // shipped the `selected reference/base` placeholder instead, and its worker
+    // searched git history for that ref.
+    base:
+      run.startRef?.resolvedSha ??
+      run.startRef?.requestedRef ??
+      (usesEvalTrialCapsule(run.engineState?.evalExperiment?.blind)
+        ? run.engineState?.evalExperiment?.blind?.baseSha
+        : undefined) ??
+      undefined,
     ...(run.engineState?.evalExperiment
       ? {
           ignoredPaths: [

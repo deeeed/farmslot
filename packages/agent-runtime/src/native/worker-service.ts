@@ -1,4 +1,5 @@
 import { type NativeSessionClient, observeExistingNativeHost } from './client.js';
+import { preservedNativeHostCode } from './host-unavailable.js';
 import { decodeRequest } from './ipc.js';
 import { NativeSessionMethodError } from './service.js';
 import {
@@ -140,6 +141,10 @@ export async function routeNativeWorkerSession(
     if (error instanceof NativeSessionMethodError) throw error;
     if ((error as { code?: string }).code === 'NOT_FOUND')
       throw new NativeSessionMethodError('NOT_FOUND', (error as Error).message);
+    // ENSURE refused by a host that never answered sent nothing. Keep that code so a
+    // launch can wait for the next host instead of failing its step.
+    const preserved = preservedNativeHostCode(error);
+    if (preserved) throw new NativeSessionMethodError(preserved, (error as Error).message);
     throw new NativeSessionMethodError('NATIVE_SESSION_ERROR', (error as Error).message);
   }
 }

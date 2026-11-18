@@ -248,7 +248,11 @@ function isHostedRequest(value: unknown): value is HostedTaskInitRequest {
     !optional(task.terminalContract, terminalContract) ||
     !optional(
       task.artifactOnlyReplay,
-      (entry) => isRecord(entry) && string(entry.base) && optional(entry.ignoredPaths, strings),
+      // A replay whose run recorded no base declares none: the guardrails say
+      // so rather than naming a ref the worker cannot resolve. A present base
+      // must still be a string.
+      (entry) =>
+        isRecord(entry) && optional(entry.base, string) && optional(entry.ignoredPaths, strings),
     ) ||
     !optional(
       task.authored,

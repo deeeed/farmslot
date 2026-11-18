@@ -341,6 +341,8 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
           options.excludingRunId,
         );
         if (!original.reviewWorkspaceTarget)
+          // A machine is still being chosen here, so this keeps the default of no
+          // host wait: an unavailable host yields to the next choice.
           await assertReviewNativeRunnerHealthy(
             target,
             options.ownerId,

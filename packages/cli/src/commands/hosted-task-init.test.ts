@@ -75,6 +75,18 @@ test('private request accepts the declared grammar and rejects executable or gat
   );
 });
 
+// A run that recorded no base declares none, and the guardrails say so. The
+// gateway used to send the prose placeholder `selected reference/base` instead,
+// which a worker then searched git history for (eval run 9317844e).
+test('a replay that declares no base is accepted', () => {
+  const valid = request();
+  const parsed = parseHostedTaskInitRequest({
+    ...valid,
+    task: { ...valid.task, artifactOnlyReplay: { ignoredPaths: ['scripts/**'] } },
+  });
+  assert.equal(parsed.task.artifactOnlyReplay?.base, undefined);
+});
+
 test('private requests validate replay and authored data instead of asserting its type', () => {
   const valid = request();
   assert.throws(

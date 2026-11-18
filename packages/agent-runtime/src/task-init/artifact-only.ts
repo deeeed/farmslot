@@ -6,7 +6,12 @@ import {
 } from './artifact-only-guard.js';
 
 export interface ArtifactOnlyReplay {
-  base: string;
+  /**
+   * The commit this replay compares against. Absent when the run recorded no
+   * base: the guardrails then say so, because naming an unresolvable
+   * placeholder sends the worker hunting through git history for it.
+   */
+  base?: string;
   ignoredPaths?: readonly string[];
 }
 
@@ -45,15 +50,22 @@ export function applyArtifactOnlyTaskPolicy(
   const branch = taskBlockValue(taskBlockSource, 'BRANCH') || '<branch-from-task-block>';
   const repo = taskBlockValue(taskBlockSource, 'REPO') || '<repo-from-task-block>';
   const replayBase = replay.base;
+  const hasBase = typeof replayBase === 'string' && replayBase.trim().length > 0;
   const harnessOverlayGuardrail = replay.ignoredPaths?.length
     ? `Ignore injected recipe-harness overlay paths when reasoning about the product bug or product diff: ${replay.ignoredPaths.map((entry) => `\`${entry}\``).join(', ')}.`
     : '';
   const artifactOnlyPreamble = [
     '## Artifact-only replay guardrails',
     '',
-    `This task is an artifact-only comparison replay from \`${replayBase}\`.`,
-    'The local `main` branch may be newer than this replay base and may already contain the original fix; do not use `main` as the comparison baseline.',
-    `When inspecting candidate changes, compare against the replay base: \`git diff ${replayBase}\` (or \`git diff ${replayBase} -- <paths>\`).`,
+    hasBase
+      ? `This task is an artifact-only comparison replay from \`${replayBase}\`.`
+      : 'This task is an artifact-only comparison replay. No replay base was recorded for it: do not search branches, tags or git history for one.',
+    hasBase
+      ? 'The local `main` branch may be newer than this replay base and may already contain the original fix; do not use `main` as the comparison baseline.'
+      : 'The local `main` branch may already contain the original fix; do not use `main` as the comparison baseline.',
+    hasBase
+      ? `When inspecting candidate changes, compare against the replay base: \`git diff ${replayBase}\` (or \`git diff ${replayBase} -- <paths>\`).`
+      : 'When inspecting candidate changes, read the working tree itself: `git status --short` and `git diff`.',
     harnessOverlayGuardrail,
     'Avoid every publication action: no remote pushes, no GitHub PR CLI mutations, no ready/merge/publication state changes.',
     'Leave the local working-tree diff, validation evidence, and artifacts as the output. Stop after writing `artifacts/report.md` and the completion signal.',
@@ -87,22 +99,42 @@ export function applyArtifactOnlyTaskPolicy(
     ),
   );
 
+  // The template's own instructions compare against `main`, which the
+  // guardrails above forbid. With a base they are rewritten to it; without one
+  // they are rewritten to the working tree, because leaving them would tell the
+  // worker to use the very baseline the preamble just ruled out.
   result = result.replace(
     /or create it from `[^`]+` if needed\./g,
     literalReplacement(
-      `or verify it was prepared from replay base \`${replayBase}\`; do not recreate it from \`main\`.`,
+      hasBase
+        ? `or verify it was prepared from replay base \`${replayBase}\`; do not recreate it from \`main\`.`
+        : 'or verify it was prepared by this run; do not recreate it from `main`.',
     ),
   );
-  result = result.replace(/git diff main\.\.\.HEAD/g, literalReplacement(`git diff ${replayBase}`));
-  result = result.replace(/git diff main\.\.HEAD/g, literalReplacement(`git diff ${replayBase}`));
   result = result.replace(
-    /git log main\.\.HEAD/g,
-    literalReplacement(`git log ${replayBase}..HEAD`),
+    /git diff main\.\.\.HEAD/g,
+    literalReplacement(hasBase ? `git diff ${replayBase}` : 'git diff'),
   );
   result = result.replace(
-    /git log HEAD\.\.main/g,
-    literalReplacement(`git log HEAD..${replayBase}`),
+    /git diff main\.\.HEAD/g,
+    literalReplacement(hasBase ? `git diff ${replayBase}` : 'git diff'),
   );
+  if (hasBase) {
+    result = result.replace(
+      /git log main\.\.HEAD/g,
+      literalReplacement(`git log ${replayBase}..HEAD`),
+    );
+    result = result.replace(
+      /git log HEAD\.\.main/g,
+      literalReplacement(`git log HEAD..${replayBase}`),
+    );
+  } else {
+    // A commit range has no honest substitute without a base: `git log -n 20
+    // HEAD` would make a step that counts, pipes or records the range report
+    // twenty commits of HEAD instead, and `HEAD..main` loses its meaning
+    // altogether. Drop the instruction rather than answer it wrongly.
+    result = result.replace(/^.*git log (?:main\.\.HEAD|HEAD\.\.main).*(?:\r?\n|$)/gm, '');
+  }
   result = result.replace(/commit\/push approval/g, 'artifact-only completion approval');
   result = result.replace(
     /- \[ \] \*\*(\d+)\. On approval — commit, push, update PR:\*\*[\s\S]*?(?=\s*Write completion signal:|\n- \[ \] \*\*\d+\.)/g,

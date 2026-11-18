@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
 import { NATIVE_WORKER_READ } from '@farmslot/agent-runtime/native';
+import { nativeHostUnavailableError } from '@farmslot/agent-runtime/native/host-unavailable';
 import { NativeSessionMethodError } from '@farmslot/agent-runtime/native/service';
 import { Methods, type NativeSessionReadResult, type Run } from '@farmslot/protocol';
 
@@ -14,6 +15,8 @@ let snapshot: NativeSessionReadResult;
 let readFailure: Error | undefined;
 let hostFailure: Error | undefined;
 let probes: { owner: string; params: Record<string, unknown> }[] = [];
+/** Lets a test change what the host answers between probes. */
+let probeHook: (() => void) | undefined;
 mock.module('../../runs/store.js', {
   namedExports: { getAllRunsWithArchived: async () => history },
 });
@@ -26,6 +29,7 @@ mock.module('./node.js', {
     ) => {
       if (method === Methods.NATIVE_SESSION_LIST) {
         probes.push({ owner, params });
+        probeHook?.();
         if (hostFailure) throw hostFailure;
         return { sessions: [] };
       }
@@ -35,6 +39,22 @@ mock.module('./node.js', {
       if (readFailure) throw readFailure;
       return snapshot;
     },
+  },
+});
+const hostWait = await import('./host-wait.js');
+/** A test clock, so a bounded wait costs its probes and no wall time. */
+let clock = 0;
+mock.module('./host-wait.js', {
+  namedExports: {
+    ...hostWait,
+    waitForNativeHostReady: (input: Parameters<typeof hostWait.waitForNativeHostReady>[0]) =>
+      hostWait.waitForNativeHostReady({
+        ...input,
+        now: () => clock,
+        sleep: async (ms: number) => {
+          clock += ms;
+        },
+      }),
   },
 });
 const { assertReviewNativeRunnerHealthy } = await import('./review-health.js');
@@ -240,4 +260,35 @@ test('current host probe preserves structured candidate refusals and skips tmux'
   );
   await assertReviewNativeRunnerHealthy({ ...input, transport: 'tmux' }, 'owner', 'node');
   assert.equal(probes.length, 1);
+});
+
+test('a placed machine waits for a restarting host instead of refusing the review', async () => {
+  reset();
+  clock = 0;
+  history = [];
+  hostFailure = nativeHostUnavailableError('/root/host.log');
+  // The host answers on the third probe, inside the caller's budget.
+  probeHook = () => {
+    if (probes.length >= 3) hostFailure = undefined;
+  };
+  try {
+    await assertReviewNativeRunnerHealthy(input, 'owner', 'node', undefined, 30_000);
+  } finally {
+    probeHook = undefined;
+  }
+  assert.equal(probes.length, 3, 'it keeps asking until the host answers');
+  assert.equal(clock, 2_000, 'two probe intervals, well inside the budget');
+});
+
+test('a candidate being priced refuses at once and says it did not wait', async () => {
+  reset();
+  clock = 0;
+  history = [];
+  hostFailure = nativeHostUnavailableError('/root/host.log');
+  await assert.rejects(assertReviewNativeRunnerHealthy(input, 'owner', 'node'), {
+    code: 'NATIVE_SESSION_ERROR',
+    message: /stayed unavailable: the step had no budget left to wait for it/,
+  });
+  assert.equal(probes.length, 1);
+  assert.equal(clock, 0);
 });
