@@ -93,6 +93,37 @@ test('a measured session splits a parent step by the rows of the child checklist
   );
 });
 
+test('a child closed with --mark-last ends its parent step on its own last row', () => {
+  const run = reviewRun();
+  const child = run.metrics.subtasks![0];
+  // The last row and the parent step share one timestamp, as `sub complete --mark-last` writes them.
+  child.checklistTiming!.events.push({
+    stepNumber: 3,
+    label: '3. Confirm the verdict',
+    checkedAt: at(60),
+  });
+  const usage = countToolUsage(
+    {
+      tools: [10, 30, 50, 100].map((seconds) => ({ name: 'bash', issuedAt: at(seconds) })),
+      tokens: null,
+      compactions: null,
+    },
+    receiptChecklistMarks(run, context),
+  );
+  assert.deepEqual(
+    usage.steps
+      .filter((step) => step.segment !== 'after-last-mark')
+      .map((step) => [step.stepNumber, step.title, step.toolCalls]),
+    [
+      [1, 'perps-shared 1. Record the review context', 1],
+      [1, 'perps-shared 2. Check the order flow', 1],
+      // A numbered label keeps its own number once.
+      [1, 'perps-shared 3. Confirm the verdict', 1],
+      [2, '2. Complete the review', 1],
+    ],
+  );
+});
+
 test('live progress keeps the parent marks only', () => {
   assert.deepEqual(
     contextChecklistMarks(reviewRun(), context).map((mark) => mark.label),

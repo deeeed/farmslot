@@ -69,7 +69,8 @@ export async function extractRunnerSessionUsage({
       );
       const result = await execOnSlot(vars, argv.map(shellQuote).join(' '), {
         timeout: 30_000,
-        maxBuffer: 64 * 1024,
+        // A receipt carries one segment per checklist and child-checklist row (400 rows at most).
+        maxBuffer: 1024 * 1024,
         selectNodeSupport: false,
       });
       if (result.exitCode !== 0)
@@ -154,11 +155,20 @@ export function receiptChecklistMarks(
       ? checklistMarks(checklistTimingForAttempt(child.checklistTiming, startedAt)).map((mark) => ({
           ...mark,
           stepNumber: child.parent.stepNumber,
-          label: `${child.id} ${mark.stepNumber}. ${mark.label}`,
+          // The mark writer keeps a numbered row's own number in its label.
+          label: `${child.id} ${mark.label.startsWith(`${mark.stepNumber}. `) ? mark.label : `${mark.stepNumber}. ${mark.label}`}`,
         }))
       : [],
   );
-  return [...contextChecklistMarks(run, context), ...children];
+  // `mark sub <id> complete --mark-last` stamps the last child row and its parent step at once.
+  // That row closes the step: the parent mark would take the row's calls and share its segment key.
+  const closedByChild = new Set(
+    children.map((mark) => `${mark.stepNumber}\u0000${mark.checkedAt}`),
+  );
+  const parents = contextChecklistMarks(run, context).filter(
+    (mark) => !closedByChild.has(`${mark.stepNumber}\u0000${mark.checkedAt}`),
+  );
+  return [...children, ...parents];
 }
 
 /** Sums the sessions' tool usage only when every session reported it. */

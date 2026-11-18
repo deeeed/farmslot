@@ -53,9 +53,9 @@ import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import {
-  receiptChecklistMarks,
   extractRunnerSessionUsage,
   extractRunWorkerSessionUsage,
+  receiptChecklistMarks,
   runnerUsageMetrics,
   usesReviewChainSessionTotal,
 } from '../runtime/session-usage.js';
