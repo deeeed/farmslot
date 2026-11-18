@@ -45,13 +45,12 @@ test('Codex 0.170 keeps its model and directory row when a draft hides the short
   assert.equal(runnerPaneBufferedInstruction(tail), 'Current operator draft');
 });
 
-test('an explicit shortcut footer after the live prompt still ends the draft', () => {
+test('the Codex model and directory row comes before its shortcut hints', () => {
   const tail = [
     '› Current operator draft',
     '',
-    '  ← for agents · ? for shortcuts',
-    '',
     '  GPT-6.2-Sol high · /private/tmp/codex-enter-proof',
+    '  ← for agents · ? for shortcuts',
   ].join('\n');
   assert.equal(runnerPaneBufferedInstruction(tail), 'Current operator draft');
 });

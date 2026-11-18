@@ -197,6 +197,8 @@ for (const [change, expected] of [
   ['foreign draft', 'queue_buffer_unconfirmed'],
   ['foreign multiline draft with a quoted prompt', 'queue_buffer_unconfirmed'],
   ['foreign multiline draft with a quoted alternate prompt', 'queue_buffer_unconfirmed'],
+  ['foreign multiline draft with footer wording', 'queue_buffer_unconfirmed'],
+  ['foreign multiline draft with a quoted shortcut status', 'queue_buffer_unconfirmed'],
   ['foreign queue', 'queued_input'],
   ['replaced pane process', 'pane_changed'],
 ]) {
@@ -210,7 +212,12 @@ for (const [change, expected] of [
           process.env.TMUX_PANE_STATE_PROCESS_STARTED_AT = '2';
         else if (change === 'foreign queue')
           process.env.TMUX_PANE_STATE_TAIL_CAPTURE = `• Queued follow-up inputs\n  ↳ foreign\n\n${draft}`;
-        else if (change.startsWith('foreign multiline draft')) {
+        else if (change.endsWith('footer wording') || change.endsWith('quoted shortcut status')) {
+          const extra = change.endsWith('footer wording')
+            ? 'Explain the context left indicator'
+            : '? for shortcuts';
+          process.env.TMUX_PANE_STATE_TAIL_CAPTURE = `› ${message}\n\n  ${extra}\n\n  GPT-6.2-Sol high · /tmp/driver-proof`;
+        } else if (change.startsWith('foreign multiline draft')) {
           const quote = change.includes('alternate') ? '❯' : '›';
           process.env.TMUX_PANE_STATE_TAIL_CAPTURE = `› Operator draft\n  ${quote} ${message}\n\n  GPT-6.2-Sol high · /tmp/driver-proof`;
         } else process.env.TMUX_PANE_STATE_TAIL_CAPTURE = '› Operator draft\n\ncontext left';

@@ -83,25 +83,25 @@ function liveComposer(pane: string): LiveComposer | null {
       : lines.map((line) => /^\s*❯(?:\s|$)/.test(line)).lastIndexOf(true);
   if (composer === -1) return null;
 
-  let footer = lines
+  const isStatusHint = (line: string) =>
+    /^\s*(?:\? for shortcuts|context(?:\s+\d+%)?\s+left|tab to queue message|← for agents|⚠\s+\d+\s+warnings?)(?:\s*$|\s+·| {2,})/i.test(
+      line,
+    );
+  // The model and directory row precedes any status hints in the current Codex
+  // layout. An earlier hint-shaped line may be literal text inside the draft.
+  const modelFooter = lines
     .map(
       (line, index) =>
         index > composer &&
-        /\? for shortcuts|\bcontext(?:\s+\d+%)?\s+left\b|\btab to queue message\b|← for agents|⚠\s+\d+\s+warnings?\b/i.test(
-          line,
-        ),
+        lines[index - 1]?.trim() === '' &&
+        /^ {2}[\w.-]+(?: [\w.-]+)? · (?:~?\/|~$)/.test(line),
     )
     .lastIndexOf(true);
-  // Codex 0.170 hides the shortcut row while editing but still renders its
-  // final model · directory row below a blank separator.
-  const last = lines.at(-1);
-  if (
-    footer === -1 &&
-    last &&
-    lines.at(-2)?.trim() === '' &&
-    /^ {2}[\w.-]+(?: [\w.-]+)? · (?:~?\/|~$)/.test(last)
-  )
-    footer = lines.length - 1;
+  const footer =
+    modelFooter !== -1 &&
+    lines.slice(modelFooter + 1).every((line) => !line.trim() || isStatusHint(line))
+      ? modelFooter
+      : lines.map((line, index) => index > composer && isStatusHint(line)).lastIndexOf(true);
   if (footer === -1 && composer !== lines.length - 1) return null;
   const body = lines.slice(composer, footer === -1 ? undefined : footer);
   // Only the bottom composer above the status footer is live input. Transcript prompts are history.
