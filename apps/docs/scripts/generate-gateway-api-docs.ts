@@ -105,7 +105,9 @@ function gatewayCapabilitiesSnapshot(): GatewayCapabilitiesSnapshot {
         summary: `${titleCase(method)} gateway method.`,
         ...(method === Methods.SLOT_CHECK
           ? { paramsType: 'SlotCheckParams', resultType: 'SlotCheckResult' }
-          : {}),
+          : method === Methods.RUN_SEARCH_ARTIFACTS
+            ? { paramsType: 'RunSearchArtifactsParams', resultType: 'RunSearchArtifactsResult' }
+            : {}),
       })),
     events: Object.values(Events)
       .filter((event): event is string => typeof event === 'string')
@@ -148,7 +150,9 @@ function inferSafetyTier(method: string): string {
     // Device enumeration: runs `simctl`/`adb`/`emulator` list commands and fills
     // a read cache. The heuristic cannot see it because the name says neither
     // "list" nor "get".
-    method === 'resource.device.inventory'
+    method === 'resource.device.inventory' ||
+    // Literal retained-artifact search is a bounded read, with no store mutation.
+    method === Methods.RUN_SEARCH_ARTIFACTS
   ) {
     return 'read-only';
   }

@@ -1,12 +1,9 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import { CONTENT_MISMATCH, openHeldContent, readVerifiedContent } from '../../held-content.js';
+import { readVerifiedArtifactPreview } from '../../artifact-response.js';
 import { getResourceWorkspaceKey, subscribeResourceCache } from '../../resource-cache.js';
 import { colors } from '../../styles/theme-tokens.js';
-import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
-
-const MAX_BYTES = 512 * 1024;
 
 import { artifactContentPreviewWindow } from './artifact-content-search-model.js';
 
@@ -99,42 +96,7 @@ export class ArtifactContentPreview extends LitElement {
       return;
     }
     try {
-      const key = { kind: 'artifact' as const, id: this.sha256 };
-      let bytes = await openHeldContent(key);
-      if (!bytes) {
-        const verified = await readVerifiedContent(
-          key,
-          async () => {
-            const response = await gatewayHttpFetch(url, { signal: abort.signal });
-            if (!response.ok || !response.body)
-              throw Error(`File unavailable (${response.status}).`);
-            const reader = response.body.getReader();
-            const chunks: Uint8Array[] = [];
-            let total = 0;
-            try {
-              for (;;) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                total += value.byteLength;
-                if (total > MAX_BYTES) throw Error('File is too large to preview.');
-                chunks.push(value);
-              }
-            } finally {
-              await reader.cancel();
-            }
-            const body = new Uint8Array(total);
-            let offset = 0;
-            for (const chunk of chunks) {
-              body.set(chunk, offset);
-              offset += chunk.byteLength;
-            }
-            return body;
-          },
-          'run',
-        );
-        if (verified === CONTENT_MISMATCH) throw Error('File changed; search again.');
-        bytes = verified;
-      }
+      const bytes = await readVerifiedArtifactPreview(url, sha256, abort.signal);
       if (
         abort.signal.aborted ||
         owner !== getResourceWorkspaceKey() ||
@@ -142,7 +104,6 @@ export class ArtifactContentPreview extends LitElement {
         sha256 !== this.sha256
       )
         return;
-      if (bytes.byteLength > MAX_BYTES) throw Error('File is too large to preview.');
       this.text = new TextDecoder().decode(bytes);
     } catch (error) {
       if (!abort.signal.aborted && owner === getResourceWorkspaceKey())

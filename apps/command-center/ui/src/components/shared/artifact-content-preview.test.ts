@@ -3,24 +3,13 @@ import { mock, test } from 'node:test';
 
 import { litText } from '../../testing/lit-text.js';
 
-mock.module('../../held-content.js', {
-  namedExports: {
-    openHeldContent: async () => undefined,
-    readVerifiedContent: async () => new Uint8Array(),
-    CONTENT_MISMATCH: Symbol('mismatch'),
-  },
+mock.module('../../artifact-response.js', {
+  namedExports: { readVerifiedArtifactPreview: async () => new Uint8Array() },
 });
 mock.module('../../resource-cache.js', {
   namedExports: {
     getResourceWorkspaceKey: () => undefined,
     subscribeResourceCache: () => () => undefined,
-  },
-});
-mock.module('../../utils/gateway-origin.js', {
-  namedExports: {
-    gatewayHttpFetch: async () => {
-      throw Error('No network in render fixture');
-    },
   },
 });
 const { ArtifactContentPreview } = await import('./artifact-content-preview.js');
