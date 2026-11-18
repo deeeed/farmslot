@@ -1,0 +1,1 @@
+- Search retained text artifacts with bounded literal reads, line hits and the existing artifact snapshot/path checks.

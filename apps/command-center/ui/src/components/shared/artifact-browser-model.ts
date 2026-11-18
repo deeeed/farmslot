@@ -46,6 +46,11 @@ export interface ArtifactBrowserFilter {
 }
 
 export interface ArtifactBrowserView extends ArtifactBrowserFilter {
+  /** Undefined keeps path filtering; a string enables explicit content search. */
+  contentQuery?: string;
+  line?: number;
+  bundleDigest?: string;
+  contentSha256?: string;
   /** Stable across manifest refreshes and reordering. */
   path: string | null;
   /** Narrow layouts can close the preview while retaining the selected row. */
@@ -62,7 +67,7 @@ export function emptyArtifactBrowserView(): ArtifactBrowserView {
 }
 
 export function hasArtifactBrowserView(view: ArtifactBrowserView): boolean {
-  return Boolean(view.query || view.types.size || view.path);
+  return Boolean(view.query || view.types.size || view.path || view.contentQuery !== undefined);
 }
 
 const ATTEMPT_NAME = /^(.+)-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(\.[^/]+)$/i;
