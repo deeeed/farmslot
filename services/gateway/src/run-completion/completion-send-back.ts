@@ -6,6 +6,10 @@ import { continuePRCompletionStep } from '../methods/run/replay-step.js';
 import { probeWorkerSignalForRun } from '../run-engine/run-monitor.js';
 import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import { completionSendBackCommandId } from '../runners/native/worker-control.js';
+import {
+  deliverOperatorInstruction,
+  OperatorInstructionNotAttemptedError,
+} from '../runners/operator-instruction.js';
 import { deliverOperatorInstructionWithIntent } from '../runners/operator-instruction-intent.js';
 import { getRun, persistRunNow, updateRunStep } from '../runs/store.js';
 import {
@@ -211,8 +215,7 @@ export async function sendBackCompletion(
     parseStrictIsoMs(probe.signal.timestamp) === null
   )
     throw new Error(`Cannot establish the worker signal before send-back: ${probe.message}`);
-  const baseline =
-    replacement?.signal ?? (delivery && recorded.ok ? recorded.signal : probe.signal);
+  let baseline = replacement?.signal ?? (delivery && recorded.ok ? recorded.signal : probe.signal);
   delivery ??= {
     key: completionSendBackCommandId(decisionId),
     slotId,
@@ -291,20 +294,68 @@ export async function sendBackCompletion(
     });
   if (!delivery.confirmed) {
     const intent = delivery;
-    const result = await deliverOperatorInstructionWithIntent(
-      assertOwner,
-      { key: intent.key, text: intent.text, contextId: context.id, commandId: intent.key },
-      {
-        recordPending: async (begin) => {
-          const window = begin(intent.startedAt);
-          const { startedAt } = window;
-          await persistDelivery({ ...intent, startedAt }, 'completion send-back signal baseline');
-          return window;
-        },
-        clearPending: (startedAt) =>
-          persistDelivery(intent, 'untouched completion feedback can retry', startedAt),
-      },
-    );
+    const deliverReplacement = async () => {
+      let startedAt = intent.startedAt;
+      const beforeInput = async () => {
+        if (startedAt !== undefined) return;
+        const source = await probeWorkerSignalForRun(run.id, slotId, context);
+        if (
+          !source.signal ||
+          parseStrictIsoMs(source.signal.timestamp) === null ||
+          (!source.ok &&
+            source.code !== 'artifact_contract' &&
+            source.code !== 'non_terminal' &&
+            source.code !== 'stale')
+        )
+          throw new Error(`Cannot establish the worker signal at input: ${source.message}`);
+        if (signalNewerThanRecorded(baseline, source.signal)) baseline = source.signal;
+        const sendingAt = Date.now();
+        await persistDelivery(
+          { ...intent, startedAt: sendingAt },
+          'completion edit input boundary',
+        );
+        startedAt = sendingAt;
+      };
+      try {
+        const outcome = await deliverOperatorInstruction(
+          await assertOwner(),
+          intent.key,
+          intent.text,
+          intent.startedAt,
+          context.id,
+          intent.key,
+          intent.startedAt === undefined ? beforeInput : undefined,
+        );
+        if (outcome === 'not-attempted' && startedAt !== undefined)
+          await persistDelivery(intent, 'untouched completion edit can retry', startedAt);
+        if (outcome === 'confirmed' && startedAt === undefined)
+          throw new Error('Completion edit has no recorded worker input boundary');
+        return { delivery: outcome, startedAt };
+      } catch (error) {
+        if (error instanceof OperatorInstructionNotAttemptedError && startedAt !== undefined)
+          await persistDelivery(intent, 'untouched completion edit can retry', startedAt);
+        throw error;
+      }
+    };
+    const result = superseded
+      ? await deliverReplacement()
+      : await deliverOperatorInstructionWithIntent(
+          assertOwner,
+          { key: intent.key, text: intent.text, contextId: context.id, commandId: intent.key },
+          {
+            recordPending: async (begin) => {
+              const window = begin(intent.startedAt);
+              const { startedAt } = window;
+              await persistDelivery(
+                { ...intent, startedAt },
+                'completion send-back signal baseline',
+              );
+              return window;
+            },
+            clearPending: (startedAt) =>
+              persistDelivery(intent, 'untouched completion feedback can retry', startedAt),
+          },
+        );
     if (result.delivery !== 'confirmed')
       throw new Error(`Completion feedback delivery is ${result.delivery}; the run remains held.`);
     delivery = { ...intent, startedAt: result.startedAt, confirmed: true };

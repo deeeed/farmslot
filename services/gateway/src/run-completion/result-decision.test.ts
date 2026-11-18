@@ -43,6 +43,7 @@ let onReplay: (() => void) | null = null;
 let failPersist: string | null = null;
 let slotOwner: string | undefined;
 let delivery: 'confirmed' | 'queued' | 'unconfirmed' | 'not-attempted' = 'confirmed';
+let beforeDelivery: (() => void) | undefined;
 let afterDelivery: (() => void) | undefined;
 let deliveryError: Error | undefined;
 let feedback: Array<{
@@ -110,9 +111,12 @@ mock.module('../runners/operator-instruction.js', {
       observeSince?: number,
       contextId?: string,
       commandId?: string,
+      beforeInput?: () => Promise<void>,
     ) => {
+      beforeDelivery?.();
       feedback.push({ key, text, contextId, observeSince, commandId });
       if (deliveryError) throw deliveryError;
+      if (delivery !== 'not-attempted') await beforeInput?.();
       afterDelivery?.();
       return delivery;
     },
@@ -226,6 +230,7 @@ beforeEach(() => {
   starts = [];
   slotOwner = undefined;
   delivery = 'confirmed';
+  beforeDelivery = undefined;
   afterDelivery = undefined;
   feedback = [];
   deliveryError = undefined;
@@ -1361,6 +1366,11 @@ test('an uncertain edit keeps its delivery window until it can be confirmed', as
   );
   const dispatchOutputs = () => run.steps.find((step) => step.name === S.DISPATCH)?.outputs;
   const original = dispatchOutputs()?.completionSendBackDelivery;
+  const originalResult = { ...priorSignal, timestamp: '2026-10-28T00:17:00.000Z' };
+  beforeDelivery = () => {
+    assert.equal(dispatchOutputs()?.completionSendBackReplacement, undefined);
+    currentSignal = originalResult;
+  };
   delivery = 'unconfirmed';
   afterDelivery = () => {
     assert.deepEqual(dispatchOutputs()?.completionSendBackDelivery, original);
@@ -1379,6 +1389,7 @@ test('an uncertain edit keeps its delivery window until it can be confirmed', as
   const edited = feedback.at(-1);
   assert.ok(edited);
 
+  beforeDelivery = undefined;
   afterDelivery = undefined;
   delivery = 'confirmed';
   run.decisions = [await buildResultDecision(run, 'complete')];
@@ -1391,6 +1402,7 @@ test('an uncertain edit keeps its delivery window until it can be confirmed', as
 
   assert.equal(feedback.at(-1)?.key, edited.key);
   assert.equal(typeof feedback.at(-1)?.observeSince, 'number');
+  assert.deepEqual(dispatchOutputs()?.completionSendBackSignal, originalResult);
   const withdrawn = dispatchOutputs()?.completionSendBackWithdrawn;
   assert.ok(Array.isArray(withdrawn) && withdrawn.length === 1);
 });
