@@ -1,1 +1,0 @@
-- Show “Worker finished” on stale blocked runs when Monitor was the last step to run and recorded completion.

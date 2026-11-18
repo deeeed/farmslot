@@ -1,1 +1,0 @@
-- A live host start that never became ready throws with the code `NATIVE_HOST_UNAVAILABLE`, beside the `NATIVE_SOURCE_UNAVAILABLE` a passive read already raises. Both are thrown before any request reaches a host, so a caller that waits for a restarting host can tell "nothing was sent" from "this may have been served" without matching on message text. The message is unchanged.

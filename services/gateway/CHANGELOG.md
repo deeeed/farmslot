@@ -6,6 +6,37 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.39.8 - 2026-11-18
+
+- Search retained text artifacts with bounded literal reads, line hits and the existing artifact snapshot/path checks.
+- List opted-in read-only reference checkouts, their revisions and dirty state in task inputs and `inputs/reference-checkouts.json`, including references unavailable to static-review support. Missing or unreadable checkouts require a BLOCKED comparison; active slot checkouts are never substituted. Opt in with `reference_repos.<name>.read_only: true` so a farm's owned checkout stays outside the list.
+- Cost per step now splits a step that ran a child checklist by that checklist's rows, so a review shows what each rule it checked cost.
+- Stabilize the backlog handoff test by waiting for the dispatcher before checking queue revisions.
+- Recognize the Codex composer when its model and directory footer is the only status row.
+- Refuse run creation with a clear storage error before registering a run when required gateway volumes are unavailable, and alert through fleet monitoring once per outage.
+- Keep authored ticket criteria from observed expected-outcome headings, including British spelling, and retain added acceptance sections for real runs and eval trials.
+- A review step no longer fails while the node's native host is restarting. A host that never answered was never sent anything, so the launch waits for the next host — bounded by a 120 s ceiling and by whatever budget the step has left — and sends ENSURE once more; ENSURE is idempotent on the reservation, so the worker still launches once. The wait ends early when the run is cancelled or the slot changes hands, and a host that never comes back refuses with the wait it spent named in the refusal. The review admission probe uses the same wait: a caller whose machine is already placed passes what its claim has left, while a caller still pricing candidate machines keeps the default of no wait, because the next choice is cheaper than any wait.
+- Preserve native runtime-version skew errors from execution nodes so reviewers see the upgrade refusal reason.
+- Publication opens its own PR instead of pushing the approved head onto a merged PR's branch when a run reuses a branch whose PR already merged; a PR this run published, or one merged out-of-band at a head this run approved or reviewed, still links.
+- The publication gate no longer offers Close as Shipped for a merged PR this run did not ship: a reused branch's historical merge would have marked the run shipped against work it never did.
+- A merged PR counts as this run's shipment only when the published head is what merged, so a run that reviewed a PR at one head and fixed findings on top no longer binds the PR merged at the older head.
+- Close as Shipped re-proves the run's saved PR number against the head it is closing, so a number persisted by an earlier gate cannot record the run as published against a PR that merged an older head.
+- A close-as-shipped whose merged-PR probe cannot answer holds the run on an unmet publication prerequisite instead of completing it as unshipped or failing finalize, so its slot, checkout and package survive for a replay once GitHub is reachable; an unproven merged link is cleared so `run adopt-published-pr` can record what actually shipped.
+- The publication gate records the shipment its probe proved, replacing a number an earlier gate saved for a head the branch has moved past, and close-as-shipped makes no publication claim for a project with no `ci.repo` to prove one against.
+- Clearing an unproven merged link now removes the run's stale PR link as well, so `run adopt-published-pr` can record the PR that actually shipped on a run whose ticket is a backlog id or GitHub issue (the ordinary link refresh keeps the old list when the recompute comes back empty).
+- A momentary GitHub failure in the merged-PR proof Close as Shipped runs is retried once before anyone is asked, and when it still cannot answer the refusal names the supported retry (`run.replayStep finalize`) in the message the run and its decision card show, so the run is never held with no visible way forward.
+- Clearing an unproven merged link now removes only the run's PR link instead of rewriting the whole list, so a ticket's own issue link survives on a run whose links cannot be recomputed without a PR number.
+- Retain failed slot releases with their error and a supported retry instead of leaving an abandoned release in progress.
+- An artifact-only comparison replay names only a base its task input can prove: the frozen `startRef`, or a capsule blind trial's `blind.baseSha`, which is the commit prepare checks the capsule out at. It no longer writes the literal `selected reference/base` into TASK.md, which sent a worker searching git history for that ref. A replay with no provable base declares none.
+- A static review now keeps its reviewer's checklist marks, so the cost-per-step panel splits the review session by step instead of showing no checklist marks.
+- Allow a parked workspace recovery to resume when a terminal owner leaves the slot marked busy.
+- Re-review retained workspace sessions directly, including stopped blocked reviews, preserving their owner and conversation without reapplying automatic discovery filters.
+- Accept equivalent GitHub pull URLs and shorthand references throughout warm-review lineage checks while still refusing a different repository or PR.
+- Drain pending run writes before fixture teardown to prevent intermittent test cleanup failures.
+- Preserve the reviewer conversation across reliable rebases using a pinned author interdiff; record bounded, qualified cold fallbacks without upstream-only review noise.
+- A publication with a fast push skips the second base fetch, saving one fetch (about 6-8 s on macpro). Fetch, push, remote check, PR creation and the publication record now appear as their own finalize steps.
+- A tmux static review now rereads its runner state every 10 seconds instead of on every 1-second signal poll, cutting the review node's runner-file reads about tenfold while a review runs.
+
 ## 0.39.7 - 2026-11-18
 
 - Bind task recipe reruns to their computed worker directory and keep standalone project-hook recipes isolated from inherited task acceptance.
