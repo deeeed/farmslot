@@ -1244,6 +1244,10 @@
       "command": "farmslot run gate --action confirm-visual|reject-visual",
       "note": "Record authenticated visual meaning for captured evidence without resolving the gate."
     },
+    "run.searchArtifacts": {
+      "surface": "rpc-only",
+      "note": "Bounded literal search of retained run artifacts; use `farmslot rpc run.searchArtifacts <json>`."
+    },
     "run.sessionCommand": {
       "surface": "typed-command",
       "command": "farmslot run session"

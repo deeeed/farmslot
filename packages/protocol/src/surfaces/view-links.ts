@@ -48,6 +48,11 @@ export const ARTIFACT_BROWSER_PARAMS = [
   'artifactTypes',
   'artifactFile',
   'artifactPreview',
+  'artifactSearch',
+  'artifactContent',
+  'artifactLine',
+  'artifactBundle',
+  'artifactContentSha',
 ] as const;
 
 export const VIEW_QUERY_PARAMETERS: ReadonlySet<string> = new Set([
