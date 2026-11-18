@@ -111,11 +111,16 @@ function workerChecklistMarks(run: Run, row: RunnerSessionUsage) {
   )
     return undefined;
   const context = run.agentContexts?.find((item) => row.contextIds?.includes(item.id));
-  const sessionsInContext = (run.sessionUsage ?? []).filter(
-    (other) =>
-      other.role === row.role && other.contextIds?.some((id) => row.contextIds?.includes(id)),
-  ).length;
-  return receiptChecklistMarks(run, context, Math.max(1, sessionsInContext));
+  // Transcripts, not receipts: a pending receipt of a launch that never started has none.
+  const transcripts = new Set(
+    (run.sessionUsage ?? [])
+      .filter(
+        (other) =>
+          other.role === row.role && other.contextIds?.some((id) => row.contextIds?.includes(id)),
+      )
+      .flatMap((other) => (other.runnerSessionPath ? [other.runnerSessionPath] : [])),
+  );
+  return receiptChecklistMarks(run, context, Math.max(1, transcripts.size));
 }
 
 async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSessionUsage> {

@@ -137,8 +137,20 @@ export function contextChecklistMarks(
   );
 }
 
-/** At most this many child rows split a receipt, so it stays within the node's output limits. */
-export const RECEIPT_CHILD_MARK_LIMIT = 100;
+/**
+ * At most this many child rows split a receipt, each titled in at most RECEIPT_CHILD_TITLE_CHARS,
+ * so the receipt stays well inside the 64 KiB usage read.
+ */
+export const RECEIPT_CHILD_MARK_LIMIT = 50;
+export const RECEIPT_CHILD_TITLE_CHARS = 80;
+
+function childTitle(id: string, row: number, label: string): string {
+  // The mark writer keeps a numbered row's own number in its label.
+  const title = `${id} ${/^\d+[.)] /.test(label) ? label : `${row}. ${label}`}`;
+  return title.length > RECEIPT_CHILD_TITLE_CHARS
+    ? `${title.slice(0, RECEIPT_CHILD_TITLE_CHARS - 1)}…`
+    : title;
+}
 
 /**
  * The marks a measured session is split at: the worker checklist's marks, plus the row marks of
@@ -163,8 +175,7 @@ export function receiptChecklistMarks(
       ? checklistMarks(checklistTimingForAttempt(child.checklistTiming, startedAt)).map((mark) => ({
           ...mark,
           stepNumber: child.parent.stepNumber,
-          // The mark writer keeps a numbered row's own number in its label.
-          label: `${child.id} ${/^\d+[.)] /.test(mark.label) ? mark.label : `${mark.stepNumber}. ${mark.label}`}`,
+          label: childTitle(child.id, mark.stepNumber, mark.label),
         }))
       : [],
   );

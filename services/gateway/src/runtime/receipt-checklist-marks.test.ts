@@ -9,6 +9,7 @@ import { makeRun } from '../run-completion/test-fixtures.js';
 import {
   contextChecklistMarks,
   RECEIPT_CHILD_MARK_LIMIT,
+  RECEIPT_CHILD_TITLE_CHARS,
   receiptChecklistMarks,
 } from './session-usage.js';
 
@@ -132,8 +133,9 @@ test("rows marked in one millisecond, and a step closing as the next step's row 
   const run = reviewRun();
   const child = run.metrics.subtasks![0];
   child.checklistTiming!.events.push(
-    { stepNumber: 3, label: '3) Confirm the verdict', checkedAt: at(45) },
+    { stepNumber: 3, label: '3) Confirm the verdict', checkedAt: at(44) },
     { stepNumber: 4, label: 'Record the evidence', checkedAt: at(45) },
+    { stepNumber: 5, label: 'Record the evidence again', checkedAt: at(45) },
   );
   run.metrics.subtasks!.push({
     ...child,
@@ -150,7 +152,10 @@ test("rows marked in one millisecond, and a step closing as the next step's row 
     [
       [1, 'perps-shared 1. Record the review context', 20],
       [1, 'perps-shared 2. Check the order flow', 40],
-      [1, 'perps-shared 4. Record the evidence', 45],
+      // A `3)` label keeps its own number.
+      [1, 'perps-shared 3) Confirm the verdict', 44],
+      // Of two rows marked in one millisecond, the last stays.
+      [1, 'perps-shared 5. Record the evidence again', 45],
       [1, '1. Run the shared checklist', 60],
       [2, 'perps-client 1. Check the client', 60],
       [2, '2. Complete the review', 120],
@@ -177,6 +182,16 @@ test('a relaunched context or an oversized child keeps the parent marks', () => 
     receiptChecklistMarks(run, context).map((mark) => mark.label),
     parentsOnly,
   );
+});
+
+test('a long rule title is cut to the receipt title budget', () => {
+  const run = reviewRun();
+  run.metrics.subtasks![0].checklistTiming!.events = [
+    { stepNumber: 1, label: 'x'.repeat(200), checkedAt: at(20) },
+  ];
+  const [first] = receiptChecklistMarks(run, context);
+  assert.equal(first.label.length, RECEIPT_CHILD_TITLE_CHARS);
+  assert.ok(first.label.endsWith('…'));
 });
 
 test('live progress keeps the parent marks only', () => {
