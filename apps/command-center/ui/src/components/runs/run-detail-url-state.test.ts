@@ -247,3 +247,20 @@ test('returning from standalone detail drops its run-owned progress expansion st
     '#run/current?subtasks=!current%3Aworker&stepDetails=current%3A6&projects=cc&panels=sidebar';
   assert.equal(runInventoryHashFromDetail(hash), '#runs?projects=cc&panels=sidebar');
 });
+
+test('content search and its exact match preview round-trip, then leave with the run', () => {
+  const view: ArtifactBrowserView = {
+    query: '',
+    types: new Set(),
+    path: 'artifacts/worker.log',
+    preview: true,
+    contentQuery: 'capability failed',
+    line: 42,
+    bundleDigest: 'bundle',
+    contentSha256: 'a'.repeat(64),
+  };
+  const hash = runDetailArtifactBrowserHash('run-1', view, '#runs?run=run-1&projects=cc');
+  assert.deepEqual(artifactBrowserViewFromRunDetailHash(hash), view);
+  const reset = runInventoryHashFromDetail(hash);
+  assert.equal(reset, '#runs?projects=cc');
+});

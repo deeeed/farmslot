@@ -5,6 +5,8 @@ import { litBinding, litBindings, litText } from '../../testing/lit-text.js';
 import type { ArtifactType } from '../workspace/workspace-artifacts.js';
 
 mock.module('./media-lightbox.js', { namedExports: {} });
+mock.module('./artifact-content-search.js', { namedExports: {} });
+mock.module('./artifact-content-preview.js', { namedExports: {} });
 
 class ResizeMock implements ResizeObserver {
   static latest?: ResizeMock;
@@ -131,4 +133,11 @@ test('a missing bookmarked file never previews another artifact', () => {
   };
   assert.equal(litBinding(element.render(), '.items='), undefined);
   assert.match(litText(element.render()), /File unavailable.*artifacts\/removed-report.md/s);
+});
+
+test('small inventories expose content search without adding the path-filter toolbar', () => {
+  const { element } = fixture(1000);
+  const text = litText(element.render());
+  assert.match(text, /Search contents/);
+  assert.doesNotMatch(text, /placeholder="Filter files"/);
 });

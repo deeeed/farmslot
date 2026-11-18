@@ -871,6 +871,85 @@ export async function serveFile(req: IncomingMessage, res: ServerResponse): Prom
 
 const taskArtifactPaths = new WeakMap<readonly ArtifactRef[], ReadonlySet<string>>();
 
+export async function retainedRunArtifactRef(run: Run, selectors: URLSearchParams) {
+  const { retainedRunBundleRef } = await loadRetainedArtifacts();
+  const recipeRunId = selectors.get('recipeRunId');
+  const decisionId =
+    selectors.get('decisionId') ??
+    (recipeRunId === 'decision-evidence'
+      ? run.decisions
+          .slice()
+          .reverse()
+          .find((decision) => decision.payload?.kind === 'ready' && decision.payload.prPackage)?.id
+      : undefined);
+  return retainedRunBundleRef(run, decisionId, selectors.get('bundleDigest') ?? undefined);
+}
+
+export async function resolveRetainedRunArtifact(
+  run: Run,
+  requested: string,
+  selectors: URLSearchParams,
+) {
+  if (
+    path.isAbsolute(requested) ||
+    requested.split(/[\\/]/u).some((part) => part === '..' || part === '.')
+  )
+    throw Object.assign(new Error('Path traversal not allowed'), { code: 'EACCES' });
+  const runId = run.id;
+  const { retainedRunTaskDirectory, runBundleStore, selectedRetainedRecipeGroup } =
+    await loadRetainedArtifacts();
+  const recipeRunId = selectors.get('recipeRunId');
+  const ref = await retainedRunArtifactRef(run, selectors);
+  let artifactPath = requested;
+  const manifest = recipeRunId ? undefined : run.output?.artifactManifest;
+  let declaredPaths = manifest && taskArtifactPaths.get(manifest);
+  if (manifest && !declaredPaths) {
+    // Captures replace the manifest; repeated file reads reuse its task-path index.
+    declaredPaths = new Set(manifest.map((artifact) => artifact.path));
+    taskArtifactPaths.set(manifest, declaredPaths);
+  }
+  if (
+    (recipeRunId && !['current-artifacts', 'decision-evidence'].includes(recipeRunId)) ||
+    (!recipeRunId &&
+      !declaredPaths?.has(requested) &&
+      requested !== run.output?.reportPath &&
+      requested.startsWith('artifacts/'))
+  ) {
+    if (!requested.startsWith('artifacts/'))
+      throw new Error('Recipe artifact paths must start with artifacts/.');
+    const groups = await getCachedRecipeRunGroups(run, ref);
+    const group = recipeRunId
+      ? groups.find((group) => group.id === recipeRunId)
+      : selectedRetainedRecipeGroup(groups);
+    if (recipeRunId && !group?.artifactRoot)
+      throw new Error('Retained recipe execution is unavailable.');
+    if (
+      group?.artifactRoot &&
+      (recipeRunId || group.artifactManifest?.some(({ path }) => path === requested))
+    )
+      artifactPath = path.posix.join(
+        path
+          .relative(await retainedRunTaskDirectory(run, ref), group.artifactRoot)
+          .replaceAll('\\', '/'),
+        requested.slice('artifacts/'.length),
+      );
+  }
+  const entry = await resolveRunBundleEntry({
+    store: await runBundleStore(),
+    ref,
+    runId,
+    path: artifactPath,
+  });
+  const expected = selectors.get('v');
+  if (
+    expected &&
+    !expected.startsWith('s') &&
+    !entry.sha256.startsWith(expected.replace(/^sha256:/u, ''))
+  )
+    throw new Error('This artifact link refers to a different retained snapshot.');
+  return { entry, ref, artifactPath };
+}
+
 // Serve a file relative to a run's task artifact directory.
 // URL: /api/run-artifact?runId=X&path=Y[&recipeRunId=Z]  (path is relative to task dir or selected recipe-run artifact root)
 export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -924,74 +1003,11 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
       }
       return;
     }
-    const {
-      retainedRunBundleRef,
-      retainedRunTaskDirectory,
-      runBundleStore,
-      selectedRetainedRecipeGroup,
-    } = await loadRetainedArtifacts();
-    const recipeRunId = url.searchParams.get('recipeRunId');
-    const decisionId =
-      url.searchParams.get('decisionId') ??
-      (recipeRunId === 'decision-evidence'
-        ? run.decisions
-            .slice()
-            .reverse()
-            .find((decision) => decision.payload?.kind === 'ready' && decision.payload.prPackage)
-            ?.id
-        : undefined);
-    const ref = retainedRunBundleRef(
+    const { entry, ref, artifactPath } = await resolveRetainedRunArtifact(
       run,
-      decisionId,
-      url.searchParams.get('bundleDigest') ?? undefined,
+      requested,
+      url.searchParams,
     );
-    let artifactPath = requested;
-    const manifest = recipeRunId ? undefined : run.output?.artifactManifest;
-    let declaredPaths = manifest && taskArtifactPaths.get(manifest);
-    if (manifest && !declaredPaths) {
-      // Captures replace the manifest; repeated file reads reuse its task-path index.
-      declaredPaths = new Set(manifest.map((artifact) => artifact.path));
-      taskArtifactPaths.set(manifest, declaredPaths);
-    }
-    if (
-      (recipeRunId && !['current-artifacts', 'decision-evidence'].includes(recipeRunId)) ||
-      (!recipeRunId &&
-        !declaredPaths?.has(requested) &&
-        requested !== run.output?.reportPath &&
-        requested.startsWith('artifacts/'))
-    ) {
-      if (!requested.startsWith('artifacts/'))
-        throw new Error('Recipe artifact paths must start with artifacts/.');
-      const groups = await getCachedRecipeRunGroups(run, ref);
-      const group = recipeRunId
-        ? groups.find((group) => group.id === recipeRunId)
-        : selectedRetainedRecipeGroup(groups);
-      if (recipeRunId && !group?.artifactRoot)
-        throw new Error('Retained recipe execution is unavailable.');
-      if (
-        group?.artifactRoot &&
-        (recipeRunId || group.artifactManifest?.some(({ path }) => path === requested))
-      )
-        artifactPath = path.posix.join(
-          path
-            .relative(await retainedRunTaskDirectory(run, ref), group.artifactRoot)
-            .replaceAll('\\', '/'),
-          requested.slice('artifacts/'.length),
-        );
-    }
-    const entry = await resolveRunBundleEntry({
-      store: await runBundleStore(),
-      ref,
-      runId,
-      path: artifactPath,
-    });
-    const expected = url.searchParams.get('v');
-    if (
-      expected &&
-      !expected.startsWith('s') &&
-      !entry.sha256.startsWith(expected.replace(/^sha256:/u, ''))
-    )
-      throw new Error('This artifact link refers to a different retained snapshot.');
     res.setHeader('X-Farmslot-Bundle-Digest', ref.bundleDigest);
     res.setHeader('ETag', `"${entry.sha256}"`);
     const handle = await openLocalReadHandle(entry.path, artifactPath);

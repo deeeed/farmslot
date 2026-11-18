@@ -91,6 +91,7 @@ import {
 } from '../methods/run/admin.js';
 import { runAdopt } from '../methods/run/adopt.js';
 import { runAdoptPublishedPr } from '../methods/run/adopt-published-pr.js';
+import { runSearchArtifacts } from '../methods/run/artifact-search-rpc.js';
 import { runAttestBeforeAttempt } from '../methods/run/before-attestations.js';
 import { runOverrideClaim } from '../methods/run/claim-overrides.js';
 import { runReviewVisualClaim } from '../methods/run/claim-reviews.js';
@@ -245,6 +246,8 @@ export async function routeRunMethod(
       return handled(runBundleRetain(p as import('@farmslot/protocol').RunBundleRetainParams));
     case Methods.RUN_BUNDLE_LIST:
       return handled(runBundleList(p as RunBundleListParams));
+    case Methods.RUN_SEARCH_ARTIFACTS:
+      return handled(runSearchArtifacts(p as import('@farmslot/protocol').RunArtifactSearchParams));
     case Methods.RUN_GET:
       return handled(runGet(p as RunGetParams));
     case Methods.RUN_CONTEXT_BUNDLE:

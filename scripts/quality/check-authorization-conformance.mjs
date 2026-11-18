@@ -86,6 +86,7 @@ const privilegedReasons = {
   'gateway.status': 'runs git fetch against the gateway clone',
   'fleet.status': 'a stale read can shell- and git-probe every slot',
   'run.get': 'reads run artifact paths by pathname',
+  'run.searchArtifacts': 'reads retained run artifact contents',
   'family.observability.get': 'scans and reads task artifacts by pathname',
   'family.report.generate': 'reads artifacts and may launch an unsandboxed report CLI',
   'backlog.upcoming': 'reads project config and spec paths by pathname',

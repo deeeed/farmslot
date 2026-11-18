@@ -304,6 +304,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `run.resolveDecision`                   | admin                |                                                                                    |
 | `run.resume`                            | admin                |                                                                                    |
 | `run.reviewVisualClaim`                 | admin                |                                                                                    |
+| `run.searchArtifacts`                   | admin                | reads retained run artifact contents                                               |
 | `run.sessionCommand`                    | admin                |                                                                                    |
 | `run.slotHistory`                       | admin                |                                                                                    |
 | `run.tags.list`                         | admin                |                                                                                    |

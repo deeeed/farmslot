@@ -19,6 +19,7 @@ export const RunMethods = {
   create: Methods.RUN_CREATE,
   createNative: Methods.RUN_CREATE_NATIVE,
   get: Methods.RUN_GET,
+  searchArtifacts: Methods.RUN_SEARCH_ARTIFACTS,
   list: Methods.RUN_LIST,
   slotHistory: Methods.RUN_SLOT_HISTORY,
   contextBundle: Methods.RUN_CONTEXT_BUNDLE,
@@ -1008,4 +1009,24 @@ export interface RunLinkedTicketsSetParams {
 }
 export interface RunLinkedTicketsSetResult {
   run: Run;
+}
+
+/** Bounded literal search of a run's retained text artifacts. */
+export interface RunArtifactSearchParams {
+  runId: string;
+  query: string;
+  paths: string[];
+  /** Existing artifact-link versions, scoped by path. */
+  versions?: Record<string, string>;
+  bundleDigest?: string;
+  recipeRunId?: string;
+  decisionId?: string;
+}
+export interface RunArtifactSearchResult {
+  runId: string;
+  bundleDigest: string;
+  files: Array<{ path: string; sha256: string; hits: Array<{ line: number; text: string }> }>;
+  searchedFiles: number;
+  skippedFiles: number;
+  partial: boolean;
 }
