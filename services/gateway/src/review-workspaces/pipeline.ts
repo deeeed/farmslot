@@ -187,9 +187,13 @@ export async function recordWorkspaceReviewCompletion(
   runId: string,
   generation: number,
   reviewResult: NonNullable<Run['reviewResult']>,
-  deps: { collectSubtasks?: typeof collectReviewWorkspaceSubtaskMetrics } = {},
+  options: {
+    /** The reviewer's parent-checklist marks from its SIGNAL, as a slot run's completion keeps. */
+    checklistTiming?: WorkerSignal['checklistTiming'];
+    collectSubtasks?: typeof collectReviewWorkspaceSubtaskMetrics;
+  } = {},
 ): Promise<Run> {
-  const collectSubtasks = deps.collectSubtasks ?? collectReviewWorkspaceSubtaskMetrics;
+  const collectSubtasks = options.collectSubtasks ?? collectReviewWorkspaceSubtaskMetrics;
   let subtasks: Awaited<ReturnType<typeof collectReviewWorkspaceSubtaskMetrics>> = null;
   try {
     subtasks = await collectSubtasks(runId);
@@ -224,7 +228,14 @@ export async function recordWorkspaceReviewCompletion(
               },
             }
           : {}),
-        metrics: withSubtaskMetrics(run.metrics, subtasks),
+        // Per-step timing feeds the cost-per-step split of the reviewer's session.
+        metrics: withSubtaskMetrics(
+          {
+            ...run.metrics,
+            ...(options.checklistTiming ? { checklistTiming: options.checklistTiming } : {}),
+          },
+          subtasks,
+        ),
       });
     },
   );
@@ -995,7 +1006,9 @@ async function executeOwnedReviewWorkspaceStep(
             'No complete saved review is available. Repair the retained artifacts and replay monitor, or replay dispatch to continue the original reviewer.',
             'review-incomplete',
           );
-        await recordWorkspaceReviewCompletion(runId, generation, completion.result);
+        await recordWorkspaceReviewCompletion(runId, generation, completion.result, {
+          checklistTiming: completion.signal.checklistTiming,
+        });
         emit(Events.RUN_UPDATED, { run: getRun(runId) });
         return {
           outputs: {
@@ -1199,7 +1212,9 @@ async function executeOwnedReviewWorkspaceStep(
                 'review findings ready',
               );
             }
-            await recordWorkspaceReviewCompletion(runId, generation, completion.result);
+            await recordWorkspaceReviewCompletion(runId, generation, completion.result, {
+              checklistTiming: completion.signal.checklistTiming,
+            });
             emit(Events.RUN_UPDATED, { run: getRun(runId) });
             return {
               outputs: {
@@ -1275,7 +1290,9 @@ async function executeOwnedReviewWorkspaceStep(
               'review-incomplete',
             );
           }
-          await recordWorkspaceReviewCompletion(runId, generation, completion.result);
+          await recordWorkspaceReviewCompletion(runId, generation, completion.result, {
+            checklistTiming: completion.signal.checklistTiming,
+          });
           emit(Events.RUN_UPDATED, { run: getRun(runId) });
           return {
             outputs: {
