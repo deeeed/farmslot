@@ -227,6 +227,28 @@ for (const scenario of [
       );
     }
     assert.equal(updates.at(-1)!.progress.total, summary.flow.progress.total);
+    assert.equal(summary.flow.ancestry, null);
+    for (const update of updates) {
+      assert.notEqual(update.ancestry, undefined, 'new producer supplies ancestry on every update');
+      if (update.activeId === null) assert.equal(update.ancestry, null);
+      else {
+        assert.ok(update.ancestry);
+        assert.equal(update.ancestry.breadcrumbs[0]?.id, '$root');
+        assert.equal(update.ancestry.breadcrumbs.at(-1)?.id, update.activeId);
+        assert.equal(update.ancestry.depth, update.ancestry.breadcrumbs.length - 1);
+      }
+    }
+    for (const call of ['first', 'second']) {
+      const nested = updates.find((update) => update.activeId === call + '/nested/read');
+      if (nested) {
+        assert.deepEqual(
+          nested.ancestry?.breadcrumbs.map((item) => item.id),
+          ['$root', call, call + '/nested', call + '/nested/read'],
+        );
+        assert.equal(nested.ancestry?.breadcrumbs.at(-1)?.label, 'Read shared state');
+      }
+    }
+
     const resolution = JSON.parse(
       await readFile(path.join(dir, 'output/recipe-resolution.json'), 'utf8'),
     );

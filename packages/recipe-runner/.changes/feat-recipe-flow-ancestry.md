@@ -1,0 +1,1 @@
+- Project invocation ancestry once from the prepared flow tree and carry labeled breadcrumbs on existing HUD flow updates, keeping repeated calls distinct.

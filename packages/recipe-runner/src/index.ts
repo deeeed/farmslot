@@ -36,6 +36,7 @@ export {
 } from './core/compose.js';
 export { RecipeExecutionError } from './core/failure.js';
 export {
+  buildRecipeInvocationAncestry,
   buildRecipeInvocationTree,
   type BuildRecipeInvocationTreeInput,
   createRecipeFlowProjection,
@@ -195,6 +196,8 @@ export { RECIPE_RUNNER_VERSION } from './version.js';
 export type {
   RecipeFlowProgress,
   RecipeFlowUpdate,
+  RecipeInvocationAncestry,
+  RecipeInvocationBreadcrumb,
   RecipeInvocationNode,
   RecipeInvocationTree,
   RecipeResolutionDependency,
