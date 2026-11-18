@@ -1132,6 +1132,29 @@ async function recoverRunningReviewAgent(params: {
   }
 }
 
+/** Explicit effort wins. A retained or recovered session keeps its recorded effort, including null. Medium is only a fresh Claude launch. */
+export function resolveNativeReviewLaunchEffort(input: {
+  requestedEffort: string | null;
+  runner: string;
+  model: string;
+  retained: { effort: string | null } | null;
+  recovering: boolean;
+  contextEffort?: string | null;
+}): string | null {
+  if (input.requestedEffort) return input.requestedEffort;
+  if (input.retained) return input.retained.effort;
+  if (input.recovering) return input.contextEffort ?? null;
+  if (input.runner !== 'claude') return null;
+  return (
+    executionModelFromSelection({
+      runner: input.runner,
+      model: input.model,
+      effort: null,
+      mode: 'cold',
+    }).effort ?? null
+  );
+}
+
 export async function runReviewAgent(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runner: string,

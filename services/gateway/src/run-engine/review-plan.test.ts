@@ -335,6 +335,23 @@ test('historical records lacking session or reviewed head cannot satisfy publica
   );
 });
 
+test('an omitted Claude plan row accepts the effort the session recorded', () => {
+  const row: ReviewSelection = { runner: 'claude', model: 'opus', effort: null, mode: 'warm' };
+  const high = {
+    ...passing('high', 'session-high'),
+    runner: 'claude',
+    model: 'opus',
+    effort: 'high',
+  };
+  const unset = { ...high, id: 'unset', reviewerSessionId: 'session-unset', effort: null };
+  assert.deepEqual(remainingExplicitReviewPlan([row], [high]), []);
+  assert.deepEqual(remainingExplicitReviewPlan([row], [unset]), []);
+  assert.equal(
+    remainingExplicitReviewPlan([{ ...row, effort: 'high' }], [{ ...high, effort: 'low' }]).length,
+    1,
+  );
+});
+
 test('explicit sequence matches each session only once and preserves order', () => {
   assert.deepEqual(
     remainingExplicitReviewPlan(

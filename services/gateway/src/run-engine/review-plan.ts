@@ -115,11 +115,12 @@ export function remainingExplicitReviewPlan(
   let completed = 0;
   for (const selection of plan) {
     const execution = executionModelFromSelection(selection);
+    const omittedClaude = selection.runner === 'claude' && (selection.effort ?? null) === null;
     const index = passing.findIndex(
       (review) =>
         normalizeRunner(review.runner) === normalizeRunner(selection.runner) &&
         (review.model ?? execution.model) === execution.model &&
-        (review.effort ?? execution.effort) === execution.effort,
+        (omittedClaude || (review.effort ?? execution.effort) === execution.effort),
     );
     if (index < 0) break;
     passing.splice(index, 1);

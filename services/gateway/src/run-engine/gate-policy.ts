@@ -294,6 +294,16 @@ export function noChangeDispositionLabel(
   }
 }
 
+function publishedReviewEffort(
+  reviewResult: { effort?: string | null; session?: { effort?: string | null } | null },
+  requested: string | null | undefined,
+): { effort: string | null } | Record<string, never> {
+  const session = reviewResult.session;
+  if (session && 'effort' in session) return { effort: session.effort ?? null };
+  const explicit = reviewResult.effort?.trim() || requested?.trim();
+  return explicit ? { effort: explicit } : {};
+}
+
 export function buildPublishGateReviewStatus({
   source,
   priorReviewCount,
@@ -357,9 +367,7 @@ export function buildPublishGateReviewStatus({
     session: finalAttempt.session ?? reviewResult.session,
     runner: reviewRunner,
     model: reviewResult.model ?? model ?? null,
-    ...(reviewResult.effort?.trim() || effort?.trim()
-      ? { effort: reviewResult.effort?.trim() || effort?.trim() }
-      : {}),
+    ...publishedReviewEffort(reviewResult, effort),
     reviewerSessionId:
       reviewResult.reviewerSessionId ??
       finalAttempt.usage?.runnerSessionId ??
