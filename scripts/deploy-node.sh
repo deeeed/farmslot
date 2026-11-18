@@ -339,7 +339,11 @@ NODE_MACHINE_NAME="${MACHINE}"
 # same box would collide on the same socket file without this.
 marker_path=$(printf '%q' "$DEPLOY_HOME/config/instance.json")
 TARGET_MARKER=$(run "if test -f $marker_path; then cat $marker_path; fi")
-DEPLOY_PATH_VALUES=$(node --import tsx "$SCRIPT_DIR/lib/deploy-paths.mts" "$DEPLOY_HOME" "$REMOTE_HOME" "$REMOTE_UID" "${GATEWAY_PORT:-}" <<< "$TARGET_MARKER")
+# Node resolves the preload from the working directory, even with an absolute script path.
+DEPLOY_PATH_VALUES=$(
+  cd "$REPO_ROOT" &&
+    node --import tsx "$SCRIPT_DIR/lib/deploy-paths.mts" "$DEPLOY_HOME" "$REMOTE_HOME" "$REMOTE_UID" "${GATEWAY_PORT:-}" <<< "$TARGET_MARKER"
+)
 eval "$DEPLOY_PATH_VALUES"
 export FARMSLOT_POOL_DIR="$SOURCE_POOL_DIR" FARMSLOT_PROJECTS_DIR="$SOURCE_PROJECTS_DIR" FARMSLOT_HOME="$SOURCE_HOME"
 
