@@ -20,6 +20,7 @@ export {
   CLAUDE_PRICING,
   type ClaudePricing,
   OPENAI_PRICING,
+  openaiCostUsd,
   type OpenaiPricing,
 } from './prices.js';
 export type {

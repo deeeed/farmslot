@@ -201,7 +201,8 @@ test('runSessionUsage does not double-count Codex detail fields', async () => {
   assert.match(out, /reasoning_output_tokens=5/);
   // total_tokens comes from total_token_usage.total_tokens directly
   assert.match(out, /total_tokens=112/);
-  assert.match(out, /cost_usd=0.0016/);
+  // 30 uncached at $10, 70 cached at $1, 12 output at $50 per 1M.
+  assert.match(out, /cost_usd=0.00097/);
 });
 
 test('runSessionUsage estimates GPT-6 Sol session cost', async () => {
@@ -235,6 +236,46 @@ test('runSessionUsage estimates GPT-6 Sol session cost', async () => {
 
   assert.match(out, /model=gpt-6-sol/);
   assert.match(out, /cost_usd=0.0040/);
+});
+
+test('runSessionUsage bills GPT-6.1 Sol cached input at the cached rate', async () => {
+  const home = makeTmpDir();
+  const sessionPath = path.join(home, 'codex-61-sol.jsonl');
+  // A five-round reviewer session: almost all of its input came from the prompt cache.
+  const usage = {
+    input_tokens: 30_199_018,
+    cached_input_tokens: 29_199_104,
+    output_tokens: 98_880,
+  };
+  writeFileSync(
+    sessionPath,
+    [
+      { type: 'session_meta', payload: { cwd: home, model: 'gpt-6.1-sol' } },
+      {
+        type: 'event_msg',
+        payload: {
+          type: 'token_count',
+          info: { total_token_usage: { ...usage, total_tokens: 30_297_898 } },
+        },
+      },
+    ]
+      .map((line) => JSON.stringify(line))
+      .join('\n') + '\n',
+  );
+
+  const out = await withHome(home, () =>
+    runSessionUsage({
+      repo: home,
+      slotId: 'slot-61-sol',
+      action: 'total',
+      forcedPath: sessionPath,
+      forcedRunner: 'codex',
+    }),
+  );
+
+  assert.match(out, /model=gpt-6.1-sol/);
+  // 999,914 uncached at $2, 29,199,104 cached at $0.10, 98,880 output at $10 per 1M.
+  assert.match(out, /cost_usd=5.9085/);
 });
 
 // ─── Grok ─────────────────────────────────────────────────────────────────────

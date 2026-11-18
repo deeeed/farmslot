@@ -373,6 +373,35 @@ const codexItem = (completed: number, started: number, id: string) =>
     },
   });
 
+test('live: codex bills cached input at the cached rate', () => {
+  const live = createLiveToolUsage('codex')!;
+  const usage = (input: number, cached: number, output: number) =>
+    codexLine({
+      type: 'event_msg',
+      timestamp: t(2),
+      payload: {
+        type: 'token_count',
+        info: {
+          total_token_usage: {
+            input_tokens: input,
+            cached_input_tokens: cached,
+            output_tokens: output,
+            total_tokens: input + output,
+          },
+        },
+      },
+    });
+  live.append(
+    Buffer.from(
+      codexLine({ type: 'turn_context', timestamp: t(1), payload: { model: 'gpt-6.1-sol' } }) +
+        usage(1_000_000, 900_000, 10_000) +
+        usage(2_000_000, 1_800_000, 20_000),
+    ),
+  );
+  // Each of the two samples: 100k uncached at $2, 900k cached at $0.10, 10k output at $10 per 1M.
+  assert.equal(live.summary([])!.costUsd?.toFixed(4), '0.7800');
+});
+
 test('live: a record timed inside a frozen step is added to that step, not lost', () => {
   const live = createLiveToolUsage('codex')!;
   live.append(Buffer.from(codexItem(5, 4, 'a') + codexItem(12, 11, 'b')));

@@ -1,0 +1,1 @@
+- Codex live spend prices `gpt-6.1-sol`, and bills input served from the prompt cache at OpenAI's cached-input rate for the GPT-6 models instead of the full input rate, which overstated cache-heavy sessions about tenfold.
