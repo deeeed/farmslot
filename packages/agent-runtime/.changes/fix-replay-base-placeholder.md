@@ -1,0 +1,1 @@
+- Artifact-only replay guardrails state that no replay base was recorded and point at the working tree, and the template's own `main`-relative comparison commands are rewritten to match, so no instruction names the baseline the guardrails forbid. `ArtifactOnlyReplay.base` is now optional.

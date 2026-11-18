@@ -1,0 +1,1 @@
+- Hosted task init accepts an artifact-only replay that declares no base; a base that is present must still be a string.
