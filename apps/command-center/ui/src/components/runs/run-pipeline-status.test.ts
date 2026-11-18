@@ -315,8 +315,20 @@ test('review step tones are the same from the served slim row, the full run and 
     ],
   };
   const slim = runListRow(held);
-  assert.equal(slim.steps[0]?.outputs?.reviewLaunchRejection, undefined);
-  for (const run of [held, slim]) {
+  const olderSlim = { ...slim, steps: [{ ...slim.steps[0], outputs: {} }] };
+  for (const run of [held, slim, olderSlim]) {
+    assert.equal(pipelineStepTone(run.steps[0], { runError: run.error, run }), 'warn');
+  }
+
+  // Publication can proceed to a gate while an admission refusal closes Review as done.
+  const publishGate: Run = {
+    ...held,
+    status: 'human-gating',
+    steps: [{ ...held.steps[0], status: 'done' }],
+    decisions: [],
+  };
+  const slimPublishGate = runListRow(publishGate);
+  for (const run of [publishGate, slimPublishGate]) {
     assert.equal(pipelineStepTone(run.steps[0], { runError: run.error, run }), 'warn');
   }
 });
