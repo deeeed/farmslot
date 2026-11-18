@@ -2376,6 +2376,10 @@ export interface RunMonitorState {
   gateWaitDecisionId?: string;
   /** Inactivity grace after explicit resume; this is not worker progress. */
   operatorResumedAt?: string;
+  /** A fresh transcript baseline gets a new ID, independent of the timeout clock. */
+  budgetWindowId?: string;
+  /** ID of the accounting window that produced the persisted delivery state. */
+  budgetDeliveryWindow?: string;
   /** True after a one-shot usage-budget warning was emitted for this monitor session. */
   budgetWarned?: boolean;
   /** True after a budget nudge was confirmed delivered (may retry while false). */

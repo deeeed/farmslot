@@ -360,6 +360,7 @@ export async function prepareWarmBudgetBaselineForHandoff(
         nudgeCount: current.metrics.nudgeCount,
         lastPollAt: now,
         startedAt: current.monitorState?.startedAt ?? now,
+        budgetWindowId: randomUUID(),
         lastPaneHash: current.monitorState?.lastPaneHash,
         lastStructuredProgressAt: current.monitorState?.lastStructuredProgressAt,
         // A fresh baseline opens a new accounting window, so the warn-once latch and
@@ -396,6 +397,8 @@ interface MonitorState {
   startedAt: number;
   operatorWaitMs: number;
   operatorResumedAt: number;
+  /** Stable across monitor takeover and timeout extensions. */
+  budgetWindowId: string;
   /** The soft-budget guard's delivery state — see budget-delivery-state.ts. */
   delivery: BudgetDeliveryState;
   /** Runner id the guard's current verdict was reached about. */
@@ -466,6 +469,41 @@ export function migrateLegacyBudgetUsage(persisted?: {
       total: persistedTotal,
     },
   };
+}
+
+function budgetWindowIdOf(state?: RunMonitorState): string | undefined {
+  return state?.budgetWindowId ?? state?.startedAt;
+}
+
+/**
+ * The persisted delivery record, but only if it belongs to `windowStartedAt`.
+ *
+ * A warning is a fact about an accounting window. A replay that pins a fresh
+ * baseline opens a window that has had no warning, so adopting the previous
+ * window's record would either suppress the new window's warning or warn about
+ * usage it never saw. A record with no window recorded predates this field and
+ * is adopted, which keeps a restart across the upgrade from re-warning a pane.
+ */
+export function restoreBudgetDeliveryForWindow(
+  persisted:
+    | {
+        budgetDelivery?: BudgetDeliveryState;
+        budgetDeliveryWindow?: string;
+        budgetWarned?: boolean;
+        budgetNudgeSent?: boolean;
+        budgetNudgeAttempts?: number;
+        budgetFirstDeferredAt?: number;
+      }
+    | undefined,
+  windowStartedAt: string | undefined,
+): BudgetDeliveryState {
+  if (
+    persisted?.budgetDeliveryWindow !== undefined &&
+    windowStartedAt !== undefined &&
+    persisted.budgetDeliveryWindow !== windowStartedAt
+  )
+    return initialBudgetDeliveryState();
+  return restoreBudgetDeliveryState(persisted);
 }
 
 /**
@@ -557,6 +595,7 @@ export function persistMonitorWindowStart(
       ? {
           ...prev,
           startedAt,
+          budgetWindowId: budgetWindowIdOf(prev),
           gateWaitMs: 0,
           ...(closesOpenWait
             ? { gateWaitStartedAt: undefined, gateWaitDecisionId: undefined }
@@ -1410,6 +1449,7 @@ export async function monitorRun(
     await commitGateWait(runId, gateWait.ms, { ownedDecisionId: persisted?.gateWaitDecisionId });
   }
   const restoredBudgetUsage = restoreBudgetUsageState(persisted?.budgetUsage);
+  const budgetWindowId = budgetWindowIdOf(persisted) ?? new Date(now).toISOString();
 
   const state: MonitorState = persisted
     ? {
@@ -1422,7 +1462,8 @@ export async function monitorRun(
         operatorResumedAt: persisted.operatorResumedAt
           ? Date.parse(persisted.operatorResumedAt)
           : 0,
-        delivery: restoreBudgetDeliveryState(persisted),
+        budgetWindowId,
+        delivery: restoreBudgetDeliveryForWindow(persisted, budgetWindowId),
         budgetUsage: restoredBudgetUsage,
       }
     : {
@@ -1433,6 +1474,7 @@ export async function monitorRun(
         startedAt: now,
         operatorWaitMs: 0,
         operatorResumedAt: 0,
+        budgetWindowId,
         delivery: initialBudgetDeliveryState(),
         budgetUsage: emptyBudgetUsageSampleState(),
       };
@@ -1961,6 +2003,7 @@ export async function monitorRun(
           delivery: state.delivery,
           budgetUsage: state.budgetUsage,
           monitorStartedAt: new Date(state.startedAt).toISOString(),
+          budgetWindowId: state.budgetWindowId,
           generation,
           agentStatus,
           sendNudge: true,
@@ -2155,7 +2198,8 @@ export async function monitorRun(
       const ownsMonitorState =
         (currentForPersist?.engineState?.generation ?? 0) === generation &&
         (!currentForPersist?.monitorState ||
-          monitorWindowMatches(currentForPersist.monitorState, state.startedAt));
+          (monitorWindowMatches(currentForPersist.monitorState, state.startedAt) &&
+            budgetWindowIdOf(currentForPersist.monitorState) === state.budgetWindowId));
       if (currentForPersist && ownsMonitorState) {
         const structuredProgressAt = new Date(state.lastStructuredProgressAt).toISOString();
         const announceProgress = structuredProgressMovedMinute(
@@ -2167,6 +2211,7 @@ export async function monitorRun(
             nudgeCount: currentForPersist.metrics.nudgeCount,
             lastPollAt: new Date().toISOString(),
             startedAt: new Date(state.startedAt).toISOString(),
+            budgetWindowId: state.budgetWindowId,
             lastPaneHash: state.lastPaneHash,
             lastStructuredProgressAt: structuredProgressAt,
             operatorWaitMs: state.operatorWaitMs,
@@ -2186,10 +2231,18 @@ export async function monitorRun(
             ...(state.operatorResumedAt
               ? { operatorResumedAt: new Date(state.operatorResumedAt).toISOString() }
               : {}),
-            // Not budgetDelivery: pollRunBudgetGuard is its sole writer. Merging a
-            // second writer's value with Math.max hid a lost update rather than
-            // preventing one — it cannot tell "someone got there first" from "mine is
-            // stale". One writer means there is nothing to merge.
+            // The guard produces this record; this write must not delete it.
+            // Rebuilding monitorState without it dropped the whole warn-once fact
+            // on every poll, so a restart or a second Pause/Resume typed the same
+            // warning into the same pane again. Carried, never merged: whatever the
+            // guard last wrote for this window stands.
+            ...(currentForPersist.monitorState?.budgetDelivery
+              ? {
+                  budgetDelivery: currentForPersist.monitorState.budgetDelivery,
+                  budgetDeliveryWindow:
+                    currentForPersist.monitorState.budgetDeliveryWindow ?? state.budgetWindowId,
+                }
+              : {}),
             budgetUsage: state.budgetUsage,
           },
         });
@@ -3053,6 +3106,7 @@ export async function pollRunBudgetGuard(params: {
   delivery?: BudgetDeliveryState;
   budgetUsage?: BudgetUsageSampleState;
   monitorStartedAt?: string;
+  budgetWindowId?: string;
   /** The caller's engine generation; its write is dropped once that has moved. */
   generation?: number;
   agentStatus: AgentLiveStatus;
@@ -3073,8 +3127,14 @@ export async function pollRunBudgetGuard(params: {
   // that snapshot types the same warning into the same pane a second time. A
   // settled record on the run therefore wins over this caller's view; an
   // unsettled one does not, because the caller's is then the fresher sample.
-  const callerDelivery = params.delivery ?? restoreBudgetDeliveryState(run.monitorState);
-  const persistedBefore = restoreBudgetDeliveryState(run.monitorState);
+  // The window this tick measures. Whoever owns the persisted state owns its
+  // clock, so a tick whose own window is not the persisted one is retired and
+  // its result belongs to nobody.
+  const tickWindow =
+    params.budgetWindowId ?? params.monitorStartedAt ?? budgetWindowIdOf(run.monitorState);
+  const callerDelivery =
+    params.delivery ?? restoreBudgetDeliveryForWindow(run.monitorState, tickWindow);
+  const persistedBefore = restoreBudgetDeliveryForWindow(run.monitorState, tickWindow);
   const startingDelivery =
     budgetGuardSettled(persistedBefore) && !budgetGuardSettled(callerDelivery)
       ? persistedBefore
@@ -3096,6 +3156,11 @@ export async function pollRunBudgetGuard(params: {
       params.budgetUsage ?? run.monitorState?.budgetUsage ?? emptyBudgetUsageSampleState(),
     agentStatus: params.agentStatus,
     sendNudge: params.sendNudge,
+    deliverNudge: (...args) => {
+      const state = getRun(params.runId)?.monitorState;
+      if (state && budgetWindowIdOf(state) !== tickWindow) return Promise.resolve('not-attempted');
+      return sendOneShotWorkerInstruction(...args);
+    },
   });
 
   const current = getRun(params.runId);
@@ -3121,42 +3186,34 @@ export async function pollRunBudgetGuard(params: {
   // delivered, and nothing else.
   const retired =
     params.generation !== undefined && (current.engineState?.generation ?? 0) !== params.generation;
-  if (retired)
+  // A new baseline can keep startedAt. Fence both live and retired polls by
+  // the actual budget window, and never recreate cleared state from a retired poll.
+  if ((prev && budgetWindowIdOf(prev) !== tickWindow) || (retired && !prev)) {
     console.warn(
-      `[run-monitor] run ${params.runId.slice(0, 8)} — budget tick finished after its monitor was replaced; only its delivery state was kept`,
+      `[run-monitor] run ${params.runId.slice(0, 8)} — dropped a budget tick from a replaced accounting window`,
     );
-  // Nothing to amend: a replacement writes its own record on its first tick, and
-  // creating one here is what put a retired window back.
-  if (retired && !prev) return tick;
-  // A retired tick may only report what it delivered onto the record it started
-  // from. Warm dispatch replay resets delivery when it pins a new baseline, and
-  // writing `delivered` over that reset would silence the warning for a budget
-  // window that has not had one — so if the record moved while this tick ran,
-  // whoever moved it owns it now.
-  if (retired) {
-    const persistedNow = restoreBudgetDeliveryState(prev);
-    if (
-      persistedNow.phase !== startingDelivery.phase ||
-      persistedNow.attempts !== startingDelivery.attempts
-    ) {
-      console.warn(
-        `[run-monitor] run ${params.runId.slice(0, 8)} — budget delivery moved while a retired tick ran; its result was dropped`,
-      );
-      return tick;
-    }
+    return tick;
   }
+  const windowId = tickWindow ?? now;
+  const persistedDelivery = restoreBudgetDeliveryForWindow(prev, windowId);
+  const delivery =
+    budgetGuardSettled(persistedDelivery) && !budgetGuardSettled(tick.delivery)
+      ? persistedDelivery
+      : tick.delivery;
   updateRun(params.runId, {
-    monitorState: retired
-      ? { ...prev!, budgetDelivery: tick.delivery }
-      : {
-          ...prev,
-          nudgeCount: current.metrics.nudgeCount,
-          lastPollAt: now,
-          // The persisted window first: whoever owns the state owns its clock.
-          startedAt: prev?.startedAt ?? params.monitorStartedAt ?? now,
-          budgetDelivery: tick.delivery,
-          budgetUsage: tick.budgetUsage,
-        },
+    monitorState:
+      retired && prev
+        ? { ...prev, budgetDelivery: delivery, budgetDeliveryWindow: windowId }
+        : {
+            ...prev,
+            nudgeCount: current.metrics.nudgeCount,
+            lastPollAt: now,
+            startedAt: prev?.startedAt ?? params.monitorStartedAt ?? now,
+            budgetWindowId: windowId,
+            budgetDelivery: delivery,
+            budgetDeliveryWindow: windowId,
+            budgetUsage: tick.budgetUsage,
+          },
   });
   // Flush when an attempt was actually spent. Run writes persist in the background, so
   // a crash in that window would forget the attempt and buy the pane more typed copies.
@@ -3167,7 +3224,7 @@ export async function pollRunBudgetGuard(params: {
   if (tick.violation) {
     broadcastFn(Events.MONITOR_VIOLATION, { violation: tick.violation });
   }
-  return tick;
+  return { ...tick, delivery };
 }
 
 // ─── Decision creation + wait ───

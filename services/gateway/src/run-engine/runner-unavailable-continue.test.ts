@@ -41,6 +41,7 @@ import {
   monitorRun,
   persistMonitorWindowStart,
   pollRunBudgetGuard,
+  prepareWarmBudgetBaselineForHandoff,
   resolveMonitorDecision,
 } from './run-monitor.js';
 import { deleteTestRunIfPresent } from './test-fixtures.js';
@@ -66,7 +67,10 @@ const signal = (status: WorkerSignal['status']): WorkerSignal => ({
  * monitor starts: charged to the worker, a 2 s answer ends a 1.5 s window; not
  * charged, the window still has most of its 1.5 s left.
  */
-async function fixture(t: test.TestContext, options: { usageBudget?: boolean } = {}) {
+async function fixture(
+  t: test.TestContext,
+  options: { usageBudget?: boolean; longWindow?: boolean } = {},
+) {
   const project = `unavailable-continue-${randomUUID()}`;
   const projectDir = path.join(farmslotRoot(), 'projects', project);
   const poolFile = path.join(farmslotRoot(), 'pool', `${project}.json`);
@@ -101,7 +105,9 @@ async function fixture(t: test.TestContext, options: { usageBudget?: boolean } =
       name: project,
       monitoring: {
         poll_interval_min: 1 / 60_000,
-        total_timeout_min: 1.5 / 60,
+        // A case that has to watch several polls needs a window that does not
+        // expire first; the default is deliberately shorter than one card wait.
+        total_timeout_min: options.longWindow ? 30 / 60 : 1.5 / 60,
         stuck_timeout_min: 0.5 / 60,
         max_nudges: 0,
         // Opt-in: a soft turn budget makes every poll run the budget guard,
@@ -956,6 +962,9 @@ test(
 // forgetting it lets the replacement type the warning a second time.
 test('a retired budget tick still records what it delivered', async (t) => {
   const f = await fixture(t, { usageBudget: true });
+  // Pause/Resume keeps the worker, its pane and its accounting window: the
+  // generation moves, the window does not, so what this tick delivered into that
+  // pane is still a fact about the window the replacement is in.
   const openedAt = new Date(Date.now() - 5_000).toISOString();
   updateRun(f.run.id, {
     monitorState: {
@@ -978,7 +987,7 @@ test('a retired budget tick still records what it delivered', async (t) => {
     slotId: f.slotId,
     maxTurns: 80,
     maxTotalTokens: null,
-    monitorStartedAt: new Date(Date.now() - 90_000).toISOString(),
+    monitorStartedAt: openedAt,
     generation,
     agentStatus: 'working',
     sendNudge: false,
@@ -1035,40 +1044,28 @@ test('a settled delivery on the run wins over a caller snapshot that predates it
   assert.equal(tick.delivery.attempts, 1, 'and it keeps the attempt that was spent');
 });
 
-// Codex r8, second major: warm dispatch replay resets delivery when it pins a
-// new baseline. A retired tick that still holds `delivered` in memory would
-// write it over that reset and silence the warning for a window that never had
-// one — so a retired tick may only report onto the record it started from.
-test('a retired tick does not report onto a delivery record that moved', async (t) => {
+// A warm replay replaces the usage baseline while keeping the timeout clock.
+test('a late budget tick cannot update a freshly pinned baseline', async (t) => {
   const f = await fixture(t, { usageBudget: true });
-  const openedAt = new Date(Date.now() - 5_000).toISOString();
-  const reset = {
-    phase: 'ok' as const,
-    pendingMessage: null,
-    operatorMessage: null,
-    attempts: 0,
-  };
-  // The record as a warm replay left it: reset for the new baseline.
-  updateRun(f.run.id, {
-    monitorState: {
-      nudgeCount: 0,
-      lastPollAt: openedAt,
-      startedAt: openedAt,
-      budgetDelivery: reset,
-    },
-  });
   const run = getRun(f.run.id)!;
+  const startedAt = run.monitorState!.startedAt;
+  const transcript = path.join(path.dirname(f.signalFile), 'session.jsonl');
+  await writeFile(transcript, '');
   const generation = run.engineState?.generation ?? 0;
   updateRun(f.run.id, {
+    metrics: { ...run.metrics, runnerSessionPath: transcript },
     engineState: { ...run.engineState, generation: generation + 1 },
   });
+  assert.equal(await prepareWarmBudgetBaselineForHandoff(f.run.id, f.slotId), 'captured');
+  assert.equal(getRun(f.run.id)?.monitorState?.startedAt, startedAt);
 
   await pollRunBudgetGuard({
     runId: f.run.id,
     slotId: f.slotId,
     maxTurns: 80,
     maxTotalTokens: null,
-    // What the retired tick still holds from before the reset.
+    monitorStartedAt: startedAt,
+    budgetWindowId: startedAt,
     delivery: {
       phase: 'delivered',
       pendingMessage: null,
@@ -1080,9 +1077,99 @@ test('a retired tick does not report onto a delivery record that moved', async (
     sendNudge: false,
   });
 
-  assert.deepEqual(
-    getRun(f.run.id)?.monitorState?.budgetDelivery,
-    reset,
-    'the reset owns the record: a retired tick must not mark the new window as already warned',
+  assert.equal(getRun(f.run.id)?.monitorState?.budgetDelivery, undefined);
+});
+
+// Codex r9, first major: the same pair comparison also let a *live* tick write a
+// pre-replay result into a fresh window — `breach-pending` would warn about usage
+// the new window never saw, `delivered` would suppress its warning. A record is
+// adopted only for the window it was measured in.
+test('a record from another window is not adopted', async (t) => {
+  const f = await fixture(t, { usageBudget: true });
+  const oldWindow = new Date(Date.now() - 90_000).toISOString();
+  const freshWindow = new Date(Date.now() - 1_000).toISOString();
+  updateRun(f.run.id, {
+    monitorState: {
+      nudgeCount: 0,
+      lastPollAt: freshWindow,
+      // The window a replay pinned, carrying the previous window's warning.
+      startedAt: freshWindow,
+      budgetDelivery: {
+        phase: 'delivered',
+        pendingMessage: null,
+        operatorMessage: null,
+        attempts: 1,
+      },
+      budgetDeliveryWindow: oldWindow,
+    },
+  });
+
+  const tick = await pollRunBudgetGuard({
+    runId: f.run.id,
+    slotId: f.slotId,
+    maxTurns: 80,
+    maxTotalTokens: null,
+    monitorStartedAt: freshWindow,
+    agentStatus: 'working',
+    sendNudge: false,
+  });
+
+  assert.equal(
+    tick.delivery.phase,
+    'ok',
+    'a warning from the window before this one must not settle this window',
+  );
+  assert.equal(
+    getRun(f.run.id)?.monitorState?.budgetDeliveryWindow,
+    freshWindow,
+    'and what it writes belongs to the window it measured',
   );
 });
+
+// Grok r8 asked for this one and r9 named its consequence: the ordinary poll
+// write rebuilt monitorState without the delivery record, so the whole warn-once
+// fact was deleted on the very next poll and a restart or a second Pause/Resume
+// typed the same warning into the same pane again.
+test(
+  'a poll write keeps the delivery record the guard produced',
+  { timeout: 30_000 },
+  async (t) => {
+    const f = await fixture(t, { usageBudget: true, longWindow: true });
+    let polls = 0;
+    const execution = f.start({
+      violations: async () => {
+        polls += 1;
+        return [];
+      },
+    });
+    await until(() => f.card() !== undefined);
+    f.restoreRunner();
+    resolveMonitorDecision(f.card()!.id, 'continue');
+    await until(() => polls > 0, 3_000);
+
+    const held = getRun(f.run.id)!.monitorState!;
+    const delivered = {
+      phase: 'delivered' as const,
+      pendingMessage: null,
+      operatorMessage: null,
+      attempts: 1,
+    };
+    updateRun(f.run.id, {
+      monitorState: {
+        ...held,
+        budgetDelivery: delivered,
+        budgetDeliveryWindow: held.startedAt,
+      },
+    });
+    const observedBefore = polls;
+    await until(() => polls > observedBefore + 1, 8_000);
+
+    assert.ok(polls > observedBefore + 1, `the monitor must poll again: ${polls}`);
+    assert.deepEqual(
+      getRun(f.run.id)?.monitorState?.budgetDelivery,
+      delivered,
+      'the warn-once record must survive a poll, or the next restart warns the pane again',
+    );
+    void execution;
+  },
+);
