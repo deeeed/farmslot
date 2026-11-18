@@ -659,8 +659,11 @@ async function slotReleaseImpl(
           };
           const epoch = Number(slot.slot_epoch) || 0;
           const priorCleanupOwner = slot.cleanup_run_id ?? null;
+          const priorStopUnconfirmed = Boolean(slot[SLOT_CLEANUP_STOP_UNCONFIRMED]);
           // Register before the marker commit: its await can finish after the deadline.
           registerFailureRecovery?.(async (confirmed, reason) => {
+            // This attempt cannot confirm a previous attempt's command closeout.
+            const stopConfirmed = confirmed && !priorStopUnconfirmed;
             await updateSlotStatusIf(
               params.slotId,
               (current) =>
@@ -676,14 +679,14 @@ async function slotReleaseImpl(
               {
                 lifecycle: 'held',
                 phase: 'occupied',
-                current_run_id: confirmed ? (params.expectedRunId ?? owner) : null,
-                ...(!confirmed
+                current_run_id: stopConfirmed ? (params.expectedRunId ?? owner) : null,
+                ...(!stopConfirmed
                   ? {
                       cleanup_run_id: params.expectedRunId ?? owner,
                       [SLOT_CLEANUP_STOP_UNCONFIRMED]: true,
                     }
                   : {}),
-                held_reason: confirmed
+                held_reason: stopConfirmed
                   ? `${reason}; retry release or replay the run.`
                   : `${reason}. Cleanup stop is unconfirmed; inspect the slot and retry release.`,
                 [SLOT_RELEASING_SINCE]: null,
