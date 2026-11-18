@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 ## Unreleased
 
+- mm-harness 0.96.34 consumes runner 0.48.0 and protocol 0.90.0 for overall HUD progress and invocation ancestry.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.48.0 - 2026-11-18
