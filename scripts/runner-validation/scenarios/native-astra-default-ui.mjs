@@ -85,17 +85,18 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
       30000,
     );
     view(
-      `const method=${JSON.stringify(Methods.NATIVE_SESSION_CREATE)};view.__launchReceipt=null;const request=view.api.request.bind(view.api);view.__launchRequest=request;view.api.request=async(name,params)=>{const result=await request(name,params);const session=result?.session;if(name===method&&session?.id)view.__launchReceipt={id:session.id,node:session.executionNodeId,runner:session.runner,cwd:session.cwd};return result;};return {armed:true};`,
+      `const method=${JSON.stringify(Methods.NATIVE_SESSION_CREATE)};const cwd=${JSON.stringify(fixture)};view.__launchReceipt=null;const request=view.api.request.bind(view.api);view.__launchRequest=request;view.api.request=async(...args)=>{const [name,params]=args;const mine=view.api.request!==request&&name===method&&params?.cwd===cwd&&params?.runner==='codex'&&(params?.executionNodeId??'local')==='local';if(mine)view.api.request=request;const result=await request(...args);const session=result?.session;if(mine&&session?.id&&!view.__launchReceipt)view.__launchReceipt={id:session.id,node:session.executionNodeId,runner:session.runner,cwd:session.cwd};return result;};return {armed:true};`,
     );
     click('[data-testid=native-create]');
     const created = await wait(
       () => view('return view.__launchReceipt??{id:""};'),
-      (value) =>
-        value.id && value.runner === 'codex' && value.cwd === fixture && value.node === 'local',
+      (value) => Boolean(value.id),
       timeoutMs,
     );
-    view('if(view.__launchRequest)view.api.request=view.__launchRequest;return {restored:true};');
     target = { executionNodeId: created.node, sessionId: created.id };
+    assert.equal(created.runner, 'codex');
+    assert.equal(created.cwd, fixture);
+    assert.equal(created.node, 'local');
     const opened = await wait(
       () => view(`return {open:view.session?.id===${JSON.stringify(created.id)}};`),
       (value) => value.open,
@@ -172,6 +173,11 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
   } catch (error) {
     report.error = error.message;
   } finally {
+    try {
+      view('if(view.__launchRequest)view.api.request=view.__launchRequest;return {restored:true};');
+    } catch {
+      // The page may already be gone. The receipt still owns cleanup.
+    }
     if (target)
       try {
         rpc(Methods.NATIVE_SESSION_CLOSE, target);
