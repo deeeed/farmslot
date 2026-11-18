@@ -3097,28 +3097,37 @@ export async function pollRunBudgetGuard(params: {
   // override only what this tick produced.
   const prev = current.monitorState;
   // The tick above read a remote transcript, which takes long enough for a
-  // replay to land: a new generation, monitorState cleared. The results then
-  // describe a worker the replacement is no longer watching, and writing them
-  // would also put this caller's window back. Nothing here is worth more than
-  // the replacement's own first tick, so a retired caller drops its write.
+  // replay or a pause/resume to land: a new generation, sometimes monitorState
+  // cleared with it. The *samples* that tick produced describe a window nobody
+  // is in, and its clock would put this caller's window back, so neither is
+  // written once this caller is retired.
+  //
+  // Its DELIVERY state is different, and dropping that was a second bug: a
+  // warning this tick confirmed into the worker's own pane is a fact about a
+  // retained session, which a resume keeps. Forgetting it lets the replacement
+  // type the same warning again. So a retired tick still records what it
+  // delivered, and nothing else.
   const retired =
     params.generation !== undefined && (current.engineState?.generation ?? 0) !== params.generation;
-  if (retired) {
+  if (retired)
     console.warn(
-      `[run-monitor] run ${params.runId.slice(0, 8)} — budget tick finished after its monitor was replaced; its state was not written`,
+      `[run-monitor] run ${params.runId.slice(0, 8)} — budget tick finished after its monitor was replaced; only its delivery state was kept`,
     );
-    return tick;
-  }
+  // Nothing to amend: a replacement writes its own record on its first tick, and
+  // creating one here is what put a retired window back.
+  if (retired && !prev) return tick;
   updateRun(params.runId, {
-    monitorState: {
-      ...prev,
-      nudgeCount: current.metrics.nudgeCount,
-      lastPollAt: now,
-      // The persisted window first: whoever owns the state owns its clock.
-      startedAt: prev?.startedAt ?? params.monitorStartedAt ?? now,
-      budgetDelivery: tick.delivery,
-      budgetUsage: tick.budgetUsage,
-    },
+    monitorState: retired
+      ? { ...prev!, budgetDelivery: tick.delivery }
+      : {
+          ...prev,
+          nudgeCount: current.metrics.nudgeCount,
+          lastPollAt: now,
+          // The persisted window first: whoever owns the state owns its clock.
+          startedAt: prev?.startedAt ?? params.monitorStartedAt ?? now,
+          budgetDelivery: tick.delivery,
+          budgetUsage: tick.budgetUsage,
+        },
   });
   // Flush when an attempt was actually spent. Run writes persist in the background, so
   // a crash in that window would forget the attempt and buy the pane more typed copies.

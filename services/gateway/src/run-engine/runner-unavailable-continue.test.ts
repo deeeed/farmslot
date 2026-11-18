@@ -949,3 +949,47 @@ test(
     void execution;
   },
 );
+
+// Codex r7 on #2322: dropping a retired tick's whole write also dropped what it
+// had delivered. Pause and Resume keep the same worker and its pane, so a budget
+// warning this tick confirmed is a fact about a session that is still there —
+// forgetting it lets the replacement type the warning a second time.
+test('a retired budget tick still records what it delivered', async (t) => {
+  const f = await fixture(t, { usageBudget: true });
+  const openedAt = new Date(Date.now() - 5_000).toISOString();
+  updateRun(f.run.id, {
+    monitorState: {
+      nudgeCount: 0,
+      lastPollAt: openedAt,
+      startedAt: openedAt,
+      gateWaitMs: 4_000,
+      gateWaitStartedAt: openedAt,
+      gateWaitDecisionId: 'open-card',
+    },
+  });
+  const run = getRun(f.run.id)!;
+  const generation = run.engineState?.generation ?? 0;
+  updateRun(f.run.id, {
+    engineState: { ...run.engineState, generation: generation + 1 },
+  });
+
+  await pollRunBudgetGuard({
+    runId: f.run.id,
+    slotId: f.slotId,
+    maxTurns: 80,
+    maxTotalTokens: null,
+    monitorStartedAt: new Date(Date.now() - 90_000).toISOString(),
+    generation,
+    agentStatus: 'working',
+    sendNudge: false,
+  });
+
+  const state = getRun(f.run.id)?.monitorState;
+  assert.ok(
+    state?.budgetDelivery,
+    'the delivery state must survive: the replacement would otherwise warn the same pane again',
+  );
+  assert.equal(state?.startedAt, openedAt, 'but not the retired caller\u2019s window');
+  assert.equal(state?.gateWaitStartedAt, openedAt, 'nor the accounting it does not own');
+  assert.equal(state?.budgetUsage, undefined, 'and its samples are stale, so they are not kept');
+});
