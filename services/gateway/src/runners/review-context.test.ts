@@ -99,6 +99,8 @@ mock.module('./native/node.js', {
 mock.module('./launch-command.js', {
   namedExports: {
     buildInteractiveRefinementRunnerCommand: () => 'configured-command',
+    // Pass-through: this suite is about review context, not the resume guard.
+    guardedSessionReloadCommand: (_runner: string, command: string) => command,
     interactiveRunnerExecutable: () => 'codex',
     modelQuestionsEnvironment: () => ({}),
     modelQuestionsForRun: () => undefined,
