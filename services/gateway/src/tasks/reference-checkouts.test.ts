@@ -243,3 +243,55 @@ test("a farm's own second checkout is not listed as a read-only reference", asyn
   );
   assert.deepEqual(commands, [], 'and no probe runs for it');
 });
+
+test('a failed status read is not clean, and another readable reference still resolves', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'reference-status-failure-'));
+  try {
+    const slot = path.join(root, 'terminal-1');
+    const broken = path.join(root, 'mobile-ref');
+    const clean = path.join(root, 'extension-ref');
+    mkdirSync(slot);
+    for (const repo of [broken, clean]) {
+      execFileSync('git', ['init', '-q', '--initial-branch=main', repo]);
+      execFileSync('git', [
+        '-C',
+        repo,
+        '-c',
+        'user.name=Fixture',
+        '-c',
+        'user.email=fixture@example.invalid',
+        '-c',
+        'commit.gpgsign=false',
+        'commit',
+        '--allow-empty',
+        '-qm',
+        'fixture',
+      ]);
+    }
+    const cleanHead = execFileSync('git', ['-C', clean, 'rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+    }).trim();
+    // A real unreadable index still permits rev-parse HEAD. status must not become clean.
+    rmSync(path.join(broken, '.git', 'index'), { force: true });
+    mkdirSync(path.join(broken, '.git', 'index'));
+    runForReal = true;
+    const references = await resolveReferenceCheckouts(
+      slotVars,
+      {
+        mobile: { repo_url: 'fixture', local_name: 'mobile-ref', read_only: true },
+        extension: { repo_url: 'fixture', local_name: 'extension-ref', read_only: true },
+      },
+      slot,
+    );
+    assert.deepEqual(references, [
+      { name: 'mobile', path: broken, present: false },
+      { name: 'extension', path: clean, present: true, headSha: cleanHead },
+    ]);
+    assert.ok(
+      commands[0].includes('--no-optional-locks'),
+      'reference inspection must not refresh the shared index',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

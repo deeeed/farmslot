@@ -91,7 +91,17 @@ export interface RunnerSessionReactivationOptions {
 }
 
 export type RetainedSessionDeliveryResult =
-  | { delivered: true; acknowledgement: 'structured' | 'safe-send'; turnToken?: string }
+  | {
+      delivered: true;
+      acknowledgement: 'structured' | 'safe-send';
+      turnToken?: string;
+      /**
+       * The delivery respawned the runner with the prompt in its argv, so the prompt went to a
+       * new runner session. The caller's retained binding names the replaced session; it must
+       * capture the new one from the pane.
+       */
+      runnerReplaced?: true;
+    }
   | {
       delivered: false;
       disposition: 'safe-send' | 'hold';
@@ -331,7 +341,7 @@ async function relaunchRunnerWithArgvPrompt(
       },
     );
     if (acknowledgement.accepted) {
-      return { delivered: true, acknowledgement: 'structured' };
+      return { delivered: true, acknowledgement: 'structured', runnerReplaced: true };
     }
     await new Promise((resolve) =>
       setTimeout(
@@ -826,8 +836,13 @@ export async function deliverPromptWithRetainedFallback(
   options: RunnerSessionReactivationOptions,
 ): Promise<RetainedSessionDeliveryResult> {
   let resolvedOptions = options;
+  const runner = normalizeRunner(options.runnerId);
+  const argvRelaunch = runnerRetainedSessionHandoff(runner) === 'argv-relaunch';
   try {
     const delayedAcknowledgement = await probeDelayedPromptAcknowledgement(options);
+    // An argv-relaunch runner's earlier send was itself a respawn.
+    if (delayedAcknowledgement?.delivered && argvRelaunch)
+      return { ...delayedAcknowledgement, runnerReplaced: true };
     if (delayedAcknowledgement) return delayedAcknowledgement;
     if (options.priorPromptSendAttempted) {
       return retryableUnacknowledgedPriorSendHold(normalizeRunner(options.runnerId));
@@ -840,8 +855,7 @@ export async function deliverPromptWithRetainedFallback(
     };
   }
 
-  const runner = normalizeRunner(options.runnerId);
-  if (runnerRetainedSessionHandoff(runner) === 'argv-relaunch') {
+  if (argvRelaunch) {
     return relaunchRunnerWithArgvPrompt(options);
   }
   if (

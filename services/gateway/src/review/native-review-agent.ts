@@ -37,7 +37,10 @@ import {
   readNativeWorkerCommandError,
   readNativeWorkerSnapshot,
 } from '../runners/native/worker-control.js';
-import { NativeWorkerOperationUncertainError } from '../runners/native/worker-error.js';
+import {
+  NativeReviewerEmptyThreadError,
+  NativeWorkerOperationUncertainError,
+} from '../runners/native/worker-error.js';
 import { resumeNativeWorker } from '../runners/native/worker-recovery.js';
 import { PromptDeliveryUncertainError, runnerDefaultSafetyTier } from '../runners/registry.js';
 import {
@@ -269,7 +272,8 @@ async function runNativeReviewAttempt(
     artifactScope,
     loopNumber,
   });
-  const retryContextId = input.mode === 'warm' ? input.rereview?.retryContextId : undefined;
+  const retryContextId =
+    !resumeFailure && input.mode === 'warm' ? input.rereview?.retryContextId : undefined;
   const retry = retryContextId
     ? refundedNativeReviewer(original, {
         runner,
@@ -671,24 +675,36 @@ async function runNativeReviewAttempt(
               probe: existingTerminal,
               assertCurrent: admit,
             }));
-          if (!continued)
-            await resumeNativeWorker(runId, {
-              purpose: 'review',
-              contextId,
-              assertCurrent: admit,
-              ...(completing ? { commandId: context.nativeCommandId } : {}),
-              text: completing
-                ? context.nativeCommandText!
-                : reviewChecklistMarkPrompt(
-                    taskDir,
-                    taskMdPath,
-                    target,
-                    feedbackRelPath,
-                    resultRelPath,
-                  ) +
-                  `\n${reviewerScratchRule(contextId, validationDepth)}\nContinue this reviewer attempt and preserve completed work. Read its reviewer-specific execution contract. Do NOT run /review.` +
-                  REFUSED_APPROVALS,
-            });
+          if (!continued) {
+            try {
+              await resumeNativeWorker(runId, {
+                purpose: 'review',
+                contextId,
+                assertCurrent: admit,
+                ...(completing ? { commandId: context.nativeCommandId } : {}),
+                text: completing
+                  ? context.nativeCommandText!
+                  : reviewChecklistMarkPrompt(
+                      taskDir,
+                      taskMdPath,
+                      target,
+                      feedbackRelPath,
+                      resultRelPath,
+                    ) +
+                    `\n${reviewerScratchRule(contextId, validationDepth)}\nContinue this reviewer attempt and preserve completed work. Read its reviewer-specific execution contract. Do NOT run /review.` +
+                    REFUSED_APPROVALS,
+              });
+            } catch (error) {
+              if (!(error instanceof NativeReviewerEmptyThreadError)) throw error;
+              throw new NativeReviewResumeFailure(
+                new WarmReviewRefusal('session-unavailable', error.message),
+                roundId,
+                contextId,
+                startedAt,
+                { cause: error },
+              );
+            }
+          }
         }
       }
       const source =

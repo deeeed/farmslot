@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 
-import { nativeWorkerLaunchDigest } from '@farmslot/agent-runtime/native/worker-launch';
+import { nativeWorkerLaunchMatchesDigest } from '@farmslot/agent-runtime/native/worker-launch';
 import {
   isTerminalRunStatus,
   type MachineParkRecord,
@@ -199,7 +199,7 @@ export async function rehomeNativeParkHandle(
     prepareAccount: false,
     domain: resolveEffectiveDomain(run.domain, vars.domain),
   });
-  if (nativeWorkerLaunchDigest(prepared.launch) !== handle.launchDigest)
+  if (!nativeWorkerLaunchMatchesDigest(handle.launchDigest, prepared.launch))
     throw new Error('Target slot changes the saved native account or launch environment');
   currentOwner(run.id, handle);
   return {

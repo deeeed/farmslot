@@ -25,7 +25,7 @@ test('recorded Codex worker/fix paths recover once without an archive and retain
     transcript,
     [
       { type: 'session_meta', payload: { id: sessionId } },
-      { type: 'turn_context', payload: { model: 'gpt-6.1-sol' } },
+      { type: 'turn_context', payload: { model: 'gpt-unpriced-test' } },
       { type: 'response_item', payload: { type: 'message', role: 'assistant' } },
       {
         type: 'event_msg',
@@ -52,7 +52,7 @@ test('recorded Codex worker/fix paths recover once without an archive and retain
     metrics: {
       nudgeCount: 0,
       runner: 'codex',
-      model: 'gpt-6.1-sol',
+      model: 'gpt-unpriced-test',
       runnerSessionId: sessionId,
       runnerSessionPath: transcript,
     },
@@ -65,7 +65,7 @@ test('recorded Codex worker/fix paths recover once without an archive and retain
     slotId: run.slotId,
     runId: run.id,
     runner: 'codex',
-    model: 'gpt-6.1-sol',
+    model: 'gpt-unpriced-test',
     runnerSessionId: sessionId,
     runnerSessionPath: transcript,
     startedAt: '2026-11-04T15:03:37.307Z',
@@ -100,7 +100,7 @@ test('recorded Codex worker/fix paths recover once without an archive and retain
   assert.equal(usage?.costUsd, null);
   const projected = await projectArchivedRunnerUsage(run);
   assert.equal(projected.metrics.sessionTotalTokens, 40101451);
-  assert.equal(projected.metrics.actualModel, 'gpt-6.1-sol');
+  assert.equal(projected.metrics.actualModel, 'gpt-unpriced-test');
   const row = projected.sessionUsage?.find((entry) => entry.runnerSessionId === sessionId);
   assert.ok(row);
   assert.equal(row.totalTokens, 40101451);

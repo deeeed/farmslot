@@ -1,4 +1,5 @@
-import { spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
+import { closeSync, fstatSync, openSync, readSync, watch } from 'node:fs';
 import { open, stat } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -13,27 +14,33 @@ import {
   type VideoRecorderStartRequest,
 } from '@farmslot/recipe-runner';
 
+import { createVisibleSimulatorRecorder } from './ios-window-recorder.js';
+
+const START_TIMEOUT_MS = 10_000;
 const DEFAULT_STOP_TIMEOUT_MS = 20_000;
 
 export interface SimctlVideoRecorderOptions {
   stopTimeoutMs?: number;
+  startTimeoutMs?: number;
 }
 
 export function createIosSimulatorVideoRecorder(
   simulator: string,
   options: SimctlVideoRecorderOptions = {},
 ): VideoRecorder {
-  return new SimctlVideoRecorder(simulator, options);
+  return createVisibleSimulatorRecorder(simulator, new SimctlVideoRecorder(simulator, options));
 }
 
 class SimctlVideoRecorder implements VideoRecorder {
   readonly name = 'simctl';
   readonly platform = 'ios';
   readonly #stopTimeoutMs: number;
+  readonly #startTimeoutMs: number;
   readonly #simulator: string;
 
   constructor(simulator: string, options: SimctlVideoRecorderOptions) {
     this.#simulator = simulator;
+    this.#startTimeoutMs = options.startTimeoutMs ?? START_TIMEOUT_MS;
     this.#stopTimeoutMs = options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
   }
 
@@ -88,31 +95,30 @@ class SimctlVideoRecorder implements VideoRecorder {
       request.outputPath,
     ];
     const startedAtUnixMs = Date.now();
-    const child = spawn('xcrun', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    const stderr: string[] = [];
-    child.stderr.setEncoding('utf-8');
-    child.stderr.on('data', (chunk: string) => stderr.push(chunk));
-    child.stdout.resume();
-
+    const logPath = `${request.outputPath}.simctl.log`;
+    const log = openSync(logPath, 'w', 0o600);
+    let child: ChildProcess;
+    try {
+      child = spawn('xcrun', args, { stdio: ['ignore', 'ignore', log] });
+    } finally {
+      closeSync(log);
+    }
+    const stderr = () => recordingLog(logPath);
     const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
       child.once('exit', (code, signal) => resolve({ code, signal }));
+      child.once('error', () => resolve({ code: null, signal: null }));
     });
-
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(resolve, 250);
-      child.once('error', (error) => {
-        clearTimeout(timeout);
-        reject(error);
+    try {
+      await waitForRecordingStart(child, logPath, this.#startTimeoutMs);
+    } catch (error) {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGINT');
+      await waitForExit(exit, {
+        timeoutMs: this.#stopTimeoutMs,
+        onTimeout: () => child.unref(),
+        message: `${errorMessage(error)} SIGINT cleanup did not finish within ${this.#stopTimeoutMs}ms; recorder PID ${child.pid} is retained to avoid orphaning Simulator capture.`,
       });
-      child.once('exit', (code, signal) => {
-        clearTimeout(timeout);
-        reject(
-          new Error(
-            `simctl recordVideo exited early (${formatExit(code, signal)}): ${stderr.join('').trim()}`,
-          ),
-        );
-      });
-    });
+      throw error;
+    }
 
     const stopTimeoutMs = this.#stopTimeoutMs;
     const target = request.target;
@@ -121,19 +127,19 @@ class SimctlVideoRecorder implements VideoRecorder {
         if (child.exitCode == null && child.signalCode == null) child.kill('SIGINT');
         const result = await waitForExit(exit, {
           timeoutMs: stopTimeoutMs,
-          onTimeout: () => child.kill('SIGKILL'),
-          message: `simctl recordVideo did not stop within ${stopTimeoutMs}ms after SIGINT.`,
+          onTimeout: () => child.unref(),
+          message: `simctl recordVideo did not stop within ${stopTimeoutMs}ms after SIGINT; recorder PID ${child.pid} is retained to avoid orphaning Simulator capture.`,
         });
         const expectedInterrupt = result.signal === 'SIGINT';
         if (result.code !== 0 && !expectedInterrupt) {
           throw new Error(
-            `simctl recordVideo failed (${formatExit(result.code, result.signal)}): ${stderr.join('').trim()}`,
+            `simctl recordVideo failed (${formatExit(result.code, result.signal)}): ${stderr()}`,
           );
         }
         const stats = await stat(request.outputPath).catch((error: unknown) => {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
           throw new Error(
-            `simctl recordVideo produced no file (${formatExit(result.code, result.signal)}): ${stderr.join('').trim().slice(-2000)}`,
+            `simctl recordVideo produced no file (${formatExit(result.code, result.signal)}): ${stderr().slice(-2000)}`,
           );
         });
         if (stats.size <= 0) throw new Error(`Recording output is empty: ${request.outputPath}`);
@@ -238,4 +244,74 @@ function simulatorDevice(target: RecordingTarget): string {
 
 function formatExit(code: number | null, signal: NodeJS.Signals | null): string {
   return signal ? `signal ${signal}` : `exit ${code ?? 'unknown'}`;
+}
+
+// A regular staging log keeps an unresponsive client controllable after its caller exits.
+function recordingLog(file: string, head = false): string {
+  const fd = openSync(file, 'r');
+  try {
+    const size = fstatSync(fd).size;
+    const buffer = Buffer.alloc(Math.min(size, 8192));
+    const length = readSync(
+      fd,
+      buffer,
+      0,
+      buffer.length,
+      head ? 0 : Math.max(0, size - buffer.length),
+    );
+    return buffer.subarray(0, length).toString('utf8').trim();
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function waitForRecordingStart(
+  child: ChildProcess,
+  logPath: string,
+  timeoutMs: number,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const watcher = watch(logPath);
+    const timer = setTimeout(
+      () =>
+        finish(
+          new Error(`simctl recordVideo did not report its first frame within ${timeoutMs}ms.`),
+        ),
+      timeoutMs,
+    );
+    const finish = (error?: Error) => {
+      clearTimeout(timer);
+      watcher.close();
+      child.off('error', failed);
+      child.off('exit', exited);
+      if (error) reject(error);
+      else resolve();
+    };
+    const failed = (error: Error) => finish(error);
+    const exited = (code: number | null, signal: NodeJS.Signals | null) => {
+      try {
+        finish(
+          new Error(
+            `simctl recordVideo exited early (${formatExit(code, signal)}): ${recordingLog(logPath)}`,
+          ),
+        );
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error(String(error)));
+      }
+    };
+    const changed = () => {
+      try {
+        if (recordingLog(logPath, true).split(/\r?\n/u).includes('Recording started')) finish();
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error(String(error)));
+      }
+    };
+    watcher.on('change', changed);
+    watcher.on('error', failed);
+    child.once('error', failed);
+    child.once('exit', exited);
+    if (child.exitCode !== null || child.signalCode !== null)
+      exited(child.exitCode, child.signalCode);
+    else changed();
+  });
 }

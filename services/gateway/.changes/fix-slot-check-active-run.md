@@ -1,1 +1,0 @@
-- Refuse slot checks before source activation when a current, cleanup or handoff run owns the slot, unless explicitly forced.

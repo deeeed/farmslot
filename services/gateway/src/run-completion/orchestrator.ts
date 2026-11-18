@@ -1495,7 +1495,13 @@ export async function createPrFromApprovedPackage(
   );
   const match = typeof prUrl === 'string' ? prUrl.match(/\/pull\/(\d+)/) : null;
   if (match) return Number(match[1]);
-  return findPRNumber(run, ciRepo);
+  // This fallback only runs when `pr create` returned a URL without /pull/<n>.
+  // It is still the publication path, so it may not settle on a merged PR the
+  // package did not ship.
+  return findPRNumber(run, ciRepo, {
+    excludeMerged: true,
+    publicationHeadSha: prPackage.headSha,
+  });
 }
 
 function pendingPublicationTitle(prPackage: ReadyGatePrPackage): string {
@@ -1639,7 +1645,11 @@ export async function publishCompletionPackage(
     );
 
     emit('substep', { name: 'resolve-pr-number', detail: `Resolving PR number against ${ciRepo}` });
-    let prNumber = await findPRNumber(run, ciRepo, { noRetry: true });
+    let prNumber = await findPRNumber(run, ciRepo, {
+      noRetry: true,
+      excludeMerged: true,
+      publicationHeadSha: approvedPackage.headSha,
+    });
     if (!prNumber) {
       emit('substep', { name: 'create-pr', detail: `Creating draft PR on ${ciRepo}` });
       prNumber = await createPrFromApprovedPackage(run, ciRepo, publicationPackage);

@@ -1,1 +1,0 @@
-- Name the executed JSON assertion, literal artifact path and required proof category when claim evidence is unbound, preserving existing proof eligibility and verdicts.

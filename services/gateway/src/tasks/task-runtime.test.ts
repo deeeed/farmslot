@@ -194,6 +194,23 @@ test(
         await new Promise((resolve) => delay(resolve, 5));
       assert(fs.existsSync(file), file);
     };
+    const pidWhenWritten = async (file: string) => {
+      const deadline = Date.now() + 2000;
+      let text = '';
+      while (Date.now() < deadline) {
+        text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+        if (text) {
+          try {
+            const parsed = JSON.parse(text) as { pid?: number };
+            if (typeof parsed.pid === 'number') return parsed.pid;
+          } catch {
+            // writeFileSync can be seen before its bytes land.
+          }
+        }
+        await new Promise((resolve) => delay(resolve, 5));
+      }
+      assert.fail(`expected a pid in ${file}, saw ${JSON.stringify(text)}`);
+    };
     t.mock.timers.enable({ apis: ['setTimeout'] });
     const controller = new AbortController();
     const pending = runTaskRuntime(
@@ -210,13 +227,12 @@ test(
       t.mock.timers.tick(10000);
       await pending;
     });
-    await waitFor(marker);
+    const pid = await pidWhenWritten(marker);
     controller.abort();
     await waitFor(acknowledged);
     await new Promise((resolve) => delay(resolve, 5));
     t.mock.timers.tick(5000);
     assert.equal((await pending).exitCode, 130);
-    const { pid } = JSON.parse(fs.readFileSync(marker, 'utf8'));
     assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
   },
 );

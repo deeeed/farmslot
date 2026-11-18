@@ -1,1 +1,0 @@
-- Admit a dev Command Center page origin only when NODE_ENV is development, the host passes the shared dev host filter, and the port is VITE_PORT. Exact FARMSLOT_GATEWAY_ALLOWED_ORIGINS entries still work. Every other origin stays refused.

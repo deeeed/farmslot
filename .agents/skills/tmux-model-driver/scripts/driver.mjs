@@ -242,7 +242,7 @@ function paths(meta, selection = {}) {
 // The holder records its pid, so a send killed while holding the lock (a caller's timeout,
 // SIGKILL) does not leave the pane busy until its model restarts. Same idiom as
 // scripts/lib/node-cli-refresh.sh.
-function acquireLock(files) {
+export function acquireLock(files) {
   // Taking the lock, clearing a dead reaper's mutex and reaping a dead holder each retry once.
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
@@ -263,7 +263,7 @@ function acquireLock(files) {
   return false;
 }
 
-function releaseLock(files) {
+export function releaseLock(files) {
   fs.rmSync(path.join(files.lock, 'pid'), { force: true });
   fs.rmdirSync(files.lock);
 }
@@ -942,12 +942,29 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
 
 async function main() {
   const [operation, pane, runner, tracePath, answerTrace] = process.argv.slice(2);
-  if (!pane || (operation !== 'state' && !runners.has(runner) && runner !== 'shell'))
+  if (
+    !pane ||
+    (!pane.startsWith('native:') &&
+      operation !== 'state' &&
+      !runners.has(runner) &&
+      runner !== 'shell')
+  )
     throw new Error(
       'usage: driver.mjs state <pane> [runner] | send|flush <pane> <runner> [trace.jsonl]',
     );
-  const result =
-    operation === 'state'
+  const result = pane.startsWith('native:')
+    ? await (
+        await import('./native-target.mjs')
+      ).runNative({
+        operation,
+        target: pane,
+        runner,
+        argument: tracePath,
+        input: ['send', 'answer'].includes(operation)
+          ? fs.readFileSync(0, 'utf8').replace(/\n$/, '')
+          : '',
+      })
+    : operation === 'state'
       ? paneState(pane, runner)
       : operation === 'resolve-launch-blocker'
         ? resolveLaunchBlocker(pane, runner)
@@ -968,9 +985,18 @@ async function main() {
                 tracePath,
                 operation === 'flush',
               );
+  if (pane.startsWith('native:')) {
+    const trace =
+      operation === 'send' ? tracePath : operation === 'answer' ? answerTrace : undefined;
+    if (trace)
+      fs.appendFileSync(trace, `${JSON.stringify({ ts: new Date().toISOString(), ...result })}\n`, {
+        mode: 0o600,
+      });
+  }
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (
     operation !== 'state' &&
+    !(pane.startsWith('native:') && operation === 'read' && result.verification === 'read') &&
     !result.submitted &&
     !result.queued &&
     !result.acknowledged &&

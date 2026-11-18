@@ -1,1 +1,0 @@
-- Admit listed dev Command Center page origins only when FARMSLOT_DEV_UI_ORIGINS is 1. The dev stack sets that flag and does not export NODE_ENV. An installed gateway keeps refusing those origins.

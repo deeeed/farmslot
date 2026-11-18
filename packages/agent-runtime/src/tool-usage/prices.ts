@@ -10,6 +10,8 @@ export interface ClaudePricing {
 export interface OpenaiPricing {
   input: number;
   output: number;
+  /** Rate for input tokens served from the prompt cache, when OpenAI lists one. */
+  cached_input?: number;
 }
 
 // Conservative/optional estimates. If the model doesn't match any entry we omit
@@ -24,9 +26,10 @@ export const CLAUDE_PRICING: Record<string, ClaudePricing> = {
 };
 
 export const OPENAI_PRICING: Record<string, OpenaiPricing> = {
-  // https://developers.openai.com/api/docs/pricing (GPT-6 standard rates per 1M tokens).
-  'gpt-6-astra': { input: 10.0, output: 50.0 },
-  'gpt-6-sol': { input: 2.0, output: 10.0 },
+  // https://developers.openai.com/api/docs/pricing (GPT-6 standard short-context rates per 1M tokens).
+  'gpt-6-astra': { input: 10.0, cached_input: 1.0, output: 50.0 },
+  'gpt-6.1-sol': { input: 2.0, cached_input: 0.1, output: 10.0 },
+  'gpt-6-sol': { input: 2.0, cached_input: 0.2, output: 10.0 },
   // GPT-5.6 family (preview GA pricing, USD per 1M tokens).
   'gpt-5.6-sol': { input: 5.0, output: 30.0 },
   'gpt-5.6-terra': { input: 2.5, output: 15.0 },
@@ -35,3 +38,20 @@ export const OPENAI_PRICING: Record<string, OpenaiPricing> = {
   'gpt-5.5': { input: 5.0, output: 15.0 },
   'gpt-5.4': { input: 5.0, output: 15.0 },
 };
+
+/**
+ * OpenAI counts cached tokens inside input. They bill at the cached rate when the model
+ * lists one; without a cached rate every input token bills at the input rate.
+ */
+export function openaiCostUsd(
+  prices: OpenaiPricing,
+  tokens: { input: number; cachedInput: number; output: number },
+): number {
+  const cached = prices.cached_input === undefined ? 0 : Math.min(tokens.cachedInput, tokens.input);
+  return (
+    ((tokens.input - cached) * prices.input +
+      cached * (prices.cached_input ?? 0) +
+      tokens.output * prices.output) /
+    1_000_000
+  );
+}

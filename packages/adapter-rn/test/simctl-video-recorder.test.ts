@@ -7,15 +7,20 @@ import { test } from 'node:test';
 
 import { createIosSimulatorVideoRecorder } from '../src/simctl-video-recorder.js';
 
-// An xcrun stand-in: recordVideo reports an error, then exits cleanly on SIGINT
-// without ever writing the output file. It records its pid for the teardown and
-// exits on its own after about 10 s, so a stub teardown missed cannot outlive it.
-const XCRUN = String.raw`#!/bin/bash
-echo "$$" > "$(dirname "$0")/pid"
-trap 'exit 0' INT
-echo 'Error: no display attached' >&2
-: > "$(dirname "$0")/ready"
-while ((SECONDS < 10)); do sleep 0.02; done
+// A single-process xcrun stand-in installs its signal handlers before acknowledging
+// recording readiness. A Bash loop would defer SIGINT while waiting for its sleep child.
+const XCRUN = `#!${process.execPath}
+const fs = require('node:fs');
+const path = require('node:path');
+if (!process.argv.includes('recordVideo')) {
+  console.log(JSON.stringify({ devices: {} }));
+  process.exit(0);
+}
+fs.writeFileSync(path.join(__dirname, 'pid'), String(process.pid));
+process.on('SIGINT', () => process.exit(0));
+process.on('SIGTERM', () => process.exit(0));
+setTimeout(() => process.exit(90), 10_000);
+fs.writeSync(2, 'Error: no display attached\\nRecording started\\n');
 `;
 
 test('a clean stop without an output file names the exit and simctl stderr', async (t) => {
@@ -33,7 +38,7 @@ test('a clean stop without an output file names the exit and simctl stderr', asy
       ? spawnSync('ps', ['-p', pid, '-o', 'command='], { encoding: 'utf8' }).stdout
       : '';
     try {
-      if (command.includes(path.join(dir, 'xcrun'))) process.kill(Number(pid), 'SIGKILL');
+      if (command.includes(path.join(dir, 'xcrun'))) process.kill(Number(pid), 'SIGTERM');
     } catch (error) {
       // The stub can exit between its ownership probe and the signal.
       if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
@@ -41,7 +46,7 @@ test('a clean stop without an output file names the exit and simctl stderr', asy
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  // Real timers: stop()'s bound must fire if the stub ignores SIGINT.
+  // Keep the stop bound: readiness guarantees the fixture can already handle SIGINT.
   const recorder = createIosSimulatorVideoRecorder('sim-1', { stopTimeoutMs: 2_000 });
   const recording = await recorder.start({
     target: { kind: 'simulator', device: 'sim-1' },
@@ -49,13 +54,6 @@ test('a clean stop without an output file names the exit and simctl stderr', asy
     nodeId: 'run',
     record: 'full_run',
   });
-  // Bound the wait for the stub to install its trap.
-  const readyBy = Date.now() + 5_000;
-  while (!fs.existsSync(path.join(dir, 'ready'))) {
-    assert.ok(Date.now() < readyBy, 'the xcrun stub never became ready');
-    await new Promise(setImmediate);
-  }
-
   await assert.rejects(recording.stop(), (error: Error) => {
     assert.match(error.message, /simctl recordVideo produced no file \(exit 0\)/u);
     assert.match(error.message, /no display attached/u);

@@ -566,7 +566,7 @@ test('combined approval uses the checked mixed reasons without a second acceptan
   const actions: DecisionAction[] = [
     {
       id: APPROVE_PUBLISH_UNRESOLVED_ACTION,
-      label: 'Accept findings, attest evidence and publish',
+      label: 'Override review policy, attest evidence and publish',
       style: 'danger',
     },
   ];

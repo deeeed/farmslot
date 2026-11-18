@@ -1,1 +1,0 @@
-- Restore the selected run detail's viewing position after refresh and respect the viewer's own scrolling.

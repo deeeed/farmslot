@@ -39,10 +39,13 @@ const launch: NativeWorkerLaunch = {
 const vars = makeVars({ slotId: 'runtime-slot', remoteRepo: '/owned/repo', repo: '/owned/repo' });
 const stop = new Error('Reached ENSURE boundary');
 const reserved = new Error('Reached handoff reservation');
+const settled = new Error('Reached settlement boundary');
 let run: Run;
 /** A retained worker's run, for handoff tests. */
 let source: Run | undefined;
 let host: NativeSessionInfo | undefined;
+let preparedOverride: NativeWorkerLaunch | undefined;
+let ensureSucceeds = false;
 let runtimeError: string | undefined;
 let listUnavailable: boolean;
 let afterList: (() => void) | undefined;
@@ -51,6 +54,9 @@ mock.module('../../core/index.js', {
   namedExports: {
     ...core,
     readSlotRow: async () => ({ current_run_id: run.id, phase: 'dispatching' }),
+    updateSlotStatusIf: async () => {
+      throw settled;
+    },
   },
 });
 mock.module('../../core/slot-io.js', {
@@ -98,7 +104,7 @@ mock.module('./worker-launch.js', {
       modelQuestions?: 'off';
     }) => {
       launchInputs.push(input);
-      return { launch: { ...launch, modelQuestions: input.modelQuestions } };
+      return { launch: { ...(preparedOverride ?? launch), modelQuestions: input.modelQuestions } };
     },
   },
 });
@@ -144,7 +150,10 @@ mock.module('./node.js', {
         return { session: host };
       }
       if (method === NATIVE_WORKER_TRANSFER) throw new Error('Reached transfer boundary');
-      if (method === NATIVE_WORKER_ENSURE) throw stop;
+      if (method === NATIVE_WORKER_ENSURE) {
+        if (ensureSucceeds) return { session: host };
+        throw stop;
+      }
       throw new Error('Unexpected native operation: ' + method);
     },
   },
@@ -184,6 +193,8 @@ beforeEach(() => {
   ];
   source = undefined;
   host = undefined;
+  preparedOverride = undefined;
+  ensureSucceeds = false;
   runtimeError = undefined;
   listUnavailable = false;
   afterList = undefined;
@@ -444,4 +455,69 @@ test('fresh workers retain the launch machine and canonical checkout for later r
     machine: vars.machine,
     checkoutPath: '/owned/repo',
   });
+});
+
+test('legacy reviewer upgrade waits for the host receipt and reconciles a lost reply after an ASDF edit', async () => {
+  const context = run.agentContexts![0]!;
+  context.id = 'retained-reviewer';
+  context.role = 'review';
+  context.nativeSession = {
+    ...context.nativeSession!,
+    generation: 'generation',
+    acceptedAt: 'accepted',
+  };
+  preparedOverride = { ...launch, reviewerEnvironmentKeys: ['HOME'] };
+  const originalDigest = context.nativeSession.launchDigest;
+  const retry = () => dispatch({ role: 'review', contextId: context.id });
+  await assert.rejects(retry(), /Reached ENSURE boundary/);
+  assert.equal(
+    reservation()!.launchDigest,
+    originalDigest,
+    'an unconfirmed host write must not upgrade the gateway',
+  );
+  const digest = nativeWorkerLaunchDigest(preparedOverride);
+  host = {
+    id: 'pending-session',
+    generation: 'generation',
+    nativeSessionId: 'review-conversation',
+    hostPid: 1,
+    runner: 'claude',
+    model: 'sonnet',
+    ownerPrincipalId: 'owner',
+    executionNodeId: 'local',
+    accountContextId: 'native-local:owner',
+    cwd: vars.remoteRepo,
+    executable: '/runner',
+    version: 'fixture',
+    mode: 'default',
+    accountMode: 'native',
+    state: 'idle',
+    workerManaged: true,
+    workerLeaseId: 'lease',
+    workerLaunchDigest: digest,
+    capabilities: {
+      modes: ['default'],
+      streaming: true,
+      tools: true,
+      approvals: false,
+      questions: false,
+      interrupt: true,
+      resume: true,
+    },
+  };
+  // The host committed its upgrade, but its previous reply was lost. The gateway still has the legacy hash.
+  preparedOverride = {
+    ...preparedOverride,
+    environment: {
+      set: { ASDF_DATA_DIR: '/tools/asdf', ASDF_CONFIG_FILE: '/tools/asdfrc' },
+      unset: [],
+    },
+  };
+  ensureSucceeds = true;
+  calls.length = 0;
+  await assert.rejects(retry(), (error) => error === settled);
+  assert.equal(reservation()!.launchDigest, digest);
+  assert.equal(reservation()!.sessionId, 'pending-session');
+  assert.equal(reservation()!.generation, 'generation');
+  assert.deepEqual(calls, [Methods.NATIVE_SESSION_READ, NATIVE_WORKER_ENSURE]);
 });

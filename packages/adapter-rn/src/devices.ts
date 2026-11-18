@@ -136,7 +136,7 @@ function simctlDeviceList(scope: 'booted' | 'available'): string {
   return output;
 }
 
-function listIosSimulators(
+export function listIosSimulators(
   scope: 'booted' | 'available',
   errors: DeviceDiscoveryError[],
 ): ConnectedDevice[] {

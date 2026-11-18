@@ -4,6 +4,16 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.25.12 - 2026-11-18
+
+- Align exact internal dependencies with the protocol 0.88.0 release cohort consumed by mm-harness 0.96.33.
+- Label person review-policy exceptions explicitly, including a checked empty finding set.
+- An omitted PI effort is high for every selection and picker. Claude, Codex, and Cursor defaults stay as they are.
+
+## 0.25.11 - 2026-11-17
+
+- Align exact dependency pins with the JSON proof diagnostic release.
+
 ## 0.25.10 - 2026-11-17
 
 - Align exact dependency pins with the implementation-isolated prepared-cache release.

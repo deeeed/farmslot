@@ -37,6 +37,8 @@ const { startResourcePolling, stopResourcePolling }: typeof import('./resource-m
   await import(modulePath);
 const { withRunTransitionWhileMachineHeld } =
   await import('../run-lifecycle/transition-coordinator.js');
+// Load the real reaper before the timed lock regression; its first import is lazy in polling.
+await import('../run-lifecycle/idle-devserver-service.js');
 
 test(
   'a long run transition does not hold pollAllInFlight across fleet poll ticks',

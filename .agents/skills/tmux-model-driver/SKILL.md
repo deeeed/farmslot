@@ -79,6 +79,55 @@ paste again, pull back a queued message, or acknowledge another caller's receipt
 Cursor, Gemini and Grok identities can be detected, but sends fail closed unless
 compatible structured observability is installed.
 
+## Native session targets
+
+The same entry points accept `native:/absolute/path/to/target.json` instead of a pane.
+The descriptor contains no credentials:
+
+```json
+{
+  "gateway": "my-gateway-profile",
+  "sessionId": "session-id",
+  "executionNodeId": "local",
+  "generation": "session-generation"
+}
+```
+
+For a run worker, also include `worker` with the exact `runId`, `contextId`,
+`generation` and `leaseId` from its recorded target. Never replace a stale pin with
+its successor. The named gateway profile uses the CLI's stored authentication.
+All reads and controls go through the gateway's existing permission checks.
+Opening a native target does not create, resume or interrupt a session.
+
+```bash
+scripts/pane-state.sh native:/absolute/path/to/target.json codex
+cat prompt.txt | scripts/send-and-verify.sh native:/absolute/path/to/target.json codex trace.jsonl
+scripts/run-driver.sh read native:/absolute/path/to/target.json codex 0
+```
+
+A send persists its commandId and payload digest before the RPC. Retrying the same
+text uses that commandId. Native acceptance reports `submitted`; a durable native
+queue reports `queued` with `submitted: true`. Submission alone is `unverified`.
+A pending question blocks a fresh send. No tmux capture or rendered text proves delivery.
+`read` returns native conversation events, a cursor and `hasMore`; pass the returned
+cursor to read the next page or new replies. Reads never resend a turn.
+After persisting a delivered result, `ack-acceptance.sh` with its `receipt_id`
+allows an intentional new send of the same text. Without that explicit ACK it is a retry.
+Flush and launch-blocker actions are unsupported for native targets.
+
+State includes a structured `question` with its prompt/options and
+`question_fingerprint`. Answer only an explicitly chosen option or custom text:
+
+```bash
+printf '%s' '{"answers":{"question-id":["Chosen label"]}}' |
+  scripts/answer-question.sh native:/absolute/path/to/target.json codex question-fingerprint
+```
+
+Approvals use `{"decision":"approve"}` or `{"decision":"deny"}`. The driver
+rechecks the request and target under the same lock. A lost response stays
+unverified and is never automatically answered again. Unattended run workers
+keep their question tools off; questions apply to interactive sessions.
+
 ## Questions and queued input
 
 Question details come from unresolved native `AskUserQuestion` or

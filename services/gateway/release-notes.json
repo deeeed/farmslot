@@ -1,11 +1,11 @@
 {
-  "version": "0.39.6",
-  "date": "2026-11-16",
+  "version": "0.39.7",
+  "date": "2026-11-18",
   "items": [
-    "Append an operator task note to generated tasks",
-    "Select an eval trial domain, worker transport and prepare profile",
-    "Preserve ownership during worker replay and slot recovery",
-    "Retain individual Git preparation timings without replacing human progress",
-    "Keep live Co-Pilot actions usable while farm state changes"
+    "Bind task recipe reruns to their computed worker directory and keep standalone project-hook recipes isolated from inherited task acceptance",
+    "`task.progress` reports live spend for the viewed agent session. It reads only the transcript bytes appended since the last read, at most once per session every 15 s however many viewers poll, beside the existing reads: no new RPC, poll, process or Git call",
+    "TASK.md goldens match the acceptance sentence: an AC awaiting review after recorded proof, and a review-mode AC, may reach the gate and still do not grant approval; a missing AC is incomplete, so run it, and only the authorized person records UNTESTABLE at the gate",
+    "Before evidence may match any pre-work base the run recorded, not only the review snapshot's base, so a baseline recorded on the head the worker was dispatched from is no longer refused after a review loop moves that snapshot forward",
+    "A BUG_MARKER baseline is admitted in the forms the fix-bug templates prescribe — `DevLogger.log`, `Logger.log`, `console.log` — together with the logger import a file without a logger has to add"
   ]
 }

@@ -257,7 +257,9 @@ export async function archiveRunnerSessionsForSlotRelease(params: {
     };
   }
 
-  await (await import('../runtime/agent-session-usage.js')).captureRunSessionUsage(params.runId);
+  const usage = await import('../runtime/agent-session-usage.js');
+  await usage.recoverReleasedRunWorkerUsage(params.runId);
+  await usage.captureRunSessionUsage(params.runId);
   const targets = archiveTargets(run);
   const refs = new Map<string, RunnerSessionArchiveRef>();
   let captured = 0;

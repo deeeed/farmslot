@@ -6,6 +6,20 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.88.0 - 2026-11-18
+
+- `SessionToolUsage` and its segments carry `compactions` (null with a reason when the runner records none) and per-step `costUsd`; `task.progress` returns `liveSpend`, the viewed session's tokens, cost, compactions and tool calls so far, per checklist step.
+- `Run.preWorkBaseSha` records the slot HEAD a run was first dispatched from, written once and never rewritten, so recorded before evidence has a base no later prepare can move.
+- Share the dev host filter used by the Command Center dev server and the gateway page-origin allowlist.
+- Expose optional host evidence distinguishing a fresh empty native thread from submitted or unknown input.
+- Expose the explicit person review-policy override for checked current-package reviews while preserving hard prerequisites and evidence consent.
+- An omitted PI effort defaults to high for every role. An explicit level, including xhigh, stays as selected.
+- Keep equal cached read and collection data by identity so background checks do not redraw unchanged views; retain persistence and freshness checks.
+- Expose the native host's confirmed worker launch digest so retained reviewers can safely reconcile compatibility upgrades after a lost reply.
+- Add an explicit force option for health checks on slots owned by a run.
+- Add the typed task-directory path and file-format reference contract, with one canonical artifacts/task-actions root and library-grouped missing-input gaps.
+- Define documented task paths and purposes, and share an exact path check for skills Markdown and harness HTML without directory-wide allowances.
+
 ## 0.87.0 - 2026-11-16
 
 - Run create accepts an optional task note. The generated TASK.md appends it as one Note section.

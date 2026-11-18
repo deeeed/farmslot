@@ -41,16 +41,14 @@ export async function resolveReferenceCheckouts(
     .map((reference) => {
       const at = shellQuote(reference.path);
       const name = shellQuote(reference.name);
-      // --verify prints nothing when there is no commit yet: a repository without one
-      // must not report the literal 'HEAD' that plain rev-parse echoes. The status
-      // line follows it, because a revision does not describe a tree with changes.
+      // Publish a revision only when both reads succeed. A failed status read
+      // must be unreadable, not indistinguishable from an empty clean tree.
       return [
-        `printf 'head\\t%s\\t' ${name}`,
-        `git -C ${at} rev-parse --verify HEAD 2>/dev/null`,
-        `printf '\\nstatus\\t%s\\t' ${name}`,
-        `git -C ${at} status --porcelain 2>/dev/null | head -1`,
-        `printf '\\n'`,
-      ].join('; ');
+        `if farmslot_ref_head=$(git -C ${at} rev-parse --verify HEAD 2>/dev/null) &&`,
+        `farmslot_ref_status=$(git --no-optional-locks -C ${at} status --porcelain 2>/dev/null); then`,
+        `printf 'head\\t%s\\t%s\\nstatus\\t%s\\t%s\\n' ${name} "$farmslot_ref_head" ${name} "\${farmslot_ref_status:+dirty}";`,
+        'fi',
+      ].join(' ');
     })
     .join('; ');
   const probe = await execOnSlot(slotVars, command, { timeout: 20_000 });

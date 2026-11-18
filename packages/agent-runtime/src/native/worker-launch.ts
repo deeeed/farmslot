@@ -18,6 +18,8 @@ export interface NativeWorkerLaunch {
   executable?: string;
   accountLabel?: string;
   environment: { set: Record<string, string>; unset: string[] };
+  /** Runner-owned reviewer resume inputs. Tools still receive the full environment. */
+  reviewerEnvironmentKeys?: string[];
   effort?: string;
   safetyTier: SafetyTier;
   /** Gateway-owned reviewer interaction policy. Does not change filesystem grants. */
@@ -150,6 +152,7 @@ export function decodeNativeWorkerLaunch(value: unknown): NativeWorkerLaunch {
           'approvalPolicy',
           'modelQuestions',
           'filesystemPolicy',
+          'reviewerEnvironmentKeys',
         ].includes(key),
     )
   )
@@ -177,6 +180,14 @@ export function decodeNativeWorkerLaunch(value: unknown): NativeWorkerLaunch {
   const unset = environment.unset;
   const validName = (name: unknown): name is string =>
     typeof name === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(name);
+  const reviewerEnvironmentKeys = launch.reviewerEnvironmentKeys;
+  if (
+    reviewerEnvironmentKeys !== undefined &&
+    (!Array.isArray(reviewerEnvironmentKeys) ||
+      !reviewerEnvironmentKeys.length ||
+      !reviewerEnvironmentKeys.every(validName))
+  )
+    throw new Error('Invalid reviewer environment identity');
   if (
     !Array.isArray(unset) ||
     !unset.every(validName) ||
@@ -189,6 +200,7 @@ export function decodeNativeWorkerLaunch(value: unknown): NativeWorkerLaunch {
     ...(typeof launch.executable === 'string' ? { executable: launch.executable } : {}),
     ...(typeof launch.accountLabel === 'string' ? { accountLabel: launch.accountLabel } : {}),
     ...(typeof launch.effort === 'string' ? { effort: launch.effort } : {}),
+    ...(reviewerEnvironmentKeys === undefined ? {} : { reviewerEnvironmentKeys }),
     safetyTier: launch.safetyTier as SafetyTier,
     ...(launch.approvalPolicy === 'never' ? { approvalPolicy: 'never' } : {}),
     ...(launch.modelQuestions === 'off' ? { modelQuestions: 'off' } : {}),
@@ -214,9 +226,11 @@ const ROUTING_ENVIRONMENT = new Set(['GW_URL']);
  * filesystem grants.
  */
 export function nativeWorkerLaunchDigest(launch: NativeWorkerLaunch): string {
-  return createHash('sha256')
+  const keys = launch.reviewerEnvironmentKeys && new Set(launch.reviewerEnvironmentKeys);
+  const digest = createHash('sha256')
     .update(
       JSON.stringify({
+        ...(keys ? { reviewerEnvironmentKeys: [...keys].sort() } : {}),
         executable: launch.executable,
         accountLabel: launch.accountLabel,
         safetyTier: launch.safetyTier,
@@ -224,13 +238,29 @@ export function nativeWorkerLaunchDigest(launch: NativeWorkerLaunch): string {
         ...(launch.filesystemPolicy ? { filesystemPolicy: launch.filesystemPolicy } : {}),
         environment: {
           set: Object.entries(launch.environment.set)
-            .filter(([name]) => !ROUTING_ENVIRONMENT.has(name))
+            .filter(([name]) => !ROUTING_ENVIRONMENT.has(name) && (!keys || keys.has(name)))
             .sort(([a], [b]) => a.localeCompare(b)),
-          unset: [...new Set(launch.environment.unset)].sort(),
+          unset: [...new Set(launch.environment.unset)]
+            .filter((name) => !keys || keys.has(name))
+            .sort(),
         },
       }),
     )
     .digest('hex');
+  return keys ? `reviewer-v1:${digest}` : digest;
+}
+
+/** A legacy journal upgrades only after its original, complete launch still verifies. */
+export function nativeWorkerLaunchMatchesDigest(
+  expected: string,
+  launch: NativeWorkerLaunch,
+): boolean {
+  return (
+    expected === nativeWorkerLaunchDigest(launch) ||
+    (launch.reviewerEnvironmentKeys !== undefined &&
+      !expected.startsWith('reviewer-v1:') &&
+      expected === nativeWorkerLaunchDigest({ ...launch, reviewerEnvironmentKeys: undefined }))
+  );
 }
 
 export function nativeWorkerEnvironment(launch: NativeWorkerLaunch): NodeJS.ProcessEnv {

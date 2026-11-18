@@ -11,6 +11,7 @@ import { extractNativeAgentSessionUsage, nativeRunUsageWindow } from './native-s
 import {
   contextChecklistMarks,
   extractRunnerSessionUsage,
+  extractRunWorkerSessionUsage,
   unavailableRunnerSessionUsage,
 } from './session-usage.js';
 import { workspaceUsageMetrics } from './session-usage-result.js';
@@ -39,6 +40,32 @@ export function recordRecoveredWorkerUsage(
   usage: RunnerSessionUsage,
 ): void {
   recordRunSessionUsage(run.id, recoveredWorkerSessionReceipt(run, session, usage));
+}
+
+/**
+ * Slot release runs worker discovery too: a run whose review failed skips finalize, and a
+ * fix round whose session was never bound must still reach the run total.
+ */
+export async function recoverReleasedRunWorkerUsage(runId: string): Promise<void> {
+  const run = getRun(runId);
+  if (!run?.slotId) return;
+  try {
+    await extractRunWorkerSessionUsage(run, undefined, (session, usage) =>
+      recordRecoveredWorkerUsage(run, session, usage),
+    );
+  } catch (error) {
+    // Release must still free the slot. Bound receipts stay measured; the run records
+    // that its worker total may be missing a session.
+    const latest = getRun(runId) ?? run;
+    updateRun(runId, {
+      metrics: {
+        ...latest.metrics,
+        sessionUsageError: `Worker session discovery at slot release failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      },
+    });
+  }
 }
 
 function completedMeasurement(

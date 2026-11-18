@@ -271,6 +271,51 @@ test('a native launch probe resolves the same Node as the native worker environm
   assert.equal(JSON.parse(result.stdout).tools.node.version, process.version);
 });
 
+test('native probe bootstrap applies the worker alias policy before resolving partial Node', async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'native-partial-node-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const repo = path.join(home, 'checkout');
+  const shims = path.join(home, '.asdf', 'shims');
+  await mkdir(repo);
+  await mkdir(shims, { recursive: true });
+  await writeFile(path.join(repo, '.nvmrc'), 'v22');
+  await writeFile(
+    path.join(shims, 'node'),
+    `#!/bin/sh
+[ "$(cat .nvmrc)" = v22 ] || exit 99
+[ "$ASDF_NODEJS_LEGACY_FILE_DYNAMIC_STRATEGY" = latest_installed ] || exit 126
+[ -z "\${ASDF_NODEJS_VERSION+x}" ] || exit 125
+[ "$PROBE_NOTE" = "space'quote" ] || exit 124
+exec ${process.execPath} "$@"
+`,
+  );
+  await chmod(path.join(shims, 'node'), 0o755);
+  selectedVars = { ...vars, remoteRepo: repo };
+  const environment = {
+    set: {
+      ASDF_DATA_DIR: path.join(home, '.asdf'),
+      ASDF_NODEJS_LEGACY_FILE_DYNAMIC_STRATEGY: 'latest_installed',
+      PROBE_NOTE: "space'quote",
+    },
+    unset: ['ASDF_NODEJS_VERSION'],
+  };
+  await (
+    await admitWorkerLaunch({ vars: selectedVars, projectVars: project, environment })
+  )();
+  const probe = commands.find((command) => command.includes('nodeMissing'));
+  assert.ok(probe);
+  const host = { PATH: `${shims}:/usr/bin:/bin`, ASDF_NODEJS_VERSION: 'stale-host-version' };
+  const worker = spawnSync('/bin/sh', ['-c', 'node -p process.version'], {
+    cwd: repo,
+    env: nativeWorkerProcessEnvironment(environment, host),
+    encoding: 'utf8',
+  });
+  assert.equal(worker.status, 0, worker.stderr);
+  const observed = spawnSync('/bin/sh', ['-c', probe], { cwd: repo, env: host, encoding: 'utf8' });
+  assert.equal(observed.status, 0, observed.stderr);
+  assert.equal(JSON.parse(observed.stdout).tools.node.version, worker.stdout.trim());
+});
+
 test('the native worker environment wrapper keeps a probe output, status and missing Node', () => {
   const run = (environment: object, command: string) =>
     spawnSync(

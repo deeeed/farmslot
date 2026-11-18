@@ -6,6 +6,18 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.20.6 - 2026-11-18
+
+- Add an owned native-worker browser proof for host selection, reload, queued delivery and structured question answers.
+- Show the active recorded child checklist beneath its parent progress in Run Detail, keeping parent and child counts separate.
+- Add a reusable connected-browser check for background refresh renders, DOM replacements and pinned-card flashing.
+- Restore the selected run detail's viewing position after refresh and respect the viewer's own scrolling.
+- Add a read-only browser proof that run navigation drops the previous checklist's URL choices.
+- Preserve verified browser gateway selection across UI default changes and gateway restarts, restoring existing implicit device sign-ins.
+- Keep History and Load run fixed in the slot header when run status and available actions change.
+- Keep the slot workspace steady and quiet during refresh, with styled controls and delayed notices.
+- Keep a live acknowledgement recipe that matches the displayed time to a worker signal before the first checklist completion.
+
 ## 0.20.5 - 2026-11-16
 
 - Keep expected missing or pending observations neutral across run and slot panels, while preserving real read and ledger parse errors.
