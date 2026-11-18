@@ -198,35 +198,47 @@ test('a static review freezes its declared rule pack from the project installati
   });
 });
 
-test('a static review names the real cause when its rule pack is a directory or unreadable', async () => {
-  for (const [prepare, message] of [
-    [
-      (file: string) => mkdir(path.join(file, 'nested'), { recursive: true }),
-      /Static review rule pack review-pack\.json is not a single file/,
-    ],
-    [
-      async (file: string) => {
-        await writeFile(file, '{}');
-        await chmod(file, 0o000);
-      },
-      /Static review rule pack review-pack\.json could not be read: .*EACCES/,
-    ],
-  ] as const) {
+test('a static review refuses a rule pack path that is a directory without walking it', async () => {
+  await withFixture(async (f) => {
+    await mkdir(path.join(f.project.projectFixturesDir, 'review-pack.json', 'nested'), {
+      recursive: true,
+    });
+    f.project.projectJson.static_review = {
+      ...f.project.projectJson.static_review,
+      rule_pack: { pack: 'review-pack.json', client: 'fixture', level: 'static' },
+    };
+    await assert.rejects(
+      materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps),
+      /Static review rule pack review-pack\.json is not a regular file/,
+    );
+  });
+});
+
+// Root reads a mode-000 file, so the permission case only means something without it.
+test(
+  'a static review names the read error when its rule pack is unreadable',
+  { skip: process.getuid?.() === 0 },
+  async () => {
     await withFixture(async (f) => {
       const file = path.join(f.project.projectFixturesDir, 'review-pack.json');
-      await prepare(file);
+      await writeFile(file, '{}');
+      await chmod(file, 0o000);
       f.project.projectJson.static_review = {
         ...f.project.projectJson.static_review,
         rule_pack: { pack: 'review-pack.json', client: 'fixture', level: 'static' },
       };
       try {
-        await assert.rejects(materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps), message);
+        await assert.rejects(
+          materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps),
+          /Static review rule pack review-pack\.json could not be read: .*EACCES/,
+        );
       } finally {
-        await chmod(file, 0o755).catch(() => {});
+        // Restore read access so the fixture can remove its temporary tree.
+        await chmod(file, 0o644);
       }
     });
-  }
-});
+  },
+);
 
 test('a static review refuses a declared rule pack that is missing or invalid', async () => {
   for (const [content, message] of [

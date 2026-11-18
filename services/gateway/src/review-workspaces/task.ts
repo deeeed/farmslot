@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -402,25 +402,34 @@ export async function materializeReviewWorkspaceTask(
       const refuse = (problem: string) =>
         new Error(`Static review rule pack ${declared.pack} ${problem}`);
       const relative = path.posix.join('inputs/instructions', declared.pack);
-      // One read: the bytes validated here are the bytes retained and digested.
+      // Check the declared path is a regular file before collecting it, so a mistaken
+      // directory is refused without walking it. One read follows: the bytes validated
+      // here are the bytes retained and digested.
+      const readError = (error: unknown) =>
+        (error as NodeJS.ErrnoException).code === 'ENOENT'
+          ? refuse('is not installed in the project fixtures')
+          : refuse(`could not be read: ${error instanceof Error ? error.message : String(error)}`);
+      let entry: Awaited<ReturnType<typeof lstat>>;
+      try {
+        entry = await lstat(absolute);
+      } catch (error) {
+        throw readError(error);
+      }
+      if (!entry.isFile()) throw refuse('is not a regular file');
       let files: Awaited<ReturnType<typeof collectSupportFiles>>;
       try {
         files = await collectSupportFiles(absolute, relative);
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT')
-          throw refuse('is not installed in the project fixtures');
-        throw refuse(
-          `could not be read: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        throw readError(error);
       }
-      const [file] = files;
-      if (files.length !== 1 || file!.relativePath !== relative)
-        throw refuse('is not a single file');
-      const problem = reviewRulePackProblem(Buffer.from(file!.contentBase64, 'base64'));
+      const file = files[0];
+      if (files.length !== 1 || !file || file.relativePath !== relative)
+        throw refuse('is not a regular file');
+      const problem = reviewRulePackProblem(Buffer.from(file.contentBase64, 'base64'));
       if (problem) throw refuse(problem);
-      guidance.push(file!);
+      guidance.push(file);
       reviewRulePack = {
-        pack: { path: relative, sha256: file!.sha256 },
+        pack: { path: relative, sha256: file.sha256 },
         client: declared.client,
         level: declared.level,
       };
