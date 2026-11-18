@@ -1,2 +1,2 @@
-- Re-review retained workspace sessions directly, preserving their owner and conversation without reapplying automatic discovery filters.
+- Re-review retained workspace sessions directly, including stopped blocked reviews, preserving their owner and conversation without reapplying automatic discovery filters.
 - Accept equivalent GitHub pull URLs and shorthand references throughout warm-review lineage checks while still refusing a different repository or PR.

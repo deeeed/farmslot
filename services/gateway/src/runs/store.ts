@@ -84,6 +84,7 @@ import { normalizeStartRefRequest } from '../projects/start-ref-policy.js';
 import { assertCurrentReviewConfiguration } from '../quality/review-config.js';
 import { captureRunResources, publishRunResources } from '../resources/run-changes.js';
 import { comparisonReviewContext } from '../review/comparison-context.js';
+import { reviewPRIdentity } from '../review/pr-identity.js';
 import {
   assertReviewWorkspaceAdmissionOpen,
   hasReviewWorkspaceRetirement,
@@ -866,7 +867,15 @@ function normalizePressureAdmissionRefRequest(
   return { machine, pressureGeneration };
 }
 
+interface ReviewPredecessorAdmission {
+  runId: string;
+  generation: number;
+  reviewId: string;
+}
+
 export interface RunRecordOptions {
+  /** Exact stopped review being superseded. Internal only, never accepted from RPC parameters. */
+  reviewPredecessor?: ReviewPredecessorAdmission;
   dispatchRequest?: RunCreateParams;
   /** Trusted internal handoff only. Never copied from RPC parameters. */
   nativeOwnerPrincipalId?: string;
@@ -922,6 +931,8 @@ function creationRequestForFreeze(
 }
 
 export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuildOptions): Run {
+  if ('reviewPredecessor' in params)
+    throw new Error('Review predecessor admission is gateway-owned');
   if ('sourceProvenance' in params) throw new Error('Source provenance is gateway-owned');
   if (
     'nativeOwnerPrincipalId' in params ||
@@ -1004,9 +1015,49 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
         : parent && parent.createdByPrincipalId === createdByPrincipalId
           ? parent.createdByPrincipalGeneration
           : undefined;
+  const predecessor = options?.reviewPredecessor;
+  if (predecessor) {
+    const reviewer = parent?.agentContexts?.find(
+      (candidate) =>
+        candidate.id === 'review' && candidate.role === 'review' && candidate.status === 'complete',
+    );
+    const target = reviewPRIdentity(params);
+    const priorTarget = reviewPRIdentity(parent);
+    if (
+      !parent ||
+      predecessor.runId !== parent.id ||
+      predecessor.generation !== (parent.engineState?.generation ?? 0) ||
+      parent.status !== 'blocked' ||
+      parent.flowType !== 'review-pr' ||
+      !parent.reviewWorkspace?.executionStoppedAt ||
+      parent.transport !== 'tmux' ||
+      parent.prWork?.kind !== 'review' ||
+      !reviewer ||
+      reviewer.reviewId !== predecessor.reviewId ||
+      params.flowType !== 'review-pr' ||
+      params.reviewMode !== 'warm' ||
+      params.project !== parent.project ||
+      params.transport !== parent.transport ||
+      params.reviewWorkspaceTarget?.machine !== parent.reviewWorkspaceTarget?.machine ||
+      params.reviewWorkspaceTarget?.machine !== parent.reviewWorkspace.machine ||
+      params.runner !== reviewer.runner ||
+      params.model !== reviewer.model ||
+      (params.effort ?? null) !== (reviewer.effort ?? null) ||
+      params.reviewContext?.reviewLineages.length !== 1 ||
+      params.reviewContext.reviewLineages[0]?.reviewId !== predecessor.reviewId ||
+      !target ||
+      !priorTarget ||
+      target.repository.toLowerCase() !== priorTarget.repository.toLowerCase() ||
+      target.prNumber !== priorTarget.prNumber ||
+      nativeOwnerPrincipalId !== parent.nativeOwnerPrincipalId ||
+      createdByPrincipalId !== parent.createdByPrincipalId ||
+      (createdByPrincipalGeneration ?? 0) !== (parent.createdByPrincipalGeneration ?? 0)
+    )
+      throw new Error('Review predecessor changed or is not eligible for an owned warm handoff');
+  }
   assertNoAutomatedPRConflict(
     params,
-    getAllRuns().filter((run) => run.id !== options?.runId),
+    getAllRuns().filter((run) => run.id !== options?.runId && run.id !== predecessor?.runId),
   );
   if (Array.isArray(params.allowedSlots) && params.allowedSlots.length === 0) {
     throw new Error('Cannot create run: active slot filters resolved to no matching slots');

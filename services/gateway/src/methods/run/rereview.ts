@@ -218,6 +218,15 @@ async function rereviewWithSources(
     workspace
       ? {
           delegatedReviewOwner: parent.nativeOwnerPrincipalId,
+          ...(parent.status === 'blocked' && parent.prWork?.kind === 'review'
+            ? {
+                reviewPredecessor: {
+                  runId: parent.id,
+                  generation: parentGeneration,
+                  reviewId: reviewContext.reviewLineages[0]!.reviewId,
+                },
+              }
+            : {}),
           workflowExecution: {
             workspacePolicy: { kind: 'exact', machine: workspace.machine },
             transport: run.transport ?? 'tmux',
