@@ -40,6 +40,8 @@ mock.module('../core/tmux-launch-script.js', {
 });
 let paneCount = 1;
 let sessionPathExists = true;
+/** The transcript exists but is empty, which the content probe must refuse. */
+let sessionPathEmpty = false;
 let promptAccepted = true;
 let promptAcceptedSequence: boolean[] | null = null;
 let promptAcceptedAt: number | null = null;
@@ -164,8 +166,10 @@ mock.module('../core/exec.js', {
       // Both probe forms the gateway uses: existence, and the content check that
       // also refuses an empty transcript.
       if (command.startsWith('test -e ') || command.startsWith('test -r ')) {
+        // `test -e` answers only existence; the content form also refuses empty.
+        const empty = sessionPathEmpty && command.startsWith('test -r ');
         return {
-          exitCode: sessionPathExists ? 0 : 1,
+          exitCode: sessionPathExists && !empty ? 0 : 1,
           stdout: '',
           stderr: '',
         };
@@ -1563,5 +1567,48 @@ test('retained pi resume relaunches with the saved session file, not its stem', 
     stemOnly.test(joined),
     false,
     'a bare stem is neither a path nor an id pi can resolve',
+  );
+});
+
+// Codex r2 on #2347: a failed copy leaves a zero-byte transcript beside a valid
+// idle receipt. Existence passed, pi opened a new conversation at that name, and
+// the fresh pane's own prompt acknowledgement could then satisfy the continuity
+// check that was supposed to prove the old session came back.
+test('retained resume refuses a transcript that exists but is empty', async (t) => {
+  commands.length = 0;
+  launchScripts.length = 0;
+  paneCount = 1;
+  sessionPathExists = true;
+  sessionPathEmpty = true;
+  sessionState = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now() - 300_000,
+  };
+  t.after(() => {
+    sessionPathEmpty = false;
+  });
+
+  const result = await deliverPromptToRetainedRunnerSession({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'pi',
+    sessionId: '2026-11-18T03-34-24-255Z_01a1ecb8',
+    sessionPath: '/sessions/2026-11-18T03-34-24-255Z_01a1ecb8.jsonl',
+    prompt: 'Read and execute TASK.md',
+    runtimeDir: '.farmslot/runtime/test-project',
+  });
+
+  assert.equal(result.delivered, false);
+  assert.match(
+    result.reason ?? '',
+    /unavailable or empty/,
+    'the refusal must name the empty transcript, not hand back a new conversation',
+  );
+  assert.equal(
+    commands.some((command) => command.includes('respawn-window')),
+    false,
+    'and nothing may be relaunched',
   );
 });

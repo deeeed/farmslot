@@ -41,6 +41,7 @@ import {
   workspaceTerminalSessionCreateArgv,
 } from './launch-command.js';
 import { getRunnerDefinition } from './registry.js';
+import { resumableSessionContentProbeCommand } from './session-process.js';
 
 export const REVIEW_STARTUP_TIMEOUT_MS = 300_000;
 
@@ -274,6 +275,9 @@ export async function reviewTmuxOperation(
     throw new Error('Review workspace belongs to its successor');
   const w = run.reviewWorkspace!;
   const runner = run.metrics.runner!;
+  // Set for a runner that resumes only by file, so the resume can be proved
+  // before anything is relaunched.
+  let reviewSessionPath: string | null = null;
   const input: Record<string, unknown> = {
     action,
     runId: run.id,
@@ -290,6 +294,8 @@ export async function reviewTmuxOperation(
   if (action === 'launch' || action === 'resume') {
     const reviewContext = run.agentContexts?.find((context) => context.id === 'review');
     const resumeSessionId = reviewContext?.runnerSessionId;
+    if (getRunnerDefinition(runner).sessionContinuation.terminal?.sessionReference === 'path')
+      reviewSessionPath = reviewContext?.runnerSessionPath ?? null;
     if (action === 'resume' && (!resumeSessionId || !resumeCommandId))
       throw new Error(
         'Terminal reviewer continuation requires its exact saved session and command',
@@ -385,6 +391,25 @@ export async function reviewTmuxOperation(
     script,
     JSON.stringify(input),
   ];
+  // The in-pane guard refuses a resume whose transcript is gone, but it refuses
+  // *inside* the pane: this helper would already have recorded a new delivery
+  // window and reported `resumed: true` while that pane exits. So the same check
+  // runs here first, through the same channel, and the refusal is the caller's.
+  if (action === 'resume' && reviewSessionPath) {
+    const probe = ['sh', '-c', resumableSessionContentProbeCommand(reviewSessionPath)];
+    const saved =
+      w.executionNodeId === 'local'
+        ? await execFileArgv(probe, { timeout: 15000 })
+        : await execNativeNodeArgv(run.nativeOwnerPrincipalId!, w.machine, probe, 15000);
+    if (saved.exitCode === 1)
+      throw new Error(
+        `The retained reviewer session at ${reviewSessionPath} is missing, unreadable or empty; resuming would start a new conversation. Restore it, or validate the repaired output through monitor replay.`,
+      );
+    if (saved.exitCode !== 0)
+      throw new Error(
+        `Cannot verify the retained reviewer session at ${reviewSessionPath}: the probe exited ${saved.exitCode}${saved.stderr?.trim() ? ` (${saved.stderr.trim().slice(0, 200)})` : ''}. Nothing was relaunched; retry.`,
+      );
+  }
   const result =
     w.executionNodeId === 'local'
       ? await execFileArgv([process.execPath, ...argv.slice(1)], { timeout: 30000 })
