@@ -41,7 +41,6 @@ export async function extractRunnerSessionUsage({
   runnerSessionId,
   runnerSessionPath,
   checklistMarks,
-  usageWindow,
 }: {
   slotId: string;
   vars?: SlotVars;
@@ -50,8 +49,6 @@ export async function extractRunnerSessionUsage({
   runnerSessionPath?: string | null;
   /** The attempt's checklist marks; tool calls, tokens and time are split at them. */
   checklistMarks?: ChecklistMark[];
-  /** Count only this part of the transcript, e.g. one attempt of a resumed conversation. */
-  usageWindow?: SessionUsageWindow;
 }): Promise<RunnerSessionUsage> {
   if (!runnerSessionPath) {
     return unavailableRunnerSessionUsage({
@@ -69,7 +66,6 @@ export async function extractRunnerSessionUsage({
         runnerSessionPath,
         undefined,
         checklistMarks,
-        usageWindow,
       );
       const result = await execOnSlot(vars, argv.map(shellQuote).join(' '), {
         timeout: 30_000,
@@ -89,7 +85,6 @@ export async function extractRunnerSessionUsage({
       forcedRunner: runner ?? null,
       environment: { ...process.env, ...vars?.machineEnv },
       checklistMarks,
-      usageWindow,
     });
     return parseSessionUsageOutput(output, {
       runner: runner ?? null,

@@ -141,7 +141,7 @@ for (const target of ['local', 'remote'])
     assert.equal(result.metrics.costEstimate, 0.002);
   });
 
-test('a warm static review counts only its own attempt of the resumed conversation', async (t) => {
+test("a warm static tmux review keeps its session unsplit by the new review's marks", async (t) => {
   remote = false;
   const root = await mkdtemp(path.join(os.tmpdir(), 'static-review-usage-warm-'));
   const run = createRun({
@@ -192,7 +192,16 @@ test('a warm static review counts only its own attempt of the resumed conversati
     reviewWorkspaceTarget: { machine: 'localhost' },
     transport: 'tmux',
     repeatReviewContext,
-    metrics: { ...run.metrics, runner: 'pi', model: 'litellm/glm-5p3-flash' },
+    metrics: {
+      ...run.metrics,
+      runner: 'pi',
+      model: 'litellm/glm-5p3-flash',
+      checklistTiming: {
+        schemaVersion: 1,
+        source: 'CHECKLIST.md',
+        events: [{ stepNumber: 1, label: '1. Review', checkedAt: '2026-11-10T14:06:00Z' }],
+      },
+    },
     reviewWorkspace: {
       workspaceId: 'review-fixture',
       machine: 'localhost',
@@ -220,8 +229,9 @@ test('a warm static review counts only its own attempt of the resumed conversati
   });
   await captureRunSessionUsage(run.id);
   const receipt = getRun(run.id)!.sessionUsage![0];
-  assert.equal(receipt.totalTokens, 200, 'only the reply after this attempt started');
-  assert.equal(receipt.costUsd, 0.001);
+  // The resumed transcript holds the earlier review's replies; none is charged to step 1.
+  assert.equal(receipt.toolUsage?.stepsUnavailable, 'The session has no checklist marks');
+  assert.deepEqual(receipt.toolUsage?.steps, []);
 });
 
 test('ambiguous workspace sessions stay unbound', async (t) => {

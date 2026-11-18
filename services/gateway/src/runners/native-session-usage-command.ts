@@ -212,14 +212,13 @@ export function forcedSessionUsageArgv(
   sessionPath: string,
   modulePath?: string,
   checklistMarks?: ChecklistMark[],
-  usageWindow?: SessionUsageWindow,
 ): string[] {
   const program =
     SESSION_USAGE_MODULE +
     String.raw`
 const input = JSON.parse(process.argv[1]);
 try {
-  process.stdout.write(await runSessionUsage({ repo: '', slotId: input.slotId, action: 'total', forcedPath: input.sessionPath, forcedRunner: input.runner, checklistMarks: input.checklistMarks, usageWindow: input.usageWindow }));
+  process.stdout.write(await runSessionUsage({ repo: '', slotId: input.slotId, action: 'total', forcedPath: input.sessionPath, forcedRunner: input.runner, checklistMarks: input.checklistMarks }));
 } catch (error) {
   process.stderr.write(error instanceof SyntaxError ? 'Session accounting source contains invalid structured data' : error instanceof Error ? error.message : 'Session accounting failed');
   process.exitCode = 1;
@@ -232,7 +231,7 @@ try {
     '--input-type=module',
     '-e',
     program,
-    JSON.stringify({ slotId, runner, sessionPath, checklistMarks, usageWindow }),
+    JSON.stringify({ slotId, runner, sessionPath, checklistMarks }),
     modulePath ?? '',
   ];
 }

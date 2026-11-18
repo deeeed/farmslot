@@ -101,6 +101,15 @@ function completedMeasurement(
 /** Run metrics hold the worker checklist's marks; other roles' sessions are not split by them. */
 function workerChecklistMarks(run: Run, row: RunnerSessionUsage) {
   if (row.role !== primaryRoleForFlow(run.flowType)) return undefined;
+  // A warm tmux reviewer resumes the earlier review's transcript, whose calls would land in this
+  // review's first step. Its session stays unsplit, as before marks were kept.
+  if (
+    !row.slotId &&
+    !row.nativeSession &&
+    run.reviewWorkspace &&
+    run.repeatReviewContext?.mode === 'warm'
+  )
+    return undefined;
   const context = run.agentContexts?.find((item) => row.contextIds?.includes(item.id));
   return contextChecklistMarks(run, context);
 }
@@ -137,16 +146,6 @@ async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSession
       : run.reviewWorkspace
         ? ((await reviewWorkspaceRunnerVars(run)) ?? undefined)
         : undefined;
-    // A warm static reviewer resumes the earlier review's conversation in the same transcript,
-    // so only this attempt's part of it is counted.
-    const reviewer =
-      !row.slotId &&
-      run.reviewWorkspace &&
-      row.role === 'review' &&
-      run.repeatReviewContext?.session?.priorSessionId
-        ? run.agentContexts?.find((item) => row.contextIds?.includes(item.id))
-        : undefined;
-    const attemptStartedAt = reviewer?.attemptStartedAt ?? reviewer?.startedAt;
     return completedMeasurement(
       row,
       await extractRunnerSessionUsage({
@@ -156,7 +155,6 @@ async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSession
         runnerSessionId: row.runnerSessionId,
         runnerSessionPath: row.runnerSessionPath,
         checklistMarks,
-        ...(attemptStartedAt ? { usageWindow: { startedAt: attemptStartedAt } } : {}),
       }),
     );
   } catch {
