@@ -95,13 +95,22 @@ export async function taskActionInputsAvailable(
   return true;
 }
 
-/** Every action name the retained library's own action manifests declare. */
+/**
+ * Every action name the retained library's own action manifests declare.
+ *
+ * Both sources, never one or the other: an `actions` map that names a
+ * platform-scoped manifest does not retire the `manifests/` convention, and
+ * discovery reads both, so a library with a partial map still declares its
+ * shared actions.
+ */
 async function declaredTaskActionNames(root: string): Promise<Set<string>> {
   const manifest = await readRecipeLibraryManifest(root);
-  const declaredFiles = Object.values(manifest?.actions ?? {});
-  const files = declaredFiles.length
-    ? declaredFiles.map((file) => path.join(root, file))
-    : await actionManifestFiles(root);
+  const files = [
+    ...new Set([
+      ...Object.values(manifest?.actions ?? {}).map((file) => path.join(root, file)),
+      ...(await actionManifestFiles(root)),
+    ]),
+  ];
   const names = new Set<string>();
   for (const file of files) {
     let parsed: unknown;
@@ -120,12 +129,20 @@ async function declaredTaskActionNames(root: string): Promise<Set<string>> {
   return names;
 }
 
-/** Convention fallback for a library with no `recipe-library.json` actions map. */
+/**
+ * The `manifests/` files discovery reads by convention.
+ *
+ * Dotfiles are skipped for the same reason `digestRecipeLibrary` skips them:
+ * they are not part of the library's content, so a half-written `.scratch.json`
+ * left in the directory changes nothing and must not block a publication.
+ */
 async function actionManifestFiles(root: string): Promise<string[]> {
   const manifests = path.join(root, 'manifests');
   try {
     return (await readdir(manifests, { withFileTypes: true }))
-      .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+      .filter(
+        (entry) => entry.isFile() && entry.name.endsWith('.json') && !entry.name.startsWith('.'),
+      )
       .map((entry) => path.join(manifests, entry.name));
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return [];
