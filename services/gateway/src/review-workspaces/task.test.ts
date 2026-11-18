@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
@@ -200,9 +200,11 @@ test('a static review freezes its declared rule pack from the project installati
 
 test('a static review refuses a rule pack path that is a directory without walking it', async () => {
   await withFixture(async (f) => {
-    await mkdir(path.join(f.project.projectFixturesDir, 'review-pack.json', 'nested'), {
-      recursive: true,
-    });
+    const directory = path.join(f.project.projectFixturesDir, 'review-pack.json');
+    await mkdir(directory);
+    // Walking the directory would fail on this dangling link with a different error,
+    // so the expected message proves the path was refused before any walk.
+    await symlink(path.join(directory, 'missing-target'), path.join(directory, 'dangling'));
     f.project.projectJson.static_review = {
       ...f.project.projectJson.static_review,
       rule_pack: { pack: 'review-pack.json', client: 'fixture', level: 'static' },
