@@ -43,9 +43,12 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
       `const button=root?.querySelector(${JSON.stringify(selector)});if(!button||button.disabled)throw Error('Control unavailable');button.click();return {clicked:true};`,
     );
   let target;
+  let browser = false;
+  const launchToken = randomUUID();
   try {
     assert.equal(process.env.FARMSLOT_GATEWAY, 'ws://127.0.0.1:18777');
     assert.equal(process.env.FARMSLOT_CDP_PORT, '19323');
+    browser = true;
     const fixture = fs.realpathSync(path.join(ROOT, 'temp/native-validation/g003-codex-fixture'));
     const config = rpc(Methods.LLM_CONFIG_GET);
     assert.equal(config.copilotModel, 'gpt-6.2-astra');
@@ -85,14 +88,24 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
       30000,
     );
     view(
-      `const method=${JSON.stringify(Methods.NATIVE_SESSION_CREATE)};const cwd=${JSON.stringify(fixture)};view.__launchReceipt=null;const request=view.api.request.bind(view.api);view.__launchRequest=request;view.api.request=async(...args)=>{const [name,params]=args;const mine=view.api.request!==request&&name===method&&params?.cwd===cwd&&params?.runner==='codex'&&(params?.executionNodeId??'local')==='local';if(mine)view.api.request=request;const result=await request(...args);const session=result?.session;if(mine&&session?.id&&!view.__launchReceipt)view.__launchReceipt={id:session.id,node:session.executionNodeId,runner:session.runner,cwd:session.cwd};return result;};return {armed:true};`,
+      `const method=${JSON.stringify(Methods.NATIVE_SESSION_CREATE)};const cwd=${JSON.stringify(fixture)};const token=${JSON.stringify(launchToken)};view.__launchReceipt=null;view.__launchToken=token;const request=view.api.request.bind(view.api);view.__launchRequest=request;view.api.request=async(...args)=>{const [name,params]=args;const mine=view.__launchToken===token&&name===method&&!params?.resumeSessionId&&params?.cwd===cwd&&params?.runner==='codex'&&(params?.executionNodeId??'local')==='local';if(mine)view.api.request=request;const result=await request(...args);const session=result?.session;if(mine&&session?.id&&!view.__launchReceipt)view.__launchReceipt={id:session.id,node:session.executionNodeId,runner:session.runner,cwd:session.cwd};return result;};const button=root?.querySelector('[data-testid="native-create"]');if(!button||button.disabled)throw Error('Control unavailable');button.click();return {clicked:true};`,
     );
-    click('[data-testid=native-create]');
-    const created = await wait(
-      () => view('return view.__launchReceipt??{id:""};'),
-      (value) => Boolean(value.id),
-      timeoutMs,
-    );
+    let created;
+    try {
+      created = await wait(
+        () => view('return view.__launchReceipt??{id:""};'),
+        (value) => Boolean(value.id),
+        timeoutMs,
+      );
+    } catch (error) {
+      try {
+        const late = view('return view.__launchReceipt??{id:""};');
+        if (late.id) target = { executionNodeId: late.node, sessionId: late.id };
+      } catch (readError) {
+        report.receiptError = readError.message;
+      }
+      throw error;
+    }
     target = { executionNodeId: created.node, sessionId: created.id };
     assert.equal(created.runner, 'codex');
     assert.equal(created.cwd, fixture);
@@ -173,11 +186,15 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
   } catch (error) {
     report.error = error.message;
   } finally {
-    try {
-      view('if(view.__launchRequest)view.api.request=view.__launchRequest;return {restored:true};');
-    } catch {
-      // The page may already be gone. The receipt still owns cleanup.
-    }
+    if (browser)
+      try {
+        view(
+          `const token=${JSON.stringify(launchToken)};if(view?.__launchToken===token&&view.__launchRequest){view.api.request=view.__launchRequest;return {restored:true}}return {restored:false};`,
+        );
+      } catch (error) {
+        report.pass = false;
+        report.cleanupError = error.message;
+      }
     if (target)
       try {
         rpc(Methods.NATIVE_SESSION_CLOSE, target);
