@@ -79,7 +79,7 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
   // attempt finished with no session id. A lost CDP reply can call this again.
   const releaseLaunch = (knownId, closed, unknownAcked) =>
     view(
-      `const token=${JSON.stringify(launchToken)};const known=${JSON.stringify(knownId)};const closed=${closed ? 'true' : 'false'};const unknownAcked=${unknownAcked ? 'true' : 'false'};const book=document.__nativeLaunchBook;if(!book)return {released:true,id:""};if(book.token!==token&&!book.receipts?.[token]&&book.pending?.[token]===undefined)return {released:true,id:""};if(book.token===token&&book.view&&(book.originalRequest||book.request))book.view.api.request=book.originalRequest||book.request;const receipt=book.receipts?.[token]??null;const id=receipt?.id??"";const flag=book.pending?.[token];const pending=flag===true?"pending":flag==="unknown"?"unknown":flag===false?"idle":"unknown";const error=receipt?.error??"";if(id&&!(id===known&&closed))return {released:false,hold:true,id,node:receipt.node??"",runner:receipt.runner??"",cwd:receipt.cwd??"",pending,error};if(!id&&flag===true){const finished=book.finished??(book.finished={});finished[token]=true;return {released:false,hold:true,id:"",node:"",runner:"",cwd:"",pending:"pending",error};}if(!id&&flag==="unknown"&&unknownAcked!==true)return {released:false,hold:true,id:"",node:"",runner:"",cwd:"",pending:"unknown",error};const settled=book.settled??(book.settled={});settled[token]=true;if(book.receipts)delete book.receipts[token];if(book.pending)delete book.pending[token];if(book.token===token){delete book.view;delete book.request;delete book.token;}if(book.receipts&&!Object.keys(book.receipts).length&&book.pending&&!Object.keys(book.pending).length&&!book.view)delete document.__nativeLaunchBook;return {released:true,id,pending,error};`,
+      `const token=${JSON.stringify(launchToken)};const known=${JSON.stringify(knownId)};const closed=${closed ? 'true' : 'false'};const unknownAcked=${unknownAcked ? 'true' : 'false'};const book=document.__nativeLaunchBook;if(!book)return {released:true,id:""};if(book.token!==token&&!book.receipts?.[token]&&book.pending?.[token]===undefined)return {released:true,id:""};if(book.token===token&&book.view&&(book.originalRequest||book.request))book.view.api.request=book.originalRequest||book.request;const receipt=book.receipts?.[token]??null;const id=receipt?.id??"";const flag=book.pending?.[token];const pending=flag===true?"pending":flag==="unknown"?"unknown":flag===false?"idle":"unknown";const error=receipt?.error??"";const pageClosed=receipt?.closed===true;const closeError=receipt?.closeError??"";const closeOwned=book.finished?.[token]===true;if(id&&!(id===known&&closed))return {released:false,hold:true,id,node:receipt.node??"",runner:receipt.runner??"",cwd:receipt.cwd??"",pending,error,closeError,closed:pageClosed,closeOwned};if(!id&&flag===true){const finished=book.finished??(book.finished={});finished[token]=true;return {released:false,hold:true,id:"",node:"",runner:"",cwd:"",pending:"pending",error,closeError,closed:false,closeOwned:true};}if(!id&&flag==="unknown"&&unknownAcked!==true)return {released:false,hold:true,id:"",node:"",runner:"",cwd:"",pending:"unknown",error,closeError,closed:pageClosed,closeOwned};const settled=book.settled??(book.settled={});settled[token]=true;if(book.receipts)delete book.receipts[token];if(book.pending)delete book.pending[token];if(book.token===token){delete book.view;delete book.request;delete book.token;}if(book.receipts&&!Object.keys(book.receipts).length&&book.pending&&!Object.keys(book.pending).length&&!book.view)delete document.__nativeLaunchBook;return {released:true,id,pending,error,closeError,closed:pageClosed,closeOwned};`,
     );
   try {
     assert.equal(process.env.FARMSLOT_GATEWAY, 'ws://127.0.0.1:18777');
@@ -126,7 +126,7 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
     // Arm before the click eval. A lost CDP reply can still leave a receipt to close.
     armed = true;
     view(
-      `const method=${JSON.stringify(Methods.NATIVE_SESSION_CREATE)};const closeMethod=${JSON.stringify(Methods.NATIVE_SESSION_CLOSE)};const cwd=${JSON.stringify(fixture)};const token=${JSON.stringify(launchToken)};const button=root?.querySelector('[data-testid="native-create"]');if(!button||button.disabled)throw Error('Control unavailable');const book=document.__nativeLaunchBook??(document.__nativeLaunchBook={});const receipts=book.receipts??(book.receipts={});const pending=book.pending??(book.pending={});const request=view.api.request.bind(view.api);if(!book.originalRequest)book.originalRequest=request;book.request=book.originalRequest;book.view=view;book.token=token;view.api.request=async(...args)=>{const [name,params]=args;const mine=name===method&&!params?.resumeSessionId&&params?.cwd===cwd&&params?.runner==='codex'&&(params?.executionNodeId??'local')==='local'&&book.token===token;if(mine){view.api.request=book.originalRequest;pending[token]=true;}try{const result=await request(...args);const session=result?.session;if(mine&&session?.id&&!receipts[token]&&book.settled?.[token]!==true){receipts[token]={id:session.id,node:session.executionNodeId,runner:session.runner,cwd:session.cwd};if(book.finished?.[token]===true){try{await request(closeMethod,{executionNodeId:session.executionNodeId,sessionId:session.id});receipts[token].closed=true}catch(closeError){receipts[token].closeError=String(closeError?.message??closeError)}}}return result;}catch(error){if(mine&&book.settled?.[token]!==true){pending[token]='unknown';if(!receipts[token])receipts[token]={id:'',error:String(error?.message??error)};}throw error;}finally{if(mine&&book.settled?.[token]!==true&&pending[token]===true)pending[token]=false;}};button.click();return {clicked:true};`,
+      `const method=${JSON.stringify(Methods.NATIVE_SESSION_CREATE)};const closeMethod=${JSON.stringify(Methods.NATIVE_SESSION_CLOSE)};const cwd=${JSON.stringify(fixture)};const token=${JSON.stringify(launchToken)};const button=root?.querySelector('[data-testid="native-create"]');if(!button||button.disabled)throw Error('Control unavailable');const book=document.__nativeLaunchBook??(document.__nativeLaunchBook={});const receipts=book.receipts??(book.receipts={});const pending=book.pending??(book.pending={});const request=view.api.request.bind(view.api);if(!book.originalRequest)book.originalRequest=request;book.request=book.originalRequest;book.view=view;book.token=token;view.api.request=async(...args)=>{const [name,params]=args;const mine=name===method&&!params?.resumeSessionId&&params?.cwd===cwd&&params?.runner==='codex'&&(params?.executionNodeId??'local')==='local'&&book.token===token;if(mine){view.api.request=book.originalRequest;pending[token]=true;}try{const result=await request(...args);const session=result?.session;if(mine&&session?.id&&!receipts[token]&&book.settled?.[token]!==true){receipts[token]={id:session.id,node:session.executionNodeId,runner:session.runner,cwd:session.cwd};if(book.finished?.[token]===true){try{await request(closeMethod,{executionNodeId:session.executionNodeId,sessionId:session.id});if(receipts[token])receipts[token].closed=true}catch(closeError){if(receipts[token])receipts[token].closeError=String(closeError?.message??closeError)}}}return result;}catch(error){if(mine&&book.settled?.[token]!==true){pending[token]='unknown';if(!receipts[token])receipts[token]={id:'',error:String(error?.message??error)};}throw error;}finally{if(mine&&book.settled?.[token]!==true&&pending[token]===true)pending[token]=false;}};button.click();return {clicked:true};`,
     );
     const created = await wait(readLaunchReceipt, (value) => Boolean(value.id), timeoutMs);
     rememberReceipt(created);
@@ -218,7 +218,7 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
         report.pass = false;
         report.restoreError = error.message;
       }
-    const stateBody = `const token=${JSON.stringify(launchToken)};const book=document.__nativeLaunchBook;if(!book?.receipts||!book.pending)return {id:"",node:"",runner:"",cwd:"",pending:"unknown",error:"launch record missing",closeError:"",closed:false};const receipt=book.receipts[token]??null;const flag=book.pending[token];return {id:receipt?.id??"",node:receipt?.node??"",runner:receipt?.runner??"",cwd:receipt?.cwd??"",pending:flag===true?"pending":flag==="unknown"?"unknown":flag===false?"idle":"unknown",error:receipt?.error??"",closeError:receipt?.closeError??"",closed:receipt?.closed===true};`;
+    const stateBody = `const token=${JSON.stringify(launchToken)};const book=document.__nativeLaunchBook;if(!book?.receipts||!book.pending)return {id:"",node:"",runner:"",cwd:"",pending:"unknown",error:"launch record missing",closeError:"",closed:false,closeOwned:false};const receipt=book.receipts[token]??null;const flag=book.pending[token];return {id:receipt?.id??"",node:receipt?.node??"",runner:receipt?.runner??"",cwd:receipt?.cwd??"",pending:flag===true?"pending":flag==="unknown"?"unknown":flag===false?"idle":"unknown",error:receipt?.error??"",closeError:receipt?.closeError??"",closed:receipt?.closed===true,closeOwned:book.finished?.[token]===true};`;
     if (browser && armed && !target) {
       // One snapshot carries the receipt and the pending flag. The poll stops at one deadline.
       const deadline = Date.now() + 5000;
@@ -257,9 +257,17 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
         report.pass = false;
         if (!report.receiptError) report.receiptError = error.message;
       }
+    let lastRelease = null;
+    const pageOwnsClose = (snapshot) =>
+      snapshot?.closeOwned === true && snapshot?.closed !== true && !snapshot?.closeError;
     const acceptRelease = (snapshot) => {
+      lastRelease = snapshot;
       noteUnresolved(snapshot);
       if (snapshot?.pending === 'unknown') unknownSeen = true;
+      if (snapshot?.closeError) {
+        report.pass = false;
+        if (!report.closeError) report.closeError = snapshot.closeError;
+      }
     };
     // Cleanup never acknowledges an unknown create. That delete waits until the report is on disk.
     const releaseNow = () => releaseLaunch(target?.sessionId ?? '', report.stopped === true, false);
@@ -296,14 +304,15 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
     };
     closeTarget();
     releaseSafely();
-    // The release above can be the first copy of an id when the earlier read was lost.
-    if (target && !report.stopped) {
+    // A page close already in flight owns the receipt. A second close can delete it first.
+    if (target && !report.stopped && !pageOwnsClose(lastRelease) && !lastRelease?.closeError) {
       closeTarget();
       releaseSafely();
     }
-    // A create that is still pending has finished set. Wait until its close result is visible.
-    if (browser && armed && !target) {
+    // Wait while the create is unfinished or the page close has not reported.
+    if (browser && armed && (!target || pageOwnsClose(lastRelease))) {
       const lateDeadline = Date.now() + 5000;
+      let lateSeen = null;
       while (Date.now() < lateDeadline) {
         const remaining = lateDeadline - Date.now();
         if (remaining <= 0) break;
@@ -316,6 +325,7 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
           await new Promise((resolve) => setTimeout(resolve, pause));
           continue;
         }
+        lateSeen = late;
         rememberReceipt(late);
         if (late?.closeError) {
           report.pass = false;
@@ -334,15 +344,32 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
           releaseSafely();
           break;
         }
-        if (late?.id && late.pending !== 'pending' && late.closed !== true) {
+        if (
+          late?.id &&
+          late.pending !== 'pending' &&
+          late.closed !== true &&
+          late.closeOwned !== true
+        ) {
           closeTarget();
           releaseSafely();
           break;
         }
-        if (late?.pending === 'idle' || late?.pending === 'unknown') break;
+        if (late?.pending === 'unknown') {
+          noteUnresolved(late);
+          unknownSeen = true;
+          break;
+        }
+        if (late?.pending === 'idle' && !late?.id) {
+          noteUnresolved(late);
+          break;
+        }
         const pause = Math.min(200, lateDeadline - Date.now());
         if (pause <= 0) break;
         await new Promise((resolve) => setTimeout(resolve, pause));
+      }
+      if (pageOwnsClose(lateSeen) && !report.stopped && !report.closeError) {
+        report.pass = false;
+        report.closeError = 'native session close did not settle before the cleanup deadline';
       }
     }
     if (target && !report.stopped) {
