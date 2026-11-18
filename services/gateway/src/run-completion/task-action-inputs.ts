@@ -137,9 +137,11 @@ async function declaredTaskActionNames(root: string): Promise<Set<string>> {
  * them (`packages/recipe-cli/src/libraries.ts`): the `<scope>.action-manifest.json`
  * convention, with an `actions` entry replacing its scope's file.
  *
- * Dotfiles never match the convention, which is also why `digestRecipeLibrary`
- * skips them: a half-written `.scratch.json` is not part of the library and must
- * not block a publication.
+ * Dot-entries are skipped before the name is matched, as the library walker and
+ * `digestRecipeLibrary` skip them: a hidden file is not part of the library, and
+ * one that *does* match the convention (`.task.action-manifest.json`) would
+ * otherwise claim its scope and block a publication whose digest matched. The
+ * skip in the loop is what enforces that, not the pattern.
  */
 async function actionManifestFiles(
   root: string,
