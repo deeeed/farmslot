@@ -25,6 +25,11 @@ let mergeExit: number | undefined;
 let fetchOk: boolean;
 let probeHead: string;
 let conflictsDuringPush: boolean;
+/** How long the fixture push takes on the gateway clock. */
+let pushMs: number;
+let clockShift = 0;
+const realNow = Date.now.bind(Date);
+mock.method(Date, 'now', () => realNow() + clockShift);
 let workerUsage: RunnerSessionUsage | null;
 let legacyCostOutput: string;
 const commands: string[] = [];
@@ -54,6 +59,7 @@ mock.module('../core/exec.js', {
         );
       if (command.includes('rev-parse HEAD')) return ok(head);
       if (command.includes('push -u origin')) {
+        clockShift += pushMs;
         if (pushExit)
           return { stdout: 'hook refused', stderr: 'push rejected', exitCode: pushExit };
         if (pushAdvances) remote = head;
@@ -193,7 +199,7 @@ const push = await import(pushModule);
 mock.module('./publication-push.js', { namedExports: push });
 const completionModule = './orchestrator.js?remote-head-fixture';
 const { publishCompletionPackage, runCompletionPipeline } = await import(completionModule);
-const { assertPublicationRemoteHead, pushPublicationBranch } =
+const { assertPublicationRemoteHead, pushPublicationBranch, PUBLICATION_SLOW_PUSH_MS } =
   await import('./publication-push.js');
 const finalizeModule = '../run-engine/finalize-step.js?remote-head-fixture';
 const { executeFinalizeStep } = await import(finalizeModule);
@@ -224,6 +230,7 @@ beforeEach(() => {
   fetchOk = true;
   probeHead = head;
   conflictsDuringPush = false;
+  pushMs = 0;
   workerUsage = null;
   legacyCostOutput = '';
   commands.length = 0;
@@ -304,8 +311,9 @@ test('an unknown merge-tree result refuses publication before pushing or posting
   assert.deepEqual(mutations, []);
 });
 
-test('base conflicts introduced during push refuse PR mutation', async () => {
+test('base conflicts introduced during a slow push refuse PR mutation', async () => {
   conflictsDuringPush = true;
+  pushMs = PUBLICATION_SLOW_PUSH_MS;
   await assert.rejects(
     publishCompletionPackage(run.id, makeReadyGatePackage({ headSha: head, branch })),
     /PUBLICATION_MERGE_CONFLICT/,
@@ -324,10 +332,52 @@ test('legacy completion refuses conflicts before publishing', async () => {
 });
 
 test('publication probes the given base and permits a clean branch behind it', async () => {
+  pushMs = PUBLICATION_SLOW_PUSH_MS;
   await pushPublicationBranch(run, head, 'feature/upstream');
   const probes = commands.filter((command) => command.includes('CONFLICT_EXIT:'));
   assert.equal(probes.length, 2);
   assert.ok(probes.every((command) => command.includes('origin/feature/upstream')));
+});
+
+test('a fast push checks origin once and does not fetch the base again', async () => {
+  pushMs = PUBLICATION_SLOW_PUSH_MS - 1;
+  const phases: string[] = [];
+  await pushPublicationBranch(run, head, 'main', branch, (_event, { name }) => phases.push(name));
+  assert.deepEqual(phases, ['fetch-base', 'push-branch', 'verify-pushed-head']);
+  assert.equal(commands.filter((command) => command.includes('CONFLICT_EXIT:')).length, 1);
+  assert.equal(
+    commands.filter((command) => command.includes('ls-remote --exit-code origin')).length,
+    1,
+  );
+});
+
+test('a slow push records its base refetch as its own phase', async () => {
+  pushMs = PUBLICATION_SLOW_PUSH_MS;
+  const phases: string[] = [];
+  await pushPublicationBranch(run, head, 'main', branch, (_event, { name }) => phases.push(name));
+  assert.deepEqual(phases, [
+    'fetch-base',
+    'push-branch',
+    'verify-pushed-head',
+    'fetch-base-after-push',
+  ]);
+});
+
+test('local-first publication of an existing PR checks origin after the push and after PR mutation only', async () => {
+  run.flowType = 'dev';
+  const phases: string[] = [];
+  await publishCompletionPackage(
+    run.id,
+    makeReadyGatePackage({ headSha: head, branch, publicationTarget: 'ready' }),
+    { emit: (_event: string, payload: { name?: string }) => phases.push(payload.name ?? '') },
+  );
+  assert.equal(
+    commands.filter((command) => command.includes('ls-remote --exit-code origin')).length,
+    2,
+  );
+  assert.equal(commands.filter((command) => command.includes('CONFLICT_EXIT:')).length, 1);
+  for (const phase of ['fetch-base', 'push-branch', 'verify-pushed-head'])
+    assert.ok(phases.includes(phase), `${phase} is a recorded phase`);
 });
 
 test('successful push exit with a stale actual remote refuses publication', async () => {

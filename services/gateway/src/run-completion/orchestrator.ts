@@ -1454,6 +1454,7 @@ export async function createPrFromApprovedPackage(
   run: Run,
   ciRepo: string,
   prPackage: ReadyGatePrPackage,
+  emit: PublishProgressEmitter = () => {},
 ): Promise<number | null> {
   if (!run.slotId) throw new Error('cannot publish a local-first PR without an assigned slot');
   const vars = await loadSlotVars(run.slotId);
@@ -1477,8 +1478,9 @@ export async function createPrFromApprovedPackage(
   }
   if (!prPackage.branch?.trim()) throw new Error('approved package is missing a branch');
   await assertCommitSignatures(vars, `refs/remotes/origin/${base}`, prPackage.headSha || 'HEAD');
-  await pushPublicationBranch(run, prPackage.headSha, base, prPackage.branch);
+  await pushPublicationBranch(run, prPackage.headSha, base, prPackage.branch, emit);
 
+  emit('substep', { name: 'gh-pr-create', detail: `Opening draft PR for ${prPackage.branch}` });
   // Always create local-first PRs as draft while artifact upload/body rewrite is
   // still pending. Ready publication marks it ready only after the final body is
   // rewritten with uploaded evidence URLs.
@@ -1652,9 +1654,15 @@ export async function publishCompletionPackage(
     });
     if (!prNumber) {
       emit('substep', { name: 'create-pr', detail: `Creating draft PR on ${ciRepo}` });
-      prNumber = await createPrFromApprovedPackage(run, ciRepo, publicationPackage);
+      prNumber = await createPrFromApprovedPackage(run, ciRepo, publicationPackage, emit);
     } else {
-      await pushPublicationBranch(run, approvedPackage.headSha, baseBranch, approvedPackage.branch);
+      await pushPublicationBranch(
+        run,
+        approvedPackage.headSha,
+        baseBranch,
+        approvedPackage.branch,
+        emit,
+      );
     }
     if (!prNumber) throw new Error('publication could not resolve or create a PR number');
     flags.prNumber = prNumber;

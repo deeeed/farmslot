@@ -13,6 +13,18 @@ import { probeSlotBranchFreshness } from '../run-engine/branch-freshness.js';
 
 export { PUBLICATION_PUSH_TIMEOUT_MS };
 
+/**
+ * A push at least this long (pre-push hooks) gives the base time to move, so publication
+ * probes the base again before it publishes PR metadata.
+ */
+export const PUBLICATION_SLOW_PUSH_MS = 30_000;
+
+/** Publication progress: each call names the phase that starts now and ends at the next call. */
+export type PublicationSubstepEmitter = (
+  event: 'substep',
+  payload: { name: string; detail: string },
+) => void;
+
 export const BRANCH_PUBLICATION_FLOWS = new Set<string>([
   'pr-complete',
   'dev',
@@ -54,21 +66,40 @@ export async function pushPublicationBranch(
   headSha: string | undefined,
   baseBranch: string,
   branch = run.branch,
+  emit: PublicationSubstepEmitter = () => {},
 ): Promise<void> {
   if (!run.slotId || !branch || !headSha)
     throw new Error('Publication requires an assigned slot, branch and captured HEAD');
   const vars = await loadSlotVars(run.slotId);
   const timeout = await gitPushTimeoutMs(vars);
+  emit('substep', {
+    name: 'fetch-base',
+    detail: `Checking ${branch} merges into origin/${baseBranch}`,
+  });
   await assertPublicationMergeable(vars, headSha, baseBranch);
+  emit('substep', { name: 'push-branch', detail: `Pushing ${branch}` });
+  const pushStarted = Date.now();
   const push = await execOnSlot(
     vars,
     withFarmGitConfig(`git -C ${shellQuote(vars.remoteRepo)} push -u origin ${shellQuote(branch)}`),
     { timeout },
   );
+  const pushMs = Date.now() - pushStarted;
   assertPublicationBranchPushed(push, branch, run.id, timeout);
+  emit('substep', {
+    name: 'verify-pushed-head',
+    detail: `Checking origin has ${branch} at ${headSha.slice(0, 8)}`,
+  });
   await assertPublicationRemoteHead(run, headSha, branch);
-  // Pre-push hooks can take minutes; check the base again before publishing PR metadata.
-  await assertPublicationMergeable(vars, headSha, baseBranch);
+  // Pre-push hooks can take minutes, and the base can move meanwhile: a slow push checks it again
+  // before PR metadata is published. A fast push stays within the window the first probe covered.
+  if (pushMs >= PUBLICATION_SLOW_PUSH_MS) {
+    emit('substep', {
+      name: 'fetch-base-after-push',
+      detail: `Checking ${branch} still merges into origin/${baseBranch}`,
+    });
+    await assertPublicationMergeable(vars, headSha, baseBranch);
+  }
 }
 
 async function assertPublicationMergeable(

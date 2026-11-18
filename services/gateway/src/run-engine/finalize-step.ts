@@ -371,6 +371,7 @@ export async function executeFinalizeStep(
   let publishBodyPostProcessed = false;
   let publishedHeadSha: string | undefined;
   let publishedBranch = current.branch;
+  let remoteHeadVerified = false;
   if (adoption) {
     // The external publication is complete. Do not approve or republish the older package.
     emitWithBroadcast('substep', {
@@ -566,6 +567,8 @@ export async function executeFinalizeStep(
     publishBodyPostProcessed = published.bodyPostProcessed;
     publishedHeadSha = approvedPackage.headSha;
     publishedBranch = approvedPackage.branch;
+    // publishCompletionPackage checked origin after its last PR mutation, seconds ago.
+    remoteHeadVerified = true;
     emitWithBroadcast('substep', { name: 'refresh-links', detail: 'Refreshing PR run links' });
     await refreshRunLinks(runId);
   }
@@ -628,11 +631,14 @@ export async function executeFinalizeStep(
     publishedHeadSha ??= typeof completedHead === 'string' ? completedHead : undefined;
     if (!publishedHeadSha)
       throw new Error('Completion publication HEAD missing; replay complete before finalize');
-    emitWithBroadcast('substep', {
-      name: 'verify-remote-head',
-      detail: `Verifying origin contains published ${publishedHeadSha.slice(0, 8)}`,
-    });
-    await assertPublicationRemoteHead(current, publishedHeadSha, publishedBranch);
+    // A completion published earlier (often hours before finalize) is checked again here.
+    if (!remoteHeadVerified) {
+      emitWithBroadcast('substep', {
+        name: 'verify-remote-head',
+        detail: `Verifying origin contains published ${publishedHeadSha.slice(0, 8)}`,
+      });
+      await assertPublicationRemoteHead(current, publishedHeadSha, publishedBranch);
+    }
   }
 
   const cliCommand = `farmslot slot release ${current.slotId}`;
