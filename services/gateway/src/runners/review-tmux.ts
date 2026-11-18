@@ -287,9 +287,8 @@ export async function reviewTmuxOperation(
     ?.retainedReviewResume;
   if (action === 'stop' && isRecord(continuation)) input.resumeCommandId = continuation.commandId;
   if (action === 'launch' || action === 'resume') {
-    const resumeSessionId = run.agentContexts?.find(
-      (context) => context.id === 'review',
-    )?.runnerSessionId;
+    const reviewContext = run.agentContexts?.find((context) => context.id === 'review');
+    const resumeSessionId = reviewContext?.runnerSessionId;
     if (action === 'resume' && (!resumeSessionId || !resumeCommandId))
       throw new Error(
         'Terminal reviewer continuation requires its exact saved session and command',
@@ -331,6 +330,8 @@ export async function reviewTmuxOperation(
         'FARMSLOT_SIGNAL_ATTEMPT_ID',
       ],
       resumeSessionId: resumeSessionId ?? undefined,
+      // The saved transcript path, for a runner whose resume flag takes one.
+      resumeSessionPath: reviewContext?.runnerSessionPath ?? undefined,
       safetyTier: 'dangerous',
       modelQuestions,
     });

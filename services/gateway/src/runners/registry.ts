@@ -232,6 +232,12 @@ export interface RunnerSessionContinuation {
      * saved identity is a file stem that the CLI cannot resolve on its own.
      */
     args: (sessionId: string, sessionPath?: string) => string[];
+    /**
+     * 'path' means the saved conversation file is the only form this runner can
+     * resolve, so a binding without one is refused instead of producing a
+     * command that silently starts a new conversation.
+     */
+    sessionReference?: 'path';
     workspace: 'retained' | 'current';
     reservation?: 'create-chat';
     /** Missing means unsupported on this transport. The adapter owns exact CLI syntax. */
@@ -790,6 +796,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
         // `--session <path|id>`: the saved file when we have it. pi's session
         // identity is the file stem, which it cannot resolve as either form.
         args: (sessionId, sessionPath) => ['--session', sessionPath ?? sessionId],
+        sessionReference: 'path',
         workspace: 'retained',
       },
     },

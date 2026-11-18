@@ -466,6 +466,9 @@ async function reactivateRunnerSessionWithPrompt(
       options.model,
       options.sessionId,
       {
+        // This path was just verified on the slot above; it is also the form a
+        // runner like pi needs to resume at all.
+        sessionPath,
         effort: options.effort,
         safetyTier: options.safetyTier,
         modelQuestions: options.modelQuestions,

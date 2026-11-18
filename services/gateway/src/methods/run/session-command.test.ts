@@ -865,3 +865,31 @@ test('run.sessionCommand resumes a pi worker by its saved session path', async (
     'a bare session stem is not a path or an id, so pi cannot resolve it',
   );
 });
+
+// Codex r1 on #2347 asked for a refusal when a pi context kept an id but no
+// path: handed the id, pi opens a *new* conversation at that name and every
+// liveness check then calls it restored. The binding resolver already refuses
+// that shape before any command is built, so this pins the existing behaviour
+// rather than adding a second check behind it.
+test('run.sessionCommand refuses to reopen a pi session with no saved file', async () => {
+  const run = codexWorkerRun({
+    metrics: { nudgeCount: 0, model: 'auto', runner: 'pi' },
+    agentContexts: [
+      agentContext({
+        runner: 'pi',
+        model: 'auto',
+        runnerSessionId: '2026-11-18T03-34-24-255Z_01a1ecb8',
+        runnerSessionPath: undefined,
+      }),
+    ],
+  });
+  const result = await runSessionCommand({ runId: run.id }, deps(run));
+  assert.equal(result.supported, false);
+  if (result.supported) return;
+  assert.equal(result.reason, 'session-not-captured');
+  assert.match(
+    result.detail ?? '',
+    /incomplete retained session metadata/,
+    'the refusal must name the incomplete binding, not emit a command pi cannot use',
+  );
+});

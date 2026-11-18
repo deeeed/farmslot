@@ -26,6 +26,7 @@ import {
   resolveTmuxSession,
   tmuxAttachCommandForTarget,
 } from '../../core/tmux.js';
+import { blindTrialWorkerBoundary } from '../../evals/blind-git.js';
 import {
   buildOperatorPasteableCommand,
   buildRunnerSessionReloadCommand,
@@ -278,6 +279,7 @@ export async function runSessionCommand(
     projectDefaultRaw: projectVars.projectJson.default_safety_tier,
   });
   const model = context.model ?? run.metrics.model ?? null;
+  const blindBoundary = blindTrialWorkerBoundary(run, role);
   const rawReopenCommand = deps.buildReloadCommand(
     vars,
     runner,
@@ -285,6 +287,10 @@ export async function runSessionCommand(
     binding.binding.runnerSessionId,
     {
       sessionPath: binding.binding.runnerSessionPath,
+      // A blind-eval worker's transcript stays inside its trial boundary, pasted
+      // by hand or not. Before this command could resume pi at all, the question
+      // did not arise; now it can, so the boundary travels with it.
+      ...(blindBoundary ? { blindTrialBoundary: blindBoundary } : {}),
       effort: run.effort,
       runtimeDir,
       safetyTier,

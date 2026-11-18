@@ -285,6 +285,19 @@ export function resumableSessionProbeCommand(runnerSessionPath: string): string 
   return `test -e ${shellQuote(runnerSessionPath)}`;
 }
 
+/**
+ * Stricter form: the saved state must also be readable and carry content.
+ *
+ * A runner handed a path to a missing or empty transcript does not fail — pi
+ * starts a *new* conversation there — so a liveness check afterwards reports a
+ * reloaded session that has none of the work in it. A directory (Grok) only has
+ * to be readable.
+ */
+export function resumableSessionContentProbeCommand(runnerSessionPath: string): string {
+  const target = shellQuote(runnerSessionPath);
+  return `test -r ${target} && { test -s ${target} || test -d ${target}; }`;
+}
+
 export function buildRunnerSessionDiscoveryCommand(
   repo: string,
   runner: string,

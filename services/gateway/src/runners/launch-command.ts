@@ -334,6 +334,13 @@ export function runnerSessionContinuationArgs(
     throw new Error(`Runner '${runner}' cannot continue a terminal session`);
   assertSafeRunnerArgumentValue('sessionId', sessionId);
   if (sessionPath) assertSafeRunnerArgumentValue('sessionPath', sessionPath);
+  // Handed its own saved id, pi opens a *new* conversation, which then passes
+  // every liveness check. Callers that can refuse do (reopen, recovery); this
+  // builder still emits the best command it can, but it says so.
+  if (capability.sessionReference === 'path' && !sessionPath)
+    console.warn(
+      `[launch-command] runner '${runner}' resumes by its saved session file, and this session has no recorded path; the command falls back to its id and may open a new conversation`,
+    );
   return capability.args(sessionId, sessionPath ?? undefined);
 }
 

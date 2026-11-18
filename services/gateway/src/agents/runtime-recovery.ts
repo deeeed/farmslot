@@ -61,6 +61,7 @@ import {
   readPaneProcessStartedAtMs,
   resolveRunnerSessionBinding,
   resolveRunRetainedSessionBinding,
+  resumableSessionContentProbeCommand,
 } from '../runners/session-process.js';
 import { getRun, listRuns, updateRun, updateRunAgentContexts } from '../runs/store.js';
 import { normalizeWorkerSignal, parseStrictIsoMs } from '../tasks/worker-signals.js';
@@ -843,6 +844,21 @@ export async function restoreTmuxWorker(
       runTier: run.safetyTier,
       projectDefaultRaw: projectVars.projectJson.default_safety_tier,
     });
+    // A runner handed a path to a transcript that is gone or empty does not
+    // fail: pi opens a new conversation at that path, the liveness check below
+    // sees a live process, and the reload is reported as the old session
+    // restored — with none of its work in it. Prove the state is there first.
+    if (sessionBinding.runnerSessionPath) {
+      const saved = await execOnSlot(
+        vars,
+        resumableSessionContentProbeCommand(sessionBinding.runnerSessionPath),
+        { timeout: 15_000 },
+      );
+      if (saved.exitCode !== 0)
+        throw new Error(
+          `Cannot reload ${runner} session ${sessionBinding.runnerSessionId}: its saved session at ${sessionBinding.runnerSessionPath} is missing, unreadable or empty. Restore the transcript before reloading; launching here would start a new conversation and report it as the old one.`,
+        );
+    }
     const blindTrialBoundary = blindTrialWorkerBoundary(run, selected.role);
     const launchCommand = `${WORKER_ENV_PREFIX} && ${buildRunnerSessionReloadCommand(
       vars,
