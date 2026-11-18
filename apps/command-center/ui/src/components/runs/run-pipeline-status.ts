@@ -5,6 +5,7 @@
 // - green (ok) / blue (running) / muted = success / in-flight / idle
 
 import type { RunListRow, RunStep, RunStepDisplayStatus, RunStepStatus } from '@farmslot/protocol';
+import { PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
 
@@ -121,7 +122,7 @@ export function pipelineStepTone(
     status: RunStepDisplayStatus;
     outputs?: Record<string, unknown> | null;
   },
-  opts?: { runError?: string | null },
+  opts?: { runError?: string | null; run?: Pick<RunListRow, 'status' | 'decisions'> },
 ): PipelineDisplayTone {
   // A blocked run's stopped step reads amber whatever its outputs record.
   if (step.status === 'blocked') return 'warn';
@@ -134,11 +135,34 @@ export function pipelineStepTone(
         : null;
   const verdictLower = (verdict ?? '').trim().toLowerCase();
 
+  const rejection = outputs?.reviewLaunchRejection;
+  if (
+    step.name === 'review' &&
+    (step.status === 'failed' || step.status === 'done') &&
+    rejection &&
+    typeof rejection === 'object' &&
+    'code' in rejection &&
+    rejection.code === PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.roundLimitReached
+  )
+    return 'warn';
+
   // A spent fix budget stops automated rework. The review can have found issues
   // or stopped for the operator even if the engine records the step as failed.
   if (step.name === 'review' && step.status === 'failed') {
     if (verdictLower === 'issues' || verdictLower === 'blocked')
       return publicationReviewVerdictTone(verdictLower);
+    // Slim list rows can omit the rejection body, but keep the decision's stopped step.
+    if (
+      !verdict &&
+      opts?.run?.status === 'needs-decision' &&
+      opts.run.decisions.some(
+        (decision) =>
+          !decision.resolvedAt &&
+          decision.payload?.kind === 'result-decision' &&
+          decision.payload.stoppedAt === 'review',
+      )
+    )
+      return 'warn';
     if (!verdict && (outputs?.maxRetriesExhausted === true || /issues/i.test(step.detail ?? '')))
       return 'warn';
     return verdictLower === 'failed' || step.detail?.trim() || opts?.runError?.trim()

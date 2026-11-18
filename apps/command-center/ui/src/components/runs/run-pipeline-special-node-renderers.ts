@@ -148,7 +148,10 @@ export function renderReviewPipelineNode(n: NodePos, ctx: RunPipelineSpecialNode
   const isSkipped = vis === 'skipped';
   const isBlocked = vis === 'blocked';
   // The canvas and Runs strip share the review's recorded tone.
-  const tone = pipelineStepTone({ ...step, status: vis }, { runError: ctx.run.error });
+  const tone = pipelineStepTone(
+    { ...step, status: vis },
+    { runError: ctx.run.error, run: ctx.run },
+  );
   const toneColors = pipelineToneFillStroke(tone);
 
   const fillColor =
@@ -248,7 +251,7 @@ export function renderReviewPipelineNode(n: NodePos, ctx: RunPipelineSpecialNode
         <text class="node-meta" x="${n.w / 2}" y="27"
               text-anchor="middle" dominant-baseline="central"
               fill="${pipelineToneColor(tone)}">
-          ${verdict === 'blocked' ? '! NEEDS DECISION' : `! ISSUES${retryCount > 0 ? ` (${retryCount}x)` : ''}`}
+          ${verdict === 'issues' ? `! ISSUES${retryCount > 0 ? ` (${retryCount}x)` : ''}` : '! NEEDS DECISION'}
         </text>
       `
               : isDone && verdictColor
@@ -277,12 +280,12 @@ export function renderReviewPipelineNode(n: NodePos, ctx: RunPipelineSpecialNode
       `
                     : svg`
         ${
-          !isPending && !isDone
+          isRunning || (isFailed && tone === 'fail')
             ? svg`
           <text class="node-meta" x="${n.w / 2}" y="27"
                 text-anchor="middle" dominant-baseline="central"
-                fill="${stepStatusColor(vis)}">
-            ${isRunning ? '*' : isFailed ? 'x' : ''}
+                fill="${pipelineToneColor(tone)}">
+            ${isRunning ? '*' : 'x'}
           </text>
         `
             : nothing

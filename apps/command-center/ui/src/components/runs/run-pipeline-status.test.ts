@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { type Run, runListRow, trimRunForList } from '@farmslot/protocol';
+import {
+  PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
+  type Run,
+  runListRow,
+  trimRunForList,
+} from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
 
@@ -269,4 +274,49 @@ test('review step tones are the same from the served slim row, the full run and 
   assert.deepEqual(expected, ['warn', 'ok', 'warn']);
   assert.deepEqual(tones(runListRow(full)), expected);
   assert.deepEqual(tones(trimRunForList(full)), expected);
+
+  // The engine can hold a delivered result before a reviewer returns a verdict.
+  const reason = 'The review round budget is spent. Extend the review budget to continue.';
+  const held: Run = {
+    ...full,
+    status: 'needs-decision',
+    error: reason,
+    steps: [
+      {
+        name: 'review',
+        status: 'failed',
+        detail: reason,
+        outputs: {
+          reviewLaunchRejection: {
+            code: PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.roundLimitReached,
+            message: reason,
+            details: { retainedBudget: 'x'.repeat(600) },
+          },
+        },
+      },
+    ],
+    decisions: [
+      {
+        id: 'held',
+        type: 'engine_result_decision',
+        title: 'Decide on the run result',
+        description: reason,
+        createdAt: full.updatedAt,
+        actions: [],
+        payload: {
+          kind: 'result-decision',
+          stoppedAt: 'review',
+          reason,
+          delivered: { headSha: '0123456789abcdef' },
+          findingsDigest: 'sha256:review',
+          actions: [],
+        },
+      },
+    ],
+  };
+  const slim = runListRow(held);
+  assert.equal(slim.steps[0]?.outputs?.reviewLaunchRejection, undefined);
+  for (const run of [held, slim]) {
+    assert.equal(pipelineStepTone(run.steps[0], { runError: run.error, run }), 'warn');
+  }
 });

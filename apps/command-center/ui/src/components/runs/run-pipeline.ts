@@ -399,7 +399,7 @@ export class RunPipeline extends LitElement {
     const nodeMap = new Map(layout.nodes.map((n) => [n.id, n]));
     const specialNodeContext = this._specialNodeContext();
     const stepTone = (step: RunStep, status = this._vis(step)) =>
-      pipelineStepTone({ ...step, status }, { runError: this.run.error });
+      pipelineStepTone({ ...step, status }, { runError: this.run.error, run: this.run });
     return svg`
       ${renderPipelineDefs()}
       ${renderPipelineLanes(layout)}

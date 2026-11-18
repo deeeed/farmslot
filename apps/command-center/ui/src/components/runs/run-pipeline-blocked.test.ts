@@ -221,3 +221,17 @@ test('a review held after its fix budget is spent uses amber for its outline and
   assert.match(review, new RegExp(`fill="${colors.statusWarn}"`));
   assert.doesNotMatch(review, new RegExp(colors.statusFail));
 });
+
+test('a review with no recorded verdict or error has no red failure glyph', () => {
+  const run: Run = {
+    ...blockedRun,
+    status: 'reviewing',
+    error: undefined,
+    steps: blockedRun.steps.map((step) =>
+      step.name === 'review' ? { ...step, status: 'failed' } : step,
+    ),
+  };
+  const review = litText(renderReviewPipelineNode(nodeFor(run, 'review'), context(run)));
+  assert.doesNotMatch(review, new RegExp(colors.statusFail));
+  assert.doesNotMatch(review, />\s*x\s*<\/text>/);
+});
