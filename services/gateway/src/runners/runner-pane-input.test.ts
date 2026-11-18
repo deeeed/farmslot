@@ -44,3 +44,27 @@ test('Codex 0.170 keeps its model and directory row when a draft hides the short
   ].join('\n');
   assert.equal(runnerPaneBufferedInstruction(tail), 'Current operator draft');
 });
+
+test('an explicit shortcut footer after the live prompt still ends the draft', () => {
+  const tail = [
+    '› Current operator draft',
+    '',
+    '  ← for agents · ? for shortcuts',
+    '',
+    '  GPT-6.2-Sol high · /private/tmp/codex-enter-proof',
+  ].join('\n');
+  assert.equal(runnerPaneBufferedInstruction(tail), 'Current operator draft');
+});
+
+test('a shortcut footer from an older inline frame cannot hide the current Codex draft', () => {
+  const tail = [
+    '› Ask Codex to do anything',
+    '',
+    '  ← for agents · ? for shortcuts',
+    '',
+    '› Current operator draft',
+    '',
+    '  GPT-6.2-Sol high · /private/tmp/codex-enter-proof',
+  ].join('\n');
+  assert.equal(runnerPaneBufferedInstruction(tail), 'Current operator draft');
+});

@@ -195,6 +195,7 @@ test('an emptied Codex composer stops retries while delivery proof is unavailabl
 
 for (const [change, expected] of [
   ['foreign draft', 'queue_buffer_unconfirmed'],
+  ['foreign multiline draft with a quoted prompt', 'queue_buffer_unconfirmed'],
   ['foreign queue', 'queued_input'],
   ['replaced pane process', 'pane_changed'],
 ]) {
@@ -208,6 +209,8 @@ for (const [change, expected] of [
           process.env.TMUX_PANE_STATE_PROCESS_STARTED_AT = '2';
         else if (change === 'foreign queue')
           process.env.TMUX_PANE_STATE_TAIL_CAPTURE = `• Queued follow-up inputs\n  ↳ foreign\n\n${draft}`;
+        else if (change === 'foreign multiline draft with a quoted prompt')
+          process.env.TMUX_PANE_STATE_TAIL_CAPTURE = `› Operator draft\n  › ${message}\n\n  GPT-6.2-Sol high · /tmp/driver-proof`;
         else process.env.TMUX_PANE_STATE_TAIL_CAPTURE = '› Operator draft\n\ncontext left';
       }, 20);
       t.after(() => clearTimeout(timer));
