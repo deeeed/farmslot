@@ -39,6 +39,7 @@ import {
   checkAgentLive,
   type MonitorObservations,
   monitorRun,
+  persistMonitorWindowStart,
   resolveMonitorDecision,
 } from './run-monitor.js';
 import { deleteTestRunIfPresent } from './test-fixtures.js';
@@ -257,8 +258,12 @@ test(
     const unavailable = f.card()!.id;
 
     // The operator spends longer on the card than the whole 1.5 s window, then
-    // fixes the provider and clicks Continue.
-    await until(() => false, 2_000);
+    // fixes the provider and clicks Continue. Moved on the clock rather than
+    // slept: a fixed wall-clock wait is a 2 s tax on every CI run and the only
+    // thing it proves is that time passes. Only Date is faked, so the monitor's
+    // own polling still runs on real timers.
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+    t.mock.timers.setTime(Date.now() + 2_500);
     f.restoreRunner();
     resolveMonitorDecision(unavailable, 'continue');
 
@@ -540,3 +545,71 @@ test(
     void execution;
   },
 );
+
+// Grok r1 on #2322: the ownership check in commitGateWait is a same-tick guard,
+// and the retiring loop polls again right after. That poll builds a fresh
+// monitorState literal with no gateWaitStartedAt, so it dropped the replacement
+// monitor's marker one poll after commitGateWait preserved it — the same lost
+// restart credit, moved by 5 ms.
+test(
+  'a poll by a retiring monitor keeps a replacement wait’s open marker',
+  { timeout: 15_000 },
+  async (t) => {
+    const f = await fixture(t);
+    const execution = f.start();
+    await until(() => f.card() !== undefined);
+    const unavailable = f.card()!.id;
+    await until(() => getRun(f.run.id)?.monitorState?.gateWaitStartedAt !== undefined, 1_000);
+
+    const replacementMarker = new Date(Date.now() + 1_000).toISOString();
+    const held = getRun(f.run.id)!.monitorState!;
+    updateRun(f.run.id, { monitorState: { ...held, gateWaitStartedAt: replacementMarker } });
+
+    f.restoreRunner();
+    resolveMonitorDecision(unavailable, 'continue');
+    // Wait for the loop to poll again: that write, not the settlement, is what
+    // used to erase the marker.
+    const polledAt = getRun(f.run.id)?.monitorState?.lastPollAt;
+    await until(() => getRun(f.run.id)?.monitorState?.lastPollAt !== polledAt);
+
+    assert.notEqual(
+      getRun(f.run.id)?.monitorState?.lastPollAt,
+      polledAt,
+      'the monitor must poll again for this case to say anything',
+    );
+    assert.equal(
+      getRun(f.run.id)?.monitorState?.gateWaitStartedAt,
+      replacementMarker,
+      'the poll write must carry an open marker it does not own, or a restart charges that card to the worker',
+    );
+    void execution;
+  },
+);
+
+// Grok r1, second half of the same finding: a new monitoring window zeroes the
+// credit by design, but it also cleared the marker of a card that is still open.
+// The wait does not end because the window turned over; dropping its marker
+// there loses it to the next restart.
+test('a new monitoring window keeps the marker of a card still open', async (t) => {
+  const f = await fixture(t);
+  const openedAt = new Date(Date.now() - 30_000).toISOString();
+  updateRun(f.run.id, {
+    monitorState: {
+      nudgeCount: 0,
+      lastPollAt: openedAt,
+      startedAt: openedAt,
+      gateWaitMs: 4_000,
+      gateWaitStartedAt: openedAt,
+    },
+  });
+
+  persistMonitorWindowStart(f.run.id);
+
+  const state = getRun(f.run.id)?.monitorState;
+  assert.equal(state?.gateWaitMs, 0, 'a new window starts with no credit carried into it');
+  assert.equal(
+    state?.gateWaitStartedAt,
+    openedAt,
+    'the card is still open; its marker is what credits the wait after a restart',
+  );
+});

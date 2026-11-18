@@ -530,6 +530,10 @@ export function resolveMonitorDecision(decisionId: string, actionId: string): vo
  * answering a card does not shorten the window it was raised in, and carrying it
  * into the next window would make every later window longer by every card the
  * run has ever sat on.
+ *
+ * An open card's marker is kept. The wait did not end because the window turned
+ * over, and a restart reads that marker to credit the slice nothing was
+ * watching; recovery caps it to the window, so it cannot over-credit.
  */
 export function persistMonitorWindowStart(runId: string, startedAtMs: number = Date.now()): void {
   const run = getRun(runId);
@@ -538,7 +542,7 @@ export function persistMonitorWindowStart(runId: string, startedAtMs: number = D
   const prev = run.monitorState;
   updateRun(runId, {
     monitorState: prev
-      ? { ...prev, startedAt, gateWaitMs: 0, gateWaitStartedAt: undefined }
+      ? { ...prev, startedAt, gateWaitMs: 0 }
       : {
           nudgeCount: run.metrics.nudgeCount,
           lastPollAt: startedAt,
@@ -2082,7 +2086,15 @@ export async function monitorRun(
             lastPaneHash: state.lastPaneHash,
             lastStructuredProgressAt: structuredProgressAt,
             operatorWaitMs: state.operatorWaitMs,
-            gateWaitMs: gateWait.ms,
+            // This loop's view of the gate credit is a snapshot, not the only
+            // one: a replayed monitor can be holding a card open right now. Its
+            // marker has to survive this write, and the credit only ever grows
+            // within a window, so the larger total is the live one. A window
+            // reset writes 0 before this runs, so nothing is resurrected.
+            gateWaitMs: Math.max(gateWait.ms, currentForPersist.monitorState?.gateWaitMs ?? 0),
+            ...(currentForPersist.monitorState?.gateWaitStartedAt
+              ? { gateWaitStartedAt: currentForPersist.monitorState.gateWaitStartedAt }
+              : {}),
             ...(state.operatorResumedAt
               ? { operatorResumedAt: new Date(state.operatorResumedAt).toISOString() }
               : {}),
