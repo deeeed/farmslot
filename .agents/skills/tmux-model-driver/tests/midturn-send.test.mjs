@@ -19,6 +19,7 @@ function fixture(t) {
   let queuedPayload = payload;
   let drop = false;
   let pasted = '';
+  let pastedAt = 0;
   let capturedPaste = null;
   let capturedSubmit = null;
   Object.assign(process.env, {
@@ -40,11 +41,13 @@ function fixture(t) {
     assert.equal(command, 'tmux', 'no process, server or native probe is launched');
     keys.push(args);
     if (args[0] === 'load-buffer') pasted = options.input;
-    if (args[0] === 'paste-buffer')
+    if (args[0] === 'paste-buffer') {
+      pastedAt = Date.now();
       process.env.TMUX_PANE_STATE_TAIL_CAPTURE = capturedPaste ?? `› ${pasted}\n\ncontext left\n`;
+    }
     if (args[0] === 'send-keys' && !drop)
       process.env.TMUX_PANE_STATE_TAIL_CAPTURE = capturedSubmit
-        ? capturedSubmit(args.at(-1), pasted)
+        ? capturedSubmit(args.at(-1), pasted, pastedAt)
         : `Old transcript: ${payload}\n• Messages to be submitted after\nnext tool call (press esc to interrupt and send\n  immediately)\n  ↳ ${queuedPayload}\n\n› Ask Codex to do anything\ncontext left`;
     return '';
   });
@@ -134,6 +137,57 @@ test('a working composer left after Enter receives one more Enter and verifies s
     ],
   );
   assert.equal(f.keys.filter((args) => args[0] === 'paste-buffer').length, 1);
+});
+
+test('Codex lets the paste burst expire before the first Enter', async (t) => {
+  const f = fixture(t);
+  const message = 'Short idle handoff';
+  const draft = `› ${message}\n\ncontext left`;
+  const waits = [];
+  f.setCapturedPanes(draft, (key, pasted, pastedAt) => {
+    assert.equal(key, 'Enter');
+    assert.equal(pasted, message);
+    waits.push(Date.now() - pastedAt);
+    return waits.at(-1) < 120 ? draft : codexSteering(message);
+  });
+  const result = await send('%1', 'codex', message);
+  assert.equal(result.submitted, true);
+  assert.equal(waits.length, 1);
+  assert.ok(waits[0] >= 120);
+});
+
+test('Codex retries an unchanged draft at most twice, without pasting again', async (t) => {
+  const f = fixture(t);
+  const message = 'Idle handoff with a dropped Enter';
+  const draft = `› ${message}\n\ncontext left`;
+  const submits = [];
+  f.setCapturedPanes(draft, (key) => {
+    assert.equal(key, 'Enter');
+    submits.push(Date.now());
+    return draft;
+  });
+  const result = await send('%1', 'codex', message);
+  assert.equal(result.verification, 'not_sent');
+  assert.equal(result.submitted, false);
+  assert.equal(submits.length, 3);
+  assert.ok(submits.slice(1).every((at, index) => at - submits[index] >= 120));
+  assert.equal(f.keys.filter(([command]) => command === 'paste-buffer').length, 1);
+});
+
+test('an emptied Codex composer stops retries while delivery proof is unavailable', async (t) => {
+  const f = fixture(t);
+  const message = 'Idle handoff with missing native proof';
+  const draft = `› ${message}\n\ncontext left`;
+  f.setCapturedPanes(draft, () => {
+    setTimeout(() => {
+      process.env.TMUX_PANE_STATE_TAIL_CAPTURE = `› ${message}\n\n• Working (0s • esc to interrupt)\n\n› Ask Codex to do anything\n\n? for shortcuts`;
+    }, 40);
+    return draft; // Enter is queued by tmux, but the next capture can still show the old draft.
+  });
+  const result = await send('%1', 'codex', message);
+  assert.equal(result.verification, 'unverified');
+  assert.equal(result.submitted, false);
+  assert.equal(f.keys.filter(([command]) => command === 'send-keys').length, 1);
 });
 
 test('a Codex steering handoff pulled back with ⇧← loses its proof for status and ACK', async (t) => {
@@ -269,23 +323,6 @@ for (const delivered of [true, false]) {
   });
 }
 
-test('an unchanged owned composer stops after two Enters without another paste', async (t) => {
-  const f = fixture(t);
-  f.setDrop(true);
-  const result = await send('%1', 'codex', f.payload);
-  assert.equal(result.submitted, false);
-  assert.equal(result.verification, 'not_sent');
-  assert.equal(result.evidence, null);
-  assert.deepEqual(
-    f.keys.filter((args) => args[0] === 'send-keys'),
-    [
-      ['send-keys', '-t', '%1', 'Enter'],
-      ['send-keys', '-t', '%1', 'Enter'],
-    ],
-  );
-  assert.equal(f.keys.filter((args) => args[0] === 'paste-buffer').length, 1);
-});
-
 test('the captured clipped composer can deliver an Enter steering preview without a native binding', async (t) => {
   const f = fixture(t);
   const steering = captured('queued-followup').replace(
@@ -418,7 +455,7 @@ test('a retry submits only the owned composer through Enter while Codex is unkno
   assert.equal(retry.submitted, true);
   assert.equal(retry.typed, false);
   assert.equal(f.keys.filter((args) => args[0] === 'paste-buffer').length, 1);
-  assert.equal(f.keys.filter((args) => args[0] === 'send-keys').length, 3);
+  assert.equal(f.keys.filter((args) => args[0] === 'send-keys').length, 4);
 });
 
 test('owned multiline composer retry preserves paragraph breaks and ignores the footer', async (t) => {

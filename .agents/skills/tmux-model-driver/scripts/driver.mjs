@@ -38,6 +38,8 @@ import {
 const runners = new Set(['codex', 'claude', 'cursor', 'gemini', 'grok']);
 const shellNames = new Set(['zsh', 'bash', 'sh', 'fish', 'dash']);
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// Codex can treat Enter as a pasted newline for 120 ms after a burst.
+const CODEX_COMPOSER_SETTLE_MS = 150;
 const hash = (text) => createHash('sha256').update(text).digest('hex');
 const quote = (text) => `'${text.replaceAll("'", "'\\''")}'`;
 
@@ -794,22 +796,29 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
             durableWrite(files.receipt, receipt);
           }
         }
+        if (typed && runner === 'codex') await delay(CODEX_COMPOSER_SETTLE_MS);
         after = paneState(pane, runner, selection);
         verification = after.pending_question
           ? 'pending_question'
           : after.state !== runner
             ? 'wrong_runner'
-            : after.delivery_phase === 'busy' && !supportsMidTurnPrompt(runner)
-              ? 'busy'
-              : null;
-        if (!verification) {
-          tmux(['send-keys', '-t', pane, 'Enter']);
+            : runner === 'codex' &&
+                (after.pane_id !== before.pane_id || paneIdentity(after) !== paneIdentity(before))
+              ? 'pane_changed'
+              : after.launch_blocker
+                ? 'launch_blocker'
+                : after.delivery_phase === 'busy' && !supportsMidTurnPrompt(runner)
+                  ? 'busy'
+                  : null;
+        const pressEnter = () => {
+          tmux(['send-keys', '-t', runner === 'codex' ? after.pane_id : pane, 'Enter']);
           if (receipt) {
             receipt.submitted_at = Date.now();
             receipt.submit_key = 'Enter';
             durableWrite(files.receipt, receipt);
           }
-        }
+        };
+        if (!verification) pressEnter();
         verification ||= 'unverified';
         let deadline = Date.now() + timeout;
         // A mid-turn Claude send is proven only by its transcript's queue records, which can
@@ -818,7 +827,8 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
           requiresNativeSession(runner) && before.delivery_phase !== 'idle'
             ? startedAt + queueProof
             : 0;
-        let retriedEnter = false;
+        let enterRetries = 0;
+        const maxEnterRetries = runner === 'codex' ? 2 : 1;
         let leftComposer = false;
         if (verification === 'unverified') {
           for (;;) {
@@ -861,7 +871,7 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
               verification = 'pending_question';
               break;
             }
-            if (after.state !== runner) break;
+            if (after.state !== runner || after.launch_blocker) break;
             const pending = queuedPrompt(after, runner, receipt);
             if (pending) {
               evidence = {
@@ -878,25 +888,26 @@ export async function send(pane, runner, payload, tracePath, flush = false) {
             // Text that left the composer and came back was pulled back for editing: no Enter.
             const owned = ownsComposer(after, runner, receipt);
             if (!owned) leftComposer = true;
-            if (
-              !retriedEnter &&
+            const canRetry =
+              enterRetries < maxEnterRetries &&
               !flush &&
               !leftComposer &&
               !payload.startsWith('/goal ') &&
-              owned
-            ) {
-              retriedEnter = true;
-              tmux(['send-keys', '-t', pane, 'Enter']);
-              receipt.submit_key = 'Enter';
-              receipt.submitted_at = Date.now();
-              durableWrite(files.receipt, receipt);
+              owned;
+            const retryAt =
+              canRetry && runner === 'codex'
+                ? (receipt.submitted_at ?? 0) + CODEX_COMPOSER_SETTLE_MS
+                : 0;
+            if (canRetry && Date.now() >= retryAt) {
+              enterRetries++;
+              pressEnter();
               deadline = Date.now() + timeout;
               continue;
             }
-            // One last read at the deadline, never a sleep past it.
-            const left = Math.max(deadline, queueDeadline) - Date.now();
+            // One last read at the deadline, including the wait for a settled owned draft.
+            const left = Math.max(deadline, queueDeadline, retryAt) - Date.now();
             if (left <= 0) break;
-            await delay(Math.min(left, Date.now() < deadline ? 40 : 250));
+            await delay(Math.min(left, Date.now() < Math.max(deadline, retryAt) ? 40 : 250));
           }
           if (
             verification === 'unverified' &&

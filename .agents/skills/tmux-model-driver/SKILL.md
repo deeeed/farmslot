@@ -39,9 +39,11 @@ It refuses the wrong runner, a shell when a model is expected, a pending questio
 or a foreign queue. Codex and Claude accept Enter-submitted input during busy or unknown
 phases. Claude also needs its bound native session, because only its transcript proves
 delivery. Other runners and explicit flush still require idle native readiness.
-It pastes the payload once and presses `Enter`. If the exact owned text remains in the
-composer, it presses `Enter` once more and re-verifies. An unchanged composer then reports
-`not_sent`; its receipt is retained. The driver never presses `Tab` or answers a question.
+It pastes the payload once. For Codex, it waits 150 ms before `Enter` so the paste burst
+can finish. If the exact owned text stays in the composer, Codex allows up to two further
+`Enter` attempts, spaced at least 150 ms apart. Other runners keep their single retry.
+An unchanged composer then reports `not_sent` and retains its receipt. An empty composer
+ends retries, and delivery still needs proof. The driver never presses `Tab` or answers a question.
 
 `submitted` requires exact acceptance of the owned prompt. Codex native history
 can prove steering within the active turn, without claiming a new turn started.
