@@ -1,5 +1,5 @@
 import type { Dirent } from 'node:fs';
-import { lstat, readdir, realpath } from 'node:fs/promises';
+import { lstat, readdir, readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import { isRecord, TASK_DIRECTORY_LAYOUT, type TaskActionInputLibrary } from '@farmslot/protocol';
@@ -77,7 +77,60 @@ export async function taskActionInputsAvailable(
   }
   if (!entries.some((entry) => entry.isFile()))
     throw new Error(`Task-action implementation is missing for ${names}.`);
+  // "Some file exists under actions/" is not evidence that *this* action was
+  // retained. An attempt that used two task actions, then had one and its
+  // manifest entry deleted before the selected attempt ran, would otherwise
+  // publish a before image whose implementation is gone: the selected digest
+  // matches the smaller library and the other action's file satisfies the
+  // presence check. Each referenced action has to be declared by the retained
+  // library itself.
+  const declared = await declaredTaskActionNames(root);
+  const undeclared = [...new Set(referenced.flatMap(({ actionNames }) => actionNames))].filter(
+    (action) => !declared.has(action),
+  );
+  if (undeclared.length)
+    throw new Error(
+      `Task-action implementation is missing for ${undeclared.join(', ')}: the retained library declares ${declared.size ? [...declared].join(', ') : 'no actions'}.`,
+    );
   return true;
+}
+
+/** Every action name the retained library's own action manifests declare. */
+async function declaredTaskActionNames(root: string): Promise<Set<string>> {
+  const manifest = await readRecipeLibraryManifest(root);
+  const declaredFiles = Object.values(manifest?.actions ?? {});
+  const files = declaredFiles.length
+    ? declaredFiles.map((file) => path.join(root, file))
+    : await actionManifestFiles(root);
+  const names = new Set<string>();
+  for (const file of files) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await readFile(file, 'utf8'));
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue;
+      throw new Error(
+        `Task-action manifest ${path.basename(file)} could not be read: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+    if (isRecord(parsed) && isRecord(parsed.actions))
+      for (const action of Object.keys(parsed.actions)) names.add(action);
+  }
+  return names;
+}
+
+/** Convention fallback for a library with no `recipe-library.json` actions map. */
+async function actionManifestFiles(root: string): Promise<string[]> {
+  const manifests = path.join(root, 'manifests');
+  try {
+    return (await readdir(manifests, { withFileTypes: true }))
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+      .map((entry) => path.join(manifests, entry.name));
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return [];
+    throw error;
+  }
 }
 
 export async function assertTaskActionInputsComplete(

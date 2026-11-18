@@ -2108,3 +2108,72 @@ test('frozen publication accepts a before/after pair recorded across a library m
     `artifacts/${f.headRoot}/proof.png`,
   ]);
 });
+
+// Codex r2 on #2337: presence was "some file exists under actions/", which any
+// surviving action satisfies. A before attempt that used two task actions, one
+// of which was deleted along with its manifest entry before the selected
+// attempt ran, published a before image whose implementation is gone — the
+// selected digest matches the smaller library and the other file covers for it.
+test('frozen publication refuses a before attempt whose action was dropped from the library', async (t) => {
+  const f = await baselineFixture(t);
+  const actionFile = 'artifacts/task-actions/actions/read_text.mjs';
+  const manifestFile = 'artifacts/task-actions/manifests/task.action-manifest.json';
+  // The library as it stands now: task.drop_me is gone, entry and file.
+  const manifest = {
+    $schema: 'https://farmslot.io/schemas/action-manifest-v1.schema.json',
+    actions: {
+      'task.read_text': {
+        description: 'Read fixture text.',
+        examples: [{ action: 'task.read_text', intent: 'Read text.', next: 'done' }],
+        schema: { type: 'object', properties: {}, additionalProperties: false },
+      },
+    },
+  };
+  for (const [file, bytes] of [
+    [actionFile, 'export default () => "fixture";\n'],
+    [manifestFile, JSON.stringify(manifest)],
+  ]) {
+    await mkdir(path.dirname(path.join(f.taskDir, file!)), { recursive: true });
+    await writeFile(path.join(f.taskDir, file!), bytes!);
+    f.inventory.push({ path: file!, purpose: 'task-input', sha256: digest(Buffer.from(bytes!)) });
+  }
+  const { digestRecipeLibrary, readRecipeLibraryManifest } =
+    await import('@farmslot/recipe-runner');
+  const root = path.join(f.taskDir, 'artifacts/task-actions');
+  const current = await digestRecipeLibrary(root, await readRecipeLibraryManifest(root));
+  for (const [rootName, taskActions] of [
+    [
+      f.baselineRoot,
+      [
+        { action: 'task.read_text', official: false, digest: `sha256:${'c'.repeat(64)}` },
+        { action: 'task.drop_me', official: false, digest: `sha256:${'c'.repeat(64)}` },
+      ],
+    ],
+    [f.headRoot, [{ action: 'task.read_text', official: false, digest: current }]],
+  ] as const) {
+    const summaryFile = `artifacts/${rootName}/summary.json`;
+    const summary: unknown = JSON.parse(await readFile(path.join(f.taskDir, summaryFile), 'utf8'));
+    assert.ok(summary && typeof summary === 'object' && !Array.isArray(summary));
+    const bytes = JSON.stringify({ ...summary, taskActions });
+    await writeFile(path.join(f.taskDir, summaryFile), bytes);
+    const entry = f.inventory.find(({ path: file }) => file === summaryFile);
+    assert.ok(entry);
+    entry.sha256 = digest(Buffer.from(bytes));
+  }
+  await retainRunFixture(f.run);
+  const inventory = await buildPackageEvidenceManifest(
+    f.taskDir,
+    f.inventory,
+    await readEvidenceManifest(f.run),
+    1,
+    publicationBaselineContext(f.run),
+  );
+  await retainRunFixture(f.run);
+  await assert.rejects(
+    verifyFrozenPublicationEvidence(f.run, inventory, [
+      `artifacts/${f.baselineRoot}/proof.png`,
+      `artifacts/${f.headRoot}/proof.png`,
+    ]),
+    /task\.drop_me/,
+  );
+});
