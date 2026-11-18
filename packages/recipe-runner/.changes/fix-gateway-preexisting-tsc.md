@@ -1,0 +1,1 @@
+- A WebP encoder worker failure is rejected as an Error, including when the worker reports a non-Error value.

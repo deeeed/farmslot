@@ -65,9 +65,10 @@ function encoder(): Worker {
     if (message.webp) request?.resolve(message.webp);
     else request?.reject(new Error(`WebP encoding failed: ${message.error}`));
   });
-  started.on('error', (error) => {
+  started.on('error', (error: unknown) => {
     worker = undefined;
-    for (const request of pending.values()) request.reject(error);
+    const failure = error instanceof Error ? error : new Error(String(error));
+    for (const request of pending.values()) request.reject(failure);
     pending.clear();
   });
   worker = started;
