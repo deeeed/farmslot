@@ -799,6 +799,89 @@ for (const codes of [
   });
 }
 
+test('a replay during no-change diff capture keeps the old COMPLETE from persisting its checkpoint', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'no-change-replay-'));
+  const project = 'no-change-replay-fixture';
+  const slot = 'no-change-replay-fixture-1';
+  const pool = path.join(root, 'pool');
+  const projects = path.join(root, 'projects');
+  const previousPool = process.env.FARMSLOT_POOL_DIR;
+  const previousProjects = process.env.FARMSLOT_PROJECTS_DIR;
+  process.env.FARMSLOT_POOL_DIR = pool;
+  process.env.FARMSLOT_PROJECTS_DIR = projects;
+  t.after(async () => {
+    if (previousPool === undefined) delete process.env.FARMSLOT_POOL_DIR;
+    else process.env.FARMSLOT_POOL_DIR = previousPool;
+    if (previousProjects === undefined) delete process.env.FARMSLOT_PROJECTS_DIR;
+    else process.env.FARMSLOT_PROJECTS_DIR = previousProjects;
+    await rm(root, { recursive: true, force: true });
+  });
+  await mkdir(pool);
+  await mkdir(path.join(projects, project), { recursive: true });
+  await writeFile(path.join(projects, project, 'project.json'), JSON.stringify({ name: project }));
+  await writeFile(
+    path.join(pool, 'local.json'),
+    JSON.stringify({
+      machine: 'local',
+      host: 'localhost',
+      ssh_user: os.userInfo().username,
+      project,
+      platform: 'cli',
+      slots: [{ id: slot, repo: root, session: slot }],
+    }),
+  );
+  const run = createRun({
+    flowType: 'fix-bug',
+    project,
+    ticketOrPr: 'NO-CHANGE-REPLAY',
+    branch: 'fix/no-change-replay',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  updateRun(run.id, {
+    status: 'completing',
+    slotId: slot,
+    metrics: { ...run.metrics, disposition: 'already_fixed' },
+  });
+  const diffStarted = Promise.withResolvers<void>();
+  const continueDiff = Promise.withResolvers<void>();
+  t.after(() => continueDiff.resolve());
+  const completing = executeCompleteStep(run.id, {
+    ...restartReplayContext(),
+    assertGatePrerequisites: async () => ({
+      state: 'ready',
+      identity: { runId: run.id, generation: 0 },
+      reasons: [],
+      deterministicChecks: [],
+    }),
+    getDiffStat: async () => {
+      diffStarted.resolve();
+      await continueDiff.promise;
+      return { files: 0, additions: 0, deletions: 0 };
+    },
+  });
+  const outcome = completing.then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  await Promise.race([
+    diffStarted.promise,
+    outcome.then(() => assert.fail('COMPLETE settled before reaching the diff')),
+  ]);
+  const replay = getRun(run.id)!;
+  updateRun(run.id, { engineState: { ...replay.engineState, generation: 1 } });
+  updateRunStep(run.id, 'complete', { status: 'pending', inputs: undefined, outputs: undefined });
+  continueDiff.resolve();
+  const error = await outcome;
+  const step = getRun(run.id)?.steps.find(({ name }) => name === 'complete');
+  assert.equal(
+    step?.outputs?.slotDisposition,
+    undefined,
+    'the replay must not inherit a release checkpoint',
+  );
+  assert(error instanceof Error);
+  assert.match(error.message, /Completion was superseded/);
+});
+
 test('interactive completion hold persists operator state without completing monitor', async (t) => {
   const run = createRun({
     flowType: 'dev',

@@ -1746,10 +1746,14 @@ export function isFlowTerminalStep(flowType: Run['flowType'], step: string): boo
 }
 
 /** Retry only the release once the no-change completion has been persisted. */
-async function releaseNoChangeCompletion(run: Run, result: StepIO): Promise<StepIO> {
+async function releaseNoChangeCompletion(
+  run: Run,
+  result: StepIO,
+  generation: number,
+): Promise<StepIO> {
   if (!run.slotId) throw new Error('No slot assigned');
   const row = await readSlotRow(run.slotId);
-  if (runSupersededSince(getRun(run.id), run.engineState?.generation ?? 0))
+  if (runSupersededSince(getRun(run.id), generation))
     throw new Error('Completion was superseded before slot release');
   // A restart can land after release. Never run teardown against its successor.
   let released = Boolean(row && !ownsRunSlotCleanup(row, run.id) && row.handoff_run_id !== run.id);
@@ -1793,10 +1797,11 @@ export async function executeCompleteStep(
     pendingRelease?.outputs?.slotDisposition === 'no-change-release-pending' &&
     Array.isArray(pendingRelease.outputs.noChangeDeterministicChecks)
   )
-    return releaseNoChangeCompletion(current, {
-      inputs: pendingRelease.inputs,
-      outputs: pendingRelease.outputs,
-    });
+    return releaseNoChangeCompletion(
+      current,
+      { inputs: pendingRelease.inputs, outputs: pendingRelease.outputs },
+      generation,
+    );
 
   // Record the verified Git result independently of acceptance/publication approval.
   const proofMeasurement = Boolean(current.engineState?.evalExperiment?.blind?.proof);
@@ -1989,9 +1994,11 @@ export async function executeCompleteStep(
       inputs,
       outputs: { ...outputs, slotDisposition: 'no-change-release-pending' },
     };
+    if (runSupersededSince(getRun(runId), generation))
+      throw new Error('Completion was superseded before persisting the no-change result');
     updateRunStep(runId, S.COMPLETE, pending);
     await persistRunNow(getRun(runId)!, 'validated no-change completion before release');
-    return releaseNoChangeCompletion(current, pending);
+    return releaseNoChangeCompletion(current, pending, generation);
   }
   let slotDisposition: 'ci-watch' | 'released' | 'release-deferred' | 'kept-shared-slot';
 
