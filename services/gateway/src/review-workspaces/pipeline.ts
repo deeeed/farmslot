@@ -1094,7 +1094,8 @@ async function executeOwnedReviewWorkspaceStep(
       };
       // Runner state only reports a failed or still-starting turn, and each reading costs
       // runner-file reads on the review node. The 1 s loop keeps polling the signal, and
-      // rereads runner state when acceptance changes, startup looks blocked, or this ages out.
+      // rereads runner state when acceptance changes, startup looks blocked, the reading
+      // ages out, or the monitor deadline is near (a failure must win over a timeout).
       let runnerState: ReviewRunnerState | null = null;
       let runnerStateKey: string | undefined;
       let runnerStateAt = 0;
@@ -1206,7 +1207,8 @@ async function executeOwnedReviewWorkspaceStep(
           if (
             stateKey !== runnerStateKey ||
             startup === 'blocked' ||
-            Date.now() - runnerStateAt >= REVIEW_RUNNER_STATE_INTERVAL_MS
+            Date.now() - runnerStateAt >= REVIEW_RUNNER_STATE_INTERVAL_MS ||
+            deadline - Date.now() <= REVIEW_RUNNER_STATE_INTERVAL_MS
           ) {
             runnerState = await observe(() =>
               observeReviewRunnerState(currentWorkspaceRun(runId, generation), acceptance),

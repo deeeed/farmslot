@@ -28,7 +28,7 @@ let afterWait: (() => void) | undefined;
 let reviewerExists = true;
 let runnerFailure: string | null = null;
 let runnerStartupPending = false;
-let runnerStateReads = 0;
+const runnerStateReadAt: number[] = [];
 let acceptance: RunnerPromptAcceptance | null = null;
 let monitorTimeout: number | undefined;
 mock.method(Date, 'now', () => clock);
@@ -89,7 +89,7 @@ mock.module('../runners/review-startup.js', {
     ...startup,
     observeReviewPromptAcceptance: async () => acceptance,
     observeReviewRunnerState: async () => {
-      runnerStateReads++;
+      runnerStateReadAt.push(clock);
       return { failure: runnerFailure, startupPending: runnerStartupPending };
     },
   },
@@ -250,7 +250,7 @@ beforeEach(() => {
   reviewerExists = true;
   runnerFailure = null;
   runnerStartupPending = false;
-  runnerStateReads = 0;
+  runnerStateReadAt.length = 0;
   acceptance = null;
   monitorTimeout = undefined;
   terminalFailure = undefined;
@@ -678,10 +678,36 @@ test('a working tmux reviewer reads its runner state once per interval, not on e
   await executeReviewWorkspaceStep(run.id, PipelineSteps.MONITOR, 0, () => {});
   assert.equal(getRun(run.id)?.reviewResult?.recommendation, 'APPROVE');
   assert(polls >= 60, `the signal is still polled every second (${polls} polls)`);
-  assert(
-    runnerStateReads <= 60_000 / REVIEW_RUNNER_STATE_INTERVAL_MS + 1,
-    `${runnerStateReads} runner-state reads in ${polls} polls`,
+  assert.deepEqual(
+    runnerStateReadAt.map((at) => at - started),
+    [0, 10_000, 20_000, 30_000, 40_000, 50_000],
+    `runner state is reread at each ${REVIEW_RUNNER_STATE_INTERVAL_MS} ms boundary, not per poll`,
   );
+});
+
+test('a runner failure just before the monitor deadline is reported instead of a timeout', async (t) => {
+  const { run } = await fixture(t);
+  const started = clock;
+  updateRun(run.id, { status: 'monitoring' });
+  updateRunStep(run.id, PipelineSteps.MONITOR, { startedAt: new Date(started).toISOString() });
+  monitorTimeout = 1;
+  acceptance = {
+    runner: 'claude',
+    deliveryStartedAt: run.agentContexts![0].promptDeliveryStartedAt!,
+    sessionId: 'original-session',
+    sessionPath: '/fixture/session.jsonl',
+    observedAt: started,
+    turnToken: 'original-session:1',
+  };
+  const reason = 'Claude API error after the last scheduled reading';
+  afterWait = () => {
+    if (clock - started >= 55_000) runnerFailure = reason;
+  };
+  await assert.rejects(
+    executeReviewWorkspaceStep(run.id, PipelineSteps.MONITOR, 0, () => {}),
+    { name: 'RunnerExecutionError', message: reason },
+  );
+  assert.equal(clock - started, 55_000, 'the failure is read on the poll it appears');
 });
 
 test('the first Pi request and its stalled retry stay monitored without a task mark, then fail', async (t) => {
