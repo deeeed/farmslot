@@ -10,6 +10,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { gunzipSync } from 'node:zlib';
 
 import { latestAttempts } from './lib/latest-attempts.mjs';
 import { isMainModule } from './lib/step-timing.mjs';
@@ -128,12 +129,21 @@ export function verifyReceipts(plan, receipts) {
   if (ids.size !== expected.size) throw new Error('Missing CI job receipts');
 }
 
+function readPlan() {
+  const inline = process.env.CI_INLINE_PR_PLAN;
+  const json = inline
+    ? gunzipSync(Buffer.from(inline, 'base64')).toString('utf8')
+    : readFileSync('.cache/pr-ci/plan.json', 'utf8');
+  return JSON.parse(json);
+}
+
 function worker(id) {
   const root = process.cwd();
-  const plan = JSON.parse(readFileSync('.cache/pr-ci/plan.json', 'utf8'));
+  const plan = readPlan();
   const job = plan.jobs.find((entry) => entry.id === id);
   if (!job) throw new Error(`Unknown CI job: ${id}`);
   const selection = path.join(root, '.cache/pr-ci/selection.json');
+  mkdirSync(path.dirname(selection), { recursive: true });
   writeFileSync(
     selection,
     JSON.stringify({ root, files: plan.selected.map((file) => path.join(root, file)) }),
@@ -151,6 +161,7 @@ function worker(id) {
       ...process.env,
       FARMSLOT_TSX_TEST_WORKERS: '2',
     };
+    delete env.CI_INLINE_PR_PLAN;
     delete env.FARMSLOT_CI_TEST_SELECTION;
     delete env.FARMSLOT_QUALITY_TIMINGS_DIR;
     if (task.tests) {
@@ -186,7 +197,7 @@ function worker(id) {
 }
 
 function verify() {
-  const plan = JSON.parse(readFileSync('.cache/pr-ci/plan.json', 'utf8'));
+  const plan = readPlan();
   const artifacts = readdirSync('.cache/pr-ci/results').map((artifact) => {
     const match = /^pr-ci-(.+)-attempt-([1-9]\d*)$/.exec(artifact);
     if (!match) throw new Error(`Unexpected artifact: ${artifact}`);

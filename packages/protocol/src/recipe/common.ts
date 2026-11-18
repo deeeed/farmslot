@@ -207,7 +207,50 @@ export interface RecipeResolutionEdge {
   to: string;
 }
 
+/** One statically resolved call occurrence, using the executor's namespaced node IDs. */
+export interface RecipeInvocationNode {
+  id: string;
+  parentId: string | null;
+  recipeRef: string;
+  nodeId: string | null;
+  action: string;
+  label: string;
+  children: string[];
+  entry: string | null;
+  teardown: string | null;
+  next: string | null;
+  cases: Record<string, string>;
+  default: string | null;
+  claimIds: string[];
+}
+
+export interface RecipeInvocationTree {
+  version: 1;
+  rootId: string;
+  nodes: RecipeInvocationNode[];
+}
+
+export interface RecipeFlowProgress {
+  /** Active action ordinal, or the completed count between actions. */
+  current: number;
+  completed: number;
+  total: number | null;
+  /** Includes an active action that has not completed. */
+  remaining: number | null;
+  qualification: 'exact' | 'unknown';
+}
+
+export interface RecipeFlowUpdate {
+  version: 1;
+  recipeRunId: string;
+  rootId: string;
+  activeId: string | null;
+  progress: RecipeFlowProgress;
+}
+
 export interface RecipeResolutionDocument {
+  /** Prepared composition; absent in older packages. */
+  flow?: RecipeInvocationTree;
   schema_version: 1;
   root: { ref: string; digest: string };
   dependencies: RecipeResolutionDependency[];

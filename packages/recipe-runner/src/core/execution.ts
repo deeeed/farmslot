@@ -8,6 +8,7 @@ import {
   RECIPE_ASSERTION_ACTIONS,
   type RecipeActionManifestDocument,
   type RecipeFailureCause,
+  type RecipeFlowUpdate,
   validateResolvedRecipeActionNode,
 } from '@farmslot/protocol';
 
@@ -21,6 +22,7 @@ import {
   recipeFailureCause,
   recipeFailureTraceFields,
 } from './failure.js';
+import type { RecipeFlowProjection } from './flow.js';
 import { extractWorkflowGraph, resolveNextNode } from './graph.js';
 import { isRecord } from './json.js';
 import type { ResolvedLibraryRecipe } from './library.js';
@@ -55,12 +57,14 @@ type HudPublisher = (
     recipe: unknown;
     index: number;
     total: number;
+    flow?: RecipeFlowUpdate;
     context: ActionExecutionContext;
     error?: string;
   },
 ) => Promise<boolean>;
 
 export interface ExecuteRecipeOptions {
+  flow?: RecipeFlowProjection;
   signal?: AbortSignal;
   ref: string;
   adapter?: string;
@@ -144,6 +148,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
     nodeCount: number,
     stopAfterNode?: string,
     signal?: AbortSignal,
+    phase: 'main' | 'teardown' = 'main',
   ): Promise<RecipeRunStatus> => {
     let currentNodeId: string | undefined = entry;
     let transitionCount = 0;
@@ -272,6 +277,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
 
       let context: ActionExecutionContext | undefined;
       try {
+        options.flow?.start(namespacedNodeId, phase);
         if (options.prepareNode) {
           await options.prepareNode(namespacedNodeId, node, signal);
           startedAt = new Date();
@@ -303,6 +309,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
             recipe: options.recipe,
             index: transitionCount,
             total: nodeCount,
+            flow: options.flow?.snapshot(),
             context,
           });
           if (!ok) {
@@ -380,6 +387,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
           ...(observations ? { observations } : {}),
           ...(observationWarnings.length ? { observationWarnings } : {}),
         });
+        options.flow?.complete(namespacedNodeId, true, prefix + next);
         if (options.publishHudProgress) {
           const ok = await options.publishHudProgress('pass', {
             nodeId: namespacedNodeId,
@@ -388,6 +396,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
             recipe: options.recipe,
             index: transitionCount,
             total: nodeCount,
+            flow: options.flow?.snapshot(),
             context,
           });
           if (!ok) {
@@ -403,6 +412,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
         const failure = signal?.aborted ? recipeAbortError(signal) : error;
         const message = failure instanceof Error ? failure.message : String(failure);
         const causeClass = recipeFailureCause(failure);
+        options.flow?.complete(namespacedNodeId, false);
         if (options.publishHudProgress && context) {
           try {
             await options.publishHudProgress('fail', {
@@ -412,6 +422,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
               recipe: options.recipe,
               index: transitionCount,
               total: nodeCount,
+              flow: options.flow?.snapshot(),
               context,
               error: message,
             });
@@ -475,11 +486,12 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
   const mainStatus = await withRecipeExecutionSignal(options.signal, () =>
     runGraph(graph.entry, graph.mainNodeCount, options.stopAfterNode, options.signal),
   );
+  if (mainStatus !== 'pass') options.flow?.invalidate();
   const teardownSignal = options.signal ? new AbortController().signal : undefined;
   const teardownEntry = graph.teardownEntry;
   const teardownStatus = teardownEntry
     ? await withRecipeExecutionSignal(teardownSignal, () =>
-        runGraph(teardownEntry, graph.teardownNodeCount, undefined, teardownSignal),
+        runGraph(teardownEntry, graph.teardownNodeCount, undefined, teardownSignal, 'teardown'),
       )
     : 'pass';
   const status = combineStatuses(mainStatus, teardownStatus);
