@@ -625,11 +625,12 @@ async function commitGateWait(
   const run = getRun(runId);
   if (!run) return;
   const { ownedDecisionId, windowStartedAtMs } = options;
-  const prev = run.monitorState ?? {
-    nudgeCount: run.metrics.nudgeCount,
-    lastPollAt: new Date(windowStartedAtMs ?? Date.now()).toISOString(),
-    startedAt: new Date(windowStartedAtMs ?? Date.now()).toISOString(),
-  };
+  // No state means there is no marker to drop and no window to credit. Creating
+  // one here wrote this caller's window back after a replay had cleared it —
+  // including for a card that was refused and never appeared. Whoever owns the
+  // run's monitor state creates it; settlement only amends it.
+  const prev = run.monitorState;
+  if (!prev) return;
   // Two separate questions, and conflating them left orphan markers behind.
   //
   // The MARKER belongs to a decision: only the wait that opened a card may drop
@@ -1960,6 +1961,7 @@ export async function monitorRun(
           delivery: state.delivery,
           budgetUsage: state.budgetUsage,
           monitorStartedAt: new Date(state.startedAt).toISOString(),
+          generation,
           agentStatus,
           sendNudge: true,
         });
@@ -3051,6 +3053,8 @@ export async function pollRunBudgetGuard(params: {
   delivery?: BudgetDeliveryState;
   budgetUsage?: BudgetUsageSampleState;
   monitorStartedAt?: string;
+  /** The caller's engine generation; its write is dropped once that has moved. */
+  generation?: number;
   agentStatus: AgentLiveStatus;
   sendNudge: boolean;
 }): Promise<PollBudgetGuardStepResult> {
@@ -3092,6 +3096,19 @@ export async function pollRunBudgetGuard(params: {
   // window back to a run a replay has already moved on. Keep the record and
   // override only what this tick produced.
   const prev = current.monitorState;
+  // The tick above read a remote transcript, which takes long enough for a
+  // replay to land: a new generation, monitorState cleared. The results then
+  // describe a worker the replacement is no longer watching, and writing them
+  // would also put this caller's window back. Nothing here is worth more than
+  // the replacement's own first tick, so a retired caller drops its write.
+  const retired =
+    params.generation !== undefined && (current.engineState?.generation ?? 0) !== params.generation;
+  if (retired) {
+    console.warn(
+      `[run-monitor] run ${params.runId.slice(0, 8)} — budget tick finished after its monitor was replaced; its state was not written`,
+    );
+    return tick;
+  }
   updateRun(params.runId, {
     monitorState: {
       ...prev,

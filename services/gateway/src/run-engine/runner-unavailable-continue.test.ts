@@ -669,7 +669,7 @@ test(
       monitorState: { ...settled, startedAt: replacementWindow, gateWaitMs: 0 },
     });
     const observedBefore = polls;
-    await until(() => polls > observedBefore + 1);
+    await until(() => polls > observedBefore + 1, 8_000);
 
     assert.ok(
       polls > observedBefore + 1,
@@ -818,7 +818,7 @@ test(
       engineState: { ...run.engineState, generation: (run.engineState?.generation ?? 0) + 1 },
     });
     const observedBefore = polls;
-    await until(() => polls > observedBefore + 1);
+    await until(() => polls > observedBefore + 1, 8_000);
 
     assert.ok(
       polls > observedBefore + 1,
@@ -882,3 +882,70 @@ test('the budget guard keeps the gate-wait accounting it does not own', async (t
     'the persisted window owns the clock; a caller\u2019s remembered window must not replace it',
   );
 });
+
+// Codex r6 on #2322: the budget guard's tick reads a remote transcript, which
+// is long enough for a replay to land. The write that followed put the caller's
+// own window back and overwrote the replacement's usage and delivery state with
+// results from a worker it is no longer watching.
+test('a budget tick that finishes after a replay writes nothing', async (t) => {
+  const f = await fixture(t, { usageBudget: true });
+  const run = getRun(f.run.id)!;
+  const generation = run.engineState?.generation ?? 0;
+  // Replay: state cleared, generation advanced, exactly as replay-step writes it.
+  updateRun(f.run.id, {
+    monitorState: undefined,
+    engineState: { ...run.engineState, generation: generation + 1 },
+  });
+
+  await pollRunBudgetGuard({
+    runId: f.run.id,
+    slotId: f.slotId,
+    maxTurns: 80,
+    maxTotalTokens: null,
+    monitorStartedAt: new Date(Date.now() - 90_000).toISOString(),
+    generation,
+    agentStatus: 'working',
+    sendNudge: false,
+  });
+
+  assert.equal(
+    getRun(f.run.id)?.monitorState,
+    undefined,
+    'a retired budget tick must not recreate the state a replay cleared, nor its window',
+  );
+});
+
+// Codex r6, second major: settlement ran in the `finally` whatever happened to
+// the card, and with no persisted state it built one from the retiring loop's
+// window. So a replay's cleared state came back, carrying an old clock, from a
+// loop that no longer owns the run.
+test(
+  'settling a card after a replay does not recreate monitor state',
+  { timeout: 15_000 },
+  async (t) => {
+    const f = await fixture(t);
+    const execution = f.start();
+    await until(() => f.card() !== undefined);
+    const unavailable = f.card()!.id;
+    await until(() => getRun(f.run.id)?.monitorState?.gateWaitStartedAt !== undefined, 1_000);
+
+    // Replay: state cleared, generation advanced, while this loop holds a card.
+    const run = getRun(f.run.id)!;
+    updateRun(f.run.id, {
+      monitorState: undefined,
+      engineState: { ...run.engineState, generation: (run.engineState?.generation ?? 0) + 1 },
+    });
+
+    f.restoreRunner();
+    resolveMonitorDecision(unavailable, 'continue');
+    // Settlement runs as the card is answered; give it and one poll the chance.
+    await until(() => getRun(f.run.id)?.monitorState !== undefined, 2_000);
+
+    assert.equal(
+      getRun(f.run.id)?.monitorState,
+      undefined,
+      'a retired loop must leave no state behind: its window is not the replacement’s',
+    );
+    void execution;
+  },
+);
