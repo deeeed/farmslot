@@ -3067,6 +3067,18 @@ export async function pollRunBudgetGuard(params: {
     run.transport === 'native' || retainedSession.binding
       ? null
       : await resolveRunnerSessionForRun(run, vars);
+  // A warning the worker has already been told about is a durable fact about a
+  // session a Resume keeps. A replacement monitor starts from the snapshot it
+  // read at startup, which can predate the retiring tick's write, so trusting
+  // that snapshot types the same warning into the same pane a second time. A
+  // settled record on the run therefore wins over this caller's view; an
+  // unsettled one does not, because the caller's is then the fresher sample.
+  const callerDelivery = params.delivery ?? restoreBudgetDeliveryState(run.monitorState);
+  const persistedBefore = restoreBudgetDeliveryState(run.monitorState);
+  const startingDelivery =
+    budgetGuardSettled(persistedBefore) && !budgetGuardSettled(callerDelivery)
+      ? persistedBefore
+      : callerDelivery;
   const tick = await pollBudgetGuardStep({
     runId: params.runId,
     slotId: params.slotId,
@@ -3079,7 +3091,7 @@ export async function pollRunBudgetGuard(params: {
       null,
     maxTurns: params.maxTurns,
     maxTotalTokens: params.maxTotalTokens,
-    delivery: params.delivery ?? restoreBudgetDeliveryState(run.monitorState),
+    delivery: startingDelivery,
     budgetUsage:
       params.budgetUsage ?? run.monitorState?.budgetUsage ?? emptyBudgetUsageSampleState(),
     agentStatus: params.agentStatus,
@@ -3116,6 +3128,23 @@ export async function pollRunBudgetGuard(params: {
   // Nothing to amend: a replacement writes its own record on its first tick, and
   // creating one here is what put a retired window back.
   if (retired && !prev) return tick;
+  // A retired tick may only report what it delivered onto the record it started
+  // from. Warm dispatch replay resets delivery when it pins a new baseline, and
+  // writing `delivered` over that reset would silence the warning for a budget
+  // window that has not had one — so if the record moved while this tick ran,
+  // whoever moved it owns it now.
+  if (retired) {
+    const persistedNow = restoreBudgetDeliveryState(prev);
+    if (
+      persistedNow.phase !== startingDelivery.phase ||
+      persistedNow.attempts !== startingDelivery.attempts
+    ) {
+      console.warn(
+        `[run-monitor] run ${params.runId.slice(0, 8)} — budget delivery moved while a retired tick ran; its result was dropped`,
+      );
+      return tick;
+    }
+  }
   updateRun(params.runId, {
     monitorState: retired
       ? { ...prev!, budgetDelivery: tick.delivery }

@@ -993,3 +993,96 @@ test('a retired budget tick still records what it delivered', async (t) => {
   assert.equal(state?.gateWaitStartedAt, openedAt, 'nor the accounting it does not own');
   assert.equal(state?.budgetUsage, undefined, 'and its samples are stale, so they are not kept');
 });
+
+// Codex r8 on #2322, first major: a replacement monitor starts from the snapshot
+// it read at startup, which can predate a retiring tick's write. Trusting that
+// snapshot types the same budget warning into the same pane a second time — the
+// pane survives Pause/Resume, so the worker reads it twice.
+test('a settled delivery on the run wins over a caller snapshot that predates it', async (t) => {
+  const f = await fixture(t, { usageBudget: true });
+  const openedAt = new Date(Date.now() - 5_000).toISOString();
+  updateRun(f.run.id, {
+    monitorState: {
+      nudgeCount: 0,
+      lastPollAt: openedAt,
+      startedAt: openedAt,
+      // The retiring tick already told the worker.
+      budgetDelivery: {
+        phase: 'delivered',
+        pendingMessage: null,
+        operatorMessage: null,
+        attempts: 1,
+      },
+    },
+  });
+
+  const tick = await pollRunBudgetGuard({
+    runId: f.run.id,
+    slotId: f.slotId,
+    maxTurns: 80,
+    maxTotalTokens: null,
+    // What a replacement loop read at startup, before that write landed.
+    delivery: { phase: 'ok', pendingMessage: null, operatorMessage: null, attempts: 0 },
+    agentStatus: 'working',
+    sendNudge: true,
+  });
+
+  assert.equal(
+    tick.delivery.phase,
+    'delivered',
+    'the warning was already delivered to this pane; the replacement must not start from `ok`',
+  );
+  assert.equal(tick.delivery.attempts, 1, 'and it keeps the attempt that was spent');
+});
+
+// Codex r8, second major: warm dispatch replay resets delivery when it pins a
+// new baseline. A retired tick that still holds `delivered` in memory would
+// write it over that reset and silence the warning for a window that never had
+// one — so a retired tick may only report onto the record it started from.
+test('a retired tick does not report onto a delivery record that moved', async (t) => {
+  const f = await fixture(t, { usageBudget: true });
+  const openedAt = new Date(Date.now() - 5_000).toISOString();
+  const reset = {
+    phase: 'ok' as const,
+    pendingMessage: null,
+    operatorMessage: null,
+    attempts: 0,
+  };
+  // The record as a warm replay left it: reset for the new baseline.
+  updateRun(f.run.id, {
+    monitorState: {
+      nudgeCount: 0,
+      lastPollAt: openedAt,
+      startedAt: openedAt,
+      budgetDelivery: reset,
+    },
+  });
+  const run = getRun(f.run.id)!;
+  const generation = run.engineState?.generation ?? 0;
+  updateRun(f.run.id, {
+    engineState: { ...run.engineState, generation: generation + 1 },
+  });
+
+  await pollRunBudgetGuard({
+    runId: f.run.id,
+    slotId: f.slotId,
+    maxTurns: 80,
+    maxTotalTokens: null,
+    // What the retired tick still holds from before the reset.
+    delivery: {
+      phase: 'delivered',
+      pendingMessage: null,
+      operatorMessage: null,
+      attempts: 2,
+    },
+    generation,
+    agentStatus: 'working',
+    sendNudge: false,
+  });
+
+  assert.deepEqual(
+    getRun(f.run.id)?.monitorState?.budgetDelivery,
+    reset,
+    'the reset owns the record: a retired tick must not mark the new window as already warned',
+  );
+});
