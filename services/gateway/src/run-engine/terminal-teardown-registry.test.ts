@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { setImmediate } from 'node:timers/promises';
 
-import { assertCleanupCurrent } from '../core/cleanup-scope.js';
+import { assertCleanupCurrent, cleanupSignal, trackCleanupCommand } from '../core/cleanup-scope.js';
 
 import {
   beginTerminalTeardown,
   endTerminalTeardown,
   isTerminalTeardownInFlight,
+  TerminalTeardownTimeoutError,
   withTerminalTeardown,
 } from './terminal-teardown-registry.js';
 
@@ -103,4 +104,87 @@ test('a parent deadline also unwinds a nested release and its registry count', a
   await refused;
   await setImmediate();
   assert.equal(isTerminalTeardownInFlight(slot), false);
+});
+
+for (const timeoutMs of [100, null]) {
+  test(`ordinary teardown failure cancels and drains owned work, budget=${timeoutMs}`, async () => {
+    const slot = `failed-closeout-${timeoutMs}`;
+    const failure = new Error('fetch failed');
+    let lateCheck: Promise<void> | undefined;
+    let stopped = false;
+    const operation = withTerminalTeardown(
+      slot,
+      async () => {
+        const signal = cleanupSignal();
+        assert.ok(signal);
+        trackCleanupCommand(
+          new Promise<void>((resolve) => {
+            signal.addEventListener(
+              'abort',
+              () => {
+                queueMicrotask(() => {
+                  assert.equal(isTerminalTeardownInFlight(slot), true);
+                  stopped = true;
+                  resolve();
+                });
+              },
+              { once: true },
+            );
+          }),
+        );
+        lateCheck = new Promise<void>((resolve) => {
+          signal.addEventListener('abort', () => resolve(), { once: true });
+        }).then(() => assertCleanupCurrent());
+        void lateCheck.catch(() => undefined);
+        throw failure;
+      },
+      timeoutMs,
+    );
+    await assert.rejects(operation, (error) => error === failure);
+    assert.equal(stopped, true);
+    await assert.rejects(lateCheck!, (error) => error === failure);
+    assert.equal(isTerminalTeardownInFlight(slot), false);
+  });
+}
+
+test('nested closeout cannot confirm a timeout already marked unconfirmed', async () => {
+  const failure = new TerminalTeardownTimeoutError('nested-unconfirmed', 100);
+  failure.closeoutConfirmed = false;
+  let confirmed: boolean | undefined;
+  await assert.rejects(
+    withTerminalTeardown(
+      'nested-unconfirmed',
+      async () => {
+        throw failure;
+      },
+      null,
+      (value) => {
+        confirmed = value;
+      },
+    ),
+    (error) => error === failure,
+  );
+  assert.equal(confirmed, false);
+  assert.equal(failure.closeoutConfirmed, false);
+});
+
+test('synchronous operation failure preserves its error without an orphaned rejection', async () => {
+  const failure = new Error('synchronous cleanup failure');
+  let confirmed: boolean | undefined;
+  await assert.rejects(
+    withTerminalTeardown(
+      'sync-failure',
+      () => {
+        throw failure;
+      },
+      null,
+      (value) => {
+        confirmed = value;
+      },
+    ),
+    (error) => error === failure,
+  );
+  assert.equal(confirmed, true);
+  assert.equal(isTerminalTeardownInFlight('sync-failure'), false);
+  await setImmediate();
 });
