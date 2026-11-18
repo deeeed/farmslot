@@ -137,6 +137,16 @@ async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSession
       : run.reviewWorkspace
         ? ((await reviewWorkspaceRunnerVars(run)) ?? undefined)
         : undefined;
+    // A warm static reviewer resumes the earlier review's conversation in the same transcript,
+    // so only this attempt's part of it is counted.
+    const reviewer =
+      !row.slotId &&
+      run.reviewWorkspace &&
+      row.role === 'review' &&
+      run.repeatReviewContext?.session?.priorSessionId
+        ? run.agentContexts?.find((item) => row.contextIds?.includes(item.id))
+        : undefined;
+    const attemptStartedAt = reviewer?.attemptStartedAt ?? reviewer?.startedAt;
     return completedMeasurement(
       row,
       await extractRunnerSessionUsage({
@@ -146,6 +156,7 @@ async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSession
         runnerSessionId: row.runnerSessionId,
         runnerSessionPath: row.runnerSessionPath,
         checklistMarks,
+        ...(attemptStartedAt ? { usageWindow: { startedAt: attemptStartedAt } } : {}),
       }),
     );
   } catch {

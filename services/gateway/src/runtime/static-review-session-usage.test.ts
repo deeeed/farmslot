@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
 
+import type { Run } from '@farmslot/protocol';
+
 import { makeVars } from '../runners/test-fixtures.js';
 
 await import('./mock-pty.test-support.js');
@@ -138,6 +140,89 @@ for (const target of ['local', 'remote'])
     assert.equal(result.metrics.sessionTotalTokens, 400);
     assert.equal(result.metrics.costEstimate, 0.002);
   });
+
+test('a warm static review counts only its own attempt of the resumed conversation', async (t) => {
+  remote = false;
+  const root = await mkdtemp(path.join(os.tmpdir(), 'static-review-usage-warm-'));
+  const run = createRun({
+    flowType: 'review-pr',
+    project: 'usage-fixture',
+    ticketOrPr: 'owner/repo#1',
+  });
+  t.after(async () => {
+    updateRun(run.id, {
+      status: 'cancelled',
+      slotId: null,
+      reviewWorkspace: { ...getRun(run.id)!.reviewWorkspace!, cleanedAt: new Date().toISOString() },
+    });
+    await deleteRun(run.id);
+    await rm(root, { recursive: true, force: true });
+  });
+  const transcript = path.join(root, 'pi-session.jsonl');
+  const reply = (timestamp: string) => ({
+    type: 'message',
+    id: `entry-${timestamp}`,
+    timestamp,
+    message: {
+      role: 'assistant',
+      model: 'glm-5p3-flash',
+      usage: { input: 100, output: 20, cacheRead: 80, cost: { total: 0.001 } },
+    },
+  });
+  await writeFile(
+    transcript,
+    [
+      { type: 'session', id: 'pi-session', timestamp: '2026-11-10T13:00:00Z', cwd: root },
+      // The earlier review of the previous head, in the conversation this attempt resumed.
+      reply('2026-11-10T13:05:00Z'),
+      reply('2026-11-10T13:06:00Z'),
+      reply('2026-11-10T14:05:00Z'),
+    ]
+      .map((row) => JSON.stringify(row))
+      .join('\n') + '\n',
+  );
+  t.mock.method(piSessionUsageProvider, 'recoverSessions', async () => [
+    { contextId: 'review', runnerSessionId: 'pi-session', runnerSessionPath: transcript },
+  ]);
+  const repeatReviewContext = {
+    mode: 'warm',
+    session: { priorSessionId: 'pi-session' },
+  } as NonNullable<Run['repeatReviewContext']>;
+  updateRun(run.id, {
+    reviewWorkspaceTarget: { machine: 'localhost' },
+    transport: 'tmux',
+    repeatReviewContext,
+    metrics: { ...run.metrics, runner: 'pi', model: 'litellm/glm-5p3-flash' },
+    reviewWorkspace: {
+      workspaceId: 'review-fixture',
+      machine: 'localhost',
+      executionNodeId: 'local',
+      checkoutPath: root,
+      taskPath: path.join(root, 'task'),
+      artifactPath: path.join(root, 'task/artifacts'),
+    },
+    agentContexts: [
+      {
+        id: 'review',
+        role: 'review',
+        label: 'Review',
+        runId: run.id,
+        slotId: null,
+        runner: 'pi',
+        model: 'litellm/glm-5p3-flash',
+        status: 'complete',
+        startedAt: '2026-11-10T14:00:00Z',
+        attemptStartedAt: '2026-11-10T14:00:00Z',
+        completedAt: '2026-11-10T14:10:00Z',
+        target: { session: 'review-fixture', target: 'review-fixture' },
+      },
+    ],
+  });
+  await captureRunSessionUsage(run.id);
+  const receipt = getRun(run.id)!.sessionUsage![0];
+  assert.equal(receipt.totalTokens, 200, 'only the reply after this attempt started');
+  assert.equal(receipt.costUsd, 0.001);
+});
 
 test('ambiguous workspace sessions stay unbound', async (t) => {
   const { recoverWorkspaceUsageBindings } = await import('../runners/session-usage-recovery.js');

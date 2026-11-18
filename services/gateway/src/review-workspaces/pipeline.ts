@@ -71,6 +71,7 @@ import { captureRunSessionUsage } from '../runtime/agent-session-usage.js';
 import { workspaceTerminalOperation } from '../runtime/workspace-terminal.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 import { runPrincipalOwner, samePrincipalOwner } from '../security/work-originator.js';
+import { parseChecklistTiming } from '../tasks/checklist-timing.js';
 import { withSubtaskMetrics } from '../tasks/subtask-metrics.js';
 import { artifactContractWorkerInstruction } from '../tasks/worker-terminal-contract.js';
 
@@ -194,6 +195,7 @@ export async function recordWorkspaceReviewCompletion(
   } = {},
 ): Promise<Run> {
   const collectSubtasks = options.collectSubtasks ?? collectReviewWorkspaceSubtaskMetrics;
+  const timing = parseChecklistTiming(options.checklistTiming);
   let subtasks: Awaited<ReturnType<typeof collectReviewWorkspaceSubtaskMetrics>> = null;
   try {
     subtasks = await collectSubtasks(runId);
@@ -232,7 +234,7 @@ export async function recordWorkspaceReviewCompletion(
         metrics: withSubtaskMetrics(
           {
             ...run.metrics,
-            ...(options.checklistTiming ? { checklistTiming: options.checklistTiming } : {}),
+            ...(timing ? { checklistTiming: timing } : {}),
           },
           subtasks,
         ),

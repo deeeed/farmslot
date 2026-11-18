@@ -685,6 +685,37 @@ test('a working tmux reviewer reads its runner state once per interval, not on e
   );
 });
 
+test("a tmux review that completes keeps its signal's checklist marks on the run", async (t) => {
+  const { run } = await fixture(t);
+  const started = clock;
+  updateRun(run.id, { status: 'monitoring' });
+  updateRunStep(run.id, PipelineSteps.MONITOR, { startedAt: new Date(started).toISOString() });
+  acceptance = {
+    runner: 'claude',
+    deliveryStartedAt: run.agentContexts![0].promptDeliveryStartedAt!,
+    sessionId: 'original-session',
+    sessionPath: '/fixture/session.jsonl',
+    observedAt: started,
+    turnToken: 'original-session:1',
+  };
+  const checklistTiming = {
+    schemaVersion: 1 as const,
+    source: 'CHECKLIST.md',
+    events: [
+      { stepNumber: 1, label: '1. Review', checkedAt: new Date(started + 500).toISOString() },
+    ],
+  };
+  signal = {
+    status: 'complete',
+    outcome: 'success',
+    attemptId: 'original-attempt',
+    timestamp: new Date(started + 1000).toISOString(),
+    checklistTiming,
+  };
+  await executeReviewWorkspaceStep(run.id, PipelineSteps.MONITOR, 0, () => {});
+  assert.deepEqual(getRun(run.id)?.metrics.checklistTiming, checklistTiming);
+});
+
 test('a runner failure just before the monitor deadline is reported instead of a timeout', async (t) => {
   const { run } = await fixture(t);
   const started = clock;
