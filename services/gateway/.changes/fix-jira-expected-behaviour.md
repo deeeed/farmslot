@@ -1,1 +1,0 @@
-- Keep authored ticket criteria from observed expected-outcome headings, including British spelling, and retain added acceptance sections for real runs and eval trials.

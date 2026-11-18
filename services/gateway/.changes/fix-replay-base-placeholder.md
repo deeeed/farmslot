@@ -1,1 +1,0 @@
-- An artifact-only comparison replay names only a base its task input can prove: the frozen `startRef`, or a capsule blind trial's `blind.baseSha`, which is the commit prepare checks the capsule out at. It no longer writes the literal `selected reference/base` into TASK.md, which sent a worker searching git history for that ref. A replay with no provable base declares none.
