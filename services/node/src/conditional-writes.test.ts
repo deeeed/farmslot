@@ -106,6 +106,7 @@ test('the daemon advertises conditional writes and answers a refused write with 
   t.mock.module(new URL('commands/native-session.ts', source).href, {
     namedExports: {
       NativeNodeSessions: class {
+        async prepareRuntime() {}
         declaration = undefined;
         async startObservation() {}
         stopObservation() {}

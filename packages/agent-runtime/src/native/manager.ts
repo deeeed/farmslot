@@ -40,6 +40,7 @@ import {
 } from './account-profiles.js';
 import { NATIVE_CHECKPOINT_WAIT_MS, NativeCheckpoints, withinMs } from './checkpoint.js';
 import { NativeConversationJournal, splitNativeText } from './conversation.js';
+import { NATIVE_HOST_VERSION_SKEW } from './host-unavailable.js';
 import { effectiveModelQuestions } from './model-questions.js';
 import { NativeRequestRefused } from './process.js';
 import { journalProcesses, type ProcessIdentity } from './process-tree.js';
@@ -258,6 +259,44 @@ interface SessionRecord {
 /** Runs only inside the local host. Synchronous fsync orders intent before native input. */
 export class NativeSessionManager {
   private sessions = new Map<string, SessionRecord>();
+  private upgradePrepared = false;
+  private pendingAdmissions = 0;
+
+  /** Atomically fence new admissions only when no live or pre-reservation work exists. */
+  prepareUpgrade(): boolean {
+    if (this.pendingAdmissions) return false;
+    for (const record of this.sessions.values())
+      if (
+        !record.info.processStopped ||
+        record.sending ||
+        record.configuring ||
+        record.compacting ||
+        record.turnEnd ||
+        record.pendingRequests.size
+      )
+        return false;
+    this.upgradePrepared = true;
+    return true;
+  }
+
+  private assertAdmissionOpen(): void {
+    if (this.upgradePrepared)
+      throw Object.assign(
+        new Error('Native host is fenced for a runtime upgrade; new admission is blocked'),
+        { code: NATIVE_HOST_VERSION_SKEW },
+      );
+  }
+
+  private async admit<T>(operation: () => Promise<T>): Promise<T> {
+    this.assertAdmissionOpen();
+    this.pendingAdmissions += 1;
+    try {
+      return await operation();
+    } finally {
+      this.pendingAdmissions -= 1;
+    }
+  }
+
   private readonly conversationGeneration = randomUUID();
   private readonly processObservations: ProcessMetadataCache = new Map();
   /** Responses being delivered, by request ID. A resolution outside delivery has no known decision. */
@@ -404,7 +443,9 @@ export class NativeSessionManager {
     workerLaunch?: NativeWorkerLaunch,
     requester?: NativeSessionRequester,
   ): Promise<NativeSessionInfo> {
-    return this.start(owner, params, undefined, workerLaunch, undefined, undefined, requester);
+    return this.admit(() =>
+      this.start(owner, params, undefined, workerLaunch, undefined, undefined, requester),
+    );
   }
 
   async ensure(
@@ -420,14 +461,8 @@ export class NativeSessionManager {
       throw new Error('Reserved sessionId must be a lowercase UUID');
     if ('resumeSessionId' in params && params.resumeSessionId !== undefined)
       throw new Error('Reserved sessionId is for initial creation, not resume');
-    return this.start(
-      owner,
-      params,
-      params.sessionId,
-      workerLaunch,
-      undefined,
-      undefined,
-      requester,
+    return this.admit(() =>
+      this.start(owner, params, params.sessionId, workerLaunch, undefined, undefined, requester),
     );
   }
 
@@ -446,7 +481,9 @@ export class NativeSessionManager {
       )
         throw new Error('Native worker recovery operation was cancelled before launch');
     };
-    return this.start(owner, params, undefined, launch, assertCurrent, params.relocation);
+    return this.admit(() =>
+      this.start(owner, params, undefined, launch, assertCurrent, params.relocation),
+    );
   }
 
   private async start(
@@ -1134,6 +1171,7 @@ export class NativeSessionManager {
     leaseId: string,
     launch: NativeWorkerLaunch,
   ): NativeSessionInfo {
+    this.assertAdmissionOpen();
     const record = this.owned(owner, id);
     if (record.workerLeaseError) throw record.workerLeaseError;
     if (

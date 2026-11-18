@@ -7,6 +7,8 @@
 export const NATIVE_HOST_UNAVAILABLE = 'NATIVE_HOST_UNAVAILABLE';
 /** A passive read that found no host at all. */
 export const NATIVE_SOURCE_UNAVAILABLE = 'NATIVE_SOURCE_UNAVAILABLE';
+/** Admission refused while the loaded host runtime cannot safely serve the new node. */
+export const NATIVE_HOST_VERSION_SKEW = 'NATIVE_HOST_VERSION_SKEW';
 
 /** A live start that never produced a ready host within its ceiling. */
 export function nativeHostUnavailableError(logPath: string): Error {
@@ -48,9 +50,14 @@ export function isNativeHostNotReadyError(error: unknown): boolean {
  */
 export function preservedNativeHostCode(
   error: unknown,
-): typeof NATIVE_HOST_UNAVAILABLE | typeof NATIVE_SOURCE_UNAVAILABLE | undefined {
+):
+  | typeof NATIVE_HOST_UNAVAILABLE
+  | typeof NATIVE_SOURCE_UNAVAILABLE
+  | typeof NATIVE_HOST_VERSION_SKEW
+  | undefined {
   const code = codeOf(error);
   if (code === NATIVE_HOST_UNAVAILABLE) return NATIVE_HOST_UNAVAILABLE;
   if (code === NATIVE_SOURCE_UNAVAILABLE) return NATIVE_SOURCE_UNAVAILABLE;
+  if (code === NATIVE_HOST_VERSION_SKEW) return NATIVE_HOST_VERSION_SKEW;
   return undefined;
 }

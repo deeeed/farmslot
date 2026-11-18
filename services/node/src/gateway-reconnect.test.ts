@@ -98,6 +98,7 @@ test('daemon bounds transient reconnects, registers once and preserves auth refu
   t.mock.module(new URL('commands/native-session.ts', source).href, {
     namedExports: {
       NativeNodeSessions: class {
+        async prepareRuntime() {}
         declaration = undefined;
         async startObservation() {}
         stopObservation() {}

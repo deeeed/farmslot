@@ -11,6 +11,7 @@ import { nativeTurnDiff } from './checkpoint.js';
 import { type NativeSessionClient, observeExistingNativeHost } from './client.js';
 import {
   NATIVE_HOST_UNAVAILABLE,
+  NATIVE_HOST_VERSION_SKEW,
   NATIVE_SOURCE_UNAVAILABLE,
   preservedNativeHostCode,
 } from './host-unavailable.js';
@@ -27,6 +28,7 @@ export class NativeSessionMethodError extends Error {
       | 'NATIVE_SESSION_ERROR'
       | 'NOT_FOUND'
       | typeof NATIVE_HOST_UNAVAILABLE
+      | typeof NATIVE_HOST_VERSION_SKEW
       | typeof NATIVE_SOURCE_UNAVAILABLE,
     message: string,
   ) {

@@ -30,3 +30,12 @@ test('a failed profile sample reaches clients as profiles unavailable, not a ses
   assert.equal(error.code, 'NATIVE_PROFILES_UNAVAILABLE');
   assert.equal(nativeRouteError(new Error('boom')).code, 'NATIVE_SESSION_ERROR');
 });
+
+test('the gateway preserves native runtime-skew errors from execution nodes', () => {
+  const error = nativeRouteError(
+    Object.assign(new Error('Native host runtime version skew'), {
+      code: 'NATIVE_HOST_VERSION_SKEW',
+    }),
+  );
+  assert.equal(error.code, 'NATIVE_HOST_VERSION_SKEW');
+});
