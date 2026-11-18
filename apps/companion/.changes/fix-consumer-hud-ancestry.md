@@ -1,0 +1,1 @@
+- Show the active recipe breadcrumb and overall progress in the Companion recipe HUD.
