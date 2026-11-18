@@ -100,7 +100,7 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
     // Arm before the click eval. A lost CDP reply can still leave a receipt to close.
     armed = true;
     view(
-      `const method=${JSON.stringify(Methods.NATIVE_SESSION_CREATE)};const cwd=${JSON.stringify(fixture)};const token=${JSON.stringify(launchToken)};const book=document.__nativeLaunchBook??(document.__nativeLaunchBook={});const receipts=book.receipts??(book.receipts={});const pending=book.pending??(book.pending={});const request=view.api.request.bind(view.api);book.request=request;book.view=view;book.token=token;view.api.request=async(...args)=>{const [name,params]=args;const mine=name===method&&!params?.resumeSessionId&&params?.cwd===cwd&&params?.runner==='codex'&&(params?.executionNodeId??'local')==='local'&&book.token===token;if(mine){view.api.request=request;pending[token]=true;}try{const result=await request(...args);const session=result?.session;if(mine&&session?.id&&!receipts[token])receipts[token]={id:session.id,node:session.executionNodeId,runner:session.runner,cwd:session.cwd};return result;}catch(error){if(mine){pending[token]='unknown';if(!receipts[token])receipts[token]={id:'',error:String(error?.message??error)};}throw error;}finally{if(mine&&pending[token]===true)pending[token]=false;}};const button=root?.querySelector('[data-testid="native-create"]');if(!button||button.disabled)throw Error('Control unavailable');button.click();return {clicked:true};`,
+      `const method=${JSON.stringify(Methods.NATIVE_SESSION_CREATE)};const cwd=${JSON.stringify(fixture)};const token=${JSON.stringify(launchToken)};const book=document.__nativeLaunchBook??(document.__nativeLaunchBook={});const receipts=book.receipts??(book.receipts={});const pending=book.pending??(book.pending={});const request=view.api.request.bind(view.api);book.request=request;book.view=view;book.token=token;view.api.request=async(...args)=>{const [name,params]=args;const mine=name===method&&!params?.resumeSessionId&&params?.cwd===cwd&&params?.runner==='codex'&&(params?.executionNodeId??'local')==='local'&&book.token===token;if(mine){view.api.request=request;pending[token]=true;}try{const result=await request(...args);const session=result?.session;if(mine&&session?.id&&!receipts[token]&&book.settled?.[token]!==true)receipts[token]={id:session.id,node:session.executionNodeId,runner:session.runner,cwd:session.cwd};return result;}catch(error){if(mine&&book.settled?.[token]!==true){pending[token]='unknown';if(!receipts[token])receipts[token]={id:'',error:String(error?.message??error)};}throw error;}finally{if(mine&&book.settled?.[token]!==true&&pending[token]===true)pending[token]=false;}};const button=root?.querySelector('[data-testid="native-create"]');if(!button||button.disabled)throw Error('Control unavailable');button.click();return {clicked:true};`,
     );
     const created = await wait(readLaunchReceipt, (value) => Boolean(value.id), timeoutMs);
     rememberReceipt(created);
@@ -229,6 +229,27 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
         report.receiptError = snapshotError.message;
       }
     }
+    if (browser && armed)
+      try {
+        // One synchronous read seals this attempt. A reply already in the book is closed below.
+        // A reply that lands after this read sees the seal and does not write the receipt back.
+        const sealed = view(
+          `const token=${JSON.stringify(launchToken)};const book=document.__nativeLaunchBook;if(!book?.receipts||!book.pending)return {id:"",node:"",runner:"",cwd:"",pending:"unknown",error:"launch record missing"};const settled=book.settled??(book.settled={});settled[token]=true;const receipt=book.receipts[token]??null;const flag=book.pending[token];return {id:receipt?.id??"",node:receipt?.node??"",runner:receipt?.runner??"",cwd:receipt?.cwd??"",pending:flag===true?"pending":flag==="unknown"?"unknown":flag===false?"idle":"unknown",error:receipt?.error??""};`,
+        );
+        rememberReceipt(sealed);
+        if (target || (sealed.pending !== 'pending' && sealed.pending !== 'unknown'))
+          delete report.unresolvedCreate;
+        else {
+          report.pass = false;
+          report.unresolvedCreate =
+            sealed.pending === 'unknown'
+              ? `native.session.create outcome is unknown${sealed.error ? `: ${sealed.error}` : ''}`
+              : 'native.session.create was still in flight after the cleanup wait';
+        }
+      } catch (error) {
+        report.pass = false;
+        if (!report.receiptError) report.receiptError = error.message;
+      }
     if (target)
       try {
         rpc(Methods.NATIVE_SESSION_CLOSE, target);
@@ -241,7 +262,7 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
     if (browser)
       try {
         view(
-          `const token=${JSON.stringify(launchToken)};const book=document.__nativeLaunchBook;if(!book)return {released:false};if(book.receipts)delete book.receipts[token];if(book.pending)delete book.pending[token];if(book.token===token){delete book.view;delete book.request;delete book.token;}if(book.receipts&&!Object.keys(book.receipts).length&&book.pending&&!Object.keys(book.pending).length&&!book.view)delete document.__nativeLaunchBook;return {released:true};`,
+          `const token=${JSON.stringify(launchToken)};const book=document.__nativeLaunchBook;if(!book)return {released:false};if(book.token===token&&book.view&&book.request)book.view.api.request=book.request;if(book.receipts)delete book.receipts[token];if(book.pending)delete book.pending[token];if(book.token===token){delete book.view;delete book.request;delete book.token;}if(book.receipts&&!Object.keys(book.receipts).length&&book.pending&&!Object.keys(book.pending).length&&!book.view)delete document.__nativeLaunchBook;return {released:true};`,
         );
       } catch (error) {
         report.pass = false;
