@@ -154,7 +154,11 @@ async function actionManifestFiles(
     if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
   }
   for (const entry of entries) {
-    if (!entry.isFile()) continue;
+    // Dotfiles are invisible to discovery, to the library walker and to the
+    // digest, so a half-written `.web.action-manifest.json` left beside the real
+    // one is not part of the library — and must not be parsed, or claimed as a
+    // scope's manifest, by a check that runs after the digest already matched.
+    if (!entry.isFile() || entry.name.startsWith('.')) continue;
     const scope = ACTION_MANIFEST_FILE.exec(entry.name)?.[1];
     if (scope) byScope.set(scope, path.join(manifests, entry.name));
   }

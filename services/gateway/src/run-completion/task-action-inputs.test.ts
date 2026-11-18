@@ -64,13 +64,15 @@ test('an actions map does not hide the manifests the convention declares', async
   );
 });
 
-// The digest skips dotfiles, so a half-written scratch manifest changes nothing
-// about the library. Parsing it anyway turned an unfinished local edit into a
-// publication-blocking parse error.
+// The digest and discovery both skip dotfiles, so a half-written manifest left
+// beside the real one is not part of the library. Parsing it anyway turned an
+// unfinished local edit into a publication-blocking parse error — and a hidden
+// file that matches the convention could also claim its scope. Codex r5 named
+// that exact name, so this fixture uses it rather than an unrelated `.json`.
 test('a dotfile left in manifests does not block publication', async (t) => {
   const { taskDir, digest } = await library(t, {
     'manifests/task.action-manifest.json': JSON.stringify(manifestDocument(['task.read_text'])),
-    'manifests/.scratch.json': '{ "actions": {',
+    'manifests/.task.action-manifest.json': '{ "actions": {',
     'actions/shared/read_text/read_text.mjs': 'export default () => "fixture";\n',
   });
 
