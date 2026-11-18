@@ -262,6 +262,11 @@ function isRuntimeConfiguration(file) {
 export function selectAffectedTests({ files, changed, workspaces, graph }) {
   const runtimeChanges = runtimeImpactFiles(changed);
   const affected = affectedWorkspaceNames(workspaces, runtimeChanges);
+  // Test edits do not change opaque production inputs; opaque tests still use the fallback below.
+  const productionAffected = affectedWorkspaceNames(
+    workspaces,
+    runtimeChanges?.filter((file) => !TEST_FILE.test(file)) ?? null,
+  );
   const all = changed === null;
   const widened = new Set();
   const opaqueAssetOwners = new Set(
@@ -289,7 +294,7 @@ export function selectAffectedTests({ files, changed, workspaces, graph }) {
     const owner = ownerOf(file, workspaces);
     if (
       owner &&
-      affected.has(owner.name) &&
+      productionAffected.has(owner.name) &&
       !TEST_FILE.test(file) &&
       !file.includes('.live.') &&
       !file.includes('/scripts/')

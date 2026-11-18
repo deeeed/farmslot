@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { balance, balanceTestShards, estimateTestMs, withoutBuilds } from './pr-ci-plan.mjs';
+import {
+  balance,
+  balanceTestShards,
+  estimateTestMs,
+  packPrTasks,
+  withoutBuilds,
+} from './pr-ci-plan.mjs';
 import { verifyReceipts } from './pr-ci-run.mjs';
 
 test('duration balancing covers every file exactly once', () => {
@@ -38,6 +44,50 @@ test('custom suite commands retain assertions and omit already-built prerequisit
     ),
     'node --test test/*.cjs && node test.mjs',
   );
+});
+test('PR task packing fills spare test capacity, isolates long checks and bounds runner count', () => {
+  const jobs = [{ id: 'gateway-1', tasks: [{ id: 'gateway-test', seconds: 90 }] }];
+  const tasks = [
+    { id: 'long-check', seconds: 150 },
+    { id: 'script-batch', seconds: 83 },
+    { id: 'types', seconds: 25 },
+    { id: 'small-guard', seconds: 5 },
+  ];
+  const result = packPrTasks(jobs, tasks);
+  assert.ok(
+    result.find(({ id }) => id === 'gateway-1').tasks.some(({ id }) => id === 'small-guard'),
+    'cheap work uses an existing test job instead of another setup',
+  );
+  assert.equal(
+    result.find(({ tasks }) => tasks.some(({ id }) => id === 'long-check')).tasks.length,
+    1,
+  );
+  assert.deepEqual(
+    result.flatMap(({ tasks }) => tasks.map(({ id }) => id)).sort(),
+    ['gateway-test', ...tasks.map(({ id }) => id)].sort(),
+  );
+  assert.equal(jobs[0].tasks.length, 1, 'the input plan stays intact');
+  const bounded = packPrTasks(
+    [],
+    Array.from({ length: 30 }, (_, i) => ({ id: `${i}`, seconds: 150 })),
+  );
+  assert.equal(bounded.length, 24);
+  assert.equal(bounded.flatMap(({ tasks }) => tasks).length, 30);
+});
+test('native script batches retain the longest-file lower bound', async () => {
+  const { createPrPlan } = await import('./pr-ci-plan.mjs');
+  const file = 'scripts/deploy-node.test.mjs';
+  const plan = createPrPlan({
+    root: process.cwd(),
+    changed: ['services/gateway/src/core/config.ts'],
+    selected: [file],
+    workspaces: [],
+    durations: { [file]: 83_000 },
+  });
+  const task = plan.jobs
+    .flatMap(({ tasks }) => tasks)
+    .find(({ id }) => id.startsWith('other-selected-tests-'));
+  assert.ok(task.seconds >= 83, 'one slow file cannot be divided across Node workers');
 });
 test('final verifier rejects missing, duplicate and incomplete jobs', () => {
   const plan = { jobs: [{ id: 'one', tasks: [{ id: 'test' }] }] };
