@@ -1,0 +1,1 @@
+- A native Claude reviewer launch passes the selected effort, the same levels a Claude worker already accepts, and defaults to medium.

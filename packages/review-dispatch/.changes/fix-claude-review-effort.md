@@ -1,0 +1,1 @@
+- Claude reviews accept the CLI effort levels low, medium, high, xhigh, and max, and default to medium.

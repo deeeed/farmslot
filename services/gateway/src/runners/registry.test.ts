@@ -2927,7 +2927,13 @@ describe('reasoning effort capability', () => {
     assert.equal(runnerSupportsEffort('codex', 'gpt-6-luna', 'ultra'), false);
     assert.equal(runnerSupportsEffort('codex', 'gpt-5.4', 'ultra'), false);
     assert.equal(runnerSupportsEffort('codex', 'gpt-6-astra', '--help'), false);
-    assert.equal(runnerSupportsEffort('claude', 'sonnet', 'high'), false);
+    assert.equal(runnerSupportsEffort('claude', 'sonnet', 'low'), true);
+    assert.equal(runnerSupportsEffort('claude', 'opus', 'medium'), true);
+    assert.equal(runnerSupportsEffort('claude', 'sonnet', 'high'), true);
+    assert.equal(runnerSupportsEffort('claude', 'sonnet', 'xhigh'), true);
+    assert.equal(runnerSupportsEffort('claude', 'sonnet', 'max'), true);
+    assert.equal(runnerSupportsEffort('claude', 'sonnet', 'ultra'), false);
+    assert.equal(runnerSupportsEffort('claude', 'sonnet', '--help'), false);
     assert.equal(runnerSupportsEffort('claude', 'sonnet'), true);
   });
 });

@@ -54,8 +54,9 @@ export const DEFAULT_REVIEW_DISPATCH_CATALOG: ReviewDispatchCatalog = {
       id: 'claude',
       allowCustomModels: true,
       defaultModel: DEFAULT_CLAUDE_MODEL,
-      defaultEffort: null,
-      efforts: [],
+      // Claude CLI --effort levels: low, medium, high, xhigh, max. Default medium.
+      defaultEffort: 'medium',
+      efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
       models: RUNNER_PICKER_MODELS.claude.map((id) => ({ id })),
     },
     {
