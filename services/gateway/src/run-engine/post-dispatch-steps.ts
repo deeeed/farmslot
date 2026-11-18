@@ -955,8 +955,8 @@ export async function executeReviewStep(
         reviewRunner: execution.runner,
         model: execution.model,
         effort:
-          reviewSelection?.mode === 'warm'
-            ? workerModelFromSelection(reviewSelection).effort
+          reviewSelection && (reviewSelection.mode === 'warm' || execution.runner === 'claude')
+            ? (workerModelFromSelection(reviewSelection).effort ?? null)
             : execution.effort,
       }
     : {};

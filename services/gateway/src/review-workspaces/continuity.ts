@@ -153,6 +153,7 @@ export function configureWorkspaceContinuity(
       repository: context.repository,
       prNumber: context.prNumber,
       lastReviewedHeadSha: context.priorReviewedHeadSha,
+      effort: reviewer.effort ?? null,
       fallback: {
         reason: 'retention-expired',
         detail: `Retained reviewer expired at ${expiresAt}; starting a cold review.`,
@@ -208,6 +209,7 @@ export function configureWorkspaceContinuity(
       repository: context.repository,
       prNumber: context.prNumber,
       lastReviewedHeadSha: context.priorReviewedHeadSha,
+      effort: reviewer.effort ?? null,
       fallback: {
         reason: fallbackReason,
         detail:
@@ -233,6 +235,7 @@ export function configureWorkspaceContinuity(
     priorRunId: source.id,
     priorSessionId: reviewer.runnerSessionId,
     sessionId: reviewer.runnerSessionId,
+    effort: reviewer.effort ?? null,
   };
 }
 

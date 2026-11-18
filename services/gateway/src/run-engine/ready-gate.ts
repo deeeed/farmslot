@@ -612,7 +612,9 @@ export async function executePublishGateReviewPlan(
         reviewRunner: requestedRunner,
         model: execution.model,
         effort:
-          planStep.mode === 'warm' ? workerModelFromSelection(planStep).effort : execution.effort,
+          planStep.mode === 'warm' || execution.runner === 'claude'
+            ? (workerModelFromSelection(planStep).effort ?? null)
+            : execution.effort,
         validationDepth,
         artifactScope: reviewId,
         reviewId: lineageId ?? reviewId,

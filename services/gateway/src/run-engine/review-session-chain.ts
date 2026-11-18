@@ -225,6 +225,7 @@ export function resolveRepeatReviewResumePlan(
         repository: context.repository,
         prNumber: context.prNumber,
         lastReviewedHeadSha: reviewedHead,
+        effort: reviewer.effort ?? null,
         fallback: {
           reason: 'session-resume-unsupported',
           detail:

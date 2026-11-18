@@ -60,6 +60,14 @@ test('an omitted Claude effort keeps the recorded workspace reviewer', () => {
   const result = context();
   configureWorkspaceContinuity(claudeCurrent, claudePrior, result);
   assert.equal(result.session?.continuity, 'resumed');
+  assert.equal(result.session?.effort, 'medium');
+  const unsetPrior = {
+    ...claudePrior,
+    agentContexts: [{ ...claudePrior.agentContexts![0], effort: null }],
+  } as Run;
+  const unset = context();
+  configureWorkspaceContinuity(claudeCurrent, unsetPrior, unset);
+  assert.equal(unset.session?.effort, null);
   assert.throws(
     () => configureWorkspaceContinuity({ ...claudeCurrent, effort: 'low' }, claudePrior, context()),
     /WARM review unavailable/,
@@ -80,6 +88,7 @@ test('verified WARM workspace continuity retains exact PR lineage, session and l
     priorRunId: 'prior',
     priorSessionId: 'chat',
     sessionId: 'chat',
+    effort: null,
   });
 });
 

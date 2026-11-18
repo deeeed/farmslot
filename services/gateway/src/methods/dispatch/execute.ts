@@ -1985,6 +1985,7 @@ export async function dispatchExecute(
   const launchAckSinceMs = getRunnerDefinition(runner).requiresInitialPromptAck
     ? await readSlotClockMs(vars)
     : undefined;
+  let launchedEffort: string | null = effort || null;
   try {
     const roleWindowName = agentDispatchWindow(workerRole);
     const usesRoleWindow = Boolean(roleWindowName);
@@ -2006,6 +2007,7 @@ export async function dispatchExecute(
         runner === 'claude' && (effort ?? null) === null
           ? (repeatReviewResumePlan.binding.effort ?? null)
           : (effort ?? null);
+      launchedEffort = resumeEffort;
       const attempt = await attemptRepeatReviewResume(repeatReviewResumePlan, runner, {
         vars,
         target: workerTarget,
@@ -2332,6 +2334,7 @@ export async function dispatchExecute(
         signalFile: `${workerTaskDir}/SIGNAL.json`,
         runner,
         model,
+        effort: launchedEffort,
         target: primaryTarget,
         ...(runnerSessionContextPatch(sessionMeta, 'dispatch launch') ??
           clearedRunnerSessionContextPatch()),

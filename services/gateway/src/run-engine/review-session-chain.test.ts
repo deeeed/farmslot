@@ -323,10 +323,9 @@ test('COLD never resolves a retained session, and WARM without head evidence ref
       { ...prior.agentContexts![0], runner: 'claude', model: 'opus', effort: 'medium' },
     ],
   };
-  assert.equal(
-    resolveRepeatReviewResumePlan(current, claudePrior, 'claude', 'opus', null).kind,
-    'resume',
-  );
+  const resumed = resolveRepeatReviewResumePlan(current, claudePrior, 'claude', 'opus', null);
+  assert.equal(resumed.kind, 'resume');
+  if (resumed.kind === 'resume') assert.equal(resumed.binding.effort, 'medium');
   assert.deepEqual(resolveRepeatReviewResumePlan(current, claudePrior, 'claude', 'opus', 'low'), {
     kind: 'refused',
     reason: 'effort-mismatch',
@@ -415,6 +414,7 @@ test('an adapter without continuation uses the verified delta even without a sav
   assert.equal(plan.trace.fallback?.reason, 'session-resume-unsupported');
   assert.deepEqual(plan.trace.fallback?.comparedRanges, ['1111111..2222222']);
   assert.equal(plan.trace.sessionId, undefined);
+  assert.equal(plan.trace.effort ?? null, null);
 });
 
 test('retained review lineage normalizes both current and prior pull URLs', () => {
