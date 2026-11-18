@@ -86,6 +86,9 @@ export function resolveWorkspaceContinuationSource(
     const successor = read(successorId);
     const successorOwner = successor && runPrincipalOwner(successor);
     const owner = runPrincipalOwner(run);
+    const successorEffort =
+      successor?.effort ??
+      (run.metrics.runner === 'claude' ? successor?.repeatReviewContext?.session?.effort : null);
     if (
       !successor ||
       !isTerminalRunStatus(successor.status) ||
@@ -111,7 +114,7 @@ export function resolveWorkspaceContinuationSource(
       !samePrincipalOwner(owner, successorOwner) ||
       successor.metrics.runner !== run.metrics.runner ||
       successor.metrics.model !== run.metrics.model ||
-      ((successor.effort ?? null) !== (run.effort ?? null) &&
+      ((successorEffort ?? null) !== (run.effort ?? null) &&
         !(run.metrics.runner === 'claude' && (run.effort ?? null) === null)) ||
       successor.repeatReviewContext?.session?.reviewId !== reviewer.reviewId ||
       successor.repeatReviewContext.session.priorSessionId !== reviewer.runnerSessionId

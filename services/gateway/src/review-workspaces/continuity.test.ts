@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { RepeatReviewContext, Run } from '@farmslot/protocol';
+import type { RepeatReviewContext, ReviewWorkspaceBinding, Run } from '@farmslot/protocol';
 
 import { assertPrimaryReviewContext } from '../run-engine/review-plan.js';
 
-import { configureWorkspaceContinuity } from './continuity.js';
+import { configureWorkspaceContinuity, resolveWorkspaceContinuationSource } from './continuity.js';
 
 const prior = {
   id: 'prior',
@@ -71,6 +71,64 @@ test('an omitted Claude effort keeps the recorded workspace reviewer', () => {
   assert.throws(
     () => configureWorkspaceContinuity({ ...claudeCurrent, effort: 'low' }, claudePrior, context()),
     /WARM review unavailable/,
+  );
+});
+
+test('an explicit Claude effort can retry a stopped successor that inherited it', () => {
+  const workspace: ReviewWorkspaceBinding = {
+    workspaceId: 'workspace',
+    machine: 'machine',
+    executionNodeId: 'machine',
+    checkoutPath: '/fixture/review',
+    taskPath: '/fixture/review/task',
+    artifactPath: '/fixture/review/task/artifacts',
+    executionStoppedAt: '2026-11-18T00:00:00Z',
+  };
+  const baseline: Run = {
+    ...prior,
+    reviewWorkspace: { ...workspace, transferredTo: { runId: 'successor', generation: 1 } },
+    agentContexts: [
+      { ...prior.agentContexts![0], runner: 'claude', model: 'sonnet', effort: 'high' },
+    ],
+  };
+  const retry: Run = {
+    ...current,
+    id: 'retry',
+    metrics: { ...current.metrics, runner: 'claude', model: 'sonnet' },
+    effort: 'high',
+  };
+  const successor: Run = {
+    ...retry,
+    id: 'successor',
+    status: 'cancelled',
+    effort: undefined,
+    reviewWorkspace: {
+      ...workspace,
+      continuedFrom: {
+        runId: baseline.id,
+        headSha: 'a'.repeat(40),
+        baseSha: 'b'.repeat(40),
+        taskPath: workspace.taskPath,
+      },
+    },
+    repeatReviewContext: {
+      ...context(),
+      mode: 'warm',
+      session: {
+        mode: 'warm',
+        continuity: 'resumed',
+        reviewId: 'lineage',
+        priorSessionId: 'chat',
+        effort: 'high',
+      },
+    },
+  };
+  const read = (id: string) => (id === successor.id ? successor : undefined);
+  assert.equal(resolveWorkspaceContinuationSource(retry, baseline, read, 'lineage'), successor);
+  successor.effort = 'medium';
+  assert.throws(
+    () => resolveWorkspaceContinuationSource(retry, baseline, read, 'lineage'),
+    /retained workspace is held by its successor/,
   );
 });
 
