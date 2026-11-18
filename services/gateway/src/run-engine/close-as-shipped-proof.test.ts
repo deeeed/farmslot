@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
-import type { RunDecision } from '@farmslot/protocol';
+import type { Run, RunDecision } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
 
@@ -60,6 +60,9 @@ const { createRun, getRun, updateRun } = await import('../runs/store.js');
 const { latestResolvedHumanGateDecision } = await import('./decision-replay.js');
 const { executeFinalizeStep } = await import('./finalize-step.js');
 const { deleteTestRunIfPresent, makeReadyGatePackage } = await import('./test-fixtures.js');
+// The real link recompute, not a stub: clearing the number is only half of
+// making the run adoptable.
+const { refreshRunLinks } = await import('./run-links.js');
 
 const closeAsShipped: RunDecision = {
   id: 'publication',
@@ -78,6 +81,7 @@ const finalizeWithoutCiRepo = async (t: { after: (fn: () => void) => void }) =>
 const finalize = async (
   t: { after: (fn: () => void) => void },
   projectJson: Record<string, unknown> = { default_branch: 'main', ci: { repo: 'owner/repo' } },
+  overrides?: { ticketOrPr?: string; links?: Run['links']; realRunLinks?: boolean },
 ) => {
   probeCalls.length = 0;
   persisted.length = 0;
@@ -86,7 +90,7 @@ const finalize = async (
     flowType: 'fix-bug',
     mode: 'autonomous',
     project: 'generic-project',
-    ticketOrPr: 'TAT-4644',
+    ticketOrPr: overrides?.ticketOrPr ?? 'TAT-4644',
     branch: 'fix/reused',
   });
   t.after(() => deleteTestRunIfPresent(run.id));
@@ -95,13 +99,14 @@ const finalize = async (
     slotId: 'close-as-shipped-fixture',
     prNumber: stalePrNumber,
     decisions: [closeAsShipped],
+    ...(overrides?.links ? { links: overrides.links } : {}),
   });
   const context: FinalizeStepContext = {
     broadcastFn: () => {},
     latestResolvedHumanGateDecision,
     loadProjectVarsOrNull: async () => ({ projectJson }),
     readPreparedPackage: async () => makeReadyGatePackage({ headSha: packageHead }),
-    refreshRunLinks: async () => {},
+    refreshRunLinks: overrides?.realRunLinks === true ? refreshRunLinks : async () => {},
     stepPartialIO: new Map(),
   };
   await executeFinalizeStep(run.id, context);
@@ -155,6 +160,33 @@ test('close-as-shipped clears an unproven merged link so the run stays adoptable
   assert.deepEqual(staleChecks, [packageHead]);
   assert.equal(getRun(run.id)?.prNumber, undefined);
   assert.notEqual(getRun(run.id)?.engineState?.publishGate?.publicationStatus, 'published_ready');
+});
+
+// Clearing the number is only half of it. `adopt-published-pr` also refuses a
+// run whose `links` still name another PR, and the ordinary link recompute
+// keeps the old list whenever the new one comes back empty — which is exactly
+// what a backlog or GitHub-issue ticket recomputes to once the number is gone.
+test('close-as-shipped drops the stale PR link, not just the number', async (t) => {
+  probeResult = null;
+  probeError = undefined;
+  savedLinkIsStale = true;
+  staleCheckError = undefined;
+  const staleLink = `https://github.com/owner/repo/pull/${stalePrNumber}`;
+  const run = await finalize(
+    t,
+    { default_branch: 'main', ci: { repo: 'owner/repo' } },
+    {
+      ticketOrPr: 'owner/repo#2290',
+      links: [{ label: 'PR', url: staleLink }],
+      realRunLinks: true,
+    },
+  );
+  assert.equal(getRun(run.id)?.prNumber, undefined);
+  assert.equal(
+    getRun(run.id)?.links?.some((link) => link.url === staleLink),
+    false,
+    'adopt-published-pr refuses while the run still links PR #388, so the operator cannot record what shipped',
+  );
 });
 
 test('close-as-shipped keeps a live PR link that is not a stale merge', async (t) => {

@@ -81,7 +81,7 @@ export interface FinalizeStepContext {
     runId?: string,
   ) => Promise<LoadedProjectVars | null>;
   readPreparedPackage: (current: Run) => Promise<ReadyGatePrPackage | undefined>;
-  refreshRunLinks: (runId: string) => Promise<void>;
+  refreshRunLinks: (runId: string, options?: { allowEmpty?: boolean }) => Promise<void>;
   stepPartialIO: Map<string, StepIO>;
 }
 
@@ -429,7 +429,11 @@ export async function executeFinalizeStep(
           detail: `Clearing unproven link to PR #${current.prNumber} before completing`,
         });
         updateRun(runId, { prNumber: undefined });
-        await refreshRunLinks(runId);
+        // allowEmpty: a run whose ticket is a backlog id or GitHub issue
+        // recomputes to no links at all once the number is gone, and the
+        // default refresh keeps the old list — including the PR link that
+        // makes adopt-published-pr refuse the PR that actually shipped.
+        await refreshRunLinks(runId, { allowEmpty: true });
       }
     }
     if (publishedPrNumber) {
