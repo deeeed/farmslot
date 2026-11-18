@@ -390,7 +390,8 @@ export function refundedNativeReviewer(
         typeof context.reviewLoopNumber === 'number' &&
         typeof context.reviewId === 'string' &&
         (!params.reviewId || context.reviewId === params.reviewId) &&
-        (context.effort ?? null) === (params.effort?.trim() || null) &&
+        ((context.effort ?? null) === (params.effort?.trim() || null) ||
+          (params.runner === 'claude' && !params.effort?.trim())) &&
         !!context.nativeSession?.acceptedAt &&
         !!context.nativeSession.closedAt &&
         !context.nativeSession.releasedAt &&

@@ -10,7 +10,7 @@ import {
   type ReviewValidationDepth,
   type RunnerSessionUsage,
 } from '@farmslot/protocol';
-import { reviewArtifactDir } from '@farmslot/review-dispatch';
+import { executionModelFromSelection, reviewArtifactDir } from '@farmslot/review-dispatch';
 import { resolveEffectiveDomain } from '@farmslot/slot-config';
 
 import { markAgentContextStatus, upsertAgentContext } from '../agents/contexts.js';
@@ -404,6 +404,9 @@ async function runNativeReviewAttempt(
   let primaryFailure: unknown;
   let measuredUsage: RunnerSessionUsage | undefined;
   let fallbackRecord: ReviewSessionFallback | undefined;
+  // Explicit effort wins. A retained session keeps its recorded effort, including
+  // an unset pre-upgrade Claude launch. A fresh Claude launch fills the catalog default.
+  let launchEffort: string | null = null;
   try {
     const reviewSnapshot = await withNativeReviewMutation(async () => {
       admit();
@@ -500,6 +503,19 @@ async function runNativeReviewAttempt(
         : undefined;
       await admitReviewRound(runId, roundId);
       if (retained) retained = claimWarmReviewerSession(scope, { consume: true });
+      const requestedEffort = input.effort?.trim() || null;
+      launchEffort = requestedEffort
+        ? requestedEffort
+        : retained
+          ? (retained.effort ?? null)
+          : runner === 'claude'
+            ? (executionModelFromSelection({
+                runner,
+                model,
+                effort: null,
+                mode: 'cold',
+              }).effort ?? null)
+            : null;
       if (!recovering) {
         admit();
         context = (await upsertAgentContext(runId, 'review', {
@@ -520,7 +536,7 @@ async function runNativeReviewAttempt(
           runner,
           model,
           ...(visualInput ? { pipelineVisualReviewInput: visualInput } : {}),
-          ...(input.effort?.trim() ? { effort: input.effort.trim() } : {}),
+          ...(launchEffort ? { effort: launchEffort } : {}),
           target: null,
         }))!;
         await removeSlotFiles(
@@ -725,7 +741,7 @@ async function runNativeReviewAttempt(
           runner,
           model,
           resultSchema,
-          effort: input.effort?.trim() || undefined,
+          effort: launchEffort || undefined,
           safetyTier: run.safetyTier ?? runnerDefaultSafetyTier(runner),
           project: projectVars.projectJson,
           projectVars,
@@ -1062,7 +1078,7 @@ async function runNativeReviewAttempt(
             reviewerSessionId,
             runner,
             model,
-            effort: input.effort,
+            effort: launchEffort,
             mode: 'cold',
             validationDepth,
             retryCount: 0,
@@ -1134,6 +1150,7 @@ async function runNativeReviewAttempt(
     if (!feedback.incomplete && context.runnerSessionId)
       registerWarmReviewerSession({
         ...scope,
+        effort: launchEffort,
         contextId,
         windowName: contextId,
         slotId: vars.slotId,
@@ -1167,7 +1184,7 @@ async function runNativeReviewAttempt(
           mode === 'warm' ? reviewSnapshot.snapshot.baseSha! : reviewSnapshot.snapshot.headSha!,
         runner,
         model,
-        effort: input.effort?.trim() || null,
+        effort: launchEffort,
         ...(recordedFallback ? { fallback: recordedFallback } : {}),
       },
       reviewSnapshot: reviewSnapshot.snapshot,

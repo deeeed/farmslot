@@ -242,7 +242,11 @@ export function claimWarmReviewerSession(
     throw new WarmReviewRefusal('session-busy', 'the retained reviewer is running');
   if (session.model !== scope.model)
     throw new WarmReviewRefusal('model-mismatch', 'the retained reviewer cannot change model');
-  if (session.effort !== scope.effort)
+  // An omitted Claude effort means the recorded launch, including a pre-upgrade unset effort.
+  if (
+    session.effort !== scope.effort &&
+    !(scope.runner === 'claude' && (scope.effort ?? null) === null)
+  )
     throw new WarmReviewRefusal('effort-mismatch', 'the retained reviewer cannot change effort');
   if (options.consume)
     warmSessions.set(sessionKey(scope), { ...session, runId: scope.runId, busy: true });
