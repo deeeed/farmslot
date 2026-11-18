@@ -55,7 +55,6 @@ test('an omitted Claude effort keeps the recorded workspace reviewer', () => {
   } as Run;
   const claudeCurrent = {
     ...current,
-    effort: null,
     metrics: { runner: 'claude', model: 'opus' },
   } as Run;
   const result = context();
