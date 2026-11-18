@@ -1,1 +1,1 @@
-- A publication with a fast push skips the second base fetch, and a finalize that just published no longer checks origin a third time, saving one fetch and one remote check (about 13-17 s on macpro). Fetch, push, remote check and PR creation now appear as their own finalize steps.
+- A publication with a fast push skips the second base fetch, saving one fetch (about 6-8 s on macpro). Fetch, push, remote check, PR creation and the publication record now appear as their own finalize steps.

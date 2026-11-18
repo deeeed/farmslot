@@ -387,20 +387,6 @@ test('local-first publication of an existing PR checks origin after the push and
     assert.ok(phases.includes(phase), `${phase} is a recorded phase`);
 });
 
-test('an already-published package returns without an origin check, so finalize keeps its own', async () => {
-  run.flowType = 'dev';
-  run.engineState = { publishGate: { publicationStatus: 'published_ready' } };
-  const result = await publishCompletionPackage(
-    run.id,
-    makeReadyGatePackage({ headSha: head, branch, publicationTarget: 'ready' }),
-  );
-  assert.equal(result.publishedHeadSha, undefined, 'no fresh origin check to reuse');
-  assert.equal(
-    commands.filter((command) => command.includes('ls-remote --exit-code origin')).length,
-    0,
-  );
-});
-
 test('successful push exit with a stale actual remote refuses publication', async () => {
   pushAdvances = false;
   await assert.rejects(
