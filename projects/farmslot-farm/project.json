@@ -16,6 +16,21 @@
     "template_id": "review-pr/static",
     "instruction_files": ["runtime/review-quality.md"]
   },
+  "required_skills": {
+    "root": "projects/farmslot-farm/fixtures",
+    "rules": [
+      {
+        "id": "farmslot-review-rules",
+        "skills": [
+          {
+            "name": "runtime",
+            "files": ["review-quality.md"],
+            "review": { "pack": "review-pack.json", "client": "farmslot", "level": "static" }
+          }
+        ]
+      }
+    ]
+  },
   "workflow_defaults": {
     "review-pr": {
       "execution": {

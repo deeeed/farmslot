@@ -18,12 +18,16 @@ Respect the selected validation depth. A static review reads retained source, te
 
 ## Rules
 
+<a id="fsr-01"></a>
+
 ### FSR-01. Fix the demonstrated failure at its shared owner
 
 - Applies to fixes, migrations and new abstractions.
 - Inspect the approved trigger and the changed producer, sibling callers and replacement path. Prefer removing the failing work. Carry every required capability to its single owner; remove the replaced path instead of adding a shim, alias or parallel implementation. Derive credential shapes, provider lists and labels from their owning schema/catalog.
 - Contradicted by a speculative fix with no approved scope or reproduction, a timeout increase that leaves the demonstrated redundant work, or a second implementation serving the same contract, including copied credential shapes or hard-coded provider lists in consumers. Explicitly approved planned work is a valid trigger.
 - Failure: F310/F313 led to removing release copies in [#1747](https://github.com/deeeed/farmslot/pull/1747); F318 needed one worker/preflight environment in [#1758](https://github.com/deeeed/farmslot/pull/1758). F382 carries the standing no-shims and real-bugs-only requirements. [#2139](https://github.com/deeeed/farmslot/pull/2139) removed a second credential-shape definition.
+
+<a id="fsr-02"></a>
 
 ### FSR-02. Use current authoritative facts, not inferred state
 
@@ -32,12 +36,16 @@ Respect the selected validation depth. A static review reads retained source, te
 - Contradicted by a local tracking ref treated as proof of the actual remote branch, an unrecognized producer status treated as absence, business state guessed from display text, or a failed child command mislabeled as malformed output. Missing facts remain unknown or explicitly refused.
 - Failure: F301 lost a valid session status, fixed by [#1720](https://github.com/deeeed/farmslot/pull/1720); F326 rejected an already pushed branch from a stale ref, fixed by [#1767](https://github.com/deeeed/farmslot/pull/1767). F382 also carries the standing no-prose-inference requirement. [#2161](https://github.com/deeeed/farmslot/pull/2161) fixed child-command failures mislabeled as invalid JSON.
 
+<a id="fsr-03"></a>
+
 ### FSR-03. Prove ownership and quiescence before destructive cleanup
 
 - Applies to stop, release, cancel, archive, reset and replacement.
 - Inspect all recorded and unrecorded workers, resource owners, handoffs and process identities before acting. Recheck the claim/epoch after asynchronous inspection. Only the owner's confirmed processes may stop; unreadable identity and a protected worker preserve the hold.
 - Contradicted by killing before an unrecorded-worker check, treating a missing node as proof of exit, or resetting a checkout after its owner changed. A safe hold is not evidence that cleanup should bypass its guard.
 - Failure: F315's unrecorded idle worker required guarded ownership in [#1755](https://github.com/deeeed/farmslot/pull/1755). F375 and the preservation finding in [#1824](https://github.com/deeeed/farmslot/pull/1824) require daemon cleanup after worker checks.
+
+<a id="fsr-04"></a>
 
 ### FSR-04. Persist handoffs and preserve history across interruption
 
@@ -46,12 +54,16 @@ Respect the selected validation depth. A static review reads retained source, te
 - Contradicted by re-sending an acknowledged prompt after restart, rebuilding ownership from a display flag, a late result acting on a newer generation, or dropping resolved records without durable preservation.
 - Failure: F331/F332 were fixed by [#1782](https://github.com/deeeed/farmslot/pull/1782) and [#1788](https://github.com/deeeed/farmslot/pull/1788); F347/F351 required stable gate IDs and durable history in [#1797](https://github.com/deeeed/farmslot/pull/1797).
 
+<a id="fsr-05"></a>
+
 ### FSR-05. Refresh must preserve requested gate authority
 
 - Applies to package refresh, readiness, action projection, approval and final publication.
 - Trace the operator's requested policy and the exact reviewed head/inputs through every reader and mutation-time check. Refresh may invalidate stale proof; it may not silently weaken the requested policy. Available actions and final enforcement must agree.
 - Contradicted by replacing a requested review requirement with a weaker project default, offering publication despite a known conflict, or accepting an approval against another package or head.
 - Failure: F302's unmergeable publication action was fixed by [#1728](https://github.com/deeeed/farmslot/pull/1728); F346's refresh lowered a required review, fixed by [#1792](https://github.com/deeeed/farmslot/pull/1792).
+
+<a id="fsr-06"></a>
 
 ### FSR-06. Bound work at the correct owner and keep idle reads cheap
 
@@ -60,12 +72,16 @@ Respect the selected validation depth. A static review reads retained source, te
 - Contradicted by recopying evidence during release, full per-slot inspection without a viewer, a whole-store rescan/deep comparison on every recheck, or unrelated runs waiting behind one unbounded hook. A larger deadline does not remove unnecessary work.
 - Failure: F313 removed duplicate acquisition in [#1747](https://github.com/deeeed/farmslot/pull/1747); F330 split the farm-wide queue in [#1778](https://github.com/deeeed/farmslot/pull/1778); F372 removed background workspace probes in [#1823](https://github.com/deeeed/farmslot/pull/1823). [#2133](https://github.com/deeeed/farmslot/pull/2133) added a whole PR-rule-store comparison per recheck.
 
+<a id="fsr-07"></a>
+
 ### FSR-07. Bind evidence and caches to their actual retained identity
 
 - Applies to output acquisition, digests, caches, reports, review findings and publication evidence.
 - Trace producer through retention, selected attempt/head, consumer and displayed claim. Serialize competing writes at their owner. Keep task paths and recipe paths distinct. Exclude only paths explicitly omitted by the retained bundle, and preserve all other missing/changed refusals. Use the canonical producer and exact inputs for gate-validated JSON, including QA scope. If no producer exists, record that gap.
 - Contradicted by a stale-head cache used for a current package, overlapping captures that overwrite each other, an alias opening another artifact, a pass derived from evidence belonging to another attempt, or hand-written JSON replacing an available canonical producer. Missing or untimed evidence stays honestly labeled.
 - Failure: F304/F305 required exact exclusions and per-run acquisition in [#1722](https://github.com/deeeed/farmslot/pull/1722) and [#1731](https://github.com/deeeed/farmslot/pull/1731); F341/F343 corrected artifact and head identity in [#1794](https://github.com/deeeed/farmslot/pull/1794) and [#1795](https://github.com/deeeed/farmslot/pull/1795). [#2156](https://github.com/deeeed/farmslot/pull/2156) followed a hand-written QA scope rejected by the gate.
+
+<a id="fsr-08"></a>
 
 ### FSR-08. Validate real contracts and make tests contradict the bug
 
@@ -74,6 +90,8 @@ Respect the selected validation depth. A static review reads retained source, te
 - Contradicted by a forced value presented as valid domain data, a fixture that passes only because its runner skips typechecking, or a purported behavior assertion that has no consumer-visible effect.
 - Failure: review of [#1698](https://github.com/deeeed/farmslot/pull/1698) found incomplete claim fixtures that passed execution but failed the contract typecheck, and a tested field unused by judgment controls. F382 retains the standing ban on double assertions. [#2131](https://github.com/deeeed/farmslot/pull/2131) passed synthetic tests but broke real blind launches.
 
+<a id="fsr-09"></a>
+
 ### FSR-09. Keep default tests fast and control time
 
 - Applies to new or changed default tests, especially sleeps, polling, retry, timeout and cleanup timing.
@@ -81,12 +99,16 @@ Respect the selected validation depth. A static review reads retained source, te
 - Contradicted by waiting out a production delay in a unit/CI test, a fixed sleep presented as proof that an effect finished, or fake timers that leave an asynchronous completion path untested.
 - Failure: review of [#1708](https://github.com/deeeed/farmslot/pull/1708) caught a fixed-sleep proof; F382 imports the standing real-timer prohibition after repeated slow and flaky tests.
 
+<a id="fsr-10"></a>
+
 ### FSR-10. Share UI state and keep asynchronous layout stable
 
 - Applies to Command Center and Companion views, shared models, loading, warnings and errors.
 - Trace the common view model and every affected client. Keep useful prior data during background reads. Reserve the final layout space or use an overlay for transient content; inspect poll/load/error transitions and the actual rendered or accessible state when evidence is supplied.
 - Contradicted by separate implementations of one shared decision, controls reading a different flag than the test, or a banner/skeleton changing surrounding layout on each refresh. Static source inspection does not establish a measured visual result.
 - Failure: F342's misleading panels/rounds were fixed in [#1793](https://github.com/deeeed/farmslot/pull/1793) and [#1806](https://github.com/deeeed/farmslot/pull/1806); [#1819](https://github.com/deeeed/farmslot/pull/1819) corrected terminal layout and irrelevant progress notices.
+
+<a id="fsr-11"></a>
 
 ### FSR-11. Restore persistent view choices through the URL
 
@@ -99,6 +121,6 @@ Respect the selected validation depth. A static review reads retained source, te
 
 Use `.agents/skills/fs-retro-bulk/SKILL.md` Pass 2. After a review miss or incident, verify the claim against the actual run, diff, tests, review or gate outcome. Add or sharpen a rule only for a confirmed real failure likely to recur and only when the new wording changes a future diff review. Link the F-entry or PR, retain the four fields above and update an existing rule before adding another. A code fix that removes the entire class replaces the instruction; keep a broader check only when its remaining scope is demonstrated.
 
-For each curation, record the destination rule ID, evidence and net instruction lines added. Remove rules that are obsolete, duplicate another owner or repeatedly never apply to their declared scope; preserve useful failure provenance in the linked PR rather than adding run histories here. "No rule change" is a valid result. Do not auto-append rules or create a service, scheduled generator or another rule catalog.
+After any rule change, regenerate the machine-readable pack with `node projects/farmslot-farm/scripts/review-pack.mjs`; a new rule needs its `<a id="fsr-nn"></a>` anchor and a `- Failure:` line. For each curation, record the destination rule ID, evidence and net instruction lines added. Remove rules that are obsolete, duplicate another owner or repeatedly never apply to their declared scope; preserve useful failure provenance in the linked PR rather than adding run histories here. "No rule change" is a valid result. Do not auto-append rules or create a service, scheduled generator or another rule catalog.
 
 When curated feedback has landed, use fs-retro-bulk's existing canonical-rule consumption ledger with the merged commit and rule destination. Only real provider feedback candidates enter that ledger; never invent a comment identity for an incident. Resolve only the audited decisions through its existing guarded closeout. Do not resolve live retros as part of a documentation or proof run.
