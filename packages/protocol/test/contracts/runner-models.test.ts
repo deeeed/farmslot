@@ -8,16 +8,12 @@ import {
   resolveCodexReasoningEffort,
 } from '../../src/contracts/runs.js';
 
-test('GPT-6.1 Sol is the Codex default and supports max and ultra', () => {
-  assert.equal(DEFAULT_CODEX_MODEL, 'gpt-6.1-sol');
-  assert.deepEqual(codexReasoningEfforts('gpt-6.1-sol'), [
-    'low',
-    'medium',
-    'high',
-    'xhigh',
-    'max',
-    'ultra',
-  ]);
+test('GPT-6.2 Sol is the Codex default and supports max and ultra', () => {
+  assert.equal(DEFAULT_CODEX_MODEL, 'gpt-6.2-sol');
+  const full = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const;
+  assert.deepEqual(codexReasoningEfforts('gpt-6.2-sol'), [...full]);
+  assert.deepEqual(codexReasoningEfforts('gpt-6.2-astra'), [...full]);
+  assert.deepEqual(codexReasoningEfforts('gpt-6.1-sol'), [...full]);
   assert.deepEqual(codexReasoningEfforts('gpt-6-luna'), ['low', 'medium', 'high', 'xhigh', 'max']);
 });
 
@@ -26,6 +22,7 @@ test('Codex effort resolution shares defaults, auto and the model level set', ()
     assert.equal(resolveCodexReasoningEffort(effort), DEFAULT_CODEX_EFFORT);
   assert.equal(resolveCodexReasoningEffort(' AUTO '), undefined);
   assert.equal(resolveCodexReasoningEffort(' MAX ', 'gpt-6-luna'), 'max');
+  assert.equal(resolveCodexReasoningEffort('ultra', 'gpt-6.2-sol'), 'ultra');
   assert.equal(resolveCodexReasoningEffort('ultra', 'gpt-6.1-sol'), 'ultra');
   for (const effort of ['ultra', 'invalid-level', '--help'])
     assert.throws(

@@ -18,6 +18,8 @@ export const RUNNER_PICKER_MODELS: Readonly<Record<string, readonly string[]>> =
   claude: ['sonnet', 'opus', 'haiku', 'fable'],
   codex: [
     DEFAULT_CODEX_MODEL,
+    'gpt-6.2-astra',
+    'gpt-6.1-sol',
     'gpt-6-sol',
     'gpt-6-astra',
     'gpt-6-luna',
