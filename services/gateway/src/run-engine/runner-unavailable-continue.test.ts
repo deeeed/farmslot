@@ -409,3 +409,35 @@ test(
     void execution;
   },
 );
+
+// The cap itself. A marker older than the window start cannot happen while one
+// process owns both writes, but a clock stepped backwards between them can
+// produce it, and an uncapped credit then drives the timeout check negative —
+// a run that never times out at all.
+test(
+  'a card marker older than the window start credits only the window',
+  { timeout: 15_000 },
+  async (t) => {
+    const f = await fixture(t);
+    f.restoreRunner();
+    const before = getRun(f.run.id)!.monitorState!;
+    updateRun(f.run.id, {
+      monitorState: {
+        ...before,
+        startedAt: new Date(Date.now() - 2_000).toISOString(),
+        // Two minutes of "wait" against a two-second window.
+        gateWaitStartedAt: new Date(Date.now() - 120_000).toISOString(),
+      },
+    });
+
+    const execution = f.start();
+    await until(() => (getRun(f.run.id)?.monitorState?.gateWaitMs ?? 0) > 0);
+
+    const credited = getRun(f.run.id)?.monitorState?.gateWaitMs ?? 0;
+    assert.ok(
+      credited <= 10_000,
+      `the credit was not capped at the window: gateWaitMs=${credited} for a 2 s window, so elapsed goes negative and the run stops timing out`,
+    );
+    void execution;
+  },
+);
