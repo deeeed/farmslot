@@ -21,7 +21,12 @@ import { lazyImport } from '../core/lazy-import.js';
 import { captureHelperAttempt, observeHelperUsage } from '../runtime/agent-usage-context.js';
 
 import { resolveAuth } from './auth-resolve.js';
-import { registerCodexAstra, reportedLlmCost, requiresExactAstraProvider } from './codex-astra.js';
+import {
+  CODEX_ASTRA_MODEL,
+  registerCodexAstra,
+  reportedLlmCost,
+  requiresExactAstraProvider,
+} from './codex-astra.js';
 import { CODEX_LB_PROVIDER, registerCodexLb } from './codex-lb.js';
 import { getLLMConfig } from './config.js';
 
@@ -193,21 +198,21 @@ export const TIER_MAP: Record<string, Record<string, string>> = {
     anthropic: 'haiku',
     openai: 'gpt-4.1-mini',
     'openai-codex': 'gpt-5.6-luna',
-    'codex-lb': 'gpt-6-astra',
+    'codex-lb': CODEX_ASTRA_MODEL,
     google: 'gemini-flash',
   },
   standard: {
     anthropic: 'sonnet',
     openai: 'gpt-4.1',
     'openai-codex': 'gpt-5.6-terra',
-    'codex-lb': 'gpt-6-astra',
+    'codex-lb': CODEX_ASTRA_MODEL,
     google: 'gemini-pro',
   },
   smart: {
     anthropic: 'opus',
     openai: 'gpt-4.1',
     'openai-codex': 'gpt-5.6-sol',
-    'codex-lb': 'gpt-6-astra',
+    'codex-lb': CODEX_ASTRA_MODEL,
     google: 'gemini-pro',
   },
 };

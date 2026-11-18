@@ -39,7 +39,7 @@ if (config && Number(process.env.FARMSLOT_PI_ASTRA_GATEWAY_PID) === process.pid)
       );
       throw new Error('Validation stopped before provider transport');
     }
-    if (target.gatewayPid !== process.pid || body.model !== 'gpt-6-astra') return;
+    if (target.gatewayPid !== process.pid || body.model !== 'gpt-6.2-astra') return;
     const proof = {
       gatewayPid: process.pid,
       provider,
