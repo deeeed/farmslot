@@ -4,6 +4,12 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.50.0 - 2026-11-18
+
+- Usage prices include GPT-6.2 Astra at $8 / $0.40 cached / $40 and GPT-6.2 Sol at $2 / $0.10 cached / $10, the published standard short-context rates. The GPT-6.1 Sol and GPT-6 Astra rows stay.
+- The task handoff carries `reviewRulePack`, a static review's rule pack frozen with its digest.
+- Allow a clean no-change exit when changed-file CI never ran. Failed or stale receipts still block.
+
 ## 0.49.0 - 2026-11-18
 
 - `task init` accepts `referenceCheckouts`: read-only checkouts of other codebases the task is compared against, already resolved by the caller. They are listed in the task document under `Reference checkouts (read-only)` with the revision to cite, and frozen in `inputs/reference-checkouts.json`. An absent one is recorded with `present: false` and named as absent in the document: a comparison nobody can read is blocked, and silence would read as unchecked. An operator plan bypasses the shared document builder, so the same list is appended to it.

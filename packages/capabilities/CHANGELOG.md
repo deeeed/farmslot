@@ -6,6 +6,10 @@ All notable changes to `@farmslot/capabilities` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.7.8 - 2026-11-18
+
+- Align published dependencies with @farmslot/protocol 0.90.0.
+
 ## 0.7.7 - 2026-11-18
 
 - Update the exact dependency cohort for prepared recipe trees and overall progress.

@@ -6,6 +6,22 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.39.9 - 2026-11-18
+
+- Codex LB tiers and the Co-Pilot Astra default use `gpt-6.2-astra` at the published standard rates.
+- Saved `gpt-6-astra` pins stay registered on openai-codex and Codex LB. The native Co-Pilot runtime still defaults to `gpt-6.2-sol` at low effort.
+- A static review with `static_review.rule_pack` validates the pack from the project installation before building the task, copies it into `inputs/instructions/` and records `reviewRulePack` with its digest in the handoff. A missing or invalid pack refuses the review.
+- Carry the validated no-change result into the operator gate after releasing the checkout.
+- Allow a CI follow-up to start fresh when the parent worker exits by taking over its own slot reservation before launch.
+- Reopening or relaunching a pi worker now passes the saved session file to `--session`, which takes `<path|id>`. pi's saved session identity is the file stem, which it can resolve as neither, so the reopen command answered `No session found matching ...` and exited — the pane was then torn down and the worker looked unrecoverable (run bdcbd42f). A runner's continuation declaration owns which form it needs; the runners that resume by id are unchanged.
+- The same path now travels with every other pi resume: retained warm handoff (which verified the file on the slot and then dropped it), the terminal review relaunch, and the parked-session reload. Where a runner resumes only by file and a binding has none, the command builder says so instead of emitting one that silently opens a new conversation.
+- Runtime recovery proves the saved transcript is readable and non-empty on the slot before relaunching. A runner handed a path to a missing or empty transcript starts a new conversation there and passes every liveness check, so recovery used to report the old session as reloaded with none of its work in it.
+- A pasted reopen command for a blind-eval worker carries its trial boundary, so a transcript that was unreachable before this fix cannot now be opened outside its sandbox.
+- The reopen command and the terminal-review resume now check the saved transcript at the moment they run, and refuse with the reason, rather than trusting a path that was resolvable when the command was built. A pasted command or a replayed resume would otherwise open a new conversation at that name, which then passes every liveness check.
+- Warm handoff checks the retained transcript's content, not only its existence: a failed copy leaves a zero-byte file beside a valid idle receipt, and the new conversation that opens there can satisfy the prompt acknowledgement that was supposed to prove continuity.
+- A probe that fails for its own reasons is reported as a probe failure with its exit code, not as a damaged transcript: a node at its process or descriptor limit answers exit 1 too (`spawn sh EAGAIN`, `EMFILE`), and both the recovery and review-resume callers now read one shared outcome — present, absent or unavailable.
+- Publication validates the task-action references of the selected recipe attempt only, so a run whose superseded attempts ran against an earlier task-action library no longer refuses with `library digest does not match the recorded recipe: expected <current>, <stale>, found <current>`. Retained attempts stay retained; an attempt that records two library digests for its own actions is still refused. The frozen publication verifier draws the same line: the selected attempt's claim is the digest anchor for the retained library, and a superseded attempt carried as additional evidence has its inputs checked for presence instead of being folded into one digest expectation — so a before/after pair recorded across a library move publishes, while missing or corrupt implementations still refuse. Presence now means the retained library declares that action — through the one manifest per scope its own discovery would load — not merely that some file exists under `actions/`, so an attempt whose action was deleted along with its manifest entry is refused instead of publishing an image with no implementation.
+
 ## 0.39.8 - 2026-11-18
 
 - Search retained text artifacts with bounded literal reads, line hits and the existing artifact snapshot/path checks.

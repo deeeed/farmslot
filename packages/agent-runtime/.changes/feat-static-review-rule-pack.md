@@ -1,1 +1,0 @@
-- The task handoff carries `reviewRulePack`, a static review's rule pack frozen with its digest.

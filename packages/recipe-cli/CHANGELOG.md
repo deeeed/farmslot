@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.21 - 2026-11-18
+
+- Align published dependencies with @farmslot/adapter-sdk 0.28.7, @farmslot/agent-runtime 0.50.0, @farmslot/protocol 0.90.0, @farmslot/recipe-runner 0.48.0.
+
 ## 0.35.20 - 2026-11-18
 
 - `withTaskProjectHost` accepts the receipt its caller already verified, so a task command hashes the retained tooling once instead of twice. A receipt for a different binding is refused.

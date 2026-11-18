@@ -1,10 +1,11 @@
 {
-  "version": "0.36.8",
+  "version": "0.36.9",
   "date": "2026-11-18",
   "items": [
-    "Search inside saved logs, Markdown and JSON, then preview a matching original line and restore it from a shared link",
-    "Show “Worker finished” on stale blocked runs when Monitor was the last step to run and recorded completion",
-    "Show failed attempts, timestamps and recorded failure reasons inside the Review history round they belong to",
-    "Show how long a run has gone without progress after 20 minutes in Runs and the run sidebar. Keep operator waits clear of the stale label"
+    "Review holds and spent fix budgets stay amber instead of appearing as failures.",
+    "The recipe SDK exposes labeled ancestry for nested and repeated calls.",
+    "Static reviews can load a project rule pack and record its digest in the review handoff.",
+    "Session recovery resumes PI workers by saved transcript and refuses missing or empty history.",
+    "Publication verifies the selected recipe attempt's task actions while preserving older attempts."
   ]
 }

@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.25.14 - 2026-11-18
+
+- Align published dependencies with @farmslot/adapter-sdk 0.28.7, @farmslot/protocol 0.90.0.
+
 ## 0.25.13 - 2026-11-18
 
 - Group failed reviewer starts within their review round, retain the completed review's findings, and show fix acceptance as a fix rather than a new review. Keep real replays separate and use the worker context for fix duration.

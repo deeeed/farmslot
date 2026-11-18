@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import type { FleetStatus } from '@farmslot/protocol';
 import { resolveFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
-import { migratePaths, type MigrationOptions } from './paths-migrate.js';
+import type { MigrationOptions } from './paths-migrate.js';
 import { json } from './paths-migrate-plan.js';
 
 async function put(file: string, value: unknown): Promise<void> {
@@ -60,8 +60,6 @@ test('pass 3: relative backlog specPath reads, enqueues and rolls back its origi
     { id: 'outside', specPath: 'tasks/unmoved.md' },
   ]);
   const before = await readFile(backlogFile);
-  await migratePaths(f.options, 'apply');
-  const paths = resolveFarmPaths({ home: f.home, role: 'gateway', env: {} });
   const env = { ...process.env };
   for (const key of Object.keys(env)) if (key.startsWith('FARMSLOT_')) delete env[key];
   delete env.TMUX;
@@ -76,6 +74,35 @@ test('pass 3: relative backlog specPath reads, enqueues and rolls back its origi
       new URL('../../../../services/gateway/tsconfig.json', import.meta.url),
     ),
   });
+  // The legacy support selector uses os.homedir(), so isolate the migration
+  // process too; options.userHome alone does not isolate that legacy root.
+  const migrateInFixture = (mode: 'apply' | 'rollback') =>
+    execFileSync(
+      process.execPath,
+      [
+        '--import',
+        'tsx',
+        '--input-type=module',
+        '-e',
+        `
+      import assert from 'node:assert/strict';
+      import { homedir } from 'node:os';
+      import { migratePaths } from './packages/cli/src/commands/paths-migrate.ts';
+      const options = JSON.parse(process.argv[1]);
+      assert.equal(homedir(), options.userHome, 'Migration fixture must stay inside its temporary home');
+      await migratePaths(options, process.argv[2]);
+    `,
+        JSON.stringify(f.options),
+        mode,
+      ],
+      {
+        cwd: fileURLToPath(new URL('../../../../', import.meta.url)),
+        env,
+        encoding: 'utf8',
+      },
+    );
+  migrateInFixture('apply');
+  const paths = resolveFarmPaths({ home: f.home, role: 'gateway', env: {} });
   const migratedBytes = await readFile(paths.state.backlogFile);
   const migrated = await json(paths.state.backlogFile);
   assert.ok(Array.isArray(migrated));
@@ -130,7 +157,7 @@ test('pass 3: relative backlog specPath reads, enqueues and rolls back its origi
   );
   // Enqueue mutates the backlog; restore the applied bytes before testing migration rollback.
   await writeFile(paths.state.backlogFile, migratedBytes);
-  await migratePaths(f.options, 'rollback');
+  migrateInFixture('rollback');
   assert.deepEqual(await readFile(backlogFile), before);
   assert.equal(await readFile(path.join(f.checkout, specPath), 'utf8'), markdown);
 });

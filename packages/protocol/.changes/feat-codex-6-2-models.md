@@ -1,1 +1,0 @@
-- Codex defaults to `gpt-6.2-sol`, including backlog and roadmap refinement. `gpt-6.2-sol` and `gpt-6.2-astra` are known models with the full reasoning set, and `gpt-6.1-sol` stays selectable.
