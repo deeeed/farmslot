@@ -23,7 +23,7 @@ export function publicationReviewVerdictStatus(verdict: string | null | undefine
 
 /**
  * Map independent-review verdict → visual tone.
- * issues → warn (orange, another review/fix loop is expected)
+ * issues or blocked → warn (rework or an operator decision is needed)
  * failed → fail (red, terminal)
  */
 export function publicationReviewVerdictTone(
@@ -32,7 +32,7 @@ export function publicationReviewVerdictTone(
   const v = (verdict ?? '').trim().toLowerCase();
   if (v === 'pass' || v === 'skipped') return 'ok';
   if (v === 'pending') return 'running';
-  if (v === 'issues') return 'warn';
+  if (v === 'issues' || v === 'blocked') return 'warn';
   if (v === 'failed') return 'fail';
   return 'muted';
 }
@@ -114,8 +114,7 @@ export function computePackageRefreshStatus(
 
 /**
  * Visual tone for any pipeline step/node (canvas + mini).
- * Prefer explicit verdict on outputs when present (publication reviews), but
- * review must honor maxRetriesExhausted before treating issues as orange.
+ * A review verdict can explain why the engine stopped a step.
  */
 export function pipelineStepTone(
   step: Pick<RunStep, 'name' | 'detail'> & {
@@ -135,11 +134,16 @@ export function pipelineStepTone(
         : null;
   const verdictLower = (verdict ?? '').trim().toLowerCase();
 
-  // Review first: terminal exhaustion is red even when verdict is still "issues".
+  // A spent fix budget stops automated rework. The review can have found issues
+  // or stopped for the operator even if the engine records the step as failed.
   if (step.name === 'review' && step.status === 'failed') {
-    if (outputs?.maxRetriesExhausted === true) return 'fail';
-    if (verdictLower === 'issues' || /issues/i.test(step.detail ?? '')) return 'warn';
-    return 'fail';
+    if (verdictLower === 'issues' || verdictLower === 'blocked')
+      return publicationReviewVerdictTone(verdictLower);
+    if (!verdict && (outputs?.maxRetriesExhausted === true || /issues/i.test(step.detail ?? '')))
+      return 'warn';
+    return verdictLower === 'failed' || step.detail?.trim() || opts?.runError?.trim()
+      ? 'fail'
+      : 'muted';
   }
 
   if (verdict) return publicationReviewVerdictTone(verdict);

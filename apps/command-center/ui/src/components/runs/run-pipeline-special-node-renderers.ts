@@ -147,7 +147,7 @@ export function renderReviewPipelineNode(n: NodePos, ctx: RunPipelineSpecialNode
   const isPending = vis === 'pending';
   const isSkipped = vis === 'skipped';
   const isBlocked = vis === 'blocked';
-  // Shared tone map with mini (issues → orange unless maxRetriesExhausted).
+  // The canvas and Runs strip share the review's recorded tone.
   const tone = pipelineStepTone({ ...step, status: vis }, { runError: ctx.run.error });
   const toneColors = pipelineToneFillStroke(tone);
 
@@ -239,16 +239,16 @@ export function renderReviewPipelineNode(n: NodePos, ctx: RunPipelineSpecialNode
             ? svg`
         <text class="node-meta" x="${n.w / 2}" y="27"
               text-anchor="middle" dominant-baseline="central"
-              fill="${pipelineToneColor('fail')}">
+              fill="${pipelineToneColor(tone)}">
           ! MAX RETRIES (${retryCount}${maxRetries !== undefined ? `/${maxRetries}` : ''})
         </text>
       `
-            : isFailed && verdict === 'issues'
+            : isFailed && tone === 'warn'
               ? svg`
         <text class="node-meta" x="${n.w / 2}" y="27"
               text-anchor="middle" dominant-baseline="central"
               fill="${pipelineToneColor(tone)}">
-          ! ISSUES${retryCount > 0 ? ` (${retryCount}x)` : ''}
+          ${verdict === 'blocked' ? '! NEEDS DECISION' : `! ISSUES${retryCount > 0 ? ` (${retryCount}x)` : ''}`}
         </text>
       `
               : isDone && verdictColor

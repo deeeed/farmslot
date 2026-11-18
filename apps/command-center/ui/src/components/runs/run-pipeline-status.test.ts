@@ -60,7 +60,6 @@ test('pipelineStepTone uses review verdict outputs for mini+canvas parity', () =
 });
 
 test('a blocked review reads amber on the canvas and in the mini, whatever its verdict', () => {
-  // A review fix that blocks records verdict `blocked`, which the verdict tone reads as muted.
   assert.equal(
     pipelineStepTone({ name: 'review', status: 'blocked', outputs: { verdict: 'blocked' } }),
     'warn',
@@ -118,7 +117,7 @@ test('finalize package-changed failure is recoverable orange', () => {
   );
 });
 
-test('review issues are orange until max retries exhausted (then red)', () => {
+test('review issues and operator holds stay amber after fix attempts run out', () => {
   assert.equal(
     pipelineStepTone({
       name: 'review',
@@ -133,8 +132,36 @@ test('review issues are orange until max retries exhausted (then red)', () => {
       status: 'failed',
       outputs: { verdict: 'issues', maxRetriesExhausted: true },
     }),
+    'warn',
+  );
+  assert.equal(
+    pipelineStepTone({
+      name: 'review',
+      status: 'failed',
+      detail: 'Review fix needs a person to decide the remaining issues.',
+      outputs: { verdict: 'blocked', retryCount: 2, maxRetries: 2 },
+    }),
+    'warn',
+  );
+  assert.equal(
+    pipelineStepTone({
+      name: 'review',
+      status: 'failed',
+      detail: 'Reviewer process crashed',
+      outputs: { verdict: 'failed', maxRetriesExhausted: true },
+    }),
     'fail',
   );
+  assert.equal(
+    pipelineStepTone({
+      name: 'review',
+      status: 'failed',
+      detail: 'Engine failed to record the completed review',
+      outputs: { verdict: 'pass' },
+    }),
+    'fail',
+  );
+  assert.equal(pipelineStepTone({ name: 'review', status: 'failed' }), 'muted');
 });
 
 test('package-refresh stays pending while post-gate re-review or fix is in flight', () => {
@@ -239,7 +266,7 @@ test('review step tones are the same from the served slim row, the full run and 
   const tones = (run: Pick<Run, 'steps'>) =>
     run.steps.map((step) => pipelineStepTone({ ...step, status: step.status }));
   const expected = tones(full);
-  assert.deepEqual(expected, ['warn', 'ok', 'fail']);
+  assert.deepEqual(expected, ['warn', 'ok', 'warn']);
   assert.deepEqual(tones(runListRow(full)), expected);
   assert.deepEqual(tones(trimRunForList(full)), expected);
 });

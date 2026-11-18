@@ -199,3 +199,25 @@ test('a run blocked at its open human gate shows the gate waiting with its readi
   assert.match(gate, /node-blocked-anim/);
   assert.ok(gate.includes(`<title>${gateReason}</title>`));
 });
+
+test('a review held after its fix budget is spent uses amber for its outline and note', () => {
+  const run: Run = {
+    ...blockedRun,
+    status: 'needs-decision',
+    error: undefined,
+    steps: blockedRun.steps.map((step) =>
+      step.name === 'review'
+        ? {
+            ...step,
+            status: 'failed',
+            outputs: { verdict: 'issues', maxRetriesExhausted: true, retryCount: 2, maxRetries: 2 },
+          }
+        : step,
+    ),
+  };
+  const review = litText(renderReviewPipelineNode(nodeFor(run, 'review'), context(run)));
+  assert.match(review, /MAX RETRIES/);
+  assert.match(review, new RegExp(`stroke="${colors.statusWarn}"`));
+  assert.match(review, new RegExp(`fill="${colors.statusWarn}"`));
+  assert.doesNotMatch(review, new RegExp(colors.statusFail));
+});
