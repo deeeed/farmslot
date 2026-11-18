@@ -82,10 +82,9 @@ function heldAtMs(step: Run['steps'][number]): number {
 }
 
 // `updatedAt` moves on every write (tags, metrics, agent contexts), so it is not
-// progress. A restart can also rewrite a running step's start. Prefer the
-// persisted status transition for that boundary, with the step start for older rows.
+// progress. Recovery can rewrite a running step's start, even on rows without
+// a status transition. Count the recorded step progress or a durable boundary.
 function lastProgressMs(run: ProgressRun): number {
-  const hasStatusClock = Number.isFinite(Date.parse(run.statusChangedAt ?? ''));
   const stamps = [
     run.createdAt,
     run.startedAt,
@@ -95,7 +94,7 @@ function lastProgressMs(run: ProgressRun): number {
     run.monitorState?.lastStructuredProgressAt,
     ...run.steps.flatMap((step) => [
       step.lastProgressAt,
-      step.status !== 'running' || !hasStatusClock ? step.startedAt : undefined,
+      step.status !== 'running' ? step.startedAt : undefined,
       step.completedAt,
     ]),
     ...run.decisions.flatMap((decision) => [decision.createdAt, decision.resolvedAt]),

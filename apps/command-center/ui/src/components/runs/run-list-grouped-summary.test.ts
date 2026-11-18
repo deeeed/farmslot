@@ -8,7 +8,11 @@ import {
   type Run,
   type RunFamilyGroup,
   type RunListRow,
+  type TaskProgressResult,
+  type TaskProgressStructured,
 } from '@farmslot/protocol';
+import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
+import { runChecklistProgressTarget } from '@farmslot/review-dispatch';
 
 import { installFakeGateway } from '../../testing/fake-gateway.js';
 import { litText } from '../../testing/lit-text.js';
@@ -77,5 +81,51 @@ test('grouped rows retain an intermediate summary absent from the family heading
     for (const row of runs) assert(text.includes(row.summary ?? ''), row.id);
     assert.equal(text.split('Original issue').length - 1, 1, 'Do not duplicate the heading');
     assert.equal(text.split('Latest follow-up').length - 1, 1, 'Do not duplicate the heading');
+  }
+});
+
+test('the run row keeps a recorded worker finish time through a checklist refresh', async (t) => {
+  installFakeGateway(t);
+  t.mock.method(Date, 'now', () => Date.parse('2026-11-05T12:00:00.000Z'));
+  const { RunList } = await import('./run-list.js');
+  const row: Run = {
+    ...run('active', 'Worker just finished', 5),
+    status: 'monitoring',
+    slotId: 'test-slot',
+    steps: [{ name: 'monitor', status: 'running', startedAt: '2026-11-05T11:00:00.000Z' }],
+  };
+  const target = runChecklistProgressTarget(row);
+  assert(target);
+  const structured: TaskProgressStructured = {
+    schema: { flowType: 'fix-bug', title: 'Task', totalSteps: 1, phases: [] },
+    phases: [],
+    completedSteps: 1,
+    totalSteps: 1,
+    currentPhase: null,
+    currentStep: null,
+    timing: {
+      schemaVersion: 1,
+      events: [],
+      startedAt: '2026-11-05T11:00:00.000Z',
+      finishedAt: '2026-11-05T11:55:00.000Z',
+    },
+  };
+  const data: TaskProgressResult = { slotId: target.params.slotId, markdown: '', structured };
+  const state: ResourceQueryState<TaskProgressResult> = { status: 'ready', data };
+  const view = Object.create(RunList.prototype) as {
+    renderCard(run: RunListRow, checkboxes: boolean): unknown;
+  };
+  Object.assign(view, {
+    requestUpdate() {},
+    manageMode: false,
+    progressQueries: new Map([[target.key, { state }]]),
+    taskProgressByRun: new Map([[target.key, structured]]),
+    taskProgressErrorsByRun: new Map(),
+  });
+  for (const status of ['ready', 'stale'] as const) {
+    state.status = status;
+    const text = litText(view.renderCard(row, false));
+    assert.match(text, /last progress 5m ago · Worker finished; monitor has not advanced/);
+    assert.doesNotMatch(text, /Stale · no progress/);
   }
 });

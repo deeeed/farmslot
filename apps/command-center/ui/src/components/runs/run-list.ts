@@ -942,14 +942,10 @@ export class RunList extends RunListState {
         !run.autoRecoveryDisabled &&
         (hasAutoRecoveryAttempt || Boolean(run.recoveryProposal)));
     const runnerLabel = runEngineLabel({ ...engine, effort: runWorkerEffort(run, engine) }) ?? '—';
-    const taskObservation = this.progressQueries.get(
-      runChecklistProgressTarget(run)?.key ?? '',
-    )?.state;
-    const progress = runProgressSummary(
-      run,
-      Date.now(),
-      taskObservation?.status === 'ready' ? taskObservation.data?.structured : undefined,
-    );
+    const progressKey = runChecklistProgressTarget(run)?.key ?? '';
+    const taskProgress = this.taskProgressByRun.get(progressKey);
+    const progressQuery = this.progressQueries.get(progressKey);
+    const progress = runProgressSummary(run, Date.now(), taskProgress);
     const cells = [
       ...(showCheckbox
         ? [
@@ -1025,16 +1021,11 @@ export class RunList extends RunListState {
             .run=${run}
             .steps=${run.steps}
             .flowType=${run.flowType}
-            .taskProgressError=${this.taskProgressErrorsByRun.get(
-              runChecklistProgressTarget(run)?.key ?? '',
-            )}
-            .taskProgress=${this.taskProgressByRun.get(runChecklistProgressTarget(run)?.key ?? '')}
-            .retryProgress=${this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')
-              ?.retry}
+            .taskProgressError=${this.taskProgressErrorsByRun.get(progressKey)}
+            .taskProgress=${taskProgress}
+            .retryProgress=${progressQuery?.retry}
             .taskProgressStale=${progressReadNotice(
-              this.progressQueries.get(runChecklistProgressTarget(run)?.key ?? '')?.state ?? {
-                status: 'loading',
-              },
+              progressQuery?.state ?? { status: 'loading' },
               gateway.connectionState === 'connected',
             )?.kind === 'saved'}
           ></run-pipeline-mini>

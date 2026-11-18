@@ -533,6 +533,12 @@ test('run progress: a restart re-entering a step is not progress; a Resume is', 
   const restarted = summarize(ciWatch('2026-05-14T01:00:00.000Z'), now);
   assert.equal(restarted.kind, 'stale');
   assert.equal(restarted.lastProgressAgo, '1h ago');
+  const legacyRestarted = summarize(
+    { ...ciWatch('2026-05-14T01:00:00.000Z'), statusChangedAt: undefined },
+    now,
+  );
+  assert.equal(legacyRestarted.kind, 'stale');
+  assert.equal(legacyRestarted.lastProgressAgo, '1h ago');
   // A Resume after a two-hour pause changes the status.
   const resumed = summarize(ciWatch('2026-05-14T02:59:00.000Z'), now);
   assert.equal(resumed.kind, 'step');
@@ -805,21 +811,18 @@ test('run progress counts a step timestamp and goes stale just after 20 minutes'
   );
 });
 
-test('run progress uses a step start on legacy runs and flags a blocked run without a gate', () => {
+test('run progress uses a settled step start when a blocked row lacks recorded completion', () => {
   const at = Date.parse('2026-11-18T07:14:39.963Z');
   const blocked = run('0d6e97c2', {
     status: 'blocked',
     createdAt: '2026-11-18T07:11:07.884Z',
-    steps: [{ name: 'monitor', status: 'running', startedAt: new Date(at).toISOString() }],
+    steps: [{ name: 'monitor', status: 'done', startedAt: new Date(at).toISOString() }],
   });
-  assert.equal(summarize(blocked, at + 19 * 60_000).lastProgressAt, new Date(at).toISOString());
-  const stopped: Run = {
-    ...blocked,
-    steps: [{ ...blocked.steps[0], status: 'done', completedAt: new Date(at).toISOString() }],
-  };
-  assert.equal(showsRunProgress(stopped), true);
-  assert.equal(runProgressSummary(stopped, at + 19 * 60_000), null);
-  assertMatchKind(summarize(stopped, at + 21 * 60_000), 'stale', 'Stale · no progress for 21m');
+  assert.equal(showsRunProgress(blocked), true);
+  assert.equal(runProgressSummary(blocked, at + 19 * 60_000), null);
+  const stale = summarize(blocked, at + 21 * 60_000);
+  assert.equal(stale.lastProgressAt, new Date(at).toISOString());
+  assertMatchKind(stale, 'stale', 'Stale · no progress for 21m');
 });
 
 test('run progress leaves operator waits and terminal outcomes alone', () => {
