@@ -1,4 +1,3 @@
-import type { ReviewInterdiffReceipt } from '@farmslot/protocol';
 import assert from 'node:assert/strict';
 import { mock, test, type TestContext } from 'node:test';
 
@@ -7,6 +6,7 @@ import {
   isReviewRoundNoVerdictSettlement,
   type Principal,
   type ReviewDiffSnapshot,
+  type ReviewInterdiffReceipt,
 } from '@farmslot/protocol';
 
 await import('../runtime/mock-pty.test-support.js');
@@ -38,6 +38,7 @@ let currentHead = head;
 let worktreeStatus = '';
 const noop = async () => {};
 // Scripted host behaviour; the run store, the session registry and the round budget are real.
+let feedbackPass = false;
 let rebaseQualification: 'reliable' | 'unreliable' | undefined;
 let ancestorExitCode = 0;
 /** How a retained reviewer's resume fails before it accepts the prompt. */
@@ -237,10 +238,13 @@ mock.module('../tasks/watcher.js', {
 mock.module('./feedback.js', {
   namedExports: {
     logRecommendationCorrection: () => {},
-    readReviewFeedback: async () => ({
-      verdict: 'issues',
-      issues: [{ file: 'a.ts', line: 3, description: 'finding' }],
-    }),
+    readReviewFeedback: async () =>
+      feedbackPass
+        ? { verdict: 'pass', issues: [] }
+        : {
+            verdict: 'issues',
+            issues: [{ file: 'a.ts', line: 3, description: 'finding' }],
+          },
   },
 });
 mock.module('./native-reviewer-approvals.js', {
@@ -333,7 +337,7 @@ mock.module('./snapshots.js', {
           baseRef: range.baseRef ?? 'main',
           baseSha: interdiff?.newBaseSha ?? range.lastReviewedHeadSha,
           headSha: currentHead,
-          ...(interdiff ? { interdiff } : {}),
+          ...(interdiff ? { interdiff, diffHash: 'f'.repeat(64) } : {}),
           diffPath: 'artifacts/review.diff',
           capturedAt: new Date().toISOString(),
         },
@@ -390,6 +394,7 @@ async function prePublishRun(t: TestContext, ticketOrPr = 'WARM-PREPUBLISH') {
   resetWarmReviewerSessionsForTest();
   ancestorExitCode = 0;
   rebaseQualification = undefined;
+  feedbackPass = false;
   currentHead = head;
   worktreeStatus = '';
   commandFailed = false;
@@ -618,11 +623,38 @@ test('a reliable rebase resumes the same reviewer with its pinned author interdi
   const run = await prePublishRun(t, published);
   const first = await review(run.id);
   rebaseQualification = 'reliable';
+  feedbackPass = true;
   const result = await reReview(run.id);
   assert.equal(result.mode, 'warm');
   assert.equal(result.session?.continuity, 'resumed');
   assert.equal(result.reviewerSessionId, first.reviewerSessionId);
   assert.ok(dispatches[1]?.retainedFrom);
+  assert.ok(first.reviewSnapshot?.headSha);
+  assert.ok(result.reviewSnapshot?.headSha);
+  assert.equal(result.session?.lastReviewedHeadSha, first.reviewSnapshot.headSha);
+  const { buildPublishGateReviewStatus, reviewFinalSnapshotMatchesPreparedPackage } =
+    await import('../run-engine/gate-policy.js');
+  const status = buildPublishGateReviewStatus({
+    source: 'human-gate',
+    priorReviewCount: 0,
+    reviewResult: { ...result, runner: 'claude', retryCount: 0 },
+    requestedRunner: 'claude',
+    reviewId: result.reviewId,
+  });
+  assert.equal(
+    reviewFinalSnapshotMatchesPreparedPackage(status, {
+      headSha: result.reviewSnapshot.headSha,
+      reviewSnapshot: result.reviewSnapshot,
+    }),
+    true,
+  );
+  assert.equal(
+    reviewFinalSnapshotMatchesPreparedPackage(status, {
+      headSha: result.reviewSnapshot.headSha,
+      reviewSnapshot: { ...result.reviewSnapshot, diffHash: 'dirty-source' },
+    }),
+    false,
+  );
   assert.match(
     reviewerTask(run.id, dispatches[1]!.contextId),
     /Author interdiff after the base moved/,

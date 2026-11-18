@@ -144,6 +144,7 @@ const defaults: Dependencies = {
   snapshotRoot: () => path.join(runsDirectory(), 'review-workspace-tasks'),
 };
 interface Snapshot {
+  comparisonBaseSha?: string;
   interdiff?: ReviewInterdiffReceipt;
   version: 1;
   runId: string;
@@ -422,6 +423,8 @@ export async function materializeReviewWorkspaceTask(
       );
       run.reviewMode = run.repeatReviewContext.mode;
     }
+    const comparedRange = delta?.comparedRanges.at(-1);
+    const comparisonBaseSha = comparedRange ? comparedRange.split('..')[0] : subject.baseSha;
     const coverage = await prepareReviewCoverage({
       run,
       subject,
@@ -461,8 +464,9 @@ export async function materializeReviewWorkspaceTask(
             delta.interdiff,
             INTERDIFF,
             run.repeatReviewContext?.unresolvedFindings ?? [],
+            run.repeatReviewContext?.mode ?? 'warm',
           )
-        : `Review diff: git -C ${shellQuote(run.reviewWorkspace.checkoutPath)} ${GIT_DIFF_COMMAND.slice(4)} ${subject.baseSha}...${subject.headSha}`,
+        : `Review diff: git -C ${shellQuote(run.reviewWorkspace.checkoutPath)} ${GIT_DIFF_COMMAND.slice(4)} ${comparedRange ?? `${subject.baseSha}...${subject.headSha}`}`,
       coverage
         ? 'Whole-contribution inventory is frozen in inputs/instruction-manifest.json reviewCoverage.scopePaths; preserve all scope rows.'
         : `Whole-contribution inventory: git -C ${shellQuote(run.reviewWorkspace.checkoutPath)} diff --name-status ${subject.contributionBaseSha ?? subject.baseSha}...${subject.headSha}`,
@@ -612,6 +616,7 @@ export async function materializeReviewWorkspaceTask(
     );
     const files = await collectTaskBundle(bundleDir);
     snapshot = {
+      comparisonBaseSha,
       ...(delta?.interdiff ? { interdiff: delta.interdiff } : {}),
       version: 1,
       ...(coverage?.packet
@@ -960,7 +965,8 @@ export async function readReviewWorkspaceCompletion(
       artifactManifest: await scanArtifacts(viewer),
       reviewSnapshot: {
         ...(snapshot.interdiff ? { interdiff: snapshot.interdiff } : {}),
-        baseSha: snapshot.interdiff?.newBaseSha ?? snapshot.subject.baseSha,
+        baseSha:
+          snapshot.interdiff?.newBaseSha ?? snapshot.comparisonBaseSha ?? snapshot.subject.baseSha,
         headSha: snapshot.subject.headSha,
         headRef: snapshot.subject.branch,
         capturedAt: snapshot.subject.capturedAt,

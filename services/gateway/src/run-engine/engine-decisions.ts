@@ -516,7 +516,12 @@ export async function handleRepeatReviewDecision(
       updateRun(runId, { repeatReviewContext: selected, reviewMode: selected.mode });
     return selected;
   }
+  const generation = current.engineState?.generation ?? 0;
   const allRuns = startsFreshReviewChain(current) ? [] : await getAllRunsWithArchived();
+  // A cancel, pause or replay during the history lookup owns the run now; opening
+  // a decision would revive it as blocked. The engine keeps the operator state.
+  if (runSupersededSince(getRun(runId), generation))
+    throw new Error(`Run ${runId.slice(0, 8)} changed during the review history lookup`);
   const prior = findLatestPriorReviewRun(current, allRuns);
   if (!prior) {
     if (requestedMode === 'warm')
@@ -527,17 +532,13 @@ export async function handleRepeatReviewDecision(
     });
     return null;
   }
-  const generation = getRun(runId)?.engineState?.generation ?? 0;
   const context = buildRepeatReviewContext(
     current,
     prior,
     { ...subject, project: current.project, repository: subject.repository.toLowerCase() },
     allRuns,
   );
-  // A cancel, pause or replay during the GitHub lookup owns the run now; opening
-  // a decision would revive it as blocked. The engine keeps the operator state.
-  if (runSupersededSince(getRun(runId), generation))
-    throw new Error(`Run ${runId.slice(0, 8)} changed during the review ancestry lookup`);
+
   const options = current.prWork?.review?.options ?? { mode: requestedMode };
   const selected = await applyReviewContinuationCapability(
     current,

@@ -1,4 +1,3 @@
-import { isReliableInterdiff } from '../review/interdiff.js';
 import {
   APPROVE_PUBLISH_ACTION,
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
@@ -31,6 +30,8 @@ import {
   type WorkerTerminalEvidence,
 } from '@farmslot/protocol';
 import { publicationReviewBlockingReason, resolveReviewMode } from '@farmslot/review-dispatch';
+
+import { isReliableInterdiff } from '../review/interdiff.js';
 
 export { publicationReviewBlockingReason } from '@farmslot/review-dispatch';
 

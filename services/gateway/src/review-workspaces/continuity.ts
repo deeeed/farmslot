@@ -224,7 +224,10 @@ export function configureWorkspaceContinuity(
   };
 }
 
-/** Bind only structured reviewer identity to the immutable subject that produced this result. */
+/**
+ * Bind a standalone report to its source and conversation. These results do not
+ * certify publication-package bytes; the last head anchors the next PR review.
+ */
 export function bindWorkspaceReviewResult(run: Run, result: RunReviewResult): RunReviewResult {
   const reviewer = run.agentContexts?.find((context) => context.id === 'review');
   const subject = run.reviewWorkspaceSubject;

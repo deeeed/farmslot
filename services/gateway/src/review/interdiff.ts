@@ -3,6 +3,7 @@ import {
   type RepeatReviewContext,
   type ReviewInterdiffReceipt,
   type ReviewIssue,
+  type ReviewMode,
   type ReviewSessionFallback,
 } from '@farmslot/protocol';
 
@@ -206,6 +207,7 @@ export function interdiffReviewScope(
   receipt: ReviewInterdiffReceipt,
   artifactPath: string,
   priorIssues: readonly ReviewIssue[],
+  mode: ReviewMode = 'warm',
 ): string {
   const current = `${receipt.newBaseSha}..${receipt.newHeadSha}`;
   return `## Author interdiff after the base moved
@@ -214,7 +216,7 @@ The base moved from ${receipt.oldBaseSha ?? 'unavailable'} to ${receipt.newBaseS
 Read the pinned interdiff at ${JSON.stringify(artifactPath)}. Its range-diff SHA-256 is ${receipt.rangeDiffHash ?? 'unavailable'}.
 ${
   receipt.qualification === 'reliable'
-    ? `Continue this same review using the author patch interdiff between ${receipt.oldBaseSha}..${receipt.oldHeadSha} and ${current}. Recheck prior findings. Changes coming only from the base branch are outside correctness scope. Do not use raw ${receipt.oldHeadSha}..${receipt.newHeadSha}, which includes upstream changes.`
+    ? `${mode === 'warm' ? 'Continue this same review using' : 'In a fresh session, review only'} the author patch interdiff between ${receipt.oldBaseSha}..${receipt.oldHeadSha} and ${current}. Recheck prior findings. Changes coming only from the base branch are outside correctness scope. Do not use raw ${receipt.oldHeadSha}..${receipt.newHeadSha}, which includes upstream changes.`
     : `Scope fallback: ${receipt.reason}. Review the current author contribution ${current} in a fresh session and recheck prior findings. Upstream-only changes remain outside correctness scope.`
 }
 Upstream-touched files overlapping the PR: ${JSON.stringify(receipt.upstreamOverlapFiles)}.
@@ -229,7 +231,22 @@ export function applyInterdiffQualification(
   receipt: ReviewInterdiffReceipt,
 ): RepeatReviewContext {
   const fallback = interdiffFallback(receipt);
-  if (!fallback) return context;
+  if (!fallback)
+    return context.session?.fallback
+      ? {
+          ...context,
+          session: {
+            ...context.session,
+            fallback: {
+              ...context.session.fallback,
+              comparedRanges: [
+                `${receipt.oldBaseSha}..${receipt.oldHeadSha}`,
+                `${receipt.newBaseSha}..${receipt.newHeadSha}`,
+              ],
+            },
+          },
+        }
+      : context;
   return {
     ...context,
     mode: 'cold',

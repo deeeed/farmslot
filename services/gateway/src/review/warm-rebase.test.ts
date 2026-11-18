@@ -5,11 +5,16 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { isRecord,type ReviewInterdiffReceipt } from '@farmslot/protocol';
+import { isRecord, type ReviewInterdiffReceipt } from '@farmslot/protocol';
 
 import { makeVars } from '../runners/test-fixtures.js';
 
-import { interdiffFallback, isReliableInterdiff, parseInterdiffReceipt } from './interdiff.js';
+import {
+  interdiffFallback,
+  interdiffReviewScope,
+  isReliableInterdiff,
+  parseInterdiffReceipt,
+} from './interdiff.js';
 import { captureCurrentReviewSnapshot, reviewDeltaSinceReviewedHead } from './snapshots.js';
 
 async function fixture(t: test.TestContext, overlap = false) {
@@ -180,6 +185,14 @@ test('upstream overlap is named while its actual changes stay out of author revi
   assert.deepEqual(captured.snapshot.interdiff?.deltaPaths, []);
   assert.equal(captured.snapshot.interdiff?.qualification, 'reliable');
   assert.doesNotMatch(captured.diffText ?? '', /UPSTREAM-ONLY-OVERLAP|upstream-only-noise/);
+  const scope = interdiffReviewScope(
+    captured.snapshot.interdiff!,
+    'inputs/review-interdiff.json',
+    [],
+    'cold',
+  );
+  assert.match(scope, /fresh session/);
+  assert.doesNotMatch(scope, /Continue this same review/);
 });
 
 test('a missing captured prior base records the object fallback without guessing another base', async (t) => {

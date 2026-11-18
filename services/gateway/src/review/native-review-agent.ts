@@ -603,6 +603,7 @@ async function runNativeReviewAttempt(
                     input.rereview?.priorIssues ??
                       original.repeatReviewContext?.unresolvedFindings ??
                       [],
+                    'cold',
                   )
                 : deltaFallbackReviewScope({
                     reason: fallback.detail,
@@ -1177,7 +1178,9 @@ async function runNativeReviewAttempt(
         sessionId: context.runnerSessionId ?? undefined,
         ...(identity ? { repository: identity.repository, prNumber: identity.prNumber } : {}),
         lastReviewedHeadSha:
-          mode === 'warm' ? reviewSnapshot.snapshot.baseSha! : reviewSnapshot.snapshot.headSha!,
+          mode === 'warm'
+            ? (reviewSnapshot.snapshot.interdiff?.oldHeadSha ?? reviewSnapshot.snapshot.baseSha!)
+            : reviewSnapshot.snapshot.headSha!,
         runner,
         model,
         effort: input.effort?.trim() || null,

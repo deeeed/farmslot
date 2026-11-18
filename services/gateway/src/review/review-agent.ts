@@ -234,15 +234,16 @@ export function reReviewContinuation(
     result.reviewSnapshot?.source === 'unavailable'
       ? undefined
       : result.reviewSnapshot?.headSha?.trim();
+  const priorBaseSha =
+    result.reviewSnapshot?.interdiff?.newBaseSha ??
+    (result.mode === 'cold' && !result.session?.fallback
+      ? (result.reviewSnapshot?.baseSha ?? undefined)
+      : undefined);
   return result.reviewId && head
     ? {
         lastReviewedHeadSha: head,
         priorIssues: result.issues ?? [],
-        priorBaseSha:
-          result.reviewSnapshot?.interdiff?.newBaseSha ??
-          (result.mode === 'cold' && !result.session?.fallback
-            ? (result.reviewSnapshot?.baseSha ?? undefined)
-            : undefined),
+        ...(priorBaseSha ? { priorBaseSha } : {}),
       }
     : undefined;
 }
@@ -1090,7 +1091,7 @@ async function recoverRunningReviewAgent(params: {
         prNumber: identity?.prNumber,
         lastReviewedHeadSha:
           (params.mode === 'warm'
-            ? reviewSnapshot.snapshot.baseSha
+            ? (reviewSnapshot.snapshot.interdiff?.oldHeadSha ?? reviewSnapshot.snapshot.baseSha)
             : reviewSnapshot.snapshot.headSha) ?? undefined,
       },
       validationDepth: params.validationDepth,
