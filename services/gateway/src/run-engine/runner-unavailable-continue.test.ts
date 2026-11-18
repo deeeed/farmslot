@@ -35,6 +35,7 @@ import type {
 import { makeVars } from '../runners/test-fixtures.js';
 import { createRun, getRun, updateRun } from '../runs/store.js';
 
+import { emptyBudgetUsageSampleState } from './budget-usage-sample.js';
 import {
   checkAgentLive,
   type MonitorObservations,
@@ -1044,13 +1045,55 @@ test('a settled delivery on the run wins over a caller snapshot that predates it
   assert.equal(tick.delivery.attempts, 1, 'and it keeps the attempt that was spent');
 });
 
+test('a retired poll preserves the replacement monitor spent attempts', async (t) => {
+  const f = await fixture(t, { usageBudget: true });
+  const run = getRun(f.run.id)!;
+  const initial = {
+    ...run.monitorState!,
+    budgetDelivery: {
+      phase: 'breach-pending' as const,
+      pendingMessage: 'Budget exceeded',
+      operatorMessage: null,
+      attempts: 1,
+    },
+  };
+  updateRun(f.run.id, { monitorState: initial });
+  const generation = run.engineState?.generation ?? 0;
+  const late = pollRunBudgetGuard({
+    runId: f.run.id,
+    slotId: f.slotId,
+    maxTurns: 80,
+    maxTotalTokens: null,
+    monitorStartedAt: initial.startedAt,
+    delivery: initial.budgetDelivery,
+    generation,
+    agentStatus: 'working',
+    sendNudge: false,
+  });
+  updateRun(f.run.id, {
+    engineState: { ...run.engineState, generation: generation + 1 },
+    monitorState: {
+      ...initial,
+      budgetDelivery: { ...initial.budgetDelivery, attempts: 2 },
+    },
+  });
+  await late;
+  assert.equal(getRun(f.run.id)?.monitorState?.budgetDelivery?.attempts, 2);
+});
+
 // A warm replay replaces the usage baseline while keeping the timeout clock.
 test('a late budget tick cannot update a freshly pinned baseline', async (t) => {
   const f = await fixture(t, { usageBudget: true });
   const run = getRun(f.run.id)!;
   const startedAt = run.monitorState!.startedAt;
   const transcript = path.join(path.dirname(f.signalFile), 'session.jsonl');
-  await writeFile(transcript, '');
+  await writeFile(
+    transcript,
+    JSON.stringify({
+      type: 'message',
+      message: { role: 'assistant', usage: { input: 400, output: 100 } },
+    }) + '\n',
+  );
   const generation = run.engineState?.generation ?? 0;
   updateRun(f.run.id, {
     metrics: { ...run.metrics, runnerSessionPath: transcript },
@@ -1059,24 +1102,26 @@ test('a late budget tick cannot update a freshly pinned baseline', async (t) => 
   assert.equal(await prepareWarmBudgetBaselineForHandoff(f.run.id, f.slotId), 'captured');
   assert.equal(getRun(f.run.id)?.monitorState?.startedAt, startedAt);
 
-  await pollRunBudgetGuard({
+  const tick = await pollRunBudgetGuard({
     runId: f.run.id,
     slotId: f.slotId,
     maxTurns: 80,
-    maxTotalTokens: null,
+    maxTotalTokens: 10,
+    budgetUsage: emptyBudgetUsageSampleState(),
     monitorStartedAt: startedAt,
     budgetWindowId: startedAt,
     delivery: {
-      phase: 'delivered',
+      phase: 'ok',
       pendingMessage: null,
       operatorMessage: null,
-      attempts: 2,
+      attempts: 0,
     },
     generation,
     agentStatus: 'working',
     sendNudge: false,
   });
 
+  assert.equal(tick.delivery.phase, 'breach-pending');
   assert.equal(getRun(f.run.id)?.monitorState?.budgetDelivery, undefined);
 });
 

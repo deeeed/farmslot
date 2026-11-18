@@ -1,6 +1,7 @@
 // run-monitor.ts — Per-run monitoring: violation detection, nudge sending, decision creation
 // Ported from farm-monitor skill logic to be gateway-resident and persistent.
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 
 import {
   type AgentContext,
@@ -3114,6 +3115,7 @@ export async function pollRunBudgetGuard(params: {
 }): Promise<PollBudgetGuardStepResult> {
   const run = getRun(params.runId);
   if (!run) throw new Error(`Run not found: ${params.runId}`);
+  const monitorStateAtStart = run.monitorState;
   const vars = await loadSlotVars(params.slotId);
   const context = selectAgentContext(run, { role: primaryRoleForFlow(run.flowType) });
   const retainedSession = resolveRunRetainedSessionBinding(run, context);
@@ -3131,12 +3133,13 @@ export async function pollRunBudgetGuard(params: {
   // clock, so a tick whose own window is not the persisted one is retired and
   // its result belongs to nobody.
   const tickWindow =
-    params.budgetWindowId ?? params.monitorStartedAt ?? budgetWindowIdOf(run.monitorState);
+    params.budgetWindowId ?? params.monitorStartedAt ?? budgetWindowIdOf(monitorStateAtStart);
   const callerDelivery =
-    params.delivery ?? restoreBudgetDeliveryForWindow(run.monitorState, tickWindow);
-  const persistedBefore = restoreBudgetDeliveryForWindow(run.monitorState, tickWindow);
+    params.delivery ?? restoreBudgetDeliveryForWindow(monitorStateAtStart, tickWindow);
+  const persistedBefore = restoreBudgetDeliveryForWindow(monitorStateAtStart, tickWindow);
   const startingDelivery =
-    budgetGuardSettled(persistedBefore) && !budgetGuardSettled(callerDelivery)
+    (budgetGuardSettled(persistedBefore) && !budgetGuardSettled(callerDelivery)) ||
+    persistedBefore.attempts > callerDelivery.attempts
       ? persistedBefore
       : callerDelivery;
   const tick = await pollBudgetGuardStep({
@@ -3153,12 +3156,16 @@ export async function pollRunBudgetGuard(params: {
     maxTotalTokens: params.maxTotalTokens,
     delivery: startingDelivery,
     budgetUsage:
-      params.budgetUsage ?? run.monitorState?.budgetUsage ?? emptyBudgetUsageSampleState(),
+      params.budgetUsage ?? monitorStateAtStart?.budgetUsage ?? emptyBudgetUsageSampleState(),
     agentStatus: params.agentStatus,
     sendNudge: params.sendNudge,
     deliverNudge: (...args) => {
       const state = getRun(params.runId)?.monitorState;
-      if (state && budgetWindowIdOf(state) !== tickWindow) return Promise.resolve('not-attempted');
+      if (state) {
+        const live = restoreBudgetDeliveryForWindow(state, tickWindow);
+        if (budgetWindowIdOf(state) !== tickWindow || budgetGuardSettled(live))
+          return Promise.resolve('not-attempted');
+      }
       return sendOneShotWorkerInstruction(...args);
     },
   });
@@ -3196,10 +3203,19 @@ export async function pollRunBudgetGuard(params: {
   }
   const windowId = tickWindow ?? now;
   const persistedDelivery = restoreBudgetDeliveryForWindow(prev, windowId);
-  const delivery =
-    budgetGuardSettled(persistedDelivery) && !budgetGuardSettled(tick.delivery)
-      ? persistedDelivery
-      : tick.delivery;
+  const attemptsSpent = tick.delivery.attempts - startingDelivery.attempts;
+  let delivery = tick.delivery;
+  if (!isDeepStrictEqual(persistedBefore, persistedDelivery)) {
+    // A replacement poll may already have spent another attempt. Retain its
+    // state and apply only this poll's confirmed or newly typed delivery.
+    if (tick.nudgeSent) {
+      delivery = { ...tick.delivery, attempts: persistedDelivery.attempts };
+    } else if (attemptsSpent > 0) {
+      delivery = advanceBudgetDelivery(persistedDelivery, { kind: 'delivery-typed' });
+    } else {
+      delivery = persistedDelivery;
+    }
+  }
   updateRun(params.runId, {
     monitorState:
       retired && prev
@@ -3217,7 +3233,7 @@ export async function pollRunBudgetGuard(params: {
   });
   // Flush when an attempt was actually spent. Run writes persist in the background, so
   // a crash in that window would forget the attempt and buy the pane more typed copies.
-  if (tick.delivery.attempts !== (params.delivery?.attempts ?? 0)) {
+  if (delivery.attempts > persistedDelivery.attempts || tick.nudgeSent) {
     const flushed = getRun(params.runId);
     if (flushed) await persistRunNow(flushed, 'budget-nudge-attempt');
   }
