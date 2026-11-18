@@ -26,17 +26,18 @@ export const CLAUDE_PRICING: Record<string, ClaudePricing> = {
 };
 
 export const OPENAI_PRICING: Record<string, OpenaiPricing> = {
-  // https://developers.openai.com/api/docs/pricing (GPT-6 standard short-context rates per 1M tokens).
+  // https://developers.openai.com/api/docs/pricing
+  // Standard short-context rates, USD per 1M tokens. Checked 2026-11-18.
+  // GPT-5.6 Sol is the published promotional rate through 2026-11-30.
   'gpt-6-astra': { input: 10.0, cached_input: 1.0, output: 50.0 },
   'gpt-6.1-sol': { input: 2.0, cached_input: 0.1, output: 10.0 },
   'gpt-6-sol': { input: 2.0, cached_input: 0.2, output: 10.0 },
-  // GPT-5.6 family (preview GA pricing, USD per 1M tokens).
-  'gpt-5.6-sol': { input: 5.0, output: 30.0 },
-  'gpt-5.6-terra': { input: 2.5, output: 15.0 },
-  'gpt-5.6-luna': { input: 1.0, output: 6.0 },
-  'gpt-5.6': { input: 5.0, output: 30.0 }, // bare alias → Sol
-  'gpt-5.5': { input: 5.0, output: 15.0 },
-  'gpt-5.4': { input: 5.0, output: 15.0 },
+  'gpt-5.6-sol': { input: 4.0, cached_input: 0.4, output: 20.0 },
+  'gpt-5.6-terra': { input: 2.0, cached_input: 0.2, output: 12.0 },
+  'gpt-5.6-luna': { input: 0.2, cached_input: 0.02, output: 1.2 },
+  'gpt-5.6': { input: 4.0, cached_input: 0.4, output: 20.0 }, // bare alias → Sol
+  'gpt-5.5': { input: 5.0, cached_input: 0.5, output: 30.0 },
+  'gpt-5.4': { input: 2.5, cached_input: 0.25, output: 15.0 },
 };
 
 /**
