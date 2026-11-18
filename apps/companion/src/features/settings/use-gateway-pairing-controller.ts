@@ -29,6 +29,7 @@ interface GatewayPairingControllerOptions {
   setUrlInput: (url: string) => void;
   setAdvancedGatewaySetupOpen: (open: boolean) => void;
   onPaired?: () => void;
+  onPairingLinkCancelled?: () => void;
 }
 
 export function useGatewayPairingController(options: GatewayPairingControllerOptions) {
@@ -165,7 +166,14 @@ export function useGatewayPairingController(options: GatewayPairingControllerOpt
       'Pair with this gateway?',
       pairingLinkPrompt(payload, useConnectionStore.getState().profiles),
       [
-        { text: 'Cancel', style: 'cancel', onPress: releasePairing },
+        {
+          text: 'Cancel',
+          style: 'cancel',
+          onPress: () => {
+            releasePairing();
+            options.onPairingLinkCancelled?.();
+          },
+        },
         { text: 'Pair', onPress: () => void pair(data) },
       ],
       { cancelable: false },
