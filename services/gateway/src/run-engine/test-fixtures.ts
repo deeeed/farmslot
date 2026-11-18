@@ -10,7 +10,7 @@ import {
 } from '@farmslot/protocol';
 
 import { retainFixtureTask } from '../../../../packages/run-bundle/src/retained.test-support.js';
-import { deleteRun, getRun, updateRun } from '../runs/store.js';
+import { deleteRun, getRun, persistRunNow, updateRun } from '../runs/store.js';
 
 export const RECIPE_HARNESS_PROJECT_CONFIG = {
   eval_harnesses: {
@@ -191,6 +191,8 @@ export async function deleteTestRunIfPresent(runId: string): Promise<void> {
     updateRun(runId, { status: 'cancelled' });
   }
 
+  // Stop queued writes from recreating storage while the fixture root is removed.
+  await persistRunNow(run);
   await deleteRun(runId);
 }
 

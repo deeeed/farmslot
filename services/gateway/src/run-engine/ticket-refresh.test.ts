@@ -966,3 +966,57 @@ test('a task ownership change during ticket loading refuses without admitting th
   assert.equal(getRun(run.id)!.ticketRefreshes, undefined);
   assert.equal(await readFile(path.join(taskDir, 'inputs/handoff.json'), 'utf8'), original);
 });
+
+test('fixture deletion drains queued run writes before removing storage', async (t) => {
+  const { run } = await fixture(t, false);
+  updateRun(run.id, { status: 'cancelled' });
+  const { emitAnalyticsForTerminalRun } = await import('../runs/analytics.js');
+  await emitAnalyticsForTerminalRun(run);
+  await persistRunNow(run);
+
+  let started!: () => void;
+  const writing = new Promise<void>((resolve) => (started = resolve));
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const runsDir = path.join(root, 'runs');
+  const runFile = path.join(runsDir, `${run.id}.json`);
+  let mkdirFinished = false;
+  let removedBeforeMkdir = false;
+  let unlinkObserved = false;
+  const originalMkdir = fs.mkdir;
+  const originalUnlink = fs.unlink;
+  t.mock.method(fs, 'mkdir', async (...args: Parameters<typeof fs.mkdir>) => {
+    if (args[0] === runsDir) {
+      started();
+      await held;
+    }
+    try {
+      return await originalMkdir(...args);
+    } finally {
+      if (args[0] === runsDir) mkdirFinished = true;
+    }
+  });
+  t.mock.method(fs, 'unlink', async (...args: Parameters<typeof fs.unlink>) => {
+    if (args[0] === runFile) {
+      unlinkObserved = true;
+      removedBeforeMkdir = !mkdirFinished;
+    }
+    return originalUnlink(...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    updateRun(run.id, { summary: 'Queued fixture write' });
+    await writing;
+    const deleting = deleteTestRunIfPresent(run.id);
+    setImmediate(release);
+    await deleting;
+    assert.equal(unlinkObserved, true);
+    assert.equal(removedBeforeMkdir, false, 'deletion must wait for queued persistence');
+    assert.equal(getRun(run.id), undefined);
+  } finally {
+    release();
+    await persistRunNow(run);
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+});
