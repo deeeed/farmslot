@@ -606,7 +606,9 @@ test('a stale busy row with a hold reason requires a matching recovery journal',
     workspace_recovery: null,
     held_reason: 'Operator hold',
   });
-  const expectedWorkspace = slotWorkspaceIdentity(await inspectSlotWorkspace('example-slot'));
+  const expectedWorkspace = slotWorkspaceIdentity(
+    await inspectSlotWorkspace('example-slot', { timeoutMs: 120_000 }),
+  );
   const result = await recover({ recover: false, expectedWorkspace });
   assert.equal(result.reason, 'identity-changed');
   assert.deepEqual(calls, []);
