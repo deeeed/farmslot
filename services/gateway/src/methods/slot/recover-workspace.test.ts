@@ -526,6 +526,41 @@ test('a terminal run pointer and stale working agent do not block recovery', asy
   const result = await recover();
   assert.equal(result.refreshed, true, result.detail);
 });
+test('an interrupted recovery can resume from a stale busy row with a failed owner', async (t) => {
+  const run = store.createRun({
+    project: 'example',
+    flowType: 'dev',
+    ticketOrPr: 'EXAMPLE-STALE-BUSY',
+    slotId: 'example-slot',
+  });
+  store.updateRun(run.id, { status: 'failed' });
+  t.after(() => store.deleteRun(run.id));
+  const parked = {
+    ref: 'refs/farmslot/parked/example-slot/prior/preserved',
+    branch: 'example-feature',
+    commits: 3,
+    kind: 'worktree' as const,
+  };
+  await seed({
+    current_run_id: run.id,
+    lifecycle: 'busy',
+    phase: 'working',
+    agent: 'working',
+    held_reason: 'Recovery cleanup: parked checkout retained',
+    workspace_recovery: { ...recovery, completed: ['inspect'], phase: 'cleanup', parked: [parked] },
+  });
+  branch = 'example-feature';
+  const result = await recover();
+  assert.equal(result.refreshed, true, result.detail);
+  assert.deepEqual(result.parked, [parked]);
+  assert.deepEqual(calls, ['release']);
+  assert.equal(branch, 'main');
+  const ready = await core.readSlotRow('example-slot');
+  assert.equal(ready?.lifecycle, 'ready');
+  assert.equal(ready?.current_run_id, null);
+  assert.equal(ready?.workspace_recovery, null);
+});
+
 test('a live run remains protected', async (t) => {
   const run = store.createRun({
     project: 'example',
