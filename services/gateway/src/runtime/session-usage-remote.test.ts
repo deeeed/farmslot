@@ -33,7 +33,7 @@ test('remote usage uses supported node execution and preserves slot support sele
   assert.equal(String(calls[0][1]).includes('scripts/session-usage.sh'), false);
   assert.deepEqual(calls[0][2], {
     timeout: 30_000,
-    maxBuffer: 64 * 1024,
+    maxBuffer: 1024 * 1024,
     selectNodeSupport: false,
   });
   result = { stdout: '', stderr: 'node transcript unavailable', exitCode: 1 };
