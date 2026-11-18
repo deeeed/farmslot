@@ -54,6 +54,7 @@ import {
   acceptanceCoverageMarkdown,
   ledgerFromArtifactText,
 } from '../tasks/acceptance-status.js';
+import { parseChecklistTiming } from '../tasks/checklist-timing.js';
 
 import { findLatestResolvedDecision } from './decision-replay.js';
 import { captureReviewInputArtifactsForRun, readReviewInputSnapshot } from './diff-artifacts.js';
@@ -678,8 +679,10 @@ export async function refreshReviewGate(runId: string): Promise<Run> {
     const target = freshTarget();
     const result = completion.result;
     const actions = reviewPostingActions(result.reviewMd);
+    const timing = parseChecklistTiming(completion.signal.checklistTiming);
     const refreshed = updateRun(runId, {
       reviewResult: result,
+      ...(timing ? { metrics: { ...target.run.metrics, checklistTiming: timing } } : {}),
       decisions: target.run.decisions.map((entry) =>
         entry.id === decision.id
           ? {

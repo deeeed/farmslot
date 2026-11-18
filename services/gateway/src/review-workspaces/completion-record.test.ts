@@ -26,6 +26,7 @@ process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = OWNER;
 // projects directories at module load.
 const { createRun, getRun, updateRun } = await import('../runs/store.js');
 const { recordWorkspaceReviewCompletion } = await import('./pipeline.js');
+const { contextChecklistMarks } = await import('../runtime/session-usage.js');
 const {
   admitReviewRound,
   reviewRoundAdmissionId,
@@ -106,6 +107,57 @@ test('a settled review records its result and the child roll-up together', async
   assert.equal(updated.metrics.nudgeCount, 2, 'the run’s own metrics survive the roll-up');
   // Persisted, not just held in memory: the retrospective reads the stored run.
   assert.deepEqual(getRun(runId)?.metrics.subtasks, CHILD_METRICS);
+});
+
+test('a settled review keeps its checklist marks, so its session splits by step', async () => {
+  writeFixtures();
+  const runId = makeWorkspaceRun();
+  const startedAt = '2026-11-18T07:22:16.512Z';
+  updateRun(runId, {
+    agentContexts: [
+      {
+        id: 'review',
+        role: 'review',
+        label: 'Review',
+        status: 'working',
+        runId,
+        slotId: null,
+        attemptStartedAt: startedAt,
+      },
+    ],
+  });
+  const checklistTiming = {
+    schemaVersion: 1 as const,
+    source: 'CHECKLIST.md',
+    events: [
+      {
+        stepNumber: 1,
+        label: '1. Run the shared checklist',
+        checkedAt: '2026-11-18T07:30:44.707Z',
+      },
+      {
+        stepNumber: 2,
+        label: '2. Run the repository overlay',
+        checkedAt: '2026-11-18T07:33:01.989Z',
+      },
+      { stepNumber: 3, label: '3. Complete the review', checkedAt: '2026-11-18T07:33:02.097Z' },
+    ],
+  };
+
+  const updated = await recordWorkspaceReviewCompletion(runId, 0, REVIEW_RESULT, {
+    checklistTiming,
+    collectSubtasks: async () => null,
+  });
+
+  assert.deepEqual(updated.metrics.checklistTiming, checklistTiming);
+  assert.deepEqual(getRun(runId)?.metrics.checklistTiming, checklistTiming, 'persisted');
+  // The marks the reviewer session's cost-per-step split reads.
+  assert.deepEqual(
+    contextChecklistMarks(getRun(runId)!, getRun(runId)!.agentContexts?.[0]).map(
+      (mark) => mark.stepNumber,
+    ),
+    [1, 2, 3],
+  );
 });
 
 test('a verdict a monitor replay records counts the round its superseded monitor settled', async () => {

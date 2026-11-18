@@ -101,6 +101,15 @@ function completedMeasurement(
 /** Run metrics hold the worker checklist's marks; other roles' sessions are not split by them. */
 function workerChecklistMarks(run: Run, row: RunnerSessionUsage) {
   if (row.role !== primaryRoleForFlow(run.flowType)) return undefined;
+  // A warm tmux reviewer resumes the earlier review's transcript, whose calls would land in this
+  // review's first step. Its session stays unsplit, as before marks were kept.
+  if (
+    !row.slotId &&
+    !row.nativeSession &&
+    run.reviewWorkspace &&
+    run.repeatReviewContext?.mode === 'warm'
+  )
+    return undefined;
   const context = run.agentContexts?.find((item) => row.contextIds?.includes(item.id));
   return contextChecklistMarks(run, context);
 }
