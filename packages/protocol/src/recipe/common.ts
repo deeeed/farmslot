@@ -240,11 +240,25 @@ export interface RecipeFlowProgress {
   qualification: 'exact' | 'unknown';
 }
 
+export interface RecipeInvocationBreadcrumb {
+  readonly id: string;
+  readonly label: string;
+}
+
+export interface RecipeInvocationAncestry {
+  readonly parentId: string | null;
+  /** Root depth is zero; breadcrumbs include the selected invocation. */
+  readonly depth: number;
+  readonly breadcrumbs: readonly RecipeInvocationBreadcrumb[];
+}
+
 export interface RecipeFlowUpdate {
   version: 1;
   recipeRunId: string;
   rootId: string;
   activeId: string | null;
+  /** Absent in older producers; null when no invocation is active. */
+  ancestry?: RecipeInvocationAncestry | null;
   progress: RecipeFlowProgress;
 }
 

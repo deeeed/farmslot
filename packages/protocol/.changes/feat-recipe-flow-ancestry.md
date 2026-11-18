@@ -1,0 +1,1 @@
+- Add optional active-invocation ancestry to recipe flow updates, with parent, root-based depth and labeled breadcrumbs while accepting older updates.

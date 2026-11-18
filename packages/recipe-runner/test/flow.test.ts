@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createRecipeFlowProjection } from '../src/core/flow.js';
+import { buildRecipeInvocationAncestry, createRecipeFlowProjection } from '../src/core/flow.js';
 
 import { fixtureTree } from './flow.fixture.js';
 
@@ -97,4 +97,53 @@ test('failure and partial completion preserve unknown totals through teardown', 
   partial.finish('pass', true);
   assert.equal(partial.snapshot().progress.total, null);
   assert.equal(partial.snapshot().progress.completed, 4);
+});
+
+test('active ancestry supplies root depth and distinct labeled repeated-call breadcrumbs', () => {
+  const flow = createRecipeFlowProjection(fixtureTree(), 'ancestry-execution');
+  assert.equal(flow.snapshot().ancestry, null);
+  flow.start('$root');
+  assert.deepEqual(flow.snapshot().ancestry, {
+    parentId: null,
+    depth: 0,
+    breadcrumbs: [{ id: '$root', label: 'Composed flow fixture' }],
+  });
+  for (const call of ['first', 'second']) {
+    flow.start(call + '/nested/read');
+    assert.deepEqual(flow.snapshot().ancestry, {
+      parentId: call + '/nested',
+      depth: 3,
+      breadcrumbs: [
+        { id: '$root', label: 'Composed flow fixture' },
+        { id: call, label: call === 'first' ? 'First invocation' : 'Repeated invocation' },
+        { id: call + '/nested', label: 'Inspect state' },
+        { id: call + '/nested/read', label: 'Read shared state' },
+      ],
+    });
+  }
+  flow.start('first/release', 'teardown');
+  assert.equal(flow.snapshot().ancestry?.depth, 2);
+  assert.equal(flow.snapshot().ancestry?.parentId, 'first');
+  flow.invalidate();
+  assert.equal(flow.snapshot().progress.total, null);
+  assert.equal(flow.snapshot().ancestry?.depth, 2);
+  flow.finish('fail');
+  assert.equal(flow.snapshot().ancestry, null);
+});
+
+test('the public ancestry index does not depend on prepared node order', () => {
+  const tree = fixtureTree();
+  tree.nodes.reverse();
+  const index = buildRecipeInvocationAncestry(tree);
+  assert.equal(index.size, tree.nodes.length);
+  assert.deepEqual(index.get('second/nested/read'), {
+    parentId: 'second/nested',
+    depth: 3,
+    breadcrumbs: [
+      { id: '$root', label: 'Composed flow fixture' },
+      { id: 'second', label: 'Repeated invocation' },
+      { id: 'second/nested', label: 'Inspect state' },
+      { id: 'second/nested/read', label: 'Read shared state' },
+    ],
+  });
 });

@@ -1,0 +1,1 @@
+- Document active invocation ancestry, root-based depth and labeled breadcrumbs in the generated recipe protocol reference.
