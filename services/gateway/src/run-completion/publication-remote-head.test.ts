@@ -27,9 +27,9 @@ let probeHead: string;
 let conflictsDuringPush: boolean;
 /** How long the fixture push takes on the gateway clock. */
 let pushMs: number;
+// The push timer reads only this fixture clock, which moves only when the fixture push runs.
 let clockShift = 0;
-const realNow = Date.now.bind(Date);
-mock.method(Date, 'now', () => realNow() + clockShift);
+mock.method(performance, 'now', () => clockShift);
 let workerUsage: RunnerSessionUsage | null;
 let legacyCostOutput: string;
 const commands: string[] = [];
@@ -376,8 +376,28 @@ test('local-first publication of an existing PR checks origin after the push and
     2,
   );
   assert.equal(commands.filter((command) => command.includes('CONFLICT_EXIT:')).length, 1);
-  for (const phase of ['fetch-base', 'push-branch', 'verify-pushed-head'])
+  for (const phase of [
+    'fetch-base',
+    'push-branch',
+    'verify-pushed-head',
+    'record-pr',
+    'verify-published-head',
+  ])
     assert.ok(phases.includes(phase), `${phase} is a recorded phase`);
+});
+
+test('an already-published package returns without an origin check, so finalize keeps its own', async () => {
+  run.flowType = 'dev';
+  run.engineState = { publishGate: { publicationStatus: 'published_ready' } };
+  const result = await publishCompletionPackage(
+    run.id,
+    makeReadyGatePackage({ headSha: head, branch, publicationTarget: 'ready' }),
+  );
+  assert.equal(result.publishedHeadSha, undefined, 'no fresh origin check to reuse');
+  assert.equal(
+    commands.filter((command) => command.includes('ls-remote --exit-code origin')).length,
+    0,
+  );
 });
 
 test('successful push exit with a stale actual remote refuses publication', async () => {

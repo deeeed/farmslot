@@ -78,13 +78,13 @@ export async function pushPublicationBranch(
   });
   await assertPublicationMergeable(vars, headSha, baseBranch);
   emit('substep', { name: 'push-branch', detail: `Pushing ${branch}` });
-  const pushStarted = Date.now();
+  const pushStarted = performance.now();
   const push = await execOnSlot(
     vars,
     withFarmGitConfig(`git -C ${shellQuote(vars.remoteRepo)} push -u origin ${shellQuote(branch)}`),
     { timeout },
   );
-  const pushMs = Date.now() - pushStarted;
+  const pushMs = performance.now() - pushStarted;
   assertPublicationBranchPushed(push, branch, run.id, timeout);
   emit('substep', {
     name: 'verify-pushed-head',

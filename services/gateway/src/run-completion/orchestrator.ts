@@ -1666,6 +1666,10 @@ export async function publishCompletionPackage(
     }
     if (!prNumber) throw new Error('publication could not resolve or create a PR number');
     flags.prNumber = prNumber;
+    emit('substep', {
+      name: 'record-pr',
+      detail: `Recording PR #${prNumber} and the worker report`,
+    });
     await persistRunPrNumber(runId, prNumber);
 
     const latestRun = getRun(runId) ?? run;
@@ -1770,6 +1774,10 @@ export async function publishCompletionPackage(
     const publicationStatus: PublicationStatus =
       target === 'ready' ? 'published_ready' : 'published_draft';
     flags.publicationStatus = publicationStatus;
+    emit('substep', {
+      name: 'verify-published-head',
+      detail: `Checking origin still has the published ${approvedPackage.branch}`,
+    });
     await assertPublicationRemoteHead(run, approvedPackage.headSha, approvedPackage.branch);
     flags.publishedHeadSha = approvedPackage.headSha;
     await recordRunPRPublication(runId, ciRepo, prNumber, {

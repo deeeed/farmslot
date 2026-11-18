@@ -567,8 +567,9 @@ export async function executeFinalizeStep(
     publishBodyPostProcessed = published.bodyPostProcessed;
     publishedHeadSha = approvedPackage.headSha;
     publishedBranch = approvedPackage.branch;
-    // publishCompletionPackage checked origin after its last PR mutation, seconds ago.
-    remoteHeadVerified = true;
+    // publishCompletionPackage returns publishedHeadSha only after checking origin following its
+    // last PR mutation, seconds ago. An already-published return (a replay) carries none.
+    remoteHeadVerified = published.publishedHeadSha === approvedPackage.headSha;
     emitWithBroadcast('substep', { name: 'refresh-links', detail: 'Refreshing PR run links' });
     await refreshRunLinks(runId);
   }
