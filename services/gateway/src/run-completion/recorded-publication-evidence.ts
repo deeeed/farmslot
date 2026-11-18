@@ -365,10 +365,19 @@ export async function verifyFrozenPublicationEvidence(
     headSha,
     comparison,
   );
+  // The selected attempt's claim is the one measured against the retained
+  // library; a superseded attempt can legitimately name the library as it stood
+  // before a mid-run move, so its claim is presence-checked instead of being
+  // mixed into one digest expectation that then matches nothing.
   const actionInputs = await retainedTaskActionInputs(
     run,
     bundleRef,
-    sources.flatMap(({ input }) => taskActionInputReferences(input.summary)),
+    sources
+      .filter((source) => source.scope !== 'additional')
+      .flatMap(({ input }) => taskActionInputReferences(input.summary)),
+    sources
+      .filter((source) => source.scope === 'additional')
+      .flatMap(({ input }) => taskActionInputReferences(input.summary)),
   );
   if (!actionInputs.available)
     throw new Error(

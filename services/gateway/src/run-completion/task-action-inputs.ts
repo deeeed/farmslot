@@ -25,14 +25,29 @@ export function taskActionInputReferences(summary: unknown): TaskActionInputLibr
   }));
 }
 
-/** False is only a missing root. An existing but changed/partial input is a hard failure. */
+/**
+ * False is only a missing root. An existing but changed/partial input is a hard failure.
+ *
+ * `supersededActions` are claims from attempts the publication did not select.
+ * One retained library tree carries one digest, so a superseded attempt that ran
+ * before the library legitimately moved can never match it — and refusing on
+ * that would reject a valid before/after pair. Those claims are therefore
+ * checked for presence only, and only while the selected attempt's claim pins
+ * the retained bytes: that claim is the integrity anchor, so corrupt bytes still
+ * fail there. With no selected claim there is nothing to anchor to, so every
+ * claim stays authoritative.
+ */
 export async function taskActionInputsAvailable(
   taskDir: string,
   actions: readonly TaskActionInputLibrary[],
+  supersededActions: readonly TaskActionInputLibrary[] = [],
 ): Promise<boolean> {
-  if (!actions.length) return true;
+  const anchored = actions.length > 0;
+  const authoritative = anchored ? actions : [...actions, ...supersededActions];
+  const referenced = anchored ? [...actions, ...supersededActions] : authoritative;
+  if (!referenced.length) return true;
   const root = path.join(taskDir, TASK_DIRECTORY_LAYOUT.taskActions.relativePath);
-  const names = [...new Set(actions.flatMap(({ actionNames }) => actionNames))].join(', ');
+  const names = [...new Set(referenced.flatMap(({ actionNames }) => actionNames))].join(', ');
   try {
     if (!(await lstat(root)).isDirectory())
       throw new Error(`Task-action inputs are not a directory for ${names}: ${root}.`);
@@ -44,7 +59,7 @@ export async function taskActionInputsAvailable(
   if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
     throw new Error(`Task-action inputs escape their task directory: ${names}.`);
   const digest = await digestRecipeLibrary(root, await readRecipeLibraryManifest(root));
-  const expected = new Set(actions.map(({ expectedLibraryDigest }) => expectedLibraryDigest));
+  const expected = new Set(authoritative.map(({ expectedLibraryDigest }) => expectedLibraryDigest));
   if (expected.size !== 1 || !expected.has(digest))
     throw new Error(
       `Task-action implementation library digest does not match the recorded recipe: ${names}; expected ${[...expected].map((value) => value ?? 'unavailable').join(', ')}, found ${digest}.`,
