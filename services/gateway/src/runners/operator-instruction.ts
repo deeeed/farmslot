@@ -134,11 +134,13 @@ export async function deliverOperatorInstruction(
         vars,
         recoveryHandle: handle,
         initialPrompt: text,
-        beforeRespawn: async () => {
-          assertCurrent();
-          await beforeInput?.();
-          assertCurrent();
-        },
+        beforeRespawn: beforeInput
+          ? async () => {
+              assertCurrent();
+              await beforeInput();
+              assertCurrent();
+            }
+          : assertCurrent,
         blindTrialBoundary: blindTrialWorkerBoundary(run, context.role),
         modelQuestions: modelQuestionsForRun(run),
       });
