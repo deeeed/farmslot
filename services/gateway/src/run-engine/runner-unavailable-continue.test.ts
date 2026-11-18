@@ -127,8 +127,8 @@ async function fixture(t: test.TestContext) {
     agentContexts: [
       {
         // The canonical context id for the dev role; a non-canonical pair is
-      // refused by resolveAgentTarget, which production never produces.
-      id: 'dev',
+        // refused by resolveAgentTarget, which production never produces.
+        id: 'dev',
         role: 'dev',
         label: 'Worker',
         runner: 'pi',
@@ -167,14 +167,20 @@ async function fixture(t: test.TestContext) {
   };
   // What reached the pane. The real send goes through tmux, which this isolated
   // suite refuses, so delivery is injected and recorded instead.
-  const delivered: { message: string; role?: string; contextId?: string }[] = [];
+  const delivered: {
+    message: string;
+    key: string;
+    channel: string;
+    role?: string;
+    contextId?: string;
+  }[] = [];
   const start = () => {
     const observations: MonitorObservations = {
       workerStatus: (slot, runner, runId, role, contextId) =>
         checkAgentLive(slot, runner, runId, role, contextId, pane),
       violations: async () => [],
-      deliverResume: async (_runId, _slot, message, role, contextId) => {
-        delivered.push({ message, role, contextId });
+      deliverResume: async (_runId, _slot, instruction, role, contextId) => {
+        delivered.push({ ...instruction, message: instruction.text, role, contextId });
         return 'confirmed';
       },
     };
@@ -279,6 +285,72 @@ test(
     // Teardown ends the monitor (abort + resolve any open card + await). Waiting
     // for it here instead would time the 1.5 s window expiring on its own, which
     // this case has already finished asserting about.
+    void execution;
+  },
+);
+
+// A card the operator spends 25 minutes on leaves the worker idle for 25
+// minutes, and that idleness is the engine's, not the worker's. Without moving
+// the inactivity start, the first poll after Continue sees a fully elapsed stuck
+// window and can spend a nudge — or open a max_nudges card — in the same
+// iteration as the answer.
+test(
+  'answering a card restarts the inactivity window, not just the timeout window',
+  { timeout: 15_000 },
+  async (t) => {
+    const f = await fixture(t);
+    const execution = f.start();
+    await until(() => f.card() !== undefined);
+    const unavailable = f.card()!.id;
+    const staleProgressAt = Date.parse(
+      getRun(f.run.id)?.monitorState?.lastStructuredProgressAt ?? new Date().toISOString(),
+    );
+
+    await until(() => false, 1_000);
+    f.restoreRunner();
+    resolveMonitorDecision(unavailable, 'continue');
+    await until(() => (getRun(f.run.id)?.monitorState?.operatorResumedAt ?? '') !== '');
+
+    const resumedAt = Date.parse(getRun(f.run.id)?.monitorState?.operatorResumedAt ?? '');
+    assert.ok(
+      Number.isFinite(resumedAt),
+      'the answer must be recorded as an operator resume, which is what inactivityStartMs reads',
+    );
+    assert.ok(
+      resumedAt > staleProgressAt,
+      `the inactivity window still starts at the worker's last progress (${resumedAt} <= ${staleProgressAt}), so a long card spends a nudge on the next poll`,
+    );
+    void execution;
+  },
+);
+
+// A restart while an operator is still reading a card used to lose that slice:
+// gateWaitMs is only written once a wait finishes, so the recovered loop charged
+// the downtime to the worker and could re-raise the timeout being answered.
+test(
+  'a card still open at restart has its wait credited when the monitor comes back',
+  { timeout: 15_000 },
+  async (t) => {
+    const f = await fixture(t);
+    const interrupted = new Date(Date.now() - 5_000).toISOString();
+    const before = getRun(f.run.id)!.monitorState!;
+    updateRun(f.run.id, { monitorState: { ...before, gateWaitStartedAt: interrupted } });
+    // The provider is already restored, so the recovered loop polls normally
+    // instead of blocking on a fresh card before it can persist anything.
+    f.restoreRunner();
+
+    const execution = f.start();
+    await until(() => (getRun(f.run.id)?.monitorState?.gateWaitMs ?? 0) >= 5_000);
+
+    assert.ok(
+      (getRun(f.run.id)?.monitorState?.gateWaitMs ?? 0) >= 5_000,
+      `the interrupted card's wait was not credited: gateWaitMs=${getRun(f.run.id)?.monitorState?.gateWaitMs}`,
+    );
+    assert.equal(
+      getRun(f.run.id)?.monitorState?.gateWaitStartedAt,
+      undefined,
+      'the open-card marker must be cleared once credited, or every later restart counts it again',
+    );
     void execution;
   },
 );

@@ -2354,6 +2354,16 @@ export interface RunMonitorState {
    * "interactive handoff exceeded 90 min" seconds after Continue.
    */
   gateWaitMs?: number;
+  /**
+   * When the monitor started waiting on the card it is on now, written before
+   * the wait and cleared when it ends.
+   *
+   * A restart while an operator is still reading a card would otherwise lose
+   * that whole slice: the monitor only adds a wait to {@link gateWaitMs} once it
+   * finishes, so without this the recovered loop charges the time it was down to
+   * the worker and can re-block the run immediately.
+   */
+  gateWaitStartedAt?: string;
   /** Inactivity grace after explicit resume; this is not worker progress. */
   operatorResumedAt?: string;
   /** True after a one-shot usage-budget warning was emitted for this monitor session. */

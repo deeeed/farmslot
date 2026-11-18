@@ -523,7 +523,14 @@ export function resolveMonitorDecision(decisionId: string, actionId: string): vo
   }
 }
 
-/** Reset the persisted monitor clock so a restart cannot immediately re-timeout. */
+/**
+ * Reset the persisted monitor clock so a restart cannot immediately re-timeout.
+ *
+ * A new window starts with no gate wait behind it: the credit exists so that
+ * answering a card does not shorten the window it was raised in, and carrying it
+ * into the next window would make every later window longer by every card the
+ * run has ever sat on.
+ */
 export function persistMonitorWindowStart(runId: string, startedAtMs: number = Date.now()): void {
   const run = getRun(runId);
   if (!run) return;
@@ -531,13 +538,29 @@ export function persistMonitorWindowStart(runId: string, startedAtMs: number = D
   const prev = run.monitorState;
   updateRun(runId, {
     monitorState: prev
-      ? { ...prev, startedAt }
+      ? { ...prev, startedAt, gateWaitMs: 0, gateWaitStartedAt: undefined }
       : {
           nudgeCount: run.metrics.nudgeCount,
           lastPollAt: startedAt,
           startedAt,
         },
   });
+}
+
+/** Record that the monitor is waiting on a card, before it blocks on it. */
+function persistGateWaitStart(runId: string, waitingSinceMs: number): void {
+  const prev = getRun(runId)?.monitorState;
+  if (!prev) return;
+  updateRun(runId, {
+    monitorState: { ...prev, gateWaitStartedAt: new Date(waitingSinceMs).toISOString() },
+  });
+}
+
+/** The card is answered; its wait is now folded into `gateWaitMs`. */
+function clearGateWaitStart(runId: string): void {
+  const prev = getRun(runId)?.monitorState;
+  if (!prev?.gateWaitStartedAt) return;
+  updateRun(runId, { monitorState: { ...prev, gateWaitStartedAt: undefined } });
 }
 
 // ─── Main monitoring loop ───
@@ -1081,6 +1104,9 @@ export async function monitorRun(
   // worker's waitingForOperator signal on every poll, so anything added to it is
   // overwritten. Restored below from monitorState.gateWaitMs.
   const gateWait = { ms: 0 };
+  // Assigned once `state` exists below. The wrapper runs only inside the poll
+  // loop, so it is always set by then.
+  let monitorState: MonitorState | undefined;
   const createMonitorDecision = async (
     id: string,
     reason: string,
@@ -1089,6 +1115,9 @@ export async function monitorRun(
     question?: HandoffQuestionProbe,
   ) => {
     const waitingSince = Date.now();
+    // Persisted before the wait, so a restart while the operator is still
+    // reading the card can credit the slice this process never finished.
+    persistGateWaitStart(runId, waitingSince);
     try {
       return await createBlockedDecision(
         id,
@@ -1100,6 +1129,12 @@ export async function monitorRun(
       );
     } finally {
       gateWait.ms += Date.now() - waitingSince;
+      clearGateWaitStart(runId);
+      // The worker was idle for as long as the card was up, and that idleness
+      // is ours, not its. Without this the next poll can see a stuck window
+      // that elapsed entirely while a human was reading, and spend a nudge (or
+      // open a max_nudges card) in the same iteration as the answer.
+      if (monitorState) monitorState.operatorResumedAt = Date.now();
     }
   };
   // A failure the runner itself reported (an expired login) waits for the operator in a
@@ -1179,15 +1214,19 @@ export async function monitorRun(
       delivery = await deliverInstruction(
         runId,
         slotId,
-        buildNudgeMessage({
-          slotId,
-          role: context?.role,
-          contextId: context?.id,
-          type: 'error',
-          message,
-          nudgeSent: null,
-          timestamp: new Date().toISOString(),
-        }),
+        {
+          text: buildNudgeMessage({
+            slotId,
+            role: context?.role,
+            contextId: context?.id,
+            type: 'error',
+            message,
+            nudgeSent: null,
+            timestamp: new Date().toISOString(),
+          }),
+          key: 'runner-resume',
+          channel: 'run-monitor-resume',
+        },
         context?.role,
         context?.id,
       );
@@ -1211,6 +1250,17 @@ export async function monitorRun(
   // Restore from persisted state if available (gateway restart recovery)
   const persisted = run.monitorState;
   gateWait.ms = persisted?.gateWaitMs ?? 0;
+  // A card that was still open when this process went down: the operator kept
+  // reading it while nothing was watching, so that slice is gate wait too.
+  // Without it a restart mid-card charges the downtime to the worker and the
+  // first poll can re-raise the very timeout the operator was answering.
+  const interruptedGateWaitAt = persisted?.gateWaitStartedAt
+    ? Date.parse(persisted.gateWaitStartedAt)
+    : Number.NaN;
+  if (Number.isFinite(interruptedGateWaitAt)) {
+    gateWait.ms += Math.max(0, Date.now() - interruptedGateWaitAt);
+    clearGateWaitStart(runId);
+  }
   const restoredBudgetUsage = restoreBudgetUsageState(persisted?.budgetUsage);
 
   const state: MonitorState = persisted
@@ -1238,6 +1288,7 @@ export async function monitorRun(
         delivery: initialBudgetDeliveryState(),
         budgetUsage: emptyBudgetUsageSampleState(),
       };
+  monitorState = state;
   // Also restore nudge count from persisted state
   if (persisted && persisted.nudgeCount > run.metrics.nudgeCount) {
     updateRun(runId, { metrics: { ...run.metrics, nudgeCount: persisted.nudgeCount } });
@@ -2011,6 +2062,7 @@ export async function monitorRun(
           // Avoid immediately reopening the same timeout decision if the operator resolved the
           // handoff but the signal read races with a file write/delete.
           state.startedAt = Date.now();
+          gateWait.ms = 0;
           persistMonitorWindowStart(runId, state.startedAt);
           continue;
         }
@@ -2025,6 +2077,7 @@ export async function monitorRun(
         }
         // "continue" — extend by another full timeout period
         state.startedAt = Date.now();
+        gateWait.ms = 0;
         persistMonitorWindowStart(runId, state.startedAt);
       }
     }
@@ -2467,6 +2520,10 @@ export type WorkerInstructionDelivery = 'confirmed' | 'attempted' | 'queued' | '
  * metrics.nudgeCount (stuck/idle max_nudges is a separate escalation budget, and
  * a provider outage the operator fixed must not burn it).
  *
+ * The caller owns the exact text, the dedup key and the send channel. This used
+ * to wrap every message as a usage-budget warning, which told a worker being
+ * resumed after a provider outage to `mark` the current checklist item.
+ *
  * Returns `confirmed` only when the instruction was accepted and submitted. Expected
  * unavailability (missing run, non-tmux-nudgeable runner) returns `not-attempted`
  * without throwing. Unexpected delivery failures propagate so callers do not stamp a
@@ -2475,7 +2532,7 @@ export type WorkerInstructionDelivery = 'confirmed' | 'attempted' | 'queued' | '
 export async function sendOneShotWorkerInstruction(
   runId: string,
   slotId: string,
-  message: string,
+  instruction: { text: string; key: string; channel: string },
   role?: AgentRole,
   contextId?: string,
 ): Promise<WorkerInstructionDelivery> {
@@ -2491,8 +2548,8 @@ export async function sendOneShotWorkerInstruction(
       slotId,
       role,
       contextId,
-      key: 'budget',
-      text: buildUsageBudgetNudgeMessage(message),
+      key: instruction.key,
+      text: instruction.text,
     });
   const vars = await loadSlotVars(slotId);
   const context = selectAgentContext(run, { role, contextId });
@@ -2503,8 +2560,8 @@ export async function sendOneShotWorkerInstruction(
     vars,
     session,
     run.metrics.runner ?? 'claude',
-    buildUsageBudgetNudgeMessage(message),
-    'run-monitor-budget',
+    instruction.text,
+    instruction.channel,
     undefined,
     {
       recovery: { runId, emit: broadcastFn },
@@ -2516,13 +2573,13 @@ export async function sendOneShotWorkerInstruction(
   // the worker would never be told. Text that landed unconfirmed is a spent attempt.
   if (outcome === 'held-untouched') {
     console.log(
-      `[run-monitor] budget nudge held without reaching the composer for run ${runId.slice(0, 8)}`,
+      `[run-monitor] ${instruction.key} instruction held without reaching the composer for run ${runId.slice(0, 8)}`,
     );
     return 'not-attempted';
   }
   if (outcome === 'typed-unconfirmed') return 'attempted';
   console.log(
-    `[run-monitor] budget nudge sent to run ${runId.slice(0, 8)}: ${message.slice(0, 120)}`,
+    `[run-monitor] ${instruction.key} instruction sent to run ${runId.slice(0, 8)}: ${instruction.text.slice(0, 120)}`,
   );
   broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
   return 'confirmed';
@@ -2753,7 +2810,11 @@ export async function pollBudgetGuardStep(params: {
           const outcome = await (params.deliverNudge ?? sendOneShotWorkerInstruction)(
             params.runId,
             params.slotId,
-            decision.message,
+            {
+              text: buildUsageBudgetNudgeMessage(decision.message),
+              key: 'budget',
+              channel: 'run-monitor-budget',
+            },
             context?.role,
             context?.id,
           );

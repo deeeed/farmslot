@@ -1,1 +1,2 @@
 - `RunMonitorState` gains `gateWaitMs`: time the monitor itself spent blocked on a decision card, excluded from the execution timeout and kept separate from `operatorWaitMs`, which is recomputed each poll from the worker's own `waitingForOperator` signal and so cannot carry a wait the gateway owns.
+- `RunMonitorState` also gains `gateWaitStartedAt`: when the monitor started waiting on the card it is on now, so a restart mid-card can credit the slice the previous process never finished.
