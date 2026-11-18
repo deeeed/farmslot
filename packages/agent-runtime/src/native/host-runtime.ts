@@ -73,7 +73,8 @@ export async function retireIdleNativeHost(root: string, host: HostIdentity): Pr
         finish(error);
       }
     };
-    const watcher = watch(root, { recursive: true }, check);
+    // Lock removal and cleanup.json publication both change direct children of root.
+    const watcher = watch(root, check);
     const timeout = setTimeout(() => {
       check();
       if (!settled) finish(new Error('Native host cleanup timed out; no replacement was started'));
