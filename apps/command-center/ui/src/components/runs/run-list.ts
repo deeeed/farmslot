@@ -90,7 +90,6 @@ import {
   type RunListFilters,
   runListObservationAttributes,
   runProgressSummary,
-  showsRunProgress,
   TERMINAL_STATUSES,
 } from './run-list-model.js';
 import {
@@ -946,13 +945,11 @@ export class RunList extends RunListState {
     const taskObservation = this.progressQueries.get(
       runChecklistProgressTarget(run)?.key ?? '',
     )?.state;
-    const progress = showsRunProgress(run)
-      ? runProgressSummary(
-          run,
-          Date.now(),
-          taskObservation?.status === 'ready' ? taskObservation.data?.structured : undefined,
-        )
-      : null;
+    const progress = runProgressSummary(
+      run,
+      Date.now(),
+      taskObservation?.status === 'ready' ? taskObservation.data?.structured : undefined,
+    );
     const cells = [
       ...(showCheckbox
         ? [
@@ -1093,8 +1090,9 @@ export class RunList extends RunListState {
                 class="run-progress ${progress.kind}"
                 data-testid="runs-progress"
                 title=${`Last progress ${progress.lastProgressAt}${progress.text ? ` · ${progress.text}` : ''}`}
-                >last progress
-                ${progress.lastProgressAgo}${progress.text ? ` · ${progress.text}` : ''}</span
+                >${progress.kind === 'stale'
+                  ? progress.text
+                  : `last progress ${progress.lastProgressAgo}${progress.text ? ` · ${progress.text}` : ''}`}</span
               >`
             : nothing}
         </div>

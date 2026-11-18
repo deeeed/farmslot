@@ -421,7 +421,7 @@ test('run progress: a pending gate names its primary action, however old', () =>
   assert.equal(summary.lastProgressAgo, '4h ago');
 });
 
-test('run progress: stale after an hour without claiming nothing is pending', () => {
+test('run progress: stale after 20 minutes while CI progress keeps it current', () => {
   const started = Date.parse('2026-05-14T01:00:00.000Z');
   const watching = run('watch', {
     status: 'ci-watching',
@@ -445,15 +445,15 @@ test('run progress: stale after an hour without claiming nothing is pending', ()
   const before = summarize(watching, started + RUN_STALE_AFTER_MS - 60_000);
   assert.equal(before.kind, 'step');
   assert.equal(before.text, 'ci-watch: waiting for checks');
-  assert.equal(before.lastProgressAgo, '59m ago');
-  const after = summarize(watching, started + RUN_STALE_AFTER_MS);
+  assert.equal(before.lastProgressAgo, '19m ago');
+  const after = summarize(watching, started + RUN_STALE_AFTER_MS + 1);
   assert.equal(after.kind, 'stale');
-  assert.equal(after.text, 'Stale: no progress for 1h');
+  assert.equal(after.text, 'Stale · no progress for 20m');
   const ciProgress = summarize(
     {
       ...watching,
       ciWatchState: {
-        lastProgressAt: '2026-05-14T01:30:00.000Z',
+        lastProgressAt: '2026-05-14T01:10:00.000Z',
         consecutiveAttempts: 0,
         totalAttempts: 0,
         skips: 0,
@@ -462,7 +462,7 @@ test('run progress: stale after an hour without claiming nothing is pending', ()
     started + RUN_STALE_AFTER_MS,
   );
   assert.equal(ciProgress.kind, 'step', 'CI-watch progress counts');
-  assert.equal(ciProgress.lastProgressAgo, '30m ago');
+  assert.equal(ciProgress.lastProgressAgo, '10m ago');
 });
 
 test('run progress: an observed finished worker waits for its monitor to advance', () => {
@@ -485,25 +485,28 @@ test('run progress: an observed finished worker waits for its monitor to advance
       finishedAt: '2026-05-14T13:14:00.000Z',
     },
   };
-  const waiting = summarize(monitoring, Date.parse('2026-05-14T13:36:00.000Z'), taskProgress);
+  const waiting = summarize(monitoring, Date.parse('2026-05-14T13:33:00.000Z'), taskProgress);
   assert.equal(waiting.kind, 'step');
   assert.equal(waiting.text, 'Worker finished; monitor has not advanced');
-  assert.equal(waiting.lastProgressAgo, '22m ago');
+  assert.equal(waiting.lastProgressAgo, '19m ago');
 
   const stalled = summarize(monitoring, Date.parse('2026-05-14T15:14:00.000Z'), taskProgress);
   assert.equal(stalled.kind, 'stale');
-  assert.equal(stalled.text, 'Stale: Worker finished; monitor has not advanced');
+  assert.equal(
+    stalled.text,
+    'Stale · no progress for 2h 0m · Worker finished; monitor has not advanced',
+  );
   assert.equal(stalled.lastProgressAgo, '2h ago');
 
   const missing = summarize(monitoring, Date.parse('2026-05-14T13:36:00.000Z'));
-  assert.equal(missing.text, 'Stale: no progress for 3h');
+  assert.equal(missing.text, 'Stale · no progress for 3h 36m');
   assert.equal(
     summarize(
       { ...monitoring, status: 'reviewing', steps: [{ name: 'review', status: 'running' }] },
       Date.parse('2026-05-14T13:36:00.000Z'),
       taskProgress,
     ).text,
-    'Stale: no progress for 3h',
+    'Stale · no progress for 3h 36m',
     'a completed worker checklist does not describe the subsequent reviewer',
   );
 });
@@ -536,20 +539,11 @@ test('run progress: a restart re-entering a step is not progress; a Resume is', 
   assert.equal(resumed.lastProgressAgo, '1m ago');
 });
 
-test('run progress: only runs that can still move show it', () => {
+test('run progress: terminal runs omit progress and blocked runs can show it', () => {
   assert.equal(showsRunProgress(run('active', { status: 'monitoring' })), true);
   assert.equal(showsRunProgress(run('done', { status: 'done' })), false);
   assert.equal(showsRunProgress(run('failed', { status: 'failed' })), false);
-  // Blocked with nothing running or pending: the worker settled on blocked.
-  assert.equal(
-    showsRunProgress(
-      run('settled', {
-        status: 'blocked',
-        steps: [{ name: 'monitor', status: 'done', completedAt: '2026-05-14T01:00:00.000Z' }],
-      }),
-    ),
-    false,
-  );
+  assert.equal(showsRunProgress(run('settled', { status: 'blocked' })), true);
   assert.equal(
     showsRunProgress(
       run('gated', {
@@ -777,4 +771,61 @@ test("the run list's read state is exposed on its host for proofs and the reconn
     'data-runs-status': 'loading',
     'data-runs-observed-at': '',
   });
+});
+
+test('run progress counts a step timestamp and goes stale just after 20 minutes', () => {
+  const progressAt = '2026-11-18T04:02:48.046Z';
+  const at = Date.parse(progressAt);
+  const reconciling = run('652dbeec', {
+    status: 'reconciling',
+    createdAt: '2026-11-18T00:57:52.147Z',
+    updatedAt: '2026-11-18T04:22:48.046Z',
+    steps: [
+      {
+        name: 'monitor',
+        status: 'running',
+        startedAt: '2026-11-18T02:20:29.596Z',
+        lastProgressAt: progressAt,
+      },
+    ],
+  });
+
+  const before = summarize(reconciling, at + 20 * 60_000);
+  assert.equal(before.kind, 'step');
+  assert.equal(before.lastProgressAt, progressAt);
+  assertMatchKind(
+    summarize(reconciling, at + 20 * 60_000 + 1),
+    'stale',
+    'Stale · no progress for 20m',
+  );
+  assertMatchKind(
+    summarize(reconciling, at + 270 * 60_000),
+    'stale',
+    'Stale · no progress for 4h 30m',
+  );
+});
+
+test('run progress uses a step start on legacy runs and flags a blocked run without a gate', () => {
+  const at = Date.parse('2026-11-18T07:14:39.963Z');
+  const blocked = run('0d6e97c2', {
+    status: 'blocked',
+    createdAt: '2026-11-18T07:11:07.884Z',
+    steps: [{ name: 'monitor', status: 'running', startedAt: new Date(at).toISOString() }],
+  });
+  assert.equal(summarize(blocked, at + 19 * 60_000).lastProgressAt, new Date(at).toISOString());
+  const stopped: Run = {
+    ...blocked,
+    steps: [{ ...blocked.steps[0], status: 'done', completedAt: new Date(at).toISOString() }],
+  };
+  assert.equal(showsRunProgress(stopped), true);
+  assert.equal(runProgressSummary(stopped, at + 19 * 60_000), null);
+  assertMatchKind(summarize(stopped, at + 21 * 60_000), 'stale', 'Stale · no progress for 21m');
+});
+
+test('run progress leaves operator waits and terminal outcomes alone', () => {
+  const now = Date.parse('2026-11-18T12:00:00.000Z');
+  for (const status of ['human-gating', 'needs-decision'] as const)
+    assert.equal(summarize(run(status, { status }), now).kind, 'gate');
+  for (const status of ['done', 'cancelled', 'failed'] as const)
+    assert.equal(runProgressSummary(run(status, { status }), now), null);
 });

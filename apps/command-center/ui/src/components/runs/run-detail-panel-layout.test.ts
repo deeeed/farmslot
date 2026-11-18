@@ -692,3 +692,31 @@ test('detail forwards saved and failed progress observations through the pipelin
     );
   }
 });
+
+test('the run sidebar shows stale progress on the list row and the hydrated run', (t) => {
+  t.mock.method(Date, 'now', () => Date.parse('2026-11-02T20:21:00.000Z'));
+  const stale: Run = {
+    ...run,
+    status: 'reconciling',
+    steps: [
+      {
+        name: 'monitor',
+        status: 'running',
+        startedAt: '2026-11-02T19:00:00.000Z',
+        lastProgressAt: '2026-11-02T20:00:00.000Z',
+      },
+    ],
+  };
+  const standIn = renderRunDetailView({
+    ...context(),
+    run: null,
+    standInRow: stale,
+    _hydrating: true,
+  });
+  const hydrated = renderRunDetailView({ ...context(), run: stale });
+  for (const view of [standIn, hydrated])
+    assert.match(litText(view), /Stale · no progress for 21m/);
+
+  const gate = renderRunDetailView({ ...context(), run: { ...stale, status: 'human-gating' } });
+  assert.doesNotMatch(litText(gate), /Stale · no progress/);
+});

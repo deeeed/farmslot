@@ -84,6 +84,7 @@ import {
 import type { RunDetailPanelId } from './run-detail-panels.js';
 import { renderToolUsagePanel } from './run-detail-tool-usage.js';
 import { runInventoryHashFromDetail } from './run-detail-url-state.js';
+import { runProgressSummary } from './run-list-model.js';
 import { stepInspectorTaskProgress } from './run-pipeline-model.js';
 import { renderReviewProcess, renderRunReviewResult } from './run-review-result-renderer.js';
 import {
@@ -1409,6 +1410,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
 function renderRunDetailHeader(ctx: RunDetailViewContext, r: RunListRow, detail: Run | null) {
   const sc = runStatusColor(r.status);
   const activityLabel = runDetailHeaderModel(r).activityLabel;
+  const progress = runProgressSummary(r, Date.now(), ctx.taskProgress ?? undefined);
   const disposition = dispositionLabel(r.metrics.disposition);
   const actionsBlocked = ctx._actionsBlocked() || !detail;
   const ticketUrl = ticketUrlForRun(r.ticketOrPr, r, ctx.siblings);
@@ -1613,6 +1615,15 @@ function renderRunDetailHeader(ctx: RunDetailViewContext, r: RunListRow, detail:
           `
         : nothing}
     </div>
+    ${progress?.kind === 'stale'
+      ? html`<div
+          class="run-stale"
+          data-testid="run-detail-stale"
+          title=${`Last progress ${progress.lastProgressAt}`}
+        >
+          ${progress.text}
+        </div>`
+      : nothing}
     ${r.summary ? html`${renderRunTitle(r, 'header-summary')}` : nothing}
   `;
 }
