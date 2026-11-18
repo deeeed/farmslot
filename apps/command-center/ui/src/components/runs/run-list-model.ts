@@ -12,6 +12,7 @@ import {
   slotMachineMap,
   type SlotStatus,
   type TaskProgressStructured,
+  workerRoleForFlow,
 } from '@farmslot/protocol';
 import { isSettledBlockedRun, selectRunList, TERMINAL_RUN_STATUSES } from '@farmslot/protocol';
 import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
@@ -61,8 +62,10 @@ export interface RunProgressSummary {
 }
 
 type ProgressRun = Pick<
-  Run,
+  RunListRow,
   | 'status'
+  | 'flowType'
+  | 'agentContexts'
   | 'statusChangedAt'
   | 'createdAt'
   | 'startedAt'
@@ -103,6 +106,19 @@ function lastProgressMs(run: ProgressRun): number {
   return Math.max(...[...stamps, ...held].filter(Number.isFinite));
 }
 
+/** A same-slot replay can briefly read the previous checklist from the cache. */
+function monitorAttemptStartMs(run: ProgressRun): number {
+  const dispatch = run.steps.find((step) => step.name === 'dispatch');
+  const workerRole = workerRoleForFlow(run.flowType);
+  const launchTimes = [
+    dispatch?.startedAt ?? dispatch?.completedAt,
+    ...(run.agentContexts ?? [])
+      .filter((context) => context.role === workerRole || context.role === 'primary')
+      .map((context) => context.attemptStartedAt ?? context.startedAt),
+  ].map((stamp) => Date.parse(stamp ?? ''));
+  return Math.max(...launchTimes.filter(Number.isFinite));
+}
+
 /** A blocked run can still be stale after its worker has stopped. */
 export function showsRunProgress(run: Pick<Run, 'status'>): boolean {
   return !TERMINAL_STATUSES.has(run.status);
@@ -116,11 +132,14 @@ export function runProgressSummary(
 ): RunProgressSummary | null {
   if (!showsRunProgress(run)) return null;
   const step = run.steps.find((item) => item.status === 'running');
-  const finishedMs =
-    step?.name === 'monitor' ? Date.parse(taskProgress?.timing?.finishedAt ?? '') : NaN;
+  const monitor = step?.name === 'monitor';
+  const attemptStartedMs = monitor ? monitorAttemptStartMs(run) : -Infinity;
+  const recordedFinishMs = monitor ? Date.parse(taskProgress?.timing?.finishedAt ?? '') : NaN;
+  const workerFinished = Number.isFinite(recordedFinishMs) && recordedFinishMs >= attemptStartedMs;
   const lastMs = Math.max(
     lastProgressMs(run),
-    Number.isFinite(finishedMs) ? finishedMs : -Infinity,
+    attemptStartedMs,
+    workerFinished ? recordedFinishMs : -Infinity,
   );
   // Every run has createdAt; a record without one valid timestamp has no clock to show.
   if (!Number.isFinite(lastMs)) return null;
@@ -157,13 +176,12 @@ export function runProgressSummary(
     const elapsed = formatElapsed(lastProgressAt, nowMs);
     return summary(
       'stale',
-      `Stale · no progress for ${elapsed}${Number.isFinite(finishedMs) ? ' · Worker finished; monitor has not advanced' : ''}`,
+      `Stale · no progress for ${elapsed}${workerFinished ? ' · Worker finished; monitor has not advanced' : ''}`,
     );
   }
   if (isSettledBlockedRun(run)) return null;
   if (activity) return summary('step', activity);
-  if (Number.isFinite(finishedMs))
-    return summary('step', 'Worker finished; monitor has not advanced');
+  if (workerFinished) return summary('step', 'Worker finished; monitor has not advanced');
   return step
     ? summary('step', step.detail ? `${step.name}: ${step.detail}` : step.name)
     : summary('none', '');

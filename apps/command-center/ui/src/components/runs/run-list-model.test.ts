@@ -490,6 +490,28 @@ test('run progress: an observed finished worker waits for its monitor to advance
   assert.equal(waiting.text, 'Worker finished; monitor has not advanced');
   assert.equal(waiting.lastProgressAgo, '19m ago');
 
+  const replayed = summarize(
+    {
+      ...monitoring,
+      agentContexts: [
+        {
+          id: 'fix-bug',
+          role: 'fix-bug',
+          label: 'Current worker',
+          status: 'working',
+          runId: monitoring.id,
+          slotId: monitoring.slotId,
+          startedAt: '2026-05-14T10:00:00.000Z',
+          attemptStartedAt: '2026-05-14T13:20:00.000Z',
+        },
+      ],
+    },
+    Date.parse('2026-05-14T13:36:00.000Z'),
+    taskProgress,
+  );
+  assertMatchKind(replayed, 'step', 'monitor');
+  assert.equal(replayed.lastProgressAgo, '16m ago');
+
   const stalled = summarize(monitoring, Date.parse('2026-05-14T15:14:00.000Z'), taskProgress);
   assert.equal(stalled.kind, 'stale');
   assert.equal(

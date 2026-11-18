@@ -84,7 +84,7 @@ test('grouped rows retain an intermediate summary absent from the family heading
   }
 });
 
-test('the run row keeps a recorded worker finish time through a checklist refresh', async (t) => {
+test('the row retains worker completion through refresh and clears it on a same-slot replay', async (t) => {
   installFakeGateway(t);
   t.mock.method(Date, 'now', () => Date.parse('2026-11-05T12:00:00.000Z'));
   const { RunList } = await import('./run-list.js');
@@ -128,4 +128,30 @@ test('the run row keeps a recorded worker finish time through a checklist refres
     assert.match(text, /last progress 5m ago · Worker finished; monitor has not advanced/);
     assert.doesNotMatch(text, /Stale · no progress/);
   }
+
+  const replay: Run = {
+    ...row,
+    statusChangedAt: '2026-11-05T11:59:30.000Z',
+    steps: [
+      {
+        name: 'dispatch',
+        status: 'done',
+        startedAt: '2026-11-05T11:59:00.000Z',
+        completedAt: '2026-11-05T11:59:30.000Z',
+      },
+      { name: 'monitor', status: 'running', startedAt: '2026-11-05T11:59:30.000Z' },
+    ],
+  };
+  const replayTarget = runChecklistProgressTarget(replay);
+  assert(replayTarget && replayTarget.key !== target.key);
+  assert.deepEqual(
+    replayTarget.params,
+    target.params,
+    'same run and slot share the retained query',
+  );
+  Object.assign(view, {
+    progressQueries: new Map([[replayTarget.key, { state }]]),
+    taskProgressByRun: new Map([[replayTarget.key, structured]]),
+  });
+  assert.doesNotMatch(litText(view.renderCard(replay, false)), /Worker finished; monitor/);
 });
