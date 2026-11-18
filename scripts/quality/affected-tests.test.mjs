@@ -29,6 +29,25 @@ test('follows reverse imports across workspace consumers and .js source imports'
 test('runs a changed test even without imports', () => {
   assert.deepEqual(select(['apps/app/src/other.test.ts']), ['apps/app/src/other.test.ts']);
 });
+test('test-only edits follow consumers without widening unrelated opaque production modules', () => {
+  const additions = {
+    'apps/app/src/dynamic.ts': 'import(moduleName);',
+    'apps/app/src/consumer.test.ts': "import './other.test.js';",
+    'apps/app/src/unknown.test.ts':
+      "import { readFileSync } from 'node:fs'; readFileSync(runtimePath);",
+  };
+  assert.deepEqual(select(['apps/app/src/other.test.ts'], additions), [
+    'apps/app/src/other.test.ts',
+    'apps/app/src/consumer.test.ts',
+    'apps/app/src/unknown.test.ts',
+  ]);
+  assert.deepEqual(select(['apps/app/src/model.ts'], additions), [
+    'apps/app/src/model.test.ts',
+    'apps/app/src/other.test.ts',
+    'apps/app/src/consumer.test.ts',
+    'apps/app/src/unknown.test.ts',
+  ]);
+});
 test('config and deleted files widen to every consumer test', () => {
   for (const file of ['packages/lib/tsconfig.json', 'packages/lib/src/deleted.ts']) {
     assert.deepEqual(select([file]), ['apps/app/src/model.test.ts', 'apps/app/src/other.test.ts']);
