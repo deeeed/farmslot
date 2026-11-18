@@ -26,6 +26,8 @@ let outcomes: Error[] = [];
 let launches = false;
 let launchAttempted = false;
 let priorWorker = false;
+let supersedeClaim = false;
+let warmSuccess = false;
 let parent: Run | undefined;
 let slotRow: Record<string, unknown> | undefined;
 const partialIO: Parameters<typeof executeDispatchStep>[1]['stepPartialIO'] = new Map();
@@ -66,6 +68,7 @@ mock.module('../core/state.js', {
       predicate: (row: Readonly<Record<string, unknown>>) => boolean,
       fields: Record<string, unknown>,
     ) => {
+      if (supersedeClaim) current.engineState = { ...current.engineState, generation: 1 };
       if (!slotRow || !predicate(slotRow)) return { claimed: false, epoch: null };
       Object.assign(slotRow, fields, { slot_epoch: Number(slotRow.slot_epoch) + 1 });
       return { claimed: true, epoch: Number(slotRow.slot_epoch) };
@@ -84,11 +87,10 @@ mock.module('../run-completion/inherited-acceptance.js', {
 mock.module('../methods/dispatch.js', {
   namedExports: {
     ...dispatch,
-    warmSessionHandoffDispatch: async () => ({
-      handedOff: false,
-      disposition: 'fresh-dispatch',
-      reason: 'worker session not alive',
-    }),
+    warmSessionHandoffDispatch: async () =>
+      warmSuccess
+        ? { handedOff: true, runner: 'scripted' }
+        : { handedOff: false, disposition: 'fresh-dispatch', reason: 'worker session not alive' },
     dispatchExecute: async (...args: Parameters<typeof dispatch.dispatchExecute>) => {
       attempts++;
       if (slotRow)
@@ -215,9 +217,16 @@ test('a second change in a row still refuses', async () => {
 
 for (const scenario of [
   'reserved parent',
+  'stale devserver epoch',
+  'warm handoff succeeds',
   'other owner',
   'other reservation',
+  'already owned with another reservation',
   'releasing slot',
+  'cleanup owner',
+  'disabled slot',
+  'manual slot',
+  'superseded before claim',
   'active parent',
 ] as const) {
   test(`fresh dispatch after warm fallback respects the slot claim: ${scenario}`, async () => {
@@ -239,15 +248,28 @@ for (const scenario of [
       metrics: { ...parent.metrics, runner: 'scripted' },
       engineState: { flags: { skipPrepare: true, warmSessionReuse: true } },
     });
-    const owner = scenario === 'other owner' ? 'sibling' : parent.id;
-    const reservation = scenario === 'other reservation' ? 'sibling' : current.id;
+    const owner =
+      scenario === 'other owner'
+        ? 'sibling'
+        : scenario === 'already owned with another reservation'
+          ? current.id
+          : parent.id;
+    const reservation =
+      scenario === 'other reservation' || scenario === 'already owned with another reservation'
+        ? 'sibling'
+        : current.id;
+    const idleEpoch = scenario === 'stale devserver epoch' ? 6 : 7;
+    supersedeClaim = scenario === 'superseded before claim';
+    warmSuccess = scenario === 'warm handoff succeeds';
     slotRow = {
       current_run_id: owner,
       handoff_run_id: reservation,
       slot_epoch: 7,
-      lifecycle: 'busy',
+      lifecycle:
+        scenario === 'disabled slot' ? 'disabled' : scenario === 'manual slot' ? 'manual' : 'busy',
       phase: scenario === 'releasing slot' ? 'releasing' : 'working',
-      idle_devserver_epoch: 7,
+      ...(scenario === 'cleanup owner' ? { cleanup_run_id: parent.id } : {}),
+      idle_devserver_epoch: idleEpoch,
       idle_devservers: ['test-fixture'],
     };
     try {
@@ -255,15 +277,16 @@ for (const scenario of [
         stepPartialIO: partialIO,
         blockedRunError: (message, detail) => Object.assign(new Error(message), { detail }),
       });
-      if (scenario === 'reserved parent') {
+      if (scenario === 'reserved parent' || scenario === 'stale devserver epoch') {
         assert.equal((await work).outputs?.success, true);
         assert.equal(attempts, 1);
         assert.equal(slotRow.current_run_id, current.id);
         assert.equal(slotRow.handoff_run_id, null);
         assert.equal(slotRow.slot_epoch, 8);
-        assert.equal(slotRow.idle_devserver_epoch, 8);
+        assert.equal(slotRow.idle_devserver_epoch, idleEpoch === 7 ? 8 : idleEpoch);
       } else {
-        await assert.rejects(work, { detail: RETAINED_SESSION_HANDOFF_HOLD });
+        if (warmSuccess) assert.equal((await work).outputs?.warmHandoff, true);
+        else await assert.rejects(work, { detail: RETAINED_SESSION_HANDOFF_HOLD });
         assert.equal(attempts, 0);
         assert.equal(slotRow.current_run_id, owner);
         assert.equal(slotRow.handoff_run_id, reservation);
@@ -271,6 +294,8 @@ for (const scenario of [
       }
     } finally {
       launches = false;
+      supersedeClaim = false;
+      warmSuccess = false;
       parent = undefined;
       slotRow = undefined;
     }

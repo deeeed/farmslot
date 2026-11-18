@@ -610,8 +610,19 @@ async function claimWarmFallbackSlot(run: Run, slotId: string): Promise<boolean>
   const generation = run.engineState?.generation ?? 0;
   return withRunTransition(run.id, async () => {
     const current = getRun(run.id);
-    if (runSupersededSince(current, generation) || current?.slotId !== slotId) return false;
+    if (!current || current.slotId !== slotId || runSupersededSince(current, generation))
+      return false;
+    const blockedSlot = (slot: Readonly<Record<string, unknown>>) =>
+      Boolean(
+        (slot.handoff_run_id && slot.handoff_run_id !== run.id) ||
+        slot.cleanup_run_id ||
+        slot.workspace_recovery ||
+        slot.lifecycle === 'disabled' ||
+        slot.lifecycle === 'manual' ||
+        slotClaimBlockedByRelease(slot),
+      );
     const row = await readSlotRow(slotId);
+    if (row && blockedSlot(row)) return false;
     // A replay or a completed release may already have left the slot owned by
     // this run or free. The normal fresh launch path handles either state.
     if (!row?.current_run_id || row.current_run_id === run.id) return true;
@@ -631,10 +642,7 @@ async function claimWarmFallbackSlot(run: Run, slotId: string): Promise<boolean>
           latest?.parentRunId !== parentId ||
           slot.current_run_id !== parentId ||
           slot.handoff_run_id !== run.id ||
-          slot.cleanup_run_id ||
-          slot.lifecycle === 'disabled' ||
-          slot.lifecycle === 'manual' ||
-          slotClaimBlockedByRelease(slot)
+          blockedSlot(slot)
         )
           return false;
         if (slot.idle_devserver_epoch === slot.slot_epoch && Array.isArray(slot.idle_devservers))
@@ -790,7 +798,7 @@ export async function executeDispatchStep(
     }
     if (!(await claimWarmFallbackSlot(current, current.slotId)))
       throw blockedRunError(
-        `Slot ${current.slotId}: the CI follow-up does not have a claim from its completed parent`,
+        `Slot ${current.slotId}: the CI follow-up could not acquire its reserved slot for fresh dispatch`,
         RETAINED_SESSION_HANDOFF_HOLD,
       );
   }
