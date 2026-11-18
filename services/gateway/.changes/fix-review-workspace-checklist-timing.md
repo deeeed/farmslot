@@ -1,0 +1,1 @@
+- A static review now keeps its reviewer's checklist marks, so the cost-per-step panel splits the review session by step instead of showing no checklist marks.
