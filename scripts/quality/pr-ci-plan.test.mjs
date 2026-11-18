@@ -86,7 +86,7 @@ test('at the matrix cap the smallest job takes the next task', () => {
     ],
   );
 });
-test('full gateway PRs fit the matrix cap without changing test ownership', async (t) => {
+test('full gateway PRs split large work without changing test ownership', async (t) => {
   const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const path = await import('node:path');
@@ -114,8 +114,8 @@ test('full gateway PRs fit the matrix cap without changing test ownership', asyn
   const gatewayJobs = (plan) => plan.jobs.filter(({ id }) => id.startsWith('gateway-'));
   const plan = createPrPlan(input);
   const shards = gatewayJobs(plan);
-  assert.equal(shards.length, 11);
-  assert.equal(plan.jobs.length, 12);
+  assert.ok(shards.length > 11);
+  assert.ok(plan.jobs.length > 12 && plan.jobs.length <= 26);
   assert.deepEqual(shards.flatMap(({ tasks }) => tasks[0].tests).sort(), [...selected].sort());
   for (const file of selected) assert.match(plan.testOwners[file], /^gateway-\d+$/);
   assert.equal(
@@ -175,8 +175,8 @@ test('full workspace inventory has one test owner and splits the critical app su
     durations: JSON.parse(readFileSync('scripts/quality/ci-test-durations.json', 'utf8')),
   });
   const tasks = plan.jobs.flatMap(({ tasks }) => tasks);
-  assert.equal(plan.jobs.length, 12);
-  assert.equal(plan.jobs.filter(({ id }) => id.startsWith('gateway-')).length, 7);
+  assert.equal(plan.jobs.length, 26);
+  assert.ok(plan.jobs.filter(({ id }) => id.startsWith('gateway-')).length > 7);
   assert.equal(plan.jobs.filter(({ id }) => id.startsWith('command-center-ui-')).length, 4);
   const assigned = tasks.flatMap((task) => task.tests ?? []);
   assert.deepEqual(Object.keys(plan.testOwners).sort(), [...plan.selected].sort());
