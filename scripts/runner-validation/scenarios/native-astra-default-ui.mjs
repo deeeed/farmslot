@@ -6,7 +6,6 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { Methods, NativeSessionEventTypes } from '@farmslot/protocol';
-import { nativeLaunchContextKey } from '@farmslot/review-dispatch';
 
 import { ROOT } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
@@ -23,6 +22,7 @@ export const RUNNER_AGNOSTIC = true;
  */
 export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
   if (!explicit) return { scenario: SCENARIO_ID, runner: 'codex', pass: true, skipped: true };
+  const { nativeLaunchContextKey } = await import('@farmslot/review-dispatch');
   const report = { runner: 'codex', pass: false, checks: [] };
   const cdp = (...args) =>
     JSON.parse(
@@ -84,26 +84,24 @@ export async function runScenario({ explicit, outDir, timeoutMs = 120000 }) {
       (value) => value.ready,
       30000,
     );
-    const existing = new Set(
-      rpc(Methods.NATIVE_SESSION_LIST, { executionNodeId: 'local' }).sessions.map(
-        (item) => item.id,
-      ),
+    view(
+      `const method=${JSON.stringify(Methods.NATIVE_SESSION_CREATE)};view.__launchReceipt=null;const request=view.api.request.bind(view.api);view.__launchRequest=request;view.api.request=async(name,params)=>{const result=await request(name,params);const session=result?.session;if(name===method&&session?.id)view.__launchReceipt={id:session.id,node:session.executionNodeId,runner:session.runner,cwd:session.cwd};return result;};return {armed:true};`,
     );
     click('[data-testid=native-create]');
     const created = await wait(
-      () =>
-        view(
-          'const session=view?.session;return {id:session?.id??"",runner:session?.runner??"",cwd:session?.cwd??"",node:session?.executionNodeId??""};',
-        ),
+      () => view('return view.__launchReceipt??{id:""};'),
       (value) =>
-        value.id &&
-        !existing.has(value.id) &&
-        value.runner === 'codex' &&
-        value.cwd === fixture &&
-        value.node === 'local',
+        value.id && value.runner === 'codex' && value.cwd === fixture && value.node === 'local',
       timeoutMs,
     );
+    view('if(view.__launchRequest)view.api.request=view.__launchRequest;return {restored:true};');
     target = { executionNodeId: created.node, sessionId: created.id };
+    const opened = await wait(
+      () => view(`return {open:view.session?.id===${JSON.stringify(created.id)}};`),
+      (value) => value.open,
+      30000,
+    );
+    assert.equal(opened.open, true);
     const session = rpc(Methods.NATIVE_SESSION_READ, target).session;
     report.sessionId = session.id;
     assert.equal(session.model, 'gpt-6.2-sol');
