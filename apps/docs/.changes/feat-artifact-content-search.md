@@ -1,0 +1,1 @@
+- Document the bounded, read-only retained-artifact search method and its request and result fields.

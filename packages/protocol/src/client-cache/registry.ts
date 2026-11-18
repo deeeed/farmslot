@@ -1162,6 +1162,15 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     rereadIntervalMs: { runs: 30_000 },
   },
   // Background sync stores every listed run's details (ADR-071 Amendment 2), so bytes bound it.
+  [Methods.RUN_SEARCH_ARTIFACTS]: {
+    persisted: true,
+    maxBytes: 128 * 1024,
+    retention: { maxEntries: 32, maxBytes: 1024 * 1024 },
+    live: true,
+    dependencies: (params: unknown) => [
+      { family: 'artifacts', runId: requiredId(params, 'runId') },
+    ],
+  },
   [Methods.RUN_GET]: {
     persisted: true,
     maxBytes: 20 * mb,

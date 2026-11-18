@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
 import { after, mock, test } from 'node:test';
 
+import { GATEWAY_TOKEN_STORAGE_KEY, GATEWAY_URL_STORAGE_KEY } from '../../gateway-url.js';
 import { litBinding, litBindings, litText } from '../../testing/lit-text.js';
+import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
 import type { ArtifactType } from '../workspace/workspace-artifacts.js';
 
 mock.module('./media-lightbox.js', { namedExports: {} });
+mock.module('./artifact-content-search.js', { namedExports: {} });
+mock.module('./artifact-content-preview.js', { namedExports: {} });
 
 class ResizeMock implements ResizeObserver {
   static latest?: ResizeMock;
@@ -131,4 +135,99 @@ test('a missing bookmarked file never previews another artifact', () => {
   };
   assert.equal(litBinding(element.render(), '.items='), undefined);
   assert.match(litText(element.render()), /File unavailable.*artifacts\/removed-report.md/s);
+});
+
+test('small inventories expose content search without adding the path-filter toolbar', () => {
+  const { element } = fixture(1000);
+  const text = litText(element.render());
+  assert.match(text, /Search contents/);
+  assert.doesNotMatch(text, /placeholder="Filter files"/);
+});
+
+test('relative search previews stay on the gateway origin rather than the dashboard origin', (t) => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'location');
+  Object.defineProperty(globalThis, 'location', {
+    configurable: true,
+    value: { href: 'http://dashboard.local:5175/#runs' },
+  });
+  t.after(() => {
+    if (original) Object.defineProperty(globalThis, 'location', original);
+    else Reflect.deleteProperty(globalThis, 'location');
+  });
+  const { element } = fixture(1000);
+  element.artifactHref = () => '/api/run-artifact?runId=r&path=artifacts%2Freport.md';
+  element.viewState = {
+    query: '',
+    types: new Set(),
+    path: 'artifacts/report.md',
+    preview: true,
+    contentQuery: 'needle',
+    line: 2,
+    bundleDigest: 'bundle',
+    contentSha256: 'a'.repeat(64),
+  };
+  const value = litBinding(element.render(), '.url=');
+  assert.equal(typeof value, 'string');
+  assert.equal(new URL(String(value)).origin, 'http://localhost:7777');
+});
+
+test('person-session preview transport keeps Authorization across separate UI and gateway origins', async (t) => {
+  const props = new Map(
+    ['location', 'window', 'localStorage', 'fetch'].map((key) => [
+      key,
+      Object.getOwnPropertyDescriptor(globalThis, key),
+    ]),
+  );
+  t.after(() => {
+    for (const [key, desc] of props) {
+      if (desc) Object.defineProperty(globalThis, key, desc);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  });
+  const token = `fsa_${'a'.repeat(32)}_${'b'.repeat(43)}`;
+  const location = {
+    href: 'http://dashboard.local:5175/#runs',
+    origin: 'http://dashboard.local:5175',
+    pathname: '/',
+  };
+  const store = new Map([
+    [GATEWAY_URL_STORAGE_KEY, 'ws://gateway.local:7801/ws'],
+    [GATEWAY_TOKEN_STORAGE_KEY, token],
+  ]);
+  Object.defineProperty(globalThis, 'location', { configurable: true, value: location });
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { location } });
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => store.set(k, v),
+      removeItem: (k: string) => store.delete(k),
+    },
+  });
+  const requests: Array<{ url: string; auth: string | null }> = [];
+  Object.defineProperty(globalThis, 'fetch', {
+    configurable: true,
+    value: async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ url: String(input), auth: new Headers(init?.headers).get('Authorization') });
+      return new Response('preview');
+    },
+  });
+  const { element } = fixture(1000);
+  element.artifactHref = () => '/api/run-artifact?runId=r&path=artifacts%2Freport.md';
+  element.viewState = {
+    query: '',
+    types: new Set(),
+    path: 'artifacts/report.md',
+    preview: true,
+    contentQuery: 'needle',
+    line: 2,
+    bundleDigest: 'bundle',
+    contentSha256: 'a'.repeat(64),
+  };
+  const url = litBinding(element.render(), '.url=');
+  assert.equal(typeof url, 'string');
+  await gatewayHttpFetch(String(url), undefined, location);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].auth, `Bearer ${token}`);
+  assert.equal(new URL(requests[0].url, location.origin).searchParams.has('token'), false);
 });
