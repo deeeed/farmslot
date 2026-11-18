@@ -1,0 +1,1 @@
+- Prepare the native host before node registration: refresh a stopped older runtime and keep busy sessions readable while new admissions report version skew.

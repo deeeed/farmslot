@@ -4,6 +4,8 @@ import { existsSync, mkdirSync, readdirSync, rmSync, watch } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { RUNTIME_VERSION } from '../version.js';
+
 import { recoverStoppedNativeHost } from './host-cleanup-recovery.js';
 import { socketDirectory } from './ipc.js';
 import { NativeProcessTree } from './process-tree.js';
@@ -84,6 +86,7 @@ rmSync(join(root, 'ready.json'), { force: true });
 const socket = join(socketDirectory(root), 's');
 privateDirectory(socketDirectory(root));
 durableWrite(join(root, 'host.json'), {
+  runtimeVersion: RUNTIME_VERSION,
   supportsApprovalMode: true,
   supportsStandaloneDelegation: true,
   conversationStreaming: 1,

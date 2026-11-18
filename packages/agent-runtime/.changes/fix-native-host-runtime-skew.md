@@ -1,0 +1,1 @@
+- Refresh idle native hosts when a redeployed node loads a different runtime; preserve retained sessions and report busy-host version skew before new launches. Unsupported launch errors name the rejected field without its value.

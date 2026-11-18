@@ -139,24 +139,23 @@ function object(value: unknown): Record<string, unknown> {
 
 export function decodeNativeWorkerLaunch(value: unknown): NativeWorkerLaunch {
   const launch = object(value);
-  if (
-    Object.keys(launch).some(
-      (key) =>
-        ![
-          'leaseId',
-          'executable',
-          'accountLabel',
-          'environment',
-          'effort',
-          'safetyTier',
-          'approvalPolicy',
-          'modelQuestions',
-          'filesystemPolicy',
-          'reviewerEnvironmentKeys',
-        ].includes(key),
-    )
-  )
-    throw new Error('Unsupported native worker launch field');
+  const unsupported = Object.keys(launch).filter(
+    (key) =>
+      ![
+        'leaseId',
+        'executable',
+        'accountLabel',
+        'environment',
+        'effort',
+        'safetyTier',
+        'approvalPolicy',
+        'modelQuestions',
+        'filesystemPolicy',
+        'reviewerEnvironmentKeys',
+      ].includes(key),
+  );
+  if (unsupported.length)
+    throw new Error(`Unsupported native worker launch field: ${unsupported.join(', ')}`);
   if (!['sandboxed', 'full-auto', 'dangerous'].includes(String(launch.safetyTier)))
     throw new Error('Invalid native worker safety tier');
   if (

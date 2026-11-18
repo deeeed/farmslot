@@ -34,6 +34,8 @@ import {
 } from './worker-launch.js';
 
 export interface HostIdentity {
+  /** Version loaded by the detached supervisor, not its current files on disk. */
+  runtimeVersion?: string;
   supportsApprovalMode?: boolean;
   conversationStreaming?: 1;
   supportsStandaloneDelegation?: boolean;
