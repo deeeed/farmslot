@@ -97,9 +97,16 @@ function liveComposer(pane: string): LiveComposer | null {
         /^ {2}[\w.-]+(?: [\w.-]+)? · (?:~?\/|~$)/.test(line),
     )
     .lastIndexOf(true);
-  const footer =
+  // A legacy context row cannot authenticate a preceding model-like line.
+  // Do not cut the draft there or fall back to another cut in the same frame.
+  const legacyContextHint = /^\s*(?:\d+%\s+)?context(?:\s+\d+%)?\s+left\b/i;
+  if (
     modelFooter !== -1 &&
-    lines.slice(modelFooter + 1).every((line) => !line.trim() || isStatusHint(line))
+    lines.slice(modelFooter + 1).some((line) => !isStatusHint(line) || legacyContextHint.test(line))
+  )
+    return null;
+  const footer =
+    modelFooter !== -1
       ? modelFooter
       : lines.map((line, index) => index > composer && isStatusHint(line)).lastIndexOf(true);
   if (footer === -1 && composer !== lines.length - 1) return null;

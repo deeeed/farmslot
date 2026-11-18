@@ -68,6 +68,15 @@ test('unavailable WARM refuses instead of changing mode', () => {
     { ...prior, nativeOwnerPrincipalId: 'other' },
     { ...prior, project: 'other' },
     { ...prior, status: 'monitoring' },
+    {
+      ...prior,
+      status: 'blocked',
+      reviewWorkspace: {
+        ...prior.reviewWorkspace!,
+        retainedAt: '2026-11-18T00:00:00Z',
+        executionStoppedAt: '2026-11-18T00:00:01Z',
+      },
+    },
     { ...prior, ticketOrPr: 'example/foreign#42' },
     { ...prior, agentContexts: [] },
     { ...prior, agentContexts: [{ ...prior.agentContexts![0], reviewId: 'foreign' }] },
@@ -332,4 +341,18 @@ test('a historical ancestry diagnosis defers to pinned scope qualification', () 
   configureWorkspaceContinuity(current, prior, result);
   assert.equal(result.mode, 'warm');
   assert.equal(result.session?.continuity, 'resumed');
+});
+
+test('workspace lineage normalizes current and prior GitHub pull URLs', () => {
+  for (const currentTicket of ['example/app#42', 'https://github.com/example/app/pull/42'])
+    for (const priorTicket of ['example/app#42', 'https://github.com/example/app/pull/42']) {
+      const result = context();
+      configureWorkspaceContinuity(
+        { ...current, ticketOrPr: currentTicket },
+        { ...prior, ticketOrPr: priorTicket },
+        result,
+      );
+      assert.equal(result.session?.continuity, 'resumed');
+      assert.equal(result.session?.sessionId, 'chat');
+    }
 });
