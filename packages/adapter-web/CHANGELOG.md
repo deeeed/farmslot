@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.19.27 - 2026-11-19
+
+- Pin the qualified invocation-timing SDK cohort with exact package dependencies.
+
 ## 0.19.26 - 2026-11-19
 
 - Pin the shared composed-evidence SDK dependency cohort for consistent viewer data.

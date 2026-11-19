@@ -6,6 +6,10 @@ All notable changes to `@farmslot/capabilities` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.7.9 - 2026-11-19
+
+- Pin the qualified invocation-timing SDK cohort with exact package dependencies.
+
 ## 0.7.8 - 2026-11-18
 
 - Align published dependencies with @farmslot/protocol 0.90.0.
