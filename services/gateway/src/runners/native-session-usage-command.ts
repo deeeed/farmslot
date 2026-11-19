@@ -347,6 +347,8 @@ export function forcedSessionUsageArgv(
   modulePath?: string,
   checklistMarks?: ChecklistMark[],
   receiptBudget?: { maxBytes: number; parentChecklistMarks?: ChecklistMark[] },
+  /** Gateway-loaded LiteLLM prices: the slot quotes Pi's LiteLLM messages from them. */
+  liteLlmPrices?: Array<[string, PiModelCostMetadata]>,
 ): string[] {
   // Most parent marks are already in the expanded list. Keep references to
   // those marks so they do not double the remote shell argument on large ledgers.
@@ -361,7 +363,7 @@ export function forcedSessionUsageArgv(
 const input = JSON.parse(process.argv[1]);
 
 try {
-  const options = { repo: '', slotId: input.slotId, action: 'total', forcedPath: input.sessionPath, forcedRunner: input.runner, checklistMarks: input.checklistMarks };
+  const options = { repo: '', slotId: input.slotId, action: 'total', forcedPath: input.sessionPath, forcedRunner: input.runner, checklistMarks: input.checklistMarks, ...(input.liteLlmPrices ? { liteLlmPrices: new Map(input.liteLlmPrices) } : {}) };
   let output = await runSessionUsage(options);
   if (input.receiptBudget && exceedsBudget(output, input.receiptBudget.maxBytes)) {
     const marks = parentMarks(input.receiptBudget.parentChecklistMarks, input.checklistMarks);
@@ -387,7 +389,14 @@ try {
     '--input-type=module',
     '-e',
     program,
-    JSON.stringify({ slotId, runner, sessionPath, checklistMarks, receiptBudget: budget }),
+    JSON.stringify({
+      slotId,
+      runner,
+      sessionPath,
+      checklistMarks,
+      receiptBudget: budget,
+      liteLlmPrices,
+    }),
     modulePath ?? '',
   ];
 }

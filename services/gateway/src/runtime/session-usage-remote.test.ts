@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { mock, test } from 'node:test';
 
 import type { SlotVars } from '../core/config.js';
@@ -19,6 +23,7 @@ mock.module('../core/exec.js', {
 const { extractRunnerSessionUsage, extractRunWorkerSessionUsage } =
   await import('./session-usage.js');
 const { makeRun } = await import('../run-completion/test-fixtures.js');
+const { makeVars } = await import('../runners/test-fixtures.js');
 const { claudeSessionUsageProvider } = await import('../runners/session-usage-provider.js');
 
 test('remote usage uses supported node execution and preserves slot support selection', async () => {
@@ -60,6 +65,64 @@ test('remote usage uses supported node execution and preserves slot support sele
   assert.equal(failed.source, 'unavailable');
   assert.match(failed.error ?? '', /node transcript unavailable/);
   assert.equal(failed.turns, undefined);
+});
+
+test('a remote Pi receipt is quoted from the gateway LiteLLM prices, not the slot environment', async (t) => {
+  const cacheDir = mkdtempSync(path.join(tmpdir(), 'litellm-prices-'));
+  t.after(() => rmSync(cacheDir, { recursive: true, force: true }));
+  const baseUrl = 'https://litellm.example';
+  const apiKey = 'test-key';
+  writeFileSync(
+    path.join(
+      cacheDir,
+      `${createHash('sha256').update(`${baseUrl}\n${apiKey}`).digest('hex')}.json`,
+    ),
+    JSON.stringify({
+      fetchedAt: Date.now(),
+      data: [
+        {
+          model_name: 'claude-opus-5-5',
+          model_info: {
+            input_cost_per_token: 0.000004,
+            output_cost_per_token: 0.00002,
+            cache_read_input_token_cost: 0.0000004,
+            cache_creation_input_token_cost: 0.000005,
+          },
+        },
+      ],
+    }),
+  );
+  const vars = makeVars({
+    host: 'remote.example',
+    machine: 'remote-test',
+    // No project command env: the machine pool env alone carries the LiteLLM credentials.
+    projectName: '',
+    machineEnv: {
+      LITELLM_URL: baseUrl,
+      LITELLM_API_KEY: apiKey,
+      FARMSLOT_LITELLM_PRICING_CACHE_DIR: cacheDir,
+    },
+  });
+  calls.length = 0;
+  result = { stdout: 'turns=1\ntotal_tokens=10\n', stderr: '', exitCode: 0 };
+  await extractRunnerSessionUsage({
+    slotId: 'slot-1',
+    vars,
+    runner: 'pi',
+    runnerSessionId: 'pi-session',
+    runnerSessionPath: '/worker/pi.jsonl',
+  });
+  const command = String(calls[0][1]);
+  assert.match(command, /"liteLlmPrices":\[\["claude-opus-5-5"/);
+  // Other runners keep their command unchanged.
+  calls.length = 0;
+  await extractRunnerSessionUsage({
+    slotId: 'slot-1',
+    vars,
+    runner: 'codex',
+    runnerSessionPath: '/worker/codex.jsonl',
+  });
+  assert.equal(String(calls[0][1]).includes('liteLlmPrices"'), false);
 });
 
 test('successful limited receipts keep fresh totals and skip stored detail and archive reads', async (t) => {

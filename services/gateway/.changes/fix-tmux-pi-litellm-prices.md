@@ -1,0 +1,1 @@
+- Pi sessions on a LiteLLM model that ran on a remote slot over tmux now get a priced receipt total. Their usage is quoted from the gateway's LiteLLM price list, as native sessions already are.

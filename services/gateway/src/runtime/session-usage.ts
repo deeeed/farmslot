@@ -25,7 +25,11 @@ import {
   registerContextSessionUsage,
   upsertSessionUsage,
 } from './agent-session-rows.js';
-import { nativeRunUsageWindow, resolveNativeAgentSessionUsage } from './native-session-usage.js';
+import {
+  nativeRunUsageWindow,
+  resolveNativeAgentSessionUsage,
+  usageLiteLlmPrices,
+} from './native-session-usage.js';
 import {
   parseSessionUsageOutput,
   runnerUsageMetrics,
@@ -70,6 +74,19 @@ export async function extractRunnerSessionUsage({
   }
   try {
     if (vars && !isLocal(vars.host, vars.machine)) {
+      // Pi's LiteLLM messages are quoted from the gateway's LiteLLM price list; the slot that holds
+      // the transcript may have no LiteLLM credentials, which left the receipt unpriced.
+      const liteLlmPrices =
+        runner === 'pi'
+          ? await usageLiteLlmPrices(vars, vars.machine).catch((error: unknown) => {
+              // Without the price list the receipt keeps its tokens and stays unpriced, as before;
+              // a pricing failure must not cost the run its usage totals.
+              console.warn(
+                `[session-usage] LiteLLM prices unavailable for ${slotId}: ${(error as Error).message}`,
+              );
+              return undefined;
+            })
+          : undefined;
       const argv = forcedSessionUsageArgv(
         slotId,
         runner,
@@ -82,6 +99,7 @@ export async function extractRunnerSessionUsage({
             ? undefined
             : parentChecklistMarks,
         },
+        liteLlmPrices,
       );
       const result = await execOnSlot(vars, argv.map(shellQuote).join(' '), {
         timeout: 30_000,
