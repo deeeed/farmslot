@@ -59,7 +59,16 @@ test('Farmslot QA checklist retains evidence and terminal completion without loc
   const steps = enumerateChecklistCheckboxes(rendered);
   assert.equal(steps.length, 6);
   assert.doesNotMatch(rendered, /CI_PARITY_STEP|DETERMINISTIC: ci\.local_check/);
-  assert.match(steps[4].rawLabel, /qa-result.json/);
+  const smoke = steps[2].rawLabel;
+  assert.match(smoke, /freezeRecipeSuiteScope.*Run the smoke/);
+  assert.match(
+    smoke,
+    /env -u RECIPE_TASK_DIR -u FARMSLOT_TASK_DIR FARMSLOT_SLOT_REPO="\/fixture\/repo" bash "\/fixture\/repo\/projects\/farmslot-farm\/setup\/validate-recipe\.sh"/,
+  );
+  assert.match(smoke, /--artifacts-dir "\.task\/qa\/artifacts\/suite\/cases\/<case-id>"/);
+  assert.match(smoke, /omit `--task-dir`/);
+  assert.match(steps[3].rawLabel, /remaining.*same standalone route.*finalizeRecipeSuite/);
+  assert.match(steps[4].rawLabel, /qa-result\.json.*suite\/cases\/<case-id>.*smoke/);
   assert.match(steps[5].rawLabel, /mark complete --mark-last/);
 });
 
