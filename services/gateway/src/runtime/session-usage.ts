@@ -16,7 +16,6 @@ import {
 
 import { loadSlotVars, type SlotVars } from '../core/config.js';
 import { execOnSlot, isLocal } from '../core/exec.js';
-import type { ProjectCommandEnvOptions } from '../core/project-env.js';
 import { shellQuote } from '../core/tmux.js';
 import {
   forcedSessionUsageArgv,
