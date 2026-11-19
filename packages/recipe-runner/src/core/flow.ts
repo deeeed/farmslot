@@ -14,6 +14,11 @@ export { buildRecipeInvocationAncestry } from './flow-ancestry.js';
 import { extractWorkflowGraph, reachableNodes } from './graph.js';
 import type { ResolvedLibraryRecipe } from './library.js';
 
+/** Work counted by recipe progress and structural inventory. */
+export function isRecipeWorkNode(node: RecipeInvocationNode): boolean {
+  return node.action !== 'call' && node.action !== 'end';
+}
+
 export interface BuildRecipeInvocationTreeInput {
   rootRef: string;
   root: Record<string, unknown>;
@@ -164,8 +169,7 @@ export function createRecipeFlowProjection(
       parent.parentId ? add(length(parent.next ?? parent.default), outside(parent)) : 0,
     );
   };
-  const executable = (node: RecipeInvocationNode) =>
-    node.action !== 'call' && node.action !== 'end';
+  const executable = isRecipeWorkNode;
   let completed = 0;
   let current = 0;
   let activeId: string | null = null;
