@@ -22,7 +22,6 @@ import {
   removeTmuxWorkerWatchItem,
   sourceObservationAge,
   tmuxWorkerRefsMatch,
-  tmuxWorkerWatchId,
   upsertTmuxWorkerWatchItem,
 } from '@farmslot/protocol';
 import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
@@ -107,7 +106,7 @@ export class TerminalSplitView extends LitElement {
   private _renderedWorkerScope?: string;
   private _workerAgeTimer?: ReturnType<typeof setInterval>;
   private readonly _canAttachWorker = (ref: TmuxWorkerRef) =>
-    this.workerQuery.ready && this._workerTargets.has(tmuxWorkerWatchId(ref));
+    this.workerQuery.ready && this._workerTargets.has(encodeWorkerTerminalRef(ref));
   private readonly workerQuery = new ResourceQueryController<TmuxWorkerListResult>(
     this,
     (state) => {
@@ -120,22 +119,40 @@ export class TerminalSplitView extends LitElement {
         this._endSessionError = '';
         this._workerListError = '';
       }
-      if (state.data !== this._workerObservation.data) {
+      if (
+        state.data !== this._workerObservation.data ||
+        (state.status === 'ready' && this._workerObservation.status !== 'ready')
+      ) {
         const nodes = state.data?.nodes ?? [];
-        this._tmuxWorkers = flattenTmuxWorkers(nodes);
+        const observedWorkers = flattenTmuxWorkers(
+          nodes.filter((node) => node.connected && node.ok),
+        );
         this._workerTargets = new Set(
-          this._tmuxWorkers.map((worker) => tmuxWorkerWatchId(worker.ref)),
+          observedWorkers.map((worker) => encodeWorkerTerminalRef(worker.ref)),
         );
         this._workerNodesWithoutObservation = new Set(
           nodes.filter((node) => node.connected && !node.ok).map((node) => node.nodeId),
         );
+        // A superseded reply cannot retire cards. In a ready partial reply, keep
+        // the prior rows for connected nodes that could not be observed.
+        if (state.status !== 'stale' || !this._workerInventoryVerified) {
+          const held = new Map<string, TmuxWorkerSummary[]>();
+          for (const worker of this._tmuxWorkers) {
+            const nodeId = worker.ref.nodeId;
+            if (!this._workerNodesWithoutObservation.has(nodeId)) continue;
+            const rows = held.get(nodeId);
+            if (rows) rows.push(worker);
+            else held.set(nodeId, [worker]);
+          }
+          this._tmuxWorkers = nodes.flatMap((node) => held.get(node.nodeId) ?? node.workers);
+        }
       }
       this._workerObservation = state;
       if (state.status === 'ready' && state.data) {
         this._workerInventoryVerified = this.workerQuery.ready;
         this._workerWatchItems = reconcileTmuxWorkerWatchlist(
           this._workerWatchItems,
-          this._tmuxWorkers,
+          state.data.workers,
         ).map((entry) => entry.item);
         localStorage.setItem(WORKER_WATCHLIST_KEY, JSON.stringify(this._workerWatchItems));
       }
@@ -965,12 +982,12 @@ export class TerminalSplitView extends LitElement {
             : ''}
           ${repeat(
             watchEntries,
-            (entry) => entry.id,
+            (entry) => encodeWorkerTerminalRef(entry.ref),
             (entry) => this._renderWatchEntry(entry),
           )}
           ${repeat(
             liveUnwatched,
-            (worker) => tmuxWorkerWatchId(worker.ref),
+            (worker) => encodeWorkerTerminalRef(worker.ref),
             (worker) => this._renderLiveWorker(worker),
           )}
         </div>
@@ -1006,7 +1023,7 @@ export class TerminalSplitView extends LitElement {
       !worker.canEndSession ||
       !worker.pid ||
       this._endingSession ||
-      !this.workerQuery.ready
+      !this._canAttachWorker(worker.ref)
     )
       return;
     const owner = getResourceWorkspaceKey();
@@ -1025,8 +1042,9 @@ export class TerminalSplitView extends LitElement {
     this._endSessionError = '';
     try {
       const inventory = this.workerQuery.requireReady();
-      const selected = inventory.workers.find((candidate) =>
-        tmuxWorkerRefsMatch(candidate.ref, worker.ref),
+      const target = encodeWorkerTerminalRef(worker.ref);
+      const selected = inventory.workers.find(
+        (candidate) => encodeWorkerTerminalRef(candidate.ref) === target,
       );
       if (!selected?.canEndSession || selected.pid !== worker.pid || !gateway.isGlobalAdmin)
         throw new Error('The session changed. Review current worker inventory before acting.');
@@ -1102,7 +1120,7 @@ export class TerminalSplitView extends LitElement {
                 class="worker-chip-btn danger"
                 data-end-session=${ref.session}
                 ?disabled=${endDisabled}
-                aria-disabled=${endDisabled || !this.workerQuery.ready}
+                aria-disabled=${endDisabled || !this._canAttachWorker(ref)}
                 title=${!gateway.isGlobalAdmin
                   ? 'Only a farm administrator can end sessions'
                   : worker?.canEndSession
@@ -1310,7 +1328,7 @@ export class TerminalSplitView extends LitElement {
                   ? shouldRenderWorkerTerminal({
                       ready: this.workerQuery.ready,
                       status: this._workerObservation.status,
-                      targetPresent: this._workerTargets.has(tmuxWorkerWatchId(pane.ref)),
+                      targetPresent: this._workerTargets.has(encodeWorkerTerminalRef(pane.ref)),
                       nodeObservationFailed: this._workerNodesWithoutObservation.has(
                         pane.ref.nodeId,
                       ),
