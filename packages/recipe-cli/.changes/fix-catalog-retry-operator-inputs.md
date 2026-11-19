@@ -1,0 +1,1 @@
+- Preserve explicit operator library flags in catalog retry hints without authorizing discovered or task-local adapter modules.

@@ -346,13 +346,16 @@ export interface DescribedAction {
 
 export const OFFICIAL_ACTIONS = new Set<string>(OFFICIAL_RECIPE_ACTIONS);
 
-/** `--library` arguments that reproduce the non-bundled sources of a lookup. */
+/**
+ * Only explicit flag sources become retry flags. Ambient/configured sources are
+ * read again by the host; replaying discovered roots here would authorize plugins.
+ */
 export function actionLibraryContextArgs(
   catalog: RecipeCatalog,
   librarySources?: readonly RecipeLibrarySource[],
 ): string {
   return (librarySources ?? [])
-    .filter((source) => source.name !== catalog.bundledLibrary.name)
+    .filter((source) => source.origin === 'flag' && source.name !== catalog.bundledLibrary.name)
     .map((source) => {
       const entry = source.name ? `${source.name}=${source.root}` : source.root;
       return ` --library ${shellQuoteArg(entry)}`;
