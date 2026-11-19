@@ -1,0 +1,1 @@
+- Add a read-only structural inventory export using the resolved recipe dependency closure and shared invocation tree.

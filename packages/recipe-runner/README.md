@@ -288,3 +288,18 @@ digest detects accidental mismatch, not malicious forgery of an entire package.
 `projectRecipeInvocationTiming({tree, trace, summary})` is exported from the root and portable `@farmslot/recipe-runner/evidence` entry. It uses the existing resolved invocation tree and recorded execution intervals. `createRecipeInvocationTimingProjection(tree)` consumes those occurrences incrementally for the runner's existing HUD flow updates. It adds no file reads, processes or Git commands.
 
 Each node has `inclusiveMs`, `selfMs` and separate measured/partial/unknown qualifications. Self subtracts the union of measured direct-child windows, not their sum. Unknown child coverage leaves self unknown even if inclusive is measured. Zero is measured; null is unavailable. `claimTimings` uses explicit bindings and unions shared spans. AC totals can overlap and must not be added. `unassignedTiming` retains unassigned self work and its invocation IDs. Recording seek offsets stay separate.
+
+## Structural inventory
+
+The Node entry exports `buildRecipeStructuralInventory` and the named inventory input, counts and result types. Pass the same resolved root document and checked dependency closure used by preparation:
+
+```ts
+const dependencies = resolveRecipeDependencies({ rootRef, root, rootSource, recipes });
+const inventory = buildRecipeStructuralInventory({ root, dependencies });
+```
+
+The result is `{ version: 1, resolution, tree, counts }`. It reuses the existing invocation-tree builder and preserves optional checked `claimProjections`. Generation reads the supplied data without executing actions or writing artifacts. Root or child documents that differ from the supplied resolution digests are rejected.
+
+Counts cover all reachable prepared main and teardown alternatives. `nodeCount` uses the progress work classification, excluding the synthetic root, call containers and end nodes. `branchCount` counts work nodes with declared case/default routes. `callCount` counts expanded call sites, so repeated calls remain distinct. `recipeCount` counts distinct tree recipe references including the root; `teardownEntryCount` counts explicit root and nested cleanup entries.
+
+Keep selected-path progress and observed timing in separate report columns. A host retains catalog identity, variants, parameter defaults and revisions, and attaches the existing qualified timing projection only for comparable recorded inputs. Static inventory carries no timing or proof verdict.
