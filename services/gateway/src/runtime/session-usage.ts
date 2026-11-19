@@ -156,15 +156,25 @@ export function contextChecklistMarks(
 /** Bounds child row expansion independently of the serialized remote receipt limit. */
 export const RECEIPT_CHILD_MARK_LIMIT = 100;
 export const RECEIPT_CHILD_TITLE_CHARS = 80;
+export const RECEIPT_CHILD_TITLE_BYTES = 240;
 
 function childTitle(id: string, row: number, label: string): string {
   // The mark writer keeps a numbered row's own number in its label.
   const title = `${id} ${/^\d+[.)] /.test(label) ? label : `${row}. ${label}`}`;
-  // Cut on character boundaries, so an emoji is never split in half.
+  // Cut on character boundaries, so an emoji is never split in half, and to a byte budget, so 100
+  // titles of multi-byte emoji stay small in the usage command's argument and its receipt.
   const characters = [...new Intl.Segmenter().segment(title)].map((part) => part.segment);
-  return characters.length > RECEIPT_CHILD_TITLE_CHARS
-    ? `${characters.slice(0, RECEIPT_CHILD_TITLE_CHARS - 1).join('')}…`
-    : title;
+  if (
+    characters.length <= RECEIPT_CHILD_TITLE_CHARS &&
+    Buffer.byteLength(title) <= RECEIPT_CHILD_TITLE_BYTES
+  )
+    return title;
+  let kept = '';
+  for (const character of characters.slice(0, RECEIPT_CHILD_TITLE_CHARS - 1)) {
+    if (Buffer.byteLength(kept + character + '…') > RECEIPT_CHILD_TITLE_BYTES) break;
+    kept += character;
+  }
+  return `${kept}…`;
 }
 
 /**

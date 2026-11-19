@@ -9,6 +9,7 @@ import { makeRun } from '../run-completion/test-fixtures.js';
 import {
   contextChecklistMarks,
   RECEIPT_CHILD_MARK_LIMIT,
+  RECEIPT_CHILD_TITLE_BYTES,
   RECEIPT_CHILD_TITLE_CHARS,
   receiptChecklistMarks,
 } from './session-usage.js';
@@ -236,6 +237,26 @@ test('a long rule title is cut to the receipt title budget', () => {
   assert.ok(encodeURIComponent(cut.label).length > 0);
   assert.ok(cut.label.includes('🧪🧪'));
   assert.ok(cut.label.endsWith('…'));
+});
+
+test('a child of exactly 100 rows keeps every row, each title within its byte budget', () => {
+  const run = reviewRun();
+  const family = '👨‍👩‍👧‍👦';
+  run.metrics.subtasks![0].checklistTiming!.events = Array.from({ length: 100 }, (_, index) => ({
+    stepNumber: index + 1,
+    label: family.repeat(70),
+    checkedAt: at(1 + index / 10),
+  }));
+  const rows = receiptChecklistMarks(run, context).filter((mark) =>
+    mark.label.startsWith('perps-shared'),
+  );
+  assert.equal(rows.length, 100, 'no fallback to parent marks at the cap');
+  for (const row of rows) {
+    assert.ok(Buffer.byteLength(row.label) <= RECEIPT_CHILD_TITLE_BYTES);
+    assert.ok(row.label.endsWith('…'));
+    // encodeURIComponent throws on half an emoji (a lone surrogate).
+    assert.ok(encodeURIComponent(row.label).length > 0);
+  }
 });
 
 test('live progress keeps the parent marks only', () => {
