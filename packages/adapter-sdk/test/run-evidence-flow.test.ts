@@ -497,6 +497,26 @@ test('flow occurrence cues reuse checked media markers and remain null without a
   assert.notEqual(untimed.updateId, measured.updateId);
 });
 
+test('a pending task ledger without an execution ID preserves the producer identity', () => {
+  const model = createEvidenceReviewModel({
+    evidencePending: true,
+    ledger: { schemaVersion: 2, criteria: [] },
+    pendingTrace: { entries: [entry('first/nested/observe')] },
+    pendingFlow: {
+      tree,
+      update: createRecipeFlowProjection(tree, 'current-attempt').start('first/nested/read'),
+    },
+  });
+  const view = runEvidenceView(model);
+  assert.equal(view.flow?.recipeRunId, 'current-attempt');
+  assert.equal(
+    view.flow?.nodes.find((node) => node.id === 'first/nested/observe')?.occurrences[0]
+      ?.recipeRunId,
+    'current-attempt',
+  );
+  assert.ok(!view.warnings.some((warning) => warning.includes('execution identity')));
+});
+
 test('pending flow refuses an update from a different recorded execution', () => {
   const source = visualFixture();
   assert.ok(isRecord(source.recipe) && source.claims);
@@ -506,10 +526,15 @@ test('pending flow refuses an update from a different recorded execution', () =>
     recipes: new Map(),
   });
   for (const recipeRunId of [source.claims.recipeRunId, 'another-execution']) {
+    const currentTrace = structuredClone(recipeTraceEntries(source.trace)!);
+    if (recipeRunId !== source.claims.recipeRunId) {
+      assert.ok(isRecord(currentTrace[1]));
+      currentTrace[1].ok = false;
+    }
     const model = createEvidenceReviewModel({
       evidencePending: true,
       ledger: source.claims,
-      pendingTrace: source.trace,
+      pendingTrace: { entries: currentTrace },
       pendingFlow: {
         tree: prepared,
         update: createRecipeFlowProjection(prepared, recipeRunId).snapshot(),
@@ -517,11 +542,18 @@ test('pending flow refuses an update from a different recorded execution', () =>
     });
     const view = runEvidenceView(model);
     assert.ok(view.steps.length > 0, 'legacy Story remains usable');
-    if (recipeRunId === source.claims.recipeRunId)
+    if (recipeRunId === source.claims.recipeRunId) {
       assert.equal(view.flow?.recipeRunId, recipeRunId);
-    else {
+      assert.ok(view.criteria.some((claim) => (claim.occurrences?.length ?? 0) > 0));
+    } else {
       assert.equal(view.flow, null);
+      assert.equal(view.steps[1]?.ok, false, 'the current failing trace stays visible in Story');
       assert.ok(view.warnings.some((warning) => warning.includes('execution identity')));
+      assert.ok(
+        view.criteria.every((claim) => claim.occurrences?.length === 0),
+        'a stale ledger cannot label the current trace',
+      );
+      for (const claim of view.criteria) assert.deepEqual(model.criterionOccurrences(claim.id), []);
     }
   }
 });

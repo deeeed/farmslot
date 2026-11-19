@@ -198,8 +198,10 @@ export function projectRunEvidenceFlow(
   const update = isRecipeFlowUpdate(rawUpdate) ? rawUpdate : null;
   const recipeRunId = pkg
     ? packageIdentity(pkg)
-    : input.ledger?.schemaVersion === 2
-      ? input.ledger.recipeRunId
+    : input.ledger?.schemaVersion === 2 &&
+        identity(input.ledger.recipeRunId) &&
+        input.ledger.recipeRunId !== update?.recipeRunId
+      ? null
       : (update?.recipeRunId ?? null);
   const compatible =
     context.valid &&
