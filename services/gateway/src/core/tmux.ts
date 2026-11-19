@@ -94,14 +94,17 @@ export function tmuxAttachCommandForTarget(
 
 /** Check the exact session-scoped pane and attach in the same tmux command queue. */
 export function tmuxVerifiedWorkerAttachArgs(target: string, paneId: string): string[] {
-  if (!target.startsWith('=') || !/:\d+\.\d+$/.test(target) || !/^%\d+$/.test(paneId))
+  const session = /^=(.+):\d+\.\d+$/.exec(target)?.[1];
+  if (!session || !/^%\d+$/.test(paneId))
     throw new Error('Worker attachment requires an exact tmux target and stable pane ID');
+  // Even an exact target can fall back to a matching client TTY in tmux.
+  const expectedSession = session.replace(/[#,}]/g, '#$&');
   return [
     'if-shell',
     '-F',
     '-t',
     target,
-    `#{==:#{pane_id},${paneId}}`,
+    `#{&&:#{==:#{session_name},${expectedSession}},#{==:#{pane_id},${paneId}}}`,
     `attach-session -t ${shellQuote(target)}`,
     "display-message -p 'Worker pane changed before attachment'",
   ];

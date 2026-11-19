@@ -69,9 +69,8 @@ import { syncTerminalRunnerAccent, terminalViewStyles } from './terminal-view-st
 import { readTerminalRunSummary } from './terminal-view-summary.js';
 import { createTerminalRuntime } from './terminal-view-xterm.js';
 
-// Window where non-zero TERMINAL_EXITED immediately after subscribe means "role pane already gone":
-// short enough to avoid later legitimate exits, long enough for observed tmux select-window failures.
-const ROLE_PANE_FAST_FAIL_MS = 3000;
+// Treat exits around terminal attachment separately from later session exits.
+const TERMINAL_FAST_FAIL_MS = 3000;
 const TMUX_LIST_POLL_MS = 15000;
 const TMUX_LIST_ERROR_BACKOFF_MS = 30000;
 // Coalesce Lit prop batches (slotId/runId/role) into one subscribe/unsubscribe cycle.
@@ -511,6 +510,26 @@ export class TerminalView extends TerminalViewState {
       }
     });
 
+    if (worker) {
+      // A refused tmux client can exit before the subscribe reply or the initial resize settles.
+      this._unsubExit = gateway.subscribe<TerminalExitedPayload>(Events.TERMINAL_EXITED, (p) => {
+        if (subscribeSeq !== this._subscribeSeq || !this._matchesTarget(p)) return;
+        if (p.worker?.session !== worker.session) return;
+        if (this._subscribeOkAt && Date.now() - this._subscribeOkAt >= TERMINAL_FAST_FAIL_MS)
+          return;
+
+        this._teardownStreams();
+        this._terminal?.attachCustomKeyEventHandler(() => true);
+        this._ptyReady = false;
+        this._retiredTarget = false;
+        this._exited = false;
+        this._attachPhase = 'idle';
+        this._reconnecting = this._connected;
+        this._lastSubscribeError = 'Worker terminal closed during attachment. Retry to reconnect.';
+        this._recoveryMessage = this._lastSubscribeError;
+      });
+    }
+
     try {
       // gateway-client owns the request timeout (15s default). Wrapping a
       // shorter UI-side race here would discard a slow-but-successful subscribe
@@ -604,7 +623,7 @@ export class TerminalView extends TerminalViewState {
         if (subscribeSeq === this._subscribeSeq) this._syncRunSummary();
       });
 
-    this._unsubExit = gateway.subscribe<TerminalExitedPayload>(Events.TERMINAL_EXITED, (p) => {
+    this._unsubExit ??= gateway.subscribe<TerminalExitedPayload>(Events.TERMINAL_EXITED, (p) => {
       if (subscribeSeq !== this._subscribeSeq) return;
       if (!this._matchesTarget(p)) return;
       this._log('exited', `code=${p.exitCode}`);
@@ -614,7 +633,7 @@ export class TerminalView extends TerminalViewState {
         exitCode: p.exitCode,
         subscribeOkAt: this._subscribeOkAt,
         nowMs: Date.now(),
-        fastFailMs: ROLE_PANE_FAST_FAIL_MS,
+        fastFailMs: TERMINAL_FAST_FAIL_MS,
         role: this.role,
         contextId: this.contextId,
         postmortem: this._postmortem,
@@ -843,7 +862,7 @@ export class TerminalView extends TerminalViewState {
   }
 
   private _sendResize() {
-    if (this._mode !== 'pty' || !this._terminal) return;
+    if (this._mode !== 'pty' || !this._terminal || !this._ptyInputBound) return;
     if (!this._ptyReady) {
       void this._commitInitialPtySize(this._subscribeSeq);
       return;
