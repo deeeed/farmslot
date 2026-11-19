@@ -1,0 +1,1 @@
+- Worker terminal subscribe responses and exit events identify the adopted subscription so clients can ignore exits from superseded subscriptions.

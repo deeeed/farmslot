@@ -1,5 +1,5 @@
 import { html } from 'lit';
-import { customElement, state } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import { keyed } from 'lit/directives/keyed.js';
 
 import type {
@@ -7,7 +7,9 @@ import type {
   TerminalData,
   TerminalExitedPayload,
   TerminalModePayload,
+  TerminalWorkerSubscribeResult,
   TmuxListResult,
+  TmuxWorkerRef,
 } from '@farmslot/protocol';
 import { Events, Methods } from '@farmslot/protocol';
 import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
@@ -68,8 +70,7 @@ import { syncTerminalRunnerAccent, terminalViewStyles } from './terminal-view-st
 import { readTerminalRunSummary } from './terminal-view-summary.js';
 import { createTerminalRuntime } from './terminal-view-xterm.js';
 
-// Window where non-zero TERMINAL_EXITED immediately after subscribe means "role pane already gone":
-// short enough to avoid later legitimate exits, long enough for observed tmux select-window failures.
+// Early role-pane failures can fall back to the current slot terminal.
 const ROLE_PANE_FAST_FAIL_MS = 3000;
 const TMUX_LIST_POLL_MS = 15000;
 const TMUX_LIST_ERROR_BACKOFF_MS = 30000;
@@ -78,6 +79,12 @@ const TARGET_CHANGE_DEBOUNCE_MS = 50;
 
 @customElement('terminal-view')
 export class TerminalView extends TerminalViewState {
+  /** The split view owns current worker inventory. Check it when attaching a stream. */
+  @property({ attribute: false }) canAttachWorker?: (ref: TmuxWorkerRef) => boolean;
+
+  private _workerParent: Node | null = null;
+  private _workerAttachDeferred = false;
+  @state() private _retryWaitingForInventory = false;
   private _pendingOperatorMessage: OperatorMessageInput | null = null;
   static styles = [terminalViewStyles, terminalAttachmentStyles];
   @state() private progressObservation: ResourceQueryState<TaskProgressResult> = {
@@ -142,6 +149,11 @@ export class TerminalView extends TerminalViewState {
 
   connectedCallback() {
     super.connectedCallback();
+    if (this.canAttachWorker) {
+      if (this._workerParent === this.parentNode && this._unsubConn) return;
+      if (this._unsubConn) this._disconnectTerminal();
+      this._workerParent = this.parentNode;
+    }
     // Bound here, not in firstUpdated(): _dispose() unbinds on every disconnect, and
     // firstUpdated cannot fire a second time, so a DOM move that re-connects this element
     // would otherwise leave it live with image paste permanently dead. Lit assigns
@@ -156,6 +168,19 @@ export class TerminalView extends TerminalViewState {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    if (this._workerParent) {
+      // Lit repeat moves a worker pane within the grid synchronously. Give it
+      // the rest of this turn to reconnect before destroying its xterm and stream.
+      queueMicrotask(() => {
+        if (!this.isConnected && this._workerParent) this._disconnectTerminal();
+      });
+      return;
+    }
+    this._disconnectTerminal();
+  }
+
+  private _disconnectTerminal() {
+    this._workerParent = null;
     this._log('disconnectedCallback');
     // Paired with connectedCallback's bind. Deliberately not in _dispose(): the HMR recovery
     // path in updated() disposes the terminal while the element stays connected, and unbinding
@@ -184,6 +209,13 @@ export class TerminalView extends TerminalViewState {
   }
 
   updated(changed: Map<string, unknown>) {
+    if (changed.has('canAttachWorker')) {
+      const worker = this._workerRef();
+      if (worker && this.canAttachWorker?.(worker) !== false) {
+        this._retryWaitingForInventory = false;
+        if (this._workerAttachDeferred) void this._subscribe();
+      }
+    }
     if (changed.has('_runner')) {
       syncTerminalRunnerAccent(this, this._runner);
     }
@@ -438,7 +470,11 @@ export class TerminalView extends TerminalViewState {
 
   private async _subscribe() {
     if (!this._hasTarget() || gateway.connectionState !== 'connected') return;
-    const worker = this._workerRef();
+    const workerRefJson = this.workerRefJson;
+    const worker = parseWorkerRef(workerRefJson);
+    this._workerAttachDeferred = Boolean(worker && this.canAttachWorker?.(worker) === false);
+    if (this._workerAttachDeferred) return;
+    this._retryWaitingForInventory = false;
 
     // Bump seq first so any in-flight request from a prior call short-circuits
     // when its response lands. Duplicate work is absorbed by the gateway's
@@ -446,6 +482,9 @@ export class TerminalView extends TerminalViewState {
     // historically wedged the terminal on "Connecting…" when a request hung.
     this._teardownStreams(false);
     const subscribeSeq = ++this._subscribeSeq;
+    // A watched alias can replace the worker before the debounced teardown bumps the sequence.
+    const isCurrent = () =>
+      subscribeSeq === this._subscribeSeq && workerRefJson === this.workerRefJson;
 
     this._syncRunSummary();
     this._dataCount = 0;
@@ -456,48 +495,95 @@ export class TerminalView extends TerminalViewState {
     this._subscribeOkAt = 0;
     this._log('subscribe', `cols=${this._terminal?.cols} rows=${this._terminal?.rows}`);
 
-    // Listen for mode event before sending subscribe request.
-    // Skip when payload mode equals current mode — gateway re-emits the same
-    // mode event after each re-subscribe, which otherwise re-runs setupPtyMode
-    // / tmuxPoll and can cascade into duplicate terminal.subscribe (~1s SSH
-    // attach each).
-    this._unsubMode = gateway.subscribe<TerminalModePayload>(Events.TERMINAL_MODE, (p) => {
-      if (subscribeSeq !== this._subscribeSeq) return;
-      if (!this._matchesTarget(p)) return;
-      if (p.mode === this._mode && this._ptyInputBound) return;
-      this._log('mode-event', `mode=${p.mode}`);
-      this._mode = p.mode as TerminalMode;
-      if (this._mode === 'pty') {
-        this._setupPtyMode();
-        this._startTmuxPoll();
-        void this._commitInitialPtySize(subscribeSeq);
-      } else if (this._mode === 'poll') {
-        this._attachPhase = 'live';
-      }
-    });
+    if (!worker) {
+      // Slot terminals can fall back to polling. Worker subscriptions always use a PTY.
+      this._unsubMode = gateway.subscribe<TerminalModePayload>(Events.TERMINAL_MODE, (p) => {
+        if (!isCurrent()) return;
+        if (!this._matchesTarget(p)) return;
+        if (p.mode === this._mode && this._ptyInputBound) return;
+        this._log('mode-event', `mode=${p.mode}`);
+        this._mode = p.mode as TerminalMode;
+        if (this._mode === 'pty') {
+          this._setupPtyMode();
+          this._startTmuxPoll();
+          void this._commitInitialPtySize(subscribeSeq);
+        } else if (this._mode === 'poll') {
+          this._attachPhase = 'live';
+        }
+      });
+    }
+
+    // Undefined while waiting for subscribe; null after an older gateway accepts it.
+    let workerSubscriptionSeq: number | null | undefined;
+    const pendingWorkerExits = new Set<number>();
+    if (worker) {
+      this._unsubExit = gateway.subscribe<TerminalExitedPayload>(Events.TERMINAL_EXITED, (p) => {
+        if (!isCurrent()) return;
+        if (p.workerSubscriptionSeq === undefined) {
+          if (workerSubscriptionSeq !== null) return;
+          // Older gateways broadcast the worker key as slotId and contextId.
+          const matches = p.worker
+            ? p.worker.session === worker.session && this._matchesTarget(p)
+            : /^%\d+$/.test(worker.target) &&
+              p.slotId === worker.nodeId &&
+              p.contextId === worker.target &&
+              p.role === undefined &&
+              p.runId === undefined;
+          if (matches) this._workerTerminalClosed();
+          return;
+        }
+        if (p.worker?.session !== worker.session || !this._matchesTarget(p)) return;
+        if (workerSubscriptionSeq === undefined) {
+          // The PTY can exit while its subscribe reply is still in flight.
+          pendingWorkerExits.add(p.workerSubscriptionSeq);
+        } else if (p.workerSubscriptionSeq === workerSubscriptionSeq) {
+          this._workerTerminalClosed();
+        }
+      });
+    }
 
     try {
       // gateway-client owns the request timeout (15s default). Wrapping a
       // shorter UI-side race here would discard a slow-but-successful subscribe
       // without cancelling it, leaving the gateway with an orphan pty handler
       // and the UI stuck on the failure banner.
-      await gateway.request(
-        worker ? Methods.TERMINAL_WORKER_SUBSCRIBE : Methods.TERMINAL_SUBSCRIBE,
-        {
-          ...this._targetParams(),
-          ...(worker ? {} : { interactive: true }),
-          cols: this._terminal?.cols,
-          rows: this._terminal?.rows,
-        },
-      );
+      const params = {
+        ...this._targetParams(),
+        cols: this._terminal?.cols,
+        rows: this._terminal?.rows,
+      };
+      let result: TerminalWorkerSubscribeResult | undefined;
+      if (worker) {
+        result = await gateway.request<TerminalWorkerSubscribeResult>(
+          Methods.TERMINAL_WORKER_SUBSCRIBE,
+          { ...params, worker },
+        );
+      } else {
+        await gateway.request(Methods.TERMINAL_SUBSCRIBE, { ...params, interactive: true });
+      }
       this._log('subscribed OK');
-      if (subscribeSeq !== this._subscribeSeq) return;
+      if (!isCurrent()) return;
+      if (result) {
+        if (!result.subscribed) {
+          this._workerTerminalClosed();
+          return;
+        }
+        workerSubscriptionSeq = result.workerSubscriptionSeq ?? null;
+        if (workerSubscriptionSeq !== null && pendingWorkerExits.has(workerSubscriptionSeq)) {
+          this._workerTerminalClosed();
+          return;
+        }
+        pendingWorkerExits.clear();
+        this._mode = 'pty';
+        this._setupPtyMode();
+        this._startTmuxPoll();
+      }
       this._activeSubscribeIdentity = {
         slotId: this.slotId,
         runId: this.runId,
         role: this.role,
         contextId: this.contextId,
-        workerRefJson: this.workerRefJson,
+        workerRefJson,
       };
       this._activeSubscribePostmortem = this._postmortem || this.bareSession;
       this._lastSubscribeError = '';
@@ -514,7 +600,8 @@ export class TerminalView extends TerminalViewState {
         void this._commitInitialPtySize(subscribeSeq);
       }
     } catch (err) {
-      if (subscribeSeq !== this._subscribeSeq) return;
+      if (!isCurrent()) return;
+      if (worker) this._teardownStreams(false);
       this._lastSubscribeError = err instanceof Error ? err.message : String(err);
       this._retiredTarget = isRetiredTerminalTargetError(err);
       this._log('subscribe FAILED', String(err));
@@ -549,7 +636,7 @@ export class TerminalView extends TerminalViewState {
     }
 
     this._unsubData = gateway.subscribe(Events.TERMINAL_DATA, (payload: unknown) => {
-      if (subscribeSeq !== this._subscribeSeq) return;
+      if (!isCurrent()) return;
       const data = payload as TerminalData;
       if (this._matchesTarget(data)) {
         // In PTY mode, drop data until first resize settles (prevents garbled initial render)
@@ -569,8 +656,8 @@ export class TerminalView extends TerminalViewState {
         if (subscribeSeq === this._subscribeSeq) this._syncRunSummary();
       });
 
-    this._unsubExit = gateway.subscribe<TerminalExitedPayload>(Events.TERMINAL_EXITED, (p) => {
-      if (subscribeSeq !== this._subscribeSeq) return;
+    this._unsubExit ??= gateway.subscribe<TerminalExitedPayload>(Events.TERMINAL_EXITED, (p) => {
+      if (!isCurrent()) return;
       if (!this._matchesTarget(p)) return;
       this._log('exited', `code=${p.exitCode}`);
       // Early non-zero exit while bound to a role pane = role window is gone (e.g. tmux
@@ -611,7 +698,7 @@ export class TerminalView extends TerminalViewState {
 
     // In poll mode, get initial snapshot (PTY gives full screen immediately)
     setTimeout(async () => {
-      if (subscribeSeq !== this._subscribeSeq) return;
+      if (!isCurrent()) return;
       if (this._mode === 'poll') {
         try {
           const snap = await gateway.request<{
@@ -631,6 +718,20 @@ export class TerminalView extends TerminalViewState {
     }, 100);
   }
 
+  private _workerTerminalClosed() {
+    // The gateway has already removed this subscription. An unsubscribe by
+    // pane could reach a replacement that was adopted in the meantime.
+    this._teardownStreams(false);
+    this._terminal?.attachCustomKeyEventHandler(() => true);
+    this._ptyReady = false;
+    this._retiredTarget = false;
+    this._exited = false;
+    this._attachPhase = 'idle';
+    this._reconnecting = this._connected;
+    this._lastSubscribeError = 'Worker terminal connection closed. Retry to reconnect.';
+    this._recoveryMessage = this._lastSubscribeError;
+  }
+
   private _setupPtyMode() {
     if (!this._terminal) return;
     if (this._ptyInputBound) {
@@ -642,19 +743,31 @@ export class TerminalView extends TerminalViewState {
     // Disable convertEol in PTY mode — the PTY handles line endings
     this._terminal.options.convertEol = false;
 
+    const subscribeSeq = this._subscribeSeq;
+    const workerRefJson = this.workerRefJson;
+    const send = (data: string) => {
+      const worker = this._workerRef();
+      // A custom key handler or async paste can outlive the worker subscription.
+      if (
+        (worker || workerRefJson) &&
+        (!this._ptyInputBound ||
+          this._subscribeSeq !== subscribeSeq ||
+          this.workerRefJson !== workerRefJson)
+      )
+        return;
+      gateway
+        .request(worker ? Methods.TERMINAL_WORKER_INPUT : Methods.TERMINAL_INPUT, {
+          ...this._targetParams(),
+          data,
+        })
+        .catch((err) => this._warn('terminal input', err));
+    };
+
     // Intercept key combos that the browser would swallow before xterm.js sees them.
     // Return false = we handled it (prevent browser + xterm default).
     // Return true  = let xterm.js handle it normally.
     this._terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       if (e.type !== 'keydown') return true;
-      const send = (seq: string) => {
-        gateway
-          .request(this._workerRef() ? Methods.TERMINAL_WORKER_INPUT : Methods.TERMINAL_INPUT, {
-            ...this._targetParams(),
-            data: seq,
-          })
-          .catch((err) => this._warn('terminal input', err));
-      };
 
       // Ctrl+B — tmux prefix. Browsers may intercept this (bold shortcut, bookmarks, etc.)
       // Force it through to the PTY.
@@ -710,14 +823,7 @@ export class TerminalView extends TerminalViewState {
     });
 
     // Register xterm.js onData — captures all keystrokes, escape sequences, etc.
-    this._xtermDataDisposable = this._terminal.onData((data: string) => {
-      gateway
-        .request(this._workerRef() ? Methods.TERMINAL_WORKER_INPUT : Methods.TERMINAL_INPUT, {
-          ...this._targetParams(),
-          data,
-        })
-        .catch((err) => this._warn('terminal input', err));
-    });
+    this._xtermDataDisposable = this._terminal.onData(send);
     this._ptyInputBound = true;
 
     // Focus terminal for keyboard capture
@@ -808,7 +914,7 @@ export class TerminalView extends TerminalViewState {
   }
 
   private _sendResize() {
-    if (this._mode !== 'pty' || !this._terminal) return;
+    if (this._mode !== 'pty' || !this._terminal || !this._ptyInputBound) return;
     if (!this._ptyReady) {
       void this._commitInitialPtySize(this._subscribeSeq);
       return;
@@ -869,6 +975,7 @@ export class TerminalView extends TerminalViewState {
 
   // Full cleanup — element is being removed from DOM
   private _dispose() {
+    this._workerAttachDeferred = false;
     clearTimeout(this._targetChangeTimer);
     this._targetChangeTimer = undefined;
     this._teardownStreams();
@@ -888,18 +995,14 @@ export class TerminalView extends TerminalViewState {
   }
 
   private _handleSend() {
-    if (!this._inputText.trim() || !this._hasTarget()) return;
-    const worker = this._workerRef();
+    if (this._workerRef() || !this._inputText.trim() || !this._hasTarget()) return;
     const message =
       this._pendingOperatorMessage?.text === this._inputText
         ? this._pendingOperatorMessage
         : operatorMessageInput(this._inputText);
     this._pendingOperatorMessage = message;
     gateway
-      .request(worker ? Methods.TERMINAL_WORKER_INPUT : Methods.TERMINAL_SEND, {
-        ...this._targetParams(),
-        ...(worker ? { data: `${this._inputText}\r` } : message),
-      })
+      .request(Methods.TERMINAL_SEND, { ...this._targetParams(), ...message })
       .then(() => {
         if (this._pendingOperatorMessage === message) this._pendingOperatorMessage = null;
       })
@@ -936,6 +1039,11 @@ export class TerminalView extends TerminalViewState {
   private async _handleReconnect() {
     if (!this._hasTarget() || this._attachPhase === 'connecting' || this._attachPhase === 'sizing')
       return;
+    const worker = this._workerRef();
+    if (worker && this.canAttachWorker?.(worker) === false) {
+      this._retryWaitingForInventory = true;
+      return;
+    }
     if (this._retiredTarget) {
       await this._enterPostmortem('operator opened current slot terminal');
       return;
@@ -1261,7 +1369,11 @@ export class TerminalView extends TerminalViewState {
 
     const terminal = renderTerminalChrome({
       showInputBar:
-        !this.nativeWorker && !this._retiredTarget && !this.compact && this._mode !== 'pty',
+        !worker &&
+        !this.nativeWorker &&
+        !this._retiredTarget &&
+        !this.compact &&
+        this._mode !== 'pty',
       retiredTarget: this._retiredTarget,
       retryAvailable:
         !this._retiredTarget &&
@@ -1295,7 +1407,9 @@ export class TerminalView extends TerminalViewState {
           )
         : undefined,
       reconnecting: this._reconnecting,
-      recoveryMessage: this._recoveryMessage,
+      recoveryMessage: this._retryWaitingForInventory
+        ? 'Wait for current worker inventory before retrying.'
+        : this._recoveryMessage,
       copyToast: this._copyToast,
       exited: this._exited,
       inputText: this._inputText,

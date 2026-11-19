@@ -57,6 +57,10 @@ export function adoptWorkerTerminalSubscription(
     unsubscribePty(key, handler);
     return false;
   }
+  // Keep the previous handler until the replacement is ready, so a same-target
+  // refresh does not turn an active worker PTY into a detached one.
+  const previous = state.workerTerminalHandlers.get(key);
+  if (previous && previous !== handler) unsubscribePty(key, previous);
   state.workerTerminalHandlers.set(key, handler);
   return true;
 }
