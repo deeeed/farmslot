@@ -98,6 +98,7 @@ import type { WorkspaceEvidenceComparison } from '../workspace/workspace-evidenc
 
 import { CIWatchPokeController } from './ci-watch-actions.js';
 import {
+  type ComposedEvidencePosition,
   composedEvidencePositionFromHash,
   composedEvidenceRecipeGroup,
 } from './composed-evidence-model.js';
@@ -224,6 +225,7 @@ export class RunDetail extends RunDetailState {
   private _viewConnectionId?: string | number;
   private _recipeRequestedId = '';
   private _restoredRecipeCall = '';
+  private _linkRecipeOverride = '';
   private readonly detailQuery = new ResourceQueryController<RunGetResult>(this, (state) => {
     this._runObservation = state;
   });
@@ -968,6 +970,7 @@ export class RunDetail extends RunDetailState {
   private _resetRecipeRuns(): void {
     this._recipeRequestedId = '';
     this._restoredRecipeCall = '';
+    this._linkRecipeOverride = '';
     this._pendingRecipeRunSelectionId = '';
     this.recipeQuery.setQuery(undefined);
     this._recipeRuns = [];
@@ -1019,6 +1022,22 @@ export class RunDetail extends RunDetailState {
     }
     this._recipeRuns = result.recipeRuns;
     const outputDecision = pendingOutputReview(run);
+    const position = outputDecision
+      ? null
+      : composedEvidencePositionFromHash(run.id, location.hash);
+    if (!position && this._linkRecipeOverride) {
+      const stillSelected = this._recipeRequestedId === this._linkRecipeOverride;
+      this._linkRecipeOverride = '';
+      this._restoredRecipeCall = '';
+      if (stillSelected) {
+        this._recipeRequestedId = '';
+        this._selectedRecipeRunId = '';
+        this._evidenceGroupId = null;
+        this._recordedEvidence = undefined;
+        this._bindRecipeRuns(run);
+        return;
+      }
+    }
     if (
       !outputDecision &&
       this._recipeRequestedId &&
@@ -1033,8 +1052,9 @@ export class RunDetail extends RunDetailState {
       this._bindRecipeRuns(run);
       return;
     }
-    const linkedGroup = outputDecision ? undefined : this._recipeCallGroup(run.id, result);
+    const linkedGroup = this._recipeCallGroup(position, result);
     if (linkedGroup && linkedGroup !== result.selectedRecipeRunId) {
+      this._linkRecipeOverride = linkedGroup;
       this._recipeRequestedId = linkedGroup;
       this._selectedRecipeRunId = linkedGroup;
       this._recordedEvidence = undefined;
@@ -1060,8 +1080,10 @@ export class RunDetail extends RunDetailState {
     }
   }
 
-  private _recipeCallGroup(runId: string, result: RunRecipeRunsForRunResult): string | undefined {
-    const position = composedEvidencePositionFromHash(runId, location.hash);
+  private _recipeCallGroup(
+    position: ComposedEvidencePosition | null,
+    result: RunRecipeRunsForRunResult,
+  ): string | undefined {
     const key = position ? JSON.stringify(position) : '';
     if (!key) this._restoredRecipeCall = '';
     if (key === this._restoredRecipeCall) return undefined;
