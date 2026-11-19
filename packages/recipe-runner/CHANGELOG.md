@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.49.0 - 2026-11-19
+
+- Expose the existing invocation ancestry helper through the portable evidence entry for shared viewer projections.
+
 ## 0.48.0 - 2026-11-18
 
 - Project invocation ancestry once from the prepared flow tree and carry labeled breadcrumbs on existing HUD flow updates, keeping repeated calls distinct.
