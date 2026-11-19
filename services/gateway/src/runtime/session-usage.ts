@@ -90,14 +90,7 @@ export async function extractRunnerSessionUsage({
       });
       if (result.exitCode !== 0)
         throw new Error(result.stderr.trim() || `Usage extraction exited ${result.exitCode}`);
-      const usage = parseSessionUsageOutput(result.stdout, {
-        runner,
-        runnerSessionId,
-        runnerSessionPath,
-      });
-      if (result.stdout.split('\n').includes('receipt_detail_limited=yes'))
-        usage.captureGaps = [REMOTE_USAGE_DETAIL_NOTE];
-      return usage;
+      return parseSessionUsageOutput(result.stdout, { runner, runnerSessionId, runnerSessionPath });
     }
     const output = await runSessionUsage({
       // repo is unused when forcedPath is set; pass empty string.
@@ -308,7 +301,7 @@ export async function extractRunWorkerSessionUsage(
       } else {
         usage = await extractRunnerSessionUsage(input);
       }
-      if (!usage.error && !remoteReceiptDetailLimited(usage)) return usage;
+      if (!usage.error) return usage;
       try {
         const archived = await provider?.recoverArchive?.(run, session);
         if (!archived) return usage;
@@ -320,26 +313,8 @@ export async function extractRunWorkerSessionUsage(
           usageWindow,
           marks,
         );
-        if (
-          !usage.error &&
-          (recovered.totalTokens !== usage.totalTokens ||
-            recovered.toolUsage?.toolCalls !== usage.toolUsage?.toolCalls ||
-            !isDeepStrictEqual(
-              recovered.toolUsage?.toolCallsByName,
-              usage.toolUsage?.toolCallsByName,
-            ))
-        )
-          return usage;
         return { ...recovered, scope: usageWindow ? 'run-delta' : recovered.scope };
       } catch (error) {
-        if (!usage.error)
-          return {
-            ...usage,
-            captureGaps: [
-              ...(usage.captureGaps ?? []),
-              'Verified session archive could not be read',
-            ],
-          };
         // Failed archive verification/accounting must not discard successful siblings.
         return unavailableRunnerSessionUsage({
           runner: run.metrics.runner,

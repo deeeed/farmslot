@@ -1,13 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
 import { mock, test } from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
-
 import type { SlotVars } from '../core/config.js';
-import type { RecoveredUsageSession } from '../runners/session-usage-provider.js';
 
 const nativeExec = await import('../core/exec.js');
 const calls: unknown[][] = [];
@@ -68,28 +62,32 @@ test('remote usage uses supported node execution and preserves slot support sele
   assert.equal(failed.turns, undefined);
 });
 
-test('remote receipt limits preserve totals and prefer an available verified archive', async (t) => {
+test('successful limited receipts keep fresh totals and skip stored detail and archive reads', async (t) => {
   const vars = { host: 'remote.example', machine: 'remote-test', resourceVars: {} } as SlotVars;
-  const root = await mkdtemp(path.join(os.tmpdir(), 'remote-receipt-archive-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const source = path.join(root, 'worker.jsonl');
-  const archived = path.join(root, 'archive.jsonl');
-  const sessions = [source, '/worker/sibling.jsonl'].map((runnerSessionPath, index) => ({
-    contextId: 'dev',
-    runnerSessionId: String(index),
-    runnerSessionPath,
-  }));
+  const sessions = ['/worker/remote.jsonl', '/worker/sibling.jsonl'].map(
+    (runnerSessionPath, index) => ({
+      contextId: 'dev',
+      runnerSessionId: String(index),
+      runnerSessionPath,
+    }),
+  );
   t.mock.method(claudeSessionUsageProvider, 'recoverSessions', async () => sessions);
+  const archive = t.mock.method(
+    claudeSessionUsageProvider,
+    'recoverArchive',
+    async () => undefined,
+  );
   const totalsOnly = {
     attribution: 'issuedAt',
     toolCalls: 5,
+    compactions: 1,
     toolCallsByName: { shell: 5 },
     toolCallsBeforeFirstMark: null,
     untimedToolCalls: 0,
     steps: [],
   };
   result = {
-    stdout: `turns=1\ntotal_tokens=9\ntool_usage=${JSON.stringify(totalsOnly)}\nreceipt_detail_limited=yes\n`,
+    stdout: `turns=1\ntotal_tokens=9\ncost_usd=0.02\nmodel=remote-priced-model\ntool_usage=${JSON.stringify(totalsOnly)}\nreceipt_detail_limited=yes\n`,
     stderr: '',
     exitCode: 0,
   };
@@ -98,67 +96,46 @@ test('remote receipt limits preserve totals and prefer an available verified arc
     slotId: 'remote-test',
     metrics: { nudgeCount: 0, runner: 'claude', model: 'claude-opus-5-5' },
   });
-  const step = {
-    segment: 'before-first-mark',
-    stepNumber: 1,
-    title: 'Parent',
-    markedAt: '2026-11-19T00:00:05.000Z',
-    startedAt: '2026-11-19T00:00:00.000Z',
-    endedAt: '2026-11-19T00:00:05.000Z',
-    wallMs: 5000,
-    toolCalls: 1,
-    toolCallsByName: { shell: 1 },
-    totalTokens: 9,
-  };
-  t.mock.method(
-    claudeSessionUsageProvider,
-    'recoverArchive',
-    async (_run: Run, session: RecoveredUsageSession) => {
-      if (session.runnerSessionPath === source) return undefined;
-      return path.join(root, 'missing.jsonl');
-    },
-  );
-  const bounded = await extractRunWorkerSessionUsage(run, vars);
-  assert.equal(bounded?.totalTokens, 18);
-  assert.equal(bounded?.toolUsage?.toolCalls, 10);
-  assert.equal(bounded?.toolUsage?.toolCallsBeforeFirstMark, null);
-
-  await writeFile(
-    archived,
-    JSON.stringify({
-      type: 'assistant',
-      timestamp: step.startedAt,
-      message: {
-        id: 'message',
-        model: 'claude-opus-5-5',
-        usage: { input_tokens: 3, output_tokens: 6 },
-        content: Array.from({ length: 5 }, (_, index) => ({
-          type: 'tool_use',
-          id: 'tool-' + index,
-          name: 'shell',
-          input: {},
-        })),
+  const detail = {
+    ...totalsOnly,
+    attribution: 'issuedAt' as const,
+    toolCallsBeforeFirstMark: 5,
+    steps: [
+      {
+        segment: 'before-first-mark' as const,
+        startedAt: '2026-11-19T00:00:00.000Z',
+        endedAt: '2026-11-19T00:00:01.000Z',
+        wallMs: 1000,
+        stepNumber: 1,
+        title: 'Obsolete checklist row',
+        markedAt: '2026-11-19T00:00:01.000Z',
+        toolCalls: 5,
+        toolCallsByName: { shell: 5 },
+        totalTokens: 9,
       },
-    }) + '\n',
-  );
-  const archiveMock = t.mock.method(
-    claudeSessionUsageProvider,
-    'recoverArchive',
-    async (_run: Run, session: RecoveredUsageSession) =>
-      session.runnerSessionPath === source ? archived : undefined,
-  );
-  run.metrics.checklistTiming = {
-    schemaVersion: 1,
-    events: [{ stepNumber: 1, label: step.title, checkedAt: step.endedAt }],
+    ],
   };
-  const measured: Array<{ detail: number; path: string | null | undefined }> = [];
-  const detailed = await extractRunWorkerSessionUsage(run, vars, (_session, usage) => {
-    measured.push({ detail: usage.toolUsage?.steps.length ?? 0, path: usage.runnerSessionPath });
-  });
-  assert.equal(archiveMock.mock.callCount(), 2);
-  assert.equal(detailed?.totalTokens, 18);
-  assert.equal(detailed?.toolUsage?.toolCalls, 10);
-  assert.ok(measured.some((receipt) => receipt.path === source && receipt.detail > 0));
-  assert.equal(detailed?.toolUsage?.toolCallsBeforeFirstMark, null);
-  assert.deepEqual(detailed?.toolUsage?.steps, []);
+  run.sessionUsage = sessions.map((session) => ({
+    runner: 'claude',
+    runnerSessionPath: session.runnerSessionPath,
+    runnerSessionId: session.runnerSessionId,
+    measuredAt: '2026-11-19T00:00:00.000Z',
+    source: 'runner-transcript',
+    scope: 'session-total',
+    totalTokens: 9,
+    costUsd: 0.02,
+    actualModel: 'remote-priced-model',
+    toolUsage: detail,
+  }));
+  for (let read = 0; read < 2; read++) {
+    const usage = await extractRunWorkerSessionUsage(run, vars);
+    assert.equal(usage?.totalTokens, 18);
+    assert.equal(usage?.actualModel, 'remote-priced-model');
+    assert.equal(usage?.costUsd, 0.04);
+    assert.equal(usage?.toolUsage?.toolCalls, 10);
+    assert.deepEqual(usage?.toolUsage?.steps, []);
+    assert.equal(usage?.toolUsage?.toolCallsBeforeFirstMark, null);
+    assert.match(usage?.captureGaps?.[0] ?? '', /exceeds the remote receipt limit/);
+  }
+  assert.equal(archive.mock.callCount(), 0);
 });

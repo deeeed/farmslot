@@ -155,7 +155,7 @@ async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSession
           runnerSessionPath: row.runnerSessionPath,
           nativeSession: row.nativeSession,
           usageWindow: nativeRunUsageWindow(run, row),
-          checklistMarks: marks?.checklistMarks,
+          ...marks,
         }),
       );
     }

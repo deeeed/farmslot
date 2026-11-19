@@ -5,6 +5,8 @@ import {
   type SessionToolUsage,
 } from '@farmslot/protocol';
 
+import { REMOTE_USAGE_DETAIL_NOTE } from '../runners/native-session-usage-command.js';
+
 function parseNumberLine(lines: string[], prefix: string): number | null {
   const line = lines.find((candidate) => candidate.startsWith(prefix));
   if (!line) return null;
@@ -58,6 +60,9 @@ export function parseSessionUsageOutput(
       ? { costStatus: 'unpriced', costReason: parseStringLine(lines, 'cost_reason=') ?? undefined }
       : {}),
     ...parseToolUsage(lines),
+    ...(lines.includes('receipt_detail_limited=yes')
+      ? { captureGaps: [REMOTE_USAGE_DETAIL_NOTE] }
+      : {}),
     measuredAt: new Date().toISOString(),
     source: 'runner-transcript',
     scope: 'session-total',

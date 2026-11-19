@@ -438,22 +438,25 @@ test('bounded remote receipts keep Perps rows or return the complete parent rece
     (_, index) => `mcp__review_workspace__inspect_checklist_rule_result_${index + 1}`,
   );
   const sessionPath = path.join(f.root, 'receipt.jsonl');
-  const writeReceipt = async (mixed: boolean) => {
-    const tools = children.flatMap((mark, index) =>
-      (mixed ? largeMix : index < 26 ? ['shell', 'read_file'] : ['shell']).map((name) => ({
-        type: 'response_item',
-        timestamp: mark.checkedAt,
-        payload: { type: 'function_call', name, call_id: `${index}-${name}` },
-      })),
-    );
+  const writeReceipt = async (mixed: boolean, lastActivity = 42) => {
+    const tools = children
+      .slice(0, Math.min(lastActivity, children.length))
+      .flatMap((mark, index) =>
+        (mixed ? largeMix : index < 26 ? ['shell', 'read_file'] : ['shell']).map((name) => ({
+          type: 'response_item',
+          timestamp: mark.checkedAt,
+          payload: { type: 'function_call', name, call_id: `${index}-${name}` },
+        })),
+      );
     await writeFile(
       sessionPath,
       [
+        { type: 'session_meta', payload: { id: 'receipt' } },
         { type: 'turn_context', timestamp: at(0), payload: { model: 'gpt-5.5' } },
         ...tools,
         {
           type: 'event_msg',
-          timestamp: at(42),
+          timestamp: at(lastActivity),
           payload: {
             type: 'token_count',
             info: {
@@ -488,6 +491,32 @@ test('bounded remote receipts keep Perps rows or return the complete parent rece
     });
     return result.stdout;
   };
+  const runNative = async (
+    marks: typeof children,
+    parentChecklistMarks = parents,
+    usageWindow?: NativeSessionUsageRequest['usageWindow'],
+  ) => {
+    const request = {
+      ...f.request('codex'),
+      runnerSessionId: 'receipt',
+      sessionPath,
+      nativeSession: undefined,
+      checklistMarks: marks,
+      parentChecklistMarks,
+      usageWindow,
+    };
+    const argv = nativeSessionUsageArgv([request], modulePath, budget);
+    const result = await execute(process.execPath, argv.slice(1), {
+      encoding: 'utf8',
+      maxBuffer: budget,
+      env: { ...process.env, HOME: f.root },
+    });
+    const [row] = JSON.parse(result.stdout);
+    assert.equal(row.runnerSessionId, request.runnerSessionId);
+    assert.equal(row.sessionPath, await realpath(sessionPath));
+    assert.ok(Buffer.byteLength(result.stdout) <= budget);
+    return row.output;
+  };
   const usage = (stdout: string) =>
     parseSessionUsageOutput(stdout, {
       runner: 'codex',
@@ -504,6 +533,7 @@ test('bounded remote receipts keep Perps rows or return the complete parent rece
   assert.equal(normalTools.toolCalls, 67);
   assert.equal(normalTools.steps.filter((step) => step.title?.startsWith('perps-')).length, 41);
   assert.equal(normalUsage.totalTokens, 121);
+  assert.equal(await runNative(children), normal);
 
   const largeToolCount = await writeReceipt(true);
   const largeChildren = children.map((mark, index) =>
@@ -514,6 +544,7 @@ test('bounded remote receipts keep Perps rows or return the complete parent rece
   const fallback = await runForced(parents, budget);
   const bounded = await runForced(largeChildren, budget, true);
   assert.equal(bounded.replace(/\nreceipt_detail_limited=yes\n$/, ''), fallback);
+  assert.equal(await runNative(largeChildren), bounded);
   const boundedUsage = usage(bounded);
   const boundedTools = boundedUsage.toolUsage;
   assert(boundedTools);
@@ -536,6 +567,37 @@ test('bounded remote receipts keep Perps rows or return the complete parent rece
     trailing.toolUsage?.steps.flatMap((step) => (step.title ? [step.title] : [])),
     [parents[0]!.label],
   );
+
+  // In the zero-length trailing segment, actual activity at the final
+  // child mark proves the parent interval ends there.
+  await writeReceipt(true, 41);
+  const exact = usage(await runForced(largeChildren, budget, true, [parents[0]!]));
+  assert.equal(exact.toolUsage?.steps.at(-1)?.endedAt, at(41));
+  assert.equal(exact.toolUsage?.toolCalls, largeToolCount);
+  assert.equal(exact.totalTokens, 121);
+
+  // The same mark must not extend the parent interval when it alone set the end.
+  const earlierToolCount = await writeReceipt(true, 40);
+  const unproven = usage(await runForced(largeChildren, budget, true, [parents[0]!]));
+  assert.deepEqual(unproven.toolUsage?.steps, []);
+  assert.equal(unproven.toolUsage?.toolCalls, earlierToolCount);
+  assert.equal(unproven.totalTokens, 121);
+  const window = { startedAt: at(0), completedAt: at(41) };
+  const windowed = usage(await runNative(largeChildren, [parents[0]!], window));
+  const expectedWindow = usage(
+    await runSessionUsage({
+      repo: '',
+      slotId: 'receipt',
+      action: 'total',
+      forcedPath: sessionPath,
+      forcedRunner: 'codex',
+      usageWindow: window,
+      checklistMarks: [parents[0]!],
+    }),
+  );
+  assert.deepEqual(windowed.toolUsage?.steps, expectedWindow.toolUsage?.steps);
+
+  await writeReceipt(true);
 
   // A later parent boundary absent from the measured detail cannot be recreated.
   const ambiguous = usage(
