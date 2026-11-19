@@ -12,10 +12,14 @@ const reviewRunner = process.env.FARMSLOT_REVIEW_PROOF_RUNNER ?? 'codex';
 const proveReadOnly = process.env.FARMSLOT_REVIEW_PROOF_READ_ONLY === '1';
 const proveReferences = process.env.FARMSLOT_REVIEW_PROOF_REFERENCES === '1';
 const proveUsage = process.env.FARMSLOT_REVIEW_PROOF_USAGE === '1';
+// Opt-in: proves only the remote tmux Pi receipt's LiteLLM pricing, then ends the proof. It binds to
+// the route the Pi process used and re-measures through the remote receipt branch.
+const proveRemotePricing = process.env.FARMSLOT_REVIEW_PROOF_REMOTE_PRICING === '1';
 assert(!proveReadOnly || ['pi', 'cursor', 'opencode', 'grok', 'claude'].includes(reviewRunner));
 const reviewModel = process.env.FARMSLOT_REVIEW_PROOF_MODEL ?? 'gpt-6.1-sol';
 const reviewTransport = process.env.FARMSLOT_REVIEW_PROOF_TRANSPORT ?? 'tmux';
 assert(['tmux', 'native'].includes(reviewTransport));
+assert(!proveRemotePricing || (reviewRunner === 'pi' && reviewTransport === 'tmux'));
 const reviewEffort =
   process.env.FARMSLOT_REVIEW_PROOF_EFFORT === 'none'
     ? undefined
@@ -210,6 +214,50 @@ fs.writeFileSync(
   '# Review fixture\n\n- [ ] **1. Inspect the exact diff.** This fixture changes only literal greeting text. Check its bytes.\n- [ ] **2. Write the required review artifacts and complete the review.** Compute reportSha256 from the exact saved review.md bytes with Node crypto, then persist that nonempty digest into review-result.json before mark complete. No other work is requested.\n',
 );
 const load = (relative: string) => import(pathToFileURL(path.join(repo, relative)).href);
+// The node's own home: the remote-pricing proof isolates only the reviewer's Pi home.
+const nodeHome = os.homedir();
+const proofRoute = proveRemotePricing
+  ? await proofLiteLlmRoutes(modelsJsonRoute(reviewModel).baseUrl)
+  : undefined;
+if (proofRoute) {
+  // Before the gateway loads: its local node environment is this process's, read at load time.
+  // Pi gets an isolated home whose agent directory's models.json lists the review model on the
+  // `route` proxy, with its key read from the environment, never copied. Session recovery reads
+  // that same home. The environment's LiteLLM URL, which the reviewer launch and the gateway's
+  // pricing see, is the other proxy path.
+  const { id } = modelsJsonRoute(reviewModel);
+  const agent = process.env.PI_CODING_AGENT_DIR || path.join(nodeHome, '.pi/agent');
+  const real = JSON.parse(fs.readFileSync(path.join(agent, 'models.json'), 'utf8')).providers
+    .litellm;
+  const {
+    baseUrl: _baseUrl,
+    headers: _headers,
+    apiKey: _apiKey,
+    ...model
+  } = real.models.find((entry: { id: string }) => entry.id === id);
+  const home = path.join(root, 'pi-home');
+  const isolated = path.join(home, '.pi/agent');
+  fs.mkdirSync(isolated, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(
+    path.join(isolated, 'models.json'),
+    JSON.stringify({
+      providers: {
+        litellm: {
+          baseUrl: `${proofRoute.route}/v1`,
+          api: real.api ?? 'openai-completions',
+          apiKey: '$LITELLM_API_KEY',
+          models: [model],
+        },
+      },
+    }),
+  );
+  process.env.HOME = home;
+  delete process.env.PI_CODING_AGENT_DIR;
+  process.env.LITELLM_URL = proofRoute.environment;
+  delete process.env.LITELLM_BASE_URL;
+  process.env.FARMSLOT_LITELLM_PRICING_CACHE_DIR = path.join(root, 'litellm-prices');
+  assert(process.env.LITELLM_API_KEY, 'Gateway LiteLLM credentials');
+}
 const { createGatewayAuthRuntime } = await load('services/gateway/src/security/auth.ts');
 const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: process.env.FARMSLOT_HOME });
 const owner = auth.writer.createPrincipal(
@@ -357,6 +405,13 @@ try {
     const finished: Run = observed.run;
     fs.writeFileSync(path.join(out, `round-${index + 1}.json`), JSON.stringify(finished, null, 2));
     assert.equal(finished.status, 'done', finished.error);
+    if (proofRoute) {
+      // This opt-in proof ends here: the retention and session checks belong to the default proof.
+      summary.proof = 'remote-pricing';
+      summary.remotePricing = await proveRemoteLaunchPricing(finished, observed, proofRoute);
+      save();
+      break;
+    }
     assert(finished.reviewWorkspace);
     assert(finished.reviewWorkspaceSubject);
     if (proveReferences)
@@ -507,6 +562,10 @@ print(json.dumps({'sessionId':sid,'filePath':sys.argv[2],'status':'completed'}))
   save();
   throw error;
 } finally {
+  if (proofRoute) {
+    proofRoute.proxy.closeAllConnections();
+    await new Promise<void>((resolve) => proofRoute.proxy.close(() => resolve()));
+  }
   for (const connection of wss.clients) connection.terminate();
   await new Promise<void>((resolve) => wss.close(() => resolve()));
   await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -527,6 +586,270 @@ print(json.dumps({'sessionId':sid,'filePath':sys.argv[2],'status':'completed'}))
   }
   summary.cleanupRoot = root;
   save();
+}
+
+// ─── Opt-in remote pricing proof ───
+
+/** The review model's models.json route in Pi's agent directory: where the proof proxy forwards. */
+function modelsJsonRoute(model: string) {
+  const [provider, id] = [model.slice(0, model.indexOf('/')), model.slice(model.indexOf('/') + 1)];
+  const agent = process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), '.pi/agent');
+  const config = JSON.parse(fs.readFileSync(path.join(agent, 'models.json'), 'utf8'));
+  const entry = config.providers[provider];
+  const baseUrl: string =
+    entry.models?.find((m: { id: string }) => m.id === id)?.baseUrl ?? entry.baseUrl;
+  return { provider, id, baseUrl };
+}
+
+/**
+ * Two loopback LiteLLM routes to the review model's models.json route, recording each path served.
+ * Pi is configured with the `route` one; the reviewer's environment and the gateway's pricing get
+ * the `environment` one. Each path carries a token standing in for a credential in the URL.
+ */
+async function proofLiteLlmRoutes(upstream: string) {
+  const tokens = { route: 'proof-route-secret-token', environment: 'proof-env-secret-token' };
+  const served: string[] = [];
+  const target = upstream.replace(/\/+$/, '').replace(/\/v1$/, '');
+  const proxy = createServer(async (req, res) => {
+    const pathname = (req.url ?? '').split('?')[0];
+    const [label, token] =
+      Object.entries(tokens).find(([, value]) => pathname.startsWith(`/${value}/v1/`)) ?? [];
+    assert(label && token, 'Only the proof routes are served');
+    served.push(`${req.method} ${label} ${pathname.slice(token.length + 1)}`);
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    const headers = Object.fromEntries(
+      Object.entries(req.headers).filter(
+        ([name]) => !['host', 'connection', 'content-length'].includes(name),
+      ),
+    ) as Record<string, string>;
+    const response = await fetch(target + (req.url ?? '').slice(token.length + 1), {
+      method: req.method,
+      headers,
+      ...(chunks.length ? { body: Buffer.concat(chunks) } : {}),
+    });
+    res.writeHead(
+      response.status,
+      Object.fromEntries(
+        [...response.headers].filter(
+          ([name]) => !['content-encoding', 'content-length', 'transfer-encoding'].includes(name),
+        ),
+      ),
+    );
+    if (response.body) for await (const chunk of response.body) res.write(chunk);
+    res.end();
+  });
+  await new Promise<void>((resolve) => proxy.listen(0, '127.0.0.1', resolve));
+  const address = proxy.address();
+  assert(address && typeof address !== 'string');
+  const base = `http://127.0.0.1:${address.port}`;
+  return {
+    route: `${base}/${tokens.route}`,
+    environment: `${base}/${tokens.environment}`,
+    tokens: Object.values(tokens),
+    upstream,
+    served,
+    proxy,
+  };
+}
+
+/** Every piece of a URL that could carry a credential or name the endpoint. */
+function urlParts(value: string) {
+  const url = new URL(value);
+  return [url.host, url.username, url.password, url.search.slice(1), url.hash.slice(1)]
+    .concat(url.pathname.split('/'))
+    .filter((part) => part.length >= 4 && part !== 'v1');
+}
+
+/**
+ * The live review's receipt measured again through the production remote tmux receipt branch. The
+ * node's commands run here, without LiteLLM credentials, with this checkout's CLI on PATH.
+ */
+async function remoteReceipt(
+  finished: Run,
+  sessionId: string,
+  gatewayEndpoint: string | undefined,
+) {
+  const remote = 'proof-remote';
+  fs.writeFileSync(
+    path.join(root, 'pool', remote + '.json'),
+    JSON.stringify({
+      machine: remote,
+      host: remote + '.invalid',
+      ssh_user: os.userInfo().username,
+      project: 'fixture',
+      platform: 'cli',
+      os: process.platform,
+      slots: [],
+      ...(gatewayEndpoint ? { env: { LITELLM_URL: gatewayEndpoint } } : {}),
+    }),
+  );
+  const current = getRun(finished.id);
+  updateRun(finished.id, {
+    reviewWorkspace: { ...current.reviewWorkspace, machine: remote },
+    // The settled receipt is read again only when its measurement predates its completion.
+    sessionUsage: current.sessionUsage.map((row: Run['sessionUsage'][number]) =>
+      row.runnerSessionId === sessionId ? { ...row, measuredAt: '1970-01-01T00:00:00.000Z' } : row,
+    ),
+  });
+  const bin = path.join(root, 'remote-bin');
+  fs.mkdirSync(bin, { recursive: true });
+  if (!fs.existsSync(path.join(bin, 'farmslot')))
+    fs.symlinkSync(path.join(repo, 'packages/cli/bin/farmslot.mjs'), path.join(bin, 'farmslot'));
+  const { captureRunSessionUsage } = await load(
+    'services/gateway/src/runtime/agent-session-usage.ts',
+  );
+  const { withSlotCommandExecutor } = await load('services/gateway/src/core/exec-scope.ts');
+  const { parseSessionUsageOutput } = await load(
+    'services/gateway/src/runtime/session-usage-result.ts',
+  );
+  const commands: Array<{
+    command: string;
+    stdout: string;
+    status: number | null;
+    stderr: string;
+  }> = [];
+  await withSlotCommandExecutor(
+    async (vars: { host: string }, command: string) => {
+      assert.equal(vars.host, remote + '.invalid');
+      const env = Object.fromEntries(
+        Object.entries(process.env).filter(([name]) => !name.startsWith('LITELLM')),
+      );
+      const result = spawnSync('/bin/bash', ['-c', command], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...env,
+          HOME: nodeHome,
+          TSX_TSCONFIG_PATH: path.join(repo, 'services/gateway/tsconfig.json'),
+          PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+          NODE_OPTIONS: `--import=${pathToFileURL(path.join(repo, 'node_modules/tsx/dist/esm/index.mjs')).href}`,
+        },
+      });
+      commands.push({
+        command,
+        stdout: result.stdout,
+        status: result.status,
+        stderr: result.stderr,
+      });
+      return { stdout: result.stdout, stderr: result.stderr, exitCode: result.status ?? 1 };
+    },
+    () => captureRunSessionUsage(finished.id),
+  );
+  updateRun(finished.id, { reviewWorkspace: { ...getRun(finished.id).reviewWorkspace, machine } });
+  const receipt = getRun(finished.id).sessionUsage.find(
+    (row: Run['sessionUsage'][number]) => row.runnerSessionId === sessionId,
+  );
+  const usage = commands.filter(({ command }) => command.includes('runSessionUsage'));
+  assert.equal(usage.length, 1, 'One remote receipt command');
+  assert.equal(usage[0].status, 0, usage[0].stderr.slice(0, 500));
+  // This measurement as the node reported it, and the stored row: with equal token totals the
+  // newest measurement of the same conversation replaces it (preferSessionUsage).
+  const measured = parseSessionUsageOutput(usage[0].stdout);
+  return {
+    pricesSent: usage[0].command.includes('"liteLlmPrices":[['),
+    totalTokens: measured.totalTokens,
+    costUsd: measured.costUsd,
+    costReason: measured.costReason,
+    storedTotalTokens: receipt.totalTokens,
+    storedCostUsd: receipt.costUsd,
+    source: receipt.source,
+  };
+}
+/**
+ * The opt-in remote pricing proof for one finished static Pi review: the launch route identity is
+ * the route the Pi process sent its requests through, no part of either proxy URL is persisted,
+ * and the remote receipt branch prices from the gateway only for that route.
+ */
+async function proveRemoteLaunchPricing(
+  finished: Run,
+  observed: unknown,
+  proofRoute: Awaited<ReturnType<typeof proofLiteLlmRoutes>>,
+) {
+  const { liteLlmEndpointId } = (await load('packages/agent-runtime/scripts/litellm-endpoint.cjs'))
+    .default;
+  const context = finished.agentContexts!.find((entry) => entry.id === 'review');
+  assert(context?.runnerSessionId, 'Static review binds its native conversation');
+  const usage = finished.sessionUsage?.find(
+    (entry) => entry.runner === reviewRunner && entry.runnerSessionId === context.runnerSessionId,
+  );
+  assert(usage && usage.totalTokens != null && usage.totalTokens > 0, 'Measured review tokens');
+  assert(usage.costUsd != null && usage.costUsd > 0, 'The gateway priced the local receipt');
+  summary.usage = usage;
+  // The route the Pi process used is the proxy path its review requests arrived on: its
+  // models.json route, not the LiteLLM URL in its launch environment.
+  assert(proofRoute);
+  summary.proofRouteRequests = [...proofRoute.served];
+  save();
+  const id = reviewModel.slice(reviewModel.indexOf('/') + 1);
+  assert(
+    proofRoute.served.includes('POST route /v1/chat/completions'),
+    'Pi sent its review requests through its models.json route',
+  );
+  assert(
+    !proofRoute.served.includes('POST environment /v1/chat/completions'),
+    'Pi sent no review request through the environment URL',
+  );
+  const expected = liteLlmEndpointId(proofRoute.route);
+  assert(expected && expected !== liteLlmEndpointId(proofRoute.environment));
+  assert.equal(context.launchLiteLlmEndpointId, expected, 'run.get keeps the launch route');
+  const marker = fs.readFileSync(
+    path.join(finished.reviewWorkspace!.taskPath, '.terminal-launch.json'),
+    'utf8',
+  );
+  assert.equal(JSON.parse(marker).liteLlmEndpointId, expected, 'launch receipt route');
+  const transcript = fs
+    .readFileSync(context.runnerSessionPath!, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+  const replies = transcript.filter(
+    (entry) => entry.type === 'message' && entry.message?.role === 'assistant',
+  );
+  assert(replies.length, 'Pi answered');
+  for (const entry of replies) {
+    assert.equal(entry.message.provider, 'litellm', 'Pi used the LiteLLM provider');
+    assert.equal(entry.message.model, id);
+  }
+  // Neither the persisted run, its run.get reply nor the launch receipt names either URL.
+  const persisted = fs.readFileSync(path.join(root, 'runs', finished.id + '.json'), 'utf8');
+  for (const part of [
+    ...proofRoute.tokens,
+    ...urlParts(proofRoute.route),
+    ...urlParts(proofRoute.upstream),
+  ])
+    for (const [name, text] of [
+      ['run.get', JSON.stringify(observed)],
+      ['run file', persisted],
+      ['launch receipt', marker],
+    ])
+      assert.equal(text.includes(part), false, `${name} exposes a route URL part`);
+  // The gateway prices from the verified route, set through the node's pool environment.
+  const matched = await remoteReceipt(finished, context.runnerSessionId, proofRoute.route);
+  assert.equal(matched.pricesSent, true, 'Verified launch route sends gateway prices');
+  assert.equal(matched.source, 'runner-transcript');
+  assert.equal(matched.totalTokens, usage.totalTokens);
+  assert(matched.costUsd != null && matched.costUsd > 0, 'Remote receipt is priced');
+  assert.equal(matched.costUsd, usage.costUsd, 'Quoted from the same gateway price list');
+  const unverified = await remoteReceipt(
+    finished,
+    context.runnerSessionId,
+    // The launch environment's own URL is not the route Pi used.
+    proofRoute.environment,
+  );
+  assert.equal(unverified.pricesSent, false, 'An unverified endpoint sends no prices');
+  assert.equal(unverified.source, 'runner-transcript');
+  assert.equal(unverified.totalTokens, usage.totalTokens, 'Fallback keeps token counts');
+  assert.equal(unverified.costUsd, null, 'The credential-less node leaves it unpriced');
+  assert.equal(unverified.storedTotalTokens, usage.totalTokens);
+  assert.equal(unverified.storedCostUsd, null, 'run.get reports it unpriced, not guessed');
+  return {
+    launchLiteLlmEndpointId: expected,
+    proofRouteRequests: proofRoute.served,
+    piProviderReplies: replies.length,
+    matched,
+    unverified,
+  };
 }
 
 process.exit(0);

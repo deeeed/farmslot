@@ -25,6 +25,7 @@ const { extractRunnerSessionUsage, extractRunWorkerSessionUsage } =
 const { makeRun } = await import('../run-completion/test-fixtures.js');
 const { makeVars } = await import('../runners/test-fixtures.js');
 const { claudeSessionUsageProvider } = await import('../runners/session-usage-provider.js');
+const { liteLlmEndpointId } = await import('@farmslot/agent-runtime/scripts/litellm-endpoint.cjs');
 
 test('remote usage uses supported node execution and preserves slot support selection', async () => {
   const vars = { host: 'remote.example', machine: 'remote-test', resourceVars: {} } as SlotVars;
@@ -146,23 +147,36 @@ test('a remote Pi receipt is quoted from the gateway LiteLLM prices, not the slo
       ],
     }),
   );
-  calls.length = 0;
-  await extractRunnerSessionUsage({
-    slotId: 'slot-1',
-    vars,
-    runner: 'pi',
-    runnerSessionPath: '/worker/pi.jsonl',
-    launchEnvironment: async () => ({
-      unset: [],
-      set: {
-        LITELLM_URL: launchUrl,
-        LITELLM_API_KEY: apiKey,
-        FARMSLOT_LITELLM_PRICING_CACHE_DIR: cacheDir,
-      },
-    }),
-  });
-  assert.match(String(calls[0][1]), /launch-endpoint-model/);
-  assert.equal(String(calls[0][1]).includes('claude-opus-5-5'), false);
+  // The launch sets both names and unsets LITELLM_URL: set, then unset, so it resolved the base URL.
+  const launchMutation = {
+    unset: ['LITELLM_URL'],
+    set: {
+      LITELLM_URL: baseUrl,
+      LITELLM_BASE_URL: `${launchUrl}/`,
+      LITELLM_API_KEY: apiKey,
+      FARMSLOT_LITELLM_PRICING_CACHE_DIR: cacheDir,
+    },
+  };
+  const priceLaunch = async (endpointId: string | undefined) => {
+    calls.length = 0;
+    const receipt = await extractRunnerSessionUsage({
+      slotId: 'slot-1',
+      vars,
+      runner: 'pi',
+      runnerSessionPath: '/worker/pi.jsonl',
+      launchPricing: { endpointId, environment: async () => launchMutation },
+    });
+    // Every fallback still runs the receipt command and keeps its token counts.
+    assert.equal(receipt.totalTokens, 10);
+    return String(calls[0][1]);
+  };
+  // The launch route's identity: the pricing endpoint with `/v1`, as Pi's models.json names it.
+  const verified = await priceLaunch(liteLlmEndpointId(`${launchUrl}/v1`));
+  assert.match(verified, /launch-endpoint-model/);
+  assert.equal(verified.includes('claude-opus-5-5'), false);
+  // A recorded endpoint the gateway no longer resolves, or none recorded, leaves the slot's lookup.
+  for (const endpointId of [liteLlmEndpointId(baseUrl), undefined])
+    assert.equal((await priceLaunch(endpointId)).includes('liteLlmPrices"'), false);
   // Other runners keep their command unchanged.
   calls.length = 0;
   await extractRunnerSessionUsage({

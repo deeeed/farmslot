@@ -55,6 +55,8 @@ export interface ReviewTmuxOperationResult {
   signalAttemptId?: string;
   /** Set when the launch answered Codex's Folder access screen with Open restricted. */
   folderAccess?: 'restricted';
+  /** Digest of the LiteLLM endpoint the runner was routed to; absent when it had none. */
+  liteLlmEndpointId?: string;
 }
 
 /** Native prompt acceptance and task progress are independent startup evidence. */
@@ -538,6 +540,8 @@ export async function launchReviewTmux(
     status: 'launching',
     promptDeliveryStartedAt: started.startedAt ?? context.attemptStartedAt,
     ...(started.signalAttemptId ? { signalAttemptId: started.signalAttemptId } : {}),
+    // Always written, so a relaunch without an endpoint clears the previous attempt's.
+    launchLiteLlmEndpointId: started.liteLlmEndpointId || undefined,
   });
   await persistRunNow(getRun(runId)!, 'terminal review launched');
   if (started.folderAccess === 'restricted') {

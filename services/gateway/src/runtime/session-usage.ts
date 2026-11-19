@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 
+import { liteLlmEndpointId } from '@farmslot/agent-runtime/scripts/litellm-endpoint.cjs';
 import {
   type ChecklistMark,
   checklistMarks,
@@ -50,11 +51,20 @@ export {
 
 const REMOTE_RECEIPT_BYTES = 64 * 1024;
 
-/** A project command env mutation: names to unset, then values to set. */
+/** A project command env mutation, applied as the static reviewer's launch does: set, then unset. */
 interface LaunchEnvironment {
   unset: string[];
   set: Record<string, string>;
 }
+
+/** The launch a static tmux review's Pi receipt is priced against. */
+interface LaunchPricing {
+  /** The launch receipt's LiteLLM endpoint identity; absent on older or endpoint-less launches. */
+  endpointId?: string;
+  /** The launch's environment mutation, resolved again by the gateway. */
+  environment: () => Promise<LaunchEnvironment>;
+}
+
 /**
  * The shell-quoted usage command may grow to this with gateway prices. The node runs it as one
  * shell argument, and Linux allows 128 KiB per argument; above it the prices are left off.
@@ -69,16 +79,31 @@ const REMOTE_USAGE_COMMAND_BYTES = 96 * 1024;
 async function remotePiLiteLlmPrices(
   vars: SlotVars,
   slotId: string,
-  launchEnvironment: (() => Promise<LaunchEnvironment>) | undefined,
+  launch: LaunchPricing | undefined,
 ): Promise<Array<[string, PiModelCostMetadata]> | undefined> {
   let prices: Array<[string, PiModelCostMetadata]>;
   try {
-    if (launchEnvironment) {
-      // Quote from the endpoint the session was launched against, in the launch's own precedence.
-      const launch = await launchEnvironment();
-      const environment = { ...process.env };
-      for (const name of launch.unset) delete environment[name];
-      Object.assign(environment, launch.set);
+    if (launch) {
+      // Quote only from the endpoint the session's runner was routed to at launch. The gateway's
+      // prices come from the launch mutation as the launch applies it: set values over this
+      // process's environment, then its unset names removed.
+      if (!launch.endpointId) {
+        console.warn(
+          `[session-usage] gateway LiteLLM prices omitted for ${slotId}: launch endpoint unrecorded`,
+        );
+        return undefined;
+      }
+      const mutation = await launch.environment();
+      const environment: NodeJS.ProcessEnv = { ...process.env, ...mutation.set };
+      for (const name of mutation.unset) delete environment[name];
+      // The endpoint these prices come from, in the pricing loader's precedence.
+      const pricedEndpoint = environment.LITELLM_URL || environment.LITELLM_BASE_URL;
+      if (liteLlmEndpointId(pricedEndpoint) !== launch.endpointId) {
+        console.warn(
+          `[session-usage] gateway LiteLLM prices omitted for ${slotId}: launch endpoint not verified`,
+        );
+        return undefined;
+      }
       prices = [...(await loadLiteLlmPrices({ environment }))];
     } else prices = await usageLiteLlmPrices(vars, vars.machine);
   } catch (error) {
@@ -100,7 +125,7 @@ export async function extractRunnerSessionUsage({
   runnerSessionPath,
   checklistMarks,
   parentChecklistMarks,
-  launchEnvironment,
+  launchPricing,
 }: {
   slotId: string;
   vars?: SlotVars;
@@ -111,8 +136,8 @@ export async function extractRunnerSessionUsage({
   checklistMarks?: ChecklistMark[];
   /** Parent boundaries for a remote receipt whose child breakdown exceeds the transport limit. */
   parentChecklistMarks?: ChecklistMark[];
-  /** The environment the session was launched with (a static review's), read only for Pi pricing. */
-  launchEnvironment?: () => Promise<LaunchEnvironment>;
+  /** A static tmux review's launch, read only to price a remote Pi receipt. */
+  launchPricing?: LaunchPricing;
 }): Promise<RunnerSessionUsage> {
   if (!runnerSessionPath) {
     return unavailableRunnerSessionUsage({
@@ -127,7 +152,7 @@ export async function extractRunnerSessionUsage({
       // Pi's LiteLLM messages are quoted from the gateway's LiteLLM price list; the slot that holds
       // the transcript may have no LiteLLM credentials, which left the receipt unpriced.
       const liteLlmPrices =
-        runner === 'pi' ? await remotePiLiteLlmPrices(vars, slotId, launchEnvironment) : undefined;
+        runner === 'pi' ? await remotePiLiteLlmPrices(vars, slotId, launchPricing) : undefined;
       const usageArgv = (prices?: Array<[string, PiModelCostMetadata]>) =>
         forcedSessionUsageArgv(
           slotId,

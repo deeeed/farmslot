@@ -8,6 +8,7 @@ const {
   homeDirectory: home,
 } = require('./review-account-preflight.cjs');
 const { tomlSectionHeaderIndexes, tomlBareStringValue } = require('./toml-scan.cjs');
+const { liteLlmEndpointId } = require('./litellm-endpoint.cjs');
 
 const lockScript = String.raw`
 import fcntl, os, subprocess, sys
@@ -228,6 +229,56 @@ const reviewRuntimeRootsByRunner = {
     path.join(env.XDG_CONFIG_HOME || path.join(home(env), '.config'), 'opencode'),
   ],
 };
+/**
+ * The base URL Pi routes a `provider/model` to in a Farmslot launch. A model listed in the agent
+ * directory's models.json keeps its own `baseUrl`, else its provider's: the Farmslot Pi extension
+ * preserves those static models over discovered ones (preservePiStaticModels in
+ * scripts/runners/pi-farmslot-providers.mjs), and Pi does not interpolate `baseUrl`. Only another
+ * `litellm` model is routed to LITELLM_URL or LITELLM_BASE_URL, where the extension registers the
+ * provider (listPiProviderSources, openaiBaseUrl). A review checkout's own `.pi` configuration
+ * never loads: the checkout stays untrusted.
+ */
+function piModelRoute(env, model) {
+  const slash = typeof model === 'string' ? model.indexOf('/') : -1;
+  if (slash <= 0) return undefined;
+  const provider = model.slice(0, slash);
+  const id = model.slice(slash + 1);
+  const file = path.join(
+    env.PI_CODING_AGENT_DIR || path.join(home(env), '.pi/agent'),
+    'models.json',
+  );
+  let config = {};
+  try {
+    config = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (error) {
+    // A missing models.json lists no static model. One this parser cannot read (Pi also accepts
+    // comments) may list this model, so the route stays unknown rather than guessed.
+    if (error?.name === 'SyntaxError') return undefined;
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  const entry = config?.providers?.[provider];
+  const listed = Array.isArray(entry?.models)
+    ? entry.models.find((candidate) => candidate?.id === id)
+    : undefined;
+  if (listed) {
+    const baseUrl = listed.baseUrl ?? entry.baseUrl;
+    return typeof baseUrl === 'string' ? { provider, baseUrl } : undefined;
+  }
+  const registered = provider === 'litellm' && (env.LITELLM_URL || env.LITELLM_BASE_URL)?.trim();
+  if (!registered) return undefined;
+  return {
+    provider,
+    baseUrl: /^https?:\/\//i.test(registered) ? registered : `http://${registered}`,
+  };
+}
+// The LiteLLM endpoint identity a terminal reviewer is launched against, from the route its runner
+// actually uses. A runner without one records none, and its receipts keep their own pricing.
+const reviewLiteLlmEndpointIdByRunner = {
+  pi: (env, model) => {
+    const route = piModelRoute(env, model);
+    return route?.provider === 'litellm' ? liteLlmEndpointId(route.baseUrl) : undefined;
+  },
+};
 const reviewConfigurationRoots = (cwd) =>
   [
     '.grok/config.toml',
@@ -289,6 +340,7 @@ const claudeReadOnlyReviewArgs = [
 
 module.exports = {
   reviewRuntimeRootsByRunner,
+  reviewLiteLlmEndpointIdByRunner,
   reviewTemporaryDirectoryVariablesByRunner,
   piReadOnlyReviewArgs,
   claudeReadOnlyReviewArgs,

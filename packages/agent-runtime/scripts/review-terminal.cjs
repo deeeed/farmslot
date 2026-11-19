@@ -203,6 +203,9 @@ async function main() {
     terminalReviewRefusalByRunner,
     reviewRuntimeRootsByRunner,
     reviewTemporaryDirectoryVariablesByRunner,
+    // Absent from a task runtime frozen before launch receipts recorded it: such a launch records
+    // no endpoint and its receipt keeps its previous pricing.
+    reviewLiteLlmEndpointIdByRunner,
   } = require('./workspace-trust.cjs');
   if (terminalReviewRefusalByRunner[input.runner])
     throw new Error(terminalReviewRefusalByRunner[input.runner]);
@@ -234,6 +237,10 @@ async function main() {
     inspectionCwd: guard.temporaryDirectory,
   });
   const commandFile = path.join(task, '.terminal-start.cjs');
+  const liteLlmEndpointId = reviewLiteLlmEndpointIdByRunner?.[input.runner]?.(
+    environment,
+    input.model,
+  );
   const record = {
     runId: input.runId,
     workspaceId: input.workspaceId,
@@ -242,6 +249,8 @@ async function main() {
     model: input.model,
     startedAt: new Date().toISOString(),
     signalAttemptId: environment.FARMSLOT_SIGNAL_ATTEMPT_ID,
+    // A digest, never the URL: binds the gateway's later price quote to this launch's route.
+    ...(liteLlmEndpointId ? { liteLlmEndpointId } : {}),
     ...(input.action === 'resume'
       ? { resumeCommandId: input.resumeCommandId, resumeSessionId: input.resumeSessionId }
       : {}),

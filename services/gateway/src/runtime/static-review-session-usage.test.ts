@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,6 +11,8 @@ import { makeVars } from '../runners/test-fixtures.js';
 
 await import('./mock-pty.test-support.js');
 let remote = false;
+let remoteCommand = '';
+let launchMutation: { unset: string[]; set: Record<string, string> } = { unset: [], set: {} };
 mock.module('../runners/review-workspace-context.js', {
   namedExports: {
     reviewWorkspaceRunnerVars: async () =>
@@ -24,6 +27,7 @@ mock.module('../core/exec.js', {
       assert.equal(vars.host, 'review.invalid');
       assert.match(command, /runSessionUsage/);
       assert.match(command, /pi-session.jsonl/);
+      remoteCommand = command;
       return {
         exitCode: 0,
         stderr: '',
@@ -42,11 +46,13 @@ mock.module('../runners/review-tmux.js', {
     reviewTmuxSession: () => 'review-fixture',
     reviewTmuxOperation: async () => ({ stopped: true }),
     launchReviewTmux: async () => ({}),
+    reviewEnvironment: async () => launchMutation,
   },
 });
 const { createRun, updateRun, getRun, deleteRun } = await import('../runs/store.js');
 const { piSessionUsageProvider } = await import('../runners/session-usage-provider.js');
 const { captureRunSessionUsage } = await import('./agent-session-usage.js');
+const { liteLlmEndpointId } = await import('@farmslot/agent-runtime/scripts/litellm-endpoint.cjs');
 
 for (const target of ['local', 'remote'])
   test(`a ${target} slotless static review captures its exact Pi session and cost once`, async (t) => {
@@ -270,3 +276,103 @@ test('ambiguous workspace sessions stay unbound', async (t) => {
   );
   assert.equal(await recoverWorkspaceUsageBindings(run), run);
 });
+
+for (const recorded of ['launch', 'other', 'none'] as const)
+  test(`a remote static Pi review is priced from its launch endpoint only when verified (${recorded})`, async (t) => {
+    remote = true;
+    remoteCommand = '';
+    const root = await mkdtemp(path.join(os.tmpdir(), 'static-review-launch-pricing-'));
+    const run = createRun({
+      flowType: 'review-pr',
+      project: 'usage-fixture',
+      ticketOrPr: 'owner/repo#1',
+    });
+    t.after(async () => {
+      updateRun(run.id, {
+        status: 'cancelled',
+        slotId: null,
+        reviewWorkspace: {
+          ...getRun(run.id)!.reviewWorkspace!,
+          cleanedAt: new Date().toISOString(),
+        },
+      });
+      await deleteRun(run.id);
+      await rm(root, { recursive: true, force: true });
+    });
+    const endpoint = 'https://litellm-review.example';
+    const apiKey = 'review-test-key';
+    await writeFile(
+      path.join(
+        root,
+        `${createHash('sha256').update(`${endpoint}\n${apiKey}`).digest('hex')}.json`,
+      ),
+      JSON.stringify({
+        fetchedAt: Date.now(),
+        data: [
+          {
+            model_name: 'glm-5p3-flash',
+            model_info: { input_cost_per_token: 0.000001, output_cost_per_token: 0.000002 },
+          },
+        ],
+      }),
+    );
+    // Production wiring: the reviewer's launch mutation as review-tmux resolves it.
+    launchMutation = {
+      unset: [],
+      set: {
+        LITELLM_BASE_URL: endpoint,
+        LITELLM_API_KEY: apiKey,
+        FARMSLOT_LITELLM_PRICING_CACHE_DIR: root,
+      },
+    };
+    const transcript = '/review-node/pi-session.jsonl';
+    t.mock.method(piSessionUsageProvider, 'recoverSessions', async () => [
+      { contextId: 'review', runnerSessionId: 'pi-session', runnerSessionPath: transcript },
+    ]);
+    updateRun(run.id, {
+      reviewWorkspaceTarget: { machine: 'review-node' },
+      transport: 'tmux',
+      metrics: { ...run.metrics, runner: 'pi', model: 'litellm/glm-5p3-flash' },
+      reviewWorkspace: {
+        workspaceId: 'review-fixture',
+        machine: 'review-node',
+        executionNodeId: 'review-node',
+        checkoutPath: '/review-node/source',
+        taskPath: '/review-node/task',
+        artifactPath: '/review-node/task/artifacts',
+      },
+      agentContexts: [
+        {
+          id: 'review',
+          role: 'review',
+          label: 'Review',
+          runId: run.id,
+          slotId: null,
+          runner: 'pi',
+          model: 'litellm/glm-5p3-flash',
+          status: 'complete',
+          startedAt: '2026-11-10T14:00:00Z',
+          completedAt: '2026-11-10T14:10:00Z',
+          target: { session: 'review-fixture', target: 'review-fixture' },
+          runnerSessionId: 'pi-session',
+          runnerSessionPath: transcript,
+          ...(recorded === 'none'
+            ? {}
+            : {
+                launchLiteLlmEndpointId: liteLlmEndpointId(
+                  recorded === 'launch' ? `${endpoint}/v1/` : 'https://litellm-other.example',
+                ),
+              }),
+        },
+      ],
+    });
+    await captureRunSessionUsage(run.id);
+    const receipt = getRun(run.id)!.sessionUsage![0];
+    assert.equal(
+      remoteCommand.includes('"liteLlmPrices":[["glm-5p3-flash"'),
+      recorded === 'launch',
+    );
+    // An unverified endpoint keeps the slot's own pricing and the receipt's token counts.
+    assert.equal(receipt.totalTokens, 400);
+    assert.equal(receipt.runnerSessionPath, transcript);
+  });

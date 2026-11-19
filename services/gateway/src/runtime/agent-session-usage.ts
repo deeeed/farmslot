@@ -132,6 +132,18 @@ function workerChecklistMarks(run: Run, row: RunnerSessionUsage) {
   };
 }
 
+/**
+ * The LiteLLM endpoint identity the static reviewer's launch receipt recorded for this receipt's
+ * transcript. Undefined when the context's current launch is not this transcript's, so pricing
+ * falls back.
+ */
+function launchLiteLlmEndpointId(run: Run, row: RunnerSessionUsage): string | undefined {
+  const context = run.agentContexts?.find((item) => row.contextIds?.includes(item.id));
+  if (!context?.runnerSessionPath || context.runnerSessionPath !== row.runnerSessionPath)
+    return undefined;
+  return context.launchLiteLlmEndpointId;
+}
+
 async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSessionUsage> {
   try {
     const slotId = row.slotId ?? run.slotId ?? run.id;
@@ -175,8 +187,11 @@ async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSession
         ...marks,
         ...(!row.slotId && run.reviewWorkspace
           ? {
-              launchEnvironment: async () =>
-                (await import('../runners/review-tmux.js')).reviewEnvironment(run),
+              launchPricing: {
+                endpointId: launchLiteLlmEndpointId(run, row),
+                environment: async () =>
+                  (await import('../runners/review-tmux.js')).reviewEnvironment(run),
+              },
             }
           : {}),
       }),

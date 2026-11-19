@@ -894,6 +894,7 @@ async function executeOwnedReviewWorkspaceStep(
               id: context.id,
               promptDeliveryStartedAt: resumed.startedAt,
               ...(resumed.signalAttemptId ? { signalAttemptId: resumed.signalAttemptId } : {}),
+              launchLiteLlmEndpointId: resumed.liteLlmEndpointId || undefined,
             });
           }
         } else {

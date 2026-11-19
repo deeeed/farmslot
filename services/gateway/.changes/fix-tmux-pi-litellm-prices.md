@@ -1,1 +1,1 @@
-- Pi sessions on a LiteLLM model that ran on a remote slot over tmux now get a priced receipt total. Their usage is quoted from the gateway's LiteLLM price list, as native sessions already are.
+- Pi sessions on a LiteLLM model that ran on a remote slot over tmux now get a priced receipt total. Their usage is quoted from the gateway's LiteLLM price list, as native sessions already are. A static tmux review is quoted only when the gateway's LiteLLM endpoint is the route its Pi runner was launched with; otherwise the receipt keeps its token counts and its previous pricing.

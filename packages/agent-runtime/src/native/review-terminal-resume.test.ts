@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -19,6 +19,7 @@ async function fixture(
     root: string,
     creations: () => number,
   ) => Promise<void>,
+  model = 'glm',
 ) {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'review-terminal-resume-')));
   const original = {
@@ -26,7 +27,7 @@ async function fixture(
     workspaceId: 'same-workspace',
     session: 'same-terminal',
     runner: 'pi',
-    model: 'glm',
+    model,
     signalAttemptId: 'same-attempt',
     startedAt: 'before',
   };
@@ -102,6 +103,8 @@ async function fixture(
           terminalReviewRefusalByRunner: {},
           reviewRuntimeRootsByRunner: {},
           reviewTemporaryDirectoryVariablesByRunner: {},
+          reviewLiteLlmEndpointIdByRunner:
+            realRequire('./workspace-trust.cjs').reviewLiteLlmEndpointIdByRunner,
         };
       if (name === './review-codex-folder-access.cjs')
         return {
@@ -113,7 +116,7 @@ async function fixture(
     };
     await vm.runInNewContext(
       readFileSync(script, 'utf8'),
-      { require, process: fakeProcess, console, Buffer, setTimeout },
+      { require, process: fakeProcess, console, Buffer, setTimeout, URL },
       { filename: script },
     );
     return { code: fakeProcess.exitCode, error, output };
@@ -172,4 +175,96 @@ test('a newer cancellation fences its own continuation before old receipts can b
     assert.equal(readFileSync(marker, 'utf8'), original);
     assert.equal(creations(), 0);
   });
+});
+
+test('the launch receipt records only a digest of the LiteLLM route Pi is launched with', async () => {
+  const { liteLlmEndpointId } = realRequire('./litellm-endpoint.cjs');
+  const secrets = ['user', 'pass', 'secret', 'token', 'route.example', 'model-route', 'home-route'];
+  assert.notEqual(liteLlmEndpointId('https://route.example'), undefined);
+  const agent = (root: string) => ({ PI_CODING_AGENT_DIR: path.join(root, 'agent') });
+  const envUrl = { LITELLM_URL: 'https://env-token-secret.example' };
+  const cases: Array<[string, (root: string) => Record<string, unknown>, string | undefined]> = [
+    // A model listed in models.json keeps its static route, even with a LiteLLM URL in the
+    // environment: the Farmslot Pi extension preserves static models over discovered ones.
+    [
+      'litellm/glm',
+      (root) => ({ set: { ...agent(root), ...envUrl }, unset: [] }),
+      'https://route.example',
+    ],
+    // A model's own baseUrl overrides its provider's.
+    [
+      'litellm/claude-x',
+      (root) => ({ set: agent(root), unset: [] }),
+      'https://token-secret.model-route.example/proxy',
+    ],
+    // An unlisted LiteLLM model is routed to the URL the extension registers the provider on.
+    [
+      'litellm/discovered',
+      (root) => ({
+        set: { ...agent(root), LITELLM_BASE_URL: 'env-token-secret.example:4000/' },
+        unset: [],
+      }),
+      'http://env-token-secret.example:4000',
+    ],
+    // Set, then unset: the unset URL and agent directory leave Pi on HOME's models.json route.
+    [
+      'litellm/glm',
+      (root) => ({
+        set: { ...agent(root), ...envUrl },
+        unset: ['PI_CODING_AGENT_DIR', 'LITELLM_URL'],
+      }),
+      'https://home-route.example',
+    ],
+    [
+      'litellm/discovered',
+      (root) => ({ set: { ...agent(root), ...envUrl }, unset: ['LITELLM_URL'] }),
+      undefined,
+    ],
+    // Another provider, or a model Pi has no LiteLLM route for, records nothing.
+    ['other/glm', (root) => ({ set: { ...agent(root), ...envUrl }, unset: [] }), undefined],
+    [
+      'litellm/glm',
+      (root) => ({ set: { PI_CODING_AGENT_DIR: path.join(root, 'missing') }, unset: [] }),
+      undefined,
+    ],
+    // A models.json this parser cannot read leaves the route unknown, not the environment's.
+    [
+      'litellm/glm',
+      (root) => ({ set: { PI_CODING_AGENT_DIR: path.join(root, 'jsonc'), ...envUrl }, unset: [] }),
+      undefined,
+    ],
+  ];
+  for (const [model, environment, route] of cases)
+    await fixture(async (invoke, root) => {
+      const write = (directory: string, providers: unknown) => {
+        mkdirSync(directory, { recursive: true });
+        writeFileSync(path.join(directory, 'models.json'), JSON.stringify({ providers }));
+      };
+      write(path.join(root, 'agent'), {
+        litellm: {
+          baseUrl: 'https://user:pass@route.example/v1/?api_key=secret#fragment',
+          models: [
+            { id: 'glm' },
+            { id: 'claude-x', baseUrl: 'https://token-secret.model-route.example/proxy/v1' },
+          ],
+        },
+        other: { baseUrl: 'https://route.example/v1' },
+      });
+      write(path.join(root, '.pi/agent'), {
+        litellm: { baseUrl: 'https://home-route.example/v1', models: [{ id: 'glm' }] },
+      });
+      mkdirSync(path.join(root, 'jsonc'));
+      writeFileSync(path.join(root, 'jsonc/models.json'), '// comment\n{}');
+      const launched = await invoke({ environment: environment(root) });
+      assert.equal(launched.code, 0, launched.error);
+      const receipt = JSON.parse(launched.output);
+      assert.equal(receipt.liteLlmEndpointId, liteLlmEndpointId(route));
+      assert.equal(
+        JSON.parse(readFileSync(path.join(root, '.terminal-launch.json'), 'utf8'))
+          .liteLlmEndpointId,
+        receipt.liteLlmEndpointId,
+      );
+      for (const fragment of secrets)
+        assert.equal(launched.output.includes(fragment), false, fragment);
+    }, model);
 });
