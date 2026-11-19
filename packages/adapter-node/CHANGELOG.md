@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-node` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.8.29 - 2026-11-19
+
+- Pin the shared composed-evidence SDK dependency cohort for consistent viewer data.
+
 ## 0.8.28 - 2026-11-18
 
 - Align published dependencies with @farmslot/adapter-sdk 0.28.7, @farmslot/recipe-runner 0.48.0.

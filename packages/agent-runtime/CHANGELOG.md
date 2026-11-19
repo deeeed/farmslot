@@ -2,7 +2,14 @@
 
 ## Unreleased
 
+- Claude ACP effort checks use the shared `CLAUDE_CLI_EFFORTS` list.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.50.1 - 2026-11-19
+
+- Pin the shared composed-evidence SDK dependency cohort for consistent viewer data.
+- Claude Haiku 5.5 sessions are priced ($0.10 / $0.50 per million input / output tokens, with cache rates), so their receipts show cost.
 
 ## 0.50.0 - 2026-11-18
 

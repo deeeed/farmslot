@@ -1,1 +1,0 @@
-- Claude Haiku 5.5 sessions are priced ($0.10 / $0.50 per million input / output tokens, with cache rates), so their receipts show cost.

@@ -2,7 +2,13 @@
 
 ## Unreleased
 
+- Claude reviews accept the CLI effort levels low, medium, high, xhigh, and max. A fresh review defaults to medium. A worker launch keeps an omitted Claude effort unset.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.25.15 - 2026-11-19
+
+- Pin the shared composed-evidence SDK dependency cohort for consistent viewer data.
 
 ## 0.25.14 - 2026-11-18
 
