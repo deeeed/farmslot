@@ -121,9 +121,10 @@ test('a remote Pi receipt is quoted from the gateway LiteLLM prices, not the slo
     vars,
     runner: 'pi',
     runnerSessionPath: '/worker/pi.jsonl',
-    checklistMarks: Array.from({ length: 1200 }, (_, index) => ({
+    // About 46 KiB of JSON that shell quoting expands past the budget.
+    checklistMarks: Array.from({ length: 300 }, (_, index) => ({
       stepNumber: index + 1,
-      label: 'x'.repeat(80),
+      label: "'".repeat(80),
       checkedAt: '2026-11-19T00:00:00.000Z',
     })),
   });

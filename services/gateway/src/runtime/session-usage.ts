@@ -50,10 +50,10 @@ export {
 
 const REMOTE_RECEIPT_BYTES = 64 * 1024;
 /**
- * The usage command's JSON argument may grow to this with gateway prices, well inside the 128 KiB
- * a single argument may hold on Linux; above it the prices are left off.
+ * The shell-quoted usage command may grow to this with gateway prices. The node runs it as one
+ * shell argument, and Linux allows 128 KiB per argument; above it the prices are left off.
  */
-const REMOTE_USAGE_ARGUMENT_BYTES = 96 * 1024;
+const REMOTE_USAGE_COMMAND_BYTES = 96 * 1024;
 
 /**
  * The gateway's LiteLLM prices for a remote Pi receipt, or undefined to leave the slot's own
@@ -130,16 +130,16 @@ export async function extractRunnerSessionUsage({
           },
           prices,
         );
-      let argv = usageArgv(liteLlmPrices);
-      // The JSON input is one argument; prices that would push it past the limit are left off,
-      // and the slot prices the receipt as it did before.
-      if (liteLlmPrices && Buffer.byteLength(argv[argv.length - 2]) > REMOTE_USAGE_ARGUMENT_BYTES) {
+      let command = usageArgv(liteLlmPrices).map(shellQuote).join(' ');
+      // The node runs the whole quoted command as one argument; prices that would push it past the
+      // limit are left off, and the slot prices the receipt as it did before.
+      if (liteLlmPrices && Buffer.byteLength(command) > REMOTE_USAGE_COMMAND_BYTES) {
         console.warn(
-          `[session-usage] gateway LiteLLM prices omitted for ${slotId}: usage argument too large`,
+          `[session-usage] gateway LiteLLM prices omitted for ${slotId}: usage command too large`,
         );
-        argv = usageArgv();
+        command = usageArgv().map(shellQuote).join(' ');
       }
-      const result = await execOnSlot(vars, argv.map(shellQuote).join(' '), {
+      const result = await execOnSlot(vars, command, {
         timeout: 30_000,
         maxBuffer: REMOTE_RECEIPT_BYTES,
         selectNodeSupport: false,
