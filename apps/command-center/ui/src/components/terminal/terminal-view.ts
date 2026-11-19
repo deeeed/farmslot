@@ -1,5 +1,5 @@
 import { html } from 'lit';
-import { customElement, state } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import { keyed } from 'lit/directives/keyed.js';
 
 import type {
@@ -8,6 +8,7 @@ import type {
   TerminalExitedPayload,
   TerminalModePayload,
   TmuxListResult,
+  TmuxWorkerRef,
 } from '@farmslot/protocol';
 import { Events, Methods } from '@farmslot/protocol';
 import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
@@ -78,6 +79,11 @@ const TARGET_CHANGE_DEBOUNCE_MS = 50;
 
 @customElement('terminal-view')
 export class TerminalView extends TerminalViewState {
+  /** The split view owns current worker inventory. Check it when attaching a stream. */
+  @property({ attribute: false }) canAttachWorker?: (ref: TmuxWorkerRef) => boolean;
+
+  private _workerParent: Node | null = null;
+  private _workerAttachDeferred = false;
   private _pendingOperatorMessage: OperatorMessageInput | null = null;
   static styles = [terminalViewStyles, terminalAttachmentStyles];
   @state() private progressObservation: ResourceQueryState<TaskProgressResult> = {
@@ -142,6 +148,11 @@ export class TerminalView extends TerminalViewState {
 
   connectedCallback() {
     super.connectedCallback();
+    if (this.canAttachWorker) {
+      if (this._workerParent === this.parentNode && this._unsubConn) return;
+      if (this._unsubConn) this._disconnectTerminal();
+      this._workerParent = this.parentNode;
+    }
     // Bound here, not in firstUpdated(): _dispose() unbinds on every disconnect, and
     // firstUpdated cannot fire a second time, so a DOM move that re-connects this element
     // would otherwise leave it live with image paste permanently dead. Lit assigns
@@ -156,6 +167,19 @@ export class TerminalView extends TerminalViewState {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    if (this._workerParent) {
+      // Lit repeat moves a worker pane within the grid synchronously. Give it
+      // the rest of this turn to reconnect before destroying its xterm and stream.
+      queueMicrotask(() => {
+        if (!this.isConnected && this._workerParent) this._disconnectTerminal();
+      });
+      return;
+    }
+    this._disconnectTerminal();
+  }
+
+  private _disconnectTerminal() {
+    this._workerParent = null;
     this._log('disconnectedCallback');
     // Paired with connectedCallback's bind. Deliberately not in _dispose(): the HMR recovery
     // path in updated() disposes the terminal while the element stays connected, and unbinding
@@ -184,6 +208,7 @@ export class TerminalView extends TerminalViewState {
   }
 
   updated(changed: Map<string, unknown>) {
+    if (changed.has('canAttachWorker') && this._workerAttachDeferred) void this._subscribe();
     if (changed.has('_runner')) {
       syncTerminalRunnerAccent(this, this._runner);
     }
@@ -439,6 +464,8 @@ export class TerminalView extends TerminalViewState {
   private async _subscribe() {
     if (!this._hasTarget() || gateway.connectionState !== 'connected') return;
     const worker = this._workerRef();
+    this._workerAttachDeferred = Boolean(worker && this.canAttachWorker?.(worker) === false);
+    if (this._workerAttachDeferred) return;
 
     // Bump seq first so any in-flight request from a prior call short-circuits
     // when its response lands. Duplicate work is absorbed by the gateway's
@@ -869,6 +896,7 @@ export class TerminalView extends TerminalViewState {
 
   // Full cleanup — element is being removed from DOM
   private _dispose() {
+    this._workerAttachDeferred = false;
     clearTimeout(this._targetChangeTimer);
     this._targetChangeTimer = undefined;
     this._teardownStreams();
@@ -936,6 +964,11 @@ export class TerminalView extends TerminalViewState {
   private async _handleReconnect() {
     if (!this._hasTarget() || this._attachPhase === 'connecting' || this._attachPhase === 'sizing')
       return;
+    const worker = this._workerRef();
+    if (worker && this.canAttachWorker?.(worker) === false) {
+      this._recoveryMessage = 'Wait for current worker inventory before retrying.';
+      return;
+    }
     if (this._retiredTarget) {
       await this._enterPostmortem('operator opened current slot terminal');
       return;

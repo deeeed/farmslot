@@ -8,6 +8,7 @@ import type {
   TmuxWorkerWatchItem,
 } from '@farmslot/protocol';
 import { hasUnsettledRunExecution } from '@farmslot/protocol';
+import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import type { GlobalFilters } from '../../state.js';
 
@@ -45,6 +46,20 @@ export type TerminalPane =
   | { type: 'run'; runId: string }
   | { type: 'slot'; slotId: string; index: number };
 export type WorkerPaneFilter = 'adhoc' | 'all' | 'farmslot';
+
+interface WorkerTerminalInventory {
+  ready: boolean;
+  status: ResourceQueryState['status'];
+  targetPresent: boolean;
+  mountedOnCurrentConnection: boolean;
+}
+
+export function shouldRenderWorkerTerminal(inventory: WorkerTerminalInventory): boolean {
+  return (
+    inventory.targetPresent &&
+    (inventory.ready || (inventory.status === 'stale' && inventory.mountedOnCurrentConnection))
+  );
+}
 
 export function selectWorkspaceRuns(
   runs: readonly RunListRow[],

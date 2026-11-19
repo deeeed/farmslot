@@ -1,5 +1,6 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { keyed } from 'lit/directives/keyed.js';
 import { repeat } from 'lit/directives/repeat.js';
 
 import type {
@@ -52,6 +53,7 @@ import {
   selectActiveRunSlotIds,
   selectPinnedSlotIds,
   selectWorkspaceRuns,
+  shouldRenderWorkerTerminal,
   STORAGE_KEY,
   type TerminalPane,
   watchEntryDescription,
@@ -63,6 +65,8 @@ import {
   type WorkerPaneFilter,
   workerTitle,
 } from './split-view-model.js';
+
+const waitForCurrentWorkerInventory = () => false;
 
 @customElement('terminal-split-view')
 export class TerminalSplitView extends LitElement {
@@ -95,7 +99,11 @@ export class TerminalSplitView extends LitElement {
   };
   private _workerOwner?: string;
   private _workerConnection?: string | number;
+  private _renderedWorkerScope?: string;
   private _workerAgeTimer?: ReturnType<typeof setInterval>;
+  private readonly _canAttachWorker = (ref: TmuxWorkerRef) =>
+    this.workerQuery.ready &&
+    this._tmuxWorkers.some((worker) => tmuxWorkerRefsMatch(worker.ref, ref));
   private readonly workerQuery = new ResourceQueryController<TmuxWorkerListResult>(
     this,
     (state) => {
@@ -475,6 +483,7 @@ export class TerminalSplitView extends LitElement {
     super.disconnectedCallback();
     clearInterval(this._workerAgeTimer);
     this._workerAgeTimer = undefined;
+    this._renderedWorkerScope = undefined;
     this._unsubState?.();
   }
 
@@ -588,7 +597,7 @@ export class TerminalSplitView extends LitElement {
       .join('; ');
     const error = state.error?.message ?? sourceError;
     return html`
-      ${state.status !== 'ready' && state.data
+      ${heldDataIsSaved(state)
         ? html`<div data-worker-inventory-freshness="stale">
             Saved workers, ${sourceObservationAge(state.observedAt)}. Session actions wait for a
             current read.
@@ -1123,6 +1132,22 @@ export class TerminalSplitView extends LitElement {
       ? allPanes.filter((pane) => paneKey(pane) === this._expandedPane)
       : allPanes.slice(0, max);
     const paneCount = panes.length || 1;
+    const workerScope = JSON.stringify([getResourceWorkspaceKey(), gateway.resourceConnectionId]);
+    // Only a terminal that is still in this view can survive a refresh. A saved or
+    // hidden selection still needs a current inventory before it attaches.
+    const mountedWorkers =
+      this._workerObservation.status === 'stale' &&
+      gateway.connectionState === 'connected' &&
+      this.workerQuery.belongsToWorkspace &&
+      this._renderedWorkerScope === workerScope
+        ? new Set(
+            Array.from(
+              this.renderRoot.querySelectorAll('terminal-view'),
+              (view) => view.workerRefJson,
+            ),
+          )
+        : undefined;
+    this._renderedWorkerScope = workerScope;
 
     return html`
       <div class="toolbar">
@@ -1253,12 +1278,25 @@ export class TerminalSplitView extends LitElement {
                       </button>
                     </div>`
                 : pane.type === 'worker'
-                  ? this.workerQuery.ready &&
-                    this._tmuxWorkers.some((worker) => tmuxWorkerRefsMatch(worker.ref, pane.ref))
-                    ? html`<terminal-view
-                        .workerRefJson=${JSON.stringify(pane.ref)}
-                        @terminal-close=${this._handleTerminalClose}
-                      ></terminal-view>`
+                  ? shouldRenderWorkerTerminal({
+                      ready: this.workerQuery.ready,
+                      status: this._workerObservation.status,
+                      targetPresent: this._tmuxWorkers.some((worker) =>
+                        tmuxWorkerRefsMatch(worker.ref, pane.ref),
+                      ),
+                      mountedOnCurrentConnection:
+                        mountedWorkers?.has(JSON.stringify(pane.ref)) ?? false,
+                    })
+                    ? keyed(
+                        workerScope,
+                        html`<terminal-view
+                          .canAttachWorker=${this.workerQuery.ready
+                            ? this._canAttachWorker
+                            : waitForCurrentWorkerInventory}
+                          .workerRefJson=${JSON.stringify(pane.ref)}
+                          @terminal-close=${this._handleTerminalClose}
+                        ></terminal-view>`,
+                      )
                     : html`<div class="empty-slot">
                         Saved terminal selection. Wait for current worker inventory before
                         connecting.

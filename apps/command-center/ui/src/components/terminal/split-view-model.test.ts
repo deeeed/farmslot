@@ -23,6 +23,7 @@ import {
   selectActiveRunSlotIds,
   selectPinnedSlotIds,
   selectWorkspaceRuns,
+  shouldRenderWorkerTerminal,
   slotHasActiveRunTerminal,
   tmuxRefTitle,
   watchEntryDescription,
@@ -79,6 +80,40 @@ function makeRun(
 }
 
 const ref = { nodeId: 'node-a', session: 'work', target: '%3', window: '2', pane: '1' };
+
+test('worker terminal keeps its mount during a stale refresh on the same connection', () => {
+  const stale = { ready: false, status: 'stale', targetPresent: true } as const;
+
+  assert.equal(shouldRenderWorkerTerminal({ ...stale, mountedOnCurrentConnection: true }), true);
+  assert.equal(shouldRenderWorkerTerminal({ ...stale, mountedOnCurrentConnection: false }), false);
+
+  const ready = { ready: true, status: 'ready', mountedOnCurrentConnection: true } as const;
+  assert.equal(shouldRenderWorkerTerminal({ ...ready, targetPresent: true }), true);
+  assert.equal(shouldRenderWorkerTerminal({ ...ready, targetPresent: false }), false);
+  assert.equal(
+    shouldRenderWorkerTerminal({
+      ...ready,
+      targetPresent: true,
+      mountedOnCurrentConnection: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRenderWorkerTerminal({
+      ...stale,
+      targetPresent: false,
+      mountedOnCurrentConnection: true,
+    }),
+    false,
+  );
+
+  for (const status of ['loading', 'error', 'unsupported'] as const) {
+    assert.equal(
+      shouldRenderWorkerTerminal({ ...stale, status, mountedOnCurrentConnection: true }),
+      false,
+    );
+  }
+});
 
 test('split view model parses persisted worker refs and watch items defensively', () => {
   assert.deepEqual(parseWorkerRefs(null), []);
