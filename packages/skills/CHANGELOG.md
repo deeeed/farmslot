@@ -6,6 +6,10 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.13.19 - 2026-11-19
+
+- Pin the shared composed-evidence SDK dependency cohort for consistent viewer data.
+
 ## 0.13.18 - 2026-11-18
 
 - Align published dependencies with @farmslot/agent-runtime 0.50.0, @farmslot/protocol 0.90.0.

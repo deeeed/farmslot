@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.23 - 2026-11-19
+
+- Provide composed evidence metadata through the existing folder reader and keep the shared evidence entry portable for browser consumers.
+
 ## 0.35.22 - 2026-11-19
 
 - Let embedded prepare hosts opt out of verification during launch so fixtures can establish readiness before the existing final verification. The default order and failure handling remain unchanged.

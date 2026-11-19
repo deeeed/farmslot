@@ -1,1 +1,0 @@
-- Claude reviews accept the CLI effort levels low, medium, high, xhigh, and max. A fresh review defaults to medium. A worker launch keeps an omitted Claude effort unset.
