@@ -184,6 +184,37 @@ test('a relaunched context or an oversized child keeps the parent marks', () => 
   );
 });
 
+test('a full Perps review retains its 28 shared and 13 repository rows', () => {
+  const run = reviewRun();
+  const shared = run.metrics.subtasks![0];
+  const rules = (count: number, offset: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      stepNumber: index + 1,
+      label: 'A Perps rule with a long checklist title '.repeat(3),
+      checkedAt: at(offset + index),
+    }));
+  shared.checklistTiming!.events = rules(28, 10);
+  run.metrics.subtasks!.push({
+    ...shared,
+    id: 'perps-client',
+    parent: { checklist: 'CHECKLIST.md', stepNumber: 2 },
+    checklistTiming: { schemaVersion: 1, events: rules(13, 75) },
+  });
+  const marks = receiptChecklistMarks(run, context);
+  assert.equal(marks.filter((mark) => mark.label.startsWith('perps-shared ')).length, 28);
+  assert.equal(marks.filter((mark) => mark.label.startsWith('perps-client ')).length, 13);
+  const usage = countToolUsage(
+    {
+      tools: marks.map((mark) => ({ name: 'bash', issuedAt: mark.checkedAt })),
+      tokens: null,
+      compactions: null,
+    },
+    marks,
+  );
+  assert.equal(usage.toolCalls, 43);
+  assert.ok(Buffer.byteLength(JSON.stringify(usage)) < 64 * 1024);
+});
+
 test('a long rule title is cut to the receipt title budget', () => {
   const run = reviewRun();
   run.metrics.subtasks![0].checklistTiming!.events = [

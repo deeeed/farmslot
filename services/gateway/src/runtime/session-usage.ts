@@ -141,7 +141,7 @@ export function contextChecklistMarks(
  * At most this many child rows split a receipt, each titled in at most RECEIPT_CHILD_TITLE_CHARS,
  * so the receipt stays well inside the 64 KiB usage read.
  */
-export const RECEIPT_CHILD_MARK_LIMIT = 30;
+export const RECEIPT_CHILD_MARK_LIMIT = 48;
 export const RECEIPT_CHILD_TITLE_CHARS = 80;
 
 function childTitle(id: string, row: number, label: string): string {
