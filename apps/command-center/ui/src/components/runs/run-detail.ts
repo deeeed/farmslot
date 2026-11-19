@@ -1,4 +1,4 @@
-import { html } from 'lit';
+import { html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
 import {
@@ -6,6 +6,7 @@ import {
   type EvidenceReviewModel,
   readEvidenceReviewReport,
   runEvidencePending,
+  runEvidenceView,
 } from '@farmslot/adapter-sdk/evidence';
 import {
   buildRunResolveDecisionParams,
@@ -47,6 +48,7 @@ import './run-pipeline-mini.js';
 import './run-tag-editor.js';
 import '../shared/evidence-reviewer.js';
 import '../shared/media-lightbox.js';
+import './composed-evidence-view.js';
 import '../shared/step-artifacts.js';
 import '../workspace/review-workspace.js';
 import '../workspace/ready-workspace.js';
@@ -1810,8 +1812,20 @@ export class RunDetail extends RunDetailState {
     };
   }
 
+  private _composedEvidenceUrl = (path: string): string => this._captureEvidenceResolver()(path);
+
   private _renderRunEvidence(run: Run) {
-    return renderRunEvidence(run, this._runEvidenceContext(run), false);
+    const model = this.evidenceModel;
+    return html`
+      ${model?.flow
+        ? html`<composed-evidence-view
+            .view=${runEvidenceView(model)}
+            .runId=${run.id}
+            .resolveUrl=${this._composedEvidenceUrl}
+          ></composed-evidence-view>`
+        : nothing}
+      ${renderRunEvidence(run, this._runEvidenceContext(run), false)}
+    `;
   }
 
   private _renderInteractivePackets(run: Run) {
