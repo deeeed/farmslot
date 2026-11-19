@@ -13,10 +13,13 @@ import { repeat } from 'lit/directives/repeat.js';
 
 import type {
   RunEvidenceFile,
+  RunEvidenceFlow,
   RunEvidenceFlowNode,
   RunEvidenceFlowOccurrence,
+  RunEvidenceInvocationTiming,
   RunEvidenceView,
 } from '@farmslot/adapter-sdk/evidence';
+import type { RecipeTimingQualification } from '@farmslot/protocol/recipe';
 
 import '../shared/media-lightbox.js';
 
@@ -33,6 +36,42 @@ import {
   composedEvidencePositionFromHash,
   composedEvidenceSelectionHash,
 } from './composed-evidence-model.js';
+
+function timingValue(ms: number | null, qualification: RecipeTimingQualification): string {
+  if (ms === null || qualification === 'unknown') return 'Unavailable';
+  return qualification === 'partial' ? `At least ${ms} ms` : `${ms} ms`;
+}
+
+function renderInvocationTiming(timing: RunEvidenceInvocationTiming | undefined) {
+  if (!timing) return nothing;
+  return html`<dl class="timing" aria-label="Invocation timing">
+    <dt>Inclusive</dt>
+    <dd>${timingValue(timing.inclusiveMs, timing.qualification.inclusive)}</dd>
+    <dt>Self</dt>
+    <dd>${timingValue(timing.selfMs, timing.qualification.self)}</dd>
+  </dl>`;
+}
+
+function renderTimingRollups({ claimTimings, unassignedTiming }: RunEvidenceFlow) {
+  const claims = Object.entries(claimTimings ?? {});
+  if (!claims.length && !unassignedTiming) return nothing;
+  return html`<details class="timing-rollups" aria-label="Timing rollups" open>
+    <summary>Timing rollups</summary>
+    <dl class="timing">
+      ${unassignedTiming
+        ? html`<dt>Unassigned</dt>
+            <dd>${timingValue(unassignedTiming.durationMs, unassignedTiming.qualification)}</dd>`
+        : nothing}
+      ${repeat(
+        claims,
+        ([id]) => id,
+        ([id, { durationMs, qualification }]) =>
+          html`<dt>${id}</dt>
+            <dd>${timingValue(durationMs, qualification)}</dd>`,
+      )}
+    </dl>
+  </details>`;
+}
 
 @customElement('composed-evidence-view')
 export class ComposedEvidenceView extends LitElement {
@@ -136,8 +175,25 @@ export class ComposedEvidenceView extends LitElement {
       min-width: 0;
       overflow-wrap: anywhere;
     }
-    .binding {
+    .binding,
+    .timing-rollups {
       margin: ${unsafeCSS(spacing.sm)} 0;
+    }
+    .timing-rollups summary {
+      cursor: pointer;
+    }
+    .timing {
+      display: grid;
+      grid-template-columns: minmax(0, max-content) minmax(6rem, 1fr);
+      gap: 4px ${unsafeCSS(spacing.md)};
+      margin: ${unsafeCSS(spacing.sm)} 0;
+    }
+    .timing dt {
+      color: ${unsafeCSS(colors.textMuted)};
+    }
+    .timing dd {
+      margin: 0;
+      font-variant-numeric: tabular-nums;
     }
     .actions {
       display: flex;
@@ -362,11 +418,13 @@ export class ComposedEvidenceView extends LitElement {
                     ${selected.breadcrumbIds.map((id) => this.nodes.get(id)?.label).join(' › ')}
                   </p>
                   <h4>${selected.label}</h4>
+                  ${renderInvocationTiming(selected.timing)}
                   ${repeat(selected.occurrences, composedEvidenceOccurrenceKey, (occurrence) =>
                     this.renderOccurrence(occurrence),
                   )}
                 `
               : nothing}
+            ${renderTimingRollups(flow)}
             ${retained.length
               ? html`<details>
                   <summary>Evidence from earlier executions</summary>
