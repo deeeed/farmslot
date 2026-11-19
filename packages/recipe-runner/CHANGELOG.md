@@ -11,6 +11,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 - Project invocation ancestry once from the prepared flow tree and carry labeled breadcrumbs on existing HUD flow updates, keeping repeated calls distinct.
 - mm-harness 0.96.34 consumes runner 0.48.0 and protocol 0.90.0 for overall HUD progress and invocation ancestry.
 - mm-harness 0.96.35 pins this runner release and protocol 0.90.0.
+- mm-harness 0.96.36 keeps this runner release and protocol 0.90.0, and updates recipe-cli to 0.35.22 for Mobile prepare sequencing.
 
 ## 0.47.0 - 2026-11-18
 
