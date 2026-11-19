@@ -137,16 +137,6 @@ function videos(model: EvidenceReviewModel): RunEvidenceVideo[] {
 
 /** Materialize immutable source facts once; selection and run display facts stay outside. */
 function projectRunEvidenceView(model: EvidenceReviewModel, runStart: number): RunEvidenceView {
-  // A step seeks only its own execution's recording: a baseline's index is another trace's.
-  const stepCue = (traceIndex: number): RunEvidenceCue | null => {
-    for (const { videoPath } of model.currentRecordings) {
-      const startMs = model.markerSeekMs(videoPath, traceIndex, 'start');
-      const endMs = model.markerSeekMs(videoPath, traceIndex, 'end');
-      if (startMs !== null && endMs !== null)
-        return { videoPath: model.artifactPath(videoPath), startMs, endMs };
-    }
-    return null;
-  };
   const step = (occurrence: EvidenceReviewOccurrence): RunEvidenceStep => {
     const atMs = Date.parse(occurrence.startedAt ?? '') - runStart;
     return {
@@ -157,7 +147,7 @@ function projectRunEvidenceView(model: EvidenceReviewModel, runStart: number): R
       ok: occurrence.ok,
       proves: [...occurrence.proves],
       files: occurrence.artifacts.map(file),
-      cue: stepCue(occurrence.traceIndex),
+      cue: structuredClone(model.occurrenceCue(occurrence.traceIndex)),
       atMs: Number.isFinite(atMs) ? Math.max(0, atMs) : null,
     };
   };

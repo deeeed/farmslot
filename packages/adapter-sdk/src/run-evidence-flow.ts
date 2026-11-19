@@ -16,7 +16,6 @@ import type {
   EvidenceReviewInput,
   EvidenceReviewModel,
   EvidenceReviewOccurrence,
-  EvidenceReviewRecordingInput,
 } from './evidence-review-model.js';
 import type { RunEvidenceCue, RunEvidenceFile } from './run-evidence-view.js';
 
@@ -25,7 +24,7 @@ export interface EvidenceReviewPendingFlow {
   update: RecipeFlowUpdate;
 }
 
-export type RunEvidenceFlowStatus = 'pending' | 'running' | 'pass' | 'fail' | 'skipped' | 'unknown';
+export type RunEvidenceFlowStatus = 'running' | 'pass' | 'fail' | 'skipped' | 'unknown';
 
 export interface RunEvidenceFlowDecision {
   case: string | null;
@@ -63,7 +62,7 @@ interface FlowProjectionContext {
   trace: readonly unknown[];
   occurrences: readonly EvidenceReviewOccurrence[];
   claims: readonly EvidenceReviewClaim[];
-  recordings: readonly EvidenceReviewRecordingInput[];
+  occurrenceCue: EvidenceReviewModel['occurrenceCue'];
   markerSeekMs: EvidenceReviewModel['markerSeekMs'];
   artifactPath(path: string): string;
   warnings: string[];
@@ -214,15 +213,7 @@ export function projectRunEvidenceFlow(
   const byNode = new Map<string, RunEvidenceFlowOccurrence[]>();
   for (const occurrence of context.occurrences) {
     if (!recipeRunId) continue;
-    let cue: RunEvidenceCue | null = null;
-    for (const { timeline } of context.recordings) {
-      const startMs = context.markerSeekMs(timeline.videoPath, occurrence.traceIndex, 'start');
-      const endMs = context.markerSeekMs(timeline.videoPath, occurrence.traceIndex, 'end');
-      if (startMs !== null && endMs !== null) {
-        cue = { videoPath: context.artifactPath(timeline.videoPath), startMs, endMs };
-        break;
-      }
-    }
+    const cue = context.occurrenceCue(occurrence.traceIndex);
     const node = nodes.get(occurrence.nodeId);
     const value: RunEvidenceFlowOccurrence = {
       recipeRunId,
@@ -277,8 +268,8 @@ export function projectRunEvidenceFlow(
       const value = pkg && isRecord(pkg.summary) ? pkg.summary.status : undefined;
       return value === 'pass' || value === 'fail' || value === 'unknown'
         ? value
-        : update.activeId === null && update.progress.current === 0
-          ? 'pending'
+        : update.activeId === null
+          ? 'unknown'
           : 'running';
     }
     if (

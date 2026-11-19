@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 
 import {
+  digestRecipeDocument,
   isRecord,
   recipeTraceEntries,
   type RecordedEvidencePackageInput,
@@ -24,6 +25,130 @@ const entry = (nodeId: string, extra: Record<string, unknown> = {}) => ({
   durationMs: 10,
   ok: true,
   ...extra,
+});
+
+const visualFixture = () =>
+  (
+    JSON.parse(
+      fs.readFileSync(
+        new URL('../../recipe-runner/test/fixtures/visual-review-package.json', import.meta.url),
+        'utf8',
+      ),
+    ) as { input: RecordedEvidencePackageInput }
+  ).input;
+
+test('pending evidence never substitutes a prior recording trace for the current attempt', () => {
+  const source = visualFixture();
+  const failed = entry('first/nested/observe', { ok: false });
+  const model = createEvidenceReviewModel({
+    evidencePending: true,
+    pendingTrace: { entries: [failed] },
+    pendingFlow: {
+      tree,
+      update: createRecipeFlowProjection(tree, 'new-attempt').start('first/nested/observe'),
+    },
+    recordings: Object.values(source.timelines).map((timeline) => ({
+      timeline,
+      videoPath: timeline.videoPath,
+      videoDigest: timeline.videoDigest,
+      trace: source.trace,
+    })),
+  });
+  const view = runEvidenceView(model);
+  assert.equal(view.steps.length, 1);
+  assert.equal(view.steps[0]?.nodeId, failed.nodeId);
+  assert.equal(view.steps[0]?.ok, false);
+  assert.equal(view.steps[0]?.cue, null);
+  assert.ok(model.errors.some((error) => error.includes('different execution trace')));
+});
+
+test('an idle HUD update has unknown outcome until an explicit summary is available', () => {
+  for (const outcome of ['pass', 'fail', 'unknown'] as const) {
+    const progress = createRecipeFlowProjection(tree, 'terminal-attempt');
+    progress.start('first/nested/observe');
+    progress.complete('first/nested/observe', outcome === 'pass');
+    const model = createEvidenceReviewModel({
+      evidencePending: true,
+      pendingTrace: { entries: [entry('first/nested/observe', { ok: outcome === 'pass' })] },
+      pendingFlow: { tree, update: progress.finish(outcome) },
+    });
+    assert.equal(runEvidenceView(model).flow?.nodes[0]?.status, 'unknown', outcome);
+  }
+  const empty = createEvidenceReviewModel({
+    evidencePending: true,
+    pendingTrace: { entries: [] },
+    pendingFlow: {
+      tree,
+      update: createRecipeFlowProjection(tree, 'empty-attempt').finish('pass'),
+    },
+  });
+  assert.equal(runEvidenceView(empty).flow?.nodes[0]?.status, 'unknown');
+});
+
+test('marker lookup grows linearly and Flow and Story share qualified cues', (t) => {
+  const source = visualFixture();
+  const original = Object.values(source.timelines)[0]!;
+  const entries = recipeTraceEntries(source.trace)!;
+  const count = 128;
+  const trace = { entries: Array.from({ length: count }, () => structuredClone(entries[0])) };
+  let markerReads = 0;
+  const find = Array.prototype.find;
+  const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, 'find');
+  assert.ok(descriptor);
+  t.after(() => Object.defineProperty(Array.prototype, 'find', descriptor));
+  Object.defineProperty(Array.prototype, 'find', {
+    ...descriptor,
+    value: function (
+      this: unknown[],
+      predicate: (value: unknown, index: number, values: unknown[]) => unknown,
+      thisArg?: unknown,
+    ) {
+      return find.call(this, (value, index, values) => {
+        if (isRecord(value) && 'traceIndex' in value && 'startRangeMs' in value) markerReads++;
+        return predicate.call(thisArg, value, index, values);
+      });
+    },
+  });
+  const timeline = {
+    ...original,
+    traceDigest: digestRecipeDocument(trace.entries),
+    markers: Array.from({ length: count }, (_, index) => ({
+      ...original.markers[0]!,
+      traceIndex: index,
+    })),
+  };
+  assert.ok(isRecord(source.recipe));
+  const prepared = buildRecipeInvocationTree({
+    rootRef: '$root',
+    root: source.recipe,
+    recipes: new Map(),
+  });
+  const model = createEvidenceReviewModel({
+    evidencePending: true,
+    pendingTrace: trace,
+    pendingFlow: {
+      tree: prepared,
+      update: createRecipeFlowProjection(prepared, 'indexed-attempt').snapshot(),
+    },
+    recordings: [
+      { timeline, trace, videoPath: timeline.videoPath, videoDigest: timeline.videoDigest },
+    ],
+  });
+  assert.deepEqual(model.errors, []);
+  const view = runEvidenceView(model);
+  assert.equal(view.steps.length, count);
+  t.diagnostic(`marker comparisons: ${markerReads} for ${count} markers`);
+  assert.ok(markerReads < count * 20, `marker reads: ${markerReads} for ${count} markers`);
+  const flowCues = view.flow?.nodes
+    .find((node) => node.id === original.markers[0]!.nodeId)
+    ?.occurrences.map((occurrence) => occurrence.cue);
+  assert.deepEqual(
+    flowCues,
+    view.steps.map((step) => step.cue),
+  );
+  const previousReads = markerReads;
+  runEvidenceView(model);
+  assert.equal(markerReads, previousReads, 'unchanged projections do not scan the marker history');
 });
 
 test('projects nested and repeated calls through the existing evidence export without timing', () => {
@@ -195,7 +320,7 @@ test('flow occurrence cues reuse checked media markers and remain null without a
   };
   const measured = runEvidenceView(measuredModel);
   const firstProjectionReads = markerReads;
-  assert.ok(firstProjectionReads > 0);
+  assert.equal(firstProjectionReads, 0, 'Story reuses the model-owned qualified cue');
   runEvidenceView(measuredModel);
   assert.equal(
     markerReads,

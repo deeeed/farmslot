@@ -1,5 +1,5 @@
 /** Portable evidence validation; importing this entry does not load capture or filesystem code. */
-export { buildRecipeInvocationAncestry } from '../core/flow.js';
+export { buildRecipeInvocationAncestry } from '../core/flow-ancestry.js';
 export { proofDocument } from './assertions.js';
 export type { RecipeComparisonCapture, RecipeComparisonCaptureRow } from './capture-comparisons.js';
 export { groupRecipeCaptureComparisons } from './capture-comparisons.js';

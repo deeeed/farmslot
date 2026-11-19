@@ -1,4 +1,13 @@
-import type { RecipeRecordingTimelineDocument, RecordingSegmentRef } from '@farmslot/protocol';
+import type {
+  RecipeRecordingMarker,
+  RecipeRecordingTimelineDocument,
+  RecordingSegmentRef,
+} from '@farmslot/protocol';
+
+export type RecipeRecordingMarkerLookup = (
+  timeline: RecipeRecordingTimelineDocument,
+  traceIndex: number,
+) => RecipeRecordingMarker | undefined;
 
 export interface OccurrenceRecordingCoverage {
   timing: 'measured' | 'untimed' | 'outside-recording';
@@ -17,10 +26,15 @@ export function occurrenceRecordingCoverage(
   traceIndex: number,
   segments: readonly RecordingSegmentRef[],
   timelines?: ReadonlyMap<string, RecipeRecordingTimelineDocument>,
+  markerLookup?: RecipeRecordingMarkerLookup,
 ): OccurrenceRecordingCoverage {
   const spans = segments.flatMap((segment, index) => {
     const timeline = timelines?.get(segment.videoPath);
-    const marker = timeline?.markers.find((entry) => entry.traceIndex === traceIndex);
+    const marker = timeline
+      ? markerLookup
+        ? markerLookup(timeline, traceIndex)
+        : timeline.markers.find((entry) => entry.traceIndex === traceIndex)
+      : undefined;
     return timeline &&
       marker &&
       marker.endRangeMs[1] >= 0 &&

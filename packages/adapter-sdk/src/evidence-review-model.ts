@@ -88,6 +88,7 @@ import {
   type RunEvidenceFlow,
   type RunEvidenceFlowOccurrence,
 } from './run-evidence-flow.js';
+import type { RunEvidenceCue } from './run-evidence-view.js';
 
 export type EvidenceReviewContext = 'gate' | 'pr-preview' | 'run-detail' | 'artifact';
 export type EvidenceReviewTiming = 'measured' | 'untimed' | 'outside-recording';
@@ -386,6 +387,8 @@ export interface EvidenceReviewModel {
     timeMs: number,
     mediaDurationMs?: number,
   ): EvidenceReviewPlaybackEffect;
+  /** One checked current-execution cue shared by Flow and Story. */
+  occurrenceCue(traceIndex: number): RunEvidenceCue | null;
   markerSeekMs(
     videoPath: string,
     traceIndex: number,
@@ -534,8 +537,8 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
   const trace =
     recipeTraceEntries(
       pkg?.trace ??
-        input.recordings?.[0]?.trace ??
-        (input.evidencePending ? input.pendingTrace : undefined),
+        (input.evidencePending ? input.pendingTrace : undefined) ??
+        input.recordings?.[0]?.trace,
     ) ?? [];
   const recordings: EvidenceReviewRecordingInput[] = pkg
     ? Object.values(pkg.timelines).map((timeline) => ({
@@ -835,17 +838,35 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     endMs: Math.min(timeline.durationMs, last.endRangeMs[1] + EVIDENCE_PADDING_MS),
     caption,
   });
+  // Timeline owners index markers once; seeks never scan the recording history.
+  const markerIndexes = new WeakMap<
+    RecipeRecordingTimelineDocument,
+    ReadonlyMap<number, RecipeRecordingMarker>
+  >();
+  const markerFor = (timeline: RecipeRecordingTimelineDocument, traceIndex: number) => {
+    let index = markerIndexes.get(timeline);
+    if (!index) {
+      index = new Map(timeline.markers.map((marker) => [marker.traceIndex, marker]));
+      markerIndexes.set(timeline, index);
+    }
+    return index.get(traceIndex);
+  };
   // One clip derivation for the fresh execution and each retained original.
   const clipsFrom = (
     source: ClipSource,
     traceIndex: number,
     caption: (marker: RecipeRecordingMarker) => string,
   ): EvidenceReviewClip[] => {
-    const coverage = occurrenceRecordingCoverage(traceIndex, source.segments, source.timelines);
+    const coverage = occurrenceRecordingCoverage(
+      traceIndex,
+      source.segments,
+      source.timelines,
+      markerFor,
+    );
     if (coverage.timing !== 'measured') return [];
     return coverage.segments.map((segment) => {
       const timeline = source.timelines.get(segment.videoPath)!;
-      const marker = timeline.markers.find((entry) => entry.traceIndex === traceIndex)!;
+      const marker = markerFor(timeline, traceIndex)!;
       return {
         ...clipForSpan(timeline, marker, marker, caption(marker), segment.videoDigest),
         ...(source.recipeRunId
@@ -941,7 +962,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
         (clips.length
           ? 'measured'
           : traceIndex !== undefined
-            ? occurrenceRecordingCoverage(traceIndex, segments, timelines).timing
+            ? occurrenceRecordingCoverage(traceIndex, segments, timelines, markerFor).timing
             : 'untimed'));
     const selectedFiles = [
       ...new Map(
@@ -1077,11 +1098,12 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
         traceIndex,
         playbackSources.get(videoPath)!.segments,
         playbackSources.get(videoPath)!.timelines,
+        markerFor,
       ).timing !== 'measured'
     )
       return null;
     const timeline = timelines.get(videoPath);
-    const marker = timeline?.markers.find((marker) => marker.traceIndex === traceIndex);
+    const marker = timeline ? markerFor(timeline, traceIndex) : undefined;
     if (!timeline || !marker) return null;
     const bounds = phase === 'start' ? marker.startRangeMs : marker.endRangeMs;
     const first = timeline.framesMs[0];
@@ -1096,6 +1118,22 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     )
       return null;
     return clamp((bounds[0] + bounds[1]) / 2, first, Math.min(last, duration));
+  };
+  const occurrenceCues = new Map<number, RunEvidenceCue | null>();
+  const occurrenceCue = (traceIndex: number): RunEvidenceCue | null => {
+    if (occurrenceCues.has(traceIndex)) return occurrenceCues.get(traceIndex)!;
+    let cue: RunEvidenceCue | null = null;
+    if (!replaced)
+      for (const { videoPath } of headTimelines.values()) {
+        const startMs = markerSeekMs(videoPath, traceIndex, 'start');
+        const endMs = markerSeekMs(videoPath, traceIndex, 'end');
+        if (startMs !== null && endMs !== null) {
+          cue = { videoPath: `${input.artifactPrefix ?? ''}${videoPath}`, startMs, endMs };
+          break;
+        }
+      }
+    occurrenceCues.set(traceIndex, cue);
+    return cue;
   };
   const markerBelongsToClaim = (
     videoPath: string,
@@ -1167,7 +1205,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     trace,
     occurrences,
     claims,
-    recordings,
+    occurrenceCue,
     markerSeekMs,
     artifactPath: (path) => `${input.artifactPrefix ?? ''}${path}`,
     warnings,
@@ -1513,7 +1551,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     selectOccurrence(traceIndex, recording) {
       if (recording) {
         const timeline = timelines.get(recording.videoPath);
-        const marker = timeline?.markers.find((entry) => entry.traceIndex === traceIndex);
+        const marker = timeline ? markerFor(timeline, traceIndex) : undefined;
         if (
           !timeline ||
           !marker ||
@@ -1604,6 +1642,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       if (timeMs < availableEnd) return effect();
       return advanceClip(availableEnd);
     },
+    occurrenceCue,
     markerSeekMs,
     adjacentFrameMs(videoPath, timeMs, direction) {
       const timeline = errors.length ? undefined : timelines.get(videoPath);
