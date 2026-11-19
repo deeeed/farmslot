@@ -417,7 +417,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
         const publishFailure = async () => {
           if (options.publishHudProgress && context) {
             try {
-              await options.publishHudProgress('fail', {
+              return await options.publishHudProgress('fail', {
                 nodeId: namespacedNodeId,
                 action,
                 node,
@@ -432,9 +432,12 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
               options.logger.warn(
                 `app.hud failure update failed for ${namespacedNodeId}: ${hudError instanceof Error ? hudError.message : String(hudError)}`,
               );
+              return false;
             }
           }
+          return true;
         };
+        let failureHudAvailable = true;
         // The recorder must see the acknowledged red HUD before its automatic still.
         // This open update has no invented elapsed end; the closed update follows capture.
         if (
@@ -443,7 +446,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
           action.startsWith('ui.') &&
           RECIPE_ASSERTION_ACTIONS.has(action)
         )
-          await publishFailure();
+          failureHudAvailable = await publishFailure();
         const failureStill =
           signal?.aborted || !context
             ? undefined
@@ -482,7 +485,8 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
           ...recipeFailureTraceFields(failure),
         });
         options.flow?.complete(namespacedNodeId, false);
-        await publishFailure();
+        // A failed delivery already recorded this diagnostic. Do not emit it twice.
+        if (failureHudAvailable) await publishFailure();
         if (
           !signal?.aborted &&
           causeClass === 'subject' &&
