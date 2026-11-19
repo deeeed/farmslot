@@ -1,13 +1,82 @@
 // Derive from the checkout under test on every run; never freeze worker templates here.
+import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import {
+  digestRecipeDocument,
+  getRecipeWorkflowActionEntries,
+  isRecord,
+  recipeTraceEntries,
+  validateRecipeArtifactPackage,
+  validateRecipeSuitePackage,
+} from '../../../packages/protocol/src/recipe/index.js';
 import type { ProjectPack } from '../lib/remote-node-stack.mjs';
 import { REVIEWER } from './fixtures.mjs';
 
 export const FULLFLOW_PROJECT = 'farmslot-farm';
 export const FULLFLOW_MODEL = { runner: 'pi', model: 'litellm/deepseek-v4p1-flash' } as const;
+
+const QA_CASE = 'version-cli';
+const QA_SUITE = 'suite';
+const QA_PACKAGE = `${QA_SUITE}/cases/${QA_CASE}`;
+const QA_COMMAND = 'node cli.mjs --version';
+const QA_STDOUT_MATCH = '^1\\.0\\.0\\s*$';
+
+export const FULLFLOW_QA_CRITERION = `${QA_COMMAND} prints 1.0.0.`;
+export const FULLFLOW_QA_SMOKE = [
+  `Before running the smoke, freeze one standalone suite case. Use \`${QA_CASE}\` as both its case ID and recipe proof target. The single executed case is also the smoke.`,
+  `Prefix the generated validation wrapper command with \`env -u RECIPE_TASK_DIR -u FARMSLOT_TASK_DIR\` and pass \`--artifacts-dir "$TASK_DIR/artifacts/${QA_PACKAGE}"\`, substituting the generated task directory for \`$TASK_DIR\`.`,
+  'Omit `--task-dir` so the wrapper uses the standalone suite package.',
+  `Prove the output of \`${QA_COMMAND}\` with an \`assert_output\` on stdout using \`match: ${JSON.stringify(QA_STDOUT_MATCH)}\`.`,
+  `Retain \`qa-scope.json\` and use \`${QA_SUITE}\` as the QA result's suitePath. Bind its smoke case and proof target \`${QA_CASE}\` to the executed package at \`${QA_PACKAGE}\`.`,
+].join(' ');
+
+export async function validateFullflowQaArtifacts(artifacts: string): Promise<void> {
+  const read = async (file: string): Promise<unknown> =>
+    JSON.parse(await readFile(path.join(artifacts, file), 'utf8'));
+
+  const qa = await read('qa-result.json');
+  assert(isRecord(qa) && qa.suitePath === QA_SUITE, 'QA result must bind the frozen suite');
+  assert.deepEqual(qa.smoke, { caseId: QA_CASE, proofTarget: QA_CASE }, 'QA smoke binding');
+  assert.deepEqual(qa.packages, { [QA_CASE]: QA_PACKAGE }, 'QA package binding');
+  assert(isRecord(qa.scope) && qa.scope.path === 'qa-scope.json', 'QA source scope binding');
+
+  const sourceScope = await read('qa-scope.json');
+  const scope = await read(`${QA_SUITE}/suite-scope.json`);
+  const result = await read(`${QA_SUITE}/suite-result.json`);
+  assert.equal(qa.scope.digest, digestRecipeDocument(sourceScope), 'QA source scope digest');
+  assert.equal(qa.scope.suiteDigest, digestRecipeDocument(scope), 'QA suite scope digest');
+  assert(isRecord(scope), 'QA suite scope must be an object');
+  assert.deepEqual(scope.cases, [{ id: QA_CASE }], 'QA suite must freeze the version CLI case');
+  const summaryPath = 'summaries/0001.json';
+  const frozenSummary = await read(`${QA_SUITE}/${summaryPath}`);
+  const suite = validateRecipeSuitePackage({ scope, result, summaries: { [summaryPath]: frozenSummary } });
+  assert.equal(suite.status, 'valid', JSON.stringify(suite.findings));
+
+  const { readRecordedEvidencePackage } = await import('@farmslot/recipe-runner');
+  const { input, checks } = await readRecordedEvidencePackage(path.join(artifacts, QA_PACKAGE));
+  const failedRead = checks.find((check) => check.status === 'fail');
+  if (failedRead) throw new Error(failedRead.message);
+  const { recipe, summary, trace } = input;
+  assert.deepEqual(summary, frozenSummary, 'QA package summary must match the frozen suite');
+  assert(isRecord(summary) && summary.status === 'pass', 'QA package must pass');
+  const checked = validateRecipeArtifactPackage(input);
+  assert.equal(checked.status, 'valid', JSON.stringify(checked.findings));
+
+  const entries = recipeTraceEntries(trace)?.filter(isRecord) ?? [];
+  const assertion = entries.find((entry) => entry.action === 'assert_output' && entry.ok === true
+    && Array.isArray(entry.proves) && entry.proves.includes(QA_CASE));
+  assert(isRecord(assertion?.output) && assertion.output.stream === 'stdout'
+    && assertion.output.match === QA_STDOUT_MATCH, 'QA smoke must assert exact version stdout');
+  const source = assertion.output.source;
+  const command = entries.find((entry) => entry.nodeId === source);
+  assert(command?.action === 'command' && command.ok === true && isRecord(command.output)
+    && command.output.stdout === '1.0.0\n', 'QA smoke command must print 1.0.0');
+  assert(getRecipeWorkflowActionEntries(recipe).some(({ nodeId, node }) =>
+    nodeId === command.nodeId && (node.cmd ?? node.command) === QA_COMMAND), 'QA smoke must run the version CLI');
+}
 
 export const FULLFLOW_SEED: Record<string, string> = {
   'package.json': JSON.stringify({
