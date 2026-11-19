@@ -1004,6 +1004,23 @@ export class RunDetail extends RunDetailState {
 
   private _acceptRecipeObservation(state: ResourceQueryState<RunRecipeRunsForRunResult>): void {
     const run = this.run;
+    const outputDecision = run ? pendingOutputReview(run) : undefined;
+    const position = outputDecision
+      ? null
+      : composedEvidencePositionFromHash(run.id, location.hash);
+    if (run && !position && this._linkRecipeOverride) {
+      const stillSelected = this._recipeRequestedId === this._linkRecipeOverride;
+      this._linkRecipeOverride = '';
+      this._restoredRecipeCall = '';
+      if (stillSelected) {
+        this._recipeRequestedId = '';
+        this._selectedRecipeRunId = '';
+        this._evidenceGroupId = null;
+        this._recordedEvidence = undefined;
+        this._bindRecipeRuns(run);
+        return;
+      }
+    }
     const result = this.recipeQuery.belongsToWorkspace ? state.data : undefined;
     const failure = readFailureText(this.recipeQuery, this._now);
     if (!run || !result) {
@@ -1021,23 +1038,6 @@ export class RunDetail extends RunDetailState {
       return;
     }
     this._recipeRuns = result.recipeRuns;
-    const outputDecision = pendingOutputReview(run);
-    const position = outputDecision
-      ? null
-      : composedEvidencePositionFromHash(run.id, location.hash);
-    if (!position && this._linkRecipeOverride) {
-      const stillSelected = this._recipeRequestedId === this._linkRecipeOverride;
-      this._linkRecipeOverride = '';
-      this._restoredRecipeCall = '';
-      if (stillSelected) {
-        this._recipeRequestedId = '';
-        this._selectedRecipeRunId = '';
-        this._evidenceGroupId = null;
-        this._recordedEvidence = undefined;
-        this._bindRecipeRuns(run);
-        return;
-      }
-    }
     if (
       !outputDecision &&
       this._recipeRequestedId &&
@@ -1064,14 +1064,12 @@ export class RunDetail extends RunDetailState {
     this._recordedEvidence = result.recordedEvidence;
     this._evidenceGroupId = result.selectedRecipeRunId;
     this._evidenceTaskRelative = Boolean(outputDecision) || !result.recordedEvidence?.input;
-    const desired =
-      linkedGroup ??
-      runDetailDesiredRecipeRunId({
-        recipeRuns: result.recipeRuns,
-        pendingRecipeRunId: this._pendingRecipeRunSelectionId,
-        currentRecipeRunId: this._selectedRecipeRunId,
-        gatewaySelectedRecipeRunId: result.selectedRecipeRunId,
-      });
+    const desired = runDetailDesiredRecipeRunId({
+      recipeRuns: result.recipeRuns,
+      pendingRecipeRunId: this._pendingRecipeRunSelectionId,
+      currentRecipeRunId: this._selectedRecipeRunId,
+      gatewaySelectedRecipeRunId: result.selectedRecipeRunId,
+    });
     this._selectedRecipeRunId = desired;
     if (desired === this._pendingRecipeRunSelectionId) this._pendingRecipeRunSelectionId = '';
     if (desired && desired !== result.selectedRecipeRunId) {
