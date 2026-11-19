@@ -401,6 +401,8 @@ async function summarizeClaude(
   const totals = emptyTotals();
   let state = emptyIncrementalSessionUsageState();
   let cost: number | null = 0;
+  let lastModel: string | undefined;
+  let pending: ClaudeTokens | null = null;
   const seen = new Set<string>();
   for await (const obj of safeJsonLines(filePath)) {
     const message = obj.message;
@@ -428,30 +430,29 @@ async function summarizeClaude(
         ? message.model
         : undefined;
     if (messageModel && totals.model === 'unknown') totals.model = messageModel;
+    if (messageModel) {
+      lastModel = messageModel;
+      // Tokens recorded before any message named its model belong to the first model named.
+      if (pending) {
+        cost = addClaudeCost(cost, messageModel, pending);
+        pending = null;
+      }
+    }
     const before = state;
     state = applyClaudeAssistantUsage(state, obj);
     // Price each counted message at its own model, so a session that switches models (a Haiku
-    // sub-agent, an Opus fallback) is not billed entirely at its first model's rate.
+    // sub-agent, an Opus fallback) is not billed entirely at its first model's rate. A message
+    // without a model is priced at the most recent model named.
     if (state !== before) {
-      const tokens = {
+      const tokens: ClaudeTokens = {
         input: state.inputTokens - before.inputTokens,
         output: state.outputTokens - before.outputTokens,
         cacheWrite: state.cacheCreation - before.cacheCreation,
         cacheRead: state.cacheRead - before.cacheRead,
       };
-      if (tokens.input + tokens.output + tokens.cacheWrite + tokens.cacheRead > 0) {
-        const model = messageModel ?? totals.model;
-        const prices = Object.entries(CLAUDE_PRICING).find(([k]) => model.includes(k))?.[1];
-        cost =
-          cost === null || !prices
-            ? null
-            : cost +
-              (tokens.input * prices.input +
-                tokens.output * prices.output +
-                tokens.cacheWrite * prices.cache_write +
-                tokens.cacheRead * prices.cache_read) /
-                1_000_000;
-      }
+      const model = messageModel ?? lastModel;
+      if (model) cost = addClaudeCost(cost, model, tokens);
+      else pending = addClaudeTokens(pending, tokens);
     }
   }
   totals.turns = state.turns;
@@ -465,8 +466,47 @@ async function summarizeClaude(
   const modelPriced = Object.keys(CLAUDE_PRICING).some(
     (k) => totals.model !== 'unknown' && totals.model.includes(k),
   );
+  // Tokens from a session that never names its model have no price.
+  if (pending && claudeTokenCount(pending) > 0) cost = null;
   if (cost !== null && (state.totalTokens > 0 || modelPriced)) totals.cost_usd = cost;
   return totals;
+}
+
+interface ClaudeTokens {
+  input: number;
+  output: number;
+  cacheWrite: number;
+  cacheRead: number;
+}
+
+function claudeTokenCount(tokens: ClaudeTokens): number {
+  return tokens.input + tokens.output + tokens.cacheWrite + tokens.cacheRead;
+}
+
+function addClaudeTokens(sum: ClaudeTokens | null, tokens: ClaudeTokens): ClaudeTokens {
+  return sum
+    ? {
+        input: sum.input + tokens.input,
+        output: sum.output + tokens.output,
+        cacheWrite: sum.cacheWrite + tokens.cacheWrite,
+        cacheRead: sum.cacheRead + tokens.cacheRead,
+      }
+    : tokens;
+}
+
+/** Adds these tokens at the model's listed rate; tokens on an unlisted model leave no cost. */
+function addClaudeCost(cost: number | null, model: string, tokens: ClaudeTokens): number | null {
+  if (cost === null || claudeTokenCount(tokens) === 0) return cost;
+  const prices = Object.entries(CLAUDE_PRICING).find(([k]) => model.includes(k))?.[1];
+  if (!prices) return null;
+  return (
+    cost +
+    (tokens.input * prices.input +
+      tokens.output * prices.output +
+      tokens.cacheWrite * prices.cache_write +
+      tokens.cacheRead * prices.cache_read) /
+      1_000_000
+  );
 }
 
 // ─── Codex summarizer ─────────────────────────────────────────────────────────
