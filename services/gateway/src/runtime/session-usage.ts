@@ -154,7 +154,7 @@ export function contextChecklistMarks(
 }
 
 /** Bounds child row expansion independently of the serialized remote receipt limit. */
-export const RECEIPT_CHILD_MARK_LIMIT = 48;
+export const RECEIPT_CHILD_MARK_LIMIT = 100;
 export const RECEIPT_CHILD_TITLE_CHARS = 80;
 
 function childTitle(id: string, row: number, label: string): string {
