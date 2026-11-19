@@ -1,7 +1,7 @@
 // Derive from the checkout under test on every run; never freeze worker templates here.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -55,14 +55,14 @@ export async function validateFullflowQaArtifacts(artifacts: string): Promise<vo
   const suite = validateRecipeSuitePackage({ scope, result, summaries: { [summaryPath]: frozenSummary } });
   assert.equal(suite.status, 'valid', JSON.stringify(suite.findings));
 
-  const [recipe, summary, trace, manifest, recipeResolution] = await Promise.all(
-    ['recipe.json', 'summary.json', 'trace.json', 'artifact-manifest.json', 'recipe-resolution.json']
-      .map((file) => read(`${QA_PACKAGE}/${file}`)),
-  );
+  const { readRecordedEvidencePackage } = await import('@farmslot/recipe-runner');
+  const { input, checks } = await readRecordedEvidencePackage(path.join(artifacts, QA_PACKAGE));
+  const failedRead = checks.find((check) => check.status === 'fail');
+  if (failedRead) throw new Error(failedRead.message);
+  const { recipe, summary, trace } = input;
   assert.deepEqual(summary, frozenSummary, 'QA package summary must match the frozen suite');
   assert(isRecord(summary) && summary.status === 'pass', 'QA package must pass');
-  const artifactPaths = await readdir(path.join(artifacts, QA_PACKAGE));
-  const checked = validateRecipeArtifactPackage({ recipe, summary, trace, manifest, recipeResolution, artifactPaths });
+  const checked = validateRecipeArtifactPackage(input);
   assert.equal(checked.status, 'valid', JSON.stringify(checked.findings));
 
   const entries = recipeTraceEntries(trace)?.filter(isRecord) ?? [];

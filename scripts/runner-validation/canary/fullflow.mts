@@ -275,7 +275,13 @@ export default function(pi) {
           const artifacts = run.taskFile && path.join(path.dirname(run.taskFile), 'artifacts');
           if (!artifacts || !existsSync(path.join(artifacts, 'report.html')))
             check.differences.push('qa-report: report.html not retained');
-          if (artifacts) await validateFullflowQaArtifacts(artifacts);
+          if (artifacts) {
+            try {
+              await validateFullflowQaArtifacts(artifacts);
+            } catch (error) {
+              check.differences.push(`qa-package: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          }
         }
         if (name === 'fix-bug' && (!held || selectedClose !== 'hold')) check.differences.push('gate: offered hold was not accepted into the held state');
         if (selectedClose && !run.decisions.some((decision) => decision.resolvedAt && decision.resolvedAction === selectedClose))
