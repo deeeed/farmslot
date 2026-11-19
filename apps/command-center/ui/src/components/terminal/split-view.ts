@@ -1041,6 +1041,13 @@ export class TerminalSplitView extends LitElement {
   ) {
     const open = this._selectedWorkers.some((selected) => tmuxWorkerRefsMatch(selected, ref));
     const ending = this._endingSession === `${ref.nodeId}:${ref.session}`;
+    const cannotEnd =
+      !gateway.isGlobalAdmin ||
+      !worker?.canEndSession ||
+      !worker.pid ||
+      Boolean(this._endingSession);
+    // A paced reread still blocks the action, but native disabling would drop focus.
+    const endDisabled = cannotEnd || !this._workerInventoryVerified || !this.workerQuery.actable;
     return html`<div
       data-session=${ref.session}
       class="worker-chip ${worker ? 'live' : 'stale'} ${worker?.status.requiresAttention
@@ -1078,10 +1085,8 @@ export class TerminalSplitView extends LitElement {
             : html`<button
                 class="worker-chip-btn danger"
                 data-end-session=${ref.session}
-                ?disabled=${!this.workerQuery.ready ||
-                !gateway.isGlobalAdmin ||
-                !worker?.canEndSession ||
-                Boolean(this._endingSession)}
+                ?disabled=${endDisabled}
+                aria-disabled=${endDisabled || !this.workerQuery.ready}
                 title=${!gateway.isGlobalAdmin
                   ? 'Only a farm administrator can end sessions'
                   : worker?.canEndSession
