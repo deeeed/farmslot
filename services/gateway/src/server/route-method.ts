@@ -1250,11 +1250,6 @@ async function routeAuthorizedMethod(
       const registration = `worker:${key}`;
       const mySeq = (state.terminalSubscribeSeq.get(registration) ?? 0) + 1;
       state.terminalSubscribeSeq.set(registration, mySeq);
-      const oldHandler = state.workerTerminalHandlers.get(key);
-      if (oldHandler) {
-        unsubscribeWorkerTerminalPty(key, oldHandler);
-        state.workerTerminalHandlers.delete(key);
-      }
       terminalRedraws.cancel(state, key);
       const {
         key: ptyKey,

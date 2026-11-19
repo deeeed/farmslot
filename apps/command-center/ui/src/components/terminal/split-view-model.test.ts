@@ -24,6 +24,7 @@ import {
   reconcileTerminalWatchlist,
   selectActiveRunSlotIds,
   selectPinnedSlotIds,
+  selectWatchlistTerminalRefs,
   selectWorkspaceRuns,
   shouldRenderWorkerTerminal,
   slotHasActiveRunTerminal,
@@ -88,8 +89,6 @@ test('worker terminal keeps its mount during a stale refresh on the same connect
     ready: false,
     status: 'stale',
     targetPresent: true,
-    panePresent: false,
-    nodeObservationFailed: false,
   } as const;
 
   assert.equal(shouldRenderWorkerTerminal({ ...stale, mountedOnCurrentConnection: true }), true);
@@ -98,8 +97,6 @@ test('worker terminal keeps its mount during a stale refresh on the same connect
   const ready = {
     ready: true,
     status: 'ready',
-    panePresent: false,
-    nodeObservationFailed: false,
     mountedOnCurrentConnection: true,
   } as const;
   assert.equal(shouldRenderWorkerTerminal({ ...ready, targetPresent: true }), true);
@@ -118,13 +115,6 @@ test('worker terminal keeps its mount during a stale refresh on the same connect
       targetPresent: false,
       mountedOnCurrentConnection: true,
     }),
-    true,
-  );
-
-  const partial = { ...ready, targetPresent: false, nodeObservationFailed: true };
-  assert.equal(shouldRenderWorkerTerminal(partial), true);
-  assert.equal(
-    shouldRenderWorkerTerminal({ ...partial, mountedOnCurrentConnection: false }),
     false,
   );
 
@@ -134,21 +124,6 @@ test('worker terminal keeps its mount during a stale refresh on the same connect
       false,
     );
   }
-});
-
-test('a live pane with a renamed session can only retain an existing mount', () => {
-  const renamed = {
-    ready: true,
-    status: 'ready',
-    targetPresent: false,
-    panePresent: true,
-    nodeObservationFailed: false,
-  } as const;
-  assert.equal(shouldRenderWorkerTerminal({ ...renamed, mountedOnCurrentConnection: true }), true);
-  assert.equal(
-    shouldRenderWorkerTerminal({ ...renamed, mountedOnCurrentConnection: false }),
-    false,
-  );
 });
 
 test('a linked alias cannot replace a watched session that shares its pane', () => {
@@ -162,6 +137,23 @@ test('a linked alias cannot replace a watched session that shares its pane', () 
   const [missing] = reconcileTerminalWatchlist([item], [alias]);
   assert.equal(missing?.worker, undefined);
   assert.equal(missing?.ref.session, 'work');
+});
+
+test('the Watchlist opens one current session per pane before applying its cap', () => {
+  const alias = { ...ref, session: 'linked' };
+  const other = ['%4', '%5', '%6', '%7'].map((target) => ({ ...ref, target }));
+  const pins = [ref, alias, ...other].map((ref) => ({
+    id: encodeWorkerTerminalRef(ref),
+    ref,
+    nodeId: ref.nodeId,
+    target: ref.target,
+    pinnedAt: 1,
+  }));
+  const entries = reconcileTerminalWatchlist(pins, []);
+  assert.deepEqual(
+    selectWatchlistTerminalRefs(entries, (candidate) => candidate !== ref),
+    [alias, ...other.slice(0, 3)],
+  );
 });
 
 test('a worker window rename keeps the same terminal target', () => {

@@ -141,11 +141,36 @@ export function ptyExitHandlerCountForTests(): number {
 }
 
 export interface PtyAttachOptions {
+  /** A detached worker client no longer proves which pane it is displaying. */
+  workerAttachment?: true;
   assertCurrent?: () => void | Promise<void>;
   lease?: NodeLinkLease;
   nodeId?: string; // configured node-link pilot, including the gateway machine
   sshTarget?: string; // e.g. "deeeed@mini.local" — if set, PTY goes through SSH
   selectTarget?: string; // optional window/pane target to activate after attaching to the session
+}
+
+function reusablePty(
+  key: string,
+  session: string,
+  opts?: PtyAttachOptions,
+): PtySession | undefined {
+  const ps = ptySessions.get(key);
+  const lingering = pendingDetaches.get(key);
+  if (lingering && opts?.workerAttachment) {
+    clearTimeout(lingering);
+    pendingDetaches.delete(key);
+    detachPty(key);
+    return undefined;
+  }
+  if (ps && opts?.workerAttachment && ps.session !== session)
+    throw new Error('PTY is attached to a different worker session');
+  if (lingering) {
+    clearTimeout(lingering);
+    pendingDetaches.delete(key);
+    log('linger-cancel', key, 'reusing live pty');
+  }
+  return ps;
 }
 
 export async function subscribePty(
@@ -156,15 +181,9 @@ export async function subscribePty(
   rows?: number,
   opts?: PtyAttachOptions,
 ): Promise<{ joined: boolean }> {
-  let ps = ptySessions.get(key);
+  let ps = reusablePty(key, session, opts);
   // tmux does not redraw for a viewer joining a running PTY; the caller asks for one (redrawPty).
   const joined = ps !== undefined;
-  const lingering = pendingDetaches.get(key);
-  if (lingering) {
-    clearTimeout(lingering);
-    pendingDetaches.delete(key);
-    log('linger-cancel', key, 'reusing live pty');
-  }
   if (!ps) {
     if (opts?.nodeId) {
       await attachLinkedPty(key, session, handler, cols ?? 120, rows ?? 40, opts);
@@ -433,10 +452,18 @@ async function attachLinkedPty(
   const previous = pendingLinkedPtys.get(key);
   if (previous) {
     await previous;
-    const current = ptySessions.get(key);
+    const current = opts.workerAttachment ? reusablePty(key, session, opts) : ptySessions.get(key);
     if (!current) throw new Error('Node terminal attachment closed before subscription');
     current.handlers.add(handler);
     return;
+  }
+  // The authority check awaited above may have raced another worker attach.
+  if (opts.workerAttachment) {
+    const current = reusablePty(key, session, opts);
+    if (current) {
+      current.handlers.add(handler);
+      return;
+    }
   }
   const handlers = new Set([handler]);
   const attach = async () => {

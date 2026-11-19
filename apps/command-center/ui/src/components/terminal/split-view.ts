@@ -20,7 +20,6 @@ import {
   Methods,
   sourceObservationAge,
   tmuxWorkerRefsMatch,
-  tmuxWorkerWatchId,
 } from '@farmslot/protocol';
 import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 import { nativeWorkerTabs } from '@farmslot/review-dispatch';
@@ -52,6 +51,7 @@ import {
   RUN_PANES_KEY,
   selectActiveRunSlotIds,
   selectPinnedSlotIds,
+  selectWatchlistTerminalRefs,
   selectWorkspaceRuns,
   shouldRenderWorkerTerminal,
   STORAGE_KEY,
@@ -100,7 +100,6 @@ export class TerminalSplitView extends LitElement {
   private _workerOwner?: string;
   private _workerConnection?: string | number;
   private _workerInventoryVerified = false;
-  private _workerPanes = new Set<string>();
   private _workerSessions = new Set<string>();
   private _focusedEndSession?: HTMLButtonElement;
   private _workerNodesWithoutObservation = new Set<string>();
@@ -129,7 +128,6 @@ export class TerminalSplitView extends LitElement {
         const observedWorkers = flattenTmuxWorkers(
           nodes.filter((node) => node.connected && node.ok),
         );
-        this._workerPanes = new Set(observedWorkers.map((worker) => tmuxWorkerWatchId(worker.ref)));
         this._workerSessions = new Set(
           observedWorkers.map((worker) => encodeWorkerTerminalRef(worker.ref)),
         );
@@ -775,9 +773,10 @@ export class TerminalSplitView extends LitElement {
   }
 
   private _openWatchlist() {
-    const watchRefs = this._watchEntries()
-      .map((entry) => entry.ref)
-      .slice(0, 4);
+    const watchRefs = selectWatchlistTerminalRefs(
+      this._watchEntries(),
+      this._hasCurrentWorkerSession,
+    );
     const sameWatchlist =
       this._selectedSlots.filter(Boolean).length === 0 &&
       this._selectedWorkers.length === watchRefs.length &&
@@ -1212,9 +1211,11 @@ export class TerminalSplitView extends LitElement {
       : allPanes.slice(0, max);
     const paneCount = panes.length || 1;
     const workerScope = JSON.stringify([getResourceWorkspaceKey(), gateway.resourceConnectionId]);
-    // Only an already-mounted terminal can survive an incomplete observation
-    // or a renamed session with the same live pane.
+    // Keep the current view during a routine reread of held inventory. A
+    // missing exact session or a failed observation cannot retain the PTY.
     const mountedWorkers =
+      this._workerObservation.status === 'stale' &&
+      !heldDataIsSaved(this._workerObservation) &&
       gateway.connectionState === 'connected' &&
       this.workerQuery.belongsToWorkspace &&
       this._renderedWorkerScope === workerScope
@@ -1360,10 +1361,6 @@ export class TerminalSplitView extends LitElement {
                       ready: this.workerQuery.ready,
                       status: this._workerObservation.status,
                       targetPresent: this._workerSessions.has(encodeWorkerTerminalRef(pane.ref)),
-                      panePresent: this._workerPanes.has(tmuxWorkerWatchId(pane.ref)),
-                      nodeObservationFailed: this._workerNodesWithoutObservation.has(
-                        pane.ref.nodeId,
-                      ),
                       mountedOnCurrentConnection:
                         mountedWorkers?.has(encodeWorkerTerminalRef(pane.ref)) ?? false,
                     })
