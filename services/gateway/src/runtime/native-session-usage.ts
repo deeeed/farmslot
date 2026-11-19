@@ -34,6 +34,7 @@ import { getRunnerSessionUsageProvider } from '../runners/registry.js';
 import { parseSessionUsageOutput, unavailableRunnerSessionUsage } from './session-usage-result.js';
 
 const execute = promisify(execFile);
+const LOCAL_NATIVE_RECEIPT_BYTES = 64 * 1024;
 
 /** Retain this run's task leases; the node journal supplies accounting timestamps. */
 export function nativeRunUsageWindow(
@@ -91,6 +92,7 @@ export interface NativeAgentUsageInput {
   nativeSession?: NativeSessionUsageIdentity & Partial<NativeWorkerSessionBinding>;
   usageWindow?: SessionUsageWindow;
   checklistMarks?: ChecklistMark[];
+  parentChecklistMarks?: ChecklistMark[];
 }
 
 interface NativeAgentUsageResolution {
@@ -176,23 +178,28 @@ export async function resolveNativeAgentSessionUsage(
     }
     Object.assign(environment, machineShellEnv({ machineEnv: poolEnv }));
     request.liteLlmPrices = [...(await loadLiteLlmPrices({ environment }))];
-    const argv = nativeSessionUsageArgv([request]);
-    const result =
-      nativeSession.executionNodeId === 'local'
-        ? await execute(process.execPath, argv.slice(1), {
-            timeout: 30000,
-            maxBuffer: 64 * 1024,
-            env: { ...process.env, FORCE_COLOR: '0' },
-            encoding: 'utf8',
-          })
-        : await (
-            await import('../runners/native/node.js')
-          ).execNativeNodeArgv(
-            nativeSession.ownerPrincipalId,
-            nativeSession.executionNodeId,
-            argv,
-            30000,
-          );
+    const local = nativeSession.executionNodeId === 'local';
+    if (local) request.parentChecklistMarks = input.parentChecklistMarks;
+    const argv = nativeSessionUsageArgv(
+      [request],
+      undefined,
+      local ? LOCAL_NATIVE_RECEIPT_BYTES : undefined,
+    );
+    const result = local
+      ? await execute(process.execPath, argv.slice(1), {
+          timeout: 30000,
+          maxBuffer: LOCAL_NATIVE_RECEIPT_BYTES,
+          env: { ...process.env, FORCE_COLOR: '0' },
+          encoding: 'utf8',
+        })
+      : await (
+          await import('../runners/native/node.js')
+        ).execNativeNodeArgv(
+          nativeSession.ownerPrincipalId,
+          nativeSession.executionNodeId,
+          argv,
+          30000,
+        );
     if ('exitCode' in result && result.exitCode !== 0)
       return unavailable(result.stderr || 'Agent session accounting command failed');
     const rows: unknown = JSON.parse(result.stdout);

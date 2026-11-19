@@ -2,6 +2,8 @@ import type { ChecklistMark } from '@farmslot/agent-runtime/tool-usage';
 import type { NativeWorkerSessionBinding } from '@farmslot/protocol';
 import type { PiModelCostMetadata, SessionUsageWindow } from '@farmslot/slot-config';
 
+export const REMOTE_USAGE_DETAIL_NOTE = 'Checklist breakdown exceeds the remote receipt limit';
+
 export type NativeSessionUsageIdentity = Pick<
   NativeWorkerSessionBinding,
   'sessionId' | 'ownerPrincipalId' | 'executionNodeId' | 'stateDirectory'
@@ -23,6 +25,7 @@ export interface NativeSessionUsageRequest {
   usageWindow?: SessionUsageWindow;
   /** The run attempt's checklist marks, so tool calls split at the same steps. */
   checklistMarks?: ChecklistMark[];
+  parentChecklistMarks?: ChecklistMark[];
 }
 
 const SESSION_USAGE_MODULE = String.raw`
@@ -49,9 +52,112 @@ if (!modulePath) throw Error('Installed CLI accounting module is unavailable');
 const { runSessionUsage } = await import(pathToFileURL(modulePath).href);
 `;
 
+const RECEIPT_COMPACTION_PROGRAM =
+  `const detailNote = ${JSON.stringify(REMOTE_USAGE_DETAIL_NOTE)};\n` +
+  String.raw`
+function segmentKey(step, at) { return step + ':' + at; }
+function mergeSegments(segments, segment, mark) {
+  const first = segments[0];
+  const last = segments[segments.length - 1];
+  const names = new Map();
+  for (const hit of segments) {
+    for (const [name, count] of Object.entries(hit.toolCallsByName))
+      names.set(name, (names.get(name) || 0) + count);
+  }
+  const sum = (field) => segments.reduce((total, hit) => total + hit[field], 0);
+  const nullableSum = (field) => segments.some(hit => hit[field] == null) ? null : sum(field);
+  return {
+    segment,
+    ...(mark ? { stepNumber: mark.stepNumber, title: mark.label, markedAt: mark.checkedAt } : {}),
+    startedAt: first.startedAt,
+    endedAt: last.endedAt,
+    wallMs: Date.parse(last.endedAt) - Date.parse(first.startedAt),
+    toolCalls: sum('toolCalls'),
+    toolCallsByName: Object.fromEntries(names),
+    totalTokens: nullableSum('totalTokens'),
+    compactions: nullableSum('compactions'),
+    costUsd: nullableSum('costUsd'),
+  };
+}
+
+function totalsOnly(usage) {
+  return {
+    ...usage,
+    steps: [],
+    toolCallsBeforeFirstMark: null,
+    stepsUnavailable: detailNote,
+  };
+}
+
+// Parent boundaries are a subset of the measured child boundaries. Combine
+// only intervals we can prove from the receipt and never read the transcript again.
+function parentToolUsage(usage, marks, completedAt) {
+  const source = usage.steps;
+  if (!source.length || !marks?.length) return totalsOnly(usage);
+  const parents = [...marks].sort((a, b) => Date.parse(a.checkedAt) - Date.parse(b.checkedAt));
+  const lastMark = source.findLast((step) => step.markedAt)?.markedAt;
+  const trailing = source[source.length - 1];
+  // A child-only mark may have extended the source interval. Its end is proven
+  // by activity beyond that mark or by activity in the zero-length trailing
+  // segment at the mark. With neither, keep totals without guessing wall time.
+  const trailingActivity = trailing.segment === 'after-last-mark' &&
+    (trailing.toolCalls > 0 || trailing.totalTokens > 0 || trailing.compactions > 0);
+  const provenEnd = Date.parse(trailing.endedAt) === Date.parse(completedAt);
+  if (Date.parse(lastMark) > Date.parse(parents[parents.length - 1].checkedAt) &&
+      Date.parse(trailing.endedAt) <= Date.parse(lastMark) && !trailingActivity && !provenEnd)
+    return totalsOnly(usage);
+  const edges = new Map(source.flatMap((step, index) =>
+    step.markedAt ? [[segmentKey(step.stepNumber, step.markedAt), index]] : [],
+  ));
+  const steps = [];
+  let start = 0;
+  for (const [order, mark] of parents.entries()) {
+    const markTime = Date.parse(mark.checkedAt);
+    const clippedByWindow = provenEnd && markTime > Date.parse(completedAt);
+    const observedEdge = edges.get(segmentKey(mark.stepNumber, mark.checkedAt));
+    if (observedEdge === undefined && markTime < Date.parse(source[0].startedAt)) continue;
+    // The first parent beyond a proven lease cutoff owns the remaining measured interval.
+    const end = clippedByWindow ? source.length - 1 : observedEdge;
+    if (clippedByWindow && start === source.length) break;
+    if (end === undefined || end < start) return totalsOnly(usage);
+    steps.push(mergeSegments(source.slice(start, end + 1), order === 0 ? 'before-first-mark' : 'step', mark));
+    start = end + 1;
+    if (clippedByWindow) break;
+  }
+  if (start < source.length) steps.push(mergeSegments(source.slice(start), 'after-last-mark'));
+  const first = steps[0];
+  return { ...usage, steps, toolCallsBeforeFirstMark: first?.segment === 'before-first-mark' ? first.toolCalls : 0 };
+}
+
+function parentMarks(encoded, expanded) {
+  return encoded?.map((mark) => typeof mark === 'number' ? expanded[mark] : mark);
+}
+
+function compactReceipt(output, marks, completedAt) {
+  const lines = output.split('\n');
+  const index = lines.findIndex((line) => line.startsWith('tool_usage='));
+  if (index === -1) return output;
+  const usage = JSON.parse(lines[index].slice('tool_usage='.length));
+  lines[index] = 'tool_usage=' + JSON.stringify(parentToolUsage(usage, marks, completedAt));
+  if (!lines.includes('receipt_detail_limited=yes')) lines.push('receipt_detail_limited=yes', '');
+  return lines.join('\n');
+}
+
+function exceedsBudget(output, maxBytes) {
+  return Buffer.byteLength(output, 'utf8') > maxBytes;
+}
+`;
+
+function encodeParentMarks(checklistMarks?: ChecklistMark[], parents?: ChecklistMark[]) {
+  if (!parents) return undefined;
+  const indexes = new Map(checklistMarks?.map((mark, index) => [JSON.stringify(mark), index]));
+  return parents.map((mark) => indexes.get(JSON.stringify(mark)) ?? mark);
+}
+
 // Runs on the execution host. Transcript bodies never cross the RPC.
 export const NATIVE_SESSION_USAGE_PROGRAM =
   SESSION_USAGE_MODULE +
+  RECEIPT_COMPACTION_PROGRAM +
   String.raw`
 import { readdir } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
@@ -186,22 +292,50 @@ for (const request of input) {
     results.push({ key: request.key, runnerSessionId: request.runnerSessionId, sessionPath: file, output, usageWindow });
   } catch (error) { results.push({ key: request.key, runnerSessionId: request.runnerSessionId, error: error.message, usageWindow }); }
 }
-process.stdout.write(JSON.stringify(results));
+const maxBytes = Number(process.argv[3]);
+let output = JSON.stringify(results);
+if (maxBytes > 0 && exceedsBudget(output, maxBytes)) {
+  for (const [index, row] of results.entries()) {
+    const request = input[index];
+    if (row.output)
+      row.output = compactReceipt(row.output, parentMarks(request.parentChecklistMarks, request.checklistMarks), row.usageWindow?.completedAt);
+  }
+  output = JSON.stringify(results);
+  if (exceedsBudget(output, maxBytes)) {
+    for (const row of results) if (row.output) row.output = compactReceipt(row.output);
+    output = JSON.stringify(results);
+  }
+  if (exceedsBudget(output, maxBytes)) throw Error('Native session usage totals exceed the subprocess limit');
+}
+process.stdout.write(output);
 `;
 
 export function nativeSessionUsageArgv(
   requests: NativeSessionUsageRequest[],
   modulePath?: string,
+  maxBytes?: number,
 ): string[] {
+  const input =
+    maxBytes === undefined
+      ? requests
+      : requests.map((request) => ({
+          ...request,
+          parentChecklistMarks: encodeParentMarks(
+            request.checklistMarks,
+            request.parentChecklistMarks,
+          ),
+        }));
   return [
     'node',
+    ...(maxBytes === undefined ? [] : ['--no-warnings']),
     '--experimental-strip-types',
     '--experimental-sqlite',
     '--input-type=module',
     '-e',
     NATIVE_SESSION_USAGE_PROGRAM,
-    JSON.stringify(requests),
+    JSON.stringify(input),
     modulePath ?? '',
+    ...(maxBytes === undefined ? [] : [String(maxBytes)]),
   ];
 }
 
@@ -212,13 +346,32 @@ export function forcedSessionUsageArgv(
   sessionPath: string,
   modulePath?: string,
   checklistMarks?: ChecklistMark[],
+  receiptBudget?: { maxBytes: number; parentChecklistMarks?: ChecklistMark[] },
 ): string[] {
+  // Most parent marks are already in the expanded list. Keep references to
+  // those marks so they do not double the remote shell argument on large ledgers.
+  const budget = receiptBudget && {
+    maxBytes: receiptBudget.maxBytes,
+    parentChecklistMarks: encodeParentMarks(checklistMarks, receiptBudget.parentChecklistMarks),
+  };
   const program =
     SESSION_USAGE_MODULE +
+    RECEIPT_COMPACTION_PROGRAM +
     String.raw`
 const input = JSON.parse(process.argv[1]);
+
 try {
-  process.stdout.write(await runSessionUsage({ repo: '', slotId: input.slotId, action: 'total', forcedPath: input.sessionPath, forcedRunner: input.runner, checklistMarks: input.checklistMarks }));
+  const options = { repo: '', slotId: input.slotId, action: 'total', forcedPath: input.sessionPath, forcedRunner: input.runner, checklistMarks: input.checklistMarks };
+  let output = await runSessionUsage(options);
+  if (input.receiptBudget && exceedsBudget(output, input.receiptBudget.maxBytes)) {
+    const marks = parentMarks(input.receiptBudget.parentChecklistMarks, input.checklistMarks);
+    output = compactReceipt(output, marks);
+    if (exceedsBudget(output, input.receiptBudget.maxBytes))
+      output = compactReceipt(output);
+    if (exceedsBudget(output, input.receiptBudget.maxBytes))
+      throw Error('Session usage totals exceed the remote transport limit');
+  }
+  process.stdout.write(output);
 } catch (error) {
   process.stderr.write(error instanceof SyntaxError ? 'Session accounting source contains invalid structured data' : error instanceof Error ? error.message : 'Session accounting failed');
   process.exitCode = 1;
@@ -226,12 +379,15 @@ try {
 `;
   return [
     'node',
+    // The remote daemon counts stdout and stderr together, including Node 22's
+    // experimental type-stripping warning. Measurement errors still reach stderr.
+    ...(receiptBudget ? ['--no-warnings'] : []),
     '--experimental-strip-types',
     '--experimental-sqlite',
     '--input-type=module',
     '-e',
     program,
-    JSON.stringify({ slotId, runner, sessionPath, checklistMarks }),
+    JSON.stringify({ slotId, runner, sessionPath, checklistMarks, receiptBudget: budget }),
     modulePath ?? '',
   ];
 }

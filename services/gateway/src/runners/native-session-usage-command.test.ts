@@ -10,7 +10,10 @@ import { promisify } from 'node:util';
 
 import { runSessionUsage } from '@farmslot/slot-config';
 
+import { parseSessionUsageOutput } from '../runtime/session-usage-result.js';
+
 import {
+  forcedSessionUsageArgv,
   nativeSessionUsageArgv,
   type NativeSessionUsageRequest,
 } from './native-session-usage-command.js';
@@ -416,3 +419,260 @@ for (const runner of ['claude', 'codex', 'pi'])
       assert.match(String(missing.error), /no submitted command/);
     });
   }
+
+test('bounded remote receipts keep Perps rows or return the complete parent receipt', async (t) => {
+  const f = await fixture(t);
+  const budget = 64 * 1024;
+  const at = (second: number) => new Date(Date.UTC(2026, 10, 19, 0, 0, second)).toISOString();
+  const children = Array.from({ length: 41 }, (_, index) => ({
+    stepNumber: index < 28 ? 1 : 2,
+    label: `${index < 28 ? 'perps-shared' : 'perps-core'} rule ${index + 1}`,
+    checkedAt: at(index + 1),
+  }));
+  const parents = [
+    { stepNumber: 1, label: 'Shared review', checkedAt: at(28) },
+    { stepNumber: 2, label: 'Core review', checkedAt: at(41) },
+  ];
+  const largeMix = Array.from(
+    { length: 30 },
+    (_, index) => `mcp__review_workspace__inspect_checklist_rule_result_${index + 1}`,
+  );
+  const sessionPath = path.join(f.root, 'receipt.jsonl');
+  const writeReceipt = async (mixed: boolean, lastActivity = 42) => {
+    const tools = children
+      .slice(0, Math.min(lastActivity, children.length))
+      .flatMap((mark, index) =>
+        (mixed ? largeMix : index < 26 ? ['shell', 'read_file'] : ['shell']).map((name) => ({
+          type: 'response_item',
+          timestamp: mark.checkedAt,
+          payload: { type: 'function_call', name, call_id: `${index}-${name}` },
+        })),
+      );
+    await writeFile(
+      sessionPath,
+      [
+        { type: 'session_meta', payload: { id: 'receipt' } },
+        { type: 'turn_context', timestamp: at(0), payload: { model: 'gpt-5.5' } },
+        ...tools,
+        {
+          type: 'event_msg',
+          timestamp: at(lastActivity),
+          payload: {
+            type: 'token_count',
+            info: {
+              total_token_usage: { input_tokens: 100, output_tokens: 21, total_tokens: 121 },
+            },
+          },
+        },
+      ]
+        .map((record) => JSON.stringify(record))
+        .join('\n') + '\n',
+    );
+    return tools.length;
+  };
+  const runForced = async (
+    marks: typeof children,
+    maxBuffer: number,
+    bounded = false,
+    parentChecklistMarks = parents,
+  ) => {
+    const argv = forcedSessionUsageArgv(
+      'receipt',
+      'codex',
+      sessionPath,
+      modulePath,
+      marks,
+      bounded ? { maxBytes: budget, parentChecklistMarks } : undefined,
+    );
+    const result = await execute(process.execPath, argv.slice(1), {
+      encoding: 'utf8',
+      maxBuffer,
+      env: { ...process.env, HOME: f.root },
+    });
+    return result.stdout;
+  };
+  const runNative = async (
+    marks: typeof children,
+    parentChecklistMarks = parents,
+    usageWindow?: NativeSessionUsageRequest['usageWindow'],
+  ) => {
+    const request = {
+      ...f.request('codex'),
+      runnerSessionId: 'receipt',
+      sessionPath,
+      nativeSession: undefined,
+      checklistMarks: marks,
+      parentChecklistMarks,
+      usageWindow,
+    };
+    const argv = nativeSessionUsageArgv([request], modulePath, budget);
+    const result = await execute(process.execPath, argv.slice(1), {
+      encoding: 'utf8',
+      maxBuffer: budget,
+      env: { ...process.env, HOME: f.root },
+    });
+    const [row] = JSON.parse(result.stdout);
+    assert.ok('output' in row, JSON.stringify(row));
+    assert.equal(row.runnerSessionId, request.runnerSessionId);
+    assert.equal(row.sessionPath, await realpath(sessionPath));
+    assert.ok(Buffer.byteLength(result.stdout) <= budget);
+    return row.output;
+  };
+  const usage = (stdout: string) =>
+    parseSessionUsageOutput(stdout, {
+      runner: 'codex',
+      runnerSessionId: 'receipt',
+      runnerSessionPath: sessionPath,
+    });
+
+  assert.equal(await writeReceipt(false), 67);
+  const normal = await runForced(children, budget, true);
+  assert.equal(Buffer.byteLength(normal) <= budget, true);
+  const normalUsage = usage(normal);
+  const normalTools = normalUsage.toolUsage;
+  assert(normalTools);
+  assert.equal(normalTools.toolCalls, 67);
+  assert.equal(normalTools.steps.filter((step) => step.title?.startsWith('perps-')).length, 41);
+  assert.equal(normalUsage.totalTokens, 121);
+  assert.equal(await runNative(children), normal);
+
+  const largeToolCount = await writeReceipt(true);
+  const largeChildren = children.map((mark, index) =>
+    index === 0 ? { ...mark, label: mark.label + '\u2028Unicode separator' } : mark,
+  );
+  const unrestricted = await runForced(largeChildren, 2 * budget);
+  assert.ok(Buffer.byteLength(unrestricted) > budget);
+  const fallback = await runForced(parents, budget);
+  const bounded = await runForced(largeChildren, budget, true);
+  assert.equal(bounded.replace(/\nreceipt_detail_limited=yes\n$/, ''), fallback);
+  assert.equal(await runNative(largeChildren), bounded);
+  const boundedUsage = usage(bounded);
+  const boundedTools = boundedUsage.toolUsage;
+  assert(boundedTools);
+  assert.equal(boundedTools.toolCalls, largeToolCount);
+  assert.deepEqual(boundedTools.toolCallsByName, usage(unrestricted).toolUsage?.toolCallsByName);
+  assert.deepEqual(
+    boundedTools.steps.flatMap((step) => (step.title ? [step.title] : [])),
+    parents.map((mark) => mark.label),
+  );
+  assert.equal(boundedUsage.totalTokens, 121);
+  assert.equal(boundedUsage.runnerSessionId, 'receipt');
+  assert.equal(boundedUsage.runnerSessionPath, sessionPath);
+  // The final token record follows the child-only boundary, so the parent
+  // interval can still retain all of its detail.
+  const trailing = usage(await runForced(largeChildren, budget, true, [parents[0]!]));
+  assert.equal(trailing.totalTokens, 121);
+  assert.equal(trailing.toolUsage?.toolCalls, largeToolCount);
+  assert.deepEqual(trailing.toolUsage?.toolCallsByName, boundedTools.toolCallsByName);
+  assert.deepEqual(
+    trailing.toolUsage?.steps.flatMap((step) => (step.title ? [step.title] : [])),
+    [parents[0]!.label],
+  );
+
+  // In the zero-length trailing segment, actual activity at the final
+  // child mark proves the parent interval ends there.
+  await writeReceipt(true, 41);
+  const exact = usage(await runForced(largeChildren, budget, true, [parents[0]!]));
+  assert.equal(exact.toolUsage?.steps.at(-1)?.endedAt, at(41));
+  assert.equal(exact.toolUsage?.toolCalls, largeToolCount);
+  assert.equal(exact.totalTokens, 121);
+
+  // The same mark must not extend the parent interval when it alone set the end.
+  const earlierToolCount = await writeReceipt(true, 40);
+  const unproven = usage(await runForced(largeChildren, budget, true, [parents[0]!]));
+  assert.deepEqual(unproven.toolUsage?.steps, []);
+  assert.equal(unproven.toolUsage?.toolCalls, earlierToolCount);
+  assert.equal(unproven.totalTokens, 121);
+  const window = { startedAt: at(0), completedAt: at(41) };
+  const windowed = usage(await runNative(largeChildren, [parents[0]!], window));
+  const expectedWindow = usage(
+    await runSessionUsage({
+      repo: '',
+      slotId: 'receipt',
+      action: 'total',
+      forcedPath: sessionPath,
+      forcedRunner: 'codex',
+      usageWindow: window,
+      checklistMarks: [parents[0]!],
+    }),
+  );
+  assert.deepEqual(windowed.toolUsage?.steps, expectedWindow.toolUsage?.steps);
+
+  await writeReceipt(true, 35);
+  const clippedWindow = { startedAt: at(0), completedAt: at(36) };
+  const clippedParents = [...parents, { stepNumber: 3, label: 'Later review', checkedAt: at(43) }];
+  const clipped = usage(await runNative(largeChildren, clippedParents, clippedWindow));
+  const expectedClipped = usage(
+    await runSessionUsage({
+      repo: '',
+      slotId: 'receipt',
+      action: 'total',
+      forcedPath: sessionPath,
+      forcedRunner: 'codex',
+      usageWindow: clippedWindow,
+      checklistMarks: clippedParents,
+    }),
+  );
+  assert.equal(clipped.toolUsage?.toolCalls, expectedClipped.toolUsage?.toolCalls);
+  assert.deepEqual(clipped.toolUsage?.steps, expectedClipped.toolUsage?.steps);
+
+  await writeReceipt(true);
+
+  // A later parent boundary absent from the measured detail cannot be recreated.
+  const ambiguous = usage(
+    await runForced(largeChildren, budget, true, [{ ...parents[0]!, checkedAt: at(43) }]),
+  );
+  assert.equal(ambiguous.totalTokens, 121);
+  assert.equal(ambiguous.toolUsage?.toolCalls, largeToolCount);
+  assert.deepEqual(ambiguous.toolUsage?.steps, []);
+  assert.match(ambiguous.toolUsage?.stepsUnavailable ?? '', /exceeds the remote receipt limit/);
+  t.diagnostic(
+    `bytes normal=${Buffer.byteLength(normal)} expanded=${Buffer.byteLength(unrestricted)} fallback=${Buffer.byteLength(bounded)} limit=${budget}; tools normal=67 fallback=${largeToolCount}; tokens=121`,
+  );
+});
+
+test('a bounded receipt leaves no Node warning bytes in the daemon output budget', async (t) => {
+  const f = await fixture(t);
+  const budget = 64 * 1024;
+  const warning = path.join(f.root, 'startup-warning.cjs');
+  const accounting = path.join(f.root, 'near-boundary.mjs');
+  await writeFile(
+    warning,
+    "process.emitWarning('test Node startup warning', 'ExperimentalWarning');",
+  );
+  await writeFile(
+    accounting,
+    `export function runSessionUsage() { return 'turns=1\\n' + ' '.repeat(${budget - 16}); }`,
+  );
+  const argv = forcedSessionUsageArgv('slot', 'codex', '/receipt.jsonl', accounting, [], {
+    maxBytes: budget,
+    parentChecklistMarks: [],
+  });
+  const result = await execute(process.execPath, argv.slice(1), {
+    encoding: 'utf8',
+    maxBuffer: budget,
+    env: { ...process.env, NODE_OPTIONS: `--require ${warning}` },
+  });
+  assert.match(result.stdout, /^turns=1/);
+  assert.ok(Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr) <= budget);
+  assert.equal(result.stderr, '');
+});
+
+test('the bounded command does not repeat large parent marks in its shell argument', () => {
+  const parents = Array.from({ length: 150 }, (_, index) => ({
+    stepNumber: index + 1,
+    label: 'parent label '.repeat(35) + index,
+    checkedAt: '2026-11-19T00:00:00.000Z',
+  }));
+  const expanded = [...parents, { ...parents[0]!, label: 'child rule' }];
+  const argv = forcedSessionUsageArgv('receipt', 'codex', '/worker.jsonl', modulePath, expanded, {
+    maxBytes: 64 * 1024,
+    parentChecklistMarks: parents,
+  });
+  assert.ok(Buffer.byteLength(argv.join(' ')) < 128 * 1024);
+  const input = JSON.parse(argv.at(-2)!);
+  assert.deepEqual(
+    input.receiptBudget.parentChecklistMarks,
+    parents.map((_mark, index) => index),
+  );
+});

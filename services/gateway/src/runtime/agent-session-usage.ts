@@ -9,6 +9,7 @@ import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { recoveredWorkerSessionReceipt, upsertSessionUsage } from './agent-session-rows.js';
 import { extractNativeAgentSessionUsage, nativeRunUsageWindow } from './native-session-usage.js';
 import {
+  contextChecklistMarks,
   extractRunnerSessionUsage,
   extractRunWorkerSessionUsage,
   receiptChecklistMarks,
@@ -90,6 +91,7 @@ function completedMeasurement(
         ? Math.max(0, end - startedAt)
         : (row.durationMs ?? null),
     captureGaps: [
+      ...(usage.captureGaps ?? []),
       ...(usage.source === 'unavailable' ? [usage.error ?? 'Session usage unavailable'] : []),
       ...(!Number.isFinite(startedAt) ? ['Session start time is unavailable'] : []),
       ...(!usage.actualModel ? ['Actual model has not been reported'] : []),
@@ -124,13 +126,16 @@ function workerChecklistMarks(run: Run, row: RunnerSessionUsage) {
         return transcript ? [transcript] : [];
       }),
   );
-  return receiptChecklistMarks(run, context, Math.max(1, transcripts.size));
+  return {
+    checklistMarks: receiptChecklistMarks(run, context, Math.max(1, transcripts.size)),
+    parentChecklistMarks: contextChecklistMarks(run, context),
+  };
 }
 
 async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSessionUsage> {
   try {
     const slotId = row.slotId ?? run.slotId ?? run.id;
-    const checklistMarks = workerChecklistMarks(run, row);
+    const marks = workerChecklistMarks(run, row);
     if (row.nativeSession) {
       const workspace = row.role === 'review' ? run.reviewWorkspace : undefined;
       return completedMeasurement(
@@ -150,7 +155,7 @@ async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSession
           runnerSessionPath: row.runnerSessionPath,
           nativeSession: row.nativeSession,
           usageWindow: nativeRunUsageWindow(run, row),
-          checklistMarks,
+          ...marks,
         }),
       );
     }
@@ -167,7 +172,7 @@ async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSession
         runner: row.runner,
         runnerSessionId: row.runnerSessionId,
         runnerSessionPath: row.runnerSessionPath,
-        checklistMarks,
+        ...marks,
       }),
     );
   } catch {

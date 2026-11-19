@@ -53,6 +53,7 @@ import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import {
+  contextChecklistMarks,
   extractRunnerSessionUsage,
   extractRunWorkerSessionUsage,
   receiptChecklistMarks,
@@ -334,6 +335,7 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
         runnerSessionId,
         runnerSessionPath,
         checklistMarks: receiptChecklistMarks(run),
+        parentChecklistMarks: contextChecklistMarks(run),
       }));
     const costUsd = usage.costUsd ?? null;
     const inputTokens = usage.inputTokens ?? null;

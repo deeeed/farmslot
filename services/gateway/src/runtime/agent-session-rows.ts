@@ -270,6 +270,7 @@ export function recoveredWorkerSessionReceipt(
         ? (usage.costReason ?? 'Runner accounting has no verified price for this model')
         : undefined,
     captureGaps: [
+      ...(usage.captureGaps ?? []),
       ...(usage.error ? [usage.error] : []),
       ...(previous?.model == null || previous?.effort == null
         ? ['Historical requested configuration is unavailable']
