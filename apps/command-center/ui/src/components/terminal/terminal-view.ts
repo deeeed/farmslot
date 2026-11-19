@@ -7,6 +7,7 @@ import type {
   TerminalData,
   TerminalExitedPayload,
   TerminalModePayload,
+  TerminalWorkerSubscribeResult,
   TmuxListResult,
   TmuxWorkerRef,
 } from '@farmslot/protocol';
@@ -69,8 +70,8 @@ import { syncTerminalRunnerAccent, terminalViewStyles } from './terminal-view-st
 import { readTerminalRunSummary } from './terminal-view-summary.js';
 import { createTerminalRuntime } from './terminal-view-xterm.js';
 
-// Treat exits around terminal attachment separately from later session exits.
-const TERMINAL_FAST_FAIL_MS = 3000;
+// Early role-pane failures can fall back to the current slot terminal.
+const ROLE_PANE_FAST_FAIL_MS = 3000;
 const TMUX_LIST_POLL_MS = 15000;
 const TMUX_LIST_ERROR_BACKOFF_MS = 30000;
 // Coalesce Lit prop batches (slotId/runId/role) into one subscribe/unsubscribe cycle.
@@ -510,23 +511,18 @@ export class TerminalView extends TerminalViewState {
       }
     });
 
+    let workerSubscriptionSeq: number | undefined;
+    const pendingWorkerExits = new Set<number>();
     if (worker) {
-      // A refused tmux client can exit before the subscribe reply or the initial resize settles.
       this._unsubExit = gateway.subscribe<TerminalExitedPayload>(Events.TERMINAL_EXITED, (p) => {
         if (subscribeSeq !== this._subscribeSeq || !this._matchesTarget(p)) return;
-        if (p.worker?.session !== worker.session) return;
-        if (this._subscribeOkAt && Date.now() - this._subscribeOkAt >= TERMINAL_FAST_FAIL_MS)
-          return;
-
-        this._teardownStreams();
-        this._terminal?.attachCustomKeyEventHandler(() => true);
-        this._ptyReady = false;
-        this._retiredTarget = false;
-        this._exited = false;
-        this._attachPhase = 'idle';
-        this._reconnecting = this._connected;
-        this._lastSubscribeError = 'Worker terminal closed during attachment. Retry to reconnect.';
-        this._recoveryMessage = this._lastSubscribeError;
+        if (p.worker?.session !== worker.session || p.workerSubscriptionSeq === undefined) return;
+        if (workerSubscriptionSeq === undefined) {
+          // The PTY can exit while its subscribe reply is still in flight.
+          pendingWorkerExits.add(p.workerSubscriptionSeq);
+        } else if (p.workerSubscriptionSeq === workerSubscriptionSeq) {
+          this._workerTerminalClosed();
+        }
       });
     }
 
@@ -535,17 +531,30 @@ export class TerminalView extends TerminalViewState {
       // shorter UI-side race here would discard a slow-but-successful subscribe
       // without cancelling it, leaving the gateway with an orphan pty handler
       // and the UI stuck on the failure banner.
-      await gateway.request(
-        worker ? Methods.TERMINAL_WORKER_SUBSCRIBE : Methods.TERMINAL_SUBSCRIBE,
-        {
-          ...this._targetParams(),
-          ...(worker ? {} : { interactive: true }),
-          cols: this._terminal?.cols,
-          rows: this._terminal?.rows,
-        },
-      );
+      const params = {
+        ...this._targetParams(),
+        cols: this._terminal?.cols,
+        rows: this._terminal?.rows,
+      };
+      let result: TerminalWorkerSubscribeResult | undefined;
+      if (worker) {
+        result = await gateway.request<TerminalWorkerSubscribeResult>(
+          Methods.TERMINAL_WORKER_SUBSCRIBE,
+          params,
+        );
+      } else {
+        await gateway.request(Methods.TERMINAL_SUBSCRIBE, { ...params, interactive: true });
+      }
       this._log('subscribed OK');
       if (subscribeSeq !== this._subscribeSeq) return;
+      if (result) {
+        if (!result.subscribed || pendingWorkerExits.has(result.workerSubscriptionSeq)) {
+          this._workerTerminalClosed();
+          return;
+        }
+        workerSubscriptionSeq = result.workerSubscriptionSeq;
+        pendingWorkerExits.clear();
+      }
       this._activeSubscribeIdentity = {
         slotId: this.slotId,
         runId: this.runId,
@@ -633,7 +642,7 @@ export class TerminalView extends TerminalViewState {
         exitCode: p.exitCode,
         subscribeOkAt: this._subscribeOkAt,
         nowMs: Date.now(),
-        fastFailMs: TERMINAL_FAST_FAIL_MS,
+        fastFailMs: ROLE_PANE_FAST_FAIL_MS,
         role: this.role,
         contextId: this.contextId,
         postmortem: this._postmortem,
@@ -683,6 +692,20 @@ export class TerminalView extends TerminalViewState {
         }
       }
     }, 100);
+  }
+
+  private _workerTerminalClosed() {
+    // The gateway has already removed this subscription. An unsubscribe by
+    // pane could reach a replacement that was adopted in the meantime.
+    this._teardownStreams(false);
+    this._terminal?.attachCustomKeyEventHandler(() => true);
+    this._ptyReady = false;
+    this._retiredTarget = false;
+    this._exited = false;
+    this._attachPhase = 'idle';
+    this._reconnecting = this._connected;
+    this._lastSubscribeError = 'Worker terminal connection closed. Retry to reconnect.';
+    this._recoveryMessage = this._lastSubscribeError;
   }
 
   private _setupPtyMode() {

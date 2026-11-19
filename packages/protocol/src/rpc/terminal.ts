@@ -71,6 +71,11 @@ export interface TerminalWorkerSubscribeParams {
   rows?: number;
 }
 
+/** Identifies the worker subscription adopted on this connection for the pane. */
+export type TerminalWorkerSubscribeResult =
+  | { subscribed: true; workerSubscriptionSeq: number }
+  | { subscribed: false };
+
 export interface TerminalWorkerUnsubscribeParams {
   worker: TmuxWorkerRef;
 }

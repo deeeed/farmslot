@@ -1256,7 +1256,7 @@ async function routeAuthorizedMethod(
         ptyHandler,
         joined,
       } = await terminalWorkerSubscribe(sub, withTerminalBackpressure(state.ws, emit));
-      if (!hasPty(ptyKey)) throw new Error('Worker terminal closed during attachment');
+      if (!hasPty(ptyKey, ptyHandler)) throw new Error('Worker terminal closed during attachment');
       const subscribed = adoptWorkerTerminalSubscription(
         state,
         key,
@@ -1264,11 +1264,10 @@ async function routeAuthorizedMethod(
         ptyHandler,
         isActiveClient(state),
       );
-      if (subscribed) {
-        state.terminalIdentities.set(ptyKey, { worker: sub.worker });
-        if (joined) terminalRedraws.expect(state, ptyKey);
-      }
-      return { subscribed };
+      if (!subscribed) return { subscribed: false };
+      state.terminalIdentities.set(ptyKey, { worker: sub.worker, workerSubscriptionSeq: mySeq });
+      if (joined) terminalRedraws.expect(state, ptyKey);
+      return { subscribed: true, workerSubscriptionSeq: mySeq };
     }
     case Methods.TERMINAL_WORKER_UNSUBSCRIBE: {
       const key = terminalWorkerUnsubscribeKey(p as TerminalWorkerUnsubscribeParams);

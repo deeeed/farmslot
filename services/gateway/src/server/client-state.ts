@@ -23,7 +23,7 @@ export interface TerminalSubscriptionState {
   terminalIdentities: Map<
     string,
     | { slotId: string; runId?: string; role?: TerminalSubscribeParams['role']; contextId?: string }
-    | { worker: TmuxWorkerRef }
+    | { worker: TmuxWorkerRef; workerSubscriptionSeq: number }
   >;
   workerSessionHistoryHandlers: Map<string, WorkerSessionHistoryUnsubscribe>;
   workerSessionHistorySubscribeSeq: Map<string, number>;

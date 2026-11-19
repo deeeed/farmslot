@@ -280,8 +280,9 @@ export async function redrawPty(key: string): Promise<void> {
   if (ptySessions.get(key) === ps) await ps.ptyProcess.resize(ps.cols, ps.rows);
 }
 
-export function hasPty(key: string): boolean {
-  return ptySessions.has(key);
+export function hasPty(key: string, handler?: PtyDataHandler): boolean {
+  const session = ptySessions.get(key);
+  return session !== undefined && (handler === undefined || session.handlers.has(handler));
 }
 
 // Recreate a tmux session for a slot and return true if successful.
