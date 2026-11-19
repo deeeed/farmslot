@@ -425,6 +425,7 @@ export function machineRunnerPath(runner: string, machine?: RawPoolJson): string
     grok: machine?.grok_path,
     pi: machine?.pi_path,
     opencode: machine?.opencode_path,
+    antigravity: machine?.antigravity_path,
   };
   return paths[runner.trim()]?.trim() || undefined;
 }

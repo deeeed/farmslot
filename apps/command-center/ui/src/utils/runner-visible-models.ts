@@ -2,7 +2,7 @@ import type { RunnerModelCatalogResult, RunnerVisibleModelState } from '@farmslo
 import { createReviewDispatchCatalog, type ReviewDispatchCatalog } from '@farmslot/review-dispatch';
 
 /** Runners with no built-in model list: their pickers show each execution node's own catalog. */
-export const NODE_CATALOG_RUNNERS: readonly string[] = ['pi', 'opencode'];
+export const NODE_CATALOG_RUNNERS: readonly string[] = ['pi', 'opencode', 'antigravity'];
 
 let observed: readonly RunnerVisibleModelState[] = [];
 let catalogs: readonly RunnerModelCatalogResult[] = [];

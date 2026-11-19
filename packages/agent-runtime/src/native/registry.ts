@@ -12,6 +12,12 @@ import { observeGrokAccount } from './account-grok.js';
 import { observeOpenCodeAccount, opencodeProfileEnvironment } from './account-opencode.js';
 import { observePiAccount, piProfileEnvironment } from './account-pi.js';
 import type { NativeAccountObservation, NativeAccountProbeOptions } from './account-types.js';
+import {
+  antigravityBinary,
+  antigravityNativeAdapter,
+  antigravityProfileEnvironment,
+  observeAntigravityAccount,
+} from './antigravity.js';
 import { claudeNativeAdapter } from './claude.js';
 import { claudeAcpBinary, claudeAcpNativeAdapter, observeClaudeAcpAccount } from './claude-acp.js';
 import { codexNativeAdapter } from './codex.js';
@@ -240,6 +246,23 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
       // Pi signs in from its own `/login` command.
       loginArgs: [],
       observe: observePiAccount,
+    },
+  },
+  antigravity: {
+    reviewConfigurationRoots: reviewConfigurationRootsByRunner.antigravity,
+    supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
+    reviewRuntimeRoots: workspaceTrust.reviewRuntimeRootsByRunner.antigravity,
+    adapter: antigravityNativeAdapter,
+    get binary() {
+      return antigravityBinary();
+    },
+    supportsWorkers: true,
+    account: {
+      standardDirectory: (env) => env.HOME || homedir(),
+      environment: antigravityProfileEnvironment,
+      unset: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'],
+      loginArgs: ['acp', '--login'],
+      observe: observeAntigravityAccount,
     },
   },
 };

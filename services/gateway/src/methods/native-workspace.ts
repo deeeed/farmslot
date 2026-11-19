@@ -97,9 +97,11 @@ export async function nativeCatalog(
         if (!definition.nativeTransport || !definition.nativeChoices) return [];
         const defaultModel = definition.nativeChoices.defaultModel ?? definition.defaultModel;
         const nodeModels = nativeNodeModels(definition.id, defaultModel, contextMachines);
+        const modelLabels = nodeModelCatalogs.labels(definition.id);
         return [
           {
             runner: definition.id,
+            ...(definition.nativeOnly ? { nativeOnly: true } : {}),
             supportsWorkers: allowWorkers && runnerSupportsNativeTaskReuse(definition.id),
             supportsQueuedWorkers: allowWorkers && runnerSupportsNativeTaskReuse(definition.id),
             supportsWorkspaceReviews:
@@ -109,6 +111,7 @@ export async function nativeCatalog(
             ...definition.nativeChoices,
             ...nativeModelPreferences(definition.id, definition.nativeChoices.models, defaultModel),
             ...(nodeModels ? { nodeModels } : {}),
+            ...(Object.keys(modelLabels).length ? { modelLabels } : {}),
           },
         ];
       }),
@@ -148,7 +151,7 @@ export function nativeNodeModels(
   const entries = [...contextMachines].flatMap(([executionNodeId, machine]) => {
     const listing = nodeModelCatalogs.nativeListing(runner, machine);
     if (!listing) return [];
-    const listed = listing.filter(isPickerCatalogModel);
+    const listed = source.flatCatalog ? [...listing] : listing.filter(isPickerCatalogModel);
     return [
       [
         executionNodeId,

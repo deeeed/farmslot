@@ -40,6 +40,7 @@ export interface PoolConfig {
   cursor_path?: string;
   grok_path?: string;
   pi_path?: string;
+  antigravity_path?: string;
   android_home?: string;
   dispatch_cmd?: string;
   recycle_cmd?: string;

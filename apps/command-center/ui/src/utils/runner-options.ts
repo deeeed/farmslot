@@ -1,7 +1,14 @@
 import type { ReviewRunnerId } from '@farmslot/protocol';
 
 export type EffortLevel = string;
-export const RUNNER_OPTIONS: ReviewRunnerId[] = ['claude', 'codex', 'cursor', 'grok', 'pi'];
+export const RUNNER_OPTIONS: ReviewRunnerId[] = [
+  'claude',
+  'codex',
+  'cursor',
+  'grok',
+  'pi',
+  'antigravity',
+];
 
 export function isRestorableModelId(model: unknown): model is string {
   return typeof model === 'string' && /^[A-Za-z0-9][^\s]*$/.test(model);
@@ -13,6 +20,7 @@ export const COMPARISON_LANE_RUNNERS: ReadonlySet<string> = new Set([
   'cursor',
   'grok',
   'pi',
+  'antigravity',
 ]);
 
 // Eval replay defaults to Codex first to match the dispatch cockpit's current
@@ -23,6 +31,7 @@ export const EVAL_CANDIDATE_RUNNERS: ReviewRunnerId[] = [
   'cursor',
   'grok',
   'pi',
+  'antigravity',
 ].filter((runner): runner is ReviewRunnerId => COMPARISON_LANE_RUNNERS.has(runner));
 
 export function runnerLabel(runner: string): string {

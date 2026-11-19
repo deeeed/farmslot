@@ -70,6 +70,7 @@ import { createCursorLogObservability } from './cursor-observability.js';
 import { grokLogObservability } from './grok-observability.js';
 import {
   nodeModelCatalogs,
+  parseAntigravityModelCatalog,
   parseCodexModelCatalog,
   parseCursorModelCatalog,
   parseGrokModelCatalog,
@@ -1002,6 +1003,32 @@ KNOWN_RUNNERS['claude-acp'] = {
   requiresExplicitTerminationIdentity: true,
   flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
   acceptsEffort: (_model, effort) => CLAUDE_ACP_EFFORTS.includes(effort),
+};
+
+KNOWN_RUNNERS.antigravity = {
+  // Terminal capabilities fail closed; the native ACP adapter owns launch, progress, cancellation, and resume.
+  ...KNOWN_RUNNERS.none,
+  id: 'antigravity',
+  reviewResumeEnvironment: () => ['HOME', 'FARMSLOT_AGY_EXECUTABLE'],
+  sessionContinuation: { native: true, terminal: null },
+  nativeTransport: 'acp',
+  nativeOnly: true,
+  nativeChoices: {
+    models: [],
+    modes: ['default', 'plan'],
+  },
+  modelCatalog: {
+    nodeCommand: 'agy',
+    slotPathKey: 'antigravityPath',
+    args: ['models'],
+    parse: parseAntigravityModelCatalog,
+    flatCatalog: true,
+    strictAccountCatalog: true,
+  },
+  processMatchers: ['(^|/)agy($| )'],
+  flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
+  defaultModel: null,
+  acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,
 };
 
 // Kept lazy as before; the background-work module imports the registry back.

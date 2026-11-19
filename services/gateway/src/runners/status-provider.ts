@@ -9,10 +9,12 @@
  * - Fail-open for optional tools (CodexBar, missing statusline)
  */
 
+import { observeAntigravityAccount } from '@farmslot/agent-runtime/native/antigravity';
 import type { RunnerAccountInspection, RunnerAccountInventory } from '@farmslot/protocol';
 
 import type { loadSlotVars } from '../core/config.js';
-import { isLocal } from '../core/exec.js';
+import { execOnSlot, isLocal } from '../core/exec.js';
+import { withMachineEnv } from '../core/project-env.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { SSH_INTERACTIVE_CONNECT_SHELL_OPTIONS } from '../core/ssh-options.js';
 import { shellQuote } from '../core/tmux.js';
@@ -45,6 +47,7 @@ export type RunnerSubscriptionSource =
   | 'grok-auth'
   | 'codex-auth'
   | 'cursor-auth'
+  | 'antigravity-auth'
   | 'runner-inventory'
   | 'unsupported'
   | 'error';
@@ -62,8 +65,10 @@ const ABSENT_PROBE_ERRORS = new Set([
   'claude not found',
   'codex not found',
   'cursor-agent not found',
+  'agy not found',
   'auth-file-missing',
   'not-logged-in',
+  'not-installed',
   'Runner executable unavailable',
 ]);
 
@@ -536,6 +541,107 @@ function inventoryStatusProvider(
   };
 }
 
+const antigravityStatusProvider: RunnerStatusProvider = {
+  runnerId: 'antigravity',
+  providerId: 'google',
+  accountInspection: (vars) => ({
+    command: `${shellExpressionForRemotePath(vars.antigravityPath || 'agy')} models`,
+    description: 'Antigravity models available to this host login; requires authentication',
+  }),
+  supportsAccountBinding: false,
+  codexBarProviderId: null,
+
+  async getContextPct() {
+    return null;
+  },
+
+  async getActiveSubscription(vars) {
+    if (isLocal(vars.host, vars.machine)) {
+      const obs = await observeAntigravityAccount({
+        cwd: vars.remoteRepo || '/',
+        ...(vars.antigravityPath ? { executable: vars.antigravityPath } : {}),
+        env: { ...process.env, ...vars.machineEnv },
+      });
+      if (obs.login === 'authenticated') {
+        return {
+          runner: 'antigravity',
+          accountLabel: AMBIENT_ACCOUNT_LABEL,
+          accountEmail: obs.identity?.email ?? null,
+          remainingPercent: null,
+          usedPercent: null,
+          resetsAt: null,
+          loginMethod: obs.version ? `agy ${obs.version}` : 'agy',
+          source: 'antigravity-auth',
+          supportsAccountBinding: false,
+          codexBarProviderId: null,
+          outcome: { identity: 'observed', quota: 'absent' },
+        };
+      }
+      const error =
+        !obs.installed || obs.reason === 'not-installed'
+          ? 'agy not found'
+          : obs.login === 'signed-out'
+            ? 'not-logged-in'
+            : (obs.reason ?? 'status-unavailable');
+      return {
+        runner: 'antigravity',
+        accountLabel: null,
+        accountEmail: null,
+        remainingPercent: null,
+        usedPercent: null,
+        resetsAt: null,
+        loginMethod: null,
+        source: 'error',
+        supportsAccountBinding: false,
+        codexBarProviderId: null,
+        error,
+        outcome: { identity: probeOutcome(error), quota: 'absent' },
+      };
+    }
+    const binary = vars.antigravityPath?.trim() || 'agy';
+    const result = await execOnSlot(
+      vars,
+      withMachineEnv(`${shellExpressionForRemotePath(binary)} models </dev/null`, vars),
+      { cwd: '/', timeout: 15_000, maxBuffer: 1024 * 1024 },
+    );
+    if (result.exitCode === 0) {
+      return {
+        runner: 'antigravity',
+        accountLabel: AMBIENT_ACCOUNT_LABEL,
+        accountEmail: null,
+        remainingPercent: null,
+        usedPercent: null,
+        resetsAt: null,
+        loginMethod: 'agy',
+        source: 'antigravity-auth',
+        supportsAccountBinding: false,
+        codexBarProviderId: null,
+        outcome: { identity: 'observed', quota: 'absent' },
+      };
+    }
+    const error =
+      result.exitCode === 127
+        ? 'agy not found'
+        : result.exitCode === 1
+          ? 'not-logged-in'
+          : `exit-${result.exitCode}`;
+    return {
+      runner: 'antigravity',
+      accountLabel: null,
+      accountEmail: null,
+      remainingPercent: null,
+      usedPercent: null,
+      resetsAt: null,
+      loginMethod: null,
+      source: 'error',
+      supportsAccountBinding: false,
+      codexBarProviderId: null,
+      error,
+      outcome: { identity: probeOutcome(error), quota: 'absent' },
+    };
+  },
+};
+
 export const KNOWN_RUNNER_STATUS_PROVIDERS: Record<string, RunnerStatusProvider> = {
   codex: codexStatusProvider,
   claude: claudeStatusProvider,
@@ -560,6 +666,7 @@ export const KNOWN_RUNNER_STATUS_PROVIDERS: Record<string, RunnerStatusProvider>
     description:
       'List saved OpenCode providers; credential presence does not verify account identity',
   })),
+  antigravity: antigravityStatusProvider,
 };
 
 /** Runners shown on the machine Accounts panel (ordered). */

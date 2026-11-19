@@ -17,6 +17,17 @@ export function acpString(value: unknown): string {
 
 export type AcpRequest = (method: string, params: AcpObject) => Promise<unknown>;
 
+/** JSON-RPC error returned by an ACP server, retaining its structured protocol code. */
+export class AcpRpcError extends Error {
+  constructor(
+    readonly code: unknown,
+    message: string,
+  ) {
+    super(`ACP request failed (${String(code)}): ${message}`);
+    this.name = 'AcpRpcError';
+  }
+}
+
 /** A runner's headless sign-in: one fixed ACP auth method, or a pick among those it advertises. */
 export type AcpAuthMethod = string | ((methods: AcpObject[]) => string | undefined);
 
@@ -100,9 +111,7 @@ export class AcpRpc {
           return;
         }
         const error = message.error === undefined ? undefined : acpObject(message.error);
-        const failure = error
-          ? new Error(`ACP request failed (${String(error.code)}): ${acpString(error.message)}`)
-          : undefined;
+        const failure = error ? new AcpRpcError(error.code, acpString(error.message)) : undefined;
         this.pending.delete(message.id as string);
         clearTimeout(pending.timer);
         if (failure) pending.reject(failure);

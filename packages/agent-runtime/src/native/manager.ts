@@ -848,6 +848,7 @@ export class NativeSessionManager {
       );
       record.adapter = await record.startup;
       info.nativeSessionId = record.adapter.nativeSessionId;
+      if (record.adapter.model && !info.model) info.model = record.adapter.model;
       if (record.adapter.capabilities)
         info.capabilities = {
           ...record.adapter.capabilities,

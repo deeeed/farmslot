@@ -1,0 +1,1 @@
+- Register Antigravity as a native-only ACP runner with live `agy models` catalog discovery (display names and strict account model validation), structured account status probing, and automatic native transport selection on dispatch.

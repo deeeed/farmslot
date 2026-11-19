@@ -1,3 +1,4 @@
+export { antigravityNativeAdapter } from './antigravity.js';
 export { NativeSessionClient } from './client.js';
 export { cursorNativeAdapter } from './cursor.js';
 export { grokNativeAdapter } from './grok.js';
