@@ -82,6 +82,12 @@ import {
   type EvidenceReviewTimelineGroup,
   evidenceReviewTimelineGroups,
 } from './evidence-review-timeline.js';
+import {
+  type EvidenceReviewPendingFlow,
+  projectRunEvidenceFlow,
+  type RunEvidenceFlow,
+  type RunEvidenceFlowOccurrence,
+} from './run-evidence-flow.js';
 
 export type EvidenceReviewContext = 'gate' | 'pr-preview' | 'run-detail' | 'artifact';
 export type EvidenceReviewTiming = 'measured' | 'untimed' | 'outside-recording';
@@ -130,6 +136,8 @@ export interface EvidenceReviewInput {
   evidencePending?: boolean;
   /** A pending run's trace so far, before any package exists: its steps and their own files. */
   pendingTrace?: unknown;
+  /** Prepared tree and the producer's latest update; no history-derived replacement. */
+  pendingFlow?: EvidenceReviewPendingFlow;
   /** Transport namespace; contract references stay relative to their recipe package. */
   artifactPrefix?: string;
   /** Display path relative to the run's artifacts; never used to resolve media. */
@@ -188,6 +196,8 @@ export interface EvidenceReviewClaim extends AcceptanceCriterionView {
   occurrences: readonly EvidenceReviewOccurrence[];
   /** Repair: older proof kept from its original execution and recorded revision. */
   retained?: { recipeRunId: string; revision?: string };
+  /** Execution-qualified bindings; retained sources never join the current trace by index. */
+  flowOccurrences?: readonly RunEvidenceFlowOccurrence[];
 }
 
 /** Qualified visual review only; assertions and worker notes are not pre-validation. */
@@ -336,6 +346,8 @@ export interface EvidenceReviewModel {
   readonly occurrences: readonly EvidenceReviewOccurrence[];
   /** `occurrences` for panel-level evidence details: empty when the package was replaced. */
   readonly currentOccurrences: readonly EvidenceReviewOccurrence[];
+  /** Prepared execution projection, computed once with this model's source snapshot. */
+  readonly flow?: RunEvidenceFlow | null;
   readonly recordings: readonly RecipeRecordingTimelineDocument[];
   /** The measured recordings of the execution `currentOccurrences` belong to; never a
    * comparison baseline's or a retained original's, whose trace indexes are their own. */
@@ -1151,7 +1163,21 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       ? { claimId: claim.id, recipeRunId: packageClaims.recipeRunId }
       : null;
   };
+  const flowProjection = projectRunEvidenceFlow(input, {
+    trace,
+    occurrences,
+    claims,
+    recordings,
+    markerSeekMs,
+    artifactPath: (path) => `${input.artifactPrefix ?? ''}${path}`,
+    warnings,
+    valid: errors.length === 0 && !replaced,
+    retainedSources,
+  });
+  for (const claim of claims)
+    claim.flowOccurrences = flowProjection.criterionOccurrences.get(claim.id) ?? [];
   return {
+    flow: flowProjection.flow,
     artifactInventory: input.artifacts ?? [],
     recordingForPath(path) {
       return mediaRecordings.get(path);

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -16,7 +16,7 @@ import {
 import { createStandardCoreAdapters } from '../../recipe-runner/src/adapters/core.js';
 import { createRecipeRunner } from '../../recipe-runner/src/core/runner.js';
 import { readRecordedEvidencePackage } from '../../recipe-runner/src/evidence/read-package.js';
-import { createEvidenceReviewModel } from '../src/evidence.js';
+import { createEvidenceReviewModel, runEvidenceView } from '../src/evidence.js';
 
 const manifest: RecipeActionManifestDocument = {
   $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
@@ -176,4 +176,44 @@ test('a repair package presents retained criteria from their original execution'
   assert.equal(fresh.retained, undefined);
   assert.equal(fresh.status?.verdict, 'proven');
   assert.ok(fresh.occurrences.length > 0);
+  const view = runEvidenceView(model);
+  const retainedBindings = view.criteria.find(({ id }) => id === 'AC-1')!.occurrences!;
+  const freshBindings = view.criteria.find(({ id }) => id === 'AC-2')!.occurrences!;
+  assert.ok(retainedBindings.length > 0);
+  assert.ok(freshBindings.length > 0);
+  assert.equal(retainedBindings[0]?.recipeRunId, recipeRunId);
+  assert.notEqual(freshBindings[0]?.recipeRunId, recipeRunId);
+  assert.equal(retainedBindings[0]?.traceIndex, freshBindings[0]?.traceIndex);
+  assert.equal(retainedBindings[0]?.invocationId, 'verify-AC-1');
+  assert.equal(freshBindings[0]?.invocationId, 'verify-AC-2');
+  assert.ok(
+    view.flow?.nodes.every((node) =>
+      node.occurrences.every((occurrence) => occurrence.recipeRunId !== recipeRunId),
+    ),
+  );
+  const fixtureExport = process.env.FARMSLOT_EVIDENCE_FLOW_FIXTURE_DIR;
+  if (fixtureExport) {
+    await mkdir(fixtureExport, { recursive: true });
+    await cp(root, path.join(fixtureExport, 'sources'), {
+      recursive: true,
+      force: false,
+      errorOnExist: true,
+    });
+    await writeFile(path.join(fixtureExport, 'view.json'), JSON.stringify(view, null, 2) + '\n');
+    await writeFile(
+      path.join(fixtureExport, 'expected.json'),
+      JSON.stringify(
+        {
+          retainedRecipeRunId: recipeRunId,
+          freshRecipeRunId: freshBindings[0]!.recipeRunId,
+          collidingTraceIndex: 1,
+          retainedInvocationId: 'verify-AC-1',
+          freshInvocationId: 'verify-AC-2',
+          artifactPrefix: 'artifacts/recipe-runs/repair/',
+        },
+        null,
+        2,
+      ) + '\n',
+    );
+  }
 });

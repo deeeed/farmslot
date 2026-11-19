@@ -1,0 +1,1 @@
+- Project composed-flow evidence through the existing shared view with execution-qualified bindings, nullable progress and snapshot equality; retain legacy chronological evidence.
