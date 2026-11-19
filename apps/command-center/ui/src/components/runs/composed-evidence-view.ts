@@ -8,6 +8,7 @@ import {
   unsafeCSS,
 } from 'lit';
 import { customElement, property, query, state } from 'lit/decorators.js';
+import { keyed } from 'lit/directives/keyed.js';
 import { repeat } from 'lit/directives/repeat.js';
 
 import type {
@@ -393,16 +394,18 @@ export class ComposedEvidenceView extends LitElement {
                 </div>`
               : nothing}
             ${this.opened.length
-              ? html`<button type="button" @click=${this.closeMedia}>Close media</button
-                  ><media-lightbox
-                    embedded
-                    open
-                    hide-timeline
-                    .confine=${false}
-                    .items=${this.opened}
-                    .selectedIndex=${0}
-                    @lightbox-close=${this.closeMedia}
-                  ></media-lightbox>`
+              ? html`<button type="button" @click=${this.closeMedia}>Close media</button> ${keyed(
+                    JSON.stringify([this.opened[0].path, this.opened[0].url]),
+                    html`<media-lightbox
+                      embedded
+                      open
+                      hide-timeline
+                      .confine=${false}
+                      .items=${this.opened}
+                      .selectedIndex=${0}
+                      @lightbox-close=${this.closeMedia}
+                    ></media-lightbox>`,
+                  )}`
               : nothing}
           </div>
         </div>
