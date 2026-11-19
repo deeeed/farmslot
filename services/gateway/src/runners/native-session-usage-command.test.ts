@@ -513,7 +513,7 @@ test('bounded remote receipts keep Perps rows or return the complete parent rece
   assert.ok(Buffer.byteLength(unrestricted) > budget);
   const fallback = await runForced(parents, budget);
   const bounded = await runForced(largeChildren, budget, true);
-  assert.equal(bounded, fallback);
+  assert.equal(bounded.replace(/\nreceipt_detail_limited=yes\n$/, ''), fallback);
   const boundedUsage = usage(bounded);
   const boundedTools = boundedUsage.toolUsage;
   assert(boundedTools);
@@ -526,12 +526,23 @@ test('bounded remote receipts keep Perps rows or return the complete parent rece
   assert.equal(boundedUsage.totalTokens, 121);
   assert.equal(boundedUsage.runnerSessionId, 'receipt');
   assert.equal(boundedUsage.runnerSessionPath, sessionPath);
-  // A child-only boundary after the final parent mark cannot prove the
-  // parent's trailing timing. Keep the complete totals without inventing it.
-  const ambiguous = usage(await runForced(largeChildren, budget, true, [parents[0]!]));
+  // The final token record follows the child-only boundary, so the parent
+  // interval can still retain all of its detail.
+  const trailing = usage(await runForced(largeChildren, budget, true, [parents[0]!]));
+  assert.equal(trailing.totalTokens, 121);
+  assert.equal(trailing.toolUsage?.toolCalls, largeToolCount);
+  assert.deepEqual(trailing.toolUsage?.toolCallsByName, boundedTools.toolCallsByName);
+  assert.deepEqual(
+    trailing.toolUsage?.steps.flatMap((step) => (step.title ? [step.title] : [])),
+    [parents[0]!.label],
+  );
+
+  // A later parent boundary absent from the measured detail cannot be recreated.
+  const ambiguous = usage(
+    await runForced(largeChildren, budget, true, [{ ...parents[0]!, checkedAt: at(43) }]),
+  );
   assert.equal(ambiguous.totalTokens, 121);
   assert.equal(ambiguous.toolUsage?.toolCalls, largeToolCount);
-  assert.deepEqual(ambiguous.toolUsage?.toolCallsByName, boundedTools.toolCallsByName);
   assert.deepEqual(ambiguous.toolUsage?.steps, []);
   assert.match(ambiguous.toolUsage?.stepsUnavailable ?? '', /exceeds the remote receipt limit/);
   t.diagnostic(
@@ -564,4 +575,23 @@ test('a bounded receipt leaves no Node warning bytes in the daemon output budget
   assert.match(result.stdout, /^turns=1/);
   assert.ok(Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr) <= budget);
   assert.equal(result.stderr, '');
+});
+
+test('the bounded command does not repeat large parent marks in its shell argument', () => {
+  const parents = Array.from({ length: 150 }, (_, index) => ({
+    stepNumber: index + 1,
+    label: 'parent label '.repeat(35) + index,
+    checkedAt: '2026-11-19T00:00:00.000Z',
+  }));
+  const expanded = [...parents, { ...parents[0]!, label: 'child rule' }];
+  const argv = forcedSessionUsageArgv('receipt', 'codex', '/worker.jsonl', modulePath, expanded, {
+    maxBytes: 64 * 1024,
+    parentChecklistMarks: parents,
+  });
+  assert.ok(Buffer.byteLength(argv.join(' ')) < 128 * 1024);
+  const input = JSON.parse(argv.at(-2)!);
+  assert.deepEqual(
+    input.receiptBudget.parentChecklistMarks,
+    parents.map((_mark, index) => index),
+  );
 });

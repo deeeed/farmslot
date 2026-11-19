@@ -12,7 +12,10 @@ import { runSessionUsage, type SessionUsageWindow } from '@farmslot/slot-config'
 import { loadSlotVars, type SlotVars } from '../core/config.js';
 import { execOnSlot, isLocal } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
-import { forcedSessionUsageArgv } from '../runners/native-session-usage-command.js';
+import {
+  forcedSessionUsageArgv,
+  REMOTE_USAGE_DETAIL_NOTE,
+} from '../runners/native-session-usage-command.js';
 import { getRunnerSessionUsageProvider } from '../runners/registry.js';
 import { verifiedRunnerSessionArchivePath } from '../runners/session-archive.js';
 import { checklistTimingContext, checklistTimingForAttempt } from '../tasks/checklist-timing.js';
@@ -87,7 +90,14 @@ export async function extractRunnerSessionUsage({
       });
       if (result.exitCode !== 0)
         throw new Error(result.stderr.trim() || `Usage extraction exited ${result.exitCode}`);
-      return parseSessionUsageOutput(result.stdout, { runner, runnerSessionId, runnerSessionPath });
+      const usage = parseSessionUsageOutput(result.stdout, {
+        runner,
+        runnerSessionId,
+        runnerSessionPath,
+      });
+      if (result.stdout.split('\n').includes('receipt_detail_limited=yes'))
+        usage.captureGaps = [REMOTE_USAGE_DETAIL_NOTE];
+      return usage;
     }
     const output = await runSessionUsage({
       // repo is unused when forcedPath is set; pass empty string.
@@ -203,10 +213,26 @@ export function receiptChecklistMarks(
   );
 }
 
+export function remoteReceiptDetailLimited(usage: RunnerSessionUsage): boolean {
+  return usage.captureGaps?.includes(REMOTE_USAGE_DETAIL_NOTE) ?? false;
+}
+
 /** Sums the sessions' tool usage only when every session reported it. */
 function totalToolUsage(usages: RunnerSessionUsage[]): ToolUsage | null {
   const counted = usages.map((usage) => usage.toolUsage);
-  return counted.every((usage) => usage !== undefined) ? mergeToolUsage(counted) : null;
+  if (!counted.every((usage) => usage !== undefined)) return null;
+  const combined = mergeToolUsage(counted);
+  if (
+    combined &&
+    usages.some((usage) => remoteReceiptDetailLimited(usage) && !usage.toolUsage?.steps.length)
+  )
+    return {
+      ...combined,
+      steps: [],
+      toolCallsBeforeFirstMark: null,
+      stepsUnavailable: REMOTE_USAGE_DETAIL_NOTE,
+    };
+  return combined;
 }
 
 /** Completion and family reads share the same worker-only multi-session accounting. */
@@ -282,7 +308,7 @@ export async function extractRunWorkerSessionUsage(
       } else {
         usage = await extractRunnerSessionUsage(input);
       }
-      if (!usage.error) return usage;
+      if (!usage.error && !remoteReceiptDetailLimited(usage)) return usage;
       try {
         const archived = await provider?.recoverArchive?.(run, session);
         if (!archived) return usage;
@@ -294,8 +320,26 @@ export async function extractRunWorkerSessionUsage(
           usageWindow,
           marks,
         );
+        if (
+          !usage.error &&
+          (recovered.totalTokens !== usage.totalTokens ||
+            recovered.toolUsage?.toolCalls !== usage.toolUsage?.toolCalls ||
+            !isDeepStrictEqual(
+              recovered.toolUsage?.toolCallsByName,
+              usage.toolUsage?.toolCallsByName,
+            ))
+        )
+          return usage;
         return { ...recovered, scope: usageWindow ? 'run-delta' : recovered.scope };
       } catch (error) {
+        if (!usage.error)
+          return {
+            ...usage,
+            captureGaps: [
+              ...(usage.captureGaps ?? []),
+              'Verified session archive could not be read',
+            ],
+          };
         // Failed archive verification/accounting must not discard successful siblings.
         return unavailableRunnerSessionUsage({
           runner: run.metrics.runner,

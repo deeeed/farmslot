@@ -2,6 +2,8 @@ import type { ChecklistMark } from '@farmslot/agent-runtime/tool-usage';
 import type { NativeWorkerSessionBinding } from '@farmslot/protocol';
 import type { PiModelCostMetadata, SessionUsageWindow } from '@farmslot/slot-config';
 
+export const REMOTE_USAGE_DETAIL_NOTE = 'Checklist breakdown exceeds the remote receipt limit';
+
 export type NativeSessionUsageIdentity = Pick<
   NativeWorkerSessionBinding,
   'sessionId' | 'ownerPrincipalId' | 'executionNodeId' | 'stateDirectory'
@@ -214,8 +216,20 @@ export function forcedSessionUsageArgv(
   checklistMarks?: ChecklistMark[],
   receiptBudget?: { maxBytes: number; parentChecklistMarks?: ChecklistMark[] },
 ): string[] {
+  // Most parent marks are already in the expanded list. Keep references to
+  // those marks so they do not double the remote shell argument on large ledgers.
+  const expandedMarks = new Map(
+    checklistMarks?.map((mark, index) => [JSON.stringify(mark), index]),
+  );
+  const budget = receiptBudget && {
+    maxBytes: receiptBudget.maxBytes,
+    parentChecklistMarks: receiptBudget.parentChecklistMarks?.map(
+      (mark) => expandedMarks.get(JSON.stringify(mark)) ?? mark,
+    ),
+  };
   const program =
     SESSION_USAGE_MODULE +
+    `const detailNote = ${JSON.stringify(REMOTE_USAGE_DETAIL_NOTE)};\n` +
     String.raw`
 const input = JSON.parse(process.argv[1]);
 
@@ -249,7 +263,7 @@ function totalsOnly(usage) {
     ...usage,
     steps: [],
     toolCallsBeforeFirstMark: null,
-    stepsUnavailable: 'Checklist breakdown exceeds the remote receipt limit',
+    stepsUnavailable: detailNote,
   };
 }
 
@@ -262,7 +276,8 @@ function parentToolUsage(usage, marks) {
   const lastMark = source.findLast((step) => step.markedAt)?.markedAt;
   // A later child-only boundary may have extended the source's trailing wall
   // time. Without the original activity stream the parent interval end is unknown.
-  if (Date.parse(lastMark) > Date.parse(parents[parents.length - 1].checkedAt))
+  if (Date.parse(lastMark) > Date.parse(parents[parents.length - 1].checkedAt) &&
+      Date.parse(source[source.length - 1].endedAt) <= Date.parse(lastMark))
     return totalsOnly(usage);
   const edges = new Map(source.flatMap((step, index) =>
     step.markedAt ? [[segmentKey(step.stepNumber, step.markedAt), index]] : [],
@@ -289,8 +304,12 @@ try {
     const index = lines.findIndex((line) => line.startsWith('tool_usage='));
     if (index !== -1) {
       const usage = JSON.parse(lines[index].slice('tool_usage='.length));
-      const compact = parentToolUsage(usage, input.receiptBudget.parentChecklistMarks);
+      const parentMarks = input.receiptBudget.parentChecklistMarks?.map((mark) =>
+        typeof mark === 'number' ? input.checklistMarks[mark] : mark,
+      );
+      const compact = parentToolUsage(usage, parentMarks);
       lines[index] = 'tool_usage=' + JSON.stringify(compact);
+      lines.push('receipt_detail_limited=yes', '');
       output = lines.join('\n');
       if (compact.steps.length && Buffer.byteLength(output, 'utf8') > input.receiptBudget.maxBytes) {
         lines[index] = 'tool_usage=' + JSON.stringify(totalsOnly(usage));
@@ -316,7 +335,7 @@ try {
     '--input-type=module',
     '-e',
     program,
-    JSON.stringify({ slotId, runner, sessionPath, checklistMarks, receiptBudget }),
+    JSON.stringify({ slotId, runner, sessionPath, checklistMarks, receiptBudget: budget }),
     modulePath ?? '',
   ];
 }

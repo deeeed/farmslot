@@ -91,6 +91,7 @@ function completedMeasurement(
         ? Math.max(0, end - startedAt)
         : (row.durationMs ?? null),
     captureGaps: [
+      ...(usage.captureGaps ?? []),
       ...(usage.source === 'unavailable' ? [usage.error ?? 'Session usage unavailable'] : []),
       ...(!Number.isFinite(startedAt) ? ['Session start time is unavailable'] : []),
       ...(!usage.actualModel ? ['Actual model has not been reported'] : []),
