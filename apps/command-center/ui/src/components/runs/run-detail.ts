@@ -6,6 +6,7 @@ import {
   type EvidenceReviewModel,
   readEvidenceReviewReport,
   runEvidencePending,
+  runEvidenceView,
 } from '@farmslot/adapter-sdk/evidence';
 import {
   buildRunResolveDecisionParams,
@@ -47,6 +48,7 @@ import './run-pipeline-mini.js';
 import './run-tag-editor.js';
 import '../shared/evidence-reviewer.js';
 import '../shared/media-lightbox.js';
+import './composed-evidence-view.js';
 import '../shared/step-artifacts.js';
 import '../workspace/review-workspace.js';
 import '../workspace/ready-workspace.js';
@@ -95,6 +97,11 @@ import { recipeRunArtifactUrl, runArtifactUrl } from '../workspace/workspace-art
 import type { WorkspaceEvidenceComparison } from '../workspace/workspace-evidence-preview.js';
 
 import { CIWatchPokeController } from './ci-watch-actions.js';
+import {
+  type ComposedEvidencePosition,
+  composedEvidencePositionFromHash,
+  composedEvidenceRecipeGroup,
+} from './composed-evidence-model.js';
 import { LiveArtifactRefresh, liveArtifactRefreshActive } from './run-artifact-live-refresh.js';
 import {
   checkInteractiveHandoffSignal,
@@ -217,6 +224,8 @@ export class RunDetail extends RunDetailState {
   private _viewVersion = 0;
   private _viewConnectionId?: string | number;
   private _recipeRequestedId = '';
+  private _restoredRecipeCall = '';
+  private _linkRecipeOverride = '';
   private readonly detailQuery = new ResourceQueryController<RunGetResult>(this, (state) => {
     this._runObservation = state;
   });
@@ -960,6 +969,8 @@ export class RunDetail extends RunDetailState {
 
   private _resetRecipeRuns(): void {
     this._recipeRequestedId = '';
+    this._restoredRecipeCall = '';
+    this._linkRecipeOverride = '';
     this._pendingRecipeRunSelectionId = '';
     this.recipeQuery.setQuery(undefined);
     this._recipeRuns = [];
@@ -993,6 +1004,22 @@ export class RunDetail extends RunDetailState {
 
   private _acceptRecipeObservation(state: ResourceQueryState<RunRecipeRunsForRunResult>): void {
     const run = this.run;
+    const outputDecision = run ? pendingOutputReview(run) : undefined;
+    const position =
+      run && !outputDecision ? composedEvidencePositionFromHash(run.id, location.hash) : null;
+    if (run && !position && this._linkRecipeOverride) {
+      const stillSelected = this._recipeRequestedId === this._linkRecipeOverride;
+      this._linkRecipeOverride = '';
+      this._restoredRecipeCall = '';
+      if (stillSelected) {
+        this._recipeRequestedId = '';
+        this._selectedRecipeRunId = '';
+        this._evidenceGroupId = null;
+        this._recordedEvidence = undefined;
+        this._bindRecipeRuns(run);
+        return;
+      }
+    }
     const result = this.recipeQuery.belongsToWorkspace ? state.data : undefined;
     const failure = readFailureText(this.recipeQuery, this._now);
     if (!run || !result) {
@@ -1010,7 +1037,6 @@ export class RunDetail extends RunDetailState {
       return;
     }
     this._recipeRuns = result.recipeRuns;
-    const outputDecision = pendingOutputReview(run);
     if (
       !outputDecision &&
       this._recipeRequestedId &&
@@ -1021,6 +1047,15 @@ export class RunDetail extends RunDetailState {
       // hint error never replaces the retained package that remains readable.
       this._recipeRequestedId = result.selectedRecipeRunId;
       this._selectedRecipeRunId = result.selectedRecipeRunId;
+      this._recordedEvidence = undefined;
+      this._bindRecipeRuns(run);
+      return;
+    }
+    const linkedGroup = this._recipeCallGroup(position, result);
+    if (linkedGroup && linkedGroup !== result.selectedRecipeRunId) {
+      this._linkRecipeOverride = linkedGroup;
+      this._recipeRequestedId = linkedGroup;
+      this._selectedRecipeRunId = linkedGroup;
       this._recordedEvidence = undefined;
       this._bindRecipeRuns(run);
       return;
@@ -1040,6 +1075,22 @@ export class RunDetail extends RunDetailState {
       this._recipeRequestedId = desired;
       this._bindRecipeRuns(run);
     }
+  }
+
+  private _recipeCallGroup(
+    position: ComposedEvidencePosition | null,
+    result: RunRecipeRunsForRunResult,
+  ): string | undefined {
+    const key = position ? JSON.stringify(position) : '';
+    if (!key) this._restoredRecipeCall = '';
+    if (key === this._restoredRecipeCall) return undefined;
+    const group = composedEvidenceRecipeGroup(
+      result.recipeRuns,
+      position,
+      result.selectedRecipeRunId,
+    );
+    if (group) this._restoredRecipeCall = key;
+    return group;
   }
 
   private _handleRecipeRunArtifacts(run: Run, detail: RecipeCompleteDetail): void {
@@ -1075,6 +1126,7 @@ export class RunDetail extends RunDetailState {
         this.runId,
         'conversation',
       );
+      this._acceptRecipeObservation(this._recipeObservation);
       this._applySelectedStepFromHash();
       this._applyEvidenceArtifactFromHash();
       this._sharedPanelFocusKey = '';
@@ -1810,8 +1862,18 @@ export class RunDetail extends RunDetailState {
     };
   }
 
+  private _composedEvidenceUrl = (path: string): string => this._captureEvidenceResolver()(path);
+
   private _renderRunEvidence(run: Run) {
-    return renderRunEvidence(run, this._runEvidenceContext(run), false);
+    const model = this.evidenceModel;
+    const ctx = this._runEvidenceContext(run);
+    if (model?.flow)
+      ctx.composedEvidence = html`<composed-evidence-view
+        .view=${runEvidenceView(model)}
+        .runId=${run.id}
+        .resolveUrl=${this._composedEvidenceUrl}
+      ></composed-evidence-view>`;
+    return renderRunEvidence(run, ctx, false);
   }
 
   private _renderInteractivePackets(run: Run) {

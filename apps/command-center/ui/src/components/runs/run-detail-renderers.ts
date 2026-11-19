@@ -1,4 +1,4 @@
-import { html, nothing } from 'lit';
+import { html, nothing, type TemplateResult } from 'lit';
 import { keyed } from 'lit/directives/keyed.js';
 
 import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
@@ -258,6 +258,7 @@ export function renderInteractiveDevGate(run: Run, ctx: InteractiveDevGateRender
 
 export interface RunEvidenceRenderContext {
   selectedSharedEvidence?: boolean;
+  composedEvidence?: TemplateResult;
   taskProgress?: TaskProgressStructured | null;
   evidenceLightboxItems: LightboxItem[];
   evidenceLightboxOpen: boolean;
@@ -297,7 +298,7 @@ export function renderRunEvidence(
   includeOverlay = true,
 ): unknown {
   return html`<section data-shared-run-panel="evidence" tabindex="-1">
-      ${renderRunEvidenceContent(run, ctx)}
+      ${ctx.composedEvidence ?? nothing} ${renderRunEvidenceContent(run, ctx)}
     </section>
     ${includeOverlay ? renderEvidenceLightbox(ctx) : nothing}`;
 }
