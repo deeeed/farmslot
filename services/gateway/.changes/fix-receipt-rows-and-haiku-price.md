@@ -1,1 +1,0 @@
-- Cost per step now keeps up to 100 child-checklist rows; a receipt over the size limit still falls back to parent steps.

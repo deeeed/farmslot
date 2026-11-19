@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.30.0 - 2026-11-19
+
+- Expose qualified invocation timing through the shared evidence view, including unassigned costs and timing-sensitive snapshot equality.
+
 ## 0.29.0 - 2026-11-19
 
 - Project composed-flow evidence through the existing shared view with execution-qualified bindings, nullable progress and snapshot equality; retain legacy chronological evidence.

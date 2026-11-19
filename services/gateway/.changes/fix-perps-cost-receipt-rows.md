@@ -1,1 +1,0 @@
-- Keep individual checklist rows in the session-cost receipt for a full Perps review.
