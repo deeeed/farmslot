@@ -129,6 +129,40 @@ test('a remote Pi receipt is quoted from the gateway LiteLLM prices, not the slo
     })),
   });
   assert.equal(String(calls[0][1]).includes('liteLlmPrices"'), false);
+  // A static review is quoted from the endpoint it was launched with, not the machine pool's.
+  const launchUrl = 'https://litellm-launch.example';
+  writeFileSync(
+    path.join(
+      cacheDir,
+      `${createHash('sha256').update(`${launchUrl}\n${apiKey}`).digest('hex')}.json`,
+    ),
+    JSON.stringify({
+      fetchedAt: Date.now(),
+      data: [
+        {
+          model_name: 'launch-endpoint-model',
+          model_info: { input_cost_per_token: 0.000001, output_cost_per_token: 0.000002 },
+        },
+      ],
+    }),
+  );
+  calls.length = 0;
+  await extractRunnerSessionUsage({
+    slotId: 'slot-1',
+    vars,
+    runner: 'pi',
+    runnerSessionPath: '/worker/pi.jsonl',
+    launchEnvironment: async () => ({
+      unset: [],
+      set: {
+        LITELLM_URL: launchUrl,
+        LITELLM_API_KEY: apiKey,
+        FARMSLOT_LITELLM_PRICING_CACHE_DIR: cacheDir,
+      },
+    }),
+  });
+  assert.match(String(calls[0][1]), /launch-endpoint-model/);
+  assert.equal(String(calls[0][1]).includes('claude-opus-5-5'), false);
   // Other runners keep their command unchanged.
   calls.length = 0;
   await extractRunnerSessionUsage({

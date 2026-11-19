@@ -174,7 +174,10 @@ async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSession
         runnerSessionPath: row.runnerSessionPath,
         ...marks,
         ...(!row.slotId && run.reviewWorkspace
-          ? { commandEnvOptions: reviewWorkspaceCommandEnvOptions(run.reviewWorkspace, run.domain) }
+          ? {
+              launchEnvironment: async () =>
+                (await import('../runners/review-tmux.js')).reviewEnvironment(run),
+            }
           : {}),
       }),
     );

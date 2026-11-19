@@ -8,6 +8,7 @@ import {
 } from '@farmslot/agent-runtime/tool-usage';
 import type { AgentContext, Run, RunnerSessionUsage } from '@farmslot/protocol';
 import {
+  loadLiteLlmPrices,
   type PiModelCostMetadata,
   runSessionUsage,
   type SessionUsageWindow,
@@ -49,6 +50,12 @@ export {
 } from './session-usage-result.js';
 
 const REMOTE_RECEIPT_BYTES = 64 * 1024;
+
+/** A project command env mutation: names to unset, then values to set. */
+interface LaunchEnvironment {
+  unset: string[];
+  set: Record<string, string>;
+}
 /**
  * The shell-quoted usage command may grow to this with gateway prices. The node runs it as one
  * shell argument, and Linux allows 128 KiB per argument; above it the prices are left off.
@@ -63,11 +70,18 @@ const REMOTE_USAGE_COMMAND_BYTES = 96 * 1024;
 async function remotePiLiteLlmPrices(
   vars: SlotVars,
   slotId: string,
-  commandEnvOptions: ProjectCommandEnvOptions | undefined,
+  launchEnvironment: (() => Promise<LaunchEnvironment>) | undefined,
 ): Promise<Array<[string, PiModelCostMetadata]> | undefined> {
   let prices: Array<[string, PiModelCostMetadata]>;
   try {
-    prices = await usageLiteLlmPrices(vars, vars.machine, commandEnvOptions);
+    if (launchEnvironment) {
+      // Quote from the endpoint the session was launched against, in the launch's own precedence.
+      const launch = await launchEnvironment();
+      const environment = { ...process.env };
+      for (const name of launch.unset) delete environment[name];
+      Object.assign(environment, launch.set);
+      prices = [...(await loadLiteLlmPrices({ environment }))];
+    } else prices = await usageLiteLlmPrices(vars, vars.machine);
   } catch (error) {
     // Without the gateway's prices the receipt keeps its tokens and its previous pricing; a
     // pricing failure must not cost the run its usage totals.
@@ -87,7 +101,7 @@ export async function extractRunnerSessionUsage({
   runnerSessionPath,
   checklistMarks,
   parentChecklistMarks,
-  commandEnvOptions,
+  launchEnvironment,
 }: {
   slotId: string;
   vars?: SlotVars;
@@ -98,8 +112,8 @@ export async function extractRunnerSessionUsage({
   checklistMarks?: ChecklistMark[];
   /** Parent boundaries for a remote receipt whose child breakdown exceeds the transport limit. */
   parentChecklistMarks?: ChecklistMark[];
-  /** The project command env the session was launched with (a review workspace's domain). */
-  commandEnvOptions?: ProjectCommandEnvOptions;
+  /** The environment the session was launched with (a static review's), read only for Pi pricing. */
+  launchEnvironment?: () => Promise<LaunchEnvironment>;
 }): Promise<RunnerSessionUsage> {
   if (!runnerSessionPath) {
     return unavailableRunnerSessionUsage({
@@ -114,7 +128,7 @@ export async function extractRunnerSessionUsage({
       // Pi's LiteLLM messages are quoted from the gateway's LiteLLM price list; the slot that holds
       // the transcript may have no LiteLLM credentials, which left the receipt unpriced.
       const liteLlmPrices =
-        runner === 'pi' ? await remotePiLiteLlmPrices(vars, slotId, commandEnvOptions) : undefined;
+        runner === 'pi' ? await remotePiLiteLlmPrices(vars, slotId, launchEnvironment) : undefined;
       const usageArgv = (prices?: Array<[string, PiModelCostMetadata]>) =>
         forcedSessionUsageArgv(
           slotId,
