@@ -45,12 +45,6 @@ export function buildRecipeStructuralInventory(
       'reload the root document and resolve its dependencies together',
     );
   }
-  const tree = buildRecipeInvocationTree({
-    root: input.root,
-    rootRef: input.dependencies.document.root.ref,
-    recipes: input.dependencies.recipes,
-    claimProjections: input.claimProjections,
-  });
   for (const dependency of input.dependencies.document.dependencies) {
     const recipe = input.dependencies.recipes.get(dependency.ref);
     if (!recipe || digestRecipeDocument(recipe.document) !== dependency.digest) {
@@ -61,6 +55,12 @@ export function buildRecipeStructuralInventory(
       );
     }
   }
+  const tree = buildRecipeInvocationTree({
+    root: input.root,
+    rootRef: input.dependencies.document.root.ref,
+    recipes: input.dependencies.recipes,
+    claimProjections: input.claimProjections,
+  });
   const counts: RecipeStructuralInventoryCounts = {
     nodeCount: 0,
     branchCount: 0,

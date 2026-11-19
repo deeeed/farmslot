@@ -6,6 +6,7 @@ import { digestRecipeDocument } from '@farmslot/protocol';
 import {
   buildRecipeInvocationTree,
   buildRecipeStructuralInventory,
+  RecipeResolutionError,
   type RecipeStructuralInventoryInput,
   type ResolvedLibraryRecipe,
   resolveRecipeDependencies,
@@ -41,6 +42,11 @@ async function input(
     }),
   };
 }
+
+const sourceDigestMismatch = (error: unknown): boolean =>
+  error instanceof RecipeResolutionError &&
+  error.code === 'RECIPE_RESOLUTION_DIGEST_MISMATCH' &&
+  /reload/.test(error.userAction);
 
 const health = {
   workflow: {
@@ -172,7 +178,7 @@ test('missing resolved children fail instead of silently producing zero inventor
         ...fixture,
         dependencies: { ...fixture.dependencies, recipes: new Map() },
       }),
-    /Resolved recipe fixture.unit is missing/,
+    sourceDigestMismatch,
   );
 });
 
@@ -223,4 +229,44 @@ test('a changed child document cannot reuse an older resolved dependency digest'
       }),
     /source digest/,
   );
+});
+
+test('a stale nested target reports a typed digest mismatch before dependency expansion', async () => {
+  const fixture = await input(root, [
+    ['fixture.inner', inner],
+    ['fixture.unit', unit],
+  ]);
+  const child = fixture.dependencies.recipes.get('fixture.unit');
+  assert.ok(child);
+  const edited = {
+    ...unit,
+    workflow: {
+      ...unit.workflow,
+      nodes: {
+        ...unit.workflow.nodes,
+        nested: { ...unit.workflow.nodes.nested, ref: 'fixture.replacement' },
+      },
+    },
+  };
+  const staleRecipes = new Map(fixture.dependencies.recipes);
+  staleRecipes.set(child.ref, { ...child, document: edited });
+  assert.throws(
+    () =>
+      buildRecipeStructuralInventory({
+        ...fixture,
+        dependencies: { ...fixture.dependencies, recipes: staleRecipes },
+      }),
+    sourceDigestMismatch,
+  );
+  const refreshed = await input(root, [
+    ['fixture.unit', edited],
+    ['fixture.replacement', inner],
+  ]);
+  assert.deepEqual(buildRecipeStructuralInventory(refreshed).counts, {
+    nodeCount: 13,
+    branchCount: 1,
+    callCount: 4,
+    recipeCount: 3,
+    teardownEntryCount: 3,
+  });
 });
