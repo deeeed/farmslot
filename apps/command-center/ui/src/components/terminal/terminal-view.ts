@@ -491,32 +491,44 @@ export class TerminalView extends TerminalViewState {
     this._subscribeOkAt = 0;
     this._log('subscribe', `cols=${this._terminal?.cols} rows=${this._terminal?.rows}`);
 
-    // Listen for mode event before sending subscribe request.
-    // Skip when payload mode equals current mode — gateway re-emits the same
-    // mode event after each re-subscribe, which otherwise re-runs setupPtyMode
-    // / tmuxPoll and can cascade into duplicate terminal.subscribe (~1s SSH
-    // attach each).
-    this._unsubMode = gateway.subscribe<TerminalModePayload>(Events.TERMINAL_MODE, (p) => {
-      if (subscribeSeq !== this._subscribeSeq) return;
-      if (!this._matchesTarget(p)) return;
-      if (p.mode === this._mode && this._ptyInputBound) return;
-      this._log('mode-event', `mode=${p.mode}`);
-      this._mode = p.mode as TerminalMode;
-      if (this._mode === 'pty') {
-        this._setupPtyMode();
-        this._startTmuxPoll();
-        void this._commitInitialPtySize(subscribeSeq);
-      } else if (this._mode === 'poll') {
-        this._attachPhase = 'live';
-      }
-    });
+    if (!worker) {
+      // Slot terminals can fall back to polling. Worker subscriptions always use a PTY.
+      this._unsubMode = gateway.subscribe<TerminalModePayload>(Events.TERMINAL_MODE, (p) => {
+        if (subscribeSeq !== this._subscribeSeq) return;
+        if (!this._matchesTarget(p)) return;
+        if (p.mode === this._mode && this._ptyInputBound) return;
+        this._log('mode-event', `mode=${p.mode}`);
+        this._mode = p.mode as TerminalMode;
+        if (this._mode === 'pty') {
+          this._setupPtyMode();
+          this._startTmuxPoll();
+          void this._commitInitialPtySize(subscribeSeq);
+        } else if (this._mode === 'poll') {
+          this._attachPhase = 'live';
+        }
+      });
+    }
 
-    let workerSubscriptionSeq: number | undefined;
+    // Undefined while waiting for subscribe; null after an older gateway accepts it.
+    let workerSubscriptionSeq: number | null | undefined;
     const pendingWorkerExits = new Set<number>();
     if (worker) {
       this._unsubExit = gateway.subscribe<TerminalExitedPayload>(Events.TERMINAL_EXITED, (p) => {
-        if (subscribeSeq !== this._subscribeSeq || !this._matchesTarget(p)) return;
-        if (p.worker?.session !== worker.session || p.workerSubscriptionSeq === undefined) return;
+        if (subscribeSeq !== this._subscribeSeq) return;
+        if (p.workerSubscriptionSeq === undefined) {
+          if (workerSubscriptionSeq !== null) return;
+          // Older gateways broadcast the worker key as slotId and contextId.
+          const matches = p.worker
+            ? p.worker.session === worker.session && this._matchesTarget(p)
+            : /^%\d+$/.test(worker.target) &&
+              p.slotId === worker.nodeId &&
+              p.contextId === worker.target &&
+              p.role === undefined &&
+              p.runId === undefined;
+          if (matches) this._workerTerminalClosed();
+          return;
+        }
+        if (p.worker?.session !== worker.session || !this._matchesTarget(p)) return;
         if (workerSubscriptionSeq === undefined) {
           // The PTY can exit while its subscribe reply is still in flight.
           pendingWorkerExits.add(p.workerSubscriptionSeq);
@@ -548,12 +560,19 @@ export class TerminalView extends TerminalViewState {
       this._log('subscribed OK');
       if (subscribeSeq !== this._subscribeSeq) return;
       if (result) {
-        if (!result.subscribed || pendingWorkerExits.has(result.workerSubscriptionSeq)) {
+        if (!result.subscribed) {
           this._workerTerminalClosed();
           return;
         }
-        workerSubscriptionSeq = result.workerSubscriptionSeq;
+        workerSubscriptionSeq = result.workerSubscriptionSeq ?? null;
+        if (workerSubscriptionSeq !== null && pendingWorkerExits.has(workerSubscriptionSeq)) {
+          this._workerTerminalClosed();
+          return;
+        }
         pendingWorkerExits.clear();
+        this._mode = 'pty';
+        this._setupPtyMode();
+        this._startTmuxPoll();
       }
       this._activeSubscribeIdentity = {
         slotId: this.slotId,
@@ -578,6 +597,7 @@ export class TerminalView extends TerminalViewState {
       }
     } catch (err) {
       if (subscribeSeq !== this._subscribeSeq) return;
+      if (worker) this._teardownStreams(false);
       this._lastSubscribeError = err instanceof Error ? err.message : String(err);
       this._retiredTarget = isRetiredTerminalTargetError(err);
       this._log('subscribe FAILED', String(err));

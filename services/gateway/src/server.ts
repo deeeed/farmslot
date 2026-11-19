@@ -566,6 +566,7 @@ export function initServerGlobals(): void {
       if ('worker' in identity) {
         state.workerTerminalHandlers.delete(slotId);
         state.terminalIdentities.delete(slotId);
+        forgetTerminalRedraws(state, slotId);
       }
       sendEvent(ws, Events.TERMINAL_EXITED, { ...identity, exitCode });
       sent = true;

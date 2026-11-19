@@ -71,9 +71,9 @@ export interface TerminalWorkerSubscribeParams {
   rows?: number;
 }
 
-/** Identifies the worker subscription adopted on this connection for the pane. */
+/** Current gateways identify the adopted worker subscription on this connection. */
 export type TerminalWorkerSubscribeResult =
-  | { subscribed: true; workerSubscriptionSeq: number }
+  | { subscribed: true; workerSubscriptionSeq?: number }
   | { subscribed: false };
 
 export interface TerminalWorkerUnsubscribeParams {

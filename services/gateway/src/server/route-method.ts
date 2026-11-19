@@ -663,9 +663,10 @@ const terminalRedraws = createTerminalRedraws<ClientState>((key) => {
   });
 });
 
-/** A disconnected client's pending repaints are dropped with its terminal subscriptions. */
-export function forgetTerminalRedraws(state: ClientState): void {
-  terminalRedraws.cancelAll(state);
+/** Drop pending repaints when a terminal ends or the client disconnects. */
+export function forgetTerminalRedraws(state: ClientState, key?: string): void {
+  if (key === undefined) terminalRedraws.cancelAll(state);
+  else terminalRedraws.cancel(state, key);
 }
 
 /** The pr.list scope an entity read names; the same selectors the view accepts. */
