@@ -16,6 +16,8 @@ export const RUNNER_OBSERVABILITY_SUPPORT_PATHS = [
   'scripts/lib/provider-accounts.mjs',
   'scripts/lib/runner-observability-bundle.mjs',
   'packages/agent-runtime/scripts/toml-scan.cjs',
+  // Required by workspace-trust.cjs for the launch receipt's LiteLLM route identity.
+  'packages/agent-runtime/scripts/litellm-endpoint.cjs',
   'packages/agent-runtime/scripts/review-account-preflight.cjs',
   'packages/agent-runtime/scripts/workspace-trust.cjs',
   ...RUNNER_OBSERVABILITY_COPY_PATHS,
