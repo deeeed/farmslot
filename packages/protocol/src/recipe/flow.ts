@@ -1,4 +1,10 @@
-import { isRecord, type RecipeFlowUpdate, type RecipeInvocationBreadcrumb } from './common.js';
+import {
+  isRecord,
+  type RecipeFlowTiming,
+  type RecipeFlowTimingUpdate,
+  type RecipeFlowUpdate,
+  type RecipeInvocationBreadcrumb,
+} from './common.js';
 
 const count = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
@@ -17,6 +23,7 @@ export function isRecipeFlowUpdate(value: unknown): value is RecipeFlowUpdate {
     return false;
   if (value.ancestry !== undefined && !validAncestry(value.ancestry, value.rootId, value.activeId))
     return false;
+  if (value.timing !== undefined && !validTiming(value.timing)) return false;
   const p = value.progress;
   if (
     !count(p.current) ||
@@ -57,5 +64,43 @@ function validAncestry(value: unknown, rootId: string, activeId: string | null):
     ids[0] === rootId &&
     ids.at(-1) === activeId &&
     value.parentId === (ids.length === 1 ? null : ids.at(-2))
+  );
+}
+
+function validMetric(value: unknown, qualification: unknown): boolean {
+  return qualification === 'unknown'
+    ? value === null
+    : (qualification === 'measured' || qualification === 'partial') &&
+        typeof value === 'number' &&
+        Number.isFinite(value) &&
+        value >= 0;
+}
+function validTiming(value: unknown): value is RecipeFlowTiming | RecipeFlowTimingUpdate {
+  if (
+    !isRecord(value) ||
+    !isRecord(value.nodes) ||
+    (value.scope !== 'active' && value.scope !== 'all')
+  )
+    return false;
+  const rollup = (row: unknown) =>
+    isRecord(row) &&
+    validMetric(row.durationMs, row.qualification) &&
+    Array.isArray(row.invocationIds) &&
+    row.invocationIds.every(identity);
+  return (
+    Object.values(value.nodes).every(
+      (row) =>
+        isRecord(row) &&
+        isRecord(row.qualification) &&
+        validMetric(row.inclusiveMs, row.qualification.inclusive) &&
+        validMetric(row.selfMs, row.qualification.self) &&
+        (row.inclusiveMs === null ||
+          row.selfMs === null ||
+          Number(row.selfMs) <= Number(row.inclusiveMs)),
+    ) &&
+    (value.scope === 'active' ||
+      (isRecord(value.claimTimings) &&
+        Object.values(value.claimTimings).every(rollup) &&
+        rollup(value.unassignedTiming)))
   );
 }

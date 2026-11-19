@@ -5,11 +5,19 @@ import {
   type RecipeFlowProgress,
   type RecipeFlowUpdate,
   type RecipeInvocationNode,
+  type RecipeInvocationTiming,
   type RecipeInvocationTree,
+  type RecipeTimingRollup,
   recipeTraceEntries,
   type RecordedEvidencePackageInput,
 } from '@farmslot/protocol';
-import { buildRecipeInvocationAncestry } from '@farmslot/recipe-runner/evidence';
+import {
+  buildRecipeInvocationAncestry,
+  createRecipeInvocationRouteIndex,
+  projectRecipeInvocationTiming,
+  type RecipeInvocationDecision,
+  recipeInvocationDecision,
+} from '@farmslot/recipe-runner/evidence';
 
 import type {
   EvidenceReviewClaim,
@@ -26,10 +34,7 @@ export interface EvidenceReviewPendingFlow {
 
 export type RunEvidenceFlowStatus = 'running' | 'pass' | 'fail' | 'skipped' | 'unknown';
 
-export interface RunEvidenceFlowDecision {
-  case: string | null;
-  next: string | null;
-}
+export type RunEvidenceFlowDecision = RecipeInvocationDecision;
 
 export interface RunEvidenceFlowOccurrence {
   recipeRunId: string;
@@ -42,11 +47,14 @@ export interface RunEvidenceFlowOccurrence {
   cue: RunEvidenceCue | null;
 }
 
+export type RunEvidenceInvocationTiming = RecipeInvocationTiming;
+
 export interface RunEvidenceFlowNode extends RecipeInvocationNode {
   depth: number;
   breadcrumbIds: string[];
   status: RunEvidenceFlowStatus;
   occurrences: RunEvidenceFlowOccurrence[];
+  timing?: RunEvidenceInvocationTiming;
 }
 
 export interface RunEvidenceFlow {
@@ -56,6 +64,8 @@ export interface RunEvidenceFlow {
   activeId: string | null;
   progress: RecipeFlowProgress;
   nodes: RunEvidenceFlowNode[];
+  unassignedTiming?: RecipeTimingRollup;
+  claimTimings?: Record<string, RecipeTimingRollup>;
 }
 
 interface FlowProjectionContext {
@@ -152,30 +162,6 @@ function preparedTree(
   return isRecord(input?.recipeResolution) ? checkedTree(input.recipeResolution.flow) : null;
 }
 
-/** Resolve a recorded local next through the prepared edges, not a guessed path prefix. */
-function decision(
-  entry: unknown,
-  node: RecipeInvocationNode | undefined,
-  nodes: ReadonlyMap<string, RecipeInvocationNode>,
-): RunEvidenceFlowDecision {
-  if (!isRecord(entry)) return { case: null, next: null };
-  const branch = typeof entry.case === 'string' ? entry.case : null;
-  const edges = node
-    ? [...new Set([node.next, node.default, ...Object.values(node.cases)].filter(identity))]
-    : [];
-  const recordedNext = typeof entry.next === 'string' ? entry.next : null;
-  const matches =
-    recordedNext === null
-      ? []
-      : edges.filter((id) => id === recordedNext || nodes.get(id)?.nodeId === recordedNext);
-  const selected =
-    branch !== null && node && Object.hasOwn(node.cases, branch) ? node.cases[branch] : undefined;
-  return {
-    case: branch,
-    next: matches.length === 1 ? matches[0]! : recordedNext === null ? (selected ?? null) : null,
-  };
-}
-
 function recordedStatus(entry: unknown): RunEvidenceFlowOccurrence['status'] {
   if (!isRecord(entry) || entry.status === 'unknown') return 'unknown';
   if (entry.status === 'pass' || entry.status === 'fail') return entry.status;
@@ -226,7 +212,7 @@ export function projectRunEvidenceFlow(
       traceIndex: occurrence.traceIndex,
       invocationId: node?.id ?? null,
       status: recordedStatus(context.trace[occurrence.traceIndex]),
-      decision: decision(context.trace[occurrence.traceIndex], node, nodes),
+      decision: recipeInvocationDecision(context.trace[occurrence.traceIndex], node, nodes),
       claimIds: [...new Set(occurrence.proves.map(normalizeRecipeClaimId))],
       files: occurrence.artifacts.map(({ artifactPath, name, mediaType }) => ({
         path: artifactPath,
@@ -245,27 +231,16 @@ export function projectRunEvidenceFlow(
   const criterionOccurrences = projectCriterionOccurrences(context, occurrences);
   if (!compatible) return { flow: null, criterionOccurrences };
   const ancestry = buildRecipeInvocationAncestry(tree);
-  const choices = new Map<string, Set<string>>();
-  for (const [id, list] of byNode) {
-    const node = nodes.get(id)!;
-    if (!Object.keys(node.cases).length || list.some((entry) => entry.decision.next === null))
-      continue;
-    choices.set(id, new Set(list.map((entry) => entry.decision.next!)));
-  }
-  const reachable = new Set<string>();
-  const pendingIds = [tree.rootId];
-  while (pendingIds.length) {
-    const id = pendingIds.pop()!;
-    if (reachable.has(id)) continue;
-    reachable.add(id);
-    const node = nodes.get(id)!;
-    for (const target of [
-      node.entry,
-      node.teardown,
-      ...(choices.get(id) ?? [node.next, node.default, ...Object.values(node.cases)]),
-    ])
-      if (target !== null) pendingIds.push(target);
-  }
+  const timing = projectRecipeInvocationTiming({
+    tree,
+    trace: context.trace,
+    ...(pkg
+      ? { summary: pkg.summary }
+      : { activeId: update.progress.current > update.progress.completed ? update.activeId : null }),
+  });
+  const route = createRecipeInvocationRouteIndex(tree);
+  for (const entry of context.trace) route.record(entry);
+  const reachable = route.reachable();
   const active = update.activeId === null ? undefined : ancestry.get(update.activeId);
   const activePath = new Set(active?.breadcrumbs.map(({ id }) => id) ?? []);
   const status = (node: RecipeInvocationNode): RunEvidenceFlowStatus => {
@@ -292,11 +267,14 @@ export function projectRunEvidenceFlow(
       rootId: tree.rootId,
       activeId: update.activeId,
       progress: { ...update.progress },
+      unassignedTiming: timing.unassignedTiming,
+      claimTimings: timing.claimTimings,
       nodes: tree.nodes.map((node) => ({
         ...structuredClone(node),
         depth: ancestry.get(node.id)!.depth,
         breadcrumbIds: ancestry.get(node.id)!.breadcrumbs.map(({ id }) => id),
         status: status(node),
+        timing: timing.nodes[node.id],
         occurrences: byNode.get(node.id) ?? [],
       })),
     },
@@ -404,7 +382,7 @@ function projectCriterionOccurrences(
           traceIndex,
           invocationId: node?.id ?? null,
           status: recordedStatus(entry),
-          decision: decision(entry, node, source.nodes),
+          decision: recipeInvocationDecision(entry, node, source.nodes),
           claimIds: [claim.id],
           files: [...paths].flatMap((path) => {
             const file = files.get(`${retained.prefix}${path}`);

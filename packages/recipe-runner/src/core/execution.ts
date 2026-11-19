@@ -244,6 +244,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
         const causeClass = missedStop ? 'harness' : 'subject';
         const failed = status === 'fail';
         options.traceWriter.record({
+          intervalSource: 'execution',
           nodeId: namespacedNodeId,
           action,
           startedAt: startedAt.toISOString(),
@@ -366,6 +367,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
         await options.registerArtifacts(result.artifacts ?? [], namespacedNodeId);
         options.bindArtifactOccurrence?.(namespacedNodeId, options.traceWriter.list().length);
         options.traceWriter.record({
+          intervalSource: 'execution',
           nodeId: namespacedNodeId,
           action,
           ...(action === 'call' ? { recipe: recipeCallTrace(node, options.recipes) } : {}),
@@ -412,26 +414,39 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
         const failure = signal?.aborted ? recipeAbortError(signal) : error;
         const message = failure instanceof Error ? failure.message : String(failure);
         const causeClass = recipeFailureCause(failure);
-        options.flow?.complete(namespacedNodeId, false);
-        if (options.publishHudProgress && context) {
-          try {
-            await options.publishHudProgress('fail', {
-              nodeId: namespacedNodeId,
-              action,
-              node,
-              recipe: options.recipe,
-              index: transitionCount,
-              total: nodeCount,
-              flow: options.flow?.snapshot(),
-              context,
-              error: message,
-            });
-          } catch (hudError) {
-            options.logger.warn(
-              `app.hud failure update failed for ${namespacedNodeId}: ${hudError instanceof Error ? hudError.message : String(hudError)}`,
-            );
+        const publishFailure = async () => {
+          if (options.publishHudProgress && context) {
+            try {
+              return await options.publishHudProgress('fail', {
+                nodeId: namespacedNodeId,
+                action,
+                node,
+                recipe: options.recipe,
+                index: transitionCount,
+                total: nodeCount,
+                flow: options.flow?.snapshot(),
+                context,
+                error: message,
+              });
+            } catch (hudError) {
+              options.logger.warn(
+                `app.hud failure update failed for ${namespacedNodeId}: ${hudError instanceof Error ? hudError.message : String(hudError)}`,
+              );
+              return false;
+            }
           }
-        }
+          return true;
+        };
+        let failureHudAvailable = true;
+        // The recorder must see the acknowledged red HUD before its automatic still.
+        // This open update has no invented elapsed end; the closed update follows capture.
+        if (
+          !signal?.aborted &&
+          context?.captureRecordingSnapshot &&
+          action.startsWith('ui.') &&
+          RECIPE_ASSERTION_ACTIONS.has(action)
+        )
+          failureHudAvailable = await publishFailure();
         const failureStill =
           signal?.aborted || !context
             ? undefined
@@ -449,6 +464,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
         }
         options.bindArtifactOccurrence?.(namespacedNodeId, options.traceWriter.list().length);
         options.traceWriter.record({
+          intervalSource: 'execution',
           nodeId: namespacedNodeId,
           action,
           ...(action === 'call' ? { recipe: recipeCallTrace(node, options.recipes) } : {}),
@@ -468,6 +484,9 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
           error: message,
           ...recipeFailureTraceFields(failure),
         });
+        options.flow?.complete(namespacedNodeId, false);
+        // A failed delivery already recorded this diagnostic. Do not emit it twice.
+        if (failureHudAvailable) await publishFailure();
         if (
           !signal?.aborted &&
           causeClass === 'subject' &&

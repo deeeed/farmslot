@@ -51,6 +51,7 @@ export type {
   RunEvidenceFlowNode,
   RunEvidenceFlowOccurrence,
   RunEvidenceFlowStatus,
+  RunEvidenceInvocationTiming,
 } from './run-evidence-flow.js';
 export type {
   RunEvidenceCriterion,

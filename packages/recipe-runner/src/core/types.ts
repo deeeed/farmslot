@@ -409,6 +409,8 @@ export interface ArtifactWriter {
 }
 
 export interface TraceEntry {
+  /** Synthetic diagnostics carry timestamps but no executed invocation interval. */
+  intervalSource?: 'execution' | 'diagnostic';
   nodeId: string;
   action: string;
   recipe?: RecipeCallTrace;
