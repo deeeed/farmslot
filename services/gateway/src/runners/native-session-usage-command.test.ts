@@ -10,7 +10,10 @@ import { promisify } from 'node:util';
 
 import { runSessionUsage } from '@farmslot/slot-config';
 
+import { parseSessionUsageOutput } from '../runtime/session-usage-result.js';
+
 import {
+  forcedSessionUsageArgv,
   nativeSessionUsageArgv,
   type NativeSessionUsageRequest,
 } from './native-session-usage-command.js';
@@ -416,3 +419,149 @@ for (const runner of ['claude', 'codex', 'pi'])
       assert.match(String(missing.error), /no submitted command/);
     });
   }
+
+test('bounded remote receipts keep Perps rows or return the complete parent receipt', async (t) => {
+  const f = await fixture(t);
+  const budget = 64 * 1024;
+  const at = (second: number) => new Date(Date.UTC(2026, 10, 19, 0, 0, second)).toISOString();
+  const children = Array.from({ length: 41 }, (_, index) => ({
+    stepNumber: index < 28 ? 1 : 2,
+    label: `${index < 28 ? 'perps-shared' : 'perps-core'} rule ${index + 1}`,
+    checkedAt: at(index + 1),
+  }));
+  const parents = [
+    { stepNumber: 1, label: 'Shared review', checkedAt: at(28) },
+    { stepNumber: 2, label: 'Core review', checkedAt: at(41) },
+  ];
+  const largeMix = Array.from(
+    { length: 30 },
+    (_, index) => `mcp__review_workspace__inspect_checklist_rule_result_${index + 1}`,
+  );
+  const sessionPath = path.join(f.root, 'receipt.jsonl');
+  const writeReceipt = async (mixed: boolean) => {
+    const tools = children.flatMap((mark, index) =>
+      (mixed ? largeMix : index < 26 ? ['shell', 'read_file'] : ['shell']).map((name) => ({
+        type: 'response_item',
+        timestamp: mark.checkedAt,
+        payload: { type: 'function_call', name, call_id: `${index}-${name}` },
+      })),
+    );
+    await writeFile(
+      sessionPath,
+      [
+        { type: 'turn_context', timestamp: at(0), payload: { model: 'gpt-5.5' } },
+        ...tools,
+        {
+          type: 'event_msg',
+          timestamp: at(42),
+          payload: {
+            type: 'token_count',
+            info: {
+              total_token_usage: { input_tokens: 100, output_tokens: 21, total_tokens: 121 },
+            },
+          },
+        },
+      ]
+        .map((record) => JSON.stringify(record))
+        .join('\n') + '\n',
+    );
+    return tools.length;
+  };
+  const runForced = async (
+    marks: typeof children,
+    maxBuffer: number,
+    bounded = false,
+    parentChecklistMarks = parents,
+  ) => {
+    const argv = forcedSessionUsageArgv(
+      'receipt',
+      'codex',
+      sessionPath,
+      modulePath,
+      marks,
+      bounded ? { maxBytes: budget, parentChecklistMarks } : undefined,
+    );
+    const result = await execute(process.execPath, argv.slice(1), {
+      encoding: 'utf8',
+      maxBuffer,
+      env: { ...process.env, HOME: f.root },
+    });
+    return result.stdout;
+  };
+  const usage = (stdout: string) =>
+    parseSessionUsageOutput(stdout, {
+      runner: 'codex',
+      runnerSessionId: 'receipt',
+      runnerSessionPath: sessionPath,
+    });
+
+  assert.equal(await writeReceipt(false), 67);
+  const normal = await runForced(children, budget, true);
+  assert.equal(Buffer.byteLength(normal) <= budget, true);
+  const normalUsage = usage(normal);
+  const normalTools = normalUsage.toolUsage;
+  assert(normalTools);
+  assert.equal(normalTools.toolCalls, 67);
+  assert.equal(normalTools.steps.filter((step) => step.title?.startsWith('perps-')).length, 41);
+  assert.equal(normalUsage.totalTokens, 121);
+
+  const largeToolCount = await writeReceipt(true);
+  const largeChildren = children.map((mark, index) =>
+    index === 0 ? { ...mark, label: mark.label + '\u2028Unicode separator' } : mark,
+  );
+  const unrestricted = await runForced(largeChildren, 2 * budget);
+  assert.ok(Buffer.byteLength(unrestricted) > budget);
+  const fallback = await runForced(parents, budget);
+  const bounded = await runForced(largeChildren, budget, true);
+  assert.equal(bounded, fallback);
+  const boundedUsage = usage(bounded);
+  const boundedTools = boundedUsage.toolUsage;
+  assert(boundedTools);
+  assert.equal(boundedTools.toolCalls, largeToolCount);
+  assert.deepEqual(boundedTools.toolCallsByName, usage(unrestricted).toolUsage?.toolCallsByName);
+  assert.deepEqual(
+    boundedTools.steps.flatMap((step) => (step.title ? [step.title] : [])),
+    parents.map((mark) => mark.label),
+  );
+  assert.equal(boundedUsage.totalTokens, 121);
+  assert.equal(boundedUsage.runnerSessionId, 'receipt');
+  assert.equal(boundedUsage.runnerSessionPath, sessionPath);
+  // A child-only boundary after the final parent mark cannot prove the
+  // parent's trailing timing. Keep the complete totals without inventing it.
+  const ambiguous = usage(await runForced(largeChildren, budget, true, [parents[0]!]));
+  assert.equal(ambiguous.totalTokens, 121);
+  assert.equal(ambiguous.toolUsage?.toolCalls, largeToolCount);
+  assert.deepEqual(ambiguous.toolUsage?.toolCallsByName, boundedTools.toolCallsByName);
+  assert.deepEqual(ambiguous.toolUsage?.steps, []);
+  assert.match(ambiguous.toolUsage?.stepsUnavailable ?? '', /exceeds the remote receipt limit/);
+  t.diagnostic(
+    `bytes normal=${Buffer.byteLength(normal)} expanded=${Buffer.byteLength(unrestricted)} fallback=${Buffer.byteLength(bounded)} limit=${budget}; tools normal=67 fallback=${largeToolCount}; tokens=121`,
+  );
+});
+
+test('a bounded receipt leaves no Node warning bytes in the daemon output budget', async (t) => {
+  const f = await fixture(t);
+  const budget = 64 * 1024;
+  const warning = path.join(f.root, 'startup-warning.cjs');
+  const accounting = path.join(f.root, 'near-boundary.mjs');
+  await writeFile(
+    warning,
+    "process.emitWarning('test Node startup warning', 'ExperimentalWarning');",
+  );
+  await writeFile(
+    accounting,
+    `export function runSessionUsage() { return 'turns=1\\n' + ' '.repeat(${budget - 16}); }`,
+  );
+  const argv = forcedSessionUsageArgv('slot', 'codex', '/receipt.jsonl', accounting, [], {
+    maxBytes: budget,
+    parentChecklistMarks: [],
+  });
+  const result = await execute(process.execPath, argv.slice(1), {
+    encoding: 'utf8',
+    maxBuffer: budget,
+    env: { ...process.env, NODE_OPTIONS: `--require ${warning}` },
+  });
+  assert.match(result.stdout, /^turns=1/);
+  assert.ok(Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr) <= budget);
+  assert.equal(result.stderr, '');
+});

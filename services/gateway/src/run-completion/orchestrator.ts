@@ -55,6 +55,7 @@ import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import {
   extractRunnerSessionUsage,
   extractRunWorkerSessionUsage,
+  contextChecklistMarks,
   receiptChecklistMarks,
   runnerUsageMetrics,
   usesReviewChainSessionTotal,
@@ -334,6 +335,7 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
         runnerSessionId,
         runnerSessionPath,
         checklistMarks: receiptChecklistMarks(run),
+        parentChecklistMarks: contextChecklistMarks(run),
       }));
     const costUsd = usage.costUsd ?? null;
     const inputTokens = usage.inputTokens ?? null;

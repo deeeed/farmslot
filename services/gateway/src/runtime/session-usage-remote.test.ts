@@ -20,16 +20,27 @@ const { extractRunnerSessionUsage } = await import('./session-usage.js');
 
 test('remote usage uses supported node execution and preserves slot support selection', async () => {
   const vars = { host: 'remote.example', machine: 'remote-test', resourceVars: {} } as SlotVars;
+  const parent = { stepNumber: 1, label: 'Parent step', checkedAt: '2026-11-19T00:00:00.000Z' };
+  const child = { ...parent, label: 'Child rule' };
   const usage = await extractRunnerSessionUsage({
     slotId: 'slot-1',
     vars,
     runner: 'codex',
+    runnerSessionId: 'conversation',
     runnerSessionPath: "/tmp/native session's.jsonl",
+    checklistMarks: [child],
+    parentChecklistMarks: [parent],
   });
   assert.equal(usage.turns, 3);
   assert.equal(usage.totalTokens, 124);
+  assert.equal(usage.runnerSessionId, 'conversation');
   assert.equal(calls[0][0], vars);
   assert.match(String(calls[0][1]), /runSessionUsage/);
+  assert.ok(
+    String(calls[0][1]).includes(
+      JSON.stringify({ maxBytes: 64 * 1024, parentChecklistMarks: [parent] }),
+    ),
+  );
   assert.equal(String(calls[0][1]).includes('scripts/session-usage.sh'), false);
   assert.deepEqual(calls[0][2], {
     timeout: 30_000,

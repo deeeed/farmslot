@@ -212,13 +212,95 @@ export function forcedSessionUsageArgv(
   sessionPath: string,
   modulePath?: string,
   checklistMarks?: ChecklistMark[],
+  receiptBudget?: { maxBytes: number; parentChecklistMarks?: ChecklistMark[] },
 ): string[] {
   const program =
     SESSION_USAGE_MODULE +
     String.raw`
 const input = JSON.parse(process.argv[1]);
+
+function segmentKey(step, at) { return step + ':' + at; }
+function mergeSegments(segments, segment, mark) {
+  const first = segments[0];
+  const last = segments[segments.length - 1];
+  const names = new Map();
+  for (const hit of segments) {
+    for (const [name, count] of Object.entries(hit.toolCallsByName))
+      names.set(name, (names.get(name) || 0) + count);
+  }
+  const sum = (field) => segments.reduce((total, hit) => total + hit[field], 0);
+  const nullableSum = (field) => segments.some(hit => hit[field] == null) ? null : sum(field);
+  return {
+    segment,
+    ...(mark ? { stepNumber: mark.stepNumber, title: mark.label, markedAt: mark.checkedAt } : {}),
+    startedAt: first.startedAt,
+    endedAt: last.endedAt,
+    wallMs: Date.parse(last.endedAt) - Date.parse(first.startedAt),
+    toolCalls: sum('toolCalls'),
+    toolCallsByName: Object.fromEntries(names),
+    totalTokens: nullableSum('totalTokens'),
+    compactions: nullableSum('compactions'),
+    costUsd: nullableSum('costUsd'),
+  };
+}
+
+function totalsOnly(usage) {
+  return {
+    ...usage,
+    steps: [],
+    toolCallsBeforeFirstMark: null,
+    stepsUnavailable: 'Checklist breakdown exceeds the remote receipt limit',
+  };
+}
+
+// Parent boundaries are a subset of the measured child boundaries. Combine
+// only intervals we can prove from the receipt and never read the transcript again.
+function parentToolUsage(usage, marks) {
+  const source = usage.steps;
+  if (!source.length || !marks?.length) return totalsOnly(usage);
+  const parents = [...marks].sort((a, b) => Date.parse(a.checkedAt) - Date.parse(b.checkedAt));
+  const lastMark = source.findLast((step) => step.markedAt)?.markedAt;
+  // A later child-only boundary may have extended the source's trailing wall
+  // time. Without the original activity stream the parent interval end is unknown.
+  if (Date.parse(lastMark) > Date.parse(parents[parents.length - 1].checkedAt))
+    return totalsOnly(usage);
+  const edges = new Map(source.flatMap((step, index) =>
+    step.markedAt ? [[segmentKey(step.stepNumber, step.markedAt), index]] : [],
+  ));
+  const steps = [];
+  let start = 0;
+  for (const [order, mark] of parents.entries()) {
+    const end = edges.get(segmentKey(mark.stepNumber, mark.checkedAt));
+    if (end === undefined && Date.parse(mark.checkedAt) < Date.parse(source[0].startedAt)) continue;
+    if (end === undefined || end < start) return totalsOnly(usage);
+    steps.push(mergeSegments(source.slice(start, end + 1), order === 0 ? 'before-first-mark' : 'step', mark));
+    start = end + 1;
+  }
+  if (start < source.length) steps.push(mergeSegments(source.slice(start), 'after-last-mark'));
+  const first = steps[0];
+  return { ...usage, steps, toolCallsBeforeFirstMark: first?.segment === 'before-first-mark' ? first.toolCalls : 0 };
+}
+
 try {
-  process.stdout.write(await runSessionUsage({ repo: '', slotId: input.slotId, action: 'total', forcedPath: input.sessionPath, forcedRunner: input.runner, checklistMarks: input.checklistMarks }));
+  const options = { repo: '', slotId: input.slotId, action: 'total', forcedPath: input.sessionPath, forcedRunner: input.runner, checklistMarks: input.checklistMarks };
+  let output = await runSessionUsage(options);
+  if (input.receiptBudget && Buffer.byteLength(output, 'utf8') > input.receiptBudget.maxBytes) {
+    const lines = output.split('\n');
+    const index = lines.findIndex((line) => line.startsWith('tool_usage='));
+    if (index !== -1) {
+      const usage = JSON.parse(lines[index].slice('tool_usage='.length));
+      const compact = parentToolUsage(usage, input.receiptBudget.parentChecklistMarks);
+      lines[index] = 'tool_usage=' + JSON.stringify(compact);
+      output = lines.join('\n');
+      if (compact.steps.length && Buffer.byteLength(output, 'utf8') > input.receiptBudget.maxBytes) {
+        lines[index] = 'tool_usage=' + JSON.stringify(totalsOnly(usage));
+        output = lines.join('\n');
+      }
+    }
+    if (Buffer.byteLength(output, 'utf8') > input.receiptBudget.maxBytes)
+      throw Error('Session usage totals exceed the remote transport limit');
+  }
+  process.stdout.write(output);
 } catch (error) {
   process.stderr.write(error instanceof SyntaxError ? 'Session accounting source contains invalid structured data' : error instanceof Error ? error.message : 'Session accounting failed');
   process.exitCode = 1;
@@ -226,12 +308,15 @@ try {
 `;
   return [
     'node',
+    // The remote daemon counts stdout and stderr together, including Node 22's
+    // experimental type-stripping warning. Measurement errors still reach stderr.
+    ...(receiptBudget ? ['--no-warnings'] : []),
     '--experimental-strip-types',
     '--experimental-sqlite',
     '--input-type=module',
     '-e',
     program,
-    JSON.stringify({ slotId, runner, sessionPath, checklistMarks }),
+    JSON.stringify({ slotId, runner, sessionPath, checklistMarks, receiptBudget }),
     modulePath ?? '',
   ];
 }

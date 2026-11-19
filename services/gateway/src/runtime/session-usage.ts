@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util';
+
 import {
   type ChecklistMark,
   checklistMarks,
@@ -34,6 +36,8 @@ export {
   usesReviewChainSessionTotal,
 } from './session-usage-result.js';
 
+const REMOTE_RECEIPT_BYTES = 64 * 1024;
+
 export async function extractRunnerSessionUsage({
   slotId,
   vars,
@@ -41,6 +45,7 @@ export async function extractRunnerSessionUsage({
   runnerSessionId,
   runnerSessionPath,
   checklistMarks,
+  parentChecklistMarks,
 }: {
   slotId: string;
   vars?: SlotVars;
@@ -49,6 +54,8 @@ export async function extractRunnerSessionUsage({
   runnerSessionPath?: string | null;
   /** The attempt's checklist marks; tool calls, tokens and time are split at them. */
   checklistMarks?: ChecklistMark[];
+  /** Parent boundaries for a remote receipt whose child breakdown exceeds the transport limit. */
+  parentChecklistMarks?: ChecklistMark[];
 }): Promise<RunnerSessionUsage> {
   if (!runnerSessionPath) {
     return unavailableRunnerSessionUsage({
@@ -66,10 +73,16 @@ export async function extractRunnerSessionUsage({
         runnerSessionPath,
         undefined,
         checklistMarks,
+        {
+          maxBytes: REMOTE_RECEIPT_BYTES,
+          parentChecklistMarks: isDeepStrictEqual(checklistMarks, parentChecklistMarks)
+            ? undefined
+            : parentChecklistMarks,
+        },
       );
       const result = await execOnSlot(vars, argv.map(shellQuote).join(' '), {
         timeout: 30_000,
-        maxBuffer: 64 * 1024,
+        maxBuffer: REMOTE_RECEIPT_BYTES,
         selectNodeSupport: false,
       });
       if (result.exitCode !== 0)
@@ -137,10 +150,7 @@ export function contextChecklistMarks(
   );
 }
 
-/**
- * At most this many child rows split a receipt, each titled in at most RECEIPT_CHILD_TITLE_CHARS,
- * so the receipt stays well inside the 64 KiB usage read.
- */
+/** Bounds child row expansion independently of the serialized remote receipt limit. */
 export const RECEIPT_CHILD_MARK_LIMIT = 48;
 export const RECEIPT_CHILD_TITLE_CHARS = 80;
 
@@ -255,6 +265,7 @@ export async function extractRunWorkerSessionUsage(
         runner: run.metrics.runner,
         ...session,
         checklistMarks: marks,
+        parentChecklistMarks: contextChecklistMarks(run, context),
       };
       let usage: RunnerSessionUsage;
       if (nativeSession) {

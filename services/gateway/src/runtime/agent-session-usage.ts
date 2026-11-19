@@ -11,6 +11,7 @@ import { extractNativeAgentSessionUsage, nativeRunUsageWindow } from './native-s
 import {
   extractRunnerSessionUsage,
   extractRunWorkerSessionUsage,
+  contextChecklistMarks,
   receiptChecklistMarks,
   unavailableRunnerSessionUsage,
 } from './session-usage.js';
@@ -124,13 +125,16 @@ function workerChecklistMarks(run: Run, row: RunnerSessionUsage) {
         return transcript ? [transcript] : [];
       }),
   );
-  return receiptChecklistMarks(run, context, Math.max(1, transcripts.size));
+  return {
+    checklistMarks: receiptChecklistMarks(run, context, Math.max(1, transcripts.size)),
+    parentChecklistMarks: contextChecklistMarks(run, context),
+  };
 }
 
 async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSessionUsage> {
   try {
     const slotId = row.slotId ?? run.slotId ?? run.id;
-    const checklistMarks = workerChecklistMarks(run, row);
+    const marks = workerChecklistMarks(run, row);
     if (row.nativeSession) {
       const workspace = row.role === 'review' ? run.reviewWorkspace : undefined;
       return completedMeasurement(
@@ -150,7 +154,7 @@ async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSession
           runnerSessionPath: row.runnerSessionPath,
           nativeSession: row.nativeSession,
           usageWindow: nativeRunUsageWindow(run, row),
-          checklistMarks,
+          checklistMarks: marks?.checklistMarks,
         }),
       );
     }
@@ -167,7 +171,7 @@ async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSession
         runner: row.runner,
         runnerSessionId: row.runnerSessionId,
         runnerSessionPath: row.runnerSessionPath,
-        checklistMarks,
+        ...marks,
       }),
     );
   } catch {
