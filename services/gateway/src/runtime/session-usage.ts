@@ -7,10 +7,15 @@ import {
   type ToolUsage,
 } from '@farmslot/agent-runtime/tool-usage';
 import type { AgentContext, Run, RunnerSessionUsage } from '@farmslot/protocol';
-import { runSessionUsage, type SessionUsageWindow } from '@farmslot/slot-config';
+import {
+  type PiModelCostMetadata,
+  runSessionUsage,
+  type SessionUsageWindow,
+} from '@farmslot/slot-config';
 
 import { loadSlotVars, type SlotVars } from '../core/config.js';
 import { execOnSlot, isLocal } from '../core/exec.js';
+import type { ProjectCommandEnvOptions } from '../core/project-env.js';
 import { shellQuote } from '../core/tmux.js';
 import {
   forcedSessionUsageArgv,
@@ -44,6 +49,39 @@ export {
 } from './session-usage-result.js';
 
 const REMOTE_RECEIPT_BYTES = 64 * 1024;
+/** A price list larger than this stays off the remote shell argument; the receipt stays unpriced. */
+const REMOTE_PRICE_ARGUMENT_BYTES = 64 * 1024;
+
+/**
+ * The gateway's LiteLLM prices for a remote Pi receipt, or undefined to leave the slot's own
+ * lookup as it was: when the gateway has no prices, when loading them fails, or when the list is
+ * too large to pass in one shell argument.
+ */
+async function remotePiLiteLlmPrices(
+  vars: SlotVars,
+  slotId: string,
+  commandEnvOptions: ProjectCommandEnvOptions | undefined,
+): Promise<Array<[string, PiModelCostMetadata]> | undefined> {
+  let prices: Array<[string, PiModelCostMetadata]>;
+  try {
+    prices = await usageLiteLlmPrices(vars, vars.machine, commandEnvOptions);
+  } catch (error) {
+    // Without the gateway's prices the receipt keeps its tokens and its previous pricing; a
+    // pricing failure must not cost the run its usage totals.
+    console.warn(
+      `[session-usage] LiteLLM prices unavailable for ${slotId}: ${(error as Error).message}`,
+    );
+    return undefined;
+  }
+  if (!prices.length) return undefined;
+  if (Buffer.byteLength(JSON.stringify(prices)) > REMOTE_PRICE_ARGUMENT_BYTES) {
+    console.warn(
+      `[session-usage] LiteLLM price list too large to send to ${slotId}; the receipt stays unpriced`,
+    );
+    return undefined;
+  }
+  return prices;
+}
 
 export async function extractRunnerSessionUsage({
   slotId,
@@ -53,6 +91,7 @@ export async function extractRunnerSessionUsage({
   runnerSessionPath,
   checklistMarks,
   parentChecklistMarks,
+  commandEnvOptions,
 }: {
   slotId: string;
   vars?: SlotVars;
@@ -63,6 +102,8 @@ export async function extractRunnerSessionUsage({
   checklistMarks?: ChecklistMark[];
   /** Parent boundaries for a remote receipt whose child breakdown exceeds the transport limit. */
   parentChecklistMarks?: ChecklistMark[];
+  /** The project command env the session was launched with (a review workspace's domain). */
+  commandEnvOptions?: ProjectCommandEnvOptions;
 }): Promise<RunnerSessionUsage> {
   if (!runnerSessionPath) {
     return unavailableRunnerSessionUsage({
@@ -77,16 +118,7 @@ export async function extractRunnerSessionUsage({
       // Pi's LiteLLM messages are quoted from the gateway's LiteLLM price list; the slot that holds
       // the transcript may have no LiteLLM credentials, which left the receipt unpriced.
       const liteLlmPrices =
-        runner === 'pi'
-          ? await usageLiteLlmPrices(vars, vars.machine).catch((error: unknown) => {
-              // Without the price list the receipt keeps its tokens and stays unpriced, as before;
-              // a pricing failure must not cost the run its usage totals.
-              console.warn(
-                `[session-usage] LiteLLM prices unavailable for ${slotId}: ${(error as Error).message}`,
-              );
-              return undefined;
-            })
-          : undefined;
+        runner === 'pi' ? await remotePiLiteLlmPrices(vars, slotId, commandEnvOptions) : undefined;
       const argv = forcedSessionUsageArgv(
         slotId,
         runner,

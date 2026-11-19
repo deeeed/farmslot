@@ -123,6 +123,15 @@ test('a remote Pi receipt is quoted from the gateway LiteLLM prices, not the slo
     runnerSessionPath: '/worker/codex.jsonl',
   });
   assert.equal(String(calls[0][1]).includes('liteLlmPrices"'), false);
+  // A gateway with no LiteLLM prices leaves the slot's own lookup as it was.
+  calls.length = 0;
+  await extractRunnerSessionUsage({
+    slotId: 'slot-1',
+    vars: makeVars({ host: 'remote.example', machine: 'remote-test', projectName: '' }),
+    runner: 'pi',
+    runnerSessionPath: '/worker/pi.jsonl',
+  });
+  assert.equal(String(calls[0][1]).includes('liteLlmPrices"'), false);
 });
 
 test('successful limited receipts keep fresh totals and skip stored detail and archive reads', async (t) => {
