@@ -2,9 +2,12 @@
 
 ## Unreleased
 
-- Claude ACP effort checks use the shared `CLAUDE_CLI_EFFORTS` list.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.50.2 - 2026-11-19
+
+- Claude ACP effort checks use the shared `CLAUDE_CLI_EFFORTS` list.
+- Pin the qualified invocation-timing SDK cohort with exact package dependencies.
 
 ## 0.50.1 - 2026-11-19
 

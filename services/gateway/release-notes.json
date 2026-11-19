@@ -1,11 +1,11 @@
 {
-  "version": "0.39.9",
-  "date": "2026-11-18",
+  "version": "0.39.10",
+  "date": "2026-11-19",
   "items": [
-    "Review holds and spent fix budgets stay amber instead of appearing as failures.",
-    "The recipe SDK exposes labeled ancestry for nested and repeated calls.",
-    "Static reviews can load a project rule pack and record its digest in the review handoff.",
-    "Session recovery resumes PI workers by saved transcript and refuses missing or empty history.",
-    "Publication verifies the selected recipe attempt's task actions while preserving older attempts."
+    "Continue on a `runner unavailable` card now delivers a resume to the worker instead of only resuming the watch, so a pane holding a turn that died mid-flight is actually continued; the resume uses a one-shot pane instruction and does not spend the stuck/idle nudge budget, because a provider outage the operator fixed is not the worker stalling",
+    "Time a run spends blocked on a monitor decision is recorded as `monitorState.gateWaitMs` and excluded from the execution timeout, so answering a card no longer eats the worker's monitoring window and re-blocks the run as an interactive-handoff timeout seconds later",
+    "The resume and the usage-budget warning no longer share one message wrapper: the one-shot pane sender now carries the caller's exact text, dedup key and channel, so a worker resumed after a provider outage is no longer told to mark the checklist item it is still working on",
+    "Answering a monitor card also restarts the inactivity window, so a card the operator spent longer than the stuck timeout on does not spend a nudge in the same poll as the answer",
+    "A card still open when the gateway restarts has its wait credited when the monitor comes back, and a new monitoring window starts with no gate credit carried into it"
   ]
 }

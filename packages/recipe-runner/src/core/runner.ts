@@ -131,6 +131,7 @@ import type {
   RecordingAdmissionLease,
   SummaryDocument,
   TraceEntry,
+  TraceWriter,
   VideoRecorder,
 } from './types.js';
 import { assertManifestIsValid, assertRecipeMatchesManifest } from './validation.js';
@@ -447,7 +448,15 @@ class DefaultRecipeRunner implements RecipeRunner {
     const runFileOffsets = await collectRunFileOffsets(runLogPaths, projectRoot);
 
     const artifactWriter = new JsonArtifactWriter(artifactsDir);
-    const traceWriter = new JsonTraceWriter(artifactsDir, this.#runnerProvenance, request.hud);
+    const fileTraceWriter = new JsonTraceWriter(artifactsDir, this.#runnerProvenance, request.hud);
+    const traceWriter: TraceWriter = {
+      record(entry) {
+        fileTraceWriter.record(entry);
+        flow.record(entry);
+      },
+      list: () => fileTraceWriter.list(),
+      write: () => fileTraceWriter.write(),
+    };
     const summaryWriter = new JsonSummaryWriter(artifactsDir);
     let outputs: ReadonlyMap<string, unknown> = new Map();
     const recipePath = await artifactWriter.copyRecipe(recipe);
@@ -667,18 +676,20 @@ class DefaultRecipeRunner implements RecipeRunner {
             }
             for (const artifact of artifacts) registerCapture(artifact, nodeId);
           },
-          publishHudProgress: (hudStatus, event) => {
-            if (
-              runHud &&
-              isRecord(event.node.display) &&
-              event.node.display.position !== undefined
-            ) {
-              runHud.display = mergeHudDisplay(runHud, {
-                display: { position: event.node.display.position },
-              });
-            }
-            return this.#publishHudProgressOrRecord(traceWriter, hudStatus, event, runHud);
-          },
+          publishHudProgress: this.#hudAction()
+            ? (hudStatus, event) => {
+                if (
+                  runHud &&
+                  isRecord(event.node.display) &&
+                  event.node.display.position !== undefined
+                ) {
+                  runHud.display = mergeHudDisplay(runHud, {
+                    display: { position: event.node.display.position },
+                  });
+                }
+                return this.#publishHudProgressOrRecord(traceWriter, hudStatus, event, runHud);
+              }
+            : undefined,
           ...(request.stopAfterNode !== undefined ? { stopAfterNode: request.stopAfterNode } : {}),
         });
         status = hasUnresolvedRecipeFailure(traceWriter.list()) ? 'fail' : execution.status;
@@ -826,6 +837,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       }
     }
     const endedAt = new Date();
+    flow.setRunInterval({ startedAt: startedAt.toISOString(), endedAt: endedAt.toISOString() });
     const tracePath = await traceWriter.write();
     const trace = traceWriter.list();
     for (const artifact of artifactWriter.list()) {
@@ -974,7 +986,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     }
     const summary: SummaryDocument = {
       recipeRunId,
-      flow: flow.finish(status, request.stopAfterNode !== undefined),
+      flow: flow.finish(status, request.stopAfterNode !== undefined, true),
       invocationDigest: digestRecipeDocument(invocation),
       status,
       ...summarizeTraceCounts(trace),
@@ -1358,7 +1370,7 @@ class DefaultRecipeRunner implements RecipeRunner {
 
   async #stopRunVideoRecording(
     runRecording: RunVideoRecording,
-    traceWriter: JsonTraceWriter,
+    traceWriter: TraceWriter,
     artifactWriter: JsonArtifactWriter,
     runStartedAt: Date,
   ): Promise<{
@@ -1444,7 +1456,7 @@ class DefaultRecipeRunner implements RecipeRunner {
   }
 
   async #publishHudProgressOrRecord(
-    traceWriter: JsonTraceWriter,
+    traceWriter: TraceWriter,
     status: 'running' | 'pass' | 'fail',
     event: {
       nodeId: string;

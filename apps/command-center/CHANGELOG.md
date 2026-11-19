@@ -6,6 +6,10 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.20.9 - 2026-11-19
+
+- Show the active recipe breadcrumb and overall progress in the Command Center browser recipe HUD.
+
 ## 0.20.8 - 2026-11-18
 
 - Align the hosted command layer with protocol 0.90.0 and the ancestry SDK cohort.
