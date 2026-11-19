@@ -470,7 +470,8 @@ export class TerminalView extends TerminalViewState {
 
   private async _subscribe() {
     if (!this._hasTarget() || gateway.connectionState !== 'connected') return;
-    const worker = this._workerRef();
+    const workerRefJson = this.workerRefJson;
+    const worker = parseWorkerRef(workerRefJson);
     this._workerAttachDeferred = Boolean(worker && this.canAttachWorker?.(worker) === false);
     if (this._workerAttachDeferred) return;
     this._retryWaitingForInventory = false;
@@ -481,6 +482,9 @@ export class TerminalView extends TerminalViewState {
     // historically wedged the terminal on "Connecting…" when a request hung.
     this._teardownStreams(false);
     const subscribeSeq = ++this._subscribeSeq;
+    // A watched alias can replace the worker before the debounced teardown bumps the sequence.
+    const isCurrent = () =>
+      subscribeSeq === this._subscribeSeq && workerRefJson === this.workerRefJson;
 
     this._syncRunSummary();
     this._dataCount = 0;
@@ -494,7 +498,7 @@ export class TerminalView extends TerminalViewState {
     if (!worker) {
       // Slot terminals can fall back to polling. Worker subscriptions always use a PTY.
       this._unsubMode = gateway.subscribe<TerminalModePayload>(Events.TERMINAL_MODE, (p) => {
-        if (subscribeSeq !== this._subscribeSeq) return;
+        if (!isCurrent()) return;
         if (!this._matchesTarget(p)) return;
         if (p.mode === this._mode && this._ptyInputBound) return;
         this._log('mode-event', `mode=${p.mode}`);
@@ -514,7 +518,7 @@ export class TerminalView extends TerminalViewState {
     const pendingWorkerExits = new Set<number>();
     if (worker) {
       this._unsubExit = gateway.subscribe<TerminalExitedPayload>(Events.TERMINAL_EXITED, (p) => {
-        if (subscribeSeq !== this._subscribeSeq) return;
+        if (!isCurrent()) return;
         if (p.workerSubscriptionSeq === undefined) {
           if (workerSubscriptionSeq !== null) return;
           // Older gateways broadcast the worker key as slotId and contextId.
@@ -552,13 +556,13 @@ export class TerminalView extends TerminalViewState {
       if (worker) {
         result = await gateway.request<TerminalWorkerSubscribeResult>(
           Methods.TERMINAL_WORKER_SUBSCRIBE,
-          params,
+          { ...params, worker },
         );
       } else {
         await gateway.request(Methods.TERMINAL_SUBSCRIBE, { ...params, interactive: true });
       }
       this._log('subscribed OK');
-      if (subscribeSeq !== this._subscribeSeq) return;
+      if (!isCurrent()) return;
       if (result) {
         if (!result.subscribed) {
           this._workerTerminalClosed();
@@ -579,7 +583,7 @@ export class TerminalView extends TerminalViewState {
         runId: this.runId,
         role: this.role,
         contextId: this.contextId,
-        workerRefJson: this.workerRefJson,
+        workerRefJson,
       };
       this._activeSubscribePostmortem = this._postmortem || this.bareSession;
       this._lastSubscribeError = '';
@@ -596,7 +600,7 @@ export class TerminalView extends TerminalViewState {
         void this._commitInitialPtySize(subscribeSeq);
       }
     } catch (err) {
-      if (subscribeSeq !== this._subscribeSeq) return;
+      if (!isCurrent()) return;
       if (worker) this._teardownStreams(false);
       this._lastSubscribeError = err instanceof Error ? err.message : String(err);
       this._retiredTarget = isRetiredTerminalTargetError(err);
@@ -632,7 +636,7 @@ export class TerminalView extends TerminalViewState {
     }
 
     this._unsubData = gateway.subscribe(Events.TERMINAL_DATA, (payload: unknown) => {
-      if (subscribeSeq !== this._subscribeSeq) return;
+      if (!isCurrent()) return;
       const data = payload as TerminalData;
       if (this._matchesTarget(data)) {
         // In PTY mode, drop data until first resize settles (prevents garbled initial render)
@@ -653,7 +657,7 @@ export class TerminalView extends TerminalViewState {
       });
 
     this._unsubExit ??= gateway.subscribe<TerminalExitedPayload>(Events.TERMINAL_EXITED, (p) => {
-      if (subscribeSeq !== this._subscribeSeq) return;
+      if (!isCurrent()) return;
       if (!this._matchesTarget(p)) return;
       this._log('exited', `code=${p.exitCode}`);
       // Early non-zero exit while bound to a role pane = role window is gone (e.g. tmux
@@ -694,7 +698,7 @@ export class TerminalView extends TerminalViewState {
 
     // In poll mode, get initial snapshot (PTY gives full screen immediately)
     setTimeout(async () => {
-      if (subscribeSeq !== this._subscribeSeq) return;
+      if (!isCurrent()) return;
       if (this._mode === 'poll') {
         try {
           const snap = await gateway.request<{
