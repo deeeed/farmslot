@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.50.3 - 2026-11-19
+
+- Pin the structural inventory SDK cohort while retaining public protocol 0.91.0.
+
 ## 0.50.2 - 2026-11-19
 
 - Claude ACP effort checks use the shared `CLAUDE_CLI_EFFORTS` list.
