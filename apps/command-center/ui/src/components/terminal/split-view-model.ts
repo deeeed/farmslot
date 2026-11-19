@@ -7,7 +7,7 @@ import type {
   TmuxWorkerWatchEntry,
   TmuxWorkerWatchItem,
 } from '@farmslot/protocol';
-import { hasUnsettledRunExecution } from '@farmslot/protocol';
+import { hasUnsettledRunExecution, refreshTmuxWorkerWatchItem } from '@farmslot/protocol';
 import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import type { GlobalFilters } from '../../state.js';
@@ -51,6 +51,7 @@ interface WorkerTerminalInventory {
   ready: boolean;
   status: ResourceQueryState['status'];
   targetPresent: boolean;
+  panePresent: boolean;
   nodeObservationFailed: boolean;
   mountedOnCurrentConnection: boolean;
 }
@@ -59,7 +60,8 @@ export function shouldRenderWorkerTerminal(inventory: WorkerTerminalInventory): 
   return (
     (inventory.ready && inventory.targetPresent) ||
     (inventory.mountedOnCurrentConnection &&
-      (inventory.status === 'stale' || (inventory.ready && inventory.nodeObservationFailed)))
+      (inventory.status === 'stale' ||
+        (inventory.ready && (inventory.panePresent || inventory.nodeObservationFailed))))
   );
 }
 
@@ -99,6 +101,20 @@ export function isTmuxWorkerRef(value: unknown): value is TmuxWorkerRef {
 /** Window labels and indices describe the pane, but do not address its stream. */
 export function encodeWorkerTerminalRef({ nodeId, session, target }: TmuxWorkerRef): string {
   return JSON.stringify({ nodeId, session, target });
+}
+
+/** A watched session has its own action target even when another session links the pane. */
+export function reconcileTerminalWatchlist(
+  items: readonly TmuxWorkerWatchItem[],
+  workers: readonly TmuxWorkerSummary[],
+): TmuxWorkerWatchEntry[] {
+  const live = new Map(workers.map((worker) => [encodeWorkerTerminalRef(worker.ref), worker]));
+  return items.map((item) => {
+    const id = encodeWorkerTerminalRef(item.ref);
+    const worker = live.get(id);
+    const current = worker ? refreshTmuxWorkerWatchItem(item, worker) : item;
+    return { id, ref: current.ref, item: current, worker, live: Boolean(worker) };
+  });
 }
 
 export function encodeWorkerRouteParam(ref: TmuxWorkerRef): string {

@@ -21,6 +21,7 @@ import {
   parseWatchItems,
   parseWorkerRefs,
   parseWorkerRouteParam,
+  reconcileTerminalWatchlist,
   selectActiveRunSlotIds,
   selectPinnedSlotIds,
   selectWorkspaceRuns,
@@ -87,6 +88,7 @@ test('worker terminal keeps its mount during a stale refresh on the same connect
     ready: false,
     status: 'stale',
     targetPresent: true,
+    panePresent: false,
     nodeObservationFailed: false,
   } as const;
 
@@ -96,6 +98,7 @@ test('worker terminal keeps its mount during a stale refresh on the same connect
   const ready = {
     ready: true,
     status: 'ready',
+    panePresent: false,
     nodeObservationFailed: false,
     mountedOnCurrentConnection: true,
   } as const;
@@ -131,6 +134,34 @@ test('worker terminal keeps its mount during a stale refresh on the same connect
       false,
     );
   }
+});
+
+test('a live pane with a renamed session can only retain an existing mount', () => {
+  const renamed = {
+    ready: true,
+    status: 'ready',
+    targetPresent: false,
+    panePresent: true,
+    nodeObservationFailed: false,
+  } as const;
+  assert.equal(shouldRenderWorkerTerminal({ ...renamed, mountedOnCurrentConnection: true }), true);
+  assert.equal(
+    shouldRenderWorkerTerminal({ ...renamed, mountedOnCurrentConnection: false }),
+    false,
+  );
+});
+
+test('a linked alias cannot replace a watched session that shares its pane', () => {
+  const worker: TmuxWorkerSummary = {
+    ref,
+    status: { label: 'running', source: 'tmux', confidence: 'medium' },
+  };
+  const alias = { ...worker, ref: { ...ref, session: 'alias' } };
+  const item = { id: 'legacy-node-a:%3', ref, nodeId: ref.nodeId, target: ref.target, pinnedAt: 1 };
+  assert.equal(reconcileTerminalWatchlist([item], [worker, alias])[0]?.worker, worker);
+  const [missing] = reconcileTerminalWatchlist([item], [alias]);
+  assert.equal(missing?.worker, undefined);
+  assert.equal(missing?.ref.session, 'work');
 });
 
 test('a worker window rename keeps the same terminal target', () => {

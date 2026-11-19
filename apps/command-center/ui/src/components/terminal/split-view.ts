@@ -14,15 +14,13 @@ import type {
   TmuxWorkerWatchItem,
 } from '@farmslot/protocol';
 import {
+  createTmuxWorkerWatchItem,
   flattenTmuxWorkers,
-  isTmuxWorkerWatched,
   mergeRunsById,
   Methods,
-  reconcileTmuxWorkerWatchlist,
-  removeTmuxWorkerWatchItem,
   sourceObservationAge,
   tmuxWorkerRefsMatch,
-  upsertTmuxWorkerWatchItem,
+  tmuxWorkerWatchId,
 } from '@farmslot/protocol';
 import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 import { nativeWorkerTabs } from '@farmslot/review-dispatch';
@@ -50,6 +48,7 @@ import {
   parseWatchItems,
   parseWorkerRefs,
   parseWorkerRouteParam,
+  reconcileTerminalWatchlist,
   RUN_PANES_KEY,
   selectActiveRunSlotIds,
   selectPinnedSlotIds,
@@ -101,12 +100,15 @@ export class TerminalSplitView extends LitElement {
   private _workerOwner?: string;
   private _workerConnection?: string | number;
   private _workerInventoryVerified = false;
-  private _workerTargets = new Set<string>();
+  private _workerPanes = new Set<string>();
+  private _workerSessions = new Set<string>();
+  private _focusedEndSession?: HTMLButtonElement;
   private _workerNodesWithoutObservation = new Set<string>();
   private _renderedWorkerScope?: string;
   private _workerAgeTimer?: ReturnType<typeof setInterval>;
-  private readonly _canAttachWorker = (ref: TmuxWorkerRef) =>
-    this.workerQuery.ready && this._workerTargets.has(encodeWorkerTerminalRef(ref));
+  private readonly _hasCurrentWorkerSession = (ref: TmuxWorkerRef) =>
+    this.workerQuery.ready && this._workerSessions.has(encodeWorkerTerminalRef(ref));
+
   private readonly workerQuery = new ResourceQueryController<TmuxWorkerListResult>(
     this,
     (state) => {
@@ -127,7 +129,8 @@ export class TerminalSplitView extends LitElement {
         const observedWorkers = flattenTmuxWorkers(
           nodes.filter((node) => node.connected && node.ok),
         );
-        this._workerTargets = new Set(
+        this._workerPanes = new Set(observedWorkers.map((worker) => tmuxWorkerWatchId(worker.ref)));
+        this._workerSessions = new Set(
           observedWorkers.map((worker) => encodeWorkerTerminalRef(worker.ref)),
         );
         this._workerNodesWithoutObservation = new Set(
@@ -150,7 +153,7 @@ export class TerminalSplitView extends LitElement {
       this._workerObservation = state;
       if (state.status === 'ready' && state.data) {
         this._workerInventoryVerified = this.workerQuery.ready;
-        this._workerWatchItems = reconcileTmuxWorkerWatchlist(
+        this._workerWatchItems = reconcileTerminalWatchlist(
           this._workerWatchItems,
           state.data.workers,
         ).map((entry) => entry.item);
@@ -859,7 +862,7 @@ export class TerminalSplitView extends LitElement {
   }
 
   private _watchEntries(): TmuxWorkerWatchEntry[] {
-    return reconcileTmuxWorkerWatchlist(
+    return reconcileTerminalWatchlist(
       this._workerWatchItems,
       this._machineFilteredWorkers(),
     ).filter((entry) => {
@@ -915,22 +918,32 @@ export class TerminalSplitView extends LitElement {
   }
 
   private _toggleWorkerWatch(worker: TmuxWorkerSummary) {
-    const next = isTmuxWorkerWatched(this._workerWatchItems, worker.ref)
-      ? removeTmuxWorkerWatchItem(this._workerWatchItems, worker.ref)
-      : upsertTmuxWorkerWatchItem(this._workerWatchItems, worker);
-    this._saveWatchItems(next);
+    const id = encodeWorkerTerminalRef(worker.ref);
+    const others = this._workerWatchItems.filter(
+      (item) => encodeWorkerTerminalRef(item.ref) !== id,
+    );
+    this._saveWatchItems(
+      others.length < this._workerWatchItems.length
+        ? others
+        : [{ ...createTmuxWorkerWatchItem(worker), id }, ...others],
+    );
   }
 
   private _removeWatchEntry(entry: TmuxWorkerWatchEntry) {
-    this._saveWatchItems(removeTmuxWorkerWatchItem(this._workerWatchItems, entry.ref));
+    this._saveWatchItems(
+      this._workerWatchItems.filter((item) => encodeWorkerTerminalRef(item.ref) !== entry.id),
+    );
   }
 
   private _renderWorkerPanel() {
     const watchEntries = this._watchEntries();
     const liveWorkers = this._filteredWorkers();
     const counts = this._workerFilterCounts();
+    const watched = new Set(
+      this._workerWatchItems.map((item) => encodeWorkerTerminalRef(item.ref)),
+    );
     const liveUnwatched = liveWorkers.filter(
-      (worker) => !isTmuxWorkerWatched(this._workerWatchItems, worker.ref),
+      (worker) => !watched.has(encodeWorkerTerminalRef(worker.ref)),
     );
 
     return html`
@@ -1023,7 +1036,7 @@ export class TerminalSplitView extends LitElement {
       !worker.canEndSession ||
       !worker.pid ||
       this._endingSession ||
-      !this._canAttachWorker(worker.ref)
+      !this._hasCurrentWorkerSession(worker.ref)
     )
       return;
     const owner = getResourceWorkspaceKey();
@@ -1120,7 +1133,7 @@ export class TerminalSplitView extends LitElement {
                 class="worker-chip-btn danger"
                 data-end-session=${ref.session}
                 ?disabled=${endDisabled}
-                aria-disabled=${endDisabled || !this._canAttachWorker(ref)}
+                aria-disabled=${endDisabled || !this._hasCurrentWorkerSession(ref)}
                 title=${!gateway.isGlobalAdmin
                   ? 'Only a farm administrator can end sessions'
                   : worker?.canEndSession
@@ -1160,6 +1173,29 @@ export class TerminalSplitView extends LitElement {
     ></terminal-view>`;
   }
 
+  protected override willUpdate(): void {
+    const focused = this.shadowRoot?.activeElement;
+    this._focusedEndSession =
+      focused instanceof HTMLButtonElement && focused.hasAttribute('data-end-session')
+        ? focused
+        : undefined;
+  }
+
+  protected override updated(): void {
+    const button = this._focusedEndSession;
+    this._focusedEndSession = undefined;
+    // Moving a keyed row can blur its button. Focus only the same surviving
+    // element when the move left focus on the document body.
+    if (
+      button &&
+      !button.disabled &&
+      this.shadowRoot?.contains(button) &&
+      this.ownerDocument.activeElement === this.ownerDocument.body
+    ) {
+      button.focus({ preventScroll: true });
+    }
+  }
+
   render() {
     const max = this._maxSlots();
     const slotsToShow = this._selectedSlots.slice(0, max);
@@ -1179,11 +1215,9 @@ export class TerminalSplitView extends LitElement {
       : allPanes.slice(0, max);
     const paneCount = panes.length || 1;
     const workerScope = JSON.stringify([getResourceWorkspaceKey(), gateway.resourceConnectionId]);
-    // Only a mounted terminal can survive an incomplete observation. A saved or
-    // hidden selection still needs a current inventory before it attaches.
+    // Only an already-mounted terminal can survive an incomplete observation
+    // or a renamed session with the same live pane.
     const mountedWorkers =
-      (this._workerObservation.status === 'stale' ||
-        this._workerNodesWithoutObservation.size > 0) &&
       gateway.connectionState === 'connected' &&
       this.workerQuery.belongsToWorkspace &&
       this._renderedWorkerScope === workerScope
@@ -1328,7 +1362,8 @@ export class TerminalSplitView extends LitElement {
                   ? shouldRenderWorkerTerminal({
                       ready: this.workerQuery.ready,
                       status: this._workerObservation.status,
-                      targetPresent: this._workerTargets.has(encodeWorkerTerminalRef(pane.ref)),
+                      targetPresent: this._workerSessions.has(encodeWorkerTerminalRef(pane.ref)),
+                      panePresent: this._workerPanes.has(tmuxWorkerWatchId(pane.ref)),
                       nodeObservationFailed: this._workerNodesWithoutObservation.has(
                         pane.ref.nodeId,
                       ),
@@ -1338,8 +1373,8 @@ export class TerminalSplitView extends LitElement {
                     ? keyed(
                         workerScope,
                         html`<terminal-view
-                          .canAttachWorker=${this._canAttachWorker(pane.ref)
-                            ? this._canAttachWorker
+                          .canAttachWorker=${this._hasCurrentWorkerSession(pane.ref)
+                            ? this._hasCurrentWorkerSession
                             : waitForCurrentWorkerInventory}
                           .workerRefJson=${encodeWorkerTerminalRef(pane.ref)}
                           @terminal-close=${this._handleTerminalClose}
