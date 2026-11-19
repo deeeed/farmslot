@@ -83,12 +83,22 @@ function makeRun(
 const ref = { nodeId: 'node-a', session: 'work', target: '%3', window: '2', pane: '1' };
 
 test('worker terminal keeps its mount during a stale refresh on the same connection', () => {
-  const stale = { ready: false, status: 'stale', targetPresent: true } as const;
+  const stale = {
+    ready: false,
+    status: 'stale',
+    targetPresent: true,
+    nodeObservationFailed: false,
+  } as const;
 
   assert.equal(shouldRenderWorkerTerminal({ ...stale, mountedOnCurrentConnection: true }), true);
   assert.equal(shouldRenderWorkerTerminal({ ...stale, mountedOnCurrentConnection: false }), false);
 
-  const ready = { ready: true, status: 'ready', mountedOnCurrentConnection: true } as const;
+  const ready = {
+    ready: true,
+    status: 'ready',
+    nodeObservationFailed: false,
+    mountedOnCurrentConnection: true,
+  } as const;
   assert.equal(shouldRenderWorkerTerminal({ ...ready, targetPresent: true }), true);
   assert.equal(shouldRenderWorkerTerminal({ ...ready, targetPresent: false }), false);
   assert.equal(
@@ -105,6 +115,13 @@ test('worker terminal keeps its mount during a stale refresh on the same connect
       targetPresent: false,
       mountedOnCurrentConnection: true,
     }),
+    true,
+  );
+
+  const partial = { ...ready, targetPresent: false, nodeObservationFailed: true };
+  assert.equal(shouldRenderWorkerTerminal(partial), true);
+  assert.equal(
+    shouldRenderWorkerTerminal({ ...partial, mountedOnCurrentConnection: false }),
     false,
   );
 

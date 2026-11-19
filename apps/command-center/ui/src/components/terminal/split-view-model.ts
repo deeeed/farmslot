@@ -51,13 +51,15 @@ interface WorkerTerminalInventory {
   ready: boolean;
   status: ResourceQueryState['status'];
   targetPresent: boolean;
+  nodeObservationFailed: boolean;
   mountedOnCurrentConnection: boolean;
 }
 
 export function shouldRenderWorkerTerminal(inventory: WorkerTerminalInventory): boolean {
   return (
-    inventory.targetPresent &&
-    (inventory.ready || (inventory.status === 'stale' && inventory.mountedOnCurrentConnection))
+    (inventory.ready && inventory.targetPresent) ||
+    (inventory.mountedOnCurrentConnection &&
+      (inventory.status === 'stale' || (inventory.ready && inventory.nodeObservationFailed)))
   );
 }
 
