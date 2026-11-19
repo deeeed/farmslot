@@ -255,6 +255,64 @@ test('a Claude message recorded before any model is named is priced at the first
   assert.match(out, /cost_usd=8\.0000/);
 });
 
+test('a replayed Claude record does not change the model a later model-less message is priced at', async (t) => {
+  const home = makeTmpDir();
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const sessionPath = path.join(home, 'session.jsonl');
+  const M = 1_000_000;
+  const record = (id: string, usage: Record<string, number>, model?: string) =>
+    JSON.stringify({ type: 'assistant', message: { id, ...(model ? { model } : {}), usage } });
+  writeFileSync(
+    sessionPath,
+    [
+      record('m1', { input_tokens: M }, 'claude-haiku-5-5'),
+      record('m2', { input_tokens: M }, 'claude-opus-5-5'),
+      record('m1', { input_tokens: M }, 'claude-haiku-5-5'),
+      record('m3', { output_tokens: M }),
+    ].join('\n') + '\n',
+  );
+  const out = await runSessionUsage({
+    repo: home,
+    slotId: 'fixture',
+    action: 'total',
+    forcedPath: sessionPath,
+    forcedRunner: 'claude',
+  });
+  // Haiku input 0.10 + Opus input 4 + model-less output at Opus 20, the replay ignored.
+  assert.match(out, /cost_usd=24\.1000/);
+});
+
+test('a run window keeps the model named before it for a model-less message inside it', async (t) => {
+  const home = makeTmpDir();
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const sessionPath = path.join(home, 'session.jsonl');
+  writeFileSync(
+    sessionPath,
+    [
+      JSON.stringify({
+        type: 'assistant',
+        timestamp: '2026-11-19T13:00:00Z',
+        message: { id: 'm0', model: 'claude-opus-5-5', usage: { input_tokens: 1_000_000 } },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        timestamp: '2026-11-19T14:01:00Z',
+        message: { id: 'm1', usage: { output_tokens: 1_000_000 } },
+      }),
+    ].join('\n') + '\n',
+  );
+  const out = await runSessionUsage({
+    repo: home,
+    slotId: 'fixture',
+    action: 'total',
+    forcedPath: sessionPath,
+    forcedRunner: 'claude',
+    usageWindow: { startedAt: '2026-11-19T14:00:00Z' },
+  });
+  // Only the in-window output counts, at Opus: 1M x $20.
+  assert.match(out, /cost_usd=20\.0000/);
+});
+
 test('a Claude message on an unpriced model leaves the session unpriced', async (t) => {
   const home = makeTmpDir();
   t.after(() => rmSync(home, { recursive: true, force: true }));

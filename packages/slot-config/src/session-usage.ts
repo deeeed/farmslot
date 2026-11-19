@@ -406,6 +406,14 @@ async function summarizeClaude(
   const seen = new Set<string>();
   for await (const obj of safeJsonLines(filePath)) {
     const message = obj.message;
+    const messageModel =
+      obj.type === 'assistant' &&
+      message &&
+      typeof message === 'object' &&
+      'model' in message &&
+      typeof message.model === 'string'
+        ? message.model
+        : undefined;
     if (window) {
       if (
         obj.type !== 'assistant' ||
@@ -419,18 +427,17 @@ async function summarizeClaude(
       if (seen.has(message.id)) continue;
       // Deduplicate before applying the window. A replayed old message is still old work.
       seen.add(message.id);
-      if (!inUsageWindow(usageTimestamp(obj), window)) continue;
+      if (!inUsageWindow(usageTimestamp(obj), window)) {
+        // Earlier work is not this run's, but its model still prices a later model-less message.
+        if (messageModel) lastModel = messageModel;
+        continue;
+      }
     }
-    const messageModel =
-      obj.type === 'assistant' &&
-      message &&
-      typeof message === 'object' &&
-      'model' in message &&
-      typeof message.model === 'string'
-        ? message.model
-        : undefined;
     if (messageModel && totals.model === 'unknown') totals.model = messageModel;
-    if (messageModel) {
+    // A replayed record is not new work, and its model must not become the current model.
+    const id = object(message) && typeof message.id === 'string' ? message.id : undefined;
+    const replay = id !== undefined && (state.claudeMessageIds ?? []).includes(id);
+    if (messageModel && !replay) {
       lastModel = messageModel;
       // Tokens recorded before any message named its model belong to the first model named.
       if (pending) {
