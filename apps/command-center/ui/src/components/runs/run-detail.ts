@@ -1005,9 +1005,8 @@ export class RunDetail extends RunDetailState {
   private _acceptRecipeObservation(state: ResourceQueryState<RunRecipeRunsForRunResult>): void {
     const run = this.run;
     const outputDecision = run ? pendingOutputReview(run) : undefined;
-    const position = outputDecision
-      ? null
-      : composedEvidencePositionFromHash(run.id, location.hash);
+    const position =
+      run && !outputDecision ? composedEvidencePositionFromHash(run.id, location.hash) : null;
     if (run && !position && this._linkRecipeOverride) {
       const stillSelected = this._recipeRequestedId === this._linkRecipeOverride;
       this._linkRecipeOverride = '';
