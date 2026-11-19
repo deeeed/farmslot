@@ -40,6 +40,7 @@ import { hashParams } from '../../utils/url-state.js';
 import { heldDataIsSaved, ResourceQueryController } from '../shared/resource-query-controller.js';
 
 import {
+  encodeWorkerTerminalRef,
   filterSlotsByGlobalFilters,
   isFarmslotWatchEntry,
   isFarmslotWorker,
@@ -99,6 +100,7 @@ export class TerminalSplitView extends LitElement {
   };
   private _workerOwner?: string;
   private _workerConnection?: string | number;
+  private _workerInventoryVerified = false;
   private _renderedWorkerScope?: string;
   private _workerAgeTimer?: ReturnType<typeof setInterval>;
   private readonly _canAttachWorker = (ref: TmuxWorkerRef) =>
@@ -111,6 +113,7 @@ export class TerminalSplitView extends LitElement {
       if (owner !== this._workerOwner || gateway.resourceConnectionId !== this._workerConnection) {
         this._workerOwner = owner;
         this._workerConnection = gateway.resourceConnectionId;
+        this._workerInventoryVerified = false;
         this._endingSession = null;
         this._endSessionError = '';
         this._workerListError = '';
@@ -118,6 +121,7 @@ export class TerminalSplitView extends LitElement {
       this._workerObservation = state;
       this._tmuxWorkers = state.data ? flattenTmuxWorkers(state.data.nodes) : [];
       if (state.status === 'ready' && state.data) {
+        this._workerInventoryVerified = this.workerQuery.ready;
         this._workerWatchItems = reconcileTmuxWorkerWatchlist(
           this._workerWatchItems,
           this._tmuxWorkers,
@@ -484,6 +488,7 @@ export class TerminalSplitView extends LitElement {
     clearInterval(this._workerAgeTimer);
     this._workerAgeTimer = undefined;
     this._renderedWorkerScope = undefined;
+    this._workerInventoryVerified = false;
     this._unsubState?.();
   }
 
@@ -597,7 +602,9 @@ export class TerminalSplitView extends LitElement {
       .join('; ');
     const error = state.error?.message ?? sourceError;
     return html`
-      ${heldDataIsSaved(state)
+      ${state.status === 'stale' &&
+      state.data &&
+      (!this._workerInventoryVerified || heldDataIsSaved(state))
         ? html`<div data-worker-inventory-freshness="stale">
             Saved workers, ${sourceObservationAge(state.observedAt)}. Session actions wait for a
             current read.
@@ -1285,7 +1292,7 @@ export class TerminalSplitView extends LitElement {
                         tmuxWorkerRefsMatch(worker.ref, pane.ref),
                       ),
                       mountedOnCurrentConnection:
-                        mountedWorkers?.has(JSON.stringify(pane.ref)) ?? false,
+                        mountedWorkers?.has(encodeWorkerTerminalRef(pane.ref)) ?? false,
                     })
                     ? keyed(
                         workerScope,
@@ -1293,7 +1300,7 @@ export class TerminalSplitView extends LitElement {
                           .canAttachWorker=${this.workerQuery.ready
                             ? this._canAttachWorker
                             : waitForCurrentWorkerInventory}
-                          .workerRefJson=${JSON.stringify(pane.ref)}
+                          .workerRefJson=${encodeWorkerTerminalRef(pane.ref)}
                           @terminal-close=${this._handleTerminalClose}
                         ></terminal-view>`,
                       )

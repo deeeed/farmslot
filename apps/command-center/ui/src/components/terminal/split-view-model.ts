@@ -94,6 +94,11 @@ export function isTmuxWorkerRef(value: unknown): value is TmuxWorkerRef {
   );
 }
 
+/** Window labels and indices describe the pane, but do not address its stream. */
+export function encodeWorkerTerminalRef({ nodeId, session, target }: TmuxWorkerRef): string {
+  return JSON.stringify({ nodeId, session, target });
+}
+
 export function encodeWorkerRouteParam(ref: TmuxWorkerRef): string {
   return JSON.stringify(ref);
 }

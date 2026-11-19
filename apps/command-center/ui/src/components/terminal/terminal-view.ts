@@ -84,6 +84,7 @@ export class TerminalView extends TerminalViewState {
 
   private _workerParent: Node | null = null;
   private _workerAttachDeferred = false;
+  @state() private _retryWaitingForInventory = false;
   private _pendingOperatorMessage: OperatorMessageInput | null = null;
   static styles = [terminalViewStyles, terminalAttachmentStyles];
   @state() private progressObservation: ResourceQueryState<TaskProgressResult> = {
@@ -208,7 +209,13 @@ export class TerminalView extends TerminalViewState {
   }
 
   updated(changed: Map<string, unknown>) {
-    if (changed.has('canAttachWorker') && this._workerAttachDeferred) void this._subscribe();
+    if (changed.has('canAttachWorker')) {
+      const worker = this._workerRef();
+      if (worker && this.canAttachWorker?.(worker) !== false) {
+        this._retryWaitingForInventory = false;
+        if (this._workerAttachDeferred) void this._subscribe();
+      }
+    }
     if (changed.has('_runner')) {
       syncTerminalRunnerAccent(this, this._runner);
     }
@@ -466,6 +473,7 @@ export class TerminalView extends TerminalViewState {
     const worker = this._workerRef();
     this._workerAttachDeferred = Boolean(worker && this.canAttachWorker?.(worker) === false);
     if (this._workerAttachDeferred) return;
+    this._retryWaitingForInventory = false;
 
     // Bump seq first so any in-flight request from a prior call short-circuits
     // when its response lands. Duplicate work is absorbed by the gateway's
@@ -966,7 +974,7 @@ export class TerminalView extends TerminalViewState {
       return;
     const worker = this._workerRef();
     if (worker && this.canAttachWorker?.(worker) === false) {
-      this._recoveryMessage = 'Wait for current worker inventory before retrying.';
+      this._retryWaitingForInventory = true;
       return;
     }
     if (this._retiredTarget) {
@@ -1328,7 +1336,9 @@ export class TerminalView extends TerminalViewState {
           )
         : undefined,
       reconnecting: this._reconnecting,
-      recoveryMessage: this._recoveryMessage,
+      recoveryMessage: this._retryWaitingForInventory
+        ? 'Wait for current worker inventory before retrying.'
+        : this._recoveryMessage,
       copyToast: this._copyToast,
       exited: this._exited,
       inputText: this._inputText,

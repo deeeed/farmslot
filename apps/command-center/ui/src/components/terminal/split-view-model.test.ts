@@ -11,6 +11,7 @@ import type {
 
 import {
   encodeWorkerRouteParam,
+  encodeWorkerTerminalRef,
   filterSlotsByGlobalFilters,
   isActiveRunTerminalSlot,
   isFarmslotWatchEntry,
@@ -113,6 +114,12 @@ test('worker terminal keeps its mount during a stale refresh on the same connect
       false,
     );
   }
+});
+
+test('a worker window rename keeps the same terminal target', () => {
+  const target = encodeWorkerTerminalRef({ ...ref, windowName: 'old name' });
+  assert.equal(encodeWorkerTerminalRef({ ...ref, windowName: 'new name' }), target);
+  assert.notEqual(encodeWorkerTerminalRef({ ...ref, target: '%4' }), target);
 });
 
 test('split view model parses persisted worker refs and watch items defensively', () => {
