@@ -468,6 +468,14 @@ export class TerminalSplitView extends LitElement {
     }
   `;
 
+  protected override willUpdate(): void {
+    const focused = this.shadowRoot?.activeElement;
+    this._focusedEndSession =
+      focused instanceof HTMLButtonElement && focused.hasAttribute('data-end-session')
+        ? focused
+        : undefined;
+  }
+
   updated(changed: Map<string, unknown>) {
     if (changed.has('initialRun') && this.initialRun) {
       this._selectedRuns = [this.initialRun];
@@ -487,6 +495,18 @@ export class TerminalSplitView extends LitElement {
         ...this._selectedSlots.slice(0, this._maxSlots() - 1),
       ];
       this._save();
+    }
+    const button = this._focusedEndSession;
+    this._focusedEndSession = undefined;
+    // Moving a keyed row can blur its button. Focus only the same surviving
+    // element when the move left focus on the document body.
+    if (
+      button &&
+      !button.disabled &&
+      this.shadowRoot?.contains(button) &&
+      this.ownerDocument.activeElement === this.ownerDocument.body
+    ) {
+      button.focus({ preventScroll: true });
     }
   }
 
@@ -1171,29 +1191,6 @@ export class TerminalSplitView extends LitElement {
       @terminal-expand=${this._handleExpand}
       @terminal-close=${this._handleTerminalClose}
     ></terminal-view>`;
-  }
-
-  protected override willUpdate(): void {
-    const focused = this.shadowRoot?.activeElement;
-    this._focusedEndSession =
-      focused instanceof HTMLButtonElement && focused.hasAttribute('data-end-session')
-        ? focused
-        : undefined;
-  }
-
-  protected override updated(): void {
-    const button = this._focusedEndSession;
-    this._focusedEndSession = undefined;
-    // Moving a keyed row can blur its button. Focus only the same surviving
-    // element when the move left focus on the document body.
-    if (
-      button &&
-      !button.disabled &&
-      this.shadowRoot?.contains(button) &&
-      this.ownerDocument.activeElement === this.ownerDocument.body
-    ) {
-      button.focus({ preventScroll: true });
-    }
   }
 
   render() {
