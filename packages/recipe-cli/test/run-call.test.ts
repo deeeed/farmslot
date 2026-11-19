@@ -4957,7 +4957,7 @@ console.log(JSON.stringify({adapters:harnessAdapters().list(),actions}));
       `#!/bin/sh\nexec ${shellQuoteArg(process.execPath)} --import ${shellQuoteArg(import.meta.resolve('tsx'))} ${shellQuoteArg(module)} "$@"\n`,
       { mode: 0o700 },
     );
-    return { bin, marker };
+    return { bin, marker, home: root };
   }
 
   function followHint(
@@ -4978,6 +4978,8 @@ console.log(JSON.stringify({adapters:harnessAdapters().list(),actions}));
       env: {
         ...process.env,
         RECIPE_LIBRARY_PATH: '',
+        FARMSLOT_HOME: host.home,
+        CATALOG_RETRY_CONFIGURED: '[]',
         ...env,
         PATH: host.bin + path.delimiter + process.env.PATH,
         PLUGIN_IMPORT_LOG: host.marker,
@@ -4992,6 +4994,9 @@ console.log(JSON.stringify({adapters:harnessAdapters().list(),actions}));
     test(`${caller} hint does not authorize a discovered cache module on retry`, async () => {
       const root = echoCache();
       const host = retryHost();
+      process.env.FARMSLOT_HOME = host.home;
+      process.env.CATALOG_RETRY_CONFIGURED = '[]';
+      process.env.PLUGIN_IMPORT_LOG = host.marker;
       const target = checkout();
       const sources = [
         { name: 'cache', root, origin: 'env' as const },
@@ -5040,6 +5045,11 @@ console.log(JSON.stringify({adapters:harnessAdapters().list(),actions}));
         before,
       );
       const matrix = followHint(error.userAction, host);
+      assert.deepEqual(
+        fs.readdirSync(root).map((file) => [file, fs.readFileSync(path.join(root, file), 'utf8')]),
+        before,
+        'following matrix discovery preserves cached library bytes',
+      );
       assert.equal(fs.existsSync(host.marker), false, 'following the hint imports no cache module');
       assert.equal(
         matrix.adapters.includes('echo'),
