@@ -251,12 +251,26 @@ test('a child of exactly 100 rows keeps every row, each title within its byte bu
     mark.label.startsWith('perps-shared'),
   );
   assert.equal(rows.length, 100, 'no fallback to parent marks at the cap');
-  for (const row of rows) {
-    assert.ok(Buffer.byteLength(row.label) <= RECEIPT_CHILD_TITLE_BYTES);
-    assert.ok(row.label.endsWith('…'));
-    // encodeURIComponent throws on half an emoji (a lone surrogate).
-    assert.ok(encodeURIComponent(row.label).length > 0);
-  }
+  // Each family emoji is 25 bytes: 16 prefix bytes + 8 whole families + a 3-byte ellipsis = 219.
+  // A code-point cut would leave part of a ninth family; none is kept.
+  assert.equal(rows[0].label, `perps-shared 1. ${family.repeat(8)}…`);
+  for (const row of rows) assert.ok(Buffer.byteLength(row.label) <= RECEIPT_CHILD_TITLE_BYTES);
+});
+
+test('the byte budget keeps room for the ellipsis', () => {
+  const run = reviewRun();
+  const fits = (count: number) => {
+    run.metrics.subtasks![0].checklistTiming!.events = [
+      { stepNumber: 1, label: '😀'.repeat(count), checkedAt: at(20) },
+    ];
+    return receiptChecklistMarks(run, context)[0].label;
+  };
+  // 16 prefix bytes + 56 four-byte emoji = 240 bytes and 72 characters: within both budgets.
+  assert.equal(fits(56), `perps-shared 1. ${'😀'.repeat(56)}`);
+  // One more must be cut. The 56th emoji would fit only without the ellipsis (243 bytes).
+  const cut = fits(57);
+  assert.equal(cut, `perps-shared 1. ${'😀'.repeat(55)}…`);
+  assert.equal(Buffer.byteLength(cut), 239);
 });
 
 test('live progress keeps the parent marks only', () => {
