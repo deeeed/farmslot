@@ -258,7 +258,9 @@ export class ComposedEvidenceView extends LitElement {
         ${occurrence.decision.next !== null
           ? html`<span>
               · Next
-              ${this.nodes.get(occurrence.decision.next)?.label ?? occurrence.decision.next}</span
+              ${(occurrence.recipeRunId === this.executionId
+                ? this.nodes.get(occurrence.decision.next)?.label
+                : undefined) ?? occurrence.decision.next}</span
             >`
           : nothing}
         <div class="actions">
@@ -334,15 +336,10 @@ export class ComposedEvidenceView extends LitElement {
     if (!flow) return nothing;
     const selected = composedEvidenceNode(flow, this.position);
     const retained = (this.view?.criteria ?? []).flatMap((criterion) =>
-      (criterion.occurrences ?? []).filter(
-        (occurrence) => occurrence.recipeRunId !== flow.recipeRunId,
-      ),
+      (criterion.occurrences ?? [])
+        .filter((occurrence) => occurrence.recipeRunId !== flow.recipeRunId)
+        .map((occurrence) => ({ criterionId: criterion.id, occurrence })),
     );
-    const retainedOccurrences = [
-      ...new Map(
-        retained.map((occurrence) => [composedEvidenceOccurrenceKey(occurrence), occurrence]),
-      ).values(),
-    ];
     return html`
       <section aria-label="Recipe flow" data-testid="composed-evidence-view">
         <header>
@@ -370,11 +367,14 @@ export class ComposedEvidenceView extends LitElement {
                   )}
                 `
               : nothing}
-            ${retainedOccurrences.length
+            ${retained.length
               ? html`<details>
                   <summary>Evidence from earlier executions</summary>
-                  ${repeat(retainedOccurrences, composedEvidenceOccurrenceKey, (occurrence) =>
-                    this.renderOccurrence(occurrence),
+                  ${repeat(
+                    retained,
+                    ({ criterionId, occurrence }) =>
+                      JSON.stringify([criterionId, composedEvidenceOccurrenceKey(occurrence)]),
+                    ({ occurrence }) => this.renderOccurrence(occurrence),
                   )}
                 </details>`
               : nothing}

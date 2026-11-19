@@ -2,11 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { RunEvidenceFlow, RunEvidenceFlowNode } from '@farmslot/adapter-sdk/evidence';
+import { validViewRoute } from '@farmslot/protocol/surfaces/view-links';
 
 import {
   composedEvidenceNode,
   composedEvidenceOccurrenceKey,
   composedEvidencePositionFromHash,
+  composedEvidenceRecipeGroup,
   composedEvidenceSelectionHash,
 } from './composed-evidence-model.js';
 
@@ -66,6 +68,7 @@ test('a linked call is scoped to its gateway run and recipe execution', () => {
   assert.equal(composedEvidencePositionFromHash('other-run', hash), null);
   assert.equal(composedEvidenceNode({ ...flow, recipeRunId: 'prior' }, position)?.id, 'second');
   assert.ok(hash.includes('tab=evidence'));
+  assert.equal(validViewRoute(hash), true);
 });
 
 test('a legacy or unresolved selection falls back to the SDK active node then root', () => {
@@ -76,4 +79,19 @@ test('a legacy or unresolved selection falls back to the SDK active node then ro
     composedEvidenceOccurrenceKey({ recipeRunId: 'current', traceIndex: 1 }),
     composedEvidenceOccurrenceKey({ recipeRunId: 'retained', traceIndex: 1 }),
   );
+});
+
+test('a call link restores a known non-default recipe group', () => {
+  const groups = [
+    { id: 'current-artifacts', recipeRunId: null },
+    { id: 'qa-default', recipeRunId: 'attempt#1' },
+    { id: 'live-run:request-id', recipeRunId: flow.recipeRunId },
+  ];
+  const link = { recipeRunId: flow.recipeRunId, invocationId: 'first' };
+  assert.equal(composedEvidenceRecipeGroup(groups, link, 'qa-default'), 'live-run:request-id');
+  assert.equal(
+    composedEvidenceRecipeGroup(groups, { ...link, recipeRunId: 'missing' }, 'qa-default'),
+    undefined,
+  );
+  assert.equal(composedEvidenceRecipeGroup(groups, null, 'qa-default'), undefined);
 });

@@ -7,7 +7,8 @@ export interface ComposedEvidencePosition {
   invocationId: string;
 }
 
-const CALL_PARAM = 'recipeCall';
+// Use the existing shareable recipe-node field, qualified for Run Detail.
+const CALL_PARAM = 'recipeNode';
 
 export function composedEvidenceNode(
   flow: RunEvidenceFlow | null,
@@ -62,4 +63,14 @@ export function composedEvidenceSelectionHash(
     params.set(CALL_PARAM, JSON.stringify([runId, position.recipeRunId, position.invocationId]));
   else params.delete(CALL_PARAM);
   return buildHash(route, params);
+}
+
+export function composedEvidenceRecipeGroup(
+  groups: readonly { id: string; recipeRunId: string | null }[],
+  position: ComposedEvidencePosition | null,
+  selectedGroup: string | null,
+): string | undefined {
+  if (!position) return undefined;
+  const matching = groups.filter((group) => group.recipeRunId === position.recipeRunId);
+  return matching.find((group) => group.id === selectedGroup)?.id ?? matching[0]?.id;
 }

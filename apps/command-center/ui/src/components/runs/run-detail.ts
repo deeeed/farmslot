@@ -1,4 +1,4 @@
-import { html, nothing } from 'lit';
+import { html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
 import {
@@ -97,6 +97,10 @@ import { recipeRunArtifactUrl, runArtifactUrl } from '../workspace/workspace-art
 import type { WorkspaceEvidenceComparison } from '../workspace/workspace-evidence-preview.js';
 
 import { CIWatchPokeController } from './ci-watch-actions.js';
+import {
+  composedEvidencePositionFromHash,
+  composedEvidenceRecipeGroup,
+} from './composed-evidence-model.js';
 import { LiveArtifactRefresh, liveArtifactRefreshActive } from './run-artifact-live-refresh.js';
 import {
   checkInteractiveHandoffSignal,
@@ -219,6 +223,7 @@ export class RunDetail extends RunDetailState {
   private _viewVersion = 0;
   private _viewConnectionId?: string | number;
   private _recipeRequestedId = '';
+  private _restoredRecipeCall = '';
   private readonly detailQuery = new ResourceQueryController<RunGetResult>(this, (state) => {
     this._runObservation = state;
   });
@@ -962,6 +967,7 @@ export class RunDetail extends RunDetailState {
 
   private _resetRecipeRuns(): void {
     this._recipeRequestedId = '';
+    this._restoredRecipeCall = '';
     this._pendingRecipeRunSelectionId = '';
     this.recipeQuery.setQuery(undefined);
     this._recipeRuns = [];
@@ -1027,21 +1033,45 @@ export class RunDetail extends RunDetailState {
       this._bindRecipeRuns(run);
       return;
     }
+    const linkedGroup = outputDecision ? undefined : this._recipeCallGroup(run.id, result);
+    if (linkedGroup && linkedGroup !== result.selectedRecipeRunId) {
+      this._recipeRequestedId = linkedGroup;
+      this._selectedRecipeRunId = linkedGroup;
+      this._recordedEvidence = undefined;
+      this._bindRecipeRuns(run);
+      return;
+    }
     this._recordedEvidence = result.recordedEvidence;
     this._evidenceGroupId = result.selectedRecipeRunId;
     this._evidenceTaskRelative = Boolean(outputDecision) || !result.recordedEvidence?.input;
-    const desired = runDetailDesiredRecipeRunId({
-      recipeRuns: result.recipeRuns,
-      pendingRecipeRunId: this._pendingRecipeRunSelectionId,
-      currentRecipeRunId: this._selectedRecipeRunId,
-      gatewaySelectedRecipeRunId: result.selectedRecipeRunId,
-    });
+    const desired =
+      linkedGroup ??
+      runDetailDesiredRecipeRunId({
+        recipeRuns: result.recipeRuns,
+        pendingRecipeRunId: this._pendingRecipeRunSelectionId,
+        currentRecipeRunId: this._selectedRecipeRunId,
+        gatewaySelectedRecipeRunId: result.selectedRecipeRunId,
+      });
     this._selectedRecipeRunId = desired;
     if (desired === this._pendingRecipeRunSelectionId) this._pendingRecipeRunSelectionId = '';
     if (desired && desired !== result.selectedRecipeRunId) {
       this._recipeRequestedId = desired;
       this._bindRecipeRuns(run);
     }
+  }
+
+  private _recipeCallGroup(runId: string, result: RunRecipeRunsForRunResult): string | undefined {
+    const position = composedEvidencePositionFromHash(runId, location.hash);
+    const key = position ? JSON.stringify(position) : '';
+    if (!key) this._restoredRecipeCall = '';
+    if (key === this._restoredRecipeCall) return undefined;
+    const group = composedEvidenceRecipeGroup(
+      result.recipeRuns,
+      position,
+      result.selectedRecipeRunId,
+    );
+    if (group) this._restoredRecipeCall = key;
+    return group;
   }
 
   private _handleRecipeRunArtifacts(run: Run, detail: RecipeCompleteDetail): void {
@@ -1077,6 +1107,7 @@ export class RunDetail extends RunDetailState {
         this.runId,
         'conversation',
       );
+      this._acceptRecipeObservation(this._recipeObservation);
       this._applySelectedStepFromHash();
       this._applyEvidenceArtifactFromHash();
       this._sharedPanelFocusKey = '';
@@ -1816,16 +1847,14 @@ export class RunDetail extends RunDetailState {
 
   private _renderRunEvidence(run: Run) {
     const model = this.evidenceModel;
-    return html`
-      ${model?.flow
-        ? html`<composed-evidence-view
-            .view=${runEvidenceView(model)}
-            .runId=${run.id}
-            .resolveUrl=${this._composedEvidenceUrl}
-          ></composed-evidence-view>`
-        : nothing}
-      ${renderRunEvidence(run, this._runEvidenceContext(run), false)}
-    `;
+    const ctx = this._runEvidenceContext(run);
+    if (model?.flow)
+      ctx.composedEvidence = html`<composed-evidence-view
+        .view=${runEvidenceView(model)}
+        .runId=${run.id}
+        .resolveUrl=${this._composedEvidenceUrl}
+      ></composed-evidence-view>`;
+    return renderRunEvidence(run, ctx, false);
   }
 
   private _renderInteractivePackets(run: Run) {
