@@ -563,6 +563,11 @@ export function initServerGlobals(): void {
     for (const [ws, state] of clients) {
       const identity = state.terminalIdentities.get(slotId);
       if (!identity) continue;
+      if ('worker' in identity) {
+        state.workerTerminalHandlers.delete(slotId);
+        state.terminalIdentities.delete(slotId);
+        forgetTerminalRedraws(state, slotId);
+      }
       sendEvent(ws, Events.TERMINAL_EXITED, { ...identity, exitCode });
       sent = true;
     }

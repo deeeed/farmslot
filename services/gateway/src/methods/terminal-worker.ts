@@ -61,10 +61,15 @@ export async function terminalWorkerSubscribe(
   params: TerminalWorkerSubscribeParams,
   emit: EventEmitter,
 ): Promise<{ key: string; ptyHandler: PtyDataHandler; joined: boolean }> {
-  await assertTmuxWorkerControlAllowed(params.worker);
+  const { worker } = params;
   const key = terminalWorkerSubscriptionKey(params);
-  const ptyOptions = await resolveWorkerPtyOptions(params.worker);
-  const payload = terminalDataPayload({ worker: params.worker });
+  const ptyOptions = await resolveWorkerPtyOptions(worker);
+  const pane = await assertTmuxWorkerControlAllowed(worker, true);
+  // Inventory supplies the coordinates; tmux checks the stable pane ID again
+  // on the target host before attaching to those exact coordinates.
+  if (!pane.paneId) throw new Error('Worker attachment requires a stable tmux pane ID');
+  const selectTarget = `=${worker.session}:${pane.window}.${pane.pane}`;
+  const payload = terminalDataPayload({ worker });
   const ptyHandler: PtyDataHandler = (data: string) => {
     emit('terminal.data', payload(data, Date.now()));
   };
@@ -74,7 +79,7 @@ export async function terminalWorkerSubscribe(
     ptyHandler,
     params.cols,
     params.rows,
-    { ...ptyOptions, selectTarget: params.worker.target },
+    { ...ptyOptions, workerPaneId: pane.paneId, selectTarget },
   );
   emit('terminal.mode', { worker: params.worker, mode: 'pty' });
   return { key, ptyHandler, joined };

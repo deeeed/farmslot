@@ -591,7 +591,7 @@ import { nativeConversations } from '../resources/native-conversations.js';
 import { nativeObservations } from '../resources/native-observations.js';
 import { upstreamObservers } from '../resources/upstream-observers.js';
 import { rememberNativeExecutionNode } from '../runners/native/execution-nodes.js';
-import { redrawPty, unsubscribePty } from '../runtime/pty-stream.js';
+import { hasPty, redrawPty, unsubscribePty } from '../runtime/pty-stream.js';
 import { withRunSessionUsageContext } from '../runtime/run-session-usage-context.js';
 import { resubscribeAgentScreenSessions } from '../runtime/screen-session.js';
 import { unsubscribe as unsubscribeTerminalPoll } from '../runtime/tmux-stream.js';
@@ -663,9 +663,10 @@ const terminalRedraws = createTerminalRedraws<ClientState>((key) => {
   });
 });
 
-/** A disconnected client's pending repaints are dropped with its terminal subscriptions. */
-export function forgetTerminalRedraws(state: ClientState): void {
-  terminalRedraws.cancelAll(state);
+/** Drop pending repaints when a terminal ends or the client disconnects. */
+export function forgetTerminalRedraws(state: ClientState, key?: string): void {
+  if (key === undefined) terminalRedraws.cancelAll(state);
+  else terminalRedraws.cancel(state, key);
 }
 
 /** The pr.list scope an entity read names; the same selectors the view accepts. */
@@ -1250,17 +1251,13 @@ async function routeAuthorizedMethod(
       const registration = `worker:${key}`;
       const mySeq = (state.terminalSubscribeSeq.get(registration) ?? 0) + 1;
       state.terminalSubscribeSeq.set(registration, mySeq);
-      const oldHandler = state.workerTerminalHandlers.get(key);
-      if (oldHandler) {
-        unsubscribeWorkerTerminalPty(key, oldHandler);
-        state.workerTerminalHandlers.delete(key);
-      }
       terminalRedraws.cancel(state, key);
       const {
         key: ptyKey,
         ptyHandler,
         joined,
       } = await terminalWorkerSubscribe(sub, withTerminalBackpressure(state.ws, emit));
+      if (!hasPty(ptyKey, ptyHandler)) throw new Error('Worker terminal closed during attachment');
       const subscribed = adoptWorkerTerminalSubscription(
         state,
         key,
@@ -1268,8 +1265,10 @@ async function routeAuthorizedMethod(
         ptyHandler,
         isActiveClient(state),
       );
-      if (subscribed && joined) terminalRedraws.expect(state, ptyKey);
-      return { subscribed };
+      if (!subscribed) return { subscribed: false };
+      state.terminalIdentities.set(ptyKey, { worker: sub.worker, workerSubscriptionSeq: mySeq });
+      if (joined) terminalRedraws.expect(state, ptyKey);
+      return { subscribed: true, workerSubscriptionSeq: mySeq };
     }
     case Methods.TERMINAL_WORKER_UNSUBSCRIBE: {
       const key = terminalWorkerUnsubscribeKey(p as TerminalWorkerUnsubscribeParams);
@@ -1282,6 +1281,7 @@ async function routeAuthorizedMethod(
       if (handler) {
         unsubscribeWorkerTerminalPty(key, handler);
         state.workerTerminalHandlers.delete(key);
+        state.terminalIdentities.delete(key);
       }
       terminalRedraws.cancel(state, key);
       return { unsubscribed: true };
