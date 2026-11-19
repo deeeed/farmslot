@@ -368,3 +368,13 @@ Status: Accepted. Implements item 6 of the approved composed-flow SDK split for 
 The SDK projects parent, depth and labeled breadcrumbs from the same prepared invocation tree. The root has depth zero. Breadcrumbs retain each namespaced invocation ID and label, ordered from root through the selected invocation, so repeated calls remain distinct. The runner caches this projection once per prepared tree and supplies active ancestry on its existing flow updates. Consumers render that data without rebuilding ancestry or scanning execution history.
 
 Ancestry is an optional extension for older payloads. New updates carry null when no invocation is active. Progress qualifications and null totals remain unchanged. The prepared tree remains the common input for the later evidence view-model and timing work; no renderer or new event channel is introduced. ADR-062 Amendment 23 remains unchanged.
+
+## Amendment 10 (2026-11-19): Qualified invocation timing
+
+Status: Accepted under the approved composed-flow split, item 9, MANUAL-000187.
+
+The SDK uses recorded closed invocation windows to project inclusive elapsed time and self time. Self excludes the union of attributed direct-child windows. Repeated call IDs remain distinct; overlapping or shared windows count once in a rollup. A measured zero is valid. Missing, open, invalid or ambiguously attributed coverage stays unknown. Qualification is separate for inclusive and self; a partial number is a measured lower bound from complete qualified subsets, never an estimate from missing child costs.
+
+The existing prepared tree and execution trace remain authoritative. The runner maintains an interval index as trace entries arrive and publishes timing on the existing flow update and final summary, without rereading history per HUD event. The portable evidence projection uses the same calculator once per snapshot. An invocation may have measured inclusive time with unknown self. Costs with no explicit claim assignment remain in an unassigned timing rollup. Hosts render supplied data; playback offsets and wall-clock duration remain separate.
+
+Optional timing fields preserve old flow updates. `runEvidenceView` keeps the same version and projects qualified timing on its existing flow nodes; timing-only changes affect snapshot equality. No proof verdict, evidence authority, renderer, polling channel or device trial changes. ADR-062 Amendment 23 stays unchanged.

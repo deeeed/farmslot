@@ -42,6 +42,14 @@ export {
   createRecipeFlowProjection,
   type RecipeFlowProjection,
 } from './core/flow.js';
+export type {
+  ProjectRecipeInvocationTimingInput,
+  RecipeInvocationTimingProjection,
+} from './core/flow-timing.js';
+export {
+  createRecipeInvocationTimingProjection,
+  projectRecipeInvocationTiming,
+} from './core/flow-timing.js';
 export { extractWorkflowGraph, type WorkflowGraph } from './core/graph.js';
 export { redactRecipeParams } from './core/invocation.js';
 export type {

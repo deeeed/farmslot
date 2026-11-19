@@ -282,3 +282,9 @@ values are retained only when declared as integers and supplied as nonnegative
 safe integers. Packages with redacted inputs fail parameter validation explicitly;
 use fixture references rather than credentials in recipe parameters. The evidence
 digest detects accidental mismatch, not malicious forgery of an entire package.
+
+### Qualified invocation timing
+
+`projectRecipeInvocationTiming({tree, trace, summary})` is exported from the root and portable `@farmslot/recipe-runner/evidence` entry. It uses the existing resolved invocation tree and recorded execution intervals. `createRecipeInvocationTimingProjection(tree)` consumes those occurrences incrementally for the runner's existing HUD flow updates. It adds no file reads, processes or Git commands.
+
+Each node has `inclusiveMs`, `selfMs` and separate measured/partial/unknown qualifications. Self subtracts the union of measured direct-child windows, not their sum. Unknown child coverage leaves self unknown even if inclusive is measured. Zero is measured; null is unavailable. `claimTimings` uses explicit bindings and unions shared spans. AC totals can overlap and must not be added. `unassignedTiming` retains unassigned self work and its invocation IDs. Recording seek offsets stay separate.

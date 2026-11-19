@@ -312,7 +312,7 @@ test('marker lookup grows linearly and Flow and Story share qualified cues', (t)
   assert.equal(markerReads, previousReads, 'unchanged projections do not scan the marker history');
 });
 
-test('projects nested and repeated calls through the existing evidence export without timing', () => {
+test('projects nested and repeated calls through the existing evidence export with qualified timing', () => {
   const progress = createRecipeFlowProjection(tree, 'execution-1');
   const update = progress.start('first/nested/read');
   const model = createEvidenceReviewModel({
@@ -333,7 +333,8 @@ test('projects nested and repeated calls through the existing evidence export wi
   assert.equal(first.parentId, 'first/nested');
   assert.equal(first.status, 'running');
   assert.equal(second.status, 'unknown');
-  assert.ok(view.flow?.nodes.every((node) => !('timing' in node)));
+  assert.ok(view.flow?.nodes.every((node) => node.timing));
+  assert.equal(first.timing?.inclusiveMs, null);
   assert.deepEqual(
     view.steps.map((step) => step.nodeId),
     ['first/nested/observe'],

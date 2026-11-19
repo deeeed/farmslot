@@ -1,0 +1,1 @@
+- Expose qualified invocation timing through the shared evidence view, including unassigned costs and timing-sensitive snapshot equality.

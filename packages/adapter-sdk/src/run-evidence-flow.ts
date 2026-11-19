@@ -5,11 +5,16 @@ import {
   type RecipeFlowProgress,
   type RecipeFlowUpdate,
   type RecipeInvocationNode,
+  type RecipeInvocationTiming,
   type RecipeInvocationTree,
+  type RecipeTimingRollup,
   recipeTraceEntries,
   type RecordedEvidencePackageInput,
 } from '@farmslot/protocol';
-import { buildRecipeInvocationAncestry } from '@farmslot/recipe-runner/evidence';
+import {
+  buildRecipeInvocationAncestry,
+  projectRecipeInvocationTiming,
+} from '@farmslot/recipe-runner/evidence';
 
 import type {
   EvidenceReviewClaim,
@@ -42,11 +47,14 @@ export interface RunEvidenceFlowOccurrence {
   cue: RunEvidenceCue | null;
 }
 
+export type RunEvidenceInvocationTiming = RecipeInvocationTiming;
+
 export interface RunEvidenceFlowNode extends RecipeInvocationNode {
   depth: number;
   breadcrumbIds: string[];
   status: RunEvidenceFlowStatus;
   occurrences: RunEvidenceFlowOccurrence[];
+  timing?: RunEvidenceInvocationTiming;
 }
 
 export interface RunEvidenceFlow {
@@ -56,6 +64,8 @@ export interface RunEvidenceFlow {
   activeId: string | null;
   progress: RecipeFlowProgress;
   nodes: RunEvidenceFlowNode[];
+  unassignedTiming?: RecipeTimingRollup;
+  claimTimings?: Record<string, RecipeTimingRollup>;
 }
 
 interface FlowProjectionContext {
@@ -245,6 +255,13 @@ export function projectRunEvidenceFlow(
   const criterionOccurrences = projectCriterionOccurrences(context, occurrences);
   if (!compatible) return { flow: null, criterionOccurrences };
   const ancestry = buildRecipeInvocationAncestry(tree);
+  const timing = projectRecipeInvocationTiming({
+    tree,
+    trace: context.trace,
+    ...(pkg
+      ? { summary: pkg.summary }
+      : { activeId: update.progress.current > update.progress.completed ? update.activeId : null }),
+  });
   const choices = new Map<string, Set<string>>();
   for (const [id, list] of byNode) {
     const node = nodes.get(id)!;
@@ -292,11 +309,14 @@ export function projectRunEvidenceFlow(
       rootId: tree.rootId,
       activeId: update.activeId,
       progress: { ...update.progress },
+      unassignedTiming: timing.unassignedTiming,
+      claimTimings: timing.claimTimings,
       nodes: tree.nodes.map((node) => ({
         ...structuredClone(node),
         depth: ancestry.get(node.id)!.depth,
         breadcrumbIds: ancestry.get(node.id)!.breadcrumbs.map(({ id }) => id),
         status: status(node),
+        timing: timing.nodes[node.id],
         occurrences: byNode.get(node.id) ?? [],
       })),
     },

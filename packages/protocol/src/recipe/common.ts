@@ -252,6 +252,27 @@ export interface RecipeInvocationAncestry {
   readonly breadcrumbs: readonly RecipeInvocationBreadcrumb[];
 }
 
+export type RecipeTimingQualification = 'measured' | 'partial' | 'unknown';
+
+export interface RecipeInvocationTiming {
+  inclusiveMs: number | null;
+  selfMs: number | null;
+  qualification: { inclusive: RecipeTimingQualification; self: RecipeTimingQualification };
+}
+
+/** Qualified elapsed union, never the sum of nested or overlapping work. */
+export interface RecipeTimingRollup {
+  durationMs: number | null;
+  qualification: RecipeTimingQualification;
+  invocationIds: string[];
+}
+
+export interface RecipeFlowTiming {
+  nodes: Record<string, RecipeInvocationTiming>;
+  claimTimings: Record<string, RecipeTimingRollup>;
+  unassignedTiming: RecipeTimingRollup;
+}
+
 export interface RecipeFlowUpdate {
   version: 1;
   recipeRunId: string;
@@ -260,6 +281,8 @@ export interface RecipeFlowUpdate {
   /** Absent in older producers; null when no invocation is active. */
   ancestry?: RecipeInvocationAncestry | null;
   progress: RecipeFlowProgress;
+  /** Closed recorded intervals only. Older producers omit this projection. */
+  timing?: RecipeFlowTiming;
 }
 
 export interface RecipeResolutionDocument {
