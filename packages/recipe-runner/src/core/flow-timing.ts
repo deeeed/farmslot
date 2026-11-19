@@ -1,12 +1,15 @@
 import {
   isRecord,
   type RecipeFlowTiming,
+  type RecipeFlowTimingUpdate,
   type RecipeInvocationNode,
   type RecipeInvocationTiming,
   type RecipeInvocationTree,
   type RecipeTimingQualification,
   type RecipeTimingRollup,
 } from '@farmslot/protocol';
+
+import { createRecipeInvocationRouteIndex } from './flow-route.js';
 
 interface Interval {
   start: number;
@@ -17,8 +20,6 @@ interface RecordedNode {
   spans: Interval[];
   invalid: boolean;
   open: boolean;
-  choices: Set<string>;
-  unknownChoice: boolean;
 }
 interface QualifiedNode {
   timing: RecipeInvocationTiming;
@@ -30,6 +31,14 @@ function interval(value: unknown): Interval | null {
     return null;
   const start = Date.parse(value.startedAt);
   const end = Date.parse(value.endedAt);
+  if (
+    value.intervalSource === 'diagnostic' ||
+    (value.intervalSource !== 'execution' &&
+      value.ok === false &&
+      value.action !== 'end' &&
+      start === end)
+  )
+    return null;
   return Number.isFinite(start) && Number.isFinite(end) && end >= start ? { start, end } : null;
 }
 
@@ -59,6 +68,7 @@ export interface RecipeInvocationTimingProjection {
   start(id: string): void;
   setRunInterval(value: unknown): void;
   snapshot(): RecipeFlowTiming;
+  snapshot(ids: readonly string[]): RecipeFlowTimingUpdate;
 }
 
 /** Incremental interval index. Snapshots use prepared edges and cached node metrics, not trace history. */
@@ -67,6 +77,7 @@ export function createRecipeInvocationTimingProjection(
 ): RecipeInvocationTimingProjection {
   const nodes = new Map(tree.nodes.map((node) => [node.id, node]));
   const recorded = new Map<string, RecordedNode>();
+  const route = createRecipeInvocationRouteIndex(tree);
   const cached = new Map<string, QualifiedNode>();
   const state = (id: string) => {
     let result = recorded.get(id);
@@ -76,8 +87,6 @@ export function createRecipeInvocationTimingProjection(
         spans: [],
         invalid: false,
         open: false,
-        choices: new Set(),
-        unknownChoice: false,
       };
       recorded.set(id, result);
     }
@@ -101,29 +110,15 @@ export function createRecipeInvocationTimingProjection(
     }
     dirty(id);
   };
-  const reachable = (): Set<string> => {
-    const result = new Set<string>();
-    const pending = [tree.rootId];
-    while (pending.length) {
-      const id = pending.pop()!;
-      if (result.has(id)) continue;
-      result.add(id);
-      const node = nodes.get(id)!;
-      const value = recorded.get(id);
-      const edges =
-        Object.keys(node.cases).length && value?.choices.size && !value.unknownChoice
-          ? [...value.choices]
-          : [node.next, node.default, ...Object.values(node.cases)];
-      for (const next of [node.entry, node.teardown, ...edges])
-        if (next !== null && nodes.has(next)) pending.push(next);
-    }
-    return result;
-  };
   const qualify = (node: RecipeInvocationNode, active: ReadonlySet<string>): QualifiedNode => {
     const known = cached.get(node.id);
     if (known) return known;
     const value = recorded.get(node.id);
-    if (!value?.windows.length) return unknown();
+    if (!value?.windows.length) {
+      const result = unknown();
+      cached.set(node.id, result);
+      return result;
+    }
     const inclusive: RecipeTimingQualification =
       value.invalid || value.open ? 'partial' : 'measured';
     const result: QualifiedNode = {
@@ -134,6 +129,7 @@ export function createRecipeInvocationTimingProjection(
       },
       self: null,
     };
+    cached.set(node.id, result);
     const children = node.children.filter((id) => active.has(id));
     const childStates = children.map((id) => recorded.get(id));
     // Missing or invalid child coverage cannot give a lower bound for self time.
@@ -198,6 +194,7 @@ export function createRecipeInvocationTimingProjection(
   ): RecipeTimingRollup => {
     const spans: Interval[] = [];
     let qualified = 0;
+    const contributors: string[] = [];
     let complete = true;
     for (const id of ids) {
       const metric = metrics.get(id)!;
@@ -207,15 +204,61 @@ export function createRecipeInvocationTimingProjection(
       if (qualification !== 'measured') complete = false;
       if (qualification !== 'unknown') {
         qualified++;
+        contributors.push(id);
         spans.push(...(own ? metric.self! : recorded.get(id)!.spans));
       }
     }
     return {
       durationMs: qualified ? duration(union(spans)) : null,
       qualification: qualified ? (complete ? 'measured' : 'partial') : 'unknown',
-      invocationIds: ids,
+      invocationIds: contributors,
     };
   };
+  function snapshot(): RecipeFlowTiming;
+  function snapshot(ids: readonly string[]): RecipeFlowTimingUpdate;
+  function snapshot(ids?: readonly string[]): RecipeFlowTiming | RecipeFlowTimingUpdate {
+    if (ids) {
+      const active = route.reachable();
+      return {
+        scope: 'active',
+        nodes: Object.fromEntries(
+          ids.map((id) => {
+            const node = nodes.get(id)!;
+            const metric = active.has(id) ? qualify(node, active) : unknown();
+            return [id, structuredClone(metric.timing)];
+          }),
+        ),
+      };
+    }
+    const active = route.reachable();
+    const metrics = new Map(
+      tree.nodes.map((node) => [node.id, active.has(node.id) ? qualify(node, active) : unknown()]),
+    );
+    const claims = new Map<string, string[]>();
+    for (const node of tree.nodes)
+      if (active.has(node.id))
+        for (const claim of node.claimIds) {
+          const ids = claims.get(claim) ?? [];
+          ids.push(node.id);
+          claims.set(claim, ids);
+        }
+    return {
+      scope: 'all',
+      nodes: Object.fromEntries(
+        [...metrics].map(([id, metric]) => [id, structuredClone(metric.timing)]),
+      ),
+      claimTimings: Object.fromEntries(
+        [...claims].map(([claim, ids]) => [claim, rollup(ids, metrics, false)]),
+      ),
+      unassignedTiming: rollup(
+        tree.nodes
+          .filter((node) => active.has(node.id) && !owners(node).size)
+          .map((node) => node.id),
+        metrics,
+        true,
+      ),
+    };
+  }
   return {
     start(id) {
       if (nodes.has(id)) {
@@ -228,61 +271,13 @@ export function createRecipeInvocationTimingProjection(
       const node = nodes.get(entry.nodeId);
       if (!node || entry.action !== node.action) return;
       recordWindow(node.id, entry);
-      if (Object.keys(node.cases).length) {
-        const edges = [
-          ...new Set(
-            [node.next, node.default, ...Object.values(node.cases)].filter(
-              (id): id is string => id !== null,
-            ),
-          ),
-        ];
-        const selected =
-          typeof entry.next === 'string'
-            ? edges.filter((id) => id === entry.next || nodes.get(id)?.nodeId === entry.next)
-            : typeof entry.case === 'string' && node.cases[entry.case]
-              ? [node.cases[entry.case]!]
-              : [];
-        const value = state(node.id);
-        if (selected.length === 1) value.choices.add(selected[0]!);
-        else value.unknownChoice = true;
-        cached.clear(); // A recorded branch changes which prepared children could have executed.
-      }
+      route.record(entry);
+      if (Object.keys(node.cases).length) cached.clear();
     },
     setRunInterval(value) {
       recordWindow(tree.rootId, value);
     },
-    snapshot() {
-      const active = reachable();
-      const metrics = new Map(
-        tree.nodes.map((node) => [
-          node.id,
-          active.has(node.id) ? qualify(node, active) : unknown(),
-        ]),
-      );
-      const claims = new Map<string, string[]>();
-      for (const node of tree.nodes)
-        if (active.has(node.id))
-          for (const claim of node.claimIds) {
-            const ids = claims.get(claim) ?? [];
-            ids.push(node.id);
-            claims.set(claim, ids);
-          }
-      return {
-        nodes: Object.fromEntries(
-          [...metrics].map(([id, metric]) => [id, structuredClone(metric.timing)]),
-        ),
-        claimTimings: Object.fromEntries(
-          [...claims].map(([claim, ids]) => [claim, rollup(ids, metrics, false)]),
-        ),
-        unassignedTiming: rollup(
-          tree.nodes
-            .filter((node) => active.has(node.id) && !owners(node).size)
-            .map((node) => node.id),
-          metrics,
-          true,
-        ),
-      };
-    },
+    snapshot,
   };
 }
 

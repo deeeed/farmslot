@@ -1,3 +1,5 @@
+export type { RecipeInvocationDecision, RecipeInvocationRouteIndex } from '../core/flow-route.js';
+export { createRecipeInvocationRouteIndex, recipeInvocationDecision } from '../core/flow-route.js';
 export type {
   ProjectRecipeInvocationTimingInput,
   RecipeInvocationTimingProjection,

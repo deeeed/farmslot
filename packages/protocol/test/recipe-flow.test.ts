@@ -101,6 +101,7 @@ test('timing decoding preserves measured zero and separately qualified unknown s
     activeId: null,
     progress: { current: 1, completed: 1, total: 1, remaining: 0, qualification: 'exact' },
     timing: {
+      scope: 'all',
       nodes: {
         $root: {
           inclusiveMs: 10,
@@ -114,6 +115,14 @@ test('timing decoding preserves measured zero and separately qualified unknown s
   };
   assert.equal(isRecipeFlowUpdate(update), true);
   const original = update.timing!;
+  assert.equal(
+    isRecipeFlowUpdate({ ...update, timing: { scope: 'active', nodes: original.nodes } }),
+    true,
+  );
+  assert.equal(
+    isRecipeFlowUpdate({ ...update, timing: { scope: 'all', nodes: original.nodes } }),
+    false,
+  );
   for (const bad of [
     { inclusiveMs: -1, selfMs: null, qualification: { inclusive: 'measured', self: 'unknown' } },
     { inclusiveMs: null, selfMs: null, qualification: { inclusive: 'measured', self: 'unknown' } },

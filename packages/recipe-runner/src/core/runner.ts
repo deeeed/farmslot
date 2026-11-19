@@ -984,7 +984,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     }
     const summary: SummaryDocument = {
       recipeRunId,
-      flow: flow.finish(status, request.stopAfterNode !== undefined),
+      flow: flow.finish(status, request.stopAfterNode !== undefined, true),
       invocationDigest: digestRecipeDocument(invocation),
       status,
       ...summarizeTraceCounts(trace),

@@ -268,9 +268,15 @@ export interface RecipeTimingRollup {
 }
 
 export interface RecipeFlowTiming {
+  scope: 'all';
   nodes: Record<string, RecipeInvocationTiming>;
   claimTimings: Record<string, RecipeTimingRollup>;
   unassignedTiming: RecipeTimingRollup;
+}
+
+export interface RecipeFlowTimingUpdate {
+  scope: 'active';
+  nodes: Record<string, RecipeInvocationTiming>;
 }
 
 export interface RecipeFlowUpdate {
@@ -282,7 +288,7 @@ export interface RecipeFlowUpdate {
   ancestry?: RecipeInvocationAncestry | null;
   progress: RecipeFlowProgress;
   /** Closed recorded intervals only. Older producers omit this projection. */
-  timing?: RecipeFlowTiming;
+  timing?: RecipeFlowTiming | RecipeFlowTimingUpdate;
 }
 
 export interface RecipeResolutionDocument {

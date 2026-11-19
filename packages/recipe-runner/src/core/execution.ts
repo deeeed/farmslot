@@ -244,6 +244,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
         const causeClass = missedStop ? 'harness' : 'subject';
         const failed = status === 'fail';
         options.traceWriter.record({
+          intervalSource: 'execution',
           nodeId: namespacedNodeId,
           action,
           startedAt: startedAt.toISOString(),
@@ -366,6 +367,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
         await options.registerArtifacts(result.artifacts ?? [], namespacedNodeId);
         options.bindArtifactOccurrence?.(namespacedNodeId, options.traceWriter.list().length);
         options.traceWriter.record({
+          intervalSource: 'execution',
           nodeId: namespacedNodeId,
           action,
           ...(action === 'call' ? { recipe: recipeCallTrace(node, options.recipes) } : {}),
@@ -412,6 +414,43 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
         const failure = signal?.aborted ? recipeAbortError(signal) : error;
         const message = failure instanceof Error ? failure.message : String(failure);
         const causeClass = recipeFailureCause(failure);
+        const failureStill =
+          signal?.aborted || !context
+            ? undefined
+            : await captureAutomaticStill(options, node, context, retryAttempt);
+        try {
+          await options.registerArtifacts([], namespacedNodeId);
+        } catch (captureError) {
+          recordSyntheticFailure(
+            options.traceWriter,
+            `${namespacedNodeId}:capture-source`,
+            captureError instanceof Error ? captureError : new Error(String(captureError)),
+            'capture.source',
+            'environment',
+          );
+        }
+        options.bindArtifactOccurrence?.(namespacedNodeId, options.traceWriter.list().length);
+        options.traceWriter.record({
+          intervalSource: 'execution',
+          nodeId: namespacedNodeId,
+          action,
+          ...(action === 'call' ? { recipe: recipeCallTrace(node, options.recipes) } : {}),
+          ...traceNodeMetadata(node),
+          ...(failureStill ? { artifacts: [failureStill] } : {}),
+          ...(typeof node.retryGroup === 'string'
+            ? { retryGroup: node.retryGroup, retryAttempt }
+            : {}),
+          ...(options.claimProjections?.get(namespacedNodeId)?.proves
+            ? { proves: options.claimProjections.get(namespacedNodeId)!.proves }
+            : {}),
+          startedAt: startedAt.toISOString(),
+          endedAt: new Date().toISOString(),
+          durationMs: Date.now() - startedAt.getTime(),
+          ok: false,
+          cause_class: causeClass,
+          error: message,
+          ...recipeFailureTraceFields(failure),
+        });
         options.flow?.complete(namespacedNodeId, false);
         if (options.publishHudProgress && context) {
           try {
@@ -432,42 +471,6 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
             );
           }
         }
-        const failureStill =
-          signal?.aborted || !context
-            ? undefined
-            : await captureAutomaticStill(options, node, context, retryAttempt);
-        try {
-          await options.registerArtifacts([], namespacedNodeId);
-        } catch (captureError) {
-          recordSyntheticFailure(
-            options.traceWriter,
-            `${namespacedNodeId}:capture-source`,
-            captureError instanceof Error ? captureError : new Error(String(captureError)),
-            'capture.source',
-            'environment',
-          );
-        }
-        options.bindArtifactOccurrence?.(namespacedNodeId, options.traceWriter.list().length);
-        options.traceWriter.record({
-          nodeId: namespacedNodeId,
-          action,
-          ...(action === 'call' ? { recipe: recipeCallTrace(node, options.recipes) } : {}),
-          ...traceNodeMetadata(node),
-          ...(failureStill ? { artifacts: [failureStill] } : {}),
-          ...(typeof node.retryGroup === 'string'
-            ? { retryGroup: node.retryGroup, retryAttempt }
-            : {}),
-          ...(options.claimProjections?.get(namespacedNodeId)?.proves
-            ? { proves: options.claimProjections.get(namespacedNodeId)!.proves }
-            : {}),
-          startedAt: startedAt.toISOString(),
-          endedAt: new Date().toISOString(),
-          durationMs: Date.now() - startedAt.getTime(),
-          ok: false,
-          cause_class: causeClass,
-          error: message,
-          ...recipeFailureTraceFields(failure),
-        });
         if (
           !signal?.aborted &&
           causeClass === 'subject' &&

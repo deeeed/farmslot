@@ -24,6 +24,7 @@ export {
   type RecipeFailureCause,
   type RecipeFlowProgress,
   type RecipeFlowTiming,
+  type RecipeFlowTimingUpdate,
   type RecipeFlowUpdate,
   type RecipeInvocationAncestry,
   type RecipeInvocationBreadcrumb,

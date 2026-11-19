@@ -1,6 +1,7 @@
 import {
   isRecord,
   type RecipeFlowTiming,
+  type RecipeFlowTimingUpdate,
   type RecipeFlowUpdate,
   type RecipeInvocationBreadcrumb,
 } from './common.js';
@@ -74,8 +75,13 @@ function validMetric(value: unknown, qualification: unknown): boolean {
         Number.isFinite(value) &&
         value >= 0;
 }
-function validTiming(value: unknown): value is RecipeFlowTiming {
-  if (!isRecord(value) || !isRecord(value.nodes) || !isRecord(value.claimTimings)) return false;
+function validTiming(value: unknown): value is RecipeFlowTiming | RecipeFlowTimingUpdate {
+  if (
+    !isRecord(value) ||
+    !isRecord(value.nodes) ||
+    (value.scope !== 'active' && value.scope !== 'all')
+  )
+    return false;
   const rollup = (row: unknown) =>
     isRecord(row) &&
     validMetric(row.durationMs, row.qualification) &&
@@ -92,7 +98,9 @@ function validTiming(value: unknown): value is RecipeFlowTiming {
           row.selfMs === null ||
           Number(row.selfMs) <= Number(row.inclusiveMs)),
     ) &&
-    Object.values(value.claimTimings).every(rollup) &&
-    rollup(value.unassignedTiming)
+    (value.scope === 'active' ||
+      (isRecord(value.claimTimings) &&
+        Object.values(value.claimTimings).every(rollup) &&
+        rollup(value.unassignedTiming)))
   );
 }

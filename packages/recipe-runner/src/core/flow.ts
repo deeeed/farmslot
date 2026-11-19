@@ -111,7 +111,11 @@ export interface RecipeFlowProjection {
   invalidate(): RecipeFlowUpdate;
   start(id: string, phase?: 'main' | 'teardown'): RecipeFlowUpdate;
   complete(id: string, ok: boolean, next?: string): RecipeFlowUpdate;
-  finish(status: 'pass' | 'fail' | 'unknown', partial?: boolean): RecipeFlowUpdate;
+  finish(
+    status: 'pass' | 'fail' | 'unknown',
+    partial?: boolean,
+    fullTiming?: boolean,
+  ): RecipeFlowUpdate;
   snapshot(): RecipeFlowUpdate;
 }
 
@@ -167,13 +171,23 @@ export function createRecipeFlowProjection(
   let activeId: string | null = null;
   let interrupted = declaredPartial;
   let total = declaredPartial ? null : length(tree.rootId);
-  const snapshot = (): RecipeFlowUpdate => ({
+  const snapshot = (timingScope: 'none' | 'active' | 'all' = 'none'): RecipeFlowUpdate => ({
     version: 1,
     recipeRunId,
     rootId: tree.rootId,
     activeId,
     ancestry: activeId === null ? null : ancestry.get(activeId)!,
-    timing: timing.snapshot(),
+    ...(timingScope === 'all'
+      ? { timing: timing.snapshot() }
+      : timingScope === 'active'
+        ? {
+            timing: timing.snapshot(
+              activeId === null
+                ? [tree.rootId]
+                : ancestry.get(activeId)!.breadcrumbs.map(({ id }) => id),
+            ),
+          }
+        : {}),
     progress: {
       current,
       completed,
@@ -209,12 +223,12 @@ export function createRecipeFlowProjection(
       total = interrupted ? null : add(completed, length(next ?? null), outside(node));
       return snapshot();
     },
-    finish(status, partial = false) {
+    finish(status, partial = false, fullTiming = false) {
       activeId = null;
       current = completed;
       total = status === 'pass' && !partial && !declaredPartial ? completed : null;
-      return snapshot();
+      return snapshot(fullTiming ? 'all' : 'active');
     },
-    snapshot,
+    snapshot: () => snapshot('active'),
   };
 }

@@ -266,6 +266,18 @@ for (const scenario of [
       'summary and report share the recorded-interval calculation',
     );
     assert.equal(timing.nodes.$root?.inclusiveMs, summary.durationMs);
+    if (scenario === 'failure') {
+      const failed = updates.find(
+        (update) => update.activeId === 'first/nested/read' && update.progress.completed === 2,
+      );
+      assert.deepEqual(
+        failed?.timing?.nodes['first/nested/read'],
+        timing.nodes['first/nested/read'],
+        'failed completion HUD retains its closed measured interval',
+      );
+    }
+    if (scenario === 'resolution') assert.equal(timing.nodes.work?.inclusiveMs, null);
+    if (scenario === 'cancelled') assert.equal(timing.nodes.first?.inclusiveMs, null);
     assert.ok(
       updates.every((update) => update.timing),
       'existing HUD event supplies SDK timing',
