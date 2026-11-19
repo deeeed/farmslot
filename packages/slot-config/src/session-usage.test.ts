@@ -157,6 +157,50 @@ test('Claude multi-block messages count once across serialized incremental windo
   assert.match(out, /cost_usd=0\.2053/);
 });
 
+test('a Claude session that switches models is priced per message', async (t) => {
+  const home = makeTmpDir();
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const sessionPath = path.join(home, 'session.jsonl');
+  const reply = (id: string, model: string) =>
+    JSON.stringify({
+      type: 'assistant',
+      message: { id, model, usage: { input_tokens: 1_000_000, output_tokens: 0 } },
+    });
+  writeFileSync(
+    sessionPath,
+    [reply('m1', 'claude-haiku-5-5'), reply('m2', 'claude-opus-5-5')].join('\n') + '\n',
+  );
+  const out = await runSessionUsage({
+    repo: home,
+    slotId: 'fixture',
+    action: 'total',
+    forcedPath: sessionPath,
+    forcedRunner: 'claude',
+  });
+  // 1M Haiku 5.5 input at $0.10 plus 1M Opus 5.5 input at $4, not 2M at the first model's rate.
+  assert.match(out, /cost_usd=4\.1000/);
+});
+
+test('a Claude message on an unpriced model leaves the session unpriced', async (t) => {
+  const home = makeTmpDir();
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const sessionPath = path.join(home, 'session.jsonl');
+  const reply = (id: string, model: string) =>
+    JSON.stringify({ type: 'assistant', message: { id, model, usage: { input_tokens: 10 } } });
+  writeFileSync(
+    sessionPath,
+    [reply('m1', 'claude-haiku-5-5'), reply('m2', 'claude-unlisted-9')].join('\n') + '\n',
+  );
+  const out = await runSessionUsage({
+    repo: home,
+    slotId: 'fixture',
+    action: 'total',
+    forcedPath: sessionPath,
+    forcedRunner: 'claude',
+  });
+  assert.doesNotMatch(out, /cost_usd=/);
+});
+
 // ─── Codex ────────────────────────────────────────────────────────────────────
 
 test('runSessionUsage does not double-count Codex detail fields', async () => {

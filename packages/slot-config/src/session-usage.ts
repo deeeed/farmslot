@@ -400,6 +400,7 @@ async function summarizeClaude(
 ): Promise<SessionTotals> {
   const totals = emptyTotals();
   let state = emptyIncrementalSessionUsageState();
+  let cost: number | null = 0;
   const seen = new Set<string>();
   for await (const obj of safeJsonLines(filePath)) {
     const message = obj.message;
@@ -418,16 +419,40 @@ async function summarizeClaude(
       seen.add(message.id);
       if (!inUsageWindow(usageTimestamp(obj), window)) continue;
     }
-    if (
+    const messageModel =
       obj.type === 'assistant' &&
       message &&
       typeof message === 'object' &&
       'model' in message &&
-      typeof message.model === 'string' &&
-      totals.model === 'unknown'
-    )
-      totals.model = message.model;
+      typeof message.model === 'string'
+        ? message.model
+        : undefined;
+    if (messageModel && totals.model === 'unknown') totals.model = messageModel;
+    const before = state;
     state = applyClaudeAssistantUsage(state, obj);
+    // Price each counted message at its own model, so a session that switches models (a Haiku
+    // sub-agent, an Opus fallback) is not billed entirely at its first model's rate.
+    if (state !== before) {
+      const tokens = {
+        input: state.inputTokens - before.inputTokens,
+        output: state.outputTokens - before.outputTokens,
+        cacheWrite: state.cacheCreation - before.cacheCreation,
+        cacheRead: state.cacheRead - before.cacheRead,
+      };
+      if (tokens.input + tokens.output + tokens.cacheWrite + tokens.cacheRead > 0) {
+        const model = messageModel ?? totals.model;
+        const prices = Object.entries(CLAUDE_PRICING).find(([k]) => model.includes(k))?.[1];
+        cost =
+          cost === null || !prices
+            ? null
+            : cost +
+              (tokens.input * prices.input +
+                tokens.output * prices.output +
+                tokens.cacheWrite * prices.cache_write +
+                tokens.cacheRead * prices.cache_read) /
+                1_000_000;
+      }
+    }
   }
   totals.turns = state.turns;
   totals.input_tokens = state.inputTokens;
@@ -435,16 +460,12 @@ async function summarizeClaude(
   totals.cache_creation = state.cacheCreation;
   totals.cache_read = state.cacheRead;
   totals.total_tokens = state.totalTokens;
-  const prices = Object.entries(CLAUDE_PRICING).find(
-    ([k]) => totals.model !== 'unknown' && totals.model.includes(k),
-  )?.[1];
-  if (prices) {
-    totals.cost_usd =
-      (totals.input_tokens * prices.input) / 1_000_000 +
-      (totals.output_tokens * prices.output) / 1_000_000 +
-      (totals.cache_creation * prices.cache_write) / 1_000_000 +
-      (totals.cache_read * prices.cache_read) / 1_000_000;
-  }
+  // A message with tokens on a model without a listed price leaves the session unpriced; a session
+  // with no tokens yet costs 0 when its model is priced, as before.
+  const modelPriced = Object.keys(CLAUDE_PRICING).some(
+    (k) => totals.model !== 'unknown' && totals.model.includes(k),
+  );
+  if (cost !== null && (state.totalTokens > 0 || modelPriced)) totals.cost_usd = cost;
   return totals;
 }
 
