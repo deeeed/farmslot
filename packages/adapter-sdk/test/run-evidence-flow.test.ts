@@ -60,6 +60,116 @@ test('pending evidence never substitutes a prior recording trace for the current
   assert.equal(view.steps[0]?.ok, false);
   assert.equal(view.steps[0]?.cue, null);
   assert.ok(model.errors.some((error) => error.includes('different execution trace')));
+  assert.equal(view.flow?.recipeRunId, 'new-attempt', 'bad media cannot discard the prepared flow');
+  const occurrence = view.flow?.nodes.find((node) => node.id === failed.nodeId)?.occurrences[0];
+  assert.equal(occurrence?.status, 'fail');
+  assert.equal(occurrence?.cue, null);
+});
+
+test('a first pending HUD update has no occurrences before its current trace is written', () => {
+  const source = visualFixture();
+  for (const withPriorRecording of [true, false]) {
+    const model = createEvidenceReviewModel({
+      evidencePending: true,
+      pendingFlow: {
+        tree,
+        update: createRecipeFlowProjection(tree, 'first-hud').start('first/nested/observe'),
+      },
+      ...(withPriorRecording
+        ? {
+            recordings: Object.values(source.timelines).map((timeline) => ({
+              timeline,
+              videoPath: timeline.videoPath,
+              videoDigest: timeline.videoDigest,
+              trace: source.trace,
+            })),
+          }
+        : {}),
+    });
+    const view = runEvidenceView(model);
+    assert.deepEqual(view.steps, []);
+    assert.equal(view.flow?.recipeRunId, 'first-hud');
+    assert.ok(view.flow?.nodes.every((node) => node.occurrences.length === 0));
+    assert.equal(
+      view.flow?.nodes.find((node) => node.id === 'first/nested/observe')?.status,
+      'running',
+    );
+  }
+});
+
+test('segmented media coverage is lazy and computed once for an occurrence in the last segment', (t) => {
+  const source = visualFixture();
+  const original = Object.values(source.timelines)[0]!;
+  const trace = { entries: [recipeTraceEntries(source.trace)![0]] };
+  const count = 32;
+  const recordings = Array.from({ length: count }, (_, index) => {
+    const videoPath = `segment-${index}.mp4`;
+    const timeline = {
+      ...original,
+      videoPath,
+      traceDigest: digestRecipeDocument(trace.entries),
+      markers: index === count - 1 ? [{ ...original.markers[0]!, traceIndex: 0 }] : [],
+    };
+    return { timeline, videoPath, videoDigest: timeline.videoDigest, trace, gapBefore: false };
+  });
+  let segmentVisits = 0;
+  const flatMap = Array.prototype.flatMap;
+  const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, 'flatMap');
+  assert.ok(descriptor);
+  t.after(() => Object.defineProperty(Array.prototype, 'flatMap', descriptor));
+  Object.defineProperty(Array.prototype, 'flatMap', {
+    ...descriptor,
+    value: function (
+      this: unknown[],
+      callback: (value: unknown, index: number, values: unknown[]) => unknown,
+      thisArg?: unknown,
+    ) {
+      return flatMap.call(this, (value, index, values) => {
+        if (
+          isRecord(value) &&
+          typeof value.videoPath === 'string' &&
+          typeof value.videoDigest === 'string' &&
+          !('timeline' in value)
+        )
+          segmentVisits++;
+        return callback.call(thisArg, value, index, values);
+      });
+    },
+  });
+  assert.ok(isRecord(source.recipe));
+  const prepared = buildRecipeInvocationTree({
+    rootRef: '$root',
+    root: source.recipe,
+    recipes: new Map(),
+  });
+  const model = createEvidenceReviewModel({
+    evidencePending: true,
+    pendingTrace: trace,
+    recordings,
+    pendingFlow: {
+      tree: prepared,
+      update: createRecipeFlowProjection(prepared, 'segmented-attempt').snapshot(),
+    },
+  });
+  assert.deepEqual(model.errors, []);
+  const atCreation = segmentVisits;
+  const view = runEvidenceView(model);
+  t.diagnostic(
+    `segment visits: construction ${atCreation}, first projection ${segmentVisits}, segments ${count}`,
+  );
+  assert.equal(atCreation, 0, 'legacy-only model construction does not join flow cues');
+  assert.ok(segmentVisits <= count * 2, `segment visits: ${segmentVisits}`);
+  assert.equal(view.steps[0]?.cue?.videoPath, `segment-${count - 1}.mp4`);
+  const flowCue = view.flow?.nodes.find((node) => node.id === original.markers[0]!.nodeId)
+    ?.occurrences[0]?.cue;
+  assert.deepEqual(flowCue, view.steps[0]?.cue);
+  const previousVisits = segmentVisits;
+  for (const recording of recordings) {
+    model.markerSeekMs(recording.videoPath, 0, 'start');
+    model.markerSeekMs(recording.videoPath, 0, 'end');
+  }
+  runEvidenceView(model);
+  assert.equal(segmentVisits, previousVisits, 'all cue endpoints share the occurrence coverage');
 });
 
 test('an idle HUD update has unknown outcome until an explicit summary is available', () => {

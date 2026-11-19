@@ -47,6 +47,7 @@ import {
 import {
   deriveReviewedRecipeClaims,
   indexRecordingTimelines,
+  type OccurrenceRecordingCoverage,
   occurrenceRecordingCoverage,
   planRecipeEvidence,
   proofDocument,
@@ -347,7 +348,7 @@ export interface EvidenceReviewModel {
   readonly occurrences: readonly EvidenceReviewOccurrence[];
   /** `occurrences` for panel-level evidence details: empty when the package was replaced. */
   readonly currentOccurrences: readonly EvidenceReviewOccurrence[];
-  /** Prepared execution projection, computed once with this model's source snapshot. */
+  /** Prepared execution projection, computed on first access for this source snapshot. */
   readonly flow?: RunEvidenceFlow | null;
   readonly recordings: readonly RecipeRecordingTimelineDocument[];
   /** The measured recordings of the execution `currentOccurrences` belong to; never a
@@ -536,9 +537,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       : null;
   const trace =
     recipeTraceEntries(
-      pkg?.trace ??
-        (input.evidencePending ? input.pendingTrace : undefined) ??
-        input.recordings?.[0]?.trace,
+      pkg?.trace ?? (input.evidencePending ? input.pendingTrace : input.recordings?.[0]?.trace),
     ) ?? [];
   const recordings: EvidenceReviewRecordingInput[] = pkg
     ? Object.values(pkg.timelines).map((timeline) => ({
@@ -548,6 +547,8 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
         trace: pkg.trace,
       }))
     : [...(input.recordings ?? [])];
+  // Unbound player media cannot invalidate the pending execution's prepared tree and trace.
+  const flowSourceValid = errors.length === 0 && !replaced;
   for (const recording of recordings) {
     if (pkg) continue; // The canonical package validator already checks every binding.
     errors.push(
@@ -662,6 +663,9 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     moments: claim.status?.moments ?? [],
     clips: [],
     occurrences: [],
+    get flowOccurrences() {
+      return getFlowProjection().criterionOccurrences.get(claim.id) ?? [];
+    },
   }));
   const proofNodes =
     pkg?.recipe && !errors.length
@@ -851,18 +855,39 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     }
     return index.get(traceIndex);
   };
+  // Each ordered segment array belongs to one immutable recording source snapshot.
+  const coverageIndexes = new WeakMap<
+    readonly RecordingSegmentRef[],
+    Map<number, OccurrenceRecordingCoverage>
+  >();
+  const coverageFor = (
+    traceIndex: number,
+    sourceSegments: readonly RecordingSegmentRef[],
+    sourceTimelines: ReadonlyMap<string, RecipeRecordingTimelineDocument>,
+  ): OccurrenceRecordingCoverage => {
+    let index = coverageIndexes.get(sourceSegments);
+    if (!index) {
+      index = new Map();
+      coverageIndexes.set(sourceSegments, index);
+    }
+    const cached = index.get(traceIndex);
+    if (cached) return cached;
+    const coverage = occurrenceRecordingCoverage(
+      traceIndex,
+      sourceSegments,
+      sourceTimelines,
+      markerFor,
+    );
+    index.set(traceIndex, coverage);
+    return coverage;
+  };
   // One clip derivation for the fresh execution and each retained original.
   const clipsFrom = (
     source: ClipSource,
     traceIndex: number,
     caption: (marker: RecipeRecordingMarker) => string,
   ): EvidenceReviewClip[] => {
-    const coverage = occurrenceRecordingCoverage(
-      traceIndex,
-      source.segments,
-      source.timelines,
-      markerFor,
-    );
+    const coverage = coverageFor(traceIndex, source.segments, source.timelines);
     if (coverage.timing !== 'measured') return [];
     return coverage.segments.map((segment) => {
       const timeline = source.timelines.get(segment.videoPath)!;
@@ -962,7 +987,7 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
         (clips.length
           ? 'measured'
           : traceIndex !== undefined
-            ? occurrenceRecordingCoverage(traceIndex, segments, timelines, markerFor).timing
+            ? coverageFor(traceIndex, segments, timelines).timing
             : 'untimed'));
     const selectedFiles = [
       ...new Map(
@@ -1094,11 +1119,10 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     if (
       errors.length ||
       !playbackSources.has(videoPath) ||
-      occurrenceRecordingCoverage(
+      coverageFor(
         traceIndex,
         playbackSources.get(videoPath)!.segments,
         playbackSources.get(videoPath)!.timelines,
-        markerFor,
       ).timing !== 'measured'
     )
       return null;
@@ -1123,15 +1147,18 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
   const occurrenceCue = (traceIndex: number): RunEvidenceCue | null => {
     if (occurrenceCues.has(traceIndex)) return occurrenceCues.get(traceIndex)!;
     let cue: RunEvidenceCue | null = null;
-    if (!replaced)
-      for (const { videoPath } of headTimelines.values()) {
-        const startMs = markerSeekMs(videoPath, traceIndex, 'start');
-        const endMs = markerSeekMs(videoPath, traceIndex, 'end');
-        if (startMs !== null && endMs !== null) {
-          cue = { videoPath: `${input.artifactPrefix ?? ''}${videoPath}`, startMs, endMs };
-          break;
+    if (!replaced && !errors.length) {
+      const coverage = coverageFor(traceIndex, segments, headTimelines);
+      if (coverage.timing === 'measured')
+        for (const { videoPath } of coverage.segments) {
+          const startMs = markerSeekMs(videoPath, traceIndex, 'start');
+          const endMs = markerSeekMs(videoPath, traceIndex, 'end');
+          if (startMs !== null && endMs !== null) {
+            cue = { videoPath: `${input.artifactPrefix ?? ''}${videoPath}`, startMs, endMs };
+            break;
+          }
         }
-      }
+    }
     occurrenceCues.set(traceIndex, cue);
     return cue;
   };
@@ -1201,21 +1228,25 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       ? { claimId: claim.id, recipeRunId: packageClaims.recipeRunId }
       : null;
   };
-  const flowProjection = projectRunEvidenceFlow(input, {
-    trace,
-    occurrences,
-    claims,
-    occurrenceCue,
-    markerSeekMs,
-    artifactPath: (path) => `${input.artifactPrefix ?? ''}${path}`,
-    warnings,
-    valid: errors.length === 0 && !replaced,
-    retainedSources,
-  });
-  for (const claim of claims)
-    claim.flowOccurrences = flowProjection.criterionOccurrences.get(claim.id) ?? [];
+  let flowProjection: ReturnType<typeof projectRunEvidenceFlow> | undefined;
+  const getFlowProjection = (): ReturnType<typeof projectRunEvidenceFlow> =>
+    (flowProjection ??= projectRunEvidenceFlow(input, {
+      trace,
+      occurrences,
+      claims,
+      occurrenceCue,
+      markerSeekMs,
+      artifactPath: (path) => `${input.artifactPrefix ?? ''}${path}`,
+      warnings,
+      valid: flowSourceValid,
+      retainedSources,
+    }));
+  let displayWarnings: readonly string[] = [];
+  let displayWarningCount = -1;
   return {
-    flow: flowProjection.flow,
+    get flow() {
+      return getFlowProjection().flow;
+    },
     artifactInventory: input.artifacts ?? [],
     recordingForPath(path) {
       return mediaRecordings.get(path);
@@ -1489,11 +1520,18 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     currentRecordings: replaced ? [] : [...headTimelines.values()],
     errors,
     warnings,
-    displayWarnings: replaced
-      ? []
-      : [...new Set(warnings)].filter(
-          (warning) => packageStatus?.status !== 'Legacy' || !warning.startsWith('Legacy package'),
-        ),
+    get displayWarnings() {
+      if (displayWarningCount !== warnings.length) {
+        displayWarningCount = warnings.length;
+        displayWarnings = replaced
+          ? []
+          : [...new Set(warnings)].filter(
+              (warning) =>
+                packageStatus?.status !== 'Legacy' || !warning.startsWith('Legacy package'),
+            );
+      }
+      return displayWarnings;
+    },
     report: input.report,
     packageStatus,
     recording: verdictRecording,

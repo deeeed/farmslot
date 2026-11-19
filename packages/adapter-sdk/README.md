@@ -63,7 +63,9 @@ playable without a seek cue. `updateId` is opaque snapshot equality across displ
 cursor or evidence digest. Selection alone does not change it; changed evidence at the same trace
 length does. Each source snapshot is projected once and repeated reads return detached JSON.
 An idle HUD update has no terminal verdict; the root stays unknown until the summary supplies one.
-Pending trace data takes precedence over player data, and mismatched recordings supply no cues.
+Pending occurrences use only the current trace; before its first write they stay empty.
+Mismatched recordings supply no cues and leave the prepared flow visible. Flow and coverage joins
+are computed on demand and reused for each immutable source snapshot.
 
 ## Source layout
 
