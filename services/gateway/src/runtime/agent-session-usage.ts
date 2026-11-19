@@ -9,9 +9,9 @@ import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { recoveredWorkerSessionReceipt, upsertSessionUsage } from './agent-session-rows.js';
 import { extractNativeAgentSessionUsage, nativeRunUsageWindow } from './native-session-usage.js';
 import {
+  contextChecklistMarks,
   extractRunnerSessionUsage,
   extractRunWorkerSessionUsage,
-  contextChecklistMarks,
   receiptChecklistMarks,
   unavailableRunnerSessionUsage,
 } from './session-usage.js';
