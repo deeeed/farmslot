@@ -1,0 +1,1 @@
+- Let embedded prepare hosts opt out of verification during launch so fixtures can establish readiness before the existing final verification. The default order and failure handling remain unchanged.
