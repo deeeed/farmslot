@@ -112,11 +112,17 @@ function parentToolUsage(usage, marks, completedAt) {
   const steps = [];
   let start = 0;
   for (const [order, mark] of parents.entries()) {
-    const end = edges.get(segmentKey(mark.stepNumber, mark.checkedAt));
-    if (end === undefined && Date.parse(mark.checkedAt) < Date.parse(source[0].startedAt)) continue;
+    const markTime = Date.parse(mark.checkedAt);
+    const clippedByWindow = provenEnd && markTime > Date.parse(completedAt);
+    const observedEdge = edges.get(segmentKey(mark.stepNumber, mark.checkedAt));
+    if (observedEdge === undefined && markTime < Date.parse(source[0].startedAt)) continue;
+    // The first parent beyond a proven lease cutoff owns the remaining measured interval.
+    const end = clippedByWindow ? source.length - 1 : observedEdge;
+    if (clippedByWindow && start === source.length) break;
     if (end === undefined || end < start) return totalsOnly(usage);
     steps.push(mergeSegments(source.slice(start, end + 1), order === 0 ? 'before-first-mark' : 'step', mark));
     start = end + 1;
+    if (clippedByWindow) break;
   }
   if (start < source.length) steps.push(mergeSegments(source.slice(start), 'after-last-mark'));
   const first = steps[0];

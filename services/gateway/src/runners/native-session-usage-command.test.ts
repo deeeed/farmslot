@@ -512,6 +512,7 @@ test('bounded remote receipts keep Perps rows or return the complete parent rece
       env: { ...process.env, HOME: f.root },
     });
     const [row] = JSON.parse(result.stdout);
+    assert.ok('output' in row, JSON.stringify(row));
     assert.equal(row.runnerSessionId, request.runnerSessionId);
     assert.equal(row.sessionPath, await realpath(sessionPath));
     assert.ok(Buffer.byteLength(result.stdout) <= budget);
@@ -596,6 +597,24 @@ test('bounded remote receipts keep Perps rows or return the complete parent rece
     }),
   );
   assert.deepEqual(windowed.toolUsage?.steps, expectedWindow.toolUsage?.steps);
+
+  await writeReceipt(true, 35);
+  const clippedWindow = { startedAt: at(0), completedAt: at(36) };
+  const clippedParents = [...parents, { stepNumber: 3, label: 'Later review', checkedAt: at(43) }];
+  const clipped = usage(await runNative(largeChildren, clippedParents, clippedWindow));
+  const expectedClipped = usage(
+    await runSessionUsage({
+      repo: '',
+      slotId: 'receipt',
+      action: 'total',
+      forcedPath: sessionPath,
+      forcedRunner: 'codex',
+      usageWindow: clippedWindow,
+      checklistMarks: clippedParents,
+    }),
+  );
+  assert.equal(clipped.toolUsage?.toolCalls, expectedClipped.toolUsage?.toolCalls);
+  assert.deepEqual(clipped.toolUsage?.steps, expectedClipped.toolUsage?.steps);
 
   await writeReceipt(true);
 
