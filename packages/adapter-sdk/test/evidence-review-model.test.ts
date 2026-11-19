@@ -6,6 +6,7 @@ import test from 'node:test';
 import {
   type AcceptanceStatusLedger,
   digestRecipeDocument,
+  isRecord,
   type RecipeClaimDeclaration,
   type RecipeRecordingTimelineDocument,
   type RecipeVisualJudgmentReceipt,
@@ -1619,6 +1620,44 @@ function withComparison(
   };
   return head;
 }
+
+test('comparison media selection changes the pair and snapshot equality on the same model', () => {
+  const baseSha = '1'.repeat(40),
+    headSha = '2'.repeat(40);
+  const baseline = boundComparisonPackage('baseline', 'before', baseSha);
+  assert.ok(isRecord(baseline.manifest) && Array.isArray(baseline.manifest.artifacts));
+  const original = baseline.manifest.artifacts.find(
+    (artifact) => isRecord(artifact) && artifact.path === 'stills/1.png',
+  );
+  assert.ok(isRecord(original));
+  const alternatePath = 'stills/alternate.png';
+  baseline.manifest.artifacts.push({ ...structuredClone(original), path: alternatePath });
+  baseline.artifactPaths = [...(baseline.artifactPaths ?? []), alternatePath];
+  baseline.artifactDigests = {
+    ...baseline.artifactDigests,
+    [alternatePath]: digest('alternate before capture'),
+  };
+  const source = withComparison(boundComparisonPackage('head', 'after', headSha), baseline);
+  const model = createEvidenceReviewModel({
+    package: source,
+    comparisonSnapshot: { baseSha, headSha },
+  });
+  assert.deepEqual(model.errors, []);
+  const row = model.comparisons.find((row) => row.claim.id === 'check-1')!;
+  const initial = row.before.find((media) => media.eligible)!;
+  const other = row.before.find((media) => media.identity !== initial.identity);
+  assert.ok(other?.eligible);
+  assert.equal(model.chooseComparisonMedia('check-1', 'before', initial.identity), true);
+  const before = runEvidenceView(model);
+  assert.equal(model.chooseComparisonMedia('check-1', 'before', other.identity), true);
+  const after = runEvidenceView(model);
+  assert.notDeepEqual(
+    after.criteria.find((claim) => claim.id === 'check-1')?.pair,
+    before.criteria.find((claim) => claim.id === 'check-1')?.pair,
+  );
+  assert.notEqual(after.updateId, before.updateId);
+  assert.equal(runEvidenceView(model).updateId, after.updateId);
+});
 
 test('comparison roles retain original executions, exact claim rows, independent timestamps and shared transform state', () => {
   const baseSha = '1'.repeat(40),

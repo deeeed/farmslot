@@ -1,0 +1,1 @@
+- Provide composed evidence metadata through the existing folder reader and keep the shared evidence entry portable for browser consumers.
