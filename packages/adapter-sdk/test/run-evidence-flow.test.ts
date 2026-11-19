@@ -172,6 +172,57 @@ test('segmented media coverage is lazy and computed once for an occurrence in th
   assert.equal(segmentVisits, previousVisits, 'all cue endpoints share the occurrence coverage');
 });
 
+test('comparison-only reads leave Flow and Story coverage joins deferred', (t) => {
+  const source = visualFixture();
+  let segmentVisits = 0;
+  const flatMap = Array.prototype.flatMap;
+  const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, 'flatMap');
+  assert.ok(descriptor);
+  t.after(() => Object.defineProperty(Array.prototype, 'flatMap', descriptor));
+  Object.defineProperty(Array.prototype, 'flatMap', {
+    ...descriptor,
+    value: function (
+      this: unknown[],
+      callback: (value: unknown, index: number, values: unknown[]) => unknown,
+      thisArg?: unknown,
+    ) {
+      return flatMap.call(this, (value, index, values) => {
+        if (
+          isRecord(value) &&
+          typeof value.videoPath === 'string' &&
+          typeof value.videoDigest === 'string' &&
+          !('timeline' in value)
+        )
+          segmentVisits++;
+        return callback.call(thisArg, value, index, values);
+      });
+    },
+  });
+  const model = createEvidenceReviewModel({ package: source });
+  assert.deepEqual(model.errors, []);
+  const constructed = segmentVisits;
+  assert.ok(model.comparisonView.rows.length > 0);
+  const compared = segmentVisits;
+  const view = runEvidenceView(model);
+  t.diagnostic(
+    `comparison-first segment visits: construction ${constructed}, comparison ${compared}, projection ${segmentVisits}`,
+  );
+  assert.equal(
+    compared,
+    constructed,
+    'comparison rows never request the flow/criterion projection',
+  );
+  assert.ok(
+    segmentVisits > compared,
+    'the explicit evidence projection performs the deferred join',
+  );
+  assert.ok(view.steps.length > 0);
+  const projected = segmentVisits;
+  model.comparisonView.rows;
+  assert.equal(runEvidenceView(model).updateId, view.updateId);
+  assert.equal(segmentVisits, projected, 'comparison and evidence rereads reuse checked coverage');
+});
+
 test('an idle HUD update has unknown outcome until an explicit summary is available', () => {
   for (const outcome of ['pass', 'fail', 'unknown'] as const) {
     const progress = createRecipeFlowProjection(tree, 'terminal-attempt');
@@ -444,6 +495,35 @@ test('flow occurrence cues reuse checked media markers and remain null without a
   const untimed = runEvidenceView(createEvidenceReviewModel(input));
   assert.equal(untimed.flow?.nodes.find((node) => node.id === 'read-1')?.occurrences[0]?.cue, null);
   assert.notEqual(untimed.updateId, measured.updateId);
+});
+
+test('pending flow refuses an update from a different recorded execution', () => {
+  const source = visualFixture();
+  assert.ok(isRecord(source.recipe) && source.claims);
+  const prepared = buildRecipeInvocationTree({
+    rootRef: '$root',
+    root: source.recipe,
+    recipes: new Map(),
+  });
+  for (const recipeRunId of [source.claims.recipeRunId, 'another-execution']) {
+    const model = createEvidenceReviewModel({
+      evidencePending: true,
+      ledger: source.claims,
+      pendingTrace: source.trace,
+      pendingFlow: {
+        tree: prepared,
+        update: createRecipeFlowProjection(prepared, recipeRunId).snapshot(),
+      },
+    });
+    const view = runEvidenceView(model);
+    assert.ok(view.steps.length > 0, 'legacy Story remains usable');
+    if (recipeRunId === source.claims.recipeRunId)
+      assert.equal(view.flow?.recipeRunId, recipeRunId);
+    else {
+      assert.equal(view.flow, null);
+      assert.ok(view.warnings.some((warning) => warning.includes('execution identity')));
+    }
+  }
 });
 
 test('a replaced package cannot add current-execution occurrence bindings', () => {

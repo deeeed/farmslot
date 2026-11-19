@@ -196,7 +196,11 @@ export function projectRunEvidenceFlow(
   const rawUpdate = pkg && isRecord(pkg.summary) ? pkg.summary.flow : pending?.update;
   const tree = checkedTree(rawTree);
   const update = isRecipeFlowUpdate(rawUpdate) ? rawUpdate : null;
-  const recipeRunId = pkg ? packageIdentity(pkg) : (update?.recipeRunId ?? null);
+  const recipeRunId = pkg
+    ? packageIdentity(pkg)
+    : input.ledger?.schemaVersion === 2
+      ? input.ledger.recipeRunId
+      : (update?.recipeRunId ?? null);
   const compatible =
     context.valid &&
     tree &&

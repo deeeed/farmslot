@@ -178,7 +178,7 @@ function projectRunEvidenceView(model: EvidenceReviewModel, runStart: number): R
         files: claim.evidence.filter((entry) => entry.mediaType !== 'video').map(file),
         pair: null,
         traceIndexes: [...new Set(claim.occurrences.map((entry) => entry.traceIndex))],
-        occurrences: structuredClone([...(claim.flowOccurrences ?? [])]),
+        occurrences: structuredClone([...model.criterionOccurrences(claim.id)]),
         ...(claim.status?.note ? { note: claim.status.note } : {}),
       };
     }),

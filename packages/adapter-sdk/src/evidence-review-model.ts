@@ -198,8 +198,6 @@ export interface EvidenceReviewClaim extends AcceptanceCriterionView {
   occurrences: readonly EvidenceReviewOccurrence[];
   /** Repair: older proof kept from its original execution and recorded revision. */
   retained?: { recipeRunId: string; revision?: string };
-  /** Execution-qualified bindings; retained sources never join the current trace by index. */
-  flowOccurrences?: readonly RunEvidenceFlowOccurrence[];
 }
 
 /** Qualified visual review only; assertions and worker notes are not pre-validation. */
@@ -350,6 +348,8 @@ export interface EvidenceReviewModel {
   readonly currentOccurrences: readonly EvidenceReviewOccurrence[];
   /** Prepared execution projection, computed on first access for this source snapshot. */
   readonly flow?: RunEvidenceFlow | null;
+  /** Execution-qualified criterion bindings, requested only by the evidence projection. */
+  criterionOccurrences(claimId: string): readonly RunEvidenceFlowOccurrence[];
   readonly recordings: readonly RecipeRecordingTimelineDocument[];
   /** The measured recordings of the execution `currentOccurrences` belong to; never a
    * comparison baseline's or a retained original's, whose trace indexes are their own. */
@@ -663,9 +663,6 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     moments: claim.status?.moments ?? [],
     clips: [],
     occurrences: [],
-    get flowOccurrences() {
-      return getFlowProjection().criterionOccurrences.get(claim.id) ?? [];
-    },
   }));
   const proofNodes =
     pkg?.recipe && !errors.length
@@ -1246,6 +1243,9 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
   return {
     get flow() {
       return getFlowProjection().flow;
+    },
+    criterionOccurrences(claimId) {
+      return getFlowProjection().criterionOccurrences.get(claimId) ?? [];
     },
     artifactInventory: input.artifacts ?? [],
     recordingForPath(path) {
