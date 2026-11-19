@@ -44,6 +44,8 @@ export interface PrepareCommandOptions {
   usage: string;
   // Steps after launch, in order.
   steps?: readonly PrepareStep[];
+  // Defaults to true. False lets host steps prepare state before standalone verify.
+  verifyLaunch?: boolean;
   // The launch row's hint.
   launchHint?: string;
   // The device platform option (e.g. --mobile-platform ios|android).
@@ -532,6 +534,7 @@ async function handlePrepareLocked(
   const { surface, prepare } = resolvePlatform(optionString(options, 'platform'), target, usage);
   const platform = surface.id;
   const hostSteps = commandOptions.steps ?? [];
+  const verifyLaunch = commandOptions.verifyLaunch !== false;
   const artifactsDir = path.resolve(
     optionString(options, 'artifactsDir') ?? path.join(target, recipeRuntimeDir()),
   );
@@ -635,10 +638,13 @@ async function handlePrepareLocked(
         activeStep = { id, startedAt: new Date(stepStartedAt).toISOString() };
         writeProgress();
         view?.start(id, stepStartedAt);
-        stage = stages?.stage(STAGE_NAME[id] ?? id, {
-          index: chain.indexOf(id) + 1,
-          total: chain.length,
-        });
+        stage = stages?.stage(
+          id === 'launch' && !verifyLaunch ? 'launch' : (STAGE_NAME[id] ?? id),
+          {
+            index: chain.indexOf(id) + 1,
+            total: chain.length,
+          },
+        );
       },
       onStageLine: (line) => {
         stage?.forward(line);
@@ -692,7 +698,7 @@ async function handlePrepareLocked(
         ...device,
         ...(clearMetro ? ['--clear-metro'] : []),
         ...forwarded,
-        '--verify',
+        ...(verifyLaunch ? ['--verify'] : []),
         '--json',
         ...targetArgs,
       ]);
