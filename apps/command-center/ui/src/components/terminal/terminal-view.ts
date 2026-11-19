@@ -739,19 +739,31 @@ export class TerminalView extends TerminalViewState {
     // Disable convertEol in PTY mode — the PTY handles line endings
     this._terminal.options.convertEol = false;
 
+    const subscribeSeq = this._subscribeSeq;
+    const workerRefJson = this.workerRefJson;
+    const send = (data: string) => {
+      const worker = this._workerRef();
+      // A custom key handler or async paste can outlive the worker subscription.
+      if (
+        (worker || workerRefJson) &&
+        (!this._ptyInputBound ||
+          this._subscribeSeq !== subscribeSeq ||
+          this.workerRefJson !== workerRefJson)
+      )
+        return;
+      gateway
+        .request(worker ? Methods.TERMINAL_WORKER_INPUT : Methods.TERMINAL_INPUT, {
+          ...this._targetParams(),
+          data,
+        })
+        .catch((err) => this._warn('terminal input', err));
+    };
+
     // Intercept key combos that the browser would swallow before xterm.js sees them.
     // Return false = we handled it (prevent browser + xterm default).
     // Return true  = let xterm.js handle it normally.
     this._terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       if (e.type !== 'keydown') return true;
-      const send = (seq: string) => {
-        gateway
-          .request(this._workerRef() ? Methods.TERMINAL_WORKER_INPUT : Methods.TERMINAL_INPUT, {
-            ...this._targetParams(),
-            data: seq,
-          })
-          .catch((err) => this._warn('terminal input', err));
-      };
 
       // Ctrl+B — tmux prefix. Browsers may intercept this (bold shortcut, bookmarks, etc.)
       // Force it through to the PTY.
@@ -807,14 +819,7 @@ export class TerminalView extends TerminalViewState {
     });
 
     // Register xterm.js onData — captures all keystrokes, escape sequences, etc.
-    this._xtermDataDisposable = this._terminal.onData((data: string) => {
-      gateway
-        .request(this._workerRef() ? Methods.TERMINAL_WORKER_INPUT : Methods.TERMINAL_INPUT, {
-          ...this._targetParams(),
-          data,
-        })
-        .catch((err) => this._warn('terminal input', err));
-    });
+    this._xtermDataDisposable = this._terminal.onData(send);
     this._ptyInputBound = true;
 
     // Focus terminal for keyboard capture
@@ -986,18 +991,14 @@ export class TerminalView extends TerminalViewState {
   }
 
   private _handleSend() {
-    if (!this._inputText.trim() || !this._hasTarget()) return;
-    const worker = this._workerRef();
+    if (this._workerRef() || !this._inputText.trim() || !this._hasTarget()) return;
     const message =
       this._pendingOperatorMessage?.text === this._inputText
         ? this._pendingOperatorMessage
         : operatorMessageInput(this._inputText);
     this._pendingOperatorMessage = message;
     gateway
-      .request(worker ? Methods.TERMINAL_WORKER_INPUT : Methods.TERMINAL_SEND, {
-        ...this._targetParams(),
-        ...(worker ? { data: `${this._inputText}\r` } : message),
-      })
+      .request(Methods.TERMINAL_SEND, { ...this._targetParams(), ...message })
       .then(() => {
         if (this._pendingOperatorMessage === message) this._pendingOperatorMessage = null;
       })
@@ -1364,7 +1365,11 @@ export class TerminalView extends TerminalViewState {
 
     const terminal = renderTerminalChrome({
       showInputBar:
-        !this.nativeWorker && !this._retiredTarget && !this.compact && this._mode !== 'pty',
+        !worker &&
+        !this.nativeWorker &&
+        !this._retiredTarget &&
+        !this.compact &&
+        this._mode !== 'pty',
       retiredTarget: this._retiredTarget,
       retryAvailable:
         !this._retiredTarget &&
