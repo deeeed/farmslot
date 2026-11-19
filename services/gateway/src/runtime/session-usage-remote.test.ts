@@ -114,6 +114,20 @@ test('a remote Pi receipt is quoted from the gateway LiteLLM prices, not the slo
   });
   const command = String(calls[0][1]);
   assert.match(command, /"liteLlmPrices":\[\["claude-opus-5-5"/);
+  // Prices that would push the one JSON argument past its budget are left off.
+  calls.length = 0;
+  await extractRunnerSessionUsage({
+    slotId: 'slot-1',
+    vars,
+    runner: 'pi',
+    runnerSessionPath: '/worker/pi.jsonl',
+    checklistMarks: Array.from({ length: 1200 }, (_, index) => ({
+      stepNumber: index + 1,
+      label: 'x'.repeat(80),
+      checkedAt: '2026-11-19T00:00:00.000Z',
+    })),
+  });
+  assert.equal(String(calls[0][1]).includes('liteLlmPrices"'), false);
   // Other runners keep their command unchanged.
   calls.length = 0;
   await extractRunnerSessionUsage({
@@ -127,7 +141,13 @@ test('a remote Pi receipt is quoted from the gateway LiteLLM prices, not the slo
   calls.length = 0;
   await extractRunnerSessionUsage({
     slotId: 'slot-1',
-    vars: makeVars({ host: 'remote.example', machine: 'remote-test', projectName: '' }),
+    vars: makeVars({
+      host: 'remote.example',
+      machine: 'remote-test',
+      projectName: '',
+      // Isolated from any LiteLLM configuration the test process inherits.
+      machineEnv: { LITELLM_URL: '', LITELLM_BASE_URL: '', LITELLM_API_KEY: '' },
+    }),
     runner: 'pi',
     runnerSessionPath: '/worker/pi.jsonl',
   });
