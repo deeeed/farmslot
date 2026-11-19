@@ -35,7 +35,7 @@ function interval(value: unknown): Interval | null {
     value.intervalSource === 'diagnostic' ||
     (value.intervalSource !== 'execution' &&
       value.ok === false &&
-      value.action !== 'end' &&
+      !(value.action === 'end' && ['pass', 'fail', 'unknown'].includes(String(value.status))) &&
       start === end)
   )
     return null;
@@ -93,9 +93,13 @@ export function createRecipeInvocationTimingProjection(
     return result;
   };
   const dirty = (id: string) => {
-    cached.delete(id);
+    cached.delete('active:' + id);
+    cached.delete('all:' + id);
     const parent = nodes.get(id)?.parentId;
-    if (parent) cached.delete(parent);
+    if (parent) {
+      cached.delete('active:' + parent);
+      cached.delete('all:' + parent);
+    }
   };
   const recordWindow = (id: string, value: unknown) => {
     const target = state(id);
@@ -110,13 +114,17 @@ export function createRecipeInvocationTimingProjection(
     }
     dirty(id);
   };
-  const qualify = (node: RecipeInvocationNode, active: ReadonlySet<string>): QualifiedNode => {
-    const known = cached.get(node.id);
+  const qualify = (
+    node: RecipeInvocationNode,
+    active: ReadonlySet<string> | null,
+  ): QualifiedNode => {
+    const cacheKey = (active === null ? 'active:' : 'all:') + node.id;
+    const known = cached.get(cacheKey);
     if (known) return known;
     const value = recorded.get(node.id);
     if (!value?.windows.length) {
       const result = unknown();
-      cached.set(node.id, result);
+      cached.set(cacheKey, result);
       return result;
     }
     const inclusive: RecipeTimingQualification =
@@ -129,8 +137,8 @@ export function createRecipeInvocationTimingProjection(
       },
       self: null,
     };
-    cached.set(node.id, result);
-    const children = node.children.filter((id) => active.has(id));
+    cached.set(cacheKey, result);
+    const children = node.children.filter((id) => active === null || active.has(id));
     const childStates = children.map((id) => recorded.get(id));
     // Missing or invalid child coverage cannot give a lower bound for self time.
     if (childStates.some((child) => !child?.windows.length || child.invalid || child.open))
@@ -171,7 +179,7 @@ export function createRecipeInvocationTimingProjection(
     result.self = self;
     result.timing.selfMs = duration(self);
     result.timing.qualification.self = inclusive;
-    cached.set(node.id, result);
+    cached.set(cacheKey, result);
     return result;
   };
   const claimOwners = new Map<string, Set<string>>();
@@ -218,13 +226,14 @@ export function createRecipeInvocationTimingProjection(
   function snapshot(ids: readonly string[]): RecipeFlowTimingUpdate;
   function snapshot(ids?: readonly string[]): RecipeFlowTiming | RecipeFlowTimingUpdate {
     if (ids) {
-      const active = route.reachable();
       return {
         scope: 'active',
         nodes: Object.fromEntries(
           ids.map((id) => {
             const node = nodes.get(id)!;
-            const metric = active.has(id) ? qualify(node, active) : unknown();
+            // Active rows do not resolve the whole graph. An untimed possible child
+            // conservatively leaves self unknown until the full recorded report.
+            const metric = qualify(node, null);
             return [id, structuredClone(metric.timing)];
           }),
         ),

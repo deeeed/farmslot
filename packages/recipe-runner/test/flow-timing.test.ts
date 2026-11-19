@@ -222,3 +222,65 @@ test('overlapping repeated parent windows leave self attribution unknown', () =>
   assert.equal(result.nodes['first/nested']?.inclusiveMs, 150);
   assert.equal(result.nodes['first/nested']?.selfMs, null);
 });
+
+test('conditional HUD updates do not walk the prepared route when branch choices invalidate it', () => {
+  const nodes: Record<string, Record<string, unknown>> = {};
+  for (let i = 0; i < 200; i++)
+    nodes['n' + i] = {
+      action: 'switch',
+      cases: { yes: i < 199 ? 'n' + (i + 1) : 'done', no: i < 199 ? 'n' + (i + 1) : 'done' },
+    };
+  nodes.done = { action: 'end', status: 'pass' };
+  const prepared = buildRecipeInvocationTree({
+    rootRef: 'conditional',
+    recipes: new Map(),
+    root: { workflow: { entry: 'n0', nodes } },
+  });
+  let reads = 0;
+  for (const node of prepared.nodes) {
+    const id = node.id,
+      cases = node.cases;
+    Object.defineProperty(node, 'id', {
+      get() {
+        reads++;
+        return id;
+      },
+      enumerable: true,
+    });
+    Object.defineProperty(node, 'cases', {
+      get() {
+        reads++;
+        return cases;
+      },
+      enumerable: true,
+    });
+  }
+  const flow = createRecipeFlowProjection(prepared, 'conditional');
+  flow.snapshot();
+  reads = 0;
+  for (let i = 0; i < 20; i++) {
+    flow.start('n0');
+    flow.record({ ...row('n0', i * 10, i * 10 + 5), action: 'switch', next: 'n1', case: 'yes' });
+    flow.complete('n0', true, 'n1');
+    flow.snapshot();
+  }
+  assert.ok(reads <= 400, `conditional HUD reads ${reads} exceed active-ancestry bound`);
+});
+
+test('a legacy aborted terminal has no measurement, while its executed terminal status qualifies zero', () => {
+  const prepared = buildRecipeInvocationTree({
+    rootRef: 'terminal',
+    recipes: new Map(),
+    root: { workflow: { entry: 'done', nodes: { done: { action: 'end', status: 'fail' } } } },
+  });
+  const cancelled = { ...row('done', 0, 0), ok: false };
+  assert.equal(
+    projectRecipeInvocationTiming({ tree: prepared, trace: [cancelled] }).nodes.done?.inclusiveMs,
+    null,
+  );
+  assert.equal(
+    projectRecipeInvocationTiming({ tree: prepared, trace: [{ ...cancelled, status: 'fail' }] })
+      .nodes.done?.inclusiveMs,
+    0,
+  );
+});

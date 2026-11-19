@@ -414,6 +414,36 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
         const failure = signal?.aborted ? recipeAbortError(signal) : error;
         const message = failure instanceof Error ? failure.message : String(failure);
         const causeClass = recipeFailureCause(failure);
+        const publishFailure = async () => {
+          if (options.publishHudProgress && context) {
+            try {
+              await options.publishHudProgress('fail', {
+                nodeId: namespacedNodeId,
+                action,
+                node,
+                recipe: options.recipe,
+                index: transitionCount,
+                total: nodeCount,
+                flow: options.flow?.snapshot(),
+                context,
+                error: message,
+              });
+            } catch (hudError) {
+              options.logger.warn(
+                `app.hud failure update failed for ${namespacedNodeId}: ${hudError instanceof Error ? hudError.message : String(hudError)}`,
+              );
+            }
+          }
+        };
+        // The recorder must see the acknowledged red HUD before its automatic still.
+        // This open update has no invented elapsed end; the closed update follows capture.
+        if (
+          !signal?.aborted &&
+          context?.captureRecordingSnapshot &&
+          action.startsWith('ui.') &&
+          RECIPE_ASSERTION_ACTIONS.has(action)
+        )
+          await publishFailure();
         const failureStill =
           signal?.aborted || !context
             ? undefined
@@ -452,25 +482,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
           ...recipeFailureTraceFields(failure),
         });
         options.flow?.complete(namespacedNodeId, false);
-        if (options.publishHudProgress && context) {
-          try {
-            await options.publishHudProgress('fail', {
-              nodeId: namespacedNodeId,
-              action,
-              node,
-              recipe: options.recipe,
-              index: transitionCount,
-              total: nodeCount,
-              flow: options.flow?.snapshot(),
-              context,
-              error: message,
-            });
-          } catch (hudError) {
-            options.logger.warn(
-              `app.hud failure update failed for ${namespacedNodeId}: ${hudError instanceof Error ? hudError.message : String(hudError)}`,
-            );
-          }
-        }
+        await publishFailure();
         if (
           !signal?.aborted &&
           causeClass === 'subject' &&

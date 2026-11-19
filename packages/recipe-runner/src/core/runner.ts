@@ -676,18 +676,20 @@ class DefaultRecipeRunner implements RecipeRunner {
             }
             for (const artifact of artifacts) registerCapture(artifact, nodeId);
           },
-          publishHudProgress: (hudStatus, event) => {
-            if (
-              runHud &&
-              isRecord(event.node.display) &&
-              event.node.display.position !== undefined
-            ) {
-              runHud.display = mergeHudDisplay(runHud, {
-                display: { position: event.node.display.position },
-              });
-            }
-            return this.#publishHudProgressOrRecord(traceWriter, hudStatus, event, runHud);
-          },
+          publishHudProgress: this.#hudAction()
+            ? (hudStatus, event) => {
+                if (
+                  runHud &&
+                  isRecord(event.node.display) &&
+                  event.node.display.position !== undefined
+                ) {
+                  runHud.display = mergeHudDisplay(runHud, {
+                    display: { position: event.node.display.position },
+                  });
+                }
+                return this.#publishHudProgressOrRecord(traceWriter, hudStatus, event, runHud);
+              }
+            : undefined,
           ...(request.stopAfterNode !== undefined ? { stopAfterNode: request.stopAfterNode } : {}),
         });
         status = hasUnresolvedRecipeFailure(traceWriter.list()) ? 'fail' : execution.status;
