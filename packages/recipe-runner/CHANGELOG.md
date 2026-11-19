@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.50.0 - 2026-11-19
+
+- Project recorded inclusive/self timing and explicit claim/unassigned rollups from the prepared invocation tree on existing flow updates.
+
 ## 0.49.0 - 2026-11-19
 
 - Expose the existing invocation ancestry helper through the portable evidence entry for shared viewer projections.
