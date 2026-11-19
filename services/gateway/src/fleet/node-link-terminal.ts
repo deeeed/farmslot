@@ -1,5 +1,6 @@
 import { type NodeLinkCommand, NodeLinkFailure, type NodeLinkLease } from '@farmslot/protocol';
 
+import { tmuxVerifiedWorkerAttachArgs } from '../core/tmux.js';
 import { currentSessionOriginator } from '../security/work-originator.js';
 
 import { getNode } from './machine-registry.js';
@@ -11,6 +12,7 @@ export interface LinkedPtyOptions {
   resourceId: string;
   session: string;
   selectTarget?: string;
+  workerPaneId?: string;
   cols: number;
   rows: number;
   lease?: NodeLinkLease;
@@ -40,12 +42,16 @@ export async function openLinkedPty(options: LinkedPtyOptions): Promise<LinkedPt
   if (!binary)
     throw new NodeLinkFailure('UNSUPPORTED_OPERATION', 'Tmux is unavailable on this node.');
   const argv = [binary];
-  if (options.selectTarget && options.selectTarget !== options.session) {
-    argv.push('select-window', '-t', options.selectTarget, ';');
-    if (/^%\d+$|\.\d+$/.test(options.selectTarget))
-      argv.push('select-pane', '-t', options.selectTarget, ';');
+  if (options.workerPaneId) {
+    argv.push(...tmuxVerifiedWorkerAttachArgs(options.selectTarget ?? '', options.workerPaneId));
+  } else {
+    if (options.selectTarget && options.selectTarget !== options.session) {
+      argv.push('select-window', '-t', options.selectTarget, ';');
+      if (/^%\d+$|\.\d+$/.test(options.selectTarget))
+        argv.push('select-pane', '-t', options.selectTarget, ';');
+    }
+    argv.push('attach-session', '-t', `=${options.session}`);
   }
-  argv.push('attach-session', '-t', `=${options.session}`);
   const principal = currentSessionOriginator();
   const id = createNodeLinkCommandId(24 * 60 * 60_000);
   const controller = new AbortController();

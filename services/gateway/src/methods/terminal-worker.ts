@@ -51,7 +51,8 @@ async function resolveWorkerPtyOptions(worker: TmuxWorkerRef): Promise<PtyAttach
   const pools = await loadPoolConfigs();
   const pool = resolveMachinePoolConfig(pools, worker.nodeId);
   if (!pool) throw new Error(`pool config for tmux worker node ${worker.nodeId} was not found`);
-  if (usesNodeLink(worker.nodeId)) return { nodeId: worker.nodeId };
+  if (usesNodeLink(worker.nodeId))
+    return { nodeId: worker.nodeId, assertCurrent: () => assertTmuxWorkerControlAllowed(worker) };
   if (isLocal(pool.host, pool.machine)) return {};
   return { sshTarget: `${pool.sshUser}@${pool.host}` };
 }
@@ -63,13 +64,11 @@ export async function terminalWorkerSubscribe(
   const { worker } = params;
   const key = terminalWorkerSubscriptionKey(params);
   const ptyOptions = await resolveWorkerPtyOptions(worker);
-  const verifiedTarget = async () => {
-    const pane = await assertTmuxWorkerControlAllowed(worker, true);
-    // A pane ID can be linked into multiple sessions. Select it through the
-    // verified session and its own window index, rather than a bare pane ID.
-    return `=${worker.session}:${pane.window}.${pane.pane}`;
-  };
-  const selectTarget = await verifiedTarget();
+  const pane = await assertTmuxWorkerControlAllowed(worker, true);
+  // Inventory supplies the coordinates; tmux checks the stable pane ID again
+  // on the target host before attaching to those exact coordinates.
+  if (!pane.paneId) throw new Error('Worker attachment requires a stable tmux pane ID');
+  const selectTarget = `=${worker.session}:${pane.window}.${pane.pane}`;
   const payload = terminalDataPayload({ worker });
   const ptyHandler: PtyDataHandler = (data: string) => {
     emit('terminal.data', payload(data, Date.now()));
@@ -80,19 +79,7 @@ export async function terminalWorkerSubscribe(
     ptyHandler,
     params.cols,
     params.rows,
-    {
-      ...ptyOptions,
-      workerAttachment: true,
-      selectTarget,
-      ...(ptyOptions.nodeId
-        ? {
-            assertCurrent: async () => {
-              if ((await verifiedTarget()) !== selectTarget)
-                throw new Error('worker target moved before tmux attachment');
-            },
-          }
-        : {}),
-    },
+    { ...ptyOptions, workerPaneId: pane.paneId, selectTarget },
   );
   emit('terminal.mode', { worker: params.worker, mode: 'pty' });
   return { key, ptyHandler, joined };

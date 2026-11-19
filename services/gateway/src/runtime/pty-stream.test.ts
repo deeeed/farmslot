@@ -134,7 +134,7 @@ test('remote PTY uses the same window and pane selection in one attach command',
 test('a detached worker PTY is replaced within the linger window', async (t) => {
   const key = 'worker-node:%42';
   const handler = () => undefined;
-  const opts = { workerAttachment: true, selectTarget: '=proof-session:0.0' } as const;
+  const opts = { workerPaneId: '%42', selectTarget: '=proof-session:0.0' } as const;
   t.after(() => exits.splice(0).forEach((exit) => exit()));
   await subscribePty(key, 'proof-session', handler, 90, 25, opts);
   const attached = spawned;
@@ -148,7 +148,7 @@ test('a detached worker PTY is replaced within the linger window', async (t) => 
 
 test('a live worker PTY joins the same session but rejects a linked alias', async (t) => {
   const key = 'worker-node:%43';
-  const opts = { workerAttachment: true, selectTarget: '=proof-session:0.0' } as const;
+  const opts = { workerPaneId: '%42', selectTarget: '=proof-session:0.0' } as const;
   t.after(() => exits.splice(0).forEach((exit) => exit()));
   await subscribePty(key, 'proof-session', () => undefined, 90, 25, opts);
   const attached = spawned;

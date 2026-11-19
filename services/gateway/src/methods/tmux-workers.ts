@@ -713,9 +713,7 @@ export async function assertTmuxWorkerControlAllowed(
   if (!node) throw new Error(`node ${worker.nodeId} is not connected`);
   const payload = await sendNodeRequest(node, 'tmux.panes', {}, { timeout: TMUX_PANES_TIMEOUT_MS });
   const pane = normalizeNodeTmuxPanesResult(payload).find(
-    (pane) =>
-      (pane.paneId || pane.target) === worker.target &&
-      (!exactSession || pane.session === worker.session),
+    (pane) => (pane.paneId || pane.target) === worker.target && pane.session === worker.session,
   );
   if (!pane)
     throw new Error(
