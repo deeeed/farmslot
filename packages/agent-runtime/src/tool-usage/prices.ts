@@ -20,6 +20,9 @@ export const CLAUDE_PRICING: Record<string, ClaudePricing> = {
   // Company LiteLLM catalog, USD per million tokens.
   'claude-opus-5-5': { input: 4, output: 20, cache_write: 5, cache_read: 0.4 },
   'claude-sonnet-5-5': { input: 2, output: 10, cache_write: 2.5, cache_read: 0.2 },
+  // Anthropic's published rate card for prompts of 100K tokens or fewer ($0.50 / $2.50 above);
+  // 5-minute cache writes are 1.25x input and cache reads 0.1x.
+  'claude-haiku-5-5': { input: 0.1, output: 0.5, cache_write: 0.125, cache_read: 0.01 },
   'claude-opus-4-6': { input: 15.0, output: 75.0, cache_write: 18.75, cache_read: 1.5 },
   'claude-sonnet-4-6': { input: 3.0, output: 15.0, cache_write: 3.75, cache_read: 0.3 },
   'claude-haiku-4-5': { input: 0.8, output: 4.0, cache_write: 1.0, cache_read: 0.08 },
