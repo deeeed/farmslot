@@ -492,7 +492,10 @@ export async function extractRunWorkerSessionUsage(
 }
 
 /** Recover only verified retained native usage, without rewriting stored runs. */
-export async function projectArchivedRunnerUsage(storedRun: Run): Promise<Run> {
+export async function projectArchivedRunnerUsage(
+  storedRun: Run,
+  lookupArchiveSlot: typeof loadSlotVars = loadSlotVars,
+): Promise<Run> {
   let run = storedRun;
   try {
     let workerUsage: RunnerSessionUsage | null;
@@ -557,7 +560,7 @@ export async function projectArchivedRunnerUsage(storedRun: Run): Promise<Run> {
     // whose origin cannot be resolved, must not inherit an ambient gateway price.
     const slotVars =
       run.metrics.runner === 'pi' && run.slotId
-        ? await loadSlotVars(run.slotId).catch(() => undefined)
+        ? await lookupArchiveSlot(run.slotId).catch(() => undefined)
         : undefined;
     const localVars = slotVars && isLocal(slotVars.host, slotVars.machine) ? slotVars : undefined;
     const usage = await archivedSessionUsage(
@@ -575,6 +578,8 @@ export async function projectArchivedRunnerUsage(storedRun: Run): Promise<Run> {
       metrics: {
         ...runnerUsageMetrics(usage),
         ...run.metrics,
+        // This read-only fallback has no attributable attempt receipt.
+        retainedArchiveProviderReportedCostUsd: usage.providerReportedCostUsd,
         sessionUsageError: workerUsage?.error ?? usage.error,
       },
     };

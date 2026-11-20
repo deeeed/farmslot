@@ -113,9 +113,6 @@ export function runnerUsageMetrics(usage: RunnerSessionUsage): Partial<Run['metr
     ...(usage.cacheCreation != null ? { sessionCacheCreation: usage.cacheCreation } : {}),
     ...(usage.cacheRead != null ? { sessionCacheRead: usage.cacheRead } : {}),
     ...(usage.costUsd != null ? { costEstimate: usage.costUsd } : {}),
-    ...(usage.providerReportedCostUsd === undefined
-      ? {}
-      : { sessionProviderReportedCostUsd: usage.providerReportedCostUsd }),
     ...(usage.toolUsage ? { sessionToolCalls: usage.toolUsage.toolCalls } : {}),
     ...(usage.toolUsage?.toolCallsBeforeFirstMark != null
       ? { sessionToolCallsBeforeFirstMark: usage.toolUsage.toolCallsBeforeFirstMark }

@@ -191,9 +191,10 @@ test('archived tmux Pi usage preserves local pricing and the remote provider sub
     assert.equal(projected.metrics.sessionTotalTokens, 1100, kind);
     assert.equal(projected.metrics.costEstimate, kind === 'remote-slot' ? undefined : 0.0142, kind);
     assert.equal(
-      projected.metrics.sessionProviderReportedCostUsd,
+      projected.metrics.retainedArchiveProviderReportedCostUsd,
       kind === 'remote-slot' ? 0.0042 : undefined,
       kind,
     );
+    assert.equal(run.metrics.retainedArchiveProviderReportedCostUsd, undefined, kind);
   }
 });

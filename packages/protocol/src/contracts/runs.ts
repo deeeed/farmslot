@@ -2054,8 +2054,8 @@ export interface RunMetrics {
   sessionCacheCreation?: number;
   sessionCacheRead?: number;
   sessionTotalTokens?: number;
-  /** Recorded provider charges, even when the full session cost is unknown. */
-  sessionProviderReportedCostUsd?: number;
+  /** Provider charges from an archive-only historical projection. Not an attempt cost. */
+  retainedArchiveProviderReportedCostUsd?: number;
   /** Whether the session fields are raw transcript totals or a retained-review generation delta. */
   sessionUsageScope?: 'session-total' | 'review-generation-delta' | 'review-chain-total';
   /** Raw retained transcript total used as the next review generation's subtraction baseline. */
