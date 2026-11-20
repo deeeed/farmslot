@@ -1,0 +1,1 @@
+- Price remote tmux Pi LiteLLM receipts from gateway rates only when a completed turn matches a direct request to the pricing endpoint. Keep tokens and provider-reported charges. Older transcripts and replies without verified route evidence remain unpriced, with no lookup on the remote node.

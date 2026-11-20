@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 
+import { liteLlmEndpointId } from '@farmslot/agent-runtime/scripts/litellm-endpoint.cjs';
 import {
   type ChecklistMark,
   checklistMarks,
@@ -7,13 +8,14 @@ import {
   type ToolUsage,
 } from '@farmslot/agent-runtime/tool-usage';
 import type { AgentContext, Run, RunnerSessionUsage } from '@farmslot/protocol';
-import { runSessionUsage, type SessionUsageWindow } from '@farmslot/slot-config';
+import { loadLiteLlmPrices, runSessionUsage, type SessionUsageWindow } from '@farmslot/slot-config';
 
 import { loadSlotVars, type SlotVars } from '../core/config.js';
 import { execOnSlot, isLocal } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import {
   forcedSessionUsageArgv,
+  type LiteLlmRouteRates,
   REMOTE_USAGE_DETAIL_NOTE,
 } from '../runners/native-session-usage-command.js';
 import { getRunnerSessionUsageProvider } from '../runners/registry.js';
@@ -25,7 +27,11 @@ import {
   registerContextSessionUsage,
   upsertSessionUsage,
 } from './agent-session-rows.js';
-import { nativeRunUsageWindow, resolveNativeAgentSessionUsage } from './native-session-usage.js';
+import {
+  nativeRunUsageWindow,
+  resolveNativeAgentSessionUsage,
+  usageLiteLlmEnvironment,
+} from './native-session-usage.js';
 import {
   parseSessionUsageOutput,
   runnerUsageMetrics,
@@ -41,6 +47,60 @@ export {
 
 const REMOTE_RECEIPT_BYTES = 64 * 1024;
 
+/** A project command env mutation, applied as the static reviewer's launch does: set, then unset. */
+interface LaunchEnvironment {
+  unset: string[];
+  set: Record<string, string>;
+}
+
+/** The launch a static tmux review's Pi receipt is priced against. */
+interface LaunchPricing {
+  /** The launch's environment mutation, resolved again by the gateway. */
+  environment: () => Promise<LaunchEnvironment>;
+}
+
+/**
+ * The shell-quoted usage command may grow to this with gateway prices. The node runs it as one
+ * shell argument, and Linux allows 128 KiB per argument; above it the prices are left off.
+ */
+const REMOTE_USAGE_COMMAND_BYTES = 96 * 1024;
+
+/** The environment a static review's launch runs with: its set values, then its unset names. */
+async function launchEnvironment(launch: LaunchPricing): Promise<NodeJS.ProcessEnv> {
+  const mutation = await launch.environment();
+  const environment: NodeJS.ProcessEnv = { ...process.env, ...mutation.set };
+  for (const name of mutation.unset) delete environment[name];
+  return environment;
+}
+
+/**
+ * The gateway's LiteLLM prices for a tmux Pi receipt, bound to the endpoint they are loaded from.
+ * The receipt quotes them only for turns whose Pi request entry recorded a successful answer from
+ * that endpoint. Undefined when the gateway has no endpoint or prices: those turns are unpriced.
+ */
+async function piLiteLlmRoute(
+  environment: () => Promise<NodeJS.ProcessEnv>,
+  slotId: string,
+): Promise<LiteLlmRouteRates | undefined> {
+  try {
+    const resolved = await environment();
+    // The endpoint the pricing loader queries, in its own precedence.
+    const endpointId = liteLlmEndpointId(resolved.LITELLM_URL || resolved.LITELLM_BASE_URL);
+    if (!endpointId) return undefined;
+    const prices = [
+      ...(await loadLiteLlmPrices({ environment: resolved, requireDirectResponse: true })),
+    ];
+    return prices.length ? { endpointId, prices } : undefined;
+  } catch (error) {
+    // Prices are optional evidence: without them the receipt keeps its tokens and its LiteLLM
+    // cost is unpriced, so a pricing failure never costs the run its usage totals.
+    console.warn(
+      `[session-usage] LiteLLM prices unavailable for ${slotId}: ${(error as Error).message}`,
+    );
+    return undefined;
+  }
+}
+
 export async function extractRunnerSessionUsage({
   slotId,
   vars,
@@ -49,6 +109,7 @@ export async function extractRunnerSessionUsage({
   runnerSessionPath,
   checklistMarks,
   parentChecklistMarks,
+  launchPricing,
 }: {
   slotId: string;
   vars?: SlotVars;
@@ -59,6 +120,8 @@ export async function extractRunnerSessionUsage({
   checklistMarks?: ChecklistMark[];
   /** Parent boundaries for a remote receipt whose child breakdown exceeds the transport limit. */
   parentChecklistMarks?: ChecklistMark[];
+  /** A static tmux review's launch, read only to price a remote Pi receipt. */
+  launchPricing?: LaunchPricing;
 }): Promise<RunnerSessionUsage> {
   if (!runnerSessionPath) {
     return unavailableRunnerSessionUsage({
@@ -70,27 +133,57 @@ export async function extractRunnerSessionUsage({
   }
   try {
     if (vars && !isLocal(vars.host, vars.machine)) {
-      const argv = forcedSessionUsageArgv(
-        slotId,
-        runner,
-        runnerSessionPath,
-        undefined,
-        checklistMarks,
-        {
-          maxBytes: REMOTE_RECEIPT_BYTES,
-          parentChecklistMarks: isDeepStrictEqual(checklistMarks, parentChecklistMarks)
-            ? undefined
-            : parentChecklistMarks,
-        },
-      );
-      const result = await execOnSlot(vars, argv.map(shellQuote).join(' '), {
+      // The slot holding a Pi transcript may have no LiteLLM credentials: the gateway sends its own
+      // prices, bound to their endpoint, and an empty list so a slot without route binding
+      // leaves LiteLLM turns unpriced instead of quoting them from its own lookup.
+      const route =
+        runner === 'pi'
+          ? await piLiteLlmRoute(
+              launchPricing
+                ? () => launchEnvironment(launchPricing)
+                : () => usageLiteLlmEnvironment(vars, vars.machine),
+              slotId,
+            )
+          : undefined;
+      const usageArgv = (liteLlmRoute?: LiteLlmRouteRates) =>
+        forcedSessionUsageArgv(
+          slotId,
+          runner,
+          runnerSessionPath,
+          undefined,
+          checklistMarks,
+          {
+            maxBytes: REMOTE_RECEIPT_BYTES,
+            parentChecklistMarks: isDeepStrictEqual(checklistMarks, parentChecklistMarks)
+              ? undefined
+              : parentChecklistMarks,
+          },
+          runner === 'pi'
+            ? { liteLlmPrices: [], ...(liteLlmRoute ? { liteLlmRoute } : {}) }
+            : undefined,
+        );
+      let command = usageArgv(route).map(shellQuote).join(' ');
+      // The node runs the whole quoted command as one argument; prices that would push it past the
+      // limit are left off, and the receipt's LiteLLM cost is unpriced.
+      if (route && Buffer.byteLength(command) > REMOTE_USAGE_COMMAND_BYTES) {
+        console.warn(
+          `[session-usage] gateway LiteLLM prices omitted for ${slotId}: usage command too large`,
+        );
+        command = usageArgv().map(shellQuote).join(' ');
+      }
+      const result = await execOnSlot(vars, command, {
         timeout: 30_000,
         maxBuffer: REMOTE_RECEIPT_BYTES,
         selectNodeSupport: false,
       });
       if (result.exitCode !== 0)
         throw new Error(result.stderr.trim() || `Usage extraction exited ${result.exitCode}`);
-      return parseSessionUsageOutput(result.stdout, { runner, runnerSessionId, runnerSessionPath });
+      return parseSessionUsageOutput(result.stdout, {
+        runner,
+        runnerSessionId,
+        runnerSessionPath,
+        ...(runner === 'pi' ? { pricingScope: 'remote-tmux-pi' } : {}),
+      });
     }
     const output = await runSessionUsage({
       // repo is unused when forcedPath is set; pass empty string.
@@ -122,21 +215,45 @@ async function archivedSessionUsage(
   archived: string,
   session: Pick<RunnerSessionUsage, 'runnerSessionId' | 'runnerSessionPath'> = {},
   vars?: SlotVars,
-  usageWindow?: SessionUsageWindow,
+  // Only the native session resolver can supply a window for archive accounting.
+  nativeUsageWindow?: SessionUsageWindow,
   marks?: ChecklistMark[],
 ): Promise<RunnerSessionUsage> {
+  const workspace = run.reviewWorkspace;
+  const isKnownLocal = vars
+    ? isLocal(vars.host, vars.machine)
+    : !!workspace &&
+      (workspace.executionNodeId === 'local' || isLocal(workspace.machine, workspace.machine));
+  const remotePi =
+    run.metrics.runner === 'pi' &&
+    run.transport !== 'native' &&
+    !nativeUsageWindow &&
+    !isKnownLocal;
+  const slotId = run.slotId ?? run.id;
+  const route =
+    remotePi && vars
+      ? await piLiteLlmRoute(() => usageLiteLlmEnvironment(vars, vars.machine), slotId)
+      : undefined;
   return parseSessionUsageOutput(
     await runSessionUsage({
       repo: '',
-      slotId: run.slotId ?? run.id,
+      slotId,
       action: 'total',
       forcedPath: archived,
       forcedRunner: run.metrics.runner,
       environment: { ...process.env, ...vars?.machineEnv },
-      usageWindow,
+      usageWindow: nativeUsageWindow,
       checklistMarks: marks,
+      ...(remotePi ? { liteLlmPrices: new Map() } : {}),
+      ...(route
+        ? { liteLlmRoute: { endpointId: route.endpointId, prices: new Map(route.prices) } }
+        : {}),
     }),
-    { runner: run.metrics.runner, ...session },
+    {
+      runner: run.metrics.runner,
+      ...session,
+      ...(remotePi ? { pricingScope: 'remote-tmux-pi' } : {}),
+    },
   );
 }
 
@@ -348,6 +465,9 @@ export async function extractRunWorkerSessionUsage(
       : null;
   };
   const cost = total('costUsd');
+  const reportedCharges = usages.flatMap((usage) =>
+    usage.providerReportedCostUsd === undefined ? [] : [usage.providerReportedCostUsd],
+  );
   const toolUsage = totalToolUsage(usages);
   return {
     ...usages[0],
@@ -362,6 +482,9 @@ export async function extractRunWorkerSessionUsage(
     cacheRead: total('cacheRead'),
     totalTokens: total('totalTokens'),
     costUsd: cost == null ? null : Number(cost.toFixed(10)),
+    providerReportedCostUsd: reportedCharges.length
+      ? Number(reportedCharges.reduce((sum, charge) => sum + charge, 0).toFixed(10))
+      : undefined,
     costStatus: cost == null ? 'unpriced' : 'estimated',
     costReason:
       cost == null ? usages.find((usage) => usage.costUsd == null)?.costReason : undefined,
@@ -369,7 +492,10 @@ export async function extractRunWorkerSessionUsage(
 }
 
 /** Recover only verified retained native usage, without rewriting stored runs. */
-export async function projectArchivedRunnerUsage(storedRun: Run): Promise<Run> {
+export async function projectArchivedRunnerUsage(
+  storedRun: Run,
+  lookupArchiveSlot: typeof loadSlotVars = loadSlotVars,
+): Promise<Run> {
   let run = storedRun;
   try {
     let workerUsage: RunnerSessionUsage | null;
@@ -430,11 +556,18 @@ export async function projectArchivedRunnerUsage(storedRun: Run): Promise<Run> {
         'runner did not report usage and no verified transcript was retained';
       return { ...run, metrics: { ...run.metrics, sessionUsageError: reason } };
     }
+    // A stored local slot keeps its legacy price lookup. An offline remote slot, or a slot
+    // whose origin cannot be resolved, must not inherit an ambient gateway price.
+    const slotVars =
+      run.metrics.runner === 'pi' && run.slotId
+        ? await lookupArchiveSlot(run.slotId).catch(() => undefined)
+        : undefined;
+    const localVars = slotVars && isLocal(slotVars.host, slotVars.machine) ? slotVars : undefined;
     const usage = await archivedSessionUsage(
       run,
       archived,
       {},
-      undefined,
+      localVars,
       undefined,
       receiptChecklistMarks(run),
     );
@@ -445,6 +578,8 @@ export async function projectArchivedRunnerUsage(storedRun: Run): Promise<Run> {
       metrics: {
         ...runnerUsageMetrics(usage),
         ...run.metrics,
+        // This read-only fallback has no attributable attempt receipt.
+        retainedArchiveProviderReportedCostUsd: usage.providerReportedCostUsd,
         sessionUsageError: workerUsage?.error ?? usage.error,
       },
     };

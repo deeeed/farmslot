@@ -180,3 +180,114 @@ test('unknown provider pricing cannot turn Pi SDK placeholder zeros into a compl
     /cost_usd=0\.0003600000/,
   );
 });
+
+test('a tmux Pi receipt quotes gateway LiteLLM rates only through the request entry it answers', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'pi-route-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const file = path.join(root, 'session.jsonl');
+  const gateway = 'sha256:gateway-endpoint';
+  // Pi's own catalog rates for the request; the SDK total below is quoted from them.
+  const catalog = { input: 0.15, output: 0.5, cacheRead: 0, cacheWrite: 0 };
+  const request = (id: string, endpoint?: string) => ({
+    type: 'custom',
+    customType: 'farmslot-model-request',
+    id,
+    parentId: 'u1',
+    data: {
+      provider: 'litellm',
+      model: 'glm',
+      cost: catalog,
+      ...(endpoint ? { endpoint } : {}),
+    },
+  });
+  const turn = (
+    id: string,
+    parentId: string,
+    cost: Record<string, unknown> = { total: 0.0002 },
+  ) => ({
+    type: 'message',
+    id,
+    parentId,
+    message: {
+      role: 'assistant',
+      provider: 'litellm',
+      model: 'glm',
+      stopReason: 'stop',
+      usage: { input: 1000, output: 100, cacheRead: 0, cacheWrite: 0, cost },
+    },
+  });
+  const user = { type: 'message', id: 'u1', parentId: null, message: { role: 'user' } };
+  // Gateway rates differ from Pi's catalog, so a quote shows which list priced the turn.
+  const route = {
+    endpointId: gateway,
+    prices: new Map<string, PiModelCostMetadata>([
+      ['glm', { input: 1, output: 2, cacheRead: null, cacheWrite: null }],
+    ]),
+  };
+  const summarize = async (records: unknown[], options: Record<string, unknown>) => {
+    await writeFile(file, records.map((record) => JSON.stringify(record)).join('\n') + '\n');
+    return runSessionUsage({
+      repo: '',
+      slotId: 'pi-route',
+      action: 'total',
+      forcedPath: file,
+      forcedRunner: 'pi',
+      environment: {},
+      ...options,
+    });
+  };
+  const bound = [user, request('r1', gateway), turn('a1', 'r1')];
+  // Matched: the request entry recorded the gateway's endpoint. (1000 * 1 + 100 * 2) / 1e6.
+  assert.match(await summarize(bound, { liteLlmRoute: route }), /cost_usd=0\.0012000000/);
+  // Wrong route: the request went to another endpoint. Tokens kept, cost unpriced.
+  const wrong = await summarize([user, request('r1', 'sha256:other'), turn('a1', 'r1')], {
+    liteLlmRoute: route,
+  });
+  assert.match(wrong, /total_tokens=1100/);
+  assert.doesNotMatch(wrong, /cost_usd=/);
+  // Unsupported: no request entry (Pi's own route, outside the Farmslot catalog), or one without
+  // an endpoint digest (an older extension).
+  for (const records of [
+    [user, turn('a1', 'u1')],
+    [user, request('r1'), turn('a1', 'r1')],
+  ]) {
+    const unpriced = await summarize(records, { liteLlmRoute: route });
+    assert.match(unpriced, /total_tokens=1100/);
+    assert.doesNotMatch(unpriced, /cost_usd=/);
+  }
+  // Mixed: one bound turn and one unsupported turn leave the receipt unpriced.
+  assert.doesNotMatch(
+    await summarize([...bound, turn('a2', 'a1')], { liteLlmRoute: route }),
+    /cost_usd=/,
+  );
+  // A provider-reported charge is kept on any route.
+  assert.match(
+    await summarize([user, turn('a1', 'u1', { total: 0.0042, totalFromProvider: true })], {
+      liteLlmRoute: route,
+    }),
+    /cost_usd=0\.0042000000/,
+  );
+  for (const stopReason of ['error', 'aborted', undefined]) {
+    const reply = turn('a1', 'r1');
+    const failed = await summarize(
+      [user, request('r1', gateway), { ...reply, message: { ...reply.message, stopReason } }],
+      { liteLlmRoute: route },
+    );
+    assert.match(failed, /total_tokens=1100/);
+    assert.doesNotMatch(failed, /^cost_usd=/m);
+  }
+  const charged = turn('a1', 'u1', { total: 0.0042, totalFromProvider: true });
+  for (const options of [{ liteLlmRoute: route }, { liteLlmPrices: new Map() }]) {
+    const mixed = await summarize([user, charged, turn('a2', 'a1')], options);
+    assert.match(mixed, /total_tokens=2200/);
+    assert.match(mixed, /^provider_reported_cost_usd=0\.0042000000$/m);
+    assert.doesNotMatch(mixed, /^cost_usd=/m);
+  }
+  // Native and local tmux receipts keep their accounting without a route binding.
+  assert.match(
+    await summarize([user, request('r1', 'sha256:other'), turn('a1', 'r1')], {
+      liteLlmPrices: route.prices,
+    }),
+    /cost_usd=0\.0012000000/,
+  );
+});

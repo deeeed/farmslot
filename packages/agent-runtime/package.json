@@ -56,6 +56,10 @@
       "types": "./scripts/git-diff.d.cts",
       "default": "./scripts/git-diff.cjs"
     },
+    "./scripts/litellm-endpoint.cjs": {
+      "types": "./scripts/litellm-endpoint.d.cts",
+      "default": "./scripts/litellm-endpoint.cjs"
+    },
     "./scripts/review-diff-scope.cjs": {
       "types": "./scripts/review-diff-scope.d.cts",
       "default": "./scripts/review-diff-scope.cjs"
@@ -135,6 +139,7 @@
     "scripts/retained-recipe-attempt.d.cts",
     "scripts/execution-template-cli.mjs",
     "scripts/git-diff.d.cts",
+    "scripts/litellm-endpoint.d.cts",
     "scripts/review-diff-scope.d.cts",
     "scripts/review-coverage.d.cts",
     "scripts/context-compaction.d.cts",

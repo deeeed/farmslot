@@ -173,6 +173,14 @@ async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSession
         runnerSessionId: row.runnerSessionId,
         runnerSessionPath: row.runnerSessionPath,
         ...marks,
+        ...(!row.slotId && run.reviewWorkspace
+          ? {
+              launchPricing: {
+                environment: async () =>
+                  (await import('../runners/review-tmux.js')).reviewEnvironment(run),
+              },
+            }
+          : {}),
       }),
     );
   } catch {

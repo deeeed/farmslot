@@ -26,6 +26,7 @@ import {
   taskTitleText,
 } from '@farmslot/protocol';
 
+import { loadSlotVars, readSlotPools, type SlotPools } from '../core/config.js';
 import { syntheticEvalTicket } from '../evals/package-store.js';
 import { refreshRetrospectiveFeedback } from '../intelligence/feedback-candidates.js';
 import { readPortableTextIfExists } from '../live-recipe/context.js';
@@ -874,9 +875,12 @@ export async function buildFamilyObservabilitySnapshotFromRuns(
   runs: Run[],
   allRuns: Run[] = [],
 ): Promise<FamilyObservabilitySnapshot> {
+  let archivePools: Promise<SlotPools> | undefined;
+  const lookupArchiveSlot = async (slotId: string) =>
+    loadSlotVars(slotId, await (archivePools ??= Promise.resolve().then(readSlotPools)));
   const familyRuns = await Promise.all(
     sortRunsByFreshness(runs).map(async (run) =>
-      retainedArtifactRun(await projectArchivedRunnerUsage(run)),
+      retainedArtifactRun(await projectArchivedRunnerUsage(run, lookupArchiveSlot)),
     ),
   );
   if (familyRuns.length === 0) {
