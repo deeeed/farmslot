@@ -353,9 +353,13 @@ export const OFFICIAL_ACTIONS = new Set<string>(OFFICIAL_RECIPE_ACTIONS);
 export function actionLibraryContextArgs(
   catalog: RecipeCatalog,
   librarySources?: readonly RecipeLibrarySource[],
+  { includeBundled = false }: { includeBundled?: boolean } = {},
 ): string {
   return (librarySources ?? [])
-    .filter((source) => source.origin === 'flag' && source.name !== catalog.bundledLibrary.name)
+    .filter(
+      (source) =>
+        source.origin === 'flag' && (includeBundled || source.name !== catalog.bundledLibrary.name),
+    )
     .map((source) => {
       const entry = source.name ? `${source.name}=${source.root}` : source.root;
       return ` --library ${shellQuoteArg(entry)}`;

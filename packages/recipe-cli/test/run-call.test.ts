@@ -1326,6 +1326,72 @@ describe('actions', () => {
     }
   }
 
+  test('detail hints preserve a bundled library chosen over the personal default', async () => {
+    const root = tempRoot('catalog-bundled-selection-');
+    process.env.FARMSLOT_HOME = root;
+    fs.mkdirSync(path.join(root, 'recipe-library'));
+    const selectedDescription = PING_ACTION.description;
+    const personalDescription = 'Personal action shadows the bundled schema.';
+    const resolve = engine.resolveActionManifest.bind(engine);
+    engine.resolveActionManifest = async (adapter, override, sources) => {
+      const result = await resolve(adapter, override, sources);
+      if (!sources?.some((source) => source.name === 'personal' && source.origin === 'default'))
+        return result;
+      const ping = result.manifest.actions['shop.ping'];
+      assert.ok(ping);
+      return {
+        ...result,
+        manifest: {
+          ...result.manifest,
+          actions: {
+            ...result.manifest.actions,
+            'shop.ping': { ...ping, description: personalDescription },
+          },
+        },
+      };
+    };
+    const ambient = await actions('--adapter', 'web', '--action', 'shop.ping');
+    assert.ok(ambient.stdout.some((part) => part.includes(personalDescription)));
+    const flags = ['--adapter', 'web', '--library', 'shop=' + library];
+    for (const caller of ['actions', 'call']) {
+      const listing =
+        caller === 'actions'
+          ? await actions(...flags)
+          : await capture(() =>
+              handleListExecutables('call', parseArgs(flags).options, { catalog: engine }),
+            );
+      assert.equal(listing.value, 0);
+      const prefix = 'Details and examples: shop-harness ';
+      const hint = listing.stdout
+        .join('\n')
+        .split('\n')
+        .find((line) => line.includes(prefix))
+        ?.split(prefix)[1];
+      assert.ok(hint);
+      const argv = execFileSync(
+        '/bin/sh',
+        [
+          '-c',
+          'fixture_host() { printf "%s\\0" "$@"; }\nfixture_host ' +
+            hint.replace('<name>', 'shop.ping'),
+        ],
+        { encoding: 'utf8', timeout: 2000 },
+      )
+        .split('\0')
+        .filter(Boolean);
+      const detail =
+        caller === 'actions'
+          ? await actions(...argv.slice(1))
+          : await capture(() => handleCallHelp(argv.slice(1), 'GENERIC', { catalog: engine }));
+      assert.equal(detail.value, 0);
+      assert.ok(
+        detail.stdout.some((line) => line.includes(selectedDescription) && line.includes('Fields')),
+        caller + ' must keep the bundled schema when a personal default exists',
+      );
+      assert.ok(detail.stdout.every((line) => !line.includes(personalDescription)));
+    }
+  });
+
   test('limits parameter preview to four required-first names with an overflow count', () => {
     const entry = describeManifestActions(engine, manifestFor('web')).find(
       (row) => row.name === 'shop.ping',

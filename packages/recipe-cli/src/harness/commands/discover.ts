@@ -414,11 +414,21 @@ function actionCatalogContextArgs(
 ): string {
   const target = optionString(options, 'target');
   const manifest = optionString(options, 'actionManifest');
+  const projectArgs = ['project', 'projectsDir']
+    .map((key) => {
+      const value = optionString(options, key);
+      if (!value) return '';
+      return key === 'project'
+        ? ' --project ' + shellQuoteArg(value)
+        : ' --projects-dir ' + shellQuoteArg(path.resolve(value));
+    })
+    .join('');
   return (
     ' --adapter ' +
     shellQuoteArg(adapter) +
     (target ? ' --target ' + shellQuoteArg(path.resolve(target)) : '') +
-    actionLibraryContextArgs(catalog, librarySources) +
+    actionLibraryContextArgs(catalog, librarySources, { includeBundled: true }) +
+    projectArgs +
     (manifest ? ' --action-manifest ' + shellQuoteArg(path.resolve(manifest)) : '')
   );
 }
@@ -688,6 +698,9 @@ export async function handleListExecutables(
       `Available sources: ${[...new Set(available.map((entry) => entry.source))].sort().join(', ') || 'none'}`,
     );
   }
+  // Commander handles project call --help before action-specific dispatch.
+  const detailCommand =
+    host === 'farmslot recipe' ? ' actions --action <name>' : ' call <name> --help';
   console.log(
     renderHumanActionCatalog(catalog, selected, {
       title: `invocable actions (${adapter})`,
@@ -698,7 +711,7 @@ export async function handleListExecutables(
         contextArgs +
         '  ·  Details and examples: ' +
         host +
-        ' call <name> --help' +
+        detailCommand +
         contextArgs,
       sort,
       domainStyles: stylesFor(available.map(actionDomain)),
