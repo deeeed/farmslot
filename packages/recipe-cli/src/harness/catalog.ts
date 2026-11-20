@@ -353,9 +353,13 @@ export const OFFICIAL_ACTIONS = new Set<string>(OFFICIAL_RECIPE_ACTIONS);
 export function actionLibraryContextArgs(
   catalog: RecipeCatalog,
   librarySources?: readonly RecipeLibrarySource[],
+  { includeBundled = false }: { includeBundled?: boolean } = {},
 ): string {
   return (librarySources ?? [])
-    .filter((source) => source.origin === 'flag' && source.name !== catalog.bundledLibrary.name)
+    .filter(
+      (source) =>
+        source.origin === 'flag' && (includeBundled || source.name !== catalog.bundledLibrary.name),
+    )
     .map((source) => {
       const entry = source.name ? `${source.name}=${source.root}` : source.root;
       return ` --library ${shellQuoteArg(entry)}`;
@@ -453,8 +457,8 @@ function describeManifestAction(
 /**
  * One action in full, as `actions --action <name>` and `call <action> --help`
  * print it: the call form, description, source and adapter, risk, result
- * cases, fields with their types, up to two authored examples, and the first
- * one as a runnable call with its recipe node. `actionNames` is the adapter's
+ * cases, up to two authored examples, fields with their types, and the first
+ * example as a runnable call with its recipe node. `actionNames` is the adapter's
  * vocabulary, which decides whether the short name is unambiguous.
  */
 export function renderActionDetail(
@@ -479,6 +483,11 @@ export function renderActionDetail(
   );
   if (entry.capabilities.length > 0) lines.push(`  Risk: ${entry.capabilities.join(', ')}`);
   if (entry.result_cases?.length) lines.push(`  Result cases: ${entry.result_cases.join(', ')}`);
+  const examples = shortExampleCalls(entry, actionNames);
+  if (examples.length > 0) {
+    lines.push('', '  Examples:');
+    for (const example of examples) lines.push(`    ${example}`);
+  }
   lines.push('');
   if (entry.fields.length === 0) {
     lines.push('  Fields: (none)');
@@ -496,11 +505,6 @@ export function renderActionDetail(
         : '';
       lines.push(`    ${name.padEnd(width)}  ${type}${req}${defaultValue}${desc}${enumVals}`);
     }
-  }
-  const examples = shortExampleCalls(entry, actionNames);
-  if (examples.length > 0) {
-    lines.push('', '  Examples:');
-    for (const example of examples) lines.push(`    ${example}`);
   }
   const runnable = renderHumanActionExample(entry, adapter, target, executable);
   if (runnable) lines.push('', runnable);
