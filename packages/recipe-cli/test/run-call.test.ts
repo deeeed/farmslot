@@ -62,7 +62,10 @@ import {
   callArtifactsLayout,
   redactCallValue,
 } from '../src/harness/commands/call.js';
-import { renderHumanActionCatalog } from '../src/harness/commands/discover.js';
+import {
+  handleListExecutables,
+  renderHumanActionCatalog,
+} from '../src/harness/commands/discover.js';
 import { provenanceFailure, reportTrustFailure } from '../src/harness/commands/run.js';
 import {
   assertConformanceReportCurrent,
@@ -1228,6 +1231,129 @@ describe('actions', () => {
     return capture(() => handleActions(parsed, { catalog: engine }));
   };
 
+  for (const selection of ['library', 'manifest']) {
+    for (const caller of ['actions', 'call']) {
+      test(
+        'detail shortcuts retain explicit catalog selection: ' + selection + ' ' + caller,
+        async () => {
+          const root = tempRoot('catalog-help-context-');
+          const target = path.join(root, "checkout 'one=target");
+          const selectedLibrary = path.join(root, "library 'one=selected");
+          const manifest = path.join(root, "override 'one=manifest.json");
+          fs.mkdirSync(target);
+          fs.mkdirSync(selectedLibrary);
+          const action = 'team.wave';
+          const description =
+            selection === 'manifest'
+              ? 'Read the selected override schema.'
+              : WAVE_ACTION.description;
+          fs.writeFileSync(
+            manifest,
+            JSON.stringify({
+              $schema: CORE_ACTIONS.$schema,
+              actions: { ...CORE_ACTIONS.actions, [action]: { ...WAVE_ACTION, description } },
+            }),
+          );
+          const flags = [
+            '--adapter',
+            'web',
+            '--target',
+            target,
+            '--library',
+            'team=' + selectedLibrary,
+            ...(selection === 'manifest' ? ['--action-manifest', manifest] : []),
+          ];
+          const listing =
+            caller === 'actions'
+              ? await actions(...flags)
+              : await capture(() =>
+                  handleListExecutables('call', parseArgs(flags).options, { catalog: engine }),
+                );
+          assert.equal(listing.value, 0);
+          const text = listing.stdout.find((line) =>
+            line.startsWith(caller === 'actions' ? 'actions (web)' : 'invocable actions (web)'),
+          );
+          assert.ok(text);
+          const hint = text
+            .split('\n')
+            .find((line) => line.includes('Details and examples: '))
+            ?.split('Details and examples: ')[1];
+          assert.ok(hint);
+          // The shell parses the actual emitted command. The fixture host captures
+          // argv, then the real selected-catalog handler consumes those arguments.
+          const command = hint.replaceAll('<name>', action);
+          const argv = execFileSync(
+            '/bin/sh',
+            [
+              '-c',
+              'fixture_host() { printf "%s\\0" "$@"; }\nfixture_host' +
+                command.slice('shop-harness'.length),
+            ],
+            { encoding: 'utf8', timeout: 2000 },
+          )
+            .split('\0')
+            .filter(Boolean);
+          for (const [flag, expected] of [
+            ['--adapter', 'web'],
+            ['--target', target],
+            ['--library', 'team=' + selectedLibrary],
+            ...(selection === 'manifest' ? [['--action-manifest', manifest]] : []),
+          ]) {
+            assert.equal(argv[argv.indexOf(flag) + 1], expected, caller + ' retained ' + flag);
+          }
+          const manual =
+            caller === 'actions'
+              ? await actions('--action', action, ...flags)
+              : await capture(() =>
+                  handleCallHelp([action, '--help', ...flags], 'GENERIC', { catalog: engine }),
+                );
+          const replayed =
+            caller === 'actions'
+              ? await capture(() => handleActions(parseArgs(argv.slice(1)), { catalog: engine }))
+              : await capture(() => handleCallHelp(argv.slice(1), 'GENERIC', { catalog: engine }));
+          assert.equal(replayed.value, 0);
+          assert.deepEqual(
+            replayed.stdout,
+            manual.stdout,
+            caller + ' resolves the selected detail',
+          );
+          assert.ok(
+            replayed.stdout.some((line) => line.includes(description) && line.includes('Fields')),
+            'generic help at exit zero does not qualify',
+          );
+        },
+      );
+    }
+  }
+
+  test('limits parameter preview to four required-first names with an overflow count', () => {
+    const entry = describeManifestActions(engine, manifestFor('web')).find(
+      (row) => row.name === 'shop.ping',
+    );
+    assert.ok(entry);
+    const fields = ['first', 'second', 'third', 'required', 'last', 'sixth'];
+    const text = renderHumanActionCatalog(
+      engine,
+      [
+        {
+          ...entry,
+          fields,
+          schema: {
+            type: 'object',
+            properties: Object.fromEntries(fields.map((field) => [field, { type: 'string' }])),
+            required: ['required', 'last'],
+            additionalProperties: false,
+          },
+        },
+      ],
+      { title: 't', guidance: 'g' },
+    );
+    assert.equal(
+      text.split('\n').find((line) => line.includes('Params:')),
+      '    Params: required, last, first, second +2 more',
+    );
+  });
+
   test('the matrix has one column per registered adapter, in registration order', async () => {
     const json = await actions('--matrix', '--json');
     assert.equal(json.value, 0);
@@ -1301,7 +1427,7 @@ describe('actions', () => {
     const human = await actions('--adapter', 'web');
     assert.match(
       view(human.stdout, 'actions (web)') ?? '',
-      /^actions \(web\)\nDetails and examples: shop-harness actions --action <name>\nRun: shop-harness call <name> \[key=value \.\.\.\]\n[\s\S]*\ncontrol \(\d+\)[\s\S]*\nshop \(1\)\n {2}shop\.ping \[shop\]\n {4}Ping the shop\.\n {4}Params: mode, count, password\n {4}Risk: host-read-export$/u,
+      /^actions \(web\)\nDetails and examples: shop-harness actions --action <name> --adapter web\nRun: shop-harness call <name> \[key=value \.\.\.\] --adapter web\n[\s\S]*\ncontrol \(\d+\)[\s\S]*\nshop \(1\)\n {2}shop\.ping \[shop\]\n {4}Ping the shop\.\n {4}Params: mode, count, password\n {4}Risk: host-read-export$/u,
     );
     const categories = await actions('--adapter', 'web', '--categories', '--json');
     assert.ok(

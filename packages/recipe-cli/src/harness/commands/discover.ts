@@ -202,10 +202,19 @@ export async function handleActions(
       ),
     );
   } else {
+    const contextArgs = actionCatalogContextArgs(catalog, options, librarySources, adapter);
     console.log(
       renderHumanActionCatalog(catalog, actions, {
         title: `actions (${adapter})`,
-        guidance: `Details and examples: ${host} actions --action <name>\nRun: ${host} call <name> [key=value ...]`,
+        guidance:
+          'Details and examples: ' +
+          host +
+          ' actions --action <name>' +
+          contextArgs +
+          '\nRun: ' +
+          host +
+          ' call <name> [key=value ...]' +
+          contextArgs,
         sort: 'domain',
       }),
     );
@@ -397,6 +406,23 @@ function summarizeDescribedAction(
   return summary;
 }
 
+function actionCatalogContextArgs(
+  catalog: RecipeCatalog,
+  options: CliOptions,
+  librarySources: readonly RecipeLibrarySource[],
+  adapter: string,
+): string {
+  const target = optionString(options, 'target');
+  const manifest = optionString(options, 'actionManifest');
+  return (
+    ' --adapter ' +
+    shellQuoteArg(adapter) +
+    (target ? ' --target ' + shellQuoteArg(path.resolve(target)) : '') +
+    actionLibraryContextArgs(catalog, librarySources) +
+    (manifest ? ' --action-manifest ' + shellQuoteArg(path.resolve(manifest)) : '')
+  );
+}
+
 interface HumanActionCatalogOptions {
   title: string;
   guidance: string;
@@ -461,10 +487,7 @@ export function renderHumanActionCatalog(
 }
 
 function actionDescriptionPreview(description: string): string {
-  const [firstSentence = ''] = description
-    .trim()
-    .replace(/\s+/gu, ' ')
-    .split(/(?<=[.!?]) /u, 1);
+  const firstSentence = catalogFirstSentence(description.trim().replace(/\s+/gu, ' '));
   const limit = Math.max(20, Math.min(104, (process.stdout.columns ?? 80) - 5));
   if (firstSentence.length <= limit) return firstSentence;
   const prefix = firstSentence.slice(0, limit);
@@ -495,9 +518,13 @@ function actionDomainGroup(catalog: RecipeCatalog, entry: DescribedAction): stri
 const recipeDomain = (name: string): string =>
   name.includes('.') ? name.split('.')[0]!.replaceAll('_', '-') : 'general';
 
+function catalogFirstSentence(description: string): string {
+  return description.match(/^.*?[.!?](?:\s|$)/u)?.[0]?.trim() ?? description;
+}
+
 function catalogDescription(description: string | undefined): string {
   if (!description) return '';
-  const firstSentence = description.match(/^.*?[.!?](?:\s|$)/u)?.[0]?.trim() ?? description;
+  const firstSentence = catalogFirstSentence(description);
   return firstSentence.length <= 180 ? firstSentence : `${firstSentence.slice(0, 177).trimEnd()}…`;
 }
 
@@ -651,6 +678,7 @@ export async function handleListExecutables(
     return EXIT.ok;
   }
 
+  const contextArgs = actionCatalogContextArgs(catalog, options, librarySources, adapter);
   const contextLines = libraryLines();
   if (selected.length === 0) {
     contextLines.push(
@@ -663,7 +691,15 @@ export async function handleListExecutables(
   console.log(
     renderHumanActionCatalog(catalog, selected, {
       title: `invocable actions (${adapter})`,
-      guidance: `Use: ${host} call <name>  ·  Details and examples: ${host} call <name> --help`,
+      guidance:
+        'Use: ' +
+        host +
+        ' call <name>' +
+        contextArgs +
+        '  ·  Details and examples: ' +
+        host +
+        ' call <name> --help' +
+        contextArgs,
       sort,
       domainStyles: stylesFor(available.map(actionDomain)),
       contextLines,

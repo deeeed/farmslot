@@ -453,8 +453,8 @@ function describeManifestAction(
 /**
  * One action in full, as `actions --action <name>` and `call <action> --help`
  * print it: the call form, description, source and adapter, risk, result
- * cases, fields with their types, up to two authored examples, and the first
- * one as a runnable call with its recipe node. `actionNames` is the adapter's
+ * cases, up to two authored examples, fields with their types, and the first
+ * example as a runnable call with its recipe node. `actionNames` is the adapter's
  * vocabulary, which decides whether the short name is unambiguous.
  */
 export function renderActionDetail(
