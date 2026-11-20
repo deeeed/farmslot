@@ -31,8 +31,11 @@ import {
   type ActionHandler,
   createRecipeRunner,
   createStandardCoreAdapters,
+  readRunTraceEntries,
   type RecipeRecordingOptions,
+  type RecipeRunRequest,
   type RecipeRunResult,
+  resolveRecipeRunSelection,
 } from '@farmslot/recipe-runner';
 import {
   parseRecipeArtifactOwner,
@@ -71,11 +74,14 @@ import {
 } from '../src/harness/conformance.js';
 import {
   activateRecipeRuntimeEnvironment,
+  booleanOption,
   type CallCommandOptions,
   configureHarnessAdapters,
   configureHarnessHost,
   type ConsoleClassifier,
+  contractOptions,
   countRecipeNodes,
+  createHarnessCli,
   createRecordingTargetProvider,
   type DescribedAction,
   describeManifestActions,
@@ -84,6 +90,7 @@ import {
   handleCall,
   handleCallHelp,
   handleRun,
+  harnessAdapters,
   harnessHost,
   listRunnableRecipes,
   newHealState,
@@ -101,6 +108,7 @@ import {
   validateActionInputs,
   validateCommandNodes,
   validateRunRecipeStatic,
+  valueOption,
 } from '../src/harness/index.js';
 import { startRunNetworkObservation } from '../src/harness/network-observation.js';
 import { isRecord, shellQuoteArg } from '../src/harness/parse-args.js';
@@ -4446,6 +4454,260 @@ describe('call', () => {
       /No action matches "zzz" for the web adapter[\s\S]*shop-harness actions --adapter web/u,
     );
   });
+});
+
+describe('named run selection', () => {
+  function smokeRecipe(target: string): string {
+    fs.writeFileSync(
+      path.join(target, 'package.json'),
+      JSON.stringify({ name: 'selection-fixture' }),
+    );
+    const file = path.join(library, 'recipes', 'runner', 'smoke.recipe.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+        title: 'Runner smoke',
+        workflow: {
+          entry: 'package',
+          nodes: {
+            package: {
+              action: 'command',
+              cmd: 'printf selection-smoke',
+              intent: 'Run the headless smoke.',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      }),
+    );
+    return file;
+  }
+
+  function normalCli(selectedEngine = engine) {
+    const host = harnessHost();
+    fs.writeFileSync(
+      path.join(host.packageRoot, 'package.json'),
+      JSON.stringify({ version: '1.0.0' }),
+    );
+    return createHarnessCli({
+      host,
+      adapters: harnessAdapters(),
+      catalog: selectedEngine,
+      slotPoolDir: emptyPoolDir,
+      commands: [
+        {
+          name: 'run',
+          summary: 'Run a recipe.',
+          example: 'shop-harness run runner.smoke',
+          helpText: 'shop-harness run <recipe>',
+          contract: {
+            positionals: [{ label: 'recipe' }],
+            minimumPositionals: 1,
+            options: contractOptions({
+              '--adapter': valueOption(),
+              '--target': valueOption(),
+              '--artifacts-dir': valueOption(),
+              '--heal': valueOption(),
+              '--json': booleanOption(),
+              '--unbound': booleanOption(),
+              '--plan': booleanOption(),
+            }),
+          },
+          run: (argv) => handleRun([...argv], { ...runOptions, engine: selectedEngine }),
+        },
+      ],
+      help: { description: 'Selection fixture', intro: () => [], groups: [], footer: () => [] },
+    });
+  }
+
+  for (const recovered of [false, true]) {
+    test(`normal named CLI retains the SDK selection${recovered ? ' after re-preflight' : ''}`, async (t) => {
+      const target = checkout();
+      const file = smokeRecipe(target);
+      const sdk = await resolveRecipeRunSelection('runner.smoke', {
+        adapter: 'api',
+        cliEntries: [`shop=${library}`],
+      });
+      assert.ok(sdk.selection);
+      const { manifest, actionSources } = await engine.resolveActionManifest(
+        'api',
+        undefined,
+        sdk.librarySources,
+      );
+      const sdkRunner = await engine.createRunner('api', manifest, {
+        actionSources,
+        autoHud: false,
+        trustTaskActions: false,
+      });
+      const sdkArtifacts = tempRoot('recipe-selection-sdk-');
+      const sdkResult = await sdkRunner.run({
+        recipePath: file,
+        artifactsDir: sdkArtifacts,
+        projectRoot: target,
+        adapter: 'api',
+        librarySources: sdk.librarySources,
+        selection: sdk.selection,
+      });
+      assert.equal(sdkResult.status, 'pass');
+      const sdkSummary = JSON.parse(fs.readFileSync(sdkResult.summaryPath, 'utf8'));
+      assert.deepEqual(sdkSummary.recipeSelection, sdk.selection);
+      const sdkResolution = JSON.parse(
+        fs.readFileSync(path.join(sdkArtifacts, 'recipe-resolution.json'), 'utf8'),
+      );
+      assert.equal(sdkResolution.root.ref, 'runner.smoke');
+      if (recovered) {
+        const registry = createAdapterRegistry();
+        registry.register(
+          shopAdapter('api', calls, {
+            run: {
+              runtimeCheck:
+                ({ state }) =>
+                async () => {
+                  state.recovered.push('selection-runtime');
+                  return null;
+                },
+            },
+          }),
+        );
+        configureHarnessAdapters(registry);
+      }
+      const requests: RecipeRunRequest[] = [];
+      const observing: ShopEngine = {
+        ...engine,
+        async createRunner(adapter, manifest, options) {
+          const runner = await engine.createRunner(adapter, manifest, options);
+          const preflight = runner.preflight.bind(runner);
+          t.mock.method(runner, 'preflight', async (request: RecipeRunRequest) => {
+            requests.push(request);
+            return preflight(request);
+          });
+          return runner;
+        },
+      };
+      const artifacts = tempRoot('recipe-selection-cli-');
+      const cli = normalCli(observing);
+      const conformance = await checkRecipeConformance(observing, {
+        project: 'shop',
+        context: {
+          adapter: { value: 'api', source: 'flag', detail: '--adapter' },
+          target: { value: target, source: 'flag', detail: '--target' },
+        },
+        providerRoot: library,
+        configurationPaths: [],
+        librarySources: [{ name: 'shop', root: library }],
+        artifactsDir: tempRoot('recipe-selection-conformance-'),
+        recipes: [{ recipe: 'runner.smoke' }],
+      });
+      assert.equal(conformance.status, 'pass', JSON.stringify(conformance.checks));
+      const conformanceRequests = requests.splice(0);
+      assert.equal(conformanceRequests.length, 1);
+      assert.deepEqual(conformanceRequests[0]?.selection, sdk.selection);
+      assert.equal(conformanceRequests[0]?.recipePath, sdk.selection.path);
+      const planned = await capture(() =>
+        cli.main([
+          'run',
+          'runner.smoke',
+          '--plan',
+          '--adapter',
+          'api',
+          '--target',
+          target,
+          '--unbound',
+          '--artifacts-dir',
+          tempRoot('recipe-selection-plan-'),
+          '--json',
+        ]),
+      );
+      assert.equal(
+        planned.value.exitCode,
+        0,
+        planned.stdout.join('\n') + planned.stderr.join('\n'),
+      );
+      const plannedRequests = requests.splice(0);
+      assert.equal(plannedRequests.length, 1);
+      assert.deepEqual(plannedRequests[0]?.selection, sdk.selection);
+      assert.equal(plannedRequests[0]?.recipePath, sdk.selection.path);
+      const result = await capture(() =>
+        cli.main([
+          'run',
+          'runner.smoke',
+          '--adapter',
+          'api',
+          '--target',
+          target,
+          '--unbound',
+          '--heal',
+          'off',
+          '--artifacts-dir',
+          artifacts,
+          '--json',
+        ]),
+      );
+      assert.equal(result.value.exitCode, 0, result.stdout.join('\n') + result.stderr.join('\n'));
+      const summary = JSON.parse(fs.readFileSync(path.join(artifacts, 'summary.json'), 'utf8'));
+      assert.equal(summary.status, 'pass');
+      assert.deepEqual(summary.recipeSelection, sdkSummary.recipeSelection);
+      const cliResolution = JSON.parse(
+        fs.readFileSync(path.join(artifacts, 'recipe-resolution.json'), 'utf8'),
+      );
+      assert.deepEqual(cliResolution.root, sdkResolution.root);
+      assert.equal(requests.length, recovered ? 2 : 1);
+      for (const request of requests) {
+        assert.deepEqual(request.selection, sdk.selection);
+        assert.equal(request.recipePath, sdk.selection.path);
+      }
+    });
+  }
+
+  for (const nested of [false, true]) {
+    test(`normal CLI keeps ${nested ? 'ad hoc nested' : 'direct library file'} root selection absent`, async () => {
+      const target = checkout();
+      const selected = smokeRecipe(target);
+      const file = nested
+        ? recipeFile(target, {
+            child: {
+              action: 'call',
+              ref: 'runner.smoke',
+              intent: 'Run the nested smoke.',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          })
+        : selected;
+      const artifacts = tempRoot('recipe-selection-direct-');
+      const cli = normalCli();
+      const result = await capture(() =>
+        cli.main([
+          'run',
+          file,
+          '--adapter',
+          'api',
+          '--target',
+          target,
+          '--unbound',
+          '--heal',
+          'off',
+          '--artifacts-dir',
+          artifacts,
+          '--json',
+        ]),
+      );
+      assert.equal(result.value.exitCode, 0, result.stdout.join('\n') + result.stderr.join('\n'));
+      const summary = JSON.parse(fs.readFileSync(path.join(artifacts, 'summary.json'), 'utf8'));
+      assert.equal(summary.status, 'pass');
+      assert.equal(summary.recipeSelection, undefined);
+      const resolution = JSON.parse(
+        fs.readFileSync(path.join(artifacts, 'recipe-resolution.json'), 'utf8'),
+      );
+      assert.match(resolution.root.ref, /^\$root:sha256:/u);
+      const trace = await readRunTraceEntries(path.join(artifacts, 'trace.json'));
+      assert.ok(trace);
+      assert.ok(trace.some((entry) => isRecord(entry) && entry.action === 'command'));
+    });
+  }
 });
 
 describe('recipe prepared execution', () => {
