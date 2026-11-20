@@ -9,7 +9,6 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 ## 0.51.0 - 2026-11-19
 
 - Add a read-only structural inventory export using the resolved recipe dependency closure and shared invocation tree.
-- mm-harness 0.96.37 consumes this runner release and protocol 0.91.0. It uses the inventory export and pins recipe-cli 0.35.27 for named recipe selection and canonical roots.
 
 ## 0.50.0 - 2026-11-19
 
