@@ -875,9 +875,9 @@ export async function buildFamilyObservabilitySnapshotFromRuns(
   runs: Run[],
   allRuns: Run[] = [],
 ): Promise<FamilyObservabilitySnapshot> {
-  let archivePools: SlotPools | undefined;
+  let archivePools: Promise<SlotPools> | undefined;
   const lookupArchiveSlot = async (slotId: string) =>
-    loadSlotVars(slotId, (archivePools ??= readSlotPools()));
+    loadSlotVars(slotId, await (archivePools ??= Promise.resolve().then(readSlotPools)));
   const familyRuns = await Promise.all(
     sortRunsByFreshness(runs).map(async (run) =>
       retainedArtifactRun(await projectArchivedRunnerUsage(run, lookupArchiveSlot)),
