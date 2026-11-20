@@ -212,6 +212,7 @@ test('a tmux Pi receipt quotes gateway LiteLLM rates only through the request en
       role: 'assistant',
       provider: 'litellm',
       model: 'glm',
+      stopReason: 'stop',
       usage: { input: 1000, output: 100, cacheRead: 0, cacheWrite: 0, cost },
     },
   });
@@ -266,7 +267,23 @@ test('a tmux Pi receipt quotes gateway LiteLLM rates only through the request en
     }),
     /cost_usd=0\.0042000000/,
   );
-  // Without a route binding (native workspaces, workers), gateway prices apply as before.
+  for (const stopReason of ['error', 'aborted', undefined]) {
+    const reply = turn('a1', 'r1');
+    const failed = await summarize(
+      [user, request('r1', gateway), { ...reply, message: { ...reply.message, stopReason } }],
+      { liteLlmRoute: route },
+    );
+    assert.match(failed, /total_tokens=1100/);
+    assert.doesNotMatch(failed, /^cost_usd=/m);
+  }
+  const charged = turn('a1', 'u1', { total: 0.0042, totalFromProvider: true });
+  for (const options of [{ liteLlmRoute: route }, { liteLlmPrices: new Map() }]) {
+    const mixed = await summarize([user, charged, turn('a2', 'a1')], options);
+    assert.match(mixed, /total_tokens=2200/);
+    assert.match(mixed, /^provider_reported_cost_usd=0\.0042000000$/m);
+    assert.doesNotMatch(mixed, /^cost_usd=/m);
+  }
+  // Native and local tmux receipts keep their accounting without a route binding.
   assert.match(
     await summarize([user, request('r1', 'sha256:other'), turn('a1', 'r1')], {
       liteLlmPrices: route.prices,

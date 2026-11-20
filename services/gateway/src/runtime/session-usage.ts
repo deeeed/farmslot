@@ -87,7 +87,9 @@ async function piLiteLlmRoute(
     // The endpoint the pricing loader queries, in its own precedence.
     const endpointId = liteLlmEndpointId(resolved.LITELLM_URL || resolved.LITELLM_BASE_URL);
     if (!endpointId) return undefined;
-    const prices = [...(await loadLiteLlmPrices({ environment: resolved }))];
+    const prices = [
+      ...(await loadLiteLlmPrices({ environment: resolved, requireDirectResponse: true })),
+    ];
     return prices.length ? { endpointId, prices } : undefined;
   } catch (error) {
     // Prices are optional evidence: without them the receipt keeps its tokens and its LiteLLM
@@ -176,7 +178,12 @@ export async function extractRunnerSessionUsage({
       });
       if (result.exitCode !== 0)
         throw new Error(result.stderr.trim() || `Usage extraction exited ${result.exitCode}`);
-      return parseSessionUsageOutput(result.stdout, { runner, runnerSessionId, runnerSessionPath });
+      return parseSessionUsageOutput(result.stdout, {
+        runner,
+        runnerSessionId,
+        runnerSessionPath,
+        ...(runner === 'pi' ? { pricingScope: 'remote-tmux-pi' } : {}),
+      });
     }
     const output = await runSessionUsage({
       // repo is unused when forcedPath is set; pass empty string.
@@ -187,17 +194,6 @@ export async function extractRunnerSessionUsage({
       forcedRunner: runner ?? null,
       environment: { ...process.env, ...vars?.machineEnv },
       checklistMarks,
-      ...(await (async () => {
-        // A local static review is priced the same way; other local receipts are unchanged.
-        if (runner !== 'pi' || !launchPricing) return {};
-        const route = await piLiteLlmRoute(() => launchEnvironment(launchPricing), slotId);
-        return {
-          liteLlmPrices: new Map(),
-          ...(route
-            ? { liteLlmRoute: { endpointId: route.endpointId, prices: new Map(route.prices) } }
-            : {}),
-        };
-      })()),
     });
     return parseSessionUsageOutput(output, {
       runner: runner ?? null,
@@ -222,18 +218,33 @@ async function archivedSessionUsage(
   usageWindow?: SessionUsageWindow,
   marks?: ChecklistMark[],
 ): Promise<RunnerSessionUsage> {
+  const remotePi =
+    !usageWindow && run.metrics.runner === 'pi' && (!vars || !isLocal(vars.host, vars.machine));
+  const slotId = run.slotId ?? run.id;
+  const route =
+    remotePi && vars
+      ? await piLiteLlmRoute(() => usageLiteLlmEnvironment(vars, vars.machine), slotId)
+      : undefined;
   return parseSessionUsageOutput(
     await runSessionUsage({
       repo: '',
-      slotId: run.slotId ?? run.id,
+      slotId,
       action: 'total',
       forcedPath: archived,
       forcedRunner: run.metrics.runner,
       environment: { ...process.env, ...vars?.machineEnv },
       usageWindow,
       checklistMarks: marks,
+      ...(remotePi ? { liteLlmPrices: new Map() } : {}),
+      ...(route
+        ? { liteLlmRoute: { endpointId: route.endpointId, prices: new Map(route.prices) } }
+        : {}),
     }),
-    { runner: run.metrics.runner, ...session },
+    {
+      runner: run.metrics.runner,
+      ...session,
+      ...(remotePi ? { pricingScope: 'remote-tmux-pi' } : {}),
+    },
   );
 }
 
@@ -445,6 +456,9 @@ export async function extractRunWorkerSessionUsage(
       : null;
   };
   const cost = total('costUsd');
+  const reportedCharges = usages.flatMap((usage) =>
+    usage.providerReportedCostUsd === undefined ? [] : [usage.providerReportedCostUsd],
+  );
   const toolUsage = totalToolUsage(usages);
   return {
     ...usages[0],
@@ -459,6 +473,9 @@ export async function extractRunWorkerSessionUsage(
     cacheRead: total('cacheRead'),
     totalTokens: total('totalTokens'),
     costUsd: cost == null ? null : Number(cost.toFixed(10)),
+    providerReportedCostUsd: reportedCharges.length
+      ? Number(reportedCharges.reduce((sum, charge) => sum + charge, 0).toFixed(10))
+      : undefined,
     costStatus: cost == null ? 'unpriced' : 'estimated',
     costReason:
       cost == null ? usages.find((usage) => usage.costUsd == null)?.costReason : undefined,

@@ -1,4 +1,4 @@
-// One LiteLLM endpoint identity for a static reviewer's launch receipt and the gateway's pricing.
+// Shared LiteLLM endpoint identity for Pi request entries and gateway prices.
 // The identity is a digest: no part of the URL, including credentials embedded in its user info,
 // host, path, query or fragment, is ever persisted.
 const { createHash } = require('node:crypto');

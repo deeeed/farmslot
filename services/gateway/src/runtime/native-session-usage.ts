@@ -9,11 +9,7 @@ import {
   type Run,
   type RunnerSessionUsage,
 } from '@farmslot/protocol';
-import {
-  loadLiteLlmPrices,
-  type PiModelCostMetadata,
-  type SessionUsageWindow,
-} from '@farmslot/slot-config';
+import { loadLiteLlmPrices, type SessionUsageWindow } from '@farmslot/slot-config';
 
 import {
   loadMachinePool,
@@ -152,19 +148,6 @@ export async function usageLiteLlmEnvironment(
   return environment;
 }
 
-/** The LiteLLM prices a native Pi receipt is quoted from. */
-async function usageLiteLlmPrices(
-  vars: NativeSessionUsageVars,
-  machine: string,
-  commandEnvOptions?: ProjectCommandEnvOptions,
-): Promise<Array<[string, PiModelCostMetadata]>> {
-  return [
-    ...(await loadLiteLlmPrices({
-      environment: await usageLiteLlmEnvironment(vars, machine, commandEnvOptions),
-    })),
-  ];
-}
-
 export async function extractNativeAgentSessionUsage(
   input: NativeAgentUsageInput,
 ): Promise<RunnerSessionUsage> {
@@ -207,7 +190,11 @@ export async function resolveNativeAgentSessionUsage(
       nativeSession.executionNodeId === 'local'
         ? os.hostname().split('.')[0]
         : nativeSession.executionNodeId;
-    request.liteLlmPrices = await usageLiteLlmPrices(vars, machine, input.commandEnvOptions);
+    request.liteLlmPrices = [
+      ...(await loadLiteLlmPrices({
+        environment: await usageLiteLlmEnvironment(vars, machine, input.commandEnvOptions),
+      })),
+    ];
     const local = nativeSession.executionNodeId === 'local';
     if (local) request.parentChecklistMarks = input.parentChecklistMarks;
     const argv = nativeSessionUsageArgv(

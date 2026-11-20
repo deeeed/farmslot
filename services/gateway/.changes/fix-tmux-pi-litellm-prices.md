@@ -1,1 +1,1 @@
-- Price tmux Pi LiteLLM usage from the gateway's price list only for turns whose Pi request entry recorded a successful, direct answer from that endpoint. Other LiteLLM turns keep their tokens and are reported unpriced; provider-reported charges are kept.
+- Price remote tmux Pi LiteLLM receipts from gateway rates only when a completed turn matches a direct request to the pricing endpoint. Keep tokens and provider-reported charges. Older transcripts and replies without verified route evidence remain unpriced, with no lookup on the remote node.

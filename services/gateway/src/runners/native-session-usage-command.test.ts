@@ -714,6 +714,7 @@ test('the remote program prices a tmux Pi turn only through its endpoint-bound r
             role: 'assistant',
             provider: 'litellm',
             model: 'glm',
+            stopReason: 'stop',
             usage: { input: 1000, output: 100, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
           },
         },

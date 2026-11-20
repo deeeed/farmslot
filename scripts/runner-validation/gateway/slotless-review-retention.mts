@@ -813,6 +813,10 @@ async function proveRemoteRequestPricing(
     assert.equal(entry.message.provider, 'litellm', 'Pi used the LiteLLM provider');
     assert.equal(entry.message.model, id);
     if (!entry.message.usage?.totalTokens) continue;
+    assert(
+      ['stop', 'length', 'toolUse'].includes(entry.message.stopReason),
+      'Measured replies completed successfully',
+    );
     const request = requests.get(entry.parentId);
     assert.equal(request?.provider, entry.message.provider, 'request provider matches reply');
     assert.equal(request?.model, entry.message.model, 'request model matches reply');

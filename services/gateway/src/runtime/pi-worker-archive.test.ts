@@ -97,3 +97,75 @@ test('Pi reads preserve stored totals or a verified archive after the native fil
   assert.equal(offline.metrics.sessionUsageError, 'node offline');
   assert.equal(run.metrics.sessionTotalTokens, undefined, 'projection remains read-only');
 });
+
+test('an offline tmux Pi archive cannot fall back to ambient prices', async (t) => {
+  const run = makeRun({
+    id: 'offline-pi',
+    flowType: 'dev',
+    slotId: 'test-slot',
+    transport: 'tmux',
+  });
+  const cacheDir = path.join(root, 'prices');
+  const endpoint = 'https://pricing.example';
+  const apiKey = 'fixture-key';
+  t.mock.method(piSessionUsageProvider, 'recoverSessions', async () => {
+    throw new Error('node offline');
+  });
+  const priorEnv = process.env;
+  process.env = {
+    ...priorEnv,
+    LITELLM_URL: endpoint,
+    LITELLM_API_KEY: apiKey,
+    FARMSLOT_LITELLM_PRICING_CACHE_DIR: cacheDir,
+  };
+  t.after(() => {
+    process.env = priorEnv;
+  });
+  await mkdir(cacheDir, { recursive: true });
+  const cacheKey = createHash('sha256').update(`${endpoint}\n${apiKey}`).digest('hex');
+  await writeFile(
+    path.join(cacheDir, `${cacheKey}.json`),
+    JSON.stringify({
+      fetchedAt: Date.now(),
+      data: [{ model_name: 'glm', model_info: { input_cost_per_token: 0.00001 } }],
+    }),
+  );
+  const archiveDir = runnerSessionArchiveContextDir(run.id, 'dev');
+  await mkdir(archiveDir, { recursive: true });
+  const raw =
+    JSON.stringify({
+      type: 'message',
+      message: {
+        role: 'assistant',
+        provider: 'litellm',
+        model: 'glm',
+        stopReason: 'stop',
+        usage: { input: 1000, output: 0, cost: { total: 0 } },
+      },
+    }) + '\n';
+  const originalPath = '/remote/pi-session.jsonl';
+  await writeFile(path.join(archiveDir, 'transcript.jsonl'), raw);
+  const ref: RunnerSessionArchiveRef = {
+    status: 'captured',
+    kind: 'jsonl',
+    runner: 'pi',
+    originalPath,
+    sha256: createHash('sha256').update(raw).digest('hex'),
+  };
+  run.metrics = { ...run.metrics, runner: 'pi', runnerSessionArchive: ref };
+  run.agentContexts = [
+    {
+      id: 'dev',
+      role: 'dev',
+      label: 'Dev',
+      status: 'complete',
+      slotId: run.slotId,
+      runId: run.id,
+      runner: 'pi',
+      runnerSessionArchive: ref,
+    },
+  ];
+  const projected = await projectArchivedRunnerUsage(run);
+  assert.equal(projected.metrics.sessionTotalTokens, 1000);
+  assert.equal(projected.metrics.costEstimate, undefined);
+});

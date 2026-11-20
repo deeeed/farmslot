@@ -748,6 +748,10 @@ export interface RunnerSessionUsage {
   reasoningOutputTokens?: number | null;
   totalTokens?: number | null;
   costUsd?: number | null;
+  /** Provider-reported subtotal, including when the complete cost is unknown. */
+  providerReportedCostUsd?: number;
+  /** Pricing rule used by the gateway for a measured remote tmux Pi transcript. */
+  pricingScope?: 'remote-tmux-pi';
   measuredAt: string;
   source: 'runner-transcript' | 'provider-response' | 'unavailable';
   /** Transcript total at measurement time, or usage first observed within the owning run. */

@@ -145,7 +145,10 @@ export function deadlinePiFetch(fetchImpl, timeoutMs = 5 * 60_000, onExhausted, 
         },
       });
       const bounded = new Response(body, response);
-      Object.defineProperty(bounded, 'url', { value: response.url });
+      Object.defineProperties(bounded, {
+        url: { value: response.url },
+        redirected: { value: response.redirected },
+      });
       return bounded;
     } catch (error) {
       clearTimeout(timer);

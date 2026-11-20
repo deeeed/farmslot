@@ -80,6 +80,7 @@ interface SessionTotals {
   total_tokens: number;
   cost_usd: number | null;
   cost_reason?: string;
+  provider_reported_cost_usd?: number;
 }
 
 function emptyTotals(): SessionTotals {
@@ -612,6 +613,8 @@ interface LiteLlmPricingOptions {
   cacheDir?: string;
   now?: () => number;
   fetchImpl?: typeof fetch;
+  /** Require a direct pricing response and isolate its cache from legacy lookups. */
+  requireDirectResponse?: boolean;
 }
 
 /** A failed refresh leaves work explicitly unpriced, rather than silently using expired prices. */
@@ -630,7 +633,10 @@ export async function loadLiteLlmPrices(
     environment.FARMSLOT_LITELLM_PRICING_CACHE_DIR ??
     path.join(os.homedir(), '.cache', 'farmslot', 'litellm-prices');
   const identity = createHash('sha256').update(`${baseUrl}\n${apiKey}`).digest('hex');
-  const file = path.join(cacheDir, `${identity}.json`);
+  const file = path.join(
+    cacheDir,
+    `${identity}${options.requireDirectResponse ? '-direct' : ''}.json`,
+  );
   const now = (options.now ?? Date.now)();
   try {
     const cached: unknown = JSON.parse(await readFile(file, 'utf8'));
@@ -651,8 +657,13 @@ export async function loadLiteLlmPrices(
     const response = await (options.fetchImpl ?? fetch)(url, {
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(5000),
+      ...(options.requireDirectResponse ? { redirect: 'error' } : {}),
     });
-    if (!response.ok) return new Map();
+    if (
+      !response.ok ||
+      (options.requireDirectResponse && (response.redirected || response.url !== new URL(url).href))
+    )
+      return new Map();
     payload = await response.json();
   } catch {
     // Network/JSON failures cannot justify a charge. Callers retain tokens with an unpriced reason.
@@ -809,6 +820,7 @@ export interface PiAssistantUsage {
   totalTokens: number;
   costUsd: number | null;
   costReason?: string;
+  providerReportedCostUsd?: number;
   model: string | null;
 }
 
@@ -898,6 +910,7 @@ export function readPiAssistantUsage(
       : {}),
     totalTokens: inputTokens + outputTokens + cacheCreation + cacheRead,
     costUsd,
+    ...(providerCharge && costUsd !== null ? { providerReportedCostUsd: costUsd } : {}),
     model,
   };
 }
@@ -915,6 +928,7 @@ function piRoutePrices(
   const request = typeof record.parentId === 'string' ? routes.get(record.parentId) : undefined;
   return request?.endpoint === route.endpointId &&
     object(message) &&
+    ['stop', 'length', 'toolUse'].includes(String(message.stopReason)) &&
     message.provider === request.provider &&
     message.model === request.model
     ? route.prices
@@ -979,6 +993,13 @@ async function summarizePi(
     totals.cache_read += usage.cacheRead;
     totals.total_tokens += usage.totalTokens;
     if (usage.model) totals.model = usage.model;
+    if (
+      !window &&
+      (liteLlmRoute || liteLlmPrices?.size === 0) &&
+      usage.providerReportedCostUsd !== undefined
+    )
+      totals.provider_reported_cost_usd =
+        (totals.provider_reported_cost_usd ?? 0) + usage.providerReportedCostUsd;
     if (usage.costUsd === null) {
       completeCost = false;
       totals.cost_reason = usage.costReason;
@@ -1169,6 +1190,8 @@ function formatTotals(totals: SessionTotals): string[] {
   if (totals.cost_usd !== null) {
     lines.push(`cost_usd=${totals.cost_usd.toFixed(10)}`);
   }
+  if (totals.provider_reported_cost_usd !== undefined)
+    lines.push(`provider_reported_cost_usd=${totals.provider_reported_cost_usd.toFixed(10)}`);
   if (totals.cost_reason) lines.push(`cost_reason=${totals.cost_reason}`);
   return lines;
 }
@@ -1639,7 +1662,7 @@ export async function runSessionUsage(params: {
   /** Credential-free prices resolved through the owning worker's environment. */
   liteLlmPrices?: Map<string, PiModelCostMetadata>;
   /**
-   * Endpoint-bound gateway prices for a static tmux review's Pi receipt. When set, `liteLlmPrices`
+   * Endpoint-bound gateway prices for a remote tmux Pi receipt. When set, `liteLlmPrices`
    * and the environment's LiteLLM lookup are not used for that receipt.
    */
   liteLlmRoute?: LiteLlmRoutePrices;

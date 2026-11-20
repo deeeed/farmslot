@@ -1,0 +1,1 @@
+- Preserve the provider-reported subtotal and the pricing scope on remote tmux Pi usage receipts.

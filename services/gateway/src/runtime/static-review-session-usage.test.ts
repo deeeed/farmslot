@@ -312,7 +312,7 @@ for (const gateway of ['priced', 'no-prices'] as const)
     await writeFile(
       path.join(
         root,
-        `${createHash('sha256').update(`${endpoint}\n${apiKey}`).digest('hex')}.json`,
+        `${createHash('sha256').update(`${endpoint}\n${apiKey}`).digest('hex')}-direct.json`,
       ),
       JSON.stringify({
         fetchedAt: Date.now(),
@@ -391,3 +391,41 @@ for (const gateway of ['priced', 'no-prices'] as const)
     assert.equal(metrics.sessionTotalTokens, 400);
     assert.equal(metrics.costEstimate, unpriced ? undefined : 0.002);
   });
+
+test('unavailable native Pi usage keeps its earlier cost estimate', async () => {
+  const { makeRun } = await import('../run-completion/test-fixtures.js');
+  const { workspaceUsageMetrics } = await import('./session-usage-result.js');
+  const run = makeRun({ flowType: 'review-pr', transport: 'native' });
+  run.metrics.costEstimate = 0.5;
+  run.reviewWorkspace = {
+    workspaceId: 'native-review',
+    machine: 'local',
+    executionNodeId: 'local',
+    checkoutPath: '/review/source',
+    taskPath: '/review/task',
+    artifactPath: '/review/task/artifacts',
+  };
+  run.agentContexts = [
+    {
+      id: 'review',
+      role: 'review',
+      label: 'Review',
+      status: 'complete',
+      runId: run.id,
+      slotId: null,
+      runner: 'pi',
+      runnerSessionId: 'native-review',
+    },
+  ];
+  run.sessionUsage = [
+    {
+      runner: 'pi',
+      runnerSessionId: 'native-review',
+      measuredAt: '2026-11-20T00:00:00.000Z',
+      source: 'unavailable',
+      costStatus: 'unpriced',
+      error: 'Native session is unavailable',
+    },
+  ];
+  assert.equal(workspaceUsageMetrics(run).costEstimate, 0.5);
+});

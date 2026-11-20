@@ -73,11 +73,11 @@ test('a tmux Pi receipt carries gateway LiteLLM prices bound to their endpoint',
   const cacheDir = mkdtempSync(path.join(tmpdir(), 'litellm-prices-'));
   t.after(() => rmSync(cacheDir, { recursive: true, force: true }));
   const apiKey = 'test-key';
-  const cachePrices = (baseUrl: string, model: string) =>
+  const cachePrices = (baseUrl: string, model: string, suffix = '-direct') =>
     writeFileSync(
       path.join(
         cacheDir,
-        `${createHash('sha256').update(`${baseUrl}\n${apiKey}`).digest('hex')}.json`,
+        `${createHash('sha256').update(`${baseUrl}\n${apiKey}`).digest('hex')}${suffix}.json`,
       ),
       JSON.stringify({
         fetchedAt: Date.now(),
@@ -93,6 +93,7 @@ test('a tmux Pi receipt carries gateway LiteLLM prices bound to their endpoint',
   const launchUrl = 'https://litellm-launch.example';
   cachePrices(poolUrl, 'pool-model');
   cachePrices(launchUrl, 'launch-model');
+  cachePrices(poolUrl, 'launch-model', '');
   const vars = makeVars({
     host: 'remote.example',
     machine: 'remote-test',
@@ -198,7 +199,7 @@ test('a tmux Pi receipt carries gateway LiteLLM prices bound to their endpoint',
     runnerSessionPath: '/worker/codex.jsonl',
   });
   assert.equal(String(calls[0][1]).includes('"liteLlmPrices"'), false);
-  // A local static review runs the real summarizer: only the endpoint-bound turn is quoted.
+  // Local static reviews keep the existing environment lookup, including older transcripts.
   const transcript = path.join(cacheDir, 'pi-local.jsonl');
   const local = async (endpoint?: string) => {
     writeFileSync(
@@ -245,14 +246,11 @@ test('a tmux Pi receipt carries gateway LiteLLM prices bound to their endpoint',
       launchPricing,
     });
   };
-  const bound = await local(liteLlmEndpointId(`${launchUrl}/v1`));
-  assert.equal(bound.totalTokens, 1100);
-  assert.equal(bound.costUsd, 0.006);
-  for (const endpoint of [liteLlmEndpointId(poolUrl), undefined]) {
-    const unpriced = await local(endpoint);
-    assert.equal(unpriced.totalTokens, 1100);
-    assert.equal(unpriced.costUsd, null);
-    assert.equal(unpriced.costStatus, 'unpriced');
+  for (const endpoint of [liteLlmEndpointId(`${launchUrl}/v1`), undefined]) {
+    const legacy = await local(endpoint);
+    assert.equal(legacy.totalTokens, 1100);
+    assert.equal(legacy.costUsd, 0.006);
+    assert.equal(legacy.pricingScope, undefined);
   }
 });
 
