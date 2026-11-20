@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.51.0 - 2026-11-19
+
+- Add a read-only structural inventory export using the resolved recipe dependency closure and shared invocation tree.
+
 ## 0.50.0 - 2026-11-19
 
 - Project recorded inclusive/self timing and explicit claim/unassigned rollups from the prepared invocation tree on existing flow updates.

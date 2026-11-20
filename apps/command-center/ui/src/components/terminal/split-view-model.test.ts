@@ -11,6 +11,7 @@ import type {
 
 import {
   encodeWorkerRouteParam,
+  encodeWorkerTerminalRef,
   filterSlotsByGlobalFilters,
   isActiveRunTerminalSlot,
   isFarmslotWatchEntry,
@@ -20,9 +21,12 @@ import {
   parseWatchItems,
   parseWorkerRefs,
   parseWorkerRouteParam,
+  reconcileTerminalWatchlist,
   selectActiveRunSlotIds,
   selectPinnedSlotIds,
+  selectWatchlistTerminalRefs,
   selectWorkspaceRuns,
+  shouldRenderWorkerTerminal,
   slotHasActiveRunTerminal,
   tmuxRefTitle,
   watchEntryDescription,
@@ -79,6 +83,84 @@ function makeRun(
 }
 
 const ref = { nodeId: 'node-a', session: 'work', target: '%3', window: '2', pane: '1' };
+
+test('worker terminal keeps its mount during a stale refresh on the same connection', () => {
+  const stale = {
+    ready: false,
+    status: 'stale',
+    targetPresent: true,
+  } as const;
+
+  assert.equal(shouldRenderWorkerTerminal({ ...stale, mountedOnCurrentConnection: true }), true);
+  assert.equal(shouldRenderWorkerTerminal({ ...stale, mountedOnCurrentConnection: false }), false);
+
+  const ready = {
+    ready: true,
+    status: 'ready',
+    mountedOnCurrentConnection: true,
+  } as const;
+  assert.equal(shouldRenderWorkerTerminal({ ...ready, targetPresent: true }), true);
+  assert.equal(shouldRenderWorkerTerminal({ ...ready, targetPresent: false }), false);
+  assert.equal(
+    shouldRenderWorkerTerminal({
+      ...ready,
+      targetPresent: true,
+      mountedOnCurrentConnection: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRenderWorkerTerminal({
+      ...stale,
+      targetPresent: false,
+      mountedOnCurrentConnection: true,
+    }),
+    false,
+  );
+
+  for (const status of ['loading', 'error', 'unsupported'] as const) {
+    assert.equal(
+      shouldRenderWorkerTerminal({ ...stale, status, mountedOnCurrentConnection: true }),
+      false,
+    );
+  }
+});
+
+test('a linked alias cannot replace a watched session that shares its pane', () => {
+  const worker: TmuxWorkerSummary = {
+    ref,
+    status: { label: 'running', source: 'tmux', confidence: 'medium' },
+  };
+  const alias = { ...worker, ref: { ...ref, session: 'alias' } };
+  const item = { id: 'legacy-node-a:%3', ref, nodeId: ref.nodeId, target: ref.target, pinnedAt: 1 };
+  assert.equal(reconcileTerminalWatchlist([item], [worker, alias])[0]?.worker, worker);
+  const [missing] = reconcileTerminalWatchlist([item], [alias]);
+  assert.equal(missing?.worker, undefined);
+  assert.equal(missing?.ref.session, 'work');
+});
+
+test('the Watchlist opens one current session per pane before applying its cap', () => {
+  const alias = { ...ref, session: 'linked' };
+  const other = ['%4', '%5', '%6', '%7'].map((target) => ({ ...ref, target }));
+  const pins = [ref, alias, ...other].map((ref) => ({
+    id: encodeWorkerTerminalRef(ref),
+    ref,
+    nodeId: ref.nodeId,
+    target: ref.target,
+    pinnedAt: 1,
+  }));
+  const entries = reconcileTerminalWatchlist(pins, []);
+  assert.deepEqual(
+    selectWatchlistTerminalRefs(entries, (candidate) => candidate !== ref),
+    [alias, ...other.slice(0, 3)],
+  );
+});
+
+test('a worker window rename keeps the same terminal target', () => {
+  const target = encodeWorkerTerminalRef({ ...ref, windowName: 'old name' });
+  assert.equal(encodeWorkerTerminalRef({ ...ref, windowName: 'new name' }), target);
+  assert.notEqual(encodeWorkerTerminalRef({ ...ref, target: '%4' }), target);
+});
 
 test('split view model parses persisted worker refs and watch items defensively', () => {
   assert.deepEqual(parseWorkerRefs(null), []);

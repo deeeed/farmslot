@@ -9,7 +9,11 @@ import type { NodeLinkLease } from '@farmslot/protocol';
 import { ensureNodePtySpawnHelpersExecutable } from '@farmslot/protocol/node/node-pty-helper';
 
 import { SSH_CONNECT_OPTIONS, SSH_INTERACTIVE_CONNECT_OPTIONS } from '../core/ssh-options.js';
-import { shellQuote, tmuxAttachCommandForTarget } from '../core/tmux.js';
+import {
+  shellQuote,
+  tmuxAttachCommandForTarget,
+  tmuxVerifiedWorkerAttachArgs,
+} from '../core/tmux.js';
 import { type LinkedPty, openLinkedPty } from '../fleet/node-link-terminal.js';
 
 const execFileAsync = promisify(execFile);
@@ -141,11 +145,36 @@ export function ptyExitHandlerCountForTests(): number {
 }
 
 export interface PtyAttachOptions {
+  /** A detached worker client no longer proves which pane it is displaying. */
+  workerPaneId?: string;
   assertCurrent?: () => void | Promise<void>;
   lease?: NodeLinkLease;
   nodeId?: string; // configured node-link pilot, including the gateway machine
   sshTarget?: string; // e.g. "deeeed@mini.local" — if set, PTY goes through SSH
   selectTarget?: string; // optional window/pane target to activate after attaching to the session
+}
+
+function reusablePty(
+  key: string,
+  session: string,
+  opts?: PtyAttachOptions,
+): PtySession | undefined {
+  const ps = ptySessions.get(key);
+  const lingering = pendingDetaches.get(key);
+  if (lingering && opts?.workerPaneId) {
+    clearTimeout(lingering);
+    pendingDetaches.delete(key);
+    detachPty(key);
+    return undefined;
+  }
+  if (ps && opts?.workerPaneId && ps.session !== session)
+    throw new Error('PTY is attached to a different worker session');
+  if (lingering) {
+    clearTimeout(lingering);
+    pendingDetaches.delete(key);
+    log('linger-cancel', key, 'reusing live pty');
+  }
+  return ps;
 }
 
 export async function subscribePty(
@@ -156,19 +185,20 @@ export async function subscribePty(
   rows?: number,
   opts?: PtyAttachOptions,
 ): Promise<{ joined: boolean }> {
-  let ps = ptySessions.get(key);
+  let ps = reusablePty(key, session, opts);
   // tmux does not redraw for a viewer joining a running PTY; the caller asks for one (redrawPty).
   const joined = ps !== undefined;
-  const lingering = pendingDetaches.get(key);
-  if (lingering) {
-    clearTimeout(lingering);
-    pendingDetaches.delete(key);
-    log('linger-cancel', key, 'reusing live pty');
-  }
   if (!ps) {
     if (opts?.nodeId) {
-      await attachLinkedPty(key, session, handler, cols ?? 120, rows ?? 40, opts);
-      return { joined };
+      const linkedJoined = await attachLinkedPty(
+        key,
+        session,
+        handler,
+        cols ?? 120,
+        rows ?? 40,
+        opts,
+      );
+      return { joined: opts.workerPaneId ? linkedJoined : joined };
     }
     ps = attachPty(key, session, cols, rows, opts);
   }
@@ -250,8 +280,9 @@ export async function redrawPty(key: string): Promise<void> {
   if (ptySessions.get(key) === ps) await ps.ptyProcess.resize(ps.cols, ps.rows);
 }
 
-export function hasPty(key: string): boolean {
-  return ptySessions.has(key);
+export function hasPty(key: string, handler?: PtyDataHandler): boolean {
+  const session = ptySessions.get(key);
+  return session !== undefined && (handler === undefined || session.handlers.has(handler));
 }
 
 // Recreate a tmux session for a slot and return true if successful.
@@ -310,6 +341,12 @@ function attachPty(
   const selectTarget =
     opts?.selectTarget && opts.selectTarget !== session ? opts.selectTarget : undefined;
   const attachSession = session;
+  const attachCommand = (binary?: string) =>
+    opts?.workerPaneId
+      ? [binary ?? 'tmux', ...tmuxVerifiedWorkerAttachArgs(selectTarget ?? '', opts.workerPaneId)]
+          .map(shellQuote)
+          .join(' ')
+      : tmuxAttachCommandForTarget(attachSession, selectTarget, binary);
 
   // Local: spawn tmux attach directly
   // Remote: spawn ssh -t <host> tmux attach — full PTY through SSH tunnel
@@ -317,7 +354,7 @@ function attachPty(
   let args: string[];
   if (sshTarget) {
     cmd = 'ssh';
-    const remoteScript = `exec ${tmuxAttachCommandForTarget(attachSession, selectTarget)}`;
+    const remoteScript = `exec ${attachCommand()}`;
     args = [
       '-t',
       ...SSH_INTERACTIVE_CONNECT_OPTIONS,
@@ -330,9 +367,9 @@ function attachPty(
       `ptyId=${id} session=${attachSession} select=${selectTarget ?? '-'} cols=${c} rows=${r} ssh=${sshTarget}`,
     );
   } else {
-    if (selectTarget) {
+    if (selectTarget || opts?.workerPaneId) {
       cmd = 'zsh';
-      args = ['-lc', `exec ${tmuxAttachCommandForTarget(attachSession, selectTarget, tmuxPath)}`];
+      args = ['-lc', `exec ${attachCommand(tmuxPath)}`];
     } else {
       cmd = tmuxPath;
       args = ['attach-session', '-t', attachSession];
@@ -425,18 +462,31 @@ async function attachLinkedPty(
   cols: number,
   rows: number,
   opts: PtyAttachOptions,
-): Promise<void> {
+): Promise<boolean> {
   const assertCurrent = opts.assertCurrent;
   if (!assertCurrent)
     throw new Error('Node terminal attachment requires its domain authority fence');
   await assertCurrent();
-  const previous = pendingLinkedPtys.get(key);
-  if (previous) {
-    await previous;
-    const current = ptySessions.get(key);
-    if (!current) throw new Error('Node terminal attachment closed before subscription');
-    current.handlers.add(handler);
-    return;
+  if (opts.workerPaneId) {
+    // Recheck the shared attach after each await. Only one waiter may start
+    // a replacement if the previous worker PTY is already detached.
+    for (let pending = pendingLinkedPtys.get(key); pending; pending = pendingLinkedPtys.get(key)) {
+      await pending;
+    }
+    const current = reusablePty(key, session, opts);
+    if (current) {
+      current.handlers.add(handler);
+      return true;
+    }
+  } else {
+    const previous = pendingLinkedPtys.get(key);
+    if (previous) {
+      await previous;
+      const current = ptySessions.get(key);
+      if (!current) throw new Error('Node terminal attachment closed before subscription');
+      current.handlers.add(handler);
+      return true;
+    }
   }
   const handlers = new Set([handler]);
   const attach = async () => {
@@ -446,6 +496,7 @@ async function attachLinkedPty(
       resourceId: key,
       session,
       selectTarget: opts.selectTarget,
+      ...(opts.workerPaneId ? { workerPaneId: opts.workerPaneId } : {}),
       cols,
       rows,
       assertCurrent,
@@ -479,4 +530,5 @@ async function attachLinkedPty(
   } finally {
     if (pendingLinkedPtys.get(key) === pending) pendingLinkedPtys.delete(key);
   }
+  return false;
 }

@@ -71,6 +71,11 @@ export interface TerminalWorkerSubscribeParams {
   rows?: number;
 }
 
+/** Current gateways identify the adopted worker subscription on this connection. */
+export type TerminalWorkerSubscribeResult =
+  | { subscribed: true; workerSubscriptionSeq?: number }
+  | { subscribed: false };
+
 export interface TerminalWorkerUnsubscribeParams {
   worker: TmuxWorkerRef;
 }

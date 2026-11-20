@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.25.17 - 2026-11-19
+
+- Pin the structural inventory SDK cohort while retaining public protocol 0.91.0.
+
 ## 0.25.16 - 2026-11-19
 
 - Claude reviews accept the CLI effort levels low, medium, high, xhigh, and max. A fresh review defaults to medium. A worker launch keeps an omitted Claude effort unset.

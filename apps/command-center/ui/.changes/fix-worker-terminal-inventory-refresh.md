@@ -1,0 +1,1 @@
+- Keep worker terminals, Sessions layout and End session focus steady during inventory refreshes.

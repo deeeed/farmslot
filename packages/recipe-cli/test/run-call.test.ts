@@ -103,7 +103,7 @@ import {
   validateRunRecipeStatic,
 } from '../src/harness/index.js';
 import { startRunNetworkObservation } from '../src/harness/network-observation.js';
-import { isRecord } from '../src/harness/parse-args.js';
+import { isRecord, shellQuoteArg } from '../src/harness/parse-args.js';
 import {
   emitHealViolation,
   executeWithHealBounds,
@@ -1204,8 +1204,8 @@ describe('action catalog', () => {
     assert.equal(
       actionLibraryContextArgs(engine, [
         { name: 'shop', root: library },
-        { name: 'team', root: '/libs/team one' },
-        { root: '/libs/anon' },
+        { name: 'team', root: '/libs/team one', origin: 'flag' },
+        { root: '/libs/anon', origin: 'flag' },
       ]),
       " --library 'team=/libs/team one' --library /libs/anon",
     );
@@ -4888,3 +4888,229 @@ for (const command of ['call', 'run'] as const) {
     );
   });
 }
+
+describe('catalog retry operator boundary', () => {
+  function echoCache() {
+    const root = tempRoot('catalog-retry-cache-');
+    const manifestPath = path.join(root, 'echo.action-manifest.json');
+    fs.writeFileSync(
+      manifestPath,
+      JSON.stringify({
+        $schema: CORE_ACTIONS.$schema,
+        actions: {
+          'echo.ping': {
+            description: 'Benign catalog fixture',
+            schema: { type: 'object', properties: {}, additionalProperties: false },
+            examples: [{ action: 'echo.ping', intent: 'Read fixture declaration', next: 'done' }],
+          },
+        },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(root, 'recipe-library.json'),
+      JSON.stringify({ adapters: { echo: { module: './echo.mjs', export: 'adapter' } } }),
+    );
+    fs.writeFileSync(
+      path.join(root, 'echo.mjs'),
+      `import fs from 'node:fs';
+if (process.env.PLUGIN_IMPORT_LOG) fs.appendFileSync(process.env.PLUGIN_IMPORT_LOG, 'echo\\n');
+export const adapter = { id: 'echo', sdkVersion: 1, headless: true,
+ resolveSlotPorts() {}, runtimeStatus: async () => ({decision:'ready',reasons:[]}),
+ devServer: {label:'none',describe:()=> 'none',stop:()=>({kind:'none'})}, logSources:()=>[], appLogSource:()=>null,
+ hints:{launch:'launch',relaunch:'launch',runtimeProbeRecovery:()=> 'doctor'},
+ actions:{manifestPath:()=>${JSON.stringify(manifestPath)},semantic:[],cdpTarget:{transport:'none',probePath:'/'},adapters:async()=>[]},
+ harness:{install:{entry:'i',fallback:'i'},cleanup:{entry:'c',fallback:'c'},verify:()=>({error:'none'})},
+ runtimeContext:{forbiddenFields:[]}, launch:async()=>0 };
+`,
+    );
+    return root;
+  }
+
+  // A minimal matrix host uses the same public operator-library loader as the
+  // product host. Each followed hint gets a fresh process and module cache.
+  function retryHost() {
+    const root = tempRoot('catalog-retry-host-');
+    const bin = path.join(root, 'bin');
+    fs.mkdirSync(bin);
+    const marker = path.join(root, 'imports.log');
+    const module = path.join(root, 'host.mjs');
+    fs.writeFileSync(
+      module,
+      `import fs from 'node:fs';
+import {createAdapterRegistry} from ${JSON.stringify(import.meta.resolve('@farmslot/adapter-sdk'))};
+import {configureHarnessAdapters,declaredAdapters,ensureAdapterLoaded,harnessAdapters,optionValues} from ${JSON.stringify(new URL('../src/harness/index.ts', import.meta.url).href)};
+import {resolveActionCapabilityMatrix} from ${JSON.stringify(new URL('../src/harness/catalog.ts', import.meta.url).href)};
+const args=process.argv.slice(2);
+if(args[0]!=='actions'||!args.includes('--matrix'))throw new Error('Retry must stay read-only matrix discovery');
+configureHarnessAdapters(createAdapterRegistry());
+const options={libraries:optionValues(args,'--library'),env:process.env,configured:JSON.parse(process.env.CATALOG_RETRY_CONFIGURED??'[]')};
+for(const {id}of await declaredAdapters(options))await ensureAdapterLoaded(id,options);
+const catalog={bundledLibrary:{name:'fixture',root:${JSON.stringify(root)},actionNamespace:'fixture'},
+ resolveActionManifest:async(id)=>({manifest:JSON.parse(fs.readFileSync(harnessAdapters().get(id).actions.manifestPath(),'utf8')),actionSources:new Map()}),
+ actionCapabilities:()=>[]};
+const actions=await resolveActionCapabilityMatrix(catalog);
+console.log(JSON.stringify({adapters:harnessAdapters().list(),actions}));
+`,
+    );
+    fs.writeFileSync(
+      path.join(bin, 'shop-harness'),
+      `#!/bin/sh\nexec ${shellQuoteArg(process.execPath)} --import ${shellQuoteArg(import.meta.resolve('tsx'))} ${shellQuoteArg(module)} "$@"\n`,
+      { mode: 0o700 },
+    );
+    return { bin, marker, home: root };
+  }
+
+  function followHint(
+    userAction: string,
+    host: ReturnType<typeof retryHost>,
+    env: NodeJS.ProcessEnv = {},
+  ) {
+    const start = userAction.indexOf('shop-harness actions --matrix');
+    assert.ok(start >= 0, 'refusal includes an inspection command');
+    const end = userAction.indexOf(' --json', start);
+    assert.ok(end > start);
+    // Execute only the generated inspection command, excluding the run command's
+    // trailing prose. The command and its paths belong to this test fixture.
+    const command = userAction.slice(start, end + ' --json'.length);
+    const output = execFileSync('/bin/sh', ['-c', command], {
+      encoding: 'utf8',
+      timeout: 10_000,
+      env: {
+        ...process.env,
+        RECIPE_LIBRARY_PATH: '',
+        FARMSLOT_HOME: host.home,
+        CATALOG_RETRY_CONFIGURED: '[]',
+        ...env,
+        PATH: host.bin + path.delimiter + process.env.PATH,
+        PLUGIN_IMPORT_LOG: host.marker,
+      },
+    });
+    const matrix: unknown = JSON.parse(output);
+    assert.ok(isRecord(matrix) && Array.isArray(matrix.adapters));
+    return { adapters: matrix.adapters, actions: matrix.actions };
+  }
+
+  for (const caller of ['actions', 'call', 'run'] as const) {
+    test(`${caller} hint does not authorize a discovered cache module on retry`, async () => {
+      const root = echoCache();
+      const host = retryHost();
+      process.env.FARMSLOT_HOME = host.home;
+      process.env.CATALOG_RETRY_CONFIGURED = '[]';
+      process.env.PLUGIN_IMPORT_LOG = host.marker;
+      const target = checkout();
+      const sources = [
+        { name: 'cache', root, origin: 'env' as const },
+        { name: 'shop', root: library },
+      ];
+      const before = fs
+        .readdirSync(root)
+        .map((file) => [file, fs.readFileSync(path.join(root, file), 'utf8')]);
+      const result = await capture(() =>
+        caller === 'actions'
+          ? handleActions(
+              parseArgs(['--matrix', '--action', 'nonexistent.matrix.probe', '--json']),
+              { catalog: engine, librarySources: sources },
+            )
+          : caller === 'call'
+            ? handleCall(
+                ['shop.ping', 'mode=fast', '--adapter', 'api', '--target', target, '--json'],
+                { ...callOptions, librarySources: sources },
+              )
+            : handleRun(
+                [
+                  recipeFile(target, {
+                    ping: {
+                      action: 'shop.ping',
+                      mode: 'fast',
+                      intent: 'Inspect a missing capability',
+                      next: 'done',
+                    },
+                    done: { action: 'end', status: 'pass' },
+                  }),
+                  '--plan',
+                  '--adapter',
+                  'api',
+                  '--target',
+                  target,
+                  '--json',
+                ],
+                { ...runOptions, librarySources: sources },
+              ),
+      );
+      const error = lastJson(result.stdout).error;
+      assert.ok(isRecord(error) && typeof error.userAction === 'string');
+      assert.equal(fs.existsSync(host.marker), false, 'initial discovery imports no plugin');
+      assert.deepEqual(
+        fs.readdirSync(root).map((file) => [file, fs.readFileSync(path.join(root, file), 'utf8')]),
+        before,
+      );
+      const matrix = followHint(error.userAction, host);
+      assert.deepEqual(
+        fs.readdirSync(root).map((file) => [file, fs.readFileSync(path.join(root, file), 'utf8')]),
+        before,
+        'following matrix discovery preserves cached library bytes',
+      );
+      assert.equal(fs.existsSync(host.marker), false, 'following the hint imports no cache module');
+      assert.equal(
+        matrix.adapters.includes('echo'),
+        false,
+        'discovered cache never becomes an operator flag',
+      );
+      assert.equal(calls.runners.length, 0, 'discovery never executes a recipe');
+    });
+  }
+
+  for (const authority of ['flag', 'env', 'configured'] as const) {
+    test(`retry retains adapter discovery from operator ${authority} input`, () => {
+      const root = echoCache();
+      const host = retryHost();
+      const sources = [
+        {
+          name: 'plug',
+          root,
+          ...(authority === 'flag'
+            ? { origin: 'flag' as const }
+            : authority === 'env'
+              ? { origin: 'env' as const }
+              : {}),
+        },
+      ];
+      const command =
+        'shop-harness actions --matrix' + actionLibraryContextArgs(engine, sources) + ' --json';
+      const matrix = followHint(
+        command,
+        host,
+        authority === 'env'
+          ? { RECIPE_LIBRARY_PATH: 'plug=' + root }
+          : authority === 'configured'
+            ? { CATALOG_RETRY_CONFIGURED: JSON.stringify([{ name: 'plug', root }]) }
+            : {},
+      );
+      assert.ok(matrix.adapters.includes('echo'));
+      assert.equal(fs.readFileSync(host.marker, 'utf8'), 'echo\n');
+      assert.ok(
+        Array.isArray(matrix.actions) &&
+          matrix.actions.some((row) => isRecord(row) && row.name === 'echo.ping'),
+      );
+    });
+  }
+
+  test('only flag origin becomes a flag; trust metadata alone grants no retry authority', () => {
+    const sources = [
+      { name: 'explicit', root: '/operator/with space', origin: 'flag' as const },
+      { name: 'ambient', root: '/ambient', origin: 'env' as const },
+      { name: 'personal', root: '/personal', origin: 'default' as const },
+      { name: 'task', root: '/task', origin: 'task' as const },
+      { name: 'configured', root: '/configured' },
+      {
+        name: 'discovered',
+        root: '/cache',
+        provenance: { kind: 'library' as const, trust: 'trusted' as const },
+      },
+    ];
+    assert.equal(
+      actionLibraryContextArgs(engine, sources),
+      " --library 'explicit=/operator/with space'",
+    );
+  });
+});

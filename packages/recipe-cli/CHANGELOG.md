@@ -6,6 +6,14 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.26 - 2026-11-19
+
+- Pin the structural inventory SDK cohort while retaining public protocol 0.91.0.
+
+## 0.35.25 - 2026-11-19
+
+- Preserve explicit operator library flags in catalog retry hints without authorizing discovered or task-local adapter modules.
+
 ## 0.35.24 - 2026-11-19
 
 - Pin the qualified invocation-timing SDK cohort with exact package dependencies.

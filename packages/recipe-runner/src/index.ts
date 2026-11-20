@@ -116,6 +116,12 @@ export {
   type UiScrollToObservation,
   type UiScrollToRequest,
 } from './core/scroll-to.js';
+export type {
+  RecipeStructuralInventory,
+  RecipeStructuralInventoryCounts,
+  RecipeStructuralInventoryInput,
+} from './core/structural-inventory.js';
+export { buildRecipeStructuralInventory } from './core/structural-inventory.js';
 export {
   finalizeRecipeSuite,
   type FinalizeRecipeSuiteRequest,
