@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.27 - 2026-11-20
+
+- Retain named catalog selection and root identity through preflight and recovery so reports can bind timing to the selected recipe. After upgrading, regenerate and reapprove outstanding plans for named recipes.
+
 ## 0.35.26 - 2026-11-19
 
 - Pin the structural inventory SDK cohort while retaining public protocol 0.91.0.
