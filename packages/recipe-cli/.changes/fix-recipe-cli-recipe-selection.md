@@ -1,0 +1,1 @@
+- Retain named catalog selection and root identity through preflight and recovery so reports can bind timing to the selected recipe. After upgrading, regenerate and reapprove outstanding plans for named recipes.

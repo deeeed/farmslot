@@ -7,6 +7,7 @@ import path from 'node:path';
 import {
   loadRecipeLibraries,
   type RecipeLibrarySource,
+  type RecipeSelection,
   type ResolvedLibraryRecipe,
   resolveRecipeLibrarySources,
 } from '@farmslot/recipe-runner';
@@ -152,7 +153,9 @@ function isRecipeFile(p: string): boolean {
   }
 }
 
-export type ResolvedRecipeArgument = { recipeFile: string; ref?: string } | { notFound: string };
+export type ResolvedRecipeArgument =
+  | { recipeFile: string; ref?: string; selection?: RecipeSelection }
+  | { notFound: string };
 
 export interface ResolvedRecipeInvocation {
   resolved: ResolvedRecipeArgument;
@@ -173,7 +176,18 @@ export async function resolveRunRecipeArg(
   const resolution = await loadRecipeLibraries(sources, { adapter });
   if (libraryOnly || (!recipeArg.includes('/') && !recipeArg.includes(path.sep))) {
     const selected = resolution.recipes.get(recipeArg);
-    if (selected) return { recipeFile: selected.path, ref: selected.ref };
+    if (selected)
+      return {
+        recipeFile: selected.path,
+        ref: selected.ref,
+        selection: {
+          name: recipeArg,
+          resolvedBy: selected.aliasFor ? 'alias' : 'ref',
+          source: selected.source,
+          file: selected.file,
+          path: selected.path,
+        },
+      };
   }
   const available = [...resolution.recipes.keys()].sort();
   const nonCanonical = sources.filter((source) => source.name !== catalog.bundledLibrary.name);

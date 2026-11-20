@@ -19,6 +19,7 @@ import {
   loadRecipeLibraries,
   type RecipeLibrarySource,
   RecipeResolutionError,
+  type RecipeSelection,
   resolveRecipeDependencies,
   resolveRecipeValue,
   validateRecipeDependencyParams,
@@ -235,6 +236,7 @@ export async function validateRecipeAdapterAware(
 }
 
 export interface RunRecipeStaticValidation {
+  selection?: RecipeSelection;
   recipe: unknown;
   recipeFile: string;
   findings: RecipeValidationFinding[];
@@ -357,6 +359,7 @@ export async function validateRunRecipeStatic(
     schemaValid: validation.status === 'valid' && errorCount === 0,
     effectiveParams,
     librarySources,
+    ...(resolved.selection ? { selection: resolved.selection } : {}),
   };
 }
 
