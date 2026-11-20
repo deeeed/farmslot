@@ -215,11 +215,20 @@ async function archivedSessionUsage(
   archived: string,
   session: Pick<RunnerSessionUsage, 'runnerSessionId' | 'runnerSessionPath'> = {},
   vars?: SlotVars,
-  usageWindow?: SessionUsageWindow,
+  // Only the native session resolver can supply a window for archive accounting.
+  nativeUsageWindow?: SessionUsageWindow,
   marks?: ChecklistMark[],
 ): Promise<RunnerSessionUsage> {
+  const workspace = run.reviewWorkspace;
+  const isKnownLocal = vars
+    ? isLocal(vars.host, vars.machine)
+    : !!workspace &&
+      (workspace.executionNodeId === 'local' || isLocal(workspace.machine, workspace.machine));
   const remotePi =
-    !usageWindow && run.metrics.runner === 'pi' && (!vars || !isLocal(vars.host, vars.machine));
+    run.metrics.runner === 'pi' &&
+    run.transport !== 'native' &&
+    !nativeUsageWindow &&
+    !isKnownLocal;
   const slotId = run.slotId ?? run.id;
   const route =
     remotePi && vars
@@ -233,7 +242,7 @@ async function archivedSessionUsage(
       forcedPath: archived,
       forcedRunner: run.metrics.runner,
       environment: { ...process.env, ...vars?.machineEnv },
-      usageWindow,
+      usageWindow: nativeUsageWindow,
       checklistMarks: marks,
       ...(remotePi ? { liteLlmPrices: new Map() } : {}),
       ...(route
@@ -544,11 +553,18 @@ export async function projectArchivedRunnerUsage(storedRun: Run): Promise<Run> {
         'runner did not report usage and no verified transcript was retained';
       return { ...run, metrics: { ...run.metrics, sessionUsageError: reason } };
     }
+    // A stored local slot keeps its legacy price lookup. An offline remote slot, or a slot
+    // whose origin cannot be resolved, must not inherit an ambient gateway price.
+    const slotVars =
+      run.metrics.runner === 'pi' && run.slotId
+        ? await loadSlotVars(run.slotId).catch(() => undefined)
+        : undefined;
+    const localVars = slotVars && isLocal(slotVars.host, slotVars.machine) ? slotVars : undefined;
     const usage = await archivedSessionUsage(
       run,
       archived,
       {},
-      undefined,
+      localVars,
       undefined,
       receiptChecklistMarks(run),
     );

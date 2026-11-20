@@ -17,7 +17,11 @@ process.env.FARMSLOT_HOME = path.join(root, 'home');
 after(() => rm(root, { recursive: true, force: true }));
 const config = await import('../core/config.js');
 mock.module('../core/config.js', {
-  namedExports: { ...config, loadSlotVars: async () => makeVars() },
+  namedExports: {
+    ...config,
+    loadSlotVars: async (slotId: string) =>
+      makeVars(slotId === 'remote-slot' ? { host: 'offline.invalid', machine: 'remote' } : {}),
+  },
 });
 const { projectArchivedRunnerUsage } = await import('./session-usage.js');
 const { runnerSessionArchiveContextDir } = await import('../runners/session-archive.js');
@@ -98,13 +102,7 @@ test('Pi reads preserve stored totals or a verified archive after the native fil
   assert.equal(run.metrics.sessionTotalTokens, undefined, 'projection remains read-only');
 });
 
-test('an offline tmux Pi archive cannot fall back to ambient prices', async (t) => {
-  const run = makeRun({
-    id: 'offline-pi',
-    flowType: 'dev',
-    slotId: 'test-slot',
-    transport: 'tmux',
-  });
+test('archived tmux Pi usage preserves local pricing and the remote provider subtotal', async (t) => {
   const cacheDir = path.join(root, 'prices');
   const endpoint = 'https://pricing.example';
   const apiKey = 'fixture-key';
@@ -130,42 +128,72 @@ test('an offline tmux Pi archive cannot fall back to ambient prices', async (t) 
       data: [{ model_name: 'glm', model_info: { input_cost_per_token: 0.00001 } }],
     }),
   );
-  const archiveDir = runnerSessionArchiveContextDir(run.id, 'dev');
-  await mkdir(archiveDir, { recursive: true });
   const raw =
-    JSON.stringify({
-      type: 'message',
-      message: {
-        role: 'assistant',
-        provider: 'litellm',
-        model: 'glm',
-        stopReason: 'stop',
-        usage: { input: 1000, output: 0, cost: { total: 0 } },
-      },
-    }) + '\n';
-  const originalPath = '/remote/pi-session.jsonl';
-  await writeFile(path.join(archiveDir, 'transcript.jsonl'), raw);
-  const ref: RunnerSessionArchiveRef = {
-    status: 'captured',
-    kind: 'jsonl',
-    runner: 'pi',
-    originalPath,
-    sha256: createHash('sha256').update(raw).digest('hex'),
-  };
-  run.metrics = { ...run.metrics, runner: 'pi', runnerSessionArchive: ref };
-  run.agentContexts = [
-    {
-      id: 'dev',
-      role: 'dev',
-      label: 'Dev',
-      status: 'complete',
-      slotId: run.slotId,
-      runId: run.id,
+    [
+      { input: 1000, output: 0, cost: { total: 0 } },
+      { input: 100, output: 0, cost: { total: 0.0042, totalFromProvider: true } },
+    ]
+      .map((usage) =>
+        JSON.stringify({
+          type: 'message',
+          message: {
+            role: 'assistant',
+            provider: 'litellm',
+            model: 'glm',
+            stopReason: 'stop',
+            usage,
+          },
+        }),
+      )
+      .join('\n') + '\n';
+  for (const kind of ['local-review', 'local-slot', 'remote-slot'] as const) {
+    const localReview = kind === 'local-review';
+    const role = localReview ? 'review' : 'dev';
+    const run = makeRun({
+      id: kind,
+      flowType: localReview ? 'review-pr' : 'dev',
+      slotId: localReview ? null : kind,
+      transport: 'tmux',
+    });
+    if (localReview)
+      run.reviewWorkspace = {
+        workspaceId: kind,
+        machine: 'localhost',
+        executionNodeId: 'local',
+        checkoutPath: '/review/source',
+        taskPath: '/review/task',
+        artifactPath: '/review/task/artifacts',
+      };
+    const archiveDir = runnerSessionArchiveContextDir(run.id, role);
+    await mkdir(archiveDir, { recursive: true });
+    await writeFile(path.join(archiveDir, 'transcript.jsonl'), raw);
+    const ref: RunnerSessionArchiveRef = {
+      status: 'captured',
+      kind: 'jsonl',
       runner: 'pi',
-      runnerSessionArchive: ref,
-    },
-  ];
-  const projected = await projectArchivedRunnerUsage(run);
-  assert.equal(projected.metrics.sessionTotalTokens, 1000);
-  assert.equal(projected.metrics.costEstimate, undefined);
+      originalPath: '/execution/pi-session.jsonl',
+      sha256: createHash('sha256').update(raw).digest('hex'),
+    };
+    run.metrics = { ...run.metrics, runner: 'pi', runnerSessionArchive: ref };
+    run.agentContexts = [
+      {
+        id: role,
+        role,
+        label: role,
+        status: 'complete',
+        slotId: run.slotId,
+        runId: run.id,
+        runner: 'pi',
+        runnerSessionArchive: ref,
+      },
+    ];
+    const projected = await projectArchivedRunnerUsage(run);
+    assert.equal(projected.metrics.sessionTotalTokens, 1100, kind);
+    assert.equal(projected.metrics.costEstimate, kind === 'remote-slot' ? undefined : 0.0142, kind);
+    assert.equal(
+      projected.metrics.sessionProviderReportedCostUsd,
+      kind === 'remote-slot' ? 0.0042 : undefined,
+      kind,
+    );
+  }
 });
