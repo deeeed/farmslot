@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -97,6 +98,31 @@ test('prices persist across calls, refresh daily, and never persist credentials'
     ).size,
     0,
   );
+});
+
+test('bound pricing rejects redirects and ignores the legacy cache', async (t) => {
+  const cacheDir = await mkdtemp(path.join(os.tmpdir(), 'direct-litellm-prices-'));
+  t.after(() => rm(cacheDir, { recursive: true, force: true }));
+  let redirect = true;
+  const server = createServer((request, response) => {
+    if (redirect && request.url === '/v1/model/info') {
+      response.writeHead(307, { location: '/alternate/v1/model/info' }).end();
+      return;
+    }
+    response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(payload));
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const address = server.address();
+  assert(address && typeof address === 'object');
+  const options = { baseUrl: `http://127.0.0.1:${address.port}`, apiKey: 'fixture', cacheDir };
+  assert.equal((await loadLiteLlmPrices(options)).get('fixture-sonnet')?.input, 2);
+  const direct = { ...options, requireDirectResponse: true };
+  assert.equal((await loadLiteLlmPrices(direct)).size, 0);
+  redirect = false;
+  assert.equal((await loadLiteLlmPrices(direct)).get('fixture-sonnet')?.input, 2);
+  redirect = true;
+  assert.equal((await loadLiteLlmPrices(direct)).get('fixture-sonnet')?.input, 2);
 });
 
 test('session extraction computes a precise LiteLLM total and marks local sessions unpriced', async (t) => {

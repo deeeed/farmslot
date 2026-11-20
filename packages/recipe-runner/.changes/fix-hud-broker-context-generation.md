@@ -1,0 +1,1 @@
+- Replay the latest HUD state after runtime context resets and reject stale acknowledgements from replaced contexts or sockets.

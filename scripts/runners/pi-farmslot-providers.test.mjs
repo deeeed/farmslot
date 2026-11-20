@@ -1701,3 +1701,63 @@ test('idle deadlines bound missing headers and empty chunks; cancellation does n
   t.mock.timers.tick(100);
   await headerFailure;
 });
+
+test('a request entry carries the endpoint digest only after a direct successful answer', async (t) => {
+  let redirectedBack = false;
+  const server = http.createServer((request, response) => {
+    if (request.url === '/v1/chat/completions' && request.headers['x-case'] === 'redirect') {
+      response.writeHead(307, { location: '/moved/chat/completions' }).end();
+      return;
+    }
+    if (request.headers['x-case'] === 'round-trip') {
+      if (request.url === '/v1/chat/completions' && !redirectedBack) {
+        redirectedBack = true;
+        response.writeHead(307, { location: '/returned/chat/completions' }).end();
+        return;
+      }
+      if (request.url === '/returned/chat/completions') {
+        response.writeHead(307, { location: '/v1/chat/completions' }).end();
+        return;
+      }
+    }
+    if (request.headers['x-case'] === 'error') {
+      response.writeHead(500).end('upstream failed');
+      return;
+    }
+    response.writeHead(200, { 'content-type': 'application/json' }).end('{}');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const baseUrl = `http://127.0.0.1:${server.address().port}/v1`;
+  const records = [];
+  const fetch = providerReasoningFetch(
+    deadlinePiFetch(globalThis.fetch),
+    [{ id: 'litellm', baseUrl, models: [{ id: 'model', reasoning: false, input: ['text'] }] }],
+    (record) => records.push(record),
+  );
+  const send = async (headers = {}) => {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ model: 'model' }),
+    });
+    await response.text();
+    return response.status;
+  };
+  const { liteLlmEndpointId } =
+    await import('../../packages/agent-runtime/scripts/litellm-endpoint.cjs');
+  assert.equal(await send(), 200);
+  assert.equal(records.at(-1).endpoint, liteLlmEndpointId(baseUrl));
+  // Redirected and failed requests stay observed, without a route a later turn could inherit.
+  assert.equal(await send({ 'x-case': 'redirect' }), 200);
+  assert.equal(await send({ 'x-case': 'round-trip' }), 200);
+  assert.equal(await send({ 'x-case': 'error' }), 500);
+  server.closeAllConnections();
+  await new Promise((resolve) => server.close(resolve));
+  await assert.rejects(send(), /fetch failed/);
+  assert.equal(records.length, 5);
+  for (const record of records.slice(1)) {
+    assert.equal(record.provider, 'litellm');
+    assert.equal(Object.hasOwn(record, 'endpoint'), false);
+  }
+});

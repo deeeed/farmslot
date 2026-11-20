@@ -100,6 +100,54 @@ interface NativeAgentUsageResolution {
   usageWindow?: SessionUsageWindow;
 }
 
+/**
+ * The gateway-side environment a session's commands run with, for its LiteLLM prices: this process,
+ * the project's command env and the machine's pool env. The execution node itself may hold no
+ * LiteLLM credentials.
+ */
+export async function usageLiteLlmEnvironment(
+  vars: NativeSessionUsageVars,
+  machine: string,
+  commandEnvOptions?: ProjectCommandEnvOptions,
+): Promise<NodeJS.ProcessEnv> {
+  const poolEnv =
+    'machine' in vars && vars.machine === machine && vars.machineEnv !== undefined
+      ? vars.machineEnv
+      : await loadMachinePool(machine)
+          .then((pool) => pool.env)
+          .catch((error: unknown) => {
+            // Retained native sessions can outlive their pool registration. With no pool,
+            // project/process pricing still applies; malformed or unreadable pools remain errors.
+            if (error instanceof SlotConfigError && error.code === 'SLOT_NOT_FOUND') return {};
+            throw error;
+          });
+  const environment = { ...process.env };
+  if (vars.projectName) {
+    const project = await loadProjectVars(vars.projectName);
+    const domainEnvironment = vars.domain
+      ? project.projectJson.command_env?.domains?.[vars.domain]
+      : undefined;
+    // Literal environments still work after a retained session's slot is removed.
+    const needsSlotContext = Object.values(domainEnvironment?.set ?? {}).some(
+      (value) => collectPlaceholderTokens(value).size > 0,
+    );
+    const options =
+      commandEnvOptions ??
+      (needsSlotContext
+        ? projectCommandEnvOptions(
+            'resourceVars' in vars ? vars : await loadSlotVars(vars.slotId),
+            project,
+            vars.domain,
+          )
+        : { domain: vars.domain });
+    const mutation = resolveProjectCommandEnv(project.projectJson, options);
+    for (const name of mutation.unset) delete environment[name];
+    Object.assign(environment, mutation.set);
+  }
+  Object.assign(environment, machineShellEnv({ machineEnv: poolEnv }));
+  return environment;
+}
+
 export async function extractNativeAgentSessionUsage(
   input: NativeAgentUsageInput,
 ): Promise<RunnerSessionUsage> {
@@ -142,42 +190,11 @@ export async function resolveNativeAgentSessionUsage(
       nativeSession.executionNodeId === 'local'
         ? os.hostname().split('.')[0]
         : nativeSession.executionNodeId;
-    const poolEnv =
-      'machine' in vars && vars.machine === machine && vars.machineEnv !== undefined
-        ? vars.machineEnv
-        : await loadMachinePool(machine)
-            .then((pool) => pool.env)
-            .catch((error: unknown) => {
-              // Retained native sessions can outlive their pool registration. With no pool,
-              // project/process pricing still applies; malformed or unreadable pools remain errors.
-              if (error instanceof SlotConfigError && error.code === 'SLOT_NOT_FOUND') return {};
-              throw error;
-            });
-    const environment = { ...process.env };
-    if (vars.projectName) {
-      const project = await loadProjectVars(vars.projectName);
-      const domainEnvironment = vars.domain
-        ? project.projectJson.command_env?.domains?.[vars.domain]
-        : undefined;
-      // Literal environments still work after a retained session's slot is removed.
-      const needsSlotContext = Object.values(domainEnvironment?.set ?? {}).some(
-        (value) => collectPlaceholderTokens(value).size > 0,
-      );
-      const options =
-        input.commandEnvOptions ??
-        (needsSlotContext
-          ? projectCommandEnvOptions(
-              'resourceVars' in vars ? vars : await loadSlotVars(vars.slotId),
-              project,
-              vars.domain,
-            )
-          : { domain: vars.domain });
-      const mutation = resolveProjectCommandEnv(project.projectJson, options);
-      for (const name of mutation.unset) delete environment[name];
-      Object.assign(environment, mutation.set);
-    }
-    Object.assign(environment, machineShellEnv({ machineEnv: poolEnv }));
-    request.liteLlmPrices = [...(await loadLiteLlmPrices({ environment }))];
+    request.liteLlmPrices = [
+      ...(await loadLiteLlmPrices({
+        environment: await usageLiteLlmEnvironment(vars, machine, input.commandEnvOptions),
+      })),
+    ];
     const local = nativeSession.executionNodeId === 'local';
     if (local) request.parentChecklistMarks = input.parentChecklistMarks;
     const argv = nativeSessionUsageArgv(

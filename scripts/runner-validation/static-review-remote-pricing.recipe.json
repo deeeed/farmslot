@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Static review remote LiteLLM pricing",
+  "description": "Opt-in, one real Pi review of a tiny local Git fixture through an isolated production gateway. Re-measure its receipt through the remote tmux receipt path with matching and alternate pricing endpoints. Requires a models.json LiteLLM route for the review model, LITELLM_API_KEY accepted by that route, and a new private output directory. The proof uses an isolated Pi home and two loopback paths. Retention and session checks stay in the static review session accounting recipe. No live farm or publication writes.",
+  "workflow": {
+    "entry": "remote-pricing",
+    "nodes": {
+      "remote-pricing": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json FARMSLOT_REVIEW_PROOF_USAGE=1 FARMSLOT_REVIEW_PROOF_REMOTE_PRICING=1 FARMSLOT_REVIEW_PROOF_ROUNDS=1 FARMSLOT_REVIEW_PROOF_RUNNER=pi FARMSLOT_REVIEW_PROOF_MODEL=litellm/deepseek-v4p1-flash FARMSLOT_REVIEW_PROOF_EFFORT=low node --import tsx scripts/runner-validation/gateway/slotless-review-retention.mts \"$FARMSLOT_REVIEW_PRICING_PROOF_OUTPUT\"",
+        "timeout_ms": 300000,
+        "intent": "Each measured Pi reply binds to a successful request on the observed endpoint. The remote tmux receipt path quotes matching gateway prices, keeps tokens when prices are for an alternate endpoint, and retains the endpoint digest without exposing either URL.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
