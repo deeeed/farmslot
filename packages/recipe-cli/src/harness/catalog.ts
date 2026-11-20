@@ -479,6 +479,11 @@ export function renderActionDetail(
   );
   if (entry.capabilities.length > 0) lines.push(`  Risk: ${entry.capabilities.join(', ')}`);
   if (entry.result_cases?.length) lines.push(`  Result cases: ${entry.result_cases.join(', ')}`);
+  const examples = shortExampleCalls(entry, actionNames);
+  if (examples.length > 0) {
+    lines.push('', '  Examples:');
+    for (const example of examples) lines.push(`    ${example}`);
+  }
   lines.push('');
   if (entry.fields.length === 0) {
     lines.push('  Fields: (none)');
@@ -496,11 +501,6 @@ export function renderActionDetail(
         : '';
       lines.push(`    ${name.padEnd(width)}  ${type}${req}${defaultValue}${desc}${enumVals}`);
     }
-  }
-  const examples = shortExampleCalls(entry, actionNames);
-  if (examples.length > 0) {
-    lines.push('', '  Examples:');
-    for (const example of examples) lines.push(`    ${example}`);
   }
   const runnable = renderHumanActionExample(entry, adapter, target, executable);
   if (runnable) lines.push('', runnable);

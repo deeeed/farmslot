@@ -205,7 +205,8 @@ export async function handleActions(
     console.log(
       renderHumanActionCatalog(catalog, actions, {
         title: `actions (${adapter})`,
-        guidance: `Inspect: ${host} actions --action <name>  ·  Run: ${host} call <name>`,
+        guidance: `Details and examples: ${host} actions --action <name>\nRun: ${host} call <name> [key=value ...]`,
+        sort: 'domain',
       }),
     );
   }
@@ -409,7 +410,7 @@ function actionDomain(entry: DescribedAction): string {
   return entry.category.replaceAll('_', '-');
 }
 
-/** Actions grouped by origin (or domain, name or library), one line each. */
+/** Grouped action summaries with a short description and parameter preview. */
 export function renderHumanActionCatalog(
   catalog: RecipeCatalog,
   actions: DescribedAction[],
@@ -443,38 +444,43 @@ export function renderHumanActionCatalog(
           : 'accent';
     if (group) lines.push('', `${out(groupStyle, group)} ${out('dim', `(${entries.length})`)}`);
     for (const entry of entries) {
-      const fieldNames = humanFieldNames(entry);
-      const fields = fieldNames.length ? ` ${out('dim', `fields=${fieldNames.join(',')}`)}` : '';
-      const cases = entry.result_cases?.length
-        ? ` ${out('dim', `cases=${entry.result_cases.join(',')}`)}`
-        : '';
-      const description = entry.description ? ` ${out('comment', `— ${entry.description}`)}` : '';
       const source = ` ${out('dim', `[${entry.source}]`)}`;
-      const risk = entry.capabilities.length
-        ? ` ${out('dim', `risk=${entry.capabilities.join(',')}`)}`
-        : '';
       const nameStyle = options.domainStyles?.get(actionDomain(entry)) ?? 'cmd';
-      lines.push(
-        `  ${out(nameStyle, options.displayName?.(entry) ?? entry.name)}${source}${fields}${cases}${risk}${description}`,
-      );
+      lines.push(`  ${out(nameStyle, options.displayName?.(entry) ?? entry.name)}${source}`);
+      const description = actionDescriptionPreview(entry.description);
+      if (description) lines.push(`    ${description}`);
+      if (entry.fields.length > 0) {
+        lines.push(`    ${out('label', 'Params:')} ${out('dim', actionParameterPreview(entry))}`);
+      }
+      if (entry.capabilities.length > 0) {
+        lines.push(`    ${out('warn', 'Risk:')} ${entry.capabilities.join(', ')}`);
+      }
     }
   }
   return lines.join('\n');
 }
 
-function humanFieldNames(entry: DescribedAction): string[] {
-  const schema = isRecord(entry.schema) ? entry.schema : undefined;
-  const properties = schema && isRecord(schema.properties) ? schema.properties : undefined;
-  if (!properties) return entry.fields;
-  return entry.fields.map((field) => {
-    const property = properties[field];
-    if (!isRecord(property) || !Array.isArray(property.enum)) return field;
-    const values = property.enum.filter(
-      (value): value is string | number | boolean =>
-        typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean',
-    );
-    return values.length > 0 ? `${field}=${values.join('|')}` : field;
-  });
+function actionDescriptionPreview(description: string): string {
+  const [firstSentence = ''] = description
+    .trim()
+    .replace(/\s+/gu, ' ')
+    .split(/(?<=[.!?]) /u, 1);
+  const limit = Math.max(20, Math.min(104, (process.stdout.columns ?? 80) - 5));
+  if (firstSentence.length <= limit) return firstSentence;
+  const prefix = firstSentence.slice(0, limit);
+  return `${prefix.replace(/ \S*$/u, '')}…`;
+}
+
+function actionParameterPreview(entry: DescribedAction): string {
+  const schema = isRecord(entry.schema) ? entry.schema : {};
+  const required = new Set(Array.isArray(schema.required) ? schema.required : []);
+  const fields = [
+    ...entry.fields.filter((field) => required.has(field)),
+    ...entry.fields.filter((field) => !required.has(field)),
+  ];
+  const limit = 4;
+  const hidden = fields.length - limit;
+  return fields.slice(0, limit).join(', ') + (hidden > 0 ? ` +${hidden} more` : '');
 }
 
 function actionDomainGroup(catalog: RecipeCatalog, entry: DescribedAction): string {
@@ -657,7 +663,7 @@ export async function handleListExecutables(
   console.log(
     renderHumanActionCatalog(catalog, selected, {
       title: `invocable actions (${adapter})`,
-      guidance: `Use: ${host} call <name>  ·  short names shown first where unambiguous`,
+      guidance: `Use: ${host} call <name>  ·  Details and examples: ${host} call <name> --help`,
       sort,
       domainStyles: stylesFor(available.map(actionDomain)),
       contextLines,

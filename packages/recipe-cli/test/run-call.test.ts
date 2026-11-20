@@ -1272,6 +1272,7 @@ describe('actions', () => {
     const text = view(detail.stdout, 'shop-harness call shop.ping') ?? '';
     assert.ok(help.stdout.includes(`${text}\n\n`));
     assert.ok(help.stdout.includes('GENERIC\n'));
+    assert.match(text, /Examples:[\s\S]*shop-harness call ping count=2 mode=fast[\s\S]*Fields/u);
     for (const line of [
       'shop-harness call shop.ping [key=value ...] [flags]',
       '  Ping the shop.',
@@ -1300,7 +1301,7 @@ describe('actions', () => {
     const human = await actions('--adapter', 'web');
     assert.match(
       view(human.stdout, 'actions (web)') ?? '',
-      /^actions \(web\)\nInspect: shop-harness actions --action <name> {2}· {2}Run: shop-harness call <name>\n\nofficial \(\d+\)[\s\S]*\ncustom \(1\)\n {2}shop\.ping \[shop\] fields=count,mode=fast\|slow,password risk=host-read-export — Ping the shop\.$/u,
+      /^actions \(web\)\nDetails and examples: shop-harness actions --action <name>\nRun: shop-harness call <name> \[key=value \.\.\.\]\n[\s\S]*\ncontrol \(\d+\)[\s\S]*\nshop \(1\)\n {2}shop\.ping \[shop\]\n {4}Ping the shop\.\n {4}Params: mode, count, password\n {4}Risk: host-read-export$/u,
     );
     const categories = await actions('--adapter', 'web', '--categories', '--json');
     assert.ok(
