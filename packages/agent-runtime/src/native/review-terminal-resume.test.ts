@@ -93,7 +93,7 @@ async function fixture(
         return {
           sandbox: async () => ({
             temporaryDirectory: root,
-            sandbox: { executable: '/bin/false', args: [] },
+            sandbox: { executable: '/usr/bin/env', args: [] },
           }),
         };
       if (name === './workspace-trust.cjs')
@@ -105,6 +105,8 @@ async function fixture(
           reviewTemporaryDirectoryVariablesByRunner: {},
           reviewLiteLlmEndpointIdByRunner:
             realRequire('./workspace-trust.cjs').reviewLiteLlmEndpointIdByRunner,
+          reviewLiteLlmRouteVariablesByRunner:
+            realRequire('./workspace-trust.cjs').reviewLiteLlmRouteVariablesByRunner,
         };
       if (name === './review-codex-folder-access.cjs')
         return {
@@ -267,4 +269,75 @@ test('the launch receipt records only a digest of the LiteLLM route Pi is launch
       for (const fragment of secrets)
         assert.equal(launched.output.includes(fragment), false, fragment);
     }, model);
+});
+
+test('Pi route measurement follows a home-relative agent directory and never blocks launch', async () => {
+  const { liteLlmEndpointId } = realRequire('./litellm-endpoint.cjs');
+  const envUrl = { LITELLM_URL: 'https://env-route.example' };
+  const cases: Array<[string, Record<string, string>, string | undefined]> = [
+    // Pi expands a leading `~` against HOME before it loads static models.
+    ['~/agent', envUrl, 'https://route.example'],
+    ['~', envUrl, 'https://home-root-route.example'],
+    // A relative directory is resolved by Pi against the review checkout: unknown here.
+    ['agent', envUrl, undefined],
+    // A models.json that cannot be read (here a directory) leaves the route unknown.
+    ['~/unreadable', envUrl, undefined],
+    // Comments: Pi reads them, this parser does not.
+    ['~/jsonc', envUrl, undefined],
+  ];
+  for (const [directory, set, route] of cases)
+    await fixture(async (invoke, root) => {
+      const write = (target: string, providers: unknown) => {
+        mkdirSync(target, { recursive: true });
+        writeFileSync(path.join(target, 'models.json'), JSON.stringify({ providers }));
+      };
+      write(path.join(root, 'agent'), {
+        litellm: { baseUrl: 'https://route.example/v1', models: [{ id: 'glm' }] },
+      });
+      write(root, {
+        litellm: { baseUrl: 'https://home-root-route.example/v1', models: [{ id: 'glm' }] },
+      });
+      mkdirSync(path.join(root, 'unreadable/models.json'), { recursive: true });
+      mkdirSync(path.join(root, 'jsonc'));
+      writeFileSync(path.join(root, 'jsonc/models.json'), '// comment\n{}');
+      const launched = await invoke({
+        environment: { set: { ...set, PI_CODING_AGENT_DIR: directory }, unset: [] },
+      });
+      assert.equal(launched.code, 0, launched.error);
+      const receipt = JSON.parse(launched.output);
+      assert.equal(receipt.liteLlmEndpointId, liteLlmEndpointId(route), directory);
+      // A Pi launch without a verified route says so: its LiteLLM cost stays unpriced.
+      assert.equal(receipt.liteLlmRouteUnverified, route ? undefined : true, directory);
+    }, 'litellm/glm');
+});
+
+test('the pane cannot inherit a Pi route variable the launch environment does not hold', async () => {
+  await fixture(async (invoke, root) => {
+    const launched = await invoke({
+      command: 'env > pane-environment.txt',
+      environment: {
+        set: { LITELLM_BASE_URL: 'https://launch-route.example' },
+        unset: ['LITELLM_URL'],
+      },
+    });
+    assert.equal(launched.code, 0, launched.error);
+    // tmux merges its server's global environment under the session's: a URL there would reach
+    // Pi. Run the generated pane command with one, as tmux would hand it over.
+    const { spawnSync } = realRequire('node:child_process');
+    const pane = spawnSync(process.execPath, [path.join(root, '.terminal-start.cjs')], {
+      cwd: root,
+      env: {
+        PATH: process.env.PATH,
+        HOME: root,
+        LITELLM_URL: 'https://tmux-global-route.example',
+        PI_CODING_AGENT_DIR: path.join(root, 'tmux-global-agent'),
+        LITELLM_BASE_URL: 'https://launch-route.example',
+      },
+      encoding: 'utf8',
+    });
+    assert.equal(pane.status, 0, pane.stderr);
+    const seen = readFileSync(path.join(root, 'pane-environment.txt'), 'utf8');
+    assert.doesNotMatch(seen, /tmux-global/);
+    assert.match(seen, /LITELLM_BASE_URL=https:\/\/launch-route\.example/);
+  }, 'litellm/glm');
 });

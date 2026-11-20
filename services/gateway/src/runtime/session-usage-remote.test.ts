@@ -13,7 +13,8 @@ let result = { stdout: 'turns=3\ntotal_tokens=124\n', stderr: '', exitCode: 0 };
 mock.module('../core/exec.js', {
   namedExports: {
     ...nativeExec,
-    isLocal: () => false,
+    // Only the local fixture host runs in this process; every other host is a remote slot.
+    isLocal: (host: string) => host === 'localhost',
     execOnSlot: async (...args: unknown[]) => {
       calls.push(args);
       return result;
@@ -157,26 +158,108 @@ test('a remote Pi receipt is quoted from the gateway LiteLLM prices, not the slo
       FARMSLOT_LITELLM_PRICING_CACHE_DIR: cacheDir,
     },
   };
-  const priceLaunch = async (endpointId: string | undefined) => {
+  const priceLaunch = async (
+    endpointId: string | undefined,
+    options: {
+      unverified?: boolean;
+      mutation?: { unset: string[]; set: Record<string, string> };
+      checklistMarks?: Parameters<typeof extractRunnerSessionUsage>[0]['checklistMarks'];
+    } = {},
+  ) => {
     calls.length = 0;
     const receipt = await extractRunnerSessionUsage({
       slotId: 'slot-1',
       vars,
       runner: 'pi',
       runnerSessionPath: '/worker/pi.jsonl',
-      launchPricing: { endpointId, environment: async () => launchMutation },
+      checklistMarks: options.checklistMarks,
+      launchPricing: {
+        endpointId,
+        unverified: options.unverified,
+        environment: async () => options.mutation ?? launchMutation,
+      },
     });
     // Every fallback still runs the receipt command and keeps its token counts.
     assert.equal(receipt.totalTokens, 10);
     return String(calls[0][1]);
   };
   // The launch route's identity: the pricing endpoint with `/v1`, as Pi's models.json names it.
-  const verified = await priceLaunch(liteLlmEndpointId(`${launchUrl}/v1`));
+  const verifiedId = liteLlmEndpointId(`${launchUrl}/v1`);
+  const verified = await priceLaunch(verifiedId);
   assert.match(verified, /launch-endpoint-model/);
   assert.equal(verified.includes('claude-opus-5-5'), false);
-  // A recorded endpoint the gateway no longer resolves, or none recorded, leaves the slot's lookup.
-  for (const endpointId of [liteLlmEndpointId(baseUrl), undefined])
-    assert.equal((await priceLaunch(endpointId)).includes('liteLlmPrices"'), false);
+  // No route recorded (a launch from before route receipts) leaves the slot's lookup.
+  assert.equal((await priceLaunch(undefined)).includes('liteLlmPrices"'), false);
+  // A recorded route the gateway cannot verify, a transcript with mixed or unknown routes, a
+  // verified route whose prices cannot load or fit, all quote nothing: tokens stay, cost unpriced.
+  const unpriced = '"liteLlmPrices":[]';
+  assert.equal((await priceLaunch(liteLlmEndpointId(baseUrl))).includes(unpriced), true);
+  assert.equal((await priceLaunch(undefined, { unverified: true })).includes(unpriced), true);
+  assert.equal(
+    (
+      await priceLaunch(verifiedId, {
+        mutation: {
+          unset: [],
+          set: {
+            LITELLM_BASE_URL: launchUrl,
+            LITELLM_API_KEY: apiKey,
+            // Not a directory: the price cache cannot be read or written.
+            FARMSLOT_LITELLM_PRICING_CACHE_DIR: path.join(cacheDir, 'missing/\0'),
+          },
+        },
+      })
+    ).includes(unpriced),
+    true,
+  );
+  assert.equal(
+    (
+      await priceLaunch(verifiedId, {
+        checklistMarks: Array.from({ length: 300 }, (_, index) => ({
+          stepNumber: index + 1,
+          label: "'".repeat(80),
+          checkedAt: '2026-11-19T00:00:00.000Z',
+        })),
+      })
+    ).includes(unpriced),
+    true,
+  );
+  // A local static review with mixed or unknown routes is reported unpriced too, with its tokens;
+  // one with no recorded route keeps the gateway's own lookup.
+  const transcript = path.join(cacheDir, 'pi-local.jsonl');
+  writeFileSync(
+    transcript,
+    JSON.stringify({
+      type: 'message',
+      message: {
+        role: 'assistant',
+        provider: 'litellm',
+        model: 'claude-opus-5-5',
+        usage: { input: 1000, output: 100, cacheRead: 0, cacheWrite: 0 },
+      },
+    }) + '\n',
+  );
+  const local = (
+    launchPricing?: Parameters<typeof extractRunnerSessionUsage>[0]['launchPricing'],
+  ) =>
+    extractRunnerSessionUsage({
+      slotId: 'slot-1',
+      vars: makeVars({
+        host: 'localhost',
+        machine: 'localhost',
+        projectName: '',
+        machineEnv: vars.machineEnv,
+      }),
+      runner: 'pi',
+      runnerSessionPath: transcript,
+      launchPricing,
+    });
+  const legacy = await local({ environment: async () => launchMutation });
+  assert.equal(legacy.totalTokens, 1100);
+  assert.equal(legacy.costUsd, 0.006);
+  const mixed = await local({ unverified: true, environment: async () => launchMutation });
+  assert.equal(mixed.totalTokens, 1100);
+  assert.equal(mixed.costUsd, null);
+  assert.equal(mixed.costStatus, 'unpriced');
   // Other runners keep their command unchanged.
   calls.length = 0;
   await extractRunnerSessionUsage({

@@ -2,6 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { fileURLToPath } = require('node:url');
 const {
   assertGrokReviewAccount,
   grokHome,
@@ -230,6 +231,19 @@ const reviewRuntimeRootsByRunner = {
   ],
 };
 /**
+ * Pi's agent directory as Pi resolves PI_CODING_AGENT_DIR (getAgentDir, normalizePath): `~` and a
+ * leading `~/` against HOME, a file: URL to its path. Undefined for a relative directory, which Pi
+ * resolves against the review checkout's working directory: that route stays unknown here.
+ */
+function piAgentDirectory(env) {
+  const configured = env.PI_CODING_AGENT_DIR;
+  if (!configured) return path.join(home(env), '.pi/agent');
+  if (configured === '~') return home(env);
+  if (configured.startsWith('~/')) return path.join(home(env), configured.slice(2));
+  if (configured.startsWith('file://')) return fileURLToPath(configured);
+  return path.isAbsolute(configured) ? configured : undefined;
+}
+/**
  * The base URL Pi routes a `provider/model` to in a Farmslot launch. A model listed in the agent
  * directory's models.json keeps its own `baseUrl`, else its provider's: the Farmslot Pi extension
  * preserves those static models over discovered ones (preservePiStaticModels in
@@ -243,10 +257,9 @@ function piModelRoute(env, model) {
   if (slash <= 0) return undefined;
   const provider = model.slice(0, slash);
   const id = model.slice(slash + 1);
-  const file = path.join(
-    env.PI_CODING_AGENT_DIR || path.join(home(env), '.pi/agent'),
-    'models.json',
-  );
+  const directory = piAgentDirectory(env);
+  if (!directory) return undefined;
+  const file = path.join(directory, 'models.json');
   let config = {};
   try {
     config = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -272,12 +285,21 @@ function piModelRoute(env, model) {
   };
 }
 // The LiteLLM endpoint identity a terminal reviewer is launched against, from the route its runner
-// actually uses. A runner without one records none, and its receipts keep their own pricing.
+// actually uses; undefined when that route is unknown or not LiteLLM. A runner without an entry
+// records nothing, and its receipts keep their own pricing.
+// null when the route is unknown: a LiteLLM cost on it cannot be verified.
 const reviewLiteLlmEndpointIdByRunner = {
   pi: (env, model) => {
     const route = piModelRoute(env, model);
-    return route?.provider === 'litellm' ? liteLlmEndpointId(route.baseUrl) : undefined;
+    if (!route) return null;
+    return route.provider === 'litellm' ? liteLlmEndpointId(route.baseUrl) : undefined;
   },
+};
+// The environment names that route measurement reads. The launch hands the pane exactly the
+// measured values: a name the launch environment lacks is removed in the pane, so a value in the
+// tmux server's global environment cannot route the runner elsewhere.
+const reviewLiteLlmRouteVariablesByRunner = {
+  pi: ['LITELLM_URL', 'LITELLM_BASE_URL', 'PI_CODING_AGENT_DIR'],
 };
 const reviewConfigurationRoots = (cwd) =>
   [
@@ -341,6 +363,7 @@ const claudeReadOnlyReviewArgs = [
 module.exports = {
   reviewRuntimeRootsByRunner,
   reviewLiteLlmEndpointIdByRunner,
+  reviewLiteLlmRouteVariablesByRunner,
   reviewTemporaryDirectoryVariablesByRunner,
   piReadOnlyReviewArgs,
   claudeReadOnlyReviewArgs,

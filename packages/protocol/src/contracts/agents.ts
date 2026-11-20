@@ -206,6 +206,11 @@ export interface AgentContext {
    * its launch receipt. Never the URL. Usage pricing uses gateway prices only for the same endpoint.
    */
   launchLiteLlmEndpointId?: string;
+  /**
+   * Set when this transcript's turns cannot all be bound to one verified LiteLLM route: a launch
+   * whose route was unknown, or a resume on another route. Its LiteLLM cost is reported unpriced.
+   */
+  launchLiteLlmRouteUnverified?: 'mixed-routes' | 'unknown-route';
   updatedAt?: string;
   completedAt?: string;
   lastSignalAt?: string;

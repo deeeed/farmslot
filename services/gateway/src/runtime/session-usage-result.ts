@@ -128,6 +128,8 @@ export function workspaceUsageMetrics(run: Run): Run['metrics'] {
     runnerSessionId: receipt.runnerSessionId ?? null,
     runnerSessionPath: receipt.runnerSessionPath ?? null,
     ...runnerUsageMetrics(receipt),
+    // An unpriced receipt leaves no earlier measurement's cost behind.
+    ...(receipt.costStatus === 'unpriced' ? { costEstimate: undefined } : {}),
     ...(usesReviewChainSessionTotal(run) ? { sessionUsageScope: 'review-generation-delta' } : {}),
     sessionUsageError: receipt.error,
   };

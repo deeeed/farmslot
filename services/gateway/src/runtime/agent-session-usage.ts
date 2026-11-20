@@ -133,15 +133,21 @@ function workerChecklistMarks(run: Run, row: RunnerSessionUsage) {
 }
 
 /**
- * The LiteLLM endpoint identity the static reviewer's launch receipt recorded for this receipt's
- * transcript. Undefined when the context's current launch is not this transcript's, so pricing
- * falls back.
+ * The LiteLLM route a static reviewer's launches recorded for this receipt's transcript. A context
+ * from before route receipts records none, and its pricing is unchanged. A recorded route that
+ * belongs to another transcript, or that is not verified for every turn, prices nothing.
  */
-function launchLiteLlmEndpointId(run: Run, row: RunnerSessionUsage): string | undefined {
+function launchLiteLlmRoute(
+  run: Run,
+  row: RunnerSessionUsage,
+): { endpointId?: string; unverified?: boolean } {
   const context = run.agentContexts?.find((item) => row.contextIds?.includes(item.id));
-  if (!context?.runnerSessionPath || context.runnerSessionPath !== row.runnerSessionPath)
-    return undefined;
-  return context.launchLiteLlmEndpointId;
+  if (!context?.launchLiteLlmEndpointId && !context?.launchLiteLlmRouteUnverified) return {};
+  if (!context.runnerSessionPath || context.runnerSessionPath !== row.runnerSessionPath)
+    return { unverified: true };
+  return context.launchLiteLlmRouteUnverified
+    ? { unverified: true }
+    : { endpointId: context.launchLiteLlmEndpointId };
 }
 
 async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSessionUsage> {
@@ -188,7 +194,7 @@ async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSession
         ...(!row.slotId && run.reviewWorkspace
           ? {
               launchPricing: {
-                endpointId: launchLiteLlmEndpointId(run, row),
+                ...launchLiteLlmRoute(run, row),
                 environment: async () =>
                   (await import('../runners/review-tmux.js')).reviewEnvironment(run),
               },

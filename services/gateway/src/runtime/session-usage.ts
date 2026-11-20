@@ -61,6 +61,8 @@ interface LaunchEnvironment {
 interface LaunchPricing {
   /** The launch receipt's LiteLLM endpoint identity; absent on older or endpoint-less launches. */
   endpointId?: string;
+  /** The transcript's turns are not all on one verified route: quote nothing. */
+  unverified?: boolean;
   /** The launch's environment mutation, resolved again by the gateway. */
   environment: () => Promise<LaunchEnvironment>;
 }
@@ -76,36 +78,48 @@ const REMOTE_USAGE_COMMAND_BYTES = 96 * 1024;
  * lookup as it was: when the gateway has no prices, when loading them fails, or when the list is
  * too large to pass in one shell argument.
  */
+/**
+ * The LiteLLM prices a static review's Pi receipt is quoted from. Undefined for a launch that
+ * recorded no route (pricing as before route receipts). An empty list when the route is not
+ * verified for every turn, or the verified route's prices cannot be loaded: the receipt keeps its
+ * tokens and its LiteLLM cost is unpriced.
+ */
+async function launchLiteLlmPrices(
+  launch: LaunchPricing,
+  slotId: string,
+): Promise<Array<[string, PiModelCostMetadata]> | undefined> {
+  if (!launch.endpointId && !launch.unverified) return undefined;
+  const unpriced = (reason: string) => {
+    console.warn(`[session-usage] LiteLLM cost unpriced for ${slotId}: ${reason}`);
+    return [];
+  };
+  if (!launch.endpointId) return unpriced('launch route not verified for every turn');
+  try {
+    // The gateway's prices come from the launch mutation as the launch applies it: set values
+    // over this process's environment, then its unset names removed.
+    const mutation = await launch.environment();
+    const environment: NodeJS.ProcessEnv = { ...process.env, ...mutation.set };
+    for (const name of mutation.unset) delete environment[name];
+    // The endpoint these prices come from, in the pricing loader's precedence.
+    if (
+      liteLlmEndpointId(environment.LITELLM_URL || environment.LITELLM_BASE_URL) !==
+      launch.endpointId
+    )
+      return unpriced('gateway prices are for another endpoint than the launch route');
+    const prices = [...(await loadLiteLlmPrices({ environment }))];
+    return prices.length ? prices : unpriced('no gateway prices for the launch route');
+  } catch (error) {
+    return unpriced(`gateway prices unavailable: ${(error as Error).message}`);
+  }
+}
+
 async function remotePiLiteLlmPrices(
   vars: SlotVars,
   slotId: string,
-  launch: LaunchPricing | undefined,
 ): Promise<Array<[string, PiModelCostMetadata]> | undefined> {
   let prices: Array<[string, PiModelCostMetadata]>;
   try {
-    if (launch) {
-      // Quote only from the endpoint the session's runner was routed to at launch. The gateway's
-      // prices come from the launch mutation as the launch applies it: set values over this
-      // process's environment, then its unset names removed.
-      if (!launch.endpointId) {
-        console.warn(
-          `[session-usage] gateway LiteLLM prices omitted for ${slotId}: launch endpoint unrecorded`,
-        );
-        return undefined;
-      }
-      const mutation = await launch.environment();
-      const environment: NodeJS.ProcessEnv = { ...process.env, ...mutation.set };
-      for (const name of mutation.unset) delete environment[name];
-      // The endpoint these prices come from, in the pricing loader's precedence.
-      const pricedEndpoint = environment.LITELLM_URL || environment.LITELLM_BASE_URL;
-      if (liteLlmEndpointId(pricedEndpoint) !== launch.endpointId) {
-        console.warn(
-          `[session-usage] gateway LiteLLM prices omitted for ${slotId}: launch endpoint not verified`,
-        );
-        return undefined;
-      }
-      prices = [...(await loadLiteLlmPrices({ environment }))];
-    } else prices = await usageLiteLlmPrices(vars, vars.machine);
+    prices = await usageLiteLlmPrices(vars, vars.machine);
   } catch (error) {
     // Without the gateway's prices the receipt keeps its tokens and its previous pricing; a
     // pricing failure must not cost the run its usage totals.
@@ -152,7 +166,11 @@ export async function extractRunnerSessionUsage({
       // Pi's LiteLLM messages are quoted from the gateway's LiteLLM price list; the slot that holds
       // the transcript may have no LiteLLM credentials, which left the receipt unpriced.
       const liteLlmPrices =
-        runner === 'pi' ? await remotePiLiteLlmPrices(vars, slotId, launchPricing) : undefined;
+        runner !== 'pi'
+          ? undefined
+          : launchPricing
+            ? await launchLiteLlmPrices(launchPricing, slotId)
+            : await remotePiLiteLlmPrices(vars, slotId);
       const usageArgv = (prices?: Array<[string, PiModelCostMetadata]>) =>
         forcedSessionUsageArgv(
           slotId,
@@ -171,11 +189,14 @@ export async function extractRunnerSessionUsage({
       let command = usageArgv(liteLlmPrices).map(shellQuote).join(' ');
       // The node runs the whole quoted command as one argument; prices that would push it past the
       // limit are left off, and the slot prices the receipt as it did before.
-      if (liteLlmPrices && Buffer.byteLength(command) > REMOTE_USAGE_COMMAND_BYTES) {
+      if (liteLlmPrices?.length && Buffer.byteLength(command) > REMOTE_USAGE_COMMAND_BYTES) {
         console.warn(
           `[session-usage] gateway LiteLLM prices omitted for ${slotId}: usage command too large`,
         );
-        command = usageArgv().map(shellQuote).join(' ');
+        // A launch-bound receipt cannot fall back to the slot's own, unverified lookup.
+        command = usageArgv(launchPricing ? [] : undefined)
+          .map(shellQuote)
+          .join(' ');
       }
       const result = await execOnSlot(vars, command, {
         timeout: 30_000,
@@ -195,6 +216,11 @@ export async function extractRunnerSessionUsage({
       forcedRunner: runner ?? null,
       environment: { ...process.env, ...vars?.machineEnv },
       checklistMarks,
+      ...(await (async () => {
+        if (runner !== 'pi' || !launchPricing) return {};
+        const prices = await launchLiteLlmPrices(launchPricing, slotId);
+        return prices ? { liteLlmPrices: new Map(prices) } : {};
+      })()),
     });
     return parseSessionUsageOutput(output, {
       runner: runner ?? null,

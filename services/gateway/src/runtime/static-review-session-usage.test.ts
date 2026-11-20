@@ -26,13 +26,18 @@ mock.module('../core/exec.js', {
     execOnSlot: async (vars: { host: string }, command: string) => {
       assert.equal(vars.host, 'review.invalid');
       assert.match(command, /runSessionUsage/);
-      assert.match(command, /pi-session.jsonl/);
+      assert.match(command, /pi-(session|other)\.jsonl/);
       remoteCommand = command;
+      // The node quotes nothing from an empty gateway price list: tokens stay, cost is unpriced.
+      const unpriced = command.includes('"liteLlmPrices":[]');
       return {
         exitCode: 0,
         stderr: '',
         stdout:
-          'turns=2\nmodel=glm-5p3-flash\ninput_tokens=200\noutput_tokens=40\ncache_read=160\ncache_creation=0\ntotal_tokens=400\ncost_usd=0.002\n',
+          'turns=2\nmodel=glm-5p3-flash\ninput_tokens=200\noutput_tokens=40\ncache_read=160\ncache_creation=0\ntotal_tokens=400\n' +
+          (unpriced
+            ? 'cost_reason=No verified model price for all used token categories\n'
+            : 'cost_usd=0.002\n'),
       };
     },
   },
@@ -277,7 +282,14 @@ test('ambiguous workspace sessions stay unbound', async (t) => {
   assert.equal(await recoverWorkspaceUsageBindings(run), run);
 });
 
-for (const recorded of ['launch', 'other', 'none'] as const)
+for (const recorded of [
+  'launch',
+  'other',
+  'none',
+  'mixed',
+  'unknown',
+  'rebound-transcript',
+] as const)
   test(`a remote static Pi review is priced from its launch endpoint only when verified (${recorded})`, async (t) => {
     remote = true;
     remoteCommand = '';
@@ -355,24 +367,48 @@ for (const recorded of ['launch', 'other', 'none'] as const)
           completedAt: '2026-11-10T14:10:00Z',
           target: { session: 'review-fixture', target: 'review-fixture' },
           runnerSessionId: 'pi-session',
-          runnerSessionPath: transcript,
+          // The context's current launch wrote another transcript for the same conversation: capture
+          // rebinds the conversation's receipt to it, and that launch's verified route prices it.
+          runnerSessionPath:
+            recorded === 'rebound-transcript' ? '/review-node/pi-other.jsonl' : transcript,
           ...(recorded === 'none'
             ? {}
-            : {
-                launchLiteLlmEndpointId: liteLlmEndpointId(
-                  recorded === 'launch' ? `${endpoint}/v1/` : 'https://litellm-other.example',
-                ),
-              }),
+            : recorded === 'mixed'
+              ? { launchLiteLlmRouteUnverified: 'mixed-routes' as const }
+              : recorded === 'unknown'
+                ? { launchLiteLlmRouteUnverified: 'unknown-route' as const }
+                : {
+                    launchLiteLlmEndpointId: liteLlmEndpointId(
+                      recorded === 'other' ? 'https://litellm-other.example' : `${endpoint}/v1/`,
+                    ),
+                  }),
         },
       ],
     });
+    // A cost from an earlier measurement of this receipt.
+    updateRun(run.id, { metrics: { ...getRun(run.id)!.metrics, costEstimate: 0.5 } });
     await captureRunSessionUsage(run.id);
     const receipt = getRun(run.id)!.sessionUsage![0];
+    const priced = recorded === 'launch' || recorded === 'rebound-transcript';
+    assert.equal(remoteCommand.includes('"liteLlmPrices":[["glm-5p3-flash"'), priced);
+    // A recorded route the gateway cannot verify for every turn quotes nothing; a context from
+    // before route receipts keeps the slot's own pricing.
     assert.equal(
-      remoteCommand.includes('"liteLlmPrices":[["glm-5p3-flash"'),
-      recorded === 'launch',
+      remoteCommand.includes('"liteLlmPrices":[]'),
+      ['other', 'mixed', 'unknown'].includes(recorded),
     );
-    // An unverified endpoint keeps the slot's own pricing and the receipt's token counts.
+    assert.equal(remoteCommand.includes('liteLlmPrices"'), recorded !== 'none');
+    // Every branch keeps the receipt's token counts.
     assert.equal(receipt.totalTokens, 400);
-    assert.equal(receipt.runnerSessionPath, transcript);
+    assert.equal(
+      receipt.runnerSessionPath,
+      recorded === 'rebound-transcript' ? '/review-node/pi-other.jsonl' : transcript,
+    );
+    const unpriced = ['other', 'mixed', 'unknown'].includes(recorded);
+    assert.equal(receipt.costUsd, unpriced ? null : 0.002);
+    assert.equal(receipt.costStatus, unpriced ? 'unpriced' : 'estimated');
+    // The run total follows the receipt: an unpriced receipt leaves no earlier cost behind.
+    const metrics = getRun(run.id)!.metrics;
+    assert.equal(metrics.sessionTotalTokens, 400);
+    assert.equal(metrics.costEstimate, unpriced ? undefined : 0.002);
   });
