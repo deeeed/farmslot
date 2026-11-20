@@ -1,1 +1,0 @@
-- Group human action lists by category and show short descriptions, a four-parameter preview, visible risk labels, and a shortcut to full details and call examples.

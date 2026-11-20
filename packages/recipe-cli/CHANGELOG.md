@@ -6,6 +6,11 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.28 - 2026-11-21
+
+- Group human action lists by category and show short descriptions, a four-parameter preview, visible risk labels, and a shortcut to full details and call examples.
+- Preserve explicit catalog choices in detail commands. Project CLI detail hints also carry provider authorization explicitly supplied by the operator.
+
 ## 0.35.27 - 2026-11-20
 
 - Retain named catalog selection and root identity through preflight and recovery so reports can bind timing to the selected recipe. After upgrading, regenerate and reapprove outstanding plans for named recipes.
