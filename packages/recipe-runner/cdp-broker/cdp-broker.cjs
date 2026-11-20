@@ -495,19 +495,31 @@ function createCdpBroker({
     const budgetMs = boundedTimeout(timeoutMs);
     const deadline = Date.now() + budgetMs;
     const session = await waitForSession(deviceId, budgetMs, socket);
+    const generation = knownTargets.get(deviceId)?.generation;
     const update = hudUpdates.get(deviceId);
     if (!update) return { status: 'none' };
     if (appliedHudVersions.get(deviceId) === update.version) {
       return { status: 'applied', version: update.version };
     }
+    const isCurrent = () => {
+      const target = knownTargets.get(deviceId);
+      return (
+        hudUpdates.get(deviceId)?.version === update.version &&
+        target?.ready &&
+        target.generation === generation &&
+        observedSessions.get(deviceId) === session
+      );
+    };
     let applied = false;
     while (Date.now() < deadline) {
+      if (!isCurrent()) return { status: 'none' };
       const globalObject = await sendCommand(
         session,
         'Runtime.evaluate',
         { expression: 'globalThis', returnByValue: false, awaitPromise: false },
         Math.max(1, deadline - Date.now()),
       );
+      if (!isCurrent()) return { status: 'none' };
       const objectId = globalObject?.result?.objectId;
       if (!objectId) {
         throw new Error('Mobile HUD runtime did not expose globalThis');
@@ -533,9 +545,7 @@ function createCdpBroker({
     if (!applied) {
       throw new Error('Mobile HUD bridge was not installed before the update deadline');
     }
-    if (hudUpdates.get(deviceId)?.version === update.version) {
-      appliedHudVersions.set(deviceId, update.version);
-    }
+    if (isCurrent()) appliedHudVersions.set(deviceId, update.version);
     return { status: 'applied', version: update.version };
   }
 
@@ -836,6 +846,14 @@ function createCdpBroker({
       if (method === 'Runtime.executionContextsCleared') {
         const target = knownTargets.get(deviceId);
         if (target) knownTargets.set(deviceId, { ...target, generation: target.generation + 1 });
+        appliedHudVersions.delete(deviceId);
+      }
+      if (
+        method === 'Runtime.executionContextCreated' &&
+        hudUpdates.has(deviceId) &&
+        !appliedHudVersions.has(deviceId)
+      ) {
+        void scheduleHudUpdate(deviceId, 10_000);
       }
       for (const socket of clients) {
         if (subscriptions.get(socket)?.has(`${deviceId}\u0000${method}`)) {
