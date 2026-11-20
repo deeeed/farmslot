@@ -28,6 +28,21 @@ export interface NativeSessionUsageRequest {
   parentChecklistMarks?: ChecklistMark[];
 }
 
+/** Gateway LiteLLM prices bound to the endpoint they were loaded from (`liteLlmEndpointId`). */
+export interface LiteLlmRouteRates {
+  endpointId: string;
+  prices: Array<[string, PiModelCostMetadata]>;
+}
+
+/**
+ * A tmux Pi receipt's gateway pricing. `liteLlmPrices` is empty so a node without route binding
+ * leaves LiteLLM turns unpriced; `liteLlmRoute` prices the turns whose request entry recorded it.
+ */
+export interface TmuxPiReceiptPricing {
+  liteLlmPrices: [];
+  liteLlmRoute?: LiteLlmRouteRates;
+}
+
 const SESSION_USAGE_MODULE = String.raw`
 import { access, realpath } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -347,8 +362,7 @@ export function forcedSessionUsageArgv(
   modulePath?: string,
   checklistMarks?: ChecklistMark[],
   receiptBudget?: { maxBytes: number; parentChecklistMarks?: ChecklistMark[] },
-  /** Gateway-loaded LiteLLM prices: the slot quotes Pi's LiteLLM messages from them. */
-  liteLlmPrices?: Array<[string, PiModelCostMetadata]>,
+  pricing?: TmuxPiReceiptPricing,
 ): string[] {
   // Most parent marks are already in the expanded list. Keep references to
   // those marks so they do not double the remote shell argument on large ledgers.
@@ -363,7 +377,7 @@ export function forcedSessionUsageArgv(
 const input = JSON.parse(process.argv[1]);
 
 try {
-  const options = { repo: '', slotId: input.slotId, action: 'total', forcedPath: input.sessionPath, forcedRunner: input.runner, checklistMarks: input.checklistMarks, ...(input.liteLlmPrices ? { liteLlmPrices: new Map(input.liteLlmPrices) } : {}) };
+  const options = { repo: '', slotId: input.slotId, action: 'total', forcedPath: input.sessionPath, forcedRunner: input.runner, checklistMarks: input.checklistMarks, ...(input.liteLlmPrices ? { liteLlmPrices: new Map(input.liteLlmPrices) } : {}), ...(input.liteLlmRoute ? { liteLlmRoute: { endpointId: input.liteLlmRoute.endpointId, prices: new Map(input.liteLlmRoute.prices) } } : {}) };
   let output = await runSessionUsage(options);
   if (input.receiptBudget && exceedsBudget(output, input.receiptBudget.maxBytes)) {
     const marks = parentMarks(input.receiptBudget.parentChecklistMarks, input.checklistMarks);
@@ -395,7 +409,7 @@ try {
       sessionPath,
       checklistMarks,
       receiptBudget: budget,
-      liteLlmPrices,
+      ...pricing,
     }),
     modulePath ?? '',
   ];

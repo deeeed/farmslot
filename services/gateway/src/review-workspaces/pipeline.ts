@@ -45,7 +45,6 @@ import {
   sendNativeWorkerInstruction,
 } from '../runners/native/worker-control.js';
 import { getRunnerDefinition } from '../runners/registry.js';
-import { launchLiteLlmRoute } from '../runners/review-launch-route.js';
 import {
   observeReviewPromptAcceptance,
   observeReviewRunnerState,
@@ -895,8 +894,6 @@ async function executeOwnedReviewWorkspaceStep(
               id: context.id,
               promptDeliveryStartedAt: resumed.startedAt,
               ...(resumed.signalAttemptId ? { signalAttemptId: resumed.signalAttemptId } : {}),
-              // A resume continues the transcript: its earlier turns keep their route.
-              ...launchLiteLlmRoute(resumed, context, true),
             });
           }
         } else {

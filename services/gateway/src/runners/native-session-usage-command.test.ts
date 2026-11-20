@@ -676,3 +676,84 @@ test('the bounded command does not repeat large parent marks in its shell argume
     parents.map((_mark, index) => index),
   );
 });
+
+test('the remote program prices a tmux Pi turn only through its endpoint-bound request entry', async (t) => {
+  const f = await fixture(t);
+  const sessionPath = path.join(f.root, 'pi.jsonl');
+  const route = {
+    endpointId: 'sha256:gateway',
+    prices: [['glm', { input: 1, output: 2, cacheRead: null, cacheWrite: null }]] as Array<
+      [string, { input: number; output: number; cacheRead: null; cacheWrite: null }]
+    >,
+  };
+  const measure = async (
+    endpoint: string | undefined,
+    pricing: Parameters<typeof forcedSessionUsageArgv>[6],
+  ) => {
+    await writeFile(
+      sessionPath,
+      [
+        { type: 'message', id: 'u1', parentId: null, message: { role: 'user' } },
+        {
+          type: 'custom',
+          customType: 'farmslot-model-request',
+          id: 'r1',
+          parentId: 'u1',
+          data: {
+            provider: 'litellm',
+            model: 'glm',
+            cost: null,
+            ...(endpoint ? { endpoint } : {}),
+          },
+        },
+        {
+          type: 'message',
+          id: 'a1',
+          parentId: 'r1',
+          message: {
+            role: 'assistant',
+            provider: 'litellm',
+            model: 'glm',
+            usage: { input: 1000, output: 100, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+          },
+        },
+      ]
+        .map((record) => JSON.stringify(record))
+        .join('\n') + '\n',
+    );
+    const argv = forcedSessionUsageArgv(
+      'receipt',
+      'pi',
+      sessionPath,
+      modulePath,
+      [],
+      undefined,
+      pricing,
+    );
+    const result = await execute(process.execPath, argv.slice(1), {
+      encoding: 'utf8',
+      // The node's own LiteLLM configuration must not price the receipt.
+      env: {
+        ...process.env,
+        HOME: f.root,
+        LITELLM_URL: 'https://node-own.invalid',
+        LITELLM_API_KEY: 'k',
+      },
+    });
+    return parseSessionUsageOutput(result.stdout, { runner: 'pi' });
+  };
+  const bound = await measure(route.endpointId, { liteLlmPrices: [], liteLlmRoute: route });
+  assert.equal(bound.totalTokens, 1100);
+  assert.equal(bound.costUsd, 0.0012);
+  const unbound: Array<[string | undefined, Parameters<typeof forcedSessionUsageArgv>[6]]> = [
+    ['sha256:other', { liteLlmPrices: [], liteLlmRoute: route }],
+    [undefined, { liteLlmPrices: [], liteLlmRoute: route }],
+    // A node without route binding reads only the empty list: unpriced, never its own lookup.
+    [route.endpointId, { liteLlmPrices: [] }],
+  ];
+  for (const [endpoint, pricing] of unbound) {
+    const unpriced = await measure(endpoint, pricing);
+    assert.equal(unpriced.totalTokens, 1100);
+    assert.equal(unpriced.costUsd, null);
+  }
+});

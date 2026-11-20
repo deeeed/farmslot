@@ -15,6 +15,11 @@ const { normalizeLiteLlmModelInfo } = await import(
     ? './litellm-model-info.mjs'
     : '../../packages/slot-config/src/litellm-model-info.mjs'
 );
+const { liteLlmEndpointId } = await import(
+  existsSync(new URL('./litellm-endpoint.cjs', import.meta.url))
+    ? './litellm-endpoint.cjs'
+    : '../../packages/agent-runtime/scripts/litellm-endpoint.cjs'
+);
 
 /** Shared non-secret settings read by this helper and the Pi extension. */
 export const PI_CONFIG_ENVIRONMENT = Object.freeze([
@@ -732,7 +737,7 @@ export function assertPiModelThinking(model, requestedEffort, kind = model?.prov
     );
 }
 
-/** @typedef {{ provider: string, model: string, contextWindow: number, maxTokens: number, reasoning: boolean, effectiveReasoning?: import('@farmslot/protocol').EffectiveReasoning, effort?: string, requestedMaxTokens?: number, cost: PiModelCostMetadata | null }} PiModelRequestConfiguration */
+/** @typedef {{ provider: string, model: string, contextWindow: number, maxTokens: number, reasoning: boolean, effectiveReasoning?: import('@farmslot/protocol').EffectiveReasoning, effort?: string, requestedMaxTokens?: number, cost: PiModelCostMetadata | null, endpoint?: string }} PiModelRequestConfiguration */
 
 /**
  * Refuse undeclared effort changes before sending; record actual wire effort.
@@ -791,7 +796,7 @@ export function providerReasoningFetch(
           );
       }
       if (model) {
-        onRequest?.({
+        const request = {
           provider: provider.id,
           model: model.id,
           contextWindow: model.contextWindow,
@@ -808,7 +813,23 @@ export function providerReasoningFetch(
                 : undefined,
           effort,
           cost: model.cost ?? null,
-        });
+        };
+        let response;
+        try {
+          response = await fetchImpl(input, options);
+        } catch (error) {
+          // A failed request is still observed, with no endpoint: no later turn is priced by it.
+          onRequest?.(request);
+          throw error;
+        }
+        // Only a successful answer from the exact catalog URL, not a redirect, binds the endpoint
+        // digest that receipts quote gateway prices against.
+        onRequest?.(
+          response.ok && !response.redirected && response.url === url
+            ? { ...request, endpoint: liteLlmEndpointId(provider.baseUrl) }
+            : request,
+        );
+        return response;
       }
     }
     return fetchImpl(input, options);

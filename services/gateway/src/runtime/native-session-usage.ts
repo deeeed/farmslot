@@ -105,15 +105,15 @@ interface NativeAgentUsageResolution {
 }
 
 /**
- * The LiteLLM prices a Pi receipt is quoted from, loaded with the gateway-side environment the
- * session's commands run with: this process, the project's command env and the machine's pool env.
- * The execution node itself may hold no LiteLLM credentials.
+ * The gateway-side environment a session's commands run with, for its LiteLLM prices: this process,
+ * the project's command env and the machine's pool env. The execution node itself may hold no
+ * LiteLLM credentials.
  */
-export async function usageLiteLlmPrices(
+export async function usageLiteLlmEnvironment(
   vars: NativeSessionUsageVars,
   machine: string,
   commandEnvOptions?: ProjectCommandEnvOptions,
-): Promise<Array<[string, PiModelCostMetadata]>> {
+): Promise<NodeJS.ProcessEnv> {
   const poolEnv =
     'machine' in vars && vars.machine === machine && vars.machineEnv !== undefined
       ? vars.machineEnv
@@ -149,7 +149,20 @@ export async function usageLiteLlmPrices(
     Object.assign(environment, mutation.set);
   }
   Object.assign(environment, machineShellEnv({ machineEnv: poolEnv }));
-  return [...(await loadLiteLlmPrices({ environment }))];
+  return environment;
+}
+
+/** The LiteLLM prices a native Pi receipt is quoted from. */
+async function usageLiteLlmPrices(
+  vars: NativeSessionUsageVars,
+  machine: string,
+  commandEnvOptions?: ProjectCommandEnvOptions,
+): Promise<Array<[string, PiModelCostMetadata]>> {
+  return [
+    ...(await loadLiteLlmPrices({
+      environment: await usageLiteLlmEnvironment(vars, machine, commandEnvOptions),
+    })),
+  ];
 }
 
 export async function extractNativeAgentSessionUsage(

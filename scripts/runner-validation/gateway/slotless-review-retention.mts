@@ -223,8 +223,8 @@ if (proofRoute) {
   // Before the gateway loads: its local node environment is this process's, read at load time.
   // Pi gets an isolated home whose agent directory's models.json lists the review model on the
   // `route` proxy, with its key read from the environment, never copied. Session recovery reads
-  // that same home. The environment's LiteLLM URL, which the reviewer launch and the gateway's
-  // pricing see, is the other proxy path.
+  // that same home. Discovery starts on the actual route so Pi can record its request. The
+  // gateway receipt is later remeasured with both matching and different pricing endpoints.
   const { id } = modelsJsonRoute(reviewModel);
   const agent = process.env.PI_CODING_AGENT_DIR || path.join(nodeHome, '.pi/agent');
   const real = JSON.parse(fs.readFileSync(path.join(agent, 'models.json'), 'utf8')).providers
@@ -253,7 +253,7 @@ if (proofRoute) {
   );
   process.env.HOME = home;
   delete process.env.PI_CODING_AGENT_DIR;
-  process.env.LITELLM_URL = proofRoute.environment;
+  process.env.LITELLM_URL = proofRoute.route;
   delete process.env.LITELLM_BASE_URL;
   process.env.FARMSLOT_LITELLM_PRICING_CACHE_DIR = path.join(root, 'litellm-prices');
   assert(process.env.LITELLM_API_KEY, 'Gateway LiteLLM credentials');
@@ -408,7 +408,7 @@ try {
     if (proofRoute) {
       // This opt-in proof ends here: the retention and session checks belong to the default proof.
       summary.proof = 'remote-pricing';
-      summary.remotePricing = await proveRemoteLaunchPricing(finished, observed, proofRoute);
+      summary.remotePricing = await proveRemoteRequestPricing(finished, observed, proofRoute);
       save();
       break;
     }
@@ -603,8 +603,8 @@ function modelsJsonRoute(model: string) {
 
 /**
  * Two loopback LiteLLM routes to the review model's models.json route, recording each path served.
- * Pi is configured with the `route` one; the reviewer's environment and the gateway's pricing get
- * the `environment` one. Each path carries a token standing in for a credential in the URL.
+ * Pi sends requests through `route`; the gateway also tries pricing them through `environment`.
+ * Each path carries a token standing in for a credential in the URL.
  */
 async function proofLiteLlmRoutes(upstream: string) {
   const tokens = { route: 'proof-route-secret-token', environment: 'proof-env-secret-token' };
@@ -747,7 +747,7 @@ async function remoteReceipt(
   // newest measurement of the same conversation replaces it (preferSessionUsage).
   const measured = parseSessionUsageOutput(usage[0].stdout);
   return {
-    pricesSent: usage[0].command.includes('"liteLlmPrices":[['),
+    routePricesSent: usage[0].command.includes('"liteLlmRoute":{'),
     totalTokens: measured.totalTokens,
     costUsd: measured.costUsd,
     costReason: measured.costReason,
@@ -757,11 +757,10 @@ async function remoteReceipt(
   };
 }
 /**
- * The opt-in remote pricing proof for one finished static Pi review: the launch route identity is
- * the route the Pi process sent its requests through, no part of either proxy URL is persisted,
- * and the remote receipt branch prices from the gateway only for that route.
+ * The opt-in remote pricing proof binds the successful Pi requests to assistant transcript entries.
+ * The remote receipt branch quotes matching gateway prices and preserves tokens without prices.
  */
-async function proveRemoteLaunchPricing(
+async function proveRemoteRequestPricing(
   finished: Run,
   observed: unknown,
   proofRoute: Awaited<ReturnType<typeof proofLiteLlmRoutes>>,
@@ -776,8 +775,7 @@ async function proveRemoteLaunchPricing(
   assert(usage && usage.totalTokens != null && usage.totalTokens > 0, 'Measured review tokens');
   assert(usage.costUsd != null && usage.costUsd > 0, 'The gateway priced the local receipt');
   summary.usage = usage;
-  // The route the Pi process used is the proxy path its review requests arrived on: its
-  // models.json route, not the LiteLLM URL in its launch environment.
+  // Check the request path independently of the receipt's gateway price lookup.
   assert(proofRoute);
   summary.proofRouteRequests = [...proofRoute.served];
   save();
@@ -788,16 +786,14 @@ async function proveRemoteLaunchPricing(
   );
   assert(
     !proofRoute.served.includes('POST environment /v1/chat/completions'),
-    'Pi sent no review request through the environment URL',
+    'Pi sent no review request through the alternate pricing endpoint',
   );
   const expected = liteLlmEndpointId(proofRoute.route);
   assert(expected && expected !== liteLlmEndpointId(proofRoute.environment));
-  assert.equal(context.launchLiteLlmEndpointId, expected, 'run.get keeps the launch route');
   const marker = fs.readFileSync(
     path.join(finished.reviewWorkspace!.taskPath, '.terminal-launch.json'),
     'utf8',
   );
-  assert.equal(JSON.parse(marker).liteLlmEndpointId, expected, 'launch receipt route');
   const transcript = fs
     .readFileSync(context.runnerSessionPath!, 'utf8')
     .split('\n')
@@ -807,10 +803,23 @@ async function proveRemoteLaunchPricing(
     (entry) => entry.type === 'message' && entry.message?.role === 'assistant',
   );
   assert(replies.length, 'Pi answered');
+  const requests = new Map(
+    transcript
+      .filter((entry) => entry.type === 'custom' && entry.customType === 'farmslot-model-request')
+      .map((entry) => [entry.id, entry.data]),
+  );
+  let boundReplies = 0;
   for (const entry of replies) {
     assert.equal(entry.message.provider, 'litellm', 'Pi used the LiteLLM provider');
     assert.equal(entry.message.model, id);
+    if (!entry.message.usage?.totalTokens) continue;
+    const request = requests.get(entry.parentId);
+    assert.equal(request?.provider, entry.message.provider, 'request provider matches reply');
+    assert.equal(request?.model, entry.message.model, 'request model matches reply');
+    assert.equal(request?.endpoint, expected, 'reply answers a request on the verified route');
+    boundReplies++;
   }
+  assert(boundReplies > 0, 'At least one measured reply has a verified request');
   // Neither the persisted run, its run.get reply nor the launch receipt names either URL.
   const persisted = fs.readFileSync(path.join(root, 'runs', finished.id + '.json'), 'utf8');
   for (const part of [
@@ -822,11 +831,12 @@ async function proveRemoteLaunchPricing(
       ['run.get', JSON.stringify(observed)],
       ['run file', persisted],
       ['launch receipt', marker],
+      ['request entries', JSON.stringify([...requests.values()])],
     ])
       assert.equal(text.includes(part), false, `${name} exposes a route URL part`);
   // The gateway prices from the verified route, set through the node's pool environment.
   const matched = await remoteReceipt(finished, context.runnerSessionId, proofRoute.route);
-  assert.equal(matched.pricesSent, true, 'Verified launch route sends gateway prices');
+  assert.equal(matched.routePricesSent, true, 'Gateway sends endpoint-bound prices');
   assert.equal(matched.source, 'runner-transcript');
   assert.equal(matched.totalTokens, usage.totalTokens);
   assert(matched.costUsd != null && matched.costUsd > 0, 'Remote receipt is priced');
@@ -834,19 +844,20 @@ async function proveRemoteLaunchPricing(
   const unverified = await remoteReceipt(
     finished,
     context.runnerSessionId,
-    // The launch environment's own URL is not the route Pi used.
+    // The alternate pricing endpoint is not the route Pi used.
     proofRoute.environment,
   );
-  assert.equal(unverified.pricesSent, false, 'An unverified endpoint sends no prices');
+  assert.equal(unverified.routePricesSent, true, 'Alternate prices exercise node-side matching');
   assert.equal(unverified.source, 'runner-transcript');
   assert.equal(unverified.totalTokens, usage.totalTokens, 'Fallback keeps token counts');
   assert.equal(unverified.costUsd, null, 'The credential-less node leaves it unpriced');
   assert.equal(unverified.storedTotalTokens, usage.totalTokens);
   assert.equal(unverified.storedCostUsd, null, 'run.get reports it unpriced, not guessed');
   return {
-    launchLiteLlmEndpointId: expected,
+    verifiedRequestEndpointId: expected,
     proofRouteRequests: proofRoute.served,
     piProviderReplies: replies.length,
+    boundReplies,
     matched,
     unverified,
   };

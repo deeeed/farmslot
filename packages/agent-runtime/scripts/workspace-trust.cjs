@@ -2,14 +2,12 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { fileURLToPath } = require('node:url');
 const {
   assertGrokReviewAccount,
   grokHome,
   homeDirectory: home,
 } = require('./review-account-preflight.cjs');
 const { tomlSectionHeaderIndexes, tomlBareStringValue } = require('./toml-scan.cjs');
-const { liteLlmEndpointId } = require('./litellm-endpoint.cjs');
 
 const lockScript = String.raw`
 import fcntl, os, subprocess, sys
@@ -230,77 +228,6 @@ const reviewRuntimeRootsByRunner = {
     path.join(env.XDG_CONFIG_HOME || path.join(home(env), '.config'), 'opencode'),
   ],
 };
-/**
- * Pi's agent directory as Pi resolves PI_CODING_AGENT_DIR (getAgentDir, normalizePath): `~` and a
- * leading `~/` against HOME, a file: URL to its path. Undefined for a relative directory, which Pi
- * resolves against the review checkout's working directory: that route stays unknown here.
- */
-function piAgentDirectory(env) {
-  const configured = env.PI_CODING_AGENT_DIR;
-  if (!configured) return path.join(home(env), '.pi/agent');
-  if (configured === '~') return home(env);
-  if (configured.startsWith('~/')) return path.join(home(env), configured.slice(2));
-  if (configured.startsWith('file://')) return fileURLToPath(configured);
-  return path.isAbsolute(configured) ? configured : undefined;
-}
-/**
- * The base URL Pi routes a `provider/model` to in a Farmslot launch. A model listed in the agent
- * directory's models.json keeps its own `baseUrl`, else its provider's: the Farmslot Pi extension
- * preserves those static models over discovered ones (preservePiStaticModels in
- * scripts/runners/pi-farmslot-providers.mjs), and Pi does not interpolate `baseUrl`. Only another
- * `litellm` model is routed to LITELLM_URL or LITELLM_BASE_URL, where the extension registers the
- * provider (listPiProviderSources, openaiBaseUrl). A review checkout's own `.pi` configuration
- * never loads: the checkout stays untrusted.
- */
-function piModelRoute(env, model) {
-  const slash = typeof model === 'string' ? model.indexOf('/') : -1;
-  if (slash <= 0) return undefined;
-  const provider = model.slice(0, slash);
-  const id = model.slice(slash + 1);
-  const directory = piAgentDirectory(env);
-  if (!directory) return undefined;
-  const file = path.join(directory, 'models.json');
-  let config = {};
-  try {
-    config = JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch (error) {
-    // A missing models.json lists no static model. One this parser cannot read (Pi also accepts
-    // comments) may list this model, so the route stays unknown rather than guessed.
-    if (error?.name === 'SyntaxError') return undefined;
-    if (error?.code !== 'ENOENT') throw error;
-  }
-  const entry = config?.providers?.[provider];
-  const listed = Array.isArray(entry?.models)
-    ? entry.models.find((candidate) => candidate?.id === id)
-    : undefined;
-  if (listed) {
-    const baseUrl = listed.baseUrl ?? entry.baseUrl;
-    return typeof baseUrl === 'string' ? { provider, baseUrl } : undefined;
-  }
-  const registered = provider === 'litellm' && (env.LITELLM_URL || env.LITELLM_BASE_URL)?.trim();
-  if (!registered) return undefined;
-  return {
-    provider,
-    baseUrl: /^https?:\/\//i.test(registered) ? registered : `http://${registered}`,
-  };
-}
-// The LiteLLM endpoint identity a terminal reviewer is launched against, from the route its runner
-// actually uses; undefined when that route is unknown or not LiteLLM. A runner without an entry
-// records nothing, and its receipts keep their own pricing.
-// null when the route is unknown: a LiteLLM cost on it cannot be verified.
-const reviewLiteLlmEndpointIdByRunner = {
-  pi: (env, model) => {
-    const route = piModelRoute(env, model);
-    if (!route) return null;
-    return route.provider === 'litellm' ? liteLlmEndpointId(route.baseUrl) : undefined;
-  },
-};
-// The environment names that route measurement reads. The launch hands the pane exactly the
-// measured values: a name the launch environment lacks is removed in the pane, so a value in the
-// tmux server's global environment cannot route the runner elsewhere.
-const reviewLiteLlmRouteVariablesByRunner = {
-  pi: ['LITELLM_URL', 'LITELLM_BASE_URL', 'PI_CODING_AGENT_DIR'],
-};
 const reviewConfigurationRoots = (cwd) =>
   [
     '.grok/config.toml',
@@ -362,8 +289,6 @@ const claudeReadOnlyReviewArgs = [
 
 module.exports = {
   reviewRuntimeRootsByRunner,
-  reviewLiteLlmEndpointIdByRunner,
-  reviewLiteLlmRouteVariablesByRunner,
   reviewTemporaryDirectoryVariablesByRunner,
   piReadOnlyReviewArgs,
   claudeReadOnlyReviewArgs,

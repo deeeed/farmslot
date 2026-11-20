@@ -12,6 +12,8 @@ import { makeVars } from '../runners/test-fixtures.js';
 await import('./mock-pty.test-support.js');
 let remote = false;
 let remoteCommand = '';
+// Set by the LiteLLM test: its fixture node holds LiteLLM turns, priced only from bound prices.
+let liteLlmTurns = false;
 let launchMutation: { unset: string[]; set: Record<string, string> } = { unset: [], set: {} };
 mock.module('../runners/review-workspace-context.js', {
   namedExports: {
@@ -26,10 +28,9 @@ mock.module('../core/exec.js', {
     execOnSlot: async (vars: { host: string }, command: string) => {
       assert.equal(vars.host, 'review.invalid');
       assert.match(command, /runSessionUsage/);
-      assert.match(command, /pi-(session|other)\.jsonl/);
+      assert.match(command, /pi-session\.jsonl/);
       remoteCommand = command;
-      // The node quotes nothing from an empty gateway price list: tokens stay, cost is unpriced.
-      const unpriced = command.includes('"liteLlmPrices":[]');
+      const unpriced = liteLlmTurns && !command.includes('"liteLlmRoute"');
       return {
         exitCode: 0,
         stderr: '',
@@ -282,17 +283,11 @@ test('ambiguous workspace sessions stay unbound', async (t) => {
   assert.equal(await recoverWorkspaceUsageBindings(run), run);
 });
 
-for (const recorded of [
-  'launch',
-  'other',
-  'none',
-  'mixed',
-  'unknown',
-  'rebound-transcript',
-] as const)
-  test(`a remote static Pi review is priced from its launch endpoint only when verified (${recorded})`, async (t) => {
+for (const gateway of ['priced', 'no-prices'] as const)
+  test(`a remote static Pi review sends its launch endpoint's bound prices (${gateway})`, async (t) => {
     remote = true;
     remoteCommand = '';
+    liteLlmTurns = true;
     const root = await mkdtemp(path.join(os.tmpdir(), 'static-review-launch-pricing-'));
     const run = createRun({
       flowType: 'review-pr',
@@ -300,6 +295,7 @@ for (const recorded of [
       ticketOrPr: 'owner/repo#1',
     });
     t.after(async () => {
+      liteLlmTurns = false;
       updateRun(run.id, {
         status: 'cancelled',
         slotId: null,
@@ -330,12 +326,15 @@ for (const recorded of [
     );
     // Production wiring: the reviewer's launch mutation as review-tmux resolves it.
     launchMutation = {
-      unset: [],
-      set: {
-        LITELLM_BASE_URL: endpoint,
-        LITELLM_API_KEY: apiKey,
-        FARMSLOT_LITELLM_PRICING_CACHE_DIR: root,
-      },
+      unset: gateway === 'priced' ? [] : ['LITELLM_URL', 'LITELLM_BASE_URL'],
+      set:
+        gateway === 'priced'
+          ? {
+              LITELLM_BASE_URL: endpoint,
+              LITELLM_API_KEY: apiKey,
+              FARMSLOT_LITELLM_PRICING_CACHE_DIR: root,
+            }
+          : {},
     };
     const transcript = '/review-node/pi-session.jsonl';
     t.mock.method(piSessionUsageProvider, 'recoverSessions', async () => [
@@ -367,21 +366,7 @@ for (const recorded of [
           completedAt: '2026-11-10T14:10:00Z',
           target: { session: 'review-fixture', target: 'review-fixture' },
           runnerSessionId: 'pi-session',
-          // The context's current launch wrote another transcript for the same conversation: capture
-          // rebinds the conversation's receipt to it, and that launch's verified route prices it.
-          runnerSessionPath:
-            recorded === 'rebound-transcript' ? '/review-node/pi-other.jsonl' : transcript,
-          ...(recorded === 'none'
-            ? {}
-            : recorded === 'mixed'
-              ? { launchLiteLlmRouteUnverified: 'mixed-routes' as const }
-              : recorded === 'unknown'
-                ? { launchLiteLlmRouteUnverified: 'unknown-route' as const }
-                : {
-                    launchLiteLlmEndpointId: liteLlmEndpointId(
-                      recorded === 'other' ? 'https://litellm-other.example' : `${endpoint}/v1/`,
-                    ),
-                  }),
+          runnerSessionPath: transcript,
         },
       ],
     });
@@ -389,22 +374,16 @@ for (const recorded of [
     updateRun(run.id, { metrics: { ...getRun(run.id)!.metrics, costEstimate: 0.5 } });
     await captureRunSessionUsage(run.id);
     const receipt = getRun(run.id)!.sessionUsage![0];
-    const priced = recorded === 'launch' || recorded === 'rebound-transcript';
-    assert.equal(remoteCommand.includes('"liteLlmPrices":[["glm-5p3-flash"'), priced);
-    // A recorded route the gateway cannot verify for every turn quotes nothing; a context from
-    // before route receipts keeps the slot's own pricing.
+    // Always the empty list: a node without route binding never quotes from its own lookup.
+    assert.equal(remoteCommand.includes('"liteLlmPrices":[]'), true);
     assert.equal(
-      remoteCommand.includes('"liteLlmPrices":[]'),
-      ['other', 'mixed', 'unknown'].includes(recorded),
+      remoteCommand.includes(
+        `"liteLlmRoute":{"endpointId":"${liteLlmEndpointId(`${endpoint}/v1`)}","prices":[["glm-5p3-flash"`,
+      ),
+      gateway === 'priced',
     );
-    assert.equal(remoteCommand.includes('liteLlmPrices"'), recorded !== 'none');
-    // Every branch keeps the receipt's token counts.
     assert.equal(receipt.totalTokens, 400);
-    assert.equal(
-      receipt.runnerSessionPath,
-      recorded === 'rebound-transcript' ? '/review-node/pi-other.jsonl' : transcript,
-    );
-    const unpriced = ['other', 'mixed', 'unknown'].includes(recorded);
+    const unpriced = gateway === 'no-prices';
     assert.equal(receipt.costUsd, unpriced ? null : 0.002);
     assert.equal(receipt.costStatus, unpriced ? 'unpriced' : 'estimated');
     // The run total follows the receipt: an unpriced receipt leaves no earlier cost behind.

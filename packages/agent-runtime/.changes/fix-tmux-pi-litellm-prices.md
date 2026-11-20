@@ -1,1 +1,1 @@
-- A static terminal review's launch receipt records a digest of the LiteLLM route its Pi runner is configured with, never the URL. The new `scripts/litellm-endpoint.cjs` export computes that identity.
+- New `scripts/litellm-endpoint.cjs` export: a digest identity for a LiteLLM base URL, never the URL itself.

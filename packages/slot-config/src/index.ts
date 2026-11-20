@@ -15,6 +15,7 @@ export {
 export type {
   IncrementalSessionUsageResult,
   IncrementalSessionUsageState,
+  LiteLlmRoutePrices,
   PiModelCostMetadata,
   SessionAction,
   SessionUsageWindow,

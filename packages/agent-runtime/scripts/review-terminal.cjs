@@ -203,10 +203,6 @@ async function main() {
     terminalReviewRefusalByRunner,
     reviewRuntimeRootsByRunner,
     reviewTemporaryDirectoryVariablesByRunner,
-    // Absent from a task runtime frozen before launch receipts recorded it: such a launch records
-    // no endpoint and its receipt keeps its previous pricing.
-    reviewLiteLlmEndpointIdByRunner,
-    reviewLiteLlmRouteVariablesByRunner,
   } = require('./workspace-trust.cjs');
   if (terminalReviewRefusalByRunner[input.runner])
     throw new Error(terminalReviewRefusalByRunner[input.runner]);
@@ -238,19 +234,6 @@ async function main() {
     inspectionCwd: guard.temporaryDirectory,
   });
   const commandFile = path.join(task, '.terminal-start.cjs');
-  // Route measurement only binds pricing: a route it cannot measure leaves the launch going, and
-  // the receipt says the route is unverified so its LiteLLM cost stays unpriced.
-  const measureRoute = reviewLiteLlmEndpointIdByRunner?.[input.runner];
-  let liteLlmEndpointId;
-  let liteLlmRouteUnverified = false;
-  if (measureRoute) {
-    try {
-      liteLlmEndpointId = measureRoute(environment, input.model);
-    } catch {
-      liteLlmEndpointId = null;
-    }
-    liteLlmRouteUnverified = liteLlmEndpointId === null;
-  }
   const record = {
     runId: input.runId,
     workspaceId: input.workspaceId,
@@ -259,26 +242,12 @@ async function main() {
     model: input.model,
     startedAt: new Date().toISOString(),
     signalAttemptId: environment.FARMSLOT_SIGNAL_ATTEMPT_ID,
-    // A digest, never the URL: binds the gateway's later price quote to this launch's route.
-    ...(liteLlmEndpointId ? { liteLlmEndpointId } : {}),
-    ...(liteLlmRouteUnverified ? { liteLlmRouteUnverified: true } : {}),
     ...(input.action === 'resume'
       ? { resumeCommandId: input.resumeCommandId, resumeSessionId: input.resumeSessionId }
       : {}),
     ...(input.runner === 'codex' ? { codexHandshake: 'watching' } : {}),
   };
-  // tmux merges its server's global environment under the session's: a route variable the launch
-  // measured as absent is removed in the pane, so the runner takes the route the receipt records.
-  const scrubbed = [
-    'FARMSLOT_NODE_TOKEN',
-    'FARMSLOT_GATEWAY_TOKEN',
-    'FARMSLOT_GATEWAY_PASSWORD',
-    'CLAUDECODE',
-    ...(reviewLiteLlmRouteVariablesByRunner?.[input.runner] ?? []).filter(
-      (name) => typeof environment[name] !== 'string',
-    ),
-  ];
-  const launch = `const cp=require('node:child_process');const env={...process.env};for(const key of ${JSON.stringify(scrubbed)})delete env[key];const r=cp.spawnSync(${JSON.stringify(guard.sandbox.executable)},${JSON.stringify([...guard.sandbox.args, '/bin/sh', '-c', input.command])},{cwd:${JSON.stringify(cwd)},env,stdio:'inherit'});process.exit(r.status??1);`;
+  const launch = `const cp=require('node:child_process');const env={...process.env};for(const key of ['FARMSLOT_NODE_TOKEN','FARMSLOT_GATEWAY_TOKEN','FARMSLOT_GATEWAY_PASSWORD','CLAUDECODE'])delete env[key];const r=cp.spawnSync(${JSON.stringify(guard.sandbox.executable)},${JSON.stringify([...guard.sandbox.args, '/bin/sh', '-c', input.command])},{cwd:${JSON.stringify(cwd)},env,stdio:'inherit'});process.exit(r.status??1);`;
   fs.writeFileSync(commandFile, launch, { mode: 0o600 });
   const envArgs = Object.entries(environment)
     .filter(([, value]) => typeof value === 'string')

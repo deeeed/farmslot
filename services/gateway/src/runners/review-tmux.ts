@@ -41,7 +41,6 @@ import {
   workspaceTerminalSessionCreateArgv,
 } from './launch-command.js';
 import { getRunnerDefinition } from './registry.js';
-import { launchLiteLlmRoute } from './review-launch-route.js';
 import {
   resumableSessionContentProbeCommand,
   resumableSessionProbeOutcome,
@@ -56,10 +55,6 @@ export interface ReviewTmuxOperationResult {
   signalAttemptId?: string;
   /** Set when the launch answered Codex's Folder access screen with Open restricted. */
   folderAccess?: 'restricted';
-  /** Digest of the LiteLLM endpoint the runner was routed to; absent when it had none. */
-  liteLlmEndpointId?: string;
-  /** The runner's route could not be measured: its LiteLLM cost stays unpriced. */
-  liteLlmRouteUnverified?: boolean;
 }
 
 /** Native prompt acceptance and task progress are independent startup evidence. */
@@ -543,9 +538,6 @@ export async function launchReviewTmux(
     status: 'launching',
     promptDeliveryStartedAt: started.startedAt ?? context.attemptStartedAt,
     ...(started.signalAttemptId ? { signalAttemptId: started.signalAttemptId } : {}),
-    // Always written: a retained session continues its transcript, so its earlier turns keep their
-    // route; a fresh one takes this launch's.
-    ...launchLiteLlmRoute(started, context, Boolean(runnerSessionId)),
   });
   await persistRunNow(getRun(runId)!, 'terminal review launched');
   if (started.folderAccess === 'restricted') {

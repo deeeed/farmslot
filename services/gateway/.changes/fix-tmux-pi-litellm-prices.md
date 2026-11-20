@@ -1,1 +1,1 @@
-- Price remote tmux Pi usage from the gateway's LiteLLM price list. For static reviews, use those prices only when the gateway endpoint matches the verified route for the transcript. Keep token counts and report cost as unpriced when the route cannot be verified.
+- Price tmux Pi LiteLLM usage from the gateway's price list only for turns whose Pi request entry recorded a successful, direct answer from that endpoint. Other LiteLLM turns keep their tokens and are reported unpriced; provider-reported charges are kept.

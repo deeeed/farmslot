@@ -132,24 +132,6 @@ function workerChecklistMarks(run: Run, row: RunnerSessionUsage) {
   };
 }
 
-/**
- * The LiteLLM route a static reviewer's launches recorded for this receipt's transcript. A context
- * from before route receipts records none, and its pricing is unchanged. A recorded route that
- * belongs to another transcript, or that is not verified for every turn, prices nothing.
- */
-function launchLiteLlmRoute(
-  run: Run,
-  row: RunnerSessionUsage,
-): { endpointId?: string; unverified?: boolean } {
-  const context = run.agentContexts?.find((item) => row.contextIds?.includes(item.id));
-  if (!context?.launchLiteLlmEndpointId && !context?.launchLiteLlmRouteUnverified) return {};
-  if (!context.runnerSessionPath || context.runnerSessionPath !== row.runnerSessionPath)
-    return { unverified: true };
-  return context.launchLiteLlmRouteUnverified
-    ? { unverified: true }
-    : { endpointId: context.launchLiteLlmEndpointId };
-}
-
 async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSessionUsage> {
   try {
     const slotId = row.slotId ?? run.slotId ?? run.id;
@@ -194,7 +176,6 @@ async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSession
         ...(!row.slotId && run.reviewWorkspace
           ? {
               launchPricing: {
-                ...launchLiteLlmRoute(run, row),
                 environment: async () =>
                   (await import('../runners/review-tmux.js')).reviewEnvironment(run),
               },
