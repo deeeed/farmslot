@@ -296,9 +296,9 @@ test('public project call list prints a working action-detail hint', async (t) =
     }
   });
 
-  async function invoke(args: string[]): Promise<string> {
+  async function invoke(args: string[], expectedExit = 0): Promise<string> {
     const chunks: string[] = [];
-    const program = new Command().name('farmslot').exitOverride();
+    const program = new Command().name('farmslot').option('--json').exitOverride();
     program.configureOutput({ writeOut: (text) => chunks.push(text) });
     registerRecipeCommand(program);
     const write = process.stdout.write;
@@ -314,7 +314,7 @@ test('public project call list prints a working action-detail hint', async (t) =
     }) as typeof process.stdout.write;
     try {
       await program.parseAsync(args, { from: 'user' });
-      assert.equal(process.exitCode, 0, chunks.join(''));
+      assert.equal(process.exitCode, expectedExit, chunks.join(''));
     } catch (error) {
       if (!(error instanceof CommanderError && error.code === 'commander.helpDisplayed'))
         throw error;
@@ -341,23 +341,70 @@ test('public project call list prints a working action-detail hint', async (t) =
     root,
   ]);
   assert.match(listing, /invocable actions \(headless\)/u);
-  const hint = listing
-    .split('\n')
-    .find((line) => line.includes('Details and examples: '))
-    ?.split('Details and examples: ')[1];
-  assert.ok(hint);
-  assert.ok(hint.startsWith('farmslot recipe '));
-  const parsed = spawnSync(
-    '/bin/sh',
-    ['-c', 'farmslot() { printf "%s\\0" "$@"; }\n' + hint.replace('<name>', 'command')],
-    { encoding: 'utf8', timeout: 2000 },
-  );
-  assert.ifError(parsed.error);
-  assert.equal(parsed.status, 0, parsed.stderr);
-  const detail = await invoke(parsed.stdout.split('\0').filter(Boolean));
-  assert.match(detail, /Execute an operator command\./u);
-  assert.match(detail, /Fields \(pass as <name>=<value>\):/u);
-  assert.match(detail, /\bcmd\s+string \(required\)/u);
+  function printedDetail(listOutput: string): string[] {
+    const hint = listOutput
+      .split('\n')
+      .find((line) => line.includes('Details and examples: '))
+      ?.split('Details and examples: ')[1];
+    assert.ok(hint);
+    assert.ok(hint.startsWith('farmslot recipe '));
+    const parsed = spawnSync(
+      '/bin/sh',
+      ['-c', 'farmslot() { printf "%s\\0" "$@"; }\n' + hint.replace('<name>', 'command')],
+      { encoding: 'utf8', timeout: 2000 },
+    );
+    assert.ifError(parsed.error);
+    assert.equal(parsed.status, 0, parsed.stderr);
+    return parsed.stdout.split('\0').filter(Boolean);
+  }
+
+  function assertSelectedSchema(detail: string): void {
+    assert.match(detail, /Execute an operator command\./u);
+    assert.match(detail, /Fields \(pass as <name>=<value>\):/u);
+    assert.match(detail, /\bcmd\s+string \(required\)/u);
+  }
+
+  const registered = printedDetail(listing);
+  assert.ok(!registered.includes('--authorize-provider'));
+  assertSelectedSchema(await invoke(registered));
+
+  const target = path.join(root, 'discovered');
+  const registry = path.join(root, 'empty registry');
+  fs.cpSync(path.join(root, 'projects/example'), target, { recursive: true });
+  fs.mkdirSync(path.join(target, 'artifacts'));
+  fs.mkdirSync(registry);
+  const provider = path.join(target, 'provider.mjs');
+  const discoveryArgs = ['--adapter', 'headless', '--projects-dir', registry, '--target', target];
+  for (const listArgs of [['call', '--list'], ['actions']]) {
+    const listOutput = await invoke([
+      'recipe',
+      ...listArgs,
+      ...discoveryArgs,
+      '--authorize-provider',
+      'provider.mjs',
+      '--authorize-provider',
+      provider,
+    ]);
+    const replay = printedDetail(listOutput);
+    assertSelectedSchema(await invoke(replay));
+    const suppliedProviders = replay.flatMap((arg, index) =>
+      arg === '--authorize-provider' ? [replay[index + 1]] : [],
+    );
+    assert.deepEqual(suppliedProviders, ['provider.mjs', provider]);
+    const executionHint = listOutput.split('\n').find((line) => /^(Use|Run):/u.test(line));
+    assert.ok(executionHint);
+    assert.doesNotMatch(
+      executionHint.split('  ·  Details and examples: ')[0]!,
+      /--authorize-provider/u,
+    );
+    const missing = replay.filter(
+      (arg, index) =>
+        arg !== '--authorize-provider' && replay[index - 1] !== '--authorize-provider',
+    );
+    missing.push('--json');
+    const denied = JSON.parse(await invoke(missing, 1));
+    assert.equal(denied.error.code, 'PROVIDER_UNAUTHORIZED');
+  }
 });
 
 test('public call refuses omitted diagnostic or task binding before executing', (t) => {

@@ -211,6 +211,7 @@ export async function handleActions(
           host +
           ' actions --action <name>' +
           contextArgs +
+          detailProviderArgs(options) +
           '\nRun: ' +
           host +
           ' call <name> [key=value ...]' +
@@ -431,6 +432,13 @@ function actionCatalogContextArgs(
     projectArgs +
     (manifest ? ' --action-manifest ' + shellQuoteArg(path.resolve(manifest)) : '')
   );
+}
+
+/** Replay only provider authorization supplied by the operator for this detail lookup. */
+function detailProviderArgs(options: CliOptions): string {
+  return (optionStrings(options, 'authorizeProvider') ?? [])
+    .map((provider) => ' --authorize-provider ' + shellQuoteArg(provider))
+    .join('');
 }
 
 interface HumanActionCatalogOptions {
@@ -712,7 +720,8 @@ export async function handleListExecutables(
         '  ·  Details and examples: ' +
         host +
         detailCommand +
-        contextArgs,
+        contextArgs +
+        detailProviderArgs(options),
       sort,
       domainStyles: stylesFor(available.map(actionDomain)),
       contextLines,
