@@ -783,3 +783,36 @@ test('an inherited Family observation prevents billing the same lifetime on a la
   assert.equal(chart.runPoints[1]?.stepCostEstimate, 0);
   assert.equal(chart.runPoints[1]?.deltaTokens, 0);
 });
+
+test('Family uses the first USD read as a baseline for an inherited token-only lifetime', () => {
+  const usage = receipt({
+    runnerSessionId: 'borrowed-review',
+    role: 'review',
+    roles: ['review'],
+    scope: 'session-total',
+  });
+  const inherited = makeRun({
+    id: 'inherited',
+    sessionUsage: [{ ...usage, includesPriorRunLifetime: true, costUsd: null }],
+  });
+  const priced = makeRun({
+    id: 'priced',
+    createdAt: '2026-11-05T21:00:00Z',
+    sessionUsage: [{ ...usage, costUsd: 8 }],
+  });
+  const next = makeRun({
+    id: 'next',
+    createdAt: '2026-11-06T21:00:00Z',
+    sessionUsage: [{ ...usage, costUsd: 9 }],
+  });
+  const runs = [inherited, priced, next];
+  const result = buildFamilyUsage(runs);
+  assert.deepEqual(
+    result.contributions.map(({ runId, usage }) => [runId, usage.costUsd]),
+    [['next', 1]],
+  );
+  const chart = buildFamilyObservabilityTokenSummary(runs, inherited.familyId);
+  assert.equal(chart.runPoints[0]?.stepCostEstimate, null);
+  assert.equal(chart.runPoints[1]?.stepCostEstimate, 0);
+  assert.equal(chart.runPoints[2]?.stepCostEstimate, 1);
+});

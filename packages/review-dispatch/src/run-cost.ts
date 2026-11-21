@@ -33,6 +33,7 @@ interface CostSession {
   leases: Set<string>;
   pendingLeases: Set<string>;
   observedPendingLeases: Set<string>;
+  verifiedReceipts: RunnerSessionUsage[];
 }
 
 type SessionIdentity = Pick<
@@ -268,6 +269,7 @@ function costSessions(rows: readonly RunnerSessionUsage[]): Map<string | number,
         leases: new Set(),
         pendingLeases: new Set(),
         observedPendingLeases: new Set(),
+        verifiedReceipts: [],
       };
       sessions.set(key, session);
     }
@@ -279,9 +281,11 @@ function costSessions(rows: readonly RunnerSessionUsage[]): Map<string | number,
     for (const id of row.usageLeaseIds ?? []) session.leases.add(id);
     for (const id of pendingSessionUsageLeaseIds(row)) session.pendingLeases.add(id);
     for (const id of row.pendingUsageLeaseIds ?? []) session.observedPendingLeases.add(id);
+    if (verifiedSessionUsageLeaseIds(row).length) session.verifiedReceipts.push(row);
   }
   for (const session of sessions.values()) {
-    for (const id of verifiedSessionUsageLeaseIds(session.receipt)) {
+    const verified = matchingVerifiedReceipt(session, session.receipt);
+    for (const id of verifiedSessionUsageLeaseIds(verified)) {
       session.pendingLeases.delete(id);
       session.observedPendingLeases.delete(id);
     }
@@ -402,6 +406,18 @@ function matchesRecordedRoundWindow(
   );
 }
 
+function matchingVerifiedReceipt(
+  session: CostSession | undefined,
+  recorded: RunnerSessionUsage,
+): RunnerSessionUsage | undefined {
+  let verified: RunnerSessionUsage | undefined;
+  for (const receipt of session?.verifiedReceipts ?? []) {
+    if (matchesRecordedRoundWindow(recorded, receipt))
+      verified = verified ? preferRunUsageReceipt(verified, receipt) : receipt;
+  }
+  return verified;
+}
+
 type CostedRound = Pick<ReviewHistoryRound, 'key' | 'mode' | 'usage' | 'sessionIdentity'>;
 
 export function reviewRoundCosts(
@@ -456,7 +472,9 @@ export function reviewRoundCosts(
         (session?.phases.size ?? 0) > 1 ||
         (usage?.contextIds?.length ?? 0) > 1 ||
         (usage?.usageLeaseIds?.length ?? 0) > 1;
-      const verified = session?.receipt;
+      if (shared || (usage && sharedAcrossRuns(usage, priorSessions)))
+        return [key, 'Round cost unavailable · shared session'];
+      const verified = (usage && matchingVerifiedReceipt(session, usage)) ?? session?.receipt;
       const sameWindow = usage && verified && matchesRecordedRoundWindow(usage, verified);
       const measuredLeases = sameWindow ? verifiedSessionUsageLeaseIds(verified) : [];
       const roundPending = pendingSessionUsageLeaseIds(usage).some(
@@ -466,8 +484,6 @@ export function reviewRoundCosts(
       const ownReceipt =
         usage === rounds[index]?.usage && recordedCost(usage) !== null && !roundPending;
       const cost = recordedCost(sameWindow && !pending ? verified : usage);
-      if (shared || (usage && sharedAcrossRuns(usage, priorSessions)))
-        return [key, 'Round cost unavailable · shared session'];
       // A dedicated recorded attempt can still price itself when a legacy ledger has lease hints.
       // A recorded pending retry, or a missing round receipt, cannot certify a complete round.
       if (session?.observedPendingLeases.size || (pending && !ownReceipt))

@@ -169,6 +169,7 @@ export function sessionUsageContributions(
   ] as const;
   type Counter = (typeof counters)[number];
   const seen = new Map<string, Partial<Record<Counter, number>>>();
+  const unknownInheritedCost = new Set<string>();
   for (const run of [...runs].sort(
     (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
   )) {
@@ -189,6 +190,8 @@ export function sessionUsageContributions(
         continue;
       }
       const key = sessionUsageKey(row);
+      const inherited = options.omitInheritedLifetime && sessionUsageIncludesPriorRun(row);
+      if (key && inherited && row.costUsd == null) unknownInheritedCost.add(key);
       const previous = key ? seen.get(key) : undefined;
       const highWater = { ...previous };
       const contribution = { ...row };
@@ -199,14 +202,19 @@ export function sessionUsageContributions(
         const value = row[field];
         if (typeof value !== 'number' || !Number.isFinite(value)) continue;
         const before = previous?.[field];
+        if (field === 'costUsd' && key && unknownInheritedCost.delete(key)) {
+          // The first lifetime USD read after an unpriced inherited snapshot sets the baseline.
+          highWater[field] = before === undefined ? value : Math.max(before, value);
+          contribution.costUsd = null;
+          continue;
+        }
         contribution[field] = before === undefined ? value : Math.max(0, value - before);
         if (before === undefined || value > before) contributes = true;
         highWater[field] = before === undefined ? value : Math.max(before, value);
       }
       if (key) seen.set(key, highWater);
       // An inherited observation is still a high-water mark for the next receipt.
-      if (contributes && !(options.omitInheritedLifetime && sessionUsageIncludesPriorRun(row)))
-        contributions.push(contribution);
+      if (contributes && !inherited) contributions.push(contribution);
     }
     result.set(run.id, contributions);
   }

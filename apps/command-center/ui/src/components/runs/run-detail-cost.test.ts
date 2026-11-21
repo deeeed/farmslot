@@ -1012,3 +1012,54 @@ test('a verified recapture restores the exact cold price and clears matching leg
     'Round cost unavailable · pending usage',
   );
 });
+
+test('Run Detail clears a cold round lease hint in a mixed verified and legacy inventory', () => {
+  const legacy = receipt('mixed-review', 'review', 2.25, {
+    scope: 'run-delta',
+    totalTokens: 200,
+    usageLeaseIds: ['lease'],
+    startedAt: '2026-11-20T00:00:00Z',
+    completedAt: '2026-11-20T00:01:00Z',
+  });
+  const verified: RunnerSessionUsage = {
+    ...legacy,
+    totalTokens: 100,
+    costUsd: 2.5,
+    usageLeaseIdsVerified: true,
+  };
+  const run = {
+    id: 'mixed-review-run',
+    flowType: 'fix-bug' as const,
+    sessionUsage: [verified],
+    engineState: {
+      publishGate: {
+        reviews: [
+          {
+            id: 'check',
+            mode: 'cold' as const,
+            loopNumber: 1,
+            verdict: 'pass' as const,
+            unresolvedCount: 0,
+            attempts: [
+              {
+                mode: 'cold' as const,
+                loopNumber: 1,
+                verdict: 'pass' as const,
+                unresolvedCount: 0,
+                usage: legacy,
+              },
+            ],
+          },
+        ],
+      },
+    },
+  };
+  const rows = runCostReceipts(run);
+  assert.equal(rows.length, 2);
+  assert.ok(rows.some((row) => !row.usageLeaseIdsVerified));
+  assert.ok(rows.some((row) => row.usageLeaseIdsVerified));
+  assert.match(litText(renderRunCost(rows)), /Known subtotal \$2\.25/);
+  assert.doesNotMatch(litText(renderRunCost(rows)), /pending usage/);
+  const round = { key: 'cold', mode: 'cold' as const, usage: legacy };
+  assert.equal(reviewRoundCosts(rows, [round], run).get(round.key), 'Round cost $2.50');
+});
