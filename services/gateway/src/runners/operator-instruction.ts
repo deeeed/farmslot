@@ -21,7 +21,7 @@ import {
 } from './native/worker-control.js';
 import { resumeNativeWorker } from './native/worker-recovery.js';
 import { modelQuestionsForRun } from './launch-command.js';
-import { sendRunnerInstructionWithOutcome } from './registry.js';
+import { sendRunnerInstructionWithOutcome, withRunnerPromptMutationBoundary } from './registry.js';
 import { inspectRunnerRecovery, reloadRunnerForPark } from './session-lifecycle.js';
 import { resolveRunRetainedSessionBinding, retainedSessionSendOption } from './session-process.js';
 
@@ -35,6 +35,7 @@ export async function deliverOperatorInstruction(
   observeSince?: number,
   contextId?: string,
   nativeCommandId?: string,
+  beforeInput?: () => Promise<void>,
 ): Promise<'confirmed' | 'queued' | 'unconfirmed' | 'not-attempted'> {
   if (!run.slotId) throw new Error('Operator instruction requires an owned slot');
   const slotId = run.slotId;
@@ -58,6 +59,10 @@ export async function deliverOperatorInstruction(
   assertCurrent();
   const native = resolveNativeContext(run, context);
   if (native) {
+    if (beforeInput)
+      throw new OperatorInstructionNotAttemptedError(
+        'Edited feedback requires a retained terminal worker',
+      );
     const commandId =
       nativeCommandId ?? nativeWorkerInstructionCommandId(run.id, native.binding, key, text);
     const pendingRecovery = native.binding.recovery;
@@ -96,7 +101,8 @@ export async function deliverOperatorInstruction(
     const retained = resolveRunRetainedSessionBinding(run, context);
     const binding = retained.binding;
     const target = context.target?.target;
-    if (!binding || !target || !context.runner)
+    const runner = context.runner;
+    if (!binding || !target || !runner)
       throw new Error(
         retained.reason ?? 'Operator instruction has no exact retained worker binding',
       );
@@ -105,7 +111,7 @@ export async function deliverOperatorInstruction(
     if (!paneId) throw new Error('Operator instruction worker pane is unavailable');
     const handle: MachinePauseTerminalRecoveryHandle = {
       version: 1,
-      runnerId: context.runner,
+      runnerId: runner,
       contextId: context.id,
       sessionId: binding.runnerSessionId,
       sessionPath: binding.runnerSessionPath,
@@ -119,7 +125,7 @@ export async function deliverOperatorInstruction(
     };
     const inspection = await inspectRunnerRecovery({
       vars,
-      runnerId: context.runner,
+      runnerId: runner,
       recoveryHandle: handle,
       expectedRunnerState: 'stopped-or-live',
     });
@@ -128,31 +134,50 @@ export async function deliverOperatorInstruction(
     assertCurrent();
     if (inspection.liveTarget.state === 'stopped' && observeSince === undefined) {
       reloadAttempted = true;
+      let refusedBeforeInput = false;
       const resumed = await reloadRunnerForPark({
         vars,
         recoveryHandle: handle,
         initialPrompt: text,
-        beforeRespawn: assertCurrent,
+        beforeRespawn: beforeInput
+          ? async () => {
+              try {
+                assertCurrent();
+                await beforeInput();
+                assertCurrent();
+              } catch (error) {
+                refusedBeforeInput = true;
+                throw error;
+              }
+            }
+          : assertCurrent,
         blindTrialBoundary: blindTrialWorkerBoundary(run, context.role),
         modelQuestions: modelQuestionsForRun(run),
       });
-      if (!resumed.ok) throw new Error(resumed.error);
+      if (!resumed.ok) {
+        if (refusedBeforeInput) throw new OperatorInstructionNotAttemptedError(resumed.error);
+        throw new Error(resumed.error);
+      }
       return 'confirmed';
     }
-    const outcome = await sendRunnerInstructionWithOutcome(
-      vars,
-      paneId,
-      context.runner,
-      text,
-      'operator-message',
-      observeSince === undefined ? undefined : 0,
-      {
-        ...retainedSessionSendOption(retained),
-        ...(observeSince === undefined
-          ? {}
-          : { observeOnly: true, acceptanceSinceMs: observeSince }),
-      },
-    );
+    const send = () =>
+      sendRunnerInstructionWithOutcome(
+        vars,
+        paneId,
+        runner,
+        text,
+        'operator-message',
+        observeSince === undefined ? undefined : 0,
+        {
+          ...retainedSessionSendOption(retained),
+          ...(observeSince === undefined
+            ? {}
+            : { observeOnly: true, acceptanceSinceMs: observeSince }),
+        },
+      );
+    const outcome = beforeInput
+      ? await withRunnerPromptMutationBoundary(beforeInput, send)
+      : await send();
     return outcome === 'sent'
       ? 'confirmed'
       : outcome === 'held-untouched' && observeSince === undefined

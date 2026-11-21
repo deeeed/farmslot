@@ -43,6 +43,7 @@ let onReplay: (() => void) | null = null;
 let failPersist: string | null = null;
 let slotOwner: string | undefined;
 let delivery: 'confirmed' | 'queued' | 'unconfirmed' | 'not-attempted' = 'confirmed';
+let beforeDelivery: (() => void) | undefined;
 let afterDelivery: (() => void) | undefined;
 let deliveryError: Error | undefined;
 let feedback: Array<{
@@ -110,9 +111,12 @@ mock.module('../runners/operator-instruction.js', {
       observeSince?: number,
       contextId?: string,
       commandId?: string,
+      beforeInput?: () => Promise<void>,
     ) => {
+      beforeDelivery?.();
       feedback.push({ key, text, contextId, observeSince, commandId });
       if (deliveryError) throw deliveryError;
+      if (delivery !== 'not-attempted') await beforeInput?.();
       afterDelivery?.();
       return delivery;
     },
@@ -226,6 +230,7 @@ beforeEach(() => {
   starts = [];
   slotOwner = undefined;
   delivery = 'confirmed';
+  beforeDelivery = undefined;
   afterDelivery = undefined;
   feedback = [];
   deliveryError = undefined;
@@ -1082,4 +1087,322 @@ test('publishing review holds without a budget refusal keep their existing accep
     decision.payload.actions.find((action) => action.id === 'accept-result')?.available,
     false,
   );
+});
+
+// Run 09501e29: a send-back whose feedback was never attempted left a retained
+// delivery with `confirmed: false` and no `startedAt`. Its decision was then
+// answered another way, so nothing would ever retry that exact instruction —
+// and every later send-back carrying a different operator note was refused with
+// "Reconcile the retained completion feedback before changing its operator
+// note", with no reconciling move available: the retained delivery named a
+// decision that no longer existed. Nothing was ever handed to the worker there,
+// so a later card's note replaces it. A delivery that *was* handed over (any
+// `startedAt`: typed, submitted, or queued on a native host) still refuses,
+// because its text can still arrive — Codex and Grok both named that line.
+test('a send-back is not blocked forever by an unattempted delivery of an answered card', async () => {
+  await heldQa();
+  delivery = 'not-attempted';
+  await assert.rejects(
+    resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'First note.',
+    }),
+    /delivery is not-attempted/,
+  );
+  const stale = run.steps.find((step) => step.name === S.DISPATCH)?.outputs
+    ?.completionSendBackDelivery;
+  assert.ok(stale && typeof stale === 'object' && 'confirmed' in stale);
+  assert.equal(stale.confirmed, false, 'the retained delivery was never confirmed');
+  assert.equal(
+    (stale as { startedAt?: number }).startedAt,
+    undefined,
+    'and was never handed to the worker, which is what makes it replaceable',
+  );
+
+  // That card is answered and gone; the worker wrote a fresh terminal signal,
+  // the hold comes back as a new decision, and the operator words the feedback
+  // differently this time.
+  delivery = 'confirmed';
+  currentSignal = { ...priorSignal, timestamp: '2026-10-28T00:16:01.000Z' };
+  run.decisions = [await buildResultDecision(run, 'complete')];
+  const second = pending().id;
+  assert.notEqual(
+    `completion-send-back:${second}`,
+    (stale as { key?: string }).key,
+    'the new card is a different decision; this case is about the old one',
+  );
+
+  await resolveResultDecision({
+    runId: run.id,
+    decisionId: second,
+    actionId: 'send-back',
+    reason: 'Second note, after the first delivery was never confirmed.',
+  });
+
+  const delivered = feedback.at(-1);
+  assert.equal(delivered?.key, `completion-send-back:${second}`, 'the new card owns the delivery');
+  assert.match(delivered?.text ?? '', /Second note/);
+  assert.deepEqual(replays.at(-1), {
+    runId: run.id,
+    stepName: 'monitor',
+    triggeredBy: 'operator',
+  });
+});
+
+// Codex r2 on #2354 read the real run record: 09501e29's delivery has
+// `startedAt: 1794973740931` and the archived transcript shows the instruction
+// reached the worker as a user message, so the incident is on the *guarded*
+// side of a `startedAt` test, not the untouched side. My r1 premise was wrong.
+// The worker also never wrote a newer signal, so the "operation is over" rule
+// never fires either: the instruction can be neither retried (its card is gone)
+// nor replaced. What replacement owes is telling the worker which message to
+// follow, so a handed-over delivery is withdrawn by name in the new text.
+test('a handed-over delivery is withdrawn by name when the next card changes the note', async () => {
+  await heldQa();
+  delivery = 'queued';
+  await assert.rejects(
+    resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'Keep the video.',
+    }),
+    /delivery is queued/,
+  );
+  const handed = run.steps.find((step) => step.name === S.DISPATCH)?.outputs
+    ?.completionSendBackDelivery;
+  assert.ok(handed && typeof handed === 'object' && 'startedAt' in handed);
+  assert.ok(
+    (handed as { startedAt?: number }).startedAt,
+    'the first delivery was handed over: that is the case this covers',
+  );
+
+  // The card is answered another way and the hold comes back, with no new worker
+  // signal — exactly 09501e29's state.
+  delivery = 'confirmed';
+  run.decisions = [await buildResultDecision(run, 'complete')];
+  const second = pending().id;
+  await resolveResultDecision({
+    runId: run.id,
+    decisionId: second,
+    actionId: 'send-back',
+    reason: 'Replace the video.',
+  });
+
+  const sent = feedback.at(-1);
+  assert.equal(sent?.key, `completion-send-back:${second}`, 'the new card owns the delivery');
+  assert.match(sent?.text ?? '', /An earlier instruction for this task is withdrawn/);
+  assert.match(
+    sent?.text ?? '',
+    /carries the operator feedback "Keep the video\."/,
+    'the withdrawal names the instruction it replaces, since that text can still arrive',
+  );
+  assert.match(sent?.text ?? '', /Replace the video\./);
+  const withdrawn = run.steps.find((step) => step.name === S.DISPATCH)?.outputs
+    ?.completionSendBackWithdrawn;
+  assert.ok(Array.isArray(withdrawn) && withdrawn.length === 1, 'the run records what it withdrew');
+});
+
+// A confirmed delivery still refuses: the worker is known to be working from
+// that wording, so the operator reconciles rather than withdrawing it underneath.
+test('a changed note still refuses a confirmed delivery', async () => {
+  await heldQa();
+  await resolveResultDecision({
+    runId: run.id,
+    decisionId: pending().id,
+    actionId: 'send-back',
+    reason: 'First note.',
+  });
+  const saved = run.steps.find((step) => step.name === S.DISPATCH)?.outputs
+    ?.completionSendBackDelivery;
+  assert.ok(saved && typeof saved === 'object' && 'confirmed' in saved);
+  assert.equal(saved.confirmed, true);
+
+  run.decisions = [await buildResultDecision(run, 'complete')];
+  await assert.rejects(
+    resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'Second note.',
+    }),
+    /Reconcile the retained completion feedback/,
+  );
+});
+
+// Codex r3 on #2354, first major: on a native host the handed-over command sits
+// in a durable queue that nothing may cancel, so the withdrawn turn can still
+// run, finish and write its own terminal signal — and a withdrawal carried in a
+// message that arrives afterwards does not help. That case keeps refusing.
+test('a queued native delivery cannot be withdrawn by a changed note', async () => {
+  await heldQa();
+  run.transport = 'native';
+  delivery = 'queued';
+  await assert.rejects(
+    resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'Keep the video.',
+    }),
+    /delivery is queued/,
+  );
+
+  delivery = 'confirmed';
+  run.decisions = [await buildResultDecision(run, 'complete')];
+  await assert.rejects(
+    resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'Replace the video.',
+    }),
+    /queued on the worker host and cannot be withdrawn/,
+  );
+});
+
+// Codex r3, second major: a replacement that never reaches the composer leaves
+// nothing retained, so keying the stale-signal allowance on the withdrawal
+// stranded the operator's next edit — it failed on the signal probe instead of
+// sending. The allowance follows what was retained when the send-back started.
+test('a further note edit still sends after a replacement that was never attempted', async () => {
+  await heldQa();
+  delivery = 'not-attempted';
+  await assert.rejects(
+    resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'First note.',
+    }),
+    /delivery is not-attempted/,
+  );
+
+  // The operator edits the note again. The previous attempt left an untouched
+  // delivery behind, and this one has to be able to proceed on the same signal.
+  delivery = 'confirmed';
+  run.decisions = [await buildResultDecision(run, 'complete')];
+  const third = pending().id;
+  await resolveResultDecision({
+    runId: run.id,
+    decisionId: third,
+    actionId: 'send-back',
+    reason: 'Second note.',
+  });
+
+  assert.equal(feedback.at(-1)?.key, `completion-send-back:${third}`);
+  assert.match(feedback.at(-1)?.text ?? '', /Second note\./);
+});
+
+// Grok r3 and Codex r3 on #2354, same major: on Claude and pi the operator send
+// is hook-only, so a composer still holding the old text makes the replacement
+// *hold* rather than type over it. Overwriting the saved record before that is
+// known loses the retry that would have submitted the old text, and every later
+// attempt holds again — the worker never hears either message. A withdrawal only
+// becomes durable once its replacement is confirmed.
+test('a withdrawal that was not delivered leaves the original retryable', async () => {
+  await heldQa();
+  delivery = 'queued';
+  await assert.rejects(
+    resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'Keep the video.',
+    }),
+    /delivery is queued/,
+  );
+  const original = run.steps.find((step) => step.name === S.DISPATCH)?.outputs
+    ?.completionSendBackDelivery;
+  assert.ok(original && typeof original === 'object' && 'key' in original);
+
+  // The first worker produced a new signal before the replacement was offered.
+  // A composer hold must preserve both the original intent and its signal floor.
+  currentSignal = { ...priorSignal, timestamp: '2026-10-28T00:17:00.000Z' };
+  delivery = 'not-attempted';
+  run.decisions = [await buildResultDecision(run, 'complete')];
+  await assert.rejects(
+    resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'Replace the video.',
+    }),
+    /delivery is not-attempted/,
+  );
+
+  const retained = run.steps.find((step) => step.name === S.DISPATCH)?.outputs
+    ?.completionSendBackDelivery;
+  assert.deepEqual(
+    retained,
+    original,
+    'the original instruction must still be the retained one, or nothing can submit it',
+  );
+  assert.deepEqual(
+    run.steps.find((step) => step.name === S.DISPATCH)?.outputs?.completionSendBackSignal,
+    priorSignal,
+  );
+  const withdrawn = run.steps.find((step) => step.name === S.DISPATCH)?.outputs
+    ?.completionSendBackWithdrawn;
+  assert.ok(
+    !Array.isArray(withdrawn) || withdrawn.length === 0,
+    'and nothing is recorded as withdrawn, because nothing was',
+  );
+});
+
+test('an uncertain edit keeps its delivery window until it can be confirmed', async () => {
+  await heldQa();
+  delivery = 'queued';
+  await assert.rejects(
+    resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'Keep the video.',
+    }),
+    /delivery is queued/,
+  );
+  const dispatchOutputs = () => run.steps.find((step) => step.name === S.DISPATCH)?.outputs;
+  const original = dispatchOutputs()?.completionSendBackDelivery;
+  const originalResult = { ...priorSignal, timestamp: '2026-10-28T00:17:00.000Z' };
+  beforeDelivery = () => {
+    assert.equal(dispatchOutputs()?.completionSendBackReplacement, undefined);
+    currentSignal = originalResult;
+  };
+  delivery = 'unconfirmed';
+  afterDelivery = () => {
+    assert.deepEqual(dispatchOutputs()?.completionSendBackDelivery, original);
+    assert.equal(dispatchOutputs()?.completionSendBackWithdrawn, undefined);
+  };
+  run.decisions = [await buildResultDecision(run, 'complete')];
+  await assert.rejects(
+    resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'Replace the video.',
+    }),
+    /delivery is unconfirmed/,
+  );
+  const edited = feedback.at(-1);
+  assert.ok(edited);
+
+  beforeDelivery = undefined;
+  afterDelivery = undefined;
+  delivery = 'confirmed';
+  run.decisions = [await buildResultDecision(run, 'complete')];
+  await resolveResultDecision({
+    runId: run.id,
+    decisionId: pending().id,
+    actionId: 'send-back',
+    reason: 'Replace the video.',
+  });
+
+  assert.equal(feedback.at(-1)?.key, edited.key);
+  assert.equal(typeof feedback.at(-1)?.observeSince, 'number');
+  assert.deepEqual(dispatchOutputs()?.completionSendBackSignal, originalResult);
+  const withdrawn = dispatchOutputs()?.completionSendBackWithdrawn;
+  assert.ok(Array.isArray(withdrawn) && withdrawn.length === 1);
 });
