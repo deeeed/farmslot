@@ -17,6 +17,7 @@ export function videoSourceLoadDurationMs(
 }
 
 export interface LoadedVideoSource {
+  player: VideoReadySource;
   uri: string;
   durationMs: number;
 }
@@ -31,7 +32,7 @@ export function observeLoadedVideoReady(
   loaded: LoadedVideoSource | null,
   onReady: (durationMs: number) => void,
 ): (() => void) | undefined {
-  if (loaded?.uri !== expectedUri) return;
+  if (loaded?.uri !== expectedUri || loaded.player !== player) return;
   let active = true;
   const syncReady = () => {
     if (active && player.status === 'readyToPlay') onReady(loaded.durationMs);
@@ -44,4 +45,23 @@ export function observeLoadedVideoReady(
     active = false;
     status.remove();
   };
+}
+
+export interface RecordingSeekIdentity {
+  player: object;
+  sourceUri: string;
+  recording: string;
+  atMs: number;
+}
+
+export function sameRecordingSeek(
+  previous: RecordingSeekIdentity | null | undefined,
+  current: RecordingSeekIdentity,
+): boolean {
+  return (
+    previous?.player === current.player &&
+    previous.sourceUri === current.sourceUri &&
+    previous.recording === current.recording &&
+    previous.atMs === current.atMs
+  );
 }

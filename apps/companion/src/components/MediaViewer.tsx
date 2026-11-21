@@ -59,6 +59,8 @@ import { colors, fonts } from '../lib/theme';
 import {
   type LoadedVideoSource,
   observeLoadedVideoReady,
+  type RecordingSeekIdentity,
+  sameRecordingSeek,
   videoSourceLoadDurationMs,
 } from '../lib/video-source-load';
 
@@ -615,9 +617,16 @@ function FullscreenVideo({
   const [timelineAt, setTimelineAt] = useViewChoice(timelineTimeField);
   const sharedOwner = item.sharedArtifact;
   const [criterionId, setCriterionId] = useState(sharedOwner?.criterionId);
-  const anchorKey = JSON.stringify([timelineScope, uri, timelineAt]);
-  const [confirmedAnchor, setConfirmedAnchor] = useState<string | null>(null);
-  const trackedAnchor = useRef<(RecordingAnchor & { key: string }) | null>(null);
+  const seekIdentity = useMemo<RecordingSeekIdentity>(
+    () => ({ player, sourceUri: source.uri, recording: timelineScope, atMs: timelineAt }),
+    [player, source.uri, timelineScope, timelineAt],
+  );
+  const activeSeek = useRef(seekIdentity);
+  activeSeek.current = seekIdentity;
+  const [confirmedAnchor, setConfirmedAnchor] = useState<RecordingSeekIdentity | null>(null);
+  const trackedAnchor = useRef<(RecordingAnchor & { identity: RecordingSeekIdentity }) | null>(
+    null,
+  );
   const savedTimelineAt = useRef(timelineAt);
   savedTimelineAt.current = timelineAt;
   const invalidateTimelineAnchor = useCallback(() => {
@@ -635,7 +644,7 @@ function FullscreenVideo({
       recordingPath &&
       recordingRevision &&
       timelinePage >= 0 &&
-      (timelineAt < 0 || confirmedAnchor === anchorKey)
+      (timelineAt < 0 || sameRecordingSeek(confirmedAnchor, seekIdentity))
         ? {
             ...sharedOwner,
             criterionId,
@@ -650,7 +659,7 @@ function FullscreenVideo({
     onTimelineViewChange(item.uri, artifact);
     return () => onTimelineViewChange(item.uri);
   }, [
-    anchorKey,
+    seekIdentity,
     confirmedAnchor,
     criterionId,
     item.uri,
@@ -661,7 +670,7 @@ function FullscreenVideo({
     timelineAt,
     timelinePage,
   ]);
-  const appliedTimelineSeek = useRef<string | null>(null);
+  const appliedTimelineSeek = useRef<RecordingSeekIdentity | null>(null);
   useEffect(() => {
     if (timelineAt < 0 || !recordingRevision) {
       appliedTimelineSeek.current = null;
@@ -669,13 +678,17 @@ function FullscreenVideo({
       return;
     }
     return observeLoadedVideoReady(player, source.uri, loadedSource, (loadedDurationMs) => {
-      if (appliedTimelineSeek.current === anchorKey) return;
+      if (
+        !sameRecordingSeek(seekIdentity, activeSeek.current) ||
+        sameRecordingSeek(appliedTimelineSeek.current, seekIdentity)
+      )
+        return;
       const seek = restoreRecordingTimeMs(timelineAt, loadedDurationMs);
       if (seek === null) {
         setTimelineAt(-1);
         return;
       }
-      appliedTimelineSeek.current = anchorKey;
+      appliedTimelineSeek.current = seekIdentity;
       setConfirmedAnchor(null);
       onViewSelectionChange(item.uri);
       resumePlayback.current = false;
@@ -683,11 +696,11 @@ function FullscreenVideo({
       const previousMs = player.currentTime * 1000;
       player.pause();
       player.currentTime = seek / 1000;
-      trackedAnchor.current = { key: anchorKey, requestedMs: seek, previousMs };
+      trackedAnchor.current = { identity: seekIdentity, requestedMs: seek, previousMs };
       updateSelection((value) => value + 1);
     });
   }, [
-    anchorKey,
+    seekIdentity,
     item.uri,
     loadedSource,
     model,
@@ -700,11 +713,19 @@ function FullscreenVideo({
   ]);
 
   useEffect(() => {
+    const currentAnchor = () => {
+      const anchor = trackedAnchor.current;
+      return anchor &&
+        sameRecordingSeek(anchor.identity, seekIdentity) &&
+        sameRecordingSeek(seekIdentity, activeSeek.current)
+        ? anchor
+        : null;
+    };
     const state = player.addListener('playingChange', ({ isPlaying }) => {
-      if (isPlaying && trackedAnchor.current) invalidateTimelineAnchor();
+      if (isPlaying && currentAnchor()) invalidateTimelineAnchor();
     });
     const position = player.addListener('timeUpdate', ({ currentTime }) => {
-      const anchor = trackedAnchor.current;
+      const anchor = currentAnchor();
       if (!anchor) return;
       const sample = currentTime * 1000;
       const observed = observeRecordingAnchor(anchor, player.playing, sample);
@@ -712,14 +733,14 @@ function FullscreenVideo({
         invalidateTimelineAnchor();
       } else if (observed === 'confirmed' && anchor.observedMs === undefined) {
         anchor.observedMs = sample;
-        setConfirmedAnchor(anchor.key);
+        setConfirmedAnchor(anchor.identity);
       }
     });
     return () => {
       state.remove();
       position.remove();
     };
-  }, [invalidateTimelineAnchor, player]);
+  }, [invalidateTimelineAnchor, player, seekIdentity]);
 
   const applyPlayback = useCallback(
     (effect: EvidenceReviewPlaybackEffect) => {
@@ -779,9 +800,11 @@ function FullscreenVideo({
       if (active && loadedDurationMs !== null) {
         setDurationMs(loadedDurationMs);
         setLoadedSource((previous) =>
-          previous?.uri === source.uri && previous.durationMs === loadedDurationMs
+          previous?.player === player &&
+          previous.uri === source.uri &&
+          previous.durationMs === loadedDurationMs
             ? previous
-            : { uri: source.uri, durationMs: loadedDurationMs },
+            : { player, uri: source.uri, durationMs: loadedDurationMs },
         );
         syncReady();
       }

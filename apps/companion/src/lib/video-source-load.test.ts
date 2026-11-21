@@ -6,7 +6,11 @@ import type { VideoPlayerStatus } from 'expo-video';
 import { restoreRecordingTimeMs } from '@farmslot/adapter-sdk/evidence';
 import { viewScopedIntegerField } from '@farmslot/protocol';
 
-import { observeLoadedVideoReady, videoSourceLoadDurationMs } from './video-source-load';
+import {
+  observeLoadedVideoReady,
+  sameRecordingSeek,
+  videoSourceLoadDurationMs,
+} from './video-source-load';
 
 const uri = 'https://gateway.test/api/run-artifact?runId=run-a&path=video.mp4&bundleDigest=head';
 // Native sourceLoad observation, with the private fixture credential replaced.
@@ -92,13 +96,13 @@ test('the matching timed link restores when the loaded player becomes ready at t
   const foreign = observeLoadedVideoReady(
     player,
     source.uri,
-    { uri, durationMs: loadedDurationMs },
+    { player, uri, durationMs: loadedDurationMs },
     restore,
   );
   const remove = observeLoadedVideoReady(
     player,
     source.uri,
-    { uri: source.uri, durationMs: loadedDurationMs },
+    { player, uri: source.uri, durationMs: loadedDurationMs },
     restore,
   );
   assert.deepEqual(seeks, []);
@@ -117,8 +121,46 @@ test('the matching timed link restores when the loaded player becomes ready at t
   observeLoadedVideoReady(
     player,
     source.uri,
-    { uri: source.uri, durationMs: loadedDurationMs },
+    { player, uri: source.uri, durationMs: loadedDurationMs },
     restore,
   )?.();
   assert.deepEqual(seeks, [11388, 11388]);
+});
+
+test('the saved seek must reapply and reconfirm after gateway playback becomes a cached source', () => {
+  const gateway = {
+    player: {},
+    sourceUri: source.uri,
+    recording: JSON.stringify(['artifacts/videos/recipe-run.mp4', 'retained-revision']),
+    atMs: 11388,
+  };
+  const cached = { ...gateway, sourceUri: 'file:///recording-cache/retained.mp4' };
+  const replacement = { ...cached, player: {} };
+  let applied = gateway;
+  let confirmed = gateway;
+  for (const active of [cached, replacement]) {
+    assert.equal(sameRecordingSeek(confirmed, active), false);
+    if (!sameRecordingSeek(applied, active)) applied = active;
+    assert.equal(applied, active);
+    confirmed = active;
+    assert.equal(sameRecordingSeek(confirmed, { ...active }), true);
+  }
+});
+
+test('a ready event with the same URI cannot use duration from a retired player', () => {
+  const ready = (): { status: VideoPlayerStatus; addListener(): { remove(): void } } => ({
+    status: 'readyToPlay',
+    addListener() {
+      return { remove() {} };
+    },
+  });
+  const retired = ready();
+  const active = ready();
+  const loaded = { player: retired, uri: source.uri, durationMs: 41971 };
+  const seeks: number[] = [];
+  const recordSeek = (durationMs: number) => seeks.push(durationMs);
+  assert.equal(observeLoadedVideoReady(active, source.uri, loaded, recordSeek), undefined);
+  assert.deepEqual(seeks, []);
+  observeLoadedVideoReady(active, source.uri, { ...loaded, player: active }, recordSeek)?.();
+  assert.deepEqual(seeks, [41971]);
 });
