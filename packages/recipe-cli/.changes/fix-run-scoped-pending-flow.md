@@ -1,1 +1,0 @@
-- Read active invocation progress from a run folder while HUD is off.

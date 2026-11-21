@@ -6,6 +6,14 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.52.0 - 2026-11-21
+
+- Record mm-harness 0.96.37 as a consumer of recipe-runner 0.51.0 and protocol 0.91.0. It uses the structural inventory export and pins recipe-cli 0.35.27 for named recipe identity.
+- mm-harness 0.96.38 keeps recipe-runner 0.51.0 and protocol 0.91.0. It pins Recipe CLI 0.35.29 for grouped action discovery and uses the existing runtime and recipe commands in the local workspace.
+- Index verified recording coverage for evidence readers that seek across many trace pages.
+- Replay the latest HUD state after runtime context resets and reject stale acknowledgements from replaced contexts or sockets.
+- Publish run-local invocation progress independently of HUD for live evidence viewers.
+
 ## 0.51.0 - 2026-11-19
 
 - Add a read-only structural inventory export using the resolved recipe dependency closure and shared invocation tree.
