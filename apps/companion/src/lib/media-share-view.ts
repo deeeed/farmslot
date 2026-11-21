@@ -39,6 +39,11 @@ export function observeRecordingAnchor(
   if (playing) return 'moved';
   if (anchor.observedMs !== undefined)
     return Math.abs(positionMs - anchor.observedMs) <= 1 ? 'confirmed' : 'moved';
-  if (Math.abs(positionMs - anchor.requestedMs) <= 100) return 'confirmed';
-  return Math.abs(positionMs - anchor.previousMs) <= 1 ? 'pending' : 'moved';
+  // A short seek can leave a queued old sample inside the landing tolerance.
+  if (
+    Math.abs(positionMs - anchor.previousMs) <= 1 &&
+    Math.round(positionMs) !== Math.round(anchor.requestedMs)
+  )
+    return 'pending';
+  return Math.abs(positionMs - anchor.requestedMs) <= 100 ? 'confirmed' : 'moved';
 }
