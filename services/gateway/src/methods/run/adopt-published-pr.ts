@@ -69,16 +69,18 @@ export interface PublicationAdoptionDependencies {
 }
 
 /**
- * Whether this hold's result was already held when the publication was adopted. Restart and
- * recapture re-present the same result as a new decision and supersede the old one, keeping its
- * stop, delivered head and findings digest.
+ * Whether this hold's result was pending when the publication was adopted: created by then and
+ * not resolved before it. Restart and recapture re-present the same result as a new decision
+ * and supersede the old one after the adoption, keeping its stop, delivered head and findings
+ * digest. A hold a replay superseded before the adoption does not count.
  */
 function heldAtAdoption(run: Run, held: RunDecision, adoptedAt: string): boolean {
   if (held.payload?.kind !== 'result-decision') return false;
   const { stoppedAt, findingsDigest, delivered } = held.payload;
   return run.decisions.some(
     (decision) =>
-      (decision.id === held.id || decision.resolvedAction === 'superseded') &&
+      (decision.id === held.id ||
+        (decision.resolvedAction === 'superseded' && decision.resolvedAt! >= adoptedAt)) &&
       decision.payload?.kind === 'result-decision' &&
       decision.payload.stoppedAt === stoppedAt &&
       decision.payload.findingsDigest === findingsDigest &&

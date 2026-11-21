@@ -1012,6 +1012,29 @@ test('a hold first raised after the adoption in the same generation stays pendin
   assert.equal(held.decisions[0].resolvedAt, undefined);
 });
 
+test('a hold a replay superseded before the adoption does not cover a later hold', async (t) => {
+  const fixture = await heldResultFixture(t);
+  const [original] = fixture.decisions;
+  const before = new Date(Date.now() - 60_000).toISOString();
+  const later = new Date(Date.now() + 60_000).toISOString();
+  // Replay superseded the old hold before the adoption; REVIEW later stops on the same result.
+  const run = updateRun(fixture.id, {
+    decisions: [
+      { ...original, createdAt: before, resolvedAt: before, resolvedAction: 'superseded' },
+      { ...original, id: 'after-replay', createdAt: later },
+    ],
+  });
+  const result = await runAdoptPublishedPr(
+    request(run),
+    noop,
+    dependencies({ readiness: undefined, continuationRefusals: waitingOnDecision }),
+  );
+  assert.equal(result.continuation, 'refused');
+  const held = (await getRunWithArchived(run.id))!;
+  assert.equal(held.status, 'needs-decision');
+  assert.equal(held.decisions[1].resolvedAt, undefined);
+});
+
 test('the bound acceptance refuses a generation other than the receipt one', async (t) => {
   const run = await heldResultFixture(t);
   const linked = await runAdoptPublishedPr(
