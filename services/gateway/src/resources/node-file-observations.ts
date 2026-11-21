@@ -22,13 +22,14 @@ export async function watchNodeFile(
   filePath: string,
   onRequestId: (id: string) => void,
   invalidate: () => void,
+  notificationsOnly = false,
 ): Promise<unknown> {
   let source: FileObservation | undefined;
   try {
     const result = (await sendNodeRequest(
       node,
       'fs.watch',
-      { path: filePath, observations: 1 },
+      { path: filePath, ...(notificationsOnly ? { notificationsOnly: 1 } : { observations: 1 }) },
       {
         requireSameConnection: true,
         onRequestId(id) {
@@ -37,14 +38,16 @@ export async function watchNodeFile(
           onRequestId(id);
         },
       },
-    )) as NodeFsWatchResult;
+    )) as NodeFsWatchResult & { notificationsOnly?: number };
     if (source) {
       if (getNode(node.machine) !== node || node.observationAuthority?.() === false)
         source.failure = 'The source connection was replaced.';
       else if (
-        node.observationCapabilities?.files !== 1 ||
-        result.observations !== 1 ||
-        !result.initial
+        notificationsOnly
+          ? node.observationCapabilities?.fileAppends !== 1 || result.notificationsOnly !== 1
+          : node.observationCapabilities?.files !== 1 ||
+            result.observations !== 1 ||
+            !result.initial
       )
         source.failure = 'This node does not support verified file observations.';
       else {
@@ -52,7 +55,7 @@ export async function watchNodeFile(
         // A push received while the ACK was in flight is newer than its initial snapshot.
         if (source.revision === 0)
           source.failure =
-            result.initial.kind === 'error' ? result.initial.error.message : undefined;
+            result.initial?.kind === 'error' ? result.initial.error.message : undefined;
       }
       source.revision++;
       invalidate();

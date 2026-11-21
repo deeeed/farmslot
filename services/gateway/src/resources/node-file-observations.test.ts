@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import type { WebSocket } from 'ws';
 
-import type { NodeFsWatchResult } from '@farmslot/protocol';
+import type { NodeFsWatchResult, NodeObservationCapabilities } from '@farmslot/protocol';
 
 import { getNode, registerNode, unregisterByWs } from '../fleet/machine-registry.js';
 import { handleNodeResponse } from '../fleet/node-rpc.js';
@@ -15,11 +15,17 @@ import {
   watchNodeFile,
 } from './node-file-observations.js';
 
-function producer(machine: string, supported: boolean, ack: NodeFsWatchResult) {
+function producer(
+  machine: string,
+  supported: boolean | NodeObservationCapabilities,
+  ack: NodeFsWatchResult & { notificationsOnly?: 1 },
+) {
+  let params: unknown;
   const ws = {
     readyState: 1,
     send(raw: string) {
-      const frame = JSON.parse(raw) as { id: string };
+      const frame = JSON.parse(raw) as { id: string; params: unknown };
+      params = frame.params;
       handleNodeResponse(frame.id, true, ack, undefined, undefined, ws);
     },
   } as WebSocket;
@@ -33,9 +39,9 @@ function producer(machine: string, supported: boolean, ack: NodeFsWatchResult) {
     undefined,
     undefined,
     undefined,
-    supported ? { files: 1 } : undefined,
+    typeof supported === 'object' ? supported : supported ? { files: 1 } : undefined,
   );
-  return { ws, node: getNode(machine)! };
+  return { ws, node: getNode(machine)!, request: () => params };
 }
 
 const healthy: NodeFsWatchResult = {
@@ -43,6 +49,36 @@ const healthy: NodeFsWatchResult = {
   observations: 1,
   initial: { kind: 'updated', content: 'initial' },
 };
+
+test('notification-only watches require the negotiated ACK without reading initial bytes', async (t) => {
+  for (const notificationsOnly of [1, undefined] as const) {
+    const { ws, node, request } = producer(
+      `file-notification-${notificationsOnly}`,
+      { fileAppends: 1 },
+      { watching: true, ...(notificationsOnly ? { notificationsOnly } : {}) },
+    );
+    let id = '';
+    t.after(() => {
+      forgetNodeFileObservation(id);
+      unregisterByWs(ws);
+    });
+    await watchNodeFile(
+      node,
+      '/pending.json',
+      (requestId) => {
+        id = requestId;
+      },
+      () => {},
+      true,
+    );
+    assert.deepEqual(request(), { path: '/pending.json', notificationsOnly: 1 });
+    if (notificationsOnly) assertFileObservationsAdmitted([id])();
+    else
+      assert.throws(() => assertFileObservationsAdmitted([id]), {
+        code: 'RESOURCE_OBSERVATION_UNSUPPORTED',
+      });
+  }
+});
 
 test('file observation admission rejects mixed capability and missing initial ACK', async (t) => {
   for (const [supported, ack] of [

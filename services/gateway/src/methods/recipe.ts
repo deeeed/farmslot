@@ -3,6 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
+import { runEvidencePending } from '@farmslot/adapter-sdk/evidence';
 import {
   conformanceChecksPass,
   Events,
@@ -59,7 +60,7 @@ import {
   resolvePathWithinRemoteBase,
   shellExpressionForRemotePath,
 } from '../core/remote-paths.js';
-import { slotRealpath } from '../core/slot-io.js';
+import { slotMkdir, slotRealpath } from '../core/slot-io.js';
 import {
   claimSlotStatusIf,
   onSlotReset,
@@ -1817,6 +1818,19 @@ async function executeRecipeRerunJob(args: {
       currentOwner?.phase === SLOT_PHASE_RELEASING
     ) {
       throw new Error('Slot ownership changed during recipe preflight.');
+    }
+    const currentRun = getRun(runId);
+    if (currentRun && runEvidencePending(currentRun)) {
+      // Arm on the parent before the runner's first atomic sidecar rename.
+      await slotMkdir(slotVars, slotRecipeRunArtifactsDir);
+      const outputOwner = await readSlotRow(slotId);
+      if (
+        outputOwner?.current_run_id !== owner?.current_run_id ||
+        outputOwner?.slot_epoch !== owner?.slot_epoch ||
+        outputOwner?.phase === SLOT_PHASE_RELEASING
+      ) {
+        throw new Error('Slot ownership changed while preparing the recipe artifact directory.');
+      }
     }
     publishLiveRecipeContext();
     const result = await execOnSlot(slotVars, recipeCmd, {
