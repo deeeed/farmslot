@@ -533,7 +533,7 @@ projection. The reader combines it with `recipe-resolution.json.flow` only
 when the update's recipeRunId matches `recipe-invocation.json` and the
 resolution root digest matches the invocation recipe digest. A missing or
 incompatible pair leaves pending flow unavailable. The engine reserves the
-pending filename and its temporary sibling and removes them after finalization. Completed packages use `summary.json.flow`.
+pending filename and its temporary sibling across case variants and removes them after finalization. Completed packages use `summary.json.flow`.
 
 Tree construction happens once after static resolution. Updates use prepared route lengths and the bounded invocation ancestry; they do not scan prior trace entries or reload libraries. Labels and explicit claim bindings come from the resolved documents/evidence plan. Packages predating these optional fields have no prepared-flow data.
 

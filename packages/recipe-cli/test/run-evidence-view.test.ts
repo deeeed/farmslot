@@ -419,8 +419,21 @@ test('recipe view serves a read-only page, the files and the view-model of one r
   const server = await serveRunEvidence({ dir });
   t.after(() => server.close());
   assert.match(server.url, /^http:\/\/127\.0\.0\.1:\d+\/runs\/proof-1\/$/u);
-  const page = await get(server.url);
+  const nested = path.join(dir, 'resolved-recipes');
+  fs.mkdirSync(nested, { recursive: true });
+  let signatureScans = 0;
+  const readdir = fs.readdirSync;
+  const readDirectories = t.mock.method(
+    fs,
+    'readdirSync',
+    (...args: Parameters<typeof readdir>) => {
+      if (args[0] === nested) signatureScans++;
+      return readdir(...args);
+    },
+  );
+  const page = await get(server.url).finally(() => readDirectories.mock.restore());
   assert.equal(page.status, 200);
+  assert.equal(signatureScans, 0, 'completed HTML pages skip the live folder signature');
   assert.match(page.body, /<code>check-1<\/code>/u);
   assert.match(page.body, /data-seek-video="video\.mp4" data-seek-ms="0"/u);
   assert.match(page.body, /id="step-1"/u);
@@ -842,16 +855,41 @@ test('a recipe-flow.json report survives HUD-off artifact closeout', async (t) =
     defaultSource: { kind: 'operator', trust: 'trusted' },
     adapters: createStandardCoreAdapters().filter(({ action }) => action === 'index_artifacts'),
   });
-  const result = await runner.run({
-    recipeDocument: {
-      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-      title: 'Retain the author report.',
-      workflow: { entry: 'index', nodes: { index, done: end } },
-    },
-    projectRoot: root,
-    artifactsDir,
-  });
+  const recipeDocument = {
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    title: 'Retain the author report.',
+    workflow: { entry: 'index', nodes: { index, done: end } },
+  };
+  const result = await runner.run({ recipeDocument, projectRoot: root, artifactsDir });
   assert.equal(result.status, 'pass');
   assert.equal(fs.readFileSync(path.join(artifactsDir, 'recipe-flow.json'), 'utf8'), report);
   assert.match(fs.readFileSync(result.artifactManifestPath, 'utf8'), /"path": "recipe-flow.json"/u);
+
+  for (const name of [RECIPE_PENDING_FLOW_FILE, `${RECIPE_PENDING_FLOW_FILE}.partial`]) {
+    const alias = name.toUpperCase();
+    fs.writeFileSync(path.join(root, alias), report);
+    const denied = await runner.run({
+      recipeDocument: {
+        ...recipeDocument,
+        workflow: {
+          ...recipeDocument.workflow,
+          nodes: { index: { ...index, artifacts: [alias] }, done: end },
+        },
+      },
+      projectRoot: root,
+      artifactsDir: path.join(root, `denied-${alias}`),
+    });
+    assert.equal(denied.status, 'fail', 'pending flow names are reserved across case variants');
+    assert.match(fs.readFileSync(denied.tracePath, 'utf8'), /reserved for pending recipe flow/u);
+    assert.equal(fs.readFileSync(path.join(root, alias), 'utf8'), report);
+
+    const occupied = path.join(root, `occupied-${alias}`);
+    fs.mkdirSync(occupied);
+    fs.writeFileSync(path.join(occupied, alias), report);
+    await assert.rejects(
+      runner.run({ recipeDocument, projectRoot: root, artifactsDir: occupied }),
+      /already contains a retained attempt/u,
+    );
+    assert.equal(fs.readFileSync(path.join(occupied, alias), 'utf8'), report);
+  }
 });

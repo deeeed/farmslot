@@ -4,9 +4,13 @@ import path from 'node:path';
 export const RECIPE_PENDING_FLOW_FILE = '.farmslot-recipe-flow.json';
 export const RECIPE_PENDING_FLOW_PARTIAL_FILE = `${RECIPE_PENDING_FLOW_FILE}.partial`;
 
+function isPendingFlowArtifact(relativePath: string): boolean {
+  const file = path.normalize(relativePath).toLowerCase();
+  return file === RECIPE_PENDING_FLOW_FILE || file === RECIPE_PENDING_FLOW_PARTIAL_FILE;
+}
+
 export function assertNotPendingFlowArtifact(relativePath: string): void {
-  const file = path.normalize(relativePath);
-  if (file === RECIPE_PENDING_FLOW_FILE || file === RECIPE_PENDING_FLOW_PARTIAL_FILE) {
+  if (isPendingFlowArtifact(relativePath)) {
     throw new Error(`Artifact path ${relativePath} is reserved for pending recipe flow.`);
   }
 }
@@ -16,8 +20,6 @@ const PACKAGE_FILES = new Set([
   'recipe.json',
   'recipe-invocation.json',
   'recipe-resolution.json',
-  RECIPE_PENDING_FLOW_FILE,
-  RECIPE_PENDING_FLOW_PARTIAL_FILE,
   'summary.json',
   'trace.json',
   'artifact-manifest.json',
@@ -43,7 +45,7 @@ export async function assertRecipeArtifactDestinationAvailable(
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
     throw error;
   }
-  if (entries.some((entry) => PACKAGE_FILES.has(entry))) {
+  if (entries.some((entry) => PACKAGE_FILES.has(entry) || isPendingFlowArtifact(entry))) {
     throw occupiedRecipeArtifactsError(artifactsDir);
   }
 }

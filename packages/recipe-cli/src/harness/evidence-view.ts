@@ -91,21 +91,13 @@ function packageComplete(dir: string): boolean {
 }
 
 /**
- * What the folder says about the run without reading its evidence. The runner writes
- * summary.json before both manifests, so the run is still finishing until the artifact
- * manifest reads whole; an unreadable summary is `unknown`, never `running`.
+ * The artifact manifest closes the package. An unreadable summary remains unknown.
  */
-function runFacts(dir: string): { run: RunEvidenceViewRun; errors: string[]; invocation: unknown } {
+function runState(dir: string) {
   const errors: string[] = [];
   const summary = readJson(path.join(dir, 'summary.json'), errors);
   const summaryUnreadable = errors.length > 0;
-  const recipe = readJson(path.join(dir, 'recipe.json'), errors);
-  const invocation = readJson(path.join(dir, 'recipe-invocation.json'), errors);
-  const title = isRecord(recipe) ? (text(recipe.title) ?? text(recipe.description)) : undefined;
-  const startedAt =
-    (isRecord(summary) ? text(summary.startedAt) : undefined) ??
-    (isRecord(invocation) ? text(invocation.startedAt) : undefined);
-  const status =
+  const status: RunEvidenceViewRun['status'] =
     summary === undefined && !summaryUnreadable
       ? 'running'
       : !isRecord(summary) || (summary.status !== 'pass' && summary.status !== 'fail')
@@ -113,6 +105,16 @@ function runFacts(dir: string): { run: RunEvidenceViewRun; errors: string[]; inv
         : packageComplete(dir)
           ? summary.status
           : 'running';
+  return { summary, status, errors };
+}
+
+function runFacts(dir: string, { summary, status, errors } = runState(dir)) {
+  const recipe = readJson(path.join(dir, 'recipe.json'), errors);
+  const invocation = readJson(path.join(dir, 'recipe-invocation.json'), errors);
+  const title = isRecord(recipe) ? (text(recipe.title) ?? text(recipe.description)) : undefined;
+  const startedAt =
+    (isRecord(summary) ? text(summary.startedAt) : undefined) ??
+    (isRecord(invocation) ? text(invocation.startedAt) : undefined);
   return {
     run: {
       id: path.basename(dir),
@@ -131,7 +133,11 @@ function runFacts(dir: string): { run: RunEvidenceViewRun; errors: string[]; inv
 
 /** Whether the page keeps following the folder: until the run finishes, or its summary reads. */
 export function runEvidenceLive(view: Pick<RunEvidenceView, 'run'>): boolean {
-  return view.run?.status === 'running' || view.run?.status === 'unknown';
+  return isLiveRunStatus(view.run?.status);
+}
+
+function isLiveRunStatus(status: RunEvidenceViewRun['status'] | undefined): boolean {
+  return status === 'running' || status === 'unknown';
 }
 
 /** A running run lists the criteria its recipe declares, none judged yet. */
@@ -219,7 +225,25 @@ async function readPendingFlow(
 /** One run folder as the shared view-model; read-only. */
 export async function readRunEvidenceView(runDir: string): Promise<RunEvidenceView> {
   const dir = path.resolve(runDir);
-  const { run, errors, invocation } = runFacts(dir);
+  return projectRunEvidenceFolder(dir, runFacts(dir));
+}
+
+/** Capture the live version before reading the facts that the HTML page will render. */
+export async function readRunEvidencePageSnapshot(
+  runDir: string,
+): Promise<{ view: RunEvidenceView; version: string | null }> {
+  const dir = path.resolve(runDir);
+  const state = runState(dir);
+  const version = isLiveRunStatus(state.status) ? runEvidenceSignature(dir) : null;
+  // A live run can finalize during the signature read. Sample its state again before projection.
+  const facts = runFacts(dir, version === null ? state : runState(dir));
+  return { view: await projectRunEvidenceFolder(dir, facts), version };
+}
+
+async function projectRunEvidenceFolder(
+  dir: string,
+  { run, errors, invocation }: ReturnType<typeof runFacts>,
+): Promise<RunEvidenceView> {
   if (run.status === 'running') {
     // The runner republishes trace.json whole after each step, so its steps so far read live.
     const pendingFlow = await readPendingFlow(dir, invocation, errors);

@@ -11,6 +11,7 @@ import { formatEvidenceReviewVideoTime } from '@farmslot/adapter-sdk/evidence';
 import {
   isRecipeRunFolder,
   listRunEvidenceHistory,
+  readRunEvidencePageSnapshot,
   readRunEvidenceView,
   runEvidenceLive,
   runEvidenceSignature,
@@ -177,9 +178,7 @@ export async function serveRunEvidence(
     }
     if (rest.length > 1 || (rest.length === 1 && rest[0] !== ''))
       return send(response, 404, 'Not found.');
-    // If the runner publishes during the read, the next poll must still see the change.
-    const version = runEvidenceSignature(run);
-    const view = await readRunEvidenceView(run);
+    const { view, version } = await readRunEvidencePageSnapshot(run);
     const context: RunEvidencePageContext = {
       fileUrl: (file) => fileUrl(id, file),
       runUrl: runPath,
@@ -189,7 +188,10 @@ export async function serveRunEvidence(
         `data-seek-video="${escapeHtml(cue.videoPath)}" data-seek-ms="${Math.round(cue.startMs)}"`,
       history: listRunEvidenceHistory(root),
     };
-    const live = runEvidenceLive(view) ? { versionUrl: `${runPath(id)}version`, version } : null;
+    const live =
+      version !== null && runEvidenceLive(view)
+        ? { versionUrl: `${runPath(id)}version`, version }
+        : null;
     return send(
       response,
       200,

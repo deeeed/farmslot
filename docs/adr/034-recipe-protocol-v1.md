@@ -389,4 +389,4 @@ The runner atomically replaces the optional run-local `.farmslot-recipe-flow.jso
 
 The pending reader pairs this file with the prepared tree in `recipe-resolution.json.flow`. The update must match `recipe-invocation.json.recipeRunId`, and the resolution root digest must match the invocation's recipe digest. The SDK checks the tree, root and active invocation. A missing or incompatible input leaves pending flow unavailable.
 
-The engine reserves the pending filename and its temporary sibling for transient flow. They are outside the evidence manifest and removed when the package is finalized. Completed viewers use the existing summary flow and prepared tree. The SDK's existing snapshot equality reflects active changes before a trace entry completes.
+The engine reserves the pending filename and its temporary sibling across case variants for transient flow. They are outside the evidence manifest and removed when the package is finalized. Completed viewers use the existing summary flow and prepared tree. The SDK's existing snapshot equality reflects active changes before a trace entry completes.
