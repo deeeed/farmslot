@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.26.0 - 2026-11-21
+
+- Read verified review receipts from retained pipeline step results.
+
 ## 0.25.18 - 2026-11-21
 
 - Pin the pending flow and recording timeline producer cohort.
