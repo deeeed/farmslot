@@ -195,3 +195,34 @@ test('a pending service link shares its first verified principal across reconnec
     null,
   );
 });
+
+test('a live service grant cannot expand the saved offline fallback before link claim', () => {
+  const service = { ...workspace, principalId: null };
+  const live = startupWorkspaceAfterConnectionChange(service, undefined, {
+    principalId: 'service-A',
+    workspaceAccess: 'farm',
+  });
+  const intent = pendingStartupRunDestination(href);
+  assert.ok(intent);
+  assert.equal(
+    resolveStartupRunDestination(intent.href, {
+      ...connected,
+      startupWorkspace: live,
+      principalId: 'service-A',
+    }),
+    href,
+  );
+  const offline = {
+    ...pending,
+    status: 'disconnected' as const,
+    offline: true,
+    startupWorkspace: startupWorkspaceAfterConnectionChange(live, 'network'),
+  };
+  assert.equal(resolveStartupRunDestination(intent.href, offline), null);
+  assert.equal(
+    startupFallbackAccess(offline, { access: 'farm', principalId: 'service-A' }),
+    'none',
+  );
+  assert.equal(intent.claim(), true);
+  assert.equal(intent.claim(), false);
+});

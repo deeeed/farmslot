@@ -6,6 +6,7 @@ export interface StartupWorkspace {
   profileId: string;
   gatewayUrl: string;
   principalId: string | null;
+  verifiedPrincipalId?: string;
 }
 
 export interface StartupRunAuthority extends StartupWorkspace {
@@ -43,7 +44,7 @@ export function resolveStartupRunDestination(
   if (
     authority.workspaceAccess !== 'farm' ||
     !authority.principalId ||
-    authority.principalId !== initial.principalId
+    authority.principalId !== (initial.verifiedPrincipalId ?? initial.principalId)
   )
     return null;
   return href;
@@ -94,12 +95,9 @@ export function startupWorkspaceAfterConnectionChange(
     return null;
   if (!workspace || !authority) return workspace;
   const { principalId, workspaceAccess } = authority;
-  if (
-    workspaceAccess !== 'farm' ||
-    !principalId ||
-    (workspace.principalId !== null && workspace.principalId !== principalId)
-  )
+  const expected = workspace.verifiedPrincipalId ?? workspace.principalId;
+  if (workspaceAccess !== 'farm' || !principalId || (expected !== null && expected !== principalId))
     return null;
-  // Service profiles have no saved person session. Bind their first verified principal.
-  return workspace.principalId === null ? { ...workspace, principalId } : workspace;
+  // The verified principal owns replay. Offline fallback still uses the saved principal.
+  return expected === null ? { ...workspace, verifiedPrincipalId: principalId } : workspace;
 }
