@@ -148,15 +148,14 @@ export function familySessionUsageContributions(
   runs: readonly Run[],
   inventory: (run: Run) => readonly RunnerSessionUsage[],
 ) {
-  return sessionUsageContributions(runs, (run) =>
-    inventory(run).filter((row) => !sessionUsageIncludesPriorRun(row)),
-  );
+  return sessionUsageContributions(runs, inventory, { omitInheritedLifetime: true });
 }
 
 /** Attribute only a conversation's growth to a later run; never sum warm snapshots. */
 export function sessionUsageContributions(
   runs: readonly Run[],
   inventory: (run: Run) => readonly RunnerSessionUsage[] = allRunSessionUsageReceipts,
+  options: { omitInheritedLifetime?: boolean } = {},
 ): Map<string, RunnerSessionUsage[]> {
   const result = new Map<string, RunnerSessionUsage[]>();
   const counters = [
@@ -205,7 +204,9 @@ export function sessionUsageContributions(
         highWater[field] = before === undefined ? value : Math.max(before, value);
       }
       if (key) seen.set(key, highWater);
-      if (contributes) contributions.push(contribution);
+      // An inherited observation is still a high-water mark for the next receipt.
+      if (contributes && !(options.omitInheritedLifetime && sessionUsageIncludesPriorRun(row)))
+        contributions.push(contribution);
     }
     result.set(run.id, contributions);
   }

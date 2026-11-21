@@ -457,16 +457,15 @@ export function reviewRoundCosts(
         (usage?.contextIds?.length ?? 0) > 1 ||
         (usage?.usageLeaseIds?.length ?? 0) > 1;
       const verified = session?.receipt;
-      const pending = session?.pendingLeases.size || pendingSessionUsageLeaseIds(usage).length;
-      const ownReceipt =
-        usage === rounds[index]?.usage &&
-        recordedCost(usage) !== null &&
-        !pendingSessionUsageLeaseIds(usage).length;
-      const cost = recordedCost(
-        usage && verified && !pending && matchesRecordedRoundWindow(usage, verified)
-          ? verified
-          : usage,
+      const sameWindow = usage && verified && matchesRecordedRoundWindow(usage, verified);
+      const measuredLeases = sameWindow ? verifiedSessionUsageLeaseIds(verified) : [];
+      const roundPending = pendingSessionUsageLeaseIds(usage).some(
+        (lease) => !measuredLeases.includes(lease),
       );
+      const pending = Boolean(session?.pendingLeases.size) || roundPending;
+      const ownReceipt =
+        usage === rounds[index]?.usage && recordedCost(usage) !== null && !roundPending;
+      const cost = recordedCost(sameWindow && !pending ? verified : usage);
       if (shared || (usage && sharedAcrossRuns(usage, priorSessions)))
         return [key, 'Round cost unavailable · shared session'];
       // A dedicated recorded attempt can still price itself when a legacy ledger has lease hints.

@@ -759,3 +759,27 @@ test('a pipeline-only warm lifetime is retained but cannot bill a run without it
     1,
   );
 });
+
+test('an inherited Family observation prevents billing the same lifetime on a later run', () => {
+  const usage = receipt({
+    runnerSessionId: 'borrowed-review',
+    role: 'review',
+    roles: ['review'],
+    scope: 'session-total',
+    costUsd: 8,
+  });
+  const inherited = makeRun({
+    id: 'inherited',
+    sessionUsage: [{ ...usage, includesPriorRunLifetime: true }],
+  });
+  const successor = makeRun({
+    id: 'successor',
+    createdAt: '2026-11-05T21:00:00Z',
+    sessionUsage: [usage],
+  });
+  assert.deepEqual(buildFamilyUsage([inherited, successor]).contributions, []);
+  const chart = buildFamilyObservabilityTokenSummary([inherited, successor], inherited.familyId);
+  assert.equal(chart.runPoints[0]?.stepCostEstimate, null);
+  assert.equal(chart.runPoints[1]?.stepCostEstimate, 0);
+  assert.equal(chart.runPoints[1]?.deltaTokens, 0);
+});

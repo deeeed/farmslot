@@ -990,3 +990,25 @@ test('a dedicated cold attempt prices its own receipt alongside unverified ledge
     'Round cost unavailable · pending usage',
   );
 });
+
+test('a verified recapture restores the exact cold price and clears matching legacy coverage', () => {
+  const legacy = receipt('legacy-review', 'review', 2.25, {
+    scope: 'run-delta',
+    usageLeaseIds: ['lease'],
+    startedAt: '2026-11-20T00:00:00Z',
+    completedAt: '2026-11-20T00:01:00Z',
+  });
+  const round = { key: 'cold', mode: 'cold' as const, usage: legacy };
+  assert.equal(
+    reviewRoundCosts([legacy], [round]).get(round.key),
+    'Round cost unavailable · pending usage',
+  );
+  const verified: RunnerSessionUsage = { ...legacy, usageLeaseIdsVerified: true, costUsd: 2.5 };
+  assert.equal(reviewRoundCosts([verified], [round]).get(round.key), 'Round cost $2.50');
+  assert.doesNotMatch(litText(renderRunCost([verified])), /pending usage/);
+  const otherWindow = { ...verified, completedAt: '2026-11-20T00:02:00Z' };
+  assert.equal(
+    reviewRoundCosts([otherWindow], [round]).get(round.key),
+    'Round cost unavailable · pending usage',
+  );
+});
