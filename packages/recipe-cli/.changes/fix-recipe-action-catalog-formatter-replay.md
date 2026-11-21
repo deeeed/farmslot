@@ -1,1 +1,0 @@
-- Keep the invoked executable in action detail hints and display category names that can be copied into filters.
