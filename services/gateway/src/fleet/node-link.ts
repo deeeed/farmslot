@@ -245,6 +245,9 @@ async function invokeUnqueued(
           error instanceof NodeTransportUnavailableError ? error.reason : 'timeout',
           node.ws,
           requestId ? awaitOwedCloseout(requestId, node.ws) : undefined,
+          error instanceof NodeTransportUnavailableError && error.cause instanceof Error
+            ? error
+            : undefined,
         );
       const abort = () => {
         if (!dispatched || cancelling) return;
@@ -289,7 +292,7 @@ async function invokeUnqueued(
             dispatched = true;
             requestId = id;
           },
-          onSent: invocation.onDispatch ? () => invocation.onDispatch?.(node) : undefined,
+          onSent: () => invocation.onDispatch?.(node),
         });
         receipt = await Promise.race([response, cancellation]);
       } catch (error) {

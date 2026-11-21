@@ -151,7 +151,12 @@ test('an RPC reports no send acceptance when the socket write fails', async (t) 
       {},
       { requireSameConnection: true, timeout: 100, onSent: () => accepted++ },
     ),
-    error,
+    (failure: unknown) => {
+      assert(failure instanceof NodeTransportUnavailableError);
+      assert.equal(failure.reason, 'disconnected');
+      assert.equal(failure.cause, error);
+      return true;
+    },
   );
   assert.equal(accepted, 0);
 });

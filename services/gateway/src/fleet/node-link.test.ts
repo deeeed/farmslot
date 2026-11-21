@@ -26,7 +26,8 @@ after(async () => {
 });
 const { getNode, registerNode, unregisterByWs } = await import('./machine-registry.js');
 const { acceptNodeLinkStream, invokeNodeLink } = await import('./node-link.js');
-const { handleNodeResponse } = await import('./node-rpc.js');
+const { handleNodeResponse, NodeExecUnconfirmedError, NodeTransportUnavailableError } =
+  await import('./node-rpc.js');
 
 test('typed node link streams real argv output and reuses the durable receipt without executing twice', async (t) => {
   const root = await realpath(await mkdtemp(path.join(tmpdir(), 'node-link-rpc-')));
@@ -50,9 +51,15 @@ test('typed node link streams real argv output and reuses the durable receipt wi
   const dispatches: ReturnType<typeof getNode>[] = [];
   const dispatchCountsAtSend: number[] = [];
   const send = gatewaySocket.send.bind(gatewaySocket);
+  let commandWriteFailure: Error | undefined;
   t.mock.method(gatewaySocket, 'send', (raw: string, callback?: (error?: Error) => void) => {
-    if (JSON.parse(raw).method === 'node.link.command')
+    if (JSON.parse(raw).method === 'node.link.command') {
       dispatchCountsAtSend.push(dispatches.length);
+      if (commandWriteFailure) {
+        callback?.(commandWriteFailure);
+        return;
+      }
+    }
     send(raw, callback);
   });
   const invocation = {
@@ -106,6 +113,21 @@ test('typed node link streams real argv output and reuses the durable receipt wi
       invocation,
     ),
     { code: 'IDEMPOTENCY_CONFLICT' },
+  );
+  const writeFailure = new Error('fixture socket write failed before close');
+  commandWriteFailure = writeFailure;
+  await assert.rejects(
+    invokeNodeLink(request, { ...invocation, commandId: 'failed-write-command' }),
+    (error: unknown) => {
+      assert(error instanceof NodeExecUnconfirmedError);
+      assert.equal(error.executionConnection, gatewaySocket);
+      assert.equal(dispatches.length, 1);
+      assert.equal(error.reason, 'disconnected');
+      assert.match(error.message, /send failed: fixture socket write failed before close/);
+      assert(error.cause instanceof NodeTransportUnavailableError);
+      assert.equal(error.cause.cause, writeFailure);
+      return true;
+    },
   );
 });
 

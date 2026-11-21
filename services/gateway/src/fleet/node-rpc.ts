@@ -159,8 +159,9 @@ export class NodeTransportUnavailableError extends Error {
     readonly machine: string,
     readonly reason: NodeTransportUnavailableReason,
     message: string,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
     this.name = 'NodeTransportUnavailableError';
   }
 }
@@ -201,11 +202,14 @@ export class NodeExecUnconfirmedError extends NodeTransportUnavailableError {
     executionConnection?: WebSocket,
     /** Settles when the node later delivers this execution's result on its original connection. */
     readonly closeout: Promise<void> = new Promise(() => {}),
+    cause?: Error,
   ) {
     super(
       machine,
       reason,
-      `Execution ${requestId} on ${machine} has unconfirmed closeout (${reason}); preserve its resources until verified.`,
+      `Execution ${requestId} on ${machine} has unconfirmed closeout (${reason}); preserve its resources until verified.` +
+        (cause ? ` ${cause.message}` : ''),
+      cause ? { cause } : undefined,
     );
     this.name = 'NodeExecUnconfirmedError';
     this.#executionConnection = executionConnection;
@@ -294,13 +298,24 @@ function sendNodeRequestUnmeasured(
       node.ws.send(frame);
       return;
     }
+    const failWrite = (error: unknown) => {
+      const cause = error instanceof Error ? error : new Error(String(error));
+      takePendingRequest(id)?.reject(
+        new NodeTransportUnavailableError(
+          node.machine,
+          'disconnected',
+          `Node ${node.machine} send failed: ${cause.message}`,
+          { cause },
+        ),
+      );
+    };
     try {
       node.ws.send(frame, (error) => {
-        if (error) takePendingRequest(id)?.reject(error);
+        if (error) failWrite(error);
         else if (pending.has(id)) onSent();
       });
     } catch (error) {
-      takePendingRequest(id)?.reject(error instanceof Error ? error : new Error(String(error)));
+      failWrite(error);
     }
   });
 }
