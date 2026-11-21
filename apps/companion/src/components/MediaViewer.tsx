@@ -776,14 +776,16 @@ function FullscreenVideo({
     });
     const status = player.addListener('statusChange', syncReady);
     const ended = player.addListener('playToEnd', () => {
-      if (!active || !model || !videoPath) return;
+      if (!active || !model || !videoPath || savedTimelineAt.current >= 0) return;
       const effect = model.playbackAt(videoPath, player.currentTime * 1000, player.duration * 1000);
       if (effect.sourceChanged) resumePlayback.current = true;
       applyPlayback(effect);
     });
     const updates = player.addListener('timeUpdate', ({ currentTime }) => {
-      if (active && model && videoPath)
-        applyPlayback(model.playbackAt(videoPath, currentTime * 1000, player.duration * 1000));
+      // A saved seek owns playback while the source loads. Clip bounds can seek
+      // during a ready event and put the player back into buffering.
+      if (!active || !model || !videoPath || savedTimelineAt.current >= 0) return;
+      applyPlayback(model.playbackAt(videoPath, currentTime * 1000, player.duration * 1000));
     });
     return () => {
       active = false;
