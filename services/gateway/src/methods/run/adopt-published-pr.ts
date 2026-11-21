@@ -4,7 +4,9 @@ import {
   type EvidenceAttestationApprover,
   githubPullUrl,
   type HumanPublicationAdoptionReceipt,
+  isHeldForResultDecision,
   parseGitHubPullUrl,
+  pendingResultDecision,
   PipelineSteps,
   pipelineStepsForRun,
   PUBLICATION_ADOPTION_ACTION,
@@ -319,6 +321,7 @@ export async function runAdoptPublishedPr(
     };
   }
   let completed = false;
+  let acceptedResultDecisionId: string | null = null;
   let teardownSlotId: string | null = null;
   return withRunTransition<RunAdoptPublishedPrResult>(initial.id, async () => {
     const currentApprover = authorize();
@@ -372,6 +375,17 @@ export async function runAdoptPublishedPr(
     };
     if (projectionRefusals.length) return { ...result, continuation: 'refused' };
     if (result.archived || !getRun(run.id) || run.status === 'done') return result;
+    // An attested adoption is the person's acceptance of a REVIEW hold. It is
+    // settled after this transition, through the result decision's own path.
+    const held =
+      // Receipts without a match predate content matching and were attested.
+      (receipt!.match?.type ?? 'attested') === 'attested' && isHeldForResultDecision(run)
+        ? pendingResultDecision(run)
+        : undefined;
+    if (held?.payload?.kind === 'result-decision' && held.payload.stoppedAt === 'review') {
+      acceptedResultDecisionId = held.id;
+      return result;
+    }
     const continuationIdentity = adoptionIdentity(run);
     try {
       result.refusals = await (
@@ -457,6 +471,19 @@ export async function runAdoptPublishedPr(
     return { ...result, continuation: resumed ? 'resumed' : 'waiting' };
   })
     .then(async (result) => {
+      if (acceptedResultDecisionId) {
+        const { resolveResultDecision } = await import('../../run-completion/result-decision.js');
+        const run = await resolveResultDecision(
+          {
+            runId: initial.id,
+            decisionId: acceptedResultDecisionId,
+            actionId: 'accept-result',
+            reason: receipt!.reason,
+          },
+          { adoptedPublication: { principalId: receipt!.approver.principalId } },
+        );
+        return { ...result, run, continuation: 'resumed' as const };
+      }
       if (!completed) return result;
       // Release can join another machine/run transition; never hold those keys here.
       const { collectCompletedRunSlotReleaseEffect } = await import('./lifecycle-control.js');

@@ -381,10 +381,26 @@ export interface ResolveResultDecisionParams {
   reason?: string;
 }
 
+/**
+ * A recorded attested adoption is the person's acceptance of a REVIEW hold: the
+ * publication the gate would have produced already exists (ADR-065 Amendment 2).
+ */
+function adoptedAcceptState(run: Run, stoppedAt: ResultDecisionStop): ResultDecisionActionState {
+  const unavailableReason =
+    stoppedAt !== 'review'
+      ? 'A refused completion prerequisite cannot be accepted. Send it back once it is fixed, or close it.'
+      : !run.engineState?.publishGate?.humanPublicationAdoption
+        ? 'No attested publication adoption is recorded on this run.'
+        : undefined;
+  return unavailableReason
+    ? { id: 'accept-result', available: false, unavailableReason, requiresReason: true }
+    : { id: 'accept-result', available: true, requiresReason: true };
+}
+
 /** Settle a held run through one result-decision action (ADR-065 Amendment 7). */
 export async function resolveResultDecision(
   params: ResolveResultDecisionParams,
-  options: { releaseSlot?: boolean } = {},
+  options: { releaseSlot?: boolean; adoptedPublication?: { principalId: string } } = {},
 ): Promise<Run> {
   const actionId = params.actionId;
   if (!isResultDecisionActionId(actionId))
@@ -424,7 +440,9 @@ export async function resolveResultDecision(
         actionId === 'send-back'
           ? await sendBackState(run, payload.stoppedAt)
           : actionId === 'accept-result'
-            ? acceptState(run, payload.stoppedAt)
+            ? options.adoptedPublication
+              ? adoptedAcceptState(run, payload.stoppedAt)
+              : acceptState(run, payload.stoppedAt)
             : { id: actionId, available: true, requiresReason: false };
       if (!state.available) throw new Error(state.unavailableReason ?? 'Action unavailable');
       if (actionId === 'send-back' && payload.stoppedAt === 'review') {
@@ -457,7 +475,8 @@ export async function resolveResultDecision(
       const now = new Date().toISOString();
       const receipt = {
         action: actionId,
-        principalId: currentSessionPrincipal()?.id ?? 'system',
+        principalId:
+          options.adoptedPublication?.principalId ?? currentSessionPrincipal()?.id ?? 'system',
         ...(reason ? { reason } : {}),
         decidedAt: now,
         delivered: payload.delivered,

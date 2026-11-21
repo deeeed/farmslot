@@ -430,7 +430,12 @@ report. Its actions:
     publish gate does not offer publication while review findings remain at
     the delivered head (`review-fix-required` has no override), so an accepted
     result could not be published. Its exits are Send back and Close; this
-    amendment does not change the gate.
+    amendment does not change the gate. One exception, 2026-11-21: an attested
+    human publication adoption (Amendment 2) is the person's acceptance of a
+    REVIEW hold, because the publication already exists. Adoption resolves the
+    pending result decision as `accept-result`, with the adoption reason and
+    principal, and the PR link stays. It never accepts a refused completion
+    prerequisite, and a content-match adoption leaves the decision pending.
 - **Close.** Settles `done` through a new named ADR-053 transition,
   `close-result`, without accepting the result. This is not output-close, whose
   eligibility rules differ. For a retained refused completion, Close is the

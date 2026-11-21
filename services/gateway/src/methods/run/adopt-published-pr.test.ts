@@ -848,3 +848,126 @@ test('adoption during progress observation cannot append a fresh publication gat
   assert.equal(run.decisions.length, 0);
   assert.equal(run.engineState?.publishGate?.publicationStatus, 'published_ready');
 });
+
+/** dee8558e: held for a REVIEW result decision after 4/4 fix attempts, review budget spent. */
+async function heldResultFixture(t: test.TestContext, stoppedAt: 'review' | 'complete' = 'review') {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'generic-project',
+    ticketOrPr: 'TAT-4395',
+    branch: 'fix/feature',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+  const steps = FLOW_STEPS.dev.map((name) => {
+    const order = FLOW_STEPS.dev.indexOf(name);
+    const stop = FLOW_STEPS.dev.indexOf(stoppedAt);
+    return {
+      name,
+      status: (order < stop
+        ? 'done'
+        : order === stop
+          ? 'failed'
+          : 'pending') as Run['steps'][number]['status'],
+      ...(name === 'review'
+        ? {
+            outputs: {
+              verdict: 'issues',
+              issues: [{ file: 'src/a.ts', line: 1, description: 'Remaining finding' }],
+              retryCount: 4,
+              maxRetries: 4,
+              reviewSnapshot: { headSha: reviewedHead },
+            },
+          }
+        : {}),
+    };
+  });
+  const held = updateRun(run.id, {
+    status: 'failed',
+    engineState: { generation: 4, publishGate: { publicationStatus: 'not_published' } },
+    steps,
+    output: {
+      capturedAt: new Date().toISOString(),
+      workerFinished: true,
+      artifactManifest: [],
+      manifestDigest: 'digest',
+      reportPath: 'artifacts/pr-description.md',
+    },
+  });
+  const { buildResultDecision } = await import('../../run-completion/result-decision.js');
+  const decision = await buildResultDecision(held, stoppedAt);
+  return updateRun(run.id, { status: 'needs-decision', decisions: [decision] });
+}
+
+const waitingOnDecision: Dependencies['continuationRefusals'] = async (run) =>
+  run.decisions.some((decision) => !decision.resolvedAt)
+    ? [
+        {
+          code: 'publication-continuation-waiting',
+          prerequisite: 'lifecycle',
+          message: 'Another run decision still requires resolution.',
+        },
+      ]
+    : [];
+
+test('attested adoption accepts the pending review result decision and keeps the PR link', async (t) => {
+  const run = await heldResultFixture(t);
+  const decisionId = run.decisions[0].id;
+  assert.equal(
+    run.decisions[0].payload?.kind === 'result-decision' &&
+      run.decisions[0].payload.actions.find((action) => action.id === 'accept-result')?.available,
+    false,
+  );
+  const result = await runAdoptPublishedPr(
+    request(run),
+    noop,
+    dependencies({ readiness: undefined, continuationRefusals: waitingOnDecision }),
+  );
+  assert.equal(result.continuation, 'resumed');
+  assert.deepEqual(result.refusals, []);
+  const settled = (await getRunWithArchived(run.id))!;
+  assert.equal(settled.status, 'done');
+  assert.equal(settled.error, undefined);
+  const decision = settled.decisions.find((entry) => entry.id === decisionId)!;
+  assert.equal(decision.resolvedAction, 'accept-result');
+  assert.equal(settled.resultDecisionReceipt?.action, 'accept-result');
+  assert.equal(settled.resultDecisionReceipt?.principalId, approver.principalId);
+  assert.equal(settled.resultDecisionReceipt?.reason, request(run).reason);
+  assert.equal(settled.prNumber, 192);
+  assert.equal(settled.engineState?.publishGate?.publicationStatus, 'published_ready');
+  assert.equal(settled.engineState?.publishGate?.humanPublicationAdoption?.prNumber, 192);
+});
+
+test('adoption never accepts a refused completion prerequisite', async (t) => {
+  const run = await heldResultFixture(t, 'complete');
+  const result = await runAdoptPublishedPr(
+    request(run),
+    noop,
+    dependencies({ readiness: undefined, continuationRefusals: waitingOnDecision }),
+  );
+  assert.equal(result.continuation, 'refused');
+  assert.equal(result.refusals[0].code, 'publication-continuation-waiting');
+  const held = (await getRunWithArchived(run.id))!;
+  assert.equal(held.status, 'needs-decision');
+  assert.equal(held.decisions[0].resolvedAt, undefined);
+  assert.equal(held.resultDecisionReceipt, undefined);
+  assert.equal(held.prNumber, 192);
+});
+
+test('content-match adoption links the PR but leaves the review result decision to a person', async (t) => {
+  const run = await heldResultFixture(t);
+  const result = await runAdoptPublishedPr(
+    { runId: run.id, prRef: 'https://github.com/owner/repo/pull/192' },
+    noop,
+    dependencies({
+      readiness: undefined,
+      continuationRefusals: waitingOnDecision,
+      compareContent: async () => ({ differingFiles: [] }),
+    }),
+  );
+  assert.equal(result.receipt.match?.type, 'content-match');
+  assert.equal(result.continuation, 'refused');
+  const held = (await getRunWithArchived(run.id))!;
+  assert.equal(held.status, 'needs-decision');
+  assert.equal(held.decisions[0].resolvedAt, undefined);
+  assert.equal(held.prNumber, 192);
+});
