@@ -218,6 +218,90 @@ test('cleanup retains a detached child after its title changes and parent exits'
   }
 });
 
+test('a detached group remains owned after its only observed launcher exits', async () => {
+  const launcherCode = `
+    process.on('message', () => {
+      const worker = require('node:child_process').spawn(
+        process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }
+      );
+      worker.once('spawn', () => process.send(worker.pid, () => process.exit(0)));
+    });
+    process.send('ready');
+  `;
+  const rootCode = `
+    const launcher = require('node:child_process').spawn(
+      process.execPath, ['-e', ${JSON.stringify(launcherCode)}],
+      { detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }
+    );
+    let worker;
+    launcher.on('message', (message) => {
+      if (message === 'ready') process.send(launcher.pid);
+      else worker = message;
+    });
+    launcher.once('exit', () => process.send(worker));
+    process.on('message', () => launcher.send('start'));
+  `;
+  const root = spawn(process.execPath, ['-e', rootCode], {
+    detached: true,
+    stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+  });
+  let launcher: number | undefined;
+  let worker: number | undefined;
+  try {
+    [launcher] = await once(root, 'message');
+    assert.equal(typeof launcher, 'number');
+    const tree = new NativeProcessTree(root.pid!);
+    assert.ok(tree.snapshot().some(({ pid, group }) => pid === launcher && group === launcher));
+    const spawned = once(root, 'message');
+    root.send('start');
+    [worker] = await spawned;
+    assert.equal(typeof worker, 'number');
+    assert.ok(!tree.snapshot().some(({ pid }) => pid === worker));
+    const exited = once(root, 'exit');
+    root.kill('SIGKILL');
+    await exited;
+    assert.equal(alive(launcher!), false);
+    assert.equal(alive(worker!), true);
+    assert.equal(await tree.empty(), false);
+  } finally {
+    if (root.pid && alive(root.pid)) root.kill('SIGKILL');
+    if (launcher && alive(launcher)) process.kill(launcher, 'SIGKILL');
+    if (worker && alive(worker)) process.kill(worker, 'SIGKILL');
+  }
+});
+
+test('a distinct leader in the detached group proves numeric group reuse', async (t) => {
+  const root = 100039801;
+  const launcher = root + 1;
+  const member = launcher + 1;
+  const tree = new NativeProcessTree(root, {
+    snapshot: new Map([
+      [root, { pid: root, parent: process.pid, group: root, identity: 'original root' }],
+      [launcher, { pid: launcher, parent: root, group: launcher, identity: 'original launcher' }],
+    ]),
+  });
+  let census = `${member} 1 ${launcher} unobserved worker\n`;
+  const mock = t.mock.method(
+    childProcess,
+    'execFile',
+    (...args: Parameters<typeof childProcess.execFile>) => {
+      const callback = args.at(-1);
+      if (typeof callback !== 'function') throw new Error('Census callback missing');
+      queueMicrotask(() => callback(null, census, ''));
+      return new childProcess.ChildProcess();
+    },
+  );
+  syncBuiltinESMExports();
+  try {
+    assert.equal(await tree.empty(), false);
+    census += `${launcher} 1 ${launcher} unrelated replacement leader\n`;
+    assert.equal(await tree.empty(), true);
+  } finally {
+    mock.mock.restore();
+    syncBuiltinESMExports();
+  }
+});
+
 test('retains stopped root observation without retaining live signal ownership', async (t) => {
   const root = 100039802;
   let census = `${process.pid} 1 ${process.pid} inspector\n${root} 100039801 100039801 original host birth\n`;

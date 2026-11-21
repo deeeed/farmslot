@@ -127,6 +127,9 @@ test('an exited worker with retained handles can confirm stop and cancel its exa
 
   stoppedAtOwner = true;
   publish(closed(null, 'SIGTERM'));
+  const exited = manager.inspect('owner', id);
+  assert.equal(exited.exitCode, null);
+  assert.equal(exited.signal, 'SIGTERM');
   const confirmed = await confirm();
   assert.equal(confirmed.processStopped, true);
   assert.equal(confirmed.processStopReason, 'process-missing-attested');

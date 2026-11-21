@@ -1,1 +1,1 @@
-- Confirm native worker cleanup after an observed exit when the recorded processes are all gone.
+- Confirm exited Codex workers only after their process owner verifies that the recorded processes and detached groups are gone.

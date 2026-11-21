@@ -283,6 +283,7 @@ function signal(
 /** Tracks detached descendants while their ancestry is still observable. */
 export class NativeProcessTree {
   private owned = new Map<number, ProcessIdentity>();
+  private readonly detachedGroupLeaders = new Map<number, string>();
   private readonly rootIdentity: string;
   private readonly rootObservation: ProcessIdentity;
   /**
@@ -371,6 +372,12 @@ export class NativeProcessTree {
         }
       }
     }
+    // Keep a detached group's identity after its leader exits. A child can inherit
+    // the group and outlive the last census that observed its ancestry.
+    for (const entry of this.owned.values()) {
+      if (entry.pid === entry.group && entry.group !== this.root)
+        this.detachedGroupLeaders.set(entry.group, entry.identity);
+    }
   }
   /** Last observed identities remain useful when a later census cannot be read. */
   snapshot(): ProcessIdentity[] {
@@ -422,8 +429,15 @@ export class NativeProcessTree {
     const snapshot = await cleanupProcesses();
     this.applySnapshot(snapshot);
     if (this.owned.size > 0) return false;
-    // A reused group cannot be signaled safely or counted as proof of cleanup.
-    return ![...snapshot.values()].some((entry) => entry.group === this.root);
+    return ![...snapshot.values()].some(({ group }) => {
+      if (group === this.root) return true;
+      const identity = this.detachedGroupLeaders.get(group);
+      if (identity === undefined) return false;
+      // A new group leader proves reuse. Surviving members without a leader
+      // still belong to the observed group, even after reparenting.
+      const leader = snapshot.get(group);
+      return leader?.group !== group || leader.identity === identity;
+    });
   }
   private stopGroup(snapshot: Map<number, ProcessIdentity>): void {
     const members = [...snapshot.values()].filter((entry) => entry.group === this.root);
