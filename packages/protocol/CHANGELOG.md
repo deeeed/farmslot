@@ -6,6 +6,14 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.92.0 - 2026-11-21
+
+- Allow Command Center review links to share the recording, recipe attempt, and timeline page.
+- Include an optional accounting revision on run detail reads and mark journal-verified usage lease coverage.
+- The run evidence response can carry transient invocation flow for the current recipe attempt while recorded evidence is pending.
+- Worker terminal subscribe responses and exit events identify the adopted subscription so clients can ignore exits from superseded subscriptions.
+- Preserve the provider-reported subtotal and pricing scope on remote tmux Pi receipts. Expose the known subtotal when usage is recovered from a retained transcript.
+
 ## 0.91.0 - 2026-11-19
 
 - Add optional qualified invocation timing to recipe flow updates, preserving unknown measurements.

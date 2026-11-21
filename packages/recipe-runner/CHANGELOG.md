@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.52.1 - 2026-11-21
+
+- mm-harness 0.96.39 consumes recipe-runner 0.52.0 and Recipe CLI 0.35.30 with protocol 0.91.0. The HTML evidence viewer shows the active invocation while the recipe HUD is hidden.
+
 ## 0.52.0 - 2026-11-21
 
 - Record mm-harness 0.96.37 as a consumer of recipe-runner 0.51.0 and protocol 0.91.0. It uses the structural inventory export and pins recipe-cli 0.35.27 for named recipe identity.

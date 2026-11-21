@@ -1,1 +1,0 @@
-- Reattach worker terminals to a verified session and pane instead of reusing detached clients.

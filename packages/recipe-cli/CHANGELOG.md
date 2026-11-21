@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.31 - 2026-11-21
+
+- Pin the Protocol 0.92.0 producer cohort.
+
 ## 0.35.30 - 2026-11-21
 
 - Read active invocation progress from a run folder while HUD is off.

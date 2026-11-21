@@ -6,6 +6,13 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.39.11 - 2026-11-21
+
+- Keep the run detail accounting revision stable through unrelated progress updates.
+- Run Detail can read the active, run-owned recipe flow before its first trace step, including with HUD disabled.
+- Price remote tmux Pi LiteLLM receipts from gateway rates only when a completed turn matches a direct request to the pricing endpoint. Keep tokens and provider-reported charges. Older transcripts and replies without verified route evidence remain unpriced, with no lookup on the remote node.
+- Reattach worker terminals to a verified session and pane instead of reusing detached clients.
+
 ## 0.39.10 - 2026-11-19
 
 - Continue on a `runner unavailable` card now delivers a resume to the worker instead of only resuming the watch, so a pane holding a turn that died mid-flight is actually continued; the resume uses a one-shot pane instruction and does not spend the stuck/idle nudge budget, because a provider outage the operator fixed is not the worker stalling.

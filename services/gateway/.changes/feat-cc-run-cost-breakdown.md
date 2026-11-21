@@ -1,1 +1,0 @@
-- Keep the run detail accounting revision stable through unrelated progress updates.

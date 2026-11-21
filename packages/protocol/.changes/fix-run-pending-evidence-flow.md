@@ -1,1 +1,0 @@
-- The run evidence response can carry transient invocation flow for the current recipe attempt while recorded evidence is pending.

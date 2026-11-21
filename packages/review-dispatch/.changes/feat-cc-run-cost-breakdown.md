@@ -1,1 +1,0 @@
-- Read verified review receipts from retained pipeline step results.

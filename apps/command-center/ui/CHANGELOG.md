@@ -6,6 +6,14 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.36.11 - 2026-11-21
+
+- Show the full execution timeline in evidence review, including setup and steps with no verified video position.
+- Show the known run cost by phase, receipt coverage, and verified costs for individual review rounds.
+- Show inclusive and self timing, criterion rollups, and unassigned time in composed recipe evidence.
+- Show the active recipe flow in Run Detail while a recipe runs, before its first step completes.
+- Keep worker terminals, Sessions layout and End session focus steady during inventory refreshes.
+
 ## 0.36.10 - 2026-11-19
 
 - Show composed recipe calls and execution-qualified playback in run evidence.
