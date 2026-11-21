@@ -58,7 +58,7 @@ export const ARTIFACT_BROWSER_PARAMS = [
 export const VIEW_QUERY_PARAMETERS: ReadonlySet<string> = new Set([
   ...(
     'cwd custom effort approvalMode a b activity artifact artifactAc artifactRun artifactTrace artifactPhase artifactView assessment backlogProject backlogStatus capture create demo dispatchConfig draft draftMode file item resource runId contextId history historyRun host recipeRun recipeDependency ' +
-    'recipeNode recipeArtifact recipeEvidenceMode recipeViewer recipeViewerMode recipeViewerPair review reviewAt reviewCheck reviewDrawer reviewFile reviewRecipe reviewRecording reviewRevision reviewTimeline comment commentFile commentLine commentHead ' +
+    'recipeNode recipeArtifact recipeEvidenceMode recipeViewer recipeViewerMode recipeViewerPair review reviewAt reviewCheck reviewDecision reviewDrawer reviewFile reviewRecipe reviewRecording reviewRevision reviewTimeline comment commentFile commentLine commentHead ' +
     'cmpSort cmpTab diffArtifact diffRun direction evidence evidencePreview family familyId flow flowType focus gate graph intent lane ' +
     'layout lightboxIndex lightboxRecipeRunId machines modal mode model node panel parentRunId pr prDraft prEditor prHistory prHost project projects ' +
     'prPane prScope prSection prSort prTab prTarget publicationReviews q refresh qaInputs qaProfileId repo reviewMachine ' +
@@ -128,6 +128,7 @@ export interface SharedRunArtifactOwner {
   runId: string;
   slotId?: string;
   recipeRunId?: string;
+  decisionId?: string;
 }
 
 export interface SharedRunRecordingReview {
@@ -279,6 +280,7 @@ function companionViewRoute(location: CompanionViewLocation): string | null {
       runId,
       slotId,
       recipeRunId,
+      decisionId,
       path: artifact,
       criterionId,
       traceIndex,
@@ -297,6 +299,7 @@ function companionViewRoute(location: CompanionViewLocation): string | null {
       const { revision, page, atMs } = recordingReview;
       if (
         !criterionId ||
+        (decisionId !== undefined && !viewId.test(decisionId)) ||
         !/^(?:sha256:)?[a-f0-9]{64}(?:\.(?:sha256:)?[a-f0-9]{64})?$/u.test(revision) ||
         !Number.isSafeInteger(page) ||
         page < 0 ||
@@ -307,6 +310,7 @@ function companionViewRoute(location: CompanionViewLocation): string | null {
       return route(`run/${runId}`, {
         tab: 'evidence',
         review: criterionId,
+        reviewDecision: decisionId ?? '',
         reviewFile: artifact,
         reviewRecording: artifact,
         reviewRevision: revision,

@@ -36,6 +36,10 @@ import {
   renderAcceptancePanel,
 } from '../progress-tracker/acceptance-panel.js';
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
+import {
+  evidenceReviewerViewFromHash,
+  reviewLinkMatchesRun,
+} from '../shared/evidence-reviewer-url-state.js';
 import { gatewayMediaHtml } from '../shared/gateway-media-src.js';
 import { slotViewHash } from '../slot-view/slot-view-url-state.js';
 import { readyReviewRequestProgress } from '../workspace/ready-workspace-review-request-model.js';
@@ -277,11 +281,24 @@ function renderResultDecisionSection(
   </section>`;
 }
 
+/** Undefined lets the normal gate selection run. Null is an explicit missing gate. */
+export function linkedPublicationGate(
+  run: Pick<Run, 'id' | 'decisions'>,
+  hash = typeof location === 'undefined' ? '' : location.hash,
+): RunDecision | null | undefined {
+  const selected = evidenceReviewerViewFromHash(hash)?.decisionId;
+  if (!selected || !reviewLinkMatchesRun(run.id, hash)) return undefined;
+  const gate = run.decisions.find((decision) => decision.id === selected);
+  const pending = run.decisions.find((decision) => !decision.resolvedAt);
+  return gate?.payload?.kind === 'ready' && (gate.resolvedAt || gate === pending) ? gate : null;
+}
+
 /**
  * Whether the gate section mounts the publication gate (open or saved), which
  * then owns review links: the same branches renderRunGateSection takes.
  */
-export function runMountsPublicationGate(run: Pick<Run, 'status' | 'decisions'>): boolean {
+export function runMountsPublicationGate(run: Pick<Run, 'id' | 'status' | 'decisions'>): boolean {
+  if (linkedPublicationGate(run) !== undefined) return true;
   if (pendingResultDecision(run)) return false;
   const pending = run.decisions.find((decision) => !decision.resolvedAt);
   return pending
@@ -290,29 +307,32 @@ export function runMountsPublicationGate(run: Pick<Run, 'status' | 'decisions'>)
 }
 
 export function renderRunGateSection(run: Run, context: RunDecisionRenderContext) {
+  const linked = linkedPublicationGate(run);
+  if (linked === null)
+    return html`<p role="status">The publication gate in this review link is unavailable.</p>`;
+  const retained = linked?.resolvedAt ? linked : retainedEvidenceGate(run);
+  if (retained)
+    return html`<section class="gate-section" data-testid="retained-evidence-gate">
+      <details open>
+        <summary data-testid="open-retained-evidence">Review saved gate evidence</summary>
+        <p class="gate-description">
+          Read-only · ${retained.resolvedAction ?? 'resolved'} · ${retained.resolvedAt}
+        </p>
+        <ready-workspace
+          .runId=${run.id}
+          .decision=${retained}
+          .run=${run}
+          .recipeRuns=${context.recipeRuns}
+          selectedRecipeRunId=${context.selectedRecipeRunId}
+          .hideRecipeTab=${true}
+        ></ready-workspace>
+      </details>
+    </section>`;
   const result = pendingResultDecision(run);
   if (result) return renderResultDecisionSection(run, result, context);
-  // Show gate section for ANY unresolved decision (not just ones with payload)
+  // Show gate section for ANY unresolved decision (not just ones with payload).
   const rawPending = run.decisions.find((d) => !d.resolvedAt);
   if (!rawPending) {
-    const retained = retainedEvidenceGate(run);
-    if (retained)
-      return html`<section class="gate-section" data-testid="retained-evidence-gate">
-        <details open>
-          <summary data-testid="open-retained-evidence">Review saved gate evidence</summary>
-          <p class="gate-description">
-            Read-only · ${retained.resolvedAction ?? 'resolved'} · ${retained.resolvedAt}
-          </p>
-          <ready-workspace
-            .runId=${run.id}
-            .decision=${retained}
-            .run=${run}
-            .recipeRuns=${context.recipeRuns}
-            selectedRecipeRunId=${context.selectedRecipeRunId}
-            .hideRecipeTab=${true}
-          ></ready-workspace>
-        </details>
-      </section>`;
     const progress = readyReviewRequestProgress(run);
     return progress
       ? html`<section class="gate-section" role="status" data-testid="rdy-review-progress">

@@ -515,6 +515,12 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       this._reviewLinkError = '';
     }
     if (!model || !view || this._evidenceLoading) return;
+    if (view.decisionId && view.decisionId !== this._gateDecision?.id) {
+      this._review = null;
+      this._reviewLinkKey = '';
+      this._reviewLinkError = 'The publication gate in this review link is unavailable.';
+      return;
+    }
     if (
       !gateReviewAttemptMatches(this._evidenceSource, view.recipeGroupId, view.recordingRevision)
     ) {
@@ -550,7 +556,11 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   private _onReviewerView(view: EvidenceReviewerView, runId?: string): void {
     if (runId && !reviewLinkMatchesRun(runId)) return;
     const linked = evidenceReviewerViewFromHash();
-    const next = { ...view, recipeGroupId: linked?.recipeGroupId };
+    const next = {
+      ...view,
+      recipeGroupId: linked?.recipeGroupId,
+      decisionId: linked?.decisionId,
+    };
     if (
       this._review &&
       (this._review.recordingPath !== view.recordingPath ||

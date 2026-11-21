@@ -186,6 +186,7 @@ export function evidenceViewerSessionItems(
         runId: opening.sharedArtifact.runId,
         slotId: opening.sharedArtifact.slotId,
         recipeRunId: opening.sharedArtifact.recipeRunId,
+        decisionId: opening.sharedArtifact.decisionId,
       }
     : undefined;
   const context = opening.resolveArtifactUrl

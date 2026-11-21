@@ -48,6 +48,7 @@ import {
   mediaShareView,
 } from '../lib/evidence-media-items';
 import { gatewayFetch } from '../lib/gateway-http-auth';
+import { recordingAnchorMoved } from '../lib/media-share-view';
 import {
   TEXT_PREVIEW_MAX_BYTES,
   TEXT_PREVIEW_RANGE,
@@ -602,11 +603,23 @@ function FullscreenVideo({
   const [timelinePage, setTimelinePage] = useViewChoice(
     viewScopedIntegerField('reviewTimeline', 'mediaTimelineSource', timelineScope, -1),
   );
-  const [timelineAt, setTimelineAt] = useViewChoice(
-    viewScopedIntegerField('mediaTimelineAt', 'mediaTimelineAnchor', timelineScope, -1),
+  const timelineTimeField = useMemo(
+    () => viewScopedIntegerField('mediaTimelineAt', 'mediaTimelineAnchor', timelineScope, -1),
+    [timelineScope],
   );
+  const [timelineAt, setTimelineAt] = useViewChoice(timelineTimeField);
   const sharedOwner = item.sharedArtifact;
-  const criterionId = sharedOwner?.criterionId;
+  const [criterionId, setCriterionId] = useState(sharedOwner?.criterionId);
+  const trackedAnchor = useRef<{ requestedMs: number; observedMs?: number } | null>(null);
+  const savedTimelineAt = useRef(timelineAt);
+  savedTimelineAt.current = timelineAt;
+  const invalidateTimelineAnchor = useCallback(() => {
+    if (trackedAnchor.current || savedTimelineAt.current >= 0) {
+      trackedAnchor.current = null;
+      setTimelineAt(-1);
+    }
+    onViewSelectionChange(item.uri);
+  }, [item.uri, onViewSelectionChange, setTimelineAt]);
   useEffect(() => {
     const artifact =
       sharedOwner && criterionId && recordingPath && recordingRevision && timelinePage >= 0
@@ -637,6 +650,7 @@ function FullscreenVideo({
   useEffect(() => {
     if (timelineAt < 0 || !recordingRevision) {
       appliedTimelineSeek.current = null;
+      trackedAnchor.current = null;
       return;
     }
     const key = JSON.stringify([timelineScope, uri, timelineAt]);
@@ -652,13 +666,48 @@ function FullscreenVideo({
     model?.clearSelection();
     player.pause();
     player.currentTime = seek / 1000;
+    trackedAnchor.current = { requestedMs: seek };
+    if (!criterionId) onViewSelectionChange(item.uri);
     updateSelection((value) => value + 1);
-  }, [durationMs, model, player, recordingRevision, setTimelineAt, timelineAt, timelineScope, uri]);
+  }, [
+    criterionId,
+    durationMs,
+    item.uri,
+    model,
+    onViewSelectionChange,
+    player,
+    recordingRevision,
+    setTimelineAt,
+    timelineAt,
+    timelineScope,
+    uri,
+  ]);
+
+  useEffect(() => {
+    const state = player.addListener('playingChange', ({ isPlaying }) => {
+      if (isPlaying && trackedAnchor.current) invalidateTimelineAnchor();
+    });
+    const position = player.addListener('timeUpdate', ({ currentTime }) => {
+      const anchor = trackedAnchor.current;
+      if (!anchor) return;
+      const sample = currentTime * 1000;
+      if (recordingAnchorMoved(anchor, player.playing, sample)) {
+        invalidateTimelineAnchor();
+      } else if (anchor.observedMs === undefined && Math.abs(sample - anchor.requestedMs) <= 100) {
+        // Wait for the asynchronous seek to land before treating movement as a native scrub.
+        anchor.observedMs = sample;
+      }
+    });
+    return () => {
+      state.remove();
+      position.remove();
+    };
+  }, [invalidateTimelineAnchor, player]);
 
   const applyPlayback = useCallback(
     (effect: EvidenceReviewPlaybackEffect) => {
       if (effect.sourceChanged && effect.clip && effect.clip.videoPath !== videoPath) {
-        onViewSelectionChange(item.uri);
+        invalidateTimelineAnchor();
         if (!item.resolveArtifactUrl || !model) {
           setError('The recording source has no artifact URL resolver.');
           player.pause();
@@ -676,7 +725,7 @@ function FullscreenVideo({
       if (effect.seekMs !== null && player.status === 'readyToPlay')
         player.currentTime = effect.seekMs / 1000;
     },
-    [item.resolveArtifactUrl, item.uri, model, onViewSelectionChange, player, videoPath],
+    [invalidateTimelineAnchor, item.resolveArtifactUrl, model, player, videoPath],
   );
 
   useEffect(() => {
@@ -740,14 +789,15 @@ function FullscreenVideo({
     (claimId: string, startMs: number | null) => {
       const chosen = model ? evidenceClaimPlayback(model, claimId, videoPath, startMs) : undefined;
       if (!chosen) return;
-      onViewSelectionChange(item.uri);
+      invalidateTimelineAnchor();
+      setCriterionId(claimId);
       updateSelection((value) => value + 1);
       if (!chosen.effect) return;
       resumePlayback.current = true;
       applyPlayback(chosen.effect);
       player.play();
     },
-    [applyPlayback, item.uri, model, onViewSelectionChange, player, videoPath],
+    [applyPlayback, invalidateTimelineAnchor, model, player, videoPath],
   );
 
   const review = recordingAcceptanceReview(acceptance, item.evidenceKey);
@@ -774,7 +824,7 @@ function FullscreenVideo({
                   if (!model) return;
                   const effect = model.selectTimelineGroup(videoPath, group.id, durationMs);
                   if (effect.seekMs === null) return;
-                  onViewSelectionChange(item.uri);
+                  invalidateTimelineAnchor();
                   resumePlayback.current = true;
                   applyPlayback(effect);
                   updateSelection((value) => value + 1);
@@ -845,7 +895,7 @@ function FullscreenVideo({
                             })
                           )
                             return;
-                          onViewSelectionChange(item.uri);
+                          invalidateTimelineAnchor();
                           resumePlayback.current = true;
                           applyPlayback(model.cueClip(0));
                           updateSelection((value) => value + 1);
@@ -901,12 +951,8 @@ function FullscreenVideo({
               if (page < 0) setTimelineAt(-1);
             }}
             onSeek={(ms) => {
+              if (!criterionId) onViewSelectionChange(item.uri);
               setTimelineAt(Math.round(ms));
-              resumePlayback.current = false;
-              model.clearSelection();
-              player.pause();
-              player.currentTime = ms / 1000;
-              updateSelection((value) => value + 1);
             }}
           />
         ) : null}

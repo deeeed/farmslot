@@ -23,3 +23,14 @@ export function mediaShareView(
       }
     : undefined;
 }
+
+/** A requested timeline position stops being exact when the native player moves. */
+export function recordingAnchorMoved(
+  anchor: { requestedMs: number; observedMs?: number },
+  playing: boolean,
+  positionMs: number,
+): boolean {
+  return (
+    playing || (anchor.observedMs !== undefined && Math.abs(positionMs - anchor.observedMs) > 1)
+  );
+}

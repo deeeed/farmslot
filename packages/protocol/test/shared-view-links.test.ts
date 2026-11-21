@@ -582,6 +582,7 @@ test('a Companion timeline link retains verified bytes, attempt, page and paused
     path: 'artifacts/videos/original.mp4',
     recipeRunId: 'current-artifacts',
     criterionId: 'AC-1',
+    decisionId: 'older-gate',
     recordingReview: { revision: 'sha256:' + 'a'.repeat(64), page: 1, atMs: 41972 },
   };
   const resolve = (selection = artifactSelection) =>
@@ -594,6 +595,10 @@ test('a Companion timeline link retains verified bytes, attempt, page and paused
   if (result.status !== 'available') return;
   const params = new URLSearchParams(result.route.split('?')[1]);
   assert.equal(params.get('review'), 'AC-1');
+  assert.equal(params.get('reviewDecision'), 'older-gate');
+  const newer = resolve({ ...artifactSelection, decisionId: 'newer-gate' });
+  assert.ok(newer.status === 'available' && newer.route.includes('reviewDecision=newer-gate'));
+  assert.notEqual(newer.status === 'available' ? newer.route : null, result.route);
   assert.equal(params.get('reviewFile'), artifactSelection.path);
   assert.equal(params.get('reviewRecording'), artifactSelection.path);
   assert.equal(params.get('reviewRecipe'), 'current-artifacts');

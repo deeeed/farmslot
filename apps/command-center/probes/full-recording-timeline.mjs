@@ -4,10 +4,12 @@ import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const [tab, output, control] = process.argv.slice(2);
+const [tab, output, ...options] = process.argv.slice(2);
+const expectedRecipeOption = options.find((option) => option.startsWith('--expect-recipe='));
+const control = options.find((option) => !option.startsWith('--expect-recipe='));
 assert.ok(
-  tab && output,
-  'Usage: full-recording-timeline.mjs <@tab> <result.json> [--check-playing | --check-page-2]',
+  tab && output && expectedRecipeOption,
+  'Usage: full-recording-timeline.mjs <@tab> <result.json> --expect-recipe=<group|none> [--check-playing | --check-page-2]',
 );
 const resolve = (path) => fileURLToPath(new URL(path, import.meta.url));
 const cdp = (...args) =>
@@ -15,6 +17,18 @@ const cdp = (...args) =>
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'inherit'],
   });
+
+const expectedGroup = expectedRecipeOption.slice('--expect-recipe='.length);
+assert.ok(expectedGroup, 'Provide the retained recipe group or none');
+const recipeGroup = expectedGroup === 'none' ? null : expectedGroup;
+const beforeGroup = JSON.parse(
+  cdp(
+    'eval',
+    tab,
+    'return JSON.stringify(new URLSearchParams(location.hash.split("?")[1]).get("reviewRecipe"));',
+  ),
+);
+assert.equal(beforeGroup, recipeGroup, 'Starting link points to the wrong recipe group');
 
 const observed = JSON.parse(cdp('eval', tab, '--file', resolve('./full-recording-timeline.js')));
 const params = new URLSearchParams(observed.route.split('?')[1]);
@@ -24,8 +38,9 @@ const expected = {
   revision: observed.recordingRevision,
   positionMs: Math.round(observed.seek.expectedMs),
   page: '0',
-  recipeGroup: params.get('reviewRecipe'),
+  recipeGroup,
 };
+assert.equal(params.get('reviewRecipe'), expected.recipeGroup);
 assert.equal(params.get('reviewRecording'), expected.path);
 assert.equal(params.get('reviewFile'), expected.path);
 assert.equal(params.get('reviewTimeline'), expected.page);
