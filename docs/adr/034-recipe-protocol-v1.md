@@ -380,3 +380,13 @@ The existing prepared tree and execution trace remain authoritative. The runner 
 Optional timing fields preserve old flow updates. `runEvidenceView` keeps the same version and projects qualified timing on its existing flow nodes; timing-only changes affect snapshot equality. No proof verdict, evidence authority, renderer, polling channel or device trial changes. ADR-062 Amendment 23 stays unchanged.
 
 Live timing updates are bounded to active ancestry. Full timing/claim/unassigned rollups are materialized once for final summary and evidence projection. The existing recorded branch calculation is shared by the timing and evidence owners. Trace provenance distinguishes measured execution from synthetic diagnostics; historical failed-zero ambiguity remains unknown.
+
+## Amendment 11 (2026-11-21): Run-local pending invocation flow
+
+Status: Accepted under MANUAL-000187 for the shared evidence viewer.
+
+The runner atomically replaces the optional run-local `recipe-flow.json` with the existing version 1 `RecipeFlowUpdate` when execution starts or closes an invocation, including nested calls and teardown. It uses the same incremental projection whether or not HUD is enabled. The file carries progress and ancestry. The viewer derives timing from recorded trace intervals.
+
+The pending reader pairs this file with the prepared tree in `recipe-resolution.json.flow`. The update must match `recipe-invocation.json.recipeRunId`, and the resolution root digest must match the invocation's recipe digest. The SDK checks the tree, root and active invocation. A missing or incompatible input leaves pending flow unavailable.
+
+The pending file is transient, outside the evidence manifest and removed when the package is finalized. Completed viewers use the existing summary flow and prepared tree. The SDK's existing snapshot equality reflects active changes before a trace entry completes.

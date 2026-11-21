@@ -1,10 +1,14 @@
 import { readdir } from 'node:fs/promises';
 
+export const RECIPE_PENDING_FLOW_FILE = 'recipe-flow.json';
+
 // Observer setup may already exist here, but a recipe package belongs to one attempt.
 const PACKAGE_FILES = new Set([
   'recipe.json',
   'recipe-invocation.json',
   'recipe-resolution.json',
+  RECIPE_PENDING_FLOW_FILE,
+  `.${RECIPE_PENDING_FLOW_FILE}.partial`,
   'summary.json',
   'trace.json',
   'artifact-manifest.json',

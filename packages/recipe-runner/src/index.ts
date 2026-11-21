@@ -28,6 +28,7 @@ export {
   normalizeUiTransportResult,
   STANDARD_UI_ACTIONS,
 } from './adapters/ui.js';
+export { RECIPE_PENDING_FLOW_FILE } from './core/artifact-destination.js';
 export {
   type ResolvedRecipeDependencies,
   resolveRecipeDependencies,
