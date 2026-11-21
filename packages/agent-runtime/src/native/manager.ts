@@ -1026,11 +1026,13 @@ export class NativeSessionManager {
     const record = this.owned(owner, id);
     if (record.info.processStopped) return this.snapshot(record);
     const pid = record.info.processPid;
+    // A completed adapter can retain its handles after a cleanup census fails.
+    const observedExit =
+      typeof record.info.exitCode === 'number' || typeof record.info.signal === 'string';
     if (
       !pid ||
-      record.adapter ||
-      record.startup ||
       !['closed', 'failed'].includes(record.info.state) ||
+      ((record.adapter || record.startup) && (!observedExit || !record.processes?.length)) ||
       this.recordedLeaderAlive(record) ||
       this.recordedGroupAlive(record)
     )

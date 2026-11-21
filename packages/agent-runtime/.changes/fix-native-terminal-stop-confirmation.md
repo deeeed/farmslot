@@ -1,0 +1,1 @@
+- Confirm native worker cleanup after an observed exit when the recorded processes are all gone.
