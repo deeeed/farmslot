@@ -4,6 +4,10 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.50.4 - 2026-11-21
+
+- New `scripts/litellm-endpoint.cjs` export: a digest identity for a LiteLLM base URL, never the URL itself.
+
 ## 0.50.3 - 2026-11-19
 
 - Pin the structural inventory SDK cohort while retaining public protocol 0.91.0.

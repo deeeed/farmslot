@@ -1,1 +1,0 @@
-- Expose the verified recording timeline digest for evidence viewer index reuse.

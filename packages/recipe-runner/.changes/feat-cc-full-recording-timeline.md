@@ -1,1 +1,0 @@
-- Index verified recording coverage for evidence readers that seek across many trace pages.

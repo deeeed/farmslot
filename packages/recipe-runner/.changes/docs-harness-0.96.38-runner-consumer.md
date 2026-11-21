@@ -1,1 +1,0 @@
-- mm-harness 0.96.38 keeps recipe-runner 0.51.0 and protocol 0.91.0. It pins Recipe CLI 0.35.29 for grouped action discovery and uses the existing runtime and recipe commands in the local workspace.

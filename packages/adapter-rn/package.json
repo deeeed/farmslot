@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/adapter-rn",
-  "version": "0.31.32",
+  "version": "0.31.33",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/agent-runtime",
-  "version": "0.50.3",
+  "version": "0.50.4",
   "minimumRuntimeVersion": "0.42.0",
   "type": "module",
   "main": "dist/index.js",
