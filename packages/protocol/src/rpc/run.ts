@@ -10,6 +10,7 @@ import type {
   RunStatus,
   SlotRunHistoryEntry,
 } from '../contracts/index.js';
+import type { RecipeFlowUpdate, RecipeInvocationTree } from '../recipe/common.js';
 import type { RunListRow } from '../runs/list-row.js';
 import type { WorkerSignalProbeResult } from '../transport/signal.js';
 
@@ -681,6 +682,11 @@ export interface RunRecordedEvidenceReview {
 }
 
 export interface RunRecipeRunsForRunResult {
+  /** Validated transient flow for the run's active, gateway-owned recipe attempt. */
+  pendingFlow?: {
+    tree: RecipeInvocationTree;
+    update: RecipeFlowUpdate;
+  };
   recordedEvidence?: RunRecordedEvidenceReview;
   recipeRuns: RecipeRunArtifactGroup[];
   selectedRecipeRunId: string | null;

@@ -25,6 +25,7 @@ import {
 import { GatewayMethodError } from '../../core/method-error.js';
 import { loadFleetStatus } from '../../fleet/state.js';
 import { attachRetainedLiveRecipeContext } from '../../live-recipe/context.js';
+import { readPendingRecipeFlow } from '../../live-recipe/pending-flow.js';
 import { reviewChainWithMetrics } from '../../review/chain-metadata.js';
 import { attachReviewRoundBudget } from '../../review/review-round-budget.js';
 import { outputManifestDigest } from '../../run-completion/output.js';
@@ -240,15 +241,24 @@ export async function runRecipeRunsForRun(
     artifactPrefix: 'artifacts/',
     contractVersion: run.recordedEvidenceContractVersion ?? 0,
   };
-  // A working run retains its bundle at completion; until then there is no evidence to judge.
-  if (!params.decisionId && runEvidencePending(run))
+  // A working run may show live progress before there is a retained bundle to judge.
+  if (!params.decisionId && runEvidencePending(run)) {
+    const pendingFlow =
+      params.includeRecordedEvidence &&
+      !params.recipeRunId &&
+      !params.recordedRecipeRunId &&
+      !params.evidenceSnapshotHash
+        ? await readPendingRecipeFlow(run)
+        : undefined;
     return {
       recipeRuns: [],
       selectedRecipeRunId: null,
+      ...(pendingFlow ? { pendingFlow } : {}),
       ...(params.includeRecordedEvidence
         ? { recordedEvidence: { ...noEvidence, errors: [] } }
         : {}),
     };
+  }
   const ref = retainedRunBundleRef(run, params.decisionId);
   const enrichedRun = run;
   const recipeRuns = await retainedRecipeRunGroups(run, ref);
