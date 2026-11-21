@@ -194,12 +194,18 @@ async function until(predicate, label, timeout = 60000) {
 }
 const report = (result) => console.log(JSON.stringify({ phase, ...result }));
 /**
- * Android: how far the transcript's last laid-out row ends above the transcript's bottom edge, in
- * dp (the unit of distanceFromEnd), read from the device's own layout. The app's distanceFromEnd
- * comes from scroll events, and Android drops one that lands within scrollEventThrottle of the
- * last: after the final jump of a turn it can stay ~100 dp behind a list that is at its end.
+ * Android: how far a row ends above the transcript's bottom edge, in dp (the unit of
+ * distanceFromEnd), read from the device's own layout. The app's distanceFromEnd comes from scroll
+ * events, and Android drops one that lands within scrollEventThrottle of the last: after the final
+ * jump of a turn it can stay ~100 dp behind a list that is at its end.
+ *
+ * With `turn` the row is the turn's own last card: the entry of its turn.completed event, found by
+ * the testID that carries an entry's sequence (`completion`); the turn's assistant entry
+ * (`assistant.key`) must show its last line (`assistant.lastLine`). Without it, the last laid-out
+ * row. Android's view tree lists a card's content beside the card, not under it, so content
+ * belongs to a card when it ends within the card's bounds.
  */
-function endLayout(turnLastLine) {
+function endLayout(turn) {
   const shot = device('snapshot');
   assert(shot.success, JSON.stringify(shot.error));
   const nodes = shot.data.nodes;
@@ -214,11 +220,30 @@ function endLayout(turnLastLine) {
       node.index !== list.index && inside.has(node.index) && node.label && node.rect?.height > 0,
   );
   assert(rows.length, 'The transcript has no laid-out rows');
-  // The streamed turn's own text must be laid out: a list still showing earlier turns would
-  // otherwise read as at its end.
-  const turnRow = turnLastLine && rows.find((node) => node.label.includes(turnLastLine));
-  assert(!turnLastLine || turnRow, `The new turn's last line is not laid out: ${turnLastLine}`);
   const lastBottom = Math.max(...rows.map((node) => node.rect.y + node.rect.height));
+  // The streamed turn's own cards must be laid out, and its last one scores the gap: another row
+  // reaching the bottom must not stand in for it.
+  const card = (key) => {
+    const found = nodes.find((node) => node.identifier === `companion-native-entry-${key}`);
+    assert(found?.rect && inside.has(found.index), `The turn's row ${key} is not laid out`);
+    return { top: found.rect.y, bottom: found.rect.y + found.rect.height };
+  };
+  let turnRowBottom;
+  if (turn) {
+    const answer = card(turn.assistant.key);
+    assert(
+      rows.some((node) => {
+        const bottom = node.rect.y + node.rect.height;
+        return (
+          node.label.includes(turn.assistant.lastLine) &&
+          bottom > answer.top &&
+          bottom <= answer.bottom
+        );
+      }),
+      `The turn's answer ${turn.assistant.key} does not show its last line: ${turn.assistant.lastLine}`,
+    );
+    turnRowBottom = card(turn.completion).bottom;
+  }
   const densityOutput = execFileSync('adb', ['-s', target, 'shell', 'wm', 'density'], {
     encoding: 'utf8',
   }).trim();
@@ -230,11 +255,11 @@ function endLayout(turnLastLine) {
   if (session === 'native-stream-proof')
     assert(device('close').success, 'Could not release the device');
   return {
-    gap: ((listBottom - lastBottom) * 160) / density,
+    gap: ((listBottom - (turnRowBottom ?? lastBottom)) * 160) / density,
     listBottom,
     lastBottom,
     density,
-    ...(turnRow ? { turnRowBottom: turnRow.rect.y + turnRow.rect.height } : {}),
+    ...(turn ? { turnKey: turn.completion, turnRowBottom } : {}),
   };
 }
 /** True when follow is only reported (NATIVE_STREAM_REQUIRE_FOLLOW=no); otherwise the frame must have it. */
@@ -403,7 +428,11 @@ if (phase === 'setup') {
         await delay(SETTLE_MS);
         value = (await frame()) ?? value;
       }
-      samples.push(value.follow);
+      samples.push({
+        follow: value.follow,
+        cursor: value.cursor,
+        commandId: turnCommand(value)?.commandId,
+      });
     }
     if (done) {
       // Let the last delta's layout settle before reading the final position.
@@ -411,26 +440,43 @@ if (phase === 'setup') {
       const settled = await frame();
       assert(settled && reached(settled, gateway), 'The app lost the streamed turn');
       const off = samples.filter(
-        (follow) => !follow.following || follow.distanceFromEnd > STREAM_ALLOWANCE,
+        ({ follow }) => !follow.following || follow.distanceFromEnd > STREAM_ALLOWANCE,
       );
       assert.equal(
         off.length,
         0,
         `Away from the end while streaming (${off.length}/${samples.length}): ${JSON.stringify(off[0])}`,
       );
+      // Only frames of the turn in progress count: they hold its command, and each has applied
+      // more of the journal than the one before, short of its completion. A frame that kept the
+      // baseline until the turn completed showed none of the stream.
+      let applied = baseline.cursor;
+      const streaming = samples.filter(({ commandId, cursor }) => {
+        const advanced =
+          commandId === gateway.lastCompleted.commandId &&
+          cursor > applied &&
+          cursor < gateway.lastCompleted.cursor;
+        if (advanced) applied = cursor;
+        return advanced;
+      });
       assert(
-        samples.length >= MIN_STREAM_SAMPLES,
-        `Only ${samples.length} samples while streaming; need ${MIN_STREAM_SAMPLES}`,
+        streaming.length >= MIN_STREAM_SAMPLES,
+        `Only ${streaming.length} advancing frames of the turn while it streamed (${samples.length} read); need ${MIN_STREAM_SAMPLES}`,
       );
       assert(
         settled.follow.following,
         `Not following after the stream: ${JSON.stringify(settled.follow)}`,
       );
-      // The completed turn's final row: the last assistant entry of a frame that holds the whole
-      // turn. On Android the end is read from that row's layout (see endLayout); a list past its
-      // end shows a negative gap, which fails too.
-      const turnLastLine = lastAssistant(settled).text.trim().split('\n').at(-1).trim();
-      const layout = android ? endLayout(turnLastLine) : undefined;
+      // The completed turn's final row: on Android the card of its turn.completed entry, below
+      // its answer, the last assistant entry of a frame that holds the whole turn (see endLayout).
+      // A list past its end shows a negative gap, which fails too.
+      const answer = lastAssistant(settled);
+      const layout = android
+        ? endLayout({
+            completion: gateway.lastCompleted.cursor,
+            assistant: { key: answer.key, lastLine: answer.text.trim().split('\n').at(-1).trim() },
+          })
+        : undefined;
       assert(
         layout ? layout.gap >= 0 && layout.gap < SLACK : settled.follow.distanceFromEnd < SLACK,
         `Not at the end after the stream: ${JSON.stringify({ follow: settled.follow, layout })}`,
@@ -439,7 +485,8 @@ if (phase === 'setup') {
       writeState({ ...readState(), completedTurns: gateway.completedTurns, baseline: undefined });
       report({
         samples: samples.length,
-        maxDistance: Math.max(...samples.map((follow) => follow.distanceFromEnd)),
+        streamingSamples: streaming.length,
+        maxDistance: Math.max(...samples.map(({ follow }) => follow.distanceFromEnd)),
         final: settled.follow,
         ...(layout ? { finalRowLayout: layout } : {}),
         command: gateway.lastCompleted,

@@ -31,8 +31,10 @@
  * window needs.
  * NATIVE_STREAM_SEED_TERMINALS=<n> registers one test node for Companion's Terminals list, which
  * shows only registered nodes' tmux panes: a private tmux server (its own socket directory under
- * /tmp) runs n idle `sleep` sessions, and a node agent with a scratch HOME, pool directory and
- * screen-control socket, a clean environment and a node credential from this stack's own store
+ * /tmp, started with an empty config, a clean environment and a scratch HOME, so no operator
+ * tmux config or hook runs) holds n idle `sleep` sessions, and a node agent with that scratch HOME,
+ * a pool directory and screen-control socket, a clean environment and a node credential from this
+ * stack's own store (in the scratch HOME's .env, which the node reads ahead of any checkout's)
  * connects as machine stream-fixture, which this stack's pool lists with one enabled slot. It sees
  * only that tmux server; shared nodes and existing sessions are never discovered. Teardown stops
  * the node, kills that tmux server and removes its directory. The ready line names the node pid,
@@ -162,25 +164,43 @@ const read = () =>
   connected().call<NativeSessionReadResult>('native.session.read', { ...target(), limit: 1 });
 const completedTurns = (page: NativeSessionReadResult) =>
   page.commands.filter((command) => command.state === 'completed').length;
-/** How far GET /read has paged the session's journal, and the last turn.completed in it. */
+/** How far GET /read has paged a session's journal, and the last turn.completed in it. */
 interface JournalPosition {
+  sessionId: string;
   cursor: number;
   lastCompleted?: { commandId: string; cursor: number };
 }
-let journal: JournalPosition = { cursor: 0 };
-/** Pages the journal from where the last call stopped to its end; returns the last page. */
-async function readJournal() {
+/** The current session's position; POST /session replaces it. */
+let journal: JournalPosition | undefined;
+/**
+ * Pages the current session's journal from where the last read stopped to its end. A page applies
+ * only to the position it was read for, and only forward: a read still running when POST /session
+ * replaces the position, or one overtaken by a concurrent read, cannot move it.
+ */
+async function readJournal(): Promise<{
+  position: JournalPosition;
+  page: NativeSessionReadResult;
+}> {
   for (;;) {
+    const position = journal;
+    assert(position, 'POST /session first');
     const page = await connected().call<NativeSessionReadResult>('native.session.read', {
-      ...target(),
-      after: journal.cursor,
+      sessionId: position.sessionId,
+      executionNodeId: 'local',
+      after: position.cursor,
       limit: 500,
     });
+    // The session changed during the read: read the new one.
+    if (journal !== position) continue;
     for (const event of page.events)
-      if (event.type === 'turn.completed' && event.commandId)
-        journal.lastCompleted = { commandId: event.commandId, cursor: event.sequence };
-    journal.cursor = page.cursor;
-    if (!page.hasMore) return page;
+      if (
+        event.type === 'turn.completed' &&
+        event.commandId &&
+        event.sequence > (position.lastCompleted?.cursor ?? 0)
+      )
+        position.lastCompleted = { commandId: event.commandId, cursor: event.sequence };
+    position.cursor = Math.max(position.cursor, page.cursor);
+    if (!page.hasMore) return { position, page };
   }
 }
 
@@ -202,15 +222,25 @@ async function stopHost() {
 }
 
 const FIXTURE_MACHINE = 'stream-fixture';
-/** The environment of the fixture's tmux commands: its own server, never the caller's. */
-const fixtureTmuxEnv = (tmuxDir: string) => {
-  const env: NodeJS.ProcessEnv = { ...process.env, TMUX_TMPDIR: tmuxDir };
-  delete env.TMUX;
-  delete env.TMUX_PANE;
-  return env;
-};
+/** The fixture node's scratch HOME: the tmux server and the node read no operator configuration. */
+const fixtureHome = () => path.join(root, 'node-home');
+/**
+ * The fixture's tmux commands: its own server under tmuxDir, started with the fixture's empty
+ * config (tmux.conf in tmuxDir, never the operator's ~/.tmux.conf or its hooks) and a clean
+ * environment with the scratch HOME, so its sessions inherit nothing from the caller.
+ */
 const fixtureTmux = (tmuxDir: string, ...args: string[]) =>
-  execFileSync('tmux', args, { env: fixtureTmuxEnv(tmuxDir), encoding: 'utf8' }).trim();
+  execFileSync('tmux', ['-f', path.join(tmuxDir, 'tmux.conf'), ...args], {
+    env: {
+      PATH: process.env.PATH,
+      USER: process.env.USER,
+      LANG: process.env.LANG,
+      HOME: fixtureHome(),
+      SHELL: '/bin/sh',
+      TMUX_TMPDIR: tmuxDir,
+    },
+    encoding: 'utf8',
+  }).trim();
 
 /** NATIVE_STREAM_SEED_TERMINALS: n idle panes on a private tmux server, reported by one test node. */
 async function startTerminals(count: number, nodeSecret: string): Promise<FixtureTerminals> {
@@ -218,6 +248,9 @@ async function startTerminals(count: number, nodeSecret: string): Promise<Fixtur
   // Real path: tmux reports /private/tmp on macOS.
   const tmuxDir = fs.realpathSync(await mkdtemp('/tmp/nst-'));
   running.tmuxDir = tmuxDir;
+  const home = fixtureHome();
+  await mkdir(home, { recursive: true });
+  await writeFile(path.join(tmuxDir, 'tmux.conf'), '');
   for (let index = 1; index <= count; index++)
     fixtureTmux(
       tmuxDir,
@@ -251,9 +284,10 @@ async function startTerminals(count: number, nodeSecret: string): Promise<Fixtur
     ],
   };
   await writeFile(path.join(root, 'pool', `${FIXTURE_MACHINE}.json`), `${JSON.stringify(pool)}\n`);
-  const home = path.join(root, 'node-home');
-  await mkdir(home, { recursive: true });
   await mkdir(path.join(root, 'node-pool'), { recursive: true });
+  // The node credential: the node reads FARMSLOT_NODE_TOKEN from the first .env it finds, starting
+  // at its working directory, ahead of its environment and of the source checkout's own .env.
+  await writeFile(path.join(home, '.env'), `FARMSLOT_NODE_TOKEN=${nodeSecret}\n`, { mode: 0o600 });
   // A clean environment: the stack's own FARMSLOT_* variables (its home, native state directory
   // and native owner) would make the node share the gateway's state.
   const env: NodeJS.ProcessEnv = {
@@ -265,7 +299,6 @@ async function startTerminals(count: number, nodeSecret: string): Promise<Fixtur
     TMUX_TMPDIR: tmuxDir,
     GATEWAY_URL: gatewayUrl,
     MACHINE_NAME: FIXTURE_MACHINE,
-    FARMSLOT_NODE_TOKEN: nodeSecret,
     FARMSLOT_POOL_DIR: path.join(root, 'node-pool'),
     SCREEN_CONTROL_SOCKET: path.join(tmuxDir, 'screen.sock'),
     TSX_TSCONFIG_PATH: path.join(repo, 'services/node/tsconfig.json'),
@@ -278,7 +311,7 @@ async function startTerminals(count: number, nodeSecret: string): Promise<Fixtur
       pathToFileURL(path.join(repo, 'node_modules/tsx/dist/loader.mjs')).href,
       path.join(repo, 'services/node/src/index.ts'),
     ],
-    // Its working directory is under the root, so it reads no checkout's .env for a node token.
+    // In the scratch HOME: its .env is the first the node reads.
     { cwd: home, env, stdio: ['ignore', log, log] },
   );
   running.terminalNode = node;
@@ -418,7 +451,7 @@ function controlRoutes(personId: string): Record<string, Handler> {
         },
       );
       state.sessionId = session.id;
-      journal = { cursor: 0 };
+      journal = { sessionId: session.id, cursor: 0 };
       return { sessionId: session.id };
     },
     'POST /seed': async (url) => {
@@ -436,14 +469,14 @@ function controlRoutes(personId: string): Record<string, Handler> {
       return { completedTurns: completedTurns(await read()) };
     },
     'GET /read': async () => {
-      const page = await readJournal();
+      const { position, page } = await readJournal();
       return {
-        sessionId: state.sessionId,
+        sessionId: position.sessionId,
         state: page.session.state,
-        cursor: journal.cursor,
+        cursor: position.cursor,
         completedTurns: completedTurns(page),
         commands: page.commands.length,
-        lastCompleted: journal.lastCompleted ?? null,
+        lastCompleted: position.lastCompleted ?? null,
       };
     },
     'POST /token': async () => {

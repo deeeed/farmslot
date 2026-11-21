@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Companion jank check",
-  "description": "Drives Companion's main read-only flows on an Android device and fails on jank. Native frames come from adb gfxinfo framestats: a flow fails below min_sustained_fps over any 500 ms of rendering, and tab presses fail over the p95 or max press limits (from the touch to the end of the last frame that started by two vsyncs after the tab's post-commit [farmslot-perf] shown logcat line; it can over-read by up to ~2 light frames, and could still miss a mount frame that starts more than two vsyncs after the marker, not seen in 24 Pixel 6 presses). target_fps and target_press_ms are reported, never failed on. Each measured flow records its baseline in its end node (release build 7da49c4df timed by this press rule, Pixel 6 at 90 Hz, idle Review at 60 Hz; run-detail keeps main 4da00ad80's, timed by the frame rule; terminal-open runs only against a sandbox and has none); a window with a coverage gap (failed polls, overwritten frames) is inconclusive and never passes; when the median tab-press p95 of at least 3 fresh release runs on main is more than 20 ms under that baseline, lower the caps and record the new baseline. Review and Terminals scroll with 700 ms, 900 px drags anchored inside their lists (540,1800 forward, 540,900 back on a 1080x2424 screen): ui.scroll starts in the tab bar on Android and moves neither list, and a drag that long renders a 500 ms sustained sample. Both lists need rows: a seeded Review queue, and a registered node's tmux panes for Terminals (native-stream-stack.mts NATIVE_STREAM_SEED_RUNS and NATIVE_STREAM_SEED_TERMINALS); each scroll window asserts a numeric sustained FPS. Run it on the development variant with video off: screenrecord's encoder competes with the app for the frames being measured.",
+  "description": "Drives Companion's main read-only flows on an Android device and fails on jank. Native frames come from adb gfxinfo framestats: a flow fails below min_sustained_fps over any 500 ms of rendering, and tab presses fail over the p95 or max press limits (from the touch to the end of the last frame that started by two vsyncs after the tab's post-commit [farmslot-perf] shown logcat line; it can over-read by up to ~2 light frames, and could still miss a mount frame that starts more than two vsyncs after the marker, not seen in 24 Pixel 6 presses). target_fps and target_press_ms are reported, never failed on. Each measured flow records its baseline in its end node (release build 7da49c4df timed by this press rule, Pixel 6 at 90 Hz, idle Review at 60 Hz; run-detail keeps main 4da00ad80's, timed by the frame rule; terminal-open runs only against a sandbox and has none); a window with a coverage gap (failed polls, overwritten frames) is inconclusive and never passes; when the median tab-press p95 of at least 3 fresh release runs on main is more than 20 ms under that baseline, lower the caps and record the new baseline. Review and Terminals scroll with 700 ms, 900 px drags anchored inside their lists (540,1800 forward, 540,900 back on a 1080x2424 screen): ui.scroll starts in the tab bar on Android and moves neither list, and a drag that long renders a 500 ms sustained sample. Before each list's window one drag of the same gesture must move a row on screen (list-scroll-proof.mjs reads the device's view tree), so an empty list fails the run. Both lists need rows: a seeded Review queue, and a registered node's tmux panes for Terminals (native-stream-stack.mts NATIVE_STREAM_SEED_RUNS and NATIVE_STREAM_SEED_TERMINALS); each scroll window asserts a numeric sustained FPS. Run it on the development variant with video off: screenrecord's encoder competes with the app for the frames being measured.",
   "paramsSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -469,6 +469,64 @@
           ]
         },
         "intent": "Close the tab press window against its budget.",
+        "next": "review-rows-mark"
+      },
+      "review-rows-mark": {
+        "action": "command",
+        "cmd": "node scripts/agentic/list-scroll-proof.mjs mark companion-screen-review",
+        "intent": "Record the Review queue rows on screen before the drag.",
+        "next": "review-rows-drag"
+      },
+      "review-rows-drag": {
+        "action": "ui.swipe",
+        "target": {
+          "x": 540,
+          "y": 1800
+        },
+        "direction": "up",
+        "distance": 900,
+        "duration_ms": 700,
+        "settle": false,
+        "intent": "Drag inside the Review queue with the measured gesture.",
+        "next": "review-rows-drag-settle"
+      },
+      "review-rows-drag-settle": {
+        "action": "wait",
+        "duration_ms": 1200,
+        "intent": "Let the list come to rest.",
+        "next": "review-rows-moved"
+      },
+      "review-rows-moved": {
+        "action": "command",
+        "cmd": "node scripts/agentic/list-scroll-proof.mjs moved companion-screen-review",
+        "intent": "Read the Review queue rows again: one must have moved up with the drag.",
+        "next": "review-rows-moved-checked"
+      },
+      "review-rows-moved-checked": {
+        "action": "assert_output",
+        "source": "review-rows-moved",
+        "stream": "stdout",
+        "match": "\"rowsMoved\":[1-9]",
+        "intent": "The Review queue has rows and the drag scrolls them, so its window measures the list.",
+        "next": "review-rows-back"
+      },
+      "review-rows-back": {
+        "action": "ui.swipe",
+        "target": {
+          "x": 540,
+          "y": 900
+        },
+        "direction": "down",
+        "distance": 900,
+        "duration_ms": 700,
+        "settle": false,
+        "intent": "Drag the Review queue back to where it started.",
+        "next": "review-rows-back-settle"
+      },
+      "review-rows-back-settle": {
+        "action": "wait",
+        "duration_ms": 1200,
+        "intent": "Let the list come to rest before measuring.",
         "next": "review-scroll-start"
       },
       "review-scroll-start": {
@@ -643,6 +701,64 @@
         "test_id": "companion-screen-terminals",
         "expected": "visible",
         "intent": "Confirm Terminals is on screen.",
+        "next": "terminals-rows-mark"
+      },
+      "terminals-rows-mark": {
+        "action": "command",
+        "cmd": "node scripts/agentic/list-scroll-proof.mjs mark companion-screen-terminals",
+        "intent": "Record the Terminals list rows on screen before the drag.",
+        "next": "terminals-rows-drag"
+      },
+      "terminals-rows-drag": {
+        "action": "ui.swipe",
+        "target": {
+          "x": 540,
+          "y": 1800
+        },
+        "direction": "up",
+        "distance": 900,
+        "duration_ms": 700,
+        "settle": false,
+        "intent": "Drag inside the Terminals list with the measured gesture.",
+        "next": "terminals-rows-drag-settle"
+      },
+      "terminals-rows-drag-settle": {
+        "action": "wait",
+        "duration_ms": 1200,
+        "intent": "Let the list come to rest.",
+        "next": "terminals-rows-moved"
+      },
+      "terminals-rows-moved": {
+        "action": "command",
+        "cmd": "node scripts/agentic/list-scroll-proof.mjs moved companion-screen-terminals",
+        "intent": "Read the Terminals list rows again: one must have moved up with the drag.",
+        "next": "terminals-rows-moved-checked"
+      },
+      "terminals-rows-moved-checked": {
+        "action": "assert_output",
+        "source": "terminals-rows-moved",
+        "stream": "stdout",
+        "match": "\"rowsMoved\":[1-9]",
+        "intent": "The Terminals list has rows and the drag scrolls them, so its window measures the list.",
+        "next": "terminals-rows-back"
+      },
+      "terminals-rows-back": {
+        "action": "ui.swipe",
+        "target": {
+          "x": 540,
+          "y": 900
+        },
+        "direction": "down",
+        "distance": 900,
+        "duration_ms": 700,
+        "settle": false,
+        "intent": "Drag the Terminals list back to where it started.",
+        "next": "terminals-rows-back-settle"
+      },
+      "terminals-rows-back-settle": {
+        "action": "wait",
+        "duration_ms": 1200,
+        "intent": "Let the list come to rest before measuring.",
         "next": "terminals-scroll-start"
       },
       "terminals-scroll-start": {

@@ -70,7 +70,11 @@ export const NativeTimelineCard = memo(function NativeTimelineCard({
   const command = nativeCommandText(entry.event.tool);
   const plan = entry.event.plan;
   return (
-    <View style={[styles.card, entry.kind === 'user' && styles.user]}>
+    <View
+      // Its event sequence: a proof finds a given entry's row on screen.
+      testID={`companion-native-entry-${entry.key}`}
+      style={[styles.card, entry.kind === 'user' && styles.user]}
+    >
       <Text style={styles.muted}>
         {entry.kind === 'user'
           ? 'You'
