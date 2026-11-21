@@ -1,6 +1,15 @@
 import { readdir } from 'node:fs/promises';
+import path from 'node:path';
 
-export const RECIPE_PENDING_FLOW_FILE = 'recipe-flow.json';
+export const RECIPE_PENDING_FLOW_FILE = '.farmslot-recipe-flow.json';
+export const RECIPE_PENDING_FLOW_PARTIAL_FILE = `${RECIPE_PENDING_FLOW_FILE}.partial`;
+
+export function assertNotPendingFlowArtifact(relativePath: string): void {
+  const file = path.normalize(relativePath);
+  if (file === RECIPE_PENDING_FLOW_FILE || file === RECIPE_PENDING_FLOW_PARTIAL_FILE) {
+    throw new Error(`Artifact path ${relativePath} is reserved for pending recipe flow.`);
+  }
+}
 
 // Observer setup may already exist here, but a recipe package belongs to one attempt.
 const PACKAGE_FILES = new Set([
@@ -8,7 +17,7 @@ const PACKAGE_FILES = new Set([
   'recipe-invocation.json',
   'recipe-resolution.json',
   RECIPE_PENDING_FLOW_FILE,
-  `.${RECIPE_PENDING_FLOW_FILE}.partial`,
+  RECIPE_PENDING_FLOW_PARTIAL_FILE,
   'summary.json',
   'trace.json',
   'artifact-manifest.json',

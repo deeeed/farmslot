@@ -385,8 +385,8 @@ Live timing updates are bounded to active ancestry. Full timing/claim/unassigned
 
 Status: Accepted under MANUAL-000187 for the shared evidence viewer.
 
-The runner atomically replaces the optional run-local `recipe-flow.json` with the existing version 1 `RecipeFlowUpdate` when execution starts or closes an invocation, including nested calls and teardown. It uses the same incremental projection whether or not HUD is enabled. The file carries progress and ancestry. The viewer derives timing from recorded trace intervals.
+The runner atomically replaces the optional run-local `.farmslot-recipe-flow.json` with the existing version 1 `RecipeFlowUpdate` when execution starts or closes an invocation, including nested calls and teardown. It uses the same incremental projection whether or not HUD is enabled. The file carries progress and ancestry. The viewer derives timing from recorded trace intervals.
 
 The pending reader pairs this file with the prepared tree in `recipe-resolution.json.flow`. The update must match `recipe-invocation.json.recipeRunId`, and the resolution root digest must match the invocation's recipe digest. The SDK checks the tree, root and active invocation. A missing or incompatible input leaves pending flow unavailable.
 
-The pending file is transient, outside the evidence manifest and removed when the package is finalized. Completed viewers use the existing summary flow and prepared tree. The SDK's existing snapshot equality reflects active changes before a trace entry completes.
+The engine reserves the pending filename and its temporary sibling for transient flow. They are outside the evidence manifest and removed when the package is finalized. Completed viewers use the existing summary flow and prepared tree. The SDK's existing snapshot equality reflects active changes before a trace entry completes.

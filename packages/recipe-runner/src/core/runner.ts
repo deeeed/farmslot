@@ -523,6 +523,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       try {
         await artifactWriter.writePendingFlow(update);
       } catch (error) {
+        // The viewer can proceed without pending flow after the prior snapshot is cleared.
         pendingFlowAvailable = false;
         this.#logger.warn(`Pending flow artifact could not be written: ${errorMessage(error)}`);
         await artifactWriter.removePendingFlow();

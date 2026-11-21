@@ -709,15 +709,17 @@ test(
       const snapshot = fs.readFileSync(pendingFile, 'utf8');
       const update: unknown = JSON.parse(snapshot);
       assert.ok(isRecipeFlowUpdate(update));
+      const fixedTime = new Date('2026-01-01T00:00:00.000Z');
+      fs.utimesSync(pendingFile, fixedTime, fixedTime);
       const signature = runEvidenceSignature(artifactsDir);
       const swap = path.join(artifactsDir, 'fixture-flow-swap.json');
       const foreignId =
         (update.recipeRunId.startsWith('a') ? 'b' : 'a') + update.recipeRunId.slice(1);
       const foreignSnapshot = JSON.stringify({ ...update, recipeRunId: foreignId }, null, 2) + '\n';
       assert.equal(Buffer.byteLength(foreignSnapshot), Buffer.byteLength(snapshot));
-      const originalStat = fs.statSync(pendingFile);
       fs.writeFileSync(swap, foreignSnapshot);
-      fs.utimesSync(swap, originalStat.atime, originalStat.mtime);
+      fs.utimesSync(swap, fixedTime, fixedTime);
+      assert.equal(fs.statSync(swap).mtimeMs, fs.statSync(pendingFile).mtimeMs);
       fs.renameSync(swap, pendingFile);
       assert.notEqual(runEvidenceSignature(artifactsDir), signature);
       const stale = await readRunEvidenceView(artifactsDir);
@@ -737,6 +739,49 @@ test(
       );
       assert.equal((await readRunEvidenceView(artifactsDir)).flow, null);
       fs.writeFileSync(resolutionFile, resolutionText);
+
+      const server = await serveRunEvidence({ dir: artifactsDir });
+      t.after(() => server.close());
+      const traceFile = path.join(artifactsDir, 'trace.json');
+      fs.writeFileSync(
+        swap,
+        JSON.stringify({
+          ...update,
+          activeId: null,
+          ancestry: null,
+          progress: { ...update.progress, current: update.progress.completed },
+        }),
+      );
+      const pageVersion = runEvidenceSignature(artifactsDir);
+      const readFile = fs.readFileSync;
+      let advancedDuringRead = false;
+      const duringRead = t.mock.method(
+        fs,
+        'readFileSync',
+        (...args: Parameters<typeof readFile>) => {
+          if (args[0] === traceFile && !advancedDuringRead) {
+            fs.renameSync(swap, pendingFile);
+            advancedDuringRead = true;
+          }
+          return readFile(...args);
+        },
+      );
+      try {
+        const response = await fetch(server.url);
+        assert.equal(response.status, 200);
+        const page = await response.text();
+        assert.equal(advancedDuringRead, true);
+        assert.ok(
+          page.includes(`data-version="${pageVersion}"`),
+          'page must keep its pre-read version',
+        );
+        const live = await fetch(new URL('version', server.url));
+        assert.notEqual(await live.text(), pageVersion);
+        assert.equal((await readRunEvidenceView(artifactsDir)).flow?.activeId, null);
+      } finally {
+        duringRead.mock.restore();
+        fs.writeFileSync(pendingFile, snapshot);
+      }
 
       advance();
       const second = await readActive('second/observe');
@@ -763,3 +808,50 @@ test(
     assert.equal(complete.flow?.progress.completed, 3);
   },
 );
+
+test('a recipe-flow.json report survives HUD-off artifact closeout', async (t) => {
+  const root = runsRoot(t);
+  const artifactsDir = path.join(root, 'report-run');
+  const report = '{"report":"authored recipe flow"}\n';
+  fs.writeFileSync(path.join(root, 'recipe-flow.json'), report);
+  const index = {
+    action: 'index_artifacts',
+    intent: 'Retain the author report.',
+    artifacts: ['recipe-flow.json'],
+    next: 'done',
+  };
+  const end = { action: 'end', status: 'pass' };
+  const runner = createRecipeRunner({
+    actionManifest: {
+      $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+      actions: {
+        index_artifacts: {
+          description: 'Index the author report.',
+          schema: {
+            type: 'object',
+            required: ['artifacts'],
+            properties: { artifacts: { type: 'array', items: { type: 'string' } } },
+            additionalProperties: false,
+          },
+          examples: [index],
+        },
+        end: { description: 'Finish.', examples: [end] },
+      },
+    },
+    hud: false,
+    defaultSource: { kind: 'operator', trust: 'trusted' },
+    adapters: createStandardCoreAdapters().filter(({ action }) => action === 'index_artifacts'),
+  });
+  const result = await runner.run({
+    recipeDocument: {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      title: 'Retain the author report.',
+      workflow: { entry: 'index', nodes: { index, done: end } },
+    },
+    projectRoot: root,
+    artifactsDir,
+  });
+  assert.equal(result.status, 'pass');
+  assert.equal(fs.readFileSync(path.join(artifactsDir, 'recipe-flow.json'), 'utf8'), report);
+  assert.match(fs.readFileSync(result.artifactManifestPath, 'utf8'), /"path": "recipe-flow.json"/u);
+});

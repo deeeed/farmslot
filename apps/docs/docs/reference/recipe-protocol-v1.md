@@ -526,6 +526,15 @@ Simple recipes need no composition, proof targets, or teardown. Use only what th
 
 `RecipeFlowUpdate` carries recipeRunId, rootId, activeId and progress. Progress contains current, completed, total, remaining and qualification (`exact` or `unknown`). current is the active executable action's one-based ordinal, or completed between actions. remaining includes the active action. Calls and end controls are not actions for these counters. Retries are action occurrences. Null totals/remaining preserve unresolved route lengths; failure and partial completion retain unknown qualification. The summary stores final progress at flow; existing HUD payloads carry the update at recipe_flow. The existing HUD progress fields remain compatible until consumers adopt the shared update.
 
+While an invocation is in flight, the runner atomically replaces the optional
+`.farmslot-recipe-flow.json` with the existing version 1 `RecipeFlowUpdate`, including
+when HUD is off. It carries progress and ancestry from the live execution
+projection. The reader combines it with `recipe-resolution.json.flow` only
+when the update's recipeRunId matches `recipe-invocation.json` and the
+resolution root digest matches the invocation recipe digest. A missing or
+incompatible pair leaves pending flow unavailable. The engine reserves the
+pending filename and its temporary sibling and removes them after finalization. Completed packages use `summary.json.flow`.
+
 Tree construction happens once after static resolution. Updates use prepared route lengths and the bounded invocation ancestry; they do not scan prior trace entries or reload libraries. Labels and explicit claim bindings come from the resolved documents/evidence plan. Packages predating these optional fields have no prepared-flow data.
 
 ### Invocation ancestry

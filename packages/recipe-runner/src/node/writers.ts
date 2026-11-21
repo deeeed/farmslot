@@ -13,9 +13,11 @@ import {
 
 import { recordRecipeArtifactOwner } from '../../bin/recipe-artifact-owner.cjs';
 import {
+  assertNotPendingFlowArtifact,
   assertRecipeArtifactDestinationAvailable,
   occupiedRecipeArtifactsError,
   RECIPE_PENDING_FLOW_FILE,
+  RECIPE_PENDING_FLOW_PARTIAL_FILE,
 } from '../core/artifact-destination.js';
 import type { RecipeInvocationDocument } from '../core/invocation.js';
 import { writeFileWithinRoot } from '../core/path.js';
@@ -96,17 +98,21 @@ export class JsonArtifactWriter implements ArtifactWriter {
   }
 
   async writePendingFlow(update: RecipeFlowUpdate): Promise<void> {
-    await replaceJsonWithinRoot(this.#artifactsDir, RECIPE_PENDING_FLOW_FILE, update);
+    await replaceJsonWithinRoot(
+      this.#artifactsDir,
+      RECIPE_PENDING_FLOW_FILE,
+      update,
+      RECIPE_PENDING_FLOW_PARTIAL_FILE,
+    );
   }
 
   async removePendingFlow(): Promise<void> {
     await rm(path.join(this.#artifactsDir, RECIPE_PENDING_FLOW_FILE), { force: true });
-    await rm(path.join(this.#artifactsDir, `.${RECIPE_PENDING_FLOW_FILE}.partial`), {
-      force: true,
-    });
+    await rm(path.join(this.#artifactsDir, RECIPE_PENDING_FLOW_PARTIAL_FILE), { force: true });
   }
 
   register(entry: RecipeArtifactManifestEntry): void {
+    assertNotPendingFlowArtifact(entry.path);
     if (!this.#entries.some((existing) => existing.path === entry.path)) {
       this.#entries.push(entry);
     }
@@ -298,8 +304,13 @@ export class JsonSummaryWriter implements SummaryWriter {
   }
 }
 
-async function replaceJsonWithinRoot(root: string, file: string, value: unknown): Promise<string> {
-  const temporary = await writeJsonWithinRoot(root, `.${file}.partial`, value);
+async function replaceJsonWithinRoot(
+  root: string,
+  file: string,
+  value: unknown,
+  temporaryFile = `.${file}.partial`,
+): Promise<string> {
+  const temporary = await writeJsonWithinRoot(root, temporaryFile, value);
   const destination = path.join(path.dirname(temporary), file);
   await rename(temporary, destination);
   return destination;
