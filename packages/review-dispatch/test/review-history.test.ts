@@ -1484,3 +1484,156 @@ test('failed-start live absence is not a read failure while a real failure remai
   );
   assert.ok(Object.values(failed).some((value) => value.error));
 });
+
+test('a replayed loop cannot give the final pipeline price to an older actor', () => {
+  const current = run();
+  const first = { ...actor(1), id: 'earlier', runnerSessionId: 'old' };
+  const second = {
+    ...actor(1),
+    id: 'newer',
+    runnerSessionId: 'new',
+    startedAt: '2026-10-21T10:05:00Z',
+    completedAt: '2026-10-21T10:06:00Z',
+  };
+  current.agentContexts = [first, second];
+  const usage = {
+    runner: 'codex',
+    runnerSessionId: 'new',
+    source: 'runner-transcript',
+    measuredAt: second.completedAt,
+    costUsd: 2,
+  };
+  current.steps[0].outputs = {
+    usage,
+    attempts: [
+      { loopNumber: 1, startedAt: second.startedAt, completedAt: second.completedAt, usage },
+    ],
+  };
+  const rounds = reviewHistoryView(current).cards.map(({ round }) => round);
+  assert.equal(rounds.find((round) => round.key === first.id)?.usage, undefined);
+  assert.equal(rounds.find((round) => round.key === second.id)?.usage?.costUsd, 2);
+});
+
+for (const source of ['pipeline', 'human-gate'] as const)
+  test(`a ${source} summary only attaches its final receipt to the owning actorless loop`, () => {
+    const current = run();
+    const usage = {
+      runner: 'codex',
+      runnerSessionId: 'final',
+      measuredAt: '2026-10-21T11:00:00Z',
+      source: 'runner-transcript' as const,
+      costUsd: 2,
+    };
+    current.engineState = {
+      publishGate: {
+        publicationStatus: 'not_published',
+        reviews: [
+          {
+            id: 'pipeline-summary',
+            source,
+            mode: 'cold',
+            verdict: 'pass',
+            loopNumber: 1,
+            unresolvedCount: 0,
+            usage,
+            attempts: [
+              { loopNumber: 1, mode: 'cold', verdict: 'issues', unresolvedCount: 1 },
+              { loopNumber: 2, mode: 'cold', verdict: 'pass', unresolvedCount: 0, usage },
+            ],
+          },
+        ],
+      },
+    };
+    const rounds = reviewHistoryView(current).cards.map(({ round }) => round);
+    assert.deepEqual(
+      rounds.map((round) => round.usage?.costUsd),
+      [undefined, 2],
+    );
+  });
+
+test('a recovered pending loop cannot take a completed human-gate summary receipt', () => {
+  const current = run();
+  const usage = {
+    runner: 'codex',
+    runnerSessionId: 'completed-session',
+    measuredAt: '2026-10-21T11:00:00Z',
+    source: 'runner-transcript' as const,
+    costUsd: 2,
+  };
+  current.engineState = {
+    publishGate: {
+      publicationStatus: 'not_published',
+      reviews: [
+        {
+          id: 'human',
+          source: 'human-gate',
+          mode: 'cold',
+          loopNumber: 1,
+          verdict: 'issues',
+          completedAt: '2026-10-21T11:00:00Z',
+          unresolvedCount: 1,
+          usage,
+          attempts: [
+            {
+              loopNumber: 1,
+              mode: 'cold',
+              verdict: 'issues',
+              unresolvedCount: 1,
+              completedAt: '2026-10-21T11:00:00Z',
+            },
+            { loopNumber: 2, mode: 'cold', verdict: 'pending', unresolvedCount: 0 },
+          ],
+        },
+      ],
+    },
+  };
+  const rounds = reviewHistoryView(current).cards.map(({ round }) => round);
+  assert.deepEqual(
+    rounds.map((round) => round.usage?.costUsd),
+    [2, undefined],
+  );
+});
+
+test('the history projects a recorded session even when the warm attempt has no receipt', () => {
+  const current = run();
+  const session = {
+    runner: 'codex',
+    sessionId: 'shared',
+    mode: 'warm' as const,
+    continuity: 'resumed' as const,
+  };
+  current.engineState = {
+    publishGate: {
+      publicationStatus: 'not_published',
+      reviews: [
+        {
+          id: 'human',
+          source: 'human-gate',
+          mode: 'warm',
+          loopNumber: 1,
+          verdict: 'pass',
+          unresolvedCount: 0,
+          attempts: [
+            {
+              loopNumber: 1,
+              mode: 'cold',
+              verdict: 'issues',
+              unresolvedCount: 1,
+              usage: {
+                runner: 'codex',
+                runnerSessionId: 'shared',
+                source: 'runner-transcript',
+                measuredAt: '2026-10-21T11:00:00Z',
+                costUsd: 1,
+              },
+            },
+            { loopNumber: 2, mode: 'warm', verdict: 'pass', unresolvedCount: 0, session },
+          ],
+        },
+      ],
+    },
+  };
+  const rounds = reviewHistoryView(current).cards.map(({ round }) => round);
+  assert.equal(rounds[1]?.usage, undefined);
+  assert.deepEqual(rounds[1]?.sessionIdentity, { runner: 'codex', runnerSessionId: 'shared' });
+});

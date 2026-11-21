@@ -1,3 +1,7 @@
+import { formatUsageCost } from '@farmslot/review-dispatch';
+
+export { formatUsageCost } from '@farmslot/review-dispatch';
+
 import {
   type ArtifactRef,
   classifyReviewFreshness,
@@ -180,11 +184,6 @@ export function formatTokenCount(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
   return `${value}`;
-}
-
-export function formatUsageCost(value: number | null | undefined, reason?: string): string {
-  if (value == null) return reason ?? 'Unpriced';
-  return `$${value.toFixed(value !== 0 && value < 1 ? 4 : 2)}`;
 }
 
 export interface GateSummaryTokenRow {

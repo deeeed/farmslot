@@ -1,5 +1,6 @@
 import {
   type AgentContext,
+  preferRunUsageReceipt,
   primaryRoleForFlow,
   type Run,
   type RunnerSessionUsage,
@@ -7,8 +8,7 @@ import {
 
 import { resolveNativeContext } from '../agents/native-context.js';
 import type { RecoveredUsageSession } from '../runners/session-usage-provider.js';
-
-import { preferSessionUsage } from './reviewer-usage.js';
+import { noteCostUsageUpsert } from '../runs/cost-accounting-revision.js';
 
 export const sessionUsageKey = (
   usage: Pick<RunnerSessionUsage, 'runner' | 'runnerSessionId' | 'nativeSession'>,
@@ -30,24 +30,120 @@ export const sessionUsageKey = (
 export function upsertSessionUsage(
   rows: readonly RunnerSessionUsage[],
   receipt: RunnerSessionUsage,
+  coverage: 'run' | 'session' = 'run',
 ): RunnerSessionUsage[] {
   const key = sessionUsageKey(receipt);
-  if (!key) return [...rows];
-  const retained =
-    receipt.runnerSessionId && receipt.nativeSession
-      ? rows.filter(
-          (row) =>
-            row.runnerSessionId ||
-            row.runner !== receipt.runner ||
+  if (!key) {
+    const copy = [...rows];
+    noteCostUsageUpsert(rows, copy);
+    return copy;
+  }
+  const promoteRequest =
+    coverage === 'run' && receipt.identityKind === 'conversation' && receipt.requestId;
+  const promoteNative = Boolean(receipt.runnerSessionId && receipt.nativeSession);
+  const filtered =
+    promoteRequest || promoteNative
+      ? rows.filter((row) => {
+          if (row.runner !== receipt.runner) return true;
+          if (
+            promoteRequest &&
+            row.identityKind === 'request' &&
+            row.requestId === receipt.requestId
+          )
+            return false;
+          return (
+            !promoteNative ||
+            Boolean(row.runnerSessionId) ||
             row.nativeSession?.sessionId !== receipt.nativeSession?.sessionId ||
             row.nativeSession?.ownerPrincipalId !== receipt.nativeSession?.ownerPrincipalId ||
-            row.nativeSession?.executionNodeId !== receipt.nativeSession?.executionNodeId,
-        )
+            row.nativeSession?.executionNodeId !== receipt.nativeSession?.executionNodeId
+          );
+        })
       : rows;
+  const retained = filtered.length === rows.length ? rows : filtered;
   const index = retained.findIndex((row) => sessionUsageKey(row) === key);
-  if (index < 0) return [...retained, receipt];
+  if (index < 0) {
+    const added = [...retained, receipt];
+    noteCostUsageUpsert(rows, added, undefined, receipt);
+    return added;
+  }
   const previous = retained[index];
-  const best = preferSessionUsage(previous, receipt);
+  const merged = mergeUsageReceipt(previous, receipt, coverage);
+  const updated = retained.map((row, rowIndex) => (rowIndex === index ? merged : row));
+  noteCostUsageUpsert(rows, updated, previous, merged);
+  return updated;
+}
+
+function mergeUsageReceipt(
+  previous: RunnerSessionUsage,
+  receipt: RunnerSessionUsage,
+  coverage: 'run' | 'session',
+): RunnerSessionUsage {
+  const scopeChanged = (previous.scope ?? 'session-total') !== (receipt.scope ?? 'session-total');
+  const earlierNative = previous.nativeSession;
+  const laterNative = receipt.nativeSession;
+  const sameNativeRun =
+    coverage === 'run' &&
+    Boolean(earlierNative || laterNative) &&
+    (!earlierNative ||
+      !laterNative ||
+      (earlierNative.sessionId === laterNative.sessionId &&
+        earlierNative.ownerPrincipalId === laterNative.ownerPrincipalId &&
+        earlierNative.executionNodeId === laterNative.executionNodeId)) &&
+    (!previous.runId || !receipt.runId || previous.runId === receipt.runId);
+  const coversMoreLeases = (candidate: RunnerSessionUsage, existing: RunnerSessionUsage) => {
+    if (candidate.scope !== 'run-delta' || candidate.source === 'unavailable' || candidate.error)
+      return false;
+    const covered = new Set(candidate.usageLeaseIds);
+    const prior = existing.usageLeaseIds ?? [];
+    return covered.size > prior.length && prior.every((lease) => covered.has(lease));
+  };
+  const best =
+    sameNativeRun && coversMoreLeases(receipt, previous)
+      ? receipt
+      : sameNativeRun && coversMoreLeases(previous, receipt)
+        ? previous
+        : preferRunUsageReceipt(
+            previous,
+            receipt,
+            coverage === 'run' ? 'run-delta' : 'session-total',
+          );
+  const other = best === previous ? receipt : previous;
+  const leases = new Set(best.usageLeaseIds);
+  const otherLeases = new Set(other.usageLeaseIds);
+  const pendingLeases = sameNativeRun
+    ? [
+        ...new Set([
+          ...(previous.pendingUsageLeaseIds ?? []),
+          ...(receipt.pendingUsageLeaseIds ?? []),
+          ...(previous.usageLeaseIds ?? []),
+          ...(receipt.usageLeaseIds ?? []),
+        ]),
+      ].filter((lease) => !leases.has(lease))
+    : best.pendingUsageLeaseIds;
+  const differentDeltaWindow =
+    best.scope === 'run-delta' &&
+    ((best.runId && other.runId && best.runId !== other.runId) ||
+      (best.startedAt && other.startedAt && best.startedAt !== other.startedAt) ||
+      (best.completedAt && other.completedAt && best.completedAt !== other.completedAt) ||
+      leases.size !== otherLeases.size ||
+      [...leases].some((lease) => !otherLeases.has(lease)));
+  const differentWindow = scopeChanged || differentDeltaWindow;
+  const measuredTokens =
+    !differentWindow &&
+    best.totalTokens == null &&
+    other.totalTokens != null &&
+    other.source !== 'unavailable' &&
+    !other.error
+      ? {
+          totalTokens: other.totalTokens,
+          inputTokens: other.inputTokens,
+          outputTokens: other.outputTokens,
+          cacheCreation: other.cacheCreation,
+          cacheRead: other.cacheRead,
+          reasoningOutputTokens: other.reasoningOutputTokens,
+        }
+      : undefined;
   const startedAt =
     [previous.startedAt, receipt.startedAt]
       .filter((value): value is string => !!value)
@@ -61,35 +157,82 @@ export function upsertSessionUsage(
       ),
     ),
   ];
-  const merged: RunnerSessionUsage = {
-    ...previous,
-    ...receipt,
+  return {
+    // Missing measurement fields must not be filled from a different usage window.
+    ...(differentWindow ? {} : { ...previous, ...receipt }),
     ...best,
+    ...measuredTokens,
+    includesPriorRunLifetime: previous.includesPriorRunLifetime ?? receipt.includesPriorRunLifetime,
     error: best.error,
+    costUsd: best.costUsd,
+    costStatus: best.costStatus,
+    costReason: best.costReason,
+    pricingScope: best.pricingScope,
+    providerReportedCostUsd: best.providerReportedCostUsd,
     outcome: receipt.outcome ?? previous.outcome,
     captureGaps: best.captureGaps ?? [],
     role: previous.role ?? receipt.role,
     roles,
     contextIds: [...new Set([...(previous.contextIds ?? []), ...(receipt.contextIds ?? [])])],
     nativeSession: receipt.nativeSession ?? previous.nativeSession,
-    usageLeaseIds: [
-      ...new Set([...(previous.usageLeaseIds ?? []), ...(receipt.usageLeaseIds ?? [])]),
-    ],
+    usageLeaseIds:
+      sameNativeRun || differentDeltaWindow
+        ? best.usageLeaseIds
+        : [...new Set([...(previous.usageLeaseIds ?? []), ...(receipt.usageLeaseIds ?? [])])],
+    pendingUsageLeaseIds: pendingLeases?.length ? pendingLeases : undefined,
     runnerSessionPath:
       best.runnerSessionPath ?? receipt.runnerSessionPath ?? previous.runnerSessionPath,
-    startedAt,
-    completedAt,
-    durationMs: startedAt
-      ? Math.max(
-          0,
-          Math.max(
-            Date.parse(previous.completedAt ?? previous.measuredAt),
-            Date.parse(receipt.completedAt ?? receipt.measuredAt),
-          ) - Date.parse(startedAt),
-        )
-      : (previous.durationMs ?? receipt.durationMs ?? null),
+    startedAt: differentDeltaWindow ? best.startedAt : startedAt,
+    completedAt: differentDeltaWindow ? best.completedAt : completedAt,
+    durationMs: differentDeltaWindow
+      ? best.durationMs
+      : startedAt
+        ? Math.max(
+            0,
+            Math.max(
+              Date.parse(previous.completedAt ?? previous.measuredAt),
+              Date.parse(receipt.completedAt ?? receipt.measuredAt),
+            ) - Date.parse(startedAt),
+          )
+        : (previous.durationMs ?? receipt.durationMs ?? null),
   };
-  return retained.map((row, rowIndex) => (rowIndex === index ? merged : row));
+}
+
+/** Merge a batch without searching and copying the ledger for every observation. */
+export function mergeRunSessionReceipts(
+  existing: readonly RunnerSessionUsage[],
+  receipts: readonly RunnerSessionUsage[],
+): RunnerSessionUsage[] {
+  const rows = Array.from<RunnerSessionUsage | undefined>(existing);
+  const positions = new Map<string, number>();
+  const pending = new Map<string, number[]>();
+  for (const [index, row] of existing.entries()) {
+    const key = sessionUsageKey(row);
+    if (!key) continue;
+    if (!positions.has(key)) positions.set(key, index);
+    if (!row.runnerSessionId && row.nativeSession) {
+      const reservations = pending.get(key) ?? [];
+      reservations.push(index);
+      pending.set(key, reservations);
+    }
+  }
+  for (const receipt of receipts) {
+    const key = sessionUsageKey(receipt);
+    if (!key) continue;
+    const index = positions.get(key) ?? rows.length;
+    if (receipt.runnerSessionId && receipt.nativeSession) {
+      const reservation = sessionUsageKey({ ...receipt, runnerSessionId: null })!;
+      for (const slot of pending.get(reservation) ?? []) rows[slot] = undefined;
+      pending.delete(reservation);
+      positions.delete(reservation);
+    } else if (receipt.nativeSession && !pending.has(key)) {
+      pending.set(key, [index]);
+    }
+    const previous = rows[index];
+    rows[index] = previous ? mergeUsageReceipt(previous, receipt, 'run') : receipt;
+    positions.set(key, index);
+  }
+  return rows.filter((row): row is RunnerSessionUsage => Boolean(row));
 }
 
 /** Enrich the common receipt. Unknown fields remain explicit, never observed zero. */
@@ -137,9 +280,11 @@ export function contextSessionReceipt(
     runner: context.runner,
     runnerSessionId,
     runnerSessionPath: captured?.runnerSessionPath ?? context.runnerSessionPath ?? null,
-    usageLeaseIds: context.nativeSession
-      ? [context.nativeSession.leaseId]
-      : captured?.usageLeaseIds,
+    usageLeaseIds: captured?.usageLeaseIds,
+    pendingUsageLeaseIds:
+      context.nativeSession && !captured?.usageLeaseIds?.includes(context.nativeSession.leaseId)
+        ? [...new Set([...(captured?.pendingUsageLeaseIds ?? []), context.nativeSession.leaseId])]
+        : captured?.pendingUsageLeaseIds,
     nativeSession: context.nativeSession
       ? {
           sessionId: context.nativeSession.sessionId,

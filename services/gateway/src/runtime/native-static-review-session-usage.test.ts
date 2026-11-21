@@ -167,6 +167,79 @@ test('slotless native review persists cold and resumed run receipts through froz
   assert.equal(result.sessionUsage![0].totalTokens, 400);
   assert.equal(result.sessionUsage![0].costUsd, 0.002);
 
+  await upsertAgentContext(run.id, 'review', {
+    id: 'review',
+    runner: 'pi',
+    runnerSessionId: 'native-review',
+    runnerSessionPath: transcript,
+    startedAt: '2026-11-10T14:20:00Z',
+    status: 'working',
+    nativeSession: {
+      sessionId: 'host',
+      stateDirectory,
+      ownerPrincipalId: 'owner',
+      executionNodeId: 'review-node',
+      leaseId: 'retry-lease',
+      commandId: 'retry-command',
+    },
+  });
+  const beforeRetryCapture = getRun(run.id)!.sessionUsage![0];
+  assert.deepEqual(beforeRetryCapture.usageLeaseIds, ['lease']);
+  assert.deepEqual(beforeRetryCapture.pendingUsageLeaseIds, ['retry-lease']);
+  assert.equal(beforeRetryCapture.totalTokens, 400, 'registration preserves the last measurement');
+  await captureRunSessionUsage(run.id);
+  assert.equal(requests.length, 2, 'the observed lease reopens usage capture');
+  assert.deepEqual(requests[1].usageWindow?.nativeLeaseIds, ['lease', 'retry-lease']);
+  const beforeSubmission = getRun(run.id)!.sessionUsage![0];
+  assert.deepEqual(beforeSubmission.pendingUsageLeaseIds, ['retry-lease']);
+  assert.deepEqual(
+    beforeSubmission.usageLeaseIds,
+    ['lease'],
+    'an unsubmitted lease is not measured',
+  );
+
+  await appendFile(journal, submission('retry-lease', 'retry-command', '2026-11-10T14:20:00Z'));
+  await appendFile(
+    transcript,
+    JSON.stringify({
+      type: 'message',
+      id: 'retry-answer',
+      timestamp: '2026-11-10T14:25:00Z',
+      message: {
+        role: 'assistant',
+        model: 'fixture-model',
+        usage: { input: 5, output: 5, cost: { total: 0.0001 } },
+      },
+    }) + '\n',
+  );
+  await upsertAgentContext(run.id, 'review', {
+    id: 'review',
+    runner: 'pi',
+    runnerSessionId: 'native-review',
+    runnerSessionPath: transcript,
+    startedAt: '2026-11-10T14:20:00Z',
+    completedAt: '2026-11-10T14:30:00Z',
+    status: 'complete',
+    nativeSession: {
+      sessionId: 'host',
+      stateDirectory,
+      ownerPrincipalId: 'owner',
+      executionNodeId: 'review-node',
+      leaseId: 'retry-lease',
+      commandId: 'retry-command',
+      releasedAt: '2026-11-10T14:30:00Z',
+    },
+  });
+  const retried = getRun(run.id)!.sessionUsage![0];
+  assert.equal(requests.length, 3, 'the completed lease is captured');
+  assert.deepEqual(requests[2].usageWindow?.nativeLeaseIds, ['lease', 'retry-lease']);
+  assert.deepEqual(retried.usageLeaseIds, ['lease', 'retry-lease']);
+  assert.equal(retried.pendingUsageLeaseIds, undefined);
+  assert.equal(retried.totalTokens, 410);
+  assert.ok(Math.abs(retried.costUsd! - 0.0021) < 1e-10);
+  await captureRunSessionUsage(run.id);
+  assert.equal(requests.length, 3, 'the expanded receipt settles once');
+
   updateRun(run.id, { status: 'done' });
   const warm = createRun(
     {
@@ -230,7 +303,7 @@ test('slotless native review persists cold and resumed run receipts through froz
   assert.equal(receipt.turns, 1);
   assert.equal(receipt.totalTokens, 40);
   assert.equal(receipt.costUsd, 0.0002);
-  assert.equal(requests.length, 2, 'A settled receipt is measured once');
+  assert.equal(requests.length, 4, 'A settled receipt is measured once');
   const { piSessionUsageProvider } = await import('../runners/session-usage-provider.js');
   const { extractRunWorkerSessionUsage } = await import('./session-usage.js');
   t.mock.method(piSessionUsageProvider, 'recoverSessions', async () => [

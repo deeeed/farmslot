@@ -245,7 +245,6 @@ async function materializeOrphanReviewAttempts(
       verdict,
       unresolvedCount: receipt?.unresolvedCount ?? receipt?.issues?.length ?? 0,
       validationDepth: review.validationDepth,
-      usage: review.usage,
       reviewSnapshot,
       fixDelta,
       artifactPaths: artifactRelPathsForReviewLoop(review.id, loopNumber, files),

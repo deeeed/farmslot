@@ -7,9 +7,10 @@ import {
 } from '@farmslot/protocol';
 
 import {
+  capturedSessionUsage,
+  familyRunSessionUsageReceipts,
   isHelperSession,
   isReviewSession,
-  runSessionUsageReceipts,
   sessionUsageContributions,
 } from '../runtime/session-usage-selection.js';
 
@@ -90,7 +91,10 @@ export function buildFamilyObservabilityTokenSummary(
   familyId: string,
 ): FamilyObservabilityTokenSummary {
   const ordered = sortRunsChronologically(runs);
-  const sessionRows = sessionUsageContributions(ordered);
+  const inventory = new Map(
+    ordered.map((run) => [run, capturedSessionUsage(familyRunSessionUsageReceipts(run))]),
+  );
+  const sessionRows = sessionUsageContributions(ordered, (run) => inventory.get(run)!);
   let cumulativeTokens = 0;
   let cumulativeCost = 0;
   let hasAnyCost = false;
@@ -155,7 +159,7 @@ export function buildFamilyObservabilityTokenSummary(
     const review = parts(receipts.filter(isReviewSession));
     const helper = parts(receipts.filter(isHelperSession));
     const stepParts = parts(receipts);
-    const hasCapturedReceipts = runSessionUsageReceipts(run).length > 0;
+    const hasCapturedReceipts = (inventory.get(run)?.length ?? 0) > 0;
     const hasMetrics = hasCapturedReceipts || hasRunMetrics(run, worker, review);
     if (hasMetrics) runsWithMetrics += 1;
     else missingRunIds.push(run.id);

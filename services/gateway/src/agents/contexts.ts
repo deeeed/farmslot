@@ -32,6 +32,7 @@ import {
   canonicalAgentContextTarget,
   isDevServerLogTarget,
 } from '../methods/dispatch/role-target.js';
+import { noteCostActorUpsert } from '../runs/cost-accounting-revision.js';
 import { getRun, listRuns, updateRunAgentContexts } from '../runs/store.js';
 import { resolveReviewWorkspaceOwner } from '../security/native-worker-owner.js';
 
@@ -440,7 +441,9 @@ export async function upsertAgentContext(
       }
       if (!context.startedAt) context.startedAt = now;
       nextContext = context;
-      return [...contexts, context];
+      const next = [...contexts, context];
+      noteCostActorUpsert(currentContexts, next, existing, context);
+      return next;
     });
     if (!nextContext) return null;
     if (!updated?.slotId) return nextContext;

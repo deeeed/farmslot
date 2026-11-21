@@ -80,6 +80,19 @@ export async function fetchRunArtifactBytes(
   return new Uint8Array(await response.arrayBuffer());
 }
 
+type ReviewHistoryPrefetchListener = (cache: GatewayResourceCache, identity: string) => void;
+const reviewHistoryListeners = new Map<string, Set<ReviewHistoryPrefetchListener>>();
+
+export function onReviewHistoryPrefetched(runId: string, listener: ReviewHistoryPrefetchListener) {
+  const listeners = reviewHistoryListeners.get(runId) ?? new Set<ReviewHistoryPrefetchListener>();
+  reviewHistoryListeners.set(runId, listeners);
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+    if (!listeners.size) reviewHistoryListeners.delete(runId);
+  };
+}
+
 export interface OwnerContentPrefetch {
   /** Keeps one prefetcher for the owned cache while it writes to a persistent store. */
   sync(cache: GatewayResourceCache | undefined, persistent: boolean): void;
@@ -102,10 +115,21 @@ export function createOwnerContentPrefetch(
       current?.prefetcher.dispose();
       current = undefined;
       if (!next) return;
+      const history = createReviewHistoryPrefetch({ ...options, cache: next });
       const prefetcher = createContentPrefetcher({
         ...options,
         cache: next,
-        reviewHistory: createReviewHistoryPrefetch({ ...options, cache: next }),
+        reviewHistory: {
+          ...history,
+          async prefetch(run, write) {
+            await history.prefetch(run, write);
+            if (write.signal.aborted || current?.cache !== next) return;
+            const listeners = reviewHistoryListeners.get(run.id);
+            if (!listeners?.size) return;
+            const identity = history.identity(run);
+            for (const listener of listeners) listener(next, identity);
+          },
+        },
       });
       current = { cache: next, prefetcher };
       prefetcher.setTargets(targets);

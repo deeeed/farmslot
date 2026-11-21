@@ -4,8 +4,10 @@ import {
   type Run,
   type RunnerSessionUsage,
 } from '@farmslot/protocol';
+import { pipelineReviewReceipts } from '@farmslot/review-dispatch';
 
 import {
+  mergeRunSessionReceipts,
   registerContextSessionUsage,
   sessionUsageKey,
   upsertSessionUsage,
@@ -19,6 +21,18 @@ export const isHelperSession = (row: RunnerSessionUsage): boolean =>
 
 /** Canonical receipts first; old result/metric-only records remain readable. */
 export function allRunSessionUsageReceipts(run: Run): RunnerSessionUsage[] {
+  return sessionUsageInventory(run, []);
+}
+
+/** Family observability includes historical pipeline-only attempts. Gate reads use the ledger. */
+export function familyRunSessionUsageReceipts(run: Run): RunnerSessionUsage[] {
+  return sessionUsageInventory(run, pipelineReviewReceipts(run));
+}
+
+function sessionUsageInventory(
+  run: Run,
+  pipeline: readonly RunnerSessionUsage[],
+): RunnerSessionUsage[] {
   let rows = registerContextSessionUsage(run, run.updatedAt) ?? [];
   for (const review of run.engineState?.publishGate?.reviews ?? []) {
     if (!review.usage) continue;
@@ -37,6 +51,8 @@ export function allRunSessionUsageReceipts(run: Run): RunnerSessionUsage[] {
     };
     rows = sessionUsageKey(receipt) ? upsertSessionUsage(rows, receipt) : [...rows, receipt];
   }
+
+  if (pipeline.length) rows = mergeRunSessionReceipts(rows, pipeline);
 
   if (
     !rows.some(
@@ -114,7 +130,11 @@ export function allRunSessionUsageReceipts(run: Run): RunnerSessionUsage[] {
 
 /** Accounting accepts verified tokens or USD independently; inventories retain all rows. */
 export function runSessionUsageReceipts(run: Run): RunnerSessionUsage[] {
-  return allRunSessionUsageReceipts(run).filter(
+  return capturedSessionUsage(allRunSessionUsageReceipts(run));
+}
+
+export function capturedSessionUsage(rows: readonly RunnerSessionUsage[]): RunnerSessionUsage[] {
+  return rows.filter(
     (row) =>
       row.source !== 'unavailable' &&
       !row.error &&
@@ -123,7 +143,10 @@ export function runSessionUsageReceipts(run: Run): RunnerSessionUsage[] {
 }
 
 /** Attribute only a conversation's growth to a later run; never sum warm snapshots. */
-export function sessionUsageContributions(runs: readonly Run[]): Map<string, RunnerSessionUsage[]> {
+export function sessionUsageContributions(
+  runs: readonly Run[],
+  inventory: (run: Run) => readonly RunnerSessionUsage[] = allRunSessionUsageReceipts,
+): Map<string, RunnerSessionUsage[]> {
   const result = new Map<string, RunnerSessionUsage[]>();
   const counters = [
     'inputTokens',
@@ -140,7 +163,7 @@ export function sessionUsageContributions(runs: readonly Run[]): Map<string, Run
     (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
   )) {
     const contributions: RunnerSessionUsage[] = [];
-    for (const row of runSessionUsageReceipts(run)) {
+    for (const row of capturedSessionUsage(inventory(run))) {
       if (row.scope === 'run-delta') {
         const key = sessionUsageKey(row);
         if (key) {
