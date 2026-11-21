@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  Events,
   type EvidenceAttestationApprover,
   githubPullUrl,
   type HumanPublicationAdoptionReceipt,
@@ -382,7 +383,14 @@ export async function runAdoptPublishedPr(
       (receipt!.match?.type ?? 'attested') === 'attested' && isHeldForResultDecision(run)
         ? pendingResultDecision(run)
         : undefined;
-    if (held?.payload?.kind === 'result-decision' && held.payload.stoppedAt === 'review') {
+    // Only the hold this receipt was recorded against: one raised after the
+    // adoption (a replay, a new round) needs its own decision.
+    if (
+      held?.payload?.kind === 'result-decision' &&
+      held.payload.stoppedAt === 'review' &&
+      held.createdAt <= receipt!.adoptedAt &&
+      (run.engineState?.generation ?? 0) === receipt!.generation
+    ) {
       acceptedResultDecisionId = held.id;
       return result;
     }
@@ -472,16 +480,40 @@ export async function runAdoptPublishedPr(
   })
     .then(async (result) => {
       if (acceptedResultDecisionId) {
+        const decisionId = acceptedResultDecisionId;
+        const adopted = receipt!;
         const { resolveResultDecision } = await import('../../run-completion/result-decision.js');
-        const run = await resolveResultDecision(
-          {
-            runId: initial.id,
-            decisionId: acceptedResultDecisionId,
-            actionId: 'accept-result',
-            reason: receipt!.reason,
-          },
-          { adoptedPublication: { principalId: receipt!.approver.principalId } },
-        );
+        let run: Run;
+        try {
+          run = await resolveResultDecision(
+            { runId: initial.id, decisionId, actionId: 'accept-result', reason: adopted.reason },
+            {
+              adoptedPublication: {
+                principalId: adopted.approver.principalId,
+                receiptId: adopted.id,
+                generation: adopted.generation,
+              },
+            },
+          );
+        } catch (error) {
+          // A concurrent identical adoption already settled this decision with this receipt.
+          const current = getRun(initial.id);
+          const settled = current?.decisions.find((entry) => entry.id === decisionId);
+          if (
+            !current ||
+            settled?.resolvedAction !== 'accept-result' ||
+            current.resultDecisionReceipt?.principalId !== adopted.approver.principalId ||
+            current.resultDecisionReceipt?.reason !== adopted.reason
+          )
+            throw error;
+          return { ...result, run: current, continuation: 'resumed' as const };
+        }
+        emit(Events.RUN_UPDATED, { run });
+        emit(Events.RUN_DECISION_RESOLVED, {
+          runId: run.id,
+          decisionId,
+          actionId: 'accept-result',
+        });
         return { ...result, run, continuation: 'resumed' as const };
       }
       if (!completed) return result;

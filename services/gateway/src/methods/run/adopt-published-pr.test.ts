@@ -971,3 +971,54 @@ test('content-match adoption links the PR but leaves the review result decision 
   assert.equal(held.decisions[0].resolvedAt, undefined);
   assert.equal(held.prNumber, 192);
 });
+
+test('a result decision raised after the adoption is not accepted by its receipt', async (t) => {
+  const fixture = await heldResultFixture(t);
+  const later = new Date(Date.now() + 60_000).toISOString();
+  const run = updateRun(fixture.id, {
+    decisions: fixture.decisions.map((decision) => ({ ...decision, createdAt: later })),
+  });
+  const result = await runAdoptPublishedPr(
+    request(run),
+    noop,
+    dependencies({ readiness: undefined, continuationRefusals: waitingOnDecision }),
+  );
+  assert.equal(result.continuation, 'refused');
+  const held = (await getRunWithArchived(run.id))!;
+  assert.equal(held.status, 'needs-decision');
+  assert.equal(held.decisions[0].resolvedAt, undefined);
+});
+
+test('a generation change after adoption refuses the bound acceptance', async (t) => {
+  const run = await heldResultFixture(t);
+  const { resolveResultDecision } = await import('../../run-completion/result-decision.js');
+  await assert.rejects(
+    resolveResultDecision(
+      { runId: run.id, decisionId: run.decisions[0].id, actionId: 'accept-result', reason: 'r' },
+      {
+        adoptedPublication: {
+          principalId: approver.principalId,
+          receiptId: 'stale',
+          generation: 3,
+        },
+      },
+    ),
+    /changed since the publication was adopted/,
+  );
+  assert.equal(getRun(run.id)?.status, 'needs-decision');
+});
+
+test('concurrent identical attested adoptions settle the review result decision once', async (t) => {
+  const run = await heldResultFixture(t);
+  const deps = dependencies({ readiness: undefined, continuationRefusals: waitingOnDecision });
+  const [first, second] = await Promise.all([
+    runAdoptPublishedPr(request(run), noop, deps),
+    runAdoptPublishedPr(request(run), noop, deps),
+  ]);
+  assert.equal(first.continuation, 'resumed');
+  assert.equal(second.continuation, 'resumed');
+  assert.equal(first.receipt.id, second.receipt.id);
+  const settled = (await getRunWithArchived(run.id))!;
+  assert.equal(settled.status, 'done');
+  assert.equal(settled.decisions[0].resolvedAction, 'accept-result');
+});

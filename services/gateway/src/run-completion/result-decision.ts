@@ -381,16 +381,28 @@ export interface ResolveResultDecisionParams {
   reason?: string;
 }
 
+/** The attested adoption receipt an acceptance is bound to, and the generation it was recorded at. */
+export interface AdoptedPublicationAcceptance {
+  principalId: string;
+  receiptId: string;
+  generation: number;
+}
+
 /**
  * A recorded attested adoption is the person's acceptance of a REVIEW hold: the
  * publication the gate would have produced already exists (ADR-065 Amendment 2).
  */
-function adoptedAcceptState(run: Run, stoppedAt: ResultDecisionStop): ResultDecisionActionState {
+function adoptedAcceptState(
+  run: Run,
+  stoppedAt: ResultDecisionStop,
+  adopted: AdoptedPublicationAcceptance,
+): ResultDecisionActionState {
   const unavailableReason =
     stoppedAt !== 'review'
       ? 'A refused completion prerequisite cannot be accepted. Send it back once it is fixed, or close it.'
-      : !run.engineState?.publishGate?.humanPublicationAdoption
-        ? 'No attested publication adoption is recorded on this run.'
+      : run.engineState?.publishGate?.humanPublicationAdoption?.id !== adopted.receiptId ||
+          (run.engineState?.generation ?? 0) !== adopted.generation
+        ? 'The run changed since the publication was adopted. Refresh the run.'
         : undefined;
   return unavailableReason
     ? { id: 'accept-result', available: false, unavailableReason, requiresReason: true }
@@ -400,7 +412,7 @@ function adoptedAcceptState(run: Run, stoppedAt: ResultDecisionStop): ResultDeci
 /** Settle a held run through one result-decision action (ADR-065 Amendment 7). */
 export async function resolveResultDecision(
   params: ResolveResultDecisionParams,
-  options: { releaseSlot?: boolean; adoptedPublication?: { principalId: string } } = {},
+  options: { releaseSlot?: boolean; adoptedPublication?: AdoptedPublicationAcceptance } = {},
 ): Promise<Run> {
   const actionId = params.actionId;
   if (!isResultDecisionActionId(actionId))
@@ -441,7 +453,7 @@ export async function resolveResultDecision(
           ? await sendBackState(run, payload.stoppedAt)
           : actionId === 'accept-result'
             ? options.adoptedPublication
-              ? adoptedAcceptState(run, payload.stoppedAt)
+              ? adoptedAcceptState(run, payload.stoppedAt, options.adoptedPublication)
               : acceptState(run, payload.stoppedAt)
             : { id: actionId, available: true, requiresReason: false };
       if (!state.available) throw new Error(state.unavailableReason ?? 'Action unavailable');
