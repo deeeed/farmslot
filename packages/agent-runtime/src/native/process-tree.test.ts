@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import childProcess, { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import { NativeProcessTree } from './process-tree.js';
@@ -219,54 +222,119 @@ test('cleanup retains a detached child after its title changes and parent exits'
 });
 
 test('a detached group remains owned after its only observed launcher exits', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'native-detached-group-'));
+  const launcherFile = join(dir, 'launcher.pid');
+  const workerFile = join(dir, 'worker.pid');
+  const triggerFile = join(dir, 'start');
+  const workerCode = `
+    const fs = require('node:fs');
+    setInterval(() => {
+      if (!fs.existsSync(${JSON.stringify(dir)})) process.exit(0);
+    }, 20);
+  `;
   const launcherCode = `
-    process.on('message', () => {
+    const fs = require('node:fs');
+    fs.writeFileSync(${JSON.stringify(launcherFile)}, String(process.pid));
+    const poll = setInterval(() => {
+      if (!fs.existsSync(${JSON.stringify(dir)})) process.exit(0);
+      if (!fs.existsSync(${JSON.stringify(triggerFile)})) return;
+      clearInterval(poll);
       const worker = require('node:child_process').spawn(
-        process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }
+        process.execPath, ['-e', ${JSON.stringify(workerCode)}], { stdio: 'ignore' }
       );
-      worker.once('spawn', () => process.send(worker.pid, () => process.exit(0)));
-    });
-    process.send('ready');
+      worker.once('spawn', () => {
+        fs.writeFileSync(${JSON.stringify(workerFile)}, String(worker.pid));
+        process.exit(0);
+      });
+    }, 10);
   `;
   const rootCode = `
-    const launcher = require('node:child_process').spawn(
+    require('node:child_process').spawn(
       process.execPath, ['-e', ${JSON.stringify(launcherCode)}],
-      { detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }
+      { detached: true, stdio: 'ignore' }
     );
-    let worker;
-    launcher.on('message', (message) => {
-      if (message === 'ready') process.send(launcher.pid);
-      else worker = message;
-    });
-    launcher.once('exit', () => process.send(worker));
-    process.on('message', () => launcher.send('start'));
+    setInterval(() => {}, 1000);
   `;
   const root = spawn(process.execPath, ['-e', rootCode], {
     detached: true,
-    stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    stdio: 'ignore',
   });
-  let launcher: number | undefined;
-  let worker: number | undefined;
+  const deadline = Date.now() + 2500;
+  const pidAt = (file: string) => {
+    if (!existsSync(file)) return undefined;
+    const pid = Number(readFileSync(file, 'utf8'));
+    return Number.isSafeInteger(pid) && pid > 1 ? pid : undefined;
+  };
+  const waitFor = async (predicate: () => boolean) => {
+    while (!predicate()) {
+      assert.equal(root.exitCode, null, 'fixture root exited before reporting readiness');
+      assert.equal(root.signalCode, null, 'fixture root was stopped before reporting readiness');
+      assert.ok(Date.now() < deadline, 'fixture did not reach its process checkpoint');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  };
   try {
-    [launcher] = await once(root, 'message');
-    assert.equal(typeof launcher, 'number');
+    await waitFor(() => pidAt(launcherFile) !== undefined);
+    const launcher = pidAt(launcherFile)!;
     const tree = new NativeProcessTree(root.pid!);
     assert.ok(tree.snapshot().some(({ pid, group }) => pid === launcher && group === launcher));
-    const spawned = once(root, 'message');
-    root.send('start');
-    [worker] = await spawned;
-    assert.equal(typeof worker, 'number');
+    writeFileSync(triggerFile, '');
+    await waitFor(() => pidAt(workerFile) !== undefined && !alive(launcher));
+    const worker = pidAt(workerFile)!;
     assert.ok(!tree.snapshot().some(({ pid }) => pid === worker));
-    const exited = once(root, 'exit');
+    const exited = once(root, 'exit', { signal: AbortSignal.timeout(2500) });
     root.kill('SIGKILL');
     await exited;
-    assert.equal(alive(launcher!), false);
-    assert.equal(alive(worker!), true);
-    assert.equal(await tree.empty(), false);
+    assert.equal(alive(worker), true);
+    assert.equal(await tree.empty({ includeDetachedGroups: true }), false);
   } finally {
     if (root.pid && alive(root.pid)) root.kill('SIGKILL');
-    if (launcher && alive(launcher)) process.kill(launcher, 'SIGKILL');
-    if (worker && alive(worker)) process.kill(worker, 'SIGKILL');
+    for (const file of [launcherFile, workerFile]) {
+      const pid = pidAt(file);
+      if (pid && alive(pid)) process.kill(pid, 'SIGKILL');
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('explicit confirmation remembers group changes and leaderless ownership', async (t) => {
+  const root = 100039811;
+  const child = root + 1;
+  const leaderlessGroup = root + 2;
+  const member = root + 3;
+  let census =
+    `${root} 1 ${root} original root\n` +
+    `${child} ${root} ${root} original child\n` +
+    `${member} ${root} ${leaderlessGroup} observed member\n`;
+  const mock = t.mock.method(
+    childProcess,
+    'execFile',
+    (...args: Parameters<typeof childProcess.execFile>) => {
+      const callback = args.at(-1);
+      if (typeof callback !== 'function') throw new Error('Census callback missing');
+      queueMicrotask(() => callback(null, census, ''));
+      return new childProcess.ChildProcess();
+    },
+  );
+  syncBuiltinESMExports();
+  const verify = { includeDetachedGroups: true };
+  try {
+    const tree = await NativeProcessTree.create(root);
+    census = `${root} 1 ${root} original root\n` + `${child} ${root} ${child} original child\n`;
+    await tree.capture();
+
+    census = `${child + 5} 1 ${child} unobserved worker\n`;
+    assert.equal(await tree.empty(verify), false, 'a known PID moved to a detached group');
+    assert.equal(await tree.empty(), true, 'ordinary cleanup keeps its existing policy');
+
+    census = `${member + 5} 1 ${leaderlessGroup} unobserved member\n`;
+    assert.equal(await tree.empty(verify), false, 'the group was observed only through its member');
+
+    census = '';
+    assert.equal(await tree.empty(verify), true);
+  } finally {
+    mock.mock.restore();
+    syncBuiltinESMExports();
   }
 });
 
@@ -293,9 +361,9 @@ test('a distinct leader in the detached group proves numeric group reuse', async
   );
   syncBuiltinESMExports();
   try {
-    assert.equal(await tree.empty(), false);
+    assert.equal(await tree.empty({ includeDetachedGroups: true }), false);
     census += `${launcher} 1 ${launcher} unrelated replacement leader\n`;
-    assert.equal(await tree.empty(), true);
+    assert.equal(await tree.empty({ includeDetachedGroups: true }), true);
   } finally {
     mock.mock.restore();
     syncBuiltinESMExports();

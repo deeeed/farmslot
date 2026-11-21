@@ -283,7 +283,7 @@ function signal(
 /** Tracks detached descendants while their ancestry is still observable. */
 export class NativeProcessTree {
   private owned = new Map<number, ProcessIdentity>();
-  private readonly detachedGroupLeaders = new Map<number, string>();
+  private readonly detachedGroups = new Map<number, string | undefined>();
   private readonly rootIdentity: string;
   private readonly rootObservation: ProcessIdentity;
   /**
@@ -353,7 +353,9 @@ export class NativeProcessTree {
       this.owned.set(root.pid, root);
     }
     for (const [pid, identity] of this.owned) {
-      if (snapshot.get(pid)?.identity !== identity.identity) this.owned.delete(pid);
+      const current = snapshot.get(pid);
+      if (current?.identity === identity.identity) this.owned.set(pid, current);
+      else this.owned.delete(pid);
     }
     // A current, known member proves this is still the original runner group.
     const ownsGroup = [...this.owned.values()].some((entry) => entry.group === this.root);
@@ -372,11 +374,13 @@ export class NativeProcessTree {
         }
       }
     }
-    // Keep a detached group's identity after its leader exits. A child can inherit
-    // the group and outlive the last census that observed its ancestry.
-    for (const entry of this.owned.values()) {
-      if (entry.pid === entry.group && entry.group !== this.root)
-        this.detachedGroupLeaders.set(entry.group, entry.identity);
+    // Any owned member can establish a detached group. Keep the leader's birth
+    // identity when available, even after all observed members exit or reparent.
+    for (const { group } of this.owned.values()) {
+      if (group === this.root) continue;
+      const leader = snapshot.get(group);
+      if (leader?.group === group) this.detachedGroups.set(group, leader.identity);
+      else if (!this.detachedGroups.has(group)) this.detachedGroups.set(group, undefined);
     }
   }
   /** Last observed identities remain useful when a later census cannot be read. */
@@ -425,14 +429,15 @@ export class NativeProcessTree {
         `Native process tree cleanup failed: ${errors.map((error) => (error instanceof Error ? error.message : String(error))).join('; ')}`,
       );
   }
-  async empty(): Promise<boolean> {
+  async empty({ includeDetachedGroups = false } = {}): Promise<boolean> {
     const snapshot = await cleanupProcesses();
     this.applySnapshot(snapshot);
     if (this.owned.size > 0) return false;
     return ![...snapshot.values()].some(({ group }) => {
       if (group === this.root) return true;
-      const identity = this.detachedGroupLeaders.get(group);
-      if (identity === undefined) return false;
+      if (!includeDetachedGroups || !this.detachedGroups.has(group)) return false;
+      const identity = this.detachedGroups.get(group);
+      if (identity === undefined) return true;
       // A new group leader proves reuse. Surviving members without a leader
       // still belong to the observed group, even after reparenting.
       const leader = snapshot.get(group);

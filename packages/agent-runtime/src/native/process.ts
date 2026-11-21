@@ -299,7 +299,7 @@ export class JsonLineProcess {
   async verifyStoppedProcessTree(): Promise<boolean> {
     if (!this.cleanupStarted || (this.exitCode === null && this.exitSignal === null)) return false;
     await this.finished;
-    return this.tree ? this.tree.empty() : this.gatedRootExited();
+    return this.tree ? this.tree.empty({ includeDetachedGroups: true }) : this.gatedRootExited();
   }
 
   private beginStop(): void {
