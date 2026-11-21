@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 
 import {
   Events,
@@ -15,6 +16,7 @@ import {
   type Run,
   type RunAdoptPublishedPrParams,
   type RunAdoptPublishedPrResult,
+  type RunDecision,
   type RunGatePrerequisiteReason,
   sameEvidenceAttestationApprover,
 } from '@farmslot/protocol';
@@ -64,6 +66,25 @@ export interface PublicationAdoptionDependencies {
   continueDecision?: (run: Run, decisionId: string) => Promise<boolean>;
   releaseSlot?: typeof releaseCompletedRunSlot;
   compareContent?: typeof comparePublishedContent;
+}
+
+/**
+ * Whether this hold's result was already held when the publication was adopted. Restart and
+ * recapture re-present the same result as a new decision and supersede the old one, keeping its
+ * stop, delivered head and findings digest.
+ */
+function heldAtAdoption(run: Run, held: RunDecision, adoptedAt: string): boolean {
+  if (held.payload?.kind !== 'result-decision') return false;
+  const { stoppedAt, findingsDigest, delivered } = held.payload;
+  return run.decisions.some(
+    (decision) =>
+      (decision.id === held.id || decision.resolvedAction === 'superseded') &&
+      decision.payload?.kind === 'result-decision' &&
+      decision.payload.stoppedAt === stoppedAt &&
+      decision.payload.findingsDigest === findingsDigest &&
+      isDeepStrictEqual(decision.payload.delivered, delivered) &&
+      decision.createdAt <= adoptedAt,
+  );
 }
 
 /** In-flight adoption acceptances by run and result decision. */
@@ -386,12 +407,13 @@ export async function runAdoptPublishedPr(
       (receipt!.match?.type ?? 'attested') === 'attested' && isHeldForResultDecision(run)
         ? pendingResultDecision(run)
         : undefined;
-    // Only at the generation the receipt was recorded at: a replay or a new
-    // round bumps it and needs its own decision. Re-presentation does not.
+    // Only the hold the receipt was recorded against: same generation (a replay or
+    // a new round bumps it), and that result already held at adoption time.
     if (
       held?.payload?.kind === 'result-decision' &&
       held.payload.stoppedAt === 'review' &&
-      (run.engineState?.generation ?? 0) === receipt!.generation
+      (run.engineState?.generation ?? 0) === receipt!.generation &&
+      heldAtAdoption(run, held, receipt!.adoptedAt)
     ) {
       acceptedResultDecisionId = held.id;
       return result;
@@ -498,16 +520,20 @@ export async function runAdoptPublishedPr(
                 generation: adopted.generation,
               },
             },
-          ).finally(() => adoptionAcceptances.delete(key));
+          )
+            .then((run) => {
+              emit(Events.RUN_UPDATED, { run });
+              emit(Events.RUN_DECISION_RESOLVED, {
+                runId: run.id,
+                decisionId,
+                actionId: 'accept-result',
+              });
+              return run;
+            })
+            .finally(() => adoptionAcceptances.delete(key));
           adoptionAcceptances.set(key, settlement);
         }
         const run = await settlement;
-        emit(Events.RUN_UPDATED, { run });
-        emit(Events.RUN_DECISION_RESOLVED, {
-          runId: run.id,
-          decisionId,
-          actionId: 'accept-result',
-        });
         return { ...result, run, continuation: 'resumed' as const };
       }
       if (!completed) return result;

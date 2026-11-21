@@ -5,6 +5,7 @@ import test from 'node:test';
 
 import {
   adoptedPublicationTarget,
+  Events,
   FLOW_STEPS,
   PUBLICATION_ADOPTION_ACTION,
   type Run,
@@ -974,7 +975,28 @@ test('content-match adoption links the PR but leaves the review result decision 
 
 test('a re-presented hold at the receipt generation is still accepted (restart)', async (t) => {
   const fixture = await heldResultFixture(t);
-  // Startup re-presents the same hold with a fresh createdAt; the generation is unchanged.
+  // Startup supersedes the original hold and re-presents the same result with a fresh id and time.
+  const [original] = fixture.decisions;
+  const later = new Date(Date.now() + 60_000).toISOString();
+  const run = updateRun(fixture.id, {
+    decisions: [
+      { ...original, resolvedAt: later, resolvedAction: 'superseded' },
+      { ...original, id: 'represented', createdAt: later },
+    ],
+  });
+  const result = await runAdoptPublishedPr(
+    request(run),
+    noop,
+    dependencies({ readiness: undefined, continuationRefusals: waitingOnDecision }),
+  );
+  assert.equal(result.continuation, 'resumed');
+  const settled = (await getRunWithArchived(run.id))!;
+  assert.equal(settled.status, 'done');
+  assert.equal(settled.decisions[1].resolvedAction, 'accept-result');
+});
+
+test('a hold first raised after the adoption in the same generation stays pending', async (t) => {
+  const fixture = await heldResultFixture(t);
   const later = new Date(Date.now() + 60_000).toISOString();
   const run = updateRun(fixture.id, {
     decisions: fixture.decisions.map((decision) => ({ ...decision, createdAt: later })),
@@ -984,8 +1006,10 @@ test('a re-presented hold at the receipt generation is still accepted (restart)'
     noop,
     dependencies({ readiness: undefined, continuationRefusals: waitingOnDecision }),
   );
-  assert.equal(result.continuation, 'resumed');
-  assert.equal((await getRunWithArchived(run.id))!.status, 'done');
+  assert.equal(result.continuation, 'refused');
+  const held = (await getRunWithArchived(run.id))!;
+  assert.equal(held.status, 'needs-decision');
+  assert.equal(held.decisions[0].resolvedAt, undefined);
 });
 
 test('the bound acceptance refuses a generation other than the receipt one', async (t) => {
@@ -1021,10 +1045,13 @@ test('the bound acceptance refuses a generation other than the receipt one', asy
 test('concurrent identical attested adoptions settle the review result decision once', async (t) => {
   const run = await heldResultFixture(t);
   const deps = dependencies({ readiness: undefined, continuationRefusals: waitingOnDecision });
+  const events: string[] = [];
+  const record = (event: string) => events.push(event);
   const [first, second] = await Promise.all([
-    runAdoptPublishedPr(request(run), noop, deps),
-    runAdoptPublishedPr(request(run), noop, deps),
+    runAdoptPublishedPr(request(run), record, deps),
+    runAdoptPublishedPr(request(run), record, deps),
   ]);
+  assert.equal(events.filter((event) => event === Events.RUN_DECISION_RESOLVED).length, 1);
   assert.equal(first.continuation, 'resumed');
   assert.equal(second.continuation, 'resumed');
   assert.equal(first.receipt.id, second.receipt.id);
