@@ -220,6 +220,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           startupWorkspace: startupWorkspaceAfterConnectionChange(
             get().startupWorkspace,
             client.resourceConnectionReason,
+            status === 'connected' ? { principalId, workspaceAccess } : undefined,
           ),
           activeProfileHttpAuthHeaders: client.httpAuthHeaders,
           personSession: client.personDeviceSession,

@@ -43,7 +43,7 @@ export function resolveStartupRunDestination(
   if (
     authority.workspaceAccess !== 'farm' ||
     !authority.principalId ||
-    (initial.principalId !== null && authority.principalId !== initial.principalId)
+    authority.principalId !== initial.principalId
   )
     return null;
   return href;
@@ -81,13 +81,25 @@ export function pendingStartupRunDestination(href: string) {
 export function startupWorkspaceAfterConnectionChange(
   workspace: StartupWorkspace | null | undefined,
   reason: ResourceConnectionReason | undefined,
+  authority?: Pick<StartupRunAuthority, 'principalId' | 'workspaceAccess'>,
 ): StartupWorkspace | null | undefined {
   // Connection reasons are transient. Keep a rejected startup scope rejected after reconnect.
-  return reason === 'principal-change' ||
+  if (
+    reason === 'principal-change' ||
     reason === 'profile-change' ||
     reason === 'sign-out' ||
     reason === 'credential-refused' ||
     reason === 'session-ended'
-    ? null
-    : workspace;
+  )
+    return null;
+  if (!workspace || !authority) return workspace;
+  const { principalId, workspaceAccess } = authority;
+  if (
+    workspaceAccess !== 'farm' ||
+    !principalId ||
+    (workspace.principalId !== null && workspace.principalId !== principalId)
+  )
+    return null;
+  // Service profiles have no saved person session. Bind their first verified principal.
+  return workspace.principalId === null ? { ...workspace, principalId } : workspace;
 }

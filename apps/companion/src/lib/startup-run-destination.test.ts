@@ -121,7 +121,10 @@ test('a same-profile credential change irreversibly discards the pending service
 
 test('an unchanged eligible service profile can claim the verified startup link', () => {
   const service = { ...workspace, principalId: null };
-  const unchanged = startupWorkspaceAfterConnectionChange(service, 'network');
+  const unchanged = startupWorkspaceAfterConnectionChange(service, undefined, {
+    principalId: 'service',
+    workspaceAccess: 'farm',
+  });
   assert.equal(
     resolveStartupRunDestination(href, {
       ...connected,
@@ -140,4 +143,55 @@ test('ordinary Files, Diff, Gate and Timeline links are outside automatic startu
   for (const tab of ['files', 'diff', 'gate', 'timeline']) {
     assert.equal(startupRunDestination('/workspace/run/run-1/' + tab + '?panel=detail'), null);
   }
+});
+
+test('a pending service link shares its first verified principal across reconnects', () => {
+  const service = { ...workspace, principalId: null };
+  const first = startupWorkspaceAfterConnectionChange(service, undefined, {
+    principalId: 'service-A',
+    workspaceAccess: 'farm',
+  });
+  const pendingIntent = pendingStartupRunDestination(href);
+  assert.ok(pendingIntent);
+  assert.equal(
+    resolveStartupRunDestination(pendingIntent.href, {
+      ...connected,
+      principalId: 'service-A',
+      startupWorkspace: first,
+    }),
+    href,
+  );
+  // Authentication can finish before the mounted index claims its pending link.
+  const dropped = startupWorkspaceAfterConnectionChange(first, 'network');
+  const same = startupWorkspaceAfterConnectionChange(dropped, undefined, {
+    principalId: 'service-A',
+    workspaceAccess: 'farm',
+  });
+  assert.equal(
+    resolveStartupRunDestination(pendingIntent.href, {
+      ...connected,
+      principalId: 'service-A',
+      startupWorkspace: same,
+    }),
+    href,
+  );
+  const different = startupWorkspaceAfterConnectionChange(dropped, undefined, {
+    principalId: 'service-B',
+    workspaceAccess: 'farm',
+  });
+  assert.equal(
+    resolveStartupRunDestination(pendingIntent.href, {
+      ...connected,
+      principalId: 'service-B',
+      startupWorkspace: different,
+    }),
+    null,
+  );
+  assert.equal(
+    startupWorkspaceAfterConnectionChange(different, undefined, {
+      principalId: 'service-A',
+      workspaceAccess: 'farm',
+    }),
+    null,
+  );
 });
