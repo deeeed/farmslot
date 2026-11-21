@@ -61,6 +61,7 @@ import {
   readGatewayProfilePersonSession,
 } from '../lib/gateway-profiles';
 import { notifyRunCompleted, notifyViolation } from '../lib/notifications';
+import type { StartupWorkspace } from '../lib/startup-run-destination';
 import type { WorkspaceAccess } from '../lib/workspace-access';
 
 import { resetFarmState } from './reset-farm-state';
@@ -107,6 +108,7 @@ interface ConnectionStore {
   probeInProgress: boolean;
   lastSyncError: string | null;
   initializing: boolean;
+  startupWorkspace?: StartupWorkspace;
   init: () => Promise<void>;
   setGatewayUrl: (url: string) => Promise<void>;
   setActiveProfile: (profileId: string) => Promise<void>;
@@ -229,6 +231,11 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       set({
         signedOut,
         personSession: session?.session ?? null,
+        startupWorkspace: {
+          profileId: activeProfile?.id ?? '',
+          gatewayUrl: url,
+          principalId: session?.session.principalId ?? null,
+        },
         gatewayUrl: url,
         profiles,
         activeProfileId: activeProfile?.id ?? '',
