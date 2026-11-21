@@ -445,7 +445,9 @@ export async function extractRunWorkerSessionUsage(
         return {
           ...recovered,
           scope: usageWindow ? 'run-delta' : recovered.scope,
-          ...(verifiedLeaseIds && !recovered.error ? { usageLeaseIds: verifiedLeaseIds } : {}),
+          ...(verifiedLeaseIds && !recovered.error && recovered.source !== 'unavailable'
+            ? { usageLeaseIds: verifiedLeaseIds, usageLeaseIdsVerified: true as const }
+            : {}),
         };
       } catch (error) {
         // Failed archive verification/accounting must not discard successful siblings.

@@ -187,6 +187,17 @@ test('slotless native review persists cold and resumed run receipts through froz
   assert.deepEqual(beforeRetryCapture.usageLeaseIds, ['lease']);
   assert.deepEqual(beforeRetryCapture.pendingUsageLeaseIds, ['retry-lease']);
   assert.equal(beforeRetryCapture.totalTokens, 400, 'registration preserves the last measurement');
+  // Older rows unioned the observed lease IDs into the prior measurement.
+  updateRun(run.id, {
+    sessionUsage: [
+      {
+        ...beforeRetryCapture,
+        usageLeaseIds: ['lease', 'retry-lease'],
+        usageLeaseIdsVerified: undefined,
+        pendingUsageLeaseIds: undefined,
+      },
+    ],
+  });
   await captureRunSessionUsage(run.id);
   assert.equal(requests.length, 2, 'the observed lease reopens usage capture');
   assert.deepEqual(requests[1].usageWindow?.nativeLeaseIds, ['lease', 'retry-lease']);

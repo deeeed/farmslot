@@ -4,6 +4,7 @@ import {
   primaryRoleForFlow,
   type Run,
   type RunnerSessionUsage,
+  verifiedSessionUsageLeaseIds,
 } from '@farmslot/protocol';
 
 import { resolveNativeContext } from '../agents/native-context.js';
@@ -92,10 +93,8 @@ function mergeUsageReceipt(
         earlierNative.executionNodeId === laterNative.executionNodeId)) &&
     (!previous.runId || !receipt.runId || previous.runId === receipt.runId);
   const coversMoreLeases = (candidate: RunnerSessionUsage, existing: RunnerSessionUsage) => {
-    if (candidate.scope !== 'run-delta' || candidate.source === 'unavailable' || candidate.error)
-      return false;
-    const covered = new Set(candidate.usageLeaseIds);
-    const prior = existing.usageLeaseIds ?? [];
+    const covered = new Set(verifiedSessionUsageLeaseIds(candidate));
+    const prior = verifiedSessionUsageLeaseIds(existing);
     return covered.size > prior.length && prior.every((lease) => covered.has(lease));
   };
   const best =
@@ -111,15 +110,19 @@ function mergeUsageReceipt(
   const other = best === previous ? receipt : previous;
   const leases = new Set(best.usageLeaseIds);
   const otherLeases = new Set(other.usageLeaseIds);
+  const verifiedLeases = new Set(verifiedSessionUsageLeaseIds(best));
+  const observedLeases = [
+    ...new Set([...(previous.usageLeaseIds ?? []), ...(receipt.usageLeaseIds ?? [])]),
+  ];
   const pendingLeases = sameNativeRun
     ? [
         ...new Set([
           ...(previous.pendingUsageLeaseIds ?? []),
           ...(receipt.pendingUsageLeaseIds ?? []),
-          ...(previous.usageLeaseIds ?? []),
-          ...(receipt.usageLeaseIds ?? []),
+          // A new verified window identifies which old observations are still outside it.
+          ...(verifiedLeases.size ? observedLeases : []),
         ]),
-      ].filter((lease) => !leases.has(lease))
+      ].filter((lease) => !verifiedLeases.has(lease))
     : best.pendingUsageLeaseIds;
   const differentDeltaWindow =
     best.scope === 'run-delta' &&
@@ -175,10 +178,11 @@ function mergeUsageReceipt(
     roles,
     contextIds: [...new Set([...(previous.contextIds ?? []), ...(receipt.contextIds ?? [])])],
     nativeSession: receipt.nativeSession ?? previous.nativeSession,
+    usageLeaseIdsVerified: best.usageLeaseIdsVerified,
     usageLeaseIds:
-      sameNativeRun || differentDeltaWindow
+      best.usageLeaseIdsVerified || (differentDeltaWindow && !sameNativeRun)
         ? best.usageLeaseIds
-        : [...new Set([...(previous.usageLeaseIds ?? []), ...(receipt.usageLeaseIds ?? [])])],
+        : observedLeases,
     pendingUsageLeaseIds: pendingLeases?.length ? pendingLeases : undefined,
     runnerSessionPath:
       best.runnerSessionPath ?? receipt.runnerSessionPath ?? previous.runnerSessionPath,
@@ -275,16 +279,17 @@ export function contextSessionReceipt(
   if (!captured?.actualModel) gaps.push('Actual model has not been reported');
   if (!(context.effort ?? context.nativeSession?.effort ?? run.effort))
     gaps.push('Effective effort has not been reported');
+  const pendingLeases = new Set(captured?.pendingUsageLeaseIds ?? []);
+  // Legacy IDs remain observations. The pending-coverage reader already reports those hints.
+  if (context.nativeSession && !captured?.usageLeaseIds?.includes(context.nativeSession.leaseId))
+    pendingLeases.add(context.nativeSession.leaseId);
   return {
     ...captured,
     runner: context.runner,
     runnerSessionId,
     runnerSessionPath: captured?.runnerSessionPath ?? context.runnerSessionPath ?? null,
     usageLeaseIds: captured?.usageLeaseIds,
-    pendingUsageLeaseIds:
-      context.nativeSession && !captured?.usageLeaseIds?.includes(context.nativeSession.leaseId)
-        ? [...new Set([...(captured?.pendingUsageLeaseIds ?? []), context.nativeSession.leaseId])]
-        : captured?.pendingUsageLeaseIds,
+    pendingUsageLeaseIds: pendingLeases.size ? [...pendingLeases] : undefined,
     nativeSession: context.nativeSession
       ? {
           sessionId: context.nativeSession.sessionId,
@@ -392,6 +397,7 @@ export function recoveredWorkerSessionReceipt(
   return {
     ...previous,
     ...usage,
+    usageLeaseIdsVerified: usage.usageLeaseIdsVerified,
     error: usage.error,
     runnerSessionId: session.runnerSessionId,
     runnerSessionPath: session.runnerSessionPath,

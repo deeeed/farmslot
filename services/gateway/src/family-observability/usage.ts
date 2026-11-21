@@ -6,6 +6,7 @@ import {
   preferRunUsageReceipt,
   type Run,
   type RunnerSessionUsage,
+  sessionUsageIncludesPriorRun,
 } from '@farmslot/protocol';
 import { reviewHistoryView } from '@farmslot/review-dispatch';
 
@@ -17,7 +18,7 @@ import {
 } from '../runtime/agent-session-rows.js';
 import {
   familyRunSessionUsageReceipts,
-  sessionUsageContributions,
+  familySessionUsageContributions,
 } from '../runtime/session-usage-selection.js';
 
 function sameReviewUsageWindow(
@@ -117,7 +118,7 @@ export function buildFamilyUsage(runs: readonly Run[]): FamilyObservabilityUsage
   for (const { run, usage, index } of rows) {
     add(run, usage, `receipt:${index}`);
   }
-  const canonical = sessionUsageContributions(ordered, (run) => inventory.get(run)!);
+  const canonical = familySessionUsageContributions(ordered, (run) => inventory.get(run)!);
   const contributions = ordered.flatMap((run) =>
     (canonical.get(run.id) ?? []).map((usage) => ({
       runId: run.id,
@@ -288,7 +289,10 @@ export function buildFamilyUsage(runs: readonly Run[]): FamilyObservabilityUsage
           usage.error ||
           (usage.totalTokens == null && (usage.costUsd == null || usage.costStatus === 'unpriced'))
             ? 'unavailable'
-            : shared || !key
+            : shared ||
+                !key ||
+                sessionUsageIncludesPriorRun(usage) ||
+                sessionUsageIncludesPriorRun(retained)
               ? 'shared-session'
               : 'session-total',
       };

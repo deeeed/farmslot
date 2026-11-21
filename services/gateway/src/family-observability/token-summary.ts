@@ -4,14 +4,15 @@ import {
   type FamilyObservabilityTokenSummary,
   type FlowType,
   type Run,
+  sessionUsageIncludesPriorRun,
 } from '@farmslot/protocol';
 
 import {
   capturedSessionUsage,
   familyRunSessionUsageReceipts,
+  familySessionUsageContributions,
   isHelperSession,
   isReviewSession,
-  sessionUsageContributions,
 } from '../runtime/session-usage-selection.js';
 
 const MILESTONE_FLOWS: ReadonlySet<FlowType> = new Set(['pr-complete', 'update-branch']);
@@ -94,7 +95,7 @@ export function buildFamilyObservabilityTokenSummary(
   const inventory = new Map(
     ordered.map((run) => [run, capturedSessionUsage(familyRunSessionUsageReceipts(run))]),
   );
-  const sessionRows = sessionUsageContributions(ordered, (run) => inventory.get(run)!);
+  const sessionRows = familySessionUsageContributions(ordered, (run) => inventory.get(run)!);
   let cumulativeTokens = 0;
   let cumulativeCost = 0;
   let hasAnyCost = false;
@@ -159,20 +160,25 @@ export function buildFamilyObservabilityTokenSummary(
     const review = parts(receipts.filter(isReviewSession));
     const helper = parts(receipts.filter(isHelperSession));
     const stepParts = parts(receipts);
-    const hasCapturedReceipts = (inventory.get(run)?.length ?? 0) > 0;
+    const captured = inventory.get(run) ?? [];
+    const hasCapturedReceipts = captured.length > 0;
+    const inherited = captured.filter(sessionUsageIncludesPriorRun);
     const hasMetrics = hasCapturedReceipts || hasRunMetrics(run, worker, review);
     if (hasMetrics) runsWithMetrics += 1;
     else missingRunIds.push(run.id);
 
     cumulativeTokens += stepParts.total;
-    const cost = receipts.length
-      ? receipts.every((row) => row.costUsd != null)
-        ? receipts.reduce((sum, row) => sum + num(row.costUsd), 0)
-        : null
-      : hasCapturedReceipts
-        ? 0
-        : (run.metrics.costEstimate ?? null);
-    if (receipts.some((row) => row.costUsd == null)) hasUnpriced = true;
+    const cost = inherited.length
+      ? null
+      : receipts.length
+        ? receipts.every((row) => row.costUsd != null)
+          ? receipts.reduce((sum, row) => sum + num(row.costUsd), 0)
+          : null
+        : hasCapturedReceipts
+          ? 0
+          : (run.metrics.costEstimate ?? null);
+    if (inherited.length || receipts.some((row) => row.costUsd == null)) hasUnpriced = true;
+    for (const row of inherited) unpricedModels.add(row.actualModel ?? row.model ?? 'unknown');
     for (const row of receipts)
       if (row.costUsd == null) unpricedModels.add(row.actualModel ?? row.model ?? 'unknown');
     if (cost != null) {

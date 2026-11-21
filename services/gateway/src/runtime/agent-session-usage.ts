@@ -1,4 +1,10 @@
-import { primaryRoleForFlow, type Run, type RunnerSessionUsage } from '@farmslot/protocol';
+import {
+  pendingSessionUsageLeaseIds,
+  primaryRoleForFlow,
+  type Run,
+  type RunnerSessionUsage,
+  verifiedSessionUsageLeaseIds,
+} from '@farmslot/protocol';
 
 import { loadSlotVars } from '../core/config.js';
 import { reviewWorkspaceCommandEnvOptions } from '../review-workspaces/skills.js';
@@ -67,20 +73,17 @@ function completedMeasurement(
   usage: RunnerSessionUsage,
 ): RunnerSessionUsage {
   const { error: _oldError, ...metadata } = row;
-  const coveredLeases = new Set(usage.usageLeaseIds);
+  const coveredLeases = new Set(verifiedSessionUsageLeaseIds(usage));
   const costUsd = usage.costUsd ?? null;
   const startedAt = row.startedAt ? Date.parse(row.startedAt) : NaN;
   const end = Date.parse(row.completedAt ?? usage.measuredAt);
   return {
     ...metadata,
     ...usage,
-    ...(usage.usageLeaseIds
-      ? {
-          pendingUsageLeaseIds: row.pendingUsageLeaseIds?.filter(
-            (lease) => !coveredLeases.has(lease),
-          ),
-        }
-      : {}),
+    usageLeaseIdsVerified: usage.usageLeaseIdsVerified,
+    pendingUsageLeaseIds: pendingSessionUsageLeaseIds(row).filter(
+      (lease) => !coveredLeases.has(lease),
+    ),
     costUsd,
     costStatus: costUsd === null ? 'unpriced' : 'estimated',
     costReason:
@@ -239,7 +242,7 @@ export function captureRunSessionUsage(runId: string): Promise<void> {
           key && nativeCompletion.has(key) ? nativeCompletion.get(key) : row.completedAt;
         // Only a settled measurement covering all observed leases can skip the read.
         if (
-          !row.pendingUsageLeaseIds?.length &&
+          !pendingSessionUsageLeaseIds(row).length &&
           row.source !== 'unavailable' &&
           !row.error &&
           completedAt &&

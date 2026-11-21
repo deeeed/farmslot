@@ -1,11 +1,13 @@
 import {
   matchesFailedReviewUsageWindow,
+  pendingSessionUsageLeaseIds,
   preferRunUsageReceipt,
   recordedSessionCost as recordedCost,
   retainedWorkerLifetimeSessions,
   type ReviewSessionTrace,
   type Run,
   type RunnerSessionUsage,
+  verifiedSessionUsageLeaseIds,
 } from '@farmslot/protocol';
 
 import { resolveReviewMode } from './catalog.js';
@@ -30,6 +32,7 @@ interface CostSession {
   contexts: Set<string>;
   leases: Set<string>;
   pendingLeases: Set<string>;
+  observedPendingLeases: Set<string>;
 }
 
 type SessionIdentity = Pick<
@@ -149,6 +152,7 @@ function accountingFields(row: RunnerSessionUsage | undefined) {
       row.roles,
       row.contextIds,
       row.usageLeaseIds,
+      row.usageLeaseIdsVerified,
       row.pendingUsageLeaseIds,
       row.scope,
       row.startedAt,
@@ -263,6 +267,7 @@ function costSessions(rows: readonly RunnerSessionUsage[]): Map<string | number,
         contexts: new Set(),
         leases: new Set(),
         pendingLeases: new Set(),
+        observedPendingLeases: new Set(),
       };
       sessions.set(key, session);
     }
@@ -272,10 +277,15 @@ function costSessions(rows: readonly RunnerSessionUsage[]): Map<string | number,
     for (const role of roles) session.phases.add(costPhase(role));
     for (const id of row.contextIds ?? []) session.contexts.add(id);
     for (const id of row.usageLeaseIds ?? []) session.leases.add(id);
-    for (const id of row.pendingUsageLeaseIds ?? []) session.pendingLeases.add(id);
+    for (const id of pendingSessionUsageLeaseIds(row)) session.pendingLeases.add(id);
+    for (const id of row.pendingUsageLeaseIds ?? []) session.observedPendingLeases.add(id);
   }
-  for (const session of sessions.values())
-    for (const id of session.receipt.usageLeaseIds ?? []) session.pendingLeases.delete(id);
+  for (const session of sessions.values()) {
+    for (const id of verifiedSessionUsageLeaseIds(session.receipt)) {
+      session.pendingLeases.delete(id);
+      session.observedPendingLeases.delete(id);
+    }
+  }
   sessionCache.set(rows, sessions);
   return sessions;
 }
@@ -447,12 +457,21 @@ export function reviewRoundCosts(
         (usage?.contextIds?.length ?? 0) > 1 ||
         (usage?.usageLeaseIds?.length ?? 0) > 1;
       const verified = session?.receipt;
+      const pending = session?.pendingLeases.size || pendingSessionUsageLeaseIds(usage).length;
+      const ownReceipt =
+        usage === rounds[index]?.usage &&
+        recordedCost(usage) !== null &&
+        !pendingSessionUsageLeaseIds(usage).length;
       const cost = recordedCost(
-        usage && verified && matchesRecordedRoundWindow(usage, verified) ? verified : usage,
+        usage && verified && !pending && matchesRecordedRoundWindow(usage, verified)
+          ? verified
+          : usage,
       );
       if (shared || (usage && sharedAcrossRuns(usage, priorSessions)))
         return [key, 'Round cost unavailable · shared session'];
-      if (session?.pendingLeases.size || (!session && usage?.pendingUsageLeaseIds?.length))
+      // A dedicated recorded attempt can still price itself when a legacy ledger has lease hints.
+      // A recorded pending retry, or a missing round receipt, cannot certify a complete round.
+      if (session?.observedPendingLeases.size || (pending && !ownReceipt))
         return [key, 'Round cost unavailable · pending usage'];
       // A warm attempt needs its own usage window. Run deltas cover the owning run.
       return [

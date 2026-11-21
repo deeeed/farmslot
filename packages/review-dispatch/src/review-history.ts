@@ -74,7 +74,6 @@ function reviewUsageLabel(usage: RunnerSessionUsage | undefined): string | null 
   const parts = [
     usage.turns != null ? `${usage.turns} turns` : null,
     usage.totalTokens != null ? `${usage.totalTokens.toLocaleString()} tokens` : null,
-    usage.costUsd != null ? `$${usage.costUsd.toFixed(4)}` : null,
   ].filter(Boolean);
   return parts.length ? parts.join(' · ') : 'Usage measured';
 }
@@ -322,6 +321,7 @@ function pipelineReviewUsage(
     turns: number(receipt.turns),
     contextIds: strings(receipt.contextIds),
     usageLeaseIds: strings(receipt.usageLeaseIds),
+    usageLeaseIdsVerified: receipt.usageLeaseIdsVerified === true ? true : undefined,
     pendingUsageLeaseIds: strings(receipt.pendingUsageLeaseIds),
     error: text(receipt.error) ?? undefined,
   };

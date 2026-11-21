@@ -107,6 +107,7 @@ function receiptKey(row?: RunnerSessionUsage) {
     row.roles,
     row.contextIds,
     row.usageLeaseIds,
+    row.usageLeaseIdsVerified,
     row.pendingUsageLeaseIds,
     row.scope,
     row.startedAt,

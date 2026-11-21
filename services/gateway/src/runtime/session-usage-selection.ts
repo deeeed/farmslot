@@ -3,6 +3,7 @@ import {
   primaryRoleForFlow,
   type Run,
   type RunnerSessionUsage,
+  sessionUsageIncludesPriorRun,
 } from '@farmslot/protocol';
 import { pipelineReviewReceipts } from '@farmslot/review-dispatch';
 
@@ -139,6 +140,16 @@ export function capturedSessionUsage(rows: readonly RunnerSessionUsage[]): Runne
       row.source !== 'unavailable' &&
       !row.error &&
       (row.totalTokens != null || row.costUsd != null),
+  );
+}
+
+/** Family totals use attributable receipts while keeping inherited captures in their inventory. */
+export function familySessionUsageContributions(
+  runs: readonly Run[],
+  inventory: (run: Run) => readonly RunnerSessionUsage[],
+) {
+  return sessionUsageContributions(runs, (run) =>
+    inventory(run).filter((row) => !sessionUsageIncludesPriorRun(row)),
   );
 }
 

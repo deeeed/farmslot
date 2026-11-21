@@ -297,7 +297,9 @@ export async function resolveNativeAgentSessionUsage(
       usage: {
         ...usage,
         ...(input.usageWindow ? { startedAt: input.usageWindow.startedAt } : {}),
-        ...(verifiedLeaseIds ? { usageLeaseIds: verifiedLeaseIds } : {}),
+        ...(verifiedLeaseIds && !usage.error && usage.source !== 'unavailable'
+          ? { usageLeaseIds: verifiedLeaseIds, usageLeaseIdsVerified: true as const }
+          : {}),
         scope: input.usageWindow ? 'run-delta' : 'session-total',
       },
       usageWindow,

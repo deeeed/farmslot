@@ -12,6 +12,34 @@ export function recordedSessionCost(usage: RunnerSessionUsage | undefined): numb
     : null;
 }
 
+export function verifiedSessionUsageLeaseIds(
+  row: RunnerSessionUsage | undefined,
+): readonly string[] {
+  return row?.usageLeaseIdsVerified &&
+    row.scope === 'run-delta' &&
+    row.source !== 'unavailable' &&
+    !row.error
+    ? (row.usageLeaseIds ?? [])
+    : [];
+}
+
+export function pendingSessionUsageLeaseIds(
+  row: RunnerSessionUsage | undefined,
+): readonly string[] {
+  if (!row) return [];
+  const verified = verifiedSessionUsageLeaseIds(row);
+  return [
+    ...new Set([
+      ...(row.pendingUsageLeaseIds ?? []),
+      ...(!verified.length ? (row.usageLeaseIds ?? []) : []),
+    ]),
+  ].filter((lease) => !verified.includes(lease));
+}
+
+export function sessionUsageIncludesPriorRun(row: RunnerSessionUsage | undefined): boolean {
+  return Boolean(row?.includesPriorRunLifetime && row.scope !== 'run-delta');
+}
+
 /** Reconcile observations of one conversation without substituting another usage window. */
 export function preferRunUsageReceipt(
   previous: RunnerSessionUsage,

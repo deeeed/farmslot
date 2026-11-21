@@ -713,3 +713,49 @@ test('a pipeline-only review contributes to Family totals and coverage once', ()
     );
   }
 });
+
+test('a pipeline-only warm lifetime is retained but cannot bill a run without its predecessor', () => {
+  const usage = receipt({
+    runnerSessionId: 'borrowed-review',
+    role: 'review',
+    roles: ['review'],
+    scope: 'session-total',
+    costUsd: 8,
+  });
+  const session = { priorRunId: 'absent-run', priorSessionId: 'borrowed-review' };
+  const current = makeRun({
+    id: 'current',
+    steps: [
+      {
+        name: 'review',
+        status: 'done',
+        outputs: {
+          usage,
+          session,
+          attempts: [{ loopNumber: 1, mode: 'warm', verdict: 'pass', session, usage }],
+        },
+      },
+    ],
+  });
+  const view = buildFamilyUsage([current]);
+  assert.equal(view.runCoverage[0]?.costCaptures, 1);
+  assert.equal(view.sessions[0]?.usage.includesPriorRunLifetime, true);
+  assert.equal(view.rounds[0]?.costScope, 'shared-session');
+  assert.deepEqual(view.contributions, []);
+  const chart = buildFamilyObservabilityTokenSummary([current], current.familyId);
+  assert.equal(chart.runPoints[0]?.stepCostEstimate, null);
+  assert.equal(chart.familyTotalCostEstimate, null);
+
+  const delta = { ...usage, scope: 'run-delta' as const, costUsd: 1 };
+  const verified = makeRun({
+    ...current,
+    sessionUsage: [delta],
+  });
+  const measured = buildFamilyUsage([verified]);
+  assert.equal(measured.contributions[0]?.usage.costUsd, 1);
+  assert.equal(
+    buildFamilyObservabilityTokenSummary([verified], current.familyId).runPoints[0]
+      ?.stepCostEstimate,
+    1,
+  );
+});

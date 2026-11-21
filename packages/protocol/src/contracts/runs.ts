@@ -729,8 +729,10 @@ export interface RunnerSessionUsage {
     import('./agents.js').NativeWorkerSessionBinding,
     'sessionId' | 'ownerPrincipalId' | 'executionNodeId' | 'stateDirectory'
   >;
-  /** Node-owned task leases covered by the measured conversation receipt. */
+  /** Recorded task lease IDs. Older receipts can include observed, unmeasured leases. */
   usageLeaseIds?: string[];
+  /** The native transcript measurement verified every ID in usageLeaseIds. */
+  usageLeaseIdsVerified?: true;
   /** Observed native task leases still awaiting a verified measurement. */
   pendingUsageLeaseIds?: string[];
   startedAt?: string | null;

@@ -105,7 +105,12 @@ test('a run delta with one recorded lease still leaves the warm round cost unava
     scope: 'run-delta',
     startedAt: '2026-11-19T17:30:00Z',
   });
-  const row = { ...usage, contextIds: ['round'], usageLeaseIds: ['lease'] };
+  const row = {
+    ...usage,
+    contextIds: ['round'],
+    usageLeaseIds: ['lease'],
+    usageLeaseIdsVerified: true as const,
+  };
   assert.equal(runCostBreakdown([row]).subtotal, 1.25);
   assert.equal(
     reviewRoundCosts([row], [{ key: 'round', mode: 'warm', usage }]).get('round'),
@@ -777,9 +782,14 @@ test('a receipt-less round cannot borrow a rebound actor price', () => {
 test('a cold round keeps its recorded price when a later lifetime receipt has more work', () => {
   const first = receipt('reviewer', 'review', 1, {
     totalTokens: 100,
+    scope: 'run-delta',
     usageLeaseIds: ['owning-lease'],
+    usageLeaseIdsVerified: true,
   });
-  const later = { ...first, totalTokens: 800, costUsd: 8, measuredAt: '2026-11-20T18:00:00Z' };
+  const later = receipt('reviewer', 'review', 8, {
+    totalTokens: 800,
+    measuredAt: '2026-11-20T18:00:00Z',
+  });
   const [label] = reviewRoundCosts(
     [first, later],
     [{ key: 'cold', mode: 'cold', usage: first }],
@@ -907,6 +917,7 @@ test('pending native captures keep the known subtotal and mark incomplete covera
   const first = receipt('retry', 'review', 2, {
     scope: 'run-delta',
     usageLeaseIds: ['first'],
+    usageLeaseIdsVerified: true,
     contextIds: ['reviewer'],
   });
   const pending = { ...first, pendingUsageLeaseIds: ['retry', 'retry'] };
@@ -936,6 +947,7 @@ test('a failed cold capture can recover an exactly owned native round price', ()
   const recovered = receipt('native', 'review', 4, {
     scope: 'run-delta',
     usageLeaseIds: ['lease'],
+    usageLeaseIdsVerified: true,
     contextIds: ['actor'],
     startedAt,
   });
@@ -954,5 +966,27 @@ test('a failed cold capture can recover an exactly owned native round price', ()
   assert.equal(
     reviewRoundCosts([recovered], [{ ...round, mode: 'warm' }]).get(round.key),
     'Round cost unavailable',
+  );
+});
+
+test('persisted legacy lease associations show a coverage gap even without a live context', () => {
+  const old = receipt('legacy', 'review', 4, {
+    scope: 'run-delta',
+    usageLeaseIds: ['first', 'retry'],
+  });
+  assert.match(litText(renderRunCost([old])), /Known subtotal \$4\.00.*2 pending usage captures/s);
+});
+
+test('a dedicated cold attempt prices its own receipt alongside unverified ledger coverage', () => {
+  const own = receipt('legacy-review', 'review', 2.25, { scope: 'run-delta' });
+  const ledger = { ...own, usageLeaseIds: ['observed-lease'] };
+  const round = { key: 'cold', mode: 'cold' as const, usage: own };
+  const costs = reviewRoundCosts([ledger], [round]);
+  assert.equal(costs.get(round.key), 'Round cost $2.25');
+  assert.match(litText(renderRunCost([ledger])), /1 pending usage capture/);
+  const pending = { ...ledger, pendingUsageLeaseIds: ['retry'] };
+  assert.equal(
+    reviewRoundCosts([pending], [round]).get(round.key),
+    'Round cost unavailable · pending usage',
   );
 });
