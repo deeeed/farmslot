@@ -321,6 +321,11 @@ export class RunDetail extends RunDetailState {
         comparisonSnapshot: this._recordedEvidence?.comparisonSnapshot,
         criterionSourceUrl: this.run?.links?.find((link) => link.label === 'Jira')?.url,
         package: this._recordedEvidence?.input,
+        // Saved recipe reads have no resource stamp. Hold only a gateway-observed graph.
+        pendingFlow:
+          !output && this.recipeQuery.belongsToWorkspace && this._recipeObservation.resourceState
+            ? this._recipeObservation.data?.pendingFlow
+            : undefined,
         contractVersion: this._recordedEvidence?.contractVersion,
         claimOverrideAuthority: this._recordedEvidence?.claimOverrideAuthority,
         visualReviewAuthority: this._recordedEvidence?.visualReviewAuthority,

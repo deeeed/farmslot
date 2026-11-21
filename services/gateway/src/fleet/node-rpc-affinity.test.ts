@@ -4,7 +4,7 @@ import test from 'node:test';
 
 import { WebSocket } from 'ws';
 
-import { registerNode, unregisterByWs } from './machine-registry.js';
+import { type ConnectedNode, registerNode, unregisterByWs } from './machine-registry.js';
 import {
   failRequestsBoundTo,
   handleNodeExecOutput,
@@ -84,7 +84,11 @@ class ExecSocket extends EventEmitter {
   }
 }
 
-async function startScopedExec(t: test.TestContext, socket: ExecSocket) {
+async function startScopedExec(
+  t: test.TestContext,
+  socket: ExecSocket,
+  onDispatch?: (node: ConnectedNode) => void,
+) {
   const controller = new AbortController();
   const output: string[] = [];
   registerNode(
@@ -107,11 +111,55 @@ async function startScopedExec(t: test.TestContext, socket: ExecSocket) {
     timeout: 1000,
     closeoutTimeoutMs: 10,
     onOutput: (_stream, data) => output.push(data),
+    onDispatch,
   });
   // waitForNode resolves the registered socket before sending in the next microtask.
   await Promise.resolve();
   return { controller, result, output, request: socket.sent[0]! };
 }
+
+test('remote exec waits for send acceptance and never reports a failed send', async (t) => {
+  const socket = new ExecSocket();
+  let acknowledge: ((error?: Error) => void) | undefined;
+  t.mock.method(socket, 'send', (raw: string, callback?: (error?: Error) => void) => {
+    socket.sent.push(JSON.parse(raw));
+    acknowledge = callback;
+  });
+  const dispatches: ConnectedNode[] = [];
+  const { result } = await startScopedExec(t, socket, (node) => dispatches.push(node));
+  assert.equal(socket.sent[0]?.method, 'exec');
+  assert.ok(acknowledge);
+  const rejected = assert.rejects(result, NodeExecUnconfirmedError);
+  const before = dispatches.length;
+  acknowledge(new Error('fixture write failure'));
+  await rejected;
+  assert.equal(before, 0);
+  assert.deepEqual(dispatches, []);
+});
+
+test('an RPC reports no send acceptance when the socket write fails', async (t) => {
+  const socket = new ExecSocket();
+  const error = new Error('fixture write failure');
+  t.mock.method(socket, 'send', (_raw: string, callback?: (failure?: Error) => void) => {
+    queueMicrotask(() => callback?.(error));
+  });
+  let accepted = 0;
+  await assert.rejects(
+    sendNodeRequest(
+      { machine: 'node-a', pid: 1, connectedAt: new Date().toISOString(), ws: socket.asSocket() },
+      'node.link.command',
+      {},
+      { requireSameConnection: true, timeout: 100, onSent: () => accepted++ },
+    ),
+    (failure: unknown) => {
+      assert(failure instanceof NodeTransportUnavailableError);
+      assert.equal(failure.reason, 'disconnected');
+      assert.equal(failure.cause, error);
+      return true;
+    },
+  );
+  assert.equal(accepted, 0);
+});
 
 test(
   'exec cancellation stays on its connection and settles only with the original result',
