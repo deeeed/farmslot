@@ -67,12 +67,25 @@
         "expected": "visible",
         "timeout_ms": 30000,
         "intent": "The approved turn ended; its watched tool calls sit under one open fold row.",
+        "next": "fold-open-before"
+      },
+      "fold-open-before": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts fold-state open",
+        "intent": "The watched fold starts open; record which fold row it is.",
         "next": "close-work-fold"
       },
       "open-work-fold": {
         "action": "ui.press",
         "test_id": "companion-native-work-fold",
         "intent": "Open the finished turn's tools again from their fold row.",
+        "next": "fold-open-again"
+      },
+      "fold-open-again": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts fold-state open",
+        "intent": "The same fold row shows open again.",
+        "proves": ["work-fold"],
         "next": "reveal-tools"
       },
       "reveal-tools": {
@@ -100,6 +113,12 @@
         "action": "ui.press",
         "test_id": "companion-native-work-fold",
         "intent": "Fold the finished turn's tools away.",
+        "next": "fold-closed"
+      },
+      "fold-closed": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts fold-state closed",
+        "intent": "The same fold row now shows closed.",
         "next": "tools-hidden"
       },
       "tools-hidden": {

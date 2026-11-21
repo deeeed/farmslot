@@ -36,6 +36,8 @@ type State = {
   commandId: string;
   requestId?: string;
   evidence: string;
+  /** The finished-turn fold row's label without its open/closed marker, once fold-state read it. */
+  foldLabel?: string;
 };
 let state: State;
 const save = () => writeFileSync(stateFile, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
@@ -233,6 +235,42 @@ try {
       await delay(600);
     }
     console.log(JSON.stringify({ phase, wanted, steps }));
+  } else if (phase === 'fold-state') {
+    // `fold-state <open|closed>`: the finished-turn fold row on screen shows that state. The first
+    // read records which fold it is; later reads must find that same fold, so a toggle that did
+    // nothing, or a different row, fails.
+    const expected = process.argv[3];
+    assert(expected === 'open' || expected === 'closed', 'fold-state needs open or closed');
+    const device = createAgentDeviceClient({
+      stateDir: process.env.FARMSLOT_AGENT_DEVICE_STATE_DIR,
+    });
+    const active = (await device.sessions.list()).find(
+      (session) => session.device.id === process.env.IOS_SIMULATOR,
+    );
+    assert(active, 'The recipe must own the private simulator before reading the fold');
+    const observed = await device.capture.snapshot({
+      session: active.name,
+      platform: 'ios',
+      udid: process.env.IOS_SIMULATOR,
+      interactiveOnly: false,
+    });
+    // NativeWorkCard labels the row "▾ Worked for … · N tools" when open and "▸ …" when closed.
+    const folds = observed.nodes
+      .filter((node) => node.identifier === 'companion-native-work-fold' && node.label)
+      .map((node) => ({
+        marker: node.label!.trim().charAt(0),
+        rest: node.label!.trim().slice(1).trim(),
+      }));
+    const fold = state.foldLabel
+      ? folds.find((entry) => entry.rest === state.foldLabel)
+      : folds.length === 1
+        ? folds[0]
+        : undefined;
+    assert(fold, `Expected one finished-turn fold row on screen: ${JSON.stringify(folds)}`);
+    assert.equal(fold.marker, expected === 'open' ? '\u25be' : '\u25b8', `Fold is not ${expected}`);
+    state.foldLabel = fold.rest;
+    save();
+    console.log(JSON.stringify({ phase, state: expected, fold: fold.rest }));
   } else if (phase === 'answered') {
     const page = await wait(
       (value) =>

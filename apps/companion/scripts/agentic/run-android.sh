@@ -334,11 +334,11 @@ ANDROID_LINE=""
 ANDROID_EXPO_TARGET=""
 if command -v adb >/dev/null 2>&1; then
   ANDROID_LINE="$(adb devices -l | awk -v serial="${ANDROID_TARGET}" '$1 == serial && $2 == "device" { print; exit }')"
-  if [[ "${ANDROID_TARGET}" == emulator-* ]]; then
-    # Expo names an emulator by its AVD, not by the model adb reports.
-    ANDROID_EXPO_TARGET="$(adb -s "${ANDROID_TARGET}" emu avd name </dev/null 2>/dev/null | tr -d '\r' | head -1)"
-  else
-    ANDROID_EXPO_TARGET="$(android_model_token_from_adb_line "${ANDROID_LINE}")"
+  # Expo matches --device by serial before name. The serial is the one device adb reverse and the
+  # install use; a model or AVD name can match another attached device, or a second instance of
+  # the same AVD.
+  if [[ -n "${ANDROID_LINE}" ]]; then
+    ANDROID_EXPO_TARGET="${ANDROID_TARGET}"
   fi
 fi
 

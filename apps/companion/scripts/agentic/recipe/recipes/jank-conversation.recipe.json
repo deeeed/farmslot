@@ -33,12 +33,12 @@
   "proofTargets": [
     {
       "id": "conversation-jank-budget",
-      "claim": "Opening, streaming into and scrolling a native conversation hold the jank budget on this Android device.",
+      "claim": "Streaming into and scrolling back through a native conversation hold the sustained FPS budget on this Android device; opening is measured and reported.",
       "proofMode": "state"
     },
     {
       "id": "conversation-follow",
-      "claim": "The reader follows the end while the turn streams and stops following after scrolling back.",
+      "claim": "The reader follows the end while the turn streams and stops following after scrolling back (checked only with require_follow=yes).",
       "proofMode": "state"
     }
   ],
@@ -94,15 +94,25 @@
         "action": "command",
         "cmd": "NATIVE_STREAM_FRAMES={{params.frames}} NATIVE_STREAM_SEND=gateway NATIVE_STREAM_REQUIRE_FOLLOW={{params.require_follow}} node scripts/agentic/native-stream-proof.mjs streams-following",
         "intent": "The streamed turn ends; every sample during it stayed at the end.",
-        "next": "assert-streams-following"
+        "next": "follow-checked-stream"
+      },
+      "follow-checked-stream": {
+        "action": "switch",
+        "value": "{{params.require_follow}}",
+        "equals": "yes",
+        "intent": "Claim follow only when this run checked it.",
+        "cases": {
+          "match": "assert-streams-following"
+        },
+        "default": "stream-end"
       },
       "assert-streams-following": {
         "action": "assert_output",
         "source": "streams-following",
         "stream": "stdout",
-        "match": "\"phase\":\"streams-following\"",
+        "match": "\"followChecked\":true",
         "proves": ["conversation-follow"],
-        "intent": "The streamed turn finished and its follow checks passed.",
+        "intent": "The streamed turn reached the app and every follow check passed.",
         "next": "stream-end"
       },
       "stream-end": {
@@ -117,6 +127,17 @@
           "fps": "{{params.target_fps}}"
         },
         "intent": "Close the streaming window against its budget.",
+        "next": "stream-fps-sampled"
+      },
+      "stream-fps-sampled": {
+        "action": "assert_output",
+        "source": "stream-end",
+        "assert": {
+          "path": "$.sustainedFps",
+          "operator": "gt",
+          "value": 0
+        },
+        "intent": "This window rendered at least one 500 ms stretch, so its sustained FPS is measured.",
         "next": "scroll-start"
       },
       "scroll-start": {
@@ -214,21 +235,42 @@
           "fps": "{{params.target_fps}}"
         },
         "intent": "Close the scroll window against its budget.",
+        "next": "scroll-fps-sampled"
+      },
+      "scroll-fps-sampled": {
+        "action": "assert_output",
+        "source": "scroll-end",
+        "assert": {
+          "path": "$.sustainedFps",
+          "operator": "gt",
+          "value": 0
+        },
+        "intent": "This window rendered at least one 500 ms stretch, so its sustained FPS is measured.",
         "next": "reader-away"
       },
       "reader-away": {
         "action": "command",
         "cmd": "NATIVE_STREAM_FRAMES={{params.frames}} NATIVE_STREAM_REQUIRE_FOLLOW={{params.require_follow}} node scripts/agentic/native-stream-proof.mjs reader-away",
         "intent": "After scrolling back the reader no longer follows the end.",
-        "next": "assert-reader-away"
+        "next": "follow-checked-away"
+      },
+      "follow-checked-away": {
+        "action": "switch",
+        "value": "{{params.require_follow}}",
+        "equals": "yes",
+        "intent": "Claim follow only when this run checked it.",
+        "cases": {
+          "match": "assert-reader-away"
+        },
+        "default": "report"
       },
       "assert-reader-away": {
         "action": "assert_output",
         "source": "reader-away",
         "stream": "stdout",
-        "match": "\"phase\":\"reader-away\"",
+        "match": "\"followChecked\":true",
         "proves": ["conversation-follow"],
-        "intent": "The reader-away checks passed.",
+        "intent": "The reader-away follow check passed.",
         "next": "report"
       },
       "report": {

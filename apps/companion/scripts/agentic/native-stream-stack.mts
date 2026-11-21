@@ -24,6 +24,9 @@
  * synthetic runs drop. NATIVE_STREAM_TOKEN_FILE, a new path, receives the setup operator's access
  * token (mode 0600) for native-conversation-proof.mts; POST /token writes a fresh one, since access
  * tokens expire within a long proof. The clean stop deletes the file.
+ * NATIVE_STREAM_SEED_RUNS=<n> creates n active runs (fix-bug, status monitoring, no slot; the run
+ * engine is off) so Companion's Review queue has rows to scroll, as jank.recipe.json's review-scroll
+ * window needs.
  * NATIVE_STREAM_SEED_DIR is copied into the session folder, which
  * then becomes a Git repository with one commit, so turns get checkpoints and diffs.
  *
@@ -289,20 +292,47 @@ function logOutboundFrames(wss: GatewaySocketServer, file: string) {
     socket.send = (data: unknown, ...rest: unknown[]) => {
       const text =
         typeof data === 'string' ? data : Buffer.isBuffer(data) ? data.toString('utf8') : '';
-      fs.appendFileSync(
-        file,
-        `${JSON.stringify({
-          at: performance.timeOrigin + performance.now(),
-          socket: id,
-          event: /"event":"([^"]+)"/.exec(text)?.[1],
-          bytes: text.length,
-          sequences: [...text.matchAll(/"sequence":(\d+)/g)].map((match) => Number(match[1])),
-          kinds: [...text.matchAll(/"kind":"(\w+)"/g)].map((match) => match[1]),
-        })}\n`,
-      );
+      try {
+        fs.appendFileSync(
+          file,
+          `${JSON.stringify({
+            at: performance.timeOrigin + performance.now(),
+            socket: id,
+            event: /"event":"([^"]+)"/.exec(text)?.[1],
+            bytes: Buffer.isBuffer(data) ? data.length : Buffer.byteLength(text),
+            ...frameEvents(text),
+          })}\n`,
+        );
+      } catch (cause) {
+        // A wire log that stops recording would make the measurement wrong: end the stack.
+        void finish(cause);
+      }
       send(data, ...rest);
     };
   });
+}
+
+/** The native events a frame carries (their sequences), not the page cursor, and update kinds. */
+function frameEvents(text: string): { sequences: number[]; kinds: string[] } {
+  const sequences: number[] = [];
+  const kinds: string[] = [];
+  const walk = (value: unknown, key?: string): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const sequence = (item as { sequence?: unknown } | null)?.sequence;
+        if (key === 'events' && typeof sequence === 'number') sequences.push(sequence);
+        walk(item);
+      }
+    } else if (value && typeof value === 'object') {
+      for (const [name, child] of Object.entries(value)) {
+        if (name === 'kind' && typeof child === 'string') kinds.push(child);
+        walk(child, name);
+      }
+    }
+  };
+  // Frames that are not JSON (none are expected) carry no events.
+  if (text.startsWith('{')) walk(JSON.parse(text));
+  return { sequences, kinds };
 }
 
 async function start() {
@@ -408,6 +438,20 @@ async function start() {
   running.wss = createWebSocketServer(running.server, auth);
   if (wireLog) logOutboundFrames(running.wss, wireLog);
   initServerGlobals();
+  const seedRuns = Number(process.env.NATIVE_STREAM_SEED_RUNS ?? '0');
+  assert(Number.isSafeInteger(seedRuns) && seedRuns >= 0, 'NATIVE_STREAM_SEED_RUNS: 0 or more');
+  if (seedRuns) {
+    const { createRun, updateRun } = await import('../../../../services/gateway/src/runs/store.js');
+    for (let index = 1; index <= seedRuns; index++) {
+      const run = createRun({
+        flowType: 'fix-bug',
+        project: 'stream',
+        ticketOrPr: `STREAM-${index}`,
+        mode: 'interactive',
+      });
+      updateRun(run.id, { status: 'monitoring' });
+    }
+  }
   await listen(running.server, port);
   const grant = await auth.writer.exchangePersonCredential(credential.secret, {
     deviceName: 'Companion stream setup',
@@ -432,7 +476,9 @@ async function start() {
         credential: { token: fresh.accessToken },
         timeout: 60_000,
       }).connect();
-      await previous?.close();
+      // New calls use the new connection; one already in flight on the old one gets the client's
+      // full 60 s timeout before that connection closes.
+      setTimeout(() => previous?.close(), 60_000).unref();
     })().catch((cause: unknown) => void finish(cause));
   }, 20 * 60_000);
   running.renewal.unref();
@@ -444,7 +490,10 @@ async function start() {
         deviceName: 'Companion stream setup',
         deviceKind: 'cli',
       });
-      await writeFile(tokenFile, `${fresh.accessToken}\n`, { mode: 0o600 });
+      // Replaced in one rename, so a proof phase never reads a half-written token.
+      const next = `${tokenFile}.${process.pid}.tmp`;
+      await writeFile(next, `${fresh.accessToken}\n`, { mode: 0o600, flag: 'wx' });
+      fs.renameSync(next, tokenFile);
     };
   }
 

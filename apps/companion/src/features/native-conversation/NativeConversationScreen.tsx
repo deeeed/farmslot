@@ -472,11 +472,10 @@ export function NativeConversationScreen({
             onScrollBeginDrag={() => {
               autoScrolling.current = false;
             }}
-            onMomentumScrollEnd={(event) => {
-              viewport.current.offset = event.nativeEvent.contentOffset.y;
-              if (!nativeAwayFromEnd(distanceFromEnd(viewport.current.content)))
-                autoScrolling.current = false;
-            }}
+            // The momentum's final offset, through the same follow rules as a scroll event: Android
+            // can drop the last scroll event of a fling (scrollEventThrottle), and the reader would
+            // otherwise stay marked away after flinging back to the end.
+            onMomentumScrollEnd={onScroll}
             scrollEventThrottle={100}
             onContentSizeChange={(_, height) => {
               viewport.current.content = height;

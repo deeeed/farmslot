@@ -45,9 +45,12 @@ const targetArgs = android
   ? ['--platform', 'android', '--serial', target]
   : ['--platform', 'ios', '--udid', target];
 /** Opens a link in the app the way the system would: simctl on iOS, a VIEW intent on Android. */
-const openUrl = (link) =>
-  android
-    ? // adb shell joins its arguments into one remote shell command; quote the link's `&`.
+const openUrl = (link) => {
+  // adb shell joins its arguments into one remote shell command: the link is single-quoted there,
+  // so it must not contain a single quote itself.
+  assert(!android || !link.includes("'"), `Cannot pass a link with a single quote to adb: ${link}`);
+  return android
+    ? // Quoted for the remote shell, which would otherwise split the link at its `&`.
       execFileSync(
         'adb',
         [
@@ -66,6 +69,7 @@ const openUrl = (link) =>
         { stdio: 'ignore' },
       )
     : execFileSync('xcrun', ['simctl', 'openurl', target, link]);
+};
 const agentDevice = fileURLToPath(
   new URL('../../../../node_modules/.bin/agent-device', import.meta.url),
 );
@@ -192,7 +196,7 @@ const report = (result) => console.log(JSON.stringify({ phase, ...result }));
  * comes from scroll events, and Android drops one that lands within scrollEventThrottle of the
  * last: after the final jump of a turn it can stay ~100 dp behind a list that is at its end.
  */
-function endLayout() {
+function endLayout(turnLastLine) {
   const shot = device('snapshot');
   assert(shot.success, JSON.stringify(shot.error));
   const nodes = shot.data.nodes;
@@ -207,17 +211,28 @@ function endLayout() {
       node.index !== list.index && inside.has(node.index) && node.label && node.rect?.height > 0,
   );
   assert(rows.length, 'The transcript has no laid-out rows');
+  // The streamed turn's own text must be laid out: a list still showing earlier turns would
+  // otherwise read as at its end.
+  const turnRow = turnLastLine && rows.find((node) => node.label.includes(turnLastLine));
+  assert(!turnLastLine || turnRow, `The new turn's last line is not laid out: ${turnLastLine}`);
   const lastBottom = Math.max(...rows.map((node) => node.rect.y + node.rect.height));
-  const density = Number(
-    /(\d+)\s*$/.exec(
-      execFileSync('adb', ['-s', target, 'shell', 'wm', 'density'], { encoding: 'utf8' }).trim(),
-    )[1],
-  );
+  const densityOutput = execFileSync('adb', ['-s', target, 'shell', 'wm', 'density'], {
+    encoding: 'utf8',
+  }).trim();
+  const densityMatch = /(\d+)\s*$/.exec(densityOutput);
+  assert(densityMatch, `Unexpected wm density output: ${densityOutput}`);
+  const density = Number(densityMatch[1]);
   const listBottom = list.rect.y + list.rect.height;
   // Outside a recipe this script opened its own session: hand the device back.
   if (session === 'native-stream-proof')
     assert(device('close').success, 'Could not release the device');
-  return { gap: ((listBottom - lastBottom) * 160) / density, listBottom, lastBottom, density };
+  return {
+    gap: ((listBottom - lastBottom) * 160) / density,
+    listBottom,
+    lastBottom,
+    density,
+    ...(turnRow ? { turnRowBottom: turnRow.rect.y + turnRow.rect.height } : {}),
+  };
 }
 /** True when follow is only reported (NATIVE_STREAM_REQUIRE_FOLLOW=no); otherwise the frame must have it. */
 const followless = (value) => {
@@ -308,7 +323,7 @@ if (phase === 'setup') {
       followless(sample) || (sample.follow.following && sample.follow.distanceFromEnd < SLACK),
     'following at the end',
   );
-  report({ follow: value.follow ?? null });
+  report({ follow: value.follow ?? null, ...(requireFollow ? { followChecked: true } : {}) });
 } else if (phase === 'streams-following') {
   // The composer just sent a prompt: while it streams, every sample follows and sits at the end.
   // NATIVE_STREAM_SEND=gateway sends it from another client instead (the control port), for a run
@@ -329,13 +344,21 @@ if (phase === 'setup') {
     if (failure) throw failure;
   };
   const samples = [];
+  // The app has the new turn once its frame holds more events than before the prompt and a newer
+  // last assistant entry: the gateway finishing the turn alone does not mean the app received it.
+  const start = await frame();
+  assert(start, 'No conversation frame before the stream');
+  const reached = (value) =>
+    value.eventCount > start.eventCount &&
+    lastAssistant(value)?.key !== undefined &&
+    lastAssistant(value)?.key !== lastAssistant(start)?.key;
   const deadline = Date.now() + 120000;
   for (;;) {
     assert(Date.now() < deadline, 'Timed out waiting for the streamed turn');
     const { completedTurns } = await call('GET', '/read');
-    const done = completedTurns > before;
     let value = await frame();
-    if (done && value?.caughtUp && followless(value)) {
+    const done = completedTurns > before && value?.caughtUp && reached(value);
+    if (done && followless(value)) {
       // Follow is only reported: the turn streamed and nothing is checked.
       await sent();
       writeState({ ...readState(), completedTurns });
@@ -349,10 +372,11 @@ if (phase === 'setup') {
       }
       samples.push(value.follow);
     }
-    if (done && value?.caughtUp) {
+    if (done) {
       // Let the last delta's layout settle before reading the final position.
       await delay(1000);
       const settled = await frame();
+      assert(settled && reached(settled), 'The app lost the streamed turn');
       const off = samples.filter(
         (follow) => !follow.following || follow.distanceFromEnd > STREAM_ALLOWANCE,
       );
@@ -371,7 +395,8 @@ if (phase === 'setup') {
       );
       // On Android the end is read from the final row's layout (see endLayout); a list past its
       // end shows a negative gap, which fails too.
-      const layout = android ? endLayout() : undefined;
+      const turnLastLine = lastAssistant(settled).text.trim().split('\n').at(-1).trim();
+      const layout = android ? endLayout(turnLastLine) : undefined;
       assert(
         layout ? layout.gap >= 0 && layout.gap < SLACK : settled.follow.distanceFromEnd < SLACK,
         `Not at the end after the stream: ${JSON.stringify({ follow: settled.follow, layout })}`,
@@ -383,6 +408,8 @@ if (phase === 'setup') {
         maxDistance: Math.max(...samples.map((follow) => follow.distanceFromEnd)),
         final: settled.follow,
         ...(layout ? { finalRowLayout: layout } : {}),
+        turnEvents: settled.eventCount,
+        followChecked: true,
         completedTurns,
       });
       break;
@@ -401,7 +428,7 @@ if (phase === 'setup') {
       followless(sample) || (!sample.follow.following && sample.follow.distanceFromEnd >= SLACK),
     'the reader away from the end',
   );
-  report({ follow: value.follow ?? null });
+  report({ follow: value.follow ?? null, ...(requireFollow ? { followChecked: true } : {}) });
 } else if (phase === 'scrolled-away') {
   // The reader flicks the conversation back toward its start.
   const flung = device('gesture', 'fling', 'down', '200', '520', '400', '150');
