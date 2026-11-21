@@ -47,11 +47,16 @@ import {
   type EvidenceReviewerJudgments,
   type EvidenceReviewerSelection,
 } from '../shared/evidence-reviewer.js';
-import { evidenceReviewerSelection } from '../shared/evidence-reviewer-recording.js';
+import {
+  evidenceReviewerSelection,
+  gateReviewArtifactPath,
+  gateReviewAttemptMatches,
+} from '../shared/evidence-reviewer-recording.js';
 import {
   type EvidenceReviewerView,
   evidenceReviewerViewFromHash,
   evidenceReviewerViewKey,
+  reviewLinkMatchesRun,
   writeEvidenceReviewerHash,
 } from '../shared/evidence-reviewer-url-state.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
@@ -100,7 +105,11 @@ import {
   renderReadyRecipeTab,
 } from './ready-workspace-tab-renderers.js';
 import { loadRecipeRunnerUiOptionsForProject } from './recipe-runner-options-model.js';
-import { isWorkspaceDiffArtifact, workspaceArtifactBasename } from './workspace-artifacts.js';
+import {
+  frozenGateArtifactUrl,
+  isWorkspaceDiffArtifact,
+  workspaceArtifactBasename,
+} from './workspace-artifacts.js';
 
 @customElement('ready-workspace')
 export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
@@ -114,6 +123,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   @state() private _blockerSheet: ReadyBlockerSheet | null = null;
   @state() private _evidenceLoading = true;
   @state() private _evidenceError = '';
+  @state() private _reviewLinkError = '';
   @state() private _evidenceModel: EvidenceReviewModel | null = null;
   private _evidenceSource?: RunRecipeRunsForRunResult;
   private _evidenceDecision?: import('@farmslot/protocol').RunDecision;
@@ -143,6 +153,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       this._attestingDecisionId = null;
       this._acceptingFindingsDecisionId = null;
       this._reviewLinkKey = '';
+      this._reviewLinkError = '';
       this._evidenceItems = null;
       this._evidenceRecipeRunId = null;
       this._lightboxOpen = false;
@@ -499,28 +510,59 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     const model = this._evidenceModel;
     const view = evidenceReviewerViewFromHash();
     const key = evidenceReviewerViewKey(view);
-    if (!view) this._reviewLinkKey = '';
-    if (!model || !view || key === this._reviewLinkKey) return;
+    if (!view) {
+      this._reviewLinkKey = '';
+      this._reviewLinkError = '';
+    }
+    if (!model || !view || this._evidenceLoading) return;
+    if (
+      !gateReviewAttemptMatches(this._evidenceSource, view.recipeGroupId, view.recordingRevision)
+    ) {
+      this._review = null;
+      this._reviewLinkKey = '';
+      this._reviewLinkError = 'The recipe attempt in this review link is unavailable at this gate.';
+      return;
+    }
+    this._reviewLinkError = '';
+    if (key === this._reviewLinkKey) return;
     if (!model.claims.some((claim) => claim.id === view.claimId)) return;
     this._reviewLinkKey = key;
     model.selectClaim(view.claimId);
+    const gatePath = (path: string) =>
+      view.recipeGroupId ? gateReviewArtifactPath(model, path) : path;
     this._review = {
       ...evidenceReviewerSelection({
         model,
         claimId: view.claimId,
-        resolveUrl: (path) => this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
-        opened: view.path ? this._evidenceItem(view.path) : undefined,
+        resolveUrl: this._frozenEvidenceUrl,
+        opened: view.path ? this._evidenceItem(gatePath(view.path)) : undefined,
+        recordingPath: view.recordingPath ? gatePath(view.recordingPath) : undefined,
+        recordingRevision: view.recordingRevision,
       }),
       atMs: view.atMs,
       check: view.check,
+      timelinePage: view.timelinePage,
       link: ++this._reviewLinkCount,
     };
   }
 
   /** The review reports its view; the link follows it. */
-  private _onReviewerView(view: EvidenceReviewerView): void {
-    this._reviewLinkKey = evidenceReviewerViewKey(view);
-    writeEvidenceReviewerHash(view);
+  private _onReviewerView(view: EvidenceReviewerView, runId?: string): void {
+    if (runId && !reviewLinkMatchesRun(runId)) return;
+    const linked = evidenceReviewerViewFromHash();
+    const next = { ...view, recipeGroupId: linked?.recipeGroupId };
+    if (
+      this._review &&
+      (this._review.recordingPath !== view.recordingPath ||
+        this._review.recordingRevision !== view.recordingRevision)
+    )
+      this._review = {
+        ...this._review,
+        recordingPath: view.recordingPath,
+        recordingRevision: view.recordingRevision,
+      };
+    this._reviewLinkKey = evidenceReviewerViewKey(next);
+    writeEvidenceReviewerHash(next);
   }
 
   override updated(changed: Map<string, unknown>): void {
@@ -563,6 +605,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   override render() {
     const payload = this._payload;
     if (!payload) return renderReadyWorkspaceEmpty();
+    const reviewRunId = this._canonicalRun?.id;
     return html` ${renderReadyWorkspaceFrame({
       payload,
       renderReview: () =>
@@ -574,11 +617,13 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
                 writeEvidenceReviewerHash(null);
               }}
               @reviewer-view=${(event: CustomEvent<EvidenceReviewerView>) =>
-                this._onReviewerView(event.detail)}
+                this._onReviewerView(event.detail, reviewRunId)}
               @reviewer-files=${(event: CustomEvent<{ claimId: string }>) =>
                 this._openClaimGallery(event.detail.claimId)}
             ></evidence-reviewer>`
-          : nothing,
+          : this._reviewLinkError
+            ? html`<p role="status">${this._reviewLinkError}</p>`
+            : nothing,
       packagePending: this._packagePending,
       splitPct: this._splitPct,
       // A held package diff keeps the gate readable offline; its actions still wait.
@@ -1001,15 +1046,20 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     };
   }
 
+  private _frozenEvidenceUrl = (path: string): string =>
+    frozenGateArtifactUrl(this.runId, path, {
+      bundleDigest: this._payload?.prPackage?.artifactBundle?.bundleDigest,
+      decisionId: this._gateDecision?.id,
+    });
+
   /** One evidence file of the open package, served and reviewed through the gate's model. */
   private _evidenceItem(path: string): LightboxItem {
     return {
       path,
       purpose: 'evidence',
-      url: this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
+      url: this._frozenEvidenceUrl(path),
       ...(this._evidenceModel ? { evidenceModel: this._evidenceModel } : {}),
-      resolveArtifactUrl: (artifact) =>
-        this._lightboxArtifactUrl({ path: artifact, purpose: 'evidence' }),
+      resolveArtifactUrl: this._frozenEvidenceUrl,
     };
   }
 
@@ -1041,11 +1091,14 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       ...evidenceReviewerSelection({
         model,
         claimId: review.claimId,
-        resolveUrl: (path) => this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
+        resolveUrl: this._frozenEvidenceUrl,
         opened: review.opened,
+        recordingPath: review.recordingPath,
+        recordingRevision: review.recordingRevision,
       }),
       atMs: review.atMs,
       check: review.check,
+      timelinePage: review.timelinePage,
       link: review.link,
       judgments: this._reviewJudgments(),
     };
@@ -1058,11 +1111,12 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       this._lightboxOpen = true;
       return;
     }
+    if (this._reviewLinkError) writeEvidenceReviewerHash(null);
     this._review = evidenceReviewerSelection({
       model,
       claimId,
-      resolveUrl: (path) => this._lightboxArtifactUrl({ path, purpose: 'evidence' }),
-      opened,
+      resolveUrl: this._frozenEvidenceUrl,
+      opened: opened && { ...opened, url: this._frozenEvidenceUrl(opened.path) },
     });
   }
 

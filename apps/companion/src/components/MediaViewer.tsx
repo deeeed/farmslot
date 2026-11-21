@@ -22,10 +22,12 @@ import Animated, {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
+  evidenceRecordingRevision,
   type EvidenceReviewModel,
   type EvidenceReviewPlaybackEffect,
   formatEvidenceReviewVideoTime,
   loadRecordingEvidenceReview,
+  restoreRecordingTimeMs,
 } from '@farmslot/adapter-sdk/evidence';
 import { viewScopedIntegerField, viewToggleMapField } from '@farmslot/protocol';
 import { createSha256 } from '@farmslot/protocol/client-cache';
@@ -57,6 +59,7 @@ import { videoSourceLoadDurationMs } from '../lib/video-source-load';
 
 import { ArtifactImage } from './ArtifactImage';
 import { type EvidenceAcceptanceReview, EvidenceAcOverlay } from './EvidenceAcOverlay';
+import { RecordingTimeline } from './RecordingTimeline';
 import { useViewChoice } from './view-state';
 
 /** Room for the player's native controls (time, progress, settings) at the video's foot. */
@@ -80,6 +83,8 @@ export interface MediaViewerItem {
   /** The recorded evidence this item opened on; verdicts over it need the same evidence. */
   evidenceKey?: string | null;
 }
+
+type TimelineViewCallback = (uri: string, artifact?: SharedRunArtifactSelection) => void;
 
 interface MediaViewerProps {
   visible: boolean;
@@ -159,11 +164,29 @@ export function MediaViewer({
   };
   const [zoomedUri, setZoomedUri] = useState<string | null>(null);
   const [changedVideoItems, setChangedVideoItems] = useState<ReadonlySet<string>>(() => new Set());
-  const markVideoSelectionChanged = useCallback((uri: string) => {
-    setChangedVideoItems((previous) => (previous.has(uri) ? previous : new Set(previous).add(uri)));
+  const [sharedTimeline, setSharedTimeline] = useState<{
+    uri: string;
+    artifact: SharedRunArtifactSelection;
+  }>();
+  const updateSharedTimeline: TimelineViewCallback = useCallback((uri, artifact) => {
+    setSharedTimeline((previous) =>
+      artifact ? { uri, artifact } : previous?.uri === uri ? undefined : previous,
+    );
   }, []);
+  const markVideoSelectionChanged = useCallback(
+    (uri: string) => {
+      updateSharedTimeline(uri);
+      setChangedVideoItems((previous) =>
+        previous.has(uri) ? previous : new Set(previous).add(uri),
+      );
+    },
+    [updateSharedTimeline],
+  );
   useEffect(() => {
-    if (!visible) setChangedVideoItems(new Set());
+    if (!visible) {
+      setChangedVideoItems(new Set());
+      setSharedTimeline(undefined);
+    }
   }, [visible]);
 
   useEffect(() => {
@@ -185,6 +208,8 @@ export function MediaViewer({
 
   const current = viewerItems[currentIndex];
   const mediaHeight = Math.max(180, height - topInset - bottomInset - 140);
+  const timelineArtifact =
+    sharedTimeline?.uri === current?.uri ? sharedTimeline?.artifact : undefined;
 
   return (
     <Modal
@@ -193,8 +218,8 @@ export function MediaViewer({
       animationType="fade"
       onRequestClose={closeViewer}
       sharedView={mediaShareView(
-        current?.sharedArtifact,
-        Boolean(current && changedVideoItems.has(current.uri)),
+        timelineArtifact ?? current?.sharedArtifact,
+        !timelineArtifact && Boolean(current && changedVideoItems.has(current.uri)),
       )}
     >
       <GestureHandlerRootView style={styles.modalRoot}>
@@ -220,6 +245,7 @@ export function MediaViewer({
                   panEnabled={zoomedUri === item.uri}
                   onZoomChange={(zoomed) => setZoomedUri(zoomed ? item.uri : null)}
                   onViewSelectionChange={markVideoSelectionChanged}
+                  onTimelineViewChange={updateSharedTimeline}
                   acceptance={acceptance}
                 />
               </View>
@@ -294,6 +320,7 @@ function MediaSlide({
   panEnabled,
   onZoomChange,
   onViewSelectionChange,
+  onTimelineViewChange,
   acceptance,
 }: {
   isActive: boolean;
@@ -303,6 +330,7 @@ function MediaSlide({
   panEnabled?: boolean;
   onZoomChange?: (zoomed: boolean) => void;
   onViewSelectionChange: (uri: string) => void;
+  onTimelineViewChange: TimelineViewCallback;
   acceptance?: EvidenceAcceptanceReview;
 }) {
   const mediaType = item.mediaType ?? classifyArtifact(item.title ?? item.uri);
@@ -325,6 +353,7 @@ function MediaSlide({
         width={width}
         height={height}
         onViewSelectionChange={onViewSelectionChange}
+        onTimelineViewChange={onTimelineViewChange}
         acceptance={acceptance}
       />
     );
@@ -477,12 +506,14 @@ function FullscreenVideo({
   width,
   height,
   onViewSelectionChange,
+  onTimelineViewChange,
   acceptance,
 }: {
   item: MediaViewerItem;
   width: number;
   height: number;
   onViewSelectionChange: (uri: string) => void;
+  onTimelineViewChange: TimelineViewCallback;
   acceptance?: EvidenceAcceptanceReview;
 }) {
   const [model, setModel] = useState<EvidenceReviewModel | null>(item.evidenceModel ?? null);
@@ -559,6 +590,70 @@ function FullscreenVideo({
     item.resolveArtifactUrl,
     item.authHeaders,
   ]);
+
+  const recordingPath =
+    model && videoPath
+      ? item.path && model.recordingForPath(item.path)?.videoPath === videoPath
+        ? item.path
+        : model.artifactPath(videoPath)
+      : undefined;
+  const recordingRevision = model && evidenceRecordingRevision(model, recordingPath);
+  const timelineScope = JSON.stringify([recordingPath, recordingRevision]);
+  const [timelinePage, setTimelinePage] = useViewChoice(
+    viewScopedIntegerField('reviewTimeline', 'mediaTimelineSource', timelineScope, -1),
+  );
+  const [timelineAt, setTimelineAt] = useViewChoice(
+    viewScopedIntegerField('mediaTimelineAt', 'mediaTimelineAnchor', timelineScope, -1),
+  );
+  const sharedOwner = item.sharedArtifact;
+  const criterionId = sharedOwner?.criterionId;
+  useEffect(() => {
+    const artifact =
+      sharedOwner && criterionId && recordingPath && recordingRevision && timelinePage >= 0
+        ? {
+            ...sharedOwner,
+            criterionId,
+            path: recordingPath,
+            recordingReview: {
+              revision: recordingRevision,
+              page: timelinePage,
+              atMs: timelineAt >= 0 ? timelineAt : undefined,
+            },
+          }
+        : undefined;
+    onTimelineViewChange(item.uri, artifact);
+    return () => onTimelineViewChange(item.uri);
+  }, [
+    criterionId,
+    item.uri,
+    onTimelineViewChange,
+    recordingPath,
+    recordingRevision,
+    sharedOwner,
+    timelineAt,
+    timelinePage,
+  ]);
+  const appliedTimelineSeek = useRef<string | null>(null);
+  useEffect(() => {
+    if (timelineAt < 0 || !recordingRevision) {
+      appliedTimelineSeek.current = null;
+      return;
+    }
+    const key = JSON.stringify([timelineScope, uri, timelineAt]);
+    if (appliedTimelineSeek.current === key || !durationMs || player.status !== 'readyToPlay')
+      return;
+    const seek = restoreRecordingTimeMs(timelineAt, durationMs);
+    if (seek === null) {
+      setTimelineAt(-1);
+      return;
+    }
+    appliedTimelineSeek.current = key;
+    resumePlayback.current = false;
+    model?.clearSelection();
+    player.pause();
+    player.currentTime = seek / 1000;
+    updateSelection((value) => value + 1);
+  }, [durationMs, model, player, recordingRevision, setTimelineAt, timelineAt, timelineScope, uri]);
 
   const applyPlayback = useCallback(
     (effect: EvidenceReviewPlaybackEffect) => {
@@ -793,6 +888,27 @@ function FullscreenVideo({
         ) : null}
         {model?.selection?.message ? (
           <Text style={styles.detailText}>{model.selection.message}</Text>
+        ) : null}
+        {model && recordingPath && recordingRevision ? (
+          <RecordingTimeline
+            model={model}
+            path={recordingPath}
+            durationMs={durationMs}
+            maxHeight={height * 0.25}
+            selectedPage={timelinePage}
+            onPage={(page) => {
+              setTimelinePage(page);
+              if (page < 0) setTimelineAt(-1);
+            }}
+            onSeek={(ms) => {
+              setTimelineAt(Math.round(ms));
+              resumePlayback.current = false;
+              model.clearSelection();
+              player.pause();
+              player.currentTime = ms / 1000;
+              updateSelection((value) => value + 1);
+            }}
+          />
         ) : null}
         {model && videoPath && review ? (
           <EvidenceAcOverlay

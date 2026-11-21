@@ -34,6 +34,7 @@ import {
   locateStepArtifact,
   pendingCITimeoutDecision,
   readCiWatchOutputs,
+  recipeReviewLinkFailure,
   reviewTerminalUnavailableReason,
   runArtifactsWithOperationLogs,
   runDetailDesiredRecipeRunId,
@@ -863,5 +864,37 @@ test('the run detail header is the same from the served row, the full run and an
   assert.equal(
     runDetailHeaderModel(states[3]).activityLabel,
     'Needs your decision: Evidence policy needs attestation.',
+  );
+});
+
+test('a settled recipe lookup failure names the failed review link instead of waiting forever', () => {
+  assert.equal(
+    recipeReviewLinkFailure({ state: { status: 'loading' } }, 'older', false, 0),
+    undefined,
+  );
+  assert.match(
+    recipeReviewLinkFailure(
+      {
+        state: {
+          status: 'error',
+          error: { code: 'UNAVAILABLE', message: 'Retained bundle read timed out' },
+        },
+      },
+      'older',
+      false,
+      0,
+    )!,
+    /Could not load the recipe attempt.*Retained bundle read timed out/,
+  );
+  assert.match(
+    recipeReviewLinkFailure(
+      {
+        state: { status: 'ready', data: { recipeRuns: [], selectedRecipeRunId: null } },
+      },
+      'older',
+      false,
+      0,
+    )!,
+    /attempt in this review link is unavailable/,
   );
 });

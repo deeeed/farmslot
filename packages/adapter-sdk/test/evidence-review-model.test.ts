@@ -27,6 +27,7 @@ import {
   runEvidencePending,
   runEvidenceView,
 } from '../src/evidence.js';
+import { indexRetainedClipSources } from '../src/evidence-review-model.js';
 
 import { untimedRecordingFixture } from './untimed-fixture.js';
 
@@ -1863,6 +1864,61 @@ test('a gate package the worker re-recorded reads as replaced, with no details f
   );
   // Validity is unchanged: the mismatch still refuses measured proof.
   assert.ok(replaced.errors.includes('The task ledger belongs to another recipe execution.'));
+});
+
+test('claims of one retained package share their multi-segment coverage cache key', () => {
+  const input = qaPackage(2);
+  const [first] = input.claims!.recording.segments;
+  assert.ok(first);
+  input.claims!.recording.segments.push({ ...first, videoPath: 'rotated.mp4' });
+
+  const index = indexRetainedClipSources(
+    new Map([
+      ['AC-1', { input, prefix: 'original/' }],
+      ['AC-2', { input, prefix: 'original/' }],
+      ['AC-3', { input, prefix: 'separate/' }],
+    ]),
+  );
+  const original = index.get('AC-1');
+  assert.ok(original);
+  assert.equal(original.segments, index.get('AC-2')?.segments);
+  assert.equal(original.timelines, index.get('AC-2')?.timelines);
+  assert.notEqual(original.segments, index.get('AC-3')?.segments);
+  assert.deepEqual(
+    original.segments.map(({ videoPath }) => videoPath),
+    ['original/' + first.videoPath, 'original/rotated.mp4'],
+  );
+});
+
+test('an explicitly selected older package retains playback without gaining review authority', () => {
+  const pkg = qaPackage(2);
+  const ledger = { ...pkg.claims!, recipeRunId: 'newer-attempt' };
+  const archived = createEvidenceReviewModel({ context: 'run-detail', package: pkg, ledger });
+  const path = pkg.claims!.recording.segments[0]!.videoPath;
+
+  const source = archived.recordingTimelineForPath(path, { allowHistorical: true });
+  assert.equal(source?.current, false);
+  assert.deepEqual(source?.retainedOccurrences, archived.occurrences);
+  assert.equal(typeof source?.historicalSeekMs?.(1), 'number');
+  assert.equal(archived.markerSeekMs(path, 1, 'start'), null);
+  assert.equal(archived.packageStatus?.status, 'Replaced');
+  assert.deepEqual(archived.currentOccurrences, []);
+  assert.equal(archived.recordingTimelineForPath(path)?.historicalSeekMs, undefined);
+  const gate = createEvidenceReviewModel({ context: 'gate', package: pkg, ledger });
+  assert.equal(
+    gate.recordingTimelineForPath(path, { allowHistorical: true })?.historicalSeekMs,
+    undefined,
+  );
+  const malformed = createEvidenceReviewModel({
+    context: 'run-detail',
+    package: pkg,
+    ledger,
+    readErrors: ['Artifact verification failed'],
+  });
+  assert.equal(
+    malformed.recordingTimelineForPath(path, { allowHistorical: true })?.historicalSeekMs,
+    undefined,
+  );
 });
 
 test('the run evidence view keeps criteria in run order with each claim and step cue', () => {

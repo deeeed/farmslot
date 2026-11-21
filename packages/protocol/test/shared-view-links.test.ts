@@ -575,3 +575,37 @@ test('native launch approval choices round trip through shared links', () => {
     assert.equal(viewRouteFromLink(link), route);
   }
 });
+
+test('a Companion timeline link retains verified bytes, attempt, page and paused time', () => {
+  const artifactSelection = {
+    runId: 'run-1',
+    path: 'artifacts/videos/original.mp4',
+    recipeRunId: 'current-artifacts',
+    criterionId: 'AC-1',
+    recordingReview: { revision: 'sha256:' + 'a'.repeat(64), page: 1, atMs: 41972 },
+  };
+  const resolve = (selection = artifactSelection) =>
+    resolveSharedViewLink(
+      { companion: { pathname: '/artifacts', params: {}, artifactSelection: selection } },
+      base,
+    );
+  const result = resolve();
+  assert.equal(result.status, 'available');
+  if (result.status !== 'available') return;
+  const params = new URLSearchParams(result.route.split('?')[1]);
+  assert.equal(params.get('review'), 'AC-1');
+  assert.equal(params.get('reviewFile'), artifactSelection.path);
+  assert.equal(params.get('reviewRecording'), artifactSelection.path);
+  assert.equal(params.get('reviewRecipe'), 'current-artifacts');
+  assert.equal(params.get('reviewTimeline'), '1');
+  assert.equal(params.get('reviewAt'), '41.972');
+  assert.equal(params.get('reviewRevision'), artifactSelection.recordingReview.revision);
+  assert.equal(resolve({ ...artifactSelection, criterionId: '' }).status, 'unavailable');
+  assert.equal(
+    resolve({
+      ...artifactSelection,
+      recordingReview: { ...artifactSelection.recordingReview, revision: '' },
+    }).status,
+    'unavailable',
+  );
+});

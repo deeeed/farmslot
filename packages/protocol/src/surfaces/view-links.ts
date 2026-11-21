@@ -58,7 +58,7 @@ export const ARTIFACT_BROWSER_PARAMS = [
 export const VIEW_QUERY_PARAMETERS: ReadonlySet<string> = new Set([
   ...(
     'cwd custom effort approvalMode a b activity artifact artifactAc artifactRun artifactTrace artifactPhase artifactView assessment backlogProject backlogStatus capture create demo dispatchConfig draft draftMode file item resource runId contextId history historyRun host recipeRun recipeDependency ' +
-    'recipeNode recipeArtifact recipeEvidenceMode recipeViewer recipeViewerMode recipeViewerPair review reviewAt reviewCheck reviewDrawer reviewFile comment commentFile commentLine commentHead ' +
+    'recipeNode recipeArtifact recipeEvidenceMode recipeViewer recipeViewerMode recipeViewerPair review reviewAt reviewCheck reviewDrawer reviewFile reviewRecipe reviewRecording reviewRevision reviewTimeline comment commentFile commentLine commentHead ' +
     'cmpSort cmpTab diffArtifact diffRun direction evidence evidencePreview family familyId flow flowType focus gate graph intent lane ' +
     'layout lightboxIndex lightboxRecipeRunId machines modal mode model node panel parentRunId pr prDraft prEditor prHistory prHost project projects ' +
     'prPane prScope prSection prSort prTab prTarget publicationReviews q refresh qaInputs qaProfileId repo reviewMachine ' +
@@ -130,10 +130,17 @@ export interface SharedRunArtifactOwner {
   recipeRunId?: string;
 }
 
+export interface SharedRunRecordingReview {
+  revision: string;
+  page: number;
+  atMs?: number;
+}
+
 export interface SharedRunArtifactSelection extends SharedRunArtifactOwner {
   path: string;
   criterionId?: string;
   traceIndex?: number;
+  recordingReview?: SharedRunRecordingReview;
 }
 
 export interface SharedRunViewSelection {
@@ -275,6 +282,7 @@ function companionViewRoute(location: CompanionViewLocation): string | null {
       path: artifact,
       criterionId,
       traceIndex,
+      recordingReview,
     } = location.artifactSelection;
     if (
       !viewId.test(runId) ||
@@ -285,6 +293,28 @@ function companionViewRoute(location: CompanionViewLocation): string | null {
       artifact.split('/').includes('..')
     )
       return null;
+    if (recordingReview) {
+      const { revision, page, atMs } = recordingReview;
+      if (
+        !criterionId ||
+        !/^(?:sha256:)?[a-f0-9]{64}(?:\.(?:sha256:)?[a-f0-9]{64})?$/u.test(revision) ||
+        !Number.isSafeInteger(page) ||
+        page < 0 ||
+        (atMs !== undefined && (!Number.isSafeInteger(atMs) || atMs < 0)) ||
+        (recipeRunId && !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/.test(recipeRunId))
+      )
+        return null;
+      return route(`run/${runId}`, {
+        tab: 'evidence',
+        review: criterionId,
+        reviewFile: artifact,
+        reviewRecording: artifact,
+        reviewRevision: revision,
+        reviewRecipe: recipeRunId !== DECISION_EVIDENCE_RECIPE_RUN_PARAM ? (recipeRunId ?? '') : '',
+        reviewAt: atMs === undefined ? '' : (atMs / 1000).toFixed(3),
+        reviewTimeline: String(page),
+      });
+    }
     if (recipeRunId) {
       if (criterionId || traceIndex !== undefined) return null;
       if (

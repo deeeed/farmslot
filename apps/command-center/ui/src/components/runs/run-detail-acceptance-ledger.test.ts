@@ -3,7 +3,12 @@ import { mock, test } from 'node:test';
 
 import { LitElement, type ReactiveControllerHost } from 'lit';
 
-import type { RunRecipeRunsForRunResult, TaskProgressResult } from '@farmslot/protocol';
+import type {
+  RecipeRunArtifactGroup,
+  RunDecision,
+  RunRecipeRunsForRunResult,
+  TaskProgressResult,
+} from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
 
 import { installFakeGateway } from '../../testing/fake-gateway.js';
@@ -229,4 +234,84 @@ test('the acceptance panel names no superseded ledger read for the grace period'
   view._acceptProgressObservation();
   assert.equal(view.acceptanceStatusError, 'invalid acceptance-status.json');
   progress.hostDisconnected();
+});
+
+test('publication gate review links do not rebind Run Detail to a foreign recipe', async (t) => {
+  installFakeGateway(t);
+  location.hash = '#run/run-1?review=AC-1&reviewRecipe=other';
+  const { RunDetail } = await import('./run-detail.js');
+  type RecipeObservation = ResourceQueryController<RunRecipeRunsForRunResult>['state'];
+  const current: RecipeRunArtifactGroup = {
+    id: 'current-artifacts',
+    recipeRunId: 'current-attempt',
+    label: 'Current attempt',
+    groupKind: 'current-artifacts',
+    promoted: false,
+    status: 'pass',
+    source: 'recipe-run-live',
+    artifactRoot: null,
+    artifactManifest: null,
+    recipeJson: null,
+    recipeQualityArtifact: null,
+    qualityReport: null,
+    workerLearnings: null,
+    isStale: false,
+    selectionReason: 'latest-run',
+  };
+  const state: RecipeObservation = {
+    status: 'ready',
+    data: {
+      recipeRuns: [
+        current,
+        { ...current, id: 'other', recipeRunId: 'another-attempt', groupKind: 'live-run' },
+      ],
+      selectedRecipeRunId: current.id,
+    },
+  };
+  interface RecipeView {
+    _acceptRecipeObservation(state: RecipeObservation): void;
+    _evidenceGroupId: string | null;
+  }
+  const binds: string[] = [];
+  const decision: RunDecision = {
+    id: 'gate',
+    type: 'engine_human_gate',
+    title: 'Ready',
+    description: '',
+    createdAt: '2026-01-01',
+    actions: [],
+    payload: {
+      kind: 'ready',
+      prNumber: null,
+      repo: null,
+      workerReport: '',
+      branch: 'fixture',
+      diffStat: { files: 0, additions: 0, deletions: 0 },
+    },
+  };
+  function accept(status: 'blocked' | 'cancelled' | 'monitoring', decisions: RunDecision[]) {
+    binds.length = 0;
+    const view = Object.assign(Object.create(RunDetail.prototype), {
+      requestUpdate() {},
+      run: { id: 'run-1', status, decisions },
+      recipeQuery: { belongsToWorkspace: true, state },
+      _recipeRequestedId: '',
+      _linkRecipeOverride: '',
+      _selectedRecipeRunId: '',
+      _pendingRecipeRunSelectionId: '',
+      _bindRecipeRuns() {
+        binds.push(this._recipeRequestedId);
+      },
+    }) as RecipeView;
+    view._acceptRecipeObservation(state);
+    return view._evidenceGroupId;
+  }
+
+  assert.equal(accept('blocked', [decision]), 'current-artifacts');
+  assert.deepEqual(binds, []);
+  const saved: RunDecision = { ...decision, resolvedAt: '2026-01-02' };
+  assert.equal(accept('cancelled', [saved]), 'current-artifacts');
+  assert.deepEqual(binds, []);
+  accept('monitoring', []);
+  assert.deepEqual(binds, ['other']);
 });
