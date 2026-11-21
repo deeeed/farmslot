@@ -1,3 +1,5 @@
+import type { ResourceConnectionReason } from '@farmslot/protocol/client-cache';
+
 import type { WorkspaceAccess } from './workspace-access';
 
 export interface StartupWorkspace {
@@ -7,7 +9,7 @@ export interface StartupWorkspace {
 }
 
 export interface StartupRunAuthority extends StartupWorkspace {
-  startupWorkspace?: StartupWorkspace;
+  startupWorkspace?: StartupWorkspace | null;
   status: 'disconnected' | 'connecting' | 'connected';
   workspaceAccess: WorkspaceAccess;
   signedOut: boolean;
@@ -19,7 +21,7 @@ export function startupRunDestination(href: string): string | null {
   const path = href.split('?', 1)[0];
   const runId = '[a-z0-9][a-z0-9._-]*';
   return new RegExp(
-    `^/(?:evidence/${runId}|run/${runId}|workspace/run/${runId}/(?:evidence|timeline|files|diff|gate))$`,
+    `^/(?:evidence/${runId}|run/${runId}|workspace/run/${runId}/evidence)$`,
     'i',
   ).test(path)
     ? href
@@ -33,7 +35,8 @@ export function resolveStartupRunDestination(
 ): string | null | undefined {
   if (authority.signedOut || authority.refused) return null;
   const initial = authority.startupWorkspace;
-  if (!initial) return undefined;
+  if (initial === null) return null;
+  if (initial === undefined) return undefined;
   if (authority.gatewayUrl !== initial.gatewayUrl || authority.profileId !== initial.profileId)
     return null;
   if (authority.status !== 'connected') return authority.offline ? null : undefined;
@@ -73,4 +76,18 @@ export function pendingStartupRunDestination(href: string) {
       return true;
     },
   };
+}
+
+export function startupWorkspaceAfterConnectionChange(
+  workspace: StartupWorkspace | null | undefined,
+  reason: ResourceConnectionReason | undefined,
+): StartupWorkspace | null | undefined {
+  // Connection reasons are transient. Keep a rejected startup scope rejected after reconnect.
+  return reason === 'principal-change' ||
+    reason === 'profile-change' ||
+    reason === 'sign-out' ||
+    reason === 'credential-refused' ||
+    reason === 'session-ended'
+    ? null
+    : workspace;
 }

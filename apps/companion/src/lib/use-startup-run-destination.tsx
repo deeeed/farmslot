@@ -75,7 +75,18 @@ export function useStartupRunRedirect(rememberedAccess: WorkspaceAccess): boolea
         )
       : resolved;
   useEffect(() => {
-    if (focused && destination && target && destination.claim()) router.replace(target as Href);
-  }, [destination, focused, router, target]);
+    if (!focused || !destination || !target) return;
+    const live = useConnectionStore.getState();
+    if (
+      target === destination.href &&
+      (live.startupWorkspace !== authority.startupWorkspace ||
+        live.principalId !== authority.principalId ||
+        live.signedOut ||
+        live.status !== 'connected' ||
+        live.workspaceAccess !== 'farm')
+    )
+      return;
+    if (destination.claim()) router.replace(target as Href);
+  }, [authority.principalId, authority.startupWorkspace, destination, focused, router, target]);
   return destination !== null;
 }

@@ -61,7 +61,10 @@ import {
   readGatewayProfilePersonSession,
 } from '../lib/gateway-profiles';
 import { notifyRunCompleted, notifyViolation } from '../lib/notifications';
-import type { StartupWorkspace } from '../lib/startup-run-destination';
+import {
+  type StartupWorkspace,
+  startupWorkspaceAfterConnectionChange,
+} from '../lib/startup-run-destination';
 import type { WorkspaceAccess } from '../lib/workspace-access';
 
 import { resetFarmState } from './reset-farm-state';
@@ -108,7 +111,7 @@ interface ConnectionStore {
   probeInProgress: boolean;
   lastSyncError: string | null;
   initializing: boolean;
-  startupWorkspace?: StartupWorkspace;
+  startupWorkspace?: StartupWorkspace | null;
   init: () => Promise<void>;
   setGatewayUrl: (url: string) => Promise<void>;
   setActiveProfile: (profileId: string) => Promise<void>;
@@ -214,6 +217,10 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           status,
           principalId,
           workspaceAccess,
+          startupWorkspace: startupWorkspaceAfterConnectionChange(
+            get().startupWorkspace,
+            client.resourceConnectionReason,
+          ),
           activeProfileHttpAuthHeaders: client.httpAuthHeaders,
           personSession: client.personDeviceSession,
           authorityEpoch: get().authorityEpoch + (authorityChanged ? 1 : 0),
@@ -801,6 +808,7 @@ function connectionIdentityTransition(
       ? {
           principalId: null,
           workspaceAccess: 'none' as const,
+          startupWorkspace: null,
           authorityEpoch: current.authorityEpoch + 1,
           lastSyncError: null,
           ...livenessPatch(INITIAL_CONNECTION_LIVENESS),

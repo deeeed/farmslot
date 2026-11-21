@@ -7,6 +7,7 @@ import {
   startupFallbackAccess,
   type StartupRunAuthority,
   startupRunDestination,
+  startupWorkspaceAfterConnectionChange,
 } from './startup-run-destination';
 
 const href =
@@ -101,5 +102,42 @@ test('accepted and discarded startup links cannot replay after returning home', 
     assert.equal(intent.claim(), true);
     assert.equal(resolveStartupRunDestination(intent.href, connected), href);
     assert.equal(intent.claim(), false);
+  }
+});
+
+test('a same-profile credential change irreversibly discards the pending service link', () => {
+  const service = { ...workspace, principalId: null };
+  const changed = startupWorkspaceAfterConnectionChange(service, 'principal-change');
+  const reconnected = startupWorkspaceAfterConnectionChange(changed, 'network');
+  assert.equal(
+    resolveStartupRunDestination(href, {
+      ...connected,
+      startupWorkspace: reconnected,
+      principalId: 'another-service',
+    }),
+    null,
+  );
+});
+
+test('an unchanged eligible service profile can claim the verified startup link', () => {
+  const service = { ...workspace, principalId: null };
+  const unchanged = startupWorkspaceAfterConnectionChange(service, 'network');
+  assert.equal(
+    resolveStartupRunDestination(href, {
+      ...connected,
+      startupWorkspace: unchanged,
+      principalId: 'service',
+    }),
+    href,
+  );
+});
+
+test('ordinary Files, Diff, Gate and Timeline links are outside automatic startup replay', () => {
+  assert.equal(
+    startupRunDestination('/workspace/run/run-1/evidence?tab=evidence'),
+    '/workspace/run/run-1/evidence?tab=evidence',
+  );
+  for (const tab of ['files', 'diff', 'gate', 'timeline']) {
+    assert.equal(startupRunDestination('/workspace/run/run-1/' + tab + '?panel=detail'), null);
   }
 });
