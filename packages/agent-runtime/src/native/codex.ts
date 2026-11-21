@@ -196,7 +196,7 @@ export const codexNativeAdapter: NativeAdapter = {
         ...(options.modelQuestions === 'off' ? modelQuestionsOffByRunner.codex.args : []),
         'app-server',
       ],
-      options,
+      { ...options, includeDetachedGroups: true },
       (message) => {
         const params = wireObject(message.params ?? {});
         const method = optionalString(message.method);

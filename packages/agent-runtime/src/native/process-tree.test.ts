@@ -221,7 +221,7 @@ test('cleanup retains a detached child after its title changes and parent exits'
   }
 });
 
-test('a detached group remains owned after its only observed launcher exits', async () => {
+test('a detached group remains owned after its only observed launcher exits', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'native-detached-group-'));
   const launcherFile = join(dir, 'launcher.pid');
   const workerFile = join(dir, 'worker.pid');
@@ -234,7 +234,11 @@ test('a detached group remains owned after its only observed launcher exits', as
   `;
   const launcherCode = `
     const fs = require('node:fs');
-    fs.writeFileSync(${JSON.stringify(launcherFile)}, String(process.pid));
+    const publishPid = (file, pid) => {
+      fs.writeFileSync(file + '.tmp', String(pid));
+      fs.renameSync(file + '.tmp', file);
+    };
+    publishPid(${JSON.stringify(launcherFile)}, process.pid);
     const poll = setInterval(() => {
       if (!fs.existsSync(${JSON.stringify(dir)})) process.exit(0);
       if (!fs.existsSync(${JSON.stringify(triggerFile)})) return;
@@ -243,7 +247,7 @@ test('a detached group remains owned after its only observed launcher exits', as
         process.execPath, ['-e', ${JSON.stringify(workerCode)}], { stdio: 'ignore' }
       );
       worker.once('spawn', () => {
-        fs.writeFileSync(${JSON.stringify(workerFile)}, String(worker.pid));
+        publishPid(${JSON.stringify(workerFile)}, worker.pid);
         process.exit(0);
       });
     }, 10);
@@ -273,28 +277,35 @@ test('a detached group remains owned after its only observed launcher exits', as
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
   };
-  try {
-    await waitFor(() => pidAt(launcherFile) !== undefined);
-    const launcher = pidAt(launcherFile)!;
-    const tree = new NativeProcessTree(root.pid!);
-    assert.ok(tree.snapshot().some(({ pid, group }) => pid === launcher && group === launcher));
-    writeFileSync(triggerFile, '');
-    await waitFor(() => pidAt(workerFile) !== undefined && !alive(launcher));
-    const worker = pidAt(workerFile)!;
-    assert.ok(!tree.snapshot().some(({ pid }) => pid === worker));
-    const exited = once(root, 'exit', { signal: AbortSignal.timeout(2500) });
-    root.kill('SIGKILL');
-    await exited;
-    assert.equal(alive(worker), true);
-    assert.equal(await tree.empty({ includeDetachedGroups: true }), false);
-  } finally {
-    if (root.pid && alive(root.pid)) root.kill('SIGKILL');
-    for (const file of [launcherFile, workerFile]) {
-      const pid = pidAt(file);
-      if (pid && alive(pid)) process.kill(pid, 'SIGKILL');
+  t.after(() => {
+    try {
+      if (root.pid && alive(root.pid)) root.kill('SIGKILL');
+      for (const file of [launcherFile, workerFile]) {
+        const pid = pidAt(file);
+        if (!pid) continue;
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+        }
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
-    rmSync(dir, { recursive: true, force: true });
-  }
+  });
+  await waitFor(() => pidAt(launcherFile) !== undefined);
+  const launcher = pidAt(launcherFile)!;
+  const tree = new NativeProcessTree(root.pid!);
+  assert.ok(tree.snapshot().some(({ pid, group }) => pid === launcher && group === launcher));
+  writeFileSync(triggerFile, '');
+  await waitFor(() => pidAt(workerFile) !== undefined && !alive(launcher));
+  const worker = pidAt(workerFile)!;
+  assert.ok(!tree.snapshot().some(({ pid }) => pid === worker));
+  const exited = once(root, 'exit', { signal: AbortSignal.timeout(2500) });
+  root.kill('SIGKILL');
+  await exited;
+  assert.equal(alive(worker), true);
+  assert.equal(await tree.empty({ includeDetachedGroups: true }), false);
 });
 
 test('explicit confirmation remembers group changes and leaderless ownership', async (t) => {
