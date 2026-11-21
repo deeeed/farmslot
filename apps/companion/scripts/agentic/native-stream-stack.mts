@@ -14,31 +14,54 @@
  *   POST /session         → { sessionId } a new native session (runner claude, synthetic)
  *   POST /seed?turns=N    → sends N prompts over RPC, each waited to completion (keep N small:
  *                           a client's HTTP timeout can end the request; the seeding goes on)
- *   GET  /read            → { sessionId, state, cursor, completedTurns, commands }
+ *   GET  /read            → { sessionId, state, cursor, completedTurns, commands, lastCompleted }:
+ *                           cursor is the journal's latest sequence; lastCompleted the commandId and
+ *                           sequence of the last turn.completed
  *   POST /shutdown        → closes the session, stops the private native host, exits
  *
  * NATIVE_STREAM_RUNNER (default claude), NATIVE_STREAM_FIXTURE (a file in
  * scripts/runner-validation/fixtures, installed as that runner's binary) and NATIVE_STREAM_MODEL
- * swap in another synthetic peer. NATIVE_STREAM_SEED_DIR is copied into the session folder, which
+ * swap in another synthetic peer. NATIVE_STREAM_FIXTURE=none runs the real runner from PATH instead
+ * (NATIVE_STREAM_RUNNER=codex for native-conversation.recipe.json) and keeps CODEX_LB_API_KEY, which
+ * synthetic runs drop. NATIVE_STREAM_TOKEN_FILE, a new path, receives the setup operator's access
+ * token (mode 0600) for native-conversation-proof.mts; POST /token writes a fresh one, since access
+ * tokens expire within a long proof. The clean stop deletes the file.
+ * NATIVE_STREAM_SEED_RUNS=<n> creates n active runs (fix-bug, status monitoring, no slot; the run
+ * engine is off) so Companion's Review queue has rows to scroll, as jank.recipe.json's review-scroll
+ * window needs.
+ * NATIVE_STREAM_SEED_TERMINALS=<n> registers one test node for Companion's Terminals list, which
+ * shows only registered nodes' tmux panes: a private tmux server (its own socket directory under
+ * /tmp, started with an empty config, a clean environment and a scratch HOME, so no operator
+ * tmux config or hook runs) holds n idle `sleep` sessions, and a node agent with that scratch HOME,
+ * a pool directory and screen-control socket, a clean environment and a node credential from this
+ * stack's own store (in the scratch HOME's .env, which the node reads ahead of any checkout's)
+ * connects as machine stream-fixture, which this stack's pool lists with one enabled slot. It sees
+ * only that tmux server; shared nodes and existing sessions are never discovered. Teardown stops
+ * the node, kills that tmux server and removes its directory. The ready line names the node pid,
+ * tmux server pid and socket.
+ * NATIVE_STREAM_SEED_DIR is copied into the session folder, which
  * then becomes a Git repository with one commit, so turns get checkpoints and diffs.
  *
- * Every exit path tears down what started: /shutdown, SIGINT and SIGTERM, and a startup failure. A
- * clean stop removes the temp root, which holds credentials; a failure keeps it and logs its path.
+ * Every exit path tears down what started: /shutdown, SIGINT, SIGTERM, SIGHUP (tmux kill-session) and
+ * a startup failure. A clean stop removes the temp root, which holds credentials; a failure keeps it
+ * and logs its path.
  */
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import { copyFile, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import type {
+  NativeSessionDeltaPayload,
   NativeSessionInfo,
   NativeSessionReadResult,
   PairingCreateResult,
+  TmuxWorkerListResult,
 } from '@farmslot/protocol';
 
 import type { GatewayClient } from '../../../../packages/cli/src/gateway-client.js';
@@ -53,11 +76,32 @@ interface StackState {
   gatewayUrl: string;
   controlUrl: string;
   sessionId?: string;
+  terminals?: FixtureTerminals;
+}
+/** The NATIVE_STREAM_SEED_TERMINALS node and tmux server, for teardown and its checks. */
+interface FixtureTerminals {
+  machine: string;
+  panes: number;
+  nodePid: number;
+  tmuxDir: string;
+  tmuxSocket: string;
+  tmuxServerPid: number;
 }
 
 const runner = process.env.NATIVE_STREAM_RUNNER ?? 'claude';
 const fixture = process.env.NATIVE_STREAM_FIXTURE ?? 'native-stream-latency-claude.cjs';
-const binaries: Record<string, string> = { claude: 'claude', opencode: 'opencode' };
+const binaries: Record<string, string> = { claude: 'claude', opencode: 'opencode', codex: 'codex' };
+const realRunner = fixture === 'none';
+/**
+ * NATIVE_STREAM_WIRE_LOG, a new path: one JSON line per frame the gateway sends to a client, with
+ * its send time (epoch ms, sub-ms), the socket, the event name and bytes; for a native.session.delta
+ * event also its update kind and the sequences of its native events. With the host journal's append
+ * times it shows whether the relay pairs deltas.
+ */
+const wireLog = process.env.NATIVE_STREAM_WIRE_LOG;
+assert(!wireLog || !fs.existsSync(wireLog), 'NATIVE_STREAM_WIRE_LOG must be a new path');
+const tokenFile = process.env.NATIVE_STREAM_TOKEN_FILE;
+assert(!tokenFile || !fs.existsSync(tokenFile), 'NATIVE_STREAM_TOKEN_FILE must be a new path');
 assert(binaries[runner], `NATIVE_STREAM_RUNNER: one of ${Object.keys(binaries).join(', ')}`);
 const port = Number(process.env.GATEWAY_PORT);
 const controlPort = Number(process.env.CONTROL_PORT);
@@ -77,8 +121,15 @@ interface Running {
   wss?: GatewaySocketServer;
   connection?: GatewayConnection;
   control?: Server;
+  /** Renews the setup connection before its access token expires. */
+  renewal?: ReturnType<typeof setInterval>;
+  /** The NATIVE_STREAM_SEED_TERMINALS tmux directory, once created, and node, once spawned. */
+  tmuxDir?: string;
+  terminalNode?: ChildProcess;
 }
 const running: Running = {};
+/** Writes a fresh setup-operator access token to NATIVE_STREAM_TOKEN_FILE; set at startup. */
+let writeToken: (() => Promise<void>) | undefined;
 
 const listen = (server: Server, at: number) =>
   new Promise<void>((resolve, reject) => {
@@ -113,6 +164,45 @@ const read = () =>
   connected().call<NativeSessionReadResult>('native.session.read', { ...target(), limit: 1 });
 const completedTurns = (page: NativeSessionReadResult) =>
   page.commands.filter((command) => command.state === 'completed').length;
+/** How far GET /read has paged a session's journal, and the last turn.completed in it. */
+interface JournalPosition {
+  sessionId: string;
+  cursor: number;
+  lastCompleted?: { commandId: string; cursor: number };
+}
+/** The current session's position; POST /session replaces it. */
+let journal: JournalPosition | undefined;
+/**
+ * Pages the current session's journal from where the last read stopped to its end. A page applies
+ * only to the position it was read for, and only forward: a read still running when POST /session
+ * replaces the position, or one overtaken by a concurrent read, cannot move it.
+ */
+async function readJournal(): Promise<{
+  position: JournalPosition;
+  page: NativeSessionReadResult;
+}> {
+  for (;;) {
+    const position = journal;
+    assert(position, 'POST /session first');
+    const page = await connected().call<NativeSessionReadResult>('native.session.read', {
+      sessionId: position.sessionId,
+      executionNodeId: 'local',
+      after: position.cursor,
+      limit: 500,
+    });
+    // The session changed during the read: read the new one.
+    if (journal !== position) continue;
+    for (const event of page.events)
+      if (
+        event.type === 'turn.completed' &&
+        event.commandId &&
+        event.sequence > (position.lastCompleted?.cursor ?? 0)
+      )
+        position.lastCompleted = { commandId: event.commandId, cursor: event.sequence };
+    position.cursor = Math.max(position.cursor, page.cursor);
+    if (!page.hasMore) return { position, page };
+  }
+}
 
 /** The private native host the warm-up started, found by its lock under this root. */
 async function stopHost() {
@@ -131,6 +221,140 @@ async function stopHost() {
   );
 }
 
+const FIXTURE_MACHINE = 'stream-fixture';
+/** The fixture node's scratch HOME: the tmux server and the node read no operator configuration. */
+const fixtureHome = () => path.join(root, 'node-home');
+/**
+ * The fixture's tmux commands: its own server under tmuxDir, started with the fixture's empty
+ * config (tmux.conf in tmuxDir, never the operator's ~/.tmux.conf or its hooks) and a clean
+ * environment with the scratch HOME, so its sessions inherit nothing from the caller.
+ */
+const fixtureTmux = (tmuxDir: string, ...args: string[]) =>
+  execFileSync('tmux', ['-f', path.join(tmuxDir, 'tmux.conf'), ...args], {
+    env: {
+      PATH: process.env.PATH,
+      USER: process.env.USER,
+      LANG: process.env.LANG,
+      HOME: fixtureHome(),
+      SHELL: '/bin/sh',
+      TMUX_TMPDIR: tmuxDir,
+    },
+    encoding: 'utf8',
+  }).trim();
+
+/** NATIVE_STREAM_SEED_TERMINALS: n idle panes on a private tmux server, reported by one test node. */
+async function startTerminals(count: number, nodeSecret: string): Promise<FixtureTerminals> {
+  // Under /tmp: a Unix socket path must stay under 104 bytes, and the temp root is too deep.
+  // Real path: tmux reports /private/tmp on macOS.
+  const tmuxDir = fs.realpathSync(await mkdtemp('/tmp/nst-'));
+  running.tmuxDir = tmuxDir;
+  const home = fixtureHome();
+  await mkdir(home, { recursive: true });
+  await writeFile(path.join(tmuxDir, 'tmux.conf'), '');
+  for (let index = 1; index <= count; index++)
+    fixtureTmux(
+      tmuxDir,
+      'new-session',
+      '-d',
+      '-s',
+      `scratch-${String(index).padStart(2, '0')}`,
+      'sleep',
+      '86400',
+    );
+  const tmuxServerPid = Number(fixtureTmux(tmuxDir, 'display-message', '-p', '#{pid}'));
+  const tmuxSocket = fixtureTmux(tmuxDir, 'display-message', '-p', '#{socket_path}');
+  assert(tmuxSocket.startsWith(tmuxDir), `The fixture tmux server is not private: ${tmuxSocket}`);
+  // The gateway lists tmux workers only for machines with an enabled slot in a pool. This slot's
+  // session matches none of the panes, so they all list as non-Farmslot; the host never resolves.
+  const pool = {
+    schema_version: 2,
+    machine: FIXTURE_MACHINE,
+    project: 'stream',
+    platform: 'web',
+    os: 'macos',
+    host: `${FIXTURE_MACHINE}.invalid`,
+    slots: [
+      {
+        id: `${FIXTURE_MACHINE}-1`,
+        enabled: true,
+        repo: path.join(root, 'cwd'),
+        session: `${FIXTURE_MACHINE}-1`,
+        resources: {},
+      },
+    ],
+  };
+  await writeFile(path.join(root, 'pool', `${FIXTURE_MACHINE}.json`), `${JSON.stringify(pool)}\n`);
+  await mkdir(path.join(root, 'node-pool'), { recursive: true });
+  // The node credential: the node reads FARMSLOT_NODE_TOKEN from the first .env it finds, starting
+  // at its working directory, ahead of its environment and of the source checkout's own .env.
+  await writeFile(path.join(home, '.env'), `FARMSLOT_NODE_TOKEN=${nodeSecret}\n`, { mode: 0o600 });
+  // A clean environment: the stack's own FARMSLOT_* variables (its home, native state directory
+  // and native owner) would make the node share the gateway's state.
+  const env: NodeJS.ProcessEnv = {
+    PATH: process.env.PATH,
+    USER: process.env.USER,
+    LANG: process.env.LANG,
+    TMPDIR: process.env.TMPDIR,
+    HOME: home,
+    TMUX_TMPDIR: tmuxDir,
+    GATEWAY_URL: gatewayUrl,
+    MACHINE_NAME: FIXTURE_MACHINE,
+    FARMSLOT_POOL_DIR: path.join(root, 'node-pool'),
+    SCREEN_CONTROL_SOCKET: path.join(tmuxDir, 'screen.sock'),
+    TSX_TSCONFIG_PATH: path.join(repo, 'services/node/tsconfig.json'),
+  };
+  const log = fs.openSync(path.join(root, 'node.log'), 'a');
+  const node = spawn(
+    process.execPath,
+    [
+      '--import',
+      pathToFileURL(path.join(repo, 'node_modules/tsx/dist/loader.mjs')).href,
+      path.join(repo, 'services/node/src/index.ts'),
+    ],
+    // In the scratch HOME: its .env is the first the node reads.
+    { cwd: home, env, stdio: ['ignore', log, log] },
+  );
+  running.terminalNode = node;
+  assert(node.pid, 'The fixture node did not start');
+  // The node's panes reach the gateway's tmux worker list once it has registered.
+  await until(
+    async () =>
+      (await connected().call<TmuxWorkerListResult>('tmux.worker.list', {})).workers.length >=
+      count,
+    'the fixture node panes',
+    60_000,
+  );
+  return {
+    machine: FIXTURE_MACHINE,
+    panes: count,
+    nodePid: node.pid,
+    tmuxDir,
+    tmuxSocket,
+    tmuxServerPid,
+  };
+}
+
+async function stopTerminalNode() {
+  const node = running.terminalNode!;
+  if (node.exitCode !== null || node.signalCode !== null) return;
+  const exited = new Promise((resolve) => node.once('exit', resolve));
+  node.kill('SIGTERM');
+  await Promise.race([
+    exited,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('The fixture node did not exit')), 15_000).unref(),
+    ),
+  ]);
+}
+
+async function stopTerminalTmux() {
+  const tmuxDir = running.tmuxDir!;
+  // A server that never started (a failed first new-session) leaves only the directory.
+  if (fs.readdirSync(tmuxDir).some((name) => name.startsWith('tmux-')))
+    fixtureTmux(tmuxDir, 'kill-server');
+  fs.rmSync(tmuxDir, { recursive: true, force: true });
+}
+
 /** Stops everything that started, each step even if an earlier one failed; reports every
  * failure. */
 async function teardown() {
@@ -144,6 +368,7 @@ async function teardown() {
   };
   if (state.sessionId && running.connection)
     await step(() => connected().call('native.session.close', target()));
+  clearInterval(running.renewal);
   await step(() => running.connection?.close());
   await step(async () => {
     const wss = running.wss;
@@ -155,6 +380,8 @@ async function teardown() {
   });
   await step(() => close(running.server));
   await step(() => close(running.control));
+  if (running.terminalNode) await step(stopTerminalNode);
+  if (running.tmuxDir) await step(stopTerminalTmux);
   if (running.hostWarmed) await step(stopHost);
   if (failures.length) throw new AggregateError(failures, 'Teardown failed');
 }
@@ -194,6 +421,9 @@ function finish(cause?: unknown) {
 // before teardown, once it is the last listener left. `finish` runs its teardown only once.
 process.on('SIGINT', () => void finish());
 process.on('SIGTERM', () => void finish());
+// tmux kill-session hangs up the pane: without this the stack dies before teardown and the detached
+// native supervisor, its host and runner processes outlive it.
+process.on('SIGHUP', () => void finish());
 
 type Handler = (url: URL) => Promise<unknown>;
 function controlRoutes(personId: string): Record<string, Handler> {
@@ -221,6 +451,7 @@ function controlRoutes(personId: string): Record<string, Handler> {
         },
       );
       state.sessionId = session.id;
+      journal = { sessionId: session.id, cursor: 0 };
       return { sessionId: session.id };
     },
     'POST /seed': async (url) => {
@@ -238,20 +469,70 @@ function controlRoutes(personId: string): Record<string, Handler> {
       return { completedTurns: completedTurns(await read()) };
     },
     'GET /read': async () => {
-      const page = await read();
+      const { position, page } = await readJournal();
       return {
-        sessionId: state.sessionId,
+        sessionId: position.sessionId,
         state: page.session.state,
-        cursor: page.cursor,
+        cursor: position.cursor,
         completedTurns: completedTurns(page),
         commands: page.commands.length,
+        lastCompleted: position.lastCompleted ?? null,
       };
+    },
+    'POST /token': async () => {
+      assert(writeToken, 'Start the stack with NATIVE_STREAM_TOKEN_FILE');
+      await writeToken();
+      return { written: true };
     },
     'POST /shutdown': async () => {
       // After this reply is written.
       setTimeout(() => void finish(), 10);
       return { stopping: true };
     },
+  };
+}
+
+/** Wraps each new socket's send, after the gateway's own connection handling, to log its frames. */
+function logOutboundFrames(wss: GatewaySocketServer, file: string) {
+  let sockets = 0;
+  wss.on('connection', (socket: { send: (data: unknown, ...rest: unknown[]) => void }) => {
+    const id = ++sockets;
+    const send = socket.send.bind(socket);
+    socket.send = (data: unknown, ...rest: unknown[]) => {
+      const text =
+        typeof data === 'string' ? data : Buffer.isBuffer(data) ? data.toString('utf8') : '';
+      try {
+        fs.appendFileSync(
+          file,
+          `${JSON.stringify({
+            at: performance.timeOrigin + performance.now(),
+            socket: id,
+            bytes: Buffer.isBuffer(data) ? data.length : Buffer.byteLength(text),
+            ...frameEvents(text),
+          })}\n`,
+        );
+      } catch (cause) {
+        // A wire log that stops recording would make the measurement wrong: end the stack.
+        void finish(cause);
+      }
+      send(data, ...rest);
+    };
+  });
+}
+
+/** A frame's event name; for a native.session.delta event frame also the envelope's update kind
+ * and the sequences of its direct page.events or snapshot.events. Other frames carry none. */
+function frameEvents(text: string): { event?: string; kind?: string; sequences: number[] } {
+  const frame = JSON.parse(text) as { type?: string; event?: string; payload?: unknown };
+  if (frame.type !== 'event') return { sequences: [] };
+  if (frame.event !== 'native.session.delta') return { event: frame.event, sequences: [] };
+  const update = frame.payload as NativeSessionDeltaPayload;
+  const events =
+    'page' in update ? update.page.events : 'snapshot' in update ? update.snapshot.events : [];
+  return {
+    event: frame.event,
+    kind: update.kind,
+    sequences: events.map((event) => event.sequence),
   };
 }
 
@@ -279,9 +560,11 @@ async function start() {
     path.join(root, 'pool/local.json'),
     JSON.stringify({ machine: 'local', project: 'stream', host: 'localhost', slots: [] }),
   );
-  const executable = path.join(root, 'bin', binaries[runner]!);
-  await copyFile(path.join(repo, 'scripts/runner-validation/fixtures', fixture), executable);
-  fs.chmodSync(executable, 0o700);
+  if (!realRunner) {
+    const executable = path.join(root, 'bin', binaries[runner]!);
+    await copyFile(path.join(repo, 'scripts/runner-validation/fixtures', fixture), executable);
+    fs.chmodSync(executable, 0o700);
+  }
   const seed = process.env.NATIVE_STREAM_SEED_DIR;
   if (seed) {
     const cwd = path.join(root, 'cwd');
@@ -316,7 +599,8 @@ async function start() {
     FARMSLOT_RUNS_DIR: path.join(root, 'runs'),
     SCREEN_CONTROL_SOCKET: path.join(root, 'screen.sock'),
   });
-  delete process.env.CODEX_LB_API_KEY;
+  // A synthetic peer must never reach a real model; the real runner needs its key.
+  if (!realRunner) delete process.env.CODEX_LB_API_KEY;
 
   const { createGatewayAuthRuntime } =
     await import('../../../../services/gateway/src/security/auth.js');
@@ -353,7 +637,22 @@ async function start() {
     response.end(request.url === '/health' ? '{"ok":true}\n' : '{}\n');
   });
   running.wss = createWebSocketServer(running.server, auth);
+  if (wireLog) logOutboundFrames(running.wss, wireLog);
   initServerGlobals();
+  const seedRuns = Number(process.env.NATIVE_STREAM_SEED_RUNS ?? '0');
+  assert(Number.isSafeInteger(seedRuns) && seedRuns >= 0, 'NATIVE_STREAM_SEED_RUNS: 0 or more');
+  if (seedRuns) {
+    const { createRun, updateRun } = await import('../../../../services/gateway/src/runs/store.js');
+    for (let index = 1; index <= seedRuns; index++) {
+      const run = createRun({
+        flowType: 'fix-bug',
+        project: 'stream',
+        ticketOrPr: `STREAM-${index}`,
+        mode: 'interactive',
+      });
+      updateRun(run.id, { status: 'monitoring' });
+    }
+  }
   await listen(running.server, port);
   const grant = await auth.writer.exchangePersonCredential(credential.secret, {
     deviceName: 'Companion stream setup',
@@ -364,6 +663,62 @@ async function start() {
     credential: { token: grant.accessToken },
     timeout: 60_000,
   }).connect();
+  // Access tokens expire within an hour, and a proof session can outlive one: renew the setup
+  // connection every 20 minutes. A failed renewal stops the stack rather than leave it half-working.
+  running.renewal = setInterval(() => {
+    void (async () => {
+      const fresh = await auth.writer.exchangePersonCredential(credential.secret, {
+        deviceName: 'Companion stream setup',
+        deviceKind: 'cli',
+      });
+      const previous = running.connection;
+      running.connection = await new GatewayClient({
+        url: gatewayUrl,
+        credential: { token: fresh.accessToken },
+        timeout: 60_000,
+      }).connect();
+      // New calls use the new connection; one already in flight on the old one gets the client's
+      // full 60 s timeout before that connection closes.
+      setTimeout(() => previous?.close(), 60_000).unref();
+    })().catch((cause: unknown) => void finish(cause));
+  }, 20 * 60_000);
+  running.renewal.unref();
+  if (tokenFile) {
+    await writeFile(tokenFile, `${grant.accessToken}\n`, { mode: 0o600, flag: 'wx' });
+    process.on('exit', () => fs.rmSync(tokenFile, { force: true }));
+    writeToken = async () => {
+      const fresh = await auth.writer.exchangePersonCredential(credential.secret, {
+        deviceName: 'Companion stream setup',
+        deviceKind: 'cli',
+      });
+      // Replaced in one rename, so a proof phase never reads a half-written token. Each request
+      // writes its own temp file: overlapping requests never share one, and a failed write or
+      // rename removes it, since it holds a credential.
+      const next = `${tokenFile}.${randomUUID()}.tmp`;
+      try {
+        await writeFile(next, `${fresh.accessToken}\n`, { mode: 0o600, flag: 'wx' });
+        fs.renameSync(next, tokenFile);
+      } catch (cause) {
+        fs.rmSync(next, { force: true });
+        throw cause;
+      }
+    };
+  }
+
+  const seedTerminals = Number(process.env.NATIVE_STREAM_SEED_TERMINALS ?? '0');
+  assert(
+    Number.isSafeInteger(seedTerminals) && seedTerminals >= 0,
+    'NATIVE_STREAM_SEED_TERMINALS: 0 or more',
+  );
+  if (seedTerminals) {
+    const node = auth.writer.createPrincipal(
+      { type: 'node', displayName: 'Stream fixture node', machine: FIXTURE_MACHINE },
+      [],
+      'stream-fixture-node',
+    );
+    const nodeCredential = auth.writer.issueCredential(node.id, 'Stream fixture node');
+    state.terminals = await startTerminals(seedTerminals, nodeCredential.secret);
+  }
 
   const routes = controlRoutes(person.id);
   running.control = createServer((request: IncomingMessage, response: ServerResponse) => {
