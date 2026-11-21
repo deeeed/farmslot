@@ -1,0 +1,1 @@
+- mm-harness 0.96.39 consumes recipe-runner 0.52.0 and Recipe CLI 0.35.30 with protocol 0.91.0. The HTML evidence viewer shows the active invocation while the recipe HUD is hidden.
