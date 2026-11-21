@@ -48,6 +48,7 @@ export interface NodeLinkInvocation {
   timeoutMs?: number;
   signal?: AbortSignal;
   assertCurrent(): void | Promise<void>;
+  onDispatch?(node: ConnectedNode): void;
   onStarted?(command: NodeLinkCommand): void;
   onOutput?(stream: 'stdout' | 'stderr', text: string): void;
   onReset?(snapshot: unknown): void;
@@ -287,6 +288,7 @@ async function invokeUnqueued(
           onRequestId: (id) => {
             dispatched = true;
             requestId = id;
+            invocation.onDispatch?.(node);
           },
         });
         receipt = await Promise.race([response, cancellation]);

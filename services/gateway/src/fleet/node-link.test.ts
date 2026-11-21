@@ -24,7 +24,7 @@ after(async () => {
   else process.env.FARMSLOT_POOL_DIR = previousPool;
   await rm(suiteRoot, { recursive: true, force: true });
 });
-const { registerNode, unregisterByWs } = await import('./machine-registry.js');
+const { getNode, registerNode, unregisterByWs } = await import('./machine-registry.js');
 const { acceptNodeLinkStream, invokeNodeLink } = await import('./node-link.js');
 const { handleNodeResponse } = await import('./node-rpc.js');
 
@@ -47,11 +47,13 @@ test('typed node link streams real argv output and reuses the durable receipt wi
     approval: 'framework',
   };
   let output = '';
+  const dispatches: ReturnType<typeof getNode>[] = [];
   const invocation = {
     commandId: 'retained-process-command',
     target: { nodeId: machine, resourceId: 'fixture-process' },
     authority,
     assertCurrent: () => undefined,
+    onDispatch: (node: ReturnType<typeof getNode>) => dispatches.push(node),
     onOutput: (_stream: 'stdout' | 'stderr', data: string) => {
       output += data;
     },
@@ -78,11 +80,14 @@ test('typed node link streams real argv output and reuses the durable receipt wi
   const receipt = await invokeNodeLink(request, invocation);
   assert.equal(receipt.state, 'completed');
   assert.equal(receipt.closeoutConfirmed, true);
+  assert.equal(dispatches.length, 1);
+  assert.equal(dispatches[0], getNode(machine));
   assert.equal(output, 'NODE_LINK_REAL_PROCESS');
   assert.deepEqual(receipt.result, { exitCode: 0, stdout: output, stderr: '' });
   // A repeat cannot emit another process output frame; it reads the settled outcome.
   output = '';
   assert.deepEqual(await invokeNodeLink(request, invocation), receipt);
+  assert.equal(dispatches.length, 1);
   assert.equal(output, '');
   await assert.rejects(
     invokeNodeLink(
