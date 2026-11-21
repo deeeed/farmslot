@@ -208,7 +208,7 @@ export async function handleActions(
         title: `actions (${adapter})`,
         guidance:
           'Details and examples: ' +
-          host +
+          actionDetailHost(host) +
           ' actions --action <name>' +
           contextArgs +
           detailProviderArgs(options) +
@@ -434,6 +434,10 @@ function actionCatalogContextArgs(
   );
 }
 
+function actionDetailHost(host: string): string {
+  return host === 'farmslot recipe' ? host : shellQuoteArg(invokedHostCommand());
+}
+
 /** Replay only provider authorization supplied by the operator for this detail lookup. */
 function detailProviderArgs(options: CliOptions): string {
   return (optionStrings(options, 'authorizeProvider') ?? [])
@@ -469,7 +473,7 @@ export function renderHumanActionCatalog(
         : options.sort === 'library'
           ? `Library: ${entry.source}`
           : options.sort === 'domain'
-            ? actionDomain(entry)
+            ? entry.category
             : actionDomainGroup(catalog, entry);
     groups.set(group, [...(groups.get(group) ?? []), entry]);
   }
@@ -489,7 +493,7 @@ export function renderHumanActionCatalog(
     if (group) lines.push('', `${out(groupStyle, group)} ${out('dim', `(${entries.length})`)}`);
     for (const entry of entries) {
       const source = ` ${out('dim', `[${entry.source}]`)}`;
-      const nameStyle = options.domainStyles?.get(actionDomain(entry)) ?? 'cmd';
+      const nameStyle = options.domainStyles?.get(entry.category) ?? 'cmd';
       lines.push(`  ${out(nameStyle, options.displayName?.(entry) ?? entry.name)}${source}`);
       const description = actionDescriptionPreview(entry.description);
       if (description) lines.push(`    ${description}`);
@@ -718,12 +722,12 @@ export async function handleListExecutables(
         ' call <name>' +
         contextArgs +
         '  ·  Details and examples: ' +
-        host +
+        actionDetailHost(host) +
         detailCommand +
         contextArgs +
         detailProviderArgs(options),
       sort,
-      domainStyles: stylesFor(available.map(actionDomain)),
+      domainStyles: stylesFor(available.map((entry) => entry.category)),
       contextLines,
       displayName: (entry) => {
         const short = shortByName.get(entry.name);

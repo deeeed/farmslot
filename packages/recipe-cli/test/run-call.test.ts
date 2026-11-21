@@ -1238,6 +1238,9 @@ describe('actions', () => {
         async () => {
           const root = tempRoot('catalog-help-context-');
           const target = path.join(root, "checkout 'one=target");
+          const executable = path.join(root, "task 'one=shop-harness");
+          fs.writeFileSync(executable, '#!/bin/sh\nprintf "%s\\0" "$@"\n', { mode: 0o700 });
+          process.env.SHOP_HARNESS_INVOKED_AS = executable;
           const selectedLibrary = path.join(root, "library 'one=selected");
           const manifest = path.join(root, "override 'one=manifest.json");
           fs.mkdirSync(target);
@@ -1279,18 +1282,12 @@ describe('actions', () => {
             .find((line) => line.includes('Details and examples: '))
             ?.split('Details and examples: ')[1];
           assert.ok(hint);
-          // The shell parses the actual emitted command. The fixture host captures
-          // argv, then the real selected-catalog handler consumes those arguments.
-          const command = hint.replaceAll('<name>', action);
-          const argv = execFileSync(
-            '/bin/sh',
-            [
-              '-c',
-              'fixture_host() { printf "%s\\0" "$@"; }\nfixture_host' +
-                command.slice('shop-harness'.length),
-            ],
-            { encoding: 'utf8', timeout: 2000 },
-          )
+          const execution = text.split('\n').find((line) => /^(Run|Use): /u.test(line));
+          assert.match(execution ?? '', /^(Run|Use): shop-harness call /u);
+          const argv = execFileSync('/bin/sh', ['-c', hint.replaceAll('<name>', action)], {
+            encoding: 'utf8',
+            timeout: 2000,
+          })
             .split('\0')
             .filter(Boolean);
           for (const [flag, expected] of [
@@ -1389,6 +1386,33 @@ describe('actions', () => {
         caller + ' must keep the bundled schema when a personal default exists',
       );
       assert.ok(detail.stdout.every((line) => !line.includes(personalDescription)));
+    }
+  });
+
+  test('lists canonical category headings that can be used as filters', async () => {
+    const manifest = path.join(tempRoot('catalog-category-'), 'manifest.json');
+    const action = 'shop.swap_bridge.ping';
+    fs.writeFileSync(
+      manifest,
+      JSON.stringify({ $schema: CORE_ACTIONS.$schema, actions: { [action]: PING_ACTION } }),
+    );
+    const flags = ['--adapter', 'web', '--action-manifest', manifest];
+    const listing = await actions(...flags);
+    const callList = await capture(() =>
+      handleListExecutables('call', parseArgs(flags).options, { catalog: engine }),
+    );
+    for (const text of [
+      view(listing.stdout, 'actions (web)'),
+      view(callList.stdout, 'invocable actions (web)'),
+    ]) {
+      const category = /^([a-z_-]+) \(1\)$/mu.exec(text ?? '')?.[1];
+      assert.equal(category, 'swap_bridge');
+      const filtered = await actions(...flags, '--category', category, '--json');
+      assert.equal(filtered.value, 0);
+      assert.deepEqual(
+        (lastJson(filtered.stdout).actions as Array<{ name: string }>).map(({ name }) => name),
+        [action],
+      );
     }
   });
 
