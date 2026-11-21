@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
+import { tmpdir } from 'node:os';
 import { mock, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
+import { withProjectSources } from '@farmslot/slot-config';
+
+import { sourceTestLock, sourceTestMaterialization } from '../sources/source.test-support.js';
 import { withCleanupSignal } from './cleanup-scope.js';
 import type { SlotVars } from './config.js';
 
@@ -14,6 +19,11 @@ let resolveElapsedMs = 0;
 let now = 0;
 let pending = false;
 const sent: Array<{ cmd: string; timeout: number | undefined; signal?: AbortSignal }> = [];
+let verifySources: () => Promise<void>;
+
+mock.module('../sources/runtime.js', {
+  namedExports: { verifyExecutionSources: () => verifySources() },
+});
 
 mock.module('../node-support/remote-command.js', {
   namedExports: {
@@ -73,6 +83,58 @@ const remote: SlotVars = {
   dispatchCmd: '',
   recycleCmd: '',
 };
+
+test('local exec reports dispatch only when a child spawns', async () => {
+  let finishVerification!: () => void;
+  let startVerification!: () => void;
+  const verified = new Promise<void>((resolve) => {
+    finishVerification = resolve;
+  });
+  const verifying = new Promise<void>((resolve) => {
+    startVerification = resolve;
+  });
+  verifySources = () => {
+    startVerification();
+    return verified;
+  };
+  const materialization = sourceTestMaterialization(sourceTestLock(), 'gateway');
+  const sources = {
+    project: 'demo',
+    pack: materialization.lock.packBindings.demo,
+    materialization,
+  };
+  const vars = { ...remote, host: 'localhost', remoteRepo: tmpdir() };
+  const controller = new AbortController();
+  let dispatches = 0;
+  const onDispatch = (node: unknown) => {
+    assert.equal(node, undefined);
+    dispatches++;
+  };
+  const cancelled = withProjectSources(sources, () =>
+    execOnSlot(vars, 'printf ran', {
+      signal: controller.signal,
+      onDispatch,
+    }),
+  );
+  await verifying;
+  controller.abort();
+  finishVerification();
+  assert.equal((await cancelled).exitCode, 130);
+  assert.equal(dispatches, 0);
+
+  const failedSpawn = await execOnSlot(vars, 'printf ran', {
+    cwd: fileURLToPath(new URL('./missing-exec-dispatch-cwd', import.meta.url)),
+    onDispatch,
+  });
+  assert.match(failedSpawn.stderr, /spawn error/);
+  assert.equal(dispatches, 0);
+
+  const spawned = await withProjectSources(sources, () =>
+    execOnSlot(vars, 'printf ran', { onDispatch }),
+  );
+  assert.equal(spawned.stdout, 'ran');
+  assert.equal(dispatches, 1);
+});
 
 function reset(): void {
   resolved.length = 0;

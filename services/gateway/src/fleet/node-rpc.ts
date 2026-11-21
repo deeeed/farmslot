@@ -216,14 +216,19 @@ export class NodeExecUnconfirmedError extends NodeTransportUnavailableError {
   }
 }
 
-/**
- * Send an RPC request to a connected node and await the response.
- */
+interface NodeRequestOptions {
+  timeout?: number;
+  onRequestId?: (id: string) => void;
+  onSent?: () => void;
+  requireSameConnection?: boolean;
+}
+
+/** Send an RPC request to a connected node and await the response. */
 export function sendNodeRequest(
   node: ConnectedNode,
   method: string,
   params: unknown,
-  opts?: { timeout?: number; onRequestId?: (id: string) => void; requireSameConnection?: boolean },
+  opts?: NodeRequestOptions,
 ): Promise<unknown> {
   return measureManagedOperation('node', 'node', async () => {
     try {
@@ -247,7 +252,7 @@ function sendNodeRequestUnmeasured(
   node: ConnectedNode,
   method: string,
   params: unknown,
-  opts?: { timeout?: number; onRequestId?: (id: string) => void; requireSameConnection?: boolean },
+  opts?: NodeRequestOptions,
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
     if (stoppingNodes.has(node.ws)) return reject(new NodeRequestNotAcceptedError(node.machine));
@@ -283,7 +288,20 @@ function sendNodeRequestUnmeasured(
         : {}),
     });
     opts?.onRequestId?.(id);
-    node.ws.send(JSON.stringify({ type: 'req', id, method, params }));
+    const frame = JSON.stringify({ type: 'req', id, method, params });
+    const onSent = opts?.onSent;
+    if (!onSent) {
+      node.ws.send(frame);
+      return;
+    }
+    try {
+      node.ws.send(frame, (error) => {
+        if (error) takePendingRequest(id)?.reject(error);
+        else if (pending.has(id)) onSent();
+      });
+    } catch (error) {
+      takePendingRequest(id)?.reject(error instanceof Error ? error : new Error(String(error)));
+    }
   });
 }
 
@@ -431,8 +449,8 @@ function sendNodeRequestStreamingUnmeasured(
     try {
       node.ws.send(JSON.stringify({ type: 'req', id, method, params }), (error) => {
         if (error) sendFailed(error);
+        else if (pending.has(id)) opts?.onDispatch?.(node);
       });
-      if (pending.has(id)) opts?.onDispatch?.(node);
     } catch (error) {
       sendFailed(error instanceof Error ? error : new Error(String(error)));
     }

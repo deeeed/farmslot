@@ -33,7 +33,7 @@ test('typed node link streams real argv output and reuses the durable receipt wi
   const previousHome = process.env.FARMSLOT_HOME;
   process.env.FARMSLOT_HOME = root;
   const machine = 'node-link-rpc-fixture';
-  const { principal } = await linkedNode(t, root, machine);
+  const { principal, gatewaySocket } = await linkedNode(t, root, machine);
   t.after(async () => {
     if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
     else process.env.FARMSLOT_HOME = previousHome;
@@ -48,6 +48,13 @@ test('typed node link streams real argv output and reuses the durable receipt wi
   };
   let output = '';
   const dispatches: ReturnType<typeof getNode>[] = [];
+  const dispatchCountsAtSend: number[] = [];
+  const send = gatewaySocket.send.bind(gatewaySocket);
+  t.mock.method(gatewaySocket, 'send', (raw: string, callback?: (error?: Error) => void) => {
+    if (JSON.parse(raw).method === 'node.link.command')
+      dispatchCountsAtSend.push(dispatches.length);
+    send(raw, callback);
+  });
   const invocation = {
     commandId: 'retained-process-command',
     target: { nodeId: machine, resourceId: 'fixture-process' },
@@ -80,6 +87,7 @@ test('typed node link streams real argv output and reuses the durable receipt wi
   const receipt = await invokeNodeLink(request, invocation);
   assert.equal(receipt.state, 'completed');
   assert.equal(receipt.closeoutConfirmed, true);
+  assert.deepEqual(dispatchCountsAtSend, [0]);
   assert.equal(dispatches.length, 1);
   assert.equal(dispatches[0], getNode(machine));
   assert.equal(output, 'NODE_LINK_REAL_PROCESS');
@@ -219,7 +227,15 @@ async function linkedNode(
       nodePrincipal: principal,
     },
   );
-  return { agent, principal, calls, cancelAcknowledged, delayedReplyReady, commandHandled };
+  return {
+    agent,
+    principal,
+    calls,
+    cancelAcknowledged,
+    delayedReplyReady,
+    commandHandled,
+    gatewaySocket,
+  };
 }
 
 test('flagged task staging uses node commands, preserves existing artifacts and publishes executable marker last', async (t) => {

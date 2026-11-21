@@ -288,8 +288,8 @@ async function invokeUnqueued(
           onRequestId: (id) => {
             dispatched = true;
             requestId = id;
-            invocation.onDispatch?.(node);
           },
+          onSent: invocation.onDispatch ? () => invocation.onDispatch?.(node) : undefined,
         });
         receipt = await Promise.race([response, cancellation]);
       } catch (error) {

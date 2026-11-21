@@ -101,6 +101,7 @@ export interface ExecOptions {
   cwd?: string;
   timeout?: number;
   onOutput?: (stream: string, data: string) => void;
+  onSpawn?: () => void;
   signal?: AbortSignal;
   closeoutTimeoutMs?: number;
   maxBuffer?: number;
@@ -264,6 +265,7 @@ function spawnLocalProcess(
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: useProcessGroup,
       });
+      if (opts?.onSpawn) proc.once('spawn', opts.onSpawn);
       if (proc.pid !== undefined && owner) {
         owner.started(proc);
         watchCommand(proc);
@@ -396,7 +398,7 @@ function spawnLocalProcess(
 // ─── ExecOnSlotOptions ───
 
 export interface ExecOnSlotOptions extends ExecOptions {
-  /** Reports the dispatch selected by the transport. Local processes have no node connection. */
+  /** Reports a successful local spawn or an accepted transport write. */
   onDispatch?: (node: ConnectedNode | undefined) => void;
   /** Read-only probes may deliver a bundle without selecting it for the slot. */
   selectNodeSupport?: boolean;
@@ -442,16 +444,15 @@ export async function execOnSlot(
   }
 
   if (isLocal(slotVars.host, slotVars.machine) && !usesNodeLink(slotVars.machine)) {
-    const execution = execLocal(cmd, {
+    return execLocal(cmd, {
       cwd,
       timeout: opts.timeout,
       onOutput: opts.onOutput,
+      onSpawn: opts.onDispatch ? () => opts.onDispatch?.(undefined) : undefined,
       signal,
       closeoutTimeoutMs: opts.closeoutTimeoutMs,
       maxBuffer: opts.maxBuffer,
     });
-    opts.onDispatch?.(undefined);
-    return execution;
   }
   // Every remote command that calls a farm script runs it from the support
   // bundle matching this gateway's config, never from the node's last deploy

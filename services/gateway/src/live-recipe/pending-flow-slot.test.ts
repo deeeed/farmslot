@@ -126,7 +126,7 @@ async function held(
   const register = (pid: number) => {
     const socket = {
       readyState: 1,
-      send(raw: string) {
+      send(raw: string, callback?: () => void) {
         const {
           id: requestId,
           method,
@@ -158,6 +158,7 @@ async function held(
             respond({ content }),
           );
         } else if (method === 'exec') {
+          callback?.();
           queueMicrotask(() => respond({ exitCode: 0, stdout: String(pid), stderr: '' }));
         } else assert.fail('Unexpected node method: ' + method);
       },
