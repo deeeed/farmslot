@@ -56,7 +56,11 @@ import {
   textPreviewTotalBytes,
 } from '../lib/text-preview';
 import { colors, fonts } from '../lib/theme';
-import { videoSourceLoadDurationMs } from '../lib/video-source-load';
+import {
+  type LoadedVideoSource,
+  observeLoadedVideoReady,
+  videoSourceLoadDurationMs,
+} from '../lib/video-source-load';
 
 import { ArtifactImage } from './ArtifactImage';
 import { type EvidenceAcceptanceReview, EvidenceAcOverlay } from './EvidenceAcOverlay';
@@ -526,6 +530,7 @@ function FullscreenVideo({
   const resumePlayback = useRef(Boolean(item.evidenceModel?.selection?.clips.length));
   const [videoPath, setVideoPath] = useState('');
   const [durationMs, setDurationMs] = useState(0);
+  const [loadedSource, setLoadedSource] = useState<LoadedVideoSource | null>(null);
   const [, updateSelection] = useState(0);
   const source = useArtifactSource(uri, item.authHeaders, item.sha256);
   const player = useVideoPlayer(source, (value) => {
@@ -663,32 +668,34 @@ function FullscreenVideo({
       trackedAnchor.current = null;
       return;
     }
-    if (appliedTimelineSeek.current === anchorKey || !durationMs || player.status !== 'readyToPlay')
-      return;
-    const seek = restoreRecordingTimeMs(timelineAt, durationMs);
-    if (seek === null) {
-      setTimelineAt(-1);
-      return;
-    }
-    appliedTimelineSeek.current = anchorKey;
-    setConfirmedAnchor(null);
-    onViewSelectionChange(item.uri);
-    resumePlayback.current = false;
-    model?.clearSelection();
-    const previousMs = player.currentTime * 1000;
-    player.pause();
-    player.currentTime = seek / 1000;
-    trackedAnchor.current = { key: anchorKey, requestedMs: seek, previousMs };
-    updateSelection((value) => value + 1);
+    return observeLoadedVideoReady(player, source.uri, loadedSource, (loadedDurationMs) => {
+      if (appliedTimelineSeek.current === anchorKey) return;
+      const seek = restoreRecordingTimeMs(timelineAt, loadedDurationMs);
+      if (seek === null) {
+        setTimelineAt(-1);
+        return;
+      }
+      appliedTimelineSeek.current = anchorKey;
+      setConfirmedAnchor(null);
+      onViewSelectionChange(item.uri);
+      resumePlayback.current = false;
+      model?.clearSelection();
+      const previousMs = player.currentTime * 1000;
+      player.pause();
+      player.currentTime = seek / 1000;
+      trackedAnchor.current = { key: anchorKey, requestedMs: seek, previousMs };
+      updateSelection((value) => value + 1);
+    });
   }, [
     anchorKey,
-    durationMs,
     item.uri,
+    loadedSource,
     model,
     onViewSelectionChange,
     player,
     recordingRevision,
     setTimelineAt,
+    source.uri,
     timelineAt,
   ]);
 
@@ -771,6 +778,11 @@ function FullscreenVideo({
       const loadedDurationMs = videoSourceLoadDurationMs(source.uri, event);
       if (active && loadedDurationMs !== null) {
         setDurationMs(loadedDurationMs);
+        setLoadedSource((previous) =>
+          previous?.uri === source.uri && previous.durationMs === loadedDurationMs
+            ? previous
+            : { uri: source.uri, durationMs: loadedDurationMs },
+        );
         syncReady();
       }
     });
