@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { withProjectSources } from '@farmslot/slot-config';
 
 import { sourceTestLock, sourceTestMaterialization } from '../sources/source.test-support.js';
+
 import { withCleanupSignal } from './cleanup-scope.js';
 import type { SlotVars } from './config.js';
 
