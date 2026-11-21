@@ -559,7 +559,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     const next = {
       ...view,
       recipeGroupId: linked?.recipeGroupId,
-      decisionId: linked?.decisionId,
+      decisionId: this._gateDecision?.id,
     };
     if (
       this._review &&
@@ -624,7 +624,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
               .selection=${this._reviewSelection(this._review, this._evidenceModel)}
               @reviewer-close=${() => {
                 this._review = null;
-                writeEvidenceReviewerHash(null);
+                writeEvidenceReviewerHash(null, true);
               }}
               @reviewer-view=${(event: CustomEvent<EvidenceReviewerView>) =>
                 this._onReviewerView(event.detail, reviewRunId)}

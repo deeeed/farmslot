@@ -107,7 +107,17 @@ export function reviewLinkMatchesRun(runId: string, hash: string = location.hash
   return true;
 }
 
-export function writeEvidenceReviewerHash(view: EvidenceReviewerView | null): void {
+export function writeEvidenceReviewerHash(
+  view: EvidenceReviewerView | null,
+  notifyRoute = false,
+): void {
   const next = evidenceReviewerHash(view);
-  if (location.hash !== next) navigateHash(next, 'replace');
+  if (location.hash === next) return;
+  const before = location.href;
+  navigateHash(next, 'replace');
+  // Gate selection lives in Run Detail, which listens to route changes.
+  if (notifyRoute && location.href !== before)
+    window.dispatchEvent(
+      new HashChangeEvent('hashchange', { oldURL: before, newURL: location.href }),
+    );
 }

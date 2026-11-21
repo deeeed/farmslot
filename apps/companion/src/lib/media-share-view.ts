@@ -24,13 +24,21 @@ export function mediaShareView(
     : undefined;
 }
 
-/** A requested timeline position stops being exact when the native player moves. */
-export function recordingAnchorMoved(
-  anchor: { requestedMs: number; observedMs?: number },
+export interface RecordingAnchor {
+  requestedMs: number;
+  previousMs: number;
+  observedMs?: number;
+}
+
+/** Old samples can precede seek completion; a third position means playback has moved. */
+export function observeRecordingAnchor(
+  anchor: RecordingAnchor,
   playing: boolean,
   positionMs: number,
-): boolean {
-  return (
-    playing || (anchor.observedMs !== undefined && Math.abs(positionMs - anchor.observedMs) > 1)
-  );
+): 'pending' | 'confirmed' | 'moved' {
+  if (playing) return 'moved';
+  if (anchor.observedMs !== undefined)
+    return Math.abs(positionMs - anchor.observedMs) <= 1 ? 'confirmed' : 'moved';
+  if (Math.abs(positionMs - anchor.requestedMs) <= 100) return 'confirmed';
+  return Math.abs(positionMs - anchor.previousMs) <= 1 ? 'pending' : 'moved';
 }

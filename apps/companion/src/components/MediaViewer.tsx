@@ -48,7 +48,7 @@ import {
   mediaShareView,
 } from '../lib/evidence-media-items';
 import { gatewayFetch } from '../lib/gateway-http-auth';
-import { recordingAnchorMoved } from '../lib/media-share-view';
+import { observeRecordingAnchor, type RecordingAnchor } from '../lib/media-share-view';
 import {
   TEXT_PREVIEW_MAX_BYTES,
   TEXT_PREVIEW_RANGE,
@@ -610,19 +610,27 @@ function FullscreenVideo({
   const [timelineAt, setTimelineAt] = useViewChoice(timelineTimeField);
   const sharedOwner = item.sharedArtifact;
   const [criterionId, setCriterionId] = useState(sharedOwner?.criterionId);
-  const trackedAnchor = useRef<{ requestedMs: number; observedMs?: number } | null>(null);
+  const anchorKey = JSON.stringify([timelineScope, uri, timelineAt]);
+  const [confirmedAnchor, setConfirmedAnchor] = useState<string | null>(null);
+  const trackedAnchor = useRef<(RecordingAnchor & { key: string }) | null>(null);
   const savedTimelineAt = useRef(timelineAt);
   savedTimelineAt.current = timelineAt;
   const invalidateTimelineAnchor = useCallback(() => {
     if (trackedAnchor.current || savedTimelineAt.current >= 0) {
       trackedAnchor.current = null;
+      setConfirmedAnchor(null);
       setTimelineAt(-1);
     }
     onViewSelectionChange(item.uri);
   }, [item.uri, onViewSelectionChange, setTimelineAt]);
   useEffect(() => {
     const artifact =
-      sharedOwner && criterionId && recordingPath && recordingRevision && timelinePage >= 0
+      sharedOwner &&
+      criterionId &&
+      recordingPath &&
+      recordingRevision &&
+      timelinePage >= 0 &&
+      (timelineAt < 0 || confirmedAnchor === anchorKey)
         ? {
             ...sharedOwner,
             criterionId,
@@ -637,6 +645,8 @@ function FullscreenVideo({
     onTimelineViewChange(item.uri, artifact);
     return () => onTimelineViewChange(item.uri);
   }, [
+    anchorKey,
+    confirmedAnchor,
     criterionId,
     item.uri,
     onTimelineViewChange,
@@ -653,24 +663,25 @@ function FullscreenVideo({
       trackedAnchor.current = null;
       return;
     }
-    const key = JSON.stringify([timelineScope, uri, timelineAt]);
-    if (appliedTimelineSeek.current === key || !durationMs || player.status !== 'readyToPlay')
+    if (appliedTimelineSeek.current === anchorKey || !durationMs || player.status !== 'readyToPlay')
       return;
     const seek = restoreRecordingTimeMs(timelineAt, durationMs);
     if (seek === null) {
       setTimelineAt(-1);
       return;
     }
-    appliedTimelineSeek.current = key;
+    appliedTimelineSeek.current = anchorKey;
+    setConfirmedAnchor(null);
+    onViewSelectionChange(item.uri);
     resumePlayback.current = false;
     model?.clearSelection();
+    const previousMs = player.currentTime * 1000;
     player.pause();
     player.currentTime = seek / 1000;
-    trackedAnchor.current = { requestedMs: seek };
-    if (!criterionId) onViewSelectionChange(item.uri);
+    trackedAnchor.current = { key: anchorKey, requestedMs: seek, previousMs };
     updateSelection((value) => value + 1);
   }, [
-    criterionId,
+    anchorKey,
     durationMs,
     item.uri,
     model,
@@ -679,8 +690,6 @@ function FullscreenVideo({
     recordingRevision,
     setTimelineAt,
     timelineAt,
-    timelineScope,
-    uri,
   ]);
 
   useEffect(() => {
@@ -691,11 +700,12 @@ function FullscreenVideo({
       const anchor = trackedAnchor.current;
       if (!anchor) return;
       const sample = currentTime * 1000;
-      if (recordingAnchorMoved(anchor, player.playing, sample)) {
+      const observed = observeRecordingAnchor(anchor, player.playing, sample);
+      if (observed === 'moved') {
         invalidateTimelineAnchor();
-      } else if (anchor.observedMs === undefined && Math.abs(sample - anchor.requestedMs) <= 100) {
-        // Wait for the asynchronous seek to land before treating movement as a native scrub.
+      } else if (observed === 'confirmed' && anchor.observedMs === undefined) {
         anchor.observedMs = sample;
+        setConfirmedAnchor(anchor.key);
       }
     });
     return () => {
@@ -731,7 +741,7 @@ function FullscreenVideo({
   useEffect(() => {
     let active = true;
     const cue = () => {
-      if (!active || !model?.selection?.clips.length) return;
+      if (!active || savedTimelineAt.current >= 0 || !model?.selection?.clips.length) return;
       const clip = model.playback.clip;
       if (!clip || clip.videoPath !== videoPath) return;
       applyPlayback({
@@ -951,7 +961,7 @@ function FullscreenVideo({
               if (page < 0) setTimelineAt(-1);
             }}
             onSeek={(ms) => {
-              if (!criterionId) onViewSelectionChange(item.uri);
+              onViewSelectionChange(item.uri);
               setTimelineAt(Math.round(ms));
             }}
           />
