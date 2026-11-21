@@ -308,6 +308,7 @@ const DEFAULT_STREAMING_TIMEOUT_MS = 120_000;
 interface StreamingRequestOptions {
   timeout?: number;
   onOutput?: (stream: string, data: string) => void;
+  onDispatch?: (node: ConnectedNode) => void;
   signal?: AbortSignal;
   closeoutTimeoutMs?: number;
 }
@@ -431,6 +432,7 @@ function sendNodeRequestStreamingUnmeasured(
       node.ws.send(JSON.stringify({ type: 'req', id, method, params }), (error) => {
         if (error) sendFailed(error);
       });
+      if (pending.has(id)) opts?.onDispatch?.(node);
     } catch (error) {
       sendFailed(error instanceof Error ? error : new Error(String(error)));
     }
@@ -543,6 +545,7 @@ export interface NodeExecOpts {
   closeoutTimeoutMs?: number;
   timeout?: number;
   onOutput?: (stream: string, data: string) => void;
+  onDispatch?: (node: ConnectedNode) => void;
   maxBuffer?: number;
   /** Fail instead of resending after a lost reply: the command may already have run. */
   noRetry?: boolean;
@@ -642,6 +645,7 @@ async function nodeExecRequest(
                   }
                 : {}),
               onOutput: opts?.onOutput,
+              onDispatch: opts?.onDispatch,
               signal: opts?.signal,
               closeoutTimeoutMs: opts?.closeoutTimeoutMs,
             },

@@ -3,7 +3,9 @@
 
 import { randomBytes } from 'node:crypto';
 import { existsSync, type Stats } from 'node:fs';
-import { type FileHandle, open, readFile, rename, rm } from 'node:fs/promises';
+import { type FileHandle, open, readFile, rename, rm, stat } from 'node:fs/promises';
+
+import { deepFreeze } from '@farmslot/protocol';
 
 import { assertStatusFileWritable, resolveStatusFilePath } from '../projects/repo-root.js';
 
@@ -39,13 +41,17 @@ export function statusFileStamp(stats: Stats): StatusFileStamp {
   return { ino: stats.ino, size: stats.size, mtimeMs: stats.mtimeMs, ctimeMs: stats.ctimeMs };
 }
 /** The last status text this gateway committed, and the stamp of the file it renamed into place. */
-let committedStatus: { text: string; stamp: StatusFileStamp } | undefined;
+let committedStatus: { text: string; stamp: StatusFileStamp; rows?: SlotRows } | undefined;
 /**
  * The committed status text while the status file is still that commit, else undefined. A file
  * replaced or edited after the commit has another stamp, so readers read it rather than serve an
  * older snapshot.
  */
 export function committedStatusText(current: StatusFileStamp): string | undefined {
+  return matchingCommittedStatus(current)?.text;
+}
+
+function matchingCommittedStatus(current: StatusFileStamp) {
   const committed = committedStatus;
   if (!committed) return undefined;
   const { stamp } = committed;
@@ -53,7 +59,7 @@ export function committedStatusText(current: StatusFileStamp): string | undefine
     stamp.size === current.size &&
     stamp.mtimeMs === current.mtimeMs &&
     stamp.ctimeMs === current.ctimeMs
-    ? committed.text
+    ? committed
     : undefined;
 }
 
@@ -465,11 +471,10 @@ export function slotOwnershipReleaseFields(): Record<string, unknown> {
   return fields;
 }
 
+type SlotRows = Map<string, Readonly<Record<string, unknown>>>;
+
 /** Share the keyed rows for one immutable status snapshot across its readers. */
-const slotRowsBySnapshot = new WeakMap<
-  readonly unknown[],
-  Map<string, Readonly<Record<string, unknown>>>
->();
+const slotRowsBySnapshot = new WeakMap<readonly unknown[], SlotRows>();
 
 /**
  * Single-snapshot row read: both fields of a multi-field check come from ONE
@@ -480,8 +485,17 @@ export async function readSlotRow(
   slotId: string,
 ): Promise<Readonly<Record<string, unknown>> | null> {
   if (!existsSync(statusFile)) return null;
-  // One parse of each file version, frozen and shared by every reader until the file changes.
-  const data = await readJsonFile(statusFile);
+  const committed = matchingCommittedStatus(statusFileStamp(await stat(statusFile)));
+  if (committed) {
+    // A gateway-owned commit already has verified bytes. The generic JSON cache reparses
+    // recent writes to cover external writers, even when those bytes have not changed.
+    committed.rows ??= keyedSlotRows(deepFreeze(JSON.parse(committed.text)));
+    return committed.rows.get(slotId) ?? null;
+  }
+  return keyedSlotRows(await readJsonFile(statusFile)).get(slotId) ?? null;
+}
+
+function keyedSlotRows(data: unknown): SlotRows {
   // A corrupt status file throws, as JSON.parse's untyped reads did: ownership checks must not
   // mistake it for an absent row.
   if (!isStatusRecord(data)) throw new TypeError(`${statusFile} is not a status object`);
@@ -497,7 +511,7 @@ export async function readSlotRow(
     }
     slotRowsBySnapshot.set(slots, keyed);
   }
-  return keyed.get(slotId) ?? null;
+  return keyed;
 }
 
 function isStatusRecord(value: unknown): value is Readonly<Record<string, unknown>> {

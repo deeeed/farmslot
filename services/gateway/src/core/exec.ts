@@ -10,7 +10,7 @@ import { createNodeExecCloseout, type ExecResult, observeNodeExecAbort } from '@
 import { currentProjectSources, sourceExecutionEnvironment } from '@farmslot/slot-config';
 
 import { commandIncludesFarmPath, currentFarmPaths } from '../fleet/farm-paths.js';
-import { getNode } from '../fleet/machine-registry.js';
+import { type ConnectedNode, getNode } from '../fleet/machine-registry.js';
 import { usesNodeLink } from '../fleet/node-link-policy.js';
 import { nodeExec, nodeExecArgv } from '../fleet/node-rpc.js';
 import { executionKind, measureManagedOperation } from '../observability/performance.js';
@@ -396,6 +396,8 @@ function spawnLocalProcess(
 // ─── ExecOnSlotOptions ───
 
 export interface ExecOnSlotOptions extends ExecOptions {
+  /** Reports the dispatch selected by the transport. Local processes have no node connection. */
+  onDispatch?: (node: ConnectedNode | undefined) => void;
   /** Read-only probes may deliver a bundle without selecting it for the slot. */
   selectNodeSupport?: boolean;
 }
@@ -440,7 +442,7 @@ export async function execOnSlot(
   }
 
   if (isLocal(slotVars.host, slotVars.machine) && !usesNodeLink(slotVars.machine)) {
-    return execLocal(cmd, {
+    const execution = execLocal(cmd, {
       cwd,
       timeout: opts.timeout,
       onOutput: opts.onOutput,
@@ -448,6 +450,8 @@ export async function execOnSlot(
       closeoutTimeoutMs: opts.closeoutTimeoutMs,
       maxBuffer: opts.maxBuffer,
     });
+    opts.onDispatch?.(undefined);
+    return execution;
   }
   // Every remote command that calls a farm script runs it from the support
   // bundle matching this gateway's config, never from the node's last deploy
@@ -482,6 +486,7 @@ export async function execOnSlot(
     nodeExec(slotVars.machine, cmd, cwd, {
       timeout,
       onOutput: opts.onOutput,
+      onDispatch: opts.onDispatch,
       maxBuffer: opts.maxBuffer,
       noRetry: opts.noRetry,
       signal,

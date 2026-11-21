@@ -42,6 +42,7 @@ syncBuiltinESMExports();
 await import('../runtime/mock-pty.test-support.js');
 const state = await import('../core/state.js');
 const cfg = await import('../core/config.js');
+const { execOnSlot } = await import('../core/exec.js');
 const store = await import('../runs/store.js');
 const nodes = await import('../fleet/machine-registry.js');
 const { handleNodeResponse } = await import('../fleet/node-rpc.js');
@@ -65,7 +66,11 @@ function deferred() {
   return { promise, resolve };
 }
 
-async function held(t: TestContext, suffix: string, { firstWatchTimeout = false } = {}) {
+async function held(
+  t: TestContext,
+  suffix: string,
+  { firstWatchTimeout = false, bindOnDispatch = false } = {},
+) {
   const project = 'item7-fixture';
   const machine = 'item7-fixture-' + suffix;
   const slotId = 'item7-slot-' + suffix;
@@ -116,6 +121,7 @@ async function held(t: TestContext, suffix: string, { firstWatchTimeout = false 
   };
   store.updateRun(id, { status: 'monitoring', slotId, taskFile, liveRecipeContext: context });
   const watches = new Map<string, string>();
+  let retired: { requestId: string; path: string } | undefined;
   let watchCalls = 0;
   const register = (pid: number) => {
     const socket = {
@@ -137,6 +143,7 @@ async function held(t: TestContext, suffix: string, { firstWatchTimeout = false 
           assert.equal(path.basename(params.path), RECIPE_PENDING_FLOW_FILE);
           watches.set(requestId, params.path);
           if (watchCalls === 1 && firstWatchTimeout) {
+            retired = { requestId, path: params.path };
             queueMicrotask(() => t.mock.timers.tick(30_001));
           } else queueMicrotask(() => respond({ watching: true, notificationsOnly: 1 }));
         } else if (method === 'fs.watch.stop') {
@@ -150,6 +157,8 @@ async function held(t: TestContext, suffix: string, { firstWatchTimeout = false 
           void readFile(path.join(params.root, params.relPath), 'utf8').then((content) =>
             respond({ content }),
           );
+        } else if (method === 'exec') {
+          queueMicrotask(() => respond({ exitCode: 0, stdout: String(pid), stderr: '' }));
         } else assert.fail('Unexpected node method: ' + method);
       },
     } as WebSocket;
@@ -171,12 +180,15 @@ async function held(t: TestContext, suffix: string, { firstWatchTimeout = false 
   const firstNode = register(100);
   const epoch = (await state.readSlotRow(slotId))?.slot_epoch;
   assert(typeof epoch === 'number');
-  const releaseBinding = bindPendingRecipeAttempt({ id, taskFile, slotId }, context, {
-    taskDir,
-    slot: { id: slotId, epoch },
-    node: nodes.getNode(machine),
-  });
-  t.after(releaseBinding);
+  const bind = (node: ReturnType<typeof nodes.getNode>) =>
+    t.after(
+      bindPendingRecipeAttempt({ id, taskFile, slotId }, context, {
+        taskDir,
+        slot: { id: slotId, epoch },
+        node,
+      }),
+    );
+  if (!bindOnDispatch) bind(nodes.getNode(machine));
   const active = { action: 'app.status', intent: 'Read current status.', next: 'next' };
   const next = { action: 'app.status', intent: 'Check again.', next: 'done' };
   const end = { action: 'end', status: 'pass' };
@@ -254,8 +266,30 @@ async function held(t: TestContext, suffix: string, { firstWatchTimeout = false 
         }),
       );
   };
-  return { id, slotId, read, register, advance, watchCalls: () => watchCalls };
+  const dispatch = async () =>
+    execOnSlot(await cfg.loadSlotVars(slotId), 'opaque fixture command', { onDispatch: bind });
+  const lateRetiredNotification = () => {
+    assert.ok(retired);
+    return acceptNodeFileObservation(firstNode, { ...retired, machine, content: '' });
+  };
+  return {
+    id,
+    slotId,
+    read,
+    register,
+    advance,
+    dispatch,
+    lateRetiredNotification,
+    watchCalls: () => watchCalls,
+  };
 }
+
+test('a pre-dispatch reconnect binds pending flow to the socket that receives exec', async (t) => {
+  const f = await held(t, 'dispatch', { bindOnDispatch: true });
+  f.register(101);
+  assert.equal((await f.dispatch()).stdout, '101');
+  assert.equal((await f.read())?.update.activeId, 'hold');
+});
 
 test('a same-run claim increment revokes the former attempt', async (t) => {
   const f = await held(t, 'epoch');
@@ -284,6 +318,8 @@ test('first-arm timeout does not strand artifact invalidation', async (t) => {
   assert.equal(f.watchCalls(), 2);
   const key = { family: 'artifacts', runId: f.id } as const;
   const before = resourceRevisions.revision(key);
+  assert.equal(f.lateRetiredNotification(), undefined);
+  assert.equal(resourceRevisions.revision(key), before);
   const runBefore = resourceRevisions.revision({ family: 'run', runId: f.id });
   await f.advance();
   const after = resourceRevisions.revision(key);

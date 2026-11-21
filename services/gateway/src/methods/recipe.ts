@@ -70,8 +70,7 @@ import {
 } from '../core/state.js';
 import { resolveTmuxSession, shellQuote } from '../core/tmux.js';
 import { assertTargetInInventory } from '../fleet/device-inventory.js';
-import { getNode } from '../fleet/machine-registry.js';
-import { usesNodeLink } from '../fleet/node-link-policy.js';
+import type { ConnectedNode } from '../fleet/machine-registry.js';
 import { NodeExecUnconfirmedError } from '../fleet/node-rpc.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import {
@@ -79,6 +78,7 @@ import {
   listRecipeRunArtifactGroupsForRun,
 } from '../live-recipe/context.js';
 import { bindPendingRecipeAttempt } from '../live-recipe/pending-flow.js';
+import { resourceRevisions } from '../resources/revisions.js';
 import { prepareRunPostureForValidation } from '../run-engine/resource-posture.js';
 import { withTaskRecipeTrustEnvironment } from '../runners/launch-command.js';
 import { getRun, updateRun } from '../runs/store.js';
@@ -1794,23 +1794,22 @@ async function executeRecipeRerunJob(args: {
     const timeoutMs = typeof rawTimeout === 'number' ? rawTimeout : DEFAULT_TIMEOUT_MS;
     const recipeCmd = built.command;
 
+    const liveRecipeContext: LiveRecipeContext = {
+      source: 'recipe-run-live',
+      recipeRunId: requestId,
+      artifactRoot: slotRecipeRunArtifactsDir,
+      artifactManifest: null,
+      recipeJson: null,
+      recipeQualityArtifact: null,
+      qualityReport: null,
+      workerLearnings: null,
+      isStale: false,
+      selectionReason: 'latest-run',
+    };
     let liveContextPublished = false;
-    const publishLiveRecipeContext = (bindFlow?: (context: LiveRecipeContext) => () => void) => {
+    const publishLiveRecipeContext = () => {
       if (liveContextPublished) return;
       liveContextPublished = true;
-      const liveRecipeContext: LiveRecipeContext = {
-        source: 'recipe-run-live',
-        recipeRunId: requestId,
-        artifactRoot: slotRecipeRunArtifactsDir,
-        artifactManifest: null,
-        recipeJson: null,
-        recipeQualityArtifact: null,
-        qualityReport: null,
-        workerLearnings: null,
-        isStale: false,
-        selectionReason: 'latest-run',
-      };
-      releasePendingFlow = bindFlow?.(liveRecipeContext);
       const updatedRun = updateRun(runId, { liveRecipeContext });
       emit(Events.RUN_UPDATED, { run: updatedRun });
     };
@@ -1828,7 +1827,7 @@ async function executeRecipeRerunJob(args: {
     }
     const currentRun = getRun(runId);
     const launchEpoch = currentOwner?.slot_epoch;
-    let bindFlow: ((context: LiveRecipeContext) => () => void) | undefined;
+    let bindFlow: ((node: ConnectedNode | undefined) => void) | undefined;
     if (
       currentRun &&
       runEvidencePending(currentRun) &&
@@ -1847,22 +1846,22 @@ async function executeRecipeRerunJob(args: {
       ) {
         throw new Error('Slot ownership changed while preparing the recipe artifact directory.');
       }
-      const local = isLocal(slotVars.host, slotVars.machine) && !usesNodeLink(slotVars.machine);
-      const node = local ? undefined : getNode(slotVars.machine);
-      // A replaced connection cannot be the launch producer, including during command dispatch.
-      if (local || node)
-        bindFlow = (context) =>
-          bindPendingRecipeAttempt(launchTask, context, {
-            taskDir: built.taskDir,
-            slot: { id: slotId, epoch: launchEpoch },
-            node,
-          });
+      bindFlow = (node) => {
+        if (releasePendingFlow) return;
+        releasePendingFlow = bindPendingRecipeAttempt(launchTask, liveRecipeContext, {
+          taskDir: built.taskDir,
+          slot: { id: slotId, epoch: launchEpoch },
+          node,
+        });
+        resourceRevisions.advance({ family: 'artifacts', runId });
+      };
     }
-    publishLiveRecipeContext(bindFlow);
+    publishLiveRecipeContext();
     const result = await execOnSlot(slotVars, recipeCmd, {
       timeout: timeoutMs,
       signal: abortController.signal,
       closeoutTimeoutMs: RECIPE_CLOSEOUT_MS,
+      onDispatch: bindFlow,
       onOutput: (stream, data) => {
         publishLiveRecipeContext();
         emit(Events.SCRIPT_OUTPUT, { requestId, stream, data, timestamp: Date.now() });

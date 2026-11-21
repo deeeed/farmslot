@@ -113,6 +113,7 @@ async function executeThroughNodeLink(
             'Workspace or enrolled node changed before execution.',
           );
       },
+      onStarted: options.onDispatch ? () => options.onDispatch?.(node) : undefined,
       onOutput: (stream, text) => options.onOutput?.(stream, text),
       onReset: (snapshot) => {
         options.onOutput?.(
