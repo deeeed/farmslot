@@ -36,6 +36,7 @@ import {
 } from '../../run-completion/retained-artifacts.js';
 import { inspectedRun } from '../../run-engine/gate-inspection.js';
 import { enrichDecisionsWithGateSummary } from '../../run-engine/gate-summary.js';
+import { readCostAccountingRevision } from '../../runs/cost-accounting-revision.js';
 import {
   runListIdsPage,
   runListVersion,
@@ -110,9 +111,15 @@ export async function runGet(params: RunGetParams): Promise<RunGetResult> {
   if (!run) throw new GatewayMethodError('RUN_NOT_FOUND', `Run not found: ${params.runId}`);
   // The first paint must not wait for worker/source/evidence I/O. The ordinary read
   // serves the last gate check and asks for a new one; command handlers retain their guards.
-  if (params.view === 'snapshot') return { run };
+  if (params.view === 'snapshot')
+    return { run: { ...run, costAccountingRevision: readCostAccountingRevision(run, run) } };
   const listVersion = runListVersion(run);
-  return { run: await presentRun(run), listVersion, recoveryHints: runRecoveryHints(run) };
+  const view = await presentRun(run);
+  return {
+    run: { ...view, costAccountingRevision: readCostAccountingRevision(run, view) },
+    listVersion,
+    recoveryHints: runRecoveryHints(run),
+  };
 }
 
 export async function runList(params: RunListParams): Promise<RunListResult> {

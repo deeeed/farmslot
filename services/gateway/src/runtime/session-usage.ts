@@ -414,6 +414,7 @@ export async function extractRunWorkerSessionUsage(
         parentChecklistMarks: contextChecklistMarks(run, context),
       };
       let usage: RunnerSessionUsage;
+      let verifiedLeaseIds: string[] | undefined;
       if (nativeSession) {
         const resolved = await resolveNativeAgentSessionUsage({
           ...input,
@@ -423,6 +424,7 @@ export async function extractRunWorkerSessionUsage(
         });
         usage = resolved.usage;
         usageWindow = resolved.usageWindow;
+        verifiedLeaseIds = resolved.verifiedLeaseIds;
         // No archive can safely attribute native usage without node-owned boundaries.
         if (!usageWindow) return usage;
       } else {
@@ -440,7 +442,13 @@ export async function extractRunWorkerSessionUsage(
           usageWindow,
           marks,
         );
-        return { ...recovered, scope: usageWindow ? 'run-delta' : recovered.scope };
+        return {
+          ...recovered,
+          scope: usageWindow ? 'run-delta' : recovered.scope,
+          ...(verifiedLeaseIds && !recovered.error && recovered.source !== 'unavailable'
+            ? { usageLeaseIds: verifiedLeaseIds, usageLeaseIdsVerified: true as const }
+            : {}),
+        };
       } catch (error) {
         // Failed archive verification/accounting must not discard successful siblings.
         return unavailableRunnerSessionUsage({

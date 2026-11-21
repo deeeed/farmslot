@@ -12,6 +12,8 @@ import type { RunnerSessionUsage } from '@farmslot/protocol';
 import { makeRun } from '../run-completion/test-fixtures.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
+import { recoveredWorkerSessionReceipt, upsertSessionUsage } from './agent-session-rows.js';
+
 await import('./mock-pty.test-support.js');
 const root = await mkdtemp(path.join(os.tmpdir(), 'native-archive-usage-'));
 const previousRuns = process.env.FARMSLOT_RUNS_DIR;
@@ -62,6 +64,7 @@ for (const journalRetained of [true, false]) {
       [
         assistant('prior', '2026-01-02T00:00:29Z', 100),
         assistant('warm', '2026-01-02T00:00:31Z', 20),
+        assistant('retry', '2026-01-02T00:00:36Z', 3),
         assistant('next', '2026-01-02T00:00:40Z', 300),
       ]
         .map((row) => JSON.stringify(row))
@@ -125,6 +128,19 @@ for (const journalRetained of [true, false]) {
         startedAt: run.createdAt,
       },
     ];
+    const first: RunnerSessionUsage = {
+      runner: 'claude',
+      runnerSessionId: 'conversation',
+      runId: run.id,
+      scope: 'run-delta',
+      source: 'runner-transcript',
+      measuredAt: run.completedAt!,
+      totalTokens: 21,
+      usageLeaseIds: ['warm'],
+      pendingUsageLeaseIds: ['retry'],
+      nativeSession: run.agentContexts[0].nativeSession,
+    };
+    run.sessionUsage = [first];
     if (journalRetained)
       await writeFile(
         path.join(directory, 'sessions/host.journal'),
@@ -149,6 +165,14 @@ for (const journalRetained of [true, false]) {
             },
           },
           {
+            commands: [{ commandId: 'retry-command', leaseId: 'retry' }],
+            event: {
+              type: 'command.submitted',
+              commandId: 'retry-command',
+              at: '2026-01-02T00:00:35Z',
+            },
+          },
+          {
             commands: [{ commandId: 'next-command', leaseId: 'next' }],
             event: {
               type: 'command.submitted',
@@ -161,17 +185,22 @@ for (const journalRetained of [true, false]) {
           .join('\n') + '\n',
       );
     const receipts: RunnerSessionUsage[] = [];
-    const usage = await extractRunWorkerSessionUsage(run, vars, (_session, receipt) =>
-      receipts.push(receipt),
-    );
+    let ledger = run.sessionUsage;
+    const usage = await extractRunWorkerSessionUsage(run, vars, (session, receipt) => {
+      receipts.push(receipt);
+      ledger = upsertSessionUsage(ledger, recoveredWorkerSessionReceipt(run, session, receipt));
+    });
     assert.equal(receipts.length, 2, 'Archive recovery must retain sibling captures');
     assert.equal(receipts[1].totalTokens, 6);
     if (journalRetained) {
-      assert.equal(usage?.totalTokens, 27, usage?.error);
-      assert.equal(receipts[0].totalTokens, 21);
+      assert.equal(usage?.totalTokens, 31, usage?.error);
+      assert.equal(receipts[0].totalTokens, 25);
       assert.equal(receipts[0].scope, 'run-delta');
+      assert.deepEqual(receipts[0].usageLeaseIds, ['warm', 'retry']);
+      assert.equal(ledger[0].totalTokens, 25);
+      assert.equal(ledger[0].pendingUsageLeaseIds, undefined);
       const projected = await projectArchivedRunnerUsage(run);
-      assert.equal(projected.metrics.sessionTotalTokens, 27);
+      assert.equal(projected.metrics.sessionTotalTokens, 31);
       assert.equal(projected.metrics.sessionUsageError, undefined);
       await writeFile(path.join(archiveDir, 'transcript.jsonl'), 'corrupt archive');
       const failedReceipts: RunnerSessionUsage[] = [];

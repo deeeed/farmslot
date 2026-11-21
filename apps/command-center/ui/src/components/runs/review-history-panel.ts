@@ -25,7 +25,6 @@ import {
   readReviewHistoryContent,
   type ReviewHistoryArtifacts,
   reviewHistoryCacheScope,
-  reviewHistoryDisplayArtifacts,
   type ReviewHistoryFinding,
   reviewHistoryIdentity,
   type ReviewHistoryRound,
@@ -37,6 +36,7 @@ import '../shared/diff-viewer-modal.js';
 import '../diff-viewer/code-viewer.js';
 
 import { readStoredArtifact } from '../../artifact-response.js';
+import { onReviewHistoryPrefetched } from '../../content-prefetch.js';
 import { gateway } from '../../gateway-client.js';
 import { getResourceCache, getResourceWorkspaceKey } from '../../resource-cache.js';
 import { currentRecoveryEpoch } from '../../utils/reconnect.js';
@@ -46,6 +46,7 @@ import { readStored } from '../shared/read-current.js';
 import { runArtifactApiPath } from '../workspace/workspace-artifacts.js';
 
 import { reviewHistoryStyles } from './review-history-styles.js';
+import { reviewRoundCosts, runCostReceipts } from './run-detail-cost.js';
 import { renderReviewAttempt } from './step-inspector-review-renderer.js';
 
 /** Display reads keep held source available offline; they never authorize a write. */
@@ -83,6 +84,10 @@ export class ReviewHistoryPanel extends LitElement {
   }
   disconnectedCallback() {
     this.unsubscribeConnection?.();
+    this._historyPrefetch?.stop();
+    this._historyPrefetch = undefined;
+    this._historyRead = undefined;
+    this._historyIdentity = '';
     clearInterval(this.clock);
     super.disconnectedCallback();
   }
@@ -91,8 +96,12 @@ export class ReviewHistoryPanel extends LitElement {
   }
   @state() private _historyArtifacts: ReviewHistoryArtifacts = {};
   private _historyIdentity = '';
-  private _historyLoadedIdentity = '';
+  private _historyPrefetch?: { runId: string; stop: () => void };
+  private _historyRead?: { prefetched: boolean };
+  private _historyPreviewAtLoad?: ReviewHistoryArtifacts;
+  private _historyRunIdentity?: { run: Run; key: string };
   private _historyArtifactScope = '';
+  private _historyArtifactIdentity = '';
   private _historyPrincipal: string | null = null;
   private _artifactScope(run: Run) {
     if (gateway.connectionState === 'connected')
@@ -111,25 +120,60 @@ export class ReviewHistoryPanel extends LitElement {
     epoch: number;
   } | null = null;
 
+  private _historyKey(run: Run): string {
+    if (this._historyRunIdentity?.run !== run)
+      this._historyRunIdentity = { run, key: reviewHistoryIdentity(run) };
+    return this._historyRunIdentity.key;
+  }
+
   private async _loadHistory(force = false) {
     const run = this.run;
     const cache = getResourceCache();
     if (!run || !cache) return;
     const epoch = currentRecoveryEpoch();
-    const identity = `${getResourceWorkspaceKey()}:${epoch}:${reviewHistoryIdentity(run)}`;
+    const historyKey = this._historyKey(run);
+    const identity = `${getResourceWorkspaceKey()}:${epoch}:${historyKey}`;
+    if (this._historyPrefetch?.runId !== run.id) {
+      this._historyPrefetch?.stop();
+      this._historyPrefetch = {
+        runId: run.id,
+        stop: onReviewHistoryPrefetched(run.id, (source, key) => {
+          if (
+            source !== getResourceCache() ||
+            this.run?.id !== run.id ||
+            key !== this._historyArtifactIdentity ||
+            this._historyArtifactScope !== this._artifactScope(this.run)
+          )
+            return;
+          if (this._historyRead) this._historyRead.prefetched = true;
+          else this._mergeHistoryPreview(peekReviewHistoryContent(source, this.run));
+        }),
+      };
+    }
     if (!force && identity === this._historyIdentity) return;
+    const read = { prefetched: false };
+    this._historyRead = read;
     this._historyIdentity = identity;
     const scope = this._artifactScope(run);
+    const artifactIdentity = historyKey;
+    const sameHistory =
+      this._historyArtifactScope === scope && this._historyArtifactIdentity === artifactIdentity;
     if (this._historyArtifactScope !== scope) this._historyArtifacts = {};
     this._historyArtifactScope = scope;
+    this._historyArtifactIdentity = artifactIdentity;
     const held = peekReviewHistoryContent(cache, run);
-    if (held) this._historyArtifacts = held;
+    this._historyPreviewAtLoad = held;
+    if (held)
+      this._historyArtifacts = sameHistory
+        ? mergeReviewHistoryArtifacts(held, this._historyArtifacts)
+        : held;
     this._historyLoading = !held;
     const current = () =>
       this.isConnected &&
       cache === getResourceCache() &&
       this.run?.id === run.id &&
-      this._historyIdentity === identity;
+      this._historyIdentity === identity &&
+      this._historyRead === read;
     this._historyError = '';
     try {
       const saved = !force ? await readReviewHistoryContent(cache, run, true) : undefined;
@@ -167,29 +211,71 @@ export class ReviewHistoryPanel extends LitElement {
         ));
       if (current()) {
         this._historyArtifacts = mergeReviewHistoryArtifacts(this._historyArtifacts, artifacts);
-        this._historyLoadedIdentity = identity;
       }
     } catch (error) {
-      if (current()) this._historyError = error instanceof Error ? error.message : String(error);
+      if (current()) {
+        this._historyError = error instanceof Error ? error.message : String(error);
+      }
     } finally {
-      if (this._historyIdentity === identity) this._historyLoading = false;
+      if (current()) {
+        this._historyRead = undefined;
+        this._historyLoading = false;
+        if (read.prefetched) this._mergeHistoryPreview(peekReviewHistoryContent(cache, run));
+      }
     }
   }
 
+  private _mergeHistoryPreview(held?: ReviewHistoryArtifacts): void {
+    if (!held) return;
+    const changed: Record<string, ReviewHistoryArtifacts[string]> = {};
+    for (const [path, artifact] of Object.entries(held)) {
+      const original = this._historyPreviewAtLoad?.[path];
+      const observed = this._historyArtifacts[path];
+      if (observed?.content !== undefined && observed.error === undefined) continue;
+      if (artifact.content !== original?.content || artifact.notCaptured !== original?.notCaptured)
+        changed[path] = artifact;
+    }
+    this._historyPreviewAtLoad = held;
+    if (Object.keys(changed).length)
+      this._historyArtifacts = mergeReviewHistoryArtifacts(this._historyArtifacts, changed);
+  }
+
+  private _projection?: {
+    run: Run;
+    artifacts?: ReviewHistoryArtifacts;
+    history: ReturnType<typeof reviewHistoryView>;
+    historyKey: string;
+    accountingRevision?: string;
+    costs: ReturnType<typeof reviewRoundCosts>;
+  };
+
   render() {
-    if (!this.run) return nothing;
-    const cache = getResourceCache();
-    const held = cache ? peekReviewHistoryContent(cache, this.run) : undefined;
-    const history = reviewHistoryView(
-      this.run,
-      reviewHistoryDisplayArtifacts(
-        this._historyIdentity,
-        this._historyArtifactScope === this._artifactScope(this.run)
-          ? { identity: this._historyLoadedIdentity, artifacts: this._historyArtifacts }
-          : undefined,
-        held,
-      ),
-    );
+    const run = this.run;
+    if (!run) return nothing;
+    // The loader installs the cached preview and replaces it when the full read settles.
+    // Use that stable snapshot across clock ticks and changes to the open round.
+    const artifacts =
+      this._historyArtifactScope === this._artifactScope(run) ? this._historyArtifacts : undefined;
+    let projection = this._projection;
+    if (projection?.run !== run || projection.artifacts !== artifacts) {
+      const history = reviewHistoryView(run, artifacts);
+      const historyKey = this._historyKey(run);
+      const accountingRevision = run.costAccountingRevision;
+      const costs =
+        accountingRevision &&
+        projection?.accountingRevision === accountingRevision &&
+        projection.historyKey === historyKey &&
+        projection.artifacts === artifacts
+          ? projection.costs
+          : reviewRoundCosts(
+              runCostReceipts(run),
+              history.cards.map(({ round }) => round),
+              run,
+            );
+      projection = { run, artifacts, history, historyKey, accountingRevision, costs };
+      this._projection = projection;
+    }
+    const { history, costs } = projection;
     if (!history.roundCount && !history.segments.length && !history.chain.length) return nothing;
     const openArtifact = (path: string) => {
       if (!this.run) return;
@@ -251,6 +337,7 @@ export class ReviewHistoryPanel extends LitElement {
               (finding) => this._renderSource(card.round, finding),
               {
                 ...card,
+                cost: costs.get(card.round.key),
                 open: this.viewState.get(RUN_VIEW_FIELDS.rounds).includes(card.round.key),
                 toggle: (open) => this._toggleRound(card.round.key, open),
               },
@@ -267,7 +354,7 @@ export class ReviewHistoryPanel extends LitElement {
       <diff-viewer-modal
         .open=${Boolean(
           this._historyDiff &&
-          this._historyDiff.runId === this.run.id &&
+          this._historyDiff.runId === run.id &&
           this._historyDiff.epoch === currentRecoveryEpoch(),
         )}
         .title=${this._historyDiff?.path ?? 'Fix changes'}

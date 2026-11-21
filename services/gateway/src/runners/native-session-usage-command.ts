@@ -230,6 +230,7 @@ async function contextFor(request) {
     if (!Number.isFinite(start) || (end !== undefined && (!Number.isFinite(end) || end < start)))
       throw Error('Native usage journal has invalid command timestamps');
     matched.usageWindow = { startedAt: new Date(start).toISOString(), ...(end === undefined ? {} : { completedAt: new Date(end).toISOString() }) };
+    matched.capturedLeaseIds = [...new Set(submissions.slice(first, next < 0 ? undefined : next).map(event => commands.get(event.commandId)))];
   }
   return matched;
 }
@@ -292,9 +293,11 @@ const measured = new Map();
 const results = [];
 for (const request of input) {
   let usageWindow;
+  let capturedLeaseIds;
   try {
     const context = await contextFor(request);
     usageWindow = context.usageWindow || request.usageWindow;
+    capturedLeaseIds = context.capturedLeaseIds;
     const file = await locate(request, context);
     const key = JSON.stringify([request.provider, request.runnerSessionId, file, request.liteLlmPrices, usageWindow, request.checklistMarks]);
     let output = measured.get(key);
@@ -304,8 +307,8 @@ for (const request of input) {
         throw Error('Installed accounting module did not apply the requested run usage window');
       measured.set(key, output);
     }
-    results.push({ key: request.key, runnerSessionId: request.runnerSessionId, sessionPath: file, output, usageWindow });
-  } catch (error) { results.push({ key: request.key, runnerSessionId: request.runnerSessionId, error: error.message, usageWindow }); }
+    results.push({ key: request.key, runnerSessionId: request.runnerSessionId, sessionPath: file, output, usageWindow, capturedLeaseIds });
+  } catch (error) { results.push({ key: request.key, runnerSessionId: request.runnerSessionId, error: error.message, usageWindow, capturedLeaseIds }); }
 }
 const maxBytes = Number(process.argv[3]);
 let output = JSON.stringify(results);

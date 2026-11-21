@@ -709,6 +709,8 @@ export interface ReviewFixDeltaSnapshot extends ReviewDiffSnapshot {
 }
 
 export interface RunnerSessionUsage {
+  /** Lifetime usage could include work before a retained handoff to this run. */
+  includesPriorRunLifetime?: true;
   /** Pipeline receipt metadata; optional only for older records. */
   model?: string | null;
   effort?: string | null;
@@ -727,8 +729,12 @@ export interface RunnerSessionUsage {
     import('./agents.js').NativeWorkerSessionBinding,
     'sessionId' | 'ownerPrincipalId' | 'executionNodeId' | 'stateDirectory'
   >;
-  /** All node-owned task leases contributing to this run's conversation receipt. */
+  /** Recorded task lease IDs. Older receipts can include observed, unmeasured leases. */
   usageLeaseIds?: string[];
+  /** The native transcript measurement verified every ID in usageLeaseIds. */
+  usageLeaseIdsVerified?: true;
+  /** Observed native task leases still awaiting a verified measurement. */
+  pendingUsageLeaseIds?: string[];
   startedAt?: string | null;
   completedAt?: string | null;
   durationMs?: number | null;
@@ -3078,6 +3084,8 @@ export interface MachineParkRecord {
 }
 
 export interface Run {
+  /** Opaque revision of accounting inputs on a run detail response. */
+  costAccountingRevision?: string;
   /** New PR-completion consumers; retained runs keep their frozen contracts. */
   acceptanceContractVersion?: 1;
   acceptanceExecutionContract?: AcceptanceExecutionContract;
