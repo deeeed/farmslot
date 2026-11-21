@@ -972,8 +972,9 @@ test('content-match adoption links the PR but leaves the review result decision 
   assert.equal(held.prNumber, 192);
 });
 
-test('a result decision raised after the adoption is not accepted by its receipt', async (t) => {
+test('a re-presented hold at the receipt generation is still accepted (restart)', async (t) => {
   const fixture = await heldResultFixture(t);
+  // Startup re-presents the same hold with a fresh createdAt; the generation is unchanged.
   const later = new Date(Date.now() + 60_000).toISOString();
   const run = updateRun(fixture.id, {
     decisions: fixture.decisions.map((decision) => ({ ...decision, createdAt: later })),
@@ -983,29 +984,38 @@ test('a result decision raised after the adoption is not accepted by its receipt
     noop,
     dependencies({ readiness: undefined, continuationRefusals: waitingOnDecision }),
   );
-  assert.equal(result.continuation, 'refused');
-  const held = (await getRunWithArchived(run.id))!;
-  assert.equal(held.status, 'needs-decision');
-  assert.equal(held.decisions[0].resolvedAt, undefined);
+  assert.equal(result.continuation, 'resumed');
+  assert.equal((await getRunWithArchived(run.id))!.status, 'done');
 });
 
-test('a generation change after adoption refuses the bound acceptance', async (t) => {
+test('the bound acceptance refuses a generation other than the receipt one', async (t) => {
   const run = await heldResultFixture(t);
+  const linked = await runAdoptPublishedPr(
+    { runId: run.id, prRef: 'https://github.com/owner/repo/pull/192' },
+    noop,
+    dependencies({
+      readiness: undefined,
+      continuationRefusals: waitingOnDecision,
+      compareContent: async () => ({ differingFiles: [] }),
+    }),
+  );
+  const receipt = linked.receipt;
   const { resolveResultDecision } = await import('../../run-completion/result-decision.js');
-  await assert.rejects(
+  const accept = (generation: number) =>
     resolveResultDecision(
       { runId: run.id, decisionId: run.decisions[0].id, actionId: 'accept-result', reason: 'r' },
       {
+        releaseSlot: false,
         adoptedPublication: {
           principalId: approver.principalId,
-          receiptId: 'stale',
-          generation: 3,
+          receiptId: receipt.id,
+          generation,
         },
       },
-    ),
-    /changed since the publication was adopted/,
-  );
+    );
+  await assert.rejects(accept(receipt.generation + 1), /changed since the publication was adopted/);
   assert.equal(getRun(run.id)?.status, 'needs-decision');
+  assert.equal((await accept(receipt.generation)).status, 'done');
 });
 
 test('concurrent identical attested adoptions settle the review result decision once', async (t) => {

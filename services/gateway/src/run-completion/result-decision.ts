@@ -495,8 +495,19 @@ export async function resolveResultDecision(
         findingsDigest: payload.findingsDigest,
       };
       const { bumpRunGeneration, cancelRunEngine } = await import('../run-engine/orchestrator.js');
+      // After the last await: the adopted receipt and generation still hold for this decision.
+      const adopted = options.adoptedPublication;
+      if (adopted) {
+        const latest = getRun(params.runId);
+        if (
+          !latest ||
+          pendingResultDecision(latest)?.id !== decision.id ||
+          !adoptedAcceptState(latest, payload.stoppedAt, adopted).available
+        )
+          throw new Error('The run changed since the publication was adopted. Refresh the run.');
+      }
       cancelRunEngine(params.runId);
-      bumpRunGeneration(params.runId);
+      const settledGeneration = bumpRunGeneration(params.runId);
       const resolveDecisions = (outputReviewAction: string | null) =>
         run.decisions.map((entry) =>
           entry.id === decision.id
@@ -544,6 +555,28 @@ export async function resolveResultDecision(
           actor: 'operator',
           patch,
           settlingStatus: 'needs-decision',
+          // An adoption-bound acceptance rechecks its receipt at the mutation boundary.
+          ...(options.adoptedPublication
+            ? {
+                before: [
+                  {
+                    name: 'adopted-publication-current',
+                    severity: 'required' as const,
+                    apply: ({ run: latest }: { run: Run }) => {
+                      if (
+                        pendingResultDecision(latest)?.id !== decision.id ||
+                        latest.engineState?.publishGate?.humanPublicationAdoption?.id !==
+                          options.adoptedPublication!.receiptId ||
+                        (latest.engineState?.generation ?? 0) !== settledGeneration
+                      )
+                        throw new Error(
+                          'The run changed since the publication was adopted. Refresh the run.',
+                        );
+                    },
+                  },
+                ],
+              }
+            : {}),
           persist: (next) => persistRunNow(next, `result decision ${actionId}`),
           collaborators: operatorCompletionCollaborators(async (next) => {
             await publishCompletedRun(next);

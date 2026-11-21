@@ -66,6 +66,9 @@ export interface PublicationAdoptionDependencies {
   compareContent?: typeof comparePublishedContent;
 }
 
+/** In-flight adoption acceptances by run and result decision. */
+const adoptionAcceptances = new Map<string, Promise<Run>>();
+
 const CONTENT_MATCH_REASON = 'Published PR content matches the reviewed patch.';
 
 function contentMismatchMessage(
@@ -383,12 +386,11 @@ export async function runAdoptPublishedPr(
       (receipt!.match?.type ?? 'attested') === 'attested' && isHeldForResultDecision(run)
         ? pendingResultDecision(run)
         : undefined;
-    // Only the hold this receipt was recorded against: one raised after the
-    // adoption (a replay, a new round) needs its own decision.
+    // Only at the generation the receipt was recorded at: a replay or a new
+    // round bumps it and needs its own decision. Re-presentation does not.
     if (
       held?.payload?.kind === 'result-decision' &&
       held.payload.stoppedAt === 'review' &&
-      held.createdAt <= receipt!.adoptedAt &&
       (run.engineState?.generation ?? 0) === receipt!.generation
     ) {
       acceptedResultDecisionId = held.id;
@@ -483,9 +485,11 @@ export async function runAdoptPublishedPr(
         const decisionId = acceptedResultDecisionId;
         const adopted = receipt!;
         const { resolveResultDecision } = await import('../../run-completion/result-decision.js');
-        let run: Run;
-        try {
-          run = await resolveResultDecision(
+        // Concurrent identical adoptions share one settlement and its outcome.
+        const key = `${initial.id}\0${decisionId}`;
+        let settlement = adoptionAcceptances.get(key);
+        if (!settlement) {
+          settlement = resolveResultDecision(
             { runId: initial.id, decisionId, actionId: 'accept-result', reason: adopted.reason },
             {
               adoptedPublication: {
@@ -494,20 +498,10 @@ export async function runAdoptPublishedPr(
                 generation: adopted.generation,
               },
             },
-          );
-        } catch (error) {
-          // A concurrent identical adoption already settled this decision with this receipt.
-          const current = getRun(initial.id);
-          const settled = current?.decisions.find((entry) => entry.id === decisionId);
-          if (
-            !current ||
-            settled?.resolvedAction !== 'accept-result' ||
-            current.resultDecisionReceipt?.principalId !== adopted.approver.principalId ||
-            current.resultDecisionReceipt?.reason !== adopted.reason
-          )
-            throw error;
-          return { ...result, run: current, continuation: 'resumed' as const };
+          ).finally(() => adoptionAcceptances.delete(key));
+          adoptionAcceptances.set(key, settlement);
         }
+        const run = await settlement;
         emit(Events.RUN_UPDATED, { run });
         emit(Events.RUN_DECISION_RESOLVED, {
           runId: run.id,

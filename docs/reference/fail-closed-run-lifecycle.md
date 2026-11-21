@@ -607,8 +607,8 @@ artifact-only runs or when review budget exhaustion caused the hold. Other
 publishing REVIEW holds and refused completion prerequisites cannot be accepted.
 Acceptance settles the run as done without publishing or advancing to its
 publication gate. An attested human publication adoption accepts the REVIEW
-hold it was recorded against: the same receipt and generation, a hold raised
-before the adoption. It records the adoption reason and principal, and the PR
+hold it was recorded against: the same receipt and run generation, rechecked
+at the settlement's mutation. It records the adoption reason and principal, and the PR
 link stays. Content-match adoption and refused completion prerequisites leave
 the decision pending. Each action records a result-decision receipt;
 `metrics.outcome` is unchanged. While the run is held, its
