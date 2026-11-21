@@ -79,16 +79,24 @@ try {
     const cwd = join(fixture, 'repo');
     mkdirSync(cwd);
     execFileSync('git', ['init', '--quiet', cwd]);
+    const runner = process.env.NATIVE_COMPANION_RUNNER ?? 'codex';
     const { session } = await connection.call<{ session: NativeSessionInfo }>(
       Methods.NATIVE_SESSION_CREATE,
       {
-        runner: process.env.NATIVE_COMPANION_RUNNER ?? 'codex',
+        runner,
         cwd,
         model: process.env.NATIVE_COMPANION_MODEL ?? 'gpt-6-astra',
+        // Codex asks the operator questions only in plan mode; its session advertises that.
+        ...(phase === 'setup-question' && runner === 'codex' ? { mode: 'plan' } : {}),
       },
     );
+    if (phase === 'setup-question')
+      assert.equal(
+        session.capabilities.questions,
+        true,
+        `The ${runner} session must advertise questions before the question proof`,
+      );
     assert(session.capabilities.approvals && session.capabilities.interrupt);
-    if (phase === 'setup-question') assert(session.capabilities.questions);
     state = {
       fixture,
       cwd,
@@ -132,7 +140,7 @@ try {
     state.requestId = pending.request.id;
     save();
     evidence('question-pending', page);
-  } else if (phase === 'approval-disclosure') {
+  } else if (phase === 'approval-disclosure' || phase === 'replayed-disclosure') {
     const page = await read();
     const pending = page.pendingRequests.find((request) => request.request?.id === state.requestId);
     assert(pending?.data, 'This proof requires structured native approval data');
@@ -169,7 +177,62 @@ try {
       ),
       'Companion must disclose all structured data for the exact pending approval',
     );
+    if (phase === 'replayed-disclosure') {
+      // After the reload and the reopened link: the same native request, with the same details the
+      // pre-reload capture recorded, is what the device shows again.
+      const before = JSON.parse(
+        readFileSync(join(state.evidence, 'approval-disclosure.json'), 'utf8'),
+      ) as NativeSessionReadResult;
+      const captured = before.pendingRequests.find(
+        (request) => request.request?.id === state.requestId,
+      );
+      assert(captured, 'The pre-reload capture must hold the pending approval');
+      assert.equal(pending.request?.id, captured.request?.id);
+      assert.deepEqual(pending.data, captured.data, 'Replayed approval details changed');
+    }
     evidence(phase, page);
+  } else if (phase === 'reveal') {
+    // `reveal <test id>`: the row is above the viewport by however much the real model wrote (the
+    // conversation follows its end, and an opened fold keeps the reader's place while its tools
+    // render above it). Drag back through the transcript in short steps until the row is on
+    // screen, rather than by a fixed distance.
+    const wanted = process.argv[3];
+    assert(wanted, 'reveal needs a test id');
+    const device = createAgentDeviceClient({
+      stateDir: process.env.FARMSLOT_AGENT_DEVICE_STATE_DIR,
+    });
+    const active = (await device.sessions.list()).find(
+      (session) => session.device.id === process.env.IOS_SIMULATOR,
+    );
+    assert(active, 'The recipe must own the private simulator before revealing a row');
+    const target = {
+      session: active.name,
+      platform: 'ios' as const,
+      udid: process.env.IOS_SIMULATOR,
+    };
+    let steps = 0;
+    for (;;) {
+      const observed = await device.capture.snapshot({ ...target, interactiveOnly: false });
+      const transcript = observed.nodes.find(
+        (node) => node.identifier === 'companion-native-transcript',
+      );
+      const row = observed.nodes.find((node) => node.identifier === wanted);
+      assert(transcript?.rect, 'The transcript is not on screen');
+      const top = transcript.rect.y;
+      const bottom = transcript.rect.y + transcript.rect.height;
+      if (row?.rect && row.rect.y >= top && row.rect.y + row.rect.height <= bottom) break;
+      assert(steps < 12, `No ${wanted} on screen after ${steps} drags`);
+      const x = transcript.rect.x + transcript.rect.width / 2;
+      await device.interactions.swipe({
+        ...target,
+        from: { x, y: top + transcript.rect.height * 0.3 },
+        to: { x, y: top + transcript.rect.height * 0.7 },
+        durationMs: 300,
+      });
+      steps += 1;
+      await delay(600);
+    }
+    console.log(JSON.stringify({ phase, wanted, steps }));
   } else if (phase === 'answered') {
     const page = await wait(
       (value) =>

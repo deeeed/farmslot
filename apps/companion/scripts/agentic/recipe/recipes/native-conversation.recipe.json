@@ -53,7 +53,62 @@
         "action": "command",
         "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts continued",
         "intent": "Assert preserved native identity, prior memory and exactly one command delivery.",
+        "next": "reveal-work-fold"
+      },
+      "reveal-work-fold": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts reveal companion-native-work-fold",
+        "intent": "Drag back through the transcript until the approved turn's fold row shows.",
+        "next": "wait-work-fold"
+      },
+      "wait-work-fold": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-work-fold",
+        "expected": "visible",
+        "timeout_ms": 30000,
+        "intent": "The approved turn ended; its watched tool calls sit under one open fold row.",
+        "next": "close-work-fold"
+      },
+      "open-work-fold": {
+        "action": "ui.press",
+        "test_id": "companion-native-work-fold",
+        "intent": "Open the finished turn's tools again from their fold row.",
+        "next": "reveal-tools"
+      },
+      "reveal-tools": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts reveal companion-native-tool-toggle",
+        "intent": "The reopened tools render above their fold row; drag back to them.",
+        "next": "tools-shown"
+      },
+      "tools-shown": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-tool-toggle",
+        "expected": "visible",
+        "timeout_ms": 10000,
+        "intent": "The shell call shows again once its fold is open.",
+        "next": "back-to-latest",
+        "proves": ["work-fold"]
+      },
+      "back-to-latest": {
+        "action": "ui.press",
+        "test_id": "companion-native-jump-latest",
+        "intent": "Return to the end of the conversation, where the next request will appear.",
         "next": "prepare-denial"
+      },
+      "close-work-fold": {
+        "action": "ui.press",
+        "test_id": "companion-native-work-fold",
+        "intent": "Fold the finished turn's tools away.",
+        "next": "tools-hidden"
+      },
+      "tools-hidden": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-tool-toggle",
+        "expected": "absent",
+        "timeout_ms": 10000,
+        "intent": "The tool rows leave the conversation once folded.",
+        "next": "open-work-fold"
       },
       "prepare-denial": {
         "action": "command",
@@ -116,8 +171,22 @@
       },
       "reload-pending": {
         "action": "command",
-        "cmd": "FARMSLOT_METRO_ORIGIN=http://localhost:$METRO_PORT node scripts/agentic/cdp-eval.mjs 'const m=Array.from(__r.getModules()).find(([id,m])=>m.verboseName?.endsWith(\"/Utilities/DevSettings.js\")); __r(m[0]).default.reload(); return {reloadRequested:true};' ",
+        "cmd": "FARMSLOT_METRO_ORIGIN=http://localhost:$METRO_PORT node scripts/agentic/cdp-eval.mjs 'const m=Array.from(__r.getModules()).find(([id,m])=>m.verboseName?.endsWith(\"/Utilities/DevSettings.js\")); setTimeout(() => __r(m[0]).default.reload(), 100); return {reloadRequested:true};' ",
         "intent": "Reload the real development client while the approval is pending.",
+        "next": "reloaded-home"
+      },
+      "reloaded-home": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-review",
+        "expected": "visible",
+        "timeout_ms": 30000,
+        "intent": "The reloaded app is running again; it reopens on Review, not the conversation.",
+        "next": "reopen-after-reload"
+      },
+      "reopen-after-reload": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts open",
+        "intent": "Reopen the same conversation link after the reload.",
         "next": "wait-replayed-approval"
       },
       "wait-replayed-approval": {
@@ -155,10 +224,17 @@
       },
       "verify-replayed-details": {
         "action": "command",
-        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts approval-disclosure",
-        "intent": "Compare the visible approval data with the exact pending request returned by the gateway.",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts replayed-disclosure",
+        "intent": "The same pending request ID and details as the pre-reload capture.",
         "next": "approve"
       }
     }
-  }
+  },
+  "proofTargets": [
+    {
+      "id": "work-fold",
+      "claim": "A finished turn's tool calls fold behind one row that opens and closes.",
+      "proofMode": "state"
+    }
+  ]
 }

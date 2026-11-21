@@ -130,7 +130,7 @@ test('reset and metadata are bounded, oversized active prefix has a journal cont
   }
 });
 
-test('live delivery waits for the initial result and batches new events within fifty milliseconds', (t) => {
+test('live delivery waits for the initial result and batches new events within one frame', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const journal = new NativeConversationJournal('host');
   journal.commit(page([event(1, 'initial')]));
@@ -142,7 +142,7 @@ test('live delivery waits for the initial result and batches new events within f
   t.mock.timers.tick(100);
   assert.equal(delivered.length, 0, 'initial result must precede queued live delivery');
   subscription.start();
-  t.mock.timers.tick(49);
+  t.mock.timers.tick(15);
   assert.equal(delivered.length, 0);
   t.mock.timers.tick(1);
   assert.equal(delivered.length, 1);

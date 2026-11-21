@@ -19,7 +19,12 @@
  *
  * NATIVE_STREAM_RUNNER (default claude), NATIVE_STREAM_FIXTURE (a file in
  * scripts/runner-validation/fixtures, installed as that runner's binary) and NATIVE_STREAM_MODEL
- * swap in another synthetic peer. NATIVE_STREAM_SEED_DIR is copied into the session folder, which
+ * swap in another synthetic peer. NATIVE_STREAM_FIXTURE=none runs the real runner from PATH instead
+ * (NATIVE_STREAM_RUNNER=codex for native-conversation.recipe.json) and keeps CODEX_LB_API_KEY, which
+ * synthetic runs drop. NATIVE_STREAM_TOKEN_FILE, a new path, receives the setup operator's access
+ * token (mode 0600) for native-conversation-proof.mts; POST /token writes a fresh one, since access
+ * tokens expire within a long proof. The clean stop deletes the file.
+ * NATIVE_STREAM_SEED_DIR is copied into the session folder, which
  * then becomes a Git repository with one commit, so turns get checkpoints and diffs.
  *
  * Every exit path tears down what started: /shutdown, SIGINT and SIGTERM, and a startup failure. A
@@ -57,7 +62,17 @@ interface StackState {
 
 const runner = process.env.NATIVE_STREAM_RUNNER ?? 'claude';
 const fixture = process.env.NATIVE_STREAM_FIXTURE ?? 'native-stream-latency-claude.cjs';
-const binaries: Record<string, string> = { claude: 'claude', opencode: 'opencode' };
+const binaries: Record<string, string> = { claude: 'claude', opencode: 'opencode', codex: 'codex' };
+const realRunner = fixture === 'none';
+/**
+ * NATIVE_STREAM_WIRE_LOG, a new path: one JSON line per frame the gateway sends to a client, with
+ * its send time (epoch ms, sub-ms), the socket, the event name and the native event sequences it
+ * carries. With the host journal's append times it shows whether the relay pairs deltas.
+ */
+const wireLog = process.env.NATIVE_STREAM_WIRE_LOG;
+assert(!wireLog || !fs.existsSync(wireLog), 'NATIVE_STREAM_WIRE_LOG must be a new path');
+const tokenFile = process.env.NATIVE_STREAM_TOKEN_FILE;
+assert(!tokenFile || !fs.existsSync(tokenFile), 'NATIVE_STREAM_TOKEN_FILE must be a new path');
 assert(binaries[runner], `NATIVE_STREAM_RUNNER: one of ${Object.keys(binaries).join(', ')}`);
 const port = Number(process.env.GATEWAY_PORT);
 const controlPort = Number(process.env.CONTROL_PORT);
@@ -77,8 +92,12 @@ interface Running {
   wss?: GatewaySocketServer;
   connection?: GatewayConnection;
   control?: Server;
+  /** Renews the setup connection before its access token expires. */
+  renewal?: ReturnType<typeof setInterval>;
 }
 const running: Running = {};
+/** Writes a fresh setup-operator access token to NATIVE_STREAM_TOKEN_FILE; set at startup. */
+let writeToken: (() => Promise<void>) | undefined;
 
 const listen = (server: Server, at: number) =>
   new Promise<void>((resolve, reject) => {
@@ -144,6 +163,7 @@ async function teardown() {
   };
   if (state.sessionId && running.connection)
     await step(() => connected().call('native.session.close', target()));
+  clearInterval(running.renewal);
   await step(() => running.connection?.close());
   await step(async () => {
     const wss = running.wss;
@@ -247,12 +267,42 @@ function controlRoutes(personId: string): Record<string, Handler> {
         commands: page.commands.length,
       };
     },
+    'POST /token': async () => {
+      assert(writeToken, 'Start the stack with NATIVE_STREAM_TOKEN_FILE');
+      await writeToken();
+      return { written: true };
+    },
     'POST /shutdown': async () => {
       // After this reply is written.
       setTimeout(() => void finish(), 10);
       return { stopping: true };
     },
   };
+}
+
+/** Wraps each new socket's send, after the gateway's own connection handling, to log its frames. */
+function logOutboundFrames(wss: GatewaySocketServer, file: string) {
+  let sockets = 0;
+  wss.on('connection', (socket: { send: (data: unknown, ...rest: unknown[]) => void }) => {
+    const id = ++sockets;
+    const send = socket.send.bind(socket);
+    socket.send = (data: unknown, ...rest: unknown[]) => {
+      const text =
+        typeof data === 'string' ? data : Buffer.isBuffer(data) ? data.toString('utf8') : '';
+      fs.appendFileSync(
+        file,
+        `${JSON.stringify({
+          at: performance.timeOrigin + performance.now(),
+          socket: id,
+          event: /"event":"([^"]+)"/.exec(text)?.[1],
+          bytes: text.length,
+          sequences: [...text.matchAll(/"sequence":(\d+)/g)].map((match) => Number(match[1])),
+          kinds: [...text.matchAll(/"kind":"(\w+)"/g)].map((match) => match[1]),
+        })}\n`,
+      );
+      send(data, ...rest);
+    };
+  });
 }
 
 async function start() {
@@ -279,9 +329,11 @@ async function start() {
     path.join(root, 'pool/local.json'),
     JSON.stringify({ machine: 'local', project: 'stream', host: 'localhost', slots: [] }),
   );
-  const executable = path.join(root, 'bin', binaries[runner]!);
-  await copyFile(path.join(repo, 'scripts/runner-validation/fixtures', fixture), executable);
-  fs.chmodSync(executable, 0o700);
+  if (!realRunner) {
+    const executable = path.join(root, 'bin', binaries[runner]!);
+    await copyFile(path.join(repo, 'scripts/runner-validation/fixtures', fixture), executable);
+    fs.chmodSync(executable, 0o700);
+  }
   const seed = process.env.NATIVE_STREAM_SEED_DIR;
   if (seed) {
     const cwd = path.join(root, 'cwd');
@@ -316,7 +368,8 @@ async function start() {
     FARMSLOT_RUNS_DIR: path.join(root, 'runs'),
     SCREEN_CONTROL_SOCKET: path.join(root, 'screen.sock'),
   });
-  delete process.env.CODEX_LB_API_KEY;
+  // A synthetic peer must never reach a real model; the real runner needs its key.
+  if (!realRunner) delete process.env.CODEX_LB_API_KEY;
 
   const { createGatewayAuthRuntime } =
     await import('../../../../services/gateway/src/security/auth.js');
@@ -353,6 +406,7 @@ async function start() {
     response.end(request.url === '/health' ? '{"ok":true}\n' : '{}\n');
   });
   running.wss = createWebSocketServer(running.server, auth);
+  if (wireLog) logOutboundFrames(running.wss, wireLog);
   initServerGlobals();
   await listen(running.server, port);
   const grant = await auth.writer.exchangePersonCredential(credential.secret, {
@@ -364,6 +418,35 @@ async function start() {
     credential: { token: grant.accessToken },
     timeout: 60_000,
   }).connect();
+  // Access tokens expire within an hour, and a proof session can outlive one: renew the setup
+  // connection every 20 minutes. A failed renewal stops the stack rather than leave it half-working.
+  running.renewal = setInterval(() => {
+    void (async () => {
+      const fresh = await auth.writer.exchangePersonCredential(credential.secret, {
+        deviceName: 'Companion stream setup',
+        deviceKind: 'cli',
+      });
+      const previous = running.connection;
+      running.connection = await new GatewayClient({
+        url: gatewayUrl,
+        credential: { token: fresh.accessToken },
+        timeout: 60_000,
+      }).connect();
+      await previous?.close();
+    })().catch((cause: unknown) => void finish(cause));
+  }, 20 * 60_000);
+  running.renewal.unref();
+  if (tokenFile) {
+    await writeFile(tokenFile, `${grant.accessToken}\n`, { mode: 0o600, flag: 'wx' });
+    process.on('exit', () => fs.rmSync(tokenFile, { force: true }));
+    writeToken = async () => {
+      const fresh = await auth.writer.exchangePersonCredential(credential.secret, {
+        deviceName: 'Companion stream setup',
+        deviceKind: 'cli',
+      });
+      await writeFile(tokenFile, `${fresh.accessToken}\n`, { mode: 0o600 });
+    };
+  }
 
   const routes = controlRoutes(person.id);
   running.control = createServer((request: IncomingMessage, response: ServerResponse) => {

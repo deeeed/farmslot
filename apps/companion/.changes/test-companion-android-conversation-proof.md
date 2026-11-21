@@ -1,0 +1,1 @@
+- Native conversations on Android stay at the end when they open and while a turn streams: the follow distance now reads the content height only from content-size changes, never from a stale scroll event.
