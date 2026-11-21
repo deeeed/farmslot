@@ -7,6 +7,7 @@
 ## 0.50.5 - 2026-11-21
 
 - Pin the Protocol 0.92.0 producer cohort.
+- Native conversation streams reach viewers one update per frame: live delivery gathers events for 16 ms instead of 50 ms, so a stream emitting every 50 ms is no longer paired into 10 Hz updates. The 64 KB immediate flush, overflow and cursor behavior are unchanged.
 
 ## 0.50.4 - 2026-11-21
 

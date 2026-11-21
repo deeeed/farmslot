@@ -131,13 +131,15 @@ export function NativeConversationScreen({
     });
   useEffect(() => reportFollow(follow), [follow]);
   const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    const { contentOffset, layoutMeasurement } = event.nativeEvent;
+    // The content height comes only from onContentSizeChange. A scroll event carries the size from
+    // when it was raised, and on Android one raised before the last size change can arrive after it.
     viewport.current = {
+      ...viewport.current,
       offset: contentOffset.y,
       height: layoutMeasurement.height,
-      content: contentSize.height,
     };
-    const distance = distanceFromEnd(contentSize.height);
+    const distance = distanceFromEnd(viewport.current.content);
     if (autoScrolling.current) {
       // Following already; only arriving at the end ends the jump.
       if (!nativeAwayFromEnd(distance)) autoScrolling.current = false;
@@ -470,11 +472,10 @@ export function NativeConversationScreen({
             onScrollBeginDrag={() => {
               autoScrolling.current = false;
             }}
-            onMomentumScrollEnd={(event) => {
-              const { contentSize } = event.nativeEvent;
-              if (!nativeAwayFromEnd(distanceFromEnd(contentSize.height)))
-                autoScrolling.current = false;
-            }}
+            // The momentum's final offset, through the same follow rules as a scroll event: Android
+            // can drop the last scroll event of a fling (scrollEventThrottle), and the reader would
+            // otherwise stay marked away after flinging back to the end.
+            onMomentumScrollEnd={onScroll}
             scrollEventThrottle={100}
             onContentSizeChange={(_, height) => {
               viewport.current.content = height;
