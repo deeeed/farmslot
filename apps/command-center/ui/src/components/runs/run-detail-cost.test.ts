@@ -1062,4 +1062,27 @@ test('Run Detail clears a cold round lease hint in a mixed verified and legacy i
   assert.doesNotMatch(litText(renderRunCost(rows)), /pending usage/);
   const round = { key: 'cold', mode: 'cold' as const, usage: legacy };
   assert.equal(reviewRoundCosts(rows, [round], run).get(round.key), 'Round cost $2.50');
+
+  const later = {
+    ...legacy,
+    totalTokens: 300,
+    costUsd: 3.75,
+    completedAt: '2026-11-20T00:02:00Z',
+  };
+  const laterRun = { ...run, id: 'mixed-review-later', sessionUsage: [verified, later] };
+  const laterRows = runCostReceipts(laterRun);
+  assert.equal(laterRows.length, 3);
+  assert.equal(runCostBreakdown(laterRows).subtotal, 3.75);
+  assert.match(litText(renderRunCost(laterRows)), /pending usage/);
+  assert.equal(reviewRoundCosts(laterRows, [round], laterRun).get(round.key), 'Round cost $2.50');
+
+  const pendingRun = {
+    ...laterRun,
+    id: 'mixed-review-later-pending',
+    sessionUsage: [verified, { ...later, pendingUsageLeaseIds: ['lease'] }],
+  };
+  assert.equal(
+    reviewRoundCosts(runCostReceipts(pendingRun), [round], pendingRun).get(round.key),
+    'Round cost unavailable · pending usage',
+  );
 });

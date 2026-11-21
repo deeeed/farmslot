@@ -480,7 +480,9 @@ export function reviewRoundCosts(
       const roundPending = pendingSessionUsageLeaseIds(usage).some(
         (lease) => !measuredLeases.includes(lease),
       );
-      const pending = Boolean(session?.pendingLeases.size) || roundPending;
+      const pending =
+        roundPending ||
+        [...(session?.pendingLeases ?? [])].some((lease) => !measuredLeases.includes(lease));
       const ownReceipt =
         usage === rounds[index]?.usage && recordedCost(usage) !== null && !roundPending;
       const cost = recordedCost(sameWindow && !pending ? verified : usage);
