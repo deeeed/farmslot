@@ -465,6 +465,12 @@ export function slotOwnershipReleaseFields(): Record<string, unknown> {
   return fields;
 }
 
+/** Share the keyed rows for one immutable status snapshot across its readers. */
+const slotRowsBySnapshot = new WeakMap<
+  readonly unknown[],
+  Map<string, Readonly<Record<string, unknown>>>
+>();
+
 /**
  * Single-snapshot row read: both fields of a multi-field check come from ONE
  * file read, so a writer landing between two readSlotField calls cannot show
@@ -481,12 +487,17 @@ export async function readSlotRow(
   if (!isStatusRecord(data)) throw new TypeError(`${statusFile} is not a status object`);
   const slots = data.slots ?? [];
   if (!Array.isArray(slots)) throw new TypeError(`${statusFile} slots is not a list`);
-  for (const row of slots) {
-    if (!isStatusRecord(row))
-      throw new TypeError(`${statusFile} has a slot row that is not an object`);
-    if (row.slot === slotId) return row;
+  let keyed = slotRowsBySnapshot.get(slots);
+  if (!keyed) {
+    keyed = new Map();
+    for (const row of slots) {
+      if (!isStatusRecord(row))
+        throw new TypeError(`${statusFile} has a slot row that is not an object`);
+      if (typeof row.slot === 'string' && !keyed.has(row.slot)) keyed.set(row.slot, row);
+    }
+    slotRowsBySnapshot.set(slots, keyed);
   }
-  return null;
+  return keyed.get(slotId) ?? null;
 }
 
 function isStatusRecord(value: unknown): value is Readonly<Record<string, unknown>> {

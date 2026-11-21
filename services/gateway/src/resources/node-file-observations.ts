@@ -22,8 +22,9 @@ export async function watchNodeFile(
   filePath: string,
   onRequestId: (id: string) => void,
   invalidate: () => void,
-  notificationsOnly = false,
+  options: { notificationsOnly?: boolean; timeoutMs?: number } = {},
 ): Promise<unknown> {
+  const { notificationsOnly, timeoutMs } = options;
   let source: FileObservation | undefined;
   try {
     const result = (await sendNodeRequest(
@@ -32,6 +33,7 @@ export async function watchNodeFile(
       { path: filePath, ...(notificationsOnly ? { notificationsOnly: 1 } : { observations: 1 }) },
       {
         requireSameConnection: true,
+        timeout: timeoutMs,
         onRequestId(id) {
           source = { node, path: filePath, revision: 0, admitted: false, invalidate };
           observations.set(id, source);

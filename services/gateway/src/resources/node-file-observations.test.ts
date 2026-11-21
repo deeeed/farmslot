@@ -69,7 +69,7 @@ test('notification-only watches require the negotiated ACK without reading initi
         id = requestId;
       },
       () => {},
-      true,
+      { notificationsOnly: true },
     );
     assert.deepEqual(request(), { path: '/pending.json', notificationsOnly: 1 });
     if (notificationsOnly) assertFileObservationsAdmitted([id])();

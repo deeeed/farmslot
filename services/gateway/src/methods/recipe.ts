@@ -70,12 +70,15 @@ import {
 } from '../core/state.js';
 import { resolveTmuxSession, shellQuote } from '../core/tmux.js';
 import { assertTargetInInventory } from '../fleet/device-inventory.js';
+import { getNode } from '../fleet/machine-registry.js';
+import { usesNodeLink } from '../fleet/node-link-policy.js';
 import { NodeExecUnconfirmedError } from '../fleet/node-rpc.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import {
   attachLiveRecipeContext,
   listRecipeRunArtifactGroupsForRun,
 } from '../live-recipe/context.js';
+import { bindPendingRecipeAttempt } from '../live-recipe/pending-flow.js';
 import { prepareRunPostureForValidation } from '../run-engine/resource-posture.js';
 import { withTaskRecipeTrustEnvironment } from '../runners/launch-command.js';
 import { getRun, updateRun } from '../runs/store.js';
@@ -1177,7 +1180,7 @@ async function buildRecipeExecutionCommand(
   playbackSlowMs: number | undefined,
   recordVideo: boolean | undefined,
   target?: RuntimeCapabilityTarget,
-): Promise<{ recipePath: string; artifactRoot: string; command: string }> {
+): Promise<{ recipePath: string; artifactRoot: string; command: string; taskDir: string }> {
   assertValidArtifactRunId(artifactRunId);
   const workerTaskDir = resolveWorkerTaskDir(run, slotVars, projectVars.projectJson);
   if (!workerTaskDir) {
@@ -1237,6 +1240,7 @@ async function buildRecipeExecutionCommand(
     recipePath: slotRecipePath,
     artifactRoot: slotRecipeRunArtifactsDir,
     command: recipeCmd,
+    taskDir: workerTaskDir,
   };
 }
 
@@ -1655,6 +1659,7 @@ async function executeRecipeRerunJob(args: {
   let slotRecipeRunArtifactsDir = '';
   const active = activeReruns.get(slotId)!;
   let owner: RecipeSlotOwner = null;
+  let releasePendingFlow: (() => void) | undefined;
 
   const complete = (detail: { exitCode: number; error?: string; artifactRoot?: string }): void => {
     emit(Events.SCRIPT_COMPLETE, {
@@ -1672,6 +1677,7 @@ async function executeRecipeRerunJob(args: {
     const slotVars = await loadSlotVars(slotId);
     const projectVars = await loadProjectVars(run.project);
     const projectJson = projectVars.projectJson;
+    const launchTask = { id: runId, taskFile: run.taskFile, slotId: run.slotId };
 
     const built = await buildRecipeExecutionCommand(
       run,
@@ -1789,7 +1795,7 @@ async function executeRecipeRerunJob(args: {
     const recipeCmd = built.command;
 
     let liveContextPublished = false;
-    const publishLiveRecipeContext = () => {
+    const publishLiveRecipeContext = (bindFlow?: (context: LiveRecipeContext) => () => void) => {
       if (liveContextPublished) return;
       liveContextPublished = true;
       const liveRecipeContext: LiveRecipeContext = {
@@ -1804,6 +1810,7 @@ async function executeRecipeRerunJob(args: {
         isStale: false,
         selectionReason: 'latest-run',
       };
+      releasePendingFlow = bindFlow?.(liveRecipeContext);
       const updatedRun = updateRun(runId, { liveRecipeContext });
       emit(Events.RUN_UPDATED, { run: updatedRun });
     };
@@ -1820,19 +1827,38 @@ async function executeRecipeRerunJob(args: {
       throw new Error('Slot ownership changed during recipe preflight.');
     }
     const currentRun = getRun(runId);
-    if (currentRun && runEvidencePending(currentRun)) {
+    const launchEpoch = currentOwner?.slot_epoch;
+    let bindFlow: ((context: LiveRecipeContext) => () => void) | undefined;
+    if (
+      currentRun &&
+      runEvidencePending(currentRun) &&
+      currentRun.taskFile === launchTask.taskFile &&
+      currentRun.slotId === launchTask.slotId &&
+      currentOwner?.current_run_id === runId &&
+      typeof launchEpoch === 'number'
+    ) {
       // Arm on the parent before the runner's first atomic sidecar rename.
       await slotMkdir(slotVars, slotRecipeRunArtifactsDir);
       const outputOwner = await readSlotRow(slotId);
       if (
-        outputOwner?.current_run_id !== owner?.current_run_id ||
-        outputOwner?.slot_epoch !== owner?.slot_epoch ||
+        outputOwner?.current_run_id !== runId ||
+        outputOwner.slot_epoch !== launchEpoch ||
         outputOwner?.phase === SLOT_PHASE_RELEASING
       ) {
         throw new Error('Slot ownership changed while preparing the recipe artifact directory.');
       }
+      const local = isLocal(slotVars.host, slotVars.machine) && !usesNodeLink(slotVars.machine);
+      const node = local ? undefined : getNode(slotVars.machine);
+      // A replaced connection cannot be the launch producer, including during command dispatch.
+      if (local || node)
+        bindFlow = (context) =>
+          bindPendingRecipeAttempt(launchTask, context, {
+            taskDir: built.taskDir,
+            slot: { id: slotId, epoch: launchEpoch },
+            node,
+          });
     }
-    publishLiveRecipeContext();
+    publishLiveRecipeContext(bindFlow);
     const result = await execOnSlot(slotVars, recipeCmd, {
       timeout: timeoutMs,
       signal: abortController.signal,
@@ -1901,6 +1927,7 @@ async function executeRecipeRerunJob(args: {
     complete({ exitCode: 1, error: message, artifactRoot: slotRecipeRunArtifactsDir });
     console.warn(`[recipe] rerun ${requestId} failed: ${message}`);
   } finally {
+    releasePendingFlow?.();
     releaseRecipeTracking(slotId, active);
   }
 }

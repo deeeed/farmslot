@@ -23,6 +23,7 @@ const { routeRunMethod } = await import('../server/run-route.js');
 const { resourceRevisions } = await import('../resources/revisions.js');
 const { workspaceObservations } = await import('../resources/workspace-observations.js');
 const { captureRunOutput } = await import('../run-completion/output.js');
+const { bindPendingRecipeAttempt } = await import('./pending-flow.js');
 
 function deferred() {
   let resolve!: () => void;
@@ -63,6 +64,9 @@ test('run evidence follows only the gateway-bound HUD-off attempt', async (t) =>
     isStale: false,
     selectionReason: 'latest-run',
   } as const;
+  t.after(
+    bindPendingRecipeAttempt({ id, taskFile, slotId: null }, liveRecipeContext, { taskDir: root }),
+  );
   await persistRunNow(updateRun(id, { status: 'monitoring', taskFile, liveRecipeContext }));
 
   const unexpected = () => assert.fail('An evidence read cannot emit a run mutation');
@@ -78,7 +82,11 @@ test('run evidence follows only the gateway-bound HUD-off attempt', async (t) =>
   const nextFileRevision = () => {
     const key = { family: 'artifacts', runId: id } as const;
     const prior = resourceRevisions.revision(key);
-    return new Promise<void>((resolve) => {
+    return new Promise<void>((resolve, reject) => {
+      const deadline = setTimeout(() => {
+        unsubscribe();
+        reject(new Error('The artifact resource did not advance for the held recipe'));
+      }, 2_000);
       const unsubscribe = resourceRevisions.subscribe(({ changes }) => {
         if (
           changes.some(
@@ -86,11 +94,15 @@ test('run evidence follows only the gateway-bound HUD-off attempt', async (t) =>
               key.family === 'artifacts' && key.runId === id && revision > prior,
           )
         ) {
+          clearTimeout(deadline);
           unsubscribe();
           resolve();
         }
       });
-      t.after(unsubscribe);
+      t.after(() => {
+        clearTimeout(deadline);
+        unsubscribe();
+      });
     });
   };
 
@@ -144,10 +156,9 @@ test('run evidence follows only the gateway-bound HUD-off attempt', async (t) =>
   let valid: string;
   try {
     await Promise.race([
-      entered[0]!.promise,
+      Promise.all([entered[0]!.promise, firstPublished]),
       running.then(() => assert.fail('First hold missing')),
     ]);
-    await firstPublished;
     const firstRead = await read();
     const pending = runEvidenceView(
       createEvidenceReviewModel({
@@ -168,8 +179,7 @@ test('run evidence follows only the gateway-bound HUD-off attempt', async (t) =>
     const before = resourceRevisions.revision({ family: 'run', runId: id });
     const changed = nextFileRevision();
     release[0]!.resolve();
-    await entered[1]!.promise;
-    await changed;
+    await Promise.all([entered[1]!.promise, changed]);
     const secondRead = await read();
     assert.equal(secondRead.pendingFlow?.update.activeId, 'second');
     assert.equal(secondRead.pendingFlow?.update.recipeRunId, executionId);
