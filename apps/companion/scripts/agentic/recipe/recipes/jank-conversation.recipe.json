@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Companion conversation jank check",
-  "description": "Measures a native conversation on an Android device: open, stream a 200-delta turn sent from another client, then scroll back into the history, with adb gfxinfo framestats around each step (the jank.recipe.json method: a step fails below min_sustained_fps over any 500 ms of rendering; target_fps is reported, never failed on). Start native-stream-stack.mts (isolated gateway, synthetic Claude runner, no model), pair the app once with `PLATFORM=android ADB_SERIAL=<serial> node scripts/agentic/native-stream-proof.mjs pair`, then run with PLATFORM=android, ADB_SERIAL, METRO_PORT, NATIVE_STREAM_CONTROL and a new NATIVE_STREAM_STATE file. The streamed turn and the scroll also check the conversation's follow state from the app's proof frame. require_follow=no reports follow without checking it; a before/after frame-rate pair runs both builds that way. Run it on the development variant with video off: screenrecord's encoder competes with the app for the frames being measured. The drags start at a fixed point inside the transcript (540, 1000 device px on a 1080x2424 screen); ui.scroll swipes from the screen edge and starts in the status bar on Android.",
+  "description": "Measures a native conversation on an Android device: open, stream a 200-delta turn sent from another client, then scroll back into the history, with adb gfxinfo framestats around each step (the jank.recipe.json method: a step fails below min_sustained_fps over any 500 ms of rendering; target_fps is reported, never failed on). Start native-stream-stack.mts (isolated gateway, synthetic Claude runner, no model), pair the app once with `PLATFORM=android ADB_SERIAL=<serial> node scripts/agentic/native-stream-proof.mjs pair`, then run with PLATFORM=android, ADB_SERIAL, METRO_PORT, NATIVE_STREAM_CONTROL and a new NATIVE_STREAM_STATE file. The streamed turn and the scroll also check the conversation's follow state from the app's proof frame: the app must show the turn's command completed through its completion cursor, and after the scroll a fling back to the end must resume following. require_follow=no reports follow without checking it; a before/after frame-rate pair runs both builds that way. Run it on the development variant with video off: screenrecord's encoder competes with the app for the frames being measured. The drags start at a fixed point inside the transcript (540, 1000 device px on a 1080x2424 screen); ui.scroll swipes from the screen edge and starts in the status bar on Android.",
   "paramsSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -81,6 +81,12 @@
           "fps": "{{params.target_fps}}"
         },
         "intent": "Close the open window against its budget.",
+        "next": "baseline"
+      },
+      "baseline": {
+        "action": "command",
+        "cmd": "NATIVE_STREAM_FRAMES={{params.frames}} node scripts/agentic/native-stream-proof.mjs baseline",
+        "intent": "Record what the app shows before the other client's turn is sent.",
         "next": "stream-start"
       },
       "stream-start": {
@@ -271,6 +277,34 @@
         "match": "\"followChecked\":true",
         "proves": ["conversation-follow"],
         "intent": "The reader-away follow check passed.",
+        "next": "return-fling"
+      },
+      "return-fling": {
+        "action": "ui.swipe",
+        "target": {
+          "x": 540,
+          "y": 1900
+        },
+        "direction": "up",
+        "distance": 1500,
+        "duration_ms": 80,
+        "settle": false,
+        "intent": "The reader flings back toward the end of the conversation.",
+        "next": "back-following"
+      },
+      "back-following": {
+        "action": "command",
+        "cmd": "NATIVE_STREAM_FRAMES={{params.frames}} NATIVE_STREAM_REQUIRE_FOLLOW={{params.require_follow}} node scripts/agentic/native-stream-proof.mjs back-following",
+        "intent": "Once the fling comes to rest at the end, the reader follows again.",
+        "next": "assert-back-following"
+      },
+      "assert-back-following": {
+        "action": "assert_output",
+        "source": "back-following",
+        "stream": "stdout",
+        "match": "\"followChecked\":true",
+        "proves": ["conversation-follow"],
+        "intent": "Follow resumed after the fling back to the end.",
         "next": "report"
       },
       "report": {

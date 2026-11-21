@@ -85,7 +85,15 @@
         "action": "command",
         "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts fold-state open",
         "intent": "The same fold row shows open again.",
+        "next": "assert-fold-toggled"
+      },
+      "assert-fold-toggled": {
+        "action": "assert_output",
+        "source": "fold-open-again",
+        "stream": "stdout",
+        "match": "\"state\":\"open\"",
         "proves": ["work-fold"],
+        "intent": "The same fold row went open, closed and open again.",
         "next": "reveal-tools"
       },
       "reveal-tools": {

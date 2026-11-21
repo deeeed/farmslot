@@ -71,6 +71,12 @@
         "match": "\"phase\":\"at-end\"",
         "proves": ["rows-render", "follow-stream"],
         "intent": "The at-end phase passed its checks.",
+        "next": "baseline"
+      },
+      "baseline": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-stream-proof.mjs baseline",
+        "intent": "Record what the app shows before the prompt is sent.",
         "next": "type-prompt"
       },
       "type-prompt": {

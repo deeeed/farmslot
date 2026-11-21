@@ -14,7 +14,9 @@
  *   POST /session         → { sessionId } a new native session (runner claude, synthetic)
  *   POST /seed?turns=N    → sends N prompts over RPC, each waited to completion (keep N small:
  *                           a client's HTTP timeout can end the request; the seeding goes on)
- *   GET  /read            → { sessionId, state, cursor, completedTurns, commands }
+ *   GET  /read            → { sessionId, state, cursor, completedTurns, commands, lastCompleted }:
+ *                           cursor is the journal's latest sequence; lastCompleted the commandId and
+ *                           sequence of the last turn.completed
  *   POST /shutdown        → closes the session, stops the private native host, exits
  *
  * NATIVE_STREAM_RUNNER (default claude), NATIVE_STREAM_FIXTURE (a file in
@@ -27,26 +29,37 @@
  * NATIVE_STREAM_SEED_RUNS=<n> creates n active runs (fix-bug, status monitoring, no slot; the run
  * engine is off) so Companion's Review queue has rows to scroll, as jank.recipe.json's review-scroll
  * window needs.
+ * NATIVE_STREAM_SEED_TERMINALS=<n> registers one test node for Companion's Terminals list, which
+ * shows only registered nodes' tmux panes: a private tmux server (its own socket directory under
+ * /tmp) runs n idle `sleep` sessions, and a node agent with a scratch HOME, pool directory and
+ * screen-control socket, a clean environment and a node credential from this stack's own store
+ * connects as machine stream-fixture, which this stack's pool lists with one enabled slot. It sees
+ * only that tmux server; shared nodes and existing sessions are never discovered. Teardown stops
+ * the node, kills that tmux server and removes its directory. The ready line names the node pid,
+ * tmux server pid and socket.
  * NATIVE_STREAM_SEED_DIR is copied into the session folder, which
  * then becomes a Git repository with one commit, so turns get checkpoints and diffs.
  *
- * Every exit path tears down what started: /shutdown, SIGINT and SIGTERM, and a startup failure. A
- * clean stop removes the temp root, which holds credentials; a failure keeps it and logs its path.
+ * Every exit path tears down what started: /shutdown, SIGINT, SIGTERM, SIGHUP (tmux kill-session) and
+ * a startup failure. A clean stop removes the temp root, which holds credentials; a failure keeps it
+ * and logs its path.
  */
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import { copyFile, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import type {
+  NativeSessionDeltaPayload,
   NativeSessionInfo,
   NativeSessionReadResult,
   PairingCreateResult,
+  TmuxWorkerListResult,
 } from '@farmslot/protocol';
 
 import type { GatewayClient } from '../../../../packages/cli/src/gateway-client.js';
@@ -61,6 +74,16 @@ interface StackState {
   gatewayUrl: string;
   controlUrl: string;
   sessionId?: string;
+  terminals?: FixtureTerminals;
+}
+/** The NATIVE_STREAM_SEED_TERMINALS node and tmux server, for teardown and its checks. */
+interface FixtureTerminals {
+  machine: string;
+  panes: number;
+  nodePid: number;
+  tmuxDir: string;
+  tmuxSocket: string;
+  tmuxServerPid: number;
 }
 
 const runner = process.env.NATIVE_STREAM_RUNNER ?? 'claude';
@@ -69,8 +92,9 @@ const binaries: Record<string, string> = { claude: 'claude', opencode: 'opencode
 const realRunner = fixture === 'none';
 /**
  * NATIVE_STREAM_WIRE_LOG, a new path: one JSON line per frame the gateway sends to a client, with
- * its send time (epoch ms, sub-ms), the socket, the event name and the native event sequences it
- * carries. With the host journal's append times it shows whether the relay pairs deltas.
+ * its send time (epoch ms, sub-ms), the socket, the event name and bytes; for a native.session.delta
+ * event also its update kind and the sequences of its native events. With the host journal's append
+ * times it shows whether the relay pairs deltas.
  */
 const wireLog = process.env.NATIVE_STREAM_WIRE_LOG;
 assert(!wireLog || !fs.existsSync(wireLog), 'NATIVE_STREAM_WIRE_LOG must be a new path');
@@ -97,6 +121,9 @@ interface Running {
   control?: Server;
   /** Renews the setup connection before its access token expires. */
   renewal?: ReturnType<typeof setInterval>;
+  /** The NATIVE_STREAM_SEED_TERMINALS tmux directory, once created, and node, once spawned. */
+  tmuxDir?: string;
+  terminalNode?: ChildProcess;
 }
 const running: Running = {};
 /** Writes a fresh setup-operator access token to NATIVE_STREAM_TOKEN_FILE; set at startup. */
@@ -135,6 +162,27 @@ const read = () =>
   connected().call<NativeSessionReadResult>('native.session.read', { ...target(), limit: 1 });
 const completedTurns = (page: NativeSessionReadResult) =>
   page.commands.filter((command) => command.state === 'completed').length;
+/** How far GET /read has paged the session's journal, and the last turn.completed in it. */
+interface JournalPosition {
+  cursor: number;
+  lastCompleted?: { commandId: string; cursor: number };
+}
+let journal: JournalPosition = { cursor: 0 };
+/** Pages the journal from where the last call stopped to its end; returns the last page. */
+async function readJournal() {
+  for (;;) {
+    const page = await connected().call<NativeSessionReadResult>('native.session.read', {
+      ...target(),
+      after: journal.cursor,
+      limit: 500,
+    });
+    for (const event of page.events)
+      if (event.type === 'turn.completed' && event.commandId)
+        journal.lastCompleted = { commandId: event.commandId, cursor: event.sequence };
+    journal.cursor = page.cursor;
+    if (!page.hasMore) return page;
+  }
+}
 
 /** The private native host the warm-up started, found by its lock under this root. */
 async function stopHost() {
@@ -151,6 +199,127 @@ async function stopHost() {
     'private host cleanup',
     30_000,
   );
+}
+
+const FIXTURE_MACHINE = 'stream-fixture';
+/** The environment of the fixture's tmux commands: its own server, never the caller's. */
+const fixtureTmuxEnv = (tmuxDir: string) => {
+  const env: NodeJS.ProcessEnv = { ...process.env, TMUX_TMPDIR: tmuxDir };
+  delete env.TMUX;
+  delete env.TMUX_PANE;
+  return env;
+};
+const fixtureTmux = (tmuxDir: string, ...args: string[]) =>
+  execFileSync('tmux', args, { env: fixtureTmuxEnv(tmuxDir), encoding: 'utf8' }).trim();
+
+/** NATIVE_STREAM_SEED_TERMINALS: n idle panes on a private tmux server, reported by one test node. */
+async function startTerminals(count: number, nodeSecret: string): Promise<FixtureTerminals> {
+  // Under /tmp: a Unix socket path must stay under 104 bytes, and the temp root is too deep.
+  // Real path: tmux reports /private/tmp on macOS.
+  const tmuxDir = fs.realpathSync(await mkdtemp('/tmp/nst-'));
+  running.tmuxDir = tmuxDir;
+  for (let index = 1; index <= count; index++)
+    fixtureTmux(
+      tmuxDir,
+      'new-session',
+      '-d',
+      '-s',
+      `scratch-${String(index).padStart(2, '0')}`,
+      'sleep',
+      '86400',
+    );
+  const tmuxServerPid = Number(fixtureTmux(tmuxDir, 'display-message', '-p', '#{pid}'));
+  const tmuxSocket = fixtureTmux(tmuxDir, 'display-message', '-p', '#{socket_path}');
+  assert(tmuxSocket.startsWith(tmuxDir), `The fixture tmux server is not private: ${tmuxSocket}`);
+  // The gateway lists tmux workers only for machines with an enabled slot in a pool. This slot's
+  // session matches none of the panes, so they all list as non-Farmslot; the host never resolves.
+  const pool = {
+    schema_version: 2,
+    machine: FIXTURE_MACHINE,
+    project: 'stream',
+    platform: 'web',
+    os: 'macos',
+    host: `${FIXTURE_MACHINE}.invalid`,
+    slots: [
+      {
+        id: `${FIXTURE_MACHINE}-1`,
+        enabled: true,
+        repo: path.join(root, 'cwd'),
+        session: `${FIXTURE_MACHINE}-1`,
+        resources: {},
+      },
+    ],
+  };
+  await writeFile(path.join(root, 'pool', `${FIXTURE_MACHINE}.json`), `${JSON.stringify(pool)}\n`);
+  const home = path.join(root, 'node-home');
+  await mkdir(home, { recursive: true });
+  await mkdir(path.join(root, 'node-pool'), { recursive: true });
+  // A clean environment: the stack's own FARMSLOT_* variables (its home, native state directory
+  // and native owner) would make the node share the gateway's state.
+  const env: NodeJS.ProcessEnv = {
+    PATH: process.env.PATH,
+    USER: process.env.USER,
+    LANG: process.env.LANG,
+    TMPDIR: process.env.TMPDIR,
+    HOME: home,
+    TMUX_TMPDIR: tmuxDir,
+    GATEWAY_URL: gatewayUrl,
+    MACHINE_NAME: FIXTURE_MACHINE,
+    FARMSLOT_NODE_TOKEN: nodeSecret,
+    FARMSLOT_POOL_DIR: path.join(root, 'node-pool'),
+    SCREEN_CONTROL_SOCKET: path.join(tmuxDir, 'screen.sock'),
+    TSX_TSCONFIG_PATH: path.join(repo, 'services/node/tsconfig.json'),
+  };
+  const log = fs.openSync(path.join(root, 'node.log'), 'a');
+  const node = spawn(
+    process.execPath,
+    [
+      '--import',
+      pathToFileURL(path.join(repo, 'node_modules/tsx/dist/loader.mjs')).href,
+      path.join(repo, 'services/node/src/index.ts'),
+    ],
+    // Its working directory is under the root, so it reads no checkout's .env for a node token.
+    { cwd: home, env, stdio: ['ignore', log, log] },
+  );
+  running.terminalNode = node;
+  assert(node.pid, 'The fixture node did not start');
+  // The node's panes reach the gateway's tmux worker list once it has registered.
+  await until(
+    async () =>
+      (await connected().call<TmuxWorkerListResult>('tmux.worker.list', {})).workers.length >=
+      count,
+    'the fixture node panes',
+    60_000,
+  );
+  return {
+    machine: FIXTURE_MACHINE,
+    panes: count,
+    nodePid: node.pid,
+    tmuxDir,
+    tmuxSocket,
+    tmuxServerPid,
+  };
+}
+
+async function stopTerminalNode() {
+  const node = running.terminalNode!;
+  if (node.exitCode !== null || node.signalCode !== null) return;
+  const exited = new Promise((resolve) => node.once('exit', resolve));
+  node.kill('SIGTERM');
+  await Promise.race([
+    exited,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('The fixture node did not exit')), 15_000).unref(),
+    ),
+  ]);
+}
+
+async function stopTerminalTmux() {
+  const tmuxDir = running.tmuxDir!;
+  // A server that never started (a failed first new-session) leaves only the directory.
+  if (fs.readdirSync(tmuxDir).some((name) => name.startsWith('tmux-')))
+    fixtureTmux(tmuxDir, 'kill-server');
+  fs.rmSync(tmuxDir, { recursive: true, force: true });
 }
 
 /** Stops everything that started, each step even if an earlier one failed; reports every
@@ -178,6 +347,8 @@ async function teardown() {
   });
   await step(() => close(running.server));
   await step(() => close(running.control));
+  if (running.terminalNode) await step(stopTerminalNode);
+  if (running.tmuxDir) await step(stopTerminalTmux);
   if (running.hostWarmed) await step(stopHost);
   if (failures.length) throw new AggregateError(failures, 'Teardown failed');
 }
@@ -217,6 +388,9 @@ function finish(cause?: unknown) {
 // before teardown, once it is the last listener left. `finish` runs its teardown only once.
 process.on('SIGINT', () => void finish());
 process.on('SIGTERM', () => void finish());
+// tmux kill-session hangs up the pane: without this the stack dies before teardown and the detached
+// native supervisor, its host and runner processes outlive it.
+process.on('SIGHUP', () => void finish());
 
 type Handler = (url: URL) => Promise<unknown>;
 function controlRoutes(personId: string): Record<string, Handler> {
@@ -244,6 +418,7 @@ function controlRoutes(personId: string): Record<string, Handler> {
         },
       );
       state.sessionId = session.id;
+      journal = { cursor: 0 };
       return { sessionId: session.id };
     },
     'POST /seed': async (url) => {
@@ -261,13 +436,14 @@ function controlRoutes(personId: string): Record<string, Handler> {
       return { completedTurns: completedTurns(await read()) };
     },
     'GET /read': async () => {
-      const page = await read();
+      const page = await readJournal();
       return {
         sessionId: state.sessionId,
         state: page.session.state,
-        cursor: page.cursor,
+        cursor: journal.cursor,
         completedTurns: completedTurns(page),
         commands: page.commands.length,
+        lastCompleted: journal.lastCompleted ?? null,
       };
     },
     'POST /token': async () => {
@@ -298,7 +474,6 @@ function logOutboundFrames(wss: GatewaySocketServer, file: string) {
           `${JSON.stringify({
             at: performance.timeOrigin + performance.now(),
             socket: id,
-            event: /"event":"([^"]+)"/.exec(text)?.[1],
             bytes: Buffer.isBuffer(data) ? data.length : Buffer.byteLength(text),
             ...frameEvents(text),
           })}\n`,
@@ -312,27 +487,20 @@ function logOutboundFrames(wss: GatewaySocketServer, file: string) {
   });
 }
 
-/** The native events a frame carries (their sequences), not the page cursor, and update kinds. */
-function frameEvents(text: string): { sequences: number[]; kinds: string[] } {
-  const sequences: number[] = [];
-  const kinds: string[] = [];
-  const walk = (value: unknown, key?: string): void => {
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        const sequence = (item as { sequence?: unknown } | null)?.sequence;
-        if (key === 'events' && typeof sequence === 'number') sequences.push(sequence);
-        walk(item);
-      }
-    } else if (value && typeof value === 'object') {
-      for (const [name, child] of Object.entries(value)) {
-        if (name === 'kind' && typeof child === 'string') kinds.push(child);
-        walk(child, name);
-      }
-    }
+/** A frame's event name; for a native.session.delta event frame also the envelope's update kind
+ * and the sequences of its direct page.events or snapshot.events. Other frames carry none. */
+function frameEvents(text: string): { event?: string; kind?: string; sequences: number[] } {
+  const frame = JSON.parse(text) as { type?: string; event?: string; payload?: unknown };
+  if (frame.type !== 'event') return { sequences: [] };
+  if (frame.event !== 'native.session.delta') return { event: frame.event, sequences: [] };
+  const update = frame.payload as NativeSessionDeltaPayload;
+  const events =
+    'page' in update ? update.page.events : 'snapshot' in update ? update.snapshot.events : [];
+  return {
+    event: frame.event,
+    kind: update.kind,
+    sequences: events.map((event) => event.sequence),
   };
-  // Frames that are not JSON (none are expected) carry no events.
-  if (text.startsWith('{')) walk(JSON.parse(text));
-  return { sequences, kinds };
 }
 
 async function start() {
@@ -490,11 +658,33 @@ async function start() {
         deviceName: 'Companion stream setup',
         deviceKind: 'cli',
       });
-      // Replaced in one rename, so a proof phase never reads a half-written token.
-      const next = `${tokenFile}.${process.pid}.tmp`;
-      await writeFile(next, `${fresh.accessToken}\n`, { mode: 0o600, flag: 'wx' });
-      fs.renameSync(next, tokenFile);
+      // Replaced in one rename, so a proof phase never reads a half-written token. Each request
+      // writes its own temp file: overlapping requests never share one, and a failed write or
+      // rename removes it, since it holds a credential.
+      const next = `${tokenFile}.${randomUUID()}.tmp`;
+      try {
+        await writeFile(next, `${fresh.accessToken}\n`, { mode: 0o600, flag: 'wx' });
+        fs.renameSync(next, tokenFile);
+      } catch (cause) {
+        fs.rmSync(next, { force: true });
+        throw cause;
+      }
     };
+  }
+
+  const seedTerminals = Number(process.env.NATIVE_STREAM_SEED_TERMINALS ?? '0');
+  assert(
+    Number.isSafeInteger(seedTerminals) && seedTerminals >= 0,
+    'NATIVE_STREAM_SEED_TERMINALS: 0 or more',
+  );
+  if (seedTerminals) {
+    const node = auth.writer.createPrincipal(
+      { type: 'node', displayName: 'Stream fixture node', machine: FIXTURE_MACHINE },
+      [],
+      'stream-fixture-node',
+    );
+    const nodeCredential = auth.writer.issueCredential(node.id, 'Stream fixture node');
+    state.terminals = await startTerminals(seedTerminals, nodeCredential.secret);
   }
 
   const routes = controlRoutes(person.id);

@@ -11,6 +11,9 @@
 // `setup` seeds NATIVE_STREAM_SEED_TURNS earlier turns (default 4), so the reader has history to
 // scroll away into; 0 is allowed and opens an empty conversation.
 //
+// `baseline` runs before a turn is triggered (the composer press or NATIVE_STREAM_SEND=gateway):
+// streams-following then needs that command's completion in the app's own frame.
+//
 // NATIVE_STREAM_REQUIRE_FOLLOW=no makes at-end, streams-following and reader-away report the follow
 // state without checking it, so a build whose proof frame has none yet (a before build) runs the
 // same steps for a frame-rate comparison. They report `follow: null` when the frame has none.
@@ -324,12 +327,30 @@ if (phase === 'setup') {
     'following at the end',
   );
   report({ follow: value.follow ?? null, ...(requireFollow ? { followChecked: true } : {}) });
+} else if (phase === 'baseline' && !frames) {
+  // Without a proof frame the stream phase reads the gateway alone.
+  report({ frames: 'off' });
+} else if (phase === 'baseline') {
+  // Run before the turn is triggered (the composer press or the gateway send): what the app showed
+  // before it. Read after the trigger, the first delta can already be in it.
+  const { sessionId } = readState();
+  const value = await until((sample) => sample.caughtUp, 'the conversation before the turn');
+  assert.equal(value.session?.id, sessionId, 'The app shows another session');
+  const baseline = {
+    generation: value.session.generation,
+    cursor: value.cursor,
+    commandIds: value.commands.map((command) => command.commandId),
+    lastAssistantKey: lastAssistant(value)?.key ?? null,
+  };
+  writeState({ ...readState(), baseline });
+  report({ ...baseline, commandIds: baseline.commandIds.length });
 } else if (phase === 'streams-following') {
   // The composer just sent a prompt: while it streams, every sample follows and sits at the end.
   // NATIVE_STREAM_SEND=gateway sends it from another client instead (the control port), for a run
   // that measures the stream rather than the composer; the turn streams to the app the same way.
-  const before = readState().completedTurns;
+  const { sessionId, completedTurns: before, baseline } = readState();
   assert(Number.isSafeInteger(before), 'Run setup first');
+  assert(baseline, 'Run the baseline phase before the turn is triggered');
   // Not awaited here: the control call returns only once the turn has finished streaming. Its
   // failure is kept as a value and rethrown when the turn is read as done.
   const seeding =
@@ -344,25 +365,37 @@ if (phase === 'setup') {
     if (failure) throw failure;
   };
   const samples = [];
-  // The app has the new turn once its frame holds more events than before the prompt and a newer
-  // last assistant entry: the gateway finishing the turn alone does not mean the app received it.
-  const start = await frame();
-  assert(start, 'No conversation frame before the stream');
-  const reached = (value) =>
-    value.eventCount > start.eventCount &&
+  /** The one command the app has that it did not have before the trigger. */
+  const turnCommand = (value) => {
+    const fresh = value.commands.filter(
+      (command) => !baseline.commandIds.includes(command.commandId),
+    );
+    assert(fresh.length <= 1, `More than one new command: ${JSON.stringify(fresh)}`);
+    return fresh[0];
+  };
+  // The app has the whole turn once its frame, in the same session and generation, holds the
+  // command whose turn.completed the gateway journal has, as completed, and has applied the journal
+  // through that event: a frame that stopped mid-turn holds a running command or an older cursor.
+  const reached = (value, gateway) =>
+    gateway.lastCompleted !== null &&
+    value.session?.id === sessionId &&
+    value.session.generation === baseline.generation &&
+    turnCommand(value)?.commandId === gateway.lastCompleted.commandId &&
+    turnCommand(value).state === 'completed' &&
+    value.cursor >= gateway.lastCompleted.cursor &&
     lastAssistant(value)?.key !== undefined &&
-    lastAssistant(value)?.key !== lastAssistant(start)?.key;
+    lastAssistant(value).key !== baseline.lastAssistantKey;
   const deadline = Date.now() + 120000;
   for (;;) {
     assert(Date.now() < deadline, 'Timed out waiting for the streamed turn');
-    const { completedTurns } = await call('GET', '/read');
+    const gateway = await call('GET', '/read');
     let value = await frame();
-    const done = completedTurns > before && value?.caughtUp && reached(value);
+    const done = gateway.completedTurns > before && value?.caughtUp && reached(value, gateway);
     if (done && followless(value)) {
       // Follow is only reported: the turn streamed and nothing is checked.
       await sent();
-      writeState({ ...readState(), completedTurns });
-      report({ follow: value.follow ?? null, completedTurns });
+      writeState({ ...readState(), completedTurns: gateway.completedTurns, baseline: undefined });
+      report({ follow: value.follow ?? null, completedTurns: gateway.completedTurns });
       break;
     }
     if (value && !done && !followless(value)) {
@@ -376,7 +409,7 @@ if (phase === 'setup') {
       // Let the last delta's layout settle before reading the final position.
       await delay(1000);
       const settled = await frame();
-      assert(settled && reached(settled), 'The app lost the streamed turn');
+      assert(settled && reached(settled, gateway), 'The app lost the streamed turn');
       const off = samples.filter(
         (follow) => !follow.following || follow.distanceFromEnd > STREAM_ALLOWANCE,
       );
@@ -393,7 +426,8 @@ if (phase === 'setup') {
         settled.follow.following,
         `Not following after the stream: ${JSON.stringify(settled.follow)}`,
       );
-      // On Android the end is read from the final row's layout (see endLayout); a list past its
+      // The completed turn's final row: the last assistant entry of a frame that holds the whole
+      // turn. On Android the end is read from that row's layout (see endLayout); a list past its
       // end shows a negative gap, which fails too.
       const turnLastLine = lastAssistant(settled).text.trim().split('\n').at(-1).trim();
       const layout = android ? endLayout(turnLastLine) : undefined;
@@ -402,15 +436,16 @@ if (phase === 'setup') {
         `Not at the end after the stream: ${JSON.stringify({ follow: settled.follow, layout })}`,
       );
       await sent();
-      writeState({ ...readState(), completedTurns });
+      writeState({ ...readState(), completedTurns: gateway.completedTurns, baseline: undefined });
       report({
         samples: samples.length,
         maxDistance: Math.max(...samples.map((follow) => follow.distanceFromEnd)),
         final: settled.follow,
         ...(layout ? { finalRowLayout: layout } : {}),
-        turnEvents: settled.eventCount,
+        command: gateway.lastCompleted,
+        cursor: settled.cursor,
         followChecked: true,
-        completedTurns,
+        completedTurns: gateway.completedTurns,
       });
       break;
     }
@@ -429,6 +464,16 @@ if (phase === 'setup') {
     'the reader away from the end',
   );
   report({ follow: value.follow ?? null, ...(requireFollow ? { followChecked: true } : {}) });
+} else if (phase === 'back-following') {
+  // The reader flung back to the end: once the list comes to rest they follow again. Android can
+  // drop a fling's last scroll event, so this holds only when the momentum end updates follow.
+  assert(frames && requireFollow, "back-following checks the proof frame's follow state");
+  const value = await until(
+    (sample) => sample.follow.following && sample.follow.distanceFromEnd < SLACK,
+    'following again after the fling back',
+    15000,
+  );
+  report({ follow: value.follow, followChecked: true });
 } else if (phase === 'scrolled-away') {
   // The reader flicks the conversation back toward its start.
   const flung = device('gesture', 'fling', 'down', '200', '520', '400', '150');
