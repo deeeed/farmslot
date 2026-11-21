@@ -410,7 +410,7 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
               ),
             authHeaders,
             viewModel.acceptance.evidenceModel,
-            { runId, slotId: run?.slotId ?? undefined },
+            { runId, slotId: run?.slotId ?? undefined, decisionId: decision?.id },
           ),
         });
       },
@@ -420,7 +420,7 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
           path,
           (artifactPath) => recordedEvidenceArtifactUrl(gatewayUrl, runId, model, artifactPath),
           authHeaders,
-          { runId, slotId: run?.slotId ?? undefined },
+          { runId, slotId: run?.slotId ?? undefined, decisionId: decision?.id },
         );
         setMedia({ items: [item], uri: item.uri });
       },

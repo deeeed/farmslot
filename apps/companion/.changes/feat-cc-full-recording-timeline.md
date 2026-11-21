@@ -1,0 +1,1 @@
+- Show and seek the full recorded timeline in the Companion evidence player.

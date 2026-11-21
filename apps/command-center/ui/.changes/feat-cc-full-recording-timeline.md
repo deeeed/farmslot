@@ -1,0 +1,1 @@
+- Show the full execution timeline in evidence review, including setup and steps with no verified video position.

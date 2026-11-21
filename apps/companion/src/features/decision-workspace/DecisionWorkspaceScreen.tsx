@@ -1599,7 +1599,11 @@ export default function DecisionDetailScreen({
                   (path) =>
                     recordedEvidenceArtifactUrl(gatewayUrl, presentation.runId!, model, path),
                   artifactAuthHeaders,
-                  { runId: presentation.runId!, slotId: sourceRun?.slotId ?? undefined },
+                  {
+                    runId: presentation.runId!,
+                    slotId: sourceRun?.slotId ?? undefined,
+                    decisionId: decision.payload?.kind === 'ready' ? decision.id : undefined,
+                  },
                 );
                 setComparisonViewerItems([item]);
                 setViewerUri(item.uri);

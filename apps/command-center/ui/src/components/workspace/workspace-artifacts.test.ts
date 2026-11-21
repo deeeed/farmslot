@@ -5,6 +5,7 @@ import { GATEWAY_TOKEN_STORAGE_KEY } from '../../gateway-url.js';
 import { buildBeforeAfterPairs } from '../../utils/artifact-pairs.js';
 
 import {
+  frozenGateArtifactUrl,
   isDebugScreenshotArtifact,
   isWorkspaceDiffArtifact,
   isWorkspaceEvidenceArtifact,
@@ -116,6 +117,21 @@ test('recipeRunArtifactUrl uses size cache busting for current artifacts without
   );
 });
 
+test('a linked review explicitly requests the current-artifacts group', () => {
+  const url = recipeRunArtifactUrl(
+    'run-1',
+    {
+      id: 'current-artifacts',
+      groupKind: 'current-artifacts',
+    },
+    { path: 'artifacts/videos/root.mp4' },
+    { pinCurrentGroup: true },
+  );
+  const params = new URL(url).searchParams;
+  assert.equal(params.get('recipeRunId'), 'current-artifacts');
+  assert.equal(params.get('path'), 'artifacts/videos/root.mp4');
+});
+
 test('unbound legacy names and purposes never supply an AC role or comparison pair', () => {
   const artifacts = [
     { path: 'shots/before-home.png', purpose: 'Screenshot' },
@@ -206,4 +222,27 @@ test('workspace evidence helpers exclude raw recipe-runner screenshot spools', (
     }),
     true,
   );
+});
+
+test('a frozen gate uses the task-relative selector and its retained bundle', () => {
+  const url = frozenGateArtifactUrl('r', 'artifacts/video.mp4', {
+    bundleDigest: 'frozen-bundle',
+    decisionId: 'captured-gate',
+  });
+  const params = new URL(url).searchParams;
+  assert.equal(params.get('runId'), 'r');
+  assert.equal(params.get('path'), 'artifacts/video.mp4');
+  assert.equal(params.get('recipeRunId'), 'current-artifacts');
+  assert.equal(params.get('bundleDigest'), 'frozen-bundle');
+  assert.equal(params.get('decisionId'), 'captured-gate');
+});
+
+test('a legacy gate selects the run bundle without a decision-bound snapshot', () => {
+  const params = new URL(
+    frozenGateArtifactUrl('r', 'artifacts/video.mp4', { decisionId: 'legacy-gate' }),
+  ).searchParams;
+  assert.equal(params.get('path'), 'artifacts/video.mp4');
+  assert.equal(params.get('recipeRunId'), 'current-artifacts');
+  assert.equal(params.has('decisionId'), false);
+  assert.equal(params.has('bundleDigest'), false);
 });

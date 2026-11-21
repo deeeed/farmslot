@@ -5,6 +5,7 @@ import type { RunDecision } from '@farmslot/protocol';
 
 import {
   decisionActionHelp,
+  linkedPublicationGate,
   publicationGateWaitingTitle,
   retainedEvidenceGate,
 } from './run-detail-decision-renderers.js';
@@ -74,6 +75,35 @@ test('a settled run exposes its latest saved gate without changing the retained 
       status: 'cancelled',
       decisions: [saved, { ...saved, id: 'pending', resolvedAt: undefined }],
     }),
+    undefined,
+  );
+});
+
+test('a recording link pins a saved gate even when a newer gate has the same package', () => {
+  const saved: RunDecision = {
+    id: 'old-gate',
+    type: 'engine_human_gate',
+    title: 'Gate',
+    description: '',
+    actions: [],
+    createdAt: '2026-01-01',
+    resolvedAt: '2026-01-02',
+    payload: {
+      kind: 'ready',
+      prNumber: 1,
+      repo: 'fixture/source',
+      workerReport: '',
+      branch: 'fixture',
+      diffStat: { files: 1, additions: 1, deletions: 0 },
+    },
+  };
+  const newer = { ...saved, id: 'new-gate', resolvedAt: undefined };
+  const run = { id: 'run-1', decisions: [saved, newer] };
+  assert.equal(linkedPublicationGate(run, '#run/run-1?review=AC-1&reviewDecision=old-gate'), saved);
+  assert.equal(linkedPublicationGate(run, '#run/run-1?review=AC-1&reviewDecision=new-gate'), newer);
+  assert.equal(linkedPublicationGate(run, '#run/run-1?review=AC-1&reviewDecision=missing'), null);
+  assert.equal(
+    linkedPublicationGate(run, '#run/other?review=AC-1&reviewDecision=old-gate'),
     undefined,
   );
 });
