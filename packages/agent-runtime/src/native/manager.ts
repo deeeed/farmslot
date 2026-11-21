@@ -1016,27 +1016,32 @@ export class NativeSessionManager {
   }
 
   /** Explicit operator attestation covers legacy journals without descendant evidence. */
-  confirmWorkerStopped(
+  async confirmWorkerStopped(
     owner: string,
     id: string,
     generation: string,
     leaseId: string,
-  ): NativeSessionInfo {
+  ): Promise<NativeSessionInfo> {
     this.assertWorkerLease(owner, id, generation, leaseId, true);
     const record = this.owned(owner, id);
     if (record.info.processStopped) return this.snapshot(record);
-    const pid = record.info.processPid;
-    // A completed adapter can retain its handles after a cleanup census fails.
-    const observedExit =
-      typeof record.info.exitCode === 'number' || typeof record.info.signal === 'string';
-    if (
-      !pid ||
-      !['closed', 'failed'].includes(record.info.state) ||
-      ((record.adapter || record.startup) && (!observedExit || !record.processes?.length)) ||
-      this.recordedLeaderAlive(record) ||
-      this.recordedGroupAlive(record)
-    )
-      throw new Error('Stop confirmation requires an absent native process and process group');
+    const adapter = record.adapter;
+    const absent = 'Stop confirmation requires an absent native process and process group';
+    const terminal = () =>
+      !!record.info.processPid && ['closed', 'failed'].includes(record.info.state);
+    if (!terminal()) throw new Error(absent);
+    if (adapter || record.startup) {
+      // Only the process owner has the descendants discovered during termination.
+      const observedExit =
+        typeof record.info.exitCode === 'number' || typeof record.info.signal === 'string';
+      if (!observedExit || !(await adapter?.verifyStoppedProcessTree?.())) throw new Error(absent);
+      this.assertWorkerLease(owner, id, generation, leaseId, true);
+      if (this.owned(owner, id) !== record || record.adapter !== adapter || !terminal())
+        throw new Error(absent);
+      if (record.info.processStopped) return this.snapshot(record);
+    }
+    if (this.recordedLeaderAlive(record) || this.recordedGroupAlive(record))
+      throw new Error(absent);
     if (record.processes?.some((child) => processIdentityAlive(child.pid, child.identity)))
       throw new Error('An observed native descendant is still alive; stop confirmation is refused');
     this.append(record, {

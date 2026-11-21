@@ -21,6 +21,7 @@ test('an exited worker with retained handles can confirm stop and cancel its exa
   const child = 100038101;
   const birth = 'recorded process birth';
   let publish: ((event: NativeEventInput) => void) | undefined;
+  let stoppedAtOwner = true;
   t.mock.method(
     nativeRunnerDefinitions.codex.adapter,
     'start',
@@ -37,6 +38,7 @@ test('an exited worker with retained handles can confirm stop and cancel its exa
         respond: async () => assert.fail('unexpected native response'),
         interrupt: async () => assert.fail('unexpected native interrupt'),
         close: async () => assert.fail('unexpected native close'),
+        verifyStoppedProcessTree: async () => stoppedAtOwner,
       };
     },
   );
@@ -71,55 +73,61 @@ test('an exited worker with retained handles can confirm stop and cancel its exa
     return birth;
   });
   syncBuiltinESMExports();
-  const confirm = () => manager.confirmWorkerStopped('owner', id, generation, leaseId);
+  const confirm = async () => manager.confirmWorkerStopped('owner', id, generation, leaseId);
   const absent = /requires an absent native process and process group/;
-  const closed = (exitCode: number | null) =>
+  const closed = (exitCode: number | null, signal: string | null = null) =>
     ({
       type: 'session.closed',
       status: 'failed',
       data: {
         exitCode,
-        signal: null,
+        signal,
         processStopped: false,
         error: 'Census failed during cleanup',
       },
     }) satisfies NativeEventInput;
-  assert.throws(confirm, absent);
+  await assert.rejects(confirm, absent);
   publish(closed(null));
-  assert.throws(confirm, absent);
+  await assert.rejects(confirm, absent);
   publish(closed(0));
   await assert.rejects(
     manager.cancelWorker('owner', id, leaseId, generation),
     /cleanup is unconfirmed/,
   );
-  assert.throws(
-    () => manager.confirmWorkerStopped('foreign', id, generation, leaseId),
+  await assert.rejects(
+    async () => manager.confirmWorkerStopped('foreign', id, generation, leaseId),
     /not found/,
   );
-  assert.throws(
-    () => manager.confirmWorkerStopped('owner', id, 'stale', leaseId),
+  await assert.rejects(
+    async () => manager.confirmWorkerStopped('owner', id, 'stale', leaseId),
     /generation or task lease changed/,
   );
-  assert.throws(
-    () => manager.confirmWorkerStopped('owner', id, generation, 'stale'),
+  await assert.rejects(
+    async () => manager.confirmWorkerStopped('owner', id, generation, 'stale'),
     /generation or task lease changed/,
   );
-  await t.test('surviving processes and unavailable census evidence block cleanup', () => {
+  await t.test('surviving processes and unavailable census evidence block cleanup', async () => {
     livePid = leader;
-    assert.throws(confirm, absent);
+    await assert.rejects(confirm, absent);
     livePid = undefined;
     groupAlive = true;
-    assert.throws(confirm, absent);
+    await assert.rejects(confirm, absent);
     groupAlive = false;
     livePid = child;
-    assert.throws(confirm, /observed native descendant is still alive/);
+    await assert.rejects(confirm, /observed native descendant is still alive/);
     unreadable = true;
-    assert.throws(confirm, /Fixture census timed out/);
+    await assert.rejects(confirm, /Fixture census timed out/);
     assert.equal(manager.inspect('owner', id).processStopped, false);
   });
 
   livePid = undefined;
-  const confirmed = confirm();
+  stoppedAtOwner = false;
+  await assert.rejects(confirm, absent);
+  assert.equal(manager.inspect('owner', id).processStopped, false);
+
+  stoppedAtOwner = true;
+  publish(closed(null, 'SIGTERM'));
+  const confirmed = await confirm();
   assert.equal(confirmed.processStopped, true);
   assert.equal(confirmed.processStopReason, 'process-missing-attested');
   const cancelled = await manager.cancelWorker('owner', id, leaseId, generation);

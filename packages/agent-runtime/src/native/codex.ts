@@ -533,6 +533,7 @@ export const codexNativeAdapter: NativeAdapter = {
         await process.request('turn/interrupt', { threadId: nativeSessionId, turnId });
       },
       close: () => process.close(),
+      verifyStoppedProcessTree: () => process.verifyStoppedProcessTree(),
     };
   },
 };

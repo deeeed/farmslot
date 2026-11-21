@@ -205,6 +205,7 @@ test('cleanup retains a detached child after its title changes and parent exits'
     root.kill('SIGKILL');
     await exited;
     assert.ok(alive(descendant));
+    assert.equal(await tree.empty(), false);
     await tree.stop();
     const deadline = Date.now() + 3_000;
     while (alive(descendant) && Date.now() < deadline)

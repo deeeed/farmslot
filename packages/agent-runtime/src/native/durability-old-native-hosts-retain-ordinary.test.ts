@@ -150,11 +150,11 @@ test('legacy worker cleanup can be explicitly attested without discarding its co
     writeFileSync(journal, entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
     restored = new NativeSessionManager(fixture.root);
     assert.equal(restored.read('owner', session.id).session.processStopped, false);
-    assert.throws(
+    await assert.rejects(
       () => restored!.confirmWorkerStopped('owner', session.id, 'stale', launch.leaseId),
       /generation or task lease changed/,
     );
-    const confirmed = restored.confirmWorkerStopped(
+    const confirmed = await restored.confirmWorkerStopped(
       'owner',
       session.id,
       session.generation,
@@ -163,7 +163,7 @@ test('legacy worker cleanup can be explicitly attested without discarding its co
     assert.equal(confirmed.processStopped, true);
     assert.equal(confirmed.processStopReason, 'process-missing-attested');
     const cursor = restored.read('owner', session.id).cursor;
-    restored.confirmWorkerStopped('owner', session.id, session.generation, launch.leaseId);
+    await restored.confirmWorkerStopped('owner', session.id, session.generation, launch.leaseId);
     assert.equal(restored.read('owner', session.id).cursor, cursor);
     const resumed = await restored.create(
       'owner',
