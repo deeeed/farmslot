@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Companion jank check",
-  "description": "Drives Companion's main read-only flows on an Android device and fails on jank. Native frames come from adb gfxinfo framestats: a flow fails below min_sustained_fps over any 500 ms of rendering, and tab presses fail over the p95 or max press limits (from the touch to the end of the last frame that started by two vsyncs after the tab's post-commit [farmslot-perf] shown logcat line; it can over-read by up to ~2 light frames, and could still miss a mount frame that starts more than two vsyncs after the marker, not seen in 24 Pixel 6 presses). target_fps and target_press_ms are reported, never failed on. Each measured flow records its baseline in its end node (release build 7da49c4df timed by this press rule, Pixel 6 at 90 Hz, idle Review at 60 Hz; run-detail keeps main 4da00ad80's, timed by the frame rule; terminal-open runs only against a sandbox and has none); a window with a coverage gap (failed polls, overwritten frames) is inconclusive and never passes; when the median tab-press p95 of at least 3 fresh release runs on main is more than 20 ms under that baseline, lower the caps and record the new baseline. Run it on the development variant with video off: screenrecord's encoder competes with the app for the frames being measured.",
+  "description": "Drives Companion's main read-only flows on an Android device and fails on jank. Native frames come from adb gfxinfo framestats: a flow fails below min_sustained_fps over any 500 ms of rendering, and tab presses fail over the p95 or max press limits (from the touch to the end of the last frame that started by two vsyncs after the tab's post-commit [farmslot-perf] shown logcat line; it can over-read by up to ~2 light frames, and could still miss a mount frame that starts more than two vsyncs after the marker, not seen in 24 Pixel 6 presses). target_fps and target_press_ms are reported, never failed on. Each measured flow records its baseline in its end node (release build 7da49c4df timed by this press rule, Pixel 6 at 90 Hz, idle Review at 60 Hz; run-detail keeps main 4da00ad80's, timed by the frame rule; terminal-open runs only against a sandbox and has none); a window with a coverage gap (failed polls, overwritten frames) is inconclusive and never passes; when the median tab-press p95 of at least 3 fresh release runs on main is more than 20 ms under that baseline, lower the caps and record the new baseline. Review and Terminals scroll with 700 ms, 900 px drags anchored inside their lists (540,1800 forward, 540,900 back on a 1080x2424 screen): ui.scroll starts in the tab bar on Android and moves neither list, and a drag that long renders a 500 ms sustained sample. Both lists need rows: a seeded Review queue, and a registered node's tmux panes for Terminals (native-stream-stack.mts NATIVE_STREAM_SEED_RUNS and NATIVE_STREAM_SEED_TERMINALS); each scroll window asserts a numeric sustained FPS. Run it on the development variant with video off: screenrecord's encoder competes with the app for the frames being measured.",
   "paramsSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -479,9 +479,14 @@
         "next": "review-scroll-1"
       },
       "review-scroll-1": {
-        "action": "ui.scroll",
-        "direction": "down",
-        "pixels": 900,
+        "action": "ui.swipe",
+        "target": {
+          "x": 540,
+          "y": 1800
+        },
+        "direction": "up",
+        "distance": 900,
+        "duration_ms": 700,
         "settle": false,
         "intent": "Move further down the Review queue while its frames are measured.",
         "next": "review-scroll-1-settle"
@@ -493,9 +498,14 @@
         "next": "review-scroll-2"
       },
       "review-scroll-2": {
-        "action": "ui.scroll",
-        "direction": "down",
-        "pixels": 900,
+        "action": "ui.swipe",
+        "target": {
+          "x": 540,
+          "y": 1800
+        },
+        "direction": "up",
+        "distance": 900,
+        "duration_ms": 700,
         "settle": false,
         "intent": "Move further down the Review queue while its frames are measured.",
         "next": "review-scroll-2-settle"
@@ -507,9 +517,14 @@
         "next": "review-scroll-3"
       },
       "review-scroll-3": {
-        "action": "ui.scroll",
-        "direction": "down",
-        "pixels": 900,
+        "action": "ui.swipe",
+        "target": {
+          "x": 540,
+          "y": 1800
+        },
+        "direction": "up",
+        "distance": 900,
+        "duration_ms": 700,
         "settle": false,
         "intent": "Move further down the Review queue while its frames are measured.",
         "next": "review-scroll-3-settle"
@@ -521,9 +536,14 @@
         "next": "review-scroll-4"
       },
       "review-scroll-4": {
-        "action": "ui.scroll",
-        "direction": "up",
-        "pixels": 900,
+        "action": "ui.swipe",
+        "target": {
+          "x": 540,
+          "y": 900
+        },
+        "direction": "down",
+        "distance": 900,
+        "duration_ms": 700,
         "settle": false,
         "intent": "Move back up the Review queue while its frames are measured.",
         "next": "review-scroll-4-settle"
@@ -535,9 +555,14 @@
         "next": "review-scroll-5"
       },
       "review-scroll-5": {
-        "action": "ui.scroll",
-        "direction": "up",
-        "pixels": 900,
+        "action": "ui.swipe",
+        "target": {
+          "x": 540,
+          "y": 900
+        },
+        "direction": "down",
+        "distance": 900,
+        "duration_ms": 700,
         "settle": false,
         "intent": "Move back up the Review queue while its frames are measured.",
         "next": "review-scroll-5-settle"
@@ -549,9 +574,14 @@
         "next": "review-scroll-6"
       },
       "review-scroll-6": {
-        "action": "ui.scroll",
-        "direction": "up",
-        "pixels": 900,
+        "action": "ui.swipe",
+        "target": {
+          "x": 540,
+          "y": 900
+        },
+        "direction": "down",
+        "distance": 900,
+        "duration_ms": 700,
         "settle": false,
         "intent": "Move back up the Review queue while its frames are measured.",
         "next": "review-scroll-6-settle"
@@ -582,6 +612,17 @@
           "frames": 555
         },
         "intent": "Close the the Review queue scroll window against its budget.",
+        "next": "review-scroll-fps-sampled"
+      },
+      "review-scroll-fps-sampled": {
+        "action": "assert_output",
+        "source": "review-scroll-end",
+        "assert": {
+          "path": "$.sustainedFps",
+          "operator": "gt",
+          "value": 0
+        },
+        "intent": "A 500 ms rendering stretch exists, so sustained FPS is measured.",
         "next": "to-terminals"
       },
       "to-terminals": {
@@ -612,9 +653,14 @@
         "next": "terminals-scroll-1"
       },
       "terminals-scroll-1": {
-        "action": "ui.scroll",
-        "direction": "down",
-        "pixels": 900,
+        "action": "ui.swipe",
+        "target": {
+          "x": 540,
+          "y": 1800
+        },
+        "direction": "up",
+        "distance": 900,
+        "duration_ms": 700,
         "settle": false,
         "intent": "Move further down the Terminals list while its frames are measured.",
         "next": "terminals-scroll-1-settle"
@@ -626,9 +672,14 @@
         "next": "terminals-scroll-2"
       },
       "terminals-scroll-2": {
-        "action": "ui.scroll",
-        "direction": "down",
-        "pixels": 900,
+        "action": "ui.swipe",
+        "target": {
+          "x": 540,
+          "y": 1800
+        },
+        "direction": "up",
+        "distance": 900,
+        "duration_ms": 700,
         "settle": false,
         "intent": "Move further down the Terminals list while its frames are measured.",
         "next": "terminals-scroll-2-settle"
@@ -640,9 +691,14 @@
         "next": "terminals-scroll-3"
       },
       "terminals-scroll-3": {
-        "action": "ui.scroll",
-        "direction": "up",
-        "pixels": 900,
+        "action": "ui.swipe",
+        "target": {
+          "x": 540,
+          "y": 900
+        },
+        "direction": "down",
+        "distance": 900,
+        "duration_ms": 700,
         "settle": false,
         "intent": "Move back up the Terminals list while its frames are measured.",
         "next": "terminals-scroll-3-settle"
@@ -654,9 +710,14 @@
         "next": "terminals-scroll-4"
       },
       "terminals-scroll-4": {
-        "action": "ui.scroll",
-        "direction": "up",
-        "pixels": 900,
+        "action": "ui.swipe",
+        "target": {
+          "x": 540,
+          "y": 900
+        },
+        "direction": "down",
+        "distance": 900,
+        "duration_ms": 700,
         "settle": false,
         "intent": "Move back up the Terminals list while its frames are measured.",
         "next": "terminals-scroll-4-settle"
@@ -687,6 +748,17 @@
           "frames": 427
         },
         "intent": "Close the the Terminals list scroll window against its budget.",
+        "next": "terminals-scroll-fps-sampled"
+      },
+      "terminals-scroll-fps-sampled": {
+        "action": "assert_output",
+        "source": "terminals-scroll-end",
+        "assert": {
+          "path": "$.sustainedFps",
+          "operator": "gt",
+          "value": 0
+        },
+        "intent": "A 500 ms rendering stretch exists, so sustained FPS is measured.",
         "next": "terminal-open-gate"
       },
       "terminal-open-gate": {
