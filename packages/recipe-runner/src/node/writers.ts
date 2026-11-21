@@ -1,10 +1,11 @@
-import { rename } from 'node:fs/promises';
+import { rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
   type EvidenceManifest,
   type RecipeArtifactManifestEntry,
   type RecipeClaimLedger,
+  type RecipeFlowUpdate,
   type RecipeResolutionDocument,
   type RecordedEvidencePackageInput,
   resolvedRecipeArtifactPath,
@@ -12,8 +13,11 @@ import {
 
 import { recordRecipeArtifactOwner } from '../../bin/recipe-artifact-owner.cjs';
 import {
+  assertNotPendingFlowArtifact,
   assertRecipeArtifactDestinationAvailable,
   occupiedRecipeArtifactsError,
+  RECIPE_PENDING_FLOW_FILE,
+  RECIPE_PENDING_FLOW_PARTIAL_FILE,
 } from '../core/artifact-destination.js';
 import type { RecipeInvocationDocument } from '../core/invocation.js';
 import { writeFileWithinRoot } from '../core/path.js';
@@ -93,7 +97,22 @@ export class JsonArtifactWriter implements ArtifactWriter {
     });
   }
 
+  async writePendingFlow(update: RecipeFlowUpdate): Promise<void> {
+    await replaceJsonWithinRoot(
+      this.#artifactsDir,
+      RECIPE_PENDING_FLOW_FILE,
+      update,
+      RECIPE_PENDING_FLOW_PARTIAL_FILE,
+    );
+  }
+
+  async removePendingFlow(): Promise<void> {
+    await rm(path.join(this.#artifactsDir, RECIPE_PENDING_FLOW_FILE), { force: true });
+    await rm(path.join(this.#artifactsDir, RECIPE_PENDING_FLOW_PARTIAL_FILE), { force: true });
+  }
+
   register(entry: RecipeArtifactManifestEntry): void {
+    assertNotPendingFlowArtifact(entry.path);
     if (!this.#entries.some((existing) => existing.path === entry.path)) {
       this.#entries.push(entry);
     }
@@ -232,14 +251,7 @@ export class JsonTraceWriter implements TraceWriter {
 
   /** Replace trace.json whole, through a temporary file and a rename: never a partial read. */
   async #publish(): Promise<string> {
-    const temporary = await writeJsonWithinRoot(
-      this.#artifactsDir,
-      '.trace.json.partial',
-      this.#document(),
-    );
-    const tracePath = path.join(path.dirname(temporary), 'trace.json');
-    await rename(temporary, tracePath);
-    return tracePath;
+    return replaceJsonWithinRoot(this.#artifactsDir, 'trace.json', this.#document());
   }
 
   #document(): unknown {
@@ -290,6 +302,18 @@ export class JsonSummaryWriter implements SummaryWriter {
   async write(summary: SummaryDocument): Promise<string> {
     return writeJsonWithinRoot(this.#artifactsDir, 'summary.json', summary);
   }
+}
+
+async function replaceJsonWithinRoot(
+  root: string,
+  file: string,
+  value: unknown,
+  temporaryFile = `.${file}.partial`,
+): Promise<string> {
+  const temporary = await writeJsonWithinRoot(root, temporaryFile, value);
+  const destination = path.join(path.dirname(temporary), file);
+  await rename(temporary, destination);
+  return destination;
 }
 
 function writeJsonWithinRoot(

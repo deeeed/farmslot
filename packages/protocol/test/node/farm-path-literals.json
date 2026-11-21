@@ -262,5 +262,11 @@
     "literal": ".farmslot*",
     "reason": "Blind worker denials cover default and inactive CLI homes; discovery reads path metadata and gateway URL fields only, never logs credentials.",
     "count": 1
+  },
+  {
+    "file": "packages/recipe-runner/src/core/artifact-destination.ts",
+    "literal": ".farmslot-recipe-flow.json",
+    "reason": "Reserved transient pending-flow snapshot relative to the current recipe invocation's caller-supplied artifacts directory.",
+    "count": 1
   }
 ]

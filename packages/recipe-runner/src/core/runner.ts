@@ -517,6 +517,18 @@ class DefaultRecipeRunner implements RecipeRunner {
       await artifactWriter.copyResolvedRecipe(dependency.provenance.digest!, dependency.document);
     }
     await artifactWriter.writeRecipeResolution(dependencyResolution.document);
+    let pendingFlowAvailable = true;
+    const publishPendingFlow = async (update: RecipeFlowUpdate) => {
+      if (!pendingFlowAvailable) return;
+      try {
+        await artifactWriter.writePendingFlow(update);
+      } catch (error) {
+        // The viewer can proceed without pending flow after the prior snapshot is cleared.
+        pendingFlowAvailable = false;
+        this.#logger.warn(`Pending flow artifact could not be written: ${errorMessage(error)}`);
+        await artifactWriter.removePendingFlow();
+      }
+    };
     let status: RecipeRunStatus = 'unknown';
     const segments: RecordingSegmentRef[] = [];
     const timelines = new Map<string, RecipeRecordingTimelineDocument>();
@@ -676,6 +688,7 @@ class DefaultRecipeRunner implements RecipeRunner {
             }
             for (const artifact of artifacts) registerCapture(artifact, nodeId);
           },
+          publishPendingFlow,
           publishHudProgress: this.#hudAction()
             ? (hudStatus, event) => {
                 if (
@@ -1084,6 +1097,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     if (comparisons.references.length)
       manifestMetadata.comparisonDependencies = comparisons.references;
     await artifactWriter.write(status, this.#runnerProvenance, manifestMetadata);
+    await artifactWriter.removePendingFlow();
 
     const packageInput: RecordedEvidencePackageInput = {
       comparisonDependencies: comparisons.inputs,
