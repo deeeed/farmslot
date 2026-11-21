@@ -283,6 +283,7 @@ function signal(
 /** Tracks detached descendants while their ancestry is still observable. */
 export class NativeProcessTree {
   private owned = new Map<number, ProcessIdentity>();
+  private readonly detachedGroups = new Map<number, string | undefined>();
   private readonly rootIdentity: string;
   private readonly rootObservation: ProcessIdentity;
   /**
@@ -352,7 +353,9 @@ export class NativeProcessTree {
       this.owned.set(root.pid, root);
     }
     for (const [pid, identity] of this.owned) {
-      if (snapshot.get(pid)?.identity !== identity.identity) this.owned.delete(pid);
+      const current = snapshot.get(pid);
+      if (current?.identity === identity.identity) this.owned.set(pid, current);
+      else this.owned.delete(pid);
     }
     // A current, known member proves this is still the original runner group.
     const ownsGroup = [...this.owned.values()].some((entry) => entry.group === this.root);
@@ -370,6 +373,14 @@ export class NativeProcessTree {
           changed = true;
         }
       }
+    }
+    // Any owned member can establish a detached group. Keep the leader's birth
+    // identity when available, even after all observed members exit or reparent.
+    for (const { group } of this.owned.values()) {
+      if (group === this.root) continue;
+      const leader = snapshot.get(group);
+      if (leader?.group === group) this.detachedGroups.set(group, leader.identity);
+      else if (!this.detachedGroups.has(group)) this.detachedGroups.set(group, undefined);
     }
   }
   /** Last observed identities remain useful when a later census cannot be read. */
@@ -418,12 +429,20 @@ export class NativeProcessTree {
         `Native process tree cleanup failed: ${errors.map((error) => (error instanceof Error ? error.message : String(error))).join('; ')}`,
       );
   }
-  async empty(): Promise<boolean> {
+  async empty({ includeDetachedGroups = false } = {}): Promise<boolean> {
     const snapshot = await cleanupProcesses();
     this.applySnapshot(snapshot);
     if (this.owned.size > 0) return false;
-    // A reused group cannot be signaled safely or counted as proof of cleanup.
-    return ![...snapshot.values()].some((entry) => entry.group === this.root);
+    return ![...snapshot.values()].some(({ group }) => {
+      if (group === this.root) return true;
+      if (!includeDetachedGroups || !this.detachedGroups.has(group)) return false;
+      const identity = this.detachedGroups.get(group);
+      if (identity === undefined) return true;
+      // A new group leader proves reuse. Surviving members without a leader
+      // still belong to the observed group, even after reparenting.
+      const leader = snapshot.get(group);
+      return leader?.group !== group || leader.identity === identity;
+    });
   }
   private stopGroup(snapshot: Map<number, ProcessIdentity>): void {
     const members = [...snapshot.values()].filter((entry) => entry.group === this.root);

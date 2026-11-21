@@ -44,7 +44,7 @@ test('legacy stop attestation distinguishes a positively owned replacement gener
     });
     writeFileSync(journal, entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
     const unknown = new NativeSessionManager(fixture.root);
-    assert.throws(
+    await assert.rejects(
       () => unknown.confirmWorkerStopped('owner', original.id, original.generation, launch.leaseId),
       /absent native process and process group/,
     );
@@ -59,7 +59,7 @@ test('legacy stop attestation distinguishes a positively owned replacement gener
       },
     });
     const restored = new NativeSessionManager(fixture.root);
-    const confirmed = restored.confirmWorkerStopped(
+    const confirmed = await restored.confirmWorkerStopped(
       'owner',
       original.id,
       original.generation,

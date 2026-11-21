@@ -1,0 +1,1 @@
+- Confirm exited Codex workers only after their process owner verifies that the recorded processes and detached groups are gone.
