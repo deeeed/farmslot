@@ -137,7 +137,7 @@
           "operator": "gt",
           "value": 0
         },
-        "intent": "This window rendered at least one 500 ms stretch, so its sustained FPS is measured.",
+        "intent": "A 500 ms rendering stretch exists, so sustained FPS is measured.",
         "next": "scroll-start"
       },
       "scroll-start": {
@@ -245,7 +245,7 @@
           "operator": "gt",
           "value": 0
         },
-        "intent": "This window rendered at least one 500 ms stretch, so its sustained FPS is measured.",
+        "intent": "A 500 ms rendering stretch exists, so sustained FPS is measured.",
         "next": "reader-away"
       },
       "reader-away": {
