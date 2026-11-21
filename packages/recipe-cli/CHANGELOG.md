@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.29 - 2026-11-21
+
+- Keep the invoked executable in action detail hints and display category names that can be copied into filters.
+
 ## 0.35.28 - 2026-11-21
 
 - Group human action lists by category and show short descriptions, a four-parameter preview, visible risk labels, and a shortcut to full details and call examples.
