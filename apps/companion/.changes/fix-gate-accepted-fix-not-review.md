@@ -1,0 +1,1 @@
+- Gate review rows label a fix the gateway accepted without a reviewer "fix accepted without re-review" in amber and never count it as an approval.
