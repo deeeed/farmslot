@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFile, spawnSync } from 'node:child_process';
+import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -75,6 +75,25 @@ mock.module('../methods/slot/prepare-command.js', {
 const realFixtures = await import('../methods/slot/fixtures.js');
 mock.module('../methods/slot/fixtures.js', {
   namedExports: { ...realFixtures, runFixtureSync: async () => undefined },
+});
+
+// Lets a test switch the slot to another branch just before the guarded move runs.
+let beforeMove: (() => void) | undefined;
+const realMutations = await import('../run-lifecycle/validation-run-commits.js');
+mock.module('../run-lifecycle/validation-run-commits.js', {
+  namedExports: {
+    ...realMutations,
+    slotGitMutations: (...args: Parameters<typeof realMutations.slotGitMutations>) => {
+      const guarded = realMutations.slotGitMutations(...args);
+      return (command: string, targetTrees?: string[]) => {
+        if (beforeMove && command.includes('reset --keep')) {
+          beforeMove();
+          beforeMove = undefined;
+        }
+        return guarded(command, targetTrees);
+      };
+    },
+  },
 });
 
 const { slotPrepare } = await import('../methods/slot.js');
@@ -447,3 +466,20 @@ test(
     assert.equal(await readFile(path.join(slotRepo, 'shared/command'), 'utf8'), 'shared\n');
   },
 );
+
+test('a branch switch during the move stops prepare', needsTmuxSandbox, async (t) => {
+  const { slotId, slotRepo, oldBase } = await staleBaseSlot(t);
+  await git(slotRepo, 'branch', workBranch, oldBase);
+  beforeMove = () => execFileSync('git', ['-C', slotRepo, 'checkout', '-q', '-b', 'operator-branch']);
+  await assert.rejects(
+    slotPrepare(
+      { slotId, branch: workBranch, prepareProfile: 'core' },
+      () => {},
+      undefined,
+      { preserveBranch: true },
+    ),
+    /changed while prepare was moving it/,
+  );
+  assert.equal(await git(slotRepo, 'rev-parse', `refs/heads/${workBranch}`), oldBase);
+  assert.equal(await git(slotRepo, 'branch', '--show-current'), 'operator-branch');
+});
