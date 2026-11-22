@@ -82,6 +82,14 @@ function lintProjectRoot(projectRoot, issues) {
     const root = source?.root?.projectPath;
     if (typeof root !== 'string') continue;
     const checklistsDir = path.resolve(projectRoot, root, source.subpath ?? '.');
+    // The catalog refuses roots outside the pack; so does this check.
+    const inside = path.relative(projectRoot, checklistsDir);
+    if (inside.startsWith('..') || path.isAbsolute(inside)) {
+      issues.push(
+        `${projectRoot}: execution template source ${source.id} resolves outside the pack`,
+      );
+      continue;
+    }
     if (!existsSync(checklistsDir)) continue;
     for (const dir of readdirSync(checklistsDir, { withFileTypes: true })) {
       if (!dir.isDirectory()) continue;
