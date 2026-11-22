@@ -486,8 +486,12 @@ function assertRecipeAttemptSelected(taskDir) {
       visit(child); // a retry may sit inside a failed attempt (recipe-runs/first/retry)
     }
   };
-  const { readRecipeAttemptSelection } = require('./retained-recipe-attempt.cjs');
-  const pointer = readRecipeAttemptSelection(taskDir);
+  // Recipe-free tasks load nothing: the selection helper needs the built protocol package.
+  const pointerFile = path.join(taskDir, 'artifacts', 'latest-valid-recipe-run.json');
+  if (!fs.existsSync(pointerFile) && !fs.existsSync(runs)) return;
+  const pointer = fs.existsSync(pointerFile)
+    ? require('./retained-recipe-attempt.cjs').readRecipeAttemptSelection(taskDir)
+    : null;
   const taskRecipe = taskFileExists(taskDir, 'artifacts/recipe.json');
   if (pointer && taskRecipe) return;
   visit('');

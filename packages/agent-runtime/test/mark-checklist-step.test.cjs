@@ -57,8 +57,25 @@ assert.equal(parsed.checklistTiming.events.length, 2);
 // The bold lead is the name; the instruction tail after it is not recorded.
 assert.equal(parsed.checklistTiming.events[1].label, 'Second gate');
 
+// A recipe-free task completes without the built protocol package (source-checkout slots).
+const noProtocol = path.join(dir, 'no-protocol.cjs');
+writeFileSync(
+  noProtocol,
+  `const Module = require('node:module');
+const load = Module._load;
+Module._load = function (request, ...rest) {
+  if (request === '@farmslot/protocol/recipe') {
+    const error = new Error('Cannot find module ' + request);
+    error.code = 'MODULE_NOT_FOUND';
+    throw error;
+  }
+  return load.call(this, request, ...rest);
+};
+`,
+);
 result = spawnSync(process.execPath, [helper, dir, 'complete', '--mark-last'], {
   encoding: 'utf8',
+  env: { ...process.env, NODE_OPTIONS: `--require ${noProtocol}` },
 });
 assert.equal(result.status, 0, result.stderr);
 parsed = JSON.parse(readFileSync(signal, 'utf8'));
