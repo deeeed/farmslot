@@ -146,8 +146,17 @@ export async function sendBackCompletion(
   let delivery = savedDelivery(initial);
   // A later completed monitor ends this feedback operation. A retry or restart
   // before that point keeps its exact instruction and original signal floor.
+  //
+  // Consumption, not confirmation, is what ends it. This used to require
+  // `delivery.confirmed`, so an instruction whose delivery was never confirmed
+  // stayed retained even after the worker had answered it and the engine had
+  // consumed that answer: a later refusal then found an unconfirmed intent it
+  // could neither retry (its card is gone) nor re-word (the note and native
+  // withdrawal guards), which is the dead end the whole of this change is about.
+  // A newer terminal signal that a completed monitor consumed is evidence the
+  // worker moved on, whatever the delivery bookkeeping says.
   if (
-    delivery?.confirmed &&
+    delivery &&
     recorded.ok &&
     monitor.status === 'done' &&
     consumed.ok &&
@@ -388,9 +397,14 @@ export async function sendBackCompletion(
           },
         );
     if (result.delivery !== 'confirmed') {
-      // `not-attempted` is the only outcome that proves nothing left the gateway;
-      // everything else may be in the composer or the host's queue.
-      const handedOver = result.delivery !== 'not-attempted';
+      // Only `unconfirmed` means the text actually left the gateway: a tmux
+      // composer took it and acceptance was not observed (run 1ad82ba1). A
+      // native `queued` command is the opposite — the host is holding it until
+      // the running turn ends, so it has NOT been submitted, and resuming the
+      // monitor there would let that running turn's signal end the step while
+      // the correction runs with nobody polling. That queued case is the one the
+      // withdrawal refusal above exists for; it keeps its card.
+      const handedOver = result.delivery === 'unconfirmed';
       throw new CompletionFeedbackDeliveryError(
         `Completion feedback delivery is ${result.delivery};${
           handedOver

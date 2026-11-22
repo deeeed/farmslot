@@ -628,7 +628,24 @@ test('completion feedback not-attempted keeps a pending decision and never repla
 // This changes a contract two of the three outcomes above used to pin: an
 // instruction that was handed over cannot be un-sent, so the engine waits for
 // the worker instead of re-raising what the worker is already fixing.
-for (const outcome of ['queued', 'unconfirmed'] as const) {
+// Codex r5 and Grok r5, same finding: a native `queued` command has NOT been
+// submitted — the host holds it until the running turn ends — so resuming the
+// monitor there lets the running turn's signal end the step while the queued
+// correction runs unwatched, which is 1ad82ba1 again from the other side. Only
+// `unconfirmed` (a tmux composer took the text, acceptance unobserved) resumes.
+test('completion feedback queued keeps its card, because the host has not submitted it', async () => {
+  await heldQa();
+  delivery = 'queued';
+  await assert.rejects(
+    resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' }),
+    /delivery is queued/,
+  );
+  assert.equal(run.status, 'needs-decision');
+  assert.ok(pending(), 'the card stays: nothing has reached the worker yet');
+  assert.deepEqual(replays, [], 'and monitoring must not resume onto the running turn');
+});
+
+for (const outcome of ['unconfirmed'] as const) {
   test(`completion feedback ${outcome} resumes monitoring instead of re-raising the refusal`, async () => {
     await heldQa();
     const answered = pending().id;
@@ -711,13 +728,8 @@ test('a queued instruction can continue on its next signal without moving the or
     resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' }),
     /delivery is queued/,
   );
-  // A queued instruction now resumes monitoring instead of keeping the refusal
-  // up, so the engine is what holds the run again if the completion is still
-  // refused. The contract under test is unchanged: the retry keeps the same
-  // command and the original signal floor.
   currentSignal = { ...priorSignal, timestamp: '2026-10-28T00:16:01.000Z' };
   delivery = 'confirmed';
-  await holdRunForResultDecision(run.id, 'complete', 'Completion refused');
   await resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' });
   assert.equal(feedback[1].key, feedback[0].key);
   assert.deepEqual(
@@ -1455,4 +1467,53 @@ test('an uncertain edit keeps its delivery window until it can be confirmed', as
   assert.deepEqual(dispatchOutputs()?.completionSendBackSignal, originalResult);
   const withdrawn = dispatchOutputs()?.completionSendBackWithdrawn;
   assert.ok(Array.isArray(withdrawn) && withdrawn.length === 1);
+});
+
+// Codex r5, third major: after a queued correction runs and its signal is
+// consumed, a new refusal still saw the old delivery as unconfirmed — so a
+// changed note hit the native withdrawal guard and an unchanged one retried the
+// first command's wording. The intent has to retire once its result has been
+// consumed, which is evidence the worker moved on whatever the delivery
+// bookkeeping says.
+test('a consumed newer signal retires an unconfirmed intent for the next refusal', async () => {
+  await heldQa();
+  run.transport = 'native';
+  delivery = 'queued';
+  await assert.rejects(
+    resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' }),
+    /delivery is queued/,
+  );
+  const first = run.steps.find((step) => step.name === S.DISPATCH)?.outputs
+    ?.completionSendBackDelivery;
+  assert.ok(first && typeof first === 'object' && 'key' in first);
+  assert.equal((first as { confirmed?: boolean }).confirmed, false);
+
+  // The queued correction ran: the worker wrote a newer terminal signal and the
+  // monitor consumed it.
+  currentSignal = { ...priorSignal, timestamp: '2026-10-28T00:16:01.000Z' };
+  run.steps.find((step) => step.name === S.MONITOR)!.outputs = { workerSignal: currentSignal };
+  delivery = 'confirmed';
+
+  // A second refusal, worded differently, must now go through.
+  await holdRunForResultDecision(run.id, 'complete', 'Completion refused again');
+  const second = pending().id;
+  await resolveResultDecision({
+    runId: run.id,
+    decisionId: second,
+    actionId: 'send-back',
+    reason: 'Different note for the second refusal.',
+  });
+
+  const sent = feedback.at(-1);
+  assert.equal(
+    sent?.key,
+    `completion-send-back:${second}`,
+    'the new refusal owns its own command instead of retrying the first one',
+  );
+  assert.match(sent?.text ?? '', /Different note for the second refusal\./);
+  assert.doesNotMatch(
+    sent?.text ?? '',
+    /An earlier instruction for this task is withdrawn/,
+    'and nothing is withdrawn, because the first instruction already ran',
+  );
 });
