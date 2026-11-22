@@ -208,3 +208,20 @@ test('a retry captures again while the slot still has artifacts, even with nothi
   await retainFinalRunArtifacts(runId);
   assert.notDeepEqual(getRun(runId)?.artifactBundle, first);
 });
+
+test('a retry with no inspectable slot source keeps what the first retention kept', async () => {
+  const { runId, taskDir } = await failedRun([
+    step('write-task', 'done'),
+    step('prepare', 'failed'),
+    step('dispatch', 'skipped'),
+  ]);
+  updateRun(runId, { slotId: undefined });
+  const proof = path.join(taskDir, 'artifacts/repro.png');
+  await writeFile(proof, 'first capture');
+  await retainFinalRunArtifacts(runId);
+  const kept = getRun(runId)?.artifactBundle;
+  assert.ok(kept);
+  await rm(proof);
+  assert.equal(await retainFinalRunArtifacts(runId), 0);
+  assert.deepEqual(getRun(runId)?.artifactBundle, kept);
+});

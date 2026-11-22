@@ -376,7 +376,10 @@ export interface ArtifactMirrorOptions {
    * gateway (such as the task's frozen runtime receipt) stay for the capture.
    */
   keepMirrorWithoutSource?: boolean;
-  /** Called when that empty-source return happens: the slot package had nothing at all. */
+  /**
+   * Called when the mirror can take nothing from the slot: the package is empty, or the
+   * task has no slot or no locatable task directory there.
+   */
   onEmptySource?: () => void;
   /** Publication callers validate the same selected attempt before any copy. */
   forPublication?: boolean;
@@ -424,6 +427,7 @@ export async function refreshArtifactMirror(
   if (!run.slotId || !run.taskFile) {
     if (options.requireSourceArtifacts)
       throw new Error('artifact mirror refresh has no source artifacts');
+    options.onEmptySource?.();
     return 0;
   }
 
@@ -438,6 +442,7 @@ export async function refreshArtifactMirror(
   if (taskRelDir === null) {
     if (options.requireSourceArtifacts)
       throw new Error('artifact mirror refresh has no source artifacts');
+    options.onEmptySource?.();
     return 0;
   }
 

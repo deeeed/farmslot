@@ -284,22 +284,23 @@ async function captureRunOutputNow(
     throw new Error('Run attempt changed while retrieving output; refresh the current attempt');
   const acquisition = options.acquisition ?? createRunArtifactAcquisition(run);
   let sourceEmpty = false;
-  const mirrorOptions: ArtifactMirrorOptions =
-    purpose === 'final-result'
-      ? {
-          ...options,
-          ...finalResultMirrorOptions(run),
-          onEmptySource: () => {
-            sourceEmpty = true;
-          },
-        }
-      : options;
-  const copied =
-    mirror && !run.reviewWorkspace
-      ? await refreshArtifactMirror(run, { ...mirrorOptions, acquisition })
-      : 0;
+  const finalPolicy = purpose === 'final-result' ? finalResultMirrorOptions(run) : undefined;
+  const mirrorOptions: ArtifactMirrorOptions = finalPolicy?.keepMirrorWithoutSource
+    ? {
+        ...options,
+        ...finalPolicy,
+        onEmptySource: () => {
+          sourceEmpty = true;
+        },
+      }
+    : { ...options, ...finalPolicy };
+  let copied = 0;
+  if (mirror && !run.reviewWorkspace)
+    copied = await refreshArtifactMirror(run, { ...mirrorOptions, acquisition });
+  else mirrorOptions.onEmptySource?.();
   // A retried release must not replace what an earlier final retention kept (media can be
-  // acquired straight into that bundle) with a capture of a source the mirror found empty.
+  // acquired straight into that bundle) with a capture of a source the mirror found empty
+  // or could not inspect.
   // Any slot artifact, including new media or media a refused capture left behind, makes
   // the source non-empty and is captured again.
   if (sourceEmpty && run.artifactBundle) return 0;

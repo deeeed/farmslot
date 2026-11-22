@@ -613,6 +613,20 @@ test('an empty source keeps the gateway mirror when the caller keeps it without 
   assert.equal(emptySource, 1, 'a non-empty source is not reported empty');
 });
 
+test('a task the mirror cannot inspect on the slot is reported as an empty source', async (t) => {
+  const { run } = await publishPackageFixture(t, 'mirror-uninspectable-source');
+  let emptySource = 0;
+  const keep = { keepMirrorWithoutSource: true, onEmptySource: () => void emptySource++ };
+  assert.equal(await refreshArtifactMirror({ ...run, slotId: null }, keep), 0);
+  assert.equal(emptySource, 1, 'no slot');
+  const authored = {
+    ...run,
+    taskFile: path.join(path.parse(run.taskFile!).root, 'authored', 'AUTHORED.md'),
+  };
+  assert.equal(await refreshArtifactMirror(authored, keep), 0);
+  assert.equal(emptySource, 2, 'a task outside the task root');
+});
+
 test('a prune-only mirror notifies even when it transfers no files', async (t) => {
   const { taskDir, workerArtifacts, put, run } = await publishPackageFixture(
     t,
