@@ -180,7 +180,7 @@ type ShapeName =
 const SHAPES: Record<ShapeName, Shape> = {
   canary: canaryShape('isolated lifecycle'),
   f324: f324Shape('isolated f324'),
-  // ri-pipe runs still go through REVIEW (the reviewed profile always reviews); the test passes it.
+  // ri-pipe runs still go through REVIEW (the reviewed profile opts in); the test passes it.
   pipe: {
     project: PIPE_PROJECT,
     create: pipeRunParams,
@@ -1132,6 +1132,24 @@ function cardObservations(scenario: ScenarioResult): string[] {
  * that thread cannot resume and its re-review falls back cold. With real turns the review row
  * resumes the same session, no fallback and no no-verdict receipt.
  */
+/** A ri-pipe run's REVIEW belongs to the test: one pass receipt, from a turn the proxy swallowed. */
+function passReviewDifferences(scenario: ScenarioResult): string[] {
+  const reviews = scenario.outcome.reviews.join(', ') || '-';
+  return [
+    ...(reviews === 'loop 1: pass' ? [] : [`reviews: expected loop 1: pass, observed ${reviews}`]),
+    ...((scenario.reviewerTurns ?? 0) >= 1 ? [] : ['the test answered no reviewer turn']),
+  ];
+}
+
+/** A run whose reviews the test answers makes no model call. */
+function failOnModelCalls(result: CheckResult): CheckResult {
+  if (result.modelCalls > 0) {
+    result.status = 'fail';
+    result.differences.push(`${result.modelCalls} model calls, expected none`);
+  }
+  return result;
+}
+
 function reviewRoundDifferences(
   scenario: ScenarioResult,
   baseline: ScenarioResult,
@@ -1608,7 +1626,10 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
           },
           async () => (baseline = await runScenario(`baseline-${shapeName}`, shapeName, [])),
           (scenario) => {
-            const differences = outcomeDifferences(baselineExpected[shapeName], scenario.outcome);
+            const differences = [
+              ...outcomeDifferences(baselineExpected[shapeName], scenario.outcome),
+              ...(shapeName === 'pipe' ? passReviewDifferences(scenario) : []),
+            ];
             return {
               status: differences.length ? 'fail' : 'pass',
               differences,
@@ -1617,7 +1638,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
             };
           },
         );
-        onCheck(result);
+        onCheck(shapeName === 'pipe' ? failOnModelCalls(result) : result);
         if (!baseline || result.status !== 'pass')
           throw new Inconclusive(
             `the baseline itself ended wrong: ${result.differences.join('; ')}${result.failureText ? `; ${result.failureText}` : result.error ? `; ${result.error}` : ''}`,
@@ -1639,24 +1660,27 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
     for (const { step, variants } of restarts)
       for (const variant of variants)
         onCheck(
-          await check(
-            { case: step, variant, model: 'scripted', hold: HOLDS[step] },
-            () =>
-              runScenario(`${step}-${variant}`, 'pipe', [
-                restartPhase(stack, step, variant, options.nodeAwayMs),
-              ]),
-            (result) => {
-              const differences = [
-                ...unreachedDifferences(result),
-                ...outcomeDifferences(baseline.outcome, result.outcome),
-              ];
-              return {
-                status: differences.length ? 'fail' : 'pass',
-                differences,
-                observations: outcomeObservations(baseline.outcome, result.outcome),
-                expected: baseline.outcome,
-              };
-            },
+          failOnModelCalls(
+            await check(
+              { case: step, variant, model: 'scripted', hold: HOLDS[step] },
+              () =>
+                runScenario(`${step}-${variant}`, 'pipe', [
+                  restartPhase(stack, step, variant, options.nodeAwayMs),
+                ]),
+              (result) => {
+                const differences = [
+                  ...unreachedDifferences(result),
+                  ...outcomeDifferences(baseline.outcome, result.outcome),
+                  ...passReviewDifferences(result),
+                ];
+                return {
+                  status: differences.length ? 'fail' : 'pass',
+                  differences,
+                  observations: outcomeObservations(baseline.outcome, result.outcome),
+                  expected: baseline.outcome,
+                };
+              },
+            ),
           ),
         );
   }
@@ -1738,7 +1762,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
           ),
           ...(scripted
             ? reviewRoundDifferences(scenario, baseline, extraReviewers, large ? 1 : 0)
-            : []),
+            : passReviewDifferences(scenario)),
           ...(card ? cardDifferences(scenario, step) : []),
           ...(fixCard && !scenario.cardRun ? ['the run never waited on the card'] : []),
           ...(reviewFix
@@ -1761,11 +1785,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
         };
       },
     );
-    if (result.modelCalls > 0) {
-      result.status = 'fail';
-      result.differences.push(`${result.modelCalls} model calls, expected none`);
-    }
-    onCheck(result);
+    onCheck(failOnModelCalls(result));
   }
 
   if (options.review) {

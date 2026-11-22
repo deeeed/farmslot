@@ -5,8 +5,9 @@
 // scenario launches from the slot checkout. The isolated stack uses the same pack and repo.
 //
 // `ri-pipe` and `ri-review` drive the isolated restart matrix. `ri-pipe` runs the whole dev
-// pipeline with the scripted worker; its REVIEW still runs (the gateway never reads the project's
-// `review.enabled`), and the test answers the reviewer's turn with a pass. `ri-review` has the pipeline REVIEW on
+// pipeline with the scripted worker. Its REVIEW still runs: `review.enabled: false` only turns off
+// automatic review, and a `reviewed` interactive dev run opts in explicitly. The test answers the
+// reviewer's turn with a pass. `ri-review` has the pipeline REVIEW on
 // (codex): its scripted worker commits a two-file change, one file a leftover debug helper the
 // reviewer should flag. When the engine relaunches the worker for the review-fix round, the same
 // command marks the fix task started, removes that file, commits and marks it complete. Workers
