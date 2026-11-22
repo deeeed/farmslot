@@ -25,7 +25,17 @@ function fixture(t: { after: (fn: () => void) => void }) {
   const git = (...args: string[]) =>
     execFileSync(
       'git',
-      ['-C', repo, '-c', 'user.name=F', '-c', 'user.email=f@example.invalid', '-c', 'commit.gpgsign=false', ...args],
+      [
+        '-C',
+        repo,
+        '-c',
+        'user.name=F',
+        '-c',
+        'user.email=f@example.invalid',
+        '-c',
+        'commit.gpgsign=false',
+        ...args,
+      ],
       { encoding: 'utf8' },
     ).trim();
   git('init', '-q', '-b', 'main');

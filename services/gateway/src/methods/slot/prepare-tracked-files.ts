@@ -29,7 +29,9 @@ export function buildTrackedFilesSnapshotCommand(repo: string): string {
     `cd ${shellQuote(repo)}`,
     'head=$(git rev-parse --verify HEAD)',
     'branch=$(git symbolic-ref -q HEAD || true)',
-    'stash=$(git stash create)',
+    // Only the stash commit's trees are compared, so a fixed identity keeps slots
+    // without a configured committer working.
+    "stash=$(git -c user.name=farmslot -c user.email=prepare@farmslot.invalid stash create)",
     // A clean checkout has no stash commit: worktree and index are HEAD's tree.
     'base=${stash:-$head}',
     'worktree=$(git rev-parse --verify "$base^{tree}")',
@@ -42,7 +44,10 @@ export function parseTrackedFilesSnapshot(stdout: string): TrackedFilesSnapshot 
   const lines = stdout.split('\n');
   const [head = '', branch = '', worktreeTree = '', indexTree = ''] = lines;
   const object = /^[0-9a-f]{40,64}$/;
-  if (lines.length < SNAPSHOT_FIELDS || ![head, worktreeTree, indexTree].every((v) => object.test(v)))
+  if (
+    lines.length < SNAPSHOT_FIELDS ||
+    ![head, worktreeTree, indexTree].every((v) => object.test(v))
+  )
     throw new Error(`unreadable tracked-file snapshot: ${JSON.stringify(stdout.slice(0, 300))}`);
   return { head, branch, worktreeTree, indexTree };
 }
