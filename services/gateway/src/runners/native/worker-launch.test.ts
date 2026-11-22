@@ -417,3 +417,26 @@ test('static reviewer compatibility survives the recorded project ASDF setting',
   );
   assert.equal(nativeWorkerLaunchDigest(after), nativeWorkerLaunchDigest(before));
 });
+
+test('a native worker runs agent-browser in its slot session; a reviewer keeps its identity', async () => {
+  const launch = async (role: 'primary' | 'review') =>
+    (
+      await prepareNativeWorkerLaunch({
+        vars: makeVars(),
+        project: { command_env: { set: { AGENT_BROWSER_SESSION: 'default' } } },
+        runner: 'claude',
+        model: 'opus',
+        role,
+        safetyTier: 'sandboxed',
+        taskDir: 'tasks/proof',
+        leaseId: 'proof-lease',
+        sessionId: 'proof-session',
+        prepareAccount: false,
+      })
+    ).launch;
+  assert.equal(
+    nativeWorkerEnvironment(await launch('primary')).AGENT_BROWSER_SESSION,
+    makeVars().slotId,
+  );
+  assert.equal(nativeWorkerEnvironment(await launch('review')).AGENT_BROWSER_SESSION, 'default');
+});

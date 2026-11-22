@@ -96,3 +96,13 @@ for (const scenario of ['pool-only', 'missing-pool', 'static-collision'] as cons
     }
   });
 }
+
+test('a tmux worker shell runs agent-browser in its slot session', () => {
+  const vars = makeVars();
+  const result = spawnSync(
+    '/bin/bash',
+    ['-c', wrapWorkerShellCommand('printf %s "$AGENT_BROWSER_SESSION"', { vars, projectJson: {} })],
+    { encoding: 'utf8', env: { PATH: process.env.PATH, AGENT_BROWSER_SESSION: 'default' } },
+  );
+  assert.equal(result.stdout, vars.slotId);
+});

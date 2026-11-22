@@ -26,9 +26,12 @@ function escapeRegExp(value: string): string {
  * detached and either uses a browser profile inside the slot checkout after
  * its workers are verified stopped (includeSlotProfiles), or is
  * on its CDP port and tied to the checkout by cwd or arguments. With the same
- * verification, a detached agent-browser daemon whose cwd is inside the checkout
- * goes too: it binds no CDP port, and as a workspace occupant it skipped every
- * later teardown of the slot (four on macpro-mmt-5 since 2026-11-20). Descendants
+ * verification, a detached agent-browser daemon of this slot's session goes too:
+ * dispatch sets AGENT_BROWSER_SESSION to the slot id, and the daemon listens on
+ * `<session>.sock`. It binds no CDP port and, left in the checkout, made every
+ * later teardown skip the slot (macpro-mmt-5, 2026-11-20). Any other session,
+ * 'default' included, may be shared by workers on other slots: it is logged and
+ * kept. Descendants
  * go with it. While a capability lease on the slot still holds or keeps providers warm, its release
  * effect decides and nothing is reaped; a process a lease recorded is never
  * reaped. Returns a reason naming each process that survived SIGKILL.
@@ -59,13 +62,21 @@ export async function reapSlotBrowserSession(
           ]
         : []),
       'if [ -n "$pids" ]; then lsof -a -d cwd -Fpn -p "$pids" 2>/dev/null; fi',
+      // A daemon's session is the name of the socket it listens on.
+      ...(opts.includeSlotProfiles
+        ? [
+            'echo "--agent-browser-sockets--"',
+            'if [ -n "$ab" ]; then lsof -a -U -Fpn -p "$ab" 2>/dev/null; fi',
+          ]
+        : []),
       'true',
     ].join('\n'),
     { cwd: '/', timeout: 15_000 },
   );
   if (census.exitCode !== 0)
     return 'Browser session process census is unavailable; slot teardown was skipped';
-  const [table, after = ''] = census.stdout.split(/^--repo-- /m);
+  const [table, sections = ''] = census.stdout.split(/^--repo-- /m);
+  const [after = '', sockets = ''] = sections.split(/^--agent-browser-sockets--$/m);
   const [realRepo = '', cdpLine = '', ...rest] = after.split('\n');
   const daemonLine = rest.find((line) => line.startsWith('--agent-browser-- ')) ?? '';
   const cwdLines = rest.filter((line) => line !== daemonLine);
@@ -81,6 +92,13 @@ export async function reapSlotBrowserSession(
       .split(',')
       .filter(Boolean),
   );
+  const sessions = new Map<string, string>();
+  let socketPid = '';
+  for (const line of sockets.split('\n')) {
+    if (line.startsWith('p')) socketPid = line.slice(1);
+    else if (line.startsWith('n/') && line.endsWith('.sock'))
+      sessions.set(socketPid, path.posix.basename(line.slice(1), '.sock'));
+  }
   const rows = parseProcessCensus(table);
   const cwds = new Map(parseLsofNames(cwdLines.join('\n')));
   const repos = [
@@ -101,7 +119,12 @@ export async function reapSlotBrowserSession(
       path.posix.isAbsolute(profile) &&
       repos.some((repo) => isWithinPath(repo, path.posix.normalize(profile)));
     const inRepo = cwd !== undefined && repos.some((repo) => isWithinPath(repo, cwd));
-    const slotDaemon = opts.includeSlotProfiles && inRepo && agentBrowsers.has(row.pid);
+    const daemon = opts.includeSlotProfiles && agentBrowsers.has(row.pid);
+    const slotDaemon = daemon && sessions.get(row.pid) === vars.slotId;
+    if (daemon && !slotDaemon && inRepo && row.parent === '1')
+      console.log(
+        `[browser-session] ${vars.slotId}: kept agent-browser daemon ${row.pid} in the checkout; its session ${sessions.get(row.pid) ?? 'unknown'} is not this slot's`,
+      );
     return (
       row.parent === '1' &&
       !isTmuxProcess(row.command) &&
@@ -143,7 +166,7 @@ export async function reapSlotBrowserSession(
         onPort.has(pid) || portArg?.test(args)
           ? `on CDP port ${cdpPort}`
           : agentBrowsers.has(pid)
-            ? 'working in the slot repository'
+            ? "of this slot's agent-browser session"
             : 'with a profile in the slot repository';
       return `Browser session process ${pid} (${args.length > 120 ? `${args.slice(0, 117)}...` : args}) ${scope} did not stop`;
     })

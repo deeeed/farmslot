@@ -1,1 +1,1 @@
-- Terminal slot cleanup now stops a detached agent-browser daemon whose working directory is inside the slot checkout. Such a daemon outlived its worker and made every later release skip the slot teardown.
+- Workers now run agent-browser in a session named after their slot (`AGENT_BROWSER_SESSION`). Terminal slot cleanup stops a detached agent-browser daemon of that session, found by its `<session>.sock` socket. A daemon on any other session, `default` included, may serve workers on other slots, so it is logged and kept.

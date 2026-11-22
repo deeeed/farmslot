@@ -966,12 +966,19 @@ export function wrapWorkerShellCommand(
   },
 ): string {
   const domain = resolveEffectiveDomain(context.runDomain, context.vars.domain);
-  return applyProjectCommandEnv(context.projectJson, `${WORKER_ENV_PREFIX} && ${command}`, {
-    ...(domain ? { domain } : {}),
-    ...(context.taskLibraries ? { taskLibraries: context.taskLibraries } : {}),
-    expandDomainValue: (value) =>
-      expandTemplate(value, context.vars, context.projectVars, { domain: domain ?? '' }),
-  });
+  // agent-browser names its daemon after the session: a slot session lets terminal cleanup
+  // tell this slot's daemon from one other workers share ('default').
+  const agentBrowserSession = `export AGENT_BROWSER_SESSION=${shellQuote(context.vars.slotId)}`;
+  return applyProjectCommandEnv(
+    context.projectJson,
+    `${WORKER_ENV_PREFIX} && ${agentBrowserSession} && ${command}`,
+    {
+      ...(domain ? { domain } : {}),
+      ...(context.taskLibraries ? { taskLibraries: context.taskLibraries } : {}),
+      expandDomainValue: (value) =>
+        expandTemplate(value, context.vars, context.projectVars, { domain: domain ?? '' }),
+    },
+  );
 }
 
 /**

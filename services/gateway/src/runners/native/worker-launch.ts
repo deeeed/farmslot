@@ -92,8 +92,12 @@ export async function prepareNativeWorkerLaunch(input: {
         }
       : vars,
   );
-  environment.set = { ...environment.set, ...machineEnv };
-  environment.unset = environment.unset.filter((name) => !Object.hasOwn(machineEnv, name));
+  // The same slot agent-browser session as a tmux worker (wrapWorkerShellCommand). Reviewers
+  // keep their launch identity, so a warm reviewer stays compatible.
+  const slotEnv =
+    input.role === 'review' ? machineEnv : { ...machineEnv, AGENT_BROWSER_SESSION: vars.slotId };
+  environment.set = { ...environment.set, ...slotEnv };
+  environment.unset = environment.unset.filter((name) => !Object.hasOwn(slotEnv, name));
   const sources = currentProjectSources();
   if (sources) {
     const sourceEnv = sourceWorkerEnvironment(sources);
