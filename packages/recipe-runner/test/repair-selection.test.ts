@@ -416,7 +416,7 @@ test('retained captures keep their recorded head and prove only their retained c
   // The product-head check binds only the selected attempt. A retained after capture qualifies
   // against its own head, so it cannot exempt a stale fresh checkout; a dependency's own
   // checkout keeps the capture revision rules.
-  const rows = ['AC-1', 'AC-2'].map((id) => ({
+  const claimRows = ['AC-1', 'AC-2'].map((id) => ({
     id,
     text: id,
     kind: 'acceptance' as const,
@@ -444,13 +444,13 @@ test('retained captures keep their recorded head and prove only their retained c
         product(scope.packageHeadSha),
       ],
     },
-    claims: { ...ledger(recipeRunId), criteria: rows },
+    claims: { ...ledger(recipeRunId), criteria: claimRows },
   };
   assert.deepEqual(
     productMismatches({
       ...repaired,
       manifest: { artifacts: [product('d'.repeat(40))] },
-      claims: { ...ledger('fresh'), criteria: rows },
+      claims: { ...ledger('fresh'), criteria: claimRows },
       comparisonDependencies: [
         { artifactRoot: `comparison-dependencies/${recipeRunId}`, input: retainedOriginal },
       ],
@@ -462,7 +462,7 @@ test('retained captures keep their recorded head and prove only their retained c
     productMismatches({
       ...plain,
       manifest: { artifacts: [after('fresh', 'AC-2', head), product(head)] },
-      claims: { ...ledger('fresh'), criteria: rows },
+      claims: { ...ledger('fresh'), criteria: claimRows },
       comparisonDependencies: [
         {
           artifactRoot: `comparison-dependencies/${recipeRunId}`,
