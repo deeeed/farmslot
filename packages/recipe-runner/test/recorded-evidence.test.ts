@@ -870,6 +870,93 @@ test('package validation refuses omitted registered claim rows', () => {
     assert.equal(result.status, 'invalid');
     assert.ok(result.findings.some((finding) => finding.path === 'claims.second'));
   }
+
+  // State-only proof follows the visual rule: the selected attempt must be on the clean package
+  // head. TAT-4334: the stale attempt ran on a55ff20d while the package head was fd05c9c4.
+  const stale = 'a55ff20d2ff4947d06500e9d2cf14dcabdfe803f';
+  const head = 'fd05c9c4b47a5eba11fb66ea6ddcf017ab9fd17c';
+  const withProduct = (metadata: Record<string, unknown>) => ({
+    ...bundle,
+    manifest: {
+      ...bundle.manifest,
+      artifacts: [
+        ...bundle.manifest.artifacts,
+        { path: 'product-provenance.json', type: 'json', category: 'system', metadata },
+      ],
+    },
+  });
+  const snapshot = { baseSha: 'b'.repeat(40), headSha: head };
+  const mismatches = (input: Parameters<typeof validateRecordedEvidencePackage>[0]) =>
+    validateRecordedEvidencePackage(input, snapshot).findings.filter(
+      (finding) => finding.code === 'comparison-source-mismatch',
+    );
+  assert.deepEqual(
+    mismatches(withProduct({ adapter: 'core', git_ref: stale, dirty: false })).map(
+      ({ path }) => path,
+    ),
+    ['product-provenance.json'],
+  );
+  assert.equal(mismatches(withProduct({ adapter: 'core', git_ref: head, dirty: true })).length, 1);
+  assert.deepEqual(mismatches(withProduct({ adapter: 'core', git_ref: head, dirty: false })), []);
+  // An after capture bound to no claim is not compared, so it cannot stand in for the check.
+  const staleProduct = withProduct({ adapter: 'core', git_ref: stale, dirty: false });
+  const unassignedAfter = {
+    ...staleProduct,
+    manifest: {
+      ...staleProduct.manifest,
+      artifacts: [
+        ...staleProduct.manifest.artifacts,
+        {
+          path: 'stills/after.png',
+          type: 'screenshot',
+          category: 'validation',
+          capture: {
+            role: 'after',
+            recipeRunId: 'claim-completeness',
+            nodeId: 'done',
+            traceIndex: 2,
+          },
+        },
+      ],
+    },
+  };
+  assert.deepEqual(
+    mismatches(unassignedAfter).map(({ path }) => path),
+    ['product-provenance.json'],
+  );
+  // A claim-bound after capture with no recorded source is unavailable, not qualified, so it
+  // cannot stand in for the check either.
+  const unknownAfter = {
+    ...staleProduct,
+    manifest: {
+      ...staleProduct.manifest,
+      artifacts: [
+        ...staleProduct.manifest.artifacts,
+        {
+          path: 'stills/after.png',
+          type: 'screenshot',
+          category: 'validation',
+          capture: {
+            role: 'after',
+            ac: claims.criteria[0]!.id,
+            recipeRunId: 'claim-completeness',
+            nodeId: 'done',
+            traceIndex: 2,
+          },
+        },
+      ],
+    },
+  };
+  assert.deepEqual(
+    mismatches(unknownAfter).map(({ path }) => path),
+    ['product-provenance.json'],
+  );
+  // Without a frozen head (or provenance) nothing is compared, as for media.
+  assert.ok(
+    !validateRecordedEvidencePackage(withProduct({ git_ref: stale, dirty: false })).findings.some(
+      (finding) => finding.code === 'comparison-source-mismatch',
+    ),
+  );
 });
 
 test('a retry ending without an eligible assertion cannot reuse earlier state proof', () => {

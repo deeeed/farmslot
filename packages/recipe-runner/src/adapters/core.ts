@@ -573,7 +573,7 @@ function assertAtomicValue(
   }
 }
 
-function evaluateAtomicValue(actual: unknown, operator: string, expected: unknown): boolean {
+export function evaluateAtomicValue(actual: unknown, operator: string, expected: unknown): boolean {
   switch (operator) {
     case 'exists':
       return actual !== undefined;
