@@ -278,6 +278,100 @@ test('review overrides waive only their owning review policy, never checks or li
   }
 });
 
+// Run c22a1e09: the gateway accepted a small worker fix that no reviewer saw.
+test('an accepted fix on the package head offers no approval route when a review is required', async () => {
+  const prepared = makeReadyGatePackage({
+    reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
+  });
+  const reviewPath = 'artifacts/pipeline-review-loop-2/review-result.json';
+  const headSha = prepared.headSha!;
+  // The reviewer last saw an earlier head; the fix delta links the acceptance to it.
+  const priorSnapshot = { ...prepared.reviewSnapshot!, headSha: 'f'.repeat(40), diffHash: 'prior' };
+  const review: ReviewStatus = {
+    id: 'pipeline-review-c22',
+    source: 'pipeline',
+    mode: 'cold',
+    loopNumber: 1,
+    reviewerSessionId: 'reviewer-session',
+    reviewedHeadSha: prepared.headSha,
+    reviewedReviewSubjectHash: prepared.reviewSubjectHash,
+    reviewSnapshot: prepared.reviewSnapshot,
+    verdict: 'pass',
+    unresolvedCount: 0,
+    artifactPaths: [reviewPath],
+    attempts: [
+      {
+        mode: 'cold',
+        loopNumber: 2,
+        verdict: 'issues',
+        unresolvedCount: 1,
+        issues: [{ severity: 'minor', file: 'src/a.ts', description: 'Rename the helper.' }],
+        reviewSnapshot: priorSnapshot,
+        session: {
+          mode: 'cold',
+          continuity: 'fresh',
+          reviewId: 'pipeline-review-c22',
+          sessionId: 'reviewer-session',
+        },
+        artifactPaths: [reviewPath],
+      },
+      {
+        mode: 'cold',
+        loopNumber: 3,
+        verdict: 'pass',
+        unresolvedCount: 0,
+        reviewSnapshot: prepared.reviewSnapshot,
+        fixDelta: {
+          source: 'local-git',
+          capturedAt: '2026-11-22T03:44:51Z',
+          fixBaseSha: priorSnapshot.headSha,
+          fixHeadSha: headSha,
+        },
+        timeline: [
+          {
+            kind: 'worker-fix',
+            loopNumber: 3,
+            startedAt: '2026-11-22T03:41:00Z',
+            verdict: 'pass',
+            unresolvedCount: 0,
+          },
+        ],
+      },
+    ],
+  };
+  const run = makeRun({ engineState: { publishGate: { reviews: [review] } } });
+  const inputs = {
+    deterministic: passed,
+    acceptance: emptyAcceptance,
+    progress: idle,
+    selectedEvidence: passed,
+    reviewResult: async () =>
+      JSON.stringify({
+        schemaVersion: 1,
+        verdict: 'issues',
+        issues: [{ severity: 'minor', file: 'src/a.ts', description: 'Rename the helper.' }],
+      }),
+  };
+  const actions = [
+    { id: 'approve-publish' },
+    { id: 'approve-publish-unresolved' },
+    { id: 'hold' },
+    { id: 'request-review' },
+  ];
+  const required = await collectRunGateReadiness(run, prepared, inputs);
+  assert.equal(required.state, 'not-ready');
+  assert.deepEqual(gateActionsForReadiness(actions, required), [
+    { id: 'hold' },
+    { id: 'request-review' },
+  ]);
+  const optional = await collectRunGateReadiness(
+    run,
+    { ...prepared, reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' } },
+    inputs,
+  );
+  assert.equal(optional.state, 'ready');
+});
+
 test('an evidence-only WARM fix uses its final pass artifact and still requires that result', async (t) => {
   const prepared = makeReadyGatePackage({
     reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },

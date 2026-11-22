@@ -1092,6 +1092,8 @@ async function completeReviewFix(
     );
   }
   if (
+    // An open blocker or major, or a finding without a severity, needs a reviewer's verdict.
+    !result.issues.every((issue) => issue.severity === 'minor' || issue.severity === 'nit') ||
     fixDelta.sourceLinesChanged === undefined ||
     fixDelta.sourceLinesChanged > 50 ||
     !prior?.baseSha ||

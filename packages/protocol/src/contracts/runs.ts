@@ -1046,6 +1046,8 @@ export interface ReviewSummary {
     triggeredReWork: boolean;
     attempts: number;
     stale?: boolean;
+    /** The gateway accepted a worker fix without a reviewer; not a passing review. */
+    acceptedWithoutReview?: boolean;
     startedAt?: string;
     completedAt?: string;
   }>;

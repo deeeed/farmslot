@@ -478,6 +478,27 @@ function gateSummaryWithChecklist(checklist: GateSummary['checklist']): GateSumm
   };
 }
 
+test('a fix the gateway accepted without a reviewer is not shown as a pass', () => {
+  const summary = gateSummaryWithChecklist(undefined);
+  summary.review = {
+    ...summary.review,
+    reviews: [
+      {
+        id: 'pipeline-review-c22',
+        source: 'pipeline',
+        loopNumber: 1,
+        verdict: 'pass',
+        unresolvedCount: 0,
+        feedbackSent: true,
+        triggeredReWork: true,
+        attempts: 3,
+        acceptedWithoutReview: true,
+      },
+    ],
+  };
+  assert.equal(gateSummaryDisplay(summary).reviews[0]?.verdict, 'fix accepted without re-review');
+});
+
 test('checklist timing nests a child unit under the step it hangs off', () => {
   const display = gateSummaryDisplay(
     gateSummaryWithChecklist({
