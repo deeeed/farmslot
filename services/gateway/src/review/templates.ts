@@ -177,18 +177,15 @@ async function descriptionCheckSection(
   });
   const baseline = publicationBaselineContext(run, undefined, comparison);
   const mergeBase = publicationMergeBase(baseline.comparison);
-  const eligibleBases = [...new Set([...(baseline.beforeBaseShas ?? []), mergeBase])].filter(
-    (sha): sha is string => sha !== undefined,
-  );
   return `${check}
 
 ## Before-evidence provenance
 
 These gateway-owned source-identity rules take precedence over project-pack git_ref and branch checks, including retained checklists. Project requirements for behavior and acceptance evidence still apply.
 
-Recorded baseline: ${baseline.baseSha ?? 'unavailable'}. Every base this run recorded before the work: ${baseline.beforeBaseShas?.length ? baseline.beforeBaseShas.join(', ') : 'unavailable'}. Full publication merge base: ${baseline.comparison?.baseSha ?? 'unavailable'}, selected head: ${baseline.comparison?.headSha ?? 'unavailable'}. Bases before evidence may match: ${eligibleBases.length ? eligibleBases.join(', ') : 'unavailable'}.
+Recorded baseline: ${baseline.baseSha ?? 'unavailable'}. Every base this run recorded before the work: ${baseline.beforeBaseShas?.length ? baseline.beforeBaseShas.join(', ') : 'unavailable'}. Full publication merge base: ${baseline.comparison?.baseSha ?? 'unavailable'}, selected head: ${baseline.comparison?.headSha ?? 'unavailable'}. ${mergeBase ? `Before evidence may also match the full publication merge base ${mergeBase}, only when the selected attempt's clean git_ref is the publication head ${baseline.comparison?.headSha}.` : 'No publication merge base is available as a before baseline.'}
 
-Before-only captures require clean provenance on the run branch or detached, with git_ref equal to one of those bases (the recorded bases, and the full publication merge base of the selected head when it is listed) — or to a verified ticket BUG_MARKER commit whose parent is a recorded base, which the templates have the worker commit before recording the baseline. A warm delta is not a baseline, and a review delta base that moved to an earlier reviewed head does not replace the base the run was dispatched from. After and standalone captures require the clean selected head; captured inventory and manifest checks still apply.
+Before-only captures require clean provenance on the run branch or detached, with git_ref equal to one of the recorded bases, to that publication merge base under its condition, or to a verified ticket BUG_MARKER commit whose parent is a recorded base, which the templates have the worker commit before recording the baseline. A warm delta is not a baseline, and a review delta base that moved to an earlier reviewed head does not replace the base the run was dispatched from. After and standalone captures require the clean selected head; captured inventory and manifest checks still apply.
 `;
 }
 
