@@ -5,6 +5,8 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- State-only proof follows the capture rule: with a frozen review head, `validateRecordedEvidencePackage` reports `comparison-source-mismatch` when a package without before/after captures records a product checkout that is dirty or on another commit. Gates already refuse that finding, so a transcript can no longer prove an older commit.
+- Export `evaluateAtomicValue` and `getJsonPathValue` so hosts read and check asserted values with the runner's own rules.
 
 ## 0.52.1 - 2026-11-21
 

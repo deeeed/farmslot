@@ -1,0 +1,1 @@
+- Publication gates compare a selected recipe attempt with the package head even when the review snapshot has none, so a state-only (transcript) attempt recorded on another or dirty commit is refused, as captures already are.
