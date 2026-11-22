@@ -270,39 +270,40 @@ mock.module('../runners/session-process.js', {
     probeRunnerDescendantPid: async () => ({ state: unrecordedWorker ? 'present' : 'absent' }),
   },
 });
+function fixtureRuns() {
+  return [
+    run,
+    ...(closedHistory
+      ? [
+          {
+            ...run,
+            id: 'old-run',
+            status: 'done',
+            agentContexts: [
+              {
+                id: 'primary',
+                role: 'primary',
+                target: {
+                  target: '%7',
+                  paneId: '%7',
+                  session: 'fixture-session',
+                  window: 'worker',
+                },
+              },
+            ],
+          },
+        ]
+      : []),
+  ];
+}
 const realRuns = await import('../runs/store.js');
 mock.module('../runs/store.js', {
   namedExports: {
     ...realRuns,
     listRuns: (filter?: { limit?: number }) => ({
-      runs:
-        pagedOwner && (filter?.limit ?? 500) <= 500
-          ? []
-          : [
-              run,
-              ...(closedHistory
-                ? [
-                    {
-                      ...run,
-                      id: 'old-run',
-                      status: 'done',
-                      agentContexts: [
-                        {
-                          id: 'primary',
-                          role: 'primary',
-                          target: {
-                            target: '%7',
-                            paneId: '%7',
-                            session: 'fixture-session',
-                            window: 'worker',
-                          },
-                        },
-                      ],
-                    },
-                  ]
-                : []),
-            ],
+      runs: pagedOwner && (filter?.limit ?? 500) <= 500 ? [] : fixtureRuns(),
     }),
+    getAllRuns: () => fixtureRuns(),
   },
 });
 const { withRunTransitionWhileMachineHeld } = await import('./transition-coordinator.js');
@@ -470,7 +471,8 @@ test('a pid-file dev server outside the checkout is preserved', async () => {
 test('the cap logs one structured line per changed decision', async (t) => {
   const lines: string[] = [];
   const info = t.mock.method(console, 'info', (line: unknown) => {
-    if (String(line).startsWith('[idle-devserver]')) lines.push(String(line));
+    if (String(line).startsWith('[idle-devserver] slot=slot-a resource=server '))
+      lines.push(String(line));
   });
   await reapIdleDevServers('slot-a');
   clock++;
