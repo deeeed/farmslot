@@ -367,19 +367,35 @@ export function buildPrepareIdentityReapCommand(
   const awaitExit = opts.awaitExit
     ? [
         `    ${PREPARE_GROUP_ALIVE_FN}`,
-        '    for group in $(printf "%s\\n" "$groups"); do',
-        '      n=0; while group_alive "$group" && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n+1)); done',
+        '    await_groups() {',
+        '      for group in $(printf "%s\\n" "$1"); do',
+        '        n=0; while group_alive "$group" && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n+1)); done',
         // A live scoped member anchors the group even after its leader exits.
-        '      if group_alive "$group"; then',
-        '        live_groups=$(scoped_groups) || { echo "Prepare process census unavailable" >&2; exit 1; }',
-        '        if ! printf "%s\\n" "$live_groups" | grep -Fxq -- "$group"; then echo "preflight group $group lost its ownership identity" >&2; exit 1; fi',
-        '        kill -KILL -"$group" 2>/dev/null || true',
-        '      fi',
-        '      n=0; while group_alive "$group" && [ "$n" -lt 10 ]; do sleep 0.1; n=$((n+1)); done',
-        '      if group_alive "$group"; then echo "preflight group $group survived SIGKILL" >&2; exit 1; fi',
+        '        if group_alive "$group"; then',
+        '          live_groups=$(scoped_groups) || { echo "Prepare process census unavailable" >&2; exit 1; }',
+        '          if ! printf "%s\\n" "$live_groups" | grep -Fxq -- "$group"; then echo "preflight group $group lost its ownership identity" >&2; exit 1; fi',
+        '          kill -KILL -"$group" 2>/dev/null || true',
+        '        fi',
+        '        n=0; while group_alive "$group" && [ "$n" -lt 10 ]; do sleep 0.1; n=$((n+1)); done',
+        '        if group_alive "$group"; then echo "preflight group $group survived SIGKILL" >&2; exit 1; fi',
+        '      done',
+        '    }',
+        '    await_groups "$groups"',
+        // A scoped process can start a new group while it is being stopped (run 00fd6488): the
+        // same scope is swept again, a bounded number of times, before cleanup fails.
+        '    round=0',
+        '    while :; do',
+        '      remaining=$(scoped_groups) || { echo "Prepare process census unavailable" >&2; exit 1; }',
+        '      [ -z "$remaining" ] && break',
+        '      round=$((round+1))',
+        '      if [ "$round" -gt 3 ]; then echo "preflight groups still running: $remaining" >&2; exit 1; fi',
+        '      for group in $(printf "%s\\n" "$remaining"); do',
+        '        if [ "$group" = "$self_group" ]; then echo "Prepare cleanup cannot signal its own group" >&2; exit 1; fi',
+        '        kill -TERM -"$group" 2>/dev/null || true',
+        '      done',
+        '      echo "killed verified preflight group started during cleanup ($remaining)"',
+        '      await_groups "$remaining"',
         '    done',
-        '    remaining=$(scoped_groups) || { echo "Prepare process census unavailable" >&2; exit 1; }',
-        '    if [ -n "$remaining" ]; then echo "preflight groups still running: $remaining" >&2; exit 1; fi',
       ]
     : [];
   return [

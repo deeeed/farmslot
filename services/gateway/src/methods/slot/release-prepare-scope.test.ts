@@ -579,6 +579,27 @@ test('a preflight group that survives the reap keeps the slot held and fails the
   assert.equal(completed?.payload.exitCode, 1);
 });
 
+// macpro-mmt-1: release refused on a surviving preflight group, and the run's detached
+// recipe browser and harness kept running for days because the browser reap was skipped.
+test('a surviving preflight group still lets the release stop the detached browser session', async () => {
+  reapFails = true;
+  cdpPort = '9542';
+  browserSession = new Map([
+    [11425, false],
+    [20419, false],
+  ]);
+
+  await assert.rejects(
+    slotRelease({ slotId: SLOT_ID, keepWork: true }, emit),
+    /stays held: Prepare scope cleanup failed: preflight group 4242 survived/,
+  );
+
+  assert.equal(browserSession.size, 0, 'the detached browser session outlived the release');
+  assert.ok(events.includes('browser-session-reap'));
+  assert.equal(slotRow.lifecycle, 'held');
+  assert.ok(!events.includes('reset'), 'readiness is never published');
+});
+
 test('a prepare that never stops keeps the slot held and fails the release', async () => {
   // A git command stalled on a dropped network never observes the abort.
   activePrepareAborts.set(SLOT_ID, {
