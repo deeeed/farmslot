@@ -1,0 +1,313 @@
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { test } from 'node:test';
+
+import {
+  buildChangedPathsCommand,
+  buildDirtyPathsCommand,
+  buildTrackedFilesSnapshotCommand,
+  changedSubmodules,
+  changedTrackedFiles,
+  parseNulPaths,
+  parseTrackedFilesSnapshot,
+  snapshotsEqual,
+  trackedFilesChangedMessage,
+  type TrackedFilesSnapshot,
+} from './prepare-tracked-files.js';
+
+const sh = (command: string) => execFileSync('bash', ['-c', command], { encoding: 'utf8' });
+const parse = (stdout: string): TrackedFilesSnapshot => {
+  const snapshot = parseTrackedFilesSnapshot(stdout);
+  assert.ok(snapshot, 'expected a git work tree');
+  return snapshot;
+};
+
+function fixture(t: { after: (fn: () => void) => void }) {
+  const repo = mkdtempSync(path.join(os.tmpdir(), 'prepare-tracked-unit-'));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
+  const git = (...args: string[]) =>
+    execFileSync(
+      'git',
+      [
+        '-C',
+        repo,
+        '-c',
+        'user.name=F',
+        '-c',
+        'user.email=f@example.invalid',
+        '-c',
+        'commit.gpgsign=false',
+        ...args,
+      ],
+      { encoding: 'utf8' },
+    ).trim();
+  git('init', '-q', '-b', 'main');
+  writeFileSync(path.join(repo, 'a.txt'), 'a\n');
+  writeFileSync(path.join(repo, 'line\nbreak.txt'), 'n\n');
+  writeFileSync(path.join(repo, 'target-1'), '1\n');
+  writeFileSync(path.join(repo, 'target-2'), '2\n');
+  symlinkSync('target-1', path.join(repo, 'link'));
+  git('add', '.');
+  git('commit', '-qm', 'seed');
+  const snap = (): TrackedFilesSnapshot => {
+    const snapshot = parse(sh(buildTrackedFilesSnapshotCommand(repo)));
+    assert.equal(snapshot.unmerged, false, 'expected a merged index');
+    return snapshot;
+  };
+  // Mirrors prepare's checkTrackedFiles.
+  const files = (before: TrackedFilesSnapshot, after: TrackedFilesSnapshot) =>
+    [
+      ...new Set([
+        ...changedTrackedFiles(
+          parseNulPaths(sh(buildChangedPathsCommand(repo, before, after))),
+          parseNulPaths(sh(buildDirtyPathsCommand(repo, after))),
+        ),
+        ...changedSubmodules(before, after),
+      ]),
+    ].sort();
+  return { repo, git, snap, files };
+}
+
+test('a clean checkout snapshots as HEAD and compares equal to itself', (t) => {
+  const { git, snap } = fixture(t);
+  const s = snap();
+  assert.equal(s.worktreeTree, git('rev-parse', 'HEAD^{tree}'));
+  assert.equal(s.indexTree, s.worktreeTree);
+  assert.equal(s.branch, 'refs/heads/main');
+  assert.ok(snapshotsEqual(s, snap()));
+});
+
+test('the snapshot leaves the checkout, index and stash list untouched', (t) => {
+  const { repo, git, snap } = fixture(t);
+  writeFileSync(path.join(repo, 'a.txt'), 'dirty\n');
+  git('add', 'a.txt');
+  writeFileSync(path.join(repo, 'a.txt'), 'dirtier\n');
+  const status = git('status', '--porcelain=v1');
+  snap();
+  assert.equal(git('status', '--porcelain=v1'), status);
+  assert.equal(git('stash', 'list'), '');
+});
+
+test('symlink retarget, broken symlink and a newline in a filename are reported exactly', (t) => {
+  const { repo, snap, files } = fixture(t);
+  const before = snap();
+  unlinkSync(path.join(repo, 'link'));
+  symlinkSync('target-2', path.join(repo, 'link'));
+  writeFileSync(path.join(repo, 'line\nbreak.txt'), 'changed\n');
+  assert.deepEqual(files(before, snap()), ['line\nbreak.txt', 'link']);
+
+  const retargeted = snap();
+  unlinkSync(path.join(repo, 'link'));
+  symlinkSync('missing-target', path.join(repo, 'link'));
+  assert.deepEqual(files(retargeted, snap()), ['link']);
+});
+
+test('staging an already-dirty file is a change', (t) => {
+  const { repo, git, snap, files } = fixture(t);
+  writeFileSync(path.join(repo, 'a.txt'), 'worker edit\n');
+  const before = snap();
+  git('add', 'a.txt');
+  const after = snap();
+  assert.equal(before.worktreeTree, after.worktreeTree);
+  assert.deepEqual(files(before, after), ['a.txt']);
+});
+
+test('switching branch at the same commit is reported', (t) => {
+  const { git, snap } = fixture(t);
+  const before = snap();
+  git('checkout', '-q', '-b', 'other');
+  const after = snap();
+  assert.match(
+    trackedFilesChangedMessage('deps', 'cmd', 'slot-1', before, after, []) ?? '',
+    /^prepare deps switched branch on slot-1 \(refs\/heads\/main -> refs\/heads\/other\)/,
+  );
+});
+
+test('restoring a replay-dirty file to HEAD is allowed; changing it further is not', (t) => {
+  const { repo, git, snap, files } = fixture(t);
+  writeFileSync(path.join(repo, 'a.txt'), 'replay residue\n');
+  const before = snap();
+  git('checkout', 'HEAD', '--', 'a.txt');
+  const restored = snap();
+  assert.equal(snapshotsEqual(before, restored), false);
+  assert.deepEqual(files(before, restored), []);
+
+  writeFileSync(path.join(repo, 'a.txt'), 'replay residue\n');
+  const dirtyAgain = snap();
+  writeFileSync(path.join(repo, 'a.txt'), 'rewritten\n');
+  assert.deepEqual(files(dirtyAgain, snap()), ['a.txt']);
+});
+
+test('a file rewritten with identical bytes is not a change', (t) => {
+  const { repo, snap, files } = fixture(t);
+  const before = snap();
+  writeFileSync(path.join(repo, 'a.txt'), 'a\n');
+  const after = snap();
+  assert.ok(snapshotsEqual(before, after));
+  assert.deepEqual(files(before, after), []);
+});
+
+test('a conflicted index records HEAD and branch instead of failing', (t) => {
+  const { repo, git } = fixture(t);
+  git('checkout', '-q', '-b', 'theirs');
+  writeFileSync(path.join(repo, 'a.txt'), 'theirs\n');
+  git('commit', '-qam', 'theirs');
+  git('checkout', '-q', 'main');
+  writeFileSync(path.join(repo, 'a.txt'), 'ours\n');
+  git('commit', '-qam', 'ours');
+  assert.throws(() => git('merge', '-q', 'theirs'));
+  const conflicted = parse(sh(buildTrackedFilesSnapshotCommand(repo)));
+  assert.equal(conflicted.unmerged, true);
+  assert.equal(conflicted.head, git('rev-parse', 'HEAD'));
+  assert.equal(conflicted.branch, 'refs/heads/main');
+});
+
+function withSubmodule(t: Parameters<typeof fixture>[0], subPath: string) {
+  const fx = fixture(t);
+  const sub = mkdtempSync(path.join(os.tmpdir(), 'prepare-tracked-sub-'));
+  t.after(() => rmSync(sub, { recursive: true, force: true }));
+  const subGit = (dir: string, ...args: string[]) =>
+    execFileSync(
+      'git',
+      [
+        '-C',
+        dir,
+        '-c',
+        'user.name=F',
+        '-c',
+        'user.email=f@example.invalid',
+        '-c',
+        'commit.gpgsign=false',
+        ...args,
+      ],
+      { encoding: 'utf8' },
+    ).trim();
+  subGit(sub, 'init', '-q', '-b', 'main');
+  writeFileSync(path.join(sub, 's.txt'), '1\n');
+  subGit(sub, 'add', '.');
+  subGit(sub, 'commit', '-qm', 'one');
+  writeFileSync(path.join(sub, 's.txt'), '2\n');
+  subGit(sub, 'commit', '-qam', 'two');
+  fx.git('-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, subPath);
+  fx.git('config', '-f', '.gitmodules', `submodule.${subPath}.ignore`, 'all');
+  fx.git('add', '.gitmodules');
+  fx.git('commit', '-qm', 'add submodule');
+  const inSub = (...args: string[]) => subGit(path.join(fx.repo, subPath), ...args);
+  return { ...fx, inSub };
+}
+
+test('a moved submodule is reported even with submodule ignore=all', (t) => {
+  const { snap, files, inSub } = withSubmodule(t, 'vendor/sub');
+  const before = snap();
+  inSub('checkout', '-q', 'HEAD~1');
+  const moved = snap();
+  assert.equal(snapshotsEqual(before, moved), false);
+  assert.deepEqual(files(before, moved), ['vendor/sub']);
+  inSub('checkout', '-q', 'main');
+  assert.deepEqual(files(moved, snap()), [], 'moving back to the gitlink is a restore');
+});
+
+test('an edit inside a submodule is reported without a commit move; reverting it is a restore', (t) => {
+  const { repo, snap, files, inSub } = withSubmodule(t, 'vendor/sub');
+  const before = snap();
+  writeFileSync(path.join(repo, 'vendor/sub/s.txt'), 'hook edit\n');
+  const edited = snap();
+  assert.deepEqual(files(before, edited), ['vendor/sub']);
+  inSub('checkout', '--', '.');
+  assert.deepEqual(files(edited, snap()), []);
+});
+
+test('a submodule path that git quotes is still tracked', (t) => {
+  const odd = 'vendor/q"uote\tsub';
+  const { snap, files, inSub } = withSubmodule(t, odd);
+  const before = snap();
+  assert.match(before.submodules.get(odd) ?? '', /^[0-9a-f]+ [0-9a-f]+ clean$/);
+  inSub('checkout', '-q', 'HEAD~1');
+  assert.deepEqual(files(before, snap()), [odd]);
+});
+
+test('a staged-only edit inside a submodule is reported', (t) => {
+  const { repo, snap, files, inSub } = withSubmodule(t, 'vendor/sub');
+  const before = snap();
+  writeFileSync(path.join(repo, 'vendor/sub/s.txt'), 'staged edit\n');
+  inSub('add', 's.txt');
+  writeFileSync(path.join(repo, 'vendor/sub/s.txt'), '2\n');
+  assert.deepEqual(files(before, snap()), ['vendor/sub']);
+});
+
+test('an untracked file inside a submodule is reported', (t) => {
+  const { repo, snap, files } = withSubmodule(t, 'vendor/sub');
+  const before = snap();
+  writeFileSync(path.join(repo, 'vendor/sub/new.txt'), 'untracked\n');
+  assert.deepEqual(files(before, snap()), ['vendor/sub']);
+});
+
+test('a broken submodule checkout fails the snapshot instead of reading as clean', (t) => {
+  const { repo } = withSubmodule(t, 'vendor/sub');
+  rmSync(path.join(repo, 'vendor/sub/.git'), { recursive: true, force: true });
+  writeFileSync(path.join(repo, 'vendor/sub/.git'), 'gitdir: /nonexistent/modules/sub\n');
+  assert.throws(() => sh(buildTrackedFilesSnapshotCommand(repo)));
+});
+
+test('later snapshots reuse submodule discovery while HEAD is unchanged', (t) => {
+  const { repo, git, snap } = withSubmodule(t, 'vendor/sub');
+  const baseline = snap();
+  const reused = parse(sh(buildTrackedFilesSnapshotCommand(repo, baseline)));
+  assert.ok(snapshotsEqual(baseline, reused));
+  // A planted entry in `known` shows the list was used instead of a fresh ls-tree.
+  const planted: TrackedFilesSnapshot = {
+    ...baseline,
+    submodules: new Map([...baseline.submodules, ['planted', `${baseline.head} none clean`]]),
+  };
+  const fromKnown = parse(sh(buildTrackedFilesSnapshotCommand(repo, planted)));
+  assert.equal(fromKnown.submodules.get('planted'), `${baseline.head} none clean`);
+  // Once HEAD moves, discovery runs again.
+  writeFileSync(path.join(repo, 'a.txt'), 'next\n');
+  git('commit', '-qam', 'next');
+  const moved = parse(sh(buildTrackedFilesSnapshotCommand(repo, planted)));
+  assert.equal(moved.submodules.has('planted'), false);
+  assert.deepEqual([...moved.submodules.keys()], ['vendor/sub']);
+});
+
+test('a failing textconv driver in a dirty submodule does not break the snapshot', (t) => {
+  const { repo, snap, files, inSub } = withSubmodule(t, 'vendor/sub');
+  inSub('config', 'diff.broken.textconv', 'false');
+  const gitDir = inSub('rev-parse', '--absolute-git-dir');
+  mkdirSync(path.join(gitDir, 'info'), { recursive: true });
+  writeFileSync(path.join(gitDir, 'info/attributes'), '*.txt diff=broken\n');
+  const before = snap();
+  writeFileSync(path.join(repo, 'vendor/sub/s.txt'), 'dirty\n');
+  assert.deepEqual(files(before, snap()), ['vendor/sub']);
+});
+
+test('a directory that is not the root of its own git work tree yields no snapshot', (t) => {
+  const { repo } = fixture(t);
+  const plain = mkdtempSync(path.join(os.tmpdir(), 'prepare-tracked-plain-'));
+  t.after(() => rmSync(plain, { recursive: true, force: true }));
+  assert.equal(parseTrackedFilesSnapshot(sh(buildTrackedFilesSnapshotCommand(plain))), null);
+  mkdirSync(path.join(repo, 'nested'));
+  assert.equal(
+    parseTrackedFilesSnapshot(sh(buildTrackedFilesSnapshotCommand(path.join(repo, 'nested')))),
+    null,
+  );
+});
+
+test('a checkout with a broken .git fails the snapshot instead of being skipped', (t) => {
+  const { repo } = fixture(t);
+  rmSync(path.join(repo, '.git'), { recursive: true, force: true });
+  writeFileSync(path.join(repo, '.git'), 'gitdir: /nonexistent/worktrees/slot\n');
+  assert.throws(() => sh(buildTrackedFilesSnapshotCommand(repo)));
+});
+
+test('an invalid .git directory nested in another repository fails instead of reading the parent', (t) => {
+  const { repo } = fixture(t);
+  const nested = path.join(repo, 'nested-slot');
+  mkdirSync(path.join(nested, '.git'), { recursive: true });
+  assert.throws(
+    () => sh(buildTrackedFilesSnapshotCommand(nested)),
+    /not the root of its own git work tree/,
+  );
+});

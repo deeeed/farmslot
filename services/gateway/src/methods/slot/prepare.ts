@@ -114,6 +114,18 @@ import {
   startPrepareSentinelHeartbeat,
 } from './prepare-sentinel.js';
 import { createPrepareStream, type PrepareStream } from './prepare-stream.js';
+import {
+  buildChangedPathsCommand,
+  buildDirtyPathsCommand,
+  buildTrackedFilesSnapshotCommand,
+  changedSubmodules,
+  changedTrackedFiles,
+  parseNulPaths,
+  parseTrackedFilesSnapshot,
+  snapshotsEqual,
+  trackedFilesChangedMessage,
+  type TrackedFilesSnapshot,
+} from './prepare-tracked-files.js';
 import { checkProjectPrerequisites } from './prerequisites.js';
 import {
   activePrepareAborts,
@@ -456,15 +468,88 @@ async function slotPrepareInner(
     return remapHookSupport(cmd);
   };
 
-  const installEvalRecipeHarness = async () => {
-    if (!params.runId) return;
+  const installEvalRecipeHarness = async (): Promise<boolean> => {
+    if (!params.runId) return false;
     const run = getRun(params.runId);
-    if (!run?.engineState?.evalExperiment) return;
+    if (!run?.engineState?.evalExperiment) return false;
     step('recipe-harness-install', 'Installing eval recipe harness');
     const result = await executeEvalHarnessLifecycle(run, 'install');
     if (!result.skipped) {
       step('recipe-harness-install', `Eval recipe harness installed (log: ${result.logPath})`);
     }
+    return true;
+  };
+
+  // `known` lets a phase check reuse the previous snapshot's submodule discovery.
+  const snapshotTrackedFiles = async (
+    known?: TrackedFilesSnapshot,
+  ): Promise<TrackedFilesSnapshot | null> => {
+    checkAborted();
+    const r = await execOnSlot(vars, buildTrackedFilesSnapshotCommand(vars.remoteRepo, known), {
+      signal,
+    });
+    checkAborted();
+    if (r.exitCode !== 0)
+      throw new Error(
+        `tracked-file snapshot failed on ${vars.slotId} (${vars.remoteRepo}): exit ${r.exitCode} ${(r.stderr || r.stdout).slice(-300)}`,
+      );
+    return parseTrackedFilesSnapshot(r.stdout);
+  };
+
+  const trackedPaths = async (command: string): Promise<string[]> => {
+    const r = await execOnSlot(vars, command, { signal });
+    checkAborted();
+    if (r.exitCode !== 0)
+      throw new Error(
+        `tracked-file diff failed on ${vars.slotId} (${vars.remoteRepo}): ${r.stderr.slice(-200) || `exit ${r.exitCode}`}`,
+      );
+    return parseNulPaths(r.stdout);
+  };
+
+  // Fails the phase that changed a tracked file; returns the state the next phase is checked against.
+  const checkTrackedFiles = async (
+    baseline: TrackedFilesSnapshot | null,
+    phase: string,
+    command: string,
+  ): Promise<TrackedFilesSnapshot | null> => {
+    if (!baseline) return null;
+    const after = await snapshotTrackedFiles(baseline);
+    const fail = (message: string): never => {
+      step('tracked-files', message);
+      throw new Error(message);
+    };
+    if (!after)
+      return fail(
+        `prepare ${phase} left ${vars.remoteRepo} without its git work tree on ${vars.slotId} — command: ${command}`,
+      );
+    // HEAD and branch always compare; trees only once both sides have a merged index.
+    const moved =
+      baseline.head !== after.head || baseline.branch !== after.branch
+        ? trackedFilesChangedMessage(phase, command, vars.slotId, baseline, after, [])
+        : null;
+    if (moved) fail(moved);
+    if (after.unmerged) {
+      if (!baseline.unmerged)
+        fail(
+          `prepare ${phase} left unmerged index entries on ${vars.slotId} — command: ${command}`,
+        );
+      return after;
+    }
+    // Conflicts resolved during this phase: full checks resume from here.
+    if (baseline.unmerged) return after;
+    if (snapshotsEqual(baseline, after)) return after;
+    const files = [
+      ...new Set([
+        ...changedTrackedFiles(
+          await trackedPaths(buildChangedPathsCommand(vars.remoteRepo, baseline, after)),
+          await trackedPaths(buildDirtyPathsCommand(vars.remoteRepo, after)),
+        ),
+        ...changedSubmodules(baseline, after),
+      ]),
+    ].sort();
+    const message = trackedFilesChangedMessage(phase, command, vars.slotId, baseline, after, files);
+    if (message) fail(message);
+    return after;
   };
 
   if (selectedApp) {
@@ -1404,6 +1489,25 @@ async function slotPrepareInner(
   // always running is bounded; the cost of skipping incorrectly is a 240s
   // preflight timeout on the next webpack run. Profiles that skip this phase
   // declare deps_current so the fallback chain catches stale trees.
+  // Tracked files must leave prepare as checkout and fixtures left them; a step
+  // that rewrites one fails here, naming it, instead of at run completion.
+  let trackedBaseline =
+    phaseEnabled('deps') || phaseEnabled('preflight') || phaseEnabled('health')
+      ? await snapshotTrackedFiles()
+      : null;
+  if (
+    !trackedBaseline &&
+    (phaseEnabled('deps') || phaseEnabled('preflight') || phaseEnabled('health'))
+  )
+    step(
+      'tracked-files',
+      'Tracked-file check skipped: the slot is not the root of a git work tree',
+    );
+  if (trackedBaseline?.unmerged)
+    step(
+      'tracked-files',
+      'The index has unmerged entries: only HEAD and branch are checked until they are resolved',
+    );
   if (!phaseEnabled('deps')) {
     step('deps', `Deps install skipped (profile ${profileName()})`);
   } else {
@@ -1451,11 +1555,20 @@ async function slotPrepareInner(
     }
     // Record the lockfile hash so deps_current precondition checks can prove
     // the installed tree matches the checked-out lockfiles.
+    trackedBaseline = await checkTrackedFiles(trackedBaseline, 'deps', installCmd);
     await execOnSlot(vars, buildDepsSentinelWriteCommand(vars.remoteRepo, runtimeDir));
     step('deps', `Dependencies installed (log: ${depsLogPath})`);
   }
 
-  await installEvalRecipeHarness();
+  // An eval trial's harness install is an intended change; later phases are checked against it.
+  if ((await installEvalRecipeHarness()) && trackedBaseline) {
+    trackedBaseline = await snapshotTrackedFiles(trackedBaseline);
+    if (!trackedBaseline) {
+      const message = `eval recipe harness install left ${vars.remoteRepo} without its git work tree on ${vars.slotId}`;
+      step('tracked-files', message);
+      throw new Error(message);
+    }
+  }
 
   // Native workers have no terminal session. Project preparation still runs normally.
   let session: string | undefined;
@@ -1713,6 +1826,12 @@ async function slotPrepareInner(
     }
   }
 
+  trackedBaseline = await checkTrackedFiles(
+    trackedBaseline,
+    'preflight',
+    preflightHook || 'prepare steps after deps',
+  );
+
   // 6. Verify health
   const healthHook = phaseEnabled('health') ? expandPrepareHook('health_check') : '';
   if (!phaseEnabled('health')) {
@@ -1734,6 +1853,7 @@ async function slotPrepareInner(
       { signal },
     );
     step('health', `Health check — ${healthValue}`);
+    await checkTrackedFiles(trackedBaseline, 'health', healthHook);
   }
 
   // Operator-driven warm switch: bind this run to the slot so resume / recipe
