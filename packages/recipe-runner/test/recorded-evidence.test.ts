@@ -910,7 +910,12 @@ test('package validation refuses omitted registered claim rows', () => {
           path: 'stills/after.png',
           type: 'screenshot',
           category: 'validation',
-          capture: { role: 'after', recipeRunId: 'claim-completeness', nodeId: 'done', traceIndex: 2 },
+          capture: {
+            role: 'after',
+            recipeRunId: 'claim-completeness',
+            nodeId: 'done',
+            traceIndex: 2,
+          },
         },
       ],
     },

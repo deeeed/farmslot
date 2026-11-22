@@ -154,7 +154,10 @@ test('renders one deterministic line per node with provenance, asserted values a
   assert.match(text, /^✓ done {2}end$/m);
   assert.match(text, /^5\/5 nodes passed · status pass$/m);
   assert.match(text, /^AC3 pass \[state\] ← ac3-trade, ac3-assert$/m);
-  assert.equal(lines.at(-1), 'Artifacts: recipe run r1 (trace.json, report.md); asserted values are read from its retained reports');
+  assert.equal(
+    lines.at(-1),
+    'Artifacts: recipe run r1 (trace.json, report.md); asserted values are read from its retained reports',
+  );
   assert.match(text, /^Inputs: .*output_dir=…\/proof$/m);
   assert.doesNotMatch(text, /temp\/|recipe-runs\//);
 });
@@ -320,7 +323,10 @@ test('the transcript format renders only a validated selected attempt', async (t
   assert.equal(result.artifactDir, attempt);
   assert.equal(result.transcript, body);
   assert.match(body, /^Recipe: Permissioned dex on testnet, Core\nRun not recorded · /);
-  assert.match(body, /\nArtifacts: recipe run r2 \(trace\.json, report\.md\); asserted values are read from its retained reports\n$/);
+  assert.match(
+    body,
+    /\nArtifacts: recipe run r2 \(trace\.json, report\.md\); asserted values are read from its retained reports\n$/,
+  );
   assert.equal(result.sections, undefined);
 
   await validPackage(attempt, { ...RUNNER, git_ref: 'other-revision' });
