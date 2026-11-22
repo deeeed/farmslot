@@ -115,7 +115,7 @@ Skip when step 1 is `gateway-cli` only (no Command Center UI and no Companion de
   ```
   The engine writes the selected attempt's `evidence-manifest.json`; no evidence sync step is needed.
 - [ ] **13. Validate screenshots (HARD GATE)** — Read each screenshot referenced by `evidence-manifest.json` via the Read tool. The claimed UI must be visible — not off-screen, wrong route, or generic shell. Re-run step 12 if not.
-- [ ] **14. Check the selected attempt’s `evidence-manifest.json`** — the engine generated the retained screenshot/video paths. Keep those original paths. Use an optional task-root declaration only for external captures or comparison labels.
+- [ ] **14. Check the selected attempt’s `evidence-manifest.json`** (the attempt named in `artifacts/latest-valid-recipe-run.json`; completion refuses attempts nothing selects) — the engine generated the retained screenshot/video paths. Keep those original paths. Use an optional task-root declaration only for external captures or comparison labels.
 - [ ] **15. Recipe coverage** — `recipe-coverage.md` (gateway computes recipe-quality). Visual ACs cannot be `pass` without screenshot/video proof.
 - [ ] **16. Artifact contract**:
   ```bash

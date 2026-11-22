@@ -77,7 +77,7 @@ bash {{recipe_validate_wrapper}} \
   ```bash
   bash {{recipe_validate_wrapper}} ... --slow 2000 --record-video=full-run --task-dir {{TASK_DIR}}
   ```
-- The engine retains recipe media in the selected attempt; the gateway publishes it after approval.
+- The engine retains recipe media in the selected attempt, named in `artifacts/latest-valid-recipe-run.json`; the gateway publishes it after approval. Completion refuses attempts nothing selects; a task-root `evidence-manifest.json` is optional and only declares extra evidence.
 - Write `recipe-coverage.md` when a recipe exists (gateway computes recipe-quality).
 - Never inject UI state — use `ui.navigate`, `ui.wait_for`, and `ui.screenshot` through the runner.
 
