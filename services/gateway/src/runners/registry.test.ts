@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
@@ -1943,7 +1943,7 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'claude', 'sonnet', PROMPT, { safetyTier: 'full-auto' });
       assert.match(
         cmd,
-        /unset CLAUDECODE && if \[ [^\]]+ \]; then unset TMUX; fi && \/usr\/local\/bin\/claude --dangerously-skip-permissions --model sonnet/,
+        /unset CLAUDECODE && if \[ .+? \]; then unset TMUX; fi && \/usr\/local\/bin\/claude --dangerously-skip-permissions --model sonnet/,
       );
       assert.doesNotMatch(cmd, /--dangerously-bypass-approvals-and-sandbox/);
       assert.match(cmd, /--runner 'claude' --repo '\/tmp\/repo'/);
@@ -1961,7 +1961,7 @@ describe('buildLaunchCommand', () => {
       assert.match(cmd, /install-runner-observability\.mjs/);
       assert.match(
         cmd,
-        /cd '\/tmp\/repo' && unset CLAUDECODE && if \[ [^\]]+ \]; then unset TMUX; fi && \/usr\/local\/bin\/claude --model sonnet --settings '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json'$/,
+        /cd '\/tmp\/repo' && unset CLAUDECODE && if \[ .+? \]; then unset TMUX; fi && \/usr\/local\/bin\/claude --model sonnet --settings '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json'$/,
       );
       assert.match(cmd, /install failed; continuing without hooks/);
       assert.match(cmd, /mkdir -p '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability'/);
@@ -1982,7 +1982,7 @@ describe('buildLaunchCommand', () => {
       assert.match(cmd, /install-runner-observability\.mjs/);
       assert.match(
         cmd,
-        /unset CLAUDECODE && if \[ [^\]]+ \]; then unset TMUX; fi && cd \/tmp\/repo && \/usr\/local\/bin\/claude --settings '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json' --model opus \.task\/fix\/abc\/TASK\.md/,
+        /unset CLAUDECODE && if \[ .+? \]; then unset TMUX; fi && cd \/tmp\/repo && \/usr\/local\/bin\/claude --settings '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json' --model opus \.task\/fix\/abc\/TASK\.md/,
       );
     });
 
@@ -2022,6 +2022,10 @@ describe('buildLaunchCommand', () => {
         // tmux falls back to /tmp when TMUX_TMPDIR is missing.
         const tmpSocket = path.join(realpathSync('/tmp'), `tmux-${process.getuid?.()}`, 'default');
         assert.equal(envAfterUnset(`${tmpSocket},1,0`, path.join(tmuxTmpdir, 'gone')), 'unset|%7');
+        // An existing non-directory is not skipped by tmux, so TMUX keeps its routing.
+        const notDir = path.join(tmuxTmpdir, 'file');
+        writeFileSync(notDir, '');
+        assert.equal(envAfterUnset(`${tmpSocket},1,0`, notDir), `${tmpSocket},1,0|%7`);
         for (const kept of [
           path.join(path.dirname(fallbackSocket), 'cross-model-demo'),
           '/private/tmp/isolated/default',
@@ -2817,7 +2821,7 @@ describe('buildRunnerSessionReloadCommand', () => {
     assert.match(cmd, /install-runner-observability\.mjs/);
     assert.match(
       cmd,
-      /cd '\/tmp\/repo' && unset CLAUDECODE && if \[ [^\]]+ \]; then unset TMUX; fi && \/opt\/bin\/claude --dangerously-skip-permissions --model sonnet --settings '\/tmp\/\.farmslot-runtime\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json' --resume 'session-123' 'Read and execute TASK.md'$/,
+      /cd '\/tmp\/repo' && unset CLAUDECODE && if \[ .+? \]; then unset TMUX; fi && \/opt\/bin\/claude --dangerously-skip-permissions --model sonnet --settings '\/tmp\/\.farmslot-runtime\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json' --resume 'session-123' 'Read and execute TASK.md'$/,
     );
     assert.match(
       cmd,
