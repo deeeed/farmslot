@@ -597,7 +597,10 @@ test('an empty source keeps the gateway mirror when the caller keeps it without 
   const receipt = path.join(taskDir, 'artifacts/harness-provenance.json');
   await mkdir(path.dirname(receipt), { recursive: true });
   await writeFile(receipt, '{"frozen":true}\n');
-  assert.equal(await refreshArtifactMirror(run, { keepMirrorWithoutSource: true }), 0);
+  let emptySource = 0;
+  const keep = { keepMirrorWithoutSource: true, onEmptySource: () => void emptySource++ };
+  assert.equal(await refreshArtifactMirror(run, keep), 0);
+  assert.equal(emptySource, 1);
   assert.equal(await readFile(receipt, 'utf8'), '{"frozen":true}\n');
   await assert.rejects(
     refreshArtifactMirror(run, { requireSourceArtifacts: true }),
@@ -605,6 +608,9 @@ test('an empty source keeps the gateway mirror when the caller keeps it without 
   );
   assert.equal(await refreshArtifactMirror(run), 0);
   assert.equal(existsSync(receipt), false, 'an ordinary refresh mirrors the empty source');
+  await writeFile(path.join(workerArtifacts, 'report.md'), 'slot report');
+  assert.equal(await refreshArtifactMirror(run, keep), 1);
+  assert.equal(emptySource, 1, 'a non-empty source is not reported empty');
 });
 
 test('a prune-only mirror notifies even when it transfers no files', async (t) => {

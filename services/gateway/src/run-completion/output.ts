@@ -283,15 +283,26 @@ async function captureRunOutputNow(
   if (taskFile !== attempt.taskFile || generation !== attempt.generation)
     throw new Error('Run attempt changed while retrieving output; refresh the current attempt');
   const acquisition = options.acquisition ?? createRunArtifactAcquisition(run);
-  const mirrorOptions =
-    purpose === 'final-result' ? { ...options, ...finalResultMirrorOptions(run) } : options;
+  let sourceEmpty = false;
+  const mirrorOptions: ArtifactMirrorOptions =
+    purpose === 'final-result'
+      ? {
+          ...options,
+          ...finalResultMirrorOptions(run),
+          onEmptySource: () => {
+            sourceEmpty = true;
+          },
+        }
+      : options;
   const copied =
     mirror && !run.reviewWorkspace
       ? await refreshArtifactMirror(run, { ...mirrorOptions, acquisition })
       : 0;
   // A retried release must not replace what an earlier final retention kept (media can be
-  // acquired straight into that bundle) with a capture of the now-empty source.
-  if (mirrorOptions.keepMirrorWithoutSource && copied === 0 && run.artifactBundle) return 0;
+  // acquired straight into that bundle) with a capture of a source the mirror found empty.
+  // Any slot artifact, including new media or media a refused capture left behind, makes
+  // the source non-empty and is captured again.
+  if (sourceEmpty && run.artifactBundle) return 0;
   const artifactsByPath = new Map(
     [...(await scanArtifacts(path.dirname(taskFile))), ...acquisition.media].map((artifact) => [
       artifact.path,

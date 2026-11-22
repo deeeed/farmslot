@@ -376,6 +376,8 @@ export interface ArtifactMirrorOptions {
    * gateway (such as the task's frozen runtime receipt) stay for the capture.
    */
   keepMirrorWithoutSource?: boolean;
+  /** Called when that empty-source return happens: the slot package had nothing at all. */
+  onEmptySource?: () => void;
   /** Publication callers validate the same selected attempt before any copy. */
   forPublication?: boolean;
   publicationComparison?: ReviewDiffSnapshot;
@@ -585,8 +587,10 @@ export async function refreshArtifactMirror(
   if (options.requireSourceArtifacts && packaged.entries.length + snapshotEntries.length === 0) {
     throw new Error('artifact mirror refresh has no source artifacts');
   }
-  if (options.keepMirrorWithoutSource && packaged.entries.length + snapshotEntries.length === 0)
+  if (options.keepMirrorWithoutSource && packaged.entries.length + snapshotEntries.length === 0) {
+    options.onEmptySource?.();
     return 0;
+  }
   const packagedPaths = new Set(packaged.entries.map((entry) => entry.path));
   const skippedLinks = scan.links.filter(
     (link) => !inSnapshot(link) && !manifestPaths.includes(link) && !packagedPaths.has(link),

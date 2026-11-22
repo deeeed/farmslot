@@ -9,6 +9,8 @@ import { openRunBundleStore } from '@farmslot/run-bundle';
 
 import '../runtime/mock-pty.test-support.js';
 
+import type { ArtifactMirrorOptions } from './artifact-mirror.js';
+
 const root = await mkdtemp(path.join(tmpdir(), 'gateway-final-retention-'));
 process.env.FARMSLOT_HOME = path.join(root, 'home');
 process.env.FARMSLOT_RUNS_DIR = path.join(root, 'runs');
@@ -21,16 +23,21 @@ await openRunBundleStore({
 after(() => rm(root, { recursive: true, force: true }));
 
 // The slot's task artifacts are gone, as on macpro-audiolab-2 after the failed dispatch:
-// the real mirror refuses a required refresh with nothing to copy and otherwise copies none.
+// the real mirror refuses a required refresh with nothing to copy, reports an empty source
+// to a keeping caller, and otherwise copies none. With slot artifacts that need no copy it
+// returns 0 without reporting an empty source.
 const mirror = await import('./artifact-mirror.js');
-let mirrorOptions: { requireSourceArtifacts?: boolean; keepMirrorWithoutSource?: boolean } = {};
+let mirrorOptions: ArtifactMirrorOptions = {};
+let slotHasArtifacts = false;
 mock.module('./artifact-mirror.js', {
   namedExports: {
     ...mirror,
-    refreshArtifactMirror: async (_run: Run, options: typeof mirrorOptions = {}) => {
+    refreshArtifactMirror: async (_run: Run, options: ArtifactMirrorOptions = {}) => {
       mirrorOptions = options;
+      if (slotHasArtifacts) return 0;
       if (options.requireSourceArtifacts)
         throw new Error('artifact mirror refresh has no source artifacts');
+      if (options.keepMirrorWithoutSource) options.onEmptySource?.();
       return 0;
     },
   },
@@ -180,4 +187,24 @@ test('a retried final retention keeps what the first one retained', async () => 
   await rm(proof);
   assert.equal(await retainFinalRunArtifacts(runId), 0);
   assert.deepEqual(getRun(runId)?.artifactBundle, kept);
+});
+
+test('a retry captures again while the slot still has artifacts, even with nothing to copy', async (t) => {
+  // New media is fingerprinted from the slot, or a refused capture left media behind.
+  const { runId, taskDir } = await failedRun([
+    step('write-task', 'done'),
+    step('prepare', 'failed'),
+    step('dispatch', 'skipped'),
+  ]);
+  await writeFile(path.join(taskDir, 'artifacts/repro.png'), 'first capture');
+  await retainFinalRunArtifacts(runId);
+  const first = getRun(runId)?.artifactBundle;
+  assert.ok(first);
+  slotHasArtifacts = true;
+  t.after(() => {
+    slotHasArtifacts = false;
+  });
+  await writeFile(path.join(taskDir, 'artifacts/after.png'), 'new media');
+  await retainFinalRunArtifacts(runId);
+  assert.notDeepEqual(getRun(runId)?.artifactBundle, first);
 });
