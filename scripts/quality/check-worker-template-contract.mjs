@@ -79,9 +79,13 @@ function lintProjectRoot(projectRoot, issues) {
   // Sources rooted in an env var or another source are checked in the repo that owns them.
   const project = JSON.parse(readFileSync(projectJsonPath, 'utf8'));
   const packRoot = realpathSync(projectRoot);
+  // Segment-wise, like the catalog: `..checklists` is a child, `../x` is not.
   const within = (root, target) => {
     const relative = path.relative(root, target);
-    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+    return (
+      relative === '' ||
+      (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+    );
   };
   for (const source of project.execution_templates?.sources ?? []) {
     const root = source?.root?.projectPath;
@@ -89,11 +93,16 @@ function lintProjectRoot(projectRoot, issues) {
     // Catalog resolution: canonical source root inside the pack, canonical scan path
     // (subpath) inside that root; missing roots are skipped like the catalog does.
     const sourceRoot = path.resolve(projectRoot, root);
-    if (!existsSync(sourceRoot)) continue;
-    const canonicalRoot = realpathSync(sourceRoot);
+    // Lexically first (as configured), then after resolving symlinks.
+    const lexicalEscape =
+      !within(projectRoot, sourceRoot) ||
+      !within(sourceRoot, path.resolve(sourceRoot, source.subpath ?? '.'));
+    if (!lexicalEscape && !existsSync(sourceRoot)) continue;
+    const canonicalRoot = existsSync(sourceRoot) ? realpathSync(sourceRoot) : sourceRoot;
     const scanPath = path.resolve(canonicalRoot, source.subpath ?? '.');
     const canonicalScan = existsSync(scanPath) ? realpathSync(scanPath) : null;
     if (
+      lexicalEscape ||
       !within(packRoot, canonicalRoot) ||
       (canonicalScan && !within(canonicalRoot, canonicalScan))
     ) {
@@ -219,7 +228,24 @@ function inferFlowTypeFromTemplate(fileName, content) {
  */
 function frontmatterFlow(text) {
   const normalized = text.replace(/^\uFEFF/, '');
-  const block = normalized.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
-  const value = block?.[1].match(/^flow:[ \t]*(.*?)[ \t]*\r?$/m)?.[1];
-  return value ? value.replace(/^(['"])(.*)\1$/, '$2') : undefined;
+  if (!normalized.startsWith('---\n') && !normalized.startsWith('---\r\n')) return undefined;
+  // The closing fence is `---` alone on its line; searching from the opening fence's newline
+  // lets an empty block close immediately.
+  let end = -1;
+  for (let from = 3; ; ) {
+    const candidate = normalized.indexOf('\n---', from);
+    if (candidate === -1) break;
+    const after = normalized.slice(candidate + 4, candidate + 6);
+    if (after === '' || after.startsWith('\n') || after.startsWith('\r\n')) {
+      end = candidate;
+      break;
+    }
+    from = candidate + 4;
+  }
+  if (end === -1) return undefined;
+  for (const line of normalized.slice(normalized.indexOf('\n') + 1, end).split(/\r?\n/)) {
+    const match = line.trim().match(/^flow:\s*(.*)$/);
+    if (match) return match[1].trim().replace(/^(['"])(.*)\1$/, '$2') || undefined;
+  }
+  return undefined;
 }

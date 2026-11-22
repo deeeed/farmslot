@@ -415,9 +415,10 @@ function lintWorkerTemplateStructure(templateContent, options = {}) {
 const PROOF_SELECTION_EXEMPT_FLOWS = new Set(['review', 'review-pr', 'qa']);
 const RUNS_RECIPE_PROOF =
   /RECIPE_TASK_DIR|artifacts\/recipe-runs\/|\brecipe run\b|task-bound recipe proof|\b(?:re)?run\b[^.\n]{0,60}\b(?:recipes?|proof)\b/i;
-// A clause that forbids or only diagnoses proof runs none; the negation must sit in the
-// same clause as the run instruction.
-const NO_TASK_PROOF = /\b(?:do not|don't|never|must not|no longer)\b|--unbound/i;
+// A clause that forbids or only diagnoses proof runs none.
+const NO_TASK_PROOF = /\b(?:do not|don't|never|must not|no longer)\b/i;
+// An unbound diagnostic run records no task attempt wherever the flag sits.
+const UNBOUND_RUN = /--unbound|-u RECIPE_TASK_DIR/;
 
 /**
  * A template that runs recipe proof names the attempt the task claims: the selection in
@@ -432,9 +433,16 @@ function lintWorkerTemplateProofSelection(templateContent, flowType) {
   if (PROOF_SELECTION_EXEMPT_FLOWS.has(flow)) return [];
   // A template with its own designed proof layout opts out by name, with its reason.
   if (/<!--\s*proof-selection:\s*exempt\s*\(\s*\S[^)]*\)\s*-->/.test(templateContent)) return [];
-  const runsProof = templateContent
-    .split(/\n|[.;](?=\s)/)
-    .some((clause) => RUNS_RECIPE_PROOF.test(clause) && !NO_TASK_PROOF.test(clause));
+  // A negation counts only when it comes before the run instruction in its clause
+  // ("Do not run recipes"), not after it ("Run the recipe and do not use manual checks").
+  const runsProof = templateContent.split(/\n|(?<!\b(?:e\.g|i\.e))[.;](?=\s)/).some((clause) => {
+    const run = clause.match(RUNS_RECIPE_PROOF);
+    return (
+      run !== null &&
+      !UNBOUND_RUN.test(clause) &&
+      !NO_TASK_PROOF.test(clause.slice(0, (run.index ?? 0) + run[0].length))
+    );
+  });
   if (!runsProof || templateContent.includes('artifacts/latest-valid-recipe-run.json')) return [];
   return [
     'runs recipe proof but does not name the selected proof attempt (`artifacts/latest-valid-recipe-run.json`)',

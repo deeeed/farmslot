@@ -59,7 +59,7 @@ A template whose proof uses a different designed layout opts out by name, with i
 - the publication merge base, when the frozen comparison head is the selected attempt's clean head;
 - for fix-bug, its verified bug-marker commit.
 
-A capture from another attempt on the selected attempt's clean head may also be declared as after or standalone evidence. When none of this applies, a person can attest one same-run attempt as before evidence at the publish gate (ADR-062 Amendment 21). An "outside selected recipe attempt" refusal means a declared capture failed these checks: missing provenance or manifest, a digest mismatch, or a `git_ref` off every eligible base. Only when it names an attempt other than the current selection has the selection moved: then check the newest package under `artifacts/publication-packages`.
+A capture from another attempt on the selected attempt's clean head may also be declared as after or standalone evidence. When none of this applies, a person can attest one same-run attempt as before evidence at the publish gate (ADR-062 Amendment 21). An "outside selected recipe attempt" refusal means a declared capture's attempt lacks provenance or its manifest, or a digest doesn't match. If it names an attempt other than the current selection, the selection has moved: check the newest package under `artifacts/publication-packages`. Before evidence recorded off every eligible base is refused with "… not the unchanged base …" and the attestation command to run.
 
 ## Heuristic review (skill)
 

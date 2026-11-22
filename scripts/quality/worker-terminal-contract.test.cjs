@@ -167,6 +167,21 @@ assert.match(
   /selected proof attempt/,
 );
 assert.deepEqual(lintWorkerTemplateProofSelection(proofStep, 'qa-site-build'), []);
+// A negation after the run instruction does not hide it; a forbidden example after e.g. stays forbidden.
+assert.match(
+  lintWorkerTemplateProofSelection(
+    '- [ ] Run the task recipe and do not use manual checks as evidence.',
+    'dev',
+  ).join(' '),
+  /selected proof attempt/,
+);
+assert.deepEqual(
+  lintWorkerTemplateProofSelection(
+    'Never start other proof, e.g. `farmslot recipe run smoke`.',
+    'dev',
+  ),
+  [],
+);
 // A negation in another clause of the same line does not hide the run instruction.
 assert.match(
   lintWorkerTemplateProofSelection(
@@ -253,6 +268,18 @@ assert.match(
     writeFileSync(
       path.join(project, 'checklists', 'dev2', 'body.md'),
       `# Dev\n\nflow: qa\n\n${proofStep}\n`,
+    );
+    result = check();
+    assert.match(result.stderr, /checklists\/qa\/default\.md: runs recipe proof/);
+    assert.match(result.stderr, /checklists\/dev2\/body\.md: runs recipe proof/);
+    // Indented frontmatter keys resolve like the catalog; an empty block lets no body text in.
+    writeFileSync(
+      path.join(project, 'checklists', 'qa', 'default.md'),
+      `---\n  flow: dev\n---\n# QA dir, dev flow\n\n${proofStep}\n`,
+    );
+    writeFileSync(
+      path.join(project, 'checklists', 'dev2', 'body.md'),
+      `---\n---\nflow: qa\n\n${proofStep}\n`,
     );
     result = check();
     assert.match(result.stderr, /checklists\/qa\/default\.md: runs recipe proof/);
