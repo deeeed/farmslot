@@ -148,10 +148,10 @@ test(
       });
 
     await reset();
-    const events: string[] = [];
+    const events: Array<{ event: string; payload: unknown }> = [];
     await assert.rejects(
-      slotPrepare({ slotId, branch: 'unsorted-work', prepareProfile: 'core' }, (_event, payload) =>
-        events.push(JSON.stringify(payload)),
+      slotPrepare({ slotId, branch: 'unsorted-work', prepareProfile: 'core' }, (event, payload) =>
+        events.push({ event, payload }),
       ),
       (error: Error) => {
         assert.match(
@@ -163,7 +163,15 @@ test(
       },
     );
     assert.ok(commands.some((command) => command.includes('yarn install')));
-    assert.ok(events.some((line) => line.includes('changed 1 tracked file')));
+    const failures = events.filter(
+      ({ event, payload }) =>
+        event === 'slot.prepare.step' && (payload as { name?: string }).name === 'tracked-files',
+    );
+    assert.equal(failures.length, 1);
+    assert.match(
+      (failures[0]!.payload as { detail: string }).detail,
+      /^prepare deps changed 1 tracked file on \S+: scripts\/agentic\/package\.json — command: .*yarn install/,
+    );
 
     await t.test('a manifest already in the written form prepares cleanly', async () => {
       await git(slotRepo, 'checkout', '-q', 'main');

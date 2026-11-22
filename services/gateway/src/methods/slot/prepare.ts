@@ -115,8 +115,13 @@ import {
 } from './prepare-sentinel.js';
 import { createPrepareStream, type PrepareStream } from './prepare-stream.js';
 import {
+  buildChangedPathsCommand,
+  buildDirtyPathsCommand,
   buildTrackedFilesSnapshotCommand,
+  changedTrackedFiles,
+  parseNulPaths,
   parseTrackedFilesSnapshot,
+  snapshotsEqual,
   trackedFilesChangedMessage,
   type TrackedFilesSnapshot,
 } from './prepare-tracked-files.js';
@@ -483,23 +488,37 @@ async function slotPrepareInner(
     return parseTrackedFilesSnapshot(r.stdout);
   };
 
-  const assertTrackedFilesUnchanged = async (
+  const trackedPaths = async (command: string): Promise<string[]> => {
+    const r = await execOnSlot(vars, command);
+    if (r.exitCode !== 0)
+      throw new Error(
+        `tracked-file diff failed on ${vars.slotId} (${vars.remoteRepo}): ${r.stderr.slice(-200) || `exit ${r.exitCode}`}`,
+      );
+    return parseNulPaths(r.stdout);
+  };
+
+  // Fails the phase that changed a tracked file; returns the state the next phase is checked against.
+  const checkTrackedFiles = async (
     baseline: TrackedFilesSnapshot | null,
     phase: string,
     command: string,
-  ) => {
-    if (!baseline) return;
-    const message = trackedFilesChangedMessage(
-      phase,
-      command,
-      vars.slotId,
-      baseline,
-      await snapshotTrackedFiles(),
-    );
+  ): Promise<TrackedFilesSnapshot | null> => {
+    if (!baseline) return null;
+    const after = await snapshotTrackedFiles();
+    if (snapshotsEqual(baseline, after)) return after;
+    const files =
+      baseline.head === after.head
+        ? changedTrackedFiles(
+            await trackedPaths(buildChangedPathsCommand(vars.remoteRepo, baseline, after)),
+            await trackedPaths(buildDirtyPathsCommand(vars.remoteRepo, after)),
+          )
+        : [];
+    const message = trackedFilesChangedMessage(phase, command, vars.slotId, baseline, after, files);
     if (message) {
-      step(phase === 'deps' ? 'deps' : 'preflight', message);
+      step('tracked-files', message);
       throw new Error(message);
     }
+    return after;
   };
 
   if (selectedApp) {
@@ -1441,7 +1460,7 @@ async function slotPrepareInner(
   // declare deps_current so the fallback chain catches stale trees.
   // Tracked files must leave prepare as checkout and fixtures left them; a step
   // that rewrites one fails here, naming it, instead of at run completion.
-  const trackedBaseline =
+  let trackedBaseline =
     phaseEnabled('deps') || phaseEnabled('preflight') || phaseEnabled('health')
       ? await snapshotTrackedFiles()
       : null;
@@ -1492,15 +1511,14 @@ async function slotPrepareInner(
     }
     // Record the lockfile hash so deps_current precondition checks can prove
     // the installed tree matches the checked-out lockfiles.
-    await assertTrackedFilesUnchanged(trackedBaseline, 'deps', installCmd);
+    trackedBaseline = await checkTrackedFiles(trackedBaseline, 'deps', installCmd);
     await execOnSlot(vars, buildDepsSentinelWriteCommand(vars.remoteRepo, runtimeDir));
     step('deps', `Dependencies installed (log: ${depsLogPath})`);
   }
 
   // An eval trial's harness install is an intended change; later phases are checked against it.
-  const harnessInstalled = await installEvalRecipeHarness();
-  const lateBaseline =
-    harnessInstalled && trackedBaseline ? await snapshotTrackedFiles() : trackedBaseline;
+  if ((await installEvalRecipeHarness()) && trackedBaseline)
+    trackedBaseline = await snapshotTrackedFiles();
 
   // Native workers have no terminal session. Project preparation still runs normally.
   let session: string | undefined;
@@ -1758,6 +1776,12 @@ async function slotPrepareInner(
     }
   }
 
+  trackedBaseline = await checkTrackedFiles(
+    trackedBaseline,
+    'preflight',
+    preflightHook || 'prepare steps after deps',
+  );
+
   // 6. Verify health
   const healthHook = phaseEnabled('health') ? expandPrepareHook('health_check') : '';
   if (!phaseEnabled('health')) {
@@ -1779,6 +1803,7 @@ async function slotPrepareInner(
       { signal },
     );
     step('health', `Health check — ${healthValue}`);
+    await checkTrackedFiles(trackedBaseline, 'health', healthHook);
   }
 
   // Operator-driven warm switch: bind this run to the slot so resume / recipe
@@ -1787,8 +1812,6 @@ async function slotPrepareInner(
   // re-drive, unlike run.activateOnSlot. Compare-and-set so a direct RPC can
   // never stomp a slot another run already owns (a free or self-owned slot is
   // the only safe target).
-  await assertTrackedFilesUnchanged(lateBaseline, 'preflight/health', 'prepare hooks');
-
   if (params.bindRunId) {
     await bindRunToSlot(params, vars, step);
   }
