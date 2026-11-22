@@ -334,3 +334,19 @@ test('a staged edit keeps the branch where it was', needsTmuxSandbox, async (t) 
   assert.equal(await git(slotRepo, 'rev-parse', `refs/heads/${workBranch}`), oldBase);
   assert.equal(await git(slotRepo, 'show', ':README.md'), 'staged work');
 });
+
+test('a failing added-path scan keeps the branch where it was', needsTmuxSandbox, async (t) => {
+  const { slotId, slotRepo, oldBase } = await staleBaseSlot(t);
+  await git(slotRepo, 'branch', workBranch, oldBase);
+  // `git diff` exits 128 with a missing order file; the move must refuse, not read it as clear.
+  await git(slotRepo, 'config', 'diff.orderFile', '/nonexistent/farmslot-order-file');
+  await Promise.allSettled([
+    slotPrepare(
+      { slotId, branch: workBranch, prepareProfile: 'core' },
+      () => {},
+      undefined,
+      { preserveBranch: true },
+    ),
+  ]);
+  assert.equal(await git(slotRepo, 'rev-parse', `refs/heads/${workBranch}`), oldBase);
+});
