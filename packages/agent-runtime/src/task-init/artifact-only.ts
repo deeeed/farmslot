@@ -119,6 +119,19 @@ export function applyArtifactOnlyTaskPolicy(
     /git diff main\.\.HEAD/g,
     literalReplacement(hasBase ? `git diff ${replayBase}` : 'git diff'),
   );
+  // `git merge-base origin/<default> HEAD` is the same main-relative baseline (run
+  // 6562483b's fix-bug step 7). It resolved to the pin there only by luck.
+  result = result.replace(
+    /git diff "?\$\(git merge-base origin\/[^\s)"]+ HEAD\)"?/g,
+    literalReplacement(hasBase ? `git diff ${replayBase}` : 'git diff'),
+  );
+  result = hasBase
+    ? result.replace(
+        /"?\$\(git merge-base origin\/[^\s)"]+ HEAD\)"?/g,
+        literalReplacement(replayBase),
+      )
+    : // As with commit ranges below: no honest substitute without a base.
+      result.replace(/^.*\$\(git merge-base origin\/.*(?:\r?\n|$)/gm, '');
   if (hasBase) {
     result = result.replace(
       /git log main\.\.HEAD/g,
