@@ -21,7 +21,13 @@ export interface IdleDevServerDeps {
     refresh?: boolean,
   ): IdleDevServerPointer | undefined | Promise<IdleDevServerPointer | undefined>;
   census(slotId: string): Promise<ProcessCensusRow[]>;
-  write(slotId: string, expected: SlotRow, fields: Record<string, unknown>): Promise<boolean>;
+  /** `admit` is checked inside the conditional write, after its row predicate. */
+  write(
+    slotId: string,
+    expected: SlotRow,
+    fields: Record<string, unknown>,
+    admit?: () => boolean,
+  ): Promise<boolean>;
   stop(
     slotId: string,
     rows: ProcessCensusRow[],
@@ -222,12 +228,22 @@ export class IdleDevServerReaper {
         ? current.idle_devservers.filter((id): id is string => typeof id === 'string')
         : [];
       if (
-        !(await this.deps.write(slotId, row, {
-          idle_devservers: [...new Set([...prior, resource.id])],
-          idle_devserver_epoch: row.slot_epoch,
-        }))
+        !(await this.deps.write(
+          slotId,
+          row,
+          {
+            idle_devservers: [...new Set([...prior, resource.id])],
+            idle_devserver_epoch: row.slot_epoch,
+          },
+          () => !unobserved(),
+        ))
       ) {
-        this.decide(slotId, resource.id, 'skip at stop: slot row write refused');
+        if (unobserved()) this.idle.delete(key);
+        this.decide(
+          slotId,
+          resource.id,
+          unobserved() ? 'skip at stop: observation lost' : 'skip at stop: slot row write refused',
+        );
         return;
       }
       let lost: string | undefined;
@@ -243,9 +259,10 @@ export class IdleDevServerReaper {
             : (this.deps.explain?.(slotId, resource.id) ?? 'watched process lost');
           return false;
         }
-        lost = unobserved()
-          ? 'observation lost'
-          : ((await this.quietBlocker(slotId, row, resource.id)) ?? undefined);
+        // Last, after every awaited check: a loss during them still refuses.
+        lost =
+          (await this.quietBlocker(slotId, row, resource.id)) ??
+          (unobserved() ? 'observation lost' : undefined);
         return !lost;
       });
       if (stopped === true) this.idle.delete(key);

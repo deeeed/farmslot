@@ -299,7 +299,7 @@ const idleDevServers = new IdleDevServerReaper({
     if (result.exitCode !== 0) throw new Error('Idle dev server process census unavailable');
     return parseProcessCensus(result.stdout);
   },
-  write: async (slotId, expected, fields) =>
+  write: async (slotId, expected, fields, admit) =>
     (
       await markSlotStatusIf(
         slotId,
@@ -307,7 +307,8 @@ const idleDevServers = new IdleDevServerReaper({
           row.slot_epoch === expected.slot_epoch &&
           row.current_run_id === expected.current_run_id &&
           row.phase !== 'releasing' &&
-          (row.handoff_run_id ?? null) === (expected.handoff_run_id ?? null),
+          (row.handoff_run_id ?? null) === (expected.handoff_run_id ?? null) &&
+          (admit?.() ?? true),
         fields,
       )
     ).applied,

@@ -70,9 +70,10 @@ function fixture(status: Run['status'] = 'blocked') {
     pointer: () => pointer,
     census: async () => [frame],
     retained: async () => false,
-    write: async (_slot, expected, fields) => {
+    write: async (_slot, expected, fields, admit) => {
       if (row.slot_epoch !== expected.slot_epoch || row.current_run_id !== expected.current_run_id)
         return false;
+      if (admit && !admit()) return false;
       row = { ...row, ...fields };
       return true;
     },
@@ -376,4 +377,32 @@ test('an observation lost during the expiring sweep refuses the stop', async () 
   };
   await f.reaper.sweep('slot-a');
   assert.equal(f.stopped(), 0, 'the final stop guard rechecks observation');
+});
+
+test('an observation lost during an awaited quiet check writes no marker and stops nothing', async () => {
+  const f = fixture();
+  let losses = 0;
+  let calls = 0;
+  let loseAt = 0; // which lease check of the sweep sees the loss
+  f.deps.observed = () => losses;
+  f.deps.retained = async () => {
+    if (++calls === loseAt) losses++;
+    return false;
+  };
+  await f.reaper.sweep('slot-a');
+  f.advance();
+  // Lease checks in an expiring sweep: the loop, the pre-marker quiet check, the stop recheck.
+  calls = 0;
+  loseAt = 2;
+  await f.reaper.sweep('slot-a');
+  assert.equal(f.stopped(), 0);
+  assert.equal((await f.deps.row('slot-a'))?.idle_devservers, undefined, 'no restart marker');
+  calls = 0;
+  loseAt = 0;
+  await f.reaper.sweep('slot-a');
+  f.advance();
+  calls = 0;
+  loseAt = 3;
+  await f.reaper.sweep('slot-a');
+  assert.equal(f.stopped(), 0, 'a loss during the final quiet check refuses the stop');
 });
