@@ -877,11 +877,19 @@ async function slotPrepareInner(
     if (probe.exitCode !== 0) return;
     const [onBranch, own, tip = '', baseSha = ''] = probe.stdout.trim().split('\n');
     if (onBranch !== branch || own !== '0' || !tip || !baseSha || tip === baseSha) return;
-    const moved = await mutateGit(
-      'advance-empty-work-branch',
-      `cd ${shellQuote(vars.remoteRepo)} && { ${CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND}; } && git merge --ff-only --no-overwrite-ignore ${shellQuote(baseSha)}`,
-      [baseSha],
+    // The flag sweep ends with `exit`, so it runs as its own command before the merge.
+    const sweep = await mutateGit(
+      'clear-advance-index-flags',
+      `cd ${shellQuote(vars.remoteRepo)} && { ${CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND}; }`,
     );
+    const moved =
+      sweep.exitCode !== 0
+        ? sweep
+        : await mutateGit(
+            'advance-empty-work-branch',
+            `cd ${shellQuote(vars.remoteRepo)} && git merge --ff-only --no-overwrite-ignore ${shellQuote(baseSha)}`,
+            [baseSha],
+          );
     if (moved.exitCode !== 0) {
       step(
         'branch',
