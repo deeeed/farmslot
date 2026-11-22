@@ -5,12 +5,17 @@ import { DEFAULT_TASK_DIR } from '@farmslot/protocol';
 import { resolveProjectRuntimeDirName, resolveProjectTaskDirName } from '../core/config.js';
 import { execOnSlot, getProjectField, type RawProjectJson, type SlotVars } from '../core/index.js';
 import { shellQuote } from '../core/tmux.js';
+import { flowDir } from '../intelligence/engine.js';
 
 const DEFAULT_RETENTION_HOURS = 7 * 24;
 const CLEANUP_TIMEOUT_MS = 120_000;
 
 export interface SlotStorageCleanupOptions {
   activeTaskRel?: string | null;
+  /** Absolute paths the task-dir prune must keep (scratch that parking refused). */
+  keepPaths?: string[];
+  /** Skip the task-dir prune (scratch parking could not classify the task root). */
+  skipTaskPrune?: boolean;
   includeBrowserProfiles?: boolean;
   retentionHours?: number;
 }
@@ -113,6 +118,8 @@ export function buildSlotStorageCleanupCommand(input: SlotStorageCleanupCommandI
     remoteJoin(input.repo, 'temp/agentic'),
   ]);
   const config = {
+    keepPaths: input.keepPaths ?? [],
+    skipTaskPrune: input.skipTaskPrune === true,
     activeTaskPaths,
     cutoffMinutes: retentionMinutes,
     includeBrowserProfiles: input.includeBrowserProfiles === true,
@@ -135,6 +142,7 @@ export function buildSlotStorageCleanupCommand(input: SlotStorageCleanupCommandI
     'cfg = json.loads(sys.argv[1])',
     'repo = os.path.abspath(cfg["repo"])',
     'active_tasks = {os.path.abspath(path) for path in cfg.get("activeTaskPaths", [])}',
+    'kept = {os.path.realpath(path) for path in cfg.get("keepPaths", [])}',
     'cutoff_seconds = float(cfg["cutoffMinutes"]) * 60.0',
     'now = time.time()',
     '',
@@ -183,7 +191,7 @@ export function buildSlotStorageCleanupCommand(input: SlotStorageCleanupCommandI
     '        unique[os.path.abspath(path)] = path',
     '    ordered = sorted(unique.values(), key=lambda p: os.stat(p).st_mtime, reverse=True)',
     '    for path in ordered:',
-    '        if os.path.abspath(path) in active_tasks:',
+    '        if os.path.abspath(path) in active_tasks or os.path.realpath(path) in kept:',
     '            continue',
     '        age_seconds = now - os.stat(path).st_mtime',
     '        if age_seconds > cutoff_seconds:',
@@ -192,6 +200,9 @@ export function buildSlotStorageCleanupCommand(input: SlotStorageCleanupCommandI
     'for root in cfg["taskRoots"]:',
     '    if not inside_repo(root):',
     '        print_skipped("task-root", root, "outside repo")',
+    '        continue',
+    '    if cfg.get("skipTaskPrune"):',
+    '        print_skipped("task-root", root, "scratch parking unavailable")',
     '        continue',
     '    prune("task-dir", task_candidates(root))',
     '',
@@ -264,29 +275,28 @@ export interface TaskScratchParkResult {
   refused: Array<{ path: string; reason: string }>;
 }
 
+// The flow folders Farmslot creates under the task root (tasks/writer.ts: flowDir(flowType)).
+const FLOW_TYPES = ['fix-bug', 'review-pr', 'qa', 'dev', 'pr-complete', 'update-branch'] as const;
+
 /**
  * Workers sometimes write scratch beside their task dir (temp/tasks/scratch-probe,
  * temp/tasks/feat/scratch-tat-4753). No run owns it, so it outlived release and the next
- * blind run saw it. Move `scratch*` directories directly under the task root or a flow
- * folder to `<parkHome>/parked-scratch/<slot>/<time>/`, by atomic rename only: never delete,
- * and refuse rather than copy across devices. A directory holding TASK.md is a task dir (a
- * SCRATCH-12 Jira key or a QA title can produce `scratch-…`) and is never moved.
+ * blind run saw it. Move `scratch*` directories directly under the task root or one of its
+ * flow folders to a fresh `<parkHome>/parked-scratch/<slot>/<time>/`, by atomic rename only:
+ * never delete, and refuse rather than copy across devices. A directory holding TASK.md is a
+ * task dir (a SCRATCH-12 Jira key or a QA title can produce `scratch-…`) and is never moved;
+ * a TASK.md that cannot be checked counts as present.
  */
 export function buildTaskScratchParkCommand(input: {
   repo: string;
   taskDirName: string;
-  artifactDirName: string;
   slotId: string;
   parkHome: string;
 }): string {
-  const taskRoot = remoteJoin(input.repo, safeRelativeDir(input.taskDirName, DEFAULT_TASK_DIR));
-  const artifactRoot = remoteJoin(
-    input.repo,
-    safeRelativeDir(input.artifactDirName, input.taskDirName),
-  );
   const config = {
     repo: input.repo.replace(/\/+$/, ''),
-    taskRoots: unique([taskRoot, artifactRoot]),
+    taskRoot: safeRelativeDir(input.taskDirName, DEFAULT_TASK_DIR),
+    flows: unique(FLOW_TYPES.map((flow) => flowDir(flow))),
     parkRoot: `${input.parkHome.replace(/\/+$/, '')}/parked-scratch/${input.slotId.replace(/[^A-Za-z0-9._-]/g, '_')}`,
   };
   return [
@@ -295,34 +305,44 @@ export function buildTaskScratchParkCommand(input: {
     'import json, os, sys, time',
     'cfg = json.loads(sys.argv[1])',
     'repo = os.path.realpath(cfg["repo"])',
-    'park = os.path.join(os.path.expanduser(cfg["parkRoot"]), time.strftime("%Y%m%d-%H%M%S"))',
+    'def emit(kind, path, detail):',
+    '    print(json.dumps({"kind": kind, "path": path, "detail": detail}))',
     'def plain_dir(path):',
     '    # No symlink anywhere on the way: the real path is the spelled path.',
-    '    return os.path.isdir(path) and os.path.realpath(path) == os.path.abspath(path)',
-    'def scratch_in(parent):',
-    '    if not plain_dir(parent):',
-    '        return []',
-    '    return [os.path.join(parent, n) for n in sorted(os.listdir(parent))',
-    '            if n.startswith("scratch") and plain_dir(os.path.join(parent, n))',
-    '            and not os.path.lexists(os.path.join(parent, n, "TASK.md"))]',
-    'seen = set()',
-    'for root in cfg["taskRoots"]:',
-    '    # Spelled under the real repo path, so any symlink below it shows as a mismatch.',
-    '    root = os.path.join(repo, os.path.relpath(os.path.abspath(root), os.path.abspath(cfg["repo"])))',
-    '    if root in seen or not plain_dir(root) or os.path.commonpath([repo, root]) != repo:',
+    '    return os.path.isdir(path) and os.path.realpath(path) == path',
+    'def task_marker(path):',
+    '    try:',
+    '        os.lstat(os.path.join(path, "TASK.md"))',
+    '        return True',
+    '    except FileNotFoundError:',
+    '        return False',
+    '    except OSError:',
+    '        return True',
+    'root = os.path.join(repo, cfg["taskRoot"])',
+    'parents = [root] + [os.path.join(root, flow) for flow in cfg["flows"]]',
+    'found = []',
+    'for parent in parents if plain_dir(root) else []:',
+    '    if plain_dir(parent):',
+    '        found += [os.path.join(parent, n) for n in sorted(os.listdir(parent)) if n.startswith("scratch")]',
+    'home = os.path.realpath(os.path.expanduser(cfg["parkRoot"]))',
+    'park = None',
+    'for path in found:',
+    '    if not plain_dir(path) or task_marker(path):',
     '        continue',
-    '    seen.add(root)',
-    '    flows = [os.path.join(root, n) for n in sorted(os.listdir(root)) if not n.startswith("scratch")]',
-    '    for path in scratch_in(root) + [p for f in flows for p in scratch_in(f)]:',
-    '        dest = os.path.join(park, os.path.relpath(path, repo))',
-    '        os.makedirs(os.path.dirname(dest), exist_ok=True)',
-    '        if os.path.lexists(dest):',
-    '            print(f"refused\\t{path}\\tdestination exists")',
-    '        elif os.stat(path).st_dev != os.stat(os.path.dirname(dest)).st_dev:',
-    '            print(f"refused\\t{path}\\tparking crosses devices")',
-    '        else:',
-    '            os.rename(path, dest)',
-    '            print(f"parked\\t{path}\\t{dest}")',
+    '    if park is None:',
+    '        os.makedirs(home, exist_ok=True)',
+    '        # A fresh directory of our own: nothing inside it can already exist.',
+    '        park = os.path.join(home, time.strftime("%Y%m%d-%H%M%S") + f"-{os.getpid()}")',
+    '        os.mkdir(park)',
+    '    dest = os.path.join(park, os.path.relpath(path, repo))',
+    '    os.makedirs(os.path.dirname(dest), exist_ok=True)',
+    '    if os.path.realpath(os.path.dirname(dest)) != os.path.dirname(dest):',
+    '        emit("refused", path, "parking location is not a plain directory")',
+    '    elif os.stat(path).st_dev != os.stat(park).st_dev:',
+    '        emit("refused", path, "parking crosses devices")',
+    '    else:',
+    '        os.rename(path, dest)',
+    '        emit("parked", path, dest)',
     'PY',
   ].join('\n');
 }
@@ -330,11 +350,12 @@ export function buildTaskScratchParkCommand(input: {
 export function parseTaskScratchParkOutput(stdout: string): TaskScratchParkResult {
   const result: TaskScratchParkResult = { parked: [], refused: [] };
   for (const line of stdout.split('\n')) {
-    const [kind, pathValue, detail] = line.split('\t');
-    if (kind === 'parked' && pathValue && detail)
-      result.parked.push({ path: pathValue, to: detail });
-    else if (kind === 'refused' && pathValue && detail)
-      result.refused.push({ path: pathValue, reason: detail });
+    if (!line.trim()) continue;
+    const record = JSON.parse(line) as { kind?: string; path?: string; detail?: string };
+    if (typeof record.path !== 'string' || typeof record.detail !== 'string') continue;
+    if (record.kind === 'parked') result.parked.push({ path: record.path, to: record.detail });
+    else if (record.kind === 'refused')
+      result.refused.push({ path: record.path, reason: record.detail });
   }
   return result;
 }
@@ -343,11 +364,9 @@ export async function parkTaskScratch(
   vars: SlotVars,
   projectJson: RawProjectJson,
 ): Promise<TaskScratchParkResult> {
-  const taskDirName = resolveProjectTaskDirName(projectJson);
   const command = buildTaskScratchParkCommand({
     repo: vars.remoteRepo,
-    taskDirName,
-    artifactDirName: getProjectField(projectJson, 'paths.artifact_dir') || taskDirName,
+    taskDirName: resolveProjectTaskDirName(projectJson),
     slotId: vars.slotId,
     parkHome: '~/.farmslot-dev',
   });

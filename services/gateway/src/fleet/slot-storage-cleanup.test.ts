@@ -222,6 +222,8 @@ test('release parks scratch directories by rename and leaves task dirs, even scr
   // A SCRATCH-12 Jira key names a real task dir scratch-12-<date>; TASK.md keeps it in place.
   await write('temp/tasks/fix/scratch-12-1123-101010/TASK.md');
   await write('temp/tasks/feat/real-task/TASK.md');
+  // Only the task root and Farmslot's flow folders: not any other directory's children.
+  await write('temp/tasks/manual-notes/scratch-export/notes.md');
   await mkdir(path.join(repo, 'outside'), { recursive: true });
   await symlink(path.join(repo, 'outside'), path.join(repo, 'temp/tasks/scratch-link'));
   const run = async () =>
@@ -232,7 +234,6 @@ test('release parks scratch directories by rename and leaves task dirs, even scr
           buildTaskScratchParkCommand({
             repo,
             taskDirName: 'temp/tasks',
-            artifactDirName: 'temp/tasks',
             slotId: 'macpro-mmt-4',
             parkHome: home,
           }),
@@ -265,5 +266,31 @@ test('release parks scratch directories by rename and leaves task dirs, even scr
     true,
     'symlinks are not followed',
   );
+  assert.equal(await exists(path.join(repo, 'temp/tasks/manual-notes/scratch-export')), true);
   assert.deepEqual(result.refused, []);
+});
+
+test('the age prune keeps paths it is told to keep and can skip task dirs entirely', async () => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-keep-'));
+  const refused = path.join(repo, 'temp/tasks/feat/scratch-old');
+  const stale = path.join(repo, 'temp/tasks/feat/old-task');
+  await Promise.all([refused, stale].map((dir) => mkdir(dir, { recursive: true })));
+  await Promise.all([refused, stale].map(touchOld));
+  const prune = (extra: Record<string, unknown>) =>
+    execFileAsync('/bin/sh', [
+      '-c',
+      buildSlotStorageCleanupCommand({
+        repo,
+        taskDirName: 'temp/tasks',
+        artifactDirName: 'temp/tasks',
+        runtimeDirName: '.agent',
+        retentionHours: 0.5,
+        ...extra,
+      }),
+    ]);
+  await prune({ skipTaskPrune: true });
+  assert.equal(await exists(stale), true, 'no task pruning when scratch parking failed');
+  await prune({ keepPaths: [refused] });
+  assert.equal(await exists(refused), true, 'refused scratch is not deleted by the prune');
+  assert.equal(await exists(stale), false);
 });
