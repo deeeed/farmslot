@@ -643,7 +643,7 @@ test('authored Markdown preserves selected package provenance and refuses eviden
   const transcript = await invoke(['--format', 'transcript']);
   assert.match(transcript, /^Recipe: .*\n/);
   assert.match(transcript, /\n✓ /);
-  assert.match(transcript, /\nArtifacts: recipe run selected \(trace\.json, report\.md\)\n$/);
+  assert.match(transcript, /\nArtifacts: recipe run selected \(trace\.json, report\.md\); asserted values are read from its retained reports\n$/);
   const withTranscript = JSON.parse(
     await invoke(['--format', 'markdown', '--transcript', '--json']),
   );

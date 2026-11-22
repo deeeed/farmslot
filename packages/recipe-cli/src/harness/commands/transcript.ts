@@ -357,7 +357,7 @@ export async function renderRecipeTranscript(input: RecipeTranscriptInput): Prom
   // A basename only: publication drops PR-body lines that carry a task-local path.
   footer.push(
     clip(
-      `Artifacts: recipe run ${path.basename(input.displayDir ?? root)} (trace.json, report.md)`,
+      `Artifacts: recipe run ${path.basename(input.displayDir ?? root)} (trace.json, report.md); asserted values are read from its retained reports`,
       MAX_LINE,
     ),
   );
@@ -365,7 +365,8 @@ export async function renderRecipeTranscript(input: RecipeTranscriptInput): Prom
   const nodes = await Promise.all(
     entries.map(async (entry) => ({
       failed: entry.ok !== true,
-      head: `${entry.ok === true ? '✓' : '✗'} ${safeText(entry.nodeId)}  ${safeText(entry.action)}`,
+      // Bounded so a long id cannot push the details (and any warning) past the line clip.
+      head: `${entry.ok === true ? '✓' : '✗'} ${clip(safeText(entry.nodeId), MAX_VALUE)}  ${clip(safeText(entry.action), 32)}`,
       parts: await entryDetail(root, entry),
     })),
   );

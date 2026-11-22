@@ -264,8 +264,9 @@ function stateProofSourceMismatch(
   indexed: readonly Record<string, unknown>[],
   headSha: string,
 ): RecipeValidationFinding | undefined {
-  const compared = groupRecipeCaptureComparisons(input, input.claims?.criteria ?? []).media.some(
-    (media) => media.capture?.role === 'after',
+  // Only an after capture bound to one of this execution's claims is itself checked against the head.
+  const compared = groupRecipeCaptureComparisons(input, input.claims?.criteria ?? []).rows.some(
+    (row) => row.after.length > 0,
   );
   const product = indexed.find((entry) => entry.path === 'product-provenance.json')?.metadata;
   if (compared || !isRecord(product)) return undefined;

@@ -154,7 +154,7 @@ test('renders one deterministic line per node with provenance, asserted values a
   assert.match(text, /^✓ done {2}end$/m);
   assert.match(text, /^5\/5 nodes passed · status pass$/m);
   assert.match(text, /^AC3 pass \[state\] ← ac3-trade, ac3-assert$/m);
-  assert.equal(lines.at(-1), 'Artifacts: recipe run r1 (trace.json, report.md)');
+  assert.equal(lines.at(-1), 'Artifacts: recipe run r1 (trace.json, report.md); asserted values are read from its retained reports');
   assert.match(text, /^Inputs: .*output_dir=…\/proof$/m);
   assert.doesNotMatch(text, /temp\/|recipe-runs\//);
 });
@@ -263,7 +263,7 @@ test('task Markdown puts the selected attempt transcript in the validation logs 
   const logs = body.slice(body.indexOf('## **Validation Logs**'));
   assert.match(
     logs,
-    /Transcript:\n\n```\nRecipe: Permissioned dex on testnet, Core\n[\s\S]*\nArtifacts: recipe run r1 \(trace\.json, report\.md\)\n```\n\n<details><summary>Full output/,
+    /Transcript:\n\n```\nRecipe: Permissioned dex on testnet, Core\n[\s\S]*\nArtifacts: recipe run r1 \(trace\.json, report\.md\); asserted values are read from its retained reports\n```\n\n<details><summary>Full output/,
   );
   assert.ok(body.indexOf('Transcript:') < body.indexOf('Pre-merge author checklist'));
 });
@@ -320,7 +320,7 @@ test('the transcript format renders only a validated selected attempt', async (t
   assert.equal(result.artifactDir, attempt);
   assert.equal(result.transcript, body);
   assert.match(body, /^Recipe: Permissioned dex on testnet, Core\nRun not recorded · /);
-  assert.match(body, /\nArtifacts: recipe run r2 \(trace\.json, report\.md\)\n$/);
+  assert.match(body, /\nArtifacts: recipe run r2 \(trace\.json, report\.md\); asserted values are read from its retained reports\n$/);
   assert.equal(result.sections, undefined);
 
   await validPackage(attempt, { ...RUNNER, git_ref: 'other-revision' });
@@ -439,6 +439,13 @@ test('review r2: group semantics, foreign ledger rows, stdout and raw labels', a
   assert.match(
     await renderRecipeTranscript({ artifactDir: anyDir }),
     /⚠ retained report no longer satisfies this assertion/,
+  );
+  const longId = await headlessPackage(path.join(base, 'long-id'), [
+    { ...check({ path: '$.ok', operator: 'eq', value: false }), nodeId: 'n'.repeat(153) },
+  ]);
+  assert.match(
+    await renderRecipeTranscript({ artifactDir: longId }),
+    /^✓ n+… {2}assert_json {2}⚠ retained report no longer satisfies this assertion/m,
   );
 
   // Ledger rows retained from or recorded by another execution are not this run's proof.

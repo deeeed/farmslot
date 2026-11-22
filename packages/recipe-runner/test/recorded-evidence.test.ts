@@ -886,7 +886,7 @@ test('package validation refuses omitted registered claim rows', () => {
     },
   });
   const snapshot = { baseSha: 'b'.repeat(40), headSha: head };
-  const mismatches = (input: ReturnType<typeof withProduct>) =>
+  const mismatches = (input: Parameters<typeof validateRecordedEvidencePackage>[0]) =>
     validateRecordedEvidencePackage(input, snapshot).findings.filter(
       (finding) => finding.code === 'comparison-source-mismatch',
     );
@@ -898,6 +898,27 @@ test('package validation refuses omitted registered claim rows', () => {
   );
   assert.equal(mismatches(withProduct({ adapter: 'core', git_ref: head, dirty: true })).length, 1);
   assert.deepEqual(mismatches(withProduct({ adapter: 'core', git_ref: head, dirty: false })), []);
+  // An after capture bound to no claim is not compared, so it cannot stand in for the check.
+  const staleProduct = withProduct({ adapter: 'core', git_ref: stale, dirty: false });
+  const unassignedAfter = {
+    ...staleProduct,
+    manifest: {
+      ...staleProduct.manifest,
+      artifacts: [
+        ...staleProduct.manifest.artifacts,
+        {
+          path: 'stills/after.png',
+          type: 'screenshot',
+          category: 'validation',
+          capture: { role: 'after', recipeRunId: 'claim-completeness', nodeId: 'done', traceIndex: 2 },
+        },
+      ],
+    },
+  };
+  assert.deepEqual(
+    mismatches(unassignedAfter).map(({ path }) => path),
+    ['product-provenance.json'],
+  );
   // Without a frozen head (or provenance) nothing is compared, as for media.
   assert.ok(
     !validateRecordedEvidencePackage(withProduct({ git_ref: stale, dirty: false })).findings.some(
