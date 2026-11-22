@@ -870,16 +870,27 @@ async function slotPrepareInner(
   const advanceEmptyWorkBranch = async () => {
     if (!branch || opts?.startRef || opts?.stackBase) return;
     const base = `origin/${defaultBranch}`;
+    // Every caller has just put the slot on the work branch. Anything else means the
+    // checkout changed under prepare, which cannot vouch for the tree it would continue on.
+    const head = await execGit(
+      'read-work-branch-head',
+      vars,
+      withFarmGitConfig(`cd ${shellQuote(vars.remoteRepo)} && git symbolic-ref -q HEAD`),
+    );
+    if (head.stdout.trim() !== `refs/heads/${branch}`)
+      throw new Error(
+        `${vars.slotId} is not on ${branch} after checkout (HEAD ${head.stdout.trim() || 'detached'}); refusing to continue on an unverified checkout`,
+      );
     const probe = await execGit(
       'probe-empty-work-branch',
       vars,
       withFarmGitConfig(
-        `cd ${shellQuote(vars.remoteRepo)} && git symbolic-ref -q --short HEAD && git rev-list --count ${shellQuote(`${base}..HEAD`)} && git rev-parse HEAD ${shellQuote(`${base}^{commit}`)}`,
+        `cd ${shellQuote(vars.remoteRepo)} && git rev-list --count ${shellQuote(`${base}..HEAD`)} && git rev-parse HEAD ${shellQuote(`${base}^{commit}`)}`,
       ),
     );
     if (probe.exitCode !== 0) return;
-    const [onBranch, own, tip = '', baseSha = ''] = probe.stdout.trim().split('\n');
-    if (onBranch !== branch || own !== '0' || !tip || !baseSha || tip === baseSha) return;
+    const [own, tip = '', baseSha = ''] = probe.stdout.trim().split('\n');
+    if (own !== '0' || !tip || !baseSha || tip === baseSha) return;
     // The flag sweep ends with `exit`, so it runs as its own command before the merge.
     const sweep = await mutateGit(
       'clear-advance-index-flags',

@@ -77,20 +77,26 @@ mock.module('../methods/slot/fixtures.js', {
   namedExports: { ...realFixtures, runFixtureSync: async () => undefined },
 });
 
-// Lets a test switch the slot to another branch just before the guarded move runs.
+// Lets a test switch the slot to another branch around a guarded command.
 let beforeMove: (() => void) | undefined;
+let afterCheckout: (() => void) | undefined;
 const realMutations = await import('../run-lifecycle/validation-run-commits.js');
 mock.module('../run-lifecycle/validation-run-commits.js', {
   namedExports: {
     ...realMutations,
     slotGitMutations: (...args: Parameters<typeof realMutations.slotGitMutations>) => {
       const guarded = realMutations.slotGitMutations(...args);
-      return (command: string, targetTrees?: string[]) => {
+      return async (command: string, targetTrees?: string[]) => {
         if (beforeMove && command.includes('reset --keep')) {
           beforeMove();
           beforeMove = undefined;
         }
-        return guarded(command, targetTrees);
+        const result = await guarded(command, targetTrees);
+        if (afterCheckout && /git checkout '?fix\//.test(command)) {
+          afterCheckout();
+          afterCheckout = undefined;
+        }
+        return result;
       };
     },
   },
@@ -480,4 +486,21 @@ test('a branch switch during the move stops prepare', needsTmuxSandbox, async (t
   );
   assert.equal(await git(slotRepo, 'rev-parse', `refs/heads/${workBranch}`), oldBase);
   assert.equal(await git(slotRepo, 'branch', '--show-current'), 'operator-branch');
+});
+
+test('a branch switch right after the replay checkout stops prepare', needsTmuxSandbox, async (t) => {
+  const { slotId, slotRepo, oldBase } = await staleBaseSlot(t);
+  await git(slotRepo, 'branch', workBranch, oldBase);
+  afterCheckout = () => execFileSync('git', ['-C', slotRepo, 'checkout', '-q', '-b', 'operator-branch']);
+  await assert.rejects(
+    slotPrepare(
+      { slotId, branch: workBranch, prepareProfile: 'core' },
+      () => {},
+      undefined,
+      { preserveBranch: true },
+    ),
+    /is not on fix\/505-bug-ios-ignores-preferrawstrea after checkout/,
+  );
+  assert.equal(await git(slotRepo, 'branch', '--show-current'), 'operator-branch');
+  assert.equal(await git(slotRepo, 'rev-parse', `refs/heads/${workBranch}`), oldBase);
 });
