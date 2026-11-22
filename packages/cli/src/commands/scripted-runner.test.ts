@@ -293,8 +293,8 @@ test('late-ack consumes a delivered prompt and delays its acknowledgement', asyn
   const scheduled = t.mock.method(globalThis, 'setTimeout');
   const delays = () => scheduled.mock.calls.filter((call) => call.arguments[1] === 100).length;
   // fs.watch and git child processes are real I/O; yield the event loop until they settle.
-  // Mocked timers also stop node:test's own timeout, so bound a hang on the unmocked
-  // monotonic clock. This guard only catches regressions; it gates no scripted delay.
+  // Without a per-test timeout only the 180s file cap would stop a hang, so bound it on the
+  // unmocked monotonic clock. This guard only catches regressions; it gates no scripted delay.
   const settle = async (predicate: () => boolean) => {
     const hangAt = performance.now() + 30_000;
     while (!predicate()) {
