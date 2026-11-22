@@ -57,6 +57,7 @@ test('a WARM re-review with no requested base records the base branch, so a pass
   git('init', '-q', '-b', 'main');
   git('config', 'user.email', 'test@example.com');
   git('config', 'user.name', 'Test');
+  git('config', 'commit.gpgsign', 'false');
   await commit('base.ts', 'export const base = 1;\n');
   git('update-ref', 'refs/remotes/origin/main', 'HEAD');
   git('checkout', '-q', '-b', 'feature');
