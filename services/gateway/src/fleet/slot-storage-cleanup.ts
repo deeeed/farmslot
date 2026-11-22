@@ -299,8 +299,8 @@ const FLOW_TYPES = ['fix-bug', 'review-pr', 'qa', 'dev', 'pr-complete', 'update-
 /**
  * Workers sometimes write scratch beside their task dir (temp/tasks/scratch-probe,
  * temp/tasks/feat/scratch-tat-4753). No run owns it, so it outlived release and the next
- * blind run saw it. Move `scratch*` directories directly under the task root, its parent
- * (temp/ for temp/tasks; never the checkout root) or one of its
+ * blind run saw it. Move `scratch*` directories directly under the task root, under temp/
+ * (only for the temp/tasks layout) or under one of its
  * flow folders to a fresh `<parkHome>/parked-scratch/<slot>/<time>/`, by atomic rename only:
  * never delete, and refuse rather than copy across devices. A directory holding TASK.md is a
  * task dir (a SCRATCH-12 Jira key or a QA title can produce `scratch-…`) and is never moved;

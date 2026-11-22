@@ -372,7 +372,7 @@ test('a parking directory that already exists is never reused, for any candidate
 });
 
 // macpro-mmt-5 after run 41fc25bd: a worker left temp/scratch-tat4567 directly under temp/.
-// The task root's parent is scanned too, but never the checkout root (a `.task` layout).
+// temp/ is scanned only for the temp/tasks layout; never a custom root's parent or the checkout root.
 test('scratch directly under temp/ is parked for the temp/tasks layout only', async () => {
   const repo = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-temp-'));
   const home = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-temp-home-'));
@@ -400,6 +400,16 @@ test('scratch directly under temp/ is parked for the temp/tasks layout only', as
         ])
       ).stdout,
     );
+  // Other layouts first, while temp/scratch-tat4567 is still in place: they must not move it.
+  assert.deepEqual((await park('.task')).parked, []);
+  assert.deepEqual((await park('support/tasks')).parked, []);
+  assert.equal(await exists(path.join(repo, 'temp/scratch-tat4567/run.json')), true);
+  assert.equal(
+    await exists(path.join(repo, 'scratch-root/x')),
+    true,
+    'the checkout root is never scanned',
+  );
+  assert.equal(await exists(path.join(repo, 'support/scratch-assets/x')), true);
   const temp = await park('temp/tasks');
   assert.deepEqual(
     temp.parked.map((entry) => path.basename(entry.path)),
@@ -410,14 +420,4 @@ test('scratch directly under temp/ is parked for the temp/tasks layout only', as
     true,
     'the TASK.md guard still applies',
   );
-  const dotTask = await park('.task');
-  assert.deepEqual(dotTask.parked, []);
-  assert.equal(
-    await exists(path.join(repo, 'scratch-root/x')),
-    true,
-    'the checkout root is never scanned',
-  );
-  // A custom task root's parent is not scanned: only temp/ for the temp/tasks layout.
-  assert.deepEqual((await park('support/tasks')).parked, []);
-  assert.equal(await exists(path.join(repo, 'support/scratch-assets/x')), true);
 });
