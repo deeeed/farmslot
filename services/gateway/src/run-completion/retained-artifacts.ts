@@ -265,17 +265,21 @@ export function retainedRunBundleRef(
       throw new Error('The requested retained snapshot does not match this decision.');
     selected = requested;
   }
-  if (!selected)
+  if (!selected) {
+    // A failed capture is the usual reason there is nothing retained, and its
+    // message names the cause (an unmounted bundle volume, no write room), which
+    // retaining again cannot fix. A run that retained something and then failed a
+    // later refresh keeps that bundle, so a lookup for a replaced digest is not
+    // the capture failure and must not quote it.
+    const retainedNothing = runBundleRefs(run).length === 0;
     throw new GatewayMethodError(
       'RUN_ARTIFACTS_NOT_RETAINED',
-      // A failed capture is the usual reason there is no bundle, and its message
-      // names the cause (an unmounted bundle volume, no write room). Retaining
-      // again cannot succeed until that is fixed, so the refusal carries it.
-      run.output?.captureError
+      run.output?.captureError && retainedNothing
         ? `Run artifacts are not retained: ${run.output.captureError}`
         : 'Run artifacts are not retained.',
       { userAction: `farmslot runs bundle retain ${run.id}` },
     );
+  }
   return localBundleRef(run, selected);
 }
 

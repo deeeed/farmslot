@@ -1,0 +1,1 @@
+- A completion hold on unreadable acceptance now quotes the reader's own refusal, and a run that retained nothing because its artifact capture failed says so, naming the capture error (an unmounted bundle volume, no write room). A run that finished its work and could not be retained no longer fails with a message that blames its acceptance criteria.
