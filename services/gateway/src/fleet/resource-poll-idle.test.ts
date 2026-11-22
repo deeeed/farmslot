@@ -7,8 +7,21 @@ const config = await import('../core/config.js');
 mock.module('../core/config.js', {
   namedExports: {
     ...config,
-    resolveSlot: async () => ({ pool: { project: 'fixture-project' }, slot: {} }),
-    loadProjectVars: async () => ({ projectJson: {} }),
+    resolveSlot: async () => ({
+      pool: { project: 'fixture-project' },
+      slot: { resources: { server: {} } },
+    }),
+    loadProjectVars: async () => ({
+      projectJson: {
+        resources: {
+          server: {
+            type: 'dev-server',
+            hooks: { boot: 'boot', health: 'health' },
+            watch: { type: 'port', port: 9300 },
+          },
+        },
+      },
+    }),
   },
 });
 const state = await import('../core/state.js');
@@ -34,6 +47,7 @@ mock.module('./state.js', {
 });
 const idle = await import('../run-lifecycle/idle-devserver-service.js');
 const swept: string[] = [];
+const forgotten: string[] = [];
 mock.module('../run-lifecycle/idle-devserver-service.js', {
   namedExports: {
     ...idle,
@@ -41,6 +55,7 @@ mock.module('../run-lifecycle/idle-devserver-service.js', {
       swept.push(slotId);
       if (slotId === 'slot-a') await idle.reapIdleDevServers(slotId);
     },
+    forgetIdleDevServers: (slotId: string) => forgotten.push(slotId),
   },
 });
 const modulePath = './resource-manager.js?resource-poll-idle';
@@ -49,6 +64,7 @@ const {
   startIdleDevServerSweep,
   stopIdleDevServerSweep,
 }: typeof import('./resource-manager.js') = await import(modulePath);
+const shared = await import('./resource-manager.js');
 const { withRunTransitionWhileMachineHeld } =
   await import('../run-lifecycle/transition-coordinator.js');
 
@@ -69,15 +85,18 @@ function captureTick(t: { mock: typeof mock }): { tick: () => unknown; timer: No
 }
 
 test('the idle dev-server sweep runs without full-fleet polling, on slots with live resources', async (t) => {
-  setCachedResourceStatus('slot-a', 'dev-server', 'running', { broadcast: false });
+  t.mock.method(console, 'info', () => {});
+  setCachedResourceStatus('slot-a', 'server', 'stopped', { broadcast: false });
   setCachedResourceStatus('slot-b', 'browser', 'stopped', { broadcast: false });
-  setCachedResourceStatus('slot-c', 'dev-server', 'stale', { broadcast: false });
+  setCachedResourceStatus('slot-c', 'server', 'stale', { broadcast: false });
   const clock = captureTick(t);
   swept.length = 0;
+  forgotten.length = 0;
   try {
     startIdleDevServerSweep();
     await clock.tick();
-    assert.deepEqual(swept, ['slot-a', 'slot-c']);
+    assert.deepEqual(swept, ['slot-c']);
+    assert.deepEqual(forgotten, ['slot-a', 'slot-b'], 'unobserved slots lose their idle windows');
   } finally {
     stopIdleDevServerSweep();
     clearInterval(clock.timer);
@@ -102,6 +121,9 @@ test(
       await held;
     });
     await entered;
+    // The sweep reads this module copy; the reaper reads the shared one.
+    setCachedResourceStatus('slot-a', 'server', 'running', { broadcast: false });
+    shared.setCachedResourceStatus('slot-a', 'server', 'running', { broadcast: false });
     const info = t.mock.method(console, 'info', () => {});
     const before = polls;
     try {

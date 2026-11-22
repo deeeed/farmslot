@@ -299,3 +299,18 @@ test('restoration refuses a reservation replaced during readiness and keeps its 
   await assert.rejects(f.reaper.restore('slot-a', 'run-a'), /owner changed|releasing/);
   assert.deepEqual(f.row().idle_devservers, ['server']);
 });
+
+test('a slot without a running dev server skips the quiet checks and loses its idle window', async () => {
+  const f = fixture();
+  await f.reaper.sweep('slot-a');
+  const resources = f.deps.resources;
+  const live = await resources('slot-a');
+  f.deps.resources = async () => live.map((resource) => ({ ...resource, status: 'unknown' }));
+  f.deps.row = async () => assert.fail('an ineligible slot reads no slot row');
+  f.advance();
+  await f.reaper.sweep('slot-a');
+  f.deps.resources = resources;
+  f.deps.row = async () => ({ current_run_id: 'run-a', slot_epoch: 1 });
+  await f.reaper.sweep('slot-a');
+  assert.equal(f.stopped(), 0, 'the idle window restarts once the server is observed again');
+});

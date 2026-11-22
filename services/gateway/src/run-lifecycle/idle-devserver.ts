@@ -93,9 +93,37 @@ export class IdleDevServerReaper {
     this.deps.decide?.(slotId, resourceId, decision);
   }
 
+  /**
+   * Dev servers the cap may stop: watched, with boot and health hooks, and observed running or
+   * stale. An unobserved server loses its idle window.
+   */
+  async eligible(slotId: string): Promise<SlotResource[]> {
+    const devServers = (await this.deps.resources(slotId)).filter(
+      (resource) => resource.definition.type === 'dev-server',
+    );
+    return devServers.filter((resource) => {
+      let skip: string | undefined;
+      if (!resource.definition.hooks?.boot || !resource.definition.hooks.health)
+        skip = 'skip: no boot and health hooks';
+      else if (resource.status !== 'running' && resource.status !== 'stale')
+        skip = `skip: status ${resource.status}`;
+      if (!skip) return true;
+      this.idle.delete(`${slotId}/${resource.id}`);
+      this.decide(slotId, resource.id, skip);
+      return false;
+    });
+  }
+
+  /** A slot the sweep no longer observes restarts its idle windows when it returns. */
+  forget(slotId: string): void {
+    for (const key of this.idle.keys()) if (key.startsWith(`${slotId}/`)) this.idle.delete(key);
+  }
+
   async sweep(slotId: string): Promise<void> {
-    const row = await this.deps.row(slotId);
     const prefix = `${slotId}/`;
+    const resources = await this.eligible(slotId);
+    if (!resources.length) return;
+    const row = await this.deps.row(slotId);
     const blocker = row ? await this.quietBlocker(slotId, row) : 'slot row unavailable';
     if (!row || blocker) {
       for (const key of this.idle.keys()) if (key.startsWith(prefix)) this.idle.delete(key);
@@ -103,21 +131,6 @@ export class IdleDevServerReaper {
       return;
     }
     this.decide(slotId, undefined, 'quiet');
-    const devServers = (await this.deps.resources(slotId)).filter(
-      (resource) => resource.definition.type === 'dev-server',
-    );
-    for (const resource of devServers) {
-      if (!resource.definition.hooks?.boot || !resource.definition.hooks.health)
-        this.decide(slotId, resource.id, 'skip: no boot and health hooks');
-      else if (resource.status !== 'running' && resource.status !== 'stale')
-        this.decide(slotId, resource.id, `skip: status ${resource.status}`);
-    }
-    const resources = devServers.filter(
-      (resource) =>
-        resource.definition.hooks?.boot &&
-        resource.definition.hooks.health &&
-        (resource.status === 'running' || resource.status === 'stale'),
-    );
     let rows: ProcessCensusRow[] | undefined;
     for (const resource of resources) {
       const key = `${prefix}${resource.id}`;
@@ -208,7 +221,7 @@ export class IdleDevServerReaper {
           current.group !== pointer.group
         ) {
           lost = current
-            ? `watched process changed to pid ${current.pid}`
+            ? `watched process changed (${current.pid !== pointer.pid ? `pid ${current.pid}` : current.identity !== pointer.identity ? 'identity' : 'process group'})`
             : (this.deps.explain?.(slotId, resource.id) ?? 'watched process lost');
           return false;
         }

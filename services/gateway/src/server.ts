@@ -52,7 +52,6 @@ import { pairingExchange } from './fleet/pairing.js';
 import {
   clearMachineResourceStatus,
   handleNodeResourceChanged,
-  startIdleDevServerSweep,
   startResourcePolling,
 } from './fleet/resource-manager.js';
 import { stopSlotEntityExpiries } from './fleet/slot-entities.js';
@@ -582,7 +581,6 @@ export function initServerGlobals(): void {
     }
   });
 
-  startIdleDevServerSweep();
   // Full-fleet resource polling can execute project health hooks for every slot.
   // Keep it opt-in; request paths like resource.health still probe on demand.
   if (ENABLE_RESOURCE_POLL_ALL) {

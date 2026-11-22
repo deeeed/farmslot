@@ -890,14 +890,16 @@ async function sweepIdleDevServers(): Promise<void> {
   if (idleSweepInFlight) return;
   idleSweepInFlight = true;
   try {
+    const { forgetIdleDevServers, reapIdleDevServers } = await loadIdleDevServer();
     const slotIds = (await loadFleetStatus()).slots
       .map((s) => s.slot)
-      .filter((id) =>
-        [...(statusCache.get(id)?.values() ?? [])].some(
+      .filter((id) => {
+        const live = [...(statusCache.get(id)?.values() ?? [])].some(
           (status) => status === 'running' || status === 'stale',
-        ),
-      );
-    const { reapIdleDevServers } = await loadIdleDevServer();
+        );
+        if (!live) forgetIdleDevServers(id);
+        return live;
+      });
     const failures: string[] = [];
     await mapWithConcurrency(slotIds, RESOURCE_POLL_CONCURRENCY, async (id) => {
       try {

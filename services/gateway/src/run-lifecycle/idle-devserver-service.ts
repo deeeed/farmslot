@@ -398,8 +398,15 @@ const idleDevServers = new IdleDevServerReaper({
   },
 });
 
-/** Runs on the resource poll, serialized with run resume and machine parking. */
+/** The idle sweep stopped observing this slot: no idle window carries over. */
+export function forgetIdleDevServers(slotId: string): void {
+  idleDevServers.forget(slotId);
+}
+
+/** Runs on the idle sweep, serialized with run resume and machine parking. */
 export async function reapIdleDevServers(slotId: string): Promise<void> {
+  // No quiet checks or transition lock for a slot without a dev server the cap may stop.
+  if (!(await idleDevServers.eligible(slotId)).length) return;
   const owner = (await readSlotRow(slotId))?.current_run_id;
   if (typeof owner !== 'string') return idleDevServers.sweep(slotId);
   const swept = await tryWithRunTransition(owner, async () => {

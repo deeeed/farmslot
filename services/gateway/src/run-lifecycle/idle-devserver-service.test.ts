@@ -470,7 +470,8 @@ test('a pid-file dev server outside the checkout is preserved', async () => {
 test('the cap logs one structured line per changed decision', async (t) => {
   const lines: string[] = [];
   const info = t.mock.method(console, 'info', (line: unknown) => {
-    if (String(line).startsWith('[idle-devserver]')) lines.push(String(line));
+    if (String(line).startsWith('[idle-devserver] slot=slot-a resource=server '))
+      lines.push(String(line));
   });
   await reapIdleDevServers('slot-a');
   clock++;
