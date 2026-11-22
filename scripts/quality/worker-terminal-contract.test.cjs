@@ -152,6 +152,28 @@ assert.deepEqual(
 for (const flow of ['review', 'review-pr', 'qa', 'qa.site-build'])
   assert.deepEqual(lintWorkerTemplateProofSelection(proofStep, flow), [], flow);
 assert.deepEqual(lintWorkerTemplateProofSelection('- [ ] Write the report.', 'dev'), []);
+// Lines that forbid or only diagnose proof run none; delegated task-bound proof still counts.
+for (const line of [
+  'Do not run tests, builds, recipes or probes.',
+  'Never rerun proof here.',
+  'Run the recipe with --unbound for diagnostics.',
+])
+  assert.deepEqual(lintWorkerTemplateProofSelection(line, 'ci-fix'), [], line);
+assert.match(
+  lintWorkerTemplateProofSelection(
+    'Follow TASK.md for task-bound recipe proof.',
+    'pr-complete',
+  ).join(' '),
+  /selected proof attempt/,
+);
+assert.deepEqual(lintWorkerTemplateProofSelection(proofStep, 'qa-site-build'), []);
+assert.match(
+  lintWorkerTemplateProofSelection(`${proofStep} See latest-valid-recipe-run.json.`, 'dev').join(
+    ' ',
+  ),
+  /selected proof attempt/,
+  'the full selection path is required',
+);
 // A designed non-selection layout opts out by name, and only with a reason.
 assert.deepEqual(
   lintWorkerTemplateProofSelection(
@@ -179,7 +201,10 @@ assert.match(
       path.join(project, 'project.json'),
       JSON.stringify({
         execution_templates: {
-          sources: [{ id: 'project:x', kind: 'workspace', root: { projectPath: 'checklists' } }],
+          sources: [
+            { id: 'project:x', kind: 'workspace', root: { projectPath: 'checklists' } },
+            { id: 'pack:y', kind: 'pack', root: { projectPath: 'templates' }, subpath: 'catalog' },
+          ],
         },
       }),
     );
@@ -187,6 +212,11 @@ assert.match(
     mkdirSync(path.join(project, 'checklists', 'qa'), { recursive: true });
     writeFileSync(path.join(project, 'checklists', 'dev', 'default.md'), `# Dev\n\n${proofStep}\n`);
     writeFileSync(path.join(project, 'checklists', 'qa', 'default.md'), `# QA\n\n${proofStep}\n`);
+    mkdirSync(path.join(project, 'templates', 'catalog', 'fix-bug'), { recursive: true });
+    writeFileSync(
+      path.join(project, 'templates', 'catalog', 'fix-bug', 'default.md'),
+      `# Fix\n\n${proofStep}\n`,
+    );
     const check = () =>
       spawnSync(
         process.execPath,
@@ -199,6 +229,8 @@ assert.match(
     assert.equal(result.status, 1, result.stdout);
     assert.match(result.stderr, /checklists\/dev\/default\.md: runs recipe proof/);
     assert.doesNotMatch(result.stderr, /checklists\/qa/);
+    assert.match(result.stderr, /templates\/catalog\/fix-bug\/default\.md: runs recipe proof/);
+    rmSync(path.join(project, 'templates'), { recursive: true });
     writeFileSync(
       path.join(project, 'checklists', 'dev', 'default.md'),
       `# Dev\n\n${proofStep} Claim the attempt in \`artifacts/latest-valid-recipe-run.json\`.\n`,

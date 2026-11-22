@@ -74,20 +74,24 @@ function lintProjectRoot(projectRoot, issues) {
     return;
   }
   const workerTerminal = readWorkerTerminalConfig(projectRoot);
-  // Execution-template checklists (<source root>/<flow>/<id>.md) carry the proof steps for
-  // packs without flow templates; they get the proof-selection rule.
+  // Pack-owned execution-template checklists (<projectPath>/<subpath>/<flow>/<id>.md) carry
+  // the proof steps for packs without flow templates; they get the proof-selection rule.
+  // Sources rooted in an env var or another source are checked in the repo that owns them.
   const project = JSON.parse(readFileSync(projectJsonPath, 'utf8'));
   for (const source of project.execution_templates?.sources ?? []) {
-    const root = source?.kind === 'workspace' ? source.root?.projectPath : undefined;
-    const checklistsDir = typeof root === 'string' ? path.join(projectRoot, root) : null;
-    if (!checklistsDir || !existsSync(checklistsDir)) continue;
-    for (const flow of readdirSync(checklistsDir, { withFileTypes: true })) {
-      if (!flow.isDirectory()) continue;
-      const flowDir = path.join(checklistsDir, flow.name);
+    const root = source?.root?.projectPath;
+    if (typeof root !== 'string') continue;
+    const checklistsDir = path.resolve(projectRoot, root, source.subpath ?? '.');
+    if (!existsSync(checklistsDir)) continue;
+    for (const dir of readdirSync(checklistsDir, { withFileTypes: true })) {
+      if (!dir.isDirectory()) continue;
+      const flowDir = path.join(checklistsDir, dir.name);
       for (const fileName of readdirSync(flowDir).filter((name) => name.endsWith('.md'))) {
         const checklistPath = path.join(flowDir, fileName);
         const content = readFileSync(checklistPath, 'utf8');
-        for (const issue of lintWorkerTemplateProofSelection(content, flow.name)) {
+        // Catalog metadata: frontmatter flow, then the flow directory.
+        const flow = content.match(/^---\n[\s\S]*?^flow:\s*([\w.-]+)\s*$[\s\S]*?^---$/m)?.[1];
+        for (const issue of lintWorkerTemplateProofSelection(content, flow ?? dir.name)) {
           issues.push(`${path.relative(repoRoot, checklistPath)}: ${issue}`);
         }
       }
