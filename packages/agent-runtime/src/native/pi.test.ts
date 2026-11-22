@@ -3,11 +3,16 @@ import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { observePiAccount, piAccountState } from './account-pi.js';
 import { piNativeAdapter } from './pi.js';
 import { PiRpc } from './pi-rpc.js';
 import type { NativeEventInput } from './types.js';
+
+const bashTimeoutExtension = fileURLToPath(
+  new URL('../../scripts/pi-bash-timeout.mjs', import.meta.url),
+);
 
 // Records shaped like Pi 1.4.0's `--mode rpc` output, as observed live.
 const fixture = `#!/usr/bin/env node
@@ -92,6 +97,8 @@ test('a Pi turn streams text and tools and completes when Pi settles', async () 
       join(realpathSync(f.cwd), 'session.jsonl'),
     );
     assert.deepEqual(JSON.parse(readFileSync(join(f.cwd, 'argv'), 'utf8')), [
+      '--extension',
+      bashTimeoutExtension,
       '--mode',
       'rpc',
       '--model',
@@ -165,6 +172,8 @@ test('a bare Pi model ID matches the model Pi selected for it', async () => {
     );
     await session.close();
     assert.deepEqual(JSON.parse(readFileSync(join(f.cwd, 'argv'), 'utf8')), [
+      '--extension',
+      bashTimeoutExtension,
       '--mode',
       'rpc',
       '--model',

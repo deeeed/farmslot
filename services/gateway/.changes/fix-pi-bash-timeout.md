@@ -1,0 +1,1 @@
+- Pi workers now get a 600-second (10-minute) default timeout on a bash call that sets none; a call may still pass a longer or shorter timeout. Before this, runaway host-wide searches held workers for 22 and 41 minutes.
