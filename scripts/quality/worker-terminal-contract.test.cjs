@@ -157,6 +157,7 @@ for (const line of [
   'Do not run tests, builds, recipes or probes.',
   'Never rerun proof here.',
   'Run the recipe with --unbound for diagnostics.',
+  'Run `env -u RECIPE_TASK_DIR -u FARMSLOT_TASK_DIR farmslot recipe run smoke` for diagnostics.',
 ])
   assert.deepEqual(lintWorkerTemplateProofSelection(line, 'ci-fix'), [], line);
 assert.match(
@@ -167,6 +168,14 @@ assert.match(
   /selected proof attempt/,
 );
 assert.deepEqual(lintWorkerTemplateProofSelection(proofStep, 'qa-site-build'), []);
+assert.match(
+  lintWorkerTemplateProofSelection(
+    'Run `env -u RECIPE_TASK_DIR FARMSLOT_TASK_DIR="{{TASK_DIR}}" farmslot recipe run smoke`.',
+    'dev',
+  ).join(' '),
+  /selected proof attempt/,
+  'one binding still set is task proof',
+);
 // A negation after the run instruction does not hide it; a forbidden example after e.g. stays forbidden.
 assert.match(
   lintWorkerTemplateProofSelection(

@@ -244,7 +244,7 @@ function frontmatterFlow(text) {
   }
   if (end === -1) return undefined;
   for (const line of normalized.slice(normalized.indexOf('\n') + 1, end).split(/\r?\n/)) {
-    const match = line.trim().match(/^flow:\s*(.*)$/);
+    const match = line.trim().match(/^flow\s*:\s*(.*)$/);
     if (match) return match[1].trim().replace(/^(['"])(.*)\1$/, '$2') || undefined;
   }
   return undefined;

@@ -418,7 +418,8 @@ const RUNS_RECIPE_PROOF =
 // A clause that forbids or only diagnoses proof runs none.
 const NO_TASK_PROOF = /\b(?:do not|don't|never|must not|no longer)\b/i;
 // An unbound diagnostic run records no task attempt wherever the flag sits.
-const UNBOUND_RUN = /--unbound|-u RECIPE_TASK_DIR/;
+const UNBOUND_RUN =
+  /--unbound|-u RECIPE_TASK_DIR\b(?=.*-u FARMSLOT_TASK_DIR\b)|-u FARMSLOT_TASK_DIR\b(?=.*-u RECIPE_TASK_DIR\b)/;
 
 /**
  * A template that runs recipe proof names the attempt the task claims: the selection in
