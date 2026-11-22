@@ -25,11 +25,8 @@ interface TaskArtifactSource {
   ref: RunArtifactBundleRef;
 }
 
-/** Follow only the digest-verified predecessor recorded by this run's own capture. */
-async function predecessor(
-  bundle: Bundle,
-  runId: string,
-): Promise<RunArtifactBundleRef | undefined> {
+/** The digest-verified run record this run's own capture retained. */
+async function retainedRunRecord(bundle: Bundle, runId: string): Promise<Record<string, unknown>> {
   const entry = bundle.manifest.runs.find((entry) => entry.originalRunId === runId)!;
   const meta = bundle.manifest.entries[entry.runPath];
   const file = path.join(bundle.directory, entry.runPath);
@@ -43,7 +40,15 @@ async function predecessor(
   const record: unknown = JSON.parse(await readFile(file, 'utf8'));
   if (!isRecord(record) || record.id !== runId)
     throw new Error('Retained predecessor run changed.');
-  const ref = record.artifactBundle;
+  return record;
+}
+
+/** Follow only the digest-verified predecessor recorded by this run's own capture. */
+async function predecessor(
+  bundle: Bundle,
+  runId: string,
+): Promise<RunArtifactBundleRef | undefined> {
+  const ref = (await retainedRunRecord(bundle, runId)).artifactBundle;
   if (ref === undefined) return undefined;
   if (
     !isRecord(ref) ||
@@ -61,7 +66,7 @@ async function predecessor(
   };
 }
 
-async function sourceBundle(run: Run): Promise<TaskArtifactSource> {
+async function sourceBundle(run: Run): Promise<TaskArtifactSource | undefined> {
   const store = await runBundleStore();
   let ref: RunArtifactBundleRef | undefined = retainedRunBundleRef(run);
   let latest: TaskArtifactSource | undefined;
@@ -73,7 +78,9 @@ async function sourceBundle(run: Run): Promise<TaskArtifactSource> {
     latest ??= { bundle, ref };
     const prefix = `tasks/${ref.taskKey}/`;
     if (bundle.manifest.entries[prefix + PROVENANCE]) {
-      // Earlier evidence belongs to this exact frozen task, never to a replacement task.
+      // Earlier evidence belongs to this exact frozen task, never to a replacement task: a
+      // replay that wrote a new task restores nothing from the one it replaced.
+      if ((await retainedRunRecord(bundle, run.id)).taskFile !== run.taskFile) return undefined;
       const handoff = bundle.manifest.entries[prefix + HANDOFF];
       if (
         !handoff ||
@@ -97,7 +104,9 @@ export async function readRetainedTaskReceipt(run: Run): Promise<string | null> 
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
   if (!run.artifactBundle && !run.output?.artifactBundle) return null;
-  const { bundle, ref } = await sourceBundle(run);
+  const retained = await sourceBundle(run);
+  if (!retained) return null;
+  const { bundle, ref } = retained;
   if (!bundle.manifest.entries[`tasks/${ref.taskKey}/${PROVENANCE}`]) return null;
   const source = await bundle.resolveEntry(PROVENANCE);
   return readFile(source.path, 'utf8');
@@ -120,7 +129,9 @@ async function destinationDirectory(root: string, relative: string): Promise<str
 /** Rehydrate original bytes only; never restore signals, verdict state or overwrite newer files. */
 export async function restoreRetainedTaskArtifacts(run: Run): Promise<number> {
   if (!run.taskFile || (!run.artifactBundle && !run.output?.artifactBundle)) return 0;
-  const { bundle, ref } = await sourceBundle(run);
+  const retained = await sourceBundle(run);
+  if (!retained) return 0;
+  const { bundle, ref } = retained;
   const availability = await readRunBundleAvailability(await runBundleStore(), ref, run.id);
   const unavailableMedia = new Set([
     ...[...(bundle.manifest.missingData ?? []), ...(run.output?.retentionMissingData ?? [])].map(

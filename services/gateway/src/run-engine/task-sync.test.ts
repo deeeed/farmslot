@@ -228,6 +228,24 @@ test('task restoration rejects changed frozen inputs before publishing artifacts
   await assert.rejects(readFile(path.join(f.dir, 'artifacts/harness-provenance.json')), /ENOENT/);
 });
 
+// Run 942d189f: final retention kept the failed task, then a find-slot replay wrote a
+// replacement task. The old task's evidence never restores into it, and the copy proceeds.
+test('a replacement task restores nothing from the earlier task and still copies', async (t) => {
+  const f = await retainedFixture(t);
+  const replacement = path.join(tools.root, 'tasks/dev', `${f.run.id}-replay`);
+  t.after(() => rm(replacement, { recursive: true, force: true }));
+  await mkdir(path.join(replacement, 'artifacts'), { recursive: true });
+  await mkdir(path.join(replacement, 'inputs'));
+  await writeFile(path.join(replacement, 'TASK.md'), '# Replacement task\n');
+  await writeFile(path.join(replacement, 'inputs/handoff.json'), '{"attemptId":"replay"}\n');
+  realRunStore.updateRun(f.run.id, { taskFile: path.join(replacement, 'TASK.md') });
+  await copyTaskFilesToSlot(f.run.id);
+  await assert.rejects(
+    readFile(path.join(replacement, 'artifacts/harness-provenance.json')),
+    /ENOENT/,
+  );
+});
+
 test('task restoration rejects a redirected artifact directory', async (t) => {
   const f = await retainedFixture(t);
   const outside = path.join(tools.root, `outside-${f.run.id}`);
