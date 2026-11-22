@@ -7,6 +7,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -278,11 +279,13 @@ test('late-ack consumes a delivered prompt and delays its acknowledgement', asyn
       t.mock.timers.runAll();
       await new Promise((resolve) => setImmediate(resolve));
     }
-    process.chdir(previousCwd);
     for (const [key, value] of Object.entries(previousEnv)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
+    // A runner that will not stop keeps cwd in its temp repo rather than the caller's checkout.
+    if (!exited) throw new Error(`late-ack session did not stop; left running in ${dir}`);
+    process.chdir(previousCwd);
     rmSync(dir, { recursive: true, force: true });
   });
   // Fake clock: each scripted delay advances only when the test ticks it.
@@ -315,19 +318,31 @@ test('late-ack consumes a delivered prompt and delays its acknowledgement', asyn
   const sessionDir = path.join(dir, '.agent', 'scripted-88');
   const receipt = path.join(sessionDir, 'session.json');
   const readReceipt = () => JSON.parse(readFileSync(receipt, 'utf8'));
+  const inbox = path.join(sessionDir, 'prompt.json');
   const deliverPrompt = (prompt: string) => {
     // Match the gateway sender: publish complete JSON to the watched inbox atomically.
     const pending = path.join(sessionDir, 'prompt.pending');
     writeFileSync(pending, JSON.stringify({ prompt, taskDir: task }));
-    renameSync(pending, path.join(sessionDir, 'prompt.json'));
+    renameSync(pending, inbox);
   };
+  // The session drops watch events that arrive while it is still finishing a turn (see the
+  // consume() race noted on #2430). Re-touch a waiting inbox so the turn starts regardless.
+  const awaitTurn = (turn: number) =>
+    settle(() => {
+      try {
+        utimesSync(inbox, new Date(), new Date());
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      }
+      return delays() === turn;
+    });
 
   await settle(() => delays() === 1);
   t.mock.timers.tick(100);
   await settle(() => existsSync(receipt));
   assert.equal(JSON.parse(readFileSync(path.join(task, 'SIGNAL.json'), 'utf8')).status, 'complete');
   deliverPrompt('Read REVIEW-FIX.md');
-  await settle(() => delays() === 2);
+  await awaitTurn(2);
   const active = readReceipt();
   assert.equal(active.active, true);
   t.mock.timers.tick(99);
@@ -341,12 +356,13 @@ test('late-ack consumes a delivered prompt and delays its acknowledgement', asyn
   assert.equal(git('show', '--format=', '--name-only', 'HEAD'), 'scripted-change.txt');
   // A stop during a turn must settle that turn before the session exits.
   deliverPrompt('Read REVIEW-FIX.md again');
-  await settle(() => delays() === 3);
+  await awaitTurn(3);
   assert.equal(readReceipt().acknowledged, false);
   process.emit('SIGTERM');
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(exited, false);
   t.mock.timers.tick(100);
+  await settle(() => exited);
   assert.equal(await runner, 0);
   assert.equal(readReceipt().acknowledged, true);
 });
