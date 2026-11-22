@@ -74,6 +74,8 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 let broadcastFn: ((event: string, payload: unknown) => void) | null = null;
 const RESOURCE_POLL_CONCURRENCY = 4;
 let pollAllInFlight = false;
+let idleSweepTimer: ReturnType<typeof setInterval> | null = null;
+let idleSweepInFlight = false;
 const warnedUnconfiguredResources = new Map<string, string>();
 const loggedLegacySharedProviderInferences = new Set<string>();
 
@@ -832,8 +834,6 @@ async function pollAllResources(): Promise<void> {
     await mapWithConcurrency(slotIds, RESOURCE_POLL_CONCURRENCY, async (id) => {
       try {
         await pollSlotResources(id);
-        const { reapIdleDevServers } = await loadIdleDevServer();
-        await reapIdleDevServers(id);
       } catch (err) {
         failures.push(`${id}: ${(err as Error).message}`);
       }
@@ -880,6 +880,54 @@ export function startResourcePolling(
   pollTimer = setInterval(() => pollAllResources(), intervalMs);
   pollTimer.unref();
   console.log(`[resource-manager] polling started (interval=${intervalMs}ms)`);
+}
+
+/**
+ * Run the idle dev-server cap on its own timer. Full-fleet health polling is opt-in, and node
+ * pushes keep resource status current without it.
+ */
+async function sweepIdleDevServers(): Promise<void> {
+  if (idleSweepInFlight) return;
+  idleSweepInFlight = true;
+  try {
+    const slotIds = (await loadFleetStatus()).slots
+      .map((s) => s.slot)
+      .filter((id) =>
+        [...(statusCache.get(id)?.values() ?? [])].some(
+          (status) => status === 'running' || status === 'stale',
+        ),
+      );
+    const { reapIdleDevServers } = await loadIdleDevServer();
+    const failures: string[] = [];
+    await mapWithConcurrency(slotIds, RESOURCE_POLL_CONCURRENCY, async (id) => {
+      try {
+        await reapIdleDevServers(id);
+      } catch (err) {
+        failures.push(`${id}: ${(err as Error).message}`);
+      }
+    });
+    if (failures.length > 0) {
+      const suffix = failures.length > 5 ? `; +${failures.length - 5} more` : '';
+      console.warn(
+        `[idle-devserver] ${failures.length}/${slotIds.length} slot sweeps failed: ${failures.slice(0, 5).join('; ')}${suffix}`,
+      );
+    }
+  } catch (err) {
+    console.error(`[idle-devserver] sweep error: ${(err as Error).message}`);
+  } finally {
+    idleSweepInFlight = false;
+  }
+}
+
+export function startIdleDevServerSweep(intervalMs = 60_000): void {
+  if (idleSweepTimer) return;
+  idleSweepTimer = setInterval(() => sweepIdleDevServers(), intervalMs);
+  idleSweepTimer.unref();
+}
+
+export function stopIdleDevServerSweep(): void {
+  if (idleSweepTimer) clearInterval(idleSweepTimer);
+  idleSweepTimer = null;
 }
 
 /**

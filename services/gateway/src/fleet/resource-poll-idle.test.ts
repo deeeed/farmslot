@@ -28,30 +28,67 @@ mock.module('./state.js', {
     ...fleet,
     loadFleetStatus: async () => {
       polls++;
-      return { slots: [{ slot: 'slot-a' }] };
+      return { slots: [{ slot: 'slot-a' }, { slot: 'slot-b' }, { slot: 'slot-c' }] };
+    },
+  },
+});
+const idle = await import('../run-lifecycle/idle-devserver-service.js');
+const swept: string[] = [];
+mock.module('../run-lifecycle/idle-devserver-service.js', {
+  namedExports: {
+    ...idle,
+    reapIdleDevServers: async (slotId: string) => {
+      swept.push(slotId);
+      if (slotId === 'slot-a') await idle.reapIdleDevServers(slotId);
     },
   },
 });
 const modulePath = './resource-manager.js?resource-poll-idle';
-const { startResourcePolling, stopResourcePolling }: typeof import('./resource-manager.js') =
-  await import(modulePath);
+const {
+  setCachedResourceStatus,
+  startIdleDevServerSweep,
+  stopIdleDevServerSweep,
+}: typeof import('./resource-manager.js') = await import(modulePath);
 const { withRunTransitionWhileMachineHeld } =
   await import('../run-lifecycle/transition-coordinator.js');
-// Load the real reaper before the timed lock regression; its first import is lazy in polling.
-await import('../run-lifecycle/idle-devserver-service.js');
+
+function captureTick(t: { mock: typeof mock }): { tick: () => unknown; timer: NodeJS.Timeout } {
+  const captured = { tick: (): unknown => assert.fail('sweep callback not installed') };
+  const timer = setInterval(() => {}, 60_000);
+  timer.unref();
+  t.mock.method(globalThis, 'setInterval', (callback: () => unknown) => {
+    captured.tick = callback;
+    return timer;
+  });
+  return {
+    get tick() {
+      return captured.tick;
+    },
+    timer,
+  };
+}
+
+test('the idle dev-server sweep runs without full-fleet polling, on slots with live resources', async (t) => {
+  setCachedResourceStatus('slot-a', 'dev-server', 'running', { broadcast: false });
+  setCachedResourceStatus('slot-b', 'browser', 'stopped', { broadcast: false });
+  setCachedResourceStatus('slot-c', 'dev-server', 'stale', { broadcast: false });
+  const clock = captureTick(t);
+  swept.length = 0;
+  try {
+    startIdleDevServerSweep();
+    await clock.tick();
+    assert.deepEqual(swept, ['slot-a', 'slot-c']);
+  } finally {
+    stopIdleDevServerSweep();
+    clearInterval(clock.timer);
+  }
+});
 
 test(
-  'a long run transition does not hold pollAllInFlight across fleet poll ticks',
+  'a long run transition does not hold the idle sweep across ticks, and the skip is logged once',
   { timeout: 2_000 },
   async (t) => {
-    let tick: () => unknown = () => assert.fail('poll callback not installed');
-    const timer = setInterval(() => {}, 60_000);
-    timer.unref();
-    t.mock.method(globalThis, 'setInterval', (callback: () => unknown) => {
-      tick = callback;
-      return timer;
-    });
-    t.mock.method(globalThis, 'setTimeout', () => timer);
+    const clock = captureTick(t);
     let enter!: () => void;
     let release!: () => void;
     const entered = new Promise<void>((resolve) => {
@@ -65,16 +102,22 @@ test(
       await held;
     });
     await entered;
+    const info = t.mock.method(console, 'info', () => {});
+    const before = polls;
     try {
-      startResourcePolling(() => {});
-      await tick();
-      await tick();
-      assert.equal(polls, 2, 'the second fleet poll runs while the transition is still held');
+      startIdleDevServerSweep();
+      await clock.tick();
+      await clock.tick();
+      assert.equal(polls - before, 2, 'the second sweep runs while the transition is still held');
+      assert.deepEqual(
+        info.mock.calls.map((call) => call.arguments[0]),
+        ['[idle-devserver] slot=slot-a resource=- decision=skip: run transition in progress'],
+      );
     } finally {
-      stopResourcePolling();
+      stopIdleDevServerSweep();
       release();
       await transition;
-      clearInterval(timer);
+      clearInterval(clock.timer);
     }
   },
 );

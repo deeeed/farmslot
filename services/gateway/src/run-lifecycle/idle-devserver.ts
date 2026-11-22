@@ -27,10 +27,10 @@ export interface IdleDevServerDeps {
     rows: ProcessCensusRow[],
     roots: ProcessCensusRow[],
     stillOwned: () => Promise<boolean>,
-  ): Promise<boolean>;
+  ): Promise<true | string>;
   /** The sweep's latest decision for a slot or one of its dev servers; repeated values may be dropped. */
   decide?(slotId: string, resourceId: string | undefined, decision: string): void;
-  /** Why the latest pointer or stop call for this resource returned nothing. */
+  /** Why the latest pointer call for this resource returned nothing; read once. */
   explain?(slotId: string, resourceId: string): string | undefined;
   ready(
     slotId: string,
@@ -59,10 +59,6 @@ export class IdleDevServerReaper {
   private readonly idle = new Map<string, IdleCandidate>();
 
   constructor(private readonly deps: IdleDevServerDeps) {}
-
-  private async quiet(slotId: string, expected: SlotRow, resourceId?: string): Promise<boolean> {
-    return (await this.quietBlocker(slotId, expected, resourceId)) === null;
-  }
 
   /** Why the slot is not quiet enough to stop its idle dev server, or null when it is. */
   private async quietBlocker(
@@ -106,6 +102,7 @@ export class IdleDevServerReaper {
       this.decide(slotId, undefined, `skip: ${blocker}`);
       return;
     }
+    this.decide(slotId, undefined, 'quiet');
     const devServers = (await this.deps.resources(slotId)).filter(
       (resource) => resource.definition.type === 'dev-server',
     );
@@ -178,7 +175,7 @@ export class IdleDevServerReaper {
       );
       if (!root) {
         this.idle.delete(key);
-        this.decide(slotId, resource.id, 'skip: watched process exited');
+        this.decide(slotId, resource.id, 'skip: watched process exited or changed identity');
         continue;
       }
       // Write-ahead intent survives a gateway restart between signals and settlement.
@@ -202,22 +199,29 @@ export class IdleDevServerReaper {
         this.decide(slotId, resource.id, 'skip at stop: slot row write refused');
         return;
       }
+      let lost: string | undefined;
       const stopped = await this.deps.stop(slotId, rows, [root], async () => {
         const current = await this.deps.pointer(slotId, resource.id, true);
-        return (
-          current?.pid === pointer.pid &&
-          current.identity === pointer.identity &&
-          current.group === pointer.group &&
-          (await this.quiet(slotId, row, resource.id))
-        );
+        if (
+          current?.pid !== pointer.pid ||
+          current.identity !== pointer.identity ||
+          current.group !== pointer.group
+        ) {
+          lost = current
+            ? `watched process changed to pid ${current.pid}`
+            : (this.deps.explain?.(slotId, resource.id) ?? 'watched process lost');
+          return false;
+        }
+        lost = (await this.quietBlocker(slotId, row, resource.id)) ?? undefined;
+        return !lost;
       });
-      if (stopped) this.idle.delete(key);
+      if (stopped === true) this.idle.delete(key);
       this.decide(
         slotId,
         resource.id,
-        stopped
+        stopped === true
           ? `stopped pid ${root.pid} after the idle limit`
-          : `skip at stop: ${this.deps.explain?.(slotId, resource.id) ?? 'stop refused'}`,
+          : `skip at stop: ${lost ?? stopped}`,
       );
     }
   }

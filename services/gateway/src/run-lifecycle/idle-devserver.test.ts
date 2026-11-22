@@ -78,7 +78,7 @@ function fixture(status: Run['status'] = 'blocked') {
     stop: async (_slot, rows, roots, stillOwned) => {
       assert.deepEqual(roots, [frame]);
       assert.deepEqual(rows, [frame]);
-      if (!(await stillOwned())) return false;
+      if (!(await stillOwned())) return 'ownership changed';
       stopped++;
       pointer = undefined;
       return true;
@@ -132,17 +132,38 @@ test('the sweep reports why it skips, how long until it stops, and the stop', as
   f.setRow({ warm: false, current_run_id: 'run-a' });
   const pointer = f.deps.pointer;
   f.deps.pointer = () => undefined;
-  f.deps.explain = () => 'PID file missing, invalid or newer than its process';
+  f.deps.explain = () => 'PID file missing, invalid or older than its process';
   await f.reaper.sweep('slot-a');
   assert.deepEqual(decisions.splice(0), [
-    'slot-a/server skip: no stop authority (PID file missing, invalid or newer than its process)',
+    'slot-a/- quiet',
+    'slot-a/server skip: no stop authority (PID file missing, invalid or older than its process)',
   ]);
   f.deps.pointer = pointer;
   await f.reaper.sweep('slot-a');
-  assert.match(decisions.splice(0)[0] ?? '', /^slot-a\/server idle: pid 101 stops after \d{4}-/);
+  const idle = decisions.splice(0);
+  assert.equal(idle[0], 'slot-a/- quiet');
+  assert.match(idle[1] ?? '', /^slot-a\/server idle: pid 101 stops after \d{4}-/);
   f.advance();
   await f.reaper.sweep('slot-a');
-  assert.deepEqual(decisions.splice(0), ['slot-a/server stopped pid 101 after the idle limit']);
+  assert.deepEqual(decisions.splice(0), [
+    'slot-a/- quiet',
+    'slot-a/server stopped pid 101 after the idle limit',
+  ]);
+});
+
+test('a stop refused by the ownership recheck reports the check that failed', async () => {
+  const f = fixture();
+  const decisions: string[] = [];
+  f.deps.decide = (slotId, resourceId, decision) =>
+    decisions.push(`${slotId}/${resourceId ?? '-'} ${decision}`);
+  await f.reaper.sweep('slot-a');
+  f.advance();
+  f.deps.stop = async (_slot, _rows, _roots, stillOwned) => {
+    f.setRow({ phase: 'releasing' });
+    return (await stillOwned()) || 'ownership changed';
+  };
+  await f.reaper.sweep('slot-a');
+  assert.equal(decisions.at(-1), 'slot-a/server skip at stop: slot releasing');
 });
 
 test('idle lifetime covers an ownerless slot', async () => {
@@ -203,7 +224,7 @@ test('ownership change before signals refuses cleanup and preserves durable rest
   f.deps.stop = async (_slot, _rows, _roots, stillOwned) => {
     f.setRow({ current_run_id: 'run-b', slot_epoch: 2 });
     assert.equal(await stillOwned(), false);
-    return false;
+    return 'ownership changed';
   };
   await f.reaper.sweep('slot-a');
   assert.equal(f.stopped(), 0);
