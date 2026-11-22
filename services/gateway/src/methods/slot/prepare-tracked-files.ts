@@ -34,7 +34,7 @@ export function buildTrackedFilesSnapshotCommand(repo: string): string {
     '{ git update-index -q --refresh >/dev/null 2>&1 || true; }',
     // Only the stash commit's trees are compared, so a fixed identity keeps slots
     // without a configured committer working.
-    "stash=$(git -c user.name=farmslot -c user.email=prepare@farmslot.invalid stash create)",
+    'stash=$(git -c user.name=farmslot -c user.email=prepare@farmslot.invalid stash create)',
     // A clean checkout has no stash commit: worktree and index are HEAD's tree.
     'base=${stash:-$head}',
     'worktree=$(git rev-parse --verify "$base^{tree}")',
