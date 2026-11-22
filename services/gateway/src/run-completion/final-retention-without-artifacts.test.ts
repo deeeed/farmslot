@@ -242,3 +242,21 @@ test('a retry holds the slot while the gateway task still holds unretained media
   await assert.rejects(retainFinalRunArtifacts(runId), /were not retained: artifacts\/repro.png/);
   assert.deepEqual(getRun(runId)?.artifactBundle, first);
 });
+
+// A task outside the managed task roots keeps its media after a retained capture.
+test('a retry treats media the earlier bundle holds with the same bytes as retained', async () => {
+  const { runId, taskDir } = await failedRun([
+    step('write-task', 'done'),
+    step('prepare', 'failed'),
+    step('dispatch', 'skipped'),
+  ]);
+  const proof = path.join(taskDir, 'artifacts/repro.png');
+  await writeFile(proof, 'retained media');
+  await retainFinalRunArtifacts(runId);
+  const kept = getRun(runId)?.artifactBundle;
+  assert.ok(kept);
+  assert.equal(await retainFinalRunArtifacts(runId), 0);
+  assert.deepEqual(getRun(runId)?.artifactBundle, kept);
+  await writeFile(proof, 'changed media');
+  await assert.rejects(retainFinalRunArtifacts(runId), /were not retained: artifacts\/repro.png/);
+});

@@ -309,7 +309,19 @@ async function captureRunOutputNow(
   // media from the gateway task, so media still there was not retained: rather than a
   // replacement that could drop what the earlier bundle kept, release stops and holds it.
   if (sourceEmpty && run.artifactBundle) {
-    const unretained = scanned.filter((artifact) => isRunBundleMedia(artifact.path));
+    const media = scanned.filter((artifact) => isRunBundleMedia(artifact.path));
+    // Authored tasks outside the managed roots keep their media after a retained capture,
+    // so a file counts as retained when the earlier bundle holds the same bytes.
+    const kept = media.length
+      ? new Map(
+          (await retainedRunArtifactManifest(run, run.artifactBundle))
+            .filter((entry) => entry.availability === 'available')
+            .map((entry) => [entry.path, entry.sha256]),
+        )
+      : new Map<string, string | undefined>();
+    const unretained = media.filter(
+      (artifact) => !artifact.sha256 || kept.get(artifact.path) !== artifact.sha256,
+    );
     if (unretained.length === 0) return 0;
     throw new Error(
       `Final result artifacts were not retained: ${unretained.map((artifact) => artifact.path).join(', ')} remain in the gateway task after an earlier final retention`,
