@@ -314,10 +314,14 @@ export function buildTaskScratchParkCommand(input: {
   /** Fixed parking directory name; tests use it to force a collision. */
   parkStamp?: string;
 }): string {
+  const taskRoot = safeRelativeDir(input.taskDirName, DEFAULT_TASK_DIR).replace(/\/+$/, '');
   const config = {
     repo: input.repo.replace(/\/+$/, ''),
-    taskRoot: safeRelativeDir(input.taskDirName, DEFAULT_TASK_DIR).replace(/\/+$/, ''),
+    taskRoot,
     flows: unique(FLOW_TYPES.map((flow) => flowDir(flow))),
+    // temp/ itself only for the temp/tasks layout: a custom task root's parent may hold
+    // unrelated data, or be the task root's own scratch-named ancestor.
+    tempParent: taskRoot === 'temp/tasks' ? 'temp' : null,
     parkStamp: input.parkStamp ?? null,
     parkRoot: `${input.parkHome.replace(/\/+$/, '')}/parked-scratch/${input.slotId.replace(/[^A-Za-z0-9._-]/g, '_')}`,
   };
@@ -341,10 +345,9 @@ export function buildTaskScratchParkCommand(input: {
     '    except OSError:',
     '        return True',
     'root = os.path.join(repo, cfg["taskRoot"])',
-    "# Also the task root's parent (temp/ for temp/tasks), but never the checkout root itself.",
     'parents = [root] + [os.path.join(root, flow) for flow in cfg["flows"]]',
-    'if os.path.dirname(root) != repo:',
-    '    parents.append(os.path.dirname(root))',
+    'if cfg["tempParent"]:',
+    '    parents.append(os.path.join(repo, cfg["tempParent"]))',
     'found = []',
     'for parent in parents:',
     '    if plain_dir(parent):',

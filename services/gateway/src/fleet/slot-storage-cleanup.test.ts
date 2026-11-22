@@ -373,7 +373,7 @@ test('a parking directory that already exists is never reused, for any candidate
 
 // macpro-mmt-5 after run 41fc25bd: a worker left temp/scratch-tat4567 directly under temp/.
 // The task root's parent is scanned too, but never the checkout root (a `.task` layout).
-test('scratch directly under the task root parent is parked; the checkout root is not scanned', async () => {
+test('scratch directly under temp/ is parked for the temp/tasks layout only', async () => {
   const repo = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-temp-'));
   const home = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-temp-home-'));
   for (const rel of [
@@ -381,6 +381,7 @@ test('scratch directly under the task root parent is parked; the checkout root i
     'temp/scratch-task/TASK.md',
     'scratch-root/x',
     '.task/feat/a/TASK.md',
+    'support/scratch-assets/x',
   ]) {
     await mkdir(path.dirname(path.join(repo, rel)), { recursive: true });
     await writeFile(path.join(repo, rel), 'x');
@@ -416,4 +417,7 @@ test('scratch directly under the task root parent is parked; the checkout root i
     true,
     'the checkout root is never scanned',
   );
+  // A custom task root's parent is not scanned: only temp/ for the temp/tasks layout.
+  assert.deepEqual((await park('support/tasks')).parked, []);
+  assert.equal(await exists(path.join(repo, 'support/scratch-assets/x')), true);
 });

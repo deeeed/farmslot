@@ -1,1 +1,1 @@
-- Release scratch parking also covers `scratch*` directories directly under the task root's parent (`temp/` for `temp/tasks`), never the checkout root, with the same `TASK.md` guard and atomic-rename rules.
+- Release scratch parking also covers `scratch*` directories directly under `temp/` for the `temp/tasks` layout, with the same `TASK.md` guard and atomic-rename rules. Custom task roots' parents and the checkout root are not scanned.
