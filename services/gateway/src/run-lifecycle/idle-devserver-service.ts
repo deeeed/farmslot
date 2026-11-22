@@ -1,5 +1,3 @@
-import { RUN_LIST_UNLIMITED } from '@farmslot/protocol';
-
 import { withCleanupSignal } from '../core/cleanup-scope.js';
 import { loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
@@ -19,6 +17,7 @@ import {
   deleteActiveResource,
   getActiveResource,
   resolveSlotResources,
+  resourceObservationLosses,
   setCachedResourceStatus,
 } from '../fleet/resource-manager.js';
 import { probeResourceProcess } from '../fleet/resource-process.js';
@@ -28,7 +27,7 @@ import { activePrepareAborts } from '../methods/slot/shared.js';
 import { readRunProgress } from '../runners/run-progress.js';
 import { probeRunnerDescendantPid } from '../runners/session-process.js';
 import { contextPaneId } from '../runners/session-record.js';
-import { listRuns } from '../runs/store.js';
+import { getAllRuns } from '../runs/store.js';
 
 import {
   type IdleDevServerPointer,
@@ -40,7 +39,6 @@ import {
   isWithinPath,
   parseLsofNames,
   parseProcessCensus,
-  type ProcessCensusRow,
 } from './process-census.js';
 import { reapIdentifiedSlotProcesses } from './process-reap.js';
 import { tryWithRunTransition } from './transition-coordinator.js';
@@ -126,7 +124,7 @@ async function recordedPidFileProcess(
   return parsePidFileProbe(result.stdout);
 }
 
-// Why the latest pointer or stop call for a slot resource returned nothing, and the last
+// Why the latest pointer call for a slot resource returned nothing (read once), and the last
 // decision logged for it: the idle cap logs a structured line only when its decision changes.
 const idleReasons = new Map<string, string>();
 const loggedDecisions = new Map<string, string>();
@@ -136,13 +134,13 @@ function because(slotId: string, resourceId: string, reason: string): undefined 
   return undefined;
 }
 
-function refuse(slotId: string, roots: ProcessCensusRow[], reason: string): false {
-  const watched = [...ownedListeners.entries()].find(
-    ([key, listener]) =>
-      key.startsWith(`${slotId}/`) && roots.some((root) => Number(root.pid) === listener.pid),
+function logDecision(slotId: string, resourceId: string | undefined, decision: string): void {
+  const key = `${slotId}/${resourceId ?? '-'}`;
+  if (loggedDecisions.get(key) === decision) return;
+  loggedDecisions.set(key, decision);
+  console.info(
+    `[idle-devserver] slot=${slotId} resource=${resourceId ?? '-'} decision=${decision}`,
   );
-  if (watched) idleReasons.set(watched[0], reason);
-  return false;
 }
 
 const stoppingSlots = new Set<string>();
@@ -154,7 +152,8 @@ const ownedListeners = new Map<string, OwnedListener>();
 const idleDevServers = new IdleDevServerReaper({
   now: () => Date.now(),
   row: readSlotRow,
-  runs: () => listRuns({ limit: RUN_LIST_UNLIMITED }).runs,
+  runs: () => getAllRuns(),
+  observed: resourceObservationLosses,
   progress: async (run) => (await readRunProgress(run)).kind,
   preparing: (slotId) => activePrepareSlots.has(slotId) && !stoppingSlots.has(slotId),
   retained: async (slotId, resourceId) => {
@@ -176,15 +175,13 @@ const idleDevServers = new IdleDevServerReaper({
     });
   },
   resources: resolveSlotResources,
-  decide: (slotId, resourceId, decision) => {
-    const key = `${slotId}/${resourceId ?? '-'}`;
-    if (loggedDecisions.get(key) === decision) return;
-    loggedDecisions.set(key, decision);
-    console.info(
-      `[idle-devserver] slot=${slotId} resource=${resourceId ?? '-'} decision=${decision}`,
-    );
+  decide: logDecision,
+  explain: (slotId, resourceId) => {
+    const key = `${slotId}/${resourceId}`;
+    const reason = idleReasons.get(key);
+    idleReasons.delete(key);
+    return reason;
   },
-  explain: (slotId, resourceId) => idleReasons.get(`${slotId}/${resourceId}`),
   pointer: async (slotId, resourceId, refresh) => {
     const key = `${slotId}/${resourceId}`;
     const epoch = (await readSlotRow(slotId))?.slot_epoch;
@@ -238,7 +235,7 @@ const idleDevServers = new IdleDevServerReaper({
       const pidPath = expanded.startsWith('/') ? expanded : `${vars.remoteRepo}/${expanded}`;
       const recorded = await recordedPidFileProcess(vars, pidPath);
       if (!recorded)
-        return because(slotId, resourceId, 'PID file missing, invalid or newer than its process');
+        return because(slotId, resourceId, 'PID file missing, invalid or older than its process');
       if (cached?.pid !== undefined && cached.pid !== recorded.pid)
         return because(
           slotId,
@@ -302,7 +299,7 @@ const idleDevServers = new IdleDevServerReaper({
     if (result.exitCode !== 0) throw new Error('Idle dev server process census unavailable');
     return parseProcessCensus(result.stdout);
   },
-  write: async (slotId, expected, fields) =>
+  write: async (slotId, expected, fields, admit) =>
     (
       await markSlotStatusIf(
         slotId,
@@ -310,13 +307,14 @@ const idleDevServers = new IdleDevServerReaper({
           row.slot_epoch === expected.slot_epoch &&
           row.current_run_id === expected.current_run_id &&
           row.phase !== 'releasing' &&
-          (row.handoff_run_id ?? null) === (expected.handoff_run_id ?? null),
+          (row.handoff_run_id ?? null) === (expected.handoff_run_id ?? null) &&
+          (admit?.() ?? true),
         fields,
       )
     ).applied,
   stop: async (slotId, rows, roots, stillOwned) => {
     if (!(await stillOwned()) || activePrepareSlots.has(slotId))
-      return refuse(slotId, roots, 'ownership changed or the slot is preparing');
+      return 'ownership changed or the slot is preparing';
     const vars = await loadSlotVars(slotId);
     const panes = await execOnSlot(
       vars,
@@ -341,11 +339,10 @@ const idleDevServers = new IdleDevServerReaper({
     const repo = (await slotRealpath(vars, vars.remoteRepo)).replace(/\/$/, '');
     const currentOwner = (await readSlotRow(slotId))?.current_run_id;
     const recorded = new Set(
-      slotWorkerRuns(listRuns({ limit: RUN_LIST_UNLIMITED }).runs, slotId, currentOwner).flatMap(
-        (run) =>
-          (run.agentContexts ?? []).flatMap((context) =>
-            context.target ? [contextPaneId(context.target)] : [],
-          ),
+      slotWorkerRuns(getAllRuns(), slotId, currentOwner).flatMap((run) =>
+        (run.agentContexts ?? []).flatMap((context) =>
+          context.target ? [contextPaneId(context.target)] : [],
+        ),
       ),
     );
     for (const line of panes.stdout.split('\n')) {
@@ -357,10 +354,10 @@ const idleDevServers = new IdleDevServerReaper({
         !recorded.has(paneId) &&
         (await probeRunnerDescendantPid(vars, panePid)).state !== 'absent'
       )
-        return refuse(slotId, roots, `pane ${paneId} may hold an unrecorded worker`);
+        return `pane ${paneId} may hold an unrecorded worker`;
     }
     if (!(await stillOwned()) || activePrepareSlots.has(slotId))
-      return refuse(slotId, roots, 'ownership changed or the slot is preparing');
+      return 'ownership changed or the slot is preparing';
     // Synchronous exclusion uses prepare's existing admission guard while signals run.
     stoppingSlots.add(slotId);
     activePrepareSlots.add(slotId);
@@ -368,7 +365,7 @@ const idleDevServers = new IdleDevServerReaper({
       const result = await reapIdentifiedSlotProcesses(await loadSlotVars(slotId), rows, roots, {
         stillOwned,
       });
-      if (!result) return refuse(slotId, roots, 'the process reap declined');
+      if (!result) return 'the process reap declined';
       if (result.survivors.length) throw new Error('Idle dev server process survived cleanup');
       for (const resource of await resolveSlotResources(slotId)) {
         if (
@@ -401,12 +398,22 @@ const idleDevServers = new IdleDevServerReaper({
   },
 });
 
-/** Runs on the resource poll, serialized with run resume and machine parking. */
+/** The idle sweep stopped observing this slot: no idle window carries over. */
+export function forgetIdleDevServers(slotId: string): void {
+  idleDevServers.forget(slotId);
+}
+
+/** Runs on the idle sweep, serialized with run resume and machine parking. */
 export async function reapIdleDevServers(slotId: string): Promise<void> {
+  // No quiet checks or transition lock for a slot without a dev server the cap may stop.
+  if (!(await idleDevServers.eligible(slotId)).length) return;
   const owner = (await readSlotRow(slotId))?.current_run_id;
-  if (typeof owner === 'string')
-    await tryWithRunTransition(owner, () => idleDevServers.sweep(slotId));
-  else await idleDevServers.sweep(slotId);
+  if (typeof owner !== 'string') return idleDevServers.sweep(slotId);
+  const swept = await tryWithRunTransition(owner, async () => {
+    await idleDevServers.sweep(slotId);
+    return true;
+  });
+  if (!swept) logDecision(slotId, undefined, 'skip: run transition in progress');
 }
 
 /** Callers already own the run/machine transition; no reentrant lock. */
