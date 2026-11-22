@@ -4,6 +4,14 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.50.6 - 2026-11-23
+
+- Pin the Recipe Runner 0.52.2 cohort.
+- `mark complete` refuses a task with engine proof attempts that nothing selects. An attempt is any directory under `artifacts/recipe-runs` holding an `evidence-manifest.json`, such as `<id>`, `attempts/<id>` or a deeper output path. If there's no `latest-valid-recipe-run.json`, the refusal lists the attempts, names any unreadable summaries, and, when a passing summary is found, prints the command that selects that attempt. If there's a selection but no regular-file `artifacts/recipe.json`, it names the recipe to copy. It never picks an attempt itself. Review and QA flows are exempt (QA keeps its own selection contract), and root `artifacts/evidence-manifest.json` declarations stay optional.
+- Native Pi sessions (`pi --mode rpc`) load a small extension that gives a bash call with no timeout 600 seconds, the same default as tmux Pi workers; an explicit timeout is kept.
+- Artifact-only comparison replays now rewrite a template's `git merge-base origin/<branch> HEAD` baseline to the recorded replay base. A standalone `git diff "$(…)"` becomes `git diff <base>`, or the working-tree `git diff` when no base is recorded, like the existing `main` rewrites. Pinned-start run 6562483b's fix-bug step diffed against the merge base with `main`, beside a guardrail forbidding `main` as the baseline.
+- New `lintWorkerTemplateProofSelection`: a worker template that runs recipe proof must name the selected proof attempt (`artifacts/latest-valid-recipe-run.json`). Review and QA flows are exempt. `yarn quality:worker-templates` applies it to flow templates and to pack-owned execution-template checklists (`execution_templates.sources[].root.projectPath`, with `subpath`). A template with its own designed proof layout opts out by name: `<!-- proof-selection: exempt (<reason>) -->`.
+
 ## 0.50.5 - 2026-11-21
 
 - Pin the Protocol 0.92.0 producer cohort.
