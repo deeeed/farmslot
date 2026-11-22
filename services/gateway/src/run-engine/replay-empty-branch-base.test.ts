@@ -184,7 +184,7 @@ test('a replay starts an empty work branch from the current base', needsTmuxSand
   assert.ok(
     stepsOf(events).some((detail) =>
       detail.startsWith(
-        `${workBranch} had no commits beyond origin/main; moved from ${oldBase.slice(0, 12)}`,
+        `${workBranch} had no commits beyond origin/main; fast-forwarded from ${oldBase.slice(0, 12)}`,
       ),
     ),
   );
@@ -245,3 +245,75 @@ test('a work branch with its own commits keeps its base on replay', needsTmuxSan
   assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), tip);
   await assert.rejects(git(slotRepo, 'merge-base', '--is-ancestor', newBase, 'HEAD'));
 });
+
+test('a published empty branch keeps its base on replay', needsTmuxSandbox, async (t) => {
+  const { slotId, slotRepo, oldBase } = await staleBaseSlot(t);
+  await git(slotRepo, 'branch', workBranch, oldBase);
+  await git(slotRepo, 'push', '-q', 'origin', workBranch);
+  await assert.rejects(
+    slotPrepare(
+      { slotId, branch: workBranch, prepareProfile: 'core' },
+      () => {},
+      undefined,
+      { preserveBranch: true },
+    ),
+    /prepare deps changed 1 tracked file/,
+  );
+  assert.equal(await git(slotRepo, 'rev-parse', `refs/heads/${workBranch}`), oldBase);
+});
+
+test(
+  'local edits that conflict with the new base leave the branch where it was',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, slotRepo, oldBase } = await staleBaseSlot(t);
+    await git(slotRepo, 'checkout', '-q', '-b', workBranch, oldBase);
+    await writeFile(
+      path.join(slotRepo, manifestPath),
+      unsortedManifest.replace('"0.29.2"', '"0.29.3-local"'),
+    );
+    const events: Array<{ event: string; payload: unknown }> = [];
+    await Promise.allSettled([
+      slotPrepare(
+        { slotId, branch: workBranch, prepareProfile: 'core' },
+        (event, payload) => events.push({ event, payload }),
+        undefined,
+        { preserveBranch: true },
+      ),
+    ]);
+    assert.equal(await git(slotRepo, 'rev-parse', `refs/heads/${workBranch}`), oldBase);
+    assert.match(await readFile(path.join(slotRepo, manifestPath), 'utf8'), /0\.29\.3-local/);
+    assert.ok(
+      stepsOf(events).some((detail) =>
+        detail.startsWith(`${workBranch} has no commits beyond origin/main but stays at`),
+      ),
+    );
+  },
+);
+
+test(
+  'an ignored local file the new base would track leaves the branch where it was',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, slotRepo, oldBase } = await staleBaseSlot(t);
+    // origin/main gains a tracked path that the slot has as an ignored local file.
+    const author = path.join(path.dirname(slotRepo), 'author');
+    await writeFile(path.join(author, 'local.env'), 'tracked default\n');
+    await git(author, 'add', 'local.env');
+    await git(author, 'commit', '-qm', 'C: track local.env');
+    await git(author, 'push', '-q', 'origin', 'main');
+    await git(slotRepo, 'checkout', '-q', '-b', workBranch, oldBase);
+    await writeFile(path.join(slotRepo, '.git/info/exclude'), 'local.env\n');
+    await writeFile(path.join(slotRepo, 'local.env'), 'operator secret\n');
+    await Promise.allSettled([
+      slotPrepare(
+        { slotId, branch: workBranch, prepareProfile: 'core' },
+        () => {},
+        undefined,
+        { preserveBranch: true },
+      ),
+    ]);
+    assert.equal(await git(slotRepo, 'rev-parse', `refs/heads/${workBranch}`), oldBase);
+    assert.equal(await readFile(path.join(slotRepo, 'local.env'), 'utf8'), 'operator secret\n');
+  },
+);
