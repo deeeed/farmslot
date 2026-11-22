@@ -301,3 +301,10 @@ test('a checkout with a broken .git fails the snapshot instead of being skipped'
   writeFileSync(path.join(repo, '.git'), 'gitdir: /nonexistent/worktrees/slot\n');
   assert.throws(() => sh(buildTrackedFilesSnapshotCommand(repo)));
 });
+
+test('an invalid .git directory nested in another repository fails instead of reading the parent', (t) => {
+  const { repo } = fixture(t);
+  const nested = path.join(repo, 'nested-slot');
+  mkdirSync(path.join(nested, '.git'), { recursive: true });
+  assert.throws(() => sh(buildTrackedFilesSnapshotCommand(nested)), /not the root of its own git work tree/);
+});

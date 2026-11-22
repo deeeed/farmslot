@@ -96,6 +96,9 @@ export function buildTrackedFilesSnapshotCommand(
     // No .git entry at the slot root: a plain or nested task directory with nothing
     // of its own to check. A broken checkout still has one and fails below.
     `{ [ -e .git ] || { printf '%s\\n' notrepo; exit 0; }; }`,
+    // With a .git entry, git must resolve this directory itself as the work-tree
+    // root; an invalid .git directory would otherwise fall through to a parent repo.
+    `{ prefix=$(git rev-parse --show-prefix) && [ -z "$prefix" ] || { echo "$PWD has a .git entry but is not the root of its own git work tree" >&2; exit 1; }; }`,
     'head=$(git rev-parse --verify HEAD)',
     'branch=$(git symbolic-ref -q HEAD || true)',
     // `git stash create` needs a merged index.
