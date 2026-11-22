@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- A completion hold on unreadable acceptance now quotes the reader's own refusal, and a run whose artifact capture failed says so, naming the capture error (an unmounted bundle volume, no write room). A run that finished its work and could not be retained no longer fails with a message that blames its acceptance criteria.
 
 ## 0.39.11 - 2026-11-21
 

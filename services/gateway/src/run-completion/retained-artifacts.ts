@@ -266,9 +266,16 @@ export function retainedRunBundleRef(
     selected = requested;
   }
   if (!selected)
-    throw new GatewayMethodError('RUN_ARTIFACTS_NOT_RETAINED', 'Run artifacts are not retained.', {
-      userAction: `farmslot runs bundle retain ${run.id}`,
-    });
+    throw new GatewayMethodError(
+      'RUN_ARTIFACTS_NOT_RETAINED',
+      // A failed capture is the usual reason there is no bundle, and its message
+      // names the cause (an unmounted bundle volume, no write room). Retaining
+      // again cannot succeed until that is fixed, so the refusal carries it.
+      run.output?.captureError
+        ? `Run artifacts are not retained: ${run.output.captureError}`
+        : 'Run artifacts are not retained.',
+      { userAction: `farmslot runs bundle retain ${run.id}` },
+    );
   return localBundleRef(run, selected);
 }
 
