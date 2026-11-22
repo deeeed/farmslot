@@ -855,6 +855,46 @@ async function slotPrepareInner(
     }
     step('branch', `Reset ${branch} to stack base ${sha}`);
   };
+  // A run's work branch with no commits beyond the project base carries no work,
+  // only an old base: a replay of a run whose base has since gained a fix (for
+  // example a sorted manifest the tracked-file check needs) must not keep
+  // preparing the old tree. Start such a branch from the current base; a branch
+  // with its own commits stays where it is. Runs with an explicit start ref or
+  // stack base keep the base they asked for.
+  const advanceEmptyWorkBranch = async (checkedOut: boolean) => {
+    if (!branch || opts?.startRef || opts?.stackBase) return;
+    const base = `origin/${defaultBranch}`;
+    const probe = await execGit(
+      'probe-empty-work-branch',
+      vars,
+      withFarmGitConfig(
+        `cd ${shellQuote(vars.remoteRepo)} && git rev-list --count ${shellQuote(`${base}..refs/heads/${branch}`)} && git rev-parse ${shellQuote(`refs/heads/${branch}^{commit}`)} ${shellQuote(`${base}^{commit}`)}`,
+      ),
+    );
+    if (probe.exitCode !== 0) return;
+    const [own, tip = '', baseSha = ''] = probe.stdout.trim().split('\n');
+    if (own !== '0' || !tip || !baseSha || tip === baseSha) return;
+    // A checked-out branch fast-forwards, keeping uncommitted work unless it conflicts.
+    const move = checkedOut
+      ? `git merge --ff-only ${shellQuote(baseSha)}`
+      : `git branch -f ${shellQuote(branch)} ${shellQuote(baseSha)}`;
+    const moved = await mutateGit(
+      'advance-empty-work-branch',
+      `cd ${shellQuote(vars.remoteRepo)} && ${move}`,
+      [baseSha],
+    );
+    if (moved.exitCode !== 0) {
+      step(
+        'branch',
+        `${branch} has no commits beyond ${base} but stays at ${tip.slice(0, 12)}: ${(moved.stderr || moved.stdout).trim().slice(-200)}`,
+      );
+      return;
+    }
+    step(
+      'branch',
+      `${branch} had no commits beyond ${base}; moved from ${tip.slice(0, 12)} to ${baseSha.slice(0, 12)}`,
+    );
+  };
   // A start ref means two different things. For dev/fix-bug it is an
   // artifact-only replay base: the work branch must be local-only, and the
   // policy below refuses a remote-published branch on every non-replay path (a
@@ -957,7 +997,22 @@ async function slotPrepareInner(
       if (create.exitCode !== 0)
         throw new Error(`Replay branch creation failed: ${create.stderr || create.stdout}`);
       step('branch', `Created ${branch} after prepare failed before branch setup`);
-    } else if (current !== branch) {
+    } else {
+      // The base moves only for an empty branch; a failed fetch keeps the branch as it is.
+      const fetchBase = opts.startRef || opts.stackBase
+        ? null
+        : await execGit(
+            'fetch-replay-base',
+            vars,
+            withFarmGitConfig(
+              `git -C ${shellQuote(vars.remoteRepo)} fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+            ),
+          );
+      if (fetchBase && fetchBase.exitCode !== 0)
+        step('branch', `Replay kept ${branch} as is: fetching origin/${defaultBranch} failed`);
+      else if (fetchBase) await advanceEmptyWorkBranch(current === branch);
+    }
+    if (localExists && current !== branch) {
       const checkoutR = await mutateGit(
         'checkout-replay-branch',
         `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)}`,
@@ -1034,6 +1089,17 @@ async function slotPrepareInner(
           );
         }
         step('branch', `Remote branch ${branch} not found; using existing local ${branch}`);
+        if (!opts?.startRef && !opts?.stackBase) {
+          const fetchBase = await execGit(
+            'fetch-current-base',
+            vars,
+            withFarmGitConfig(
+              `cd ${shellQuote(vars.remoteRepo)} && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+            ),
+          );
+          if (fetchBase.exitCode === 0) await advanceEmptyWorkBranch(true);
+          else step('branch', `Kept ${branch} as is: fetching origin/${defaultBranch} failed`);
+        }
         await resolveRequestedStartRef();
         if (startRefPolicyApplies) {
           assertStartRefWorkBranchIsLocalOnly({
@@ -1334,6 +1400,7 @@ async function slotPrepareInner(
             }
             step('branch', `Recreated local ${branch} from ${newBranchBaseLabel}`);
           } else {
+            await advanceEmptyWorkBranch(false);
             await mutateGit(
               'checkout-local-branch',
               `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)}`,

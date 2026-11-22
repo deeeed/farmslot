@@ -1,0 +1,254 @@
+import assert from 'node:assert/strict';
+import { execFile, spawnSync } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { mock, test } from 'node:test';
+import { promisify } from 'node:util';
+
+import type { ExecResult } from '@farmslot/protocol';
+
+import { claimSlotStatusIf } from '../core/state.js';
+
+// 942d189f / 1f5bfba9 shape: a replayed run's local-only work branch had no
+// commits of its own and still sat at the old base, before audiolab #532 sorted
+// scripts/agentic/package.json. Prepare reused it there, Yarn re-sorted the
+// manifest and the tracked-file check stopped every replay until someone moved
+// the branch by hand. An empty work branch now starts from the current base; a
+// branch with its own commits stays where it is.
+const tmuxSandbox =
+  !process.env.TMUX &&
+  process.env.TMUX_TMPDIR &&
+  process.env.FARMSLOT_TMUX_SANDBOX ===
+    `${process.env.TMUX_TMPDIR}/tmux-${process.getuid?.() ?? 0}/default`
+    ? process.env.FARMSLOT_TMUX_SANDBOX
+    : null;
+const needsTmuxSandbox = {
+  skip: !tmuxSandbox && 'needs the test runner tmux sandbox (FARMSLOT_TMUX_SANDBOX)',
+};
+
+const execFileAsync = promisify(execFile);
+const manifestPath = 'scripts/agentic/package.json';
+const unsortedManifest = `${JSON.stringify(
+  {
+    name: '@siteed/audiolab-agentic',
+    private: true,
+    dependencies: {
+      '@farmslot/adapter-sdk': '0.25.2',
+      '@farmslot/recipe-cli': '0.32.1',
+      pngjs: '^7.0.0',
+      '@farmslot/adapter-rn': '0.29.2',
+    },
+  },
+  null,
+  2,
+)}\n`;
+
+// Stands in for `yarn install --immutable`: rewrites the workspace manifest with
+// dependencies sorted, as Yarn's manifest persistence does.
+const yarnPersist = `node -e '
+const fs = require("fs");
+const file = ${JSON.stringify(manifestPath)};
+const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
+manifest.dependencies = Object.fromEntries(Object.entries(manifest.dependencies).sort(([a], [b]) => a.localeCompare(b)));
+fs.writeFileSync(file, JSON.stringify(manifest, null, 2) + "\\n");
+'`;
+
+const commands: string[] = [];
+const realPrepareCommand = await import('../methods/slot/prepare-command.js');
+mock.module('../methods/slot/prepare-command.js', {
+  namedExports: {
+    ...realPrepareCommand,
+    runPrepareCommand: async (
+      vars: { remoteRepo: string },
+      _logPath: string,
+      command: string,
+    ): Promise<ExecResult> => {
+      commands.push(command);
+      if (!command.includes('yarn install')) return { stdout: '', stderr: '', exitCode: 0 };
+      const r = spawnSync('bash', ['-c', yarnPersist], { cwd: vars.remoteRepo, encoding: 'utf8' });
+      return { stdout: r.stdout, stderr: r.stderr, exitCode: r.status ?? 1 };
+    },
+  },
+});
+
+const realFixtures = await import('../methods/slot/fixtures.js');
+mock.module('../methods/slot/fixtures.js', {
+  namedExports: { ...realFixtures, runFixtureSync: async () => undefined },
+});
+
+const { slotPrepare } = await import('../methods/slot.js');
+
+async function git(repo: string, ...args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync('git', [
+    '-C',
+    repo,
+    '-c',
+    'user.name=Fixture',
+    '-c',
+    'user.email=fixture@example.invalid',
+    '-c',
+    'commit.gpgsign=false',
+    ...args,
+  ]);
+  return stdout.trim();
+}
+
+
+let slotCounter = 0;
+
+/**
+ * origin/main moved from A (unsorted manifest) to B (sorted, the #532 fix) after
+ * the run's branch was made; the slot still has origin/main at A.
+ */
+async function staleBaseSlot(t: { after: (fn: () => Promise<void>) => void }) {
+  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'farmslot-replay-base-'));
+  const slotRepo = path.join(fixtureRoot, 'slot');
+  const originRepo = path.join(fixtureRoot, 'origin.git');
+  const authorRepo = path.join(fixtureRoot, 'author');
+  const repoRoot = path.resolve(new URL('../../../../', import.meta.url).pathname);
+  const index = slotCounter++;
+  const slotId = `replay-base-${process.pid}-${index}`;
+  const poolPath = path.join(repoRoot, 'pool', `${slotId}.json`);
+  t.after(async () => {
+    const session = spawnSync('tmux', ['-S', tmuxSandbox!, 'has-session', '-t', `=${slotId}`]);
+    if (session.status === 0)
+      await execFileAsync('tmux', ['-S', tmuxSandbox!, 'kill-session', '-t', `=${slotId}`]);
+    await rm(poolPath, { force: true });
+    await rm(fixtureRoot, { recursive: true, force: true });
+  });
+  await execFileAsync('git', ['init', '--initial-branch=main', slotRepo]);
+  await execFileAsync('git', ['init', '--bare', '--initial-branch=main', originRepo]);
+  await mkdir(path.join(slotRepo, 'scripts/agentic'), { recursive: true });
+  await writeFile(path.join(slotRepo, manifestPath), unsortedManifest);
+  await writeFile(path.join(slotRepo, 'README.md'), 'fixture\n');
+  await git(slotRepo, 'add', '.');
+  await git(slotRepo, 'commit', '-qm', 'A: unsorted agentic manifest');
+  await git(slotRepo, 'remote', 'add', 'origin', originRepo);
+  await git(slotRepo, 'push', '-q', '--set-upstream', 'origin', 'main');
+  const oldBase = await git(slotRepo, 'rev-parse', 'HEAD');
+  await execFileAsync('git', ['clone', '-q', originRepo, authorRepo]);
+  spawnSync('bash', ['-c', yarnPersist], { cwd: authorRepo });
+  await git(authorRepo, 'commit', '-qam', 'B: sort agentic dependencies');
+  await git(authorRepo, 'push', '-q', 'origin', 'main');
+  const newBase = await git(authorRepo, 'rev-parse', 'HEAD');
+  await writeFile(
+    poolPath,
+    `${JSON.stringify({
+      machine: os.hostname(),
+      project: 'farmslot-farm',
+      platform: 'cli',
+      host: 'localhost',
+      slots: [
+        {
+          id: slotId,
+          repo: slotRepo,
+          session: slotId,
+          enabled: true,
+          mode: 'dispatch',
+          resources: { 'dev-server': { port: 48830 + index, metro_port: 48930 + index } },
+        },
+      ],
+    })}\n`,
+  );
+  await claimSlotStatusIf(slotId, () => true, {
+    lifecycle: 'ready',
+    phase: null,
+    agent: 'idle',
+    current_run_id: null,
+  });
+  return { slotId, slotRepo, oldBase, newBase };
+}
+
+const workBranch = 'fix/505-bug-ios-ignores-preferrawstrea';
+
+function stepsOf(events: Array<{ event: string; payload: unknown }>): string[] {
+  return events
+    .filter(({ event }) => event === 'slot.prepare.step')
+    .map(({ payload }) => (payload as { detail: string }).detail);
+}
+
+test(
+  'a replay starts an empty work branch from the current base',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, slotRepo, oldBase, newBase } = await staleBaseSlot(t);
+    await git(slotRepo, 'branch', workBranch, oldBase);
+    const events: Array<{ event: string; payload: unknown }> = [];
+    const result = await slotPrepare(
+      { slotId, branch: workBranch, prepareProfile: 'core' },
+      (event, payload) => events.push({ event, payload }),
+      undefined,
+      { preserveBranch: true },
+    );
+    assert.equal(result.prepared, true);
+    assert.equal(await git(slotRepo, 'branch', '--show-current'), workBranch);
+    assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), newBase);
+    assert.equal(await git(slotRepo, 'status', '--porcelain', '--untracked-files=no'), '');
+    assert.ok(
+      stepsOf(events).some((detail) =>
+        detail.startsWith(`${workBranch} had no commits beyond origin/main; moved from ${oldBase.slice(0, 12)}`),
+      ),
+    );
+  },
+);
+
+test(
+  'a fresh prepare starts an existing empty local work branch from the current base',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, slotRepo, oldBase, newBase } = await staleBaseSlot(t);
+    await git(slotRepo, 'branch', workBranch, oldBase);
+    const result = await slotPrepare(
+      { slotId, branch: workBranch, prepareProfile: 'core' },
+      () => {},
+    );
+    assert.equal(result.prepared, true);
+    assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), newBase);
+    assert.equal(await git(slotRepo, 'status', '--porcelain', '--untracked-files=no'), '');
+  },
+);
+
+test(
+  'a checked-out empty branch fast-forwards on replay and keeps uncommitted work',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, slotRepo, oldBase, newBase } = await staleBaseSlot(t);
+    await git(slotRepo, 'checkout', '-q', '-b', workBranch, oldBase);
+    await writeFile(path.join(slotRepo, 'README.md'), 'uncommitted work\n');
+    const result = await slotPrepare(
+      { slotId, branch: workBranch, prepareProfile: 'core' },
+      () => {},
+      undefined,
+      { preserveBranch: true },
+    );
+    assert.equal(result.prepared, true);
+    assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), newBase);
+    assert.equal(await readFile(path.join(slotRepo, 'README.md'), 'utf8'), 'uncommitted work\n');
+  },
+);
+
+test(
+  'a work branch with its own commits keeps its base on replay',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, slotRepo, oldBase, newBase } = await staleBaseSlot(t);
+    await git(slotRepo, 'checkout', '-q', '-b', workBranch, oldBase);
+    // The run's own commit (its manifest already sorted, so deps changes nothing).
+    spawnSync('bash', ['-c', yarnPersist], { cwd: slotRepo });
+    await writeFile(path.join(slotRepo, 'fix.txt'), 'the fix\n');
+    await git(slotRepo, 'add', '.');
+    await git(slotRepo, 'commit', '-qm', 'fix: the run work');
+    const tip = await git(slotRepo, 'rev-parse', 'HEAD');
+    await git(slotRepo, 'checkout', '-q', 'main');
+    const result = await slotPrepare(
+      { slotId, branch: workBranch, prepareProfile: 'core' },
+      () => {},
+      undefined,
+      { preserveBranch: true },
+    );
+    assert.equal(result.prepared, true);
+    assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), tip);
+    await assert.rejects(git(slotRepo, 'merge-base', '--is-ancestor', newBase, 'HEAD'));
+  },
+);
