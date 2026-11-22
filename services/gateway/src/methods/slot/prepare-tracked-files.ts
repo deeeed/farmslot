@@ -45,7 +45,7 @@ const SUBMODULE_RECORDS = [
   'dirty=$(git -C "$p" diff --binary --no-ext-diff HEAD -- 2>/dev/null | git hash-object --stdin);',
   '[ "$dirty" = "$empty" ] && dirty=clean;',
   'fi;',
-  "printf '%s %s %s\\t%s\\0' \"${meta##* }\" \"$commit\" \"$dirty\" \"$p\";",
+  'printf \'%s %s %s\\t%s\\0\' "${meta##* }" "$commit" "$dirty" "$p";',
   'done',
 ].join(' ');
 
@@ -62,7 +62,7 @@ export function buildTrackedFilesSnapshotCommand(repo: string): string {
     'worktree=$(git rev-parse --verify "$base^{tree}")',
     'index=$(if [ -n "$stash" ]; then git rev-parse --verify "$stash^2^{tree}"; else git rev-parse --verify "$head^{tree}"; fi)',
     'empty=$(git hash-object --stdin </dev/null)',
-    "printf '%s\\n%s\\n%s\\n%s\\n' \"$head\" \"$branch\" \"$worktree\" \"$index\"",
+    'printf \'%s\\n%s\\n%s\\n%s\\n\' "$head" "$branch" "$worktree" "$index"',
     `{ ${SUBMODULE_RECORDS}; }`,
   ].join(' && ');
   return [

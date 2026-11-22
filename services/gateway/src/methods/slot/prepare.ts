@@ -523,7 +523,9 @@ async function slotPrepareInner(
     if (moved) fail(moved);
     if (after.unmerged) {
       if (!baseline.unmerged)
-        fail(`prepare ${phase} left unmerged index entries on ${vars.slotId} — command: ${command}`);
+        fail(
+          `prepare ${phase} left unmerged index entries on ${vars.slotId} — command: ${command}`,
+        );
       return after;
     }
     // Conflicts resolved during this phase: full checks resume from here.
