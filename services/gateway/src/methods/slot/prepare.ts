@@ -1480,7 +1480,10 @@ async function slotPrepareInner(
     phaseEnabled('deps') || phaseEnabled('preflight') || phaseEnabled('health')
       ? await snapshotTrackedFiles()
       : null;
-  if (!trackedBaseline && (phaseEnabled('deps') || phaseEnabled('preflight') || phaseEnabled('health')))
+  if (
+    !trackedBaseline &&
+    (phaseEnabled('deps') || phaseEnabled('preflight') || phaseEnabled('health'))
+  )
     step('tracked-files', 'Tracked-file check skipped: the index has unmerged entries');
   if (!phaseEnabled('deps')) {
     step('deps', `Deps install skipped (profile ${profileName()})`);

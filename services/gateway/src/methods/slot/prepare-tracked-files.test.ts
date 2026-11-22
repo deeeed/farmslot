@@ -164,7 +164,17 @@ test('a moved submodule is reported even with submodule ignore=all', (t) => {
   const subGit = (dir: string, ...args: string[]) =>
     execFileSync(
       'git',
-      ['-C', dir, '-c', 'user.name=F', '-c', 'user.email=f@example.invalid', '-c', 'commit.gpgsign=false', ...args],
+      [
+        '-C',
+        dir,
+        '-c',
+        'user.name=F',
+        '-c',
+        'user.email=f@example.invalid',
+        '-c',
+        'commit.gpgsign=false',
+        ...args,
+      ],
       { encoding: 'utf8' },
     ).trim();
   subGit(sub, 'init', '-q', '-b', 'main');

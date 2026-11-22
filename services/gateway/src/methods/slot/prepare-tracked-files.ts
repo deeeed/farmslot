@@ -35,7 +35,7 @@ export function buildTrackedFilesSnapshotCommand(repo: string): string {
     'head=$(git rev-parse --verify HEAD)',
     'branch=$(git symbolic-ref -q HEAD || true)',
     // `git stash create` needs a merged index; a replay can keep a conflicted one.
-    "{ [ -z \"$(git ls-files -u | head -n 1)\" ] || { printf '%s\\n' unmerged; exit 0; }; }",
+    '{ [ -z "$(git ls-files -u | head -n 1)" ] || { printf \'%s\\n\' unmerged; exit 0; }; }',
     // A file rewritten with identical bytes is only stat-dirty; `git stash create`
     // exits 1 without output on that, so refresh the stat cache first.
     '{ git update-index -q --refresh >/dev/null 2>&1 || true; }',
@@ -84,7 +84,10 @@ export function snapshotsEqual(a: TrackedFilesSnapshot, b: TrackedFilesSnapshot)
 }
 
 /** Submodules whose checked-out commit changed and no longer matches HEAD's gitlink. */
-export function changedSubmodules(before: TrackedFilesSnapshot, after: TrackedFilesSnapshot): string[] {
+export function changedSubmodules(
+  before: TrackedFilesSnapshot,
+  after: TrackedFilesSnapshot,
+): string[] {
   const changed: string[] = [];
   for (const [file, state] of after.submodules) {
     const [gitlink, current] = state.split(' ');
@@ -117,7 +120,10 @@ export function buildDirtyPathsCommand(repo: string, snapshot: TrackedFilesSnaps
 function diffTreesCommand(repo: string, pairs: Array<[string, string]>): string {
   const diffs = pairs
     .filter(([a, b]) => a !== b)
-    .map(([a, b]) => `git diff --no-renames --ignore-submodules=none --name-only -z ${shellQuote(a)} ${shellQuote(b)} --`);
+    .map(
+      ([a, b]) =>
+        `git diff --no-renames --ignore-submodules=none --name-only -z ${shellQuote(a)} ${shellQuote(b)} --`,
+    );
   return `cd ${shellQuote(repo)} && { ${diffs.join(' && ') || 'true'}; }`;
 }
 
