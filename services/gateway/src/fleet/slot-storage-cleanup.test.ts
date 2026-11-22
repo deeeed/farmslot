@@ -370,3 +370,50 @@ test('a parking directory that already exists is never reused, for any candidate
   assert.equal(await exists(path.join(repo, 'temp/tasks/scratch-a/x')), true);
   assert.equal(await exists(path.join(repo, 'temp/tasks/scratch-b/x')), true);
 });
+
+// macpro-mmt-5 after run 41fc25bd: a worker left temp/scratch-tat4567 directly under temp/.
+// The task root's parent is scanned too, but never the checkout root (a `.task` layout).
+test('scratch directly under the task root parent is parked; the checkout root is not scanned', async () => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-temp-'));
+  const home = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-temp-home-'));
+  for (const rel of [
+    'temp/scratch-tat4567/run.json',
+    'temp/scratch-task/TASK.md',
+    'scratch-root/x',
+    '.task/feat/a/TASK.md',
+  ]) {
+    await mkdir(path.dirname(path.join(repo, rel)), { recursive: true });
+    await writeFile(path.join(repo, rel), 'x');
+  }
+  const park = async (taskDirName: string) =>
+    parseTaskScratchParkOutput(
+      (
+        await execFileAsync('/bin/sh', [
+          '-c',
+          buildTaskScratchParkCommand({
+            repo,
+            taskDirName,
+            slotId: 'macpro-mmt-5',
+            parkHome: home,
+          }),
+        ])
+      ).stdout,
+    );
+  const temp = await park('temp/tasks');
+  assert.deepEqual(
+    temp.parked.map((entry) => path.basename(entry.path)),
+    ['scratch-tat4567'],
+  );
+  assert.equal(
+    await exists(path.join(repo, 'temp/scratch-task/TASK.md')),
+    true,
+    'the TASK.md guard still applies',
+  );
+  const dotTask = await park('.task');
+  assert.deepEqual(dotTask.parked, []);
+  assert.equal(
+    await exists(path.join(repo, 'scratch-root/x')),
+    true,
+    'the checkout root is never scanned',
+  );
+});
