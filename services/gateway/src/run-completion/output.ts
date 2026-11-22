@@ -18,6 +18,7 @@ import {
 import { parseRunBundleMissingData, waitForRunBundleQueueTurn } from '@farmslot/run-bundle';
 
 import { GATEWAY_OWNED_DIFF_ARTIFACT_PATHS } from '../core/artifact-copy-policy.js';
+import { failedBeforeWorkerLaunch } from '../run-lifecycle/pre-worker-failure.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 
 import { type ArtifactMirrorOptions, refreshArtifactMirror } from './artifact-mirror.js';
@@ -225,46 +226,21 @@ export function captureRunOutput(
 
 /** Keep final raw artifacts without rewriting the report snapshot the person judged. */
 export function retainFinalRunArtifacts(runId: string): Promise<number> {
-  const run = getRun(runId);
-  return queueOutputCapture(
-    runId,
-    Boolean(run?.slotId),
-    false,
-    // A missing source is a loss only once there was output to lose. A run whose worker
-    // never launched has no final result: an empty source copies and prunes nothing, the
-    // gateway's mirrored task files are captured, and release can proceed.
-    !run || runMayHaveOutput(run)
-      ? { requireSourceArtifacts: true }
-      : { keepMirrorWithoutSource: true },
-    'final-result',
-  );
+  return queueOutputCapture(runId, Boolean(getRun(runId)?.slotId), false, {}, 'final-result');
 }
 
-// run.artifactBundle is left out: this retention commits one even when it captures nothing,
-// and a retried release must reach the same decision.
-function runMayHaveOutput(run: Run): boolean {
-  return (
-    !!run.output?.artifactManifest.length ||
-    !!run.output?.artifactBundle ||
-    run.steps.some((step) => step.name === 'dispatch' && step.status === 'done') ||
-    // Any trace of a launch, a handed-over prompt or a session, including a cleared retry
-    // marker's pane and a restarted native session's history, keeps the source required.
-    (run.agentContexts ?? []).some(
-      (context) =>
-        !!(
-          context.promptDeliveryStartedAt ||
-          context.promptAcceptance ||
-          context.runnerSessionId ||
-          context.runnerSessionPath ||
-          context.nativeSession ||
-          context.nativeSessionHistory?.length ||
-          context.target ||
-          context.startedAt ||
-          context.attemptStartedAt ||
-          context.adoptedAt
-        ),
-    )
-  );
+/**
+ * Decided when the capture runs, after any queued capture committed: a missing source is a
+ * loss only once there was output to lose. A run that positively failed before its worker
+ * launched and retained nothing has no final result; an empty source then copies and
+ * prunes nothing, the gateway's mirrored task files are captured, and release can proceed.
+ */
+function finalResultMirrorOptions(run: Run): ArtifactMirrorOptions {
+  return failedBeforeWorkerLaunch(run) &&
+    !run.output?.artifactManifest.length &&
+    !run.output?.artifactBundle
+    ? { keepMirrorWithoutSource: true }
+    : { requireSourceArtifacts: true };
 }
 
 type CapturePurpose = 'snapshot' | 'final-result';
@@ -307,9 +283,11 @@ async function captureRunOutputNow(
   if (taskFile !== attempt.taskFile || generation !== attempt.generation)
     throw new Error('Run attempt changed while retrieving output; refresh the current attempt');
   const acquisition = options.acquisition ?? createRunArtifactAcquisition(run);
+  const mirrorOptions =
+    purpose === 'final-result' ? { ...options, ...finalResultMirrorOptions(run) } : options;
   const copied =
     mirror && !run.reviewWorkspace
-      ? await refreshArtifactMirror(run, { ...options, acquisition })
+      ? await refreshArtifactMirror(run, { ...mirrorOptions, acquisition })
       : 0;
   const artifactsByPath = new Map(
     [...(await scanArtifacts(path.dirname(taskFile))), ...acquisition.media].map((artifact) => [

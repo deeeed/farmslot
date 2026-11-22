@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after, mock } from 'node:test';
@@ -38,17 +38,23 @@ mock.module('./artifact-mirror.js', {
 });
 
 const { createRun, updateRun } = await import('../runs/store.js');
-const { retainFinalRunArtifacts } = await import('./output.js');
+const { captureRunOutput, retainFinalRunArtifacts } = await import('./output.js');
+const { BEFORE_WORKER_LAUNCH, WORKER_LAUNCH } =
+  await import('../run-lifecycle/pre-worker-failure.js');
 
-function step(name: string, status: RunStep['status']): RunStep {
-  return { name, status, startedAt: '2026-11-22T05:04:11.000Z' };
+function step(name: string, status: RunStep['status'], failedPhase?: string): RunStep {
+  return {
+    name,
+    status,
+    startedAt: '2026-11-22T05:04:11.000Z',
+    ...(failedPhase ? { outputs: { failedPhase } } : {}),
+  };
 }
 
 async function failedRun(
   steps: RunStep[],
-  promptDeliveryStartedAt?: string,
-  launched: Partial<AgentContext> = {},
-): Promise<string> {
+  context: Partial<AgentContext> | null = {},
+): Promise<{ runId: string; taskDir: string }> {
   const run = createRun({
     flowType: 'fix-bug',
     project: 'example',
@@ -63,26 +69,27 @@ async function failedRun(
     taskFile,
     engineState: { taskInit: { taskFile, status: 'initialized' } },
     steps,
-    agentContexts: [
-      {
-        id: 'fix-bug',
-        role: 'fix-bug',
-        label: 'Worker',
-        slotId: 'macpro-audiolab-2',
-        runId: run.id,
-        status: 'failed',
-        ...(promptDeliveryStartedAt ? { promptDeliveryStartedAt } : {}),
-        ...launched,
-      },
-    ],
+    agentContexts: context
+      ? [
+          {
+            id: 'fix-bug',
+            role: 'fix-bug',
+            label: 'Worker',
+            slotId: 'macpro-audiolab-2',
+            runId: run.id,
+            status: 'failed',
+            ...context,
+          },
+        ]
+      : [],
   });
-  return run.id;
+  return { runId: run.id, taskDir };
 }
 
-// Run 942d189f: the task was written, then preparation failed before any worker ran, so
-// slot recovery's final retention refused forever and parked the checkout each time.
-test('final retention of a run whose worker never ran and retained nothing has nothing to keep', async () => {
-  const runId = await failedRun([
+// Run 942d189f after its replay: the task was written, then preparation failed before any
+// worker ran, so slot recovery's final retention refused forever and parked the checkout.
+test('final retention of a run that failed before its worker launched has nothing to keep', async () => {
+  const { runId } = await failedRun([
     step('find-slot', 'done'),
     step('write-task', 'done'),
     step('prepare', 'failed'),
@@ -94,7 +101,7 @@ test('final retention of a run whose worker never ran and retained nothing has n
 });
 
 test('final retention still refuses a missing source once the worker ran', async () => {
-  const runId = await failedRun([
+  const { runId } = await failedRun([
     step('write-task', 'done'),
     step('prepare', 'done'),
     step('dispatch', 'done'),
@@ -103,33 +110,54 @@ test('final retention still refuses a missing source once the worker ran', async
   await assert.rejects(retainFinalRunArtifacts(runId), /no source artifacts/);
 });
 
-// Its first attempt: dispatch preflight failed (the yarn token) before the worker had its prompt.
-test('final retention of a dispatch that failed before handing over the task has nothing to keep', async () => {
-  const runId = await failedRun([
-    step('write-task', 'done'),
-    step('prepare', 'done'),
-    step('dispatch', 'failed'),
-  ]);
-  assert.equal(await retainFinalRunArtifacts(runId), 0);
-});
-
-test('final retention still refuses a missing source once a failed dispatch began handing over the task', async () => {
-  const runId = await failedRun(
-    [step('write-task', 'done'), step('prepare', 'done'), step('dispatch', 'failed')],
-    '2026-11-22T05:05:00.000Z',
-  );
-  await assert.rejects(retainFinalRunArtifacts(runId), /no source artifacts/);
-});
-
-test('a worker pane without a delivery marker still counts as a launch', async () => {
-  // A tmux retry clears the marker after an unacknowledged send; the pane remains.
-  const runId = await failedRun(
-    [step('write-task', 'done'), step('prepare', 'done'), step('dispatch', 'failed')],
-    undefined,
+// The first attempt: dispatch preflight (the yarn token) failed after cold tmux dispatch had
+// prepared the pane, but before the worker launched.
+test('a dispatch recorded as failing before the worker launched has nothing to keep', async () => {
+  const { runId } = await failedRun(
+    [
+      step('write-task', 'done'),
+      step('prepare', 'done'),
+      step('dispatch', 'failed', BEFORE_WORKER_LAUNCH),
+    ],
     {
       target: { session: 'audiolab-2', window: 'fix-bug', target: 'audiolab-2:fix-bug' },
       startedAt: '2026-11-22T05:05:00.000Z',
     },
   );
+  assert.equal(await retainFinalRunArtifacts(runId), 0);
+});
+
+// Warm handoff and branch nudge can deliver the task before saving the receiving context.
+test('a dispatch that failed at worker launch refuses a missing source even without a context', async () => {
+  const { runId } = await failedRun(
+    [
+      step('write-task', 'done'),
+      step('prepare', 'done'),
+      step('dispatch', 'failed', WORKER_LAUNCH),
+    ],
+    null,
+  );
   await assert.rejects(retainFinalRunArtifacts(runId), /no source artifacts/);
+});
+
+test('a dispatch failure with no recorded phase refuses a missing source', async () => {
+  const { runId } = await failedRun([
+    step('write-task', 'done'),
+    step('prepare', 'done'),
+    step('dispatch', 'failed'),
+  ]);
+  await assert.rejects(retainFinalRunArtifacts(runId), /no source artifacts/);
+});
+
+test('final retention decides after a queued capture commits output', async () => {
+  const { runId, taskDir } = await failedRun([
+    step('write-task', 'done'),
+    step('prepare', 'failed'),
+    step('dispatch', 'skipped'),
+  ]);
+  await writeFile(path.join(taskDir, 'artifacts/report.md'), '# Partial report\n');
+  const snapshot = captureRunOutput(runId);
+  const final = retainFinalRunArtifacts(runId);
+  await snapshot;
+  await assert.rejects(final, /no source artifacts/);
 });
