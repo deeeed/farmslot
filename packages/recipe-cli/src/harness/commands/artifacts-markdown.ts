@@ -18,6 +18,7 @@ import {
 } from '../artifact-validation.js';
 import { isPathWithin } from '../paths.js';
 import { countRecipeNodes } from '../run-engine.js';
+
 import { renderRecipeTranscript } from './transcript.js';
 
 export interface TaskArtifactsMarkdownInput {

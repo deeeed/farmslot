@@ -14,7 +14,8 @@ import {
 import { renderRecipeTranscript } from '../src/harness/commands/transcript.js';
 
 const REPORT_DIR = 'temp/tasks/feat/t-1/artifacts/proof';
-const PROSE = '## **Description**\n\nAuthored.\n\n## **Pre-merge author checklist**\n\n- [x] Done\n';
+const PROSE =
+  '## **Description**\n\nAuthored.\n\n## **Pre-merge author checklist**\n\n- [x] Done\n';
 const RUNNER = { name: 'fixture-runner', source: 'fixture/runner', git_ref: 'fixture-revision' };
 const RECIPE = {
   $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
@@ -132,7 +133,10 @@ async function root(t: TestContext): Promise<string> {
 test('renders one deterministic line per node with provenance, asserted values and criteria', async (t) => {
   const dir = await headlessPackage(path.join(await root(t), 'package'));
   const text = await renderRecipeTranscript({ artifactDir: dir, displayDir: 'recipe-runs/r1' });
-  assert.equal(await renderRecipeTranscript({ artifactDir: dir, displayDir: 'recipe-runs/r1' }), text);
+  assert.equal(
+    await renderRecipeTranscript({ artifactDir: dir, displayDir: 'recipe-runs/r1' }),
+    text,
+  );
   const lines = text.trimEnd().split('\n');
   assert.ok(lines.length <= 40, `${lines.length} lines`);
   assert.equal(lines[0], 'Recipe: Permissioned dex on testnet, Core');

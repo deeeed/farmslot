@@ -595,7 +595,10 @@ test('authored static Markdown renders to stdout or explicit output, without inv
   assert.match(JSON.stringify(refused), /No retained artifact package/);
   await assert.rejects(readFile(out), { code: 'ENOENT' });
   const wrongFormat = JSON.parse(await invoke(['--out', out, '--json']));
-  assert.match(JSON.stringify(wrongFormat), /--out requires --format markdown or --format transcript/);
+  assert.match(
+    JSON.stringify(wrongFormat),
+    /--out requires --format markdown or --format transcript/,
+  );
   const transcriptFlag = JSON.parse(await invoke(['--transcript', '--json']));
   assert.match(JSON.stringify(transcriptFlag), /--transcript requires --format markdown/);
   await assert.rejects(readFile(out), { code: 'ENOENT' });

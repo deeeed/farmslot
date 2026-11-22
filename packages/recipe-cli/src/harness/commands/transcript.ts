@@ -221,7 +221,8 @@ export async function renderRecipeTranscript(input: RecipeTranscriptInput): Prom
   );
 
   const title = isRecord(recipe) && typeof recipe.title === 'string' ? recipe.title : 'untitled';
-  const runId = isRecord(summary) && typeof summary.recipeRunId === 'string'
+  const runId =
+    isRecord(summary) && typeof summary.recipeRunId === 'string'
       ? summary.recipeRunId
       : 'not recorded';
   const digest =
@@ -265,7 +266,9 @@ export async function renderRecipeTranscript(input: RecipeTranscriptInput): Prom
     );
     footer.push(...claimLines.slice(0, MAX_CLAIM_LINES));
     if (claimLines.length > MAX_CLAIM_LINES)
-      footer.push(`… ${claimLines.length - MAX_CLAIM_LINES} more criteria in acceptance-status.json`);
+      footer.push(
+        `… ${claimLines.length - MAX_CLAIM_LINES} more criteria in acceptance-status.json`,
+      );
   }
   footer.push(clip(`Artifacts: ${input.displayDir ?? root}`, MAX_LINE));
 
@@ -282,8 +285,7 @@ export async function renderRecipeTranscript(input: RecipeTranscriptInput): Prom
   if (nodes.length > budget) {
     // Keep every failure; fill the rest in trace order.
     const keep = new Set(nodes.flatMap((node, index) => (node.failed ? [index] : [])));
-    for (let index = 0; keep.size < budget - 1 && index < nodes.length; index += 1)
-      keep.add(index);
+    for (let index = 0; keep.size < budget - 1 && index < nodes.length; index += 1) keep.add(index);
     shown = nodes.filter((_, index) => keep.has(index));
     omitted = nodes.length - shown.length;
   }
