@@ -398,12 +398,9 @@ test(
     await mkdir(path.join(slotRepo, 'tools'), { recursive: true });
     await writeFile(path.join(slotRepo, 'tools/run'), 'operator file\n');
     await Promise.allSettled([
-      slotPrepare(
-        { slotId, branch: workBranch, prepareProfile: 'core' },
-        () => {},
-        undefined,
-        { preserveBranch: true },
-      ),
+      slotPrepare({ slotId, branch: workBranch, prepareProfile: 'core' }, () => {}, undefined, {
+        preserveBranch: true,
+      }),
     ]);
     assert.equal(await git(slotRepo, 'rev-parse', `refs/heads/${workBranch}`), oldBase);
     assert.equal(await readFile(path.join(slotRepo, 'tools/run'), 'utf8'), 'operator file\n');
