@@ -518,7 +518,10 @@ async function slotPrepareInner(
       step('tracked-files', message);
       throw new Error(message);
     };
-    if (!after) return fail(`prepare ${phase} left ${vars.remoteRepo} without its git work tree on ${vars.slotId} — command: ${command}`);
+    if (!after)
+      return fail(
+        `prepare ${phase} left ${vars.remoteRepo} without its git work tree on ${vars.slotId} — command: ${command}`,
+      );
     // HEAD and branch always compare; trees only once both sides have a merged index.
     const moved =
       baseline.head !== after.head || baseline.branch !== after.branch
@@ -1496,7 +1499,10 @@ async function slotPrepareInner(
     !trackedBaseline &&
     (phaseEnabled('deps') || phaseEnabled('preflight') || phaseEnabled('health'))
   )
-    step('tracked-files', 'Tracked-file check skipped: the slot is not the root of a git work tree');
+    step(
+      'tracked-files',
+      'Tracked-file check skipped: the slot is not the root of a git work tree',
+    );
   if (trackedBaseline?.unmerged)
     step(
       'tracked-files',
