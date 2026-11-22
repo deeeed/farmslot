@@ -170,6 +170,9 @@ function stepsOf(events: Array<{ event: string; payload: unknown }>): string[] {
 test('a replay starts an empty work branch from the current base', needsTmuxSandbox, async (t) => {
   const { slotId, slotRepo, oldBase, newBase } = await staleBaseSlot(t);
   await git(slotRepo, 'branch', workBranch, oldBase);
+  // Merge configuration must not change the move (it is not a merge).
+  await git(slotRepo, 'config', `branch.${workBranch}.mergeOptions`, '--squash');
+  await git(slotRepo, 'config', 'merge.autoStash', 'true');
   const events: Array<{ event: string; payload: unknown }> = [];
   const result = await slotPrepare(
     { slotId, branch: workBranch, prepareProfile: 'core' },
