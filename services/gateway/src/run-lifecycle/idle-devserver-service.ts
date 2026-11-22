@@ -40,6 +40,7 @@ import {
   isWithinPath,
   parseLsofNames,
   parseProcessCensus,
+  type ProcessCensusRow,
 } from './process-census.js';
 import { reapIdentifiedSlotProcesses } from './process-reap.js';
 import { tryWithRunTransition } from './transition-coordinator.js';
@@ -125,6 +126,25 @@ async function recordedPidFileProcess(
   return parsePidFileProbe(result.stdout);
 }
 
+// Why the latest pointer or stop call for a slot resource returned nothing, and the last
+// decision logged for it: the idle cap logs a structured line only when its decision changes.
+const idleReasons = new Map<string, string>();
+const loggedDecisions = new Map<string, string>();
+
+function because(slotId: string, resourceId: string, reason: string): undefined {
+  idleReasons.set(`${slotId}/${resourceId}`, reason);
+  return undefined;
+}
+
+function refuse(slotId: string, roots: ProcessCensusRow[], reason: string): false {
+  const watched = [...ownedListeners.entries()].find(
+    ([key, listener]) =>
+      key.startsWith(`${slotId}/`) && roots.some((root) => Number(root.pid) === listener.pid),
+  );
+  if (watched) idleReasons.set(watched[0], reason);
+  return false;
+}
+
 const stoppingSlots = new Set<string>();
 interface OwnedListener extends IdleDevServerPointer {
   epoch: unknown;
@@ -156,6 +176,15 @@ const idleDevServers = new IdleDevServerReaper({
     });
   },
   resources: resolveSlotResources,
+  decide: (slotId, resourceId, decision) => {
+    const key = `${slotId}/${resourceId ?? '-'}`;
+    if (loggedDecisions.get(key) === decision) return;
+    loggedDecisions.set(key, decision);
+    console.info(
+      `[idle-devserver] slot=${slotId} resource=${resourceId ?? '-'} decision=${decision}`,
+    );
+  },
+  explain: (slotId, resourceId) => idleReasons.get(`${slotId}/${resourceId}`),
   pointer: async (slotId, resourceId, refresh) => {
     const key = `${slotId}/${resourceId}`;
     const epoch = (await readSlotRow(slotId))?.slot_epoch;
@@ -176,15 +205,18 @@ const idleDevServers = new IdleDevServerReaper({
       const port = Number(
         expandTemplate(String(resource.definition.watch.port ?? ''), vars, project),
       );
-      if (!Number.isInteger(port) || port < 1 || port > 65535) return undefined;
+      if (!Number.isInteger(port) || port < 1 || port > 65535)
+        return because(slotId, resourceId, 'watched port is not configured');
       const result = await execOnSlot(vars, `lsof -nP -iTCP:${port} -sTCP:LISTEN -t`, {
         cwd: '/',
         timeout: 5_000,
       });
-      if (result.exitCode === 1 && !result.stdout.trim() && !result.stderr.trim()) return undefined;
+      if (result.exitCode === 1 && !result.stdout.trim() && !result.stderr.trim())
+        return because(slotId, resourceId, `nothing listens on port ${port}`);
       if (result.exitCode !== 0) throw new Error('Idle dev server listener identity unavailable');
       const pids = [...new Set(result.stdout.trim().split(/\s+/).map(Number))];
-      if (pids.length !== 1 || !Number.isSafeInteger(pids[0]) || pids[0] <= 0) return undefined;
+      if (pids.length !== 1 || !Number.isSafeInteger(pids[0]) || pids[0] <= 0)
+        return because(slotId, resourceId, `port ${port} has ${pids.length} listeners`);
       pid = pids[0];
     } else if (
       resource?.definition.watch?.type === 'pid-file' &&
@@ -197,28 +229,45 @@ const idleDevServers = new IdleDevServerReaper({
       // listener. The checkout-cwd provenance below still decides. A watch without a port keeps
       // the cached PID and that provenance alone, as before.
       const watchPath = resource.definition.watch.path;
-      if (!watchPath) return undefined;
+      if (!watchPath) return because(slotId, resourceId, 'pid-file watch has no path');
       const project = await loadProjectVars(vars.projectName);
       const port = Number(expandTemplate(String(resource.definition.watch.port), vars, project));
-      if (!Number.isInteger(port) || port < 1 || port > 65535) return undefined;
+      if (!Number.isInteger(port) || port < 1 || port > 65535)
+        return because(slotId, resourceId, 'declared watch port is not configured');
       const expanded = expandTemplate(String(watchPath), vars, project);
       const pidPath = expanded.startsWith('/') ? expanded : `${vars.remoteRepo}/${expanded}`;
       const recorded = await recordedPidFileProcess(vars, pidPath);
-      if (!recorded || (cached?.pid !== undefined && cached.pid !== recorded.pid)) return undefined;
+      if (!recorded)
+        return because(slotId, resourceId, 'PID file missing, invalid or newer than its process');
+      if (cached?.pid !== undefined && cached.pid !== recorded.pid)
+        return because(
+          slotId,
+          resourceId,
+          `cached pid ${cached.pid} differs from PID file pid ${recorded.pid}`,
+        );
       pid = recorded.pid;
       recordedIdentity = recorded.identity;
       servedPort = port;
     }
-    if (!pid) return undefined;
+    if (!pid)
+      return because(
+        slotId,
+        resourceId,
+        launch ? 'launch record has no pid' : 'no cached pid and no PID-file fallback',
+      );
     const process = await probeResourceProcess(vars, pid);
-    if (!process) return undefined;
+    if (!process) return because(slotId, resourceId, `pid ${pid} is not running`);
     if (
       recordedIdentity !== undefined &&
       process.identity !== recordedIdentity.replace(/\s+/g, ' ')
     )
-      return undefined;
+      return because(slotId, resourceId, `pid ${pid} is not the process the PID file recorded`);
     if (servedPort !== undefined && !(await groupHoldsListener(vars, servedPort, process.group)))
-      return undefined;
+      return because(
+        slotId,
+        resourceId,
+        `process group ${process.group} does not hold port ${servedPort}`,
+      );
     const matches = (known: IdleDevServerPointer | undefined) =>
       known &&
       known.pid === pid &&
@@ -235,13 +284,11 @@ const idleDevServers = new IdleDevServerReaper({
       if (cwd.exitCode !== 0) throw new Error('Idle dev server checkout provenance unavailable');
       const paths = parseLsofNames(cwd.stdout).filter(([owner]) => owner === String(pid));
       if (!paths.some(([, directory]) => isWithinPath(repo.replace(/\/$/, ''), directory))) {
-        console.warn(
-          `[idle-devserver] ${slotId}/${resourceId}: listener ${pid} has no slot ownership proof; preserving it`,
-        );
-        return undefined;
+        return because(slotId, resourceId, `pid ${pid} runs outside the slot checkout`);
       }
       const after = await probeResourceProcess(vars, pid);
-      if (!after || !matches(after)) return undefined;
+      if (!after || !matches(after))
+        return because(slotId, resourceId, `pid ${pid} changed during provenance checks`);
     }
     ownedListeners.set(key, { ...process, epoch });
     return process;
@@ -268,7 +315,8 @@ const idleDevServers = new IdleDevServerReaper({
       )
     ).applied,
   stop: async (slotId, rows, roots, stillOwned) => {
-    if (!(await stillOwned()) || activePrepareSlots.has(slotId)) return false;
+    if (!(await stillOwned()) || activePrepareSlots.has(slotId))
+      return refuse(slotId, roots, 'ownership changed or the slot is preparing');
     const vars = await loadSlotVars(slotId);
     const panes = await execOnSlot(
       vars,
@@ -309,9 +357,10 @@ const idleDevServers = new IdleDevServerReaper({
         !recorded.has(paneId) &&
         (await probeRunnerDescendantPid(vars, panePid)).state !== 'absent'
       )
-        return false;
+        return refuse(slotId, roots, `pane ${paneId} may hold an unrecorded worker`);
     }
-    if (!(await stillOwned()) || activePrepareSlots.has(slotId)) return false;
+    if (!(await stillOwned()) || activePrepareSlots.has(slotId))
+      return refuse(slotId, roots, 'ownership changed or the slot is preparing');
     // Synchronous exclusion uses prepare's existing admission guard while signals run.
     stoppingSlots.add(slotId);
     activePrepareSlots.add(slotId);
@@ -319,7 +368,7 @@ const idleDevServers = new IdleDevServerReaper({
       const result = await reapIdentifiedSlotProcesses(await loadSlotVars(slotId), rows, roots, {
         stillOwned,
       });
-      if (!result) return false;
+      if (!result) return refuse(slotId, roots, 'the process reap declined');
       if (result.survivors.length) throw new Error('Idle dev server process survived cleanup');
       for (const resource of await resolveSlotResources(slotId)) {
         if (

@@ -119,6 +119,32 @@ for (const status of ['paused', 'blocked', 'done', 'failed', 'cancelled'] as con
   });
 }
 
+// macpro-mmt-2/mmt-5: the cap skipped for hours without a trace. Every sweep outcome is now
+// reported per slot and dev server so the skip reason is visible.
+test('the sweep reports why it skips, how long until it stops, and the stop', async () => {
+  const f = fixture();
+  const decisions: string[] = [];
+  f.deps.decide = (slotId, resourceId, decision) =>
+    decisions.push(`${slotId}/${resourceId ?? '-'} ${decision}`);
+  f.setRow({ warm: true, current_run_id: null });
+  await f.reaper.sweep('slot-a');
+  assert.deepEqual(decisions.splice(0), ['slot-a/- skip: warm slot']);
+  f.setRow({ warm: false, current_run_id: 'run-a' });
+  const pointer = f.deps.pointer;
+  f.deps.pointer = () => undefined;
+  f.deps.explain = () => 'PID file missing, invalid or newer than its process';
+  await f.reaper.sweep('slot-a');
+  assert.deepEqual(decisions.splice(0), [
+    'slot-a/server skip: no stop authority (PID file missing, invalid or newer than its process)',
+  ]);
+  f.deps.pointer = pointer;
+  await f.reaper.sweep('slot-a');
+  assert.match(decisions.splice(0)[0] ?? '', /^slot-a\/server idle: pid 101 stops after \d{4}-/);
+  f.advance();
+  await f.reaper.sweep('slot-a');
+  assert.deepEqual(decisions.splice(0), ['slot-a/server stopped pid 101 after the idle limit']);
+});
+
 test('idle lifetime covers an ownerless slot', async () => {
   const f = fixture();
   f.setRow({ current_run_id: null });
