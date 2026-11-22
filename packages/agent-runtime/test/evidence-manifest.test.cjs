@@ -146,6 +146,66 @@ function selectedMediaFixture(t) {
   const selected = path.join(dir, 'artifacts/recipe-runs/proof-2');
   fs.mkdirSync(selected, { recursive: true });
   fs.writeFileSync(path.join(selected, 'evidence-manifest.json'), '{"version":1}');
+  // Completion checks the selected attempt only against the task's recipe.
+  const recipe = {
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    description: 'Retain declared evidence.',
+    workflow: { entry: 'done', nodes: { done: { action: 'end', status: 'pass' } } },
+  };
+  const { digestRecipeDocument } = require('@farmslot/protocol/recipe');
+  fs.writeFileSync(path.join(dir, 'artifacts/recipe.json'), JSON.stringify(recipe));
+  fs.writeFileSync(
+    path.join(dir, 'artifacts/recipe-coverage.md'),
+    'The selected run is retained.\n',
+  );
+  fs.writeFileSync(
+    path.join(dir, 'artifacts/recipe-quality.json'),
+    JSON.stringify({
+      version: 1,
+      verdict: 'pass',
+      compact: { verdict: 'PASS', reasons: ['Recipe is covered.'], better_version_guidance: [] },
+      dimensions: {},
+      structural_findings: [],
+      contextual_findings: [],
+      suggested_recipe_delta: [],
+      training_fields: { flow_type: 'dev', proof_mode: 'mixed' },
+      meta: {
+        producer: 'worker',
+        fallback_used: false,
+        legacy_task: false,
+        artifact_required: true,
+        source_signals: ['recipe-quality.json'],
+      },
+    }),
+  );
+  fs.writeFileSync(path.join(selected, 'recipe.json'), JSON.stringify(recipe));
+  fs.writeFileSync(
+    path.join(selected, 'recipe-resolution.json'),
+    JSON.stringify({
+      schema_version: 1,
+      root: { ref: 'task', digest: digestRecipeDocument(recipe) },
+      dependencies: [],
+      edges: [],
+    }),
+  );
+  fs.writeFileSync(
+    path.join(selected, 'artifact-manifest.json'),
+    '{"version":1,"runStatus":"pass","artifacts":[]}',
+  );
+  fs.writeFileSync(
+    path.join(selected, 'trace.json'),
+    '[{"nodeId":"done","action":"end","ok":true}]',
+  );
+  fs.writeFileSync(
+    path.join(selected, 'summary.json'),
+    JSON.stringify({
+      status: 'pass',
+      total: 1,
+      passed: 1,
+      failed: 0,
+      cause_counts: { subject: 0, harness: 0, environment: 0, unknown: 0 },
+    }),
+  );
   fs.writeFileSync(
     path.join(dir, 'artifacts/latest-valid-recipe-run.json'),
     JSON.stringify({ version: 1, relativeArtifactRoot: 'recipe-runs/proof-2' }),

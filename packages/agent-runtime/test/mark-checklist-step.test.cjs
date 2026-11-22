@@ -570,6 +570,86 @@ console.log(
   `Selected-manifest completion regression: ${(performance.now() - selectedStarted).toFixed(0)}ms`,
 );
 
+// audiolab #529 (run 6937512d) shape: engine proof attempts (an after run and a separate base
+// run) that nothing selects. Completion checked no evidence and publication had none to use.
+// It must name the attempt to select, and never pick one itself.
+const unselectedStarted = performance.now();
+const unselectedDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-unselected-attempt-'));
+try {
+  writeManifest(unselectedDir, 'CHECKLIST.md');
+  writeFileSync(path.join(unselectedDir, 'CHECKLIST.md'), '# Worker: dev\n\n- [x] Prove the fix\n');
+  const artifacts = path.join(unselectedDir, 'artifacts');
+  mkdirSync(path.join(unselectedDir, 'inputs'), { recursive: true });
+  mkdirSync(artifacts, { recursive: true });
+  writeFileSync(path.join(artifacts, 'report.md'), '# Report\n\nThe fix is proven.\n');
+  const recipe = '{"description":"Prove the flag","workflow":{"entry":"done","nodes":{}}}';
+  for (const name of ['after-flag-09425041', 'before-flag-6f0e66fa']) {
+    const attempt = path.join(artifacts, 'recipe-runs', name);
+    mkdirSync(attempt, { recursive: true });
+    writeFileSync(path.join(attempt, 'recipe.json'), recipe);
+    writeFileSync(path.join(attempt, 'summary.json'), '{"status":"pass"}');
+    writeFileSync(path.join(attempt, 'evidence-manifest.json'), '{"version":1,"standalone":[]}\n');
+  }
+  writeFileSync(
+    path.join(unselectedDir, terminalContractInputForChecklist('CHECKLIST.md')),
+    JSON.stringify({
+      schemaVersion: 1,
+      flowType: 'dev',
+      recordedEvidenceContractVersion: 1,
+      commands: { complete: { report: 'artifacts/report.md', artifacts: ['artifacts/report.md'] } },
+      whenPresent: [
+        {
+          path: 'artifacts/recipe.json',
+          alsoRequire: ['artifacts/recipe-coverage.md', 'artifacts/evidence-manifest.json'],
+        },
+      ],
+    }),
+  );
+  const complete = () =>
+    spawnSync(process.execPath, [helper, unselectedDir, 'complete', '--mark-last'], {
+      encoding: 'utf8',
+    });
+  const signalFile = path.join(unselectedDir, 'SIGNAL.json');
+  let completed = complete();
+  assert.notEqual(completed.status, 0, 'unselected proof attempts must refuse completion');
+  assert.match(completed.stderr, /latest-valid-recipe-run\.json selects none/);
+  assert.match(
+    completed.stderr,
+    /recipe-runs\/after-flag-09425041, recipe-runs\/before-flag-6f0e66fa/,
+  );
+  assert.match(
+    completed.stderr,
+    /retained-recipe-attempt\.cjs' '.*' '.*recipe-runs\/after-flag-09425041'/,
+  );
+  assert.equal(existsSync(path.join(artifacts, 'latest-valid-recipe-run.json')), false);
+  assert.equal(
+    existsSync(signalFile) && JSON.parse(readFileSync(signalFile, 'utf8')).status,
+    false,
+  );
+
+  // A selection without artifacts/recipe.json still requires no manifest.
+  writeFileSync(
+    path.join(artifacts, 'latest-valid-recipe-run.json'),
+    JSON.stringify({
+      version: 1,
+      relativeArtifactRoot: 'recipe-runs/after-flag-09425041',
+      updatedAt: new Date().toISOString(),
+    }),
+  );
+  completed = complete();
+  assert.notEqual(completed.status, 0, 'a selection with no task recipe must refuse completion');
+  assert.match(
+    completed.stderr,
+    /Copy artifacts\/recipe-runs\/after-flag-09425041\/recipe\.json to artifacts\/recipe\.json/,
+  );
+  assert.equal(existsSync(path.join(artifacts, 'recipe.json')), false);
+} finally {
+  rmSync(unselectedDir, { recursive: true, force: true });
+}
+console.log(
+  `Unselected-attempt completion regression: ${(performance.now() - unselectedStarted).toFixed(0)}ms`,
+);
+
 // A run's reviewer completes beside a blocked worker's recipe.json (F312): the worker's
 // recipe artifacts are the worker's obligation, so they never bind the reviewer's own mark.
 const reviewerStarted = performance.now();

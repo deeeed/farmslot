@@ -460,8 +460,64 @@ function assertArtifactContract(taskDir, taskPath, contract, terminalCommand) {
   }
 }
 
+// Engine proof attempts that nothing selects are evidence completion never checks and
+// publication cannot use. Completion names the attempt to select; it never picks one.
+function assertRecipeAttemptSelected(taskDir) {
+  const runs = path.join(taskDir, 'artifacts', 'recipe-runs');
+  let entries;
+  try {
+    entries = fs.readdirSync(runs, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === 'ENOENT') return;
+    throw error;
+  }
+  const attempts = entries
+    .filter(
+      (entry) =>
+        entry.isDirectory() && fs.existsSync(path.join(runs, entry.name, 'evidence-manifest.json')),
+    )
+    .map((entry) => entry.name)
+    .sort();
+  if (attempts.length === 0) return;
+  const { readRecipeAttemptSelection } = require('./retained-recipe-attempt.cjs');
+  const pointer = readRecipeAttemptSelection(taskDir);
+  if (pointer && fs.existsSync(path.join(taskDir, 'artifacts', 'recipe.json'))) return;
+  if (pointer) {
+    const selected = `artifacts/${pointer.relativeArtifactRoot}`;
+    console.error(
+      `artifacts/recipe.json is missing, so completion checks no evidence for the selected proof attempt ${selected}. Copy ${selected}/recipe.json to artifacts/recipe.json, then complete again.`,
+    );
+    process.exit(1);
+  }
+  const passed = attempts.filter((name) => {
+    try {
+      return (
+        JSON.parse(fs.readFileSync(path.join(runs, name, 'summary.json'), 'utf8')).status === 'pass'
+      );
+    } catch {
+      return false;
+    }
+  });
+  const quote = (value) => `'${value.replaceAll("'", `'\\''`)}'`;
+  const select = (name) =>
+    `node ${quote(path.join(__dirname, 'retained-recipe-attempt.cjs'))} ${quote(taskDir)} ${quote(path.join(runs, name))}`;
+  const next =
+    passed.length === 0
+      ? 'None of them passed: rerun the proof with RECIPE_TASK_DIR set in the same command so its passing attempt is selected.'
+      : `Select the proof attempt this task claims, for example:\n  ${select(passed[0])}\nPassing attempts: ${passed.map((name) => `recipe-runs/${name}`).join(', ')}.`;
+  console.error(
+    `artifacts/recipe-runs holds proof attempts (${attempts.map((name) => `recipe-runs/${name}`).join(', ')}) but artifacts/latest-valid-recipe-run.json selects none. ${next}`,
+  );
+  process.exit(1);
+}
+
 function assertTerminalPackagedEvidence(taskPath, taskDir, terminalCommand) {
   if (terminalCommand === 'blocked') return;
+  if (
+    terminalCommand === 'complete' &&
+    loadTerminalContract(taskDir, taskPath)?.flowType !== 'review'
+  )
+    assertRecipeAttemptSelected(taskDir);
 
   const contract = loadTerminalContract(taskDir, taskPath);
   if (contract) {
