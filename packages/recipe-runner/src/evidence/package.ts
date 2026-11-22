@@ -254,6 +254,31 @@ function repairFindings(
   return findings;
 }
 
+/**
+ * State-only proof (no before/after capture to compare) follows the capture rule: a recorded
+ * product checkout must be the clean frozen head, or the transcript proves another commit.
+ */
+function stateProofSourceMismatch(
+  input: RecordedEvidencePackageInput,
+  indexed: readonly Record<string, unknown>[],
+  headSha: string,
+): RecipeValidationFinding | undefined {
+  const compared = groupRecipeCaptureComparisons(input, input.claims?.criteria ?? []).media.some(
+    (media) => media.capture?.role === 'before' || media.capture?.role === 'after',
+  );
+  const product = indexed.find((entry) => entry.path === 'product-provenance.json')?.metadata;
+  if (compared || !isRecord(product)) return undefined;
+  const message =
+    product.dirty === true
+      ? 'Proof source has tracked changes'
+      : typeof product.git_ref === 'string' && product.git_ref !== headSha
+        ? `Proof ran on ${product.git_ref}, not the frozen review revision ${headSha}`
+        : undefined;
+  return message
+    ? { severity: 'error', code: 'comparison-source-mismatch', path: 'product-provenance.json', message }
+    : undefined;
+}
+
 /** Validate actual package identities before consumers derive a moment or publish evidence. */
 export function validateRecordedEvidencePackage(
   input: RecordedEvidencePackageInput,
@@ -373,6 +398,10 @@ function validatePackage(
   }
   if (input.repair || (isRecord(input.invocation) && input.invocation.repair !== undefined))
     for (const [path, message] of repairFindings(input, dependencies)) issue(path, message);
+  if (snapshot?.headSha) {
+    const finding = stateProofSourceMismatch(input, indexed, snapshot.headSha);
+    if (finding) findings.push(finding);
+  }
   if (input.claims?.schemaVersion === 2) {
     const captures = groupRecipeCaptureComparisons(input, input.claims.criteria, snapshot);
     for (const media of captures.media) {
