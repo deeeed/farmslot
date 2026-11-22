@@ -924,6 +924,33 @@ test('package validation refuses omitted registered claim rows', () => {
     mismatches(unassignedAfter).map(({ path }) => path),
     ['product-provenance.json'],
   );
+  // A claim-bound after capture with no recorded source is unavailable, not qualified, so it
+  // cannot stand in for the check either.
+  const unknownAfter = {
+    ...staleProduct,
+    manifest: {
+      ...staleProduct.manifest,
+      artifacts: [
+        ...staleProduct.manifest.artifacts,
+        {
+          path: 'stills/after.png',
+          type: 'screenshot',
+          category: 'validation',
+          capture: {
+            role: 'after',
+            ac: claims.criteria[0]!.id,
+            recipeRunId: 'claim-completeness',
+            nodeId: 'done',
+            traceIndex: 2,
+          },
+        },
+      ],
+    },
+  };
+  assert.deepEqual(
+    mismatches(unknownAfter).map(({ path }) => path),
+    ['product-provenance.json'],
+  );
   // Without a frozen head (or provenance) nothing is compared, as for media.
   assert.ok(
     !validateRecordedEvidencePackage(withProduct({ git_ref: stale, dirty: false })).findings.some(

@@ -264,11 +264,11 @@ function stateProofSourceMismatch(
   indexed: readonly Record<string, unknown>[],
   headSha: string,
 ): RecipeValidationFinding | undefined {
-  // Only this execution's own after capture bound to one of its claims is checked against the
-  // head; retained dependency captures qualify against their original revisions.
-  const compared = groupRecipeCaptureComparisons(input, input.claims?.criteria ?? []).rows.some(
-    (row) => row.after.some((media) => media.root === ''),
-  );
+  // Only a qualified after capture (clean, on this head) of the selected execution's own claim
+  // stands in for the check; an unknown or retained capture does not.
+  const compared = groupRecipeCaptureComparisons(input, input.claims?.criteria ?? [], {
+    headSha,
+  }).rows.some((row) => row.after.some((media) => media.root === '' && media.eligible));
   const product = indexed.find((entry) => entry.path === 'product-provenance.json')?.metadata;
   if (compared || !isRecord(product)) return undefined;
   const message =
