@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const {
   resolveWorkerTerminalContract,
   lintWorkerTemplateAgainstContract,
+  lintWorkerTemplateProofSelection,
   lintWorkerTemplateStructure,
   expandedArtifactsForCommand,
   templateTerminalCommands,
@@ -129,6 +130,71 @@ const structureGood = [
   '- [ ] `{{TASK_DIR}}/mark complete --mark-last`',
 ].join('\n');
 assert.deepEqual(lintWorkerTemplateStructure(structureGood), []);
+
+// A template that runs recipe proof names the selected attempt (audiolab #529: proof attempts
+// that nothing selected). The root evidence-manifest.json stays optional.
+const proofStep = '- [ ] Run the app recipe and validate its artifact package.';
+assert.match(
+  lintWorkerTemplateProofSelection(proofStep, 'dev').join(' '),
+  /does not name the selected proof attempt/,
+);
+assert.match(
+  lintWorkerTemplateProofSelection('- [ ] Run the same proof after the fix.', 'fix-bug').join(' '),
+  /selected proof attempt/,
+);
+assert.deepEqual(
+  lintWorkerTemplateProofSelection(
+    `${proofStep} Claim the attempt selected in \`artifacts/latest-valid-recipe-run.json\`.`,
+    'dev',
+  ),
+  [],
+);
+for (const flow of ['review', 'review-pr', 'qa', 'qa.site-build'])
+  assert.deepEqual(lintWorkerTemplateProofSelection(proofStep, flow), [], flow);
+assert.deepEqual(lintWorkerTemplateProofSelection('- [ ] Write the report.', 'dev'), []);
+
+// The checker applies the rule to execution-template checklists named by project.json.
+{
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = require('node:fs');
+  const { tmpdir } = require('node:os');
+  const path = require('node:path');
+  const { spawnSync } = require('node:child_process');
+  const project = mkdtempSync(path.join(tmpdir(), 'proof-selection-pack-'));
+  try {
+    writeFileSync(
+      path.join(project, 'project.json'),
+      JSON.stringify({
+        execution_templates: {
+          sources: [{ id: 'project:x', kind: 'workspace', root: { projectPath: 'checklists' } }],
+        },
+      }),
+    );
+    mkdirSync(path.join(project, 'checklists', 'dev'), { recursive: true });
+    mkdirSync(path.join(project, 'checklists', 'qa'), { recursive: true });
+    writeFileSync(path.join(project, 'checklists', 'dev', 'default.md'), `# Dev\n\n${proofStep}\n`);
+    writeFileSync(path.join(project, 'checklists', 'qa', 'default.md'), `# QA\n\n${proofStep}\n`);
+    const check = () =>
+      spawnSync(
+        process.execPath,
+        [path.join(__dirname, 'check-worker-template-contract.mjs'), project],
+        {
+          encoding: 'utf8',
+        },
+      );
+    let result = check();
+    assert.equal(result.status, 1, result.stdout);
+    assert.match(result.stderr, /checklists\/dev\/default\.md: runs recipe proof/);
+    assert.doesNotMatch(result.stderr, /checklists\/qa/);
+    writeFileSync(
+      path.join(project, 'checklists', 'dev', 'default.md'),
+      `# Dev\n\n${proofStep} Claim the attempt in \`artifacts/latest-valid-recipe-run.json\`.\n`,
+    );
+    result = check();
+    assert.equal(result.status, 0, result.stderr);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+}
 
 // Reviewer flows require the artifacts their templates actually produce, not learnings.
 const reviewContract = resolveWorkerTerminalContract(null, 'review');

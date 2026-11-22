@@ -1,0 +1,1 @@
+- New `lintWorkerTemplateProofSelection`: a worker template that runs recipe proof must name the selected proof attempt (`artifacts/latest-valid-recipe-run.json`). Review and QA flows are exempt. `yarn quality:worker-templates` applies it to flow templates and to the execution-template checklists that `project.json` names.

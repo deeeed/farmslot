@@ -411,6 +411,31 @@ function lintWorkerTemplateStructure(templateContent, options = {}) {
   return issues;
 }
 
+// Review flows judge recorded evidence; QA registers its packages in qa-result.json.
+const PROOF_SELECTION_EXEMPT_FLOWS = new Set(['review', 'review-pr', 'qa']);
+const RUNS_RECIPE_PROOF =
+  /RECIPE_TASK_DIR|artifacts\/recipe-runs\/|\brecipe run\b|\b(?:re)?run\b[^.\n]{0,60}\b(?:recipes?|proof)\b/i;
+
+/**
+ * A template that runs recipe proof names the attempt the task claims: the selection in
+ * `artifacts/latest-valid-recipe-run.json` (ADR-062). Completion refuses attempts nothing
+ * selects; a root evidence-manifest.json stays optional.
+ * @param {string} templateContent
+ * @param {string} flowType
+ */
+function lintWorkerTemplateProofSelection(templateContent, flowType) {
+  // A flow variant (`qa.site-build`) follows its flow.
+  if (PROOF_SELECTION_EXEMPT_FLOWS.has(flowType.split('.')[0])) return [];
+  if (
+    !RUNS_RECIPE_PROOF.test(templateContent) ||
+    templateContent.includes('latest-valid-recipe-run.json')
+  )
+    return [];
+  return [
+    'runs recipe proof but does not name the selected proof attempt (`artifacts/latest-valid-recipe-run.json`)',
+  ];
+}
+
 function lintWorkerTemplateAgainstContract(templateContent, contract) {
   /** @type {string[]} */
   const issues = [];
@@ -895,6 +920,7 @@ module.exports = {
   resolveWorkerTerminalContract,
   lintWorkerTemplateAgainstContract,
   lintWorkerTemplateStructure,
+  lintWorkerTemplateProofSelection,
   templateUsesTerminalMark,
   templateTerminalCommands,
   templateBodyScope,

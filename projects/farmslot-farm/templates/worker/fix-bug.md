@@ -59,7 +59,7 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
   bash {{recipe_validate_wrapper}} ... --slow 2000 --record-video=full-run --task-dir {{TASK_DIR}}
   ```
 - [ ] **10. Evidence** — inspect the selected attempt’s engine-derived screenshots/video when step 3 listed a UI/device surface. Empty media is not visual proof.
-- [ ] **11. Recipe proof + acceptance review** — follow TASK.md for task-bound recipe proof, registered criteria, coverage and completion commands. Retain recipe results and resolve refused checks before continuing.
+- [ ] **11. Recipe proof + acceptance review** — follow TASK.md for task-bound recipe proof, registered criteria, coverage and completion commands. The proof this task claims is the attempt selected in `artifacts/latest-valid-recipe-run.json`; a task-root `evidence-manifest.json` is optional and only declares extra evidence. Retain recipe results and resolve refused checks before continuing.
 - [ ] **12. Review** — read the diff (`git diff`) against `{{review_quality_path}}`.
 - [ ] **13. Blast radius** — list every caller, shared-state reader/writer, schema/doc, and test that
       references what you changed; verify each and fix sibling instances in the same pass.

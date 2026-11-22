@@ -7,6 +7,7 @@ const require = createRequire(import.meta.url);
 const {
   resolveWorkerTerminalContract,
   lintWorkerTemplateAgainstContract,
+  lintWorkerTemplateProofSelection,
   lintWorkerTemplateStructure,
   templateUsesTerminalMark,
 } = require('./worker-terminal-contract.cjs');
@@ -73,6 +74,25 @@ function lintProjectRoot(projectRoot, issues) {
     return;
   }
   const workerTerminal = readWorkerTerminalConfig(projectRoot);
+  // Execution-template checklists (<source root>/<flow>/<id>.md) carry the proof steps for
+  // packs without flow templates; they get the proof-selection rule.
+  const project = JSON.parse(readFileSync(projectJsonPath, 'utf8'));
+  for (const source of project.execution_templates?.sources ?? []) {
+    const root = source?.kind === 'workspace' ? source.root?.projectPath : undefined;
+    const checklistsDir = typeof root === 'string' ? path.join(projectRoot, root) : null;
+    if (!checklistsDir || !existsSync(checklistsDir)) continue;
+    for (const flow of readdirSync(checklistsDir, { withFileTypes: true })) {
+      if (!flow.isDirectory()) continue;
+      const flowDir = path.join(checklistsDir, flow.name);
+      for (const fileName of readdirSync(flowDir).filter((name) => name.endsWith('.md'))) {
+        const checklistPath = path.join(flowDir, fileName);
+        const content = readFileSync(checklistPath, 'utf8');
+        for (const issue of lintWorkerTemplateProofSelection(content, flow.name)) {
+          issues.push(`${path.relative(repoRoot, checklistPath)}: ${issue}`);
+        }
+      }
+    }
+  }
   const templatesDir = path.join(projectRoot, 'templates/worker');
   if (!existsSync(templatesDir)) return;
 
@@ -115,6 +135,9 @@ function collectTemplateIssues(displayPath, fileName, content, workerTerminal, i
   const { flowType, mode } = inferFlowTypeFromTemplate(fileName, content);
   const contract = resolveWorkerTerminalContract(workerTerminal, flowType, { mode });
   for (const issue of lintWorkerTemplateAgainstContract(content, contract)) {
+    issues.push(`${displayPath}: ${issue}`);
+  }
+  for (const issue of lintWorkerTemplateProofSelection(content, flowType)) {
     issues.push(`${displayPath}: ${issue}`);
   }
 }

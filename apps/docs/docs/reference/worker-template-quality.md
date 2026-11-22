@@ -35,6 +35,7 @@ node scripts/quality/check-worker-template-contract.mjs projects/my-farm/templat
 - Terminal flow documents `./mark complete`, `./mark no-change`, or `./mark blocked` (or `mark-checklist-step … complete` for secondary signals like self-review)
 - Checklist references required artifact paths for the inferred flow (`artifacts/learnings.md`, `artifacts/report.md`, `artifacts/review.md`, …)
 - Honors `worker_terminal` overrides in `project.json` when present
+- A template or execution-template checklist that runs recipe proof names the selected proof attempt, `artifacts/latest-valid-recipe-run.json` (see [Recipe proof selection](#recipe-proof-selection)). Review and QA flows are exempt.
 
 **Structure checks**
 
@@ -43,6 +44,14 @@ node scripts/quality/check-worker-template-contract.mjs projects/my-farm/templat
 - Missing `## Task` / checklist / completion section on terminal templates
 
 Failing lint should be fixed before merge. Farmslot’s own repo runs this in `yarn quality` for `projects/farmslot-farm` only — external packs run it locally.
+
+## Recipe proof selection
+
+A worker template that runs recipe proof tells the worker which attempt the task claims: the passing attempt selected in `artifacts/latest-valid-recipe-run.json`. A passing proof run with `RECIPE_TASK_DIR` set in the same command, writing under `artifacts/recipe-runs/<attempt>`, records that selection. To claim another retained attempt, run `retained-recipe-attempt.cjs <task-dir> <attempt-dir>`. `./mark complete` refuses proof attempts under `artifacts/recipe-runs` when nothing selects one. It also refuses a selection without `artifacts/recipe.json`.
+
+A task-root `artifacts/evidence-manifest.json` is optional. Use it only to declare extra evidence, such as captures from another attempt.
+
+**Before evidence from a separate base run.** Publication checks only the paths declared in the selected manifest. A file from another recipe attempt is accepted only as before evidence (`before_after_pairs[].before` or `videos.before`), never as after or standalone evidence. That attempt must carry `product-provenance.json` with a clean `git_ref` equal to an eligible base: a recorded pre-work base, the publication merge base when the selected attempt is on the publication head, or a `BUG_MARKER` child of a recorded base. Run the base proof from that clean commit into its own attempt, then declare its captures as before evidence. Undeclared attempts and prose in reports never block publication. If an "outside selected recipe attempt" error names an older attempt, the selection has moved since: check the newest package under `artifacts/publication-packages` before changing evidence.
 
 ## Heuristic review (skill)
 
