@@ -62,7 +62,11 @@ import {
   measureSlotRetention,
   retainTaskCheckouts,
 } from '../../fleet/slot-scaffolding.js';
-import { cleanupSlotStorage, normalizeTaskRelativeDir } from '../../fleet/slot-storage-cleanup.js';
+import {
+  cleanupSlotStorage,
+  normalizeTaskRelativeDir,
+  parkTaskScratch,
+} from '../../fleet/slot-storage-cleanup.js';
 import { publicationStatusForRun } from '../../run-completion/publication-status.js';
 import {
   findActiveGateHeldRunForSlot,
@@ -1157,6 +1161,21 @@ async function slotReleaseImpl(
       step('clean', `Task dir ${taskDirName}/${taskRel} cleaned`);
     }
 
+    // Before the age prune, so stale scratch is parked rather than deleted. Full release only:
+    // a preserveAgents release keeps workers that may still own it.
+    if (!preserveAgents) {
+      await assertReleaseClaim();
+      try {
+        const scratch = await parkTaskScratch(vars, projectJson);
+        for (const entry of scratch.parked)
+          step('storage-clean', `Parked scratch ${entry.path} at ${entry.to}`);
+        for (const entry of scratch.refused)
+          step('storage-clean', `Left scratch ${entry.path}: ${entry.reason}`);
+      } catch (err) {
+        step('storage-clean', `Scratch parking skipped: ${(err as Error).message.slice(0, 200)}`);
+      }
+    }
+
     await assertReleaseClaim();
     try {
       const storageCleanup = await cleanupSlotStorage(vars, projectJson, {
@@ -1165,12 +1184,6 @@ async function slotReleaseImpl(
         // reserved for explicit slot.cleanup after resource shutdown.
         includeBrowserProfiles: false,
       });
-      if (storageCleanup.parked?.length) {
-        step(
-          'storage-clean',
-          `Parked ${storageCleanup.parked.length} scratch director${storageCleanup.parked.length === 1 ? 'y' : 'ies'} left outside task dirs: ${storageCleanup.parked.map((entry) => entry.to).join(', ')}`,
-        );
-      }
       if (storageCleanup.deleted.length > 0 || storageCleanup.skipped.length > 0) {
         step(
           'storage-clean',

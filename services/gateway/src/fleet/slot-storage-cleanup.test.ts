@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -8,8 +8,10 @@ import { promisify } from 'node:util';
 
 import {
   buildSlotStorageCleanupCommand,
+  buildTaskScratchParkCommand,
   normalizeTaskRelativeDir,
   parseSlotStorageCleanupOutput,
+  parseTaskScratchParkOutput,
 } from './slot-storage-cleanup.js';
 
 const execFileAsync = promisify(execFile);
@@ -206,45 +208,62 @@ test('slot storage cleanup keeps every task inside the retention window', async 
 });
 
 // mini-mm-2 run 442a9a42 left temp/tasks/scratch-probe and macpro-mmt-4 kept
-// temp/tasks/feat/scratch-tat-4753: no run owned them, release kept them, and the next blind
-// dataset run's preflight refused the slot. Release (no active task) moves them out.
-test('release cleanup parks worker scratch outside task dirs and leaves tasks alone', async () => {
-  const repo = await mkdtemp(path.join(tmpdir(), 'farmslot-storage-scratch-'));
-  const write = async (rel: string, body = 'x') => {
+// temp/tasks/feat/scratch-tat-4753; release kept them and the next blind dataset run's
+// preflight refused the slot. Release parks scratch* there by rename, never deleting.
+test('release parks scratch directories by rename and leaves task dirs, even scratch-named ones', async () => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-repo-'));
+  const home = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-home-'));
+  const write = async (rel: string) => {
     await mkdir(path.dirname(path.join(repo, rel)), { recursive: true });
-    await writeFile(path.join(repo, rel), body);
+    await writeFile(path.join(repo, rel), 'x');
   };
   await write('temp/tasks/scratch-probe/baseline-run.json');
   await write('temp/tasks/feat/scratch-tat-4753/manual-pricing-probe.mts');
+  // A SCRATCH-12 Jira key names a real task dir scratch-12-<date>; TASK.md keeps it in place.
+  await write('temp/tasks/fix/scratch-12-1123-101010/TASK.md');
   await write('temp/tasks/feat/real-task/TASK.md');
-  await write('temp/tasks/fix/split-task/CHECKLIST.md');
-  await mkdir(path.join(repo, 'temp/tasks/feat/empty'), { recursive: true });
-  const command = (activeTaskRel?: string) =>
-    buildSlotStorageCleanupCommand({
-      repo,
-      taskDirName: 'temp/tasks',
-      artifactDirName: 'temp/tasks',
-      runtimeDirName: '.agent',
-      ...(activeTaskRel ? { activeTaskRel } : {}),
-    });
+  await mkdir(path.join(repo, 'outside'), { recursive: true });
+  await symlink(path.join(repo, 'outside'), path.join(repo, 'temp/tasks/scratch-link'));
+  const run = async () =>
+    parseTaskScratchParkOutput(
+      (
+        await execFileAsync('/bin/sh', [
+          '-c',
+          buildTaskScratchParkCommand({
+            repo,
+            taskDirName: 'temp/tasks',
+            artifactDirName: 'temp/tasks',
+            slotId: 'macpro-mmt-4',
+            parkHome: home,
+          }),
+        ])
+      ).stdout,
+    );
 
-  // A slot with an active task keeps everything: scratch may be that run's.
-  await execFileAsync('/bin/sh', ['-c', command('temp/tasks/feat/real-task/TASK.md')]);
-  assert.equal(await exists(path.join(repo, 'temp/tasks/scratch-probe')), true);
-
-  const parsed = parseSlotStorageCleanupOutput(
-    (await execFileAsync('/bin/sh', ['-c', command()])).stdout,
-  );
-  assert.deepEqual((parsed.parked ?? []).map((entry) => path.relative(repo, entry.path)).sort(), [
+  const result = await run();
+  const realRepo = await realpath(repo);
+  assert.deepEqual(result.parked.map((entry) => path.relative(realRepo, entry.path)).sort(), [
     'temp/tasks/feat/scratch-tat-4753',
     'temp/tasks/scratch-probe',
   ]);
-  for (const entry of parsed.parked ?? []) {
+  for (const entry of result.parked) {
     assert.equal(await exists(entry.path), false);
-    assert.ok(entry.to.startsWith(path.join(repo, '.agent/parked-scratch/')), entry.to);
+    assert.ok(
+      entry.to.startsWith(path.join(await realpath(home), 'parked-scratch/macpro-mmt-4/')) ||
+        entry.to.startsWith(path.join(home, 'parked-scratch/macpro-mmt-4/')),
+      entry.to,
+    );
     assert.equal(await exists(entry.to), true, 'moved, not deleted');
   }
+  assert.equal(
+    await exists(path.join(repo, 'temp/tasks/fix/scratch-12-1123-101010/TASK.md')),
+    true,
+  );
   assert.equal(await exists(path.join(repo, 'temp/tasks/feat/real-task/TASK.md')), true);
-  assert.equal(await exists(path.join(repo, 'temp/tasks/fix/split-task/CHECKLIST.md')), true);
-  assert.equal(await exists(path.join(repo, 'temp/tasks/feat/empty')), true);
+  assert.equal(
+    await exists(path.join(repo, 'temp/tasks/scratch-link')),
+    true,
+    'symlinks are not followed',
+  );
+  assert.deepEqual(result.refused, []);
 });
