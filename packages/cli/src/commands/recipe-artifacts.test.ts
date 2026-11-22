@@ -595,7 +595,9 @@ test('authored static Markdown renders to stdout or explicit output, without inv
   assert.match(JSON.stringify(refused), /No retained artifact package/);
   await assert.rejects(readFile(out), { code: 'ENOENT' });
   const wrongFormat = JSON.parse(await invoke(['--out', out, '--json']));
-  assert.match(JSON.stringify(wrongFormat), /require --format markdown/);
+  assert.match(JSON.stringify(wrongFormat), /--out requires --format markdown or --format transcript/);
+  const transcriptFlag = JSON.parse(await invoke(['--transcript', '--json']));
+  assert.match(JSON.stringify(transcriptFlag), /--transcript requires --format markdown/);
   await assert.rejects(readFile(out), { code: 'ENOENT' });
 });
 
@@ -635,6 +637,15 @@ test('authored Markdown preserves selected package provenance and refuses eviden
   assert.match(json.body, /farmslot recipe run task\/recipe.json/);
   assert.doesNotMatch(json.body, /broken stale draft/);
   assert.match(json.body, /Runner: test-runner/);
+  const transcript = await invoke(['--format', 'transcript']);
+  assert.match(transcript, /^Recipe: .*\n/);
+  assert.match(transcript, /\n✓ /);
+  assert.match(transcript, /\nArtifacts: artifacts\/recipe-runs\/selected\n$/);
+  const withTranscript = JSON.parse(
+    await invoke(['--format', 'markdown', '--transcript', '--json']),
+  );
+  assert.match(withTranscript.body, /Transcript:\n\n```\nRecipe: /);
+  assert.doesNotMatch(json.body, /Transcript:/);
   assert.doesNotMatch(
     json.body,
     /packages\/cli\/src\/commands\/recipe-artifacts|recipe-runs\/selected/,

@@ -179,6 +179,17 @@ quotes in workspace, repo, and hook paths.
 | `sync`     | During `farmslot update`, when the pack content hash changed.     |
 | `smoke`    | Last step of `project add`; non-zero exit fails the add.          |
 
+## Proof evidence: transcript or visual
+
+The pack's `vars.pr_body_cmd` renders the PR body. With `farmslot recipe artifacts --format markdown --transcript`,
+the Validation Logs open with a transcript of the selected attempt: one line per node with its asserted values,
+the recipe digest, the clean commit and the claims each node proves. `--format transcript` prints only that
+text. Use transcript proof when no acceptance criterion is about what a user sees: Core controllers, backends,
+CLIs and harness changes. The selected attempt's transcript is then the proof; no screenshots or video are
+required. Any UI claim keeps the visual evidence rules (stills, recording, visual review). A Core change that
+alters what a user sees still needs its own visual proof in each client that shows it. Declare each criterion
+in the recipe's `proofTargets` so the transcript can name the nodes that prove it.
+
 ## Farm-owned support paths
 
 `project.json` MAY declare one `fixtures.owned_paths` list:

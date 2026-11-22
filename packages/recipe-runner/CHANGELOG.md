@@ -5,6 +5,7 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Export `getJsonPathValue` so hosts read asserted values with the runner's own path rules.
 
 ## 0.52.1 - 2026-11-21
 
