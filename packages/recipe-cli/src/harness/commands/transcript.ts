@@ -86,6 +86,11 @@ function redact(keys: readonly string[], value: unknown): unknown {
   return safe.replace(LOCAL_PATH, '…/$1');
 }
 
+/** Any free text (ids, labels, paths) on one line with the same redaction. */
+function safeText(value: unknown): string {
+  return oneLine(String(redact([], String(value))));
+}
+
 function scalar(value: unknown): string {
   if (typeof value === 'string') return JSON.stringify(clip(oneLine(value), MAX_VALUE));
   if (value === undefined) return 'missing';
@@ -149,11 +154,31 @@ function holds(actual: unknown, leaf: Leaf): boolean | undefined {
   }
 }
 
+/** The retained report against the whole recorded assertion, with its group semantics. */
+function satisfies(document: unknown, assertion: unknown): boolean | undefined {
+  if (!isRecord(assertion)) return undefined;
+  for (const group of ['all', 'any', 'none'] as const) {
+    if (!Array.isArray(assertion[group])) continue;
+    const results = assertion[group].map((child) => satisfies(document, child));
+    if (results.includes(undefined)) return undefined;
+    if (group === 'all') return results.every(Boolean);
+    return group === 'any' ? results.some(Boolean) : !results.some(Boolean);
+  }
+  if (typeof assertion.path !== 'string' || typeof assertion.operator !== 'string') return undefined;
+  let actual: unknown;
+  try {
+    actual = getJsonPathValue(document, assertion.path);
+  } catch {
+    return undefined;
+  }
+  return holds(actual, { path: assertion.path, operator: assertion.operator, value: assertion.value, mode: 'all' });
+}
+
 function assertionText(document: unknown, leaf: Leaf, failed: boolean): string {
   const keys = pathKeys(leaf.path);
-  const label = `${leaf.mode === 'all' ? '' : `${leaf.mode === 'none' ? 'not' : 'any'} `}${
-    leaf.path.replace(/^\$\.?/, '') || '$'
-  }`;
+  const label = `${leaf.mode === 'all' ? '' : `${leaf.mode === 'none' ? 'not' : 'any'} `}${safeText(
+    leaf.path.replace(/^\$\.?/, '') || '$',
+  )}`;
   let actual: unknown;
   try {
     actual = document === undefined ? undefined : getJsonPathValue(document, leaf.path);
@@ -161,19 +186,11 @@ function assertionText(document: unknown, leaf: Leaf, failed: boolean): string {
     actual = undefined;
   }
   const shown = document === undefined ? 'not retained' : display(keys, actual);
-  const symbol = OPERATORS[leaf.operator] ?? leaf.operator;
-  // The retained report is read after the run; flag a value that no longer matches what passed.
-  const result = document === undefined ? undefined : holds(actual, leaf);
-  const changed =
-    !failed && result !== undefined && leaf.mode !== 'any' && result !== (leaf.mode === 'all');
+  const symbol = safeText(OPERATORS[leaf.operator] ?? leaf.operator);
   const implied =
-    (leaf.operator === 'eq' || leaf.operator === 'deep_eq') &&
-    !failed &&
-    !changed &&
-    leaf.mode === 'all';
+    (leaf.operator === 'eq' || leaf.operator === 'deep_eq') && !failed && leaf.mode === 'all';
   const expected = leaf.value === undefined ? symbol : `${symbol}${display(keys, leaf.value)}`;
-  const text = implied ? `${label}=${shown}` : `${label}=${shown} (${expected})`;
-  return changed ? `${text} ⚠ report differs from the asserted value` : text;
+  return implied ? `${label}=${shown}` : `${label}=${shown} (${expected})`;
 }
 
 async function entryDetail(root: string, entry: Record<string, unknown>): Promise<string[]> {
@@ -183,20 +200,16 @@ async function entryDetail(root: string, entry: Record<string, unknown>): Promis
   if (typeof output.path === 'string' && output.assertion !== undefined) {
     // Reports are retained in the package at the path the assertion read.
     const document = await optionalJson(root, output.path).catch(() => undefined);
-    parts.push(path.basename(output.path));
+    parts.push(safeText(path.basename(output.path)));
     parts.push(...leaves(output.assertion).map((leaf) => assertionText(document, leaf, failed)));
+    // The retained report is read after the run; flag one that no longer satisfies what passed.
+    if (!failed && document !== undefined && satisfies(document, output.assertion) === false)
+      parts.push('⚠ retained report no longer satisfies this assertion');
   } else if (typeof output.exitCode === 'number') {
+    // Exit code only: stdout, stderr and error text can carry credentials.
     parts.push(`exit ${output.exitCode}`);
-    // Only a passing command's stdout: stderr and error text can echo resolved commands.
-    if (!failed && typeof output.stdout === 'string' && output.stdout.trim())
-      parts.push(clip(oneLine(String(redact([], output.stdout))), 80));
   } else if (Array.isArray(output.artifacts)) {
     parts.push(`indexed ${output.artifacts.length}`);
-  } else {
-    for (const [key, value] of Object.entries(output).slice(0, 4)) {
-      if (value === null || typeof value !== 'object')
-        parts.push(`${key}=${display([key], value)}`);
-    }
   }
   if (failed && !(typeof output.path === 'string' && output.assertion !== undefined))
     parts.push('failed; details in report.md');
@@ -278,15 +291,15 @@ export async function renderRecipeTranscript(input: RecipeTranscriptInput): Prom
       : 'unknown';
   const commit =
     isRecord(product) && typeof product.git_ref === 'string'
-      ? `${clip(oneLine(product.git_ref), 64)} (${product.dirty === false ? 'clean' : 'dirty: not a clean-commit proof'})`
+      ? `${clip(safeText(product.git_ref), 64)} (${product.dirty === false ? 'clean' : 'dirty: not a clean-commit proof'})`
       : 'not recorded';
   const inputs = Object.entries(params)
-    .map(([key, value]) => `${key}=${display([key], value).replace(/^"|"$/g, '')}`)
+    .map(([key, value]) => `${safeText(key)}=${display([key], value).replace(/^"|"$/g, '')}`)
     .join(' · ');
 
   const header = [
-    `Recipe: ${oneLine(title)}`,
-    `Run ${runId} · digest ${digest}`,
+    `Recipe: ${safeText(title)}`,
+    `Run ${safeText(runId)} · digest ${safeText(digest)}`,
     `Commit ${commit} · network ${networkOf(params, reports)}`,
     ...(inputs ? [`Inputs: ${inputs}`] : []),
   ].map((line) => clip(line, MAX_LINE));
@@ -295,8 +308,15 @@ export async function renderRecipeTranscript(input: RecipeTranscriptInput): Prom
   const total = isRecord(summary) && typeof summary.total === 'number' ? summary.total : '?';
   const status = isRecord(summary) && typeof summary.status === 'string' ? summary.status : '?';
   const footer = [`${passed}/${total} nodes passed · status ${status}`];
+  // Only rows of this execution: a row retained from, or recorded by, another run is not its proof.
   const criteriaOf = (ledger: unknown) =>
-    (isRecord(ledger) && Array.isArray(ledger.criteria) ? ledger.criteria : []).filter(isRecord);
+    (isRecord(ledger) && Array.isArray(ledger.criteria) ? ledger.criteria : [])
+      .filter(isRecord)
+      .filter(
+        (row) =>
+          row.retainedFrom === undefined &&
+          (row.recipeRunId === undefined || row.recipeRunId === runId),
+      );
   let criteria = criteriaOf(packageLedger);
   if (!criteria.length && input.runLedgerDir) {
     const runLedger = await optionalJson(input.runLedgerDir, 'acceptance-status.json').catch(
@@ -311,11 +331,13 @@ export async function renderRecipeTranscript(input: RecipeTranscriptInput): Prom
   } else {
     const claimLines = criteria.map((claim) =>
       clip(
-        `${String(claim.id)} ${String(claim.verdict)} [${String(claim.proofMode)}] ← ${
-          Array.isArray(claim.recipeNodes) && claim.recipeNodes.length
-            ? claim.recipeNodes.join(', ')
-            : 'no node'
-        }`,
+        safeText(
+          `${String(claim.id)} ${String(claim.verdict)} [${String(claim.proofMode)}] ← ${
+            Array.isArray(claim.recipeNodes) && claim.recipeNodes.length
+              ? claim.recipeNodes.join(', ')
+              : 'no node'
+          }`,
+        ),
         MAX_LINE,
       ),
     );
@@ -336,7 +358,7 @@ export async function renderRecipeTranscript(input: RecipeTranscriptInput): Prom
   const nodes = await Promise.all(
     entries.map(async (entry) => ({
       failed: entry.ok !== true,
-      head: `${entry.ok === true ? '✓' : '✗'} ${String(entry.nodeId)}  ${String(entry.action)}`,
+      head: `${entry.ok === true ? '✓' : '✗'} ${safeText(entry.nodeId)}  ${safeText(entry.action)}`,
       parts: await entryDetail(root, entry),
     })),
   );

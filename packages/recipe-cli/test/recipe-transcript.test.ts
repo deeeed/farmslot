@@ -372,7 +372,71 @@ test('review r1: secrets, groups, changed reports and the line cap', async (t) =
   const text = await renderRecipeTranscript({ artifactDir: dir });
   assert.match(text, /network https:\/\/<redacted>@rpc\.example mainnet$/m);
   assert.match(text, / · not missingFills=\[0\] \(len>0\)/);
-  assert.match(text, /ok=true \(=false\) ⚠ report differs from the asserted value/);
+  assert.match(text, /· ⚠ retained report no longer satisfies this assertion$/m);
   assert.match(text, /session\.authorization="<redacted>"/);
   assert.doesNotMatch(text, /user:pass|ghp_/);
+});
+
+test('review r2: group semantics, foreign ledger rows, stdout and raw labels', async (t) => {
+  const base = await root(t);
+  const check = (assertion: unknown) =>
+    entry('check', 'assert_json', true, { path: `${REPORT_DIR}/trade.json`, assertion });
+  const dir = await headlessPackage(path.join(base, 'groups'), [
+    // none(all(A true, B false)) still holds: no warning.
+    check({
+      none: [
+        {
+          all: [
+            { path: '$.ok', operator: 'eq', value: true },
+            { path: '$.missingFills', operator: 'length_gt', value: 0 },
+          ],
+        },
+      ],
+    }),
+    entry('cmd', 'command', true, {
+      exitCode: 0,
+      stdout: '{"password":"hunter2","ok":true}\n',
+      stderr: '',
+    }),
+    entry('read', 'state_read', true, { path: '$.authorization.value', value: 'tok-secret' }),
+    entry('label', 'assert_json', true, {
+      path: `${REPORT_DIR}/trade.json`,
+      assertion: { path: '$.artifacts/report\nx', operator: 'exists' },
+    }),
+  ]);
+  const text = await renderRecipeTranscript({ artifactDir: dir });
+  assert.doesNotMatch(text, /⚠/);
+  assert.doesNotMatch(text, /hunter2|tok-secret|artifacts\//);
+  assert.match(text, /^✓ cmd {2}command {2}exit 0$/m);
+  assert.match(text, /^✓ read {2}state_read$/m);
+  assert.ok(text.trimEnd().split('\n').every((line) => !line.includes('\r')));
+
+  // any(...) whose retained report satisfies no branch is flagged.
+  const anyDir = await headlessPackage(path.join(base, 'any'), [
+    check({
+      any: [
+        { path: '$.ok', operator: 'eq', value: false },
+        { path: '$.missingFills', operator: 'length_gt', value: 0 },
+      ],
+    }),
+  ]);
+  assert.match(
+    await renderRecipeTranscript({ artifactDir: anyDir }),
+    /⚠ retained report no longer satisfies this assertion/,
+  );
+
+  // Ledger rows retained from or recorded by another execution are not this run's proof.
+  await writeJson(path.join(dir, 'acceptance-status.json'), {
+    schemaVersion: 2,
+    recipeRunId: '2f515d55-run',
+    criteria: [
+      { id: 'AC1', verdict: 'pass', proofMode: 'state', recipeNodes: ['a'], retainedFrom: 'old' },
+      { id: 'AC2', verdict: 'pass', proofMode: 'state', recipeNodes: ['b'], recipeRunId: 'other' },
+      { id: 'AC3', verdict: 'pass', proofMode: 'state', recipeNodes: ['check'] },
+    ],
+    recording: { status: 'not-required', segments: [] },
+  });
+  const ledger = await renderRecipeTranscript({ artifactDir: dir });
+  assert.doesNotMatch(ledger, /^AC1 |^AC2 /m);
+  assert.match(ledger, /^AC3 pass \[state\] ← check$/m);
 });
