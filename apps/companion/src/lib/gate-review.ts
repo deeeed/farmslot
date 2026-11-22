@@ -242,14 +242,19 @@ export function approvePublishGuard(input: ApprovePublishGuardInput): ApprovePub
   const passing = qualifyingPassingReviews(
     input.reviews.filter((review) => review.approved).map((review) => review.review),
   );
+  // A gateway-accepted fix is not a review: it neither approves nor refuses, so it blocks
+  // only while the required reviews are short, as the gateway's policy does.
+  const acceptedFix = (review: GateReviewVerdict) => reviewEndsWithAcceptedFix(review.review);
+  const countShort = passing.length < input.requiredReviews;
   if (
     input.reviews.length > 0 &&
-    input.reviews.every((review) => review.approved) &&
-    passing.length < input.requiredReviews
+    input.reviews.every((review) => review.approved || acceptedFix(review)) &&
+    countShort
   )
     reviewReasons.push(`${passing.length} of ${input.requiredReviews} required reviews approve`);
   for (const review of input.reviews) {
-    if (!review.approved) reviewReasons.push(`Latest ${review.runner} review is ${review.label}`);
+    if (review.approved || (acceptedFix(review) && !countShort)) continue;
+    reviewReasons.push(`Latest ${review.runner} review is ${review.label}`);
   }
   return { acceptanceReasons, reviewReasons };
 }
