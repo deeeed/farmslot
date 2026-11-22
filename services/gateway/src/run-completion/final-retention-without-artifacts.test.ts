@@ -23,13 +23,12 @@ after(() => rm(root, { recursive: true, force: true }));
 // The slot's task artifacts are gone, as on macpro-audiolab-2 after the failed dispatch:
 // the real mirror refuses a required refresh with nothing to copy and otherwise copies none.
 const mirror = await import('./artifact-mirror.js');
+let mirrorOptions: { requireSourceArtifacts?: boolean; keepMirrorWithoutSource?: boolean } = {};
 mock.module('./artifact-mirror.js', {
   namedExports: {
     ...mirror,
-    refreshArtifactMirror: async (
-      _run: Run,
-      options: { requireSourceArtifacts?: boolean } = {},
-    ) => {
+    refreshArtifactMirror: async (_run: Run, options: typeof mirrorOptions = {}) => {
+      mirrorOptions = options;
       if (options.requireSourceArtifacts)
         throw new Error('artifact mirror refresh has no source artifacts');
       return 0;
@@ -96,8 +95,11 @@ test('final retention of a run that failed before its worker launched has nothin
     step('dispatch', 'skipped'),
   ]);
   assert.equal(await retainFinalRunArtifacts(runId), 0);
+  // An empty source must not prune the gateway's mirrored receipt (see artifact-mirror.test).
+  assert.equal(mirrorOptions.keepMirrorWithoutSource, true);
   // The capture commits a bundle; a release that fails afterwards must be retryable.
   assert.equal(await retainFinalRunArtifacts(runId), 0);
+  assert.equal(mirrorOptions.keepMirrorWithoutSource, true);
 });
 
 test('final retention still refuses a missing source once the worker ran', async () => {
@@ -125,6 +127,7 @@ test('a dispatch recorded as failing before the worker launched has nothing to k
     },
   );
   assert.equal(await retainFinalRunArtifacts(runId), 0);
+  assert.equal(mirrorOptions.keepMirrorWithoutSource, true);
 });
 
 // Warm handoff and branch nudge can deliver the task before saving the receiving context.
