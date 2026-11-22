@@ -55,6 +55,7 @@ export {
 } from './core/flow-timing.js';
 export { extractWorkflowGraph, type WorkflowGraph } from './core/graph.js';
 export { redactRecipeParams } from './core/invocation.js';
+export { getJsonPathValue } from './core/json.js';
 export type {
   LibraryRecipeMatch,
   RecipeLibraryEnv,
