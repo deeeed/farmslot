@@ -470,14 +470,12 @@ test(
 test('a branch switch during the move stops prepare', needsTmuxSandbox, async (t) => {
   const { slotId, slotRepo, oldBase } = await staleBaseSlot(t);
   await git(slotRepo, 'branch', workBranch, oldBase);
-  beforeMove = () => execFileSync('git', ['-C', slotRepo, 'checkout', '-q', '-b', 'operator-branch']);
+  beforeMove = () =>
+    execFileSync('git', ['-C', slotRepo, 'checkout', '-q', '-b', 'operator-branch']);
   await assert.rejects(
-    slotPrepare(
-      { slotId, branch: workBranch, prepareProfile: 'core' },
-      () => {},
-      undefined,
-      { preserveBranch: true },
-    ),
+    slotPrepare({ slotId, branch: workBranch, prepareProfile: 'core' }, () => {}, undefined, {
+      preserveBranch: true,
+    }),
     /changed while prepare was moving it/,
   );
   assert.equal(await git(slotRepo, 'rev-parse', `refs/heads/${workBranch}`), oldBase);
