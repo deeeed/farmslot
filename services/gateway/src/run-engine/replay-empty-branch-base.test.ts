@@ -265,6 +265,8 @@ test(
   async (t) => {
     const { slotId, slotRepo, oldBase } = await staleBaseSlot(t);
     await git(slotRepo, 'checkout', '-q', '-b', workBranch, oldBase);
+    // autoStash would fast-forward and then fail to reapply the edit.
+    await git(slotRepo, 'config', 'merge.autoStash', 'true');
     await writeFile(
       path.join(slotRepo, manifestPath),
       unsortedManifest.replace('"0.29.2"', '"0.29.3-local"'),

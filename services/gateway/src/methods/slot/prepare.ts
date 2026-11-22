@@ -887,7 +887,9 @@ async function slotPrepareInner(
         ? sweep
         : await mutateGit(
             'advance-empty-work-branch',
-            `cd ${shellQuote(vars.remoteRepo)} && git merge --ff-only --no-overwrite-ignore ${shellQuote(baseSha)}`,
+            // Re-checked inside the guarded command: the guard can rerun it after recapturing a
+            // checkout that changed since the probe.
+            `cd ${shellQuote(vars.remoteRepo)} && { [ "$(git symbolic-ref -q HEAD)" = ${shellQuote(`refs/heads/${branch}`)} ] && [ "$(git rev-parse HEAD)" = ${shellQuote(tip)} ] || { echo 'the checkout changed since the probe' >&2; exit 1; }; } && git merge --ff-only --no-autostash --no-overwrite-ignore ${shellQuote(baseSha)}`,
             [baseSha],
           );
     if (moved.exitCode !== 0) {
