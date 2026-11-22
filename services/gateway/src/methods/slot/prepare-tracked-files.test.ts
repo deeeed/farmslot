@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -245,4 +245,35 @@ test('a broken submodule checkout fails the snapshot instead of reading as clean
   rmSync(path.join(repo, 'vendor/sub/.git'), { recursive: true, force: true });
   writeFileSync(path.join(repo, 'vendor/sub/.git'), 'gitdir: /nonexistent/modules/sub\n');
   assert.throws(() => sh(buildTrackedFilesSnapshotCommand(repo)));
+});
+
+test('later snapshots reuse submodule discovery while HEAD is unchanged', (t) => {
+  const { repo, git, snap } = withSubmodule(t, 'vendor/sub');
+  const baseline = snap();
+  const reused = parseTrackedFilesSnapshot(sh(buildTrackedFilesSnapshotCommand(repo, baseline)));
+  assert.ok(snapshotsEqual(baseline, reused));
+  // A planted entry in `known` shows the list was used instead of a fresh ls-tree.
+  const planted: TrackedFilesSnapshot = {
+    ...baseline,
+    submodules: new Map([...baseline.submodules, ['planted', `${baseline.head} none clean`]]),
+  };
+  const fromKnown = parseTrackedFilesSnapshot(sh(buildTrackedFilesSnapshotCommand(repo, planted)));
+  assert.equal(fromKnown.submodules.get('planted'), `${baseline.head} none clean`);
+  // Once HEAD moves, discovery runs again.
+  writeFileSync(path.join(repo, 'a.txt'), 'next\n');
+  git('commit', '-qam', 'next');
+  const moved = parseTrackedFilesSnapshot(sh(buildTrackedFilesSnapshotCommand(repo, planted)));
+  assert.equal(moved.submodules.has('planted'), false);
+  assert.deepEqual([...moved.submodules.keys()], ['vendor/sub']);
+});
+
+test('a failing textconv driver in a dirty submodule does not break the snapshot', (t) => {
+  const { repo, snap, files, inSub } = withSubmodule(t, 'vendor/sub');
+  inSub('config', 'diff.broken.textconv', 'false');
+  const gitDir = inSub('rev-parse', '--absolute-git-dir');
+  mkdirSync(path.join(gitDir, 'info'), { recursive: true });
+  writeFileSync(path.join(gitDir, 'info/attributes'), '*.txt diff=broken\n');
+  const before = snap();
+  writeFileSync(path.join(repo, 'vendor/sub/s.txt'), 'dirty\n');
+  assert.deepEqual(files(before, snap()), ['vendor/sub']);
 });

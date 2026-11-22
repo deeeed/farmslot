@@ -480,9 +480,10 @@ async function slotPrepareInner(
     return true;
   };
 
-  const snapshotTrackedFiles = async (): Promise<TrackedFilesSnapshot> => {
+  // `known` lets a phase check reuse the previous snapshot's submodule discovery.
+  const snapshotTrackedFiles = async (known?: TrackedFilesSnapshot): Promise<TrackedFilesSnapshot> => {
     checkAborted();
-    const r = await execOnSlot(vars, buildTrackedFilesSnapshotCommand(vars.remoteRepo), {
+    const r = await execOnSlot(vars, buildTrackedFilesSnapshotCommand(vars.remoteRepo, known), {
       signal,
     });
     checkAborted();
@@ -510,7 +511,7 @@ async function slotPrepareInner(
     command: string,
   ): Promise<TrackedFilesSnapshot | null> => {
     if (!baseline) return null;
-    const after = await snapshotTrackedFiles();
+    const after = await snapshotTrackedFiles(baseline);
     const fail = (message: string): never => {
       step('tracked-files', message);
       throw new Error(message);
@@ -1547,7 +1548,7 @@ async function slotPrepareInner(
 
   // An eval trial's harness install is an intended change; later phases are checked against it.
   if ((await installEvalRecipeHarness()) && trackedBaseline)
-    trackedBaseline = await snapshotTrackedFiles();
+    trackedBaseline = await snapshotTrackedFiles(trackedBaseline);
 
   // Native workers have no terminal session. Project preparation still runs normally.
   let session: string | undefined;

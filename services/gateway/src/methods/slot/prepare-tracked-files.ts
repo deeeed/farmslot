@@ -37,22 +37,44 @@ const HEADER_LINES = 4;
 
 // Single-quoted TS strings: shell ${...} stays literal; '\t' is a real tab.
 // Runs under `bash -o pipefail`: a failed probe fails the snapshot instead of reading as clean.
-const SUBMODULE_RECORDS = [
-  // NUL-delimited end to end: ls-tree quotes unusual paths in line mode.
-  "git ls-tree -r -z HEAD | perl -0ne 'print if /^160000 commit /' | while IFS= read -r -d '' entry; do",
-  'meta=${entry%%\t*}; p=${entry#*\t}; commit=none; dirty=clean;',
+const RECORD_SUBMODULE = [
+  // $1 is an ls-tree entry: "160000 commit <gitlink>\t<path>".
+  'record() {',
+  'local meta=${1%%\t*} p=${1#*\t} commit=none dirty=clean;',
   'if [ -e "$p/.git" ]; then',
-  'commit=$(git -C "$p" rev-parse --verify HEAD) || exit 1;',
+  'commit=$(git -C "$p" rev-parse --verify HEAD) || return 1;',
   // What completion's --ignore-submodules=none sees: unstaged and staged edits
-  // and untracked files.
-  'dirty=$({ git -C "$p" diff --binary --no-ext-diff HEAD -- && git -C "$p" diff --cached --binary --no-ext-diff HEAD -- && git -C "$p" status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none; } | git hash-object --stdin) || exit 1;',
+  // and untracked files. --no-textconv: no configured converters, as completion.
+  'dirty=$({ git -C "$p" diff --binary --no-ext-diff --no-textconv HEAD -- && git -C "$p" diff --cached --binary --no-ext-diff --no-textconv HEAD -- && git -C "$p" status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none; } | git hash-object --stdin) || return 1;',
   '[ "$dirty" = "$empty" ] && dirty=clean;',
   'fi;',
   'printf \'%s %s %s\\t%s\\0\' "${meta##* }" "$commit" "$dirty" "$p";',
-  'done',
+  '}',
 ].join(' ');
 
-export function buildTrackedFilesSnapshotCommand(repo: string): string {
+// NUL-delimited end to end: ls-tree quotes unusual paths in line mode.
+const DISCOVER_SUBMODULES =
+  "git ls-tree -r -z HEAD | perl -0ne 'print if /^160000 commit /' | while IFS= read -r -d '' entry; do record \"$entry\" || exit 1; done";
+
+/**
+ * `known` reuses the gitlinks a previous merged snapshot found: prepare fails as
+ * soon as HEAD moves, so later phase checks skip the full-tree `ls-tree` while
+ * HEAD still matches (one scan per prepare instead of one per phase).
+ */
+export function buildTrackedFilesSnapshotCommand(
+  repo: string,
+  known?: TrackedFilesSnapshot,
+): string {
+  const reuse =
+    known && !known.unmerged
+      ? `if [ "$head" = ${shellQuote(known.head)} ]; then ${
+          known.submodules.size === 0
+            ? 'true'
+            : `for entry in ${[...known.submodules]
+                .map(([file, state]) => shellQuote(`160000 commit ${state.split(' ')[0]}\t${file}`))
+                .join(' ')}; do record "$entry" || exit 1; done`
+        }; else ${DISCOVER_SUBMODULES}; fi`
+      : DISCOVER_SUBMODULES;
   const merged = [
     // A file rewritten with identical bytes is only stat-dirty; `git stash create`
     // exits 1 without output on that, so refresh the stat cache first.
@@ -66,9 +88,10 @@ export function buildTrackedFilesSnapshotCommand(repo: string): string {
     'index=$(if [ -n "$stash" ]; then git rev-parse --verify "$stash^2^{tree}"; else git rev-parse --verify "$head^{tree}"; fi)',
     'empty=$(git hash-object --stdin </dev/null)',
     'printf \'%s\\n%s\\n%s\\n%s\\n\' "$head" "$branch" "$worktree" "$index"',
-    `{ ${SUBMODULE_RECORDS}; }`,
+    `{ ${reuse}; }`,
   ].join(' && ');
   const script = [
+    RECORD_SUBMODULE,
     `cd ${shellQuote(repo)}`,
     'head=$(git rev-parse --verify HEAD)',
     'branch=$(git symbolic-ref -q HEAD || true)',
