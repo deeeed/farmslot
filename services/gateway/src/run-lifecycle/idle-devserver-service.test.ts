@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { beforeEach, mock, test } from 'node:test';
 
 import type { ActiveResourcePointer, Run, SlotResource } from '@farmslot/protocol';
@@ -27,6 +30,10 @@ let outsideRepo = false;
 let pagedOwner = false;
 let foreign = false;
 let unhealthyBoot = false;
+let pidFileWatch = false;
+let pidFileAge = 60;
+let pidFilePort: string | undefined = '{{port}}';
+let listenerGroup = '101';
 let closedHistory = false;
 let realStatus = false;
 let promptDelivered = false;
@@ -57,7 +64,9 @@ const resources = (): SlotResource[] => [
       label: 'Fixture server',
       controllable: true,
       streamable: false,
-      watch: { type: 'port-listen', port: '{{port}}' },
+      watch: pidFileWatch
+        ? { type: 'pid-file', path: '{{runtime_dir}}/next-dev.pid', port: pidFilePort }
+        : { type: 'port-listen', port: '{{port}}' },
       hooks: { boot: 'fixture-prepare', health: 'fixture-health' },
     },
   },
@@ -117,6 +126,18 @@ const fixtureExec = async (_vars: unknown, command: string) => {
     };
   if (realStatus && command.includes('list-panes'))
     return { exitCode: 0, stdout: '%7\n', stderr: '' };
+  if (command.startsWith("f='/fixture/.agent/next-dev.pid'")) {
+    // The PID file stays through a stop; the recorded process is 2 minutes old.
+    if (!alive) return { stdout: '', stderr: '', exitCode: 3 };
+    return {
+      stdout: `101 ${pidFileAge} 02:00 Mon Jan 1 00:00:${foreign ? '02' : '00'} 2024\n`,
+      stderr: '',
+      exitCode: 0,
+    };
+  }
+  if (command.startsWith('for p in $(lsof -nP -iTCP:9001 -sTCP:LISTEN -t')) {
+    return { stdout: alive ? `${listenerGroup}\n` : '', stderr: '', exitCode: 0 };
+  }
   if (command.startsWith('lsof -a'))
     return { stdout: `p101\nn${foreign ? '/foreign' : '/fixture'}\n`, stderr: '', exitCode: 0 };
   if (command.startsWith('ps -p'))
@@ -310,6 +331,10 @@ beforeEach(() => {
   closedHistory = false;
   realStatus = false;
   promptDelivered = false;
+  pidFileWatch = false;
+  pidFileAge = 60;
+  pidFilePort = '{{port}}';
+  listenerGroup = '101';
 });
 
 test('port watch resolves once, expires through the real identity reaper and resumes through boot', async () => {
@@ -325,6 +350,121 @@ test('port watch resolves once, expires through the real identity reaper and res
   await restoreIdleDevServers('slot-a', run.id);
   assert.equal(boots, 1);
   assert.equal(alive, true);
+});
+
+// macpro-mmt-2/mmt-5: after a gateway restart a pid-file dev server has no cached pointer,
+// so it was never reaped and outlived its runs by days.
+test('a pid-file dev server with no cached pointer is still reaped after the idle limit', async () => {
+  pidFileWatch = true;
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 1);
+  assert.equal(alive, false);
+});
+
+test('a pid-file dev server on an ownerless ready slot is reaped', async () => {
+  pidFileWatch = true;
+  row = { current_run_id: null, slot_epoch: epoch, lifecycle: 'ready' };
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 1);
+});
+
+test('a PID file older than the process it names grants no stop authority', async () => {
+  // The recorded PID was reused by a process started after the stale file was written.
+  pidFileWatch = true;
+  pidFileAge = 3 * 24 * 60 * 60;
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 0);
+});
+
+test('a watcher-cached PID with a stale PID file grants no stop authority', async () => {
+  // After a restart the node watcher rebuilds the cache from the PID file and liveness alone.
+  pidFileWatch = true;
+  pidFileAge = 3 * 24 * 60 * 60;
+  pointer = { pid: 101 } as ActiveResourcePointer;
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 0);
+});
+
+test('a capped pid-file dev server resumes through boot', async () => {
+  pidFileWatch = true;
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 1);
+  await restoreIdleDevServers('slot-a', run.id);
+  assert.equal(boots, 1);
+  assert.equal(alive, true);
+});
+
+test('the PID-file probe runs on this host and rejects a file older than its process', async (t) => {
+  const { pidFileProbeCommand, parsePidFileProbe } = await import('./idle-devserver-service.js');
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'idle-devserver-pid-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'next-dev.pid');
+  await writeFile(file, `${process.pid}\n`);
+  const probe = () => {
+    const result = spawnSync('bash', ['-c', pidFileProbeCommand(file)], { encoding: 'utf8' });
+    assert.ok(result.status === 0 || result.status === 3, result.stderr);
+    return result.status === 0 ? result.stdout : '';
+  };
+  assert.equal(parsePidFileProbe(probe())?.pid, process.pid);
+  await writeFile(file, `12\n34\n`);
+  assert.equal(parsePidFileProbe(probe()), undefined, 'one decimal PID per file');
+  await writeFile(file, '12 34\n');
+  assert.equal(parsePidFileProbe(probe()), undefined, 'no whitespace inside the PID');
+  await writeFile(file, `  ${process.pid}  \n`);
+  assert.equal(parsePidFileProbe(probe())?.pid, process.pid, 'surrounding whitespace is fine');
+  await writeFile(file, `${process.pid}\n`);
+  const stale = new Date('2020-01-01T00:00:00Z'); // Date.now is mocked in this file.
+  await utimes(file, stale, stale);
+  assert.equal(parsePidFileProbe(probe()), undefined);
+});
+
+test('a pid-file watch that declares no port grants no stop authority after a restart', async () => {
+  pidFileWatch = true;
+  pidFilePort = undefined;
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 0);
+});
+
+test('a watcher-cached PID for a pid-file watch without a port keeps its existing cleanup', async () => {
+  // Extension's webpack watcher declares no port; its cached PID still qualifies by checkout cwd.
+  pidFileWatch = true;
+  pidFilePort = undefined;
+  pointer = { pid: 101 } as ActiveResourcePointer;
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 1);
+});
+
+test('a recorded PID whose group does not hold the declared listener is preserved', async () => {
+  // A harness can rewrite the PID file with a reused PID; the listener stays elsewhere.
+  pidFileWatch = true;
+  listenerGroup = '555';
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 0);
+});
+
+test('a pid-file dev server outside the checkout is preserved', async () => {
+  pidFileWatch = true;
+  foreign = true;
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 0);
 });
 
 test('a worker active at expiry keeps its server', async () => {
@@ -528,4 +668,12 @@ test('WARM reservation carries the capped server through the actual claim and re
   const restored = await realState.readSlotRow(vars.slotId);
   assert.equal(restored?.idle_devservers, null);
   assert.equal(restored?.handoff_run_id, 'follow-up');
+});
+
+test('ps etime parses into seconds', async () => {
+  const { elapsedSeconds } = await import('./idle-devserver-service.js');
+  assert.equal(elapsedSeconds('02:00'), 120);
+  assert.equal(elapsedSeconds('01:02:03'), 3723);
+  assert.equal(elapsedSeconds('2-14:35:18'), 2 * 86400 + 14 * 3600 + 35 * 60 + 18);
+  assert.equal(elapsedSeconds('bogus'), undefined);
 });
