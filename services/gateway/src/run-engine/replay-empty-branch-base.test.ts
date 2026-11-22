@@ -437,12 +437,9 @@ test(
     // The scan does not probe beneath the tracked symlink; the parked-work guard then refuses
     // pathspecs beyond a symlink, so prepare fails before any move and nothing local is touched.
     await assert.rejects(
-      slotPrepare(
-        { slotId, branch: workBranch, prepareProfile: 'core' },
-        () => {},
-        undefined,
-        { preserveBranch: true },
-      ),
+      slotPrepare({ slotId, branch: workBranch, prepareProfile: 'core' }, () => {}, undefined, {
+        preserveBranch: true,
+      }),
       /beyond a symbolic link/,
     );
     assert.equal(await git(slotRepo, 'rev-parse', `refs/heads/${workBranch}`), linkTip);
