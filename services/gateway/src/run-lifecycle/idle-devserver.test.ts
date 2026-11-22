@@ -351,3 +351,29 @@ test('a dev server without a watch is not eligible', async () => {
   await f.reaper.sweep('slot-a');
   assert.deepEqual(decisions, ['slot-a/server skip: no watch']);
 });
+
+test('an observation lost during the expiring sweep refuses the stop', async () => {
+  const f = fixture();
+  let losses = 0;
+  f.deps.observed = () => losses;
+  await f.reaper.sweep('slot-a');
+  f.advance();
+  const census = f.deps.census;
+  f.deps.census = async (slotId) => {
+    losses++; // unknown, then running again, while the census runs
+    return census(slotId);
+  };
+  await f.reaper.sweep('slot-a');
+  assert.equal(f.stopped(), 0);
+  f.deps.census = census;
+  const pointer = f.deps.pointer;
+  f.advance();
+  await f.reaper.sweep('slot-a');
+  f.advance();
+  f.deps.pointer = (slotId, resourceId, refresh) => {
+    if (refresh) losses++; // lost during the stop's ownership recheck
+    return pointer(slotId, resourceId, refresh);
+  };
+  await f.reaper.sweep('slot-a');
+  assert.equal(f.stopped(), 0, 'the final stop guard rechecks observation');
+});

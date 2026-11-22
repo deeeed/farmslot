@@ -35,13 +35,15 @@ mock.module('../core/state.js', {
   },
 });
 let polls = 0;
+let fleetSlots = ['slot-a', 'slot-b', 'slot-c'];
+let hold: Promise<void> | undefined;
 const fleet = await import('./state.js');
 mock.module('./state.js', {
   namedExports: {
     ...fleet,
     loadFleetStatus: async () => {
       polls++;
-      return { slots: [{ slot: 'slot-a' }, { slot: 'slot-b' }, { slot: 'slot-c' }] };
+      return { slots: fleetSlots.map((slot) => ({ slot })) };
     },
   },
 });
@@ -53,6 +55,7 @@ mock.module('../run-lifecycle/idle-devserver-service.js', {
     ...idle,
     reapIdleDevServers: async (slotId: string) => {
       swept.push(slotId);
+      await hold;
       if (slotId === 'slot-a') await idle.reapIdleDevServers(slotId);
     },
     forgetIdleDevServers: (slotId: string) => forgotten.push(slotId),
@@ -148,3 +151,31 @@ test(
     }
   },
 );
+
+test('a stopped sweep starts no queued slot', async (t) => {
+  t.mock.method(console, 'info', () => {});
+  const ids = ['q-1', 'q-2', 'q-3', 'q-4', 'q-5'];
+  for (const id of ids) setCachedResourceStatus(id, 'server', 'running', { broadcast: false });
+  fleetSlots = ids;
+  let release!: () => void;
+  hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const clock = captureTick(t);
+  swept.length = 0;
+  try {
+    startIdleDevServerSweep();
+    const sweep = clock.tick();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(swept, ['q-1', 'q-2', 'q-3', 'q-4'], 'four slots run at once');
+    stopIdleDevServerSweep();
+    release();
+    await sweep;
+    assert.deepEqual(swept, ['q-1', 'q-2', 'q-3', 'q-4'], 'the fifth never starts');
+  } finally {
+    stopIdleDevServerSweep();
+    hold = undefined;
+    fleetSlots = ['slot-a', 'slot-b', 'slot-c'];
+    clearInterval(clock.timer);
+  }
+});

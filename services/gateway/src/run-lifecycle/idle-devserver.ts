@@ -201,6 +201,14 @@ export class IdleDevServerReaper {
         this.decide(slotId, resource.id, 'skip: watched process exited or changed identity');
         continue;
       }
+      // An observation lost since the window started (even during this sweep) restarts it.
+      const unobserved = () =>
+        (this.deps.observed?.(slotId, resource.id) ?? 0) !== candidate.observed;
+      if (unobserved()) {
+        this.idle.delete(key);
+        this.decide(slotId, resource.id, 'skip at stop: observation lost');
+        continue;
+      }
       // Write-ahead intent survives a gateway restart between signals and settlement.
       const current = await this.deps.row(slotId);
       const late = current
@@ -235,7 +243,9 @@ export class IdleDevServerReaper {
             : (this.deps.explain?.(slotId, resource.id) ?? 'watched process lost');
           return false;
         }
-        lost = (await this.quietBlocker(slotId, row, resource.id)) ?? undefined;
+        lost = unobserved()
+          ? 'observation lost'
+          : ((await this.quietBlocker(slotId, row, resource.id)) ?? undefined);
         return !lost;
       });
       if (stopped === true) this.idle.delete(key);
