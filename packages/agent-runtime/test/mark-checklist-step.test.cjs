@@ -75,7 +75,7 @@ Module._load = function (request, ...rest) {
 );
 result = spawnSync(process.execPath, [helper, dir, 'complete', '--mark-last'], {
   encoding: 'utf8',
-  env: { ...process.env, NODE_OPTIONS: `--require ${noProtocol}` },
+  env: { ...process.env, NODE_OPTIONS: `--require ${JSON.stringify(noProtocol)}` },
 });
 assert.equal(result.status, 0, result.stderr);
 parsed = JSON.parse(readFileSync(signal, 'utf8'));
