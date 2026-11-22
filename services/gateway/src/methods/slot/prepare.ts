@@ -480,7 +480,7 @@ async function slotPrepareInner(
     return true;
   };
 
-  const snapshotTrackedFiles = async (): Promise<TrackedFilesSnapshot | null> => {
+  const snapshotTrackedFiles = async (): Promise<TrackedFilesSnapshot> => {
     checkAborted();
     const r = await execOnSlot(vars, buildTrackedFilesSnapshotCommand(vars.remoteRepo), {
       signal,
@@ -511,29 +511,35 @@ async function slotPrepareInner(
   ): Promise<TrackedFilesSnapshot | null> => {
     if (!baseline) return null;
     const after = await snapshotTrackedFiles();
-    if (!after) {
-      const message = `prepare ${phase} left unmerged index entries on ${vars.slotId} — command: ${command}`;
+    const fail = (message: string): never => {
       step('tracked-files', message);
       throw new Error(message);
+    };
+    // HEAD and branch always compare; trees only once both sides have a merged index.
+    const moved =
+      baseline.head !== after.head || baseline.branch !== after.branch
+        ? trackedFilesChangedMessage(phase, command, vars.slotId, baseline, after, [])
+        : null;
+    if (moved) fail(moved);
+    if (after.unmerged) {
+      if (!baseline.unmerged)
+        fail(`prepare ${phase} left unmerged index entries on ${vars.slotId} — command: ${command}`);
+      return after;
     }
+    // Conflicts resolved during this phase: full checks resume from here.
+    if (baseline.unmerged) return after;
     if (snapshotsEqual(baseline, after)) return after;
-    const files =
-      baseline.head === after.head
-        ? [
-            ...new Set([
-              ...changedTrackedFiles(
-                await trackedPaths(buildChangedPathsCommand(vars.remoteRepo, baseline, after)),
-                await trackedPaths(buildDirtyPathsCommand(vars.remoteRepo, after)),
-              ),
-              ...changedSubmodules(baseline, after),
-            ]),
-          ].sort()
-        : [];
+    const files = [
+      ...new Set([
+        ...changedTrackedFiles(
+          await trackedPaths(buildChangedPathsCommand(vars.remoteRepo, baseline, after)),
+          await trackedPaths(buildDirtyPathsCommand(vars.remoteRepo, after)),
+        ),
+        ...changedSubmodules(baseline, after),
+      ]),
+    ].sort();
     const message = trackedFilesChangedMessage(phase, command, vars.slotId, baseline, after, files);
-    if (message) {
-      step('tracked-files', message);
-      throw new Error(message);
-    }
+    if (message) fail(message);
     return after;
   };
 
@@ -1480,11 +1486,11 @@ async function slotPrepareInner(
     phaseEnabled('deps') || phaseEnabled('preflight') || phaseEnabled('health')
       ? await snapshotTrackedFiles()
       : null;
-  if (
-    !trackedBaseline &&
-    (phaseEnabled('deps') || phaseEnabled('preflight') || phaseEnabled('health'))
-  )
-    step('tracked-files', 'Tracked-file check skipped: the index has unmerged entries');
+  if (trackedBaseline?.unmerged)
+    step(
+      'tracked-files',
+      'The index has unmerged entries: only HEAD and branch are checked until they are resolved',
+    );
   if (!phaseEnabled('deps')) {
     step('deps', `Deps install skipped (profile ${profileName()})`);
   } else {

@@ -49,7 +49,7 @@ function fixture(t: { after: (fn: () => void) => void }) {
   git('commit', '-qm', 'seed');
   const snap = (): TrackedFilesSnapshot => {
     const snapshot = parseTrackedFilesSnapshot(sh(buildTrackedFilesSnapshotCommand(repo)));
-    assert.ok(snapshot, 'expected a merged index');
+    assert.equal(snapshot.unmerged, false, 'expected a merged index');
     return snapshot;
   };
   // Mirrors prepare's checkTrackedFiles.
@@ -145,7 +145,7 @@ test('a file rewritten with identical bytes is not a change', (t) => {
   assert.deepEqual(files(before, after), []);
 });
 
-test('a conflicted index yields no snapshot instead of failing', (t) => {
+test('a conflicted index records HEAD and branch instead of failing', (t) => {
   const { repo, git } = fixture(t);
   git('checkout', '-q', '-b', 'theirs');
   writeFileSync(path.join(repo, 'a.txt'), 'theirs\n');
@@ -154,11 +154,14 @@ test('a conflicted index yields no snapshot instead of failing', (t) => {
   writeFileSync(path.join(repo, 'a.txt'), 'ours\n');
   git('commit', '-qam', 'ours');
   assert.throws(() => git('merge', '-q', 'theirs'));
-  assert.equal(parseTrackedFilesSnapshot(sh(buildTrackedFilesSnapshotCommand(repo))), null);
+  const conflicted = parseTrackedFilesSnapshot(sh(buildTrackedFilesSnapshotCommand(repo)));
+  assert.equal(conflicted.unmerged, true);
+  assert.equal(conflicted.head, git('rev-parse', 'HEAD'));
+  assert.equal(conflicted.branch, 'refs/heads/main');
 });
 
-test('a moved submodule is reported even with submodule ignore=all', (t) => {
-  const { repo, git, snap, files } = fixture(t);
+function withSubmodule(t: Parameters<typeof fixture>[0], subPath: string) {
+  const fx = fixture(t);
   const sub = mkdtempSync(path.join(os.tmpdir(), 'prepare-tracked-sub-'));
   t.after(() => rmSync(sub, { recursive: true, force: true }));
   const subGit = (dir: string, ...args: string[]) =>
@@ -183,15 +186,40 @@ test('a moved submodule is reported even with submodule ignore=all', (t) => {
   subGit(sub, 'commit', '-qm', 'one');
   writeFileSync(path.join(sub, 's.txt'), '2\n');
   subGit(sub, 'commit', '-qam', 'two');
-  git('-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'vendor/sub');
-  git('config', '-f', '.gitmodules', 'submodule.vendor/sub.ignore', 'all');
-  git('add', '.gitmodules');
-  git('commit', '-qm', 'add submodule');
+  fx.git('-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, subPath);
+  fx.git('config', '-f', '.gitmodules', `submodule.${subPath}.ignore`, 'all');
+  fx.git('add', '.gitmodules');
+  fx.git('commit', '-qm', 'add submodule');
+  const inSub = (...args: string[]) => subGit(path.join(fx.repo, subPath), ...args);
+  return { ...fx, inSub };
+}
+
+test('a moved submodule is reported even with submodule ignore=all', (t) => {
+  const { snap, files, inSub } = withSubmodule(t, 'vendor/sub');
   const before = snap();
-  subGit(path.join(repo, 'vendor/sub'), 'checkout', '-q', 'HEAD~1');
+  inSub('checkout', '-q', 'HEAD~1');
   const moved = snap();
   assert.equal(snapshotsEqual(before, moved), false);
   assert.deepEqual(files(before, moved), ['vendor/sub']);
-  subGit(path.join(repo, 'vendor/sub'), 'checkout', '-q', 'main');
+  inSub('checkout', '-q', 'main');
   assert.deepEqual(files(moved, snap()), [], 'moving back to the gitlink is a restore');
+});
+
+test('an edit inside a submodule is reported without a commit move; reverting it is a restore', (t) => {
+  const { repo, snap, files, inSub } = withSubmodule(t, 'vendor/sub');
+  const before = snap();
+  writeFileSync(path.join(repo, 'vendor/sub/s.txt'), 'hook edit\n');
+  const edited = snap();
+  assert.deepEqual(files(before, edited), ['vendor/sub']);
+  inSub('checkout', '--', '.');
+  assert.deepEqual(files(edited, snap()), []);
+});
+
+test('a submodule path that git quotes is still tracked', (t) => {
+  const odd = 'vendor/q"uote\tsub';
+  const { snap, files, inSub } = withSubmodule(t, odd);
+  const before = snap();
+  assert.match(before.submodules.get(odd) ?? '', /^[0-9a-f]+ [0-9a-f]+ clean$/);
+  inSub('checkout', '-q', 'HEAD~1');
+  assert.deepEqual(files(before, snap()), [odd]);
 });

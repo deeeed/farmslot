@@ -18,24 +18,39 @@ export interface TrackedFilesSnapshot {
   head: string;
   /** Symbolic ref HEAD points at, or '' when detached. */
   branch: string;
+  /**
+   * The index has unmerged entries (a replay can keep a conflicted index), so no
+   * trees were recorded; only HEAD and branch compare.
+   */
+  unmerged: boolean;
   worktreeTree: string;
   indexTree: string;
   /**
-   * Submodule path -> "<HEAD gitlink> <checked-out commit>". Recorded directly
-   * because `git stash create` and `git diff` honor `submodule.<name>.ignore`.
+   * Submodule path -> "<HEAD gitlink> <checked-out commit|none> <hash of its diff to HEAD|clean>".
+   * Recorded directly because `git stash create` and `git diff` honor
+   * `submodule.<name>.ignore`, while completion checks with --ignore-submodules=none.
    */
   submodules: Map<string, string>;
 }
 
-const SNAPSHOT_FIELDS = 4;
+const HEADER_LINES = 4;
+
+// Single-quoted TS strings: shell ${...} stays literal; '\t' is a real tab.
+const SUBMODULE_RECORDS = [
+  // NUL-delimited end to end: ls-tree quotes unusual paths in line mode.
+  "git ls-tree -r -z HEAD | perl -0ne 'print if /^160000 commit /' | while IFS= read -r -d '' entry; do",
+  'meta=${entry%%\t*}; p=${entry#*\t}; commit=none; dirty=clean;',
+  'if [ -e "$p/.git" ]; then',
+  'commit=$(git -C "$p" rev-parse -q --verify HEAD 2>/dev/null || echo none);',
+  'dirty=$(git -C "$p" diff --binary --no-ext-diff HEAD -- 2>/dev/null | git hash-object --stdin);',
+  '[ "$dirty" = "$empty" ] && dirty=clean;',
+  'fi;',
+  "printf '%s %s %s\\t%s\\0' \"${meta##* }\" \"$commit\" \"$dirty\" \"$p\";",
+  'done',
+].join(' ');
 
 export function buildTrackedFilesSnapshotCommand(repo: string): string {
-  return [
-    `cd ${shellQuote(repo)}`,
-    'head=$(git rev-parse --verify HEAD)',
-    'branch=$(git symbolic-ref -q HEAD || true)',
-    // `git stash create` needs a merged index; a replay can keep a conflicted one.
-    '{ [ -z "$(git ls-files -u | head -n 1)" ] || { printf \'%s\\n\' unmerged; exit 0; }; }',
+  const merged = [
     // A file rewritten with identical bytes is only stat-dirty; `git stash create`
     // exits 1 without output on that, so refresh the stat cache first.
     '{ git update-index -q --refresh >/dev/null 2>&1 || true; }',
@@ -46,55 +61,75 @@ export function buildTrackedFilesSnapshotCommand(repo: string): string {
     'base=${stash:-$head}',
     'worktree=$(git rev-parse --verify "$base^{tree}")',
     'index=$(if [ -n "$stash" ]; then git rev-parse --verify "$stash^2^{tree}"; else git rev-parse --verify "$head^{tree}"; fi)',
-    `printf '%s\\n%s\\n%s\\n%s\\n' "$head" "$branch" "$worktree" "$index"`,
-    // One line per gitlink in HEAD: "<HEAD gitlink> <checked-out commit or none>\t<path>".
-    // Gitlinks are filtered before the loop: large repos list tens of thousands of entries.
-    `{ git -c core.quotepath=off ls-tree -r HEAD | { grep '^160000 commit ' || true; } | while IFS=$'\\t' read -r meta p; do printf '%s %s\\t%s\\n' "\${meta##* }" "$(if [ -e "$p/.git" ]; then git -C "$p" rev-parse -q --verify HEAD 2>/dev/null || echo none; else echo none; fi)" "$p"; done; }`,
+    'empty=$(git hash-object --stdin </dev/null)',
+    "printf '%s\\n%s\\n%s\\n%s\\n' \"$head\" \"$branch\" \"$worktree\" \"$index\"",
+    `{ ${SUBMODULE_RECORDS}; }`,
+  ].join(' && ');
+  return [
+    `cd ${shellQuote(repo)}`,
+    'head=$(git rev-parse --verify HEAD)',
+    'branch=$(git symbolic-ref -q HEAD || true)',
+    // `git stash create` needs a merged index.
+    `if [ -n "$(git ls-files -u | head -n 1)" ]; then printf '%s\\n%s\\nunmerged\\n\\n' "$head" "$branch"; else ${merged}; fi`,
   ].join(' && ');
 }
 
-/** Null when the index has unmerged entries and no tree can be recorded. */
-export function parseTrackedFilesSnapshot(stdout: string): TrackedFilesSnapshot | null {
-  if (stdout.trim() === 'unmerged') return null;
-  const lines = stdout.split('\n');
-  const [head = '', branch = '', worktreeTree = '', indexTree = ''] = lines;
+export function parseTrackedFilesSnapshot(stdout: string): TrackedFilesSnapshot {
+  const header: string[] = [];
+  let rest = stdout;
+  for (let i = 0; i < HEADER_LINES; i++) {
+    const nl = rest.indexOf('\n');
+    if (nl < 0) break;
+    header.push(rest.slice(0, nl));
+    rest = rest.slice(nl + 1);
+  }
+  const [head = '', branch = '', worktreeTree = '', indexTree = ''] = header;
   const object = /^[0-9a-f]{40,64}$/;
+  const unmerged = worktreeTree === 'unmerged';
   if (
-    lines.length < SNAPSHOT_FIELDS ||
-    ![head, worktreeTree, indexTree].every((v) => object.test(v))
+    header.length < HEADER_LINES ||
+    !object.test(head) ||
+    (!unmerged && !(object.test(worktreeTree) && object.test(indexTree)))
   )
     throw new Error(`unreadable tracked-file snapshot: ${JSON.stringify(stdout.slice(0, 300))}`);
   const submodules = new Map<string, string>();
-  for (const line of lines.slice(SNAPSHOT_FIELDS)) {
-    const tab = line.indexOf('\t');
-    if (tab > 0) submodules.set(line.slice(tab + 1), line.slice(0, tab));
+  for (const record of rest.split('\0')) {
+    const tab = record.indexOf('\t');
+    if (tab > 0) submodules.set(record.slice(tab + 1), record.slice(0, tab));
   }
-  return { head, branch, worktreeTree, indexTree, submodules };
+  return unmerged
+    ? { head, branch, unmerged, worktreeTree: '', indexTree: '', submodules: new Map() }
+    : { head, branch, unmerged, worktreeTree, indexTree, submodules };
 }
 
 export function snapshotsEqual(a: TrackedFilesSnapshot, b: TrackedFilesSnapshot): boolean {
   return (
     a.head === b.head &&
     a.branch === b.branch &&
+    a.unmerged === b.unmerged &&
     a.worktreeTree === b.worktreeTree &&
     a.indexTree === b.indexTree &&
-    changedSubmodules(a, b).length === 0 &&
-    a.submodules.size === b.submodules.size
+    a.submodules.size === b.submodules.size &&
+    [...a.submodules].every(([file, state]) => b.submodules.get(file) === state)
   );
 }
 
-/** Submodules whose checked-out commit changed and no longer matches HEAD's gitlink. */
+/**
+ * Submodules whose checkout (commit or uncommitted content) changed and is not
+ * back at HEAD's gitlink with a clean tree.
+ */
 export function changedSubmodules(
   before: TrackedFilesSnapshot,
   after: TrackedFilesSnapshot,
 ): string[] {
   const changed: string[] = [];
   for (const [file, state] of after.submodules) {
-    const [gitlink, current] = state.split(' ');
-    const previous = before.submodules.get(file)?.split(' ')[1];
-    if (current !== previous && current !== gitlink) changed.push(file);
+    const [gitlink, commit, dirty] = state.split(' ');
+    const previous = before.submodules.get(file)?.split(' ').slice(1).join(' ');
+    if (`${commit} ${dirty}` !== previous && !(commit === gitlink && dirty === 'clean'))
+      changed.push(file);
   }
-  return changed;
+  return changed.sort();
 }
 
 /** Paths that differ between the two snapshots' worktree or index trees (NUL-separated). */
