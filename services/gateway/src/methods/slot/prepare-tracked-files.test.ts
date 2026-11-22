@@ -294,3 +294,10 @@ test('a directory that is not the root of its own git work tree yields no snapsh
     null,
   );
 });
+
+test('a checkout with a broken .git fails the snapshot instead of being skipped', (t) => {
+  const { repo } = fixture(t);
+  rmSync(path.join(repo, '.git'), { recursive: true, force: true });
+  writeFileSync(path.join(repo, '.git'), 'gitdir: /nonexistent/worktrees/slot\n');
+  assert.throws(() => sh(buildTrackedFilesSnapshotCommand(repo)));
+});

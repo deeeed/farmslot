@@ -93,8 +93,9 @@ export function buildTrackedFilesSnapshotCommand(
   const script = [
     RECORD_SUBMODULE,
     `cd ${shellQuote(repo)}`,
-    // Not a work tree, or nested inside another repository: nothing of its own to check.
-    `{ prefix=$(git rev-parse --show-prefix 2>/dev/null) && [ -z "$prefix" ] || { printf '%s\\n' notrepo; exit 0; }; }`,
+    // No .git entry at the slot root: a plain or nested task directory with nothing
+    // of its own to check. A broken checkout still has one and fails below.
+    `{ [ -e .git ] || { printf '%s\\n' notrepo; exit 0; }; }`,
     'head=$(git rev-parse --verify HEAD)',
     'branch=$(git symbolic-ref -q HEAD || true)',
     // `git stash create` needs a merged index.

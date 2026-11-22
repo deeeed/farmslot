@@ -1561,8 +1561,14 @@ async function slotPrepareInner(
   }
 
   // An eval trial's harness install is an intended change; later phases are checked against it.
-  if ((await installEvalRecipeHarness()) && trackedBaseline)
+  if ((await installEvalRecipeHarness()) && trackedBaseline) {
     trackedBaseline = await snapshotTrackedFiles(trackedBaseline);
+    if (!trackedBaseline) {
+      const message = `eval recipe harness install left ${vars.remoteRepo} without its git work tree on ${vars.slotId}`;
+      step('tracked-files', message);
+      throw new Error(message);
+    }
+  }
 
   // Native workers have no terminal session. Project preparation still runs normally.
   let session: string | undefined;
