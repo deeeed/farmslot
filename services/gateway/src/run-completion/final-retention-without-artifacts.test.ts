@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after, mock } from 'node:test';
 
-import type { Run, RunStep } from '@farmslot/protocol';
+import type { AgentContext, Run, RunStep } from '@farmslot/protocol';
 import { openRunBundleStore } from '@farmslot/run-bundle';
 
 import '../runtime/mock-pty.test-support.js';
@@ -44,7 +44,11 @@ function step(name: string, status: RunStep['status']): RunStep {
   return { name, status, startedAt: '2026-11-22T05:04:11.000Z' };
 }
 
-async function failedRun(steps: RunStep[], promptDeliveryStartedAt?: string): Promise<string> {
+async function failedRun(
+  steps: RunStep[],
+  promptDeliveryStartedAt?: string,
+  launched: Partial<AgentContext> = {},
+): Promise<string> {
   const run = createRun({
     flowType: 'fix-bug',
     project: 'example',
@@ -68,6 +72,7 @@ async function failedRun(steps: RunStep[], promptDeliveryStartedAt?: string): Pr
         runId: run.id,
         status: 'failed',
         ...(promptDeliveryStartedAt ? { promptDeliveryStartedAt } : {}),
+        ...launched,
       },
     ],
   });
@@ -83,6 +88,8 @@ test('final retention of a run whose worker never ran and retained nothing has n
     step('prepare', 'failed'),
     step('dispatch', 'skipped'),
   ]);
+  assert.equal(await retainFinalRunArtifacts(runId), 0);
+  // The capture commits a bundle; a release that fails afterwards must be retryable.
   assert.equal(await retainFinalRunArtifacts(runId), 0);
 });
 
@@ -110,6 +117,19 @@ test('final retention still refuses a missing source once a failed dispatch bega
   const runId = await failedRun(
     [step('write-task', 'done'), step('prepare', 'done'), step('dispatch', 'failed')],
     '2026-11-22T05:05:00.000Z',
+  );
+  await assert.rejects(retainFinalRunArtifacts(runId), /no source artifacts/);
+});
+
+test('a worker pane without a delivery marker still counts as a launch', async () => {
+  // A tmux retry clears the marker after an unacknowledged send; the pane remains.
+  const runId = await failedRun(
+    [step('write-task', 'done'), step('prepare', 'done'), step('dispatch', 'failed')],
+    undefined,
+    {
+      target: { session: 'audiolab-2', window: 'fix-bug', target: 'audiolab-2:fix-bug' },
+      startedAt: '2026-11-22T05:05:00.000Z',
+    },
   );
   await assert.rejects(retainFinalRunArtifacts(runId), /no source artifacts/);
 });

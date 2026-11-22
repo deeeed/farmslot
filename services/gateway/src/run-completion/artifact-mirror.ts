@@ -371,6 +371,11 @@ export interface ArtifactMirrorOptions {
   acquisition?: RunArtifactAcquisition;
   /** Completion requires source artifacts even when none need transferring. */
   requireSourceArtifacts?: boolean;
+  /**
+   * An empty source package copies and prunes nothing, so files already mirrored to the
+   * gateway (such as the task's frozen runtime receipt) stay for the capture.
+   */
+  keepMirrorWithoutSource?: boolean;
   /** Publication callers validate the same selected attempt before any copy. */
   forPublication?: boolean;
   publicationComparison?: ReviewDiffSnapshot;
@@ -580,6 +585,8 @@ export async function refreshArtifactMirror(
   if (options.requireSourceArtifacts && packaged.entries.length + snapshotEntries.length === 0) {
     throw new Error('artifact mirror refresh has no source artifacts');
   }
+  if (options.keepMirrorWithoutSource && packaged.entries.length + snapshotEntries.length === 0)
+    return 0;
   const packagedPaths = new Set(packaged.entries.map((entry) => entry.path));
   const skippedLinks = scan.links.filter(
     (link) => !inSnapshot(link) && !manifestPaths.includes(link) && !packagedPaths.has(link),

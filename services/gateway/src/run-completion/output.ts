@@ -231,26 +231,37 @@ export function retainFinalRunArtifacts(runId: string): Promise<number> {
     Boolean(run?.slotId),
     false,
     // A missing source is a loss only once there was output to lose. A run whose worker
-    // never ran and that retained nothing has no final result, so release can proceed.
-    { requireSourceArtifacts: !run || runMayHaveOutput(run) },
+    // never launched has no final result: an empty source copies and prunes nothing, the
+    // gateway's mirrored task files are captured, and release can proceed.
+    !run || runMayHaveOutput(run)
+      ? { requireSourceArtifacts: true }
+      : { keepMirrorWithoutSource: true },
     'final-result',
   );
 }
 
+// run.artifactBundle is left out: this retention commits one even when it captures nothing,
+// and a retried release must reach the same decision.
 function runMayHaveOutput(run: Run): boolean {
   return (
     !!run.output?.artifactManifest.length ||
     !!run.output?.artifactBundle ||
-    !!run.artifactBundle ||
     run.steps.some((step) => step.name === 'dispatch' && step.status === 'done') ||
-    // Dispatch records this boundary before any launch or keys could hand a worker its task.
+    // Any trace of a launch, a handed-over prompt or a session, including a cleared retry
+    // marker's pane and a restarted native session's history, keeps the source required.
     (run.agentContexts ?? []).some(
       (context) =>
         !!(
           context.promptDeliveryStartedAt ||
           context.promptAcceptance ||
           context.runnerSessionId ||
-          context.nativeSession
+          context.runnerSessionPath ||
+          context.nativeSession ||
+          context.nativeSessionHistory?.length ||
+          context.target ||
+          context.startedAt ||
+          context.attemptStartedAt ||
+          context.adoptedAt
         ),
     )
   );
