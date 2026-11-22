@@ -670,10 +670,11 @@ function blindMachineVars(
 // (`it2 handle-agent-hook`) asks iTerm which session shows the $TMUX pane and
 // never returns for a worker pane, stalling each tool call. Without TMUX it exits
 // at once. Only TMUX naming tmux's fallback socket is dropped, so a bare `tmux`
-// still reaches the same server; any other socket keeps its routing. TMUX_PANE
-// stays: the observability hook keys pane snapshots on it.
+// still reaches the same server; any other socket keeps its routing. Like tmux,
+// a missing TMUX_TMPDIR falls back to /tmp. TMUX_PANE stays: the observability
+// hook keys pane snapshots on it.
 export const CLAUDE_WORKER_ENV_UNSET =
-  'unset CLAUDECODE && if [ "${TMUX%%,*}" = "$(cd -P "${TMUX_TMPDIR:-/tmp}" 2>/dev/null && pwd)/tmux-$(id -u)/default" ]; then unset TMUX; fi';
+  'unset CLAUDECODE && if [ "${TMUX%%,*}" = "$({ cd -P "${TMUX_TMPDIR:-/tmp}" 2>/dev/null || cd -P /tmp; } && pwd)/tmux-$(id -u)/default" ]; then unset TMUX; fi';
 
 export function buildRunnerSessionReloadCommand(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,

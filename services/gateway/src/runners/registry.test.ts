@@ -2008,17 +2008,20 @@ describe('buildLaunchCommand', () => {
         `tmux-${process.getuid?.()}`,
         'default',
       );
-      const envAfterUnset = (tmux: string): string =>
+      const envAfterUnset = (tmux: string, tmpdir = tmuxTmpdir): string =>
         execFileSync(
           'bash',
           ['-c', `${CLAUDE_WORKER_ENV_UNSET} && printf '%s|%s' "\${TMUX-unset}" "$TMUX_PANE"`],
           {
-            env: { PATH: process.env.PATH, TMUX: tmux, TMUX_PANE: '%7', TMUX_TMPDIR: tmuxTmpdir },
+            env: { PATH: process.env.PATH, TMUX: tmux, TMUX_PANE: '%7', TMUX_TMPDIR: tmpdir },
             encoding: 'utf8',
           },
         );
       try {
         assert.equal(envAfterUnset(`${fallbackSocket},1889,55`), 'unset|%7');
+        // tmux falls back to /tmp when TMUX_TMPDIR is missing.
+        const tmpSocket = path.join(realpathSync('/tmp'), `tmux-${process.getuid?.()}`, 'default');
+        assert.equal(envAfterUnset(`${tmpSocket},1,0`, path.join(tmuxTmpdir, 'gone')), 'unset|%7');
         for (const kept of [
           path.join(path.dirname(fallbackSocket), 'cross-model-demo'),
           '/private/tmp/isolated/default',
