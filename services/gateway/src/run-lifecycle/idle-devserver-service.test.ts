@@ -418,7 +418,7 @@ test('the PID-file probe runs on this host and rejects a file older than its pro
   assert.equal(parsePidFileProbe(probe())?.pid, process.pid);
   await writeFile(file, `12\n34\n`);
   assert.equal(parsePidFileProbe(probe()), undefined, 'one decimal PID per file');
-  await writeFile(file, `${String(process.pid).slice(0, 2)} ${String(process.pid).slice(2)}\n`);
+  await writeFile(file, '12 34\n');
   assert.equal(parsePidFileProbe(probe()), undefined, 'no whitespace inside the PID');
   await writeFile(file, `  ${process.pid}  \n`);
   assert.equal(parsePidFileProbe(probe())?.pid, process.pid, 'surrounding whitespace is fine');
