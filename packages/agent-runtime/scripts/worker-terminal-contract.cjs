@@ -426,6 +426,8 @@ const RUNS_RECIPE_PROOF =
 function lintWorkerTemplateProofSelection(templateContent, flowType) {
   // A flow variant (`qa.site-build`) follows its flow.
   if (PROOF_SELECTION_EXEMPT_FLOWS.has(flowType.split('.')[0])) return [];
+  // A template with its own designed proof layout opts out by name, with its reason.
+  if (/<!--\s*proof-selection:\s*exempt\s*\(\s*\S[^)]*\)\s*-->/.test(templateContent)) return [];
   if (
     !RUNS_RECIPE_PROOF.test(templateContent) ||
     templateContent.includes('latest-valid-recipe-run.json')

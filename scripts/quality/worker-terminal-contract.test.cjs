@@ -152,6 +152,20 @@ assert.deepEqual(
 for (const flow of ['review', 'review-pr', 'qa', 'qa.site-build'])
   assert.deepEqual(lintWorkerTemplateProofSelection(proofStep, flow), [], flow);
 assert.deepEqual(lintWorkerTemplateProofSelection('- [ ] Write the report.', 'dev'), []);
+// A designed non-selection layout opts out by name, and only with a reason.
+assert.deepEqual(
+  lintWorkerTemplateProofSelection(
+    `<!-- proof-selection: exempt (baseline/after-fix [PROOF:] layout) -->\n${proofStep}`,
+    'dev',
+  ),
+  [],
+);
+assert.match(
+  lintWorkerTemplateProofSelection(`<!-- proof-selection: exempt () -->\n${proofStep}`, 'dev').join(
+    ' ',
+  ),
+  /selected proof attempt/,
+);
 
 // The checker applies the rule to execution-template checklists named by project.json.
 {
