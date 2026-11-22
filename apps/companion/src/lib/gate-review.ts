@@ -19,6 +19,7 @@ import {
   isQualifyingReview,
   qualifyingPassingReviews,
   type ReadyGatePayload,
+  reviewEndsWithAcceptedFix,
   type ReviewStatus,
   type Run,
   type RunDecision,
@@ -190,7 +191,10 @@ export function latestReviewVerdicts(reviews: ReadonlyArray<ReviewStatus>): Gate
     .map(([id, review]) => {
       const runner = review.runner?.trim() || 'unknown runner';
       const stale = review.stale === true;
-      const approved = review.verdict === 'pass' && review.unresolvedCount === 0 && !stale;
+      // No reviewer saw a gateway-accepted fix, so it is never shown as an approval.
+      const acceptedFix = reviewEndsWithAcceptedFix(review);
+      const approved =
+        review.verdict === 'pass' && review.unresolvedCount === 0 && !stale && !acceptedFix;
       const unresolved =
         review.unresolvedCount > 0 ? ` · ${review.unresolvedCount} unresolved` : '';
       return {
@@ -202,8 +206,10 @@ export function latestReviewVerdicts(reviews: ReadonlyArray<ReviewStatus>): Gate
         unresolvedCount: review.unresolvedCount,
         stale,
         approved,
-        label: `${review.verdict}${stale ? ' (stale)' : ''}${unresolved}`,
-        color: verdictColor(review, approved),
+        label: acceptedFix
+          ? 'fix accepted without re-review'
+          : `${review.verdict}${stale ? ' (stale)' : ''}${unresolved}`,
+        color: acceptedFix ? colors.statusWarn : verdictColor(review, approved),
       };
     });
 }

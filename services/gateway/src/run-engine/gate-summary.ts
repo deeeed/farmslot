@@ -274,6 +274,7 @@ export function buildReviewSummary(
     feedbackSent: r.feedbackSent === true,
     triggeredReWork: triggeredReWork(r, reviews),
     attempts: r.attempts?.length ?? 1,
+    ...(reviewEndsWithAcceptedFix(r) ? { acceptedWithoutReview: true } : {}),
     ...(preparedPackage
       ? { stale: !publicationReviewMatchesPreparedPackage(r, preparedPackage) }
       : r.stale != null

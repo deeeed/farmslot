@@ -242,6 +242,35 @@ test('a stale pass or open findings are not an approval', () => {
   assert.equal(findings.color, colors.statusFail);
 });
 
+test('a fix the gateway accepted without a reviewer is labeled and never an approval', () => {
+  const [accepted] = latestReviewVerdicts([
+    review({
+      id: 'pipeline-review-c22',
+      source: 'pipeline',
+      attempts: [
+        {
+          mode: 'warm',
+          loopNumber: 3,
+          verdict: 'pass',
+          unresolvedCount: 0,
+          timeline: [
+            {
+              kind: 'worker-fix',
+              loopNumber: 3,
+              startedAt: '2026-11-22T03:41:00Z',
+              verdict: 'pass',
+              unresolvedCount: 0,
+            },
+          ],
+        },
+      ],
+    }),
+  ]);
+  assert.equal(accepted.approved, false);
+  assert.equal(accepted.label, 'fix accepted without re-review');
+  assert.equal(accepted.color, colors.statusWarn);
+});
+
 function acceptance(withVerdictFor: string[]) {
   return acceptanceLedgerView(
     {
