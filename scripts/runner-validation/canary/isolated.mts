@@ -1148,6 +1148,30 @@ function failOnModelCalls(result: CheckResult): CheckResult {
  * as many reviewers as the same-night baseline, one turn each, none falling back cold. (The proxy
  * persists a swallowed turn's input, so its thread resumes like a real one.)
  */
+/**
+ * The large fix is past the gateway's 50-line limit: only a reviewer can accept it, so its loop 2
+ * must be a reviewer's verdict, not the gateway accepting the worker's fix.
+ */
+function reviewerAcceptedDifferences(run: Run): string[] {
+  const loop2 = (
+    (
+      run.steps.find((step) => step.name === 'review')?.outputs as
+        | { attempts?: Array<{ loopNumber?: number; timeline?: Array<{ kind?: string }> }> }
+        | undefined
+    )?.attempts ?? []
+  )
+    .filter((attempt) => attempt.loopNumber === 2)
+    .at(-1);
+  return [
+    ...(loop2?.timeline?.some((entry) => entry.kind === 'worker-fix')
+      ? ['loop 2 passed by gateway acceptance, not a reviewer verdict']
+      : []),
+    ...(contexts(run, 'review').some((context) => context.reviewLoopNumber === 2)
+      ? []
+      : ['no loop 2 reviewer ran']),
+  ];
+}
+
 function reviewRoundDifferences(scenario: ScenarioResult, baseline: ScenarioResult): string[] {
   const seen = reviewVerdicts(scenario.run);
   const expected = reviewVerdicts(baseline.run).reviewers;
@@ -1183,12 +1207,18 @@ function fixRoundDifferences(
   const held = scenario.cardRun ?? scenario.heldRun;
   if (!held) return ['the fix round was never held'];
   const before = fixContext(held)?.promptDeliveryStartedAt;
-  const final = fixContext(scenario.run)?.promptDeliveryStartedAt;
-  const sentAgain = before !== final;
+  const finalContext = fixContext(scenario.run);
+  const final = finalContext?.promptDeliveryStartedAt;
+  // A resend is a newer delivery that its replacement attempt then signalled from.
+  const sentAgain = !!final && final !== before && (!before || final > before);
   const expectResend =
     step === 'review-fix-claude-card-dead' || step === 'review-fix-claude-card-silent';
   return [
-    ...(sentAgain === expectResend ? [] : [`fix sends: ${before ?? '-'} -> ${final ?? '-'}`]),
+    ...(final ? [] : ['the run ended without a fix delivery']),
+    ...(!final || sentAgain === expectResend ? [] : [`fix sends: ${before ?? '-'} -> ${final}`]),
+    ...(expectResend && sentAgain && !((finalContext?.lastSignalAt ?? '') > final!)
+      ? ['the resent fix never signalled']
+      : []),
     ...(reviewDepth(scenario.run) === reviewDepth(baseline.run)
       ? []
       : [
@@ -1750,7 +1780,10 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
             card || fixCard ? withoutCard(scenario.outcome) : scenario.outcome,
           ),
           ...(scripted
-            ? reviewRoundDifferences(scenario, baseline)
+            ? [
+                ...reviewRoundDifferences(scenario, baseline),
+                ...(step === 'review-fix-large' ? reviewerAcceptedDifferences(scenario.run) : []),
+              ]
             : passReviewDifferences(scenario)),
           ...(card ? cardDifferences(scenario, step) : []),
           ...(fixCard && !scenario.cardRun ? ['the run never waited on the card'] : []),
