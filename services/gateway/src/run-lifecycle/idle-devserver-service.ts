@@ -62,7 +62,7 @@ export function pidFileProbeCommand(pidPath: string): string {
     '[ -f "$f" ] || exit 3',
     // Exactly one non-empty line holding one decimal PID.
     '[ "$(grep -c . "$f" 2>/dev/null)" = 1 ] || exit 3',
-    'pid=$(grep . "$f" | tr -d " \\t\\r")',
+    'pid=$(grep . "$f" | sed -e "s/^[[:space:]]*//" -e "s/[[:space:]]*$//")',
     'case "$pid" in ""|*[!0-9]*) exit 3 ;; esac',
     // BSD stat first; GNU `stat -f` prints filesystem details, so each result is validated.
     'modified=$(stat -f %m "$f" 2>/dev/null)',
@@ -186,13 +186,18 @@ const idleDevServers = new IdleDevServerReaper({
       const pids = [...new Set(result.stdout.trim().split(/\s+/).map(Number))];
       if (pids.length !== 1 || !Number.isSafeInteger(pids[0]) || pids[0] <= 0) return undefined;
       pid = pids[0];
-    } else if (resource?.definition.watch?.type === 'pid-file' && !launch) {
-      // Without this gateway's launch record (a restart, or a watcher that rebuilt the cache
-      // from liveness alone) the watched PID file is the only candidate: only while its
-      // process predates the file, and only when the watch declares the port it serves and
-      // that process's group holds the listener. The checkout-cwd provenance below still decides.
+    } else if (
+      resource?.definition.watch?.type === 'pid-file' &&
+      resource.definition.watch.port &&
+      !launch
+    ) {
+      // A watch that declares the port it serves: without this gateway's launch record (a
+      // restart, or a watcher that rebuilt the cache from liveness alone) the watched PID file
+      // is the candidate, only while its process predates the file and its group holds the
+      // listener. The checkout-cwd provenance below still decides. A watch without a port keeps
+      // the cached PID and that provenance alone, as before.
       const watchPath = resource.definition.watch.path;
-      if (!watchPath || !resource.definition.watch.port) return undefined;
+      if (!watchPath) return undefined;
       const project = await loadProjectVars(vars.projectName);
       const port = Number(expandTemplate(String(resource.definition.watch.port), vars, project));
       if (!Number.isInteger(port) || port < 1 || port > 65535) return undefined;

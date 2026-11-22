@@ -418,6 +418,10 @@ test('the PID-file probe runs on this host and rejects a file older than its pro
   assert.equal(parsePidFileProbe(probe())?.pid, process.pid);
   await writeFile(file, `12\n34\n`);
   assert.equal(parsePidFileProbe(probe()), undefined, 'one decimal PID per file');
+  await writeFile(file, `${String(process.pid).slice(0, 2)} ${String(process.pid).slice(2)}\n`);
+  assert.equal(parsePidFileProbe(probe()), undefined, 'no whitespace inside the PID');
+  await writeFile(file, `  ${process.pid}  \n`);
+  assert.equal(parsePidFileProbe(probe())?.pid, process.pid, 'surrounding whitespace is fine');
   await writeFile(file, `${process.pid}\n`);
   const stale = new Date('2020-01-01T00:00:00Z'); // Date.now is mocked in this file.
   await utimes(file, stale, stale);
@@ -431,6 +435,17 @@ test('a pid-file watch that declares no port grants no stop authority after a re
   clock += DEVSERVER_IDLE_LIMIT_MS;
   await reapIdleDevServers('slot-a');
   assert.equal(stops, 0);
+});
+
+test('a watcher-cached PID for a pid-file watch without a port keeps its existing cleanup', async () => {
+  // Extension's webpack watcher declares no port; its cached PID still qualifies by checkout cwd.
+  pidFileWatch = true;
+  pidFilePort = undefined;
+  pointer = { pid: 101 } as ActiveResourcePointer;
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 1);
 });
 
 test('a recorded PID whose group does not hold the declared listener is preserved', async () => {
