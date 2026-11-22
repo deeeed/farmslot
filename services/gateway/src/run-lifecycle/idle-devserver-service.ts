@@ -10,6 +10,7 @@ import { slotRealpath } from '../core/slot-io.js';
 import { markSlotStatusIf, readSlotRow } from '../core/state.js';
 import {
   resolveTmuxSession,
+  shellQuote,
   splitTmuxFields,
   tmuxFieldFormat,
   tmuxShellSnippet,
@@ -42,6 +43,87 @@ import {
 } from './process-census.js';
 import { reapIdentifiedSlotProcesses } from './process-reap.js';
 import { tryWithRunTransition } from './transition-coordinator.js';
+
+/** `ps -o etime` as seconds: `[[dd-]hh:]mm:ss`. */
+export function elapsedSeconds(etime: string): number | undefined {
+  const match = /^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)$/.exec(etime.trim());
+  if (!match) return undefined;
+  const [, days = '0', hours = '0', minutes, seconds] = match;
+  return ((Number(days) * 24 + Number(hours)) * 60 + Number(minutes)) * 60 + Number(seconds);
+}
+
+// Write-order and whole-second slack between a launch and its PID-file write.
+const PID_FILE_WRITE_SLACK_S = 2;
+
+/** Read a PID file's PID, its age, and that process's elapsed time and start, in one call. */
+export function pidFileProbeCommand(pidPath: string): string {
+  return [
+    `f=${shellQuote(pidPath)}`,
+    '[ -f "$f" ] || exit 3',
+    // Exactly one non-empty line holding one decimal PID.
+    '[ "$(grep -c . "$f" 2>/dev/null)" = 1 ] || exit 3',
+    'pid=$(grep . "$f" | sed -e "s/^[[:space:]]*//" -e "s/[[:space:]]*$//")',
+    'case "$pid" in ""|*[!0-9]*) exit 3 ;; esac',
+    // BSD stat first; GNU `stat -f` prints filesystem details, so each result is validated.
+    'modified=$(stat -f %m "$f" 2>/dev/null)',
+    'case "$modified" in ""|*[!0-9]*) modified=$(stat -c %Y "$f" 2>/dev/null) ;; esac',
+    'case "$modified" in ""|*[!0-9]*) exit 3 ;; esac',
+    // One ps record, so the elapsed time and start time belong to the same process.
+    'record=$(ps -o etime=,lstart= -p "$pid" 2>/dev/null)',
+    '[ -n "$record" ] || exit 3',
+    'echo "$pid $(( $(date +%s) - modified )) $record"',
+  ].join('\n');
+}
+
+/**
+ * The process a PID file names, only while it already existed when the file was written: a
+ * reused PID starts after a stale file and grants nothing. Its start time binds the later
+ * identity probe to the same incarnation.
+ */
+export function parsePidFileProbe(stdout: string): { pid: number; identity: string } | undefined {
+  const [pidText = '', ageText = '', etime = '', ...started] = stdout.trim().split(/\s+/);
+  const pid = Number(pidText);
+  const fileAge = Number(ageText);
+  const running = elapsedSeconds(etime);
+  if (
+    !Number.isSafeInteger(pid) ||
+    pid <= 0 ||
+    !Number.isFinite(fileAge) ||
+    running === undefined ||
+    !started.length ||
+    running + PID_FILE_WRITE_SLACK_S < fileAge
+  )
+    return undefined;
+  return { pid, identity: started.join(' ') };
+}
+
+/** Whether a process in this group listens on the port: the resource it serves. */
+async function groupHoldsListener(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  port: number,
+  group: number,
+): Promise<boolean> {
+  const result = await execOnSlot(
+    vars,
+    `for p in $(lsof -nP -iTCP:${port} -sTCP:LISTEN -t 2>/dev/null); do ps -o pgid= -p "$p" 2>/dev/null; done`,
+    { cwd: '/', timeout: 5_000 },
+  );
+  if (result.exitCode !== 0) throw new Error('Idle dev server listener identity unavailable');
+  return result.stdout
+    .split(/\s+/)
+    .filter(Boolean)
+    .some((value) => Number(value) === group);
+}
+
+async function recordedPidFileProcess(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  pidPath: string,
+): Promise<{ pid: number; identity: string } | undefined> {
+  const result = await execOnSlot(vars, pidFileProbeCommand(pidPath), { cwd: '/', timeout: 5_000 });
+  if (result.exitCode === 3) return undefined;
+  if (result.exitCode !== 0) throw new Error('Idle dev server PID file unavailable');
+  return parsePidFileProbe(result.stdout);
+}
 
 const stoppingSlots = new Set<string>();
 interface OwnedListener extends IdleDevServerPointer {
@@ -86,6 +168,9 @@ const idleDevServers = new IdleDevServerReaper({
       (resource) => resource.id === resourceId,
     );
     let pid = cached?.pid;
+    const launch = cached?.meta?.slotId === slotId ? cached.meta.process : undefined;
+    let recordedIdentity: string | undefined;
+    let servedPort: number | undefined;
     if (resource?.definition.watch?.type === 'port-listen') {
       const project = await loadProjectVars(vars.projectName);
       const port = Number(
@@ -101,11 +186,39 @@ const idleDevServers = new IdleDevServerReaper({
       const pids = [...new Set(result.stdout.trim().split(/\s+/).map(Number))];
       if (pids.length !== 1 || !Number.isSafeInteger(pids[0]) || pids[0] <= 0) return undefined;
       pid = pids[0];
+    } else if (
+      resource?.definition.watch?.type === 'pid-file' &&
+      resource.definition.watch.port &&
+      !launch
+    ) {
+      // A watch that declares the port it serves: without this gateway's launch record (a
+      // restart, or a watcher that rebuilt the cache from liveness alone) the watched PID file
+      // is the candidate, only while its process predates the file and its group holds the
+      // listener. The checkout-cwd provenance below still decides. A watch without a port keeps
+      // the cached PID and that provenance alone, as before.
+      const watchPath = resource.definition.watch.path;
+      if (!watchPath) return undefined;
+      const project = await loadProjectVars(vars.projectName);
+      const port = Number(expandTemplate(String(resource.definition.watch.port), vars, project));
+      if (!Number.isInteger(port) || port < 1 || port > 65535) return undefined;
+      const expanded = expandTemplate(String(watchPath), vars, project);
+      const pidPath = expanded.startsWith('/') ? expanded : `${vars.remoteRepo}/${expanded}`;
+      const recorded = await recordedPidFileProcess(vars, pidPath);
+      if (!recorded || (cached?.pid !== undefined && cached.pid !== recorded.pid)) return undefined;
+      pid = recorded.pid;
+      recordedIdentity = recorded.identity;
+      servedPort = port;
     }
     if (!pid) return undefined;
     const process = await probeResourceProcess(vars, pid);
     if (!process) return undefined;
-    const launch = cached?.meta?.slotId === slotId ? cached.meta.process : undefined;
+    if (
+      recordedIdentity !== undefined &&
+      process.identity !== recordedIdentity.replace(/\s+/g, ' ')
+    )
+      return undefined;
+    if (servedPort !== undefined && !(await groupHoldsListener(vars, servedPort, process.group)))
+      return undefined;
     const matches = (known: IdleDevServerPointer | undefined) =>
       known &&
       known.pid === pid &&
