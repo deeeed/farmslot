@@ -455,6 +455,10 @@ describe('project log views', () => {
     assert.equal(await handleLogs(parseLogs(args), { announce, compact }), 0);
     assert.equal(await handleLogs(parseLogs([...args, '--full']), { announce, compact }), 0);
     assert.equal(
+      await handleLogs(parseLogs([...args, '--full', '--follow']), { announce, compact }),
+      0,
+    );
+    assert.equal(
       await handleLogs(parseLogs([...args, '--source', 'build', '--follow']), { announce }),
       0,
     );
@@ -467,6 +471,31 @@ describe('project log views', () => {
       { source: 'client', logFile: app, mode: 'full' },
       { source: 'build', logFile: build, mode: 'raw' },
     ]);
+  });
+
+  test('--full prints the whole log and exits; only --follow keeps tail open', async () => {
+    const { args, app } = setup();
+    const record = path.join(tempRoot(), 'tail-argv.jsonl');
+    const tail = path.join(tempRoot(), 'tail');
+    fs.writeFileSync(
+      tail,
+      `#!${process.execPath}\nrequire('node:fs').appendFileSync(${JSON.stringify(record)}, JSON.stringify(process.argv.slice(2)) + '\\n');\n`,
+      { mode: 0o700 },
+    );
+    process.env[`${harnessHost().envPrefix}_SCRIPT_BIN_TAIL`] = tail;
+    assert.equal(await handleLogs(parseLogs([...args, '--full'])), 0);
+    assert.equal(await handleLogs(parseLogs([...args, '--full', '--follow'])), 0);
+    assert.deepEqual(
+      fs
+        .readFileSync(record, 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as string[]),
+      [
+        ['-n', '+1', app],
+        ['-n', '+1', '-F', app],
+      ],
+    );
   });
 
   test('refusals reach --json callers as envelopes, --events before the log file', async () => {

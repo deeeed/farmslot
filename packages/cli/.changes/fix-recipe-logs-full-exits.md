@@ -1,0 +1,1 @@
+- `farmslot recipe logs --full` help now says it prints the whole log; add `--follow` to keep streaming.

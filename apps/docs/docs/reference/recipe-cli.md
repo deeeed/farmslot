@@ -361,7 +361,8 @@ Options:
   --library <name=path>          Override a recipe library (default: [])
   --target <path>                Checkout to inspect or operate
   --source <name>                Select one runtime log source
-  --full                         Follow the entire selected log without filtering
+  --full                         Print the entire selected log without filtering; add
+                                 --follow to keep streaming
   --lines <count>                Number of initial raw log lines
   --events <count>               Number of compact events to follow
   --window                       Reopen the owned primary log window
