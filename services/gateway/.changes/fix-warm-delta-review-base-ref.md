@@ -1,0 +1,1 @@
+- A WARM re-review of a run with no stacked or repeat-review base records the base branch, as a full capture does. Its pass on the prepared package head now counts at the publish gate; before, it was always stale because the snapshot recorded the prior reviewed head as its base ref.
