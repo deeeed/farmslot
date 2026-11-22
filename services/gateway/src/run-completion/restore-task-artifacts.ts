@@ -44,11 +44,8 @@ async function retainedRunRecord(bundle: Bundle, runId: string): Promise<Record<
 }
 
 /** Follow only the digest-verified predecessor recorded by this run's own capture. */
-async function predecessor(
-  bundle: Bundle,
-  runId: string,
-): Promise<RunArtifactBundleRef | undefined> {
-  const ref = (await retainedRunRecord(bundle, runId)).artifactBundle;
+function predecessor(record: Record<string, unknown>): RunArtifactBundleRef | undefined {
+  const ref = record.artifactBundle;
   if (ref === undefined) return undefined;
   if (
     !isRecord(ref) ||
@@ -75,12 +72,13 @@ async function sourceBundle(run: Run): Promise<TaskArtifactSource | undefined> {
     if (seen.has(ref.bundleDigest)) throw new Error('Retained predecessor cycle.');
     seen.add(ref.bundleDigest);
     const bundle = await readRetainedRunBundle(store, ref, run.id);
+    const record = await retainedRunRecord(bundle, run.id);
+    // Earlier evidence belongs to this exact frozen task, never to a replacement task: a
+    // capture of the task a replay replaced, and everything before it, restores nothing.
+    if (record.taskFile !== run.taskFile) break;
     latest ??= { bundle, ref };
     const prefix = `tasks/${ref.taskKey}/`;
     if (bundle.manifest.entries[prefix + PROVENANCE]) {
-      // Earlier evidence belongs to this exact frozen task, never to a replacement task: a
-      // replay that wrote a new task restores nothing from the one it replaced.
-      if ((await retainedRunRecord(bundle, run.id)).taskFile !== run.taskFile) return undefined;
       const handoff = bundle.manifest.entries[prefix + HANDOFF];
       if (
         !handoff ||
@@ -89,10 +87,10 @@ async function sourceBundle(run: Run): Promise<TaskArtifactSource | undefined> {
         throw new Error('Retained task inputs differ; restoration refused.');
       return { bundle, ref };
     }
-    ref = await predecessor(bundle, run.id);
+    ref = predecessor(record);
   }
-  // Legacy tasks without a runtime receipt still restore their latest captured artifacts.
-  return latest!;
+  // Legacy tasks without a runtime receipt still restore this task's latest captured artifacts.
+  return latest;
 }
 
 /** Read the same frozen receipt restoration would stage, without writing task files. */

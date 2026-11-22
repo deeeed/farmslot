@@ -232,14 +232,60 @@ test('task restoration rejects changed frozen inputs before publishing artifacts
 // replacement task. The old task's evidence never restores into it, and the copy proceeds.
 test('a replacement task restores nothing from the earlier task and still copies', async (t) => {
   const f = await retainedFixture(t);
-  const replacement = path.join(tools.root, 'tasks/dev', `${f.run.id}-replay`);
-  t.after(() => rm(replacement, { recursive: true, force: true }));
-  await mkdir(path.join(replacement, 'artifacts'), { recursive: true });
-  await mkdir(path.join(replacement, 'inputs'));
-  await writeFile(path.join(replacement, 'TASK.md'), '# Replacement task\n');
-  await writeFile(path.join(replacement, 'inputs/handoff.json'), '{"attemptId":"replay"}\n');
-  realRunStore.updateRun(f.run.id, { taskFile: path.join(replacement, 'TASK.md') });
+  const replacement = await replacementTask(t, f.run.id);
   await copyTaskFilesToSlot(f.run.id);
+  await assert.rejects(
+    readFile(path.join(replacement, 'artifacts/harness-provenance.json')),
+    /ENOENT/,
+  );
+});
+
+async function replacementTask(t: TestContext, runId: string, report?: string) {
+  const dir = path.join(tools.root, 'tasks/dev', `${runId}-replay`);
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  await mkdir(path.join(dir, 'artifacts'), { recursive: true });
+  await mkdir(path.join(dir, 'inputs'));
+  await writeFile(path.join(dir, 'TASK.md'), '# Replacement task\n');
+  await writeFile(path.join(dir, 'inputs/handoff.json'), '{"attemptId":"replay"}\n');
+  if (report) await writeFile(path.join(dir, 'artifacts/report.md'), report);
+  realRunStore.updateRun(runId, { taskFile: path.join(dir, 'TASK.md') });
+  return dir;
+}
+
+test('a replaced task without a receipt restores nothing into its replacement', async (t) => {
+  const { captureRunOutput } = await import('../run-completion/output.js');
+  const run = realRunStore.createRun({
+    flowType: 'dev',
+    project: 'demo',
+    ticketOrPr: 'RESTORE-LEGACY-REPLACED',
+    slotId: 'slot-1',
+  });
+  t.after(async () => {
+    realRunStore.updateRun(run.id, { status: 'done' });
+    await realRunStore.deleteRun(run.id);
+  });
+  const dir = path.join(tools.root, 'tasks/dev', run.id);
+  await mkdir(path.join(dir, 'artifacts'), { recursive: true });
+  await writeFile(path.join(dir, 'TASK.md'), '# Task\n');
+  await writeFile(path.join(dir, 'artifacts/report.md'), 'Old task report\n');
+  realRunStore.updateRun(run.id, { taskFile: path.join(dir, 'TASK.md'), status: 'failed' });
+  await captureRunOutput(run.id, false, true);
+  const replacement = await replacementTask(t, run.id);
+  await copyTaskFilesToSlot(run.id);
+  await assert.rejects(readFile(path.join(replacement, 'artifacts/report.md')), /ENOENT/);
+});
+
+test("a replacement task restores its own capture past the replaced task's receipt", async (t) => {
+  const { captureRunOutput } = await import('../run-completion/output.js');
+  const f = await retainedFixture(t);
+  const replacement = await replacementTask(t, f.run.id, 'Replacement report\n');
+  await captureRunOutput(f.run.id, false, true);
+  await rm(path.join(replacement, 'artifacts/report.md'));
+  await copyTaskFilesToSlot(f.run.id);
+  assert.equal(
+    await readFile(path.join(replacement, 'artifacts/report.md'), 'utf8'),
+    'Replacement report\n',
+  );
   await assert.rejects(
     readFile(path.join(replacement, 'artifacts/harness-provenance.json')),
     /ENOENT/,
