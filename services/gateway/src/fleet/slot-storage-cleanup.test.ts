@@ -337,3 +337,36 @@ test('scratch parking refuses a symlinked parking root, reads a trailing-slash t
   assert.equal(parkedRun.parked.length, 1, 'a trailing slash on the task dir still parks');
   assert.equal(await exists(locked), true, 'an unreadable TASK.md counts as present');
 });
+
+test('a parking directory that already exists is never reused, for any candidate', async () => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-collide-'));
+  const home = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-collide-home-'));
+  for (const name of ['scratch-a', 'scratch-b']) {
+    await mkdir(path.join(repo, 'temp/tasks', name), { recursive: true });
+    await writeFile(path.join(repo, 'temp/tasks', name, 'x'), 'x');
+  }
+  const taken = path.join(home, 'parked-scratch/slot-a/fixed');
+  await mkdir(taken, { recursive: true });
+  const result = parseTaskScratchParkOutput(
+    (
+      await execFileAsync('/bin/sh', [
+        '-c',
+        buildTaskScratchParkCommand({
+          repo,
+          taskDirName: 'temp/tasks',
+          slotId: 'slot-a',
+          parkHome: home,
+          parkStamp: 'fixed',
+        }),
+      ])
+    ).stdout,
+  );
+  assert.deepEqual(result.parked, []);
+  assert.equal(
+    result.refused.length,
+    2,
+    'each candidate is refused, none moves into the existing directory',
+  );
+  assert.equal(await exists(path.join(repo, 'temp/tasks/scratch-a/x')), true);
+  assert.equal(await exists(path.join(repo, 'temp/tasks/scratch-b/x')), true);
+});

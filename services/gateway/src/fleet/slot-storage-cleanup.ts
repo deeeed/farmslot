@@ -310,11 +310,14 @@ export function buildTaskScratchParkCommand(input: {
   taskDirName: string;
   slotId: string;
   parkHome: string;
+  /** Fixed parking directory name; tests use it to force a collision. */
+  parkStamp?: string;
 }): string {
   const config = {
     repo: input.repo.replace(/\/+$/, ''),
     taskRoot: safeRelativeDir(input.taskDirName, DEFAULT_TASK_DIR).replace(/\/+$/, ''),
     flows: unique(FLOW_TYPES.map((flow) => flowDir(flow))),
+    parkStamp: input.parkStamp ?? null,
     parkRoot: `${input.parkHome.replace(/\/+$/, '')}/parked-scratch/${input.slotId.replace(/[^A-Za-z0-9._-]/g, '_')}`,
   };
   return [
@@ -361,7 +364,7 @@ export function buildTaskScratchParkCommand(input: {
     '            os.makedirs(home, exist_ok=True)',
     '            # A fresh directory of our own: nothing inside it can already exist. Only a',
     '            # successful mkdir makes it the parking directory.',
-    '            fresh = os.path.join(home, time.strftime("%Y%m%d-%H%M%S") + f"-{os.getpid()}")',
+    '            fresh = os.path.join(home, cfg["parkStamp"] or time.strftime("%Y%m%d-%H%M%S") + f"-{os.getpid()}")',
     '            os.mkdir(fresh)',
     '            park = fresh',
     '        dest = os.path.join(park, os.path.relpath(path, repo))',
