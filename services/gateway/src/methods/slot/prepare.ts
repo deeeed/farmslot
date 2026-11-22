@@ -855,6 +855,71 @@ async function slotPrepareInner(
     }
     step('branch', `Reset ${branch} to stack base ${sha}`);
   };
+  // A run's work branch with no commits beyond the project base carries no work,
+  // only an old base: a replay of a run whose base has since gained a fix (for
+  // example a sorted manifest the tracked-file check needs) must not keep
+  // preparing the old tree. Once the branch is checked out (by the usual path),
+  // move it forward to the current base. Branches with their own commits,
+  // published branches, and runs with an explicit start ref or stack base are
+  // never moved. The move is `git reset --keep` (no merge configuration applies)
+  // after checking HEAD is still the probed branch and tip, is an ancestor of
+  // the base, nothing is staged (reset --keep resets the index), and no local
+  // file sits at a path the base adds or where it needs a directory (reset --keep
+  // would overwrite an ignored one); pipefail makes a failed scan refuse. reset --keep refuses local edits
+  // to changed files; any refusal keeps the branch where it was.
+  const advanceEmptyWorkBranch = async () => {
+    if (!branch || opts?.startRef || opts?.stackBase) return;
+    const base = `origin/${defaultBranch}`;
+    // Every caller has just put the slot on the work branch. Anything else means the
+    // checkout changed under prepare, which cannot vouch for the tree it would continue on.
+    // HEAD, its tip and the ancestry come from one command, so they describe one moment.
+    const probe = await execGit(
+      'probe-empty-work-branch',
+      vars,
+      withFarmGitConfig(
+        `cd ${shellQuote(vars.remoteRepo)} && printf '%s\\n' "$(git symbolic-ref -q HEAD)" && git rev-list --count ${shellQuote(`${base}..HEAD`)} && git rev-parse HEAD ${shellQuote(`${base}^{commit}`)}`,
+      ),
+    );
+    const [headRef = '', own, tip = '', baseSha = ''] = probe.stdout.split('\n');
+    if (headRef !== `refs/heads/${branch}`)
+      throw new Error(
+        `${vars.slotId} is not on ${branch} after checkout (HEAD ${headRef || 'detached'}); refusing to continue on an unverified checkout`,
+      );
+    if (probe.exitCode !== 0) return;
+    if (own !== '0' || !tip || !baseSha || tip === baseSha) return;
+    // The flag sweep ends with `exit`, so it runs as its own command before the merge.
+    const sweep = await mutateGit(
+      'clear-advance-index-flags',
+      `cd ${shellQuote(vars.remoteRepo)} && { ${CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND}; }`,
+    );
+    const moved =
+      sweep.exitCode !== 0
+        ? sweep
+        : await mutateGit(
+            'advance-empty-work-branch',
+            // Re-checked inside the guarded command: the guard can rerun it after recapturing a
+            // checkout that changed since the probe.
+            `set -o pipefail; cd ${shellQuote(vars.remoteRepo)} && { [ "$(git symbolic-ref -q HEAD)" = ${shellQuote(`refs/heads/${branch}`)} ] && [ "$(git rev-parse HEAD)" = ${shellQuote(tip)} ] || { echo 'the checkout changed since the probe' >&2; exit 3; }; } && git merge-base --is-ancestor HEAD ${shellQuote(baseSha)} && { git diff --cached --quiet --ignore-submodules=none HEAD -- || { echo 'staged changes would be reset' >&2; exit 1; }; } && { git diff --no-renames --diff-filter=A --name-only -z HEAD ${shellQuote(baseSha)} | while IFS= read -r -d '' p; do covered=; rest="$p"; pre=; while [ "$rest" != "\${rest#*/}" ]; do pre="\${pre:+$pre/}\${rest%%/*}"; rest="\${rest#*/}"; if [ -L "$pre" ] || { [ -e "$pre" ] && [ ! -d "$pre" ]; }; then if git cat-file -e "HEAD:$pre" 2>/dev/null; then covered=1; break; fi; echo "$pre is a local file where the new base needs a directory" >&2; exit 1; fi; done; [ -n "$covered" ] && continue; if [ -L "$p" ] || { [ -e "$p" ] && [ ! -d "$p" ]; }; then echo "$p exists locally and the new base tracks it" >&2; exit 1; elif [ -d "$p" ]; then others=$(git ls-files --others -- "$p") || exit 1; if [ -n "$others" ]; then echo "$p holds local files and the new base tracks it as a file" >&2; exit 1; fi; fi; done; } && git reset --keep ${shellQuote(baseSha)} && [ "$(git rev-parse HEAD)" = ${shellQuote(baseSha)} ]`,
+            [baseSha],
+          );
+    // Exit 3: the checkout is no longer the probed branch and tip. Prepare cannot vouch
+    // for the tree it would continue on, so it stops instead of reporting success.
+    if (moved.exitCode === 3)
+      throw new Error(
+        `${branch} on ${vars.slotId} changed while prepare was moving it to ${base}; refusing to continue on an unverified checkout`,
+      );
+    if (moved.exitCode !== 0) {
+      step(
+        'branch',
+        `${branch} has no commits beyond ${base} but stays at ${tip.slice(0, 12)}: ${(moved.stderr || moved.stdout).trim().slice(-200)}`,
+      );
+      return;
+    }
+    step(
+      'branch',
+      `${branch} had no commits beyond ${base}; fast-forwarded from ${tip.slice(0, 12)} to ${baseSha.slice(0, 12)}`,
+    );
+  };
   // A start ref means two different things. For dev/fix-bug it is an
   // artifact-only replay base: the work branch must be local-only, and the
   // policy below refuses a remote-published branch on every non-replay path (a
@@ -970,6 +1035,31 @@ async function slotPrepareInner(
     }
     if (localExists) {
       step('branch', `Replay preserving existing local ${branch} without reset or clean`);
+      // Only a local-only branch may move; a failed probe or fetch keeps it as it is.
+      if (!opts.startRef && !opts.stackBase) {
+        const remote = await execGit(
+          'probe-replay-remote-branch',
+          vars,
+          withFarmGitConfig(
+            `git -C ${shellQuote(vars.remoteRepo)} ls-remote --exit-code --heads origin ${shellQuote(`refs/heads/${branch}`)}`,
+          ),
+        );
+        const fetchBase =
+          remote.exitCode === 2
+            ? await execGit(
+                'fetch-replay-base',
+                vars,
+                withFarmGitConfig(
+                  `git -C ${shellQuote(vars.remoteRepo)} fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+                ),
+              )
+            : null;
+        if (fetchBase?.exitCode === 0) await advanceEmptyWorkBranch();
+        else if (remote.exitCode !== 0 && remote.exitCode !== 2)
+          step('branch', `Replay kept ${branch} as is: could not tell whether origin has it`);
+        else if (fetchBase)
+          step('branch', `Replay kept ${branch} as is: fetching origin/${defaultBranch} failed`);
+      }
     }
   }
   if (branch && opts?.preserveBranch) {
@@ -1034,6 +1124,17 @@ async function slotPrepareInner(
           );
         }
         step('branch', `Remote branch ${branch} not found; using existing local ${branch}`);
+        if (!opts?.startRef && !opts?.stackBase) {
+          const fetchBase = await execGit(
+            'fetch-current-base',
+            vars,
+            withFarmGitConfig(
+              `cd ${shellQuote(vars.remoteRepo)} && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+            ),
+          );
+          if (fetchBase.exitCode === 0) await advanceEmptyWorkBranch();
+          else step('branch', `Kept ${branch} as is: fetching origin/${defaultBranch} failed`);
+        }
         await resolveRequestedStartRef();
         if (startRefPolicyApplies) {
           assertStartRefWorkBranchIsLocalOnly({
@@ -1338,6 +1439,7 @@ async function slotPrepareInner(
               'checkout-local-branch',
               `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)}`,
             );
+            await advanceEmptyWorkBranch();
             step('branch', `Switched to existing local ${branch}`);
             await resetBranchToStartRef();
           }
