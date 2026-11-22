@@ -650,21 +650,34 @@ try {
   assert.match(completed.stderr, /Copy artifacts\/recipe-runs\/after-flag-09425041\/recipe\.json/);
   rmSync(path.join(artifacts, 'recipe.json'), { recursive: true });
 
-  // The harness layout nests attempts under recipe-runs/attempts/<id>; an unreadable
-  // summary is reported as such, not as a failed proof.
+  // Attempts nest under recipe-runs/attempts/<id> (harness) or a deeper --artifacts-dir; an
+  // unreadable summary is reported as such, not as a failed proof.
   rmSync(path.join(artifacts, 'latest-valid-recipe-run.json'));
   rmSync(path.join(artifacts, 'recipe-runs'), { recursive: true });
-  const nested = path.join(artifacts, 'recipe-runs', 'attempts', 'a1');
-  mkdirSync(nested, { recursive: true });
-  writeFileSync(path.join(nested, 'evidence-manifest.json'), '{"version":1,"standalone":[]}\n');
-  writeFileSync(path.join(nested, 'summary.json'), '{');
+  for (const nested of ['attempts/a1', 'group/subgroup/a2']) {
+    const dir = path.join(artifacts, 'recipe-runs', nested);
+    mkdirSync(path.join(dir, 'screenshots'), { recursive: true });
+    writeFileSync(path.join(dir, 'evidence-manifest.json'), '{"version":1,"standalone":[]}\n');
+    writeFileSync(path.join(dir, 'summary.json'), '{');
+  }
   completed = complete();
   assert.notEqual(completed.status, 0, 'nested attempts must be selected too');
-  assert.match(completed.stderr, /proof attempts \(recipe-runs\/attempts\/a1\)/);
+  assert.match(
+    completed.stderr,
+    /proof attempts \(recipe-runs\/attempts\/a1, recipe-runs\/group\/subgroup\/a2\)/,
+  );
+  assert.match(completed.stderr, /No passing attempt could be verified/);
   assert.match(completed.stderr, /Unreadable summaries: recipe-runs\/attempts\/a1\/summary\.json/);
 
-  // QA registers its packages in qa-result.json and keeps its own selection contract.
+  // A qa-result.json does not exempt a dev task; the QA contract keeps its own selection.
   writeFileSync(path.join(artifacts, 'qa-result.json'), '{}');
+  completed = complete();
+  assert.match(completed.stderr, /selects none/);
+  const contractFile = path.join(unselectedDir, terminalContractInputForChecklist('CHECKLIST.md'));
+  writeFileSync(
+    contractFile,
+    JSON.stringify({ ...JSON.parse(readFileSync(contractFile, 'utf8')), flowType: 'qa' }),
+  );
   completed = complete();
   assert.doesNotMatch(completed.stderr, /selects none/);
 } finally {

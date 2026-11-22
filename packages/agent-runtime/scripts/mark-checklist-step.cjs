@@ -476,16 +476,18 @@ function assertRecipeAttemptSelected(taskDir) {
     }
   };
   const isAttempt = (name) => taskFileExists(runs, path.join(name, 'evidence-manifest.json'));
-  // `recipe-runs/<id>`, or the harness's `recipe-runs/attempts/<id>`.
-  const attempts = directories(runs)
-    .flatMap((name) =>
-      isAttempt(name)
-        ? [name]
-        : directories(path.join(runs, name))
-            .map((child) => `${name}/${child}`)
-            .filter(isAttempt),
-    )
-    .sort();
+  // An attempt is any directory under recipe-runs holding a manifest (`<id>`, the harness's
+  // `attempts/<id>`, or a deeper --artifacts-dir); its own subdirectories are not attempts.
+  const attempts = [];
+  const visit = (relative) => {
+    for (const name of directories(path.join(runs, relative))) {
+      const child = relative ? `${relative}/${name}` : name;
+      if (isAttempt(child)) attempts.push(child);
+      else visit(child);
+    }
+  };
+  visit('');
+  attempts.sort();
   if (attempts.length === 0) return;
   const { readRecipeAttemptSelection } = require('./retained-recipe-attempt.cjs');
   const pointer = readRecipeAttemptSelection(taskDir);
@@ -513,7 +515,7 @@ function assertRecipeAttemptSelected(taskDir) {
     `node ${quote(path.join(__dirname, 'retained-recipe-attempt.cjs'))} ${quote(taskDir)} ${quote(path.join(runs, name))}`;
   const next =
     passed.length === 0
-      ? 'None of them passed: rerun the proof with RECIPE_TASK_DIR set in the same command so its passing attempt is selected.'
+      ? `${unreadable.length ? 'No passing attempt could be verified' : 'None of them passed'}: rerun the proof with RECIPE_TASK_DIR set in the same command so its passing attempt is selected.`
       : `Select the proof attempt this task claims, for example:\n  ${select(passed[0])}\nPassing attempts: ${passed.map((name) => `recipe-runs/${name}`).join(', ')}.`;
   const unread = unreadable.length ? `\nUnreadable summaries: ${unreadable.join('; ')}.` : '';
   console.error(
@@ -524,14 +526,9 @@ function assertRecipeAttemptSelected(taskDir) {
 
 function assertTerminalPackagedEvidence(taskPath, taskDir, terminalCommand) {
   if (terminalCommand === 'blocked') return;
-  // Review flows judge others' evidence; QA registers its packages in qa-result.json.
+  // Review flows judge others' evidence; the QA contract selects its own packages.
   const flowType = loadTerminalContract(taskDir, taskPath)?.flowType;
-  if (
-    terminalCommand === 'complete' &&
-    flowType !== 'review' &&
-    flowType !== 'qa' &&
-    !taskFileExists(taskDir, 'artifacts/qa-result.json')
-  )
+  if (terminalCommand === 'complete' && flowType !== 'review' && flowType !== 'qa')
     assertRecipeAttemptSelected(taskDir);
 
   const contract = loadTerminalContract(taskDir, taskPath);
