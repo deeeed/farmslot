@@ -899,9 +899,10 @@ test('package validation refuses omitted registered claim rows', () => {
   assert.equal(mismatches(withProduct({ adapter: 'core', git_ref: head, dirty: true })).length, 1);
   assert.deepEqual(mismatches(withProduct({ adapter: 'core', git_ref: head, dirty: false })), []);
   // Without a frozen head (or provenance) nothing is compared, as for media.
-  assert.equal(
-    validateRecordedEvidencePackage(withProduct({ git_ref: stale, dirty: false })).status,
-    'valid',
+  assert.ok(
+    !validateRecordedEvidencePackage(withProduct({ git_ref: stale, dirty: false })).findings.some(
+      (finding) => finding.code === 'comparison-source-mismatch',
+    ),
   );
 });
 

@@ -275,7 +275,12 @@ function stateProofSourceMismatch(
         ? `Proof ran on ${product.git_ref}, not the frozen review revision ${headSha}`
         : undefined;
   return message
-    ? { severity: 'error', code: 'comparison-source-mismatch', path: 'product-provenance.json', message }
+    ? {
+        severity: 'error',
+        code: 'comparison-source-mismatch',
+        path: 'product-provenance.json',
+        message,
+      }
     : undefined;
 }
 
