@@ -371,6 +371,16 @@ export interface ArtifactMirrorOptions {
   acquisition?: RunArtifactAcquisition;
   /** Completion requires source artifacts even when none need transferring. */
   requireSourceArtifacts?: boolean;
+  /**
+   * An empty source package copies and prunes nothing, so files already mirrored to the
+   * gateway (such as the task's frozen runtime receipt) stay for the capture.
+   */
+  keepMirrorWithoutSource?: boolean;
+  /**
+   * Called when the mirror can take nothing from the slot: the package is empty, or the
+   * task has no slot or no locatable task directory there.
+   */
+  onEmptySource?: () => void;
   /** Publication callers validate the same selected attempt before any copy. */
   forPublication?: boolean;
   publicationComparison?: ReviewDiffSnapshot;
@@ -417,6 +427,7 @@ export async function refreshArtifactMirror(
   if (!run.slotId || !run.taskFile) {
     if (options.requireSourceArtifacts)
       throw new Error('artifact mirror refresh has no source artifacts');
+    options.onEmptySource?.();
     return 0;
   }
 
@@ -431,6 +442,7 @@ export async function refreshArtifactMirror(
   if (taskRelDir === null) {
     if (options.requireSourceArtifacts)
       throw new Error('artifact mirror refresh has no source artifacts');
+    options.onEmptySource?.();
     return 0;
   }
 
@@ -579,6 +591,10 @@ export async function refreshArtifactMirror(
   });
   if (options.requireSourceArtifacts && packaged.entries.length + snapshotEntries.length === 0) {
     throw new Error('artifact mirror refresh has no source artifacts');
+  }
+  if (options.keepMirrorWithoutSource && packaged.entries.length + snapshotEntries.length === 0) {
+    options.onEmptySource?.();
+    return 0;
   }
   const packagedPaths = new Set(packaged.entries.map((entry) => entry.path));
   const skippedLinks = scan.links.filter(

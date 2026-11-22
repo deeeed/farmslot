@@ -1,0 +1,1 @@
+- Slot recovery no longer deadlocks on a run that failed before its worker received the task. Final-result retention treats an empty source as nothing to keep when the run retained no output and no worker was handed its prompt; once a worker may have run, a missing source still stops cleanup.
