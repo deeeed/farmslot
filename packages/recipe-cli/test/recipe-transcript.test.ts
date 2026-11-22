@@ -372,7 +372,7 @@ test('review r1: secrets, groups, changed reports and the line cap', async (t) =
   const text = await renderRecipeTranscript({ artifactDir: dir });
   assert.match(text, /network https:\/\/<redacted>@rpc\.example mainnet$/m);
   assert.match(text, / · not missingFills=\[0\] \(len>0\)/);
-  assert.match(text, /· ⚠ retained report no longer satisfies this assertion$/m);
+  assert.match(text, /⚠ retained report no longer satisfies this assertion$/m);
   assert.match(text, /session\.authorization="<redacted>"/);
   assert.doesNotMatch(text, /user:pass|ghp_/);
 });
@@ -405,11 +405,18 @@ test('review r2: group semantics, foreign ledger rows, stdout and raw labels', a
     }),
   ]);
   const text = await renderRecipeTranscript({ artifactDir: dir });
-  assert.doesNotMatch(text, /⚠/);
+  // The label node reads a key the report lacks, so only it is flagged.
+  assert.doesNotMatch(text, /^✓ check .*⚠/m);
+  assert.match(text, /^✓ label .*⚠ retained report/m);
   assert.doesNotMatch(text, /hunter2|tok-secret|artifacts\//);
   assert.match(text, /^✓ cmd {2}command {2}exit 0$/m);
   assert.match(text, /^✓ read {2}state_read$/m);
-  assert.ok(text.trimEnd().split('\n').every((line) => !line.includes('\r')));
+  assert.ok(
+    text
+      .trimEnd()
+      .split('\n')
+      .every((line) => !line.includes('\r')),
+  );
 
   // any(...) whose retained report satisfies no branch is flagged.
   const anyDir = await headlessPackage(path.join(base, 'any'), [

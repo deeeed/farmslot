@@ -164,14 +164,20 @@ function satisfies(document: unknown, assertion: unknown): boolean | undefined {
     if (group === 'all') return results.every(Boolean);
     return group === 'any' ? results.some(Boolean) : !results.some(Boolean);
   }
-  if (typeof assertion.path !== 'string' || typeof assertion.operator !== 'string') return undefined;
+  if (typeof assertion.path !== 'string' || typeof assertion.operator !== 'string')
+    return undefined;
   let actual: unknown;
   try {
     actual = getJsonPathValue(document, assertion.path);
   } catch {
     return undefined;
   }
-  return holds(actual, { path: assertion.path, operator: assertion.operator, value: assertion.value, mode: 'all' });
+  return holds(actual, {
+    path: assertion.path,
+    operator: assertion.operator,
+    value: assertion.value,
+    mode: 'all',
+  });
 }
 
 function assertionText(document: unknown, leaf: Leaf, failed: boolean): string {
