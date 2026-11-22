@@ -87,4 +87,4 @@ STATUS: pending
 
 ## Recipe proof + acceptance review
 
-Follow TASK.md for task-bound recipe proof, registered criteria, coverage and completion commands. Retain the recipe's results and resolve any refused check before marking this checklist complete.
+Follow TASK.md for task-bound recipe proof, registered criteria, coverage and completion commands. The proof this task claims is the attempt selected in `artifacts/latest-valid-recipe-run.json`; a task-root `evidence-manifest.json` is optional and only declares extra evidence. Retain the recipe's results and resolve any refused check before marking this checklist complete.
