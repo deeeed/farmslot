@@ -316,3 +316,21 @@ test(
     assert.equal(await readFile(path.join(slotRepo, 'local.env'), 'utf8'), 'operator secret\n');
   },
 );
+
+test('a staged edit keeps the branch where it was', needsTmuxSandbox, async (t) => {
+  const { slotId, slotRepo, oldBase } = await staleBaseSlot(t);
+  await git(slotRepo, 'checkout', '-q', '-b', workBranch, oldBase);
+  await writeFile(path.join(slotRepo, 'README.md'), 'staged work\n');
+  await git(slotRepo, 'add', 'README.md');
+  await writeFile(path.join(slotRepo, 'README.md'), 'fixture\n');
+  await Promise.allSettled([
+    slotPrepare(
+      { slotId, branch: workBranch, prepareProfile: 'core' },
+      () => {},
+      undefined,
+      { preserveBranch: true },
+    ),
+  ]);
+  assert.equal(await git(slotRepo, 'rev-parse', `refs/heads/${workBranch}`), oldBase);
+  assert.equal(await git(slotRepo, 'show', ':README.md'), 'staged work');
+});

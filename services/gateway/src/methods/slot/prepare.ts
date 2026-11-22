@@ -863,9 +863,10 @@ async function slotPrepareInner(
   // published branches, and runs with an explicit start ref or stack base are
   // never moved. The move is `git reset --keep` (no merge configuration applies)
   // after checking HEAD is still the probed branch and tip, is an ancestor of
-  // the base, and no local file sits at a path the base adds (reset --keep would
-  // overwrite an ignored one). It refuses local edits to changed files; any
-  // refusal keeps the branch where it was.
+  // the base, nothing is staged (reset --keep resets the index), and no local
+  // file sits at a path the base adds (reset --keep would overwrite an ignored
+  // one); pipefail makes a failed scan refuse. reset --keep refuses local edits
+  // to changed files; any refusal keeps the branch where it was.
   const advanceEmptyWorkBranch = async () => {
     if (!branch || opts?.startRef || opts?.stackBase) return;
     const base = `origin/${defaultBranch}`;
@@ -891,7 +892,7 @@ async function slotPrepareInner(
             'advance-empty-work-branch',
             // Re-checked inside the guarded command: the guard can rerun it after recapturing a
             // checkout that changed since the probe.
-            `cd ${shellQuote(vars.remoteRepo)} && { [ "$(git symbolic-ref -q HEAD)" = ${shellQuote(`refs/heads/${branch}`)} ] && [ "$(git rev-parse HEAD)" = ${shellQuote(tip)} ] || { echo 'the checkout changed since the probe' >&2; exit 1; }; } && git merge-base --is-ancestor HEAD ${shellQuote(baseSha)} && { git diff --no-renames --diff-filter=A --name-only -z HEAD ${shellQuote(baseSha)} | while IFS= read -r -d '' p; do if [ -e "$p" ] || [ -L "$p" ]; then echo "$p exists locally and the new base tracks it" >&2; exit 1; fi; done; } && git reset --keep ${shellQuote(baseSha)} && [ "$(git rev-parse HEAD)" = ${shellQuote(baseSha)} ]`,
+            `set -o pipefail; cd ${shellQuote(vars.remoteRepo)} && { [ "$(git symbolic-ref -q HEAD)" = ${shellQuote(`refs/heads/${branch}`)} ] && [ "$(git rev-parse HEAD)" = ${shellQuote(tip)} ] || { echo 'the checkout changed since the probe' >&2; exit 1; }; } && git merge-base --is-ancestor HEAD ${shellQuote(baseSha)} && { git diff --cached --quiet HEAD -- || { echo 'staged changes would be reset' >&2; exit 1; }; } && { git diff --no-renames --diff-filter=A --name-only -z HEAD ${shellQuote(baseSha)} | while IFS= read -r -d '' p; do if [ -e "$p" ] || [ -L "$p" ]; then echo "$p exists locally and the new base tracks it" >&2; exit 1; fi; done; } && git reset --keep ${shellQuote(baseSha)} && [ "$(git rev-parse HEAD)" = ${shellQuote(baseSha)} ]`,
             [baseSha],
           );
     if (moved.exitCode !== 0) {
