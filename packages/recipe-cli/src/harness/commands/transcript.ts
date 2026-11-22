@@ -2,7 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { isRecord } from '@farmslot/protocol';
-import { getJsonPathValue, redactRecipeParams } from '@farmslot/recipe-runner';
+import { evaluateAtomicValue, getJsonPathValue, redactRecipeParams } from '@farmslot/recipe-runner';
 
 import { readContainedJsonArtifact } from '../artifact-files.js';
 
@@ -62,15 +62,28 @@ function oneLine(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
 }
 
-/** Key-based and value-based redaction shared with recorded recipe parameters. */
-function redact(key: string, value: unknown): unknown {
-  let safe = redactRecipeParams({ [key]: value }, undefined).params[key];
-  if (typeof safe === 'string') {
-    for (const pattern of TOKEN_PATTERNS) safe = (safe as string).replace(pattern, '<redacted>');
-    const home = os.homedir();
-    if (home.length > 1) safe = (safe as string).split(home).join('~');
-  }
-  return safe;
+// Task-local paths: publication strips any PR-body line that contains one, even in a fence.
+const LOCAL_PATH =
+  /(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s<)>'"`|]*?([^\s<)>'"`|/]+)(?=[\s<)>'"`|]|$)/gu;
+
+function sensitiveKey(key: string): boolean {
+  return redactRecipeParams({ [key]: 'value' }, undefined).params[key] === '<redacted>';
+}
+
+/**
+ * Redaction shared with recorded recipe parameters: any sensitive key on the value's path hides
+ * it, and strings lose credential patterns, home paths and task-local paths.
+ */
+function redact(keys: readonly string[], value: unknown): unknown {
+  if (keys.some(sensitiveKey)) return '<redacted>';
+  if (Array.isArray(value)) return value.map((item) => redact([], item));
+  if (isRecord(value)) return value;
+  if (typeof value !== 'string') return value;
+  let safe = String(redactRecipeParams({ value }, undefined).params.value);
+  for (const pattern of TOKEN_PATTERNS) safe = safe.replace(pattern, '<redacted>');
+  const home = os.homedir();
+  if (home.length > 1) safe = safe.split(home).join('~');
+  return safe.replace(LOCAL_PATH, '…/$1');
 }
 
 function scalar(value: unknown): string {
@@ -79,12 +92,12 @@ function scalar(value: unknown): string {
   return clip(JSON.stringify(value) ?? String(value), MAX_VALUE);
 }
 
-function display(key: string, raw: unknown): string {
-  const value = redact(key, raw);
+function display(keys: readonly string[], raw: unknown): string {
+  const value = redact(keys, raw);
   if (Array.isArray(value)) {
     const items = value.filter((item) => item === null || typeof item !== 'object');
     if (items.length !== value.length || !items.length) return `[${value.length}]`;
-    const shown = items.slice(0, 2).map((item) => scalar(redact(key, item)));
+    const shown = items.slice(0, 2).map(scalar);
     return `[${value.length}] ${shown.join(',')}${value.length > 2 ? `,+${value.length - 2}` : ''}`;
   }
   if (isRecord(value)) return `{${Object.keys(value).length} keys}`;
@@ -95,15 +108,20 @@ interface Leaf {
   path: string;
   operator: string;
   value?: unknown;
+  /** The group that decides the leaf: it must hold (all), must not hold (none), or may (any). */
+  mode: 'all' | 'any' | 'none';
 }
 
-function leaves(assertion: unknown): Leaf[] {
+function leaves(assertion: unknown, mode: Leaf['mode'] = 'all'): Leaf[] {
   if (!isRecord(assertion)) return [];
-  for (const group of ['all', 'any']) {
-    if (Array.isArray(assertion[group])) return assertion[group].flatMap(leaves);
+  for (const group of ['all', 'any', 'none'] as const) {
+    if (!Array.isArray(assertion[group])) continue;
+    const next =
+      group === 'none' ? (mode === 'none' ? 'all' : 'none') : group === 'any' ? 'any' : mode;
+    return assertion[group].flatMap((child) => leaves(child, mode === 'any' ? 'any' : next));
   }
   return typeof assertion.path === 'string' && typeof assertion.operator === 'string'
-    ? [{ path: assertion.path, operator: assertion.operator, value: assertion.value }]
+    ? [{ path: assertion.path, operator: assertion.operator, value: assertion.value, mode }]
     : [];
 }
 
@@ -116,24 +134,40 @@ async function optionalJson(root: string, file: string): Promise<unknown> {
   }
 }
 
-function lastKey(jsonPath: string): string {
-  return /([^.[\]]+)(?:\[\d+\])*$/.exec(jsonPath)?.[1] ?? jsonPath;
+function pathKeys(jsonPath: string): string[] {
+  return jsonPath.replace(/^\$\.?/, '').split(/[.[\]]+/).filter(Boolean);
+}
+
+function holds(actual: unknown, leaf: Leaf): boolean | undefined {
+  try {
+    return evaluateAtomicValue(actual, leaf.operator, leaf.value);
+  } catch {
+    return undefined;
+  }
 }
 
 function assertionText(document: unknown, leaf: Leaf, failed: boolean): string {
-  const label = leaf.path.replace(/^\$\.?/, '') || '$';
+  const keys = pathKeys(leaf.path);
+  const label = `${leaf.mode === 'all' ? '' : `${leaf.mode === 'none' ? 'not' : 'any'} `}${
+    leaf.path.replace(/^\$\.?/, '') || '$'
+  }`;
   let actual: unknown;
   try {
     actual = document === undefined ? undefined : getJsonPathValue(document, leaf.path);
   } catch {
     actual = undefined;
   }
-  const shown = document === undefined ? 'not retained' : display(lastKey(leaf.path), actual);
+  const shown = document === undefined ? 'not retained' : display(keys, actual);
   const symbol = OPERATORS[leaf.operator] ?? leaf.operator;
-  const implied = (leaf.operator === 'eq' || leaf.operator === 'deep_eq') && !failed;
-  const expected =
-    leaf.value === undefined ? symbol : `${symbol}${display(lastKey(leaf.path), leaf.value)}`;
-  return implied ? `${label}=${shown}` : `${label}=${shown} (${expected})`;
+  // The retained report is read after the run; flag a value that no longer matches what passed.
+  const result = document === undefined ? undefined : holds(actual, leaf);
+  const changed =
+    !failed && result !== undefined && leaf.mode !== 'any' && result !== (leaf.mode === 'all');
+  const implied =
+    (leaf.operator === 'eq' || leaf.operator === 'deep_eq') && !failed && !changed && leaf.mode === 'all';
+  const expected = leaf.value === undefined ? symbol : `${symbol}${display(keys, leaf.value)}`;
+  const text = implied ? `${label}=${shown}` : `${label}=${shown} (${expected})`;
+  return changed ? `${text} ⚠ report differs from the asserted value` : text;
 }
 
 async function entryDetail(root: string, entry: Record<string, unknown>): Promise<string[]> {
@@ -147,18 +181,18 @@ async function entryDetail(root: string, entry: Record<string, unknown>): Promis
     parts.push(...leaves(output.assertion).map((leaf) => assertionText(document, leaf, failed)));
   } else if (typeof output.exitCode === 'number') {
     parts.push(`exit ${output.exitCode}`);
-    const stream = failed && typeof output.stderr === 'string' ? output.stderr : output.stdout;
-    if (typeof stream === 'string' && stream.trim())
-      parts.push(String(redact('stdout', clip(oneLine(stream), 80))));
+    // Only a passing command's stdout: stderr and error text can echo resolved commands.
+    if (!failed && typeof output.stdout === 'string' && output.stdout.trim())
+      parts.push(clip(oneLine(String(redact([], output.stdout))), 80));
   } else if (Array.isArray(output.artifacts)) {
     parts.push(`indexed ${output.artifacts.length}`);
   } else {
     for (const [key, value] of Object.entries(output).slice(0, 4)) {
-      if (value === null || typeof value !== 'object') parts.push(`${key}=${display(key, value)}`);
+      if (value === null || typeof value !== 'object') parts.push(`${key}=${display([key], value)}`);
     }
   }
-  const error = isRecord(entry.error) ? entry.error.message : entry.error;
-  if (failed && typeof error === 'string') parts.push(`error: ${redact('error', oneLine(error))}`);
+  if (failed && !(typeof output.path === 'string' && output.assertion !== undefined))
+    parts.push('failed; details in report.md');
   return parts;
 }
 
@@ -174,15 +208,16 @@ function wrap(head: string, parts: readonly string[]): string[] {
 }
 
 function networkOf(params: Record<string, unknown>, reports: unknown[]): string {
+  const safe = (value: string) => clip(oneLine(String(redact(['network'], value))), MAX_VALUE);
   for (const key of ['network', 'chain', 'environment']) {
-    if (typeof params[key] === 'string') return String(params[key]);
+    if (typeof params[key] === 'string') return safe(String(params[key]));
   }
   const seen = new Set(
     reports.flatMap((report) =>
-      isRecord(report) && typeof report.network === 'string' ? [report.network] : [],
+      isRecord(report) && typeof report.network === 'string' ? [safe(report.network)] : [],
     ),
   );
-  return seen.size === 1 ? [...seen][0]! : seen.size ? [...seen].sort().join('/') : 'not recorded';
+  return seen.size ? [...seen].sort().join('/') : 'not recorded';
 }
 
 /** Render the transcript text; deterministic for one package. */
@@ -236,10 +271,10 @@ export async function renderRecipeTranscript(input: RecipeTranscriptInput): Prom
       : 'unknown';
   const commit =
     isRecord(product) && typeof product.git_ref === 'string'
-      ? `${product.git_ref} (${product.dirty === false ? 'clean' : 'dirty'})`
+      ? `${clip(oneLine(product.git_ref), 64)} (${product.dirty === false ? 'clean' : 'dirty: not a clean-commit proof'})`
       : 'not recorded';
   const inputs = Object.entries(params)
-    .map(([key, value]) => `${key}=${display(key, value).replace(/^"|"$/g, '')}`)
+    .map(([key, value]) => `${key}=${display([key], value).replace(/^"|"$/g, '')}`)
     .join(' · ');
 
   const header = [
@@ -283,7 +318,13 @@ export async function renderRecipeTranscript(input: RecipeTranscriptInput): Prom
         `… ${claimLines.length - MAX_CLAIM_LINES} more criteria in acceptance-status.json`,
       );
   }
-  footer.push(clip(`Artifacts: ${input.displayDir ?? root}`, MAX_LINE));
+  // A basename only: publication drops PR-body lines that carry a task-local path.
+  footer.push(
+    clip(
+      `Artifacts: recipe run ${path.basename(input.displayDir ?? root)} (trace.json, report.md)`,
+      MAX_LINE,
+    ),
+  );
 
   const nodes = await Promise.all(
     entries.map(async (entry) => ({
@@ -296,9 +337,12 @@ export async function renderRecipeTranscript(input: RecipeTranscriptInput): Prom
   let shown = nodes;
   let omitted = 0;
   if (nodes.length > budget) {
-    // Keep every failure; fill the rest in trace order.
-    const keep = new Set(nodes.flatMap((node, index) => (node.failed ? [index] : [])));
-    for (let index = 0; keep.size < budget - 1 && index < nodes.length; index += 1) keep.add(index);
+    // Failures first, then trace order, within the budget.
+    const keep = new Set<number>();
+    for (const failedFirst of [true, false])
+      nodes.forEach((node, index) => {
+        if (node.failed === failedFirst && keep.size < budget - 1) keep.add(index);
+      });
     shown = nodes.filter((_, index) => keep.has(index));
     omitted = nodes.length - shown.length;
   }
@@ -321,7 +365,13 @@ export async function renderRecipeTranscript(input: RecipeTranscriptInput): Prom
   const lines = [
     ...header,
     ...blocks.flat(),
-    ...(omitted ? [`… ${omitted} more passing nodes in trace.json`] : []),
+    ...(omitted
+      ? [
+          `… ${omitted} more nodes in trace.json (${
+            nodes.filter((node) => node.failed && !shown.includes(node)).length
+          } failed)`,
+        ]
+      : []),
     ...footer,
   ];
   return `${lines.join('\n')}\n`;

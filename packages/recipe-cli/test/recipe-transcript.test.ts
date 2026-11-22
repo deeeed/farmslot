@@ -154,7 +154,9 @@ test('renders one deterministic line per node with provenance, asserted values a
   assert.match(text, /^✓ done {2}end$/m);
   assert.match(text, /^5\/5 nodes passed · status pass$/m);
   assert.match(text, /^AC3 pass \[state\] ← ac3-trade, ac3-assert$/m);
-  assert.equal(lines.at(-1), 'Artifacts: recipe-runs/r1');
+  assert.equal(lines.at(-1), 'Artifacts: recipe run r1 (trace.json, report.md)');
+  assert.match(text, /^Inputs: .*output_dir=…\/proof$/m);
+  assert.doesNotMatch(text, /temp\/|recipe-runs\//);
 });
 
 test('redacts credentials from inputs, outputs and retained reports', async (t) => {
@@ -186,9 +188,9 @@ test('a failed node shows expected and actual values; long traces keep every fai
   assert.ok(lines.length <= 40, `${lines.length} lines`);
   assert.match(
     text,
-    /^✗ ac3-assert {2}assert_json {2}trade\.json · filledOrderIds=\[4\] .* \(len≥9\) · error: filledOrderIds expected length_gte 9$/m,
+    /^✗ ac3-assert {2}assert_json {2}trade\.json · filledOrderIds=\[4\] .* \(len≥9\)$/m,
   );
-  assert.match(text, /^… 9 more passing nodes in trace\.json$/m);
+  assert.match(text, /^… 9 more nodes in trace\.json \(0 failed\)$/m);
 });
 
 test('a package without declared criteria says so instead of inventing them', async (t) => {
@@ -261,7 +263,7 @@ test('task Markdown puts the selected attempt transcript in the validation logs 
   const logs = body.slice(body.indexOf('## **Validation Logs**'));
   assert.match(
     logs,
-    /Transcript:\n\n```\nRecipe: Permissioned dex on testnet, Core\n[\s\S]*\nArtifacts: artifacts\/recipe-runs\/r1\n```\n\n<details><summary>Full output/,
+    /Transcript:\n\n```\nRecipe: Permissioned dex on testnet, Core\n[\s\S]*\nArtifacts: recipe run r1 \(trace\.json, report\.md\)\n```\n\n<details><summary>Full output/,
   );
   assert.ok(body.indexOf('Transcript:') < body.indexOf('Pre-merge author checklist'));
 });
@@ -318,7 +320,7 @@ test('the transcript format renders only a validated selected attempt', async (t
   assert.equal(result.artifactDir, attempt);
   assert.equal(result.transcript, body);
   assert.match(body, /^Recipe: Permissioned dex on testnet, Core\nRun not recorded · /);
-  assert.match(body, /\nArtifacts: artifacts\/recipe-runs\/r2\n$/);
+  assert.match(body, /\nArtifacts: recipe run r2 \(trace\.json, report\.md\)\n$/);
   assert.equal(result.sections, undefined);
 
   await validPackage(attempt, { ...RUNNER, git_ref: 'other-revision' });
@@ -326,4 +328,45 @@ test('the transcript format renders only a validated selected attempt', async (t
     renderRetainedArtifactsMarkdown({ directory: taskDir, format: 'transcript' }),
     /^Error: Artifact validation failed; the transcript was not rendered or written\.$/,
   );
+});
+
+test('review r1: secrets, groups, changed reports and the line cap', async (t) => {
+  const base = await root(t);
+  const failures = Array.from({ length: 45 }, (_, index) =>
+    entry(`fail-${index}`, 'command', false, {
+      exitCode: 1,
+      stdout: '',
+      stderr: 'curl -H x-api-key:SECRET123',
+    }, { error: { message: 'Command exited with 1: deploy --password hunter2' } }),
+  );
+  const many = await headlessPackage(path.join(base, 'many'), failures);
+  const capped = await renderRecipeTranscript({ artifactDir: many });
+  assert.ok(capped.trimEnd().split('\n').length <= 40);
+  assert.match(capped, /^… \d+ more nodes in trace\.json \(\d+ failed\)$/m);
+  assert.doesNotMatch(capped, /SECRET123|hunter2/);
+  assert.match(capped, /^✗ fail-0 {2}command {2}exit 1 · failed; details in report\.md$/m);
+
+  const dir = await headlessPackage(path.join(base, 'groups'), [
+    entry('check', 'assert_json', true, {
+      path: `${REPORT_DIR}/trade.json`,
+      assertion: {
+        all: [
+          { path: '$.ok', operator: 'eq', value: false },
+          { none: [{ path: '$.missingFills', operator: 'length_gt', value: 0 }] },
+          { path: '$.session.authorization', operator: 'exists' },
+        ],
+      },
+    }),
+  ]);
+  await writeJson(path.join(dir, 'recipe-invocation.json'), {
+    version: 1,
+    params: { network: 'https://user:pass@rpc.example\nmainnet' },
+    redactedPaths: [],
+  });
+  const text = await renderRecipeTranscript({ artifactDir: dir });
+  assert.match(text, /network https:\/\/<redacted>@rpc\.example mainnet$/m);
+  assert.match(text, / · not missingFills=\[0\] \(len>0\)/);
+  assert.match(text, /ok=true \(=false\) ⚠ report differs from the asserted value/);
+  assert.match(text, /session\.authorization="<redacted>"/);
+  assert.doesNotMatch(text, /user:pass|ghp_/);
 });
