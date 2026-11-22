@@ -333,11 +333,17 @@ test('the transcript format renders only a validated selected attempt', async (t
 test('review r1: secrets, groups, changed reports and the line cap', async (t) => {
   const base = await root(t);
   const failures = Array.from({ length: 45 }, (_, index) =>
-    entry(`fail-${index}`, 'command', false, {
-      exitCode: 1,
-      stdout: '',
-      stderr: 'curl -H x-api-key:SECRET123',
-    }, { error: { message: 'Command exited with 1: deploy --password hunter2' } }),
+    entry(
+      `fail-${index}`,
+      'command',
+      false,
+      {
+        exitCode: 1,
+        stdout: '',
+        stderr: 'curl -H x-api-key:SECRET123',
+      },
+      { error: { message: 'Command exited with 1: deploy --password hunter2' } },
+    ),
   );
   const many = await headlessPackage(path.join(base, 'many'), failures);
   const capped = await renderRecipeTranscript({ artifactDir: many });

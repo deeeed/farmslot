@@ -135,7 +135,10 @@ async function optionalJson(root: string, file: string): Promise<unknown> {
 }
 
 function pathKeys(jsonPath: string): string[] {
-  return jsonPath.replace(/^\$\.?/, '').split(/[.[\]]+/).filter(Boolean);
+  return jsonPath
+    .replace(/^\$\.?/, '')
+    .split(/[.[\]]+/)
+    .filter(Boolean);
 }
 
 function holds(actual: unknown, leaf: Leaf): boolean | undefined {
@@ -164,7 +167,10 @@ function assertionText(document: unknown, leaf: Leaf, failed: boolean): string {
   const changed =
     !failed && result !== undefined && leaf.mode !== 'any' && result !== (leaf.mode === 'all');
   const implied =
-    (leaf.operator === 'eq' || leaf.operator === 'deep_eq') && !failed && !changed && leaf.mode === 'all';
+    (leaf.operator === 'eq' || leaf.operator === 'deep_eq') &&
+    !failed &&
+    !changed &&
+    leaf.mode === 'all';
   const expected = leaf.value === undefined ? symbol : `${symbol}${display(keys, leaf.value)}`;
   const text = implied ? `${label}=${shown}` : `${label}=${shown} (${expected})`;
   return changed ? `${text} ⚠ report differs from the asserted value` : text;
@@ -188,7 +194,8 @@ async function entryDetail(root: string, entry: Record<string, unknown>): Promis
     parts.push(`indexed ${output.artifacts.length}`);
   } else {
     for (const [key, value] of Object.entries(output).slice(0, 4)) {
-      if (value === null || typeof value !== 'object') parts.push(`${key}=${display([key], value)}`);
+      if (value === null || typeof value !== 'object')
+        parts.push(`${key}=${display([key], value)}`);
     }
   }
   if (failed && !(typeof output.path === 'string' && output.assertion !== undefined))
