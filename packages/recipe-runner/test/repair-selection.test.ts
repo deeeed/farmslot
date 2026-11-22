@@ -439,10 +439,7 @@ test('retained captures keep their recorded head and prove only their retained c
   const retainedOriginal: RecordedEvidencePackageInput = {
     ...original,
     manifest: {
-      artifacts: [
-        after(recipeRunId, 'AC-1', scope.packageHeadSha),
-        product(scope.packageHeadSha),
-      ],
+      artifacts: [after(recipeRunId, 'AC-1', scope.packageHeadSha), product(scope.packageHeadSha)],
     },
     claims: { ...ledger(recipeRunId), criteria: claimRows },
   };
