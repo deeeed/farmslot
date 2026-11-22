@@ -23,6 +23,7 @@ import {
   gateReviewHref,
   gateReviews,
   gateReviewSummary,
+  type GateReviewVerdict,
   humanGateGuard,
   latestReviewVerdicts,
   openHumanGateDecision,
@@ -240,6 +241,73 @@ test('a stale pass or open findings are not an approval', () => {
   assert.equal(findings.approved, false);
   assert.equal(findings.label, 'issues · 3 unresolved');
   assert.equal(findings.color, colors.statusFail);
+});
+
+test('a fix the gateway accepted without a reviewer is labeled and never an approval', () => {
+  const [accepted] = latestReviewVerdicts([
+    review({
+      id: 'pipeline-review-c22',
+      source: 'pipeline',
+      attempts: [
+        {
+          mode: 'warm',
+          loopNumber: 3,
+          verdict: 'pass',
+          unresolvedCount: 0,
+          timeline: [
+            {
+              kind: 'worker-fix',
+              loopNumber: 3,
+              startedAt: '2026-11-22T03:41:00Z',
+              verdict: 'pass',
+              unresolvedCount: 0,
+            },
+          ],
+        },
+      ],
+    }),
+  ]);
+  assert.equal(accepted.approved, false);
+  assert.equal(accepted.label, 'fix accepted without re-review');
+  assert.equal(accepted.color, colors.statusWarn);
+});
+
+test('an accepted fix withholds Approve Publish only while required reviews are short', () => {
+  const accepted = latestReviewVerdicts([
+    review({
+      id: 'pipeline-review-c22',
+      source: 'pipeline',
+      attempts: [
+        {
+          mode: 'warm',
+          loopNumber: 3,
+          verdict: 'pass',
+          unresolvedCount: 0,
+          timeline: [
+            {
+              kind: 'worker-fix',
+              loopNumber: 3,
+              startedAt: '2026-11-22T03:41:00Z',
+              verdict: 'pass',
+              unresolvedCount: 0,
+            },
+          ],
+        },
+      ],
+    }),
+  ])[0];
+  const pass = latestReviewVerdicts([review({ id: 'separate', runner: 'claude' })])[0];
+  const approve = (reviews: GateReviewVerdict[], requiredReviews: number) =>
+    gateReviewActions(
+      [GATE_ACTIONS[0]],
+      approvePublishGuard({ acceptance: { rows: [] } as never, reviews, requiredReviews }),
+    )[0].disabledReason;
+  // Dev flow: no review is required, so the gateway offers approval.
+  assert.equal(approve([accepted], 0), null);
+  // A separate current pass meets the minimum of one.
+  assert.equal(approve([accepted, pass], 1), null);
+  // Alone it cannot meet a required review.
+  assert.match(approve([accepted], 1)!, /0 of 1 required reviews approve/);
 });
 
 function acceptance(withVerdictFor: string[]) {

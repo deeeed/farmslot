@@ -60,9 +60,12 @@ delta contains zero source files and the finding set is unchanged. It MUST
 retain the findings as open at the gate and MUST NOT automatically redeliver
 them after restart.
 
-A completed fix that changes only evidence/artifacts or at most 50 source lines
-MUST skip the automatic warm re-review and resolve the prior findings for gate
-eligibility. Source lines are additions plus deletions under the project's
+A completed fix that changes only evidence/artifacts or at most 50 source lines,
+for findings that are all minor or nit, MUST skip the automatic warm re-review.
+An open blocker or major, or a finding without a severity (as when recovery
+re-reads findings from the checklist), MUST get a real re-review. The gateway acceptance MUST NOT count as a passing review: the gate
+shows "fix accepted without re-review" and does not count it toward the
+required reviews. Source lines are additions plus deletions under the project's
 existing source filter. The original reviewer attempt MUST remain unchanged.
 The gateway MUST record acceptance of the worker fix, its current contribution
 snapshot and reviewed-input fingerprint without launching or charging a reviewer.

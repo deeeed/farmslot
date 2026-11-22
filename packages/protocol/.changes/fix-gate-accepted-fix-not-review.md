@@ -1,0 +1,1 @@
+- Add `reviewEndsWithAcceptedFix` and `isAcceptedFixAttempt`. A review whose final attempt is a gateway-accepted worker fix no longer counts as passing in `qualifyingPassingReviews` or the gate review counts, and its freshness label reads "fix accepted without re-review".

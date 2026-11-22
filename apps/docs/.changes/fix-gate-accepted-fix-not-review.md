@@ -1,0 +1,1 @@
+- The review contract page states that small-fix acceptance needs only minor or nit findings and does not count as a passing review.
