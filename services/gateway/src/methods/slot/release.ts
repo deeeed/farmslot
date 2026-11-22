@@ -1165,6 +1165,12 @@ async function slotReleaseImpl(
         // reserved for explicit slot.cleanup after resource shutdown.
         includeBrowserProfiles: false,
       });
+      if (storageCleanup.parked?.length) {
+        step(
+          'storage-clean',
+          `Parked ${storageCleanup.parked.length} scratch director${storageCleanup.parked.length === 1 ? 'y' : 'ies'} left outside task dirs: ${storageCleanup.parked.map((entry) => entry.to).join(', ')}`,
+        );
+      }
       if (storageCleanup.deleted.length > 0 || storageCleanup.skipped.length > 0) {
         step(
           'storage-clean',

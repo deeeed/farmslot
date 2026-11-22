@@ -18,6 +18,8 @@ export interface SlotStorageCleanupOptions {
 export interface SlotStorageCleanupResult {
   deleted: Array<{ label: string; path: string }>;
   skipped: Array<{ label: string; path: string; reason: string }>;
+  /** Worker scratch moved out of the task root (release only), with its new location. */
+  parked?: Array<{ path: string; to: string }>;
 }
 
 interface SlotStorageCleanupCommandInput extends SlotStorageCleanupOptions {
@@ -113,6 +115,7 @@ export function buildSlotStorageCleanupCommand(input: SlotStorageCleanupCommandI
     remoteJoin(input.repo, 'temp/agentic'),
   ]);
   const config = {
+    parkRoot: remoteJoin(runtimeRoot, 'parked-scratch'),
     activeTaskPaths,
     cutoffMinutes: retentionMinutes,
     includeBrowserProfiles: input.includeBrowserProfiles === true,
@@ -207,6 +210,48 @@ export function buildSlotStorageCleanupCommand(input: SlotStorageCleanupCommandI
     '        continue',
     '    prune("runtime-cache", direct_children(root))',
     '',
+    '# Workers sometimes write scratch beside their task dir (temp/tasks/scratch-probe,',
+    '# temp/tasks/feat/scratch-tat-4753). No run owns it, so it outlived release and the',
+    '# next blind run saw it. With no active task, move it out of the task root (never',
+    '# delete) into the runtime dir.',
+    'TASK_MARKERS = ("TASK.md", "CHECKLIST.md", "SIGNAL.json", "artifacts")',
+    '',
+    'def is_task(path):',
+    '    return any(os.path.lexists(os.path.join(path, name)) for name in TASK_MARKERS)',
+    '',
+    'def holds_task(path, depth=3):',
+    '    if depth == 0:',
+    '        return False',
+    '    return any(is_task(child) or holds_task(child, depth - 1) for child in direct_children(path))',
+    '',
+    'def has_files(path):',
+    '    for _root, _dirs, files in os.walk(path):',
+    '        if files:',
+    '            return True',
+    '    return False',
+    '',
+    'def scratch_candidates(root):',
+    '    found = []',
+    '    for child in direct_children(root):',
+    '        if is_task(child):',
+    '            continue',
+    '        if holds_task(child):',
+    '            found.extend(g for g in direct_children(child) if not is_task(g) and not holds_task(g) and has_files(g))',
+    '        elif has_files(child):',
+    '            found.append(child)',
+    '    return found',
+    '',
+    'if not active_tasks:',
+    '    stamp = time.strftime("%Y%m%d-%H%M%S")',
+    '    for root in cfg["taskRoots"]:',
+    '        if not inside_repo(root):',
+    '            continue',
+    '        for path in scratch_candidates(root):',
+    '            dest = os.path.join(cfg["parkRoot"], stamp, os.path.relpath(path, repo))',
+    '            os.makedirs(os.path.dirname(dest), exist_ok=True)',
+    '            shutil.move(path, dest)',
+    '            print(f"parked\\tscratch\\t{path}\\t{dest}")',
+    '',
     'if cfg.get("includeBrowserProfiles"):',
     '    root = cfg["runtimeRoot"]',
     '    if not inside_repo(root):',
@@ -247,6 +292,7 @@ export async function cleanupSlotStorage(
 export function parseSlotStorageCleanupOutput(stdout: string): SlotStorageCleanupResult {
   const deleted: SlotStorageCleanupResult['deleted'] = [];
   const skipped: SlotStorageCleanupResult['skipped'] = [];
+  const parked: NonNullable<SlotStorageCleanupResult['parked']> = [];
   for (const line of stdout.split('\n')) {
     if (!line.trim()) continue;
     const [kind, label, pathValue, reason] = line.split('\t');
@@ -254,7 +300,9 @@ export function parseSlotStorageCleanupOutput(stdout: string): SlotStorageCleanu
       deleted.push({ label, path: pathValue });
     } else if (kind === 'skipped' && label && pathValue) {
       skipped.push({ label, path: pathValue, reason: reason || 'unknown' });
+    } else if (kind === 'parked' && pathValue && reason) {
+      parked.push({ path: pathValue, to: reason });
     }
   }
-  return { deleted, skipped };
+  return parked.length ? { deleted, skipped, parked } : { deleted, skipped };
 }

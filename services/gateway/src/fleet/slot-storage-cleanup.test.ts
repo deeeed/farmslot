@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -203,4 +203,48 @@ test('slot storage cleanup keeps every task inside the retention window', async 
   assert.equal(await exists(taskDirs[3]), true, 'second newest completed task is preserved');
   assert.equal(await exists(taskDirs[4]), true, 'newest completed task is preserved');
   assert.deepEqual(parsed.deleted, []);
+});
+
+// mini-mm-2 run 442a9a42 left temp/tasks/scratch-probe and macpro-mmt-4 kept
+// temp/tasks/feat/scratch-tat-4753: no run owned them, release kept them, and the next blind
+// dataset run's preflight refused the slot. Release (no active task) moves them out.
+test('release cleanup parks worker scratch outside task dirs and leaves tasks alone', async () => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'farmslot-storage-scratch-'));
+  const write = async (rel: string, body = 'x') => {
+    await mkdir(path.dirname(path.join(repo, rel)), { recursive: true });
+    await writeFile(path.join(repo, rel), body);
+  };
+  await write('temp/tasks/scratch-probe/baseline-run.json');
+  await write('temp/tasks/feat/scratch-tat-4753/manual-pricing-probe.mts');
+  await write('temp/tasks/feat/real-task/TASK.md');
+  await write('temp/tasks/fix/split-task/CHECKLIST.md');
+  await mkdir(path.join(repo, 'temp/tasks/feat/empty'), { recursive: true });
+  const command = (activeTaskRel?: string) =>
+    buildSlotStorageCleanupCommand({
+      repo,
+      taskDirName: 'temp/tasks',
+      artifactDirName: 'temp/tasks',
+      runtimeDirName: '.agent',
+      ...(activeTaskRel ? { activeTaskRel } : {}),
+    });
+
+  // A slot with an active task keeps everything: scratch may be that run's.
+  await execFileAsync('/bin/sh', ['-c', command('temp/tasks/feat/real-task/TASK.md')]);
+  assert.equal(await exists(path.join(repo, 'temp/tasks/scratch-probe')), true);
+
+  const parsed = parseSlotStorageCleanupOutput(
+    (await execFileAsync('/bin/sh', ['-c', command()])).stdout,
+  );
+  assert.deepEqual((parsed.parked ?? []).map((entry) => path.relative(repo, entry.path)).sort(), [
+    'temp/tasks/feat/scratch-tat-4753',
+    'temp/tasks/scratch-probe',
+  ]);
+  for (const entry of parsed.parked ?? []) {
+    assert.equal(await exists(entry.path), false);
+    assert.ok(entry.to.startsWith(path.join(repo, '.agent/parked-scratch/')), entry.to);
+    assert.equal(await exists(entry.to), true, 'moved, not deleted');
+  }
+  assert.equal(await exists(path.join(repo, 'temp/tasks/feat/real-task/TASK.md')), true);
+  assert.equal(await exists(path.join(repo, 'temp/tasks/fix/split-task/CHECKLIST.md')), true);
+  assert.equal(await exists(path.join(repo, 'temp/tasks/feat/empty')), true);
 });
