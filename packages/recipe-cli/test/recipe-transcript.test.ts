@@ -200,7 +200,51 @@ test('a package without declared criteria says so instead of inventing them', as
     recording: { status: 'not-required', segments: [] },
   });
   const text = await renderRecipeTranscript({ artifactDir: dir });
-  assert.match(text, /^Criteria: none declared by the recipe \(no proofTargets\)$/m);
+  assert.match(
+    text,
+    /^Criteria: none declared \(no recipe proofTargets, none in the run acceptance-status\.json\)$/m,
+  );
+});
+
+test('criteria fall back to the same run task ledger when the package declares none', async (t) => {
+  const base = await root(t);
+  const dir = await headlessPackage(path.join(base, 'package'));
+  const empty = {
+    schemaVersion: 2,
+    recipeRunId: '2f515d55-run',
+    criteria: [],
+    recording: { status: 'not-required', segments: [] },
+  };
+  await writeJson(path.join(dir, 'acceptance-status.json'), empty);
+  const claim = {
+    id: 'AC2',
+    text: 'Controller loads the dex markets',
+    kind: 'acceptance',
+    proofMode: 'state',
+    verdict: 'pass',
+    recipeNodes: ['ac2-assert'],
+    assertionIndices: [0],
+    evidence: [],
+    moments: [],
+  };
+  const runLedgerDir = path.join(base, 'task-artifacts');
+  await writeJson(path.join(runLedgerDir, 'acceptance-status.json'), {
+    ...empty,
+    criteria: [claim],
+  });
+  assert.match(
+    await renderRecipeTranscript({ artifactDir: dir, runLedgerDir }),
+    /^AC2 pass \[state\] ← ac2-assert$/m,
+  );
+  await writeJson(path.join(runLedgerDir, 'acceptance-status.json'), {
+    ...empty,
+    recipeRunId: 'older-run',
+    criteria: [claim],
+  });
+  assert.match(
+    await renderRecipeTranscript({ artifactDir: dir, runLedgerDir }),
+    /^Criteria: none declared/m,
+  );
 });
 
 test('task Markdown puts the selected attempt transcript in the validation logs only on request', async (t) => {

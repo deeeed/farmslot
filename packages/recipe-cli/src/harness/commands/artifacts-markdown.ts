@@ -163,6 +163,7 @@ export async function renderTaskArtifactsMarkdown(
       ? await renderRecipeTranscript({
           artifactDir: input.artifactDir,
           displayDir: path.relative(input.taskDir, input.artifactDir),
+          runLedgerDir: artifacts,
         })
       : undefined;
   const workflow = await optionalText(artifacts, 'workflow.mmd');
@@ -408,6 +409,7 @@ export async function renderRetainedArtifactsMarkdown(
             taskDir && isPathWithin(taskDir, artifactDir)
               ? path.relative(taskDir, artifactDir) || '.'
               : artifactDir,
+          ...(taskDir ? { runLedgerDir: path.join(taskDir, 'artifacts') } : {}),
         })
       : undefined;
   const body =

@@ -16,6 +16,11 @@ export interface RecipeTranscriptInput {
   artifactDir: string;
   /** Package path shown in the footer; defaults to `artifactDir`. */
   displayDir?: string;
+  /**
+   * The task's `artifacts/` directory. Its acceptance-status.json supplies the criteria when the
+   * package declares none, but only when it belongs to the same recipe run.
+   */
+  runLedgerDir?: string;
 }
 
 const MAX_JSON_BYTES = 4 * 1024 * 1024;
@@ -199,7 +204,7 @@ export async function renderRecipeTranscript(input: RecipeTranscriptInput): Prom
   const resolution = await optionalJson(root, 'recipe-resolution.json');
   const product = await optionalJson(root, 'product-provenance.json');
   const invocation = await optionalJson(root, 'recipe-invocation.json');
-  const ledger = await optionalJson(root, 'acceptance-status.json');
+  const packageLedger = await optionalJson(root, 'acceptance-status.json');
   const entries = (isRecord(trace) && Array.isArray(trace.entries) ? trace.entries : []).filter(
     isRecord,
   );
@@ -248,11 +253,17 @@ export async function renderRecipeTranscript(input: RecipeTranscriptInput): Prom
   const total = isRecord(summary) && typeof summary.total === 'number' ? summary.total : '?';
   const status = isRecord(summary) && typeof summary.status === 'string' ? summary.status : '?';
   const footer = [`${passed}/${total} nodes passed · status ${status}`];
-  const criteria = (
-    isRecord(ledger) && Array.isArray(ledger.criteria) ? ledger.criteria : []
-  ).filter(isRecord);
+  const criteriaOf = (ledger: unknown) =>
+    (isRecord(ledger) && Array.isArray(ledger.criteria) ? ledger.criteria : []).filter(isRecord);
+  let criteria = criteriaOf(packageLedger);
+  if (!criteria.length && input.runLedgerDir) {
+    const runLedger = await optionalJson(input.runLedgerDir, 'acceptance-status.json').catch(
+      () => undefined,
+    );
+    if (isRecord(runLedger) && runLedger.recipeRunId === runId) criteria = criteriaOf(runLedger);
+  }
   if (!criteria.length) {
-    footer.push('Criteria: none declared by the recipe (no proofTargets)');
+    footer.push('Criteria: none declared (no recipe proofTargets, none in the run acceptance-status.json)');
   } else {
     const claimLines = criteria.map((claim) =>
       clip(
