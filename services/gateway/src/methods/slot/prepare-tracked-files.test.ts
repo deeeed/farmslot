@@ -306,5 +306,8 @@ test('an invalid .git directory nested in another repository fails instead of re
   const { repo } = fixture(t);
   const nested = path.join(repo, 'nested-slot');
   mkdirSync(path.join(nested, '.git'), { recursive: true });
-  assert.throws(() => sh(buildTrackedFilesSnapshotCommand(nested)), /not the root of its own git work tree/);
+  assert.throws(
+    () => sh(buildTrackedFilesSnapshotCommand(nested)),
+    /not the root of its own git work tree/,
+  );
 });
