@@ -251,12 +251,9 @@ test('a published empty branch keeps its base on replay', needsTmuxSandbox, asyn
   await git(slotRepo, 'branch', workBranch, oldBase);
   await git(slotRepo, 'push', '-q', 'origin', workBranch);
   await assert.rejects(
-    slotPrepare(
-      { slotId, branch: workBranch, prepareProfile: 'core' },
-      () => {},
-      undefined,
-      { preserveBranch: true },
-    ),
+    slotPrepare({ slotId, branch: workBranch, prepareProfile: 'core' }, () => {}, undefined, {
+      preserveBranch: true,
+    }),
     /prepare deps changed 1 tracked file/,
   );
   assert.equal(await git(slotRepo, 'rev-parse', `refs/heads/${workBranch}`), oldBase);
@@ -306,12 +303,9 @@ test(
     await writeFile(path.join(slotRepo, '.git/info/exclude'), 'local.env\n');
     await writeFile(path.join(slotRepo, 'local.env'), 'operator secret\n');
     await Promise.allSettled([
-      slotPrepare(
-        { slotId, branch: workBranch, prepareProfile: 'core' },
-        () => {},
-        undefined,
-        { preserveBranch: true },
-      ),
+      slotPrepare({ slotId, branch: workBranch, prepareProfile: 'core' }, () => {}, undefined, {
+        preserveBranch: true,
+      }),
     ]);
     assert.equal(await git(slotRepo, 'rev-parse', `refs/heads/${workBranch}`), oldBase);
     assert.equal(await readFile(path.join(slotRepo, 'local.env'), 'utf8'), 'operator secret\n');
