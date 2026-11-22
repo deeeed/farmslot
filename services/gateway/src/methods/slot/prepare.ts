@@ -481,7 +481,9 @@ async function slotPrepareInner(
   };
 
   // `known` lets a phase check reuse the previous snapshot's submodule discovery.
-  const snapshotTrackedFiles = async (known?: TrackedFilesSnapshot): Promise<TrackedFilesSnapshot> => {
+  const snapshotTrackedFiles = async (
+    known?: TrackedFilesSnapshot,
+  ): Promise<TrackedFilesSnapshot> => {
     checkAborted();
     const r = await execOnSlot(vars, buildTrackedFilesSnapshotCommand(vars.remoteRepo, known), {
       signal,
