@@ -29,6 +29,9 @@ export function buildTrackedFilesSnapshotCommand(repo: string): string {
     `cd ${shellQuote(repo)}`,
     'head=$(git rev-parse --verify HEAD)',
     'branch=$(git symbolic-ref -q HEAD || true)',
+    // A file rewritten with identical bytes is only stat-dirty; `git stash create`
+    // exits 1 without output on that, so refresh the stat cache first.
+    '{ git update-index -q --refresh >/dev/null 2>&1 || true; }',
     // Only the stash commit's trees are compared, so a fixed identity keeps slots
     // without a configured committer working.
     "stash=$(git -c user.name=farmslot -c user.email=prepare@farmslot.invalid stash create)",

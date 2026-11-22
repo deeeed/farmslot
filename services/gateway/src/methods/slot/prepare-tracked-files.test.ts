@@ -124,3 +124,12 @@ test('restoring a replay-dirty file to HEAD is allowed; changing it further is n
   writeFileSync(path.join(repo, 'a.txt'), 'rewritten\n');
   assert.deepEqual(files(dirtyAgain, snap()), ['a.txt']);
 });
+
+test('a file rewritten with identical bytes is not a change', (t) => {
+  const { repo, snap, files } = fixture(t);
+  const before = snap();
+  writeFileSync(path.join(repo, 'a.txt'), 'a\n');
+  const after = snap();
+  assert.ok(snapshotsEqual(before, after));
+  assert.deepEqual(files(before, after), []);
+});

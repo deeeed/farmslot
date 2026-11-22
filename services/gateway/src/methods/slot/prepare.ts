@@ -483,7 +483,7 @@ async function slotPrepareInner(
     const r = await execOnSlot(vars, buildTrackedFilesSnapshotCommand(vars.remoteRepo));
     if (r.exitCode !== 0)
       throw new Error(
-        `tracked-file snapshot failed on ${vars.slotId} (${vars.remoteRepo}): ${r.stderr.slice(-200) || `exit ${r.exitCode}`}`,
+        `tracked-file snapshot failed on ${vars.slotId} (${vars.remoteRepo}): exit ${r.exitCode} ${(r.stderr || r.stdout).slice(-300)}`,
       );
     return parseTrackedFilesSnapshot(r.stdout);
   };
