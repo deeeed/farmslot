@@ -21,9 +21,27 @@ export function isQualifyingReview(review: ReviewStatus): boolean {
   );
 }
 
+/**
+ * ADR-063 Amendment 8: the gateway accepted a small worker fix without a reviewer turn,
+ * so no reviewer saw the final head. The gate shows it, but it is not a passing review.
+ */
+export function reviewEndsWithAcceptedFix(review: Pick<ReviewStatus, 'attempts'>): boolean {
+  const last = review.attempts?.at(-1);
+  return (
+    !!last &&
+    last.verdict === 'pass' &&
+    !last.session &&
+    !!last.timeline?.length &&
+    last.timeline.every((segment) => segment.kind === 'worker-fix')
+  );
+}
+
 /** Retrying a session replaces its verdict, including a later failure on the same head. */
 export function qualifyingPassingReviews(reviews: ReviewStatus[]): ReviewStatus[] {
-  return qualifyingReviewSessions(reviews, reviewFindingsSatisfied);
+  return qualifyingReviewSessions(
+    reviews,
+    (review) => reviewFindingsSatisfied(review) && !reviewEndsWithAcceptedFix(review),
+  );
 }
 
 /** Completed review inputs, including real findings that an operator may explicitly accept. */

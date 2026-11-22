@@ -6,6 +6,8 @@ import test from 'node:test';
 import {
   type AgentContext,
   isQualifyingReview,
+  qualifyingPassingReviews,
+  reviewEndsWithAcceptedFix,
   type ReviewIssue,
   type WorkerSignal,
 } from '@farmslot/protocol';
@@ -20,6 +22,7 @@ import {
   publicationReviewMatchesPreparedPackage,
   reviewFinalSnapshotMatchesPreparedPackage,
 } from '../run-engine/gate-policy.js';
+import { buildReviewSummary } from '../run-engine/gate-summary.js';
 import {
   executePublishGateReviewPlan,
   resumeInterruptedPublicationReview,
@@ -1202,6 +1205,10 @@ test('disabled review skips eval judging while its worker-fix budget stays zero'
 // to drive scripted scenarios.
 
 const ISSUES: ReviewIssue[] = [{ file: 'a.ts', line: 1, description: 'x' }];
+// Only minor or nit findings let a small fix skip the re-review (ADR-063 Amendment 8).
+const MINOR_ISSUES: ReviewIssue[] = [
+  { severity: 'minor', file: 'a.ts', line: 1, description: 'x' },
+];
 
 // Real SlotVars carries dozens of unrelated fields; the loop only reads remoteRepo.
 const fakeVars = { remoteRepo: '/repo' } as any;
@@ -2372,7 +2379,7 @@ for (const missing of ['baseline', 'full baseline', 'probe'] as const) {
   });
 }
 
-test('runReviewRetryLoop: an accepted small fix after a cold delta fallback qualifies at the final gate', async () => {
+test('runReviewRetryLoop: an accepted small fix after a cold delta fallback matches the package but is not a passing review', async () => {
   const { deps, calls } = buildDeps({
     reviewVerdicts: [],
     sourceLinesChanged: 1,
@@ -2409,7 +2416,7 @@ test('runReviewRetryLoop: an accepted small fix after a cold delta fallback qual
       session,
       reviewerSessionId: session.sessionId,
       verdict: 'issues',
-      issues: ISSUES,
+      issues: MINOR_ISSUES,
       reviewSnapshot: priorSnapshot,
     },
   });
@@ -2434,11 +2441,14 @@ test('runReviewRetryLoop: an accepted small fix after a cold delta fallback qual
   assert.equal(isQualifyingReview(gateReview), true);
   assert.equal(reviewFinalSnapshotMatchesPreparedPackage(gateReview, prepared), true);
   assert.equal(publicationReviewMatchesPreparedPackage(gateReview, prepared), true);
-  assert.doesNotThrow(() =>
-    assertPublicationReviewPolicySatisfied(
-      makeRun({ engineState: { publishGate: { reviews: [gateReview] } } }),
-      prepared,
-    ),
+  assert.equal(reviewEndsWithAcceptedFix(gateReview), true);
+  assert.throws(
+    () =>
+      assertPublicationReviewPolicySatisfied(
+        makeRun({ engineState: { publishGate: { reviews: [gateReview] } } }),
+        prepared,
+      ),
+    /requires passing reviews/,
   );
   assert.deepEqual(gateReview.session, session, 'the original reviewer trace is unchanged');
   assert.deepEqual(gateReview.attempts?.[0]?.reviewSnapshot, priorSnapshot);
@@ -2464,7 +2474,7 @@ for (const sourceLinesChanged of [0, 50, 51, undefined]) {
       maxRetries: 1,
       reviewResult: {
         verdict: 'issues',
-        issues: ISSUES,
+        issues: MINOR_ISSUES,
         reviewSnapshot: {
           source: 'local-git',
           capturedAt: new Date().toISOString(),
@@ -2483,7 +2493,7 @@ for (const sourceLinesChanged of [0, 50, 51, undefined]) {
       assert.deepEqual(result.issues, []);
       assert.equal(result.attempts?.length, 2);
       assert.equal(result.attempts?.[0]?.verdict, 'issues');
-      assert.deepEqual(result.attempts?.[0]?.issues, ISSUES);
+      assert.deepEqual(result.attempts?.[0]?.issues, MINOR_ISSUES);
       assert.equal(result.attempts?.[1]?.timeline?.[0]?.kind, 'worker-fix');
       assert.equal(result.attempts?.[1]?.session, undefined);
       const gateReview = buildPublishGateReviewStatus({
@@ -2502,6 +2512,93 @@ for (const sourceLinesChanged of [0, 50, 51, undefined]) {
     }
   });
 }
+
+// Run c22a1e09's shape: the loop-2 reviewer left a major and two minors open, and the
+// worker's 50-source-line fix reached the gate as a pass no reviewer had seen.
+const C22_ISSUES: ReviewIssue[] = [
+  {
+    severity: 'major',
+    file: 'electron/services/manual-trading-service.ts',
+    line: 307,
+    description: 'major',
+  },
+  {
+    severity: 'minor',
+    file: 'electron/services/manual-trading-service.ts',
+    line: 340,
+    description: 'minor',
+  },
+  { severity: 'minor', file: 'artifacts/evidence-manifest.json', line: 4, description: 'minor' },
+];
+
+function c22ReviewResult(issues: ReviewIssue[]): ReviewAgentResult {
+  return {
+    reviewId: 'pipeline-review-c22',
+    mode: 'warm',
+    reviewerSessionId: 'reviewer-session',
+    verdict: 'issues',
+    issues,
+    reviewSnapshot: {
+      source: 'local-git',
+      capturedAt: new Date().toISOString(),
+      baseSha: 'main-base',
+      headSha: 'base-head',
+    },
+  };
+}
+
+test('runReviewRetryLoop: a small fix for an open major gets a real re-review', async () => {
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: ['issues'],
+    sourceLinesChanged: 50,
+    fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+  });
+  await runReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 1,
+    retryCount: 0,
+    deps,
+    reviewResult: c22ReviewResult(C22_ISSUES),
+  });
+  assert.equal(calls.reviewAgent, 1, 'an open major was accepted without a reviewer');
+});
+
+test('runReviewRetryLoop: a small fix for minor findings is accepted but never counts as a passing review', async () => {
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: [],
+    sourceLinesChanged: 50,
+    fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+  });
+  const result = await runReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 1,
+    retryCount: 0,
+    deps,
+    reviewResult: c22ReviewResult(C22_ISSUES.slice(1)),
+  });
+  assert.equal(calls.reviewAgent, 0);
+  const gateReview = buildPublishGateReviewStatus({
+    source: 'dispatch',
+    priorReviewCount: 0,
+    reviewId: 'pipeline-review-c22',
+    reviewResult: result,
+    requestedRunner: 'codex',
+  });
+  assert.equal(reviewEndsWithAcceptedFix(gateReview), true);
+  assert.deepEqual(qualifyingPassingReviews([gateReview]), []);
+  const summary = buildReviewSummary(
+    makeRun({
+      engineState: {
+        publishGate: {
+          reviews: [gateReview],
+          reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' },
+        },
+      },
+    }),
+  );
+  assert.equal(summary.passingReviews, 0);
+  assert.match(summary.summaryText ?? '', /^fix accepted without re-review; 0\/1 reviews passing/);
+});
 
 test('runReviewRetryLoop: changed evidence at the same head is accepted and records current inputs', async () => {
   const { deps, calls } = buildDeps({
@@ -2527,7 +2624,7 @@ test('runReviewRetryLoop: changed evidence at the same head is accepted and reco
     deps,
     reviewResult: {
       verdict: 'issues',
-      issues: ISSUES,
+      issues: MINOR_ISSUES,
       reviewSnapshot: {
         source: 'local-git',
         capturedAt: new Date().toISOString(),
@@ -2539,7 +2636,7 @@ test('runReviewRetryLoop: changed evidence at the same head is accepted and reco
   assert.equal(calls.reviewAgent, 0);
   assert.equal(result.verdict, 'pass');
   assert.equal(run.engineState?.reviewInputsAtLaunch, 'after');
-  assert.deepEqual(result.attempts?.[0]?.issues, ISSUES);
+  assert.deepEqual(result.attempts?.[0]?.issues, MINOR_ISSUES);
   assert.equal(result.reviewSnapshot?.headSha, 'base-head');
 });
 

@@ -27,6 +27,7 @@ import {
   PipelineSteps,
   qualifyingPassingReviews,
   type ReadyGatePrPackage,
+  reviewEndsWithAcceptedFix,
   type ReviewStatus,
   type ReviewSummary,
   type Run,
@@ -47,6 +48,9 @@ import {
 } from '../runtime/session-usage-selection.js';
 
 import { publicationReviewMatchesPreparedPackage } from './gate-policy.js';
+
+// The final head was never reviewed, so the gateway's acceptance is not shown as a review verdict.
+const ACCEPTED_FIX_WITHOUT_REVIEW = 'fix accepted without re-review';
 
 /** Family flows whose token cost rolls up into a root gate's grand total. */
 const FIX_LOOP_FLOWS: ReadonlySet<FlowType> = new Set<FlowType>(['pr-complete', 'update-branch']);
@@ -208,6 +212,7 @@ function buildReview(
     return {
       status,
       ...(status === 'skipped' && stepReason ? { reason: stepReason } : {}),
+      ...(reviewEndsWithAcceptedFix(latest) ? { reason: ACCEPTED_FIX_WITHOUT_REVIEW } : {}),
       verdict: latest.verdict,
       feedbackSent: latest.feedbackSent === true,
       unresolvedCount: openReviewFindingCount(latest),
@@ -310,7 +315,9 @@ function buildReviewSummaryText(
     parts.push(
       review.status === 'skipped'
         ? `review skipped (${review.reason ?? 'no reason recorded'})`
-        : `review ${review.verdict ?? review.status}`,
+        : review.reason === ACCEPTED_FIX_WITHOUT_REVIEW
+          ? ACCEPTED_FIX_WITHOUT_REVIEW
+          : `review ${review.verdict ?? review.status}`,
     );
   }
   if (reviews.length) {

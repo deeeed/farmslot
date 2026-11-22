@@ -601,7 +601,9 @@ function withPrimaryWorker(runId: string, fix: Partial<AgentContext> = {}) {
   });
 }
 
-test('a small fix recovered after a restart is accepted from the persisted snapshot, with no new reviewer', async (t) => {
+// REVIEW-FIX.md bullets carry no severity, so a recovered small fix cannot show its
+// findings were all minor or nit and gets a real re-review.
+test('a small fix recovered after a restart without retained severities gets a real re-review', async (t) => {
   const run = await reviewFixRunAtReload(t, 'tmux', 'scripted');
   reviewDiffStat = JSON.stringify(REVIEWED_SNAPSHOT);
   fixDelta = {
@@ -626,7 +628,7 @@ test('a small fix recovered after a restart is accepted from the persisted snaps
   });
   assert.ok(reviewing, 'recovery re-entered the review step');
   const result = await reviewing;
-  assert.deepEqual(reReviewLoops, [], 'the gateway accepts a small fix without another reviewer');
+  assert.equal(reReviewLoops.length, 1, 'a reviewer checks the recovered fix');
   assert.equal(result.verdict, 'pass');
 });
 

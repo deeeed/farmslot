@@ -1,0 +1,1 @@
+- Add `reviewEndsWithAcceptedFix`. `qualifyingPassingReviews` no longer counts a review whose final attempt is a gateway-accepted worker fix.

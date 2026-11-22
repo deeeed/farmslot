@@ -1,0 +1,1 @@
+- A small review fix skips the automatic re-review only when every open finding is minor or nit; an open blocker or major gets a real re-review. A fix the gateway accepts without a reviewer no longer counts as a passing review: the gate summary says "fix accepted without re-review" and the required reviews stay unmet.
