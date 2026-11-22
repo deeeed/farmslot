@@ -226,8 +226,8 @@ async function validPackage(dir: string, traceRunner: unknown = RUNNER): Promise
     dependencies: [],
     edges: [],
   });
+  // A legacy package without a run id or claim ledger, as the existing validator fixture.
   await writeJson(path.join(dir, 'summary.json'), {
-    recipeRunId: 'valid-run',
     status: 'pass',
     startedAt: '2026-05-30T15:00:00Z',
     completedAt: '2026-05-30T15:00:01Z',
@@ -269,7 +269,7 @@ test('the transcript format renders only a validated selected attempt', async (t
   });
   assert.equal(result.artifactDir, attempt);
   assert.equal(result.transcript, body);
-  assert.match(body, /^Recipe: Permissioned dex on testnet, Core\nRun valid-run · /);
+  assert.match(body, /^Recipe: Permissioned dex on testnet, Core\nRun not recorded · /);
   assert.match(body, /\nArtifacts: artifacts\/recipe-runs\/r2\n$/);
   assert.equal(result.sections, undefined);
 

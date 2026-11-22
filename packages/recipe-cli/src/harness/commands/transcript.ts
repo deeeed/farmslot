@@ -210,7 +210,9 @@ export async function renderRecipeTranscript(input: RecipeTranscriptInput): Prom
   );
 
   const title = isRecord(recipe) && typeof recipe.title === 'string' ? recipe.title : 'untitled';
-  const runId = isRecord(summary) && typeof summary.recipeRunId === 'string' ? summary.recipeRunId : '?';
+  const runId = isRecord(summary) && typeof summary.recipeRunId === 'string'
+      ? summary.recipeRunId
+      : 'not recorded';
   const digest =
     isRecord(resolution) && isRecord(resolution.root) && typeof resolution.root.digest === 'string'
       ? resolution.root.digest
