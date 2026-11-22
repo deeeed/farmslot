@@ -299,7 +299,8 @@ const FLOW_TYPES = ['fix-bug', 'review-pr', 'qa', 'dev', 'pr-complete', 'update-
 /**
  * Workers sometimes write scratch beside their task dir (temp/tasks/scratch-probe,
  * temp/tasks/feat/scratch-tat-4753). No run owns it, so it outlived release and the next
- * blind run saw it. Move `scratch*` directories directly under the task root or one of its
+ * blind run saw it. Move `scratch*` directories directly under the task root, under temp/
+ * (only for the temp/tasks layout) or under one of its
  * flow folders to a fresh `<parkHome>/parked-scratch/<slot>/<time>/`, by atomic rename only:
  * never delete, and refuse rather than copy across devices. A directory holding TASK.md is a
  * task dir (a SCRATCH-12 Jira key or a QA title can produce `scratch-…`) and is never moved;
@@ -313,10 +314,14 @@ export function buildTaskScratchParkCommand(input: {
   /** Fixed parking directory name; tests use it to force a collision. */
   parkStamp?: string;
 }): string {
+  const taskRoot = safeRelativeDir(input.taskDirName, DEFAULT_TASK_DIR).replace(/\/+$/, '');
   const config = {
     repo: input.repo.replace(/\/+$/, ''),
-    taskRoot: safeRelativeDir(input.taskDirName, DEFAULT_TASK_DIR).replace(/\/+$/, ''),
+    taskRoot,
     flows: unique(FLOW_TYPES.map((flow) => flowDir(flow))),
+    // temp/ itself only for the temp/tasks layout: a custom task root's parent may hold
+    // unrelated data, or be the task root's own scratch-named ancestor.
+    tempParent: taskRoot === 'temp/tasks' ? 'temp' : null,
     parkStamp: input.parkStamp ?? null,
     parkRoot: `${input.parkHome.replace(/\/+$/, '')}/parked-scratch/${input.slotId.replace(/[^A-Za-z0-9._-]/g, '_')}`,
   };
@@ -341,8 +346,10 @@ export function buildTaskScratchParkCommand(input: {
     '        return True',
     'root = os.path.join(repo, cfg["taskRoot"])',
     'parents = [root] + [os.path.join(root, flow) for flow in cfg["flows"]]',
+    'if cfg["tempParent"]:',
+    '    parents.append(os.path.join(repo, cfg["tempParent"]))',
     'found = []',
-    'for parent in parents if plain_dir(root) else []:',
+    'for parent in parents:',
     '    if plain_dir(parent):',
     '        found += [os.path.join(parent, n) for n in sorted(os.listdir(parent)) if n.startswith("scratch")]',
     '# The configured base is trusted and resolved; parked-scratch/<slot> below it stay as spelled.',
