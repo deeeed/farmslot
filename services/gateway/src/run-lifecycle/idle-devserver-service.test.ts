@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { beforeEach, mock, test } from 'node:test';
 
 import type { ActiveResourcePointer, Run, SlotResource } from '@farmslot/protocol';
@@ -124,7 +127,11 @@ const fixtureExec = async (_vars: unknown, command: string) => {
   if (command.startsWith("f='/fixture/.agent/next-dev.pid'")) {
     // The PID file stays through a stop; the recorded process is 2 minutes old.
     if (!alive) return { stdout: '', stderr: '', exitCode: 3 };
-    return { stdout: `101 ${pidFileAge} 02:00\n`, stderr: '', exitCode: 0 };
+    return {
+      stdout: `101 ${pidFileAge} 02:00 Mon Jan 1 00:00:${foreign ? '02' : '00'} 2024\n`,
+      stderr: '',
+      exitCode: 0,
+    };
   }
   if (command.startsWith('lsof -a'))
     return { stdout: `p101\nn${foreign ? '/foreign' : '/fixture'}\n`, stderr: '', exitCode: 0 };
@@ -366,6 +373,41 @@ test('a PID file older than the process it names grants no stop authority', asyn
   clock += DEVSERVER_IDLE_LIMIT_MS;
   await reapIdleDevServers('slot-a');
   assert.equal(stops, 0);
+});
+
+test('a watcher-cached PID with a stale PID file grants no stop authority', async () => {
+  // After a restart the node watcher rebuilds the cache from the PID file and liveness alone.
+  pidFileWatch = true;
+  pidFileAge = 3 * 24 * 60 * 60;
+  pointer = { pid: 101 } as ActiveResourcePointer;
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 0);
+});
+
+test('a capped pid-file dev server resumes through boot', async () => {
+  pidFileWatch = true;
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 1);
+  await restoreIdleDevServers('slot-a', run.id);
+  assert.equal(boots, 1);
+  assert.equal(alive, true);
+});
+
+test('the PID-file probe runs on this host and rejects a file older than its process', async (t) => {
+  const { pidFileProbeCommand, parsePidFileProbe } = await import('./idle-devserver-service.js');
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'idle-devserver-pid-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'next-dev.pid');
+  await writeFile(file, `${process.pid}\n`);
+  const probe = () => execFileSync('bash', ['-c', pidFileProbeCommand(file)], { encoding: 'utf8' });
+  assert.equal(parsePidFileProbe(probe())?.pid, process.pid);
+  const stale = new Date('2020-01-01T00:00:00Z'); // Date.now is mocked in this file.
+  await utimes(file, stale, stale);
+  assert.equal(parsePidFileProbe(probe()), undefined);
 });
 
 test('a pid-file dev server outside the checkout is preserved', async () => {

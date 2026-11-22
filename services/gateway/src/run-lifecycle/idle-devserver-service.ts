@@ -52,40 +52,57 @@ export function elapsedSeconds(etime: string): number | undefined {
   return ((Number(days) * 24 + Number(hours)) * 60 + Number(minutes)) * 60 + Number(seconds);
 }
 
-// Clock and write-order slack between a launch and its PID-file write.
-const PID_FILE_WRITE_SLACK_S = 5;
+// Write-order and whole-second slack between a launch and its PID-file write.
+const PID_FILE_WRITE_SLACK_S = 2;
+
+/** Read a PID file's PID, its age, and that process's elapsed time and start, in one call. */
+export function pidFileProbeCommand(pidPath: string): string {
+  return [
+    `f=${shellQuote(pidPath)}`,
+    '[ -f "$f" ] || exit 3',
+    'pid=$(tr -d "[:space:]" < "$f" 2>/dev/null) || exit 3',
+    'case "$pid" in ""|*[!0-9]*) exit 3 ;; esac',
+    // BSD stat first; GNU `stat -f` prints filesystem details, so each result is validated.
+    'modified=$(stat -f %m "$f" 2>/dev/null)',
+    'case "$modified" in ""|*[!0-9]*) modified=$(stat -c %Y "$f" 2>/dev/null) ;; esac',
+    'case "$modified" in ""|*[!0-9]*) exit 3 ;; esac',
+    'elapsed=$(ps -o etime= -p "$pid" 2>/dev/null | tr -d "[:space:]")',
+    'started=$(ps -o lstart= -p "$pid" 2>/dev/null)',
+    '[ -n "$elapsed" ] && [ -n "$started" ] || exit 3',
+    'echo "$pid $(( $(date +%s) - modified )) $elapsed $started"',
+  ].join('\n');
+}
 
 /**
- * The PID a pid-file watch names, only while that process already existed when the file was
- * written: a reused PID starts after a stale file and grants nothing.
+ * The process a PID file names, only while it already existed when the file was written: a
+ * reused PID starts after a stale file and grants nothing. Its start time binds the later
+ * identity probe to the same incarnation.
  */
-async function recordedPidFileProcess(
-  vars: Awaited<ReturnType<typeof loadSlotVars>>,
-  pidPath: string,
-): Promise<number | undefined> {
-  const result = await execOnSlot(
-    vars,
-    [
-      `f=${shellQuote(pidPath)}`,
-      '[ -f "$f" ] || exit 3',
-      'pid=$(tr -d "[:space:]" < "$f" 2>/dev/null) || exit 3',
-      'case "$pid" in ""|*[!0-9]*) exit 3 ;; esac',
-      'modified=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null) || exit 3',
-      'elapsed=$(ps -o etime= -p "$pid" 2>/dev/null | tr -d "[:space:]")',
-      '[ -n "$elapsed" ] || exit 3',
-      'echo "$pid $(( $(date +%s) - modified )) $elapsed"',
-    ].join('\n'),
-    { cwd: '/', timeout: 5_000 },
-  );
-  if (result.exitCode === 3) return undefined;
-  if (result.exitCode !== 0) throw new Error('Idle dev server PID file unavailable');
-  const [pidText = '', ageText = '', etime = ''] = result.stdout.trim().split(/\s+/);
+export function parsePidFileProbe(stdout: string): { pid: number; identity: string } | undefined {
+  const [pidText = '', ageText = '', etime = '', ...started] = stdout.trim().split(/\s+/);
   const pid = Number(pidText);
   const fileAge = Number(ageText);
   const running = elapsedSeconds(etime);
-  if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isFinite(fileAge) || running === undefined)
+  if (
+    !Number.isSafeInteger(pid) ||
+    pid <= 0 ||
+    !Number.isFinite(fileAge) ||
+    running === undefined ||
+    !started.length ||
+    running + PID_FILE_WRITE_SLACK_S < fileAge
+  )
     return undefined;
-  return running + PID_FILE_WRITE_SLACK_S >= fileAge ? pid : undefined;
+  return { pid, identity: started.join(' ') };
+}
+
+async function recordedPidFileProcess(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  pidPath: string,
+): Promise<{ pid: number; identity: string } | undefined> {
+  const result = await execOnSlot(vars, pidFileProbeCommand(pidPath), { cwd: '/', timeout: 5_000 });
+  if (result.exitCode === 3) return undefined;
+  if (result.exitCode !== 0) throw new Error('Idle dev server PID file unavailable');
+  return parsePidFileProbe(result.stdout);
 }
 
 const stoppingSlots = new Set<string>();
@@ -131,6 +148,8 @@ const idleDevServers = new IdleDevServerReaper({
       (resource) => resource.id === resourceId,
     );
     let pid = cached?.pid;
+    const launch = cached?.meta?.slotId === slotId ? cached.meta.process : undefined;
+    let recordedIdentity: string | undefined;
     if (resource?.definition.watch?.type === 'port-listen') {
       const project = await loadProjectVars(vars.projectName);
       const port = Number(
@@ -146,22 +165,28 @@ const idleDevServers = new IdleDevServerReaper({
       const pids = [...new Set(result.stdout.trim().split(/\s+/).map(Number))];
       if (pids.length !== 1 || !Number.isSafeInteger(pids[0]) || pids[0] <= 0) return undefined;
       pid = pids[0];
-    } else if (!pid && resource?.definition.watch?.type === 'pid-file') {
-      // The cached pointer does not survive a gateway restart; the watched PID file does.
-      // It names a candidate only: the checkout-cwd provenance below still decides.
+    } else if (resource?.definition.watch?.type === 'pid-file' && !launch) {
+      // Without this gateway's launch record (a restart, or a watcher that rebuilt the cache
+      // from liveness alone) the watched PID file is the only candidate, and only while its
+      // process predates the file. The checkout-cwd provenance below still decides.
       const watchPath = resource.definition.watch.path;
       if (!watchPath) return undefined;
       const project = await loadProjectVars(vars.projectName);
       const expanded = expandTemplate(String(watchPath), vars, project);
       const pidPath = expanded.startsWith('/') ? expanded : `${vars.remoteRepo}/${expanded}`;
       const recorded = await recordedPidFileProcess(vars, pidPath);
-      if (!recorded) return undefined;
-      pid = recorded;
+      if (!recorded || (cached?.pid !== undefined && cached.pid !== recorded.pid)) return undefined;
+      pid = recorded.pid;
+      recordedIdentity = recorded.identity;
     }
     if (!pid) return undefined;
     const process = await probeResourceProcess(vars, pid);
     if (!process) return undefined;
-    const launch = cached?.meta?.slotId === slotId ? cached.meta.process : undefined;
+    if (
+      recordedIdentity !== undefined &&
+      process.identity !== recordedIdentity.replace(/\s+/g, ' ')
+    )
+      return undefined;
     const matches = (known: IdleDevServerPointer | undefined) =>
       known &&
       known.pid === pid &&
