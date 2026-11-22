@@ -190,14 +190,30 @@ test('a gateway-accepted fix on the package head is shown as unreviewed and does
           reviewId: 'pipeline-review-c22',
           sessionId: 'reviewer-session',
         },
-        timeline: [{ kind: 're-review', loopNumber: 2, verdict: 'issues', unresolvedCount: 1 }],
+        timeline: [
+          {
+            kind: 're-review',
+            loopNumber: 2,
+            startedAt: '2026-11-22T03:36:56Z',
+            verdict: 'issues',
+            unresolvedCount: 1,
+          },
+        ],
       },
       {
         mode: 'warm',
         loopNumber: 3,
         verdict: 'pass',
         unresolvedCount: 0,
-        timeline: [{ kind: 'worker-fix', loopNumber: 3, verdict: 'pass', unresolvedCount: 0 }],
+        timeline: [
+          {
+            kind: 'worker-fix',
+            loopNumber: 3,
+            startedAt: '2026-11-22T03:41:00Z',
+            verdict: 'pass',
+            unresolvedCount: 0,
+          },
+        ],
       },
     ],
   };
