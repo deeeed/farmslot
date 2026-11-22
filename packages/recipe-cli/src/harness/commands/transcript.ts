@@ -263,7 +263,9 @@ export async function renderRecipeTranscript(input: RecipeTranscriptInput): Prom
     if (isRecord(runLedger) && runLedger.recipeRunId === runId) criteria = criteriaOf(runLedger);
   }
   if (!criteria.length) {
-    footer.push('Criteria: none declared (no recipe proofTargets, none in the run acceptance-status.json)');
+    footer.push(
+      'Criteria: none declared (no recipe proofTargets, none in the run acceptance-status.json)',
+    );
   } else {
     const claimLines = criteria.map((claim) =>
       clip(
