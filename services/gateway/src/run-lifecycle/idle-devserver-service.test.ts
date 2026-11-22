@@ -28,6 +28,7 @@ let pagedOwner = false;
 let foreign = false;
 let unhealthyBoot = false;
 let pidFileWatch = false;
+let pidFileAge = 60;
 let closedHistory = false;
 let realStatus = false;
 let promptDelivered = false;
@@ -59,7 +60,7 @@ const resources = (): SlotResource[] => [
       controllable: true,
       streamable: false,
       watch: pidFileWatch
-        ? { type: 'pid-file', path: 'temp/farmslot/next-dev.pid' }
+        ? { type: 'pid-file', path: '{{runtime_dir}}/next-dev.pid' }
         : { type: 'port-listen', port: '{{port}}' },
       hooks: { boot: 'fixture-prepare', health: 'fixture-health' },
     },
@@ -101,16 +102,7 @@ mock.module('../core/config.js', {
 });
 const realIo = await import('../core/slot-io.js');
 mock.module('../core/slot-io.js', {
-  namedExports: {
-    ...realIo,
-    slotRealpath: async () => '/fixture',
-    slotFileExists: async (_vars: unknown, file: string) =>
-      pidFileWatch && alive && file === '/fixture/temp/farmslot/next-dev.pid',
-    slotReadFile: async (_vars: unknown, file: string) => {
-      assert.equal(file, '/fixture/temp/farmslot/next-dev.pid');
-      return '101\n';
-    },
-  },
+  namedExports: { ...realIo, slotRealpath: async () => '/fixture' },
 });
 const fixtureExec = async (_vars: unknown, command: string) => {
   if (realStatus && command.includes('.observability'))
@@ -129,6 +121,11 @@ const fixtureExec = async (_vars: unknown, command: string) => {
     };
   if (realStatus && command.includes('list-panes'))
     return { exitCode: 0, stdout: '%7\n', stderr: '' };
+  if (command.startsWith("f='/fixture/.agent/next-dev.pid'")) {
+    // The PID file stays through a stop; the recorded process is 2 minutes old.
+    if (!alive) return { stdout: '', stderr: '', exitCode: 3 };
+    return { stdout: `101 ${pidFileAge} 02:00\n`, stderr: '', exitCode: 0 };
+  }
   if (command.startsWith('lsof -a'))
     return { stdout: `p101\nn${foreign ? '/foreign' : '/fixture'}\n`, stderr: '', exitCode: 0 };
   if (command.startsWith('ps -p'))
@@ -323,6 +320,7 @@ beforeEach(() => {
   realStatus = false;
   promptDelivered = false;
   pidFileWatch = false;
+  pidFileAge = 60;
 });
 
 test('port watch resolves once, expires through the real identity reaper and resumes through boot', async () => {
@@ -349,6 +347,25 @@ test('a pid-file dev server with no cached pointer is still reaped after the idl
   await reapIdleDevServers('slot-a');
   assert.equal(stops, 1);
   assert.equal(alive, false);
+});
+
+test('a pid-file dev server on an ownerless ready slot is reaped', async () => {
+  pidFileWatch = true;
+  row = { current_run_id: null, slot_epoch: epoch, lifecycle: 'ready' };
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 1);
+});
+
+test('a PID file older than the process it names grants no stop authority', async () => {
+  // The recorded PID was reused by a process started after the stale file was written.
+  pidFileWatch = true;
+  pidFileAge = 3 * 24 * 60 * 60;
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 0);
 });
 
 test('a pid-file dev server outside the checkout is preserved', async () => {
@@ -561,4 +578,12 @@ test('WARM reservation carries the capped server through the actual claim and re
   const restored = await realState.readSlotRow(vars.slotId);
   assert.equal(restored?.idle_devservers, null);
   assert.equal(restored?.handoff_run_id, 'follow-up');
+});
+
+test('ps etime parses into seconds', async () => {
+  const { elapsedSeconds } = await import('./idle-devserver-service.js');
+  assert.equal(elapsedSeconds('02:00'), 120);
+  assert.equal(elapsedSeconds('01:02:03'), 3723);
+  assert.equal(elapsedSeconds('2-14:35:18'), 2 * 86400 + 14 * 3600 + 35 * 60 + 18);
+  assert.equal(elapsedSeconds('bogus'), undefined);
 });

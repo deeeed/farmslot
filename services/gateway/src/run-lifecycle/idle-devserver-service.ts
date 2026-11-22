@@ -6,10 +6,11 @@ import { execOnSlot } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
 import { activePrepareSlots } from '../core/native-worker-exclusion.js';
 import { reportSlotResourceLifecycle } from '../core/resource-lifecycle-log.js';
-import { slotFileExists, slotReadFile, slotRealpath } from '../core/slot-io.js';
+import { slotRealpath } from '../core/slot-io.js';
 import { markSlotStatusIf, readSlotRow } from '../core/state.js';
 import {
   resolveTmuxSession,
+  shellQuote,
   splitTmuxFields,
   tmuxFieldFormat,
   tmuxShellSnippet,
@@ -42,6 +43,50 @@ import {
 } from './process-census.js';
 import { reapIdentifiedSlotProcesses } from './process-reap.js';
 import { tryWithRunTransition } from './transition-coordinator.js';
+
+/** `ps -o etime` as seconds: `[[dd-]hh:]mm:ss`. */
+export function elapsedSeconds(etime: string): number | undefined {
+  const match = /^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)$/.exec(etime.trim());
+  if (!match) return undefined;
+  const [, days = '0', hours = '0', minutes, seconds] = match;
+  return ((Number(days) * 24 + Number(hours)) * 60 + Number(minutes)) * 60 + Number(seconds);
+}
+
+// Clock and write-order slack between a launch and its PID-file write.
+const PID_FILE_WRITE_SLACK_S = 5;
+
+/**
+ * The PID a pid-file watch names, only while that process already existed when the file was
+ * written: a reused PID starts after a stale file and grants nothing.
+ */
+async function recordedPidFileProcess(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  pidPath: string,
+): Promise<number | undefined> {
+  const result = await execOnSlot(
+    vars,
+    [
+      `f=${shellQuote(pidPath)}`,
+      '[ -f "$f" ] || exit 3',
+      'pid=$(tr -d "[:space:]" < "$f" 2>/dev/null) || exit 3',
+      'case "$pid" in ""|*[!0-9]*) exit 3 ;; esac',
+      'modified=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null) || exit 3',
+      'elapsed=$(ps -o etime= -p "$pid" 2>/dev/null | tr -d "[:space:]")',
+      '[ -n "$elapsed" ] || exit 3',
+      'echo "$pid $(( $(date +%s) - modified )) $elapsed"',
+    ].join('\n'),
+    { cwd: '/', timeout: 5_000 },
+  );
+  if (result.exitCode === 3) return undefined;
+  if (result.exitCode !== 0) throw new Error('Idle dev server PID file unavailable');
+  const [pidText = '', ageText = '', etime = ''] = result.stdout.trim().split(/\s+/);
+  const pid = Number(pidText);
+  const fileAge = Number(ageText);
+  const running = elapsedSeconds(etime);
+  if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isFinite(fileAge) || running === undefined)
+    return undefined;
+  return running + PID_FILE_WRITE_SLACK_S >= fileAge ? pid : undefined;
+}
 
 const stoppingSlots = new Set<string>();
 interface OwnedListener extends IdleDevServerPointer {
@@ -109,9 +154,8 @@ const idleDevServers = new IdleDevServerReaper({
       const project = await loadProjectVars(vars.projectName);
       const expanded = expandTemplate(String(watchPath), vars, project);
       const pidPath = expanded.startsWith('/') ? expanded : `${vars.remoteRepo}/${expanded}`;
-      if (!(await slotFileExists(vars, pidPath))) return undefined;
-      const recorded = Number((await slotReadFile(vars, pidPath)).trim());
-      if (!Number.isSafeInteger(recorded) || recorded <= 0) return undefined;
+      const recorded = await recordedPidFileProcess(vars, pidPath);
+      if (!recorded) return undefined;
       pid = recorded;
     }
     if (!pid) return undefined;
