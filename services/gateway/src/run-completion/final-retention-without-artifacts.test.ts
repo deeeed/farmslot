@@ -225,3 +225,19 @@ test('a retry with no inspectable slot source keeps what the first retention kep
   assert.equal(await retainFinalRunArtifacts(runId), 0);
   assert.deepEqual(getRun(runId)?.artifactBundle, kept);
 });
+
+test('a retry captures media the gateway task still holds after a refused capture', async () => {
+  const { runId, taskDir } = await failedRun([
+    step('write-task', 'done'),
+    step('prepare', 'failed'),
+    step('dispatch', 'skipped'),
+  ]);
+  await writeFile(path.join(taskDir, 'artifacts/report.md'), '# Report\n');
+  await retainFinalRunArtifacts(runId);
+  const first = getRun(runId)?.artifactBundle;
+  assert.ok(first);
+  // A capture refused for missing media leaves that media in the gateway task.
+  await writeFile(path.join(taskDir, 'artifacts/repro.png'), 'unretained media');
+  await retainFinalRunArtifacts(runId);
+  assert.notDeepEqual(getRun(runId)?.artifactBundle, first);
+});

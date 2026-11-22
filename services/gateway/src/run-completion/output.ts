@@ -15,7 +15,11 @@ import {
   runOutputReviewEnabled,
   type RunStatus,
 } from '@farmslot/protocol';
-import { parseRunBundleMissingData, waitForRunBundleQueueTurn } from '@farmslot/run-bundle';
+import {
+  isRunBundleMedia,
+  parseRunBundleMissingData,
+  waitForRunBundleQueueTurn,
+} from '@farmslot/run-bundle';
 
 import { GATEWAY_OWNED_DIFF_ARTIFACT_PATHS } from '../core/artifact-copy-policy.js';
 import { failedBeforeWorkerLaunch } from '../run-lifecycle/pre-worker-failure.js';
@@ -298,17 +302,20 @@ async function captureRunOutputNow(
   if (mirror && !run.reviewWorkspace)
     copied = await refreshArtifactMirror(run, { ...mirrorOptions, acquisition });
   else mirrorOptions.onEmptySource?.();
+  const scanned = await scanArtifacts(path.dirname(taskFile));
   // A retried release must not replace what an earlier final retention kept (media can be
   // acquired straight into that bundle) with a capture of a source the mirror found empty
-  // or could not inspect.
-  // Any slot artifact, including new media or media a refused capture left behind, makes
-  // the source non-empty and is captured again.
-  if (sourceEmpty && run.artifactBundle) return 0;
+  // or could not inspect. A retained capture removes its media from the gateway task, so
+  // media still there was not retained (a refused capture's or new) and is captured again,
+  // as is any slot artifact.
+  if (
+    sourceEmpty &&
+    run.artifactBundle &&
+    !scanned.some((artifact) => isRunBundleMedia(artifact.path))
+  )
+    return 0;
   const artifactsByPath = new Map(
-    [...(await scanArtifacts(path.dirname(taskFile))), ...acquisition.media].map((artifact) => [
-      artifact.path,
-      artifact,
-    ]),
+    [...scanned, ...acquisition.media].map((artifact) => [artifact.path, artifact]),
   );
   if (workerFinished || options.forPublication) {
     let selection: Awaited<ReturnType<typeof resolvePublicationManifest>> = null;
