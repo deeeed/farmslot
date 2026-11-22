@@ -18,13 +18,16 @@
       "case": "review",
       "variant": "node-up",
       "target": "isolated",
-      "signature": "review-fix: after the earlier restarts the run never reached this step's hold\nrun status: expected done, observed reviewing\n[\\s\\S]*slot: expected ready/-, observed busy/working",
+      "signature": "review-fix: after the earlier restarts the run never reached this step's hold\nrun status: expected done, observed reviewing\nstep 6: expected review:done, observed review:running\nstep 7: expected complete:done, observed complete:pending\nstep 8: expected human-gate:done, observed human-gate:pending\nstep 9: expected finalize:done, observed finalize:pending\nstep 10: expected ci-watch:done, observed ci-watch:pending\nslot: expected ready/-, observed busy/working",
       "differences": [
         "^review-fix: after the earlier restarts the run never reached this step's hold$",
         "^run status: expected done, observed reviewing$",
-        "^slot: expected ready/-, observed busy/working$",
         "^step 6: expected review:done, observed review:running$",
-        "^step (7|8|9|10): expected (complete|human-gate|finalize|ci-watch):done, observed \\2:pending$"
+        "^step 7: expected complete:done, observed complete:pending$",
+        "^step 8: expected human-gate:done, observed human-gate:pending$",
+        "^step 9: expected finalize:done, observed finalize:pending$",
+        "^step 10: expected ci-watch:done, observed ci-watch:pending$",
+        "^slot: expected ready/-, observed busy/working$"
       ],
       "ledger": "owner cx-engine: a gateway restart during the review-fix round loses the scripted fix worker (\"Live scripted retained handoff was not accepted\"), REVIEW restarts loop 1 and the run stays reviewing (nightly triage 2026-11-23)"
     },
@@ -32,13 +35,16 @@
       "case": "review-fix",
       "variant": "node-up+node-away",
       "target": "isolated",
-      "signature": "review-fix: after the earlier restarts the run never reached this step's hold\nrun status: expected done, observed reviewing\n[\\s\\S]*slot: expected ready/-, observed busy/working",
+      "signature": "review-fix: after the earlier restarts the run never reached this step's hold\nrun status: expected done, observed reviewing\nstep 6: expected review:done, observed review:running\nstep 7: expected complete:done, observed complete:pending\nstep 8: expected human-gate:done, observed human-gate:pending\nstep 9: expected finalize:done, observed finalize:pending\nstep 10: expected ci-watch:done, observed ci-watch:pending\nslot: expected ready/-, observed busy/working",
       "differences": [
         "^review-fix: after the earlier restarts the run never reached this step's hold$",
         "^run status: expected done, observed reviewing$",
-        "^slot: expected ready/-, observed busy/working$",
         "^step 6: expected review:done, observed review:running$",
-        "^step (7|8|9|10): expected (complete|human-gate|finalize|ci-watch):done, observed \\2:pending$"
+        "^step 7: expected complete:done, observed complete:pending$",
+        "^step 8: expected human-gate:done, observed human-gate:pending$",
+        "^step 9: expected finalize:done, observed finalize:pending$",
+        "^step 10: expected ci-watch:done, observed ci-watch:pending$",
+        "^slot: expected ready/-, observed busy/working$"
       ],
       "ledger": "owner cx-engine: a gateway restart during the review-fix round loses the scripted fix worker (\"Live scripted retained handoff was not accepted\"), REVIEW restarts loop 1 and the run stays reviewing (nightly triage 2026-11-23)"
     },

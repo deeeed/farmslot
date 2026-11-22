@@ -1526,6 +1526,8 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
     judge: (
       result: ScenarioResult,
     ) => Pick<CheckResult, 'status' | 'differences' | 'observations'> & Partial<CheckResult>,
+    /** `noModelCalls`: every reviewer turn is the test's, so any model call fails the check. */
+    rules: { noModelCalls?: boolean } = {},
   ): Promise<CheckResult> {
     const callsBefore = await modelCalls();
     let result: CheckResult;
@@ -1559,6 +1561,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
         runId: error.runId,
       };
     }
+    if (rules.noModelCalls) failOnModelCalls(result);
     if (options.fastScripted && (result.durationS ?? 0) > 5)
       result.observations.push(
         `SLOW ${result.case}: ${result.durationS}s; ${Object.entries(result.timingsS ?? {})
@@ -1637,8 +1640,9 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
               expected: { ...baselineExpected[shapeName], superseded: [], reviews: [] },
             };
           },
+          { noModelCalls: shapeName === 'pipe' },
         );
-        onCheck(shapeName === 'pipe' ? failOnModelCalls(result) : result);
+        onCheck(result);
         if (!baseline || result.status !== 'pass')
           throw new Inconclusive(
             `the baseline itself ended wrong: ${result.differences.join('; ')}${result.failureText ? `; ${result.failureText}` : result.error ? `; ${result.error}` : ''}`,
@@ -1660,27 +1664,26 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
     for (const { step, variants } of restarts)
       for (const variant of variants)
         onCheck(
-          failOnModelCalls(
-            await check(
-              { case: step, variant, model: 'scripted', hold: HOLDS[step] },
-              () =>
-                runScenario(`${step}-${variant}`, 'pipe', [
-                  restartPhase(stack, step, variant, options.nodeAwayMs),
-                ]),
-              (result) => {
-                const differences = [
-                  ...unreachedDifferences(result),
-                  ...outcomeDifferences(baseline.outcome, result.outcome),
-                  ...passReviewDifferences(result),
-                ];
-                return {
-                  status: differences.length ? 'fail' : 'pass',
-                  differences,
-                  observations: outcomeObservations(baseline.outcome, result.outcome),
-                  expected: baseline.outcome,
-                };
-              },
-            ),
+          await check(
+            { case: step, variant, model: 'scripted', hold: HOLDS[step] },
+            () =>
+              runScenario(`${step}-${variant}`, 'pipe', [
+                restartPhase(stack, step, variant, options.nodeAwayMs),
+              ]),
+            (result) => {
+              const differences = [
+                ...unreachedDifferences(result),
+                ...outcomeDifferences(baseline.outcome, result.outcome),
+                ...passReviewDifferences(result),
+              ];
+              return {
+                status: differences.length ? 'fail' : 'pass',
+                differences,
+                observations: outcomeObservations(baseline.outcome, result.outcome),
+                expected: baseline.outcome,
+              };
+            },
+            { noModelCalls: true },
           ),
         );
   }
@@ -1784,8 +1787,9 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
           expected: baseline.outcome,
         };
       },
+      { noModelCalls: true },
     );
-    onCheck(failOnModelCalls(result));
+    onCheck(result);
   }
 
   if (options.review) {
