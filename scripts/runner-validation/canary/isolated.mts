@@ -159,8 +159,11 @@ const contexts = (run: Run, role: string) =>
 
 // ---------------------------------------------------------------- run shapes
 interface Shape extends RunShape {
-  /** The proxy swallows every reviewer turn and the test answers it (scriptedReviewer). */
-  scriptedReview?: boolean;
+  /**
+   * The proxy swallows every reviewer turn and the test answers it (scriptedReviewer):
+   * `fix-then-pass` flags the review fixture's leftover helper in loop 1, `pass` passes at once.
+   */
+  scriptedReview?: 'fix-then-pass' | 'pass';
 }
 
 type ShapeName =
@@ -177,12 +180,26 @@ type ShapeName =
 const SHAPES: Record<ShapeName, Shape> = {
   canary: canaryShape('isolated lifecycle'),
   f324: f324Shape('isolated f324'),
-  pipe: { project: PIPE_PROJECT, create: pipeRunParams, decide: closeGate, timeoutMs: 20 * 60_000 },
-  pi: { project: PIPE_PROJECT, create: piRunParams, decide: closeGate, timeoutMs: 20 * 60_000 },
+  // ri-pipe runs still go through REVIEW (the reviewed profile always reviews); the test passes it.
+  pipe: {
+    project: PIPE_PROJECT,
+    create: pipeRunParams,
+    decide: closeGate,
+    scriptedReview: 'pass',
+    timeoutMs: 20 * 60_000,
+  },
+  pi: {
+    project: PIPE_PROJECT,
+    create: piRunParams,
+    decide: closeGate,
+    scriptedReview: 'pass',
+    timeoutMs: 20 * 60_000,
+  },
   claude: {
     project: PIPE_PROJECT,
     create: claudeRunParams,
     decide: closeGate,
+    scriptedReview: 'pass',
     timeoutMs: 20 * 60_000,
   },
   // The test presses the card's Replay step once its hold is over, through run.resolveDecision.
@@ -191,6 +208,7 @@ const SHAPES: Record<ShapeName, Shape> = {
     create: claudeRunParams,
     decide: (decision) =>
       decision.type === WORKER_LEFT_RUNNING_CARD ? { resolve: 'replay-step' } : closeGate(decision),
+    scriptedReview: 'pass',
     timeoutMs: 20 * 60_000,
   },
   review: {
@@ -204,7 +222,7 @@ const SHAPES: Record<ShapeName, Shape> = {
     project: REVIEW_PROJECT,
     create: reviewRunParams,
     decide: () => undefined,
-    scriptedReview: true,
+    scriptedReview: 'fix-then-pass',
     timeoutMs: 20 * 60_000,
   },
   // A Claude-runner worker, the test pressing the card's Replay step when its hold is over.
@@ -213,7 +231,7 @@ const SHAPES: Record<ShapeName, Shape> = {
     create: claudeReviewRunParams,
     decide: (decision) =>
       decision.type === WORKER_LEFT_RUNNING_CARD ? { resolve: 'replay-step' } : undefined,
-    scriptedReview: true,
+    scriptedReview: 'fix-then-pass',
     timeoutMs: 20 * 60_000,
   },
 };
@@ -840,8 +858,12 @@ interface ScriptedReviewer {
   pending(run: Run): AgentContext | undefined;
   /** The reviewer turns the proxy swallowed: one per reviewer unless a prompt was sent again. */
   turns(): number;
-  /** Answers it as the fixture's review template asks: loop 1 issues, later loops pass. */
-  answer(run: Run, slotRepo: string): Promise<string | undefined>;
+  /** Answers it: `fix-then-pass` flags loop 1 and passes later loops; `pass` always passes. */
+  answer(
+    run: Run,
+    slotRepo: string,
+    mode: NonNullable<Shape['scriptedReview']>,
+  ): Promise<string | undefined>;
   stop(dir: string): Promise<void>;
 }
 
@@ -868,12 +890,12 @@ function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
         (context) => context.nativeSession?.acceptedAt && !answered.has(context.id),
       );
     },
-    async answer(run, slotRepo) {
+    async answer(run, slotRepo, mode) {
       const context = this.pending(run);
       if (!context?.taskFile || !context.signalFile || !context.reviewResultFile) return undefined;
       answered.add(context.id);
       const loop = context.reviewLoopNumber ?? 1;
-      const issues = loop === 1;
+      const issues = mode === 'fix-then-pass' && loop === 1;
       const taskDir = path.join(slotRepo, path.dirname(context.taskFile));
       const finding = {
         file: 'src/debug-trace.ts',
@@ -889,9 +911,11 @@ function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
           `## Verdict: ${issues ? 'ISSUES' : 'PASS'}`,
           '',
           '## Summary',
-          issues
-            ? 'Adds formatName and leaves a debugging helper behind.'
-            : 'Adds formatName; the debugging helper is gone.',
+          mode === 'pass'
+            ? 'Nothing to flag.'
+            : issues
+              ? 'Adds formatName and leaves a debugging helper behind.'
+              : 'Adds formatName; the debugging helper is gone.',
           '',
           '## Issues',
           ...(issues ? [`- **${finding.file}:${finding.line}** — ${finding.description}`] : []),
@@ -1426,7 +1450,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
             if (await watchPhase(view, summary, changedAt)) return 'again';
             // A scripted review answers each reviewer turn, except one a REVIEW hold still keeps.
             if (shape.scriptedReview && phases[current]?.step !== 'review') {
-              const answered = await reviewer.answer(run, hold.slotRepo);
+              const answered = await reviewer.answer(run, hold.slotRepo, shape.scriptedReview);
               if (answered) {
                 await log(`${label}: scripted reviewer answered ${answered}`);
                 return 'again';

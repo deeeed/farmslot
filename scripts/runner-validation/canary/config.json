@@ -13,7 +13,42 @@
     "release": 120,
     "native-check": 10
   },
-  "knownFailures": [],
+  "knownFailures": [
+    {
+      "case": "review",
+      "variant": "node-up",
+      "target": "isolated",
+      "signature": "review-fix: after the earlier restarts the run never reached this step's hold",
+      "differences": [
+        "^review-fix: after the earlier restarts the run never reached this step's hold$",
+        "^run status: expected done, observed reviewing$",
+        "^slot: expected ready/-, observed busy/working$",
+        "^step \\d+: expected (review|complete|human-gate|finalize|ci-watch):done, observed \\1:(running|pending)$"
+      ],
+      "ledger": "owner cx-engine: a gateway restart during the review-fix round loses the scripted fix worker (\"Live scripted retained handoff was not accepted\"), REVIEW restarts loop 1 and the run stays reviewing (nightly triage 2026-11-23)"
+    },
+    {
+      "case": "review-fix",
+      "variant": "node-up+node-away",
+      "target": "isolated",
+      "signature": "review-fix: after the earlier restarts the run never reached this step's hold",
+      "differences": [
+        "^review-fix: after the earlier restarts the run never reached this step's hold$",
+        "^run status: expected done, observed reviewing$",
+        "^slot: expected ready/-, observed busy/working$",
+        "^step \\d+: expected (review|complete|human-gate|finalize|ci-watch):done, observed \\1:(running|pending)$"
+      ],
+      "ledger": "owner cx-engine: a gateway restart during the review-fix round loses the scripted fix worker (\"Live scripted retained handoff was not accepted\"), REVIEW restarts loop 1 and the run stays reviewing (nightly triage 2026-11-23)"
+    },
+    {
+      "case": "release",
+      "variant": "node-away",
+      "target": "isolated",
+      "signature": "slot: expected ready/-, observed busy/releasing",
+      "differences": ["^slot: expected ready/-, observed busy/releasing$"],
+      "ledger": "owner cx-runs: after a gateway restart with the node away during slot release, the slot stays busy/releasing (nightly triage 2026-11-23)"
+    }
+  ],
   "live": {
     "profileHome": "~/.farmslot-automation",
     "profile": "farm-automation",
