@@ -13,6 +13,8 @@ import {
 import { reapIdentifiedSlotProcesses } from './process-reap.js';
 
 const CENSUS_MARKER = 'farmslot-browser-session-census';
+/** agent-browser's daemon: its native binary, which detaches and keeps the cwd it started in. */
+const AGENT_BROWSER = /(?:^|\/)agent-browser(?:-[\w-]+)?$/;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -25,7 +27,10 @@ function escapeRegExp(value: string): string {
  * and no lease records them (run 22e62daa). A process is reaped only when it is
  * detached and either uses a browser profile inside the slot checkout after
  * its workers are verified stopped (includeSlotProfiles), or is
- * on its CDP port and tied to the checkout by cwd or arguments. Descendants
+ * on its CDP port and tied to the checkout by cwd or arguments. With the same
+ * verification, a detached agent-browser daemon whose cwd is inside the checkout
+ * goes too: it binds no CDP port, and as a workspace occupant it skipped every
+ * later teardown of the slot (four on macpro-mmt-5 since 2026-11-20). Descendants
  * go with it. While a capability lease on the slot still holds or keeps providers warm, its release
  * effect decides and nothing is reaped; a process a lease recorded is never
  * reaped. Returns a reason naming each process that survived SIGKILL.
@@ -47,6 +52,9 @@ export async function reapSlotBrowserSession(
         ? `pids=$(lsof -nP -iTCP:${cdpPort} -t 2>/dev/null | sort -u | paste -sd, -)`
         : "pids=''",
       'echo "--cdp-- $pids"',
+      opts.includeSlotProfiles
+        ? `pids=$(printf '%s\\n' "$pids" $(ps -axo pid=,args= | awk '$2 ~ /(^|\\/)agent-browser(-[A-Za-z0-9_-]+)?$/ { print $1 }') | grep . | paste -sd, -)`
+        : ':',
       'if [ -n "$pids" ]; then lsof -a -d cwd -Fpn -p "$pids" 2>/dev/null; fi',
       'true',
     ].join('\n'),
@@ -81,13 +89,16 @@ export async function reapSlotBrowserSession(
       profile !== undefined &&
       path.posix.isAbsolute(profile) &&
       repos.some((repo) => isWithinPath(repo, path.posix.normalize(profile)));
+    const inRepo = cwd !== undefined && repos.some((repo) => isWithinPath(repo, cwd));
+    const slotDaemon =
+      opts.includeSlotProfiles && inRepo && AGENT_BROWSER.test(row.command.split(/\s/)[0] ?? '');
     return (
       row.parent === '1' &&
       !isTmuxProcess(row.command) &&
       (ownedProfile ||
+        slotDaemon ||
         ((onPort.has(row.pid) || portArg?.test(row.command)) &&
-          ((cwd !== undefined && repos.some((repo) => isWithinPath(repo, cwd))) ||
-            repoArg.test(row.command))))
+          (inRepo || repoArg.test(row.command))))
     );
   });
   if (candidates.length === 0) return null;
@@ -121,7 +132,9 @@ export async function reapSlotBrowserSession(
       const scope =
         onPort.has(pid) || portArg?.test(args)
           ? `on CDP port ${cdpPort}`
-          : 'with a profile in the slot repository';
+          : AGENT_BROWSER.test(args.split(/\s/)[0] ?? '')
+            ? 'working in the slot repository'
+            : 'with a profile in the slot repository';
       return `Browser session process ${pid} (${args.length > 120 ? `${args.slice(0, 117)}...` : args}) ${scope} did not stop`;
     })
     .join('; ');

@@ -1,0 +1,1 @@
+- Terminal slot cleanup now stops a detached agent-browser daemon whose working directory is inside the slot checkout. Such a daemon outlived its worker and made every later release skip the slot teardown.
