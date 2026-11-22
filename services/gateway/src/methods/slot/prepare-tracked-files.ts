@@ -20,6 +20,11 @@ export interface TrackedFilesSnapshot {
   branch: string;
   worktreeTree: string;
   indexTree: string;
+  /**
+   * Submodule path -> "<HEAD gitlink> <checked-out commit>". Recorded directly
+   * because `git stash create` and `git diff` honor `submodule.<name>.ignore`.
+   */
+  submodules: Map<string, string>;
 }
 
 const SNAPSHOT_FIELDS = 4;
@@ -42,6 +47,9 @@ export function buildTrackedFilesSnapshotCommand(repo: string): string {
     'worktree=$(git rev-parse --verify "$base^{tree}")',
     'index=$(if [ -n "$stash" ]; then git rev-parse --verify "$stash^2^{tree}"; else git rev-parse --verify "$head^{tree}"; fi)',
     `printf '%s\\n%s\\n%s\\n%s\\n' "$head" "$branch" "$worktree" "$index"`,
+    // One line per gitlink in HEAD: "<HEAD gitlink> <checked-out commit or none>\t<path>".
+    // Gitlinks are filtered before the loop: large repos list tens of thousands of entries.
+    `{ git -c core.quotepath=off ls-tree -r HEAD | { grep '^160000 commit ' || true; } | while IFS=$'\\t' read -r meta p; do printf '%s %s\\t%s\\n' "\${meta##* }" "$(if [ -e "$p/.git" ]; then git -C "$p" rev-parse -q --verify HEAD 2>/dev/null || echo none; else echo none; fi)" "$p"; done; }`,
   ].join(' && ');
 }
 
@@ -56,7 +64,12 @@ export function parseTrackedFilesSnapshot(stdout: string): TrackedFilesSnapshot 
     ![head, worktreeTree, indexTree].every((v) => object.test(v))
   )
     throw new Error(`unreadable tracked-file snapshot: ${JSON.stringify(stdout.slice(0, 300))}`);
-  return { head, branch, worktreeTree, indexTree };
+  const submodules = new Map<string, string>();
+  for (const line of lines.slice(SNAPSHOT_FIELDS)) {
+    const tab = line.indexOf('\t');
+    if (tab > 0) submodules.set(line.slice(tab + 1), line.slice(0, tab));
+  }
+  return { head, branch, worktreeTree, indexTree, submodules };
 }
 
 export function snapshotsEqual(a: TrackedFilesSnapshot, b: TrackedFilesSnapshot): boolean {
@@ -64,8 +77,21 @@ export function snapshotsEqual(a: TrackedFilesSnapshot, b: TrackedFilesSnapshot)
     a.head === b.head &&
     a.branch === b.branch &&
     a.worktreeTree === b.worktreeTree &&
-    a.indexTree === b.indexTree
+    a.indexTree === b.indexTree &&
+    changedSubmodules(a, b).length === 0 &&
+    a.submodules.size === b.submodules.size
   );
+}
+
+/** Submodules whose checked-out commit changed and no longer matches HEAD's gitlink. */
+export function changedSubmodules(before: TrackedFilesSnapshot, after: TrackedFilesSnapshot): string[] {
+  const changed: string[] = [];
+  for (const [file, state] of after.submodules) {
+    const [gitlink, current] = state.split(' ');
+    const previous = before.submodules.get(file)?.split(' ')[1];
+    if (current !== previous && current !== gitlink) changed.push(file);
+  }
+  return changed;
 }
 
 /** Paths that differ between the two snapshots' worktree or index trees (NUL-separated). */

@@ -9,6 +9,7 @@ import {
   buildChangedPathsCommand,
   buildDirtyPathsCommand,
   buildTrackedFilesSnapshotCommand,
+  changedSubmodules,
   changedTrackedFiles,
   parseNulPaths,
   parseTrackedFilesSnapshot,
@@ -51,11 +52,17 @@ function fixture(t: { after: (fn: () => void) => void }) {
     assert.ok(snapshot, 'expected a merged index');
     return snapshot;
   };
+  // Mirrors prepare's checkTrackedFiles.
   const files = (before: TrackedFilesSnapshot, after: TrackedFilesSnapshot) =>
-    changedTrackedFiles(
-      parseNulPaths(sh(buildChangedPathsCommand(repo, before, after))),
-      parseNulPaths(sh(buildDirtyPathsCommand(repo, after))),
-    );
+    [
+      ...new Set([
+        ...changedTrackedFiles(
+          parseNulPaths(sh(buildChangedPathsCommand(repo, before, after))),
+          parseNulPaths(sh(buildDirtyPathsCommand(repo, after))),
+        ),
+        ...changedSubmodules(before, after),
+      ]),
+    ].sort();
   return { repo, git, snap, files };
 }
 
@@ -172,5 +179,9 @@ test('a moved submodule is reported even with submodule ignore=all', (t) => {
   git('commit', '-qm', 'add submodule');
   const before = snap();
   subGit(path.join(repo, 'vendor/sub'), 'checkout', '-q', 'HEAD~1');
-  assert.deepEqual(files(before, snap()), ['vendor/sub']);
+  const moved = snap();
+  assert.equal(snapshotsEqual(before, moved), false);
+  assert.deepEqual(files(before, moved), ['vendor/sub']);
+  subGit(path.join(repo, 'vendor/sub'), 'checkout', '-q', 'main');
+  assert.deepEqual(files(moved, snap()), [], 'moving back to the gitlink is a restore');
 });

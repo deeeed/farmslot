@@ -118,6 +118,7 @@ import {
   buildChangedPathsCommand,
   buildDirtyPathsCommand,
   buildTrackedFilesSnapshotCommand,
+  changedSubmodules,
   changedTrackedFiles,
   parseNulPaths,
   parseTrackedFilesSnapshot,
@@ -518,10 +519,15 @@ async function slotPrepareInner(
     if (snapshotsEqual(baseline, after)) return after;
     const files =
       baseline.head === after.head
-        ? changedTrackedFiles(
-            await trackedPaths(buildChangedPathsCommand(vars.remoteRepo, baseline, after)),
-            await trackedPaths(buildDirtyPathsCommand(vars.remoteRepo, after)),
-          )
+        ? [
+            ...new Set([
+              ...changedTrackedFiles(
+                await trackedPaths(buildChangedPathsCommand(vars.remoteRepo, baseline, after)),
+                await trackedPaths(buildDirtyPathsCommand(vars.remoteRepo, after)),
+              ),
+              ...changedSubmodules(baseline, after),
+            ]),
+          ].sort()
         : [];
     const message = trackedFilesChangedMessage(phase, command, vars.slotId, baseline, after, files);
     if (message) {
