@@ -270,12 +270,17 @@ test('release parks scratch directories by rename and leaves task dirs, even scr
   assert.deepEqual(result.refused, []);
 });
 
-test('the age prune keeps paths it is told to keep and can skip task dirs entirely', async () => {
+test('the age prune keeps refused scratch, what it holds and what holds it, and can skip task dirs', async () => {
   const repo = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-keep-'));
-  const refused = path.join(repo, 'temp/tasks/feat/scratch-old');
+  // Prune candidates: task-root children holding TASK.md or artifacts/, and their children.
+  const refused = path.join(repo, 'temp/tasks/scratch-old');
+  const inside = path.join(refused, 'output');
+  const holder = path.join(repo, 'temp/tasks/holder');
+  const heldScratch = path.join(holder, 'scratch-inner');
   const stale = path.join(repo, 'temp/tasks/feat/old-task');
-  await Promise.all([refused, stale].map((dir) => mkdir(dir, { recursive: true })));
-  await Promise.all([refused, stale].map(touchOld));
+  for (const dir of [inside, path.join(holder, 'artifacts'), heldScratch, stale])
+    await mkdir(dir, { recursive: true });
+  for (const dir of [inside, refused, heldScratch, holder, stale]) await touchOld(dir);
   const prune = (extra: Record<string, unknown>) =>
     execFileAsync('/bin/sh', [
       '-c',
@@ -290,13 +295,9 @@ test('the age prune keeps paths it is told to keep and can skip task dirs entire
     ]);
   await prune({ skipTaskPrune: true });
   assert.equal(await exists(stale), true, 'no task pruning when scratch parking failed');
-  const inner = path.join(refused, 'output');
-  await mkdir(inner, { recursive: true });
-  await touchOld(inner);
-  await touchOld(refused);
-  await prune({ keepPaths: [refused] });
-  assert.equal(await exists(refused), true, 'refused scratch is not deleted by the prune');
-  assert.equal(await exists(inner), true, 'nor is anything inside it');
+  await prune({ keepPaths: [refused, heldScratch] });
+  assert.equal(await exists(inside), true, 'a stale candidate inside refused scratch stays');
+  assert.equal(await exists(heldScratch), true, 'a stale candidate holding refused scratch stays');
   assert.equal(await exists(stale), false);
 });
 
@@ -324,9 +325,10 @@ test('scratch parking refuses a symlinked parking root, reads a trailing-slash t
         ])
       ).stdout,
     );
-  // A parked-scratch directory that is a symlink (here into the checkout) is refused.
+  // A parked-scratch directory that is a symlink is refused, even to a target outside the checkout.
   await mkdir(path.join(home, 'linked'), { recursive: true });
-  await symlink(path.join(repo, 'temp'), path.join(home, 'linked/parked-scratch'));
+  await mkdir(path.join(home, 'elsewhere'), { recursive: true });
+  await symlink(path.join(home, 'elsewhere'), path.join(home, 'linked/parked-scratch'));
   const refusedRun = await run(path.join(home, 'linked'));
   assert.deepEqual(refusedRun.parked, []);
   assert.equal(refusedRun.refused.length, 1);
