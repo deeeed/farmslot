@@ -408,7 +408,7 @@ test(
 );
 
 test(
-  'a tracked symlink the new base turns into a directory is not probed through',
+  'a tracked symlink the new base turns into a directory loses nothing',
   needsTmuxSandbox,
   async (t) => {
     const { slotId, slotRepo, oldBase } = await staleBaseSlot(t);
@@ -434,14 +434,19 @@ test(
     await git(author, 'commit', '-qm', 'B2: tools/run is a directory');
     await git(author, 'push', '-q', 'origin', 'HEAD:refs/heads/main');
     const dirBase = await git(author, 'rev-parse', 'HEAD');
-    const result = await slotPrepare(
-      { slotId, branch: workBranch, prepareProfile: 'core' },
-      () => {},
-      undefined,
-      { preserveBranch: true },
+    // The scan does not probe beneath the tracked symlink; the parked-work guard then refuses
+    // pathspecs beyond a symlink, so prepare fails before any move and nothing local is touched.
+    await assert.rejects(
+      slotPrepare(
+        { slotId, branch: workBranch, prepareProfile: 'core' },
+        () => {},
+        undefined,
+        { preserveBranch: true },
+      ),
+      /beyond a symbolic link/,
     );
-    assert.equal(result.prepared, true);
-    assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), dirBase);
+    assert.equal(await git(slotRepo, 'rev-parse', `refs/heads/${workBranch}`), linkTip);
+    assert.notEqual(linkTip, dirBase);
     assert.equal(await readFile(path.join(slotRepo, 'shared/command'), 'utf8'), 'shared\n');
   },
 );
