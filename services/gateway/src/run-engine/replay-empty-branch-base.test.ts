@@ -364,6 +364,7 @@ test(
     await git(author, 'reset', '-q', '--hard', 'origin/main');
     spawnSync('bash', ['-c', yarnPersist], { cwd: author });
     await git(author, 'rm', '-q', '-r', 'tools/run');
+    await mkdir(path.join(author, 'tools'), { recursive: true });
     await writeFile(path.join(author, 'tools/run'), 'now a file\n');
     await git(author, 'add', '-A');
     await git(author, 'commit', '-qm', 'B2: sorted manifest, tools/run is a file');
