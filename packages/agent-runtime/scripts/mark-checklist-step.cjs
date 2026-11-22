@@ -477,22 +477,22 @@ function assertRecipeAttemptSelected(taskDir) {
   };
   const isAttempt = (name) => taskFileExists(runs, path.join(name, 'evidence-manifest.json'));
   // An attempt is any directory under recipe-runs holding a manifest (`<id>`, the harness's
-  // `attempts/<id>`, or a deeper --artifacts-dir); its own subdirectories are not attempts.
+  // `attempts/<id>`, or a deeper --artifacts-dir).
   const attempts = [];
   const visit = (relative) => {
     for (const name of directories(path.join(runs, relative))) {
       const child = relative ? `${relative}/${name}` : name;
       if (isAttempt(child)) attempts.push(child);
-      else visit(child);
+      visit(child); // a retry may sit inside a failed attempt (recipe-runs/first/retry)
     }
   };
-  visit('');
-  attempts.sort();
-  if (attempts.length === 0) return;
   const { readRecipeAttemptSelection } = require('./retained-recipe-attempt.cjs');
   const pointer = readRecipeAttemptSelection(taskDir);
   const taskRecipe = taskFileExists(taskDir, 'artifacts/recipe.json');
   if (pointer && taskRecipe) return;
+  visit('');
+  attempts.sort();
+  if (attempts.length === 0) return;
   if (pointer) {
     const selected = `artifacts/${pointer.relativeArtifactRoot}`;
     console.error(

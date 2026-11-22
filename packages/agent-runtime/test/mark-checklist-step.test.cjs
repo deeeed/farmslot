@@ -654,7 +654,7 @@ try {
   // unreadable summary is reported as such, not as a failed proof.
   rmSync(path.join(artifacts, 'latest-valid-recipe-run.json'));
   rmSync(path.join(artifacts, 'recipe-runs'), { recursive: true });
-  for (const nested of ['attempts/a1', 'group/subgroup/a2']) {
+  for (const nested of ['attempts/a1', 'group/subgroup/a2', 'attempts/a1/retry']) {
     const dir = path.join(artifacts, 'recipe-runs', nested);
     mkdirSync(path.join(dir, 'screenshots'), { recursive: true });
     writeFileSync(path.join(dir, 'evidence-manifest.json'), '{"version":1,"standalone":[]}\n');
@@ -664,7 +664,7 @@ try {
   assert.notEqual(completed.status, 0, 'nested attempts must be selected too');
   assert.match(
     completed.stderr,
-    /proof attempts \(recipe-runs\/attempts\/a1, recipe-runs\/group\/subgroup\/a2\)/,
+    /proof attempts \(recipe-runs\/attempts\/a1, recipe-runs\/attempts\/a1\/retry, recipe-runs\/group\/subgroup\/a2\)/,
   );
   assert.match(completed.stderr, /No passing attempt could be verified/);
   assert.match(completed.stderr, /Unreadable summaries: recipe-runs\/attempts\/a1\/summary\.json/);
