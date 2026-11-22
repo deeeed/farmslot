@@ -225,12 +225,34 @@ export function captureRunOutput(
 
 /** Keep final raw artifacts without rewriting the report snapshot the person judged. */
 export function retainFinalRunArtifacts(runId: string): Promise<number> {
+  const run = getRun(runId);
   return queueOutputCapture(
     runId,
-    Boolean(getRun(runId)?.slotId),
+    Boolean(run?.slotId),
     false,
-    { requireSourceArtifacts: true },
+    // A missing source is a loss only once there was output to lose. A run whose worker
+    // never ran and that retained nothing has no final result, so release can proceed.
+    { requireSourceArtifacts: !run || runMayHaveOutput(run) },
     'final-result',
+  );
+}
+
+function runMayHaveOutput(run: Run): boolean {
+  return (
+    !!run.output?.artifactManifest.length ||
+    !!run.output?.artifactBundle ||
+    !!run.artifactBundle ||
+    run.steps.some((step) => step.name === 'dispatch' && step.status === 'done') ||
+    // Dispatch records this boundary before any launch or keys could hand a worker its task.
+    (run.agentContexts ?? []).some(
+      (context) =>
+        !!(
+          context.promptDeliveryStartedAt ||
+          context.promptAcceptance ||
+          context.runnerSessionId ||
+          context.nativeSession
+        ),
+    )
   );
 }
 
