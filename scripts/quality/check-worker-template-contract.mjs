@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
@@ -78,27 +78,40 @@ function lintProjectRoot(projectRoot, issues) {
   // the proof steps for packs without flow templates; they get the proof-selection rule.
   // Sources rooted in an env var or another source are checked in the repo that owns them.
   const project = JSON.parse(readFileSync(projectJsonPath, 'utf8'));
+  const packRoot = realpathSync(projectRoot);
+  const within = (root, target) => {
+    const relative = path.relative(root, target);
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  };
   for (const source of project.execution_templates?.sources ?? []) {
     const root = source?.root?.projectPath;
     if (typeof root !== 'string') continue;
-    const checklistsDir = path.resolve(projectRoot, root, source.subpath ?? '.');
-    // The catalog refuses roots outside the pack; so does this check.
-    const inside = path.relative(projectRoot, checklistsDir);
-    if (inside.startsWith('..') || path.isAbsolute(inside)) {
+    // Catalog resolution: canonical source root inside the pack, canonical scan path
+    // (subpath) inside that root; missing roots are skipped like the catalog does.
+    const sourceRoot = path.resolve(projectRoot, root);
+    if (!existsSync(sourceRoot)) continue;
+    const canonicalRoot = realpathSync(sourceRoot);
+    const scanPath = path.resolve(canonicalRoot, source.subpath ?? '.');
+    const canonicalScan = existsSync(scanPath) ? realpathSync(scanPath) : null;
+    if (
+      !within(packRoot, canonicalRoot) ||
+      (canonicalScan && !within(canonicalRoot, canonicalScan))
+    ) {
       issues.push(
         `${projectRoot}: execution template source ${source.id} resolves outside the pack`,
       );
       continue;
     }
-    if (!existsSync(checklistsDir)) continue;
-    for (const dir of readdirSync(checklistsDir, { withFileTypes: true })) {
+    if (!canonicalScan) continue;
+    for (const dir of readdirSync(canonicalScan, { withFileTypes: true })) {
       if (!dir.isDirectory()) continue;
-      const flowDir = path.join(checklistsDir, dir.name);
+      const flowDir = path.join(canonicalScan, dir.name);
       for (const fileName of readdirSync(flowDir).filter((name) => name.endsWith('.md'))) {
         const checklistPath = path.join(flowDir, fileName);
+        if (!lstatSync(checklistPath).isFile()) continue;
         const content = readFileSync(checklistPath, 'utf8');
         // Catalog metadata: frontmatter flow, then the flow directory.
-        const flow = content.match(/^---\n[\s\S]*?^flow:\s*([\w.-]+)\s*$[\s\S]*?^---$/m)?.[1];
+        const flow = frontmatterFlow(content);
         for (const issue of lintWorkerTemplateProofSelection(content, flow ?? dir.name)) {
           issues.push(`${path.relative(repoRoot, checklistPath)}: ${issue}`);
         }
@@ -197,4 +210,16 @@ function inferFlowTypeFromTemplate(fileName, content) {
   if (base === 'ci-fix') return { flowType: 'ci-fix', mode };
   if (base === 'validate-dep') return { flowType: 'validate-dep', mode };
   return { flowType: base, mode };
+}
+
+/**
+ * The `flow:` value of a leading frontmatter block, as the execution-template catalog reads it
+ * (BOM stripped, LF or CRLF, closing `---` on its own line, optional quotes); body text is ignored.
+ * @param {string} text
+ */
+function frontmatterFlow(text) {
+  const normalized = text.replace(/^\uFEFF/, '');
+  const block = normalized.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  const value = block?.[1].match(/^flow:[ \t]*(.*?)[ \t]*\r?$/m)?.[1];
+  return value ? value.replace(/^(['"])(.*)\1$/, '$2') : undefined;
 }

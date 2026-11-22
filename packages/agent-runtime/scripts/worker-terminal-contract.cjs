@@ -415,7 +415,8 @@ function lintWorkerTemplateStructure(templateContent, options = {}) {
 const PROOF_SELECTION_EXEMPT_FLOWS = new Set(['review', 'review-pr', 'qa']);
 const RUNS_RECIPE_PROOF =
   /RECIPE_TASK_DIR|artifacts\/recipe-runs\/|\brecipe run\b|task-bound recipe proof|\b(?:re)?run\b[^.\n]{0,60}\b(?:recipes?|proof)\b/i;
-// A line that forbids or only diagnoses proof runs none.
+// A clause that forbids or only diagnoses proof runs none; the negation must sit in the
+// same clause as the run instruction.
 const NO_TASK_PROOF = /\b(?:do not|don't|never|must not|no longer)\b|--unbound/i;
 
 /**
@@ -432,8 +433,8 @@ function lintWorkerTemplateProofSelection(templateContent, flowType) {
   // A template with its own designed proof layout opts out by name, with its reason.
   if (/<!--\s*proof-selection:\s*exempt\s*\(\s*\S[^)]*\)\s*-->/.test(templateContent)) return [];
   const runsProof = templateContent
-    .split('\n')
-    .some((line) => RUNS_RECIPE_PROOF.test(line) && !NO_TASK_PROOF.test(line));
+    .split(/\n|[.;](?=\s)/)
+    .some((clause) => RUNS_RECIPE_PROOF.test(clause) && !NO_TASK_PROOF.test(clause));
   if (!runsProof || templateContent.includes('artifacts/latest-valid-recipe-run.json')) return [];
   return [
     'runs recipe proof but does not name the selected proof attempt (`artifacts/latest-valid-recipe-run.json`)',

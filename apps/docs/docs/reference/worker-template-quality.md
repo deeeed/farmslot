@@ -35,7 +35,7 @@ node scripts/quality/check-worker-template-contract.mjs projects/my-farm/templat
 - Terminal flow documents `./mark complete`, `./mark no-change`, or `./mark blocked` (or `mark-checklist-step … complete` for secondary signals like self-review)
 - Checklist references required artifact paths for the inferred flow (`artifacts/learnings.md`, `artifacts/report.md`, `artifacts/review.md`, …)
 - Honors `worker_terminal` overrides in `project.json` when present
-- A template or execution-template checklist that runs recipe proof names the selected proof attempt, `artifacts/latest-valid-recipe-run.json` (see [Recipe proof selection](#recipe-proof-selection)). Review and QA flows are exempt.
+- A template or execution-template checklist that runs recipe proof names the selected proof attempt, `artifacts/latest-valid-recipe-run.json` (see [Recipe proof selection](#recipe-proof-selection)). Review and QA flows are exempt. Pack-owned checklists (`execution_templates` sources with `root.projectPath`) are checked here; sources rooted in an env var or another source are checked in the repo that owns them.
 
 **Structure checks**
 
@@ -53,7 +53,13 @@ A task-root `artifacts/evidence-manifest.json` is optional. Use it only to decla
 
 A template whose proof uses a different designed layout opts out by name, with its reason: `<!-- proof-selection: exempt (<reason>) -->`. The MetaMask harness and perps templates do this, because their `artifacts/baseline` and `artifacts/after-fix` `[PROOF:]` layout is consumed by other tooling.
 
-**Before evidence from a separate base run.** Run the base proof into its own attempt under `artifacts/recipe-runs`. If that passing run moves the selection, re-select the after attempt. Declare the base captures in the optional task-root `artifacts/evidence-manifest.json` as before evidence (`before_after_pairs[].before` or `videos.before`). Publication admits a capture from another attempt only when that attempt keeps its `artifact-manifest.json` and a `product-provenance.json` that is clean, on the run branch or detached, and whose `git_ref` is an eligible base: a recorded pre-work base, the publication merge base, or, for fix-bug, its verified bug-marker commit. A capture from another attempt on the selected attempt's clean head may also be declared as after or standalone evidence. An "outside selected recipe attempt" refusal means a declared capture failed these checks: missing provenance or manifest, a digest mismatch, or an ineligible base. If it names an older attempt, the selection has moved: check the newest package under `artifacts/publication-packages`.
+**Before evidence from a separate base run.** Run the base proof into its own attempt under `artifacts/recipe-runs`. If that passing run moves the selection, re-select the after attempt. Declare the base captures in the optional task-root `artifacts/evidence-manifest.json` as before evidence (`before_after_pairs[].before` or `videos.before`). A root `before_after_pairs` list or `videos` object replaces the selected attempt's, so put each pair's after path, or `videos.after`, in the same declaration. Publication admits a capture from another attempt only when that attempt keeps its `artifact-manifest.json` and a `product-provenance.json` that is clean, on the run branch or detached, and whose `git_ref` is an eligible base:
+
+- a recorded pre-work base;
+- the publication merge base, when the frozen comparison head is the selected attempt's clean head;
+- for fix-bug, its verified bug-marker commit.
+
+A capture from another attempt on the selected attempt's clean head may also be declared as after or standalone evidence. When none of this applies, a person can attest one same-run attempt as before evidence at the publish gate (ADR-062 Amendment 21). An "outside selected recipe attempt" refusal means a declared capture failed these checks: missing provenance or manifest, a digest mismatch, or a `git_ref` off every eligible base. Only when it names an attempt other than the current selection has the selection moved: then check the newest package under `artifacts/publication-packages`.
 
 ## Heuristic review (skill)
 

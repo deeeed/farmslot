@@ -167,6 +167,14 @@ assert.match(
   /selected proof attempt/,
 );
 assert.deepEqual(lintWorkerTemplateProofSelection(proofStep, 'qa-site-build'), []);
+// A negation in another clause of the same line does not hide the run instruction.
+assert.match(
+  lintWorkerTemplateProofSelection(
+    '- [ ] Run the task recipe with a fresh attempt. An unavailable surface is blocked, never a manual-check substitute.',
+    'dev',
+  ).join(' '),
+  /selected proof attempt/,
+);
 assert.match(
   lintWorkerTemplateProofSelection(`${proofStep} See latest-valid-recipe-run.json.`, 'dev').join(
     ' ',
@@ -191,7 +199,7 @@ assert.match(
 
 // The checker applies the rule to execution-template checklists named by project.json.
 {
-  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = require('node:fs');
+  const { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } = require('node:fs');
   const { tmpdir } = require('node:os');
   const path = require('node:path');
   const { spawnSync } = require('node:child_process');
@@ -203,7 +211,12 @@ assert.match(
         execution_templates: {
           sources: [
             { id: 'project:x', kind: 'workspace', root: { projectPath: 'checklists' } },
-            { id: 'pack:y', kind: 'pack', root: { projectPath: 'templates' }, subpath: 'catalog' },
+            {
+              id: 'pack:y',
+              kind: 'package',
+              root: { projectPath: 'templates' },
+              subpath: 'catalog',
+            },
           ],
         },
       }),
@@ -231,12 +244,36 @@ assert.match(
     assert.doesNotMatch(result.stderr, /checklists\/qa/);
     assert.match(result.stderr, /templates\/catalog\/fix-bug\/default\.md: runs recipe proof/);
     rmSync(path.join(project, 'templates'), { recursive: true });
+    // Frontmatter decides the flow; body text that looks like frontmatter does not.
+    writeFileSync(
+      path.join(project, 'checklists', 'qa', 'default.md'),
+      `---\r\nflow: "dev"\r\n---\r\n# QA dir, dev flow\n\n${proofStep}\n`,
+    );
+    mkdirSync(path.join(project, 'checklists', 'dev2'), { recursive: true });
+    writeFileSync(
+      path.join(project, 'checklists', 'dev2', 'body.md'),
+      `# Dev\n\nflow: qa\n\n${proofStep}\n`,
+    );
+    result = check();
+    assert.match(result.stderr, /checklists\/qa\/default\.md: runs recipe proof/);
+    assert.match(result.stderr, /checklists\/dev2\/body\.md: runs recipe proof/);
+    rmSync(path.join(project, 'checklists', 'dev2'), { recursive: true });
+    writeFileSync(path.join(project, 'checklists', 'qa', 'default.md'), `# QA\n\n${proofStep}\n`);
     writeFileSync(
       path.join(project, 'checklists', 'dev', 'default.md'),
       `# Dev\n\n${proofStep} Claim the attempt in \`artifacts/latest-valid-recipe-run.json\`.\n`,
     );
     result = check();
     assert.equal(result.status, 0, result.stderr);
+    const config = JSON.parse(readFileSync(path.join(project, 'project.json'), 'utf8'));
+    config.execution_templates.sources.push({
+      id: 'escape',
+      kind: 'workspace',
+      root: { projectPath: '..' },
+    });
+    writeFileSync(path.join(project, 'project.json'), JSON.stringify(config));
+    result = check();
+    assert.match(result.stderr, /execution template source escape resolves outside the pack/);
   } finally {
     rmSync(project, { recursive: true, force: true });
   }
