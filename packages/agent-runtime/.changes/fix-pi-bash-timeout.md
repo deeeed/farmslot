@@ -1,0 +1,1 @@
+- Native Pi sessions (`pi --mode rpc`) load a small extension that gives a bash call with no timeout 600 seconds, the same default as tmux Pi workers; an explicit timeout is kept.
