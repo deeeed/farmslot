@@ -1,1 +1,0 @@
-- Claude workers on the default tmux socket start without `TMUX`, so iTerm's agent hook inherited from the user's Claude settings exits at once instead of waiting about 120s on every hook event. A named socket keeps `TMUX`, and `TMUX_PANE` is kept for pane observability. `farmslot clip` takes the lane label from `TMUX_PANE` when `TMUX` is absent.

@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, it } from 'node:test';
 
 import {
@@ -1940,7 +1943,7 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'claude', 'sonnet', PROMPT, { safetyTier: 'full-auto' });
       assert.match(
         cmd,
-        /unset CLAUDECODE && case "\$\{TMUX%%,\*\}" in \*\/default\) unset TMUX ;; esac && \/usr\/local\/bin\/claude --dangerously-skip-permissions --model sonnet/,
+        /unset CLAUDECODE && if \[ [^\]]+ \]; then unset TMUX; fi && \/usr\/local\/bin\/claude --dangerously-skip-permissions --model sonnet/,
       );
       assert.doesNotMatch(cmd, /--dangerously-bypass-approvals-and-sandbox/);
       assert.match(cmd, /--runner 'claude' --repo '\/tmp\/repo'/);
@@ -1958,7 +1961,7 @@ describe('buildLaunchCommand', () => {
       assert.match(cmd, /install-runner-observability\.mjs/);
       assert.match(
         cmd,
-        /cd '\/tmp\/repo' && unset CLAUDECODE && case "\$\{TMUX%%,\*\}" in \*\/default\) unset TMUX ;; esac && \/usr\/local\/bin\/claude --model sonnet --settings '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json'$/,
+        /cd '\/tmp\/repo' && unset CLAUDECODE && if \[ [^\]]+ \]; then unset TMUX; fi && \/usr\/local\/bin\/claude --model sonnet --settings '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json'$/,
       );
       assert.match(cmd, /install failed; continuing without hooks/);
       assert.match(cmd, /mkdir -p '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability'/);
@@ -1979,7 +1982,7 @@ describe('buildLaunchCommand', () => {
       assert.match(cmd, /install-runner-observability\.mjs/);
       assert.match(
         cmd,
-        /unset CLAUDECODE && case "\$\{TMUX%%,\*\}" in \*\/default\) unset TMUX ;; esac && cd \/tmp\/repo && \/usr\/local\/bin\/claude --settings '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json' --model opus \.task\/fix\/abc\/TASK\.md/,
+        /unset CLAUDECODE && if \[ [^\]]+ \]; then unset TMUX; fi && cd \/tmp\/repo && \/usr\/local\/bin\/claude --settings '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json' --model opus \.task\/fix\/abc\/TASK\.md/,
       );
     });
 
@@ -1999,17 +2002,32 @@ describe('buildLaunchCommand', () => {
         assert.ok(cmd.includes(`${CLAUDE_WORKER_ENV_UNSET} && `), name);
         assert.doesNotMatch(cmd, /TMUX_PANE/, name);
       }
+      const tmuxTmpdir = mkdtempSync(path.join(os.tmpdir(), 'claude-worker-tmux-'));
+      const fallbackSocket = path.join(
+        realpathSync(tmuxTmpdir),
+        `tmux-${process.getuid?.()}`,
+        'default',
+      );
       const envAfterUnset = (tmux: string): string =>
         execFileSync(
           'bash',
           ['-c', `${CLAUDE_WORKER_ENV_UNSET} && printf '%s|%s' "\${TMUX-unset}" "$TMUX_PANE"`],
-          { env: { PATH: process.env.PATH, TMUX: tmux, TMUX_PANE: '%7' }, encoding: 'utf8' },
+          {
+            env: { PATH: process.env.PATH, TMUX: tmux, TMUX_PANE: '%7', TMUX_TMPDIR: tmuxTmpdir },
+            encoding: 'utf8',
+          },
         );
-      assert.equal(envAfterUnset('/private/tmp/tmux-501/default,1889,55'), 'unset|%7');
-      assert.equal(
-        envAfterUnset('/private/tmp/tmux-501/cross-model-demo,1889,55'),
-        '/private/tmp/tmux-501/cross-model-demo,1889,55|%7',
-      );
+      try {
+        assert.equal(envAfterUnset(`${fallbackSocket},1889,55`), 'unset|%7');
+        for (const kept of [
+          path.join(path.dirname(fallbackSocket), 'cross-model-demo'),
+          '/private/tmp/isolated/default',
+        ]) {
+          assert.equal(envAfterUnset(`${kept},1889,55`), `${kept},1889,55|%7`);
+        }
+      } finally {
+        rmSync(tmuxTmpdir, { recursive: true, force: true });
+      }
     });
 
     it('preserves selected effort once across the Claude tmux launch paths', () => {
@@ -2796,7 +2814,7 @@ describe('buildRunnerSessionReloadCommand', () => {
     assert.match(cmd, /install-runner-observability\.mjs/);
     assert.match(
       cmd,
-      /cd '\/tmp\/repo' && unset CLAUDECODE && case "\$\{TMUX%%,\*\}" in \*\/default\) unset TMUX ;; esac && \/opt\/bin\/claude --dangerously-skip-permissions --model sonnet --settings '\/tmp\/\.farmslot-runtime\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json' --resume 'session-123' 'Read and execute TASK.md'$/,
+      /cd '\/tmp\/repo' && unset CLAUDECODE && if \[ [^\]]+ \]; then unset TMUX; fi && \/opt\/bin\/claude --dangerously-skip-permissions --model sonnet --settings '\/tmp\/\.farmslot-runtime\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json' --resume 'session-123' 'Read and execute TASK.md'$/,
     );
     assert.match(
       cmd,
