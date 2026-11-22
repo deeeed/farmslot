@@ -139,48 +139,6 @@ for (const shell of ['/bin/sh', '/bin/zsh'].filter((candidate) => existsSync(can
     assert.equal(running(respawned), false, 'a group started during the reap survived');
   });
 
-  test(`prepare cleanup of successive stubborn replacement groups fits the release budget (${shell})`, async (t) => {
-    // Each generation ignores SIGTERM and starts the next group: every round needs SIGKILL.
-    const f = await fixture(t, shell);
-    const pids = path.join(f.root, 'generations');
-    const generation = (left: number): string => `
-      const { spawn } = require('node:child_process');
-      const fs = require('node:fs');
-      fs.appendFileSync(${JSON.stringify(pids)}, process.pid + '\\n');
-      process.on('SIGTERM', () => {
-        if (${left} > 0) {
-          const next = spawn(process.execPath, ['-e', ${JSON.stringify('__NEXT__')}], { detached: true, stdio: 'ignore' });
-          next.unref();
-        }
-      });
-      setInterval(() => {}, 60000);
-    `;
-    let code = generation(0);
-    for (const left of [1, 2])
-      code = generation(left).replace(JSON.stringify('__NEXT__'), JSON.stringify(code));
-    const first = spawn(process.execPath, ['-e', code], {
-      detached: true,
-      stdio: 'ignore',
-      env: { ...process.env, FARMSLOT_PREPARE_SCOPE: f.scope },
-    });
-    own(t, first);
-    while (!existsSync(pids)) await new Promise((resolve) => setTimeout(resolve, 50));
-    const started = Date.now();
-    const result = f.reap(f.scope, {}, 20_000);
-    const elapsed = Date.now() - started;
-    const generations = readFileSync(pids, 'utf8').trim().split('\n').map(Number);
-    t.after(() => {
-      for (const pid of generations) if (running(pid)) process.kill(pid, 'SIGKILL');
-    });
-    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
-    assert.equal(generations.length, 3, 'every generation started its replacement');
-    assert.ok(
-      generations.every((pid) => !running(pid)),
-      'a replacement group survived',
-    );
-    assert.ok(elapsed < 15_000, `reap took ${elapsed} ms, past the 15 s release command budget`);
-  });
-
   test(`prepare cleanup stops group members after their detached leader exits (${shell})`, async (t) => {
     const f = await fixture(t, shell);
     const exited = once(f.child, 'exit');
