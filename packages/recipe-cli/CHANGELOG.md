@@ -5,7 +5,11 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.35.32 - 2026-11-23
+
 - Add `renderRecipeTranscript` and the `transcript` artifacts format: a deterministic, redacted transcript of a retained attempt (node results with asserted values, recipe digest, clean commit, network, claims) for headless proof; Markdown includes it in the Validation Logs when `transcript` is set.
+- `logs --full` prints the whole selected log and exits; only `--follow` keeps `tail -F` open and announces a live follow (`--full --follow` still streams the whole log).
 
 ## 0.35.31 - 2026-11-21
 
