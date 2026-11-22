@@ -60,7 +60,9 @@ export function pidFileProbeCommand(pidPath: string): string {
   return [
     `f=${shellQuote(pidPath)}`,
     '[ -f "$f" ] || exit 3',
-    'pid=$(tr -d "[:space:]" < "$f" 2>/dev/null) || exit 3',
+    // Exactly one non-empty line holding one decimal PID.
+    '[ "$(grep -c . "$f" 2>/dev/null)" = 1 ] || exit 3',
+    'pid=$(grep . "$f" | tr -d " \\t\\r")',
     'case "$pid" in ""|*[!0-9]*) exit 3 ;; esac',
     // BSD stat first; GNU `stat -f` prints filesystem details, so each result is validated.
     'modified=$(stat -f %m "$f" 2>/dev/null)',
@@ -93,6 +95,24 @@ export function parsePidFileProbe(stdout: string): { pid: number; identity: stri
   )
     return undefined;
   return { pid, identity: started.join(' ') };
+}
+
+/** Whether a process in this group listens on the port: the resource it serves. */
+async function groupHoldsListener(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  port: number,
+  group: number,
+): Promise<boolean> {
+  const result = await execOnSlot(
+    vars,
+    `for p in $(lsof -nP -iTCP:${port} -sTCP:LISTEN -t 2>/dev/null); do ps -o pgid= -p "$p" 2>/dev/null; done`,
+    { cwd: '/', timeout: 5_000 },
+  );
+  if (result.exitCode !== 0) throw new Error('Idle dev server listener identity unavailable');
+  return result.stdout
+    .split(/\s+/)
+    .filter(Boolean)
+    .some((value) => Number(value) === group);
 }
 
 async function recordedPidFileProcess(
@@ -150,6 +170,7 @@ const idleDevServers = new IdleDevServerReaper({
     let pid = cached?.pid;
     const launch = cached?.meta?.slotId === slotId ? cached.meta.process : undefined;
     let recordedIdentity: string | undefined;
+    let servedPort: number | undefined;
     if (resource?.definition.watch?.type === 'port-listen') {
       const project = await loadProjectVars(vars.projectName);
       const port = Number(
@@ -167,17 +188,21 @@ const idleDevServers = new IdleDevServerReaper({
       pid = pids[0];
     } else if (resource?.definition.watch?.type === 'pid-file' && !launch) {
       // Without this gateway's launch record (a restart, or a watcher that rebuilt the cache
-      // from liveness alone) the watched PID file is the only candidate, and only while its
-      // process predates the file. The checkout-cwd provenance below still decides.
+      // from liveness alone) the watched PID file is the only candidate: only while its
+      // process predates the file, and only when the watch declares the port it serves and
+      // that process's group holds the listener. The checkout-cwd provenance below still decides.
       const watchPath = resource.definition.watch.path;
-      if (!watchPath) return undefined;
+      if (!watchPath || !resource.definition.watch.port) return undefined;
       const project = await loadProjectVars(vars.projectName);
+      const port = Number(expandTemplate(String(resource.definition.watch.port), vars, project));
+      if (!Number.isInteger(port) || port < 1 || port > 65535) return undefined;
       const expanded = expandTemplate(String(watchPath), vars, project);
       const pidPath = expanded.startsWith('/') ? expanded : `${vars.remoteRepo}/${expanded}`;
       const recorded = await recordedPidFileProcess(vars, pidPath);
       if (!recorded || (cached?.pid !== undefined && cached.pid !== recorded.pid)) return undefined;
       pid = recorded.pid;
       recordedIdentity = recorded.identity;
+      servedPort = port;
     }
     if (!pid) return undefined;
     const process = await probeResourceProcess(vars, pid);
@@ -186,6 +211,8 @@ const idleDevServers = new IdleDevServerReaper({
       recordedIdentity !== undefined &&
       process.identity !== recordedIdentity.replace(/\s+/g, ' ')
     )
+      return undefined;
+    if (servedPort !== undefined && !(await groupHoldsListener(vars, servedPort, process.group)))
       return undefined;
     const matches = (known: IdleDevServerPointer | undefined) =>
       known &&

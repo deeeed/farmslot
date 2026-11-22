@@ -1949,7 +1949,7 @@
                 },
                 "port": {
                   "type": "string",
-                  "description": "Port to check (for port-listen type)."
+                  "description": "Port to check (for port-listen type). For pid-file, the optional port the process serves: the idle dev-server cap uses it to verify a PID-file process after a gateway restart."
                 },
                 "cmd": {
                   "type": "string",

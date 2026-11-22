@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -32,6 +32,8 @@ let foreign = false;
 let unhealthyBoot = false;
 let pidFileWatch = false;
 let pidFileAge = 60;
+let pidFilePort: string | undefined = '{{port}}';
+let listenerGroup = '101';
 let closedHistory = false;
 let realStatus = false;
 let promptDelivered = false;
@@ -63,7 +65,7 @@ const resources = (): SlotResource[] => [
       controllable: true,
       streamable: false,
       watch: pidFileWatch
-        ? { type: 'pid-file', path: '{{runtime_dir}}/next-dev.pid' }
+        ? { type: 'pid-file', path: '{{runtime_dir}}/next-dev.pid', port: pidFilePort }
         : { type: 'port-listen', port: '{{port}}' },
       hooks: { boot: 'fixture-prepare', health: 'fixture-health' },
     },
@@ -132,6 +134,9 @@ const fixtureExec = async (_vars: unknown, command: string) => {
       stderr: '',
       exitCode: 0,
     };
+  }
+  if (command.startsWith('for p in $(lsof -nP -iTCP:9001 -sTCP:LISTEN -t')) {
+    return { stdout: alive ? `${listenerGroup}\n` : '', stderr: '', exitCode: 0 };
   }
   if (command.startsWith('lsof -a'))
     return { stdout: `p101\nn${foreign ? '/foreign' : '/fixture'}\n`, stderr: '', exitCode: 0 };
@@ -328,6 +333,8 @@ beforeEach(() => {
   promptDelivered = false;
   pidFileWatch = false;
   pidFileAge = 60;
+  pidFilePort = '{{port}}';
+  listenerGroup = '101';
 });
 
 test('port watch resolves once, expires through the real identity reaper and resumes through boot', async () => {
@@ -403,11 +410,37 @@ test('the PID-file probe runs on this host and rejects a file older than its pro
   t.after(() => rm(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'next-dev.pid');
   await writeFile(file, `${process.pid}\n`);
-  const probe = () => execFileSync('bash', ['-c', pidFileProbeCommand(file)], { encoding: 'utf8' });
+  const probe = () => {
+    const result = spawnSync('bash', ['-c', pidFileProbeCommand(file)], { encoding: 'utf8' });
+    assert.ok(result.status === 0 || result.status === 3, result.stderr);
+    return result.status === 0 ? result.stdout : '';
+  };
   assert.equal(parsePidFileProbe(probe())?.pid, process.pid);
+  await writeFile(file, `12\n34\n`);
+  assert.equal(parsePidFileProbe(probe()), undefined, 'one decimal PID per file');
+  await writeFile(file, `${process.pid}\n`);
   const stale = new Date('2020-01-01T00:00:00Z'); // Date.now is mocked in this file.
   await utimes(file, stale, stale);
   assert.equal(parsePidFileProbe(probe()), undefined);
+});
+
+test('a pid-file watch that declares no port grants no stop authority after a restart', async () => {
+  pidFileWatch = true;
+  pidFilePort = undefined;
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 0);
+});
+
+test('a recorded PID whose group does not hold the declared listener is preserved', async () => {
+  // A harness can rewrite the PID file with a reused PID; the listener stays elsewhere.
+  pidFileWatch = true;
+  listenerGroup = '555';
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 0);
 });
 
 test('a pid-file dev server outside the checkout is preserved', async () => {
