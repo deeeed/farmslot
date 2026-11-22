@@ -908,35 +908,36 @@ async function slotReleaseImpl(
       if (!stopped)
         holdReason = `In-flight prepare did not stop within ${Math.round(stopMs / 1000)}s`;
     }
+    // Each reap below runs even when an earlier one could not finish: a surviving preflight
+    // group must not leave the run's detached browser session and runner runtimes behind
+    // (macpro-mmt-1). The slot is still held with every reason that remains.
     if (!holdReason) {
-      await assertReleaseClaim();
-      try {
+      const reasons: string[] = [];
+      const reap = async (stop: () => Promise<string | null | undefined>) => {
+        await assertReleaseClaim();
+        try {
+          const reason = await stop();
+          if (reason) reasons.push(reason);
+        } catch (error) {
+          reasons.push(error instanceof Error ? error.message : String(error));
+        }
+      };
+      await reap(async () => {
         const stopped = await reapSlotPrepareScope(vars, {
           identityPath: prepareIdentityPath(vars.remoteRepo, projectVars?.runtimeDir ?? ''),
         });
         step('prepare', stopped ? 'Prepare scope stopped' : 'No live prepare scope');
-      } catch (error) {
-        holdReason = error instanceof Error ? error.message : String(error);
-      }
-    }
-    // A run's browser session (browser, wallet host, console collector) is
-    // detached from the agent just killed, so it is stopped here or named.
-    if (!holdReason) {
-      await assertReleaseClaim();
-      try {
-        const stillOwned = async () => {
-          await assertReleaseClaim();
-          return true;
-        };
-        holdReason = await cleanupSlotRunnerRuntimes(vars, { stillOwned });
-        if (!holdReason)
-          holdReason = await reapSlotBrowserSession(vars, {
-            stillOwned,
-            includeSlotProfiles: true,
-          });
-      } catch (error) {
-        holdReason = error instanceof Error ? error.message : String(error);
-      }
+        return null;
+      });
+      // A run's browser session (browser, wallet host, console collector) is
+      // detached from the agent just killed, so it is stopped here or named.
+      const stillOwned = async () => {
+        await assertReleaseClaim();
+        return true;
+      };
+      await reap(() => cleanupSlotRunnerRuntimes(vars, { stillOwned }));
+      await reap(() => reapSlotBrowserSession(vars, { stillOwned, includeSlotProfiles: true }));
+      holdReason = reasons.join('; ') || null;
     }
     if (holdReason) {
       const reason = holdReason;

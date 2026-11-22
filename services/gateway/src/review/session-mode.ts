@@ -1,8 +1,10 @@
 import {
   type AgentContext,
+  isAcceptedFixAttempt,
   isReviewRoundNoVerdictSettlement,
   type ReviewAttempt,
   type ReviewContinuationContext,
+  reviewEndsWithAcceptedFix,
   type ReviewGatePayload,
   type ReviewIssue,
   type ReviewMode,
@@ -148,8 +150,12 @@ export function lastValidatedReview(review: ReviewStatus | undefined):
   const results: Array<
     ReviewAttempt & Pick<ReviewStatus, 'reviewedHeadSha' | 'reviewerSessionId'>
   > = review ? [review, ...[...(review.attempts ?? [])].reverse()] : [];
+  // A gateway-accepted fix is not a reviewer result: the baseline stays the head and
+  // findings the reviewer last saw, so a re-review covers the accepted patch.
   const result = results.find(
-    (candidate) => candidate.verdict === 'pass' || candidate.verdict === 'issues',
+    (candidate) =>
+      (candidate.verdict === 'pass' || candidate.verdict === 'issues') &&
+      !(candidate === review ? reviewEndsWithAcceptedFix(review) : isAcceptedFixAttempt(candidate)),
   );
   const headSha =
     result?.reviewSnapshot?.source === 'unavailable'

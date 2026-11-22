@@ -542,6 +542,13 @@ unchanged; gateway acceptance records the completed fix and current inputs.
 Unknown deltas retain
 the existing review path. Restart recovery applies the same limits.
 
+**Revised 2026-11-22 (lead, after run c22a1e09):** the small-fix skip applies only
+when every open finding is minor or nit. An open blocker or major, or a finding
+without a severity (including findings re-read from the checklist after a restart),
+gets a real re-review. A gateway-accepted fix is not a passing
+review: the gate shows "fix accepted without re-review" and does not count it toward
+the required reviews.
+
 Repeated empty cycles and small rechecks consumed reviewer rounds without new
 findings. These limits remove automatic launches without another reviewer
 verdict or round admission. There is no new public API or package field.

@@ -19,6 +19,7 @@ import {
   isQualifyingReview,
   qualifyingPassingReviews,
   type ReadyGatePayload,
+  reviewEndsWithAcceptedFix,
   type ReviewStatus,
   type Run,
   type RunDecision,
@@ -190,7 +191,10 @@ export function latestReviewVerdicts(reviews: ReadonlyArray<ReviewStatus>): Gate
     .map(([id, review]) => {
       const runner = review.runner?.trim() || 'unknown runner';
       const stale = review.stale === true;
-      const approved = review.verdict === 'pass' && review.unresolvedCount === 0 && !stale;
+      // No reviewer saw a gateway-accepted fix, so it is never shown as an approval.
+      const acceptedFix = reviewEndsWithAcceptedFix(review);
+      const approved =
+        review.verdict === 'pass' && review.unresolvedCount === 0 && !stale && !acceptedFix;
       const unresolved =
         review.unresolvedCount > 0 ? ` · ${review.unresolvedCount} unresolved` : '';
       return {
@@ -202,8 +206,10 @@ export function latestReviewVerdicts(reviews: ReadonlyArray<ReviewStatus>): Gate
         unresolvedCount: review.unresolvedCount,
         stale,
         approved,
-        label: `${review.verdict}${stale ? ' (stale)' : ''}${unresolved}`,
-        color: verdictColor(review, approved),
+        label: acceptedFix
+          ? 'fix accepted without re-review'
+          : `${review.verdict}${stale ? ' (stale)' : ''}${unresolved}`,
+        color: acceptedFix ? colors.statusWarn : verdictColor(review, approved),
       };
     });
 }
@@ -236,14 +242,19 @@ export function approvePublishGuard(input: ApprovePublishGuardInput): ApprovePub
   const passing = qualifyingPassingReviews(
     input.reviews.filter((review) => review.approved).map((review) => review.review),
   );
+  // A gateway-accepted fix is not a review: it neither approves nor refuses, so it blocks
+  // only while the required reviews are short, as the gateway's policy does.
+  const acceptedFix = (review: GateReviewVerdict) => reviewEndsWithAcceptedFix(review.review);
+  const countShort = passing.length < input.requiredReviews;
   if (
     input.reviews.length > 0 &&
-    input.reviews.every((review) => review.approved) &&
-    passing.length < input.requiredReviews
+    input.reviews.every((review) => review.approved || acceptedFix(review)) &&
+    countShort
   )
     reviewReasons.push(`${passing.length} of ${input.requiredReviews} required reviews approve`);
   for (const review of input.reviews) {
-    if (!review.approved) reviewReasons.push(`Latest ${review.runner} review is ${review.label}`);
+    if (review.approved || (acceptedFix(review) && !countShort)) continue;
+    reviewReasons.push(`Latest ${review.runner} review is ${review.label}`);
   }
   return { acceptanceReasons, reviewReasons };
 }

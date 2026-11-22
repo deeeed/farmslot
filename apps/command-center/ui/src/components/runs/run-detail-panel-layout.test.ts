@@ -720,3 +720,50 @@ test('the run sidebar shows stale progress on the list row and the hydrated run'
   const gate = renderRunDetailView({ ...context(), run: { ...stale, status: 'human-gating' } });
   assert.doesNotMatch(litText(gate), /Stale · no progress/);
 });
+
+test('run detail shows receipt subtotal ahead of other metadata', () => {
+  const ctx = context();
+  ctx.run = {
+    ...run,
+    metrics: { ...run.metrics, costEstimate: 0.386113502 },
+    sessionUsage: [
+      {
+        runner: 'pi',
+        runnerSessionId: 'worker',
+        role: 'fix-bug',
+        source: 'runner-transcript',
+        measuredAt: run.updatedAt,
+        costUsd: 0.386113502,
+      },
+      {
+        runner: 'pi',
+        runnerSessionId: 'reviewer',
+        role: 'review',
+        source: 'runner-transcript',
+        measuredAt: run.updatedAt,
+        costUsd: 5.6972894,
+      },
+    ],
+  };
+  const view = litText(renderRunDetailView(ctx));
+  assert.match(view, /Known subtotal.*\$6\.08.*2 of 2 priced.*class="meta"/s);
+});
+
+test('legacy review estimates respect the recorded cost scope', () => {
+  const ctx = context();
+  ctx.run = {
+    ...run,
+    flowType: 'review-pr',
+    reviewMode: 'cold',
+    metrics: { ...run.metrics, costEstimate: 4, sessionUsageScope: 'review-generation-delta' },
+  };
+  assert.match(litText(renderRunDetailView(ctx)), /No session receipts.*Review estimate.*\$4\.00/s);
+  ctx.run = { ...ctx.run, reviewMode: 'warm' };
+  assert.doesNotMatch(litText(renderRunDetailView(ctx)), /Review estimate/);
+  ctx.run = {
+    ...ctx.run,
+    reviewMode: 'cold',
+    metrics: { ...ctx.run.metrics, sessionUsageScope: 'review-chain-total' },
+  };
+  assert.doesNotMatch(litText(renderRunDetailView(ctx)), /Review estimate/);
+});

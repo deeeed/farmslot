@@ -33,12 +33,21 @@ import {
 import { initializeNativeRunCollections } from '../lib/run-collections';
 import { isStoreScreenshotMode, seedStoreScreenshotMode } from '../lib/store-screenshot-mode';
 import { colors } from '../lib/theme';
+import { StartupRunDestinationProvider } from '../lib/use-startup-run-destination';
 import { useWorkspaceRenderAccess } from '../lib/use-workspace-render-access';
 import { useAttentionPrefsStore } from '../store/attention-prefs';
 import { useConnectionStore } from '../store/connection';
 import { useTerminalPrefsStore } from '../store/terminal-prefs';
 
 export default function RootLayout() {
+  return (
+    <StartupRunDestinationProvider>
+      <CompanionRootLayout />
+    </StartupRunDestinationProvider>
+  );
+}
+
+function CompanionRootLayout() {
   const init = useConnectionStore((s) => s.init);
   const access = useConnectionStore((s) => s.workspaceAccess);
   const renderAccess = useWorkspaceRenderAccess();

@@ -1,1 +1,0 @@
-- `parseReviewRuleDeclaration` is exported, and a project may declare its review rule pack on `static_review.rule_pack` (ADR-0073 Amendment 1). `FrozenReviewRulePack` names a declared pack frozen with its digest.

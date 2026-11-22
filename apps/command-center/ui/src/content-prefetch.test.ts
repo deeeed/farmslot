@@ -15,6 +15,7 @@ import {
   contentPrefetchTargets,
   createOwnerContentPrefetch,
   fetchRunArtifactBytes,
+  onReviewHistoryPrefetched,
 } from './content-prefetch.js';
 import { clearGatewayMemoryAuth, setGatewayMemoryAuth } from './gateway-url.js';
 
@@ -246,4 +247,41 @@ test('an ended person session refuses artifact reads, so prefetch stops for the 
   );
   assert.equal(artifactReads.length, 2);
   owner.sync(undefined, false);
+});
+
+test('review history publishes a completion notice with its run and cache owner', async (t) => {
+  const run = { id: 'history', steps: [{ name: 'review', status: 'pending' }], decisions: [] };
+  const { transport } = fakeTransport(true, (method, params) => {
+    if (method !== Methods.RUN_GET) return undefined;
+    return {
+      data: { run },
+      resourceState: {
+        epoch: 'prefetch',
+        dependencies: resourceQuery(Methods.RUN_GET, params).dependencies.map((key) => ({
+          key,
+          revision: 0,
+        })),
+      },
+    };
+  });
+  const cache = createGatewayResourceCache({ transport, store: createMemoryResourceStore() });
+  t.after(() => cache.dispose());
+  const owner = createOwnerContentPrefetch({
+    transport,
+    request: () => new Promise(() => {}),
+    readArtifact: async () => new Uint8Array(),
+  });
+  t.after(() => owner.sync(undefined, false));
+  const notices: Array<{ expectedOwner: boolean; identity: string }> = [];
+  t.after(
+    onReviewHistoryPrefetched(run.id, (source, identity) => {
+      notices.push({ expectedOwner: source === cache, identity });
+    }),
+  );
+  owner.sync(cache, true);
+  owner.setTargets([{ runId: run.id, gate: true }]);
+  await flush();
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0]?.expectedOwner, true);
+  assert.match(notices[0]?.identity ?? '', /history/);
 });

@@ -128,7 +128,8 @@ export async function recoverReviewTmuxSession(run: Run, assertCurrent: () => vo
   await persistRunNow(getRun(run.id)!, 'recover exact reviewer session');
 }
 
-async function reviewEnvironment(run: Run) {
+/** The environment a static tmux reviewer is launched with: project, domain, pool, then frozen support. */
+export async function reviewEnvironment(run: Run) {
   const w = run.reviewWorkspace!;
   const project = await loadProjectVars(run.project);
   const pool = await loadMachinePool(w.machine);

@@ -23,3 +23,27 @@ export function mediaShareView(
       }
     : undefined;
 }
+
+export interface RecordingAnchor {
+  requestedMs: number;
+  previousMs: number;
+  observedMs?: number;
+}
+
+/** Old samples can precede seek completion; a third position means playback has moved. */
+export function observeRecordingAnchor(
+  anchor: RecordingAnchor,
+  playing: boolean,
+  positionMs: number,
+): 'pending' | 'confirmed' | 'moved' {
+  if (playing) return 'moved';
+  if (anchor.observedMs !== undefined)
+    return Math.abs(positionMs - anchor.observedMs) <= 1 ? 'confirmed' : 'moved';
+  // A short seek can leave a queued old sample inside the landing tolerance.
+  if (
+    Math.abs(positionMs - anchor.previousMs) <= 1 &&
+    Math.round(positionMs) !== Math.round(anchor.requestedMs)
+  )
+    return 'pending';
+  return Math.abs(positionMs - anchor.requestedMs) <= 100 ? 'confirmed' : 'moved';
+}

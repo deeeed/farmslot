@@ -1,4 +1,19 @@
 import { readdir } from 'node:fs/promises';
+import path from 'node:path';
+
+export const RECIPE_PENDING_FLOW_FILE = '.farmslot-recipe-flow.json';
+export const RECIPE_PENDING_FLOW_PARTIAL_FILE = `${RECIPE_PENDING_FLOW_FILE}.partial`;
+
+function isPendingFlowArtifact(relativePath: string): boolean {
+  const file = path.normalize(relativePath).toLowerCase();
+  return file === RECIPE_PENDING_FLOW_FILE || file === RECIPE_PENDING_FLOW_PARTIAL_FILE;
+}
+
+export function assertNotPendingFlowArtifact(relativePath: string): void {
+  if (isPendingFlowArtifact(relativePath)) {
+    throw new Error(`Artifact path ${relativePath} is reserved for pending recipe flow.`);
+  }
+}
 
 // Observer setup may already exist here, but a recipe package belongs to one attempt.
 const PACKAGE_FILES = new Set([
@@ -30,7 +45,7 @@ export async function assertRecipeArtifactDestinationAvailable(
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
     throw error;
   }
-  if (entries.some((entry) => PACKAGE_FILES.has(entry))) {
+  if (entries.some((entry) => PACKAGE_FILES.has(entry) || isPendingFlowArtifact(entry))) {
     throw occupiedRecipeArtifactsError(artifactsDir);
   }
 }

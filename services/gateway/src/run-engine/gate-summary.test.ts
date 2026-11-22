@@ -553,6 +553,12 @@ test('a requested code review clears the skipped-pipeline warning', () => {
       ['pass', 'issues'].includes(verdict) ? undefined : true,
       verdict,
     );
+    // Run 936cad9f: the requested Codex review ran and counts; the skip is the pipeline's.
+    assert.match(
+      buildReviewSummary(run).summaryText ?? '',
+      /^automatic review skipped \(disabled-for-project\); [01]\/1 reviews passing/,
+      verdict,
+    );
   }
 });
 

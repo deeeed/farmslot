@@ -1,13 +1,13 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Companion custom native question answer",
-  "description": "Use a fresh NATIVE_COMPANION_PROOF_STATE and the private gateway, token file and simulator environment. A real Claude question has suggested options; Companion sends custom text and the runner repeats the received answer.",
+  "description": "Use a fresh NATIVE_COMPANION_PROOF_STATE and the private gateway, token file and simulator environment. A real Claude question has suggested options; Companion sends custom text and the runner repeats the received answer. NATIVE_COMPANION_RUNNER and NATIVE_COMPANION_MODEL pick another real runner (default claude / sonnet); a Codex session asks questions only in plan mode, which the setup selects.",
   "workflow": {
     "entry": "setup",
     "nodes": {
       "setup": {
         "action": "command",
-        "cmd": "NATIVE_COMPANION_RUNNER=claude NATIVE_COMPANION_MODEL=sonnet yarn exec tsx scripts/agentic/native-conversation-proof.mts setup-question",
+        "cmd": "NATIVE_COMPANION_RUNNER=${NATIVE_COMPANION_RUNNER:-claude} NATIVE_COMPANION_MODEL=${NATIVE_COMPANION_MODEL:-sonnet} yarn exec tsx scripts/agentic/native-conversation-proof.mts setup-question",
         "intent": "Create a disposable real Claude question with suggested options.",
         "next": "open"
       },

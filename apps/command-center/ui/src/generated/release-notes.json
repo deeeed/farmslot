@@ -1,10 +1,11 @@
 {
-  "version": "0.36.8",
-  "date": "2026-11-18",
+  "version": "0.36.11",
+  "date": "2026-11-21",
   "items": [
-    "Search inside saved logs, Markdown and JSON, then preview a matching original line and restore it from a shared link",
-    "Show “Worker finished” on stale blocked runs when Monitor was the last step to run and recorded completion",
-    "Show failed attempts, timestamps and recorded failure reasons inside the Review history round they belong to",
-    "Show how long a run has gone without progress after 20 minutes in Runs and the run sidebar. Keep operator waits clear of the stale label"
+    "View the full execution timeline in evidence review, including setup and steps with no verified video position",
+    "View the known run cost by phase, receipt coverage, and verified costs for individual review rounds",
+    "View inclusive and self timing, criterion rollups, and unassigned time in composed recipe evidence",
+    "View the active recipe flow in Run Detail while a recipe runs, before its first step completes",
+    "Keep worker terminals, Sessions layout and End session focus steady during inventory refreshes"
   ]
 }

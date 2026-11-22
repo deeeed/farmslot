@@ -1,0 +1,1 @@
+- Slot cleanup stops a scoped preflight group that starts during the reap (swept again up to three times) instead of failing teardown, and a release whose prepare scope cannot be fully stopped still stops the run's detached browser session and runner runtimes before holding the slot.

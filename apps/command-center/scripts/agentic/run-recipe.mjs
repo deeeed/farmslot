@@ -27,6 +27,7 @@ import { promisify } from 'node:util';
 
 import { cdpListenerPids, connectBrowserCdp, placeWindow } from '@farmslot/adapter-web/browser-cdp';
 import { selectPageTarget } from '@farmslot/adapter-web/page-target';
+import { isRecipeFlowUpdate } from '@farmslot/protocol/recipe';
 import {
   applyTaskLocalInvocationTrust,
   createCaptureHelperVideoRecorder,
@@ -445,7 +446,27 @@ function wrapTransportWithSlow(transport, slowMs) {
   };
 }
 
-function wrapTransportNavigate(transport, uiBaseUrl) {
+export function commandCenterHudNode(node) {
+  if (node.clear === true || !isRecipeFlowUpdate(node.recipe_flow)) return node;
+
+  const { progress, ancestry } = node.recipe_flow;
+  const updated = { ...node, progress: { ...node.progress, ...progress } };
+  if (!ancestry || ancestry.breadcrumbs.length < 2) return updated;
+
+  const path = ancestry.breadcrumbs.map(({ label }) => label).join(' › ');
+  if (typeof node.error === 'string' && node.error.trim()) {
+    // The CDP renderer gives the detail row to errors.
+    const intent = node.intent ?? node.text ?? node.node_id ?? node.recipe_flow.activeId;
+    return { ...updated, intent: `${intent} · ${path}` };
+  }
+  const detail =
+    node.display?.showDetail === true && typeof node.detail === 'string'
+      ? `${path} · ${node.detail}`
+      : path;
+  return { ...updated, detail, display: { ...node.display, showDetail: true } };
+}
+
+function wrapCommandCenterTransport(transport, uiBaseUrl) {
   return {
     async execute(action, node, context) {
       if (action === 'ui.navigate') {
@@ -456,7 +477,11 @@ function wrapTransportNavigate(transport, uiBaseUrl) {
         );
         return transport.execute(action, { ...node, url: normalized, target: normalized }, context);
       }
-      return transport.execute(action, node, context);
+      return transport.execute(
+        action,
+        action === 'app.hud' ? commandCenterHudNode(node) : node,
+        context,
+      );
     },
     ...(transport.observe
       ? { observe: (refs, node, context) => transport.observe(refs, node, context) }
@@ -791,7 +816,7 @@ async function main() {
   });
 
   const transport = wrapTransportWithSlow(
-    wrapTransportNavigate(cdpTransport, uiUrl),
+    wrapCommandCenterTransport(cdpTransport, uiUrl),
     options.slowMs,
   );
 

@@ -1,0 +1,1 @@
+- `farmslot clip` takes the lane label from `TMUX_PANE` when `TMUX` is absent, as in Claude workers on the default tmux socket.

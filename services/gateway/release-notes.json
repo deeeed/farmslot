@@ -1,11 +1,10 @@
 {
-  "version": "0.39.8",
-  "date": "2026-11-18",
+  "version": "0.39.11",
+  "date": "2026-11-21",
   "items": [
-    "Search retained text artifacts with bounded literal reads, line hits and the existing artifact snapshot/path checks",
-    "List opted-in read-only reference checkouts, their revisions and dirty state in task inputs and `inputs/reference-checkouts.json`, including references unavailable to static-review support. Missing or unreadable checkouts require a BLOCKED comparison; active slot checkouts are never substituted. Opt in with `reference_repos.<name>.read_only: true` so a farm's owned checkout stays outside the list",
-    "Cost per step now splits a step that ran a child checklist by that checklist's rows, so a review shows what each rule it checked cost",
-    "Publication opens its own PR instead of pushing the approved head onto a merged PR's branch when a run reuses a branch whose PR already merged; a PR this run published, or one merged out-of-band at a head this run approved or reviewed, still links",
-    "Recognize the Codex composer when its model and directory footer is the only status row"
+    "Keep the run detail accounting revision stable through unrelated progress updates",
+    "Run Detail can read the active, run-owned recipe flow before its first trace step, including with HUD disabled",
+    "Price remote tmux Pi LiteLLM receipts from gateway rates only when a completed turn matches a direct request to the pricing endpoint. Keep tokens and provider-reported charges. Older transcripts and replies without verified route evidence remain unpriced, with no lookup on the remote node",
+    "Reattach worker terminals to a verified session and pane instead of reusing detached clients"
   ]
 }

@@ -709,6 +709,8 @@ export interface ReviewFixDeltaSnapshot extends ReviewDiffSnapshot {
 }
 
 export interface RunnerSessionUsage {
+  /** Lifetime usage could include work before a retained handoff to this run. */
+  includesPriorRunLifetime?: true;
   /** Pipeline receipt metadata; optional only for older records. */
   model?: string | null;
   effort?: string | null;
@@ -727,8 +729,12 @@ export interface RunnerSessionUsage {
     import('./agents.js').NativeWorkerSessionBinding,
     'sessionId' | 'ownerPrincipalId' | 'executionNodeId' | 'stateDirectory'
   >;
-  /** All node-owned task leases contributing to this run's conversation receipt. */
+  /** Recorded task lease IDs. Older receipts can include observed, unmeasured leases. */
   usageLeaseIds?: string[];
+  /** The native transcript measurement verified every ID in usageLeaseIds. */
+  usageLeaseIdsVerified?: true;
+  /** Observed native task leases still awaiting a verified measurement. */
+  pendingUsageLeaseIds?: string[];
   startedAt?: string | null;
   completedAt?: string | null;
   durationMs?: number | null;
@@ -748,6 +754,10 @@ export interface RunnerSessionUsage {
   reasoningOutputTokens?: number | null;
   totalTokens?: number | null;
   costUsd?: number | null;
+  /** Provider-reported subtotal, including when the complete cost is unknown. */
+  providerReportedCostUsd?: number;
+  /** Pricing rule used by the gateway for a measured remote tmux Pi transcript. */
+  pricingScope?: 'remote-tmux-pi';
   measuredAt: string;
   source: 'runner-transcript' | 'provider-response' | 'unavailable';
   /** Transcript total at measurement time, or usage first observed within the owning run. */
@@ -1036,6 +1046,8 @@ export interface ReviewSummary {
     triggeredReWork: boolean;
     attempts: number;
     stale?: boolean;
+    /** The gateway accepted a worker fix without a reviewer; not a passing review. */
+    acceptedWithoutReview?: boolean;
     startedAt?: string;
     completedAt?: string;
   }>;
@@ -2050,6 +2062,8 @@ export interface RunMetrics {
   sessionCacheCreation?: number;
   sessionCacheRead?: number;
   sessionTotalTokens?: number;
+  /** Provider charges from an archive-only historical projection. Not an attempt cost. */
+  retainedArchiveProviderReportedCostUsd?: number;
   /** Whether the session fields are raw transcript totals or a retained-review generation delta. */
   sessionUsageScope?: 'session-total' | 'review-generation-delta' | 'review-chain-total';
   /** Raw retained transcript total used as the next review generation's subtraction baseline. */
@@ -3072,6 +3086,8 @@ export interface MachineParkRecord {
 }
 
 export interface Run {
+  /** Opaque revision of accounting inputs on a run detail response. */
+  costAccountingRevision?: string;
   /** New PR-completion consumers; retained runs keep their frozen contracts. */
   acceptanceContractVersion?: 1;
   acceptanceExecutionContract?: AcceptanceExecutionContract;

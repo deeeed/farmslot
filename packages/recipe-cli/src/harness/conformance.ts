@@ -313,6 +313,7 @@ export async function checkRecipeConformance<TMutation, TAllowlist extends Conso
             cli,
             params: validated.effectiveParams,
             librarySources: validated.librarySources,
+            ...(validated.selection ? { selection: validated.selection } : {}),
             stdoutIsMachineContract: true,
           },
         );

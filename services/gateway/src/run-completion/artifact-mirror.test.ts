@@ -588,6 +588,45 @@ test('incremental mirror keeps matches, removes stale files and accepts a zero-t
   assert.equal(await readFile(path.join(artifacts, 'report.md'), 'utf8'), 'other');
 });
 
+// Run 942d189f: task init mirrored the frozen runtime receipt to the gateway, then the
+// worker never launched and the slot's artifacts were lost. Its final retention must keep
+// the gateway copy, not prune it to match the empty source.
+test('an empty source keeps the gateway mirror when the caller keeps it without a source', async (t) => {
+  const { taskDir, workerArtifacts, run } = await publishPackageFixture(t, 'mirror-empty-source');
+  await mkdir(workerArtifacts, { recursive: true });
+  const receipt = path.join(taskDir, 'artifacts/harness-provenance.json');
+  await mkdir(path.dirname(receipt), { recursive: true });
+  await writeFile(receipt, '{"frozen":true}\n');
+  let emptySource = 0;
+  const keep = { keepMirrorWithoutSource: true, onEmptySource: () => void emptySource++ };
+  assert.equal(await refreshArtifactMirror(run, keep), 0);
+  assert.equal(emptySource, 1);
+  assert.equal(await readFile(receipt, 'utf8'), '{"frozen":true}\n');
+  await assert.rejects(
+    refreshArtifactMirror(run, { requireSourceArtifacts: true }),
+    /no source artifacts/,
+  );
+  assert.equal(await refreshArtifactMirror(run), 0);
+  assert.equal(existsSync(receipt), false, 'an ordinary refresh mirrors the empty source');
+  await writeFile(path.join(workerArtifacts, 'report.md'), 'slot report');
+  assert.equal(await refreshArtifactMirror(run, keep), 1);
+  assert.equal(emptySource, 1, 'a non-empty source is not reported empty');
+});
+
+test('a task the mirror cannot inspect on the slot is reported as an empty source', async (t) => {
+  const { run } = await publishPackageFixture(t, 'mirror-uninspectable-source');
+  let emptySource = 0;
+  const keep = { keepMirrorWithoutSource: true, onEmptySource: () => void emptySource++ };
+  assert.equal(await refreshArtifactMirror({ ...run, slotId: null }, keep), 0);
+  assert.equal(emptySource, 1, 'no slot');
+  const authored = {
+    ...run,
+    taskFile: path.join(path.parse(run.taskFile!).root, 'authored', 'AUTHORED.md'),
+  };
+  assert.equal(await refreshArtifactMirror(authored, keep), 0);
+  assert.equal(emptySource, 2, 'a task outside the task root');
+});
+
 test('a prune-only mirror notifies even when it transfers no files', async (t) => {
   const { taskDir, workerArtifacts, put, run } = await publishPackageFixture(
     t,

@@ -206,7 +206,11 @@ export async function readGateRecordedEvidenceSources(
     preparedPackage.reviewSnapshot,
   );
   if (!sources.length) throw new Error('The gate package has no retained recipe evidence closure.');
-  assertRecordedEvidenceRevision(sources, preparedPackage.reviewSnapshot);
+  // Without a snapshot head, the package's exact head is still the frozen revision.
+  assertRecordedEvidenceRevision(sources, {
+    ...preparedPackage.reviewSnapshot,
+    headSha: preparedPackage.reviewSnapshot?.headSha ?? preparedPackage.headSha,
+  });
   return sources;
 }
 

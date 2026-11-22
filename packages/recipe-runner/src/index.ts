@@ -7,7 +7,7 @@ export type {
   CreateAppLifecycleAdapterOptions,
 } from './adapters/app-lifecycle.js';
 export { createAppLifecycleAdapter, createAppLifecycleAdapters } from './adapters/app-lifecycle.js';
-export { createStandardCoreAdapters } from './adapters/core.js';
+export { createStandardCoreAdapters, evaluateAtomicValue } from './adapters/core.js';
 export {
   type GestureAction,
   gestureDurationMs,
@@ -28,6 +28,7 @@ export {
   normalizeUiTransportResult,
   STANDARD_UI_ACTIONS,
 } from './adapters/ui.js';
+export { RECIPE_PENDING_FLOW_FILE } from './core/artifact-destination.js';
 export {
   type ResolvedRecipeDependencies,
   resolveRecipeDependencies,
@@ -42,8 +43,19 @@ export {
   createRecipeFlowProjection,
   type RecipeFlowProjection,
 } from './core/flow.js';
+export type { RecipeInvocationDecision, RecipeInvocationRouteIndex } from './core/flow-route.js';
+export { createRecipeInvocationRouteIndex, recipeInvocationDecision } from './core/flow-route.js';
+export type {
+  ProjectRecipeInvocationTimingInput,
+  RecipeInvocationTimingProjection,
+} from './core/flow-timing.js';
+export {
+  createRecipeInvocationTimingProjection,
+  projectRecipeInvocationTiming,
+} from './core/flow-timing.js';
 export { extractWorkflowGraph, type WorkflowGraph } from './core/graph.js';
 export { redactRecipeParams } from './core/invocation.js';
+export { getJsonPathValue } from './core/json.js';
 export type {
   LibraryRecipeMatch,
   RecipeLibraryEnv,
@@ -106,6 +118,12 @@ export {
   type UiScrollToObservation,
   type UiScrollToRequest,
 } from './core/scroll-to.js';
+export type {
+  RecipeStructuralInventory,
+  RecipeStructuralInventoryCounts,
+  RecipeStructuralInventoryInput,
+} from './core/structural-inventory.js';
+export { buildRecipeStructuralInventory } from './core/structural-inventory.js';
 export {
   finalizeRecipeSuite,
   type FinalizeRecipeSuiteRequest,

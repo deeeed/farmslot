@@ -1,3 +1,7 @@
+import { formatUsageCost } from '@farmslot/review-dispatch';
+
+export { formatUsageCost } from '@farmslot/review-dispatch';
+
 import {
   type ArtifactRef,
   classifyReviewFreshness,
@@ -182,11 +186,6 @@ export function formatTokenCount(value: number): string {
   return `${value}`;
 }
 
-export function formatUsageCost(value: number | null | undefined, reason?: string): string {
-  if (value == null) return reason ?? 'Unpriced';
-  return `$${value.toFixed(value !== 0 && value < 1 ? 4 : 2)}`;
-}
-
 export interface GateSummaryTokenRow {
   cost: string;
   label: string;
@@ -312,6 +311,8 @@ function checklistRows(summary: GateSummary): GateSummaryChecklistStepRow[] {
   return rows.sort((a, b) => a.stepNumber - b.stepNumber);
 }
 
+const ACCEPTED_FIX_WITHOUT_REVIEW = 'fix accepted without re-review';
+
 export function gateSummaryDisplay(
   summary: GateSummary,
   requirement?: ReviewRequirementDisplay,
@@ -319,7 +320,7 @@ export function gateSummaryDisplay(
   const review = summary.review;
   const reviewRows: GateSummaryReviewRow[] = review.reviews.map((r) => ({
     label: reviewSourceLabel(r),
-    verdict: r.verdict,
+    verdict: r.acceptedWithoutReview ? ACCEPTED_FIX_WITHOUT_REVIEW : r.verdict,
     attempts: r.attempts,
     unresolvedCount: r.unresolvedCount,
     triggeredReWork: r.triggeredReWork,

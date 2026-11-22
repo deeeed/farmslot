@@ -122,3 +122,25 @@ test('later session totals absorb preceding run deltas in family and gate accoun
   assert.equal(buildTokenSummary(cold, family).familyTotalTokens, 130);
   assert.equal(buildTokenSummary(cold, family).familyCostUsd, 1.3);
 });
+
+test('gate accounting does not parse pipeline-only receipts on repeated reads', () => {
+  const source = run('pipeline', 1, 100, 0.25);
+  let reads = 0;
+  source.steps = [
+    {
+      name: 'pipeline-review',
+      status: 'done',
+      outputs: {
+        get attempts() {
+          reads++;
+          return [];
+        },
+      },
+    },
+  ];
+  for (let index = 0; index < 2; index++) {
+    assert.equal(sum(runSessionUsageReceipts(source), 'costUsd'), 0.25);
+    assert.equal(sum(sessionUsageContributions([source]).get(source.id)!, 'costUsd'), 0.25);
+  }
+  assert.equal(reads, 0);
+});

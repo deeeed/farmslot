@@ -17,12 +17,24 @@ export function renderReviewAttempt(
   openArtifact: (path: string) => void,
   openFinding: (finding: ReviewHistoryFinding) => void,
   renderSource: (finding: ReviewHistoryFinding) => unknown,
-  card?: ReviewHistoryRoundCard & { open: boolean; toggle: (open: boolean) => void },
+  card?: ReviewHistoryRoundCard & {
+    open: boolean;
+    toggle: (open: boolean) => void;
+    cost?: string;
+  },
 ): unknown {
   const running = round.verdict === 'pending';
   const duration =
     round.durationMs ??
     (running && round.startedAt ? Date.now() - Date.parse(round.startedAt) : null);
+  const reviewer = html`${round.runner} / ${round.usage?.actualModel ?? round.model}
+    <span class="chip">${round.modeLabel}</span>`;
+  const usageCounts = [
+    round.usage?.turns != null ? `${round.usage.turns} turns` : null,
+    round.usage?.totalTokens != null ? `${round.usage.totalTokens.toLocaleString()} tokens` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
   return html`<details
     class="review-history-round"
     data-round=${round.roundNumber}
@@ -52,11 +64,14 @@ export function renderReviewAttempt(
           ? `${formatDuration(card.totalDurationMs)} total`
           : 'Total time not recorded'}</span
       >
+      ${card?.cost
+        ? html`<span class="round-meta round-accounting" data-testid="review-round-cost"
+            >${reviewer} · ${card.cost}</span
+          >`
+        : nothing}
     </summary>
     <div class="review-history-body">
-      <span class="round-meta"
-        >${round.runner} / ${round.model} <span class="chip">${round.modeLabel}</span></span
-      >
+      ${card?.cost ? nothing : html`<span class="round-meta">${reviewer}</span>`}
       <span class="round-meta"
         ><code title=${round.headSha ?? ''}
           >${round.headSha?.slice(0, 8) ?? (loading ? 'Loading head…' : 'Head pending')}</code
@@ -78,7 +93,9 @@ export function renderReviewAttempt(
             Started ${new Date(round.startedAt).toLocaleString()} · ${round.reviewRange}
           </div>`
         : nothing}
-      ${round.usageLabel ? html`<div class="review-loop-meta">${round.usageLabel}</div>` : nothing}
+      ${card?.cost
+        ? usageCounts && html`<div class="review-loop-meta">Session usage · ${usageCounts}</div>`
+        : round.usageLabel && html`<div class="review-loop-meta">${round.usageLabel}</div>`}
       ${round.earlierAttempts.length
         ? html`<details
             class="review-launch-attempts"

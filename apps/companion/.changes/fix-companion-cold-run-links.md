@@ -1,0 +1,1 @@
+- Restore cold-opened run evidence and Run Detail links after Companion verifies the startup account.

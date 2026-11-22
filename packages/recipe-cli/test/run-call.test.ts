@@ -31,8 +31,11 @@ import {
   type ActionHandler,
   createRecipeRunner,
   createStandardCoreAdapters,
+  readRunTraceEntries,
   type RecipeRecordingOptions,
+  type RecipeRunRequest,
   type RecipeRunResult,
+  resolveRecipeRunSelection,
 } from '@farmslot/recipe-runner';
 import {
   parseRecipeArtifactOwner,
@@ -59,7 +62,10 @@ import {
   callArtifactsLayout,
   redactCallValue,
 } from '../src/harness/commands/call.js';
-import { renderHumanActionCatalog } from '../src/harness/commands/discover.js';
+import {
+  handleListExecutables,
+  renderHumanActionCatalog,
+} from '../src/harness/commands/discover.js';
 import { provenanceFailure, reportTrustFailure } from '../src/harness/commands/run.js';
 import {
   assertConformanceReportCurrent,
@@ -71,11 +77,14 @@ import {
 } from '../src/harness/conformance.js';
 import {
   activateRecipeRuntimeEnvironment,
+  booleanOption,
   type CallCommandOptions,
   configureHarnessAdapters,
   configureHarnessHost,
   type ConsoleClassifier,
+  contractOptions,
   countRecipeNodes,
+  createHarnessCli,
   createRecordingTargetProvider,
   type DescribedAction,
   describeManifestActions,
@@ -84,6 +93,7 @@ import {
   handleCall,
   handleCallHelp,
   handleRun,
+  harnessAdapters,
   harnessHost,
   listRunnableRecipes,
   newHealState,
@@ -101,9 +111,10 @@ import {
   validateActionInputs,
   validateCommandNodes,
   validateRunRecipeStatic,
+  valueOption,
 } from '../src/harness/index.js';
 import { startRunNetworkObservation } from '../src/harness/network-observation.js';
-import { isRecord } from '../src/harness/parse-args.js';
+import { isRecord, shellQuoteArg } from '../src/harness/parse-args.js';
 import {
   emitHealViolation,
   executeWithHealBounds,
@@ -1204,8 +1215,8 @@ describe('action catalog', () => {
     assert.equal(
       actionLibraryContextArgs(engine, [
         { name: 'shop', root: library },
-        { name: 'team', root: '/libs/team one' },
-        { root: '/libs/anon' },
+        { name: 'team', root: '/libs/team one', origin: 'flag' },
+        { root: '/libs/anon', origin: 'flag' },
       ]),
       " --library 'team=/libs/team one' --library /libs/anon",
     );
@@ -1219,6 +1230,219 @@ describe('actions', () => {
     const parsed = parseArgs(argv);
     return capture(() => handleActions(parsed, { catalog: engine }));
   };
+
+  for (const selection of ['library', 'manifest']) {
+    for (const caller of ['actions', 'call']) {
+      test(
+        'detail shortcuts retain explicit catalog selection: ' + selection + ' ' + caller,
+        async () => {
+          const root = tempRoot('catalog-help-context-');
+          const target = path.join(root, "checkout 'one=target");
+          const executable = path.join(root, "task 'one=shop-harness");
+          fs.writeFileSync(executable, '#!/bin/sh\nprintf "%s\\0" "$@"\n', { mode: 0o700 });
+          process.env.SHOP_HARNESS_INVOKED_AS = executable;
+          const selectedLibrary = path.join(root, "library 'one=selected");
+          const manifest = path.join(root, "override 'one=manifest.json");
+          fs.mkdirSync(target);
+          fs.mkdirSync(selectedLibrary);
+          const action = 'team.wave';
+          const description =
+            selection === 'manifest'
+              ? 'Read the selected override schema.'
+              : WAVE_ACTION.description;
+          fs.writeFileSync(
+            manifest,
+            JSON.stringify({
+              $schema: CORE_ACTIONS.$schema,
+              actions: { ...CORE_ACTIONS.actions, [action]: { ...WAVE_ACTION, description } },
+            }),
+          );
+          const flags = [
+            '--adapter',
+            'web',
+            '--target',
+            target,
+            '--library',
+            'team=' + selectedLibrary,
+            ...(selection === 'manifest' ? ['--action-manifest', manifest] : []),
+          ];
+          const listing =
+            caller === 'actions'
+              ? await actions(...flags)
+              : await capture(() =>
+                  handleListExecutables('call', parseArgs(flags).options, { catalog: engine }),
+                );
+          assert.equal(listing.value, 0);
+          const text = listing.stdout.find((line) =>
+            line.startsWith(caller === 'actions' ? 'actions (web)' : 'invocable actions (web)'),
+          );
+          assert.ok(text);
+          const hint = text
+            .split('\n')
+            .find((line) => line.includes('Details and examples: '))
+            ?.split('Details and examples: ')[1];
+          assert.ok(hint);
+          const execution = text.split('\n').find((line) => /^(Run|Use): /u.test(line));
+          assert.match(execution ?? '', /^(Run|Use): shop-harness call /u);
+          const argv = execFileSync('/bin/sh', ['-c', hint.replaceAll('<name>', action)], {
+            encoding: 'utf8',
+            timeout: 2000,
+          })
+            .split('\0')
+            .filter(Boolean);
+          for (const [flag, expected] of [
+            ['--adapter', 'web'],
+            ['--target', target],
+            ['--library', 'team=' + selectedLibrary],
+            ...(selection === 'manifest' ? [['--action-manifest', manifest]] : []),
+          ]) {
+            assert.equal(argv[argv.indexOf(flag) + 1], expected, caller + ' retained ' + flag);
+          }
+          const manual =
+            caller === 'actions'
+              ? await actions('--action', action, ...flags)
+              : await capture(() =>
+                  handleCallHelp([action, '--help', ...flags], 'GENERIC', { catalog: engine }),
+                );
+          const replayed =
+            caller === 'actions'
+              ? await capture(() => handleActions(parseArgs(argv.slice(1)), { catalog: engine }))
+              : await capture(() => handleCallHelp(argv.slice(1), 'GENERIC', { catalog: engine }));
+          assert.equal(replayed.value, 0);
+          assert.deepEqual(
+            replayed.stdout,
+            manual.stdout,
+            caller + ' resolves the selected detail',
+          );
+          assert.ok(
+            replayed.stdout.some((line) => line.includes(description) && line.includes('Fields')),
+            'generic help at exit zero does not qualify',
+          );
+        },
+      );
+    }
+  }
+
+  test('detail hints preserve a bundled library chosen over the personal default', async () => {
+    const root = tempRoot('catalog-bundled-selection-');
+    process.env.FARMSLOT_HOME = root;
+    fs.mkdirSync(path.join(root, 'recipe-library'));
+    const selectedDescription = PING_ACTION.description;
+    const personalDescription = 'Personal action shadows the bundled schema.';
+    const resolve = engine.resolveActionManifest.bind(engine);
+    engine.resolveActionManifest = async (adapter, override, sources) => {
+      const result = await resolve(adapter, override, sources);
+      if (!sources?.some((source) => source.name === 'personal' && source.origin === 'default'))
+        return result;
+      const ping = result.manifest.actions['shop.ping'];
+      assert.ok(ping);
+      return {
+        ...result,
+        manifest: {
+          ...result.manifest,
+          actions: {
+            ...result.manifest.actions,
+            'shop.ping': { ...ping, description: personalDescription },
+          },
+        },
+      };
+    };
+    const ambient = await actions('--adapter', 'web', '--action', 'shop.ping');
+    assert.ok(ambient.stdout.some((part) => part.includes(personalDescription)));
+    const flags = ['--adapter', 'web', '--library', 'shop=' + library];
+    for (const caller of ['actions', 'call']) {
+      const listing =
+        caller === 'actions'
+          ? await actions(...flags)
+          : await capture(() =>
+              handleListExecutables('call', parseArgs(flags).options, { catalog: engine }),
+            );
+      assert.equal(listing.value, 0);
+      const prefix = 'Details and examples: shop-harness ';
+      const hint = listing.stdout
+        .join('\n')
+        .split('\n')
+        .find((line) => line.includes(prefix))
+        ?.split(prefix)[1];
+      assert.ok(hint);
+      const argv = execFileSync(
+        '/bin/sh',
+        [
+          '-c',
+          'fixture_host() { printf "%s\\0" "$@"; }\nfixture_host ' +
+            hint.replace('<name>', 'shop.ping'),
+        ],
+        { encoding: 'utf8', timeout: 2000 },
+      )
+        .split('\0')
+        .filter(Boolean);
+      const detail =
+        caller === 'actions'
+          ? await actions(...argv.slice(1))
+          : await capture(() => handleCallHelp(argv.slice(1), 'GENERIC', { catalog: engine }));
+      assert.equal(detail.value, 0);
+      assert.ok(
+        detail.stdout.some((line) => line.includes(selectedDescription) && line.includes('Fields')),
+        caller + ' must keep the bundled schema when a personal default exists',
+      );
+      assert.ok(detail.stdout.every((line) => !line.includes(personalDescription)));
+    }
+  });
+
+  test('lists canonical category headings that can be used as filters', async () => {
+    const manifest = path.join(tempRoot('catalog-category-'), 'manifest.json');
+    const action = 'shop.swap_bridge.ping';
+    fs.writeFileSync(
+      manifest,
+      JSON.stringify({ $schema: CORE_ACTIONS.$schema, actions: { [action]: PING_ACTION } }),
+    );
+    const flags = ['--adapter', 'web', '--action-manifest', manifest];
+    const listing = await actions(...flags);
+    const callList = await capture(() =>
+      handleListExecutables('call', parseArgs(flags).options, { catalog: engine }),
+    );
+    for (const text of [
+      view(listing.stdout, 'actions (web)'),
+      view(callList.stdout, 'invocable actions (web)'),
+    ]) {
+      const category = /^([a-z_-]+) \(1\)$/mu.exec(text ?? '')?.[1];
+      assert.equal(category, 'swap_bridge');
+      const filtered = await actions(...flags, '--category', category, '--json');
+      assert.equal(filtered.value, 0);
+      assert.deepEqual(
+        (lastJson(filtered.stdout).actions as Array<{ name: string }>).map(({ name }) => name),
+        [action],
+      );
+    }
+  });
+
+  test('limits parameter preview to four required-first names with an overflow count', () => {
+    const entry = describeManifestActions(engine, manifestFor('web')).find(
+      (row) => row.name === 'shop.ping',
+    );
+    assert.ok(entry);
+    const fields = ['first', 'second', 'third', 'required', 'last', 'sixth'];
+    const text = renderHumanActionCatalog(
+      engine,
+      [
+        {
+          ...entry,
+          fields,
+          schema: {
+            type: 'object',
+            properties: Object.fromEntries(fields.map((field) => [field, { type: 'string' }])),
+            required: ['required', 'last'],
+            additionalProperties: false,
+          },
+        },
+      ],
+      { title: 't', guidance: 'g' },
+    );
+    assert.equal(
+      text.split('\n').find((line) => line.includes('Params:')),
+      '    Params: required, last, first, second +2 more',
+    );
+  });
 
   test('the matrix has one column per registered adapter, in registration order', async () => {
     const json = await actions('--matrix', '--json');
@@ -1264,6 +1488,7 @@ describe('actions', () => {
     const text = view(detail.stdout, 'shop-harness call shop.ping') ?? '';
     assert.ok(help.stdout.includes(`${text}\n\n`));
     assert.ok(help.stdout.includes('GENERIC\n'));
+    assert.match(text, /Examples:[\s\S]*shop-harness call ping count=2 mode=fast[\s\S]*Fields/u);
     for (const line of [
       'shop-harness call shop.ping [key=value ...] [flags]',
       '  Ping the shop.',
@@ -1292,7 +1517,7 @@ describe('actions', () => {
     const human = await actions('--adapter', 'web');
     assert.match(
       view(human.stdout, 'actions (web)') ?? '',
-      /^actions \(web\)\nInspect: shop-harness actions --action <name> {2}· {2}Run: shop-harness call <name>\n\nofficial \(\d+\)[\s\S]*\ncustom \(1\)\n {2}shop\.ping \[shop\] fields=count,mode=fast\|slow,password risk=host-read-export — Ping the shop\.$/u,
+      /^actions \(web\)\nDetails and examples: shop-harness actions --action <name> --adapter web\nRun: shop-harness call <name> \[key=value \.\.\.\] --adapter web\n[\s\S]*\ncontrol \(\d+\)[\s\S]*\nshop \(1\)\n {2}shop\.ping \[shop\]\n {4}Ping the shop\.\n {4}Params: mode, count, password\n {4}Risk: host-read-export$/u,
     );
     const categories = await actions('--adapter', 'web', '--categories', '--json');
     assert.ok(
@@ -4448,6 +4673,260 @@ describe('call', () => {
   });
 });
 
+describe('named run selection', () => {
+  function smokeRecipe(target: string): string {
+    fs.writeFileSync(
+      path.join(target, 'package.json'),
+      JSON.stringify({ name: 'selection-fixture' }),
+    );
+    const file = path.join(library, 'recipes', 'runner', 'smoke.recipe.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+        title: 'Runner smoke',
+        workflow: {
+          entry: 'package',
+          nodes: {
+            package: {
+              action: 'command',
+              cmd: 'printf selection-smoke',
+              intent: 'Run the headless smoke.',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      }),
+    );
+    return file;
+  }
+
+  function normalCli(selectedEngine = engine) {
+    const host = harnessHost();
+    fs.writeFileSync(
+      path.join(host.packageRoot, 'package.json'),
+      JSON.stringify({ version: '1.0.0' }),
+    );
+    return createHarnessCli({
+      host,
+      adapters: harnessAdapters(),
+      catalog: selectedEngine,
+      slotPoolDir: emptyPoolDir,
+      commands: [
+        {
+          name: 'run',
+          summary: 'Run a recipe.',
+          example: 'shop-harness run runner.smoke',
+          helpText: 'shop-harness run <recipe>',
+          contract: {
+            positionals: [{ label: 'recipe' }],
+            minimumPositionals: 1,
+            options: contractOptions({
+              '--adapter': valueOption(),
+              '--target': valueOption(),
+              '--artifacts-dir': valueOption(),
+              '--heal': valueOption(),
+              '--json': booleanOption(),
+              '--unbound': booleanOption(),
+              '--plan': booleanOption(),
+            }),
+          },
+          run: (argv) => handleRun([...argv], { ...runOptions, engine: selectedEngine }),
+        },
+      ],
+      help: { description: 'Selection fixture', intro: () => [], groups: [], footer: () => [] },
+    });
+  }
+
+  for (const recovered of [false, true]) {
+    test(`normal named CLI retains the SDK selection${recovered ? ' after re-preflight' : ''}`, async (t) => {
+      const target = checkout();
+      const file = smokeRecipe(target);
+      const sdk = await resolveRecipeRunSelection('runner.smoke', {
+        adapter: 'api',
+        cliEntries: [`shop=${library}`],
+      });
+      assert.ok(sdk.selection);
+      const { manifest, actionSources } = await engine.resolveActionManifest(
+        'api',
+        undefined,
+        sdk.librarySources,
+      );
+      const sdkRunner = await engine.createRunner('api', manifest, {
+        actionSources,
+        autoHud: false,
+        trustTaskActions: false,
+      });
+      const sdkArtifacts = tempRoot('recipe-selection-sdk-');
+      const sdkResult = await sdkRunner.run({
+        recipePath: file,
+        artifactsDir: sdkArtifacts,
+        projectRoot: target,
+        adapter: 'api',
+        librarySources: sdk.librarySources,
+        selection: sdk.selection,
+      });
+      assert.equal(sdkResult.status, 'pass');
+      const sdkSummary = JSON.parse(fs.readFileSync(sdkResult.summaryPath, 'utf8'));
+      assert.deepEqual(sdkSummary.recipeSelection, sdk.selection);
+      const sdkResolution = JSON.parse(
+        fs.readFileSync(path.join(sdkArtifacts, 'recipe-resolution.json'), 'utf8'),
+      );
+      assert.equal(sdkResolution.root.ref, 'runner.smoke');
+      if (recovered) {
+        const registry = createAdapterRegistry();
+        registry.register(
+          shopAdapter('api', calls, {
+            run: {
+              runtimeCheck:
+                ({ state }) =>
+                async () => {
+                  state.recovered.push('selection-runtime');
+                  return null;
+                },
+            },
+          }),
+        );
+        configureHarnessAdapters(registry);
+      }
+      const requests: RecipeRunRequest[] = [];
+      const observing: ShopEngine = {
+        ...engine,
+        async createRunner(adapter, manifest, options) {
+          const runner = await engine.createRunner(adapter, manifest, options);
+          const preflight = runner.preflight.bind(runner);
+          t.mock.method(runner, 'preflight', async (request: RecipeRunRequest) => {
+            requests.push(request);
+            return preflight(request);
+          });
+          return runner;
+        },
+      };
+      const artifacts = tempRoot('recipe-selection-cli-');
+      const cli = normalCli(observing);
+      const conformance = await checkRecipeConformance(observing, {
+        project: 'shop',
+        context: {
+          adapter: { value: 'api', source: 'flag', detail: '--adapter' },
+          target: { value: target, source: 'flag', detail: '--target' },
+        },
+        providerRoot: library,
+        configurationPaths: [],
+        librarySources: [{ name: 'shop', root: library }],
+        artifactsDir: tempRoot('recipe-selection-conformance-'),
+        recipes: [{ recipe: 'runner.smoke' }],
+      });
+      assert.equal(conformance.status, 'pass', JSON.stringify(conformance.checks));
+      const conformanceRequests = requests.splice(0);
+      assert.equal(conformanceRequests.length, 1);
+      assert.deepEqual(conformanceRequests[0]?.selection, sdk.selection);
+      assert.equal(conformanceRequests[0]?.recipePath, sdk.selection.path);
+      const planned = await capture(() =>
+        cli.main([
+          'run',
+          'runner.smoke',
+          '--plan',
+          '--adapter',
+          'api',
+          '--target',
+          target,
+          '--unbound',
+          '--artifacts-dir',
+          tempRoot('recipe-selection-plan-'),
+          '--json',
+        ]),
+      );
+      assert.equal(
+        planned.value.exitCode,
+        0,
+        planned.stdout.join('\n') + planned.stderr.join('\n'),
+      );
+      const plannedRequests = requests.splice(0);
+      assert.equal(plannedRequests.length, 1);
+      assert.deepEqual(plannedRequests[0]?.selection, sdk.selection);
+      assert.equal(plannedRequests[0]?.recipePath, sdk.selection.path);
+      const result = await capture(() =>
+        cli.main([
+          'run',
+          'runner.smoke',
+          '--adapter',
+          'api',
+          '--target',
+          target,
+          '--unbound',
+          '--heal',
+          'off',
+          '--artifacts-dir',
+          artifacts,
+          '--json',
+        ]),
+      );
+      assert.equal(result.value.exitCode, 0, result.stdout.join('\n') + result.stderr.join('\n'));
+      const summary = JSON.parse(fs.readFileSync(path.join(artifacts, 'summary.json'), 'utf8'));
+      assert.equal(summary.status, 'pass');
+      assert.deepEqual(summary.recipeSelection, sdkSummary.recipeSelection);
+      const cliResolution = JSON.parse(
+        fs.readFileSync(path.join(artifacts, 'recipe-resolution.json'), 'utf8'),
+      );
+      assert.deepEqual(cliResolution.root, sdkResolution.root);
+      assert.equal(requests.length, recovered ? 2 : 1);
+      for (const request of requests) {
+        assert.deepEqual(request.selection, sdk.selection);
+        assert.equal(request.recipePath, sdk.selection.path);
+      }
+    });
+  }
+
+  for (const nested of [false, true]) {
+    test(`normal CLI keeps ${nested ? 'ad hoc nested' : 'direct library file'} root selection absent`, async () => {
+      const target = checkout();
+      const selected = smokeRecipe(target);
+      const file = nested
+        ? recipeFile(target, {
+            child: {
+              action: 'call',
+              ref: 'runner.smoke',
+              intent: 'Run the nested smoke.',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          })
+        : selected;
+      const artifacts = tempRoot('recipe-selection-direct-');
+      const cli = normalCli();
+      const result = await capture(() =>
+        cli.main([
+          'run',
+          file,
+          '--adapter',
+          'api',
+          '--target',
+          target,
+          '--unbound',
+          '--heal',
+          'off',
+          '--artifacts-dir',
+          artifacts,
+          '--json',
+        ]),
+      );
+      assert.equal(result.value.exitCode, 0, result.stdout.join('\n') + result.stderr.join('\n'));
+      const summary = JSON.parse(fs.readFileSync(path.join(artifacts, 'summary.json'), 'utf8'));
+      assert.equal(summary.status, 'pass');
+      assert.equal(summary.recipeSelection, undefined);
+      const resolution = JSON.parse(
+        fs.readFileSync(path.join(artifacts, 'recipe-resolution.json'), 'utf8'),
+      );
+      assert.match(resolution.root.ref, /^\$root:sha256:/u);
+      const trace = await readRunTraceEntries(path.join(artifacts, 'trace.json'));
+      assert.ok(trace);
+      assert.ok(trace.some((entry) => isRecord(entry) && entry.action === 'command'));
+    });
+  }
+});
+
 describe('recipe prepared execution', () => {
   async function preparedRun(selectedEngine = engine) {
     const target = checkout();
@@ -4888,3 +5367,229 @@ for (const command of ['call', 'run'] as const) {
     );
   });
 }
+
+describe('catalog retry operator boundary', () => {
+  function echoCache() {
+    const root = tempRoot('catalog-retry-cache-');
+    const manifestPath = path.join(root, 'echo.action-manifest.json');
+    fs.writeFileSync(
+      manifestPath,
+      JSON.stringify({
+        $schema: CORE_ACTIONS.$schema,
+        actions: {
+          'echo.ping': {
+            description: 'Benign catalog fixture',
+            schema: { type: 'object', properties: {}, additionalProperties: false },
+            examples: [{ action: 'echo.ping', intent: 'Read fixture declaration', next: 'done' }],
+          },
+        },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(root, 'recipe-library.json'),
+      JSON.stringify({ adapters: { echo: { module: './echo.mjs', export: 'adapter' } } }),
+    );
+    fs.writeFileSync(
+      path.join(root, 'echo.mjs'),
+      `import fs from 'node:fs';
+if (process.env.PLUGIN_IMPORT_LOG) fs.appendFileSync(process.env.PLUGIN_IMPORT_LOG, 'echo\\n');
+export const adapter = { id: 'echo', sdkVersion: 1, headless: true,
+ resolveSlotPorts() {}, runtimeStatus: async () => ({decision:'ready',reasons:[]}),
+ devServer: {label:'none',describe:()=> 'none',stop:()=>({kind:'none'})}, logSources:()=>[], appLogSource:()=>null,
+ hints:{launch:'launch',relaunch:'launch',runtimeProbeRecovery:()=> 'doctor'},
+ actions:{manifestPath:()=>${JSON.stringify(manifestPath)},semantic:[],cdpTarget:{transport:'none',probePath:'/'},adapters:async()=>[]},
+ harness:{install:{entry:'i',fallback:'i'},cleanup:{entry:'c',fallback:'c'},verify:()=>({error:'none'})},
+ runtimeContext:{forbiddenFields:[]}, launch:async()=>0 };
+`,
+    );
+    return root;
+  }
+
+  // A minimal matrix host uses the same public operator-library loader as the
+  // product host. Each followed hint gets a fresh process and module cache.
+  function retryHost() {
+    const root = tempRoot('catalog-retry-host-');
+    const bin = path.join(root, 'bin');
+    fs.mkdirSync(bin);
+    const marker = path.join(root, 'imports.log');
+    const module = path.join(root, 'host.mjs');
+    fs.writeFileSync(
+      module,
+      `import fs from 'node:fs';
+import {createAdapterRegistry} from ${JSON.stringify(import.meta.resolve('@farmslot/adapter-sdk'))};
+import {configureHarnessAdapters,declaredAdapters,ensureAdapterLoaded,harnessAdapters,optionValues} from ${JSON.stringify(new URL('../src/harness/index.ts', import.meta.url).href)};
+import {resolveActionCapabilityMatrix} from ${JSON.stringify(new URL('../src/harness/catalog.ts', import.meta.url).href)};
+const args=process.argv.slice(2);
+if(args[0]!=='actions'||!args.includes('--matrix'))throw new Error('Retry must stay read-only matrix discovery');
+configureHarnessAdapters(createAdapterRegistry());
+const options={libraries:optionValues(args,'--library'),env:process.env,configured:JSON.parse(process.env.CATALOG_RETRY_CONFIGURED??'[]')};
+for(const {id}of await declaredAdapters(options))await ensureAdapterLoaded(id,options);
+const catalog={bundledLibrary:{name:'fixture',root:${JSON.stringify(root)},actionNamespace:'fixture'},
+ resolveActionManifest:async(id)=>({manifest:JSON.parse(fs.readFileSync(harnessAdapters().get(id).actions.manifestPath(),'utf8')),actionSources:new Map()}),
+ actionCapabilities:()=>[]};
+const actions=await resolveActionCapabilityMatrix(catalog);
+console.log(JSON.stringify({adapters:harnessAdapters().list(),actions}));
+`,
+    );
+    fs.writeFileSync(
+      path.join(bin, 'shop-harness'),
+      `#!/bin/sh\nexec ${shellQuoteArg(process.execPath)} --import ${shellQuoteArg(import.meta.resolve('tsx'))} ${shellQuoteArg(module)} "$@"\n`,
+      { mode: 0o700 },
+    );
+    return { bin, marker, home: root };
+  }
+
+  function followHint(
+    userAction: string,
+    host: ReturnType<typeof retryHost>,
+    env: NodeJS.ProcessEnv = {},
+  ) {
+    const start = userAction.indexOf('shop-harness actions --matrix');
+    assert.ok(start >= 0, 'refusal includes an inspection command');
+    const end = userAction.indexOf(' --json', start);
+    assert.ok(end > start);
+    // Execute only the generated inspection command, excluding the run command's
+    // trailing prose. The command and its paths belong to this test fixture.
+    const command = userAction.slice(start, end + ' --json'.length);
+    const output = execFileSync('/bin/sh', ['-c', command], {
+      encoding: 'utf8',
+      timeout: 10_000,
+      env: {
+        ...process.env,
+        RECIPE_LIBRARY_PATH: '',
+        FARMSLOT_HOME: host.home,
+        CATALOG_RETRY_CONFIGURED: '[]',
+        ...env,
+        PATH: host.bin + path.delimiter + process.env.PATH,
+        PLUGIN_IMPORT_LOG: host.marker,
+      },
+    });
+    const matrix: unknown = JSON.parse(output);
+    assert.ok(isRecord(matrix) && Array.isArray(matrix.adapters));
+    return { adapters: matrix.adapters, actions: matrix.actions };
+  }
+
+  for (const caller of ['actions', 'call', 'run'] as const) {
+    test(`${caller} hint does not authorize a discovered cache module on retry`, async () => {
+      const root = echoCache();
+      const host = retryHost();
+      process.env.FARMSLOT_HOME = host.home;
+      process.env.CATALOG_RETRY_CONFIGURED = '[]';
+      process.env.PLUGIN_IMPORT_LOG = host.marker;
+      const target = checkout();
+      const sources = [
+        { name: 'cache', root, origin: 'env' as const },
+        { name: 'shop', root: library },
+      ];
+      const before = fs
+        .readdirSync(root)
+        .map((file) => [file, fs.readFileSync(path.join(root, file), 'utf8')]);
+      const result = await capture(() =>
+        caller === 'actions'
+          ? handleActions(
+              parseArgs(['--matrix', '--action', 'nonexistent.matrix.probe', '--json']),
+              { catalog: engine, librarySources: sources },
+            )
+          : caller === 'call'
+            ? handleCall(
+                ['shop.ping', 'mode=fast', '--adapter', 'api', '--target', target, '--json'],
+                { ...callOptions, librarySources: sources },
+              )
+            : handleRun(
+                [
+                  recipeFile(target, {
+                    ping: {
+                      action: 'shop.ping',
+                      mode: 'fast',
+                      intent: 'Inspect a missing capability',
+                      next: 'done',
+                    },
+                    done: { action: 'end', status: 'pass' },
+                  }),
+                  '--plan',
+                  '--adapter',
+                  'api',
+                  '--target',
+                  target,
+                  '--json',
+                ],
+                { ...runOptions, librarySources: sources },
+              ),
+      );
+      const error = lastJson(result.stdout).error;
+      assert.ok(isRecord(error) && typeof error.userAction === 'string');
+      assert.equal(fs.existsSync(host.marker), false, 'initial discovery imports no plugin');
+      assert.deepEqual(
+        fs.readdirSync(root).map((file) => [file, fs.readFileSync(path.join(root, file), 'utf8')]),
+        before,
+      );
+      const matrix = followHint(error.userAction, host);
+      assert.deepEqual(
+        fs.readdirSync(root).map((file) => [file, fs.readFileSync(path.join(root, file), 'utf8')]),
+        before,
+        'following matrix discovery preserves cached library bytes',
+      );
+      assert.equal(fs.existsSync(host.marker), false, 'following the hint imports no cache module');
+      assert.equal(
+        matrix.adapters.includes('echo'),
+        false,
+        'discovered cache never becomes an operator flag',
+      );
+      assert.equal(calls.runners.length, 0, 'discovery never executes a recipe');
+    });
+  }
+
+  for (const authority of ['flag', 'env', 'configured'] as const) {
+    test(`retry retains adapter discovery from operator ${authority} input`, () => {
+      const root = echoCache();
+      const host = retryHost();
+      const sources = [
+        {
+          name: 'plug',
+          root,
+          ...(authority === 'flag'
+            ? { origin: 'flag' as const }
+            : authority === 'env'
+              ? { origin: 'env' as const }
+              : {}),
+        },
+      ];
+      const command =
+        'shop-harness actions --matrix' + actionLibraryContextArgs(engine, sources) + ' --json';
+      const matrix = followHint(
+        command,
+        host,
+        authority === 'env'
+          ? { RECIPE_LIBRARY_PATH: 'plug=' + root }
+          : authority === 'configured'
+            ? { CATALOG_RETRY_CONFIGURED: JSON.stringify([{ name: 'plug', root }]) }
+            : {},
+      );
+      assert.ok(matrix.adapters.includes('echo'));
+      assert.equal(fs.readFileSync(host.marker, 'utf8'), 'echo\n');
+      assert.ok(
+        Array.isArray(matrix.actions) &&
+          matrix.actions.some((row) => isRecord(row) && row.name === 'echo.ping'),
+      );
+    });
+  }
+
+  test('only flag origin becomes a flag; trust metadata alone grants no retry authority', () => {
+    const sources = [
+      { name: 'explicit', root: '/operator/with space', origin: 'flag' as const },
+      { name: 'ambient', root: '/ambient', origin: 'env' as const },
+      { name: 'personal', root: '/personal', origin: 'default' as const },
+      { name: 'task', root: '/task', origin: 'task' as const },
+      { name: 'configured', root: '/configured' },
+      {
+        name: 'discovered',
+        root: '/cache',
+        provenance: { kind: 'library' as const, trust: 'trusted' as const },
+      },
+    ];
+    assert.equal(
+      actionLibraryContextArgs(engine, sources),
+      " --library 'explicit=/operator/with space'",
+    );
+  });
+});

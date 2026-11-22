@@ -381,10 +381,38 @@ export interface ResolveResultDecisionParams {
   reason?: string;
 }
 
+/** The attested adoption receipt an acceptance is bound to, and the generation it was recorded at. */
+export interface AdoptedPublicationAcceptance {
+  principalId: string;
+  receiptId: string;
+  generation: number;
+}
+
+/**
+ * A recorded attested adoption is the person's acceptance of a REVIEW hold: the
+ * publication the gate would have produced already exists (ADR-065 Amendment 2).
+ */
+function adoptedAcceptState(
+  run: Run,
+  stoppedAt: ResultDecisionStop,
+  adopted: AdoptedPublicationAcceptance,
+): ResultDecisionActionState {
+  const unavailableReason =
+    stoppedAt !== 'review'
+      ? 'A refused completion prerequisite cannot be accepted. Send it back once it is fixed, or close it.'
+      : run.engineState?.publishGate?.humanPublicationAdoption?.id !== adopted.receiptId ||
+          (run.engineState?.generation ?? 0) !== adopted.generation
+        ? 'The run changed since the publication was adopted. Refresh the run.'
+        : undefined;
+  return unavailableReason
+    ? { id: 'accept-result', available: false, unavailableReason, requiresReason: true }
+    : { id: 'accept-result', available: true, requiresReason: true };
+}
+
 /** Settle a held run through one result-decision action (ADR-065 Amendment 7). */
 export async function resolveResultDecision(
   params: ResolveResultDecisionParams,
-  options: { releaseSlot?: boolean } = {},
+  options: { releaseSlot?: boolean; adoptedPublication?: AdoptedPublicationAcceptance } = {},
 ): Promise<Run> {
   const actionId = params.actionId;
   if (!isResultDecisionActionId(actionId))
@@ -424,7 +452,9 @@ export async function resolveResultDecision(
         actionId === 'send-back'
           ? await sendBackState(run, payload.stoppedAt)
           : actionId === 'accept-result'
-            ? acceptState(run, payload.stoppedAt)
+            ? options.adoptedPublication
+              ? adoptedAcceptState(run, payload.stoppedAt, options.adoptedPublication)
+              : acceptState(run, payload.stoppedAt)
             : { id: actionId, available: true, requiresReason: false };
       if (!state.available) throw new Error(state.unavailableReason ?? 'Action unavailable');
       if (actionId === 'send-back' && payload.stoppedAt === 'review') {
@@ -457,15 +487,27 @@ export async function resolveResultDecision(
       const now = new Date().toISOString();
       const receipt = {
         action: actionId,
-        principalId: currentSessionPrincipal()?.id ?? 'system',
+        principalId:
+          options.adoptedPublication?.principalId ?? currentSessionPrincipal()?.id ?? 'system',
         ...(reason ? { reason } : {}),
         decidedAt: now,
         delivered: payload.delivered,
         findingsDigest: payload.findingsDigest,
       };
       const { bumpRunGeneration, cancelRunEngine } = await import('../run-engine/orchestrator.js');
+      // After the last await: the adopted receipt and generation still hold for this decision.
+      const adopted = options.adoptedPublication;
+      if (adopted) {
+        const latest = getRun(params.runId);
+        if (
+          !latest ||
+          pendingResultDecision(latest)?.id !== decision.id ||
+          !adoptedAcceptState(latest, payload.stoppedAt, adopted).available
+        )
+          throw new Error('The run changed since the publication was adopted. Refresh the run.');
+      }
       cancelRunEngine(params.runId);
-      bumpRunGeneration(params.runId);
+      const settledGeneration = bumpRunGeneration(params.runId);
       const resolveDecisions = (outputReviewAction: string | null) =>
         run.decisions.map((entry) =>
           entry.id === decision.id
@@ -513,6 +555,28 @@ export async function resolveResultDecision(
           actor: 'operator',
           patch,
           settlingStatus: 'needs-decision',
+          // An adoption-bound acceptance rechecks its receipt at the mutation boundary.
+          ...(options.adoptedPublication
+            ? {
+                before: [
+                  {
+                    name: 'adopted-publication-current',
+                    severity: 'required' as const,
+                    apply: ({ run: latest }: { run: Run }) => {
+                      if (
+                        pendingResultDecision(latest)?.id !== decision.id ||
+                        latest.engineState?.publishGate?.humanPublicationAdoption?.id !==
+                          options.adoptedPublication!.receiptId ||
+                        (latest.engineState?.generation ?? 0) !== settledGeneration
+                      )
+                        throw new Error(
+                          'The run changed since the publication was adopted. Refresh the run.',
+                        );
+                    },
+                  },
+                ],
+              }
+            : {}),
           persist: (next) => persistRunNow(next, `result decision ${actionId}`),
           collaborators: operatorCompletionCollaborators(async (next) => {
             await publishCompletedRun(next);

@@ -79,7 +79,7 @@ async function fixture(t: TestContext, shell: string) {
   const [data] = await once(child.stdout!, 'data', { signal: AbortSignal.timeout(2000) });
   const descendant = Number(String(data).trim());
   assert.ok(descendant > 1);
-  const reap = (expectedScope = scope, extraEnv: NodeJS.ProcessEnv = {}) =>
+  const reap = (expectedScope = scope, extraEnv: NodeJS.ProcessEnv = {}, timeout = 2500) =>
     spawnSync(
       shell,
       [
@@ -87,7 +87,7 @@ async function fixture(t: TestContext, shell: string) {
         '-c',
         buildPrepareIdentityReapCommand(identity, { expectedScope, awaitExit: true }),
       ],
-      { encoding: 'utf8', timeout: 2500, env: { ...process.env, ...extraEnv } },
+      { encoding: 'utf8', timeout, env: { ...process.env, ...extraEnv } },
     );
   return { root, identity, scope, child, descendant, borrowed, reap };
 }
@@ -100,6 +100,43 @@ for (const shell of ['/bin/sh', '/bin/zsh'].filter((candidate) => existsSync(can
     assert.equal(running(f.descendant), false, 'detached preflight descendant survived release');
     assert.equal(running(f.borrowed.pid!), true, 'borrowed resource must survive');
     assert.equal(existsSync(f.identity), false);
+  });
+
+  // Run 00fd6488: a scoped process answered SIGTERM by starting a new detached group, so the
+  // reap's final census found group 10980 and teardown was skipped with the slot held.
+  test(`prepare cleanup also stops a scoped group started during the reap (${shell})`, async (t) => {
+    const f = await fixture(t, shell);
+    const pidFile = path.join(f.root, 'respawned.pid');
+    const respawnCode = `
+      const { spawn } = require('node:child_process');
+      const fs = require('node:fs');
+      process.on('SIGTERM', () => {
+        const next = spawn(process.execPath, ['-e', 'setInterval(() => {}, 60000)'], {
+          detached: true,
+          stdio: 'ignore',
+        });
+        fs.writeFileSync(${JSON.stringify(pidFile)}, String(next.pid));
+        next.unref();
+        process.exit(0);
+      });
+      console.log('ready');
+      setInterval(() => {}, 60000);
+    `;
+    const respawner = spawn(process.execPath, ['-e', respawnCode], {
+      detached: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: { ...process.env, FARMSLOT_PREPARE_SCOPE: f.scope },
+    });
+    own(t, respawner);
+    await once(respawner.stdout!, 'data', { signal: AbortSignal.timeout(2000) });
+    const result = f.reap(f.scope, {}, 10_000);
+    const respawned = existsSync(pidFile) ? Number(readFileSync(pidFile, 'utf8')) : 0;
+    t.after(() => {
+      if (respawned > 1 && running(respawned)) process.kill(respawned, 'SIGKILL');
+    });
+    assert.ok(respawned > 1, `the scoped process started its replacement group: ${result.stderr}`);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(running(respawned), false, 'a group started during the reap survived');
   });
 
   test(`prepare cleanup stops group members after their detached leader exits (${shell})`, async (t) => {

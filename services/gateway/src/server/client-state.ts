@@ -8,6 +8,7 @@ import type {
   GatewayAuthMode,
   TerminalData,
   TerminalSubscribeParams,
+  TmuxWorkerRef,
 } from '@farmslot/protocol';
 
 import type { WorkerTerminalPtyHandler } from '../methods/terminal-worker.js';
@@ -21,7 +22,8 @@ export interface TerminalSubscriptionState {
   ptyHandlers: Map<string, PtyDataHandler>;
   terminalIdentities: Map<
     string,
-    { slotId: string; runId?: string; role?: TerminalSubscribeParams['role']; contextId?: string }
+    | { slotId: string; runId?: string; role?: TerminalSubscribeParams['role']; contextId?: string }
+    | { worker: TmuxWorkerRef; workerSubscriptionSeq: number }
   >;
   workerSessionHistoryHandlers: Map<string, WorkerSessionHistoryUnsubscribe>;
   workerSessionHistorySubscribeSeq: Map<string, number>;

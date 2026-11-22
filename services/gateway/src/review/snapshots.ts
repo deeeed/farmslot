@@ -505,8 +505,10 @@ export async function captureReviewDeltaSnapshot(
   const deltaUnavailable =
     delta.interdiff?.qualification === 'missing-objects' ? delta.interdiff.reason : undefined;
   const current = delta.comparedRanges.at(-1)!;
+  // Record the resolved base branch, as a full capture does: the gate matches a WARM
+  // delta by base branch plus the reviewer's prior head, never by the prior head alone.
   const captured = await captureReviewSnapshot(vars, taskDir, loopNumber, artifactScope, {
-    baseRef: range.baseRef,
+    baseRef,
     committedBaseSha: current.slice(0, current.indexOf('..')),
     committedHeadSha: headSha,
     interdiff: delta.interdiff,

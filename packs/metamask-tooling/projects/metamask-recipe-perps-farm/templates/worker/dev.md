@@ -11,6 +11,8 @@ runtime_capability_requirements: '[{"capabilityId":"mobile-proof","reason":"Base
 
 # MetaMask Perps recipe library development
 
+<!-- proof-selection: exempt (baseline and after-fix proof keep the artifacts/baseline + artifacts/after-fix [PROOF:] layout that perps-review-pr and the skills consume; moving them to artifacts/recipe-runs is a pending owner decision) -->
+
 `{{REPO}}` is the recipe library checkout under edit. `{{OWNED_MOBILE_REPO}}` is this slot's own MetaMask Mobile checkout on the execution node, with simulator `{{IOS_SIMULATOR}}` and Metro port `{{WATCHER_PORT}}`. Never use another slot's checkout, simulator or port. This task's `mark` runs its retained published provider and pinned library, never the code you are changing. Set the proof inputs once in the slot shell: `PUBLISHED="$(bash {{NODE_SUPPORT_DIR}}/projects/metamask-harness-farm/scripts/tooling.sh published recipe-perps {{REPO}})"` is the published harness, and `RETAINED="$(bash {{NODE_SUPPORT_DIR}}/projects/metamask-harness-farm/scripts/tooling.sh retained-library recipe-perps {{REPO}} {{TASK_DIR}})"` is this task's verified retained Perps library. Every run passes `--library perps=` explicitly; never rely on a bundled or operator-configured library.
 
 ## Checklist

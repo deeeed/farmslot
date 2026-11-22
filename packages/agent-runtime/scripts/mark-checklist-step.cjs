@@ -460,8 +460,80 @@ function assertArtifactContract(taskDir, taskPath, contract, terminalCommand) {
   }
 }
 
+// Engine proof attempts that nothing selects are evidence completion never checks and
+// publication cannot use. Completion names the attempt to select; it never picks one.
+function assertRecipeAttemptSelected(taskDir) {
+  const runs = path.join(taskDir, 'artifacts', 'recipe-runs');
+  const directories = (dir) => {
+    try {
+      return fs
+        .readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name);
+    } catch (error) {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    }
+  };
+  const isAttempt = (name) => taskFileExists(runs, path.join(name, 'evidence-manifest.json'));
+  // An attempt is any directory under recipe-runs holding a manifest (`<id>`, the harness's
+  // `attempts/<id>`, or a deeper --artifacts-dir).
+  const attempts = [];
+  const visit = (relative) => {
+    for (const name of directories(path.join(runs, relative))) {
+      const child = relative ? `${relative}/${name}` : name;
+      if (isAttempt(child)) attempts.push(child);
+      visit(child); // a retry may sit inside a failed attempt (recipe-runs/first/retry)
+    }
+  };
+  // Recipe-free tasks load nothing: the selection helper needs the built protocol package.
+  const pointerFile = path.join(taskDir, 'artifacts', 'latest-valid-recipe-run.json');
+  if (!fs.existsSync(pointerFile) && !fs.existsSync(runs)) return;
+  const pointer = fs.existsSync(pointerFile)
+    ? require('./retained-recipe-attempt.cjs').readRecipeAttemptSelection(taskDir)
+    : null;
+  const taskRecipe = taskFileExists(taskDir, 'artifacts/recipe.json');
+  if (pointer && taskRecipe) return;
+  visit('');
+  attempts.sort();
+  if (attempts.length === 0) return;
+  if (pointer) {
+    const selected = `artifacts/${pointer.relativeArtifactRoot}`;
+    console.error(
+      `artifacts/recipe.json is missing, so completion checks no evidence for the selected proof attempt ${selected}. Copy ${selected}/recipe.json to artifacts/recipe.json, then complete again.`,
+    );
+    process.exit(1);
+  }
+  const passed = [];
+  const unreadable = [];
+  for (const name of attempts) {
+    try {
+      const summary = JSON.parse(fs.readFileSync(path.join(runs, name, 'summary.json'), 'utf8'));
+      if (summary.status === 'pass') passed.push(name);
+    } catch (error) {
+      unreadable.push(`recipe-runs/${name}/summary.json (${error.message})`);
+    }
+  }
+  const quote = (value) => `'${value.replaceAll("'", `'\\''`)}'`;
+  const select = (name) =>
+    `node ${quote(path.join(__dirname, 'retained-recipe-attempt.cjs'))} ${quote(taskDir)} ${quote(path.join(runs, name))}`;
+  const next =
+    passed.length === 0
+      ? `${unreadable.length ? 'No passing attempt could be verified' : 'None of them passed'}: rerun the proof with RECIPE_TASK_DIR set in the same command so its passing attempt is selected.`
+      : `Select the proof attempt this task claims, for example:\n  ${select(passed[0])}\nPassing attempts: ${passed.map((name) => `recipe-runs/${name}`).join(', ')}.`;
+  const unread = unreadable.length ? `\nUnreadable summaries: ${unreadable.join('; ')}.` : '';
+  console.error(
+    `artifacts/recipe-runs holds proof attempts (${attempts.map((name) => `recipe-runs/${name}`).join(', ')}) but artifacts/latest-valid-recipe-run.json selects none. ${next}${unread}`,
+  );
+  process.exit(1);
+}
+
 function assertTerminalPackagedEvidence(taskPath, taskDir, terminalCommand) {
   if (terminalCommand === 'blocked') return;
+  // Review flows judge others' evidence; the QA contract selects its own packages.
+  const flowType = loadTerminalContract(taskDir, taskPath)?.flowType;
+  if (terminalCommand === 'complete' && flowType !== 'review' && flowType !== 'qa')
+    assertRecipeAttemptSelected(taskDir);
 
   const contract = loadTerminalContract(taskDir, taskPath);
   if (contract) {
