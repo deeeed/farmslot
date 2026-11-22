@@ -666,6 +666,12 @@ function blindMachineVars(
   };
 }
 
+// Claude runs the user's own settings hooks in every worker. iTerm's agent hook
+// (`it2 handle-agent-hook`) asks iTerm which session shows the $TMUX pane and
+// never returns for a worker pane, stalling each tool call. Without TMUX it exits
+// at once. TMUX_PANE stays: the observability hook keys pane snapshots on it.
+const CLAUDE_WORKER_ENV_UNSET = 'unset CLAUDECODE TMUX';
+
 export function buildRunnerSessionReloadCommand(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runnerId: string,
@@ -716,7 +722,7 @@ export function buildRunnerSessionReloadCommand(
       withTaskRecipeTrustEnvironment(
         blind(
           withRunnerObservabilityInstall(
-            `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags}${modelFlag}${effortFlag}${modelQuestionsArgs(runner, opts.modelQuestions)}${settingsFlag} ${resume}${initialPrompt}`,
+            `cd ${shellExpressionForRemotePath(repo)} && ${CLAUDE_WORKER_ENV_UNSET} && ${claudePath}${flags}${modelFlag}${effortFlag}${modelQuestionsArgs(runner, opts.modelQuestions)}${settingsFlag} ${resume}${initialPrompt}`,
             installCommand,
             settingsFallback,
           ),
@@ -1281,7 +1287,7 @@ export function buildLaunchCommand(
       });
       return withRecipeTrust(
         withRunnerObservabilityInstall(
-          `unset CLAUDECODE && ${claudeDispatchCommand}`,
+          `${CLAUDE_WORKER_ENV_UNSET} && ${claudeDispatchCommand}`,
           installCommand,
           settingsFallback,
         ),
@@ -1292,7 +1298,7 @@ export function buildLaunchCommand(
     const flags = flagList.join(' ');
     return withRecipeTrust(
       withRunnerObservabilityInstall(
-        `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}${effortFlag}${questionsArgs}${settingsFlag}${launchPrompt ? ` ${shellQuote(launchPrompt)}` : ''}`,
+        `cd ${shellExpressionForRemotePath(repo)} && ${CLAUDE_WORKER_ENV_UNSET} && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}${effortFlag}${questionsArgs}${settingsFlag}${launchPrompt ? ` ${shellQuote(launchPrompt)}` : ''}`,
         installCommand,
         settingsFallback,
       ),

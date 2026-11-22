@@ -1,0 +1,1 @@
+- Claude workers start without `TMUX`, so iTerm's agent hook inherited from the user's Claude settings exits at once instead of waiting about 120s on every hook event. `TMUX_PANE` is kept for pane observability.
