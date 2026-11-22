@@ -289,6 +289,9 @@ async function captureRunOutputNow(
     mirror && !run.reviewWorkspace
       ? await refreshArtifactMirror(run, { ...mirrorOptions, acquisition })
       : 0;
+  // A retried release must not replace what an earlier final retention kept (media can be
+  // acquired straight into that bundle) with a capture of the now-empty source.
+  if (mirrorOptions.keepMirrorWithoutSource && copied === 0 && run.artifactBundle) return 0;
   const artifactsByPath = new Map(
     [...(await scanArtifacts(path.dirname(taskFile))), ...acquisition.media].map((artifact) => [
       artifact.path,

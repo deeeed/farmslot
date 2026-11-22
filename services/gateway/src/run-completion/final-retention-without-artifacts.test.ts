@@ -36,7 +36,7 @@ mock.module('./artifact-mirror.js', {
   },
 });
 
-const { createRun, updateRun } = await import('../runs/store.js');
+const { createRun, getRun, updateRun } = await import('../runs/store.js');
 const { captureRunOutput, retainFinalRunArtifacts } = await import('./output.js');
 const { BEFORE_WORKER_LAUNCH, WORKER_LAUNCH } =
   await import('../run-lifecycle/pre-worker-failure.js');
@@ -163,4 +163,21 @@ test('final retention decides after a queued capture commits output', async () =
   const final = retainFinalRunArtifacts(runId);
   await snapshot;
   await assert.rejects(final, /no source artifacts/);
+});
+
+test('a retried final retention keeps what the first one retained', async () => {
+  const { runId, taskDir } = await failedRun([
+    step('write-task', 'done'),
+    step('prepare', 'failed'),
+    step('dispatch', 'skipped'),
+  ]);
+  const proof = path.join(taskDir, 'artifacts/repro.png');
+  await writeFile(proof, 'first capture');
+  await retainFinalRunArtifacts(runId);
+  const kept = getRun(runId)?.artifactBundle;
+  assert.ok(kept);
+  // Release removed the task, then failed; the retry sees an empty source.
+  await rm(proof);
+  assert.equal(await retainFinalRunArtifacts(runId), 0);
+  assert.deepEqual(getRun(runId)?.artifactBundle, kept);
 });
