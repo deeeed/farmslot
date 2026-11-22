@@ -344,3 +344,39 @@ test('a failing added-path scan keeps the branch where it was', needsTmuxSandbox
   ]);
   assert.equal(await git(slotRepo, 'rev-parse', `refs/heads/${workBranch}`), oldBase);
 });
+
+test(
+  'a tracked directory the new base turns into a file still moves the branch',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, slotRepo, oldBase } = await staleBaseSlot(t);
+    // Old tip: tools/run/old.sh tracked. New base (on top of the #532 fix): tools/run is a file.
+    const author = path.join(path.dirname(slotRepo), 'author');
+    await git(author, 'checkout', '-q', 'main');
+    await mkdir(path.join(slotRepo, 'tools/run'), { recursive: true });
+    await writeFile(path.join(slotRepo, 'tools/run/old.sh'), 'old\n');
+    await git(slotRepo, 'checkout', '-q', '-b', workBranch, oldBase);
+    await git(slotRepo, 'add', 'tools/run/old.sh');
+    await git(slotRepo, 'commit', '-qm', 'A2: tools/run directory');
+    const dirTip = await git(slotRepo, 'rev-parse', 'HEAD');
+    await git(slotRepo, 'push', '-q', 'origin', `${dirTip}:refs/heads/main`, '--force');
+    await git(author, 'fetch', '-q', 'origin');
+    await git(author, 'reset', '-q', '--hard', 'origin/main');
+    spawnSync('bash', ['-c', yarnPersist], { cwd: author });
+    await git(author, 'rm', '-q', '-r', 'tools/run');
+    await writeFile(path.join(author, 'tools/run'), 'now a file\n');
+    await git(author, 'add', '-A');
+    await git(author, 'commit', '-qm', 'B2: sorted manifest, tools/run is a file');
+    await git(author, 'push', '-q', 'origin', 'HEAD:refs/heads/main');
+    const fileBase = await git(author, 'rev-parse', 'HEAD');
+    const result = await slotPrepare(
+      { slotId, branch: workBranch, prepareProfile: 'core' },
+      () => {},
+      undefined,
+      { preserveBranch: true },
+    );
+    assert.equal(result.prepared, true);
+    assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), fileBase);
+    assert.equal(await readFile(path.join(slotRepo, 'tools/run'), 'utf8'), 'now a file\n');
+  },
+);
