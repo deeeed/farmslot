@@ -394,7 +394,6 @@ function restartRecovery(run: Run, reEnterReview: (runId: string) => void) {
     resetSlot: refuse('resetSlot'),
     retryOccupiedRunSlot: refuse('retryOccupiedRunSlot'),
     resumeInterruptedRecovery: refuse('resumeInterruptedRecovery'),
-    resumeInterruptedRelease: refuse('resumeInterruptedRelease'),
     resetSlotIf: refuse('resetSlotIf'),
     updateSlotStatusIf: refuse('updateSlotStatusIf'),
     quarantineLeakedRun: refuse('quarantineLeakedRun'),

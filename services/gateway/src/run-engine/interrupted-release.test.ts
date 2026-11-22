@@ -7,6 +7,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
 
+import { cancelledRunHoldReason } from '@farmslot/protocol';
+
 import { makeRun } from '../methods/run/test-fixtures.js';
 
 const root = await mkdtemp(path.join(os.tmpdir(), 'interrupted-release-'));
@@ -107,9 +109,6 @@ test('expired release fence keeps a dirty eval checkout held until owner retry c
     resumeInterruptedRecovery: () => {
       throw new Error('Ordinary release has no workspace recovery journal');
     },
-    resumeInterruptedRelease: () => {
-      throw new Error('An expired fence goes to the backstop hold');
-    },
     absentExecutionNode: async () => null,
   };
   await reconcileOrphanedSlots(deps);
@@ -132,8 +131,23 @@ test('expired release fence keeps a dirty eval checkout held until owner retry c
   assert.equal(JSON.parse(await readFile(state.statusFile, 'utf8')).slots[0].lifecycle, 'held');
 });
 
-async function seedFence(instance: string, ownerStatus: 'done' | 'monitoring') {
-  const owner = makeRun({ id: `owner-${instance}`, status: ownerStatus, slotId: 'restart-slot' });
+interface DeadFence {
+  instance?: string;
+  ownerStatus: 'done' | 'cancelled' | 'failed' | 'monitoring';
+  token?: string | null;
+}
+
+/** A fence a previous gateway raised for this run's cleanup, read by the restarted gateway. */
+async function reconcileFence({
+  instance = 'previous-gateway',
+  ownerStatus,
+  token = 'run-cleanup-token',
+}: DeadFence) {
+  const owner = makeRun({
+    id: `owner-${ownerStatus}`,
+    status: ownerStatus,
+    slotId: 'restart-slot',
+  });
   await writeFile(
     state.statusFile,
     JSON.stringify({
@@ -146,12 +160,12 @@ async function seedFence(instance: string, ownerStatus: 'done' | 'monitoring') {
           current_run_id: owner.id,
           releasing_since: new Date().toISOString(),
           release_gateway_instance: instance,
-          cleanup_release_token: 'previous-token',
+          cleanup_release_token: token,
         },
       ],
     }),
   );
-  const resumed: Array<[string, string]> = [];
+  const retried: Array<Record<string, unknown> | null> = [];
   const deps: Deps = {
     listRuns: () => ({ runs: [owner] }),
     loadFleetStatus: async () => ({
@@ -173,33 +187,46 @@ async function seedFence(instance: string, ownerStatus: 'done' | 'monitoring') {
     resetSlotIf: state.resetSlotIf,
     updateSlotStatusIf: state.updateSlotStatusIf,
     broadcast: () => {},
-    retryOccupiedRunSlot: async () => false,
+    retryOccupiedRunSlot: async (slotId) => {
+      retried.push(await state.readSlotRow(slotId));
+      return false;
+    },
     resumeInterruptedRecovery: () => {
       throw new Error('Ordinary release has no workspace recovery journal');
-    },
-    resumeInterruptedRelease: (slotId, runId) => {
-      resumed.push([slotId, runId]);
     },
     absentExecutionNode: async () => null,
   };
   await reconcileOrphanedSlots(deps);
-  return { owner, resumed, row: await state.readSlotRow('restart-slot') };
+  return { owner, retried, row: await state.readSlotRow('restart-slot') };
 }
 
-test('a fresh fence left by a previous gateway is resumed through its terminal owner', async () => {
-  const { owner, resumed, row } = await seedFence('previous-gateway', 'done');
-  assert.deepEqual(resumed, [['restart-slot', owner.id]]);
-  assert.equal(
-    row?.phase,
-    'releasing',
-    'The owner-bound retry, not the reconciler, moves the fence',
-  );
+test('a previous gateway’s run-cleanup fence reopens as a retryable hold and is retried at once', async () => {
+  const { owner, retried, row } = await reconcileFence({ ownerStatus: 'done' });
+  assert.equal(row?.lifecycle, 'held');
+  assert.equal(row?.phase, 'occupied');
+  assert.equal(row?.current_run_id, owner.id);
+  assert.equal(row?.slot_epoch, 2);
+  assert.equal(row?.cleanup_stop_unconfirmed ?? null, null, 'the retry re-runs the stops itself');
+  assert.equal(row?.releasing_since ?? null, null);
+  assert.equal(row?.cleanup_release_token ?? null, null);
+  assert.equal(retried.length, 1, 'the same terminal cleanup is retried, not a full release');
+  assert.equal(retried[0]?.lifecycle, 'held');
 });
 
-test('this gateway’s own fence and a live owner are left alone', async () => {
-  const own = await seedFence(state.currentReleaseGatewayInstance(), 'done');
-  assert.deepEqual(own.resumed, []);
-  const live = await seedFence('previous-gateway', 'monitoring');
-  assert.deepEqual(live.resumed, []);
-  assert.equal(live.row?.phase, 'releasing');
+test('a cancelled owner’s interrupted cleanup keeps its checkout held for replay', async () => {
+  const { owner, row } = await reconcileFence({ ownerStatus: 'cancelled' });
+  assert.equal(row?.lifecycle, 'held');
+  assert.equal(row?.held_reason, cancelledRunHoldReason(owner.id));
+});
+
+test('this gateway’s fence, a live owner and a plain release fence are left to their owners', async () => {
+  for (const fence of [
+    { instance: state.currentReleaseGatewayInstance(), ownerStatus: 'done' },
+    { ownerStatus: 'monitoring' },
+    { ownerStatus: 'done', token: null },
+  ] satisfies DeadFence[]) {
+    const { retried, row } = await reconcileFence(fence);
+    assert.equal(row?.phase, 'releasing', JSON.stringify(fence));
+    assert.deepEqual(retried, []);
+  }
 });

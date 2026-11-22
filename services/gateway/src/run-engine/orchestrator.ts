@@ -1823,23 +1823,6 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
         ),
       );
     },
-    resumeInterruptedRelease: (slotId, runId) => {
-      void (async () => {
-        const { slotRelease } = await import('../methods/slot/release.js');
-        const result = await slotRelease({ slotId, expectedRunId: runId }, (event, payload) =>
-          broadcastFn(event, payload),
-        );
-        console.log(
-          result.released
-            ? `[run-engine] reconcile: finished the interrupted release of ${slotId}`
-            : `[run-engine] reconcile: interrupted release of ${slotId} not finished: ${result.reason ?? 'refused'}`,
-        );
-      })().catch((error) =>
-        console.warn(
-          `[run-engine] reconcile: retrying the interrupted release of ${slotId} failed: ${(error as Error).message}`,
-        ),
-      );
-    },
     quarantineLeakedRun,
     stopRunOwnedWorkers: async (run) => {
       const { stopRunOwnedTmuxWorkers } = await import('../runners/owned-stop.js');

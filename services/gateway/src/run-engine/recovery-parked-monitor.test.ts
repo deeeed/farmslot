@@ -56,7 +56,6 @@ function recoveryDeps(run: Run, started: string[]): RunRecoveryCollaborators {
     resetSlot: unexpected,
     retryOccupiedRunSlot: unexpected,
     resumeInterruptedRecovery: unexpected,
-    resumeInterruptedRelease: unexpected,
     resetSlotIf: unexpected,
     updateSlotStatusIf: unexpected,
     quarantineLeakedRun: async () => {},

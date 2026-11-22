@@ -2221,7 +2221,6 @@ function orphanCollaborators(overrides: Partial<OrphanCollaborators>): OrphanCol
     broadcast: unexpected,
     retryOccupiedRunSlot: async () => unexpected(),
     resumeInterruptedRecovery: unexpected,
-    resumeInterruptedRelease: unexpected,
     ...overrides,
   };
 }

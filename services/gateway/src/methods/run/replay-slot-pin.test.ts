@@ -182,7 +182,6 @@ test('restart cleanup retains a detached stored pin for replay', { timeout: 2000
     broadcast: () => {},
     retryOccupiedRunSlot: unexpected,
     resumeInterruptedRecovery: unexpected,
-    resumeInterruptedRelease: unexpected,
   });
   assert.equal(run.slotId, 'mini-example-3', 'interrupted release retains its owner');
   assert.equal(run.requestedSlotId, 'mini-example-3');

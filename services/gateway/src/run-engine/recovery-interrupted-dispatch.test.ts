@@ -86,7 +86,6 @@ function restartAt(
     resetSlot: unexpected,
     retryOccupiedRunSlot: unexpected,
     resumeInterruptedRecovery: unexpected,
-    resumeInterruptedRelease: unexpected,
     resetSlotIf: unexpected,
     updateSlotStatusIf: async (_slotId, predicate, fields) => {
       if (!predicate({ current_run_id: slotOwned ? run.id : 'another-run' })) return false;
