@@ -10,6 +10,7 @@ import {
   contextIdFor,
   isReviewerAgentRole,
   isTerminalRunStatus,
+  isTerminalWorkerSignalStatus,
   primaryRoleForFlow,
   type Run,
   type TmuxWorkerRef,
@@ -650,6 +651,25 @@ export async function dispatchPromptHandoffProven(
   return handoff.accepted;
 }
 
+/** The context's own signal file reports its current attempt finished. */
+async function attemptSignalIsTerminal(run: Run, ctx: AgentContext): Promise<boolean> {
+  if (!run.slotId || !ctx.signalFile) return false;
+  const snapshot = await readLaunchAckSignalSnapshot(
+    await loadSlotVars(run.slotId),
+    ctx.signalFile,
+  );
+  if (!snapshot?.raw) return false;
+  try {
+    const normalized = normalizeWorkerSignal(JSON.parse(snapshot.raw));
+    if (!normalized.ok || !isTerminalWorkerSignalStatus(normalized.signal.status)) return false;
+    if (ctx.signalAttemptId) return normalized.signal.attemptId === ctx.signalAttemptId;
+    return signalFromAttempt(snapshot, Date.parse(ctx.attemptStartedAt ?? ctx.startedAt ?? ''));
+  } catch {
+    // Mid-write: not proof the attempt finished.
+    return false;
+  }
+}
+
 async function reconcileTmuxRunAgentRuntime(run: Run): Promise<TmuxWorkerRestoreResult> {
   const contexts = run.agentContexts ?? [];
   if (!run.slotId || contexts.length === 0) {
@@ -660,7 +680,15 @@ async function reconcileTmuxRunAgentRuntime(run: Run): Promise<TmuxWorkerRestore
   const patches = new Map<string, Partial<AgentContext>>();
   for (const ctx of contexts) {
     if (ctx.nativeSession || ctx.nativeSessionOwner) continue;
-    const inspection = await inspectContextRuntime(run, ctx);
+    let inspection = await inspectContextRuntime(run, ctx);
+    // A worker that finished its attempt exits by design, possibly while the gateway was down.
+    // Its terminal signal, read by the step that owns the context, settles it; a missing
+    // process does not make that attempt a failure.
+    if (
+      statusAfterInspection(run, ctx, inspection) === 'failed' &&
+      (await attemptSignalIsTerminal(run, ctx))
+    )
+      inspection = { ...inspection, state: 'skipped', detail: 'runner exited after its signal' };
     const nextStatus = statusAfterInspection(run, ctx, inspection);
     const observed = inspection.state !== 'skipped' && inspection.state !== 'unknown';
     const now = new Date().toISOString();

@@ -33,6 +33,7 @@ const lookups: (string | null | undefined)[] = [];
 const commands: string[] = [];
 let slotEpoch = 1;
 let publishLaunch: (() => Promise<void>) | undefined;
+let fixSignal: string | undefined;
 
 const execModule = await import('../core/exec.js');
 mock.module('../core/exec.js', {
@@ -126,6 +127,16 @@ mock.module('../runners/registry.js', {
     getRunnerObservability: () => ({ normalizeRetainedSessionBinding: normalizeBinding }),
   },
 });
+const evidence = await import('../runners/prompt-delivery-evidence.js');
+mock.module('../runners/prompt-delivery-evidence.js', {
+  namedExports: {
+    ...evidence,
+    readLaunchAckSignalSnapshot: async () =>
+      fixSignal === undefined
+        ? { raw: null, status: null, mtimeNs: '0' }
+        : { raw: fixSignal, status: null, mtimeNs: '1' },
+  },
+});
 const support = await import('../node-support/ensure.js');
 mock.module('../node-support/ensure.js', {
   namedExports: { ...support, ensureNodeSupportBundle: async () => {} },
@@ -157,6 +168,7 @@ const { reconcileRunAgentRuntime, restoreTmuxWorker } = await import('./runtime-
 function fixture(corrupt = false): void {
   slotEpoch = 1;
   publishLaunch = undefined;
+  fixSignal = undefined;
   lookups.length = 0;
   commands.length = 0;
   launches.length = 0;
@@ -321,6 +333,53 @@ test('a clean read that finds the worker gone marks it so', async () => {
     await reconcileRunAgentRuntime(run);
 
     assert.equal(run.agentContexts![0]!.status, 'blocked', label);
+  }
+});
+
+// Nightly canary `review` (cause B): the fix round finished while the gateway was down and its
+// worker exited. Recovery marked the pass failed by the missing process, so the review step found
+// no fix to resume, discarded the finished fix and ran loop-1 review again.
+test('a fix pass whose worker exited after its terminal signal is left to the review step', async () => {
+  const fixContext = (): AgentContext => ({
+    id: 'review-fix',
+    runId: run.id,
+    slotId: run.slotId!,
+    role: 'review-fix',
+    label: 'Review fix',
+    status: 'working',
+    runner: 'scripted',
+    attemptStartedAt: '2026-11-22T23:17:50.000Z',
+    signalAttemptId: 'attempt-fix-1',
+    taskFile: '.task/t/REVIEW-FIX.md',
+    signalFile: '.task/t/REVIEW-FIX-SIGNAL.json',
+    target: { session: 'slot-1', window: 'dev', pane: null, target: 'slot-1:dev' },
+  });
+  const signal = (status: string, attemptId: string) =>
+    JSON.stringify({
+      role: 'review-fix',
+      status,
+      attemptId,
+      outcome: status === 'complete' ? 'success' : undefined,
+      timestamp: '2026-11-22T23:18:05.989Z',
+      checklist: { total: 3, done: 3, items: [] },
+    });
+  const cases: Array<[string, string | undefined, AgentContext['status']]> = [
+    ['finished this attempt', signal('complete', 'attempt-fix-1'), 'working'],
+    ['still running', signal('running', 'attempt-fix-1'), 'failed'],
+    ["an earlier attempt's completion", signal('complete', 'attempt-fix-0'), 'failed'],
+    ['no signal', undefined, 'failed'],
+  ];
+  for (const [label, raw, expected] of cases) {
+    fixture();
+    paneSession = 'slot-1';
+    run.status = 'reviewing';
+    run.agentContexts = [run.agentContexts![0]!, fixContext()];
+    runnerAlive = false;
+    fixSignal = raw;
+
+    await reconcileRunAgentRuntime(run);
+
+    assert.equal(run.agentContexts[1]!.status, expected, label);
   }
 });
 

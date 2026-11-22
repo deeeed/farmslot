@@ -3628,29 +3628,29 @@ export async function relaunchWorkerForFix(
     windowSeparator === -1
       ? null
       : workerTarget.slice(windowSeparator + 1).split('.', 1)[0] || null;
+  // The respawned pane's id is what later reads that worker after it exits (COMPLETE's
+  // progress check, restart recovery); a window name alone cannot tell it went away.
+  const paneId = (await resolveExactTmuxWindowPane(vars, workerTarget))?.paneId;
+  const relaunchedTarget = {
+    session: resolved.session,
+    window,
+    pane: null,
+    target: workerTarget,
+    ...(paneId ? { paneId } : {}),
+  };
   await upsertAgentContext(runId, workerRole, {
     status: 'working',
     runner,
     model: effectiveModel,
     ...clearedRunnerSessionContextPatch(),
-    target: {
-      session: resolved.session,
-      window,
-      pane: null,
-      target: workerTarget,
-    },
+    target: relaunchedTarget,
   });
   if (fixContext) {
     const updatedFixContext = await upsertAgentContext(runId, 'review-fix', {
       status: 'working',
       runner,
       model: effectiveModel,
-      target: {
-        session: resolved.session,
-        window,
-        pane: null,
-        target: workerTarget,
-      },
+      target: relaunchedTarget,
     });
     if (updatedFixContext) await watchContext(vars.slotId, updatedFixContext);
   }

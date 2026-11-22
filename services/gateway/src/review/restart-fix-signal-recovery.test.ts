@@ -54,6 +54,7 @@ let relaunchEnvironment: RawProjectJson['command_env'];
 let relaunchCommand: string | undefined;
 let rawRelaunchCommand = '';
 let relaunchProbe: ((command: string) => string) | undefined;
+let relaunchPane: { paneId: string; panePid: string } | undefined;
 mock.module('../core/tmux-launch-script.js', {
   namedExports: {
     writeTmuxLaunchScript: async (_vars: unknown, _target: string, command: string) => {
@@ -205,6 +206,9 @@ const originalTmux = await import('../core/tmux.js');
 mock.module('../core/tmux.js', {
   namedExports: {
     ...originalTmux,
+    resolveExactTmuxWindowPane: async (
+      ...args: Parameters<typeof originalTmux.resolveExactTmuxWindowPane>
+    ) => relaunchPane ?? originalTmux.resolveExactTmuxWindowPane(...args),
     respawnTmuxWindowWithCommand: async (
       ...args: Parameters<typeof originalTmux.respawnTmuxWindowWithCommand>
     ) => {
@@ -795,6 +799,22 @@ test('scripted review-fix relaunch reaches process proof without a settle timer'
     return originalTimeout(...args);
   });
   assert.equal(await relaunchWorkerForFix(vars, 'scripted', 'scripted', run.id), true);
+});
+
+// Nightly canary `review`: the relaunched worker's contexts lost the pane id dispatch recorded.
+// Once that worker finished and exited, COMPLETE could not read it idle and refused the run.
+test('a review-fix relaunch records the pane it respawned on the worker and fix contexts', async (t) => {
+  const run = await reviewFixRunAtReload(t, 'tmux', 'scripted');
+  paneCommand = 'scripted-runner';
+  withPrimaryWorker(run.id);
+  relaunchPane = { paneId: '%7', panePid: '4242' };
+  t.after(() => {
+    relaunchPane = undefined;
+  });
+  assert.equal(await relaunchWorkerForFix(vars, 'scripted', 'scripted', run.id), true);
+  const contexts = getRun(run.id)!.agentContexts!;
+  assert.equal(contexts.find((context) => context.role === 'dev')?.target?.paneId, '%7');
+  assert.equal(fixContext(run.id)?.target?.paneId, '%7');
 });
 
 test(
