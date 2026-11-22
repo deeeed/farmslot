@@ -80,6 +80,26 @@ function savedReplacement(
   return { delivery: parseDelivery(value.delivery), signal: signal.signal };
 }
 
+/**
+ * A send-back whose instruction did not come back confirmed.
+ *
+ * `handedOver` says whether it was typed, submitted or durably queued. That
+ * decides what the engine may do next: an instruction the worker has cannot be
+ * un-sent, so the run has to wait for the worker's next signal rather than
+ * re-present the refusal the worker is already acting on (run 1ad82ba1,
+ * audiolab#526: the refusal was re-raised 6 s later and the worker's new signal
+ * 7 minutes after that was never read).
+ */
+export class CompletionFeedbackDeliveryError extends Error {
+  constructor(
+    message: string,
+    readonly handedOver: boolean,
+  ) {
+    super(message);
+    this.name = 'CompletionFeedbackDeliveryError';
+  }
+}
+
 /** Deliver the refusal once, then resume the retained monitor on a new signal. */
 export async function sendBackCompletion(
   run: Run,
@@ -367,8 +387,19 @@ export async function sendBackCompletion(
               persistDelivery(intent, 'untouched completion feedback can retry', startedAt),
           },
         );
-    if (result.delivery !== 'confirmed')
-      throw new Error(`Completion feedback delivery is ${result.delivery}; the run remains held.`);
+    if (result.delivery !== 'confirmed') {
+      // `not-attempted` is the only outcome that proves nothing left the gateway;
+      // everything else may be in the composer or the host's queue.
+      const handedOver = result.delivery !== 'not-attempted';
+      throw new CompletionFeedbackDeliveryError(
+        `Completion feedback delivery is ${result.delivery};${
+          handedOver
+            ? ' the worker may already have it, so monitoring resumes and the run will act on its next signal.'
+            : ' the run remains held.'
+        }`,
+        handedOver,
+      );
+    }
     delivery = { ...intent, startedAt: result.startedAt, confirmed: true };
     await persistDelivery(delivery, 'completion feedback delivered');
   }

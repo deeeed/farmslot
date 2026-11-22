@@ -598,21 +598,66 @@ for (const stoppedAt of ['complete', 'finalize'] as const) {
   });
 }
 
-for (const outcome of ['queued', 'unconfirmed', 'not-attempted'] as const) {
-  test(`completion feedback ${outcome} keeps a pending decision and never replays`, async () => {
+// Only an unattempted delivery leaves the old refusal true. This case keeps that
+// behaviour: nothing reached the worker, so the decision it answers stays.
+test('completion feedback not-attempted keeps a pending decision and never replays', async () => {
+  await heldQa();
+  delivery = 'not-attempted';
+  await assert.rejects(
+    resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' }),
+    /delivery is not-attempted/,
+  );
+  assert.equal(run.status, 'needs-decision');
+  assert.ok(pending());
+  assert.deepEqual(replays, []);
+  const intent = run.steps.find((step) => step.name === S.DISPATCH)?.outputs
+    ?.completionSendBackDelivery;
+  assert.ok(intent && typeof intent === 'object' && 'confirmed' in intent);
+  assert.equal(intent.confirmed, false);
+});
+
+// Run 1ad82ba1 (deeeed/audiolab#526), from the lead's brief: the send-back RPC
+// answered "delivery is unconfirmed" although the worker pane had the message
+// and acted on it. 6 s later the engine re-presented the SAME stale refusal
+// (android-010746 vs ios-011000) because the catch re-held the run on the old
+// reason, and since monitoring never resumed, the corrected signal the worker
+// wrote 7 minutes later was never read — monitor lastPollAt stayed at 17:16Z.
+// The lead recovered it with `run.replayStep monitor`, which is exactly what the
+// engine should have done itself.
+//
+// This changes a contract two of the three outcomes above used to pin: an
+// instruction that was handed over cannot be un-sent, so the engine waits for
+// the worker instead of re-raising what the worker is already fixing.
+for (const outcome of ['queued', 'unconfirmed'] as const) {
+  test(`completion feedback ${outcome} resumes monitoring instead of re-raising the refusal`, async () => {
     await heldQa();
+    const answered = pending().id;
     delivery = outcome;
     await assert.rejects(
-      resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' }),
+      resolveResultDecision({ runId: run.id, decisionId: answered, actionId: 'send-back' }),
       new RegExp(`delivery is ${outcome}`),
     );
-    assert.equal(run.status, 'needs-decision');
-    assert.ok(pending());
-    assert.deepEqual(replays, []);
+
+    assert.deepEqual(
+      replays,
+      [{ runId: run.id, stepName: 'monitor', triggeredBy: 'operator' }],
+      'monitoring must resume, or the worker’s next signal is never read',
+    );
+    const stale = run.decisions.find(
+      (decision) =>
+        !decision.resolvedAt &&
+        decision.id !== answered &&
+        decision.type === 'engine_result_decision',
+    );
+    assert.equal(
+      stale,
+      undefined,
+      `the stale refusal must not come back as a new decision: ${JSON.stringify(stale?.description)}`,
+    );
     const intent = run.steps.find((step) => step.name === S.DISPATCH)?.outputs
       ?.completionSendBackDelivery;
     assert.ok(intent && typeof intent === 'object' && 'confirmed' in intent);
-    assert.equal(intent.confirmed, false);
+    assert.equal(intent.confirmed, false, 'and the delivery is still recorded as unconfirmed');
   });
 }
 
@@ -666,8 +711,13 @@ test('a queued instruction can continue on its next signal without moving the or
     resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' }),
     /delivery is queued/,
   );
+  // A queued instruction now resumes monitoring instead of keeping the refusal
+  // up, so the engine is what holds the run again if the completion is still
+  // refused. The contract under test is unchanged: the retry keeps the same
+  // command and the original signal floor.
   currentSignal = { ...priorSignal, timestamp: '2026-10-28T00:16:01.000Z' };
   delivery = 'confirmed';
+  await holdRunForResultDecision(run.id, 'complete', 'Completion refused');
   await resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' });
   assert.equal(feedback[1].key, feedback[0].key);
   assert.deepEqual(
