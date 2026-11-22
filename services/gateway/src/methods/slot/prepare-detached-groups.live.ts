@@ -28,7 +28,6 @@ for (const shell of ['/bin/sh', '/bin/zsh'].filter((candidate) => existsSync(can
   test(`prepare cleanup of successive stubborn replacement groups fits the release budget (${shell})`, async (t) => {
     // Each generation ignores SIGTERM and starts the next group: every round needs SIGKILL.
     const root = mkdtempSync(path.join(os.tmpdir(), 'prepare-reap-budget-'));
-    t.after(() => rmSync(root, { recursive: true, force: true }));
     const scope = randomUUID().replaceAll('-', '');
     const identity = path.join(root, 'preflight.identity');
     const sentinel = spawn('/bin/sh', ['-c', 'while :; do sleep 86400; done'], {
@@ -63,9 +62,16 @@ for (const shell of ['/bin/sh', '/bin/zsh'].filter((candidate) => existsSync(can
       existsSync(pids)
         ? readFileSync(pids, 'utf8').trim().split('\n').filter(Boolean).map(Number)
         : [];
+    // Every process here leads its own group: stop the groups, then drop the PID list.
     t.after(() => {
-      for (const pid of [sentinel.pid!, first.pid!, ...generations()])
-        if (pid > 1 && running(pid)) process.kill(pid, 'SIGKILL');
+      for (const pid of [sentinel.pid!, first.pid!, ...generations()]) {
+        try {
+          if (pid > 1) process.kill(-pid, 'SIGKILL');
+        } catch {
+          // Already gone.
+        }
+      }
+      rmSync(root, { recursive: true, force: true });
     });
     await waitFor(() => generations().length === 1, 5_000, 'the first generation');
     const started = Date.now();
