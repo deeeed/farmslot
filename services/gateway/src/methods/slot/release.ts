@@ -62,7 +62,11 @@ import {
   measureSlotRetention,
   retainTaskCheckouts,
 } from '../../fleet/slot-scaffolding.js';
-import { cleanupSlotStorage, normalizeTaskRelativeDir } from '../../fleet/slot-storage-cleanup.js';
+import {
+  cleanupSlotStorage,
+  normalizeTaskRelativeDir,
+  parkTaskScratch,
+} from '../../fleet/slot-storage-cleanup.js';
 import { publicationStatusForRun } from '../../run-completion/publication-status.js';
 import {
   findActiveGateHeldRunForSlot,
@@ -1157,9 +1161,31 @@ async function slotReleaseImpl(
       step('clean', `Task dir ${taskDirName}/${taskRel} cleaned`);
     }
 
+    // Before the age prune, so stale scratch is parked rather than deleted; refused scratch
+    // is kept out of the prune, and the prune skips task dirs when parking failed. Full
+    // release only: a preserveAgents release keeps workers that may still own it.
+    let scratchKeep: string[] = [];
+    let scratchFailed = false;
+    if (!preserveAgents) {
+      await assertReleaseClaim();
+      try {
+        const scratch = await parkTaskScratch(vars, projectJson);
+        scratchKeep = scratch.refused.map((entry) => entry.path);
+        for (const entry of scratch.parked)
+          step('storage-clean', `Parked scratch ${entry.path} at ${entry.to}`);
+        for (const entry of scratch.refused)
+          step('storage-clean', `Left scratch ${entry.path}: ${entry.reason}`);
+      } catch (err) {
+        scratchFailed = true;
+        step('storage-clean', `Scratch parking failed: ${(err as Error).message.slice(0, 200)}`);
+      }
+    }
+
     await assertReleaseClaim();
     try {
       const storageCleanup = await cleanupSlotStorage(vars, projectJson, {
+        keepPaths: scratchKeep,
+        skipTaskPrune: scratchFailed,
         // Release keeps warm resources alive, so only prune completed task
         // copies and runtime artifact buckets. Browser profile directories are
         // reserved for explicit slot.cleanup after resource shutdown.
