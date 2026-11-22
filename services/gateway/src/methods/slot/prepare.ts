@@ -114,6 +114,12 @@ import {
   startPrepareSentinelHeartbeat,
 } from './prepare-sentinel.js';
 import { createPrepareStream, type PrepareStream } from './prepare-stream.js';
+import {
+  buildTrackedFilesSnapshotCommand,
+  parseTrackedFilesSnapshot,
+  trackedFilesChangedMessage,
+  type TrackedFilesSnapshot,
+} from './prepare-tracked-files.js';
 import { checkProjectPrerequisites } from './prerequisites.js';
 import {
   activePrepareAborts,
@@ -456,14 +462,43 @@ async function slotPrepareInner(
     return remapHookSupport(cmd);
   };
 
-  const installEvalRecipeHarness = async () => {
-    if (!params.runId) return;
+  const installEvalRecipeHarness = async (): Promise<boolean> => {
+    if (!params.runId) return false;
     const run = getRun(params.runId);
-    if (!run?.engineState?.evalExperiment) return;
+    if (!run?.engineState?.evalExperiment) return false;
     step('recipe-harness-install', 'Installing eval recipe harness');
     const result = await executeEvalHarnessLifecycle(run, 'install');
     if (!result.skipped) {
       step('recipe-harness-install', `Eval recipe harness installed (log: ${result.logPath})`);
+    }
+    return true;
+  };
+
+  const snapshotTrackedFiles = async (): Promise<TrackedFilesSnapshot> => {
+    const r = await execOnSlot(vars, buildTrackedFilesSnapshotCommand(vars.remoteRepo));
+    if (r.exitCode !== 0)
+      throw new Error(
+        `tracked-file snapshot failed on ${vars.slotId} (${vars.remoteRepo}): ${r.stderr.slice(-200) || `exit ${r.exitCode}`}`,
+      );
+    return parseTrackedFilesSnapshot(r.stdout);
+  };
+
+  const assertTrackedFilesUnchanged = async (
+    baseline: TrackedFilesSnapshot | null,
+    phase: string,
+    command: string,
+  ) => {
+    if (!baseline) return;
+    const message = trackedFilesChangedMessage(
+      phase,
+      command,
+      vars.slotId,
+      baseline,
+      await snapshotTrackedFiles(),
+    );
+    if (message) {
+      step(phase === 'deps' ? 'deps' : 'preflight', message);
+      throw new Error(message);
     }
   };
 
@@ -1404,6 +1439,12 @@ async function slotPrepareInner(
   // always running is bounded; the cost of skipping incorrectly is a 240s
   // preflight timeout on the next webpack run. Profiles that skip this phase
   // declare deps_current so the fallback chain catches stale trees.
+  // Tracked files must leave prepare as checkout and fixtures left them; a step
+  // that rewrites one fails here, naming it, instead of at run completion.
+  const trackedBaseline =
+    phaseEnabled('deps') || phaseEnabled('preflight') || phaseEnabled('health')
+      ? await snapshotTrackedFiles()
+      : null;
   if (!phaseEnabled('deps')) {
     step('deps', `Deps install skipped (profile ${profileName()})`);
   } else {
@@ -1451,11 +1492,15 @@ async function slotPrepareInner(
     }
     // Record the lockfile hash so deps_current precondition checks can prove
     // the installed tree matches the checked-out lockfiles.
+    await assertTrackedFilesUnchanged(trackedBaseline, 'deps', installCmd);
     await execOnSlot(vars, buildDepsSentinelWriteCommand(vars.remoteRepo, runtimeDir));
     step('deps', `Dependencies installed (log: ${depsLogPath})`);
   }
 
-  await installEvalRecipeHarness();
+  // An eval trial's harness install is an intended change; later phases are checked against it.
+  const harnessInstalled = await installEvalRecipeHarness();
+  const lateBaseline =
+    harnessInstalled && trackedBaseline ? await snapshotTrackedFiles() : trackedBaseline;
 
   // Native workers have no terminal session. Project preparation still runs normally.
   let session: string | undefined;
@@ -1742,6 +1787,8 @@ async function slotPrepareInner(
   // re-drive, unlike run.activateOnSlot. Compare-and-set so a direct RPC can
   // never stomp a slot another run already owns (a free or self-owned slot is
   // the only safe target).
+  await assertTrackedFilesUnchanged(lateBaseline, 'preflight/health', 'prepare hooks');
+
   if (params.bindRunId) {
     await bindRunToSlot(params, vars, step);
   }
