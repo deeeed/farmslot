@@ -4,7 +4,7 @@ import test from 'node:test';
 
 import { CLIP_TEXT_MAX_BYTES } from '@farmslot/protocol';
 
-import { clipPushParams, readClipStdin } from './clip.js';
+import { clipPushParams, readClipStdin, tmuxSessionArgs } from './clip.js';
 
 test('stdin text becomes the clip, with label and source', async () => {
   const stdin = await readClipStdin(Readable.from([Buffer.from('Slack draft\n'), 'line two\n']));
@@ -46,4 +46,20 @@ test('text over the byte cap fails before anything is sent', async () => {
     clipPushParams({}, 'a'.repeat(CLIP_TEXT_MAX_BYTES)).text.length,
     CLIP_TEXT_MAX_BYTES,
   );
+});
+
+test('the lane label comes from TMUX_PANE when a Claude worker starts without TMUX', () => {
+  const display = ['display-message', '-p', '-t', '%7', '#S'];
+  assert.deepEqual(
+    tmuxSessionArgs({ TMUX: '/tmp/tmux-501/default,1,0', TMUX_PANE: '%7' }),
+    display,
+  );
+  assert.deepEqual(tmuxSessionArgs({ TMUX_PANE: '%7' }), display);
+  assert.deepEqual(tmuxSessionArgs({ TMUX: '/tmp/tmux-501/default,1,0' }), [
+    'display-message',
+    '-p',
+    '#S',
+  ]);
+  assert.equal(tmuxSessionArgs({}), undefined);
+  assert.equal(tmuxSessionArgs({ TMUX_PANE: 'not-a-pane' }), undefined);
 });

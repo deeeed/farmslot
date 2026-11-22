@@ -669,8 +669,11 @@ function blindMachineVars(
 // Claude runs the user's own settings hooks in every worker. iTerm's agent hook
 // (`it2 handle-agent-hook`) asks iTerm which session shows the $TMUX pane and
 // never returns for a worker pane, stalling each tool call. Without TMUX it exits
-// at once. TMUX_PANE stays: the observability hook keys pane snapshots on it.
-const CLAUDE_WORKER_ENV_UNSET = 'unset CLAUDECODE TMUX';
+// at once. Only a default-socket TMUX is dropped, so a bare `tmux` still reaches
+// the same server; a named socket keeps its routing. TMUX_PANE stays: the
+// observability hook keys pane snapshots on it.
+export const CLAUDE_WORKER_ENV_UNSET =
+  'unset CLAUDECODE && case "${TMUX%%,*}" in */default) unset TMUX ;; esac';
 
 export function buildRunnerSessionReloadCommand(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
