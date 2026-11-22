@@ -467,6 +467,29 @@ test('a pid-file dev server outside the checkout is preserved', async () => {
   assert.equal(stops, 0);
 });
 
+test('the cap logs one structured line per changed decision', async (t) => {
+  const lines: string[] = [];
+  const info = t.mock.method(console, 'info', (line: unknown) => {
+    if (String(line).startsWith('[idle-devserver]')) lines.push(String(line));
+  });
+  await reapIdleDevServers('slot-a');
+  clock++;
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  info.mock.restore();
+  assert.equal(stops, 1);
+  assert.equal(lines.length, 2, lines.join('\n'));
+  assert.match(
+    lines[0]!,
+    /^\[idle-devserver\] slot=slot-a resource=server decision=idle: pid 101 stops after /,
+  );
+  assert.equal(
+    lines[1],
+    '[idle-devserver] slot=slot-a resource=server decision=stopped pid 101 after the idle limit',
+  );
+});
+
 test('a worker active at expiry keeps its server', async () => {
   await reapIdleDevServers('slot-a');
   clock += DEVSERVER_IDLE_LIMIT_MS;
