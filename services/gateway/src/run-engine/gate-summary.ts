@@ -321,9 +321,11 @@ function buildReviewSummaryText(
   const parts: string[] = [];
   if (acceptedFix) parts.push(ACCEPTED_FIX_WITHOUT_REVIEW);
   else if (review) {
+    // A skipped pipeline review is not the requested reviews that ran and are counted next.
+    const requestedRan = reviews.some((entry) => entry.verdict !== 'skipped');
     parts.push(
       review.status === 'skipped'
-        ? `review skipped (${review.reason ?? 'no reason recorded'})`
+        ? `${requestedRan ? 'automatic review' : 'review'} skipped (${review.reason ?? 'no reason recorded'})`
         : `review ${review.verdict ?? review.status}`,
     );
   }
