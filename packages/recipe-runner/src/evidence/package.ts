@@ -255,8 +255,9 @@ function repairFindings(
 }
 
 /**
- * State-only proof (no before/after capture to compare) follows the capture rule: a recorded
- * product checkout must be the clean frozen head, or the transcript proves another commit.
+ * Proof without an after capture (state-only, transcript) follows the capture rule: a recorded
+ * product checkout must be the clean frozen head, or the transcript proves another commit. As for
+ * captures, an unrecorded source is unavailable rather than a mismatch.
  */
 function stateProofSourceMismatch(
   input: RecordedEvidencePackageInput,
@@ -264,7 +265,7 @@ function stateProofSourceMismatch(
   headSha: string,
 ): RecipeValidationFinding | undefined {
   const compared = groupRecipeCaptureComparisons(input, input.claims?.criteria ?? []).media.some(
-    (media) => media.capture?.role === 'before' || media.capture?.role === 'after',
+    (media) => media.capture?.role === 'after',
   );
   const product = indexed.find((entry) => entry.path === 'product-provenance.json')?.metadata;
   if (compared || !isRecord(product)) return undefined;

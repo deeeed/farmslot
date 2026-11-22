@@ -1,0 +1,1 @@
+- The recipe CLI reference lists `recipe artifacts --format transcript` and `--transcript`.

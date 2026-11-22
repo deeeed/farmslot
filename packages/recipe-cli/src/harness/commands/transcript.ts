@@ -64,7 +64,7 @@ function oneLine(text: string): string {
 
 // Task-local paths: publication strips any PR-body line that contains one, even in a fence.
 const LOCAL_PATH =
-  /(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s<)>'"`|]*?([^\s<)>'"`|/]+)(?=[\s<)>'"`|]|$)/gu;
+  /(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s<)>'"`|]*?([^\s<)>'"`|/]+)(?=[\s<)>'"`|]|$)/giu;
 
 function sensitiveKey(key: string): boolean {
   return redactRecipeParams({ [key]: 'value' }, undefined).params[key] === '<redacted>';
@@ -206,11 +206,12 @@ async function entryDetail(root: string, entry: Record<string, unknown>): Promis
   if (typeof output.path === 'string' && output.assertion !== undefined) {
     // Reports are retained in the package at the path the assertion read.
     const document = await optionalJson(root, output.path).catch(() => undefined);
-    parts.push(safeText(path.basename(output.path)));
-    parts.push(...leaves(output.assertion).map((leaf) => assertionText(document, leaf, failed)));
-    // The retained report is read after the run; flag one that no longer satisfies what passed.
+    // The retained report is read after the run; flag one that no longer satisfies what passed,
+    // first so the line budget never clips the warning off.
     if (!failed && document !== undefined && satisfies(document, output.assertion) === false)
       parts.push('⚠ retained report no longer satisfies this assertion');
+    parts.push(safeText(path.basename(output.path)));
+    parts.push(...leaves(output.assertion).map((leaf) => assertionText(document, leaf, failed)));
   } else if (typeof output.exitCode === 'number') {
     // Exit code only: stdout, stderr and error text can carry credentials.
     parts.push(`exit ${output.exitCode}`);

@@ -372,7 +372,11 @@ test('review r1: secrets, groups, changed reports and the line cap', async (t) =
   const text = await renderRecipeTranscript({ artifactDir: dir });
   assert.match(text, /network https:\/\/<redacted>@rpc\.example mainnet$/m);
   assert.match(text, / · not missingFills=\[0\] \(len>0\)/);
-  assert.match(text, /⚠ retained report no longer satisfies this assertion$/m);
+  // The warning leads the details so the line budget cannot clip it.
+  assert.match(
+    text,
+    /^✓ check {2}assert_json {2}⚠ retained report no longer satisfies this assertion · trade\.json/m,
+  );
   assert.match(text, /session\.authorization="<redacted>"/);
   assert.doesNotMatch(text, /user:pass|ghp_/);
 });
@@ -401,14 +405,19 @@ test('review r2: group semantics, foreign ledger rows, stdout and raw labels', a
     entry('read', 'state_read', true, { path: '$.authorization.value', value: 'tok-secret' }),
     entry('label', 'assert_json', true, {
       path: `${REPORT_DIR}/trade.json`,
-      assertion: { path: '$.artifacts/report\nx', operator: 'exists' },
+      assertion: {
+        all: [
+          { path: '$.artifacts/report\nx', operator: 'exists' },
+          { path: '$.ARTIFACTS/report', operator: 'exists' },
+        ],
+      },
     }),
   ]);
   const text = await renderRecipeTranscript({ artifactDir: dir });
   // The label node reads a key the report lacks, so only it is flagged.
   assert.doesNotMatch(text, /^✓ check .*⚠/m);
   assert.match(text, /^✓ label .*⚠ retained report/m);
-  assert.doesNotMatch(text, /hunter2|tok-secret|artifacts\//);
+  assert.doesNotMatch(text, /hunter2|tok-secret|artifacts\//i);
   assert.match(text, /^✓ cmd {2}command {2}exit 0$/m);
   assert.match(text, /^✓ read {2}state_read$/m);
   assert.ok(
