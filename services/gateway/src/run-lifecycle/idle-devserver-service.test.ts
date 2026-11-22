@@ -27,6 +27,7 @@ let outsideRepo = false;
 let pagedOwner = false;
 let foreign = false;
 let unhealthyBoot = false;
+let pidFileWatch = false;
 let closedHistory = false;
 let realStatus = false;
 let promptDelivered = false;
@@ -57,7 +58,9 @@ const resources = (): SlotResource[] => [
       label: 'Fixture server',
       controllable: true,
       streamable: false,
-      watch: { type: 'port-listen', port: '{{port}}' },
+      watch: pidFileWatch
+        ? { type: 'pid-file', path: 'temp/farmslot/next-dev.pid' }
+        : { type: 'port-listen', port: '{{port}}' },
       hooks: { boot: 'fixture-prepare', health: 'fixture-health' },
     },
   },
@@ -98,7 +101,16 @@ mock.module('../core/config.js', {
 });
 const realIo = await import('../core/slot-io.js');
 mock.module('../core/slot-io.js', {
-  namedExports: { ...realIo, slotRealpath: async () => '/fixture' },
+  namedExports: {
+    ...realIo,
+    slotRealpath: async () => '/fixture',
+    slotFileExists: async (_vars: unknown, file: string) =>
+      pidFileWatch && alive && file === '/fixture/temp/farmslot/next-dev.pid',
+    slotReadFile: async (_vars: unknown, file: string) => {
+      assert.equal(file, '/fixture/temp/farmslot/next-dev.pid');
+      return '101\n';
+    },
+  },
 });
 const fixtureExec = async (_vars: unknown, command: string) => {
   if (realStatus && command.includes('.observability'))
@@ -310,6 +322,7 @@ beforeEach(() => {
   closedHistory = false;
   realStatus = false;
   promptDelivered = false;
+  pidFileWatch = false;
 });
 
 test('port watch resolves once, expires through the real identity reaper and resumes through boot', async () => {
@@ -325,6 +338,26 @@ test('port watch resolves once, expires through the real identity reaper and res
   await restoreIdleDevServers('slot-a', run.id);
   assert.equal(boots, 1);
   assert.equal(alive, true);
+});
+
+// macpro-mmt-2/mmt-5: after a gateway restart a pid-file dev server has no cached pointer,
+// so it was never reaped and outlived its runs by days.
+test('a pid-file dev server with no cached pointer is still reaped after the idle limit', async () => {
+  pidFileWatch = true;
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 1);
+  assert.equal(alive, false);
+});
+
+test('a pid-file dev server outside the checkout is preserved', async () => {
+  pidFileWatch = true;
+  foreign = true;
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 0);
 });
 
 test('a worker active at expiry keeps its server', async () => {

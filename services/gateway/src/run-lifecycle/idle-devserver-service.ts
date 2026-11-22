@@ -6,7 +6,7 @@ import { execOnSlot } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
 import { activePrepareSlots } from '../core/native-worker-exclusion.js';
 import { reportSlotResourceLifecycle } from '../core/resource-lifecycle-log.js';
-import { slotRealpath } from '../core/slot-io.js';
+import { slotFileExists, slotReadFile, slotRealpath } from '../core/slot-io.js';
 import { markSlotStatusIf, readSlotRow } from '../core/state.js';
 import {
   resolveTmuxSession,
@@ -101,6 +101,18 @@ const idleDevServers = new IdleDevServerReaper({
       const pids = [...new Set(result.stdout.trim().split(/\s+/).map(Number))];
       if (pids.length !== 1 || !Number.isSafeInteger(pids[0]) || pids[0] <= 0) return undefined;
       pid = pids[0];
+    } else if (!pid && resource?.definition.watch?.type === 'pid-file') {
+      // The cached pointer does not survive a gateway restart; the watched PID file does.
+      // It names a candidate only: the checkout-cwd provenance below still decides.
+      const watchPath = resource.definition.watch.path;
+      if (!watchPath) return undefined;
+      const project = await loadProjectVars(vars.projectName);
+      const expanded = expandTemplate(String(watchPath), vars, project);
+      const pidPath = expanded.startsWith('/') ? expanded : `${vars.remoteRepo}/${expanded}`;
+      if (!(await slotFileExists(vars, pidPath))) return undefined;
+      const recorded = Number((await slotReadFile(vars, pidPath)).trim());
+      if (!Number.isSafeInteger(recorded) || recorded <= 0) return undefined;
+      pid = recorded;
     }
     if (!pid) return undefined;
     const process = await probeResourceProcess(vars, pid);

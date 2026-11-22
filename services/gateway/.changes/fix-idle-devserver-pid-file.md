@@ -1,0 +1,1 @@
+- The idle dev-server cap now stops dev servers watched by a PID file after a gateway restart: it reads the watched PID file on the slot when no cached pointer survives, and still requires the process to run in the slot checkout before stopping it.
