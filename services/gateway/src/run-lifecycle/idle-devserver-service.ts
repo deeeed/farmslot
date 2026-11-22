@@ -66,10 +66,10 @@ export function pidFileProbeCommand(pidPath: string): string {
     'modified=$(stat -f %m "$f" 2>/dev/null)',
     'case "$modified" in ""|*[!0-9]*) modified=$(stat -c %Y "$f" 2>/dev/null) ;; esac',
     'case "$modified" in ""|*[!0-9]*) exit 3 ;; esac',
-    'elapsed=$(ps -o etime= -p "$pid" 2>/dev/null | tr -d "[:space:]")',
-    'started=$(ps -o lstart= -p "$pid" 2>/dev/null)',
-    '[ -n "$elapsed" ] && [ -n "$started" ] || exit 3',
-    'echo "$pid $(( $(date +%s) - modified )) $elapsed $started"',
+    // One ps record, so the elapsed time and start time belong to the same process.
+    'record=$(ps -o etime=,lstart= -p "$pid" 2>/dev/null)',
+    '[ -n "$record" ] || exit 3',
+    'echo "$pid $(( $(date +%s) - modified )) $record"',
   ].join('\n');
 }
 
