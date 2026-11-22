@@ -370,3 +370,54 @@ test('a parking directory that already exists is never reused, for any candidate
   assert.equal(await exists(path.join(repo, 'temp/tasks/scratch-a/x')), true);
   assert.equal(await exists(path.join(repo, 'temp/tasks/scratch-b/x')), true);
 });
+
+// macpro-mmt-5 after run 41fc25bd: a worker left temp/scratch-tat4567 directly under temp/.
+// temp/ is scanned only for the temp/tasks layout; never a custom root's parent or the checkout root.
+test('scratch directly under temp/ is parked for the temp/tasks layout only', async () => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-temp-'));
+  const home = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-temp-home-'));
+  for (const rel of [
+    'temp/scratch-tat4567/run.json',
+    'temp/scratch-task/TASK.md',
+    'scratch-root/x',
+    '.task/feat/a/TASK.md',
+    'support/scratch-assets/x',
+  ]) {
+    await mkdir(path.dirname(path.join(repo, rel)), { recursive: true });
+    await writeFile(path.join(repo, rel), 'x');
+  }
+  const park = async (taskDirName: string) =>
+    parseTaskScratchParkOutput(
+      (
+        await execFileAsync('/bin/sh', [
+          '-c',
+          buildTaskScratchParkCommand({
+            repo,
+            taskDirName,
+            slotId: 'macpro-mmt-5',
+            parkHome: home,
+          }),
+        ])
+      ).stdout,
+    );
+  // Other layouts first, while temp/scratch-tat4567 is still in place: they must not move it.
+  assert.deepEqual((await park('.task')).parked, []);
+  assert.deepEqual((await park('support/tasks')).parked, []);
+  assert.equal(await exists(path.join(repo, 'temp/scratch-tat4567/run.json')), true);
+  assert.equal(
+    await exists(path.join(repo, 'scratch-root/x')),
+    true,
+    'the checkout root is never scanned',
+  );
+  assert.equal(await exists(path.join(repo, 'support/scratch-assets/x')), true);
+  const temp = await park('temp/tasks');
+  assert.deepEqual(
+    temp.parked.map((entry) => path.basename(entry.path)),
+    ['scratch-tat4567'],
+  );
+  assert.equal(
+    await exists(path.join(repo, 'temp/scratch-task/TASK.md')),
+    true,
+    'the TASK.md guard still applies',
+  );
+});
