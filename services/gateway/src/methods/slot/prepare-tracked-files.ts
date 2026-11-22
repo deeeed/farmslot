@@ -36,13 +36,16 @@ export interface TrackedFilesSnapshot {
 const HEADER_LINES = 4;
 
 // Single-quoted TS strings: shell ${...} stays literal; '\t' is a real tab.
+// Runs under `bash -o pipefail`: a failed probe fails the snapshot instead of reading as clean.
 const SUBMODULE_RECORDS = [
   // NUL-delimited end to end: ls-tree quotes unusual paths in line mode.
   "git ls-tree -r -z HEAD | perl -0ne 'print if /^160000 commit /' | while IFS= read -r -d '' entry; do",
   'meta=${entry%%\t*}; p=${entry#*\t}; commit=none; dirty=clean;',
   'if [ -e "$p/.git" ]; then',
-  'commit=$(git -C "$p" rev-parse -q --verify HEAD 2>/dev/null || echo none);',
-  'dirty=$(git -C "$p" diff --binary --no-ext-diff HEAD -- 2>/dev/null | git hash-object --stdin);',
+  'commit=$(git -C "$p" rev-parse --verify HEAD) || exit 1;',
+  // What completion's --ignore-submodules=none sees: unstaged and staged edits
+  // and untracked files.
+  'dirty=$({ git -C "$p" diff --binary --no-ext-diff HEAD -- && git -C "$p" diff --cached --binary --no-ext-diff HEAD -- && git -C "$p" status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none; } | git hash-object --stdin) || exit 1;',
   '[ "$dirty" = "$empty" ] && dirty=clean;',
   'fi;',
   'printf \'%s %s %s\\t%s\\0\' "${meta##* }" "$commit" "$dirty" "$p";',
@@ -65,13 +68,14 @@ export function buildTrackedFilesSnapshotCommand(repo: string): string {
     'printf \'%s\\n%s\\n%s\\n%s\\n\' "$head" "$branch" "$worktree" "$index"',
     `{ ${SUBMODULE_RECORDS}; }`,
   ].join(' && ');
-  return [
+  const script = [
     `cd ${shellQuote(repo)}`,
     'head=$(git rev-parse --verify HEAD)',
     'branch=$(git symbolic-ref -q HEAD || true)',
     // `git stash create` needs a merged index.
     `if [ -n "$(git ls-files -u | head -n 1)" ]; then printf '%s\\n%s\\nunmerged\\n\\n' "$head" "$branch"; else ${merged}; fi`,
   ].join(' && ');
+  return `bash -o pipefail -c ${shellQuote(script)}`;
 }
 
 export function parseTrackedFilesSnapshot(stdout: string): TrackedFilesSnapshot {

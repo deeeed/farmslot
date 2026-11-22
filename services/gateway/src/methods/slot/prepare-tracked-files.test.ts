@@ -223,3 +223,26 @@ test('a submodule path that git quotes is still tracked', (t) => {
   inSub('checkout', '-q', 'HEAD~1');
   assert.deepEqual(files(before, snap()), [odd]);
 });
+
+test('a staged-only edit inside a submodule is reported', (t) => {
+  const { repo, snap, files, inSub } = withSubmodule(t, 'vendor/sub');
+  const before = snap();
+  writeFileSync(path.join(repo, 'vendor/sub/s.txt'), 'staged edit\n');
+  inSub('add', 's.txt');
+  writeFileSync(path.join(repo, 'vendor/sub/s.txt'), '2\n');
+  assert.deepEqual(files(before, snap()), ['vendor/sub']);
+});
+
+test('an untracked file inside a submodule is reported', (t) => {
+  const { repo, snap, files } = withSubmodule(t, 'vendor/sub');
+  const before = snap();
+  writeFileSync(path.join(repo, 'vendor/sub/new.txt'), 'untracked\n');
+  assert.deepEqual(files(before, snap()), ['vendor/sub']);
+});
+
+test('a broken submodule checkout fails the snapshot instead of reading as clean', (t) => {
+  const { repo } = withSubmodule(t, 'vendor/sub');
+  rmSync(path.join(repo, 'vendor/sub/.git'), { recursive: true, force: true });
+  writeFileSync(path.join(repo, 'vendor/sub/.git'), 'gitdir: /nonexistent/modules/sub\n');
+  assert.throws(() => sh(buildTrackedFilesSnapshotCommand(repo)));
+});
