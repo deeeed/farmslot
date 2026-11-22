@@ -120,18 +120,19 @@ export function applyArtifactOnlyTaskPolicy(
     literalReplacement(hasBase ? `git diff ${replayBase}` : 'git diff'),
   );
   // `git merge-base origin/<default> HEAD` is the same main-relative baseline (run
-  // 6562483b's fix-bug step 7). It resolved to the pin there only by luck.
+  // 6562483b's fix-bug step 7). It resolved to the pin there only by luck. A standalone
+  // `git diff "$(…)"` reads the base or, without one, the working tree; with a base, every
+  // other use takes the base, keeping any quotes around a larger word. Without a base other
+  // uses stay: dropping them would break the commands that depend on them.
+  const mergeBase = String.raw`\$\(git merge-base origin\/[^\s)"]+ HEAD\)`;
   result = result.replace(
-    /git diff "?\$\(git merge-base origin\/[^\s)"]+ HEAD\)"?/g,
+    new RegExp(String.raw`git diff (?:"${mergeBase}"|${mergeBase})(?=[\s\x60&;|)]|$)`, 'g'),
     literalReplacement(hasBase ? `git diff ${replayBase}` : 'git diff'),
   );
-  result = hasBase
-    ? result.replace(
-        /"?\$\(git merge-base origin\/[^\s)"]+ HEAD\)"?/g,
-        literalReplacement(replayBase),
-      )
-    : // As with commit ranges below: no honest substitute without a base.
-      result.replace(/^.*\$\(git merge-base origin\/.*(?:\r?\n|$)/gm, '');
+  if (hasBase)
+    result = result
+      .replace(new RegExp(`"${mergeBase}"`, 'g'), literalReplacement(replayBase))
+      .replace(new RegExp(mergeBase, 'g'), literalReplacement(replayBase));
   if (hasBase) {
     result = result.replace(
       /git log main\.\.HEAD/g,

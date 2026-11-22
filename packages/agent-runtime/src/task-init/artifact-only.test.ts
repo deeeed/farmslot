@@ -64,5 +64,29 @@ test('artifact replay rewrites merge-base-with-main diffs to the replay base', (
   assert.ok(pinned.includes('`git log --oneline f6c148ef..HEAD`'));
   const unpinned = applyArtifactOnlyTaskPolicy(template, { base: undefined });
   assert.ok(unpinned.includes('Review `git diff` and'));
-  assert.equal(/merge-base/.test(unpinned), false, unpinned);
+});
+
+// Dependent commands stay coherent: a variable holding the merge base, a range, and a
+// substitution inside a larger quoted word.
+test('artifact replay keeps merge-base dependent commands runnable', () => {
+  const template = [
+    '# Synthetic task',
+    '',
+    'review_merge_base="$(git merge-base origin/main HEAD)"',
+    'git diff "$review_merge_base"',
+    'git diff "$(git merge-base origin/main HEAD)"..HEAD',
+    'echo "Base $(git merge-base origin/main HEAD)"',
+    'git log $(git merge-base origin/release origin/hotfix)..HEAD',
+    '',
+  ].join('\n');
+  const pinned = applyArtifactOnlyTaskPolicy(template, { base: 'f6c148ef' });
+  assert.ok(pinned.includes('review_merge_base=f6c148ef'));
+  assert.ok(pinned.includes('git diff f6c148ef..HEAD'));
+  assert.ok(pinned.includes('echo "Base f6c148ef"'));
+  assert.ok(
+    pinned.includes('$(git merge-base origin/release origin/hotfix)'),
+    'other merge-bases stay',
+  );
+  const unpinned = applyArtifactOnlyTaskPolicy(template, { base: undefined });
+  for (const line of template.split('\n').slice(2, 7)) assert.ok(unpinned.includes(line), line);
 });
