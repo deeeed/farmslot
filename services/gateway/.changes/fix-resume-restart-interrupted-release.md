@@ -1,0 +1,1 @@
+- A release that a gateway restart interrupted is now finished by the restarted gateway through its terminal run's owner-bound retry, instead of leaving the slot `busy/releasing` until the 30-minute backstop holds it.

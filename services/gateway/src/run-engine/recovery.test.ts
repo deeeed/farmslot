@@ -2221,6 +2221,7 @@ function orphanCollaborators(overrides: Partial<OrphanCollaborators>): OrphanCol
     broadcast: unexpected,
     retryOccupiedRunSlot: async () => unexpected(),
     resumeInterruptedRecovery: unexpected,
+    resumeInterruptedRelease: unexpected,
     ...overrides,
   };
 }
@@ -2493,6 +2494,7 @@ test('orphan reconcile leaves a releasing fence that is still young', async () =
     }),
     isTerminalTeardownInFlight: () => false,
     readSlotField: async () => new Date(Date.now() - 5_000).toISOString(),
+    getRun: () => undefined,
     resetSlot: async (slotId: string) => reset.push(slotId),
   } as unknown as RunRecoveryCollaborators;
 

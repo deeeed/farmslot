@@ -122,6 +122,7 @@ async function setup(t: import('node:test').TestContext) {
     broadcast: () => {},
     retryOccupiedRunSlot: async () => false,
     resumeInterruptedRecovery: () => {},
+    resumeInterruptedRelease: () => {},
   };
   return { id: created.id, deps };
 }

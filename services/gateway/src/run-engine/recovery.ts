@@ -11,6 +11,7 @@ import {
   isHeldForResultDecision,
   isSettledBlockedRun,
   isSettledCompletionFailure,
+  isTerminalRunStatus,
   pendingResultDecision,
   PipelineSteps,
   pipelineStepsForRun,
@@ -26,6 +27,7 @@ import {
 
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/config.js';
 import {
+  currentReleaseGatewayInstance,
   SLOT_CLEANUP_STOP_UNCONFIRMED,
   SLOT_PHASE_RELEASING,
   SLOT_RELEASE_GATEWAY_INSTANCE,
@@ -187,6 +189,11 @@ export interface RunRecoveryCollaborators {
    * Settles in the background: startup does not wait for the slot's git work.
    */
   resumeInterruptedRecovery: (slotId: string) => void;
+  /**
+   * Finish a release a previous gateway fenced, through the owner-bound retry that inspects
+   * and reclaims that exact fence. Settles in the background; a refusal leaves the fence.
+   */
+  resumeInterruptedRelease: (slotId: string, runId: string) => void;
   /**
    * Conditional reset: `predicate` runs INSIDE the serialized slot write, so
    * the check and the write cannot be split by a concurrent release. The
@@ -1498,6 +1505,7 @@ type OrphanRecoveryCollaborators = Pick<
   | 'broadcast'
   | 'retryOccupiedRunSlot'
   | 'resumeInterruptedRecovery'
+  | 'resumeInterruptedRelease'
   | 'absentExecutionNode'
 >;
 
@@ -1598,6 +1606,25 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
         continue;
       }
       if (stalledFor < STALE_RELEASE_RECLAIM_MS) {
+        // A previous gateway's fence has no owner in this process. Its terminal run's
+        // owner-bound retry rechecks the fence and the workspace census itself; an
+        // absent node refuses it and a later pass (or the reconnect) tries again.
+        const instance = await deps.readSlotField(slot.slot, SLOT_RELEASE_GATEWAY_INSTANCE);
+        const ownerId = await deps.readSlotField(slot.slot, 'current_run_id');
+        const owner = typeof ownerId === 'string' ? deps.getRun(ownerId) : undefined;
+        if (
+          typeof instance === 'string' &&
+          instance &&
+          instance !== currentReleaseGatewayInstance() &&
+          owner &&
+          isTerminalRunStatus(owner.status)
+        ) {
+          console.log(
+            `[run-engine] reconcile: ${slot.slot} release interrupted by a gateway restart; retrying it for run ${owner.id.slice(0, 8)}`,
+          );
+          deps.resumeInterruptedRelease(slot.slot, owner.id);
+          continue;
+        }
         console.log(`[run-engine] reconcile: ${slot.slot} left alone; a release owns it`);
         continue;
       }

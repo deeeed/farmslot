@@ -107,6 +107,9 @@ test('expired release fence keeps a dirty eval checkout held until owner retry c
     resumeInterruptedRecovery: () => {
       throw new Error('Ordinary release has no workspace recovery journal');
     },
+    resumeInterruptedRelease: () => {
+      throw new Error('An expired fence goes to the backstop hold');
+    },
     absentExecutionNode: async () => null,
   };
   await reconcileOrphanedSlots(deps);
@@ -127,4 +130,76 @@ test('expired release fence keeps a dirty eval checkout held until owner retry c
     before,
   );
   assert.equal(JSON.parse(await readFile(state.statusFile, 'utf8')).slots[0].lifecycle, 'held');
+});
+
+async function seedFence(instance: string, ownerStatus: 'done' | 'monitoring') {
+  const owner = makeRun({ id: `owner-${instance}`, status: ownerStatus, slotId: 'restart-slot' });
+  await writeFile(
+    state.statusFile,
+    JSON.stringify({
+      slots: [
+        {
+          slot: 'restart-slot',
+          lifecycle: 'busy',
+          phase: 'releasing',
+          slot_epoch: 2,
+          current_run_id: owner.id,
+          releasing_since: new Date().toISOString(),
+          release_gateway_instance: instance,
+          cleanup_release_token: 'previous-token',
+        },
+      ],
+    }),
+  );
+  const resumed: Array<[string, string]> = [];
+  const deps: Deps = {
+    listRuns: () => ({ runs: [owner] }),
+    loadFleetStatus: async () => ({
+      slots: [
+        {
+          slot: 'restart-slot',
+          lifecycle: 'busy',
+          phase: 'releasing',
+          slotEpoch: 2,
+          currentRunId: owner.id,
+        },
+      ],
+    }),
+    isTerminalTeardownInFlight: () => false,
+    readSlotField: state.readSlotField,
+    getRun: (id) => (id === owner.id ? owner : undefined),
+    updateRun: () => {},
+    resetSlot: state.resetSlot,
+    resetSlotIf: state.resetSlotIf,
+    updateSlotStatusIf: state.updateSlotStatusIf,
+    broadcast: () => {},
+    retryOccupiedRunSlot: async () => false,
+    resumeInterruptedRecovery: () => {
+      throw new Error('Ordinary release has no workspace recovery journal');
+    },
+    resumeInterruptedRelease: (slotId, runId) => {
+      resumed.push([slotId, runId]);
+    },
+    absentExecutionNode: async () => null,
+  };
+  await reconcileOrphanedSlots(deps);
+  return { owner, resumed, row: await state.readSlotRow('restart-slot') };
+}
+
+test('a fresh fence left by a previous gateway is resumed through its terminal owner', async () => {
+  const { owner, resumed, row } = await seedFence('previous-gateway', 'done');
+  assert.deepEqual(resumed, [['restart-slot', owner.id]]);
+  assert.equal(
+    row?.phase,
+    'releasing',
+    'The owner-bound retry, not the reconciler, moves the fence',
+  );
+});
+
+test('this gateway’s own fence and a live owner are left alone', async () => {
+  const own = await seedFence(state.currentReleaseGatewayInstance(), 'done');
+  assert.deepEqual(own.resumed, []);
+  const live = await seedFence('previous-gateway', 'monitoring');
+  assert.deepEqual(live.resumed, []);
+  assert.equal(live.row?.phase, 'releasing');
 });
