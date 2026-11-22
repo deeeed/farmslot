@@ -413,6 +413,65 @@ test('retained captures keep their recorded head and prove only their retained c
       .after[0]!.reasonCode,
     'comparison-source-mismatch',
   );
+  // The product-head check binds only the selected attempt. A retained after capture qualifies
+  // against its own head, so it cannot exempt a stale fresh checkout; a dependency's own
+  // checkout keeps the capture revision rules.
+  const rows = ['AC-1', 'AC-2'].map((id) => ({
+    id,
+    text: id,
+    kind: 'acceptance' as const,
+    proofMode: 'visual' as const,
+    verdict: 'pass' as const,
+    recipeNodes: [],
+    assertionIndices: [],
+    evidence: [],
+    moments: [],
+  }));
+  const product = (gitRef: string) => ({
+    path: 'product-provenance.json',
+    type: 'json',
+    metadata: { git_ref: gitRef, dirty: false },
+  });
+  const productMismatches = (input: RecordedEvidencePackageInput) =>
+    validateRecordedEvidencePackage(input, snapshot)
+      .findings.filter((finding) => finding.code === 'comparison-source-mismatch')
+      .map(({ path: file }) => file);
+  const retainedOriginal: RecordedEvidencePackageInput = {
+    ...original,
+    manifest: {
+      artifacts: [
+        after(recipeRunId, 'AC-1', scope.packageHeadSha),
+        product(scope.packageHeadSha),
+      ],
+    },
+    claims: { ...ledger(recipeRunId), criteria: rows },
+  };
+  assert.deepEqual(
+    productMismatches({
+      ...repaired,
+      manifest: { artifacts: [product('d'.repeat(40))] },
+      claims: { ...ledger('fresh'), criteria: rows },
+      comparisonDependencies: [
+        { artifactRoot: `comparison-dependencies/${recipeRunId}`, input: retainedOriginal },
+      ],
+    }),
+    ['product-provenance.json'],
+  );
+  const { repair: _unusedRepair, ...plain } = repaired;
+  assert.deepEqual(
+    productMismatches({
+      ...plain,
+      manifest: { artifacts: [after('fresh', 'AC-2', head), product(head)] },
+      claims: { ...ledger('fresh'), criteria: rows },
+      comparisonDependencies: [
+        {
+          artifactRoot: `comparison-dependencies/${recipeRunId}`,
+          input: { ...retainedOriginal, manifest: { artifacts: [product(scope.packageHeadSha)] } },
+        },
+      ],
+    }),
+    [],
+  );
 });
 
 test('a repair of a repair binds each nested original to its own selection and head', async (t) => {

@@ -357,7 +357,7 @@ export async function renderRecipeTranscript(input: RecipeTranscriptInput): Prom
   // A basename only: publication drops PR-body lines that carry a task-local path.
   footer.push(
     clip(
-      `Artifacts: recipe run ${path.basename(input.displayDir ?? root)} (trace.json, report.md); asserted values are read from its retained reports`,
+      `Artifacts: recipe run ${clip(safeText(path.basename(input.displayDir ?? root)), MAX_VALUE)} (trace.json, report.md); asserted values are read from its retained reports`,
       MAX_LINE,
     ),
   );

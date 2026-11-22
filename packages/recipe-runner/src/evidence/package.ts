@@ -264,9 +264,10 @@ function stateProofSourceMismatch(
   indexed: readonly Record<string, unknown>[],
   headSha: string,
 ): RecipeValidationFinding | undefined {
-  // Only an after capture bound to one of this execution's claims is itself checked against the head.
+  // Only this execution's own after capture bound to one of its claims is checked against the
+  // head; retained dependency captures qualify against their original revisions.
   const compared = groupRecipeCaptureComparisons(input, input.claims?.criteria ?? []).rows.some(
-    (row) => row.after.length > 0,
+    (row) => row.after.some((media) => media.root === ''),
   );
   const product = indexed.find((entry) => entry.path === 'product-provenance.json')?.metadata;
   if (compared || !isRecord(product)) return undefined;
@@ -405,7 +406,8 @@ function validatePackage(
   }
   if (input.repair || (isRecord(input.invocation) && input.invocation.repair !== undefined))
     for (const [path, message] of repairFindings(input, dependencies)) issue(path, message);
-  if (snapshot?.headSha) {
+  // The selected attempt only: comparison dependencies keep their own capture revision rules.
+  if (snapshot?.headSha && ancestors.size === 0) {
     const finding = stateProofSourceMismatch(input, indexed, snapshot.headSha);
     if (finding) findings.push(finding);
   }
