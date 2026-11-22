@@ -479,8 +479,12 @@ async function slotPrepareInner(
     return true;
   };
 
-  const snapshotTrackedFiles = async (): Promise<TrackedFilesSnapshot> => {
-    const r = await execOnSlot(vars, buildTrackedFilesSnapshotCommand(vars.remoteRepo));
+  const snapshotTrackedFiles = async (): Promise<TrackedFilesSnapshot | null> => {
+    checkAborted();
+    const r = await execOnSlot(vars, buildTrackedFilesSnapshotCommand(vars.remoteRepo), {
+      signal,
+    });
+    checkAborted();
     if (r.exitCode !== 0)
       throw new Error(
         `tracked-file snapshot failed on ${vars.slotId} (${vars.remoteRepo}): exit ${r.exitCode} ${(r.stderr || r.stdout).slice(-300)}`,
@@ -489,7 +493,8 @@ async function slotPrepareInner(
   };
 
   const trackedPaths = async (command: string): Promise<string[]> => {
-    const r = await execOnSlot(vars, command);
+    const r = await execOnSlot(vars, command, { signal });
+    checkAborted();
     if (r.exitCode !== 0)
       throw new Error(
         `tracked-file diff failed on ${vars.slotId} (${vars.remoteRepo}): ${r.stderr.slice(-200) || `exit ${r.exitCode}`}`,
@@ -505,6 +510,11 @@ async function slotPrepareInner(
   ): Promise<TrackedFilesSnapshot | null> => {
     if (!baseline) return null;
     const after = await snapshotTrackedFiles();
+    if (!after) {
+      const message = `prepare ${phase} left unmerged index entries on ${vars.slotId} — command: ${command}`;
+      step('tracked-files', message);
+      throw new Error(message);
+    }
     if (snapshotsEqual(baseline, after)) return after;
     const files =
       baseline.head === after.head
@@ -1464,6 +1474,8 @@ async function slotPrepareInner(
     phaseEnabled('deps') || phaseEnabled('preflight') || phaseEnabled('health')
       ? await snapshotTrackedFiles()
       : null;
+  if (!trackedBaseline && (phaseEnabled('deps') || phaseEnabled('preflight') || phaseEnabled('health')))
+    step('tracked-files', 'Tracked-file check skipped: the index has unmerged entries');
   if (!phaseEnabled('deps')) {
     step('deps', `Deps install skipped (profile ${profileName()})`);
   } else {

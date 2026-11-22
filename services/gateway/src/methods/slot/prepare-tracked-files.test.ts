@@ -46,7 +46,11 @@ function fixture(t: { after: (fn: () => void) => void }) {
   symlinkSync('target-1', path.join(repo, 'link'));
   git('add', '.');
   git('commit', '-qm', 'seed');
-  const snap = () => parseTrackedFilesSnapshot(sh(buildTrackedFilesSnapshotCommand(repo)));
+  const snap = (): TrackedFilesSnapshot => {
+    const snapshot = parseTrackedFilesSnapshot(sh(buildTrackedFilesSnapshotCommand(repo)));
+    assert.ok(snapshot, 'expected a merged index');
+    return snapshot;
+  };
   const files = (before: TrackedFilesSnapshot, after: TrackedFilesSnapshot) =>
     changedTrackedFiles(
       parseNulPaths(sh(buildChangedPathsCommand(repo, before, after))),
@@ -132,4 +136,41 @@ test('a file rewritten with identical bytes is not a change', (t) => {
   const after = snap();
   assert.ok(snapshotsEqual(before, after));
   assert.deepEqual(files(before, after), []);
+});
+
+test('a conflicted index yields no snapshot instead of failing', (t) => {
+  const { repo, git } = fixture(t);
+  git('checkout', '-q', '-b', 'theirs');
+  writeFileSync(path.join(repo, 'a.txt'), 'theirs\n');
+  git('commit', '-qam', 'theirs');
+  git('checkout', '-q', 'main');
+  writeFileSync(path.join(repo, 'a.txt'), 'ours\n');
+  git('commit', '-qam', 'ours');
+  assert.throws(() => git('merge', '-q', 'theirs'));
+  assert.equal(parseTrackedFilesSnapshot(sh(buildTrackedFilesSnapshotCommand(repo))), null);
+});
+
+test('a moved submodule is reported even with submodule ignore=all', (t) => {
+  const { repo, git, snap, files } = fixture(t);
+  const sub = mkdtempSync(path.join(os.tmpdir(), 'prepare-tracked-sub-'));
+  t.after(() => rmSync(sub, { recursive: true, force: true }));
+  const subGit = (dir: string, ...args: string[]) =>
+    execFileSync(
+      'git',
+      ['-C', dir, '-c', 'user.name=F', '-c', 'user.email=f@example.invalid', '-c', 'commit.gpgsign=false', ...args],
+      { encoding: 'utf8' },
+    ).trim();
+  subGit(sub, 'init', '-q', '-b', 'main');
+  writeFileSync(path.join(sub, 's.txt'), '1\n');
+  subGit(sub, 'add', '.');
+  subGit(sub, 'commit', '-qm', 'one');
+  writeFileSync(path.join(sub, 's.txt'), '2\n');
+  subGit(sub, 'commit', '-qam', 'two');
+  git('-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'vendor/sub');
+  git('config', '-f', '.gitmodules', 'submodule.vendor/sub.ignore', 'all');
+  git('add', '.gitmodules');
+  git('commit', '-qm', 'add submodule');
+  const before = snap();
+  subGit(path.join(repo, 'vendor/sub'), 'checkout', '-q', 'HEAD~1');
+  assert.deepEqual(files(before, snap()), ['vendor/sub']);
 });

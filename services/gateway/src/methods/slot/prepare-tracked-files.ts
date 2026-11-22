@@ -29,6 +29,8 @@ export function buildTrackedFilesSnapshotCommand(repo: string): string {
     `cd ${shellQuote(repo)}`,
     'head=$(git rev-parse --verify HEAD)',
     'branch=$(git symbolic-ref -q HEAD || true)',
+    // `git stash create` needs a merged index; a replay can keep a conflicted one.
+    "{ [ -z \"$(git ls-files -u | head -n 1)\" ] || { printf '%s\\n' unmerged; exit 0; }; }",
     // A file rewritten with identical bytes is only stat-dirty; `git stash create`
     // exits 1 without output on that, so refresh the stat cache first.
     '{ git update-index -q --refresh >/dev/null 2>&1 || true; }',
@@ -43,7 +45,9 @@ export function buildTrackedFilesSnapshotCommand(repo: string): string {
   ].join(' && ');
 }
 
-export function parseTrackedFilesSnapshot(stdout: string): TrackedFilesSnapshot {
+/** Null when the index has unmerged entries and no tree can be recorded. */
+export function parseTrackedFilesSnapshot(stdout: string): TrackedFilesSnapshot | null {
+  if (stdout.trim() === 'unmerged') return null;
   const lines = stdout.split('\n');
   const [head = '', branch = '', worktreeTree = '', indexTree = ''] = lines;
   const object = /^[0-9a-f]{40,64}$/;
@@ -87,7 +91,7 @@ export function buildDirtyPathsCommand(repo: string, snapshot: TrackedFilesSnaps
 function diffTreesCommand(repo: string, pairs: Array<[string, string]>): string {
   const diffs = pairs
     .filter(([a, b]) => a !== b)
-    .map(([a, b]) => `git diff --no-renames --name-only -z ${shellQuote(a)} ${shellQuote(b)} --`);
+    .map(([a, b]) => `git diff --no-renames --ignore-submodules=none --name-only -z ${shellQuote(a)} ${shellQuote(b)} --`);
   return `cd ${shellQuote(repo)} && { ${diffs.join(' && ') || 'true'}; }`;
 }
 
