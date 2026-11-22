@@ -999,15 +999,16 @@ async function slotPrepareInner(
       step('branch', `Created ${branch} after prepare failed before branch setup`);
     } else {
       // The base moves only for an empty branch; a failed fetch keeps the branch as it is.
-      const fetchBase = opts.startRef || opts.stackBase
-        ? null
-        : await execGit(
-            'fetch-replay-base',
-            vars,
-            withFarmGitConfig(
-              `git -C ${shellQuote(vars.remoteRepo)} fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
-            ),
-          );
+      const fetchBase =
+        opts.startRef || opts.stackBase
+          ? null
+          : await execGit(
+              'fetch-replay-base',
+              vars,
+              withFarmGitConfig(
+                `git -C ${shellQuote(vars.remoteRepo)} fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+              ),
+            );
       if (fetchBase && fetchBase.exitCode !== 0)
         step('branch', `Replay kept ${branch} as is: fetching origin/${defaultBranch} failed`);
       else if (fetchBase) await advanceEmptyWorkBranch(current === branch);

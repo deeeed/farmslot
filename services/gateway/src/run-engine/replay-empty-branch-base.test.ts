@@ -94,7 +94,6 @@ async function git(repo: string, ...args: string[]): Promise<string> {
   return stdout.trim();
 }
 
-
 let slotCounter = 0;
 
 /**
@@ -168,30 +167,28 @@ function stepsOf(events: Array<{ event: string; payload: unknown }>): string[] {
     .map(({ payload }) => (payload as { detail: string }).detail);
 }
 
-test(
-  'a replay starts an empty work branch from the current base',
-  needsTmuxSandbox,
-  async (t) => {
-    const { slotId, slotRepo, oldBase, newBase } = await staleBaseSlot(t);
-    await git(slotRepo, 'branch', workBranch, oldBase);
-    const events: Array<{ event: string; payload: unknown }> = [];
-    const result = await slotPrepare(
-      { slotId, branch: workBranch, prepareProfile: 'core' },
-      (event, payload) => events.push({ event, payload }),
-      undefined,
-      { preserveBranch: true },
-    );
-    assert.equal(result.prepared, true);
-    assert.equal(await git(slotRepo, 'branch', '--show-current'), workBranch);
-    assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), newBase);
-    assert.equal(await git(slotRepo, 'status', '--porcelain', '--untracked-files=no'), '');
-    assert.ok(
-      stepsOf(events).some((detail) =>
-        detail.startsWith(`${workBranch} had no commits beyond origin/main; moved from ${oldBase.slice(0, 12)}`),
+test('a replay starts an empty work branch from the current base', needsTmuxSandbox, async (t) => {
+  const { slotId, slotRepo, oldBase, newBase } = await staleBaseSlot(t);
+  await git(slotRepo, 'branch', workBranch, oldBase);
+  const events: Array<{ event: string; payload: unknown }> = [];
+  const result = await slotPrepare(
+    { slotId, branch: workBranch, prepareProfile: 'core' },
+    (event, payload) => events.push({ event, payload }),
+    undefined,
+    { preserveBranch: true },
+  );
+  assert.equal(result.prepared, true);
+  assert.equal(await git(slotRepo, 'branch', '--show-current'), workBranch);
+  assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), newBase);
+  assert.equal(await git(slotRepo, 'status', '--porcelain', '--untracked-files=no'), '');
+  assert.ok(
+    stepsOf(events).some((detail) =>
+      detail.startsWith(
+        `${workBranch} had no commits beyond origin/main; moved from ${oldBase.slice(0, 12)}`,
       ),
-    );
-  },
-);
+    ),
+  );
+});
 
 test(
   'a fresh prepare starts an existing empty local work branch from the current base',
@@ -228,27 +225,23 @@ test(
   },
 );
 
-test(
-  'a work branch with its own commits keeps its base on replay',
-  needsTmuxSandbox,
-  async (t) => {
-    const { slotId, slotRepo, oldBase, newBase } = await staleBaseSlot(t);
-    await git(slotRepo, 'checkout', '-q', '-b', workBranch, oldBase);
-    // The run's own commit (its manifest already sorted, so deps changes nothing).
-    spawnSync('bash', ['-c', yarnPersist], { cwd: slotRepo });
-    await writeFile(path.join(slotRepo, 'fix.txt'), 'the fix\n');
-    await git(slotRepo, 'add', '.');
-    await git(slotRepo, 'commit', '-qm', 'fix: the run work');
-    const tip = await git(slotRepo, 'rev-parse', 'HEAD');
-    await git(slotRepo, 'checkout', '-q', 'main');
-    const result = await slotPrepare(
-      { slotId, branch: workBranch, prepareProfile: 'core' },
-      () => {},
-      undefined,
-      { preserveBranch: true },
-    );
-    assert.equal(result.prepared, true);
-    assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), tip);
-    await assert.rejects(git(slotRepo, 'merge-base', '--is-ancestor', newBase, 'HEAD'));
-  },
-);
+test('a work branch with its own commits keeps its base on replay', needsTmuxSandbox, async (t) => {
+  const { slotId, slotRepo, oldBase, newBase } = await staleBaseSlot(t);
+  await git(slotRepo, 'checkout', '-q', '-b', workBranch, oldBase);
+  // The run's own commit (its manifest already sorted, so deps changes nothing).
+  spawnSync('bash', ['-c', yarnPersist], { cwd: slotRepo });
+  await writeFile(path.join(slotRepo, 'fix.txt'), 'the fix\n');
+  await git(slotRepo, 'add', '.');
+  await git(slotRepo, 'commit', '-qm', 'fix: the run work');
+  const tip = await git(slotRepo, 'rev-parse', 'HEAD');
+  await git(slotRepo, 'checkout', '-q', 'main');
+  const result = await slotPrepare(
+    { slotId, branch: workBranch, prepareProfile: 'core' },
+    () => {},
+    undefined,
+    { preserveBranch: true },
+  );
+  assert.equal(result.prepared, true);
+  assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), tip);
+  await assert.rejects(git(slotRepo, 'merge-base', '--is-ancestor', newBase, 'HEAD'));
+});
