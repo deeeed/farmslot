@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
@@ -404,5 +404,44 @@ test(
     ]);
     assert.equal(await git(slotRepo, 'rev-parse', `refs/heads/${workBranch}`), oldBase);
     assert.equal(await readFile(path.join(slotRepo, 'tools/run'), 'utf8'), 'operator file\n');
+  },
+);
+
+test(
+  'a tracked symlink the new base turns into a directory is not probed through',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, slotRepo, oldBase } = await staleBaseSlot(t);
+    const author = path.join(path.dirname(slotRepo), 'author');
+    // Old tip: tools/run -> ../shared (tracked symlink) and shared/command (tracked file).
+    await git(slotRepo, 'checkout', '-q', '-b', workBranch, oldBase);
+    await mkdir(path.join(slotRepo, 'tools'), { recursive: true });
+    await mkdir(path.join(slotRepo, 'shared'), { recursive: true });
+    await writeFile(path.join(slotRepo, 'shared/command'), 'shared\n');
+    await symlink('../shared', path.join(slotRepo, 'tools/run'));
+    await git(slotRepo, 'add', 'tools/run', 'shared/command');
+    await git(slotRepo, 'commit', '-qm', 'A2: tools/run symlink');
+    const linkTip = await git(slotRepo, 'rev-parse', 'HEAD');
+    await git(slotRepo, 'push', '-q', 'origin', `${linkTip}:refs/heads/main`, '--force');
+    // New base: sorted manifest, tools/run becomes a directory holding command.
+    await git(author, 'fetch', '-q', 'origin');
+    await git(author, 'reset', '-q', '--hard', 'origin/main');
+    spawnSync('bash', ['-c', yarnPersist], { cwd: author });
+    await git(author, 'rm', '-q', 'tools/run');
+    await mkdir(path.join(author, 'tools/run'), { recursive: true });
+    await writeFile(path.join(author, 'tools/run/command'), 'own\n');
+    await git(author, 'add', '-A');
+    await git(author, 'commit', '-qm', 'B2: tools/run is a directory');
+    await git(author, 'push', '-q', 'origin', 'HEAD:refs/heads/main');
+    const dirBase = await git(author, 'rev-parse', 'HEAD');
+    const result = await slotPrepare(
+      { slotId, branch: workBranch, prepareProfile: 'core' },
+      () => {},
+      undefined,
+      { preserveBranch: true },
+    );
+    assert.equal(result.prepared, true);
+    assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), dirBase);
+    assert.equal(await readFile(path.join(slotRepo, 'shared/command'), 'utf8'), 'shared\n');
   },
 );
