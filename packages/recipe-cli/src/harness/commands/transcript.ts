@@ -19,9 +19,9 @@ export interface RecipeTranscriptInput {
 }
 
 const MAX_JSON_BYTES = 4 * 1024 * 1024;
-const MAX_NODE_LINES = 28;
+const MAX_LINES = 40;
 const MAX_CLAIM_LINES = 5;
-const MAX_LINE = 200;
+const MAX_LINE = 160;
 const MAX_VALUE = 48;
 
 const OPERATORS: Record<string, string> = {
@@ -131,7 +131,7 @@ function assertionText(document: unknown, leaf: Leaf, failed: boolean): string {
   return implied ? `${label}=${shown}` : `${label}=${shown} (${expected})`;
 }
 
-async function entryDetail(root: string, entry: Record<string, unknown>): Promise<string> {
+async function entryDetail(root: string, entry: Record<string, unknown>): Promise<string[]> {
   const output = isRecord(entry.output) ? entry.output : {};
   const failed = entry.ok !== true;
   const parts: string[] = [];
@@ -154,7 +154,18 @@ async function entryDetail(root: string, entry: Record<string, unknown>): Promis
   }
   const error = isRecord(entry.error) ? entry.error.message : entry.error;
   if (failed && typeof error === 'string') parts.push(`error: ${redact('error', oneLine(error))}`);
-  return parts.join(' · ');
+  return parts;
+}
+
+function wrap(head: string, parts: readonly string[]): string[] {
+  const lines = [head];
+  for (const part of parts) {
+    const last = lines.length - 1;
+    const joined = `${lines[last]}${last === 0 && lines[0] === head ? '  ' : ' · '}${part}`;
+    if (joined.length <= MAX_LINE) lines[last] = joined;
+    else lines.push(clip(`    ${part}`, MAX_LINE));
+  }
+  return lines;
 }
 
 function networkOf(params: Record<string, unknown>, reports: unknown[]): string {
@@ -225,44 +236,22 @@ export async function renderRecipeTranscript(input: RecipeTranscriptInput): Prom
     .map(([key, value]) => `${key}=${display(key, value).replace(/^"|"$/g, '')}`)
     .join(' · ');
 
-  const lines = [
+  const header = [
     `Recipe: ${oneLine(title)}`,
     `Run ${runId} · digest ${digest}`,
     `Commit ${commit} · network ${networkOf(params, reports)}`,
     ...(inputs ? [`Inputs: ${inputs}`] : []),
   ].map((line) => clip(line, MAX_LINE));
 
-  const nodeLines = await Promise.all(
-    entries.map(async (entry) => {
-      const detail = await entryDetail(root, entry);
-      const mark = entry.ok === true ? '✓' : '✗';
-      return clip(
-        `${mark} ${String(entry.nodeId)}  ${String(entry.action)}${detail ? `  ${detail}` : ''}`,
-        MAX_LINE,
-      );
-    }),
-  );
-  if (nodeLines.length > MAX_NODE_LINES) {
-    // Keep every failure; fill the rest in trace order.
-    const keep = new Set(nodeLines.flatMap((line, index) => (line.startsWith('✗') ? [index] : [])));
-    for (let index = 0; keep.size < MAX_NODE_LINES - 1 && index < nodeLines.length; index += 1)
-      keep.add(index);
-    const kept = nodeLines.filter((_, index) => keep.has(index));
-    lines.push(...kept, `… ${nodeLines.length - kept.length} more passing nodes in trace.json`);
-  } else {
-    lines.push(...nodeLines);
-  }
-
   const passed = isRecord(summary) && typeof summary.passed === 'number' ? summary.passed : '?';
   const total = isRecord(summary) && typeof summary.total === 'number' ? summary.total : '?';
   const status = isRecord(summary) && typeof summary.status === 'string' ? summary.status : '?';
-  lines.push(`${passed}/${total} nodes passed · status ${status}`);
-
-  const criteria = (isRecord(ledger) && Array.isArray(ledger.criteria) ? ledger.criteria : []).filter(
-    isRecord,
-  );
+  const footer = [`${passed}/${total} nodes passed · status ${status}`];
+  const criteria = (
+    isRecord(ledger) && Array.isArray(ledger.criteria) ? ledger.criteria : []
+  ).filter(isRecord);
   if (!criteria.length) {
-    lines.push('Criteria: none declared by the recipe (no proofTargets)');
+    footer.push('Criteria: none declared by the recipe (no proofTargets)');
   } else {
     const claimLines = criteria.map((claim) =>
       clip(
@@ -274,10 +263,51 @@ export async function renderRecipeTranscript(input: RecipeTranscriptInput): Prom
         MAX_LINE,
       ),
     );
-    lines.push(...claimLines.slice(0, MAX_CLAIM_LINES));
+    footer.push(...claimLines.slice(0, MAX_CLAIM_LINES));
     if (claimLines.length > MAX_CLAIM_LINES)
-      lines.push(`… ${claimLines.length - MAX_CLAIM_LINES} more criteria in acceptance-status.json`);
+      footer.push(`… ${claimLines.length - MAX_CLAIM_LINES} more criteria in acceptance-status.json`);
   }
-  lines.push(clip(`Artifacts: ${input.displayDir ?? root}`, MAX_LINE));
+  footer.push(clip(`Artifacts: ${input.displayDir ?? root}`, MAX_LINE));
+
+  const nodes = await Promise.all(
+    entries.map(async (entry) => ({
+      failed: entry.ok !== true,
+      head: `${entry.ok === true ? '✓' : '✗'} ${String(entry.nodeId)}  ${String(entry.action)}`,
+      parts: await entryDetail(root, entry),
+    })),
+  );
+  const budget = MAX_LINES - header.length - footer.length;
+  let shown = nodes;
+  let omitted = 0;
+  if (nodes.length > budget) {
+    // Keep every failure; fill the rest in trace order.
+    const keep = new Set(nodes.flatMap((node, index) => (node.failed ? [index] : [])));
+    for (let index = 0; keep.size < budget - 1 && index < nodes.length; index += 1)
+      keep.add(index);
+    shown = nodes.filter((_, index) => keep.has(index));
+    omitted = nodes.length - shown.length;
+  }
+  // One line per node; wrap long details onto indented lines while the budget allows,
+  // failures first.
+  const blocks = shown.map((node) => [
+    clip(node.parts.length ? `${node.head}  ${node.parts.join(' · ')}` : node.head, MAX_LINE),
+  ]);
+  let spare = budget - shown.length - (omitted ? 1 : 0);
+  const order = shown
+    .map((node, index) => ({ node, index }))
+    .sort((a, b) => Number(b.node.failed) - Number(a.node.failed) || a.index - b.index);
+  for (const { node, index } of order) {
+    const wrapped = wrap(node.head, node.parts);
+    if (wrapped.length > 1 && wrapped.length - 1 <= spare) {
+      blocks[index] = wrapped;
+      spare -= wrapped.length - 1;
+    }
+  }
+  const lines = [
+    ...header,
+    ...blocks.flat(),
+    ...(omitted ? [`… ${omitted} more passing nodes in trace.json`] : []),
+    ...footer,
+  ];
   return `${lines.join('\n')}\n`;
 }

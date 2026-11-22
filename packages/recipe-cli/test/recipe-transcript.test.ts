@@ -184,7 +184,7 @@ test('a failed node shows expected and actual values; long traces keep every fai
     text,
     /^✗ ac3-assert {2}assert_json {2}trade\.json · filledOrderIds=\[4\] .* \(len≥9\) · error: filledOrderIds expected length_gte 9$/m,
   );
-  assert.match(text, /^… 14 more passing nodes in trace\.json$/m);
+  assert.match(text, /^… 9 more passing nodes in trace\.json$/m);
 });
 
 test('a package without declared criteria says so instead of inventing them', async (t) => {
