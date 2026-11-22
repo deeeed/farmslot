@@ -126,7 +126,11 @@ export function applyArtifactOnlyTaskPolicy(
   // uses stay: dropping them would break the commands that depend on them.
   const mergeBase = String.raw`\$\(git merge-base origin\/[^\s)"]+ HEAD\)`;
   result = result.replace(
-    new RegExp(String.raw`git diff (?:"${mergeBase}"|${mergeBase})(?=[\s\x60&;|)]|$)`, 'g'),
+    // Only when the merge base is the sole revision: followed by `--`, a separator or the end.
+    new RegExp(
+      String.raw`git diff (?:"${mergeBase}"|${mergeBase})(?=\s*(?:[\x60&;|)]|--(?:\s|$)|$))`,
+      'gm',
+    ),
     literalReplacement(hasBase ? `git diff ${replayBase}` : 'git diff'),
   );
   if (hasBase)

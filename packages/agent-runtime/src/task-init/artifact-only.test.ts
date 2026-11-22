@@ -77,6 +77,7 @@ test('artifact replay keeps merge-base dependent commands runnable', () => {
     'git diff "$(git merge-base origin/main HEAD)"..HEAD',
     'echo "Base $(git merge-base origin/main HEAD)"',
     'git log $(git merge-base origin/release origin/hotfix)..HEAD',
+    'git diff "$(git merge-base origin/main HEAD)" HEAD -- src',
     '',
   ].join('\n');
   const pinned = applyArtifactOnlyTaskPolicy(template, { base: 'f6c148ef' });
@@ -88,5 +89,6 @@ test('artifact replay keeps merge-base dependent commands runnable', () => {
     'other merge-bases stay',
   );
   const unpinned = applyArtifactOnlyTaskPolicy(template, { base: undefined });
-  for (const line of template.split('\n').slice(2, 7)) assert.ok(unpinned.includes(line), line);
+  for (const line of template.split('\n').slice(2, 8)) assert.ok(unpinned.includes(line), line);
+  assert.ok(pinned.includes('git diff f6c148ef HEAD -- src'), 'a two-revision diff keeps both');
 });
