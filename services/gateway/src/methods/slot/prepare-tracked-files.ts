@@ -93,6 +93,8 @@ export function buildTrackedFilesSnapshotCommand(
   const script = [
     RECORD_SUBMODULE,
     `cd ${shellQuote(repo)}`,
+    // Not a work tree, or nested inside another repository: nothing of its own to check.
+    `{ prefix=$(git rev-parse --show-prefix 2>/dev/null) && [ -z "$prefix" ] || { printf '%s\\n' notrepo; exit 0; }; }`,
     'head=$(git rev-parse --verify HEAD)',
     'branch=$(git symbolic-ref -q HEAD || true)',
     // `git stash create` needs a merged index.
@@ -101,7 +103,9 @@ export function buildTrackedFilesSnapshotCommand(
   return `bash -o pipefail -c ${shellQuote(script)}`;
 }
 
-export function parseTrackedFilesSnapshot(stdout: string): TrackedFilesSnapshot {
+/** Null when the slot directory is not the root of its own git work tree. */
+export function parseTrackedFilesSnapshot(stdout: string): TrackedFilesSnapshot | null {
+  if (stdout === 'notrepo\n') return null;
   const header: string[] = [];
   let rest = stdout;
   for (let i = 0; i < HEADER_LINES; i++) {

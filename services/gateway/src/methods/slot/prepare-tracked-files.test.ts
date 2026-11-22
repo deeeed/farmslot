@@ -19,6 +19,11 @@ import {
 } from './prepare-tracked-files.js';
 
 const sh = (command: string) => execFileSync('bash', ['-c', command], { encoding: 'utf8' });
+const parse = (stdout: string): TrackedFilesSnapshot => {
+  const snapshot = parseTrackedFilesSnapshot(stdout);
+  assert.ok(snapshot, 'expected a git work tree');
+  return snapshot;
+};
 
 function fixture(t: { after: (fn: () => void) => void }) {
   const repo = mkdtempSync(path.join(os.tmpdir(), 'prepare-tracked-unit-'));
@@ -48,7 +53,7 @@ function fixture(t: { after: (fn: () => void) => void }) {
   git('add', '.');
   git('commit', '-qm', 'seed');
   const snap = (): TrackedFilesSnapshot => {
-    const snapshot = parseTrackedFilesSnapshot(sh(buildTrackedFilesSnapshotCommand(repo)));
+    const snapshot = parse(sh(buildTrackedFilesSnapshotCommand(repo)));
     assert.equal(snapshot.unmerged, false, 'expected a merged index');
     return snapshot;
   };
@@ -154,7 +159,7 @@ test('a conflicted index records HEAD and branch instead of failing', (t) => {
   writeFileSync(path.join(repo, 'a.txt'), 'ours\n');
   git('commit', '-qam', 'ours');
   assert.throws(() => git('merge', '-q', 'theirs'));
-  const conflicted = parseTrackedFilesSnapshot(sh(buildTrackedFilesSnapshotCommand(repo)));
+  const conflicted = parse(sh(buildTrackedFilesSnapshotCommand(repo)));
   assert.equal(conflicted.unmerged, true);
   assert.equal(conflicted.head, git('rev-parse', 'HEAD'));
   assert.equal(conflicted.branch, 'refs/heads/main');
@@ -250,19 +255,19 @@ test('a broken submodule checkout fails the snapshot instead of reading as clean
 test('later snapshots reuse submodule discovery while HEAD is unchanged', (t) => {
   const { repo, git, snap } = withSubmodule(t, 'vendor/sub');
   const baseline = snap();
-  const reused = parseTrackedFilesSnapshot(sh(buildTrackedFilesSnapshotCommand(repo, baseline)));
+  const reused = parse(sh(buildTrackedFilesSnapshotCommand(repo, baseline)));
   assert.ok(snapshotsEqual(baseline, reused));
   // A planted entry in `known` shows the list was used instead of a fresh ls-tree.
   const planted: TrackedFilesSnapshot = {
     ...baseline,
     submodules: new Map([...baseline.submodules, ['planted', `${baseline.head} none clean`]]),
   };
-  const fromKnown = parseTrackedFilesSnapshot(sh(buildTrackedFilesSnapshotCommand(repo, planted)));
+  const fromKnown = parse(sh(buildTrackedFilesSnapshotCommand(repo, planted)));
   assert.equal(fromKnown.submodules.get('planted'), `${baseline.head} none clean`);
   // Once HEAD moves, discovery runs again.
   writeFileSync(path.join(repo, 'a.txt'), 'next\n');
   git('commit', '-qam', 'next');
-  const moved = parseTrackedFilesSnapshot(sh(buildTrackedFilesSnapshotCommand(repo, planted)));
+  const moved = parse(sh(buildTrackedFilesSnapshotCommand(repo, planted)));
   assert.equal(moved.submodules.has('planted'), false);
   assert.deepEqual([...moved.submodules.keys()], ['vendor/sub']);
 });
@@ -276,4 +281,16 @@ test('a failing textconv driver in a dirty submodule does not break the snapshot
   const before = snap();
   writeFileSync(path.join(repo, 'vendor/sub/s.txt'), 'dirty\n');
   assert.deepEqual(files(before, snap()), ['vendor/sub']);
+});
+
+test('a directory that is not the root of its own git work tree yields no snapshot', (t) => {
+  const { repo } = fixture(t);
+  const plain = mkdtempSync(path.join(os.tmpdir(), 'prepare-tracked-plain-'));
+  t.after(() => rmSync(plain, { recursive: true, force: true }));
+  assert.equal(parseTrackedFilesSnapshot(sh(buildTrackedFilesSnapshotCommand(plain))), null);
+  mkdirSync(path.join(repo, 'nested'));
+  assert.equal(
+    parseTrackedFilesSnapshot(sh(buildTrackedFilesSnapshotCommand(path.join(repo, 'nested')))),
+    null,
+  );
 });
