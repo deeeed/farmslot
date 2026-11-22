@@ -17,7 +17,7 @@ mock.module('../core/config.js', {
           server: {
             type: 'dev-server',
             hooks: { boot: 'boot', health: 'health' },
-            watch: { type: 'port', port: 9300 },
+            watch: { type: 'port-listen', port: 9300 },
           },
         },
       },
@@ -60,6 +60,7 @@ mock.module('../run-lifecycle/idle-devserver-service.js', {
 });
 const modulePath = './resource-manager.js?resource-poll-idle';
 const {
+  resourceObservationLosses,
   setCachedResourceStatus,
   startIdleDevServerSweep,
   stopIdleDevServerSweep,
@@ -97,6 +98,10 @@ test('the idle dev-server sweep runs without full-fleet polling, on slots with l
     await clock.tick();
     assert.deepEqual(swept, ['slot-c']);
     assert.deepEqual(forgotten, ['slot-a', 'slot-b'], 'unobserved slots lose their idle windows');
+    const lost = resourceObservationLosses('slot-c', 'server');
+    setCachedResourceStatus('slot-c', 'server', 'unknown', { broadcast: false });
+    setCachedResourceStatus('slot-c', 'server', 'running', { broadcast: false });
+    assert.equal(resourceObservationLosses('slot-c', 'server'), lost + 1);
   } finally {
     stopIdleDevServerSweep();
     clearInterval(clock.timer);

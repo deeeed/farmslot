@@ -66,6 +66,19 @@ export function isSlotResourceConfigured(
 // slotId → resourceId → status
 const statusCache = new Map<string, Map<string, ResourceStatus>>();
 const streamStatusCache = new Map<string, Map<string, ResourceStreamStatus>>();
+// slotId/resourceId → times the resource stopped being observed running or stale. The idle
+// dev-server cap restarts a window whose count moved, even between two sweeps.
+const observationLosses = new Map<string, number>();
+
+function noteResourceStatus(slotId: string, resourceId: string, status: ResourceStatus): void {
+  if (status === 'running' || status === 'stale') return;
+  const key = `${slotId}/${resourceId}`;
+  observationLosses.set(key, (observationLosses.get(key) ?? 0) + 1);
+}
+
+export function resourceObservationLosses(slotId: string, resourceId: string): number {
+  return observationLosses.get(`${slotId}/${resourceId}`) ?? 0;
+}
 // slotId → resourceId → ActiveResourcePointer. In-memory only; reconstructs
 // from the next `running` events after gateway restart.
 const activeResource = new Map<string, Map<string, ActiveResourcePointer>>();
@@ -344,6 +357,7 @@ export function setCachedResourceStatus(
   const prev = slotCache.get(resourceId);
   if (prev === status) return;
   slotCache.set(resourceId, status);
+  noteResourceStatus(slotId, resourceId, status);
   if (status !== 'running') {
     resetStreamStateIfInactiveLifecycle(slotId, resourceId, status);
   }
@@ -808,6 +822,7 @@ export async function pollSlotResources(
     if (prev !== r.status) {
       changed = true;
       slotCache.set(r.id, r.status);
+      noteResourceStatus(slotId, r.id, r.status);
     }
     changed = resetStreamStateIfInactiveLifecycle(slotId, r.id, r.status) || changed;
   }
@@ -902,6 +917,7 @@ async function sweepIdleDevServers(): Promise<void> {
       });
     const failures: string[] = [];
     await mapWithConcurrency(slotIds, RESOURCE_POLL_CONCURRENCY, async (id) => {
+      if (!idleSweepTimer) return; // Stopped (shutdown): queued slots do not start.
       try {
         await reapIdleDevServers(id);
       } catch (err) {
@@ -1007,6 +1023,7 @@ export function handleNodeResourceChanged(payload: {
     const slotCache = statusCache.get(slotId)!;
     const prevStatus = slotCache.get(resourceId);
     slotCache.set(resourceId, effectiveStatus);
+    noteResourceStatus(slotId, resourceId, effectiveStatus);
     console.log(
       `[resource-manager] relaunched: ${slotId}/${resourceId} oldPid=${oldPid} newPid=${newPid} status=${effectiveStatus}`,
     );
@@ -1069,6 +1086,7 @@ export function handleNodeResourceChanged(payload: {
   if (prev === effectiveStatus && !streamChanged) return; // no change
 
   slotCache.set(resourceId, effectiveStatus);
+  noteResourceStatus(slotId, resourceId, effectiveStatus);
   console.log(
     `[resource-manager] node push: ${slotId}/${resourceId} ${prev ?? 'unknown'} → ${effectiveStatus}`,
   );
@@ -1314,6 +1332,7 @@ export async function clearMachineResourceStatus(machine: string): Promise<void>
       for (const [resourceId, status] of slotCache) {
         if (status !== 'unknown') {
           slotCache.set(resourceId, 'unknown');
+          noteResourceStatus(slot.slot, resourceId, 'unknown');
           changed = true;
         }
       }

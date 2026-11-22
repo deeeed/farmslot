@@ -270,39 +270,40 @@ mock.module('../runners/session-process.js', {
     probeRunnerDescendantPid: async () => ({ state: unrecordedWorker ? 'present' : 'absent' }),
   },
 });
+function fixtureRuns() {
+  return [
+    run,
+    ...(closedHistory
+      ? [
+          {
+            ...run,
+            id: 'old-run',
+            status: 'done',
+            agentContexts: [
+              {
+                id: 'primary',
+                role: 'primary',
+                target: {
+                  target: '%7',
+                  paneId: '%7',
+                  session: 'fixture-session',
+                  window: 'worker',
+                },
+              },
+            ],
+          },
+        ]
+      : []),
+  ];
+}
 const realRuns = await import('../runs/store.js');
 mock.module('../runs/store.js', {
   namedExports: {
     ...realRuns,
     listRuns: (filter?: { limit?: number }) => ({
-      runs:
-        pagedOwner && (filter?.limit ?? 500) <= 500
-          ? []
-          : [
-              run,
-              ...(closedHistory
-                ? [
-                    {
-                      ...run,
-                      id: 'old-run',
-                      status: 'done',
-                      agentContexts: [
-                        {
-                          id: 'primary',
-                          role: 'primary',
-                          target: {
-                            target: '%7',
-                            paneId: '%7',
-                            session: 'fixture-session',
-                            window: 'worker',
-                          },
-                        },
-                      ],
-                    },
-                  ]
-                : []),
-            ],
+      runs: pagedOwner && (filter?.limit ?? 500) <= 500 ? [] : fixtureRuns(),
     }),
+    getAllRuns: () => fixtureRuns(),
   },
 });
 const { withRunTransitionWhileMachineHeld } = await import('./transition-coordinator.js');

@@ -28,6 +28,8 @@ export interface IdleDevServerDeps {
     roots: ProcessCensusRow[],
     stillOwned: () => Promise<boolean>,
   ): Promise<true | string>;
+  /** Times this resource stopped being observed running or stale; a change restarts its window. */
+  observed?(slotId: string, resourceId: string): number;
   /** The sweep's latest decision for a slot or one of its dev servers; repeated values may be dropped. */
   decide?(slotId: string, resourceId: string | undefined, decision: string): void;
   /** Why the latest pointer call for this resource returned nothing; read once. */
@@ -42,6 +44,7 @@ export interface IdleDevServerDeps {
 
 interface IdleCandidate {
   since: number;
+  observed: number;
   epoch: unknown;
   owner: unknown;
   process: ProcessCensusRow;
@@ -101,9 +104,13 @@ export class IdleDevServerReaper {
     const devServers = (await this.deps.resources(slotId)).filter(
       (resource) => resource.definition.type === 'dev-server',
     );
+    const configured = new Set(devServers.map((resource) => `${slotId}/${resource.id}`));
+    for (const key of this.idle.keys())
+      if (key.startsWith(`${slotId}/`) && !configured.has(key)) this.idle.delete(key);
     return devServers.filter((resource) => {
       let skip: string | undefined;
-      if (!resource.definition.hooks?.boot || !resource.definition.hooks.health)
+      if (!resource.definition.watch) skip = 'skip: no watch';
+      else if (!resource.definition.hooks?.boot || !resource.definition.hooks.health)
         skip = 'skip: no boot and health hooks';
       else if (resource.status !== 'running' && resource.status !== 'stale')
         skip = `skip: status ${resource.status}`;
@@ -147,6 +154,7 @@ export class IdleDevServerReaper {
         this.decide(slotId, resource.id, `skip: no stop authority (${why})`);
         continue;
       }
+      const observed = this.deps.observed?.(slotId, resource.id) ?? 0;
       let candidate = this.idle.get(key);
       if (
         !candidate ||
@@ -154,7 +162,8 @@ export class IdleDevServerReaper {
         candidate.process.identity !== pointer.identity ||
         candidate.process.group !== pointer.group ||
         candidate.epoch !== row.slot_epoch ||
-        candidate.owner !== row.current_run_id
+        candidate.owner !== row.current_run_id ||
+        candidate.observed !== observed
       ) {
         rows ??= await this.deps.census(slotId);
         const process = rows.find((process) => process.pid === String(pointer.pid));
@@ -165,6 +174,7 @@ export class IdleDevServerReaper {
         }
         candidate = {
           since: this.deps.now(),
+          observed,
           epoch: row.slot_epoch,
           owner: row.current_run_id,
           process,

@@ -62,6 +62,7 @@ function fixture(status: Run['status'] = 'blocked') {
           streamable: false,
           controllable: true,
           hooks: { boot: 'fixture-boot', health: 'fixture-health' },
+          watch: { type: 'port-listen', port: '9300' },
         },
         status: 'running',
       },
@@ -313,4 +314,40 @@ test('a slot without a running dev server skips the quiet checks and loses its i
   f.deps.row = async () => ({ current_run_id: 'run-a', slot_epoch: 1 });
   await f.reaper.sweep('slot-a');
   assert.equal(f.stopped(), 0, 'the idle window restarts once the server is observed again');
+});
+
+test('an observation loss between sweeps, or a removed resource, restarts the idle window', async () => {
+  const f = fixture();
+  let losses = 0;
+  f.deps.observed = () => losses;
+  await f.reaper.sweep('slot-a');
+  f.advance();
+  losses++; // unknown, then running again, before this sweep
+  await f.reaper.sweep('slot-a');
+  assert.equal(f.stopped(), 0, 'a lost observation keeps no deadline');
+  const resources = f.deps.resources;
+  f.advance();
+  f.deps.resources = async () => [];
+  await f.reaper.sweep('slot-a');
+  f.deps.resources = resources;
+  await f.reaper.sweep('slot-a');
+  assert.equal(f.stopped(), 0, 'a resource removed for a sweep keeps no deadline');
+  f.advance();
+  await f.reaper.sweep('slot-a');
+  assert.equal(f.stopped(), 1);
+});
+
+test('a dev server without a watch is not eligible', async () => {
+  const f = fixture();
+  const decisions: string[] = [];
+  f.deps.decide = (slotId, resourceId, decision) =>
+    decisions.push(`${slotId}/${resourceId ?? '-'} ${decision}`);
+  const live = await f.deps.resources('slot-a');
+  f.deps.resources = async () =>
+    live.map((resource) => ({
+      ...resource,
+      definition: { ...resource.definition, watch: undefined },
+    }));
+  await f.reaper.sweep('slot-a');
+  assert.deepEqual(decisions, ['slot-a/server skip: no watch']);
 });

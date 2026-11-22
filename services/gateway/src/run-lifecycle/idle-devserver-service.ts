@@ -1,5 +1,3 @@
-import { RUN_LIST_UNLIMITED } from '@farmslot/protocol';
-
 import { withCleanupSignal } from '../core/cleanup-scope.js';
 import { loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
@@ -19,6 +17,7 @@ import {
   deleteActiveResource,
   getActiveResource,
   resolveSlotResources,
+  resourceObservationLosses,
   setCachedResourceStatus,
 } from '../fleet/resource-manager.js';
 import { probeResourceProcess } from '../fleet/resource-process.js';
@@ -28,7 +27,7 @@ import { activePrepareAborts } from '../methods/slot/shared.js';
 import { readRunProgress } from '../runners/run-progress.js';
 import { probeRunnerDescendantPid } from '../runners/session-process.js';
 import { contextPaneId } from '../runners/session-record.js';
-import { listRuns } from '../runs/store.js';
+import { getAllRuns } from '../runs/store.js';
 
 import {
   type IdleDevServerPointer,
@@ -153,7 +152,8 @@ const ownedListeners = new Map<string, OwnedListener>();
 const idleDevServers = new IdleDevServerReaper({
   now: () => Date.now(),
   row: readSlotRow,
-  runs: () => listRuns({ limit: RUN_LIST_UNLIMITED }).runs,
+  runs: () => getAllRuns(),
+  observed: resourceObservationLosses,
   progress: async (run) => (await readRunProgress(run)).kind,
   preparing: (slotId) => activePrepareSlots.has(slotId) && !stoppingSlots.has(slotId),
   retained: async (slotId, resourceId) => {
@@ -338,11 +338,10 @@ const idleDevServers = new IdleDevServerReaper({
     const repo = (await slotRealpath(vars, vars.remoteRepo)).replace(/\/$/, '');
     const currentOwner = (await readSlotRow(slotId))?.current_run_id;
     const recorded = new Set(
-      slotWorkerRuns(listRuns({ limit: RUN_LIST_UNLIMITED }).runs, slotId, currentOwner).flatMap(
-        (run) =>
-          (run.agentContexts ?? []).flatMap((context) =>
-            context.target ? [contextPaneId(context.target)] : [],
-          ),
+      slotWorkerRuns(getAllRuns(), slotId, currentOwner).flatMap((run) =>
+        (run.agentContexts ?? []).flatMap((context) =>
+          context.target ? [contextPaneId(context.target)] : [],
+        ),
       ),
     );
     for (const line of panes.stdout.split('\n')) {
