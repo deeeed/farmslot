@@ -643,6 +643,30 @@ try {
     /Copy artifacts\/recipe-runs\/after-flag-09425041\/recipe\.json to artifacts\/recipe\.json/,
   );
   assert.equal(existsSync(path.join(artifacts, 'recipe.json')), false);
+  // A directory named recipe.json is not a task recipe.
+  mkdirSync(path.join(artifacts, 'recipe.json'));
+  completed = complete();
+  assert.notEqual(completed.status, 0);
+  assert.match(completed.stderr, /Copy artifacts\/recipe-runs\/after-flag-09425041\/recipe\.json/);
+  rmSync(path.join(artifacts, 'recipe.json'), { recursive: true });
+
+  // The harness layout nests attempts under recipe-runs/attempts/<id>; an unreadable
+  // summary is reported as such, not as a failed proof.
+  rmSync(path.join(artifacts, 'latest-valid-recipe-run.json'));
+  rmSync(path.join(artifacts, 'recipe-runs'), { recursive: true });
+  const nested = path.join(artifacts, 'recipe-runs', 'attempts', 'a1');
+  mkdirSync(nested, { recursive: true });
+  writeFileSync(path.join(nested, 'evidence-manifest.json'), '{"version":1,"standalone":[]}\n');
+  writeFileSync(path.join(nested, 'summary.json'), '{');
+  completed = complete();
+  assert.notEqual(completed.status, 0, 'nested attempts must be selected too');
+  assert.match(completed.stderr, /proof attempts \(recipe-runs\/attempts\/a1\)/);
+  assert.match(completed.stderr, /Unreadable summaries: recipe-runs\/attempts\/a1\/summary\.json/);
+
+  // QA registers its packages in qa-result.json and keeps its own selection contract.
+  writeFileSync(path.join(artifacts, 'qa-result.json'), '{}');
+  completed = complete();
+  assert.doesNotMatch(completed.stderr, /selects none/);
 } finally {
   rmSync(unselectedDir, { recursive: true, force: true });
 }

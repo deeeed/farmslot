@@ -464,24 +464,33 @@ function assertArtifactContract(taskDir, taskPath, contract, terminalCommand) {
 // publication cannot use. Completion names the attempt to select; it never picks one.
 function assertRecipeAttemptSelected(taskDir) {
   const runs = path.join(taskDir, 'artifacts', 'recipe-runs');
-  let entries;
-  try {
-    entries = fs.readdirSync(runs, { withFileTypes: true });
-  } catch (error) {
-    if (error.code === 'ENOENT') return;
-    throw error;
-  }
-  const attempts = entries
-    .filter(
-      (entry) =>
-        entry.isDirectory() && fs.existsSync(path.join(runs, entry.name, 'evidence-manifest.json')),
+  const directories = (dir) => {
+    try {
+      return fs
+        .readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name);
+    } catch (error) {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    }
+  };
+  const isAttempt = (name) => taskFileExists(runs, path.join(name, 'evidence-manifest.json'));
+  // `recipe-runs/<id>`, or the harness's `recipe-runs/attempts/<id>`.
+  const attempts = directories(runs)
+    .flatMap((name) =>
+      isAttempt(name)
+        ? [name]
+        : directories(path.join(runs, name))
+            .map((child) => `${name}/${child}`)
+            .filter(isAttempt),
     )
-    .map((entry) => entry.name)
     .sort();
   if (attempts.length === 0) return;
   const { readRecipeAttemptSelection } = require('./retained-recipe-attempt.cjs');
   const pointer = readRecipeAttemptSelection(taskDir);
-  if (pointer && fs.existsSync(path.join(taskDir, 'artifacts', 'recipe.json'))) return;
+  const taskRecipe = taskFileExists(taskDir, 'artifacts/recipe.json');
+  if (pointer && taskRecipe) return;
   if (pointer) {
     const selected = `artifacts/${pointer.relativeArtifactRoot}`;
     console.error(
@@ -489,15 +498,16 @@ function assertRecipeAttemptSelected(taskDir) {
     );
     process.exit(1);
   }
-  const passed = attempts.filter((name) => {
+  const passed = [];
+  const unreadable = [];
+  for (const name of attempts) {
     try {
-      return (
-        JSON.parse(fs.readFileSync(path.join(runs, name, 'summary.json'), 'utf8')).status === 'pass'
-      );
-    } catch {
-      return false;
+      const summary = JSON.parse(fs.readFileSync(path.join(runs, name, 'summary.json'), 'utf8'));
+      if (summary.status === 'pass') passed.push(name);
+    } catch (error) {
+      unreadable.push(`recipe-runs/${name}/summary.json (${error.message})`);
     }
-  });
+  }
   const quote = (value) => `'${value.replaceAll("'", `'\\''`)}'`;
   const select = (name) =>
     `node ${quote(path.join(__dirname, 'retained-recipe-attempt.cjs'))} ${quote(taskDir)} ${quote(path.join(runs, name))}`;
@@ -505,17 +515,22 @@ function assertRecipeAttemptSelected(taskDir) {
     passed.length === 0
       ? 'None of them passed: rerun the proof with RECIPE_TASK_DIR set in the same command so its passing attempt is selected.'
       : `Select the proof attempt this task claims, for example:\n  ${select(passed[0])}\nPassing attempts: ${passed.map((name) => `recipe-runs/${name}`).join(', ')}.`;
+  const unread = unreadable.length ? `\nUnreadable summaries: ${unreadable.join('; ')}.` : '';
   console.error(
-    `artifacts/recipe-runs holds proof attempts (${attempts.map((name) => `recipe-runs/${name}`).join(', ')}) but artifacts/latest-valid-recipe-run.json selects none. ${next}`,
+    `artifacts/recipe-runs holds proof attempts (${attempts.map((name) => `recipe-runs/${name}`).join(', ')}) but artifacts/latest-valid-recipe-run.json selects none. ${next}${unread}`,
   );
   process.exit(1);
 }
 
 function assertTerminalPackagedEvidence(taskPath, taskDir, terminalCommand) {
   if (terminalCommand === 'blocked') return;
+  // Review flows judge others' evidence; QA registers its packages in qa-result.json.
+  const flowType = loadTerminalContract(taskDir, taskPath)?.flowType;
   if (
     terminalCommand === 'complete' &&
-    loadTerminalContract(taskDir, taskPath)?.flowType !== 'review'
+    flowType !== 'review' &&
+    flowType !== 'qa' &&
+    !taskFileExists(taskDir, 'artifacts/qa-result.json')
   )
     assertRecipeAttemptSelected(taskDir);
 
