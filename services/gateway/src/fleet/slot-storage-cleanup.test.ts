@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, realpath, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -290,7 +290,48 @@ test('the age prune keeps paths it is told to keep and can skip task dirs entire
     ]);
   await prune({ skipTaskPrune: true });
   assert.equal(await exists(stale), true, 'no task pruning when scratch parking failed');
+  const inner = path.join(refused, 'output');
+  await mkdir(inner, { recursive: true });
+  await touchOld(inner);
+  await touchOld(refused);
   await prune({ keepPaths: [refused] });
   assert.equal(await exists(refused), true, 'refused scratch is not deleted by the prune');
+  assert.equal(await exists(inner), true, 'nor is anything inside it');
   assert.equal(await exists(stale), false);
+});
+
+test('scratch parking refuses a symlinked parking root, reads a trailing-slash task dir, and keeps an unreadable task', async (t) => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-edge-'));
+  const home = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-edge-home-'));
+  await mkdir(path.join(repo, 'temp/tasks/scratch-a'), { recursive: true });
+  await writeFile(path.join(repo, 'temp/tasks/scratch-a/x.json'), 'x');
+  const locked = path.join(repo, 'temp/tasks/scratch-locked');
+  await mkdir(locked, { recursive: true });
+  await writeFile(path.join(locked, 'TASK.md'), '# task');
+  await chmod(locked, 0o000);
+  t.after(() => chmod(locked, 0o755));
+  const run = async (parkHome: string) =>
+    parseTaskScratchParkOutput(
+      (
+        await execFileAsync('/bin/sh', [
+          '-c',
+          buildTaskScratchParkCommand({
+            repo,
+            taskDirName: 'temp/tasks/',
+            slotId: 'slot-a',
+            parkHome,
+          }),
+        ])
+      ).stdout,
+    );
+  // A parked-scratch directory that is a symlink (here into the checkout) is refused.
+  await mkdir(path.join(home, 'linked'), { recursive: true });
+  await symlink(path.join(repo, 'temp'), path.join(home, 'linked/parked-scratch'));
+  const refusedRun = await run(path.join(home, 'linked'));
+  assert.deepEqual(refusedRun.parked, []);
+  assert.equal(refusedRun.refused.length, 1);
+  assert.equal(await exists(path.join(repo, 'temp/tasks/scratch-a/x.json')), true);
+  const parkedRun = await run(path.join(home, 'plain'));
+  assert.equal(parkedRun.parked.length, 1, 'a trailing slash on the task dir still parks');
+  assert.equal(await exists(locked), true, 'an unreadable TASK.md counts as present');
 });
