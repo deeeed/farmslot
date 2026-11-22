@@ -14,7 +14,7 @@ const { piReadOnlyReviewArgs } = createRequire(import.meta.url)(
   '../../scripts/workspace-trust.cjs',
 ) as { piReadOnlyReviewArgs: readonly string[] };
 
-// Pi's bash tool has no default timeout; this extension gives a call without one 120 seconds.
+// Pi's bash tool has no default timeout; this extension gives a call without one 600 seconds.
 // Tmux workers get the same default from Farmslot's observability extension.
 const PI_BASH_TIMEOUT_EXTENSION = fileURLToPath(
   new URL('../../scripts/pi-bash-timeout.mjs', import.meta.url),

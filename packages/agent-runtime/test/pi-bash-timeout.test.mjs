@@ -11,11 +11,11 @@ function toolCall(toolName, input) {
   return event.input;
 }
 
-test('a Pi bash call without a timeout gets the 120-second default', () => {
-  assert.equal(PI_BASH_TIMEOUT_SECONDS, 120);
+test('a Pi bash call without a timeout gets the 600-second default', () => {
+  assert.equal(PI_BASH_TIMEOUT_SECONDS, 600);
   assert.deepEqual(toolCall('bash', { command: 'find / -name x' }), {
     command: 'find / -name x',
-    timeout: 120,
+    timeout: 600,
   });
 });
 

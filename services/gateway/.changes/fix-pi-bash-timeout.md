@@ -1,1 +1,1 @@
-- Pi workers now get a 120-second default timeout on a bash call that sets none, the same default Claude Code uses; a call may still pass a longer or shorter timeout. Before this, a runaway host-wide search held a worker for up to 41 minutes.
+- Pi workers now get a 600-second (10-minute) default timeout on a bash call that sets none; a call may still pass a longer or shorter timeout. Before this, runaway host-wide searches held workers for 22 and 41 minutes.

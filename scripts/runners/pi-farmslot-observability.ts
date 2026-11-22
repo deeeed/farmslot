@@ -347,11 +347,11 @@ export default async function (pi: {
   const readOnlyReview = process.env.FARMSLOT_PI_WORKSPACE_TRUST === 'untrusted';
   if (!readOnlyReview) pi.on('project_trust', async () => ({ trusted: 'yes' as const }));
 
-  // Pi's bash tool has no default timeout. A call without one gets Claude Code's 120 seconds;
-  // an explicit timeout, longer or shorter, is kept.
+  // Pi's bash tool has no default timeout. A call without one gets 600 seconds, enough for test
+  // runs and builds while capping runaway searches; an explicit timeout, longer or shorter, is kept.
   pi.on('tool_call', (event: { toolName?: string; input?: { timeout?: unknown } }) => {
     if (event.toolName === 'bash' && event.input && event.input.timeout === undefined)
-      event.input.timeout = 120;
+      event.input.timeout = 600;
   });
 
   pi.on('model_select', (event: { model: PiThinkingModel }, ctx: PiShutdownContext) => {

@@ -28,8 +28,8 @@ async function checkBashTimeout(extensionUrl) {
     await install({ on: (name, handler) => events.set(name, handler) });
     assert.deepEqual(
       await bashCall({ command: 'find /Users -name proof-rules.md' }),
-      { command: 'find /Users -name proof-rules.md', timeout: 120 },
-      'a bash call without a timeout gets the 120-second default',
+      { command: 'find /Users -name proof-rules.md', timeout: 600 },
+      'a bash call without a timeout gets the 600-second default',
     );
     assert.equal(
       (await bashCall({ command: 'yarn test', timeout: 900 })).timeout,
@@ -47,7 +47,7 @@ async function checkBashTimeout(extensionUrl) {
   }
 }
 
-test('the pi observability extension gives a bash call without a timeout 120 seconds', () => {
+test('the pi observability extension gives a bash call without a timeout 600 seconds', () => {
   const extension = new URL('./pi-farmslot-observability.ts', import.meta.url).href;
   const result = spawnSync(
     process.execPath,
