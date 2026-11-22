@@ -304,16 +304,17 @@ async function captureRunOutputNow(
   else mirrorOptions.onEmptySource?.();
   const scanned = await scanArtifacts(path.dirname(taskFile));
   // A retried release must not replace what an earlier final retention kept (media can be
-  // acquired straight into that bundle) with a capture of a source the mirror found empty
-  // or could not inspect. A retained capture removes its media from the gateway task, so
-  // media still there was not retained (a refused capture's or new) and is captured again,
-  // as is any slot artifact.
-  if (
-    sourceEmpty &&
-    run.artifactBundle &&
-    !scanned.some((artifact) => isRunBundleMedia(artifact.path))
-  )
-    return 0;
+  // acquired straight into that bundle and its staging copy removed) with a capture of a
+  // source the mirror found empty or could not inspect. A retained capture removes its
+  // media from the gateway task, so media still there was not retained: rather than a
+  // replacement that could drop what the earlier bundle kept, release stops and holds it.
+  if (sourceEmpty && run.artifactBundle) {
+    const unretained = scanned.filter((artifact) => isRunBundleMedia(artifact.path));
+    if (unretained.length === 0) return 0;
+    throw new Error(
+      `Final result artifacts were not retained: ${unretained.map((artifact) => artifact.path).join(', ')} remain in the gateway task after an earlier final retention`,
+    );
+  }
   const artifactsByPath = new Map(
     [...scanned, ...acquisition.media].map((artifact) => [artifact.path, artifact]),
   );
