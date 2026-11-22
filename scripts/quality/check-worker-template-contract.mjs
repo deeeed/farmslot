@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
@@ -7,6 +7,7 @@ const require = createRequire(import.meta.url);
 const {
   resolveWorkerTerminalContract,
   lintWorkerTemplateAgainstContract,
+  lintWorkerTemplateProofSelection,
   lintWorkerTemplateStructure,
   templateUsesTerminalMark,
 } = require('./worker-terminal-contract.cjs');
@@ -73,6 +74,59 @@ function lintProjectRoot(projectRoot, issues) {
     return;
   }
   const workerTerminal = readWorkerTerminalConfig(projectRoot);
+  // Pack-owned execution-template checklists (<projectPath>/<subpath>/<flow>/<id>.md) carry
+  // the proof steps for packs without flow templates; they get the proof-selection rule.
+  // Sources rooted in an env var or another source are checked in the repo that owns them.
+  const project = JSON.parse(readFileSync(projectJsonPath, 'utf8'));
+  const packRoot = realpathSync(projectRoot);
+  // Segment-wise, like the catalog: `..checklists` is a child, `../x` is not.
+  const within = (root, target) => {
+    const relative = path.relative(root, target);
+    return (
+      relative === '' ||
+      (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+    );
+  };
+  for (const source of project.execution_templates?.sources ?? []) {
+    const root = source?.root?.projectPath;
+    if (typeof root !== 'string') continue;
+    // Catalog resolution: canonical source root inside the pack, canonical scan path
+    // (subpath) inside that root; missing roots are skipped like the catalog does.
+    const sourceRoot = path.resolve(projectRoot, root);
+    // Lexically first (as configured), then after resolving symlinks.
+    const lexicalEscape =
+      !within(projectRoot, sourceRoot) ||
+      !within(sourceRoot, path.resolve(sourceRoot, source.subpath ?? '.'));
+    if (!lexicalEscape && !existsSync(sourceRoot)) continue;
+    const canonicalRoot = existsSync(sourceRoot) ? realpathSync(sourceRoot) : sourceRoot;
+    const scanPath = path.resolve(canonicalRoot, source.subpath ?? '.');
+    const canonicalScan = existsSync(scanPath) ? realpathSync(scanPath) : null;
+    if (
+      lexicalEscape ||
+      !within(packRoot, canonicalRoot) ||
+      (canonicalScan && !within(canonicalRoot, canonicalScan))
+    ) {
+      issues.push(
+        `${projectRoot}: execution template source ${source.id} resolves outside the pack`,
+      );
+      continue;
+    }
+    if (!canonicalScan) continue;
+    for (const dir of readdirSync(canonicalScan, { withFileTypes: true })) {
+      if (!dir.isDirectory()) continue;
+      const flowDir = path.join(canonicalScan, dir.name);
+      for (const fileName of readdirSync(flowDir).filter((name) => name.endsWith('.md'))) {
+        const checklistPath = path.join(flowDir, fileName);
+        if (!lstatSync(checklistPath).isFile()) continue;
+        const content = readFileSync(checklistPath, 'utf8');
+        // Catalog metadata: frontmatter flow, then the flow directory.
+        const flow = frontmatterFlow(content);
+        for (const issue of lintWorkerTemplateProofSelection(content, flow ?? dir.name)) {
+          issues.push(`${path.relative(repoRoot, checklistPath)}: ${issue}`);
+        }
+      }
+    }
+  }
   const templatesDir = path.join(projectRoot, 'templates/worker');
   if (!existsSync(templatesDir)) return;
 
@@ -115,6 +169,9 @@ function collectTemplateIssues(displayPath, fileName, content, workerTerminal, i
   const { flowType, mode } = inferFlowTypeFromTemplate(fileName, content);
   const contract = resolveWorkerTerminalContract(workerTerminal, flowType, { mode });
   for (const issue of lintWorkerTemplateAgainstContract(content, contract)) {
+    issues.push(`${displayPath}: ${issue}`);
+  }
+  for (const issue of lintWorkerTemplateProofSelection(content, flowType)) {
     issues.push(`${displayPath}: ${issue}`);
   }
 }
@@ -162,4 +219,33 @@ function inferFlowTypeFromTemplate(fileName, content) {
   if (base === 'ci-fix') return { flowType: 'ci-fix', mode };
   if (base === 'validate-dep') return { flowType: 'validate-dep', mode };
   return { flowType: base, mode };
+}
+
+/**
+ * The `flow:` value of a leading frontmatter block, as the execution-template catalog reads it
+ * (BOM stripped, LF or CRLF, closing `---` on its own line, optional quotes); body text is ignored.
+ * @param {string} text
+ */
+function frontmatterFlow(text) {
+  const normalized = text.replace(/^\uFEFF/, '');
+  if (!normalized.startsWith('---\n') && !normalized.startsWith('---\r\n')) return undefined;
+  // The closing fence is `---` alone on its line; searching from the opening fence's newline
+  // lets an empty block close immediately.
+  let end = -1;
+  for (let from = 3; ; ) {
+    const candidate = normalized.indexOf('\n---', from);
+    if (candidate === -1) break;
+    const after = normalized.slice(candidate + 4, candidate + 6);
+    if (after === '' || after.startsWith('\n') || after.startsWith('\r\n')) {
+      end = candidate;
+      break;
+    }
+    from = candidate + 4;
+  }
+  if (end === -1) return undefined;
+  for (const line of normalized.slice(normalized.indexOf('\n') + 1, end).split(/\r?\n/)) {
+    const match = line.trim().match(/^flow\s*:\s*(.*)$/);
+    if (match) return match[1].trim().replace(/^(['"])(.*)\1$/, '$2') || undefined;
+  }
+  return undefined;
 }
