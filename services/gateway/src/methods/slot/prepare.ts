@@ -864,8 +864,8 @@ async function slotPrepareInner(
   // never moved. The move is `git reset --keep` (no merge configuration applies)
   // after checking HEAD is still the probed branch and tip, is an ancestor of
   // the base, nothing is staged (reset --keep resets the index), and no local
-  // file sits at a path the base adds (reset --keep would overwrite an ignored
-  // one); pipefail makes a failed scan refuse. reset --keep refuses local edits
+  // file sits at a path the base adds or where it needs a directory (reset --keep
+  // would overwrite an ignored one); pipefail makes a failed scan refuse. reset --keep refuses local edits
   // to changed files; any refusal keeps the branch where it was.
   const advanceEmptyWorkBranch = async () => {
     if (!branch || opts?.startRef || opts?.stackBase) return;
@@ -892,7 +892,7 @@ async function slotPrepareInner(
             'advance-empty-work-branch',
             // Re-checked inside the guarded command: the guard can rerun it after recapturing a
             // checkout that changed since the probe.
-            `set -o pipefail; cd ${shellQuote(vars.remoteRepo)} && { [ "$(git symbolic-ref -q HEAD)" = ${shellQuote(`refs/heads/${branch}`)} ] && [ "$(git rev-parse HEAD)" = ${shellQuote(tip)} ] || { echo 'the checkout changed since the probe' >&2; exit 1; }; } && git merge-base --is-ancestor HEAD ${shellQuote(baseSha)} && { git diff --cached --quiet --ignore-submodules=none HEAD -- || { echo 'staged changes would be reset' >&2; exit 1; }; } && { git diff --no-renames --diff-filter=A --name-only -z HEAD ${shellQuote(baseSha)} | while IFS= read -r -d '' p; do if [ -L "$p" ] || { [ -e "$p" ] && [ ! -d "$p" ]; }; then echo "$p exists locally and the new base tracks it" >&2; exit 1; elif [ -d "$p" ]; then others=$(git ls-files --others -- "$p") || exit 1; if [ -n "$others" ]; then echo "$p holds local files and the new base tracks it as a file" >&2; exit 1; fi; fi; done; } && git reset --keep ${shellQuote(baseSha)} && [ "$(git rev-parse HEAD)" = ${shellQuote(baseSha)} ]`,
+            `set -o pipefail; cd ${shellQuote(vars.remoteRepo)} && { [ "$(git symbolic-ref -q HEAD)" = ${shellQuote(`refs/heads/${branch}`)} ] && [ "$(git rev-parse HEAD)" = ${shellQuote(tip)} ] || { echo 'the checkout changed since the probe' >&2; exit 1; }; } && git merge-base --is-ancestor HEAD ${shellQuote(baseSha)} && { git diff --cached --quiet --ignore-submodules=none HEAD -- || { echo 'staged changes would be reset' >&2; exit 1; }; } && { git diff --no-renames --diff-filter=A --name-only -z HEAD ${shellQuote(baseSha)} | while IFS= read -r -d '' p; do q="$p"; while [ "$q" != "\${q%/*}" ]; do q="\${q%/*}"; if [ -L "$q" ] || { [ -e "$q" ] && [ ! -d "$q" ]; }; then git cat-file -e "HEAD:$q" 2>/dev/null || { echo "$q is a local file where the new base needs a directory" >&2; exit 1; }; fi; done; if [ -L "$p" ] || { [ -e "$p" ] && [ ! -d "$p" ]; }; then echo "$p exists locally and the new base tracks it" >&2; exit 1; elif [ -d "$p" ]; then others=$(git ls-files --others -- "$p") || exit 1; if [ -n "$others" ]; then echo "$p holds local files and the new base tracks it as a file" >&2; exit 1; fi; fi; done; } && git reset --keep ${shellQuote(baseSha)} && [ "$(git rev-parse HEAD)" = ${shellQuote(baseSha)} ]`,
             [baseSha],
           );
     if (moved.exitCode !== 0) {

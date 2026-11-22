@@ -381,3 +381,31 @@ test(
     assert.equal(await readFile(path.join(slotRepo, 'tools/run'), 'utf8'), 'now a file\n');
   },
 );
+
+test(
+  'an ignored local file where the new base needs a directory leaves the branch where it was',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, slotRepo, oldBase } = await staleBaseSlot(t);
+    const author = path.join(path.dirname(slotRepo), 'author');
+    await mkdir(path.join(author, 'tools/run'), { recursive: true });
+    await writeFile(path.join(author, 'tools/run/command'), 'tracked\n');
+    await git(author, 'add', 'tools/run/command');
+    await git(author, 'commit', '-qm', 'C: add tools/run/command');
+    await git(author, 'push', '-q', 'origin', 'HEAD:refs/heads/main');
+    await git(slotRepo, 'checkout', '-q', '-b', workBranch, oldBase);
+    await writeFile(path.join(slotRepo, '.git/info/exclude'), 'tools/run\n');
+    await mkdir(path.join(slotRepo, 'tools'), { recursive: true });
+    await writeFile(path.join(slotRepo, 'tools/run'), 'operator file\n');
+    await Promise.allSettled([
+      slotPrepare(
+        { slotId, branch: workBranch, prepareProfile: 'core' },
+        () => {},
+        undefined,
+        { preserveBranch: true },
+      ),
+    ]);
+    assert.equal(await git(slotRepo, 'rev-parse', `refs/heads/${workBranch}`), oldBase);
+    assert.equal(await readFile(path.join(slotRepo, 'tools/run'), 'utf8'), 'operator file\n');
+  },
+);
