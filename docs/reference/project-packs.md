@@ -186,7 +186,8 @@ the Validation Logs open with a transcript of the selected attempt: one line per
 the recipe digest, the clean commit and the claims each node proves. `--format transcript` prints only that
 text. Use transcript proof when no acceptance criterion is about what a user sees: Core controllers, backends,
 CLIs and harness changes. The selected attempt's transcript is then the proof; no screenshots or video are
-required. Any UI claim keeps the visual evidence rules (stills, recording, visual review). A Core change that
+required. As with captures, the attempt must have run on the clean package head; the gate refuses an older or
+dirty checkout. Any UI claim keeps the visual evidence rules (stills, recording, visual review). A Core change that
 alters what a user sees still needs its own visual proof in each client that shows it. Declare each criterion
 in the recipe's `proofTargets` so the transcript can name the nodes that prove it.
 
