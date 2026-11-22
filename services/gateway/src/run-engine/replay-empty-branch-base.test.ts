@@ -488,19 +488,21 @@ test('a branch switch during the move stops prepare', needsTmuxSandbox, async (t
   assert.equal(await git(slotRepo, 'branch', '--show-current'), 'operator-branch');
 });
 
-test('a branch switch right after the replay checkout stops prepare', needsTmuxSandbox, async (t) => {
-  const { slotId, slotRepo, oldBase } = await staleBaseSlot(t);
-  await git(slotRepo, 'branch', workBranch, oldBase);
-  afterCheckout = () => execFileSync('git', ['-C', slotRepo, 'checkout', '-q', '-b', 'operator-branch']);
-  await assert.rejects(
-    slotPrepare(
-      { slotId, branch: workBranch, prepareProfile: 'core' },
-      () => {},
-      undefined,
-      { preserveBranch: true },
-    ),
-    /is not on fix\/505-bug-ios-ignores-preferrawstrea after checkout/,
-  );
-  assert.equal(await git(slotRepo, 'branch', '--show-current'), 'operator-branch');
-  assert.equal(await git(slotRepo, 'rev-parse', `refs/heads/${workBranch}`), oldBase);
-});
+test(
+  'a branch switch right after the replay checkout stops prepare',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, slotRepo, oldBase } = await staleBaseSlot(t);
+    await git(slotRepo, 'branch', workBranch, oldBase);
+    afterCheckout = () =>
+      execFileSync('git', ['-C', slotRepo, 'checkout', '-q', '-b', 'operator-branch']);
+    await assert.rejects(
+      slotPrepare({ slotId, branch: workBranch, prepareProfile: 'core' }, () => {}, undefined, {
+        preserveBranch: true,
+      }),
+      /is not on fix\/505-bug-ios-ignores-preferrawstrea after checkout/,
+    );
+    assert.equal(await git(slotRepo, 'branch', '--show-current'), 'operator-branch');
+    assert.equal(await git(slotRepo, 'rev-parse', `refs/heads/${workBranch}`), oldBase);
+  },
+);
