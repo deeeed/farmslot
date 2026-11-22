@@ -870,6 +870,39 @@ test('package validation refuses omitted registered claim rows', () => {
     assert.equal(result.status, 'invalid');
     assert.ok(result.findings.some((finding) => finding.path === 'claims.second'));
   }
+
+  // State-only proof follows the visual rule: the selected attempt must be on the clean package
+  // head. TAT-4334: the stale attempt ran on a55ff20d while the package head was fd05c9c4.
+  const stale = 'a55ff20d2ff4947d06500e9d2cf14dcabdfe803f';
+  const head = 'fd05c9c4b47a5eba11fb66ea6ddcf017ab9fd17c';
+  const withProduct = (metadata: Record<string, unknown>) => ({
+    ...bundle,
+    manifest: {
+      ...bundle.manifest,
+      artifacts: [
+        ...bundle.manifest.artifacts,
+        { path: 'product-provenance.json', type: 'json', category: 'system', metadata },
+      ],
+    },
+  });
+  const snapshot = { baseSha: 'b'.repeat(40), headSha: head };
+  const mismatches = (input: ReturnType<typeof withProduct>) =>
+    validateRecordedEvidencePackage(input, snapshot).findings.filter(
+      (finding) => finding.code === 'comparison-source-mismatch',
+    );
+  assert.deepEqual(
+    mismatches(withProduct({ adapter: 'core', git_ref: stale, dirty: false })).map(
+      ({ path }) => path,
+    ),
+    ['product-provenance.json'],
+  );
+  assert.equal(mismatches(withProduct({ adapter: 'core', git_ref: head, dirty: true })).length, 1);
+  assert.deepEqual(mismatches(withProduct({ adapter: 'core', git_ref: head, dirty: false })), []);
+  // Without a frozen head (or provenance) nothing is compared, as for media.
+  assert.equal(
+    validateRecordedEvidencePackage(withProduct({ git_ref: stale, dirty: false })).status,
+    'valid',
+  );
 });
 
 test('a retry ending without an eligible assertion cannot reuse earlier state proof', () => {
