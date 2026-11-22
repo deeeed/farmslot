@@ -61,7 +61,8 @@ A completed fix that changes only evidence/artifacts or at most 50 source lines,
 for findings that are all minor or nit, MUST skip the automatic warm re-review.
 An open blocker or major, or a finding without a severity (as when recovery
 re-reads findings from the checklist), MUST get a real re-review. The gateway acceptance MUST NOT count as a passing review: the gate
-shows "fix accepted without re-review" and the required reviews stay unmet. Source lines are additions plus deletions under the project's
+shows "fix accepted without re-review" and does not count it toward the
+required reviews. Source lines are additions plus deletions under the project's
 existing source filter. The original reviewer attempt MUST remain unchanged.
 The gateway MUST record acceptance of the worker fix, its current contribution
 snapshot and reviewed-input fingerprint without launching or charging a reviewer.

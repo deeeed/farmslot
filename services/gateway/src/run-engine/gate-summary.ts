@@ -301,7 +301,13 @@ export function buildReviewSummary(
     passingReviews,
     totalUnresolved,
     didAnyReviewTriggerReWork,
-    summaryText: buildReviewSummaryText(review, summaries, passingReviews),
+    summaryText: buildReviewSummaryText(
+      review,
+      summaries,
+      passingReviews,
+      review?.reason === ACCEPTED_FIX_WITHOUT_REVIEW ||
+        requestedEntries.some(reviewEndsWithAcceptedFix),
+    ),
   };
 }
 
@@ -309,15 +315,15 @@ function buildReviewSummaryText(
   review: ReviewSummary['review'],
   reviews: ReviewSummary['reviews'],
   passingReviews: number,
+  acceptedFix: boolean,
 ): string {
   const parts: string[] = [];
-  if (review) {
+  if (acceptedFix) parts.push(ACCEPTED_FIX_WITHOUT_REVIEW);
+  else if (review) {
     parts.push(
       review.status === 'skipped'
         ? `review skipped (${review.reason ?? 'no reason recorded'})`
-        : review.reason === ACCEPTED_FIX_WITHOUT_REVIEW
-          ? ACCEPTED_FIX_WITHOUT_REVIEW
-          : `review ${review.verdict ?? review.status}`,
+        : `review ${review.verdict ?? review.status}`,
     );
   }
   if (reviews.length) {

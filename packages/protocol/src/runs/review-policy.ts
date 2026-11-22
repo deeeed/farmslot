@@ -1,4 +1,9 @@
-import type { ReadyGatePayload, ReviewPolicy, ReviewStatus } from '../contracts/runs.js';
+import type {
+  ReadyGatePayload,
+  ReviewAttempt,
+  ReviewPolicy,
+  ReviewStatus,
+} from '../contracts/runs.js';
 
 import { openReviewFindingCount, reviewFindingsSatisfied } from './review-findings.js';
 
@@ -27,12 +32,18 @@ export function isQualifyingReview(review: ReviewStatus): boolean {
  */
 export function reviewEndsWithAcceptedFix(review: Pick<ReviewStatus, 'attempts'>): boolean {
   const last = review.attempts?.at(-1);
+  return !!last && isAcceptedFixAttempt(last);
+}
+
+/** The gateway's acceptance record: a pass with no reviewer session, only a worker fix. */
+export function isAcceptedFixAttempt(
+  attempt: Pick<ReviewAttempt, 'verdict' | 'session' | 'timeline'>,
+): boolean {
   return (
-    !!last &&
-    last.verdict === 'pass' &&
-    !last.session &&
-    !!last.timeline?.length &&
-    last.timeline.every((segment) => segment.kind === 'worker-fix')
+    attempt.verdict === 'pass' &&
+    !attempt.session &&
+    !!attempt.timeline?.length &&
+    attempt.timeline.every((segment) => segment.kind === 'worker-fix')
   );
 }
 
@@ -119,7 +130,7 @@ export function reviewSourceLabel(review: Pick<ReviewStatus, 'source'>): string 
 }
 
 function reviewIsPassing(review: ReviewStatus): boolean {
-  return reviewFindingsSatisfied(review);
+  return reviewFindingsSatisfied(review) && !reviewEndsWithAcceptedFix(review);
 }
 
 function reviewHead(review: ReviewStatus): string | null | undefined {
@@ -161,6 +172,16 @@ export function classifyReviewFreshness(
       reason: 'review-pending',
       label: `${sourceLabel} still running`,
       detail: 'Review has not produced a passing verdict yet',
+      stale: false,
+      passing,
+    };
+  }
+  if (reviewEndsWithAcceptedFix(review)) {
+    return {
+      review,
+      reason: 'review-not-passing',
+      label: `${sourceLabel}: fix accepted without re-review`,
+      detail: 'No reviewer has seen the final head',
       stale: false,
       passing,
     };

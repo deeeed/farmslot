@@ -27,6 +27,7 @@ import {
   executePublishGateReviewPlan,
   resumeInterruptedPublicationReview,
 } from '../run-engine/ready-gate.js';
+import { remainingExplicitReviewPlan } from '../run-engine/review-plan.js';
 import {
   deleteTestRunIfPresent,
   makeReadyGatePackage,
@@ -62,6 +63,7 @@ import {
   readReviewedInputs,
 } from './reviewed-inputs.js';
 import { slotWithTask } from './reviewed-inputs.test-support.js';
+import { lastValidatedReview } from './session-mode.js';
 import { UncommittedReviewFixError } from './uncommitted-fix-error.js';
 
 test('deferred handoffs name a missing prior-task receipt instead of claiming worker activity', async (t) => {
@@ -2586,6 +2588,13 @@ test('runReviewRetryLoop: a small fix for minor findings is accepted but never c
   });
   assert.equal(reviewEndsWithAcceptedFix(gateReview), true);
   assert.deepEqual(qualifyingPassingReviews([gateReview]), []);
+  // The accepted fix fills no planned reviewer slot.
+  const row = { runner: 'codex', model: 'gpt-6.2-sol', effort: null, mode: 'warm' as const };
+  assert.equal(remainingExplicitReviewPlan([row], [{ ...gateReview, model: row.model }]).length, 1);
+  // A requested re-review starts from what the reviewer last saw, so it covers the patch.
+  const baseline = lastValidatedReview(gateReview);
+  assert.equal(baseline?.headSha, 'base-head');
+  assert.deepEqual(baseline?.issues, C22_ISSUES.slice(1));
   const summary = buildReviewSummary(
     makeRun({
       engineState: {
