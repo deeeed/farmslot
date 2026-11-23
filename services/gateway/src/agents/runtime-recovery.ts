@@ -688,6 +688,7 @@ async function reconcileTmuxRunAgentRuntime(run: Run): Promise<TmuxWorkerRestore
     // down. Its terminal signal, read by REVIEW's fix recovery, settles the pass; a missing
     // process does not make that attempt a failure.
     if (
+      (inspection.state === 'dead' || inspection.state === 'missing') &&
       statusAfterInspection(run, ctx, inspection) === 'failed' &&
       (await fixPassSignalIsTerminal(run, ctx))
     )

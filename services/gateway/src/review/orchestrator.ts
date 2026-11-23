@@ -3619,7 +3619,8 @@ export async function relaunchWorkerForFix(
   // The respawned pane's id is what later reads that worker after it exits (COMPLETE's
   // progress check, restart recovery); a window name alone cannot tell it went away.
   // list-panes resolves named and numeric (`slot:1`) targets alike.
-  const listedPane = await resolveTmuxPaneId(vars, workerTarget);
+  // Best effort: the worker already runs, so a failed read leaves only the pane id unrecorded.
+  const listedPane = await resolveTmuxPaneId(vars, workerTarget).catch(() => null);
   const paneId = listedPane && /^%\d+$/.test(listedPane) ? listedPane : undefined;
   const relaunchedTarget = {
     session: resolved.session,
@@ -3635,7 +3636,9 @@ export async function relaunchWorkerForFix(
     ...clearedRunnerSessionContextPatch(),
     target: relaunchedTarget,
   });
-  if (fixContext) {
+  // A finished pass stays settled: reopening it would let restart recovery credit its old
+  // signal to the next round before that round's findings are sent.
+  if (fixContext && replacesAttempt) {
     const updatedFixContext = await upsertAgentContext(runId, 'review-fix', {
       status: 'working',
       runner,
@@ -3658,7 +3661,7 @@ export async function relaunchWorkerForFix(
     `[review] run ${runId.slice(0, 8)} — relaunch left no live ${runner} session in ${workerTarget}`,
   );
   await markAgentContextStatus(runId, workerRole, 'failed');
-  if (fixContext) await markAgentContextStatus(runId, 'review-fix', 'failed');
+  if (fixContext && replacesAttempt) await markAgentContextStatus(runId, 'review-fix', 'failed');
   return false;
 }
 

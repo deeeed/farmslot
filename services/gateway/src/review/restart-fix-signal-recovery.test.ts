@@ -806,6 +806,7 @@ test('a review-fix relaunch records the pane it respawned on the worker and fix 
   const run = await reviewFixRunAtReload(t, 'tmux', 'scripted');
   paneCommand = 'scripted-runner';
   withPrimaryWorker(run.id);
+  fixSignal = runningCurrentAttempt;
   relaunchPaneId = '%7';
   t.after(() => {
     relaunchPaneId = undefined;
@@ -814,6 +815,17 @@ test('a review-fix relaunch records the pane it respawned on the worker and fix 
   const contexts = getRun(run.id)!.agentContexts!;
   assert.equal(contexts.find((context) => context.role === 'dev')?.target?.paneId, '%7');
   assert.equal(fixContext(run.id)?.target?.paneId, '%7');
+});
+
+// A relaunch for the next round must not reopen the finished pass: restart recovery would
+// then credit its old signal to that round before the new findings are sent.
+test('a relaunch leaves a finished fix pass settled', async (t) => {
+  const run = await reviewFixRunAtReload(t, 'tmux', 'scripted');
+  paneCommand = 'scripted-runner';
+  withPrimaryWorker(run.id, { status: 'complete' });
+  fixSignal = finishedCurrentAttempt;
+  assert.equal(await relaunchWorkerForFix(vars, 'scripted', 'scripted', run.id), true);
+  assert.equal(fixContext(run.id)?.status, 'complete');
 });
 
 test(
