@@ -838,6 +838,29 @@ test('a pane id the first read missed is recorded once the relaunched worker is 
   assert.equal(fixContext(run.id)?.target?.paneId, '%7');
 });
 
+test('a late pane id is not written over contexts a replay has taken over', async (t) => {
+  const run = await reviewFixRunAtReload(t, 'tmux', 'scripted');
+  paneCommand = 'scripted-runner';
+  withPrimaryWorker(run.id);
+  fixSignal = runningCurrentAttempt;
+  relaunchPaneId = '%7';
+  paneIdMisses = 1;
+  // A replay advances the run's generation after the first read missed.
+  onRespawn = () => {
+    const engineState = getRun(run.id)!.engineState;
+    updateRun(run.id, {
+      engineState: { ...engineState, generation: (engineState?.generation ?? 0) + 1 },
+    });
+  };
+  t.after(() => {
+    relaunchPaneId = undefined;
+    paneIdMisses = 0;
+    onRespawn = () => {};
+  });
+  assert.equal(await relaunchWorkerForFix(vars, 'scripted', 'scripted', run.id), true);
+  assert.equal(fixContext(run.id)?.target?.paneId, undefined);
+});
+
 // A relaunch for the next round must not reopen the finished pass: restart recovery would
 // then credit its old signal to that round before the new findings are sent.
 test('a relaunch leaves a finished fix pass settled', async (t) => {

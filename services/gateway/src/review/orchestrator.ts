@@ -3506,6 +3506,7 @@ export async function relaunchWorkerForFix(
   }
   const resolved = await resolveAgentTarget(vars.slotId, { runId, role: 'primary' });
   const parentRun = getRun(runId);
+  const relaunchGeneration = parentRun?.engineState?.generation ?? 0;
   const projectVars = await loadProjectVars(parentRun?.project ?? vars.projectName);
   const workerShell = (command: string) =>
     wrapWorkerShellCommand(command, {
@@ -3659,9 +3660,17 @@ export async function relaunchWorkerForFix(
       const latePaneId = paneId ? undefined : await readPaneId();
       if (latePaneId) {
         const target = { ...relaunchedTarget, paneId: latePaneId };
-        await upsertAgentContext(runId, workerRole, { target });
+        // Checked inside the context queue: a replay since this relaunch owns the contexts now.
+        const resolvePatch = (current: AgentContext | undefined) =>
+          current &&
+          (getRun(runId)?.engineState?.generation ?? 0) === relaunchGeneration &&
+          current.target?.target === workerTarget &&
+          !current.target.paneId
+            ? { target }
+            : null;
+        await upsertAgentContext(runId, workerRole, {}, { resolvePatch });
         if (fixContext && replacesAttempt)
-          await upsertAgentContext(runId, 'review-fix', { target });
+          await upsertAgentContext(runId, 'review-fix', {}, { resolvePatch });
       }
       return true;
     }
