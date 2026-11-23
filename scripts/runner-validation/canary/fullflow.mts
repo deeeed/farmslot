@@ -222,7 +222,7 @@ export default function(pi) {
   await writeJson(path.join(evidence, 'derived-project.json'), pack.projectJson);
   // The real worker's output is reviewed by the scripted reviewer: the proxy swallows each codex
   // reviewer turn and the test passes it, so no reviewer calls a model.
-  const reviewer = scriptedReviewer(stack);
+  const reviewer = scriptedReviewer(stack, log);
   // Every turn the proxy forwarded to codex: only a reviewer runs on codex here.
   const codexCalls = async () =>
     (await readFile(path.join(stack.holds, 'model-calls.log'), 'utf8').catch(() => ''))

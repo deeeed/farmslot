@@ -66,6 +66,7 @@ import {
   f324Shape,
   Inconclusive,
   judgeLifecycle,
+  type Log,
   nativeCheck,
   retire,
   type RunShape,
@@ -873,7 +874,7 @@ export interface ScriptedReviewer {
 
 const execFileAsync = promisify(execFile);
 
-export function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
+export function scriptedReviewer(stack: RemoteNodeStack, log: Log): ScriptedReviewer {
   const hold = path.join(stack.holds, 'review');
   const answered = new Set<string>();
   // The proxy logs `… swallowed` per turn it answered and `… completed` per batch it ended.
@@ -965,15 +966,23 @@ export function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
         15_000,
       ).catch(() => false);
       await writeFile(hold, 'swallow\n');
-      // REVIEW waits for the turn to end: name the cause now rather than time out on it later.
+      // The run decides what that means: REVIEW fails if its reviewer is gone, and a live proxy that
+      // missed the marker leaves REVIEW waiting until the shape's timeout. Name the cause either way.
       if (!ended)
-        throw new Inconclusive(
-          `the proxy never ended the answered loop ${loop} reviewer turn within 15 s: its reviewer is gone`,
+        await log(
+          'scripted reviewer: the proxy never ended an answered reviewer turn within 15 s',
+          {
+            runId: run.id,
+            loop,
+            cause: 'the reviewer is gone, or the proxy missed the marker write',
+          },
         );
       return `loop ${loop}: ${issues ? 'issues' : 'pass'}`;
     },
     async stop(dir) {
-      await rm(hold, { force: true });
+      // Keep swallowing: a run still active after its scenario (retired only later) must not send a
+      // reviewer turn to a model.
+      await writeFile(hold, 'swallow\n');
       await rm(`${hold}-env.json`, { force: true });
       if (existsSync(`${hold}.hit`)) {
         await appendFile(path.join(dir, 'hold-review.hit'), await readFile(`${hold}.hit`, 'utf8'));
@@ -1311,7 +1320,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
     ...(options.onCleanup ? { onCleanup: options.onCleanup } : {}),
     log,
   });
-  const reviewer = scriptedReviewer(stack);
+  const reviewer = scriptedReviewer(stack, log);
   const slotCounter: Record<string, number> = {};
   const modelCalls = async () =>
     (await readFile(path.join(stack.holds, 'model-calls.log'), 'utf8').catch(() => ''))
@@ -1934,7 +1943,13 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
             : undefined;
         },
         10 * 60_000,
-      );
+      ).catch((error: unknown) => {
+        if (error instanceof Inconclusive) throw error;
+        // The hold never caught: unverified, so the catch below retires the run and lifts the marker.
+        throw new Inconclusive(
+          `${label}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
       const reviewer = reviewerOf(run)!.id;
       await writeJson(path.join(dir, 'run-held.json'), run);
       const restart = await stack.restartGateway({ nodeAwayMs: options.reviewNodeAwayMs });
