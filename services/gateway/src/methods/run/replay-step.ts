@@ -2331,6 +2331,12 @@ async function replayRunStep(
         const copied = await (hooks.captureOutput ?? captureRunOutput)(params.runId, true, false, {
           forPublication: requiresPublicationApproval(runBeforeGateReplay),
         });
+        // Same fence on the success path: the gate that follows must be the one
+        // this replay owns, not a newer replay's.
+        if (recaptureForComplete) {
+          assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+          assertNativeReplayCurrent();
+        }
         console.log(
           `[run] replay from ${replayStepName} — refreshed ${copied} worker artifact(s) before rebuilding the gate`,
         );
@@ -2339,6 +2345,11 @@ async function replayRunStep(
         // replay's to die on: record the fresh failure so the refusal names the
         // current cause instead of the one the operator already fixed.
         if (recaptureForComplete) {
+          // A capture rejects an attempt whose generation moved on, and a second
+          // replay may own the run by now. Recording this rejection on that newer
+          // generation would describe a capture it never asked for.
+          assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+          assertNativeReplayCurrent();
           const { failRunOutputCapture } = await import('../../run-completion/output.js');
           failRunOutputCapture(params.runId, error);
           console.warn(

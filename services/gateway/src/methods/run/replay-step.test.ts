@@ -4247,6 +4247,20 @@ test('replaying complete after a failed capture recaptures the worker mirror fir
     [run.id],
     'a stale capture failure must be refreshed before the gate re-reads the retained output',
   );
+
+  // And when the retry fails too, the refusal must name the current cause, not the
+  // one the operator already fixed: the recorded failure is replaced, not kept.
+  await runReplayStep({ runId: run.id, stepName: 'complete', triggeredBy: 'operator' }, () => {}, {
+    startEngine: async () => {},
+    captureOutput: async () => {
+      throw new Error('Storage unavailable: /Volumes/c910ssd went away again.');
+    },
+  }).catch(() => undefined);
+  assert.match(
+    getRun(run.id)?.output?.captureError ?? '',
+    /went away again/,
+    'the fresh capture failure replaces the stale one the gate would otherwise report',
+  );
 });
 
 // F311: a restart stopped a gate after the pipeline review and before its planned codex review.
