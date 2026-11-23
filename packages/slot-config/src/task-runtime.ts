@@ -18,7 +18,10 @@ export type TaskRuntimeRequest = NodeLinkTaskRuntimeInput;
 // inputs. Keep the existing ten-minute budget and two-minute verification cap.
 export const TASK_RUNTIME_TIMEOUT_MS = { init: 10 * 60_000, verify: 120_000 } as const;
 export const TASK_RUNTIME_CLOSEOUT_MS = 2 * NODE_EXEC_CLOSEOUT_MS;
-/** How long a finished task's stdout and stderr may stay open, held by a descendant. */
+/**
+ * How long a finished task's stdout and stderr may stay open, held by a descendant. Output a
+ * descendant writes after that is dropped; the result itself arrives over IPC and is never cut.
+ */
 export const TASK_OUTPUT_DRAIN_MS = 2000;
 
 export function parseTaskRuntimeRequest(value: unknown): TaskRuntimeRequest {
@@ -65,7 +68,12 @@ const ownedGroups = new Set();
 process.on('disconnect', () => {
   if (delivered) return;
   for (const pid of ownedGroups) {
-    try { process.kill(-pid, 'SIGTERM'); } catch {}
+    try {
+      process.kill(-pid, 'SIGTERM');
+    } catch (error) {
+      // A group that already ended is the expected case; anything else is reported.
+      if (error.code !== 'ESRCH') console.error('Task group ' + pid + ' was not stopped: ' + error.message);
+    }
   }
   process.exit(1);
 });
@@ -89,7 +97,14 @@ ChildProcess.prototype.spawn = function(options) {
   if (this.pid) {
     const pid = this.pid;
     ownedGroups.add(pid);
-    this.once('close', () => ownedGroups.delete(pid));
+    // Forget the group only once it is empty: a detached grandchild can outlive its leader.
+    this.once('close', () => {
+      try {
+        process.kill(-pid, 0);
+      } catch (error) {
+        if (error.code === 'ESRCH') ownedGroups.delete(pid);
+      }
+    });
     parentPort.postMessage({ type: 'task-child', pid });
     this.once('exit', () => parentPort.postMessage({ type: 'task-child-reaped', pid }));
     this.once('close', () => parentPort.postMessage({ type: 'task-child-exit', pid }));

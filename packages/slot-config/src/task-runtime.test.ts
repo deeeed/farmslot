@@ -92,14 +92,22 @@ test('task runs leave no unreaped child processes behind', { timeout: 60_000 }, 
   assert.equal(zombieChildren() - before, 0, `${runs} task runs left unreaped children`);
 });
 
-test('a task whose node dies stops instead of running on', { timeout: 30_000 }, async (t) => {
+test('a task whose node dies stops itself and its subprocesses', { timeout: 30_000 }, async (t) => {
   const marker = path.join(await realpath(tmpdir()), `task-orphan-${process.pid}-${Date.now()}`);
-  t.after(() => rm(marker, { force: true }));
+  const pids: number[] = [];
+  t.after(() => {
+    for (const pid of pids) if (alive(pid)) process.kill(pid, 'SIGKILL');
+    return rm(marker, { force: true });
+  });
   const { root, cli } = await cliFixture(
     t,
     `import fs from 'node:fs';
+    import { spawn } from 'node:child_process';
     export async function runHostedTaskInit() {
-      fs.writeFileSync(${JSON.stringify(marker)}, String(process.pid));
+      // A tracked provider subprocess, as an init that runs tooling has.
+      const child = spawn('sleep', ['30'], { stdio: 'ignore' });
+      fs.writeFileSync(${JSON.stringify(marker)} + '.tmp', JSON.stringify({ task: process.pid, child: child.pid }));
+      fs.renameSync(${JSON.stringify(marker)} + '.tmp', ${JSON.stringify(marker)});
       // Long provider work keeps the event loop busy, as a 10-minute init does.
       setInterval(() => {}, 1000);
       await new Promise(() => {});
@@ -117,10 +125,13 @@ test('a task whose node dies stops instead of running on', { timeout: 30_000 }, 
     ],
     { stdio: 'ignore' },
   );
+  if (node.pid) pids.push(node.pid);
   assert.ok(await until(() => existsSync(marker), 20_000), 'the task started');
-  const task = Number(readFileSync(marker, 'utf8'));
+  const { task, child } = JSON.parse(readFileSync(marker, 'utf8')) as { task: number; child: number };
+  pids.push(task, child);
   node.kill('SIGKILL');
   assert.ok(await until(() => !alive(task), 5000), 'the task exits once its node is gone');
+  assert.ok(await until(() => !alive(child), 5000), 'and stops its own subprocess');
 });
 
 test('a descendant holding the task output does not delay the result', { timeout: 30_000 }, async (t) => {
