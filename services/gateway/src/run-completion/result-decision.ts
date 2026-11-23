@@ -623,6 +623,22 @@ async function sendBack(
     try {
       await sendBackCompletion(run, decisionId, feedback, broadcastEvent, note);
     } catch (error) {
+      // An instruction the worker already has cannot be un-sent. Re-presenting
+      // the refusal it is acting on is what run 1ad82ba1 (audiolab#526) did: the
+      // same stale decision came back 6 s later, and because monitoring never
+      // resumed, the worker's corrected signal 7 minutes later was never read —
+      // the lead recovered it by replaying monitor by hand. So that is what the
+      // engine does now: resume monitoring and let the worker's next signal
+      // settle it, instead of holding the old refusal again.
+      // `sendBackCompletion` resumes monitoring itself for an instruction the
+      // worker may already have, under its own ownership checks. The run is
+      // monitoring again, so it must not be held on the refusal it just left.
+      // Only a plain delivery error means the resume succeeded. An AggregateError
+      // is `sendBackCompletion` reporting that it could NOT resume, so the run
+      // must be held again: round 10 found that treating it as resumed left the
+      // operator with neither a decision nor a Replay action.
+      const { CompletionFeedbackDeliveryError } = await import('./completion-send-back.js');
+      if (error instanceof CompletionFeedbackDeliveryError && error.handedOver) throw error;
       if (isHeldForResultDecision(getRun(run.id) ?? run)) {
         try {
           await holdRunForResultDecision(run.id, stoppedAt, reason);
