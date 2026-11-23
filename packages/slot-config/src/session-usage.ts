@@ -856,6 +856,8 @@ export function readPiAssistantUsage(
   if (
     !providerCharge &&
     noUsage &&
+    // Local providers stay unpriced (below), so this zero is never their cost.
+    !(provider && ['ollama', 'sparks', 'localsparks', 'lmstudio'].includes(provider)) &&
     'stopReason' in message &&
     message.stopReason === 'error' &&
     'content' in message &&

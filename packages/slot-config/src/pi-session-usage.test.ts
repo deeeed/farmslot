@@ -292,11 +292,20 @@ test('a tmux Pi receipt quotes gateway LiteLLM rates only through the request en
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
     },
   });
-  for (const options of [{ liteLlmRoute: route }, { liteLlmPrices: route.prices }])
-    assert.match(
-      await summarize([...bound, request('r2', gateway), empty('error')], options),
-      /cost_usd=0\.0012000000/,
-    );
+  for (const options of [{ liteLlmRoute: route }, { liteLlmPrices: route.prices }]) {
+    const priced = await summarize([...bound, request('r2', gateway), empty('error')], options);
+    assert.match(priced, /cost_usd=0\.0012000000/);
+    assert.match(priced, /turns=2\n/);
+    assert.match(priced, /total_tokens=1100\n/);
+  }
+  // A local provider's failed turn is still not a priced zero.
+  const local = empty('error');
+  const localOnly = await summarize(
+    [user, { ...local, parentId: 'u1', message: { ...local.message, provider: 'ollama' } }],
+    { liteLlmPrices: route.prices },
+  );
+  assert.doesNotMatch(localOnly, /^cost_usd=/m);
+  assert.match(localOnly, /cost_reason=local, unpriced/);
   // An aborted stream, or a failure after streaming began, may still have been billed.
   for (const unverified of [empty('aborted'), empty('error', [{ type: 'text', text: 'partial' }])])
     assert.doesNotMatch(
