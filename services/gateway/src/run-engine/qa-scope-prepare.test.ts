@@ -213,14 +213,21 @@ function qaRun(t: TestContext, qa: QaProfileSelection) {
   return run;
 }
 
+const claimFor = async (runId: string) => {
+  const { updateSlotStatusIf } = await import('../core/state.js');
+  await updateSlotStatusIf(slotId, () => true, { current_run_id: runId });
+};
 const prepare = (runId: string) =>
-  executePrepareStep(runId, {
-    activeMonitors: new Map(),
-    broadcastFn: () => undefined,
-    getRunFlags: () => undefined,
-    normalizeEvalReplayForTaskWrite: async (_id, run) => run,
-    stepPartialIO: new Map(),
-  });
+  // The engine prepares only a slot its run holds; find-slot's claim is skipped here.
+  claimFor(runId).then(() =>
+    executePrepareStep(runId, {
+      activeMonitors: new Map(),
+      broadcastFn: () => undefined,
+      getRunFlags: () => undefined,
+      normalizeEvalReplayForTaskWrite: async (_id, run) => run,
+      stepPartialIO: new Map(),
+    }),
+  );
 
 test('exact ref and range scopes freeze a source; names, windows and PRs do not', () => {
   const same = { baseSha: frozen, headSha: frozen };

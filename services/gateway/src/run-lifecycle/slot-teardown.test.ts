@@ -1634,6 +1634,158 @@ test('cancel keeps the slot for replay past its own exiting helper and an editor
   assertKeptForReplay();
 });
 
+// 510ed181 on macpro-mmt-6, 11-23 16:21Z: cancelled while prepare resolved its base ref. Its worker
+// was never dispatched, so there was nothing to replay, yet the slot stayed held for it.
+test('a run cancelled before its worker was dispatched releases its slot', async () => {
+  const preparing = {
+    ...run,
+    steps: [
+      { name: 'prepare', status: 'skipped', startedAt: '2026-11-23T16:21:09.377Z' },
+      { name: 'dispatch', status: 'skipped' },
+    ],
+  } as Run;
+  const cancel = defaultCancelCollaborators();
+
+  await cancel.releaseCapabilities(preparing);
+  assert.equal(await cancel.releaseSlot(preparing), undefined);
+
+  assert.equal(slotRow?.lifecycle, 'ready');
+  assert.equal(slotRow?.current_run_id, null);
+  assert.equal(slotRow?.held_reason ?? null, null);
+});
+
+test('a pre-dispatch cancel stops and joins the run’s in-flight prepare before releasing', async (t) => {
+  const { activePrepareAborts } = await import('../methods/slot/shared.js');
+  const events: string[] = [];
+  let settle!: () => void;
+  activePrepareAborts.set(SLOT_ID, {
+    runId: RUN_ID,
+    abort: () => {
+      events.push('abort');
+      // The prepare unwinds after its abort, a moment later.
+      globalThis.setImmediate(() => {
+        events.push('prepare settled');
+        settle();
+      });
+    },
+    settled: new Promise<void>((resolve) => (settle = resolve)),
+  });
+  t.after(() => activePrepareAborts.delete(SLOT_ID));
+  const preparing = {
+    ...run,
+    steps: [
+      { name: 'prepare', status: 'skipped', startedAt: '2026-11-23T16:21:09.377Z' },
+      { name: 'dispatch', status: 'skipped' },
+    ],
+  } as Run;
+  const cancel = defaultCancelCollaborators();
+
+  await cancel.releaseCapabilities(preparing);
+  events.push('capabilities released');
+  await cancel.releaseSlot(preparing);
+
+  assert.deepEqual(events, ['abort', 'prepare settled', 'capabilities released']);
+  assert.equal(slotRow?.lifecycle, 'ready');
+});
+
+test('a pre-dispatch cancel never stops another run’s prepare on its slot', async (t) => {
+  const { activePrepareAborts } = await import('../methods/slot/shared.js');
+  let aborted = false;
+  activePrepareAborts.set(SLOT_ID, {
+    runId: 'other-run',
+    abort: () => (aborted = true),
+    settled: new Promise<void>(() => {}),
+  });
+  t.after(() => activePrepareAborts.delete(SLOT_ID));
+  const preparing = {
+    ...run,
+    steps: [
+      { name: 'prepare', status: 'skipped', startedAt: '2026-11-23T16:21:09.377Z' },
+      { name: 'dispatch', status: 'skipped' },
+    ],
+  } as Run;
+
+  await defaultCancelCollaborators().releaseCapabilities(preparing);
+
+  assert.equal(aborted, false, "the other run's prepare keeps running");
+});
+
+test('a pre-dispatch cancel joins the prepare of a slot reserved for the run’s warm handoff', async (t) => {
+  const { activePrepareAborts } = await import('../methods/slot/shared.js');
+  let aborted = false;
+  activePrepareAborts.set(SLOT_ID, {
+    runId: RUN_ID,
+    abort: () => (aborted = true),
+    settled: Promise.resolve(),
+  });
+  t.after(() => activePrepareAborts.delete(SLOT_ID));
+  slotRow = { ...slotRow, current_run_id: 'other-run', handoff_run_id: RUN_ID };
+  const preparing = {
+    ...run,
+    steps: [
+      { name: 'prepare', status: 'skipped', startedAt: '2026-11-23T16:21:09.377Z' },
+      { name: 'dispatch', status: 'skipped' },
+    ],
+  } as Run;
+
+  await defaultCancelCollaborators().releaseCapabilities(preparing);
+
+  assert.equal(aborted, true, 'the reserved run’s prepare is stopped before release');
+});
+
+test('a pre-dispatch cancel whose prepare will not stop keeps the slot and names why', async (t) => {
+  const { activePrepareAborts } = await import('../methods/slot/shared.js');
+  activePrepareAborts.set(SLOT_ID, {
+    runId: RUN_ID,
+    abort: () => {},
+    settled: new Promise<void>(() => {}),
+  });
+  t.after(() => activePrepareAborts.delete(SLOT_ID));
+  const preparing = {
+    ...run,
+    steps: [
+      { name: 'prepare', status: 'skipped', startedAt: '2026-11-23T16:21:09.377Z' },
+      { name: 'dispatch', status: 'skipped' },
+    ],
+  } as Run;
+  const cancel = defaultCancelCollaborators({ prepareStopTimeoutMs: 20 });
+
+  await cancel.releaseCapabilities(preparing);
+  await cancel.releaseSlot(preparing);
+
+  assert.equal(slotRow?.lifecycle, 'held');
+  assert.equal(slotRow?.current_run_id, RUN_ID);
+  assert.match(String(runUpdates.at(-1)?.slotTeardownSkipped), /In-flight prepare did not stop/);
+});
+
+test('a replayed run whose earlier dispatch started a worker keeps the replay hold', async () => {
+  // Replay resets the dispatch step; the worker context the earlier dispatch started stays.
+  const replayed = {
+    ...run,
+    agentContexts: [
+      {
+        id: 'fix-bug',
+        role: 'fix-bug',
+        label: 'fix-bug',
+        status: 'failed',
+        slotId: SLOT_ID,
+        runId: RUN_ID,
+        startedAt: '2026-11-23T16:00:00.000Z',
+      },
+    ],
+    steps: [
+      { name: 'prepare', status: 'skipped' },
+      { name: 'dispatch', status: 'skipped' },
+    ],
+  } as Run;
+  const cancel = defaultCancelCollaborators();
+
+  await cancel.releaseCapabilities(replayed);
+  await cancel.releaseSlot(replayed);
+
+  assertKeptForReplay();
+});
+
 // macwork-mmt-3 on Arthur's cancels: the run's own finished worker had no exact pane identity.
 test('cancel stops its own worker without a pane identity the way slot.release does', async () => {
   workerBlocker = `Worker dev has no exact pane identity; cleanup deferred. Verify its window, then use farmslot slot release --keep-work ${SLOT_ID}`;

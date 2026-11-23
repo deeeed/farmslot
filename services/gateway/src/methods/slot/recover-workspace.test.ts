@@ -66,12 +66,22 @@ let beforeMark = async () => {};
 let moves = 0;
 let remoteReads = 0;
 const calls: string[] = [];
+// Whether the prepare guard was still held at each moment the slot was published ready.
+const guardedAtReady: boolean[] = [];
+let afterReady = async () => {};
+const { activePrepareSlots } = await import('./shared.js');
 mock.module('../../core/index.js', {
   namedExports: {
     ...core,
     markSlotStatusIf: async (...args: Parameters<typeof core.markSlotStatusIf>) => {
       await beforeMark();
       return core.markSlotStatusIf(...args);
+    },
+    resetSlotIf: async (...args: Parameters<typeof core.resetSlotIf>) => {
+      guardedAtReady.push(activePrepareSlots.has(args[0]));
+      const applied = await core.resetSlotIf(...args);
+      await afterReady();
+      return applied;
     },
     loadProjectVars: async (name: string) => {
       const project = await core.loadProjectVars(name);
@@ -713,6 +723,30 @@ test('a rival owner arriving during recovery is left untouched', async (t) => {
   assert.equal(row?.current_run_id, rivalId);
   assert.equal(row?.lifecycle, 'busy');
   assert.equal(row?.phase, 'working');
+});
+
+// 1b542e2f on macpro-mmt-4, 11-23 16:28Z: a run that claimed the slot as soon as it read ready was
+// refused 'already preparing', because the finished recovery still held the prepare guard.
+test('a recovery frees the prepare guard before the slot reads ready', async () => {
+  guardedAtReady.length = 0;
+  const result = await recover();
+  assert.equal(result.refreshed, true, result.detail);
+  assert.deepEqual(guardedAtReady, [false]);
+  assert.equal(activePrepareSlots.has('example-slot'), false);
+});
+
+test('a recovery never clears a guard a run took after the slot read ready', async (t) => {
+  // A run claims the ready slot and starts preparing before recovery returns.
+  afterReady = async () => {
+    activePrepareSlots.add('example-slot');
+  };
+  t.after(() => {
+    afterReady = async () => {};
+    activePrepareSlots.delete('example-slot');
+  });
+  const result = await recover();
+  assert.equal(result.refreshed, true, result.detail);
+  assert.equal(activePrepareSlots.has('example-slot'), true, 'the new prepare keeps its guard');
 });
 
 test('ordinary refresh parks dirty local work under the recovery fence and keeps runtime posture', async () => {

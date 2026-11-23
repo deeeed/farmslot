@@ -452,6 +452,7 @@ export async function executePrepareStep(
       emitWithBroadcast,
       prepareController.signal,
       {
+        requireRunOwnership: true,
         ...(warmRecovery ? { stripClean: true } : {}),
         ...(isPrepareReplay ||
         usesEvalTrialCapsule(current.engineState?.evalExperiment?.blind) ||
