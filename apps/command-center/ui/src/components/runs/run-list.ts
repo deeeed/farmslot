@@ -335,7 +335,7 @@ export class RunList extends RunListState {
       query = new ResourceQueryController<TaskProgressResult>(this, (state) => {
         if (!query || this.progressQueries.get(key) !== query) return;
         const progress = new Map(this.taskProgressByRun);
-        if (state.data?.structured) progress.set(key, state.data.structured);
+        if (state.data?.summary) progress.set(key, state.data.summary);
         else progress.delete(key);
         this.taskProgressByRun = progress;
         const errors = new Map(this.taskProgressErrorsByRun);
@@ -345,7 +345,13 @@ export class RunList extends RunListState {
         this.taskProgressErrorsByRun = errors;
       });
       this.progressQueries.set(key, query);
-      query.setQuery(resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, target.params));
+      // A row shows counts and the current step: the summary read skips everything else.
+      query.setQuery(
+        resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, {
+          ...target.params,
+          summary: true,
+        }),
+      );
     }
   }
 

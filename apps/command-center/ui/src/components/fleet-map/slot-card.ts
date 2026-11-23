@@ -1,7 +1,7 @@
 import { css, html, LitElement, unsafeCSS } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
-import type { RunListRow, SlotStatus, TaskProgressStructured } from '@farmslot/protocol';
+import type { RunListRow, SlotStatus, TaskProgressSummary } from '@farmslot/protocol';
 import { cancelledRunSlotHold, isTerminalRunStatus, runDisplayTitle } from '@farmslot/protocol';
 import {
   fleetBehindDefaultIfBehind,
@@ -33,7 +33,7 @@ import { slotBranchDisplay } from './slot-branch-display.js';
 export class SlotCard extends LitElement {
   @property({ attribute: false }) slotData!: SlotStatus;
   @property({ type: Boolean }) nodeOnline = false;
-  @property({ attribute: false }) progress?: TaskProgressStructured;
+  @property({ attribute: false }) progress?: TaskProgressSummary;
   @property({ attribute: false }) linkedRun?: RunListRow;
   @property({ attribute: false }) thumbnailData?: { data: string; ts: number };
   @property({ type: Boolean }) expanded = false;
@@ -665,7 +665,7 @@ export class SlotCard extends LitElement {
     `;
   }
 
-  private renderMiniProgress(p: TaskProgressStructured) {
+  private renderMiniProgress(p: TaskProgressSummary) {
     const pct = p.totalSteps > 0 ? Math.round((p.completedSteps / p.totalSteps) * 100) : 0;
     const label = p.currentPhase
       ? html`<span class="mini-progress-phase">${p.currentPhase}</span>

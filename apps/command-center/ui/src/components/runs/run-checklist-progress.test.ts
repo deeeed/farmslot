@@ -63,7 +63,8 @@ function nestedElement(): RunChecklistProgress {
   };
   const element = new RunChecklistProgress();
   element.run = run;
-  element.progress = checklist('Parent', 0, 2);
+  const parent = checklist('Parent', 0, 2);
+  element.progress = parent;
   const child: TaskStepSubtaskProgress = {
     id: 'cook',
     status: 'running',
@@ -71,8 +72,13 @@ function nestedElement(): RunChecklistProgress {
     source: { kind: 'inline', sha256: 'a', renderedSha256: 'b' },
     progress: checklist('Child', 1, 3),
   };
-  element.progress.phases[0].steps[0].subtask = child;
+  parent.phases[0].steps[0].subtask = child;
   return element;
+}
+function parentStep(element: RunChecklistProgress) {
+  const progress = element.progress;
+  assert(progress && 'phases' in progress);
+  return progress.phases[0].steps[0];
 }
 test('detail shows the active recorded child beneath the parent, with separate counts', () => {
   const element = nestedElement();
@@ -82,7 +88,7 @@ test('detail shows the active recorded child beneath the parent, with separate c
   assert.match(text, /1\/3/);
   assert.match(text, /Child 2/);
   assert.match(text, /data-testid="?checklist-child-progress/);
-  const child = element.progress!.phases[0].steps[0].subtask!;
+  const child = parentStep(element).subtask!;
   child.progress.phases[0].steps[1].subtask = {
     ...child,
     id: 'grandchild',
@@ -94,7 +100,7 @@ test('mini rows and missing child checklists stay at one level', () => {
   const element = nestedElement();
   assert.doesNotMatch(litText(element.render()), /checklist-child-progress|Child 2/);
   element.showSubtasks = true;
-  element.progress!.phases[0].steps[0].subtask!.progress = checklist('Empty child', 0, 0);
+  parentStep(element).subtask!.progress = checklist('Empty child', 0, 0);
   assert.doesNotMatch(litText(element.render()), /checklist-child-progress|0\/0/);
 });
 
@@ -102,7 +108,7 @@ test('saved child data is labelled and a real read failure replaces the summary'
   const element = nestedElement();
   element.showSubtasks = true;
   element.stale = true;
-  element.progress!.phases[0].steps[0].subtask!.status = 'stale';
+  parentStep(element).subtask!.status = 'stale';
   const text = litText(element.render());
   assert.match(text, /Saved child progress/);
   assert.match(text, /stale/);

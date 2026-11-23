@@ -36,7 +36,7 @@ import {
   type SlotStatus,
   sourceObservationAge,
   type TaskProgressResult,
-  type TaskProgressStructured,
+  type TaskProgressSummary,
 } from '@farmslot/protocol';
 import { resourceQuery, type ResourceQueryState } from '@farmslot/protocol/client-cache';
 
@@ -126,7 +126,7 @@ export class FleetCanvas extends LitElement {
   @state() private onlineMachines: Set<string> = new Set();
   @state() private nodeInfo: Map<string, NodeInfo> = new Map();
   @state() private gatewayProtocolVersion = '';
-  @state() private slotProgress: Map<string, TaskProgressStructured> = new Map();
+  @state() private slotProgress: Map<string, TaskProgressSummary> = new Map();
   @state() private progressObservations = new Map<string, ResourceQueryState<TaskProgressResult>>();
   private readonly progressQueries = new Map<string, ResourceQueryController<TaskProgressResult>>();
   @state() private slotRuns: Map<string, RunListRow> = new Map();
@@ -606,7 +606,7 @@ export class FleetCanvas extends LitElement {
         query = new ResourceQueryController<TaskProgressResult>(this, (state) => {
           if (!query || this.progressQueries.get(slotId) !== query) return;
           const progress = new Map(this.slotProgress);
-          if (state.data?.structured) progress.set(slotId, state.data.structured);
+          if (state.data?.summary) progress.set(slotId, state.data.summary);
           else progress.delete(slotId);
           this.slotProgress = progress;
           this.progressObservations = new Map(this.progressObservations).set(slotId, state);
@@ -617,6 +617,7 @@ export class FleetCanvas extends LitElement {
         resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, {
           slotId,
           ...(slot.currentRunId ? { runId: slot.currentRunId } : {}),
+          summary: true,
         }),
       );
     }

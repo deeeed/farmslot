@@ -14,7 +14,7 @@ import type {
   RunListSummaryMeta,
   RunProjectAnalyticsSummary,
   RunStatus,
-  TaskProgressStructured,
+  TaskProgressSummary,
 } from '@farmslot/protocol';
 import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
@@ -127,7 +127,7 @@ export abstract class RunListState extends LitElement {
   @state() archiveErrors = new Map<string, string>();
   @state() hydrating = false;
   @state() bootstrapFailed = false;
-  @state() taskProgressByRun = new Map<string, TaskProgressStructured>();
+  @state() taskProgressByRun = new Map<string, TaskProgressSummary>();
   unsub?: () => void;
   _onHashChange = () => {
     const raw = location.hash.replace(/^#/, '');
