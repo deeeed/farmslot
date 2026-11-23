@@ -51,8 +51,13 @@ function resolvedRoot(root: string): string {
     let target: string | undefined;
     try {
       target = readlinkSync(current);
-    } catch {
-      target = undefined; // Not a link, or not there at all.
+    } catch (error) {
+      // Not a link (EINVAL), or not there at all: anything else is a real failure.
+      if (
+        !(error instanceof Error && 'code' in error) ||
+        !['EINVAL', 'ENOENT', 'ENOTDIR'].includes(String(error.code))
+      )
+        throw error;
     }
     if (target !== undefined) {
       current = path.resolve(path.dirname(current), target);

@@ -1149,6 +1149,22 @@ test('a .env the node cannot read stops the token lookup instead of reading as n
   }
 });
 
+for (const args of [[], ['--no-node-token']]) {
+  test(`a local deploy${args.length ? ' with --no-node-token' : ''} stops on a .env the node cannot read`, (t) => {
+    const fixture = cliFixture(t);
+    // A directory named .env: the node's readFileSync fails on it at startup.
+    fs.mkdirSync(path.join(fixture.home, 'farmslot-node/.env'), { recursive: true });
+    assert.throws(
+      () => fixture.deploy({ machine: localMachine(), nodeTokenFile: false, args }),
+      (error) => {
+        assert.match(String(error.stderr), /a \.env the node reads on .* cannot be read/);
+        return true;
+      },
+    );
+    assert.equal(fs.existsSync(unitPath(fixture)), false, 'no service definition is written');
+  });
+}
+
 test('--no-node-token refuses a .env token the node would still use', (t) => {
   const fixture = cliFixture(t);
   fixture.write('home/farmslot-node/.env', 'FARMSLOT_NODE_TOKEN=stale-file-token\n');
