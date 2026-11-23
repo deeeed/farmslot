@@ -6,7 +6,7 @@ import type { Run } from '@farmslot/protocol';
 import { makeRun } from '../methods/run/test-fixtures.js';
 
 const live = new Map<string, Run>();
-const probed: Array<string | undefined> = [];
+const probed: Array<string | null | undefined> = [];
 let duringCensus = async (): Promise<void> => {};
 const store = await import('../runs/store.js');
 mock.module('../runs/store.js', {
@@ -30,12 +30,12 @@ const { releaseFenceCensus } = await import('./release-fence-census.js');
 test('the census stays on the fenced slot while the live run is rebound mid-census', async () => {
   const run = makeRun({ id: 'census-owner', status: 'done', slotId: 'slot-a' });
   live.set(run.id, run);
+  // A find-slot activation moves the live record mid-census, then rolls back after it.
   duringCensus = async () => {
-    run.slotId = 'slot-b'; // a find-slot activation, rolled back below
-    await Promise.resolve();
-    run.slotId = 'slot-a';
+    run.slotId = 'slot-b';
   };
   assert.equal(await releaseFenceCensus(run, 'slot-a'), null);
+  run.slotId = 'slot-a';
   assert.deepEqual(probed, ['slot-a', 'slot-a']);
 });
 
