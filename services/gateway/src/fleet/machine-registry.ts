@@ -165,6 +165,9 @@ export function getAllNodes(): NodeInfo[] {
     ...(node.taskRuntime === 1 ? { taskRuntime: 1 } : {}),
     ...(node.conditionalWrites ? { conditionalWrites: true } : {}),
     ...(node.terminalInputSequence ? { terminalInputSequence: true } : {}),
+    ...(node.observationCapabilities
+      ? { observationCapabilities: { ...node.observationCapabilities } }
+      : {}),
     uptime: (Date.now() - new Date(node.connectedAt).getTime()) / 1000,
   }));
 }

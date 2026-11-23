@@ -260,7 +260,7 @@ plus a proof plan.
 
 ### Release parks and terminal cleanup
 
-A cancelled run retains its slot for replay until another run requests that slot. On an
+A cancelled run whose worker was dispatched retains its slot for replay until another run requests that slot; a run cancelled before dispatch releases it (ADR-054, 2026-11-24 amendment). On an
 explicit request, or find-slot with no free eligible slot, the gateway MUST perform the
 existing owned cleanup, confirm it, and free ownership before the requester claims it.
 A pending request alone is not occupancy. Foreign ownership, successor reservations and

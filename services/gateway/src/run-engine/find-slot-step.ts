@@ -16,6 +16,7 @@ import {
   type RunDecisionPayload,
   SLOT_DESTRUCTIVE_OPS,
   SLOT_STALE_BRANCH_SCORE_PENALTY,
+  type SlotStatus,
 } from '@farmslot/protocol';
 import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 import { withProjectSources } from '@farmslot/slot-config';
@@ -33,6 +34,7 @@ import {
   transitionSlotStatus,
   updateSlotStatus,
 } from '../core/index.js';
+import { activePrepareSlots } from '../core/native-worker-exclusion.js';
 import {
   loadFleetStatus,
   loadPoolConfigs,
@@ -405,6 +407,50 @@ function acceptedAppBinding(run: Run | undefined): AppBindingMismatchPayload | u
  * this claim aborts its remaining writes instead of clobbering the claim.
  */
 
+/**
+ * A slot this run will prepare next must not be under another prepare guard: prepare would
+ * refuse it 'already preparing' (1b542e2f). Card picks and reuse claims reach the claim
+ * without the explicit-pick wait, and a guard can be taken after selection, so the claim
+ * waits for it the same way, as queue time.
+ */
+export async function waitForPrepareGuard(
+  runId: string,
+  generation: number,
+  slotId: string,
+  deps: {
+    preparing?: (slotId: string) => boolean;
+    runLookup?: (id: string) => Pick<Run, 'status' | 'engineState'> | undefined;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<unknown>;
+    timeoutMs?: number;
+    wrapWait?: (wait: () => Promise<void>) => Promise<void>;
+  } = {},
+): Promise<void> {
+  const {
+    preparing = (id) => activePrepareSlots.has(id),
+    runLookup = getRun,
+    now = Date.now,
+    sleep = delay,
+    timeoutMs = EXPLICIT_SLOT_RELEASE_WAIT_MS,
+    wrapWait = (wait) => awaitAsQueueTime(runId, 'find-slot', wait),
+  } = deps;
+  if (!preparing(slotId)) return;
+  await wrapWait(async () => {
+    const deadline = now() + timeoutMs;
+    while (preparing(slotId)) {
+      if (runSupersededSince(runLookup(runId), generation)) throw runChangedError(runId, slotId);
+      // A conflict: find-slot selects again (skipping the slot) instead of failing the run.
+      if (now() >= deadline)
+        throw slotClaimRefusedError(
+          slotId,
+          `Slot ${slotId} is still preparing after ${Math.round(timeoutMs / 60_000)}m`,
+          true,
+        );
+      await sleep(EXPLICIT_SLOT_RELEASE_POLL_MS);
+    }
+  });
+}
+
 async function claimSelectedSlot(
   slotId: string,
   runId: string,
@@ -420,6 +466,7 @@ async function claimSelectedSlot(
     const slotRunner = (await readSlotRow(slotId))?.runner;
     assertNativeRunForSlot(run, typeof slotRunner === 'string' ? slotRunner : undefined);
   }
+  if (phase === 'preparing') await waitForPrepareGuard(runId, generation, slotId);
   // The gate for every claim, before source admission and the claim itself. Paths
   // that may change a slot before claiming it (safe reuse, takeovers, picks) asked
   // already and replay here; a clean scored pick, affinity, the skip-prepare preview
@@ -454,6 +501,10 @@ async function claimSelectedSlot(
       const capabilityRefusal = slotCapabilityBlocker(slotId, requiredCapabilities, catalogs);
       if (capabilityRefusal) throw new Error(`Slot ${slotId}: ${capabilityRefusal}`);
       if (runSupersededSince(getRun(runId), generation)) throw runChangedError(runId, slotId);
+      // A guard taken while this claim waited on admission (sources, catalogs) would refuse
+      // the run's prepare: refuse as a conflict, so find-slot selects again.
+      if (phase === 'preparing' && activePrepareSlots.has(slotId))
+        throw slotClaimRefusedError(slotId, `Slot ${slotId} is preparing`, true);
       // Record the binding only after source revalidation. Automatic replans keep their
       // original open request, while the claim and any teardown see this exact target.
       if (current?.slotId !== slotId) updateRun(runId, { slotId });
@@ -700,6 +751,30 @@ export async function commitSlotClaim(
   }
 }
 
+// A guard that clears on a slot reading ready changes what selection may pick: announce it
+// as a slot change, so a run waiting in the slot picker re-checks.
+activePrepareSlots.onCleared((slotId) => resourceRevisions.advance({ family: 'slot', slotId }));
+
+/**
+ * Free slots split by whether a prepare guard still holds them. A guarded slot is skipped,
+ * not picked and then refused at prepare ('already preparing', 1b542e2f on macpro-mmt-4).
+ */
+export function splitGuardedFreeSlots<
+  S extends Pick<SlotStatus, 'slot' | 'missingFromPool' | 'lifecycle' | 'agent'>,
+>(
+  slots: readonly S[],
+  guarded: (slotId: string) => boolean = (slotId) => activePrepareSlots.has(slotId),
+): { free: S[]; guarded: string[] } {
+  const free: S[] = [];
+  const held: string[] = [];
+  for (const slot of slots) {
+    if (!isFreeSlot(slot)) continue;
+    if (guarded(slot.slot)) held.push(slot.slot);
+    else free.push(slot);
+  }
+  return { free, guarded: held };
+}
+
 /** How long an explicit slot pick waits for an in-flight release to land. */
 export const EXPLICIT_SLOT_RELEASE_WAIT_MS = 5 * 60 * 1000;
 const EXPLICIT_SLOT_RELEASE_POLL_MS = 2000;
@@ -828,6 +903,8 @@ export async function previewWhenSlotClaimable<T>(
     timeoutMs?: number;
     reclaimCancelled?: typeof reclaimCancelledSlot;
     wrapWait?: <W>(wait: () => Promise<W>) => Promise<W>;
+    /** An in-process prepare, recovery or upkeep still holds the slot's prepare guard. */
+    preparing?: (slotId: string) => boolean;
   } = {},
 ): Promise<T> {
   if (!slotId) return preview();
@@ -840,6 +917,7 @@ export async function previewWhenSlotClaimable<T>(
     timeoutMs = EXPLICIT_SLOT_RELEASE_WAIT_MS,
     reclaimCancelled = reclaimCancelledSlotForSelection,
     wrapWait = (wait) => awaitAsQueueTime(runId, 'find-slot', wait),
+    preparing = (id) => activePrepareSlots.has(id),
   } = deps;
   const assertRunUnchanged = () => {
     if (runSupersededSince(runLookup(runId), generation)) throw runChangedError(runId, slotId);
@@ -856,16 +934,23 @@ export async function previewWhenSlotClaimable<T>(
   await reclaimCancelled(slotId, runId);
   assertRunUnchanged();
   let blocker = blockerOf(await readRow(slotId));
-  if (blocker?.kind === 'releasing') {
+  // A slot mid-release, or one that reads free while a prepare guard still holds it (it would
+  // refuse this run's prepare 'already preparing', 1b542e2f), is waited for, not refused.
+  const waiting = (current: typeof blocker) =>
+    current?.kind === 'releasing' || (!current && preparing(slotId));
+  if (waiting(blocker)) {
     // One read decides both whether to wait and whether it counts as queue time.
     blocker = await wrapWait(async () => {
       const deadline = now() + timeoutMs;
       let current = blocker;
-      while (current?.kind === 'releasing') {
+      while (waiting(current)) {
         if (now() >= deadline) {
+          const minutes = Math.round(timeoutMs / 60_000);
           throw slotClaimRefusedError(
             slotId,
-            `${current.detail}, still releasing after ${Math.round(timeoutMs / 60_000)}m`,
+            current?.kind === 'releasing'
+              ? `${current.detail}, still releasing after ${minutes}m`
+              : `Slot ${slotId} is still preparing after ${minutes}m`,
           );
         }
         await sleep(EXPLICIT_SLOT_RELEASE_POLL_MS);
@@ -1628,7 +1713,7 @@ async function findSlotAttempt(
       `No complete source plan for eligible slots:\n${reasons.join('\n')}`,
     );
   }
-  const freeSlots = projectSlots.filter(isFreeSlot);
+  const { free: freeSlots, guarded: guardedFreeSlots } = splitGuardedFreeSlots(projectSlots);
   const refreshableSlots = freeSlots.filter(
     (slot) => !automaticSlotLoadBlocker(slot, selectionOptions),
   );
@@ -1674,8 +1759,10 @@ async function findSlotAttempt(
       allowedSlots: run.allowedSlots ?? null,
       ...selectionOptions,
     });
+    // A slot still under a prepare guard is not reused: prepare would refuse it.
     if (
       affinitySlot &&
+      !activePrepareSlots.has(affinitySlot.slot) &&
       !eligibleFreeSlots.some(
         (slot) =>
           (compareSlotModelAvailability(slot, affinitySlot, selectionOptions) ||
@@ -1771,7 +1858,7 @@ async function findSlotAttempt(
             prMatchKind: top.prMatchKind,
             canNudge: top.canNudge,
           },
-          freeSlotCandidates: projectSlots.filter(isFreeSlot).map((s) => ({
+          freeSlotCandidates: freeSlots.map((s) => ({
             slotId: s.slot,
             score: isEligibleFreeSlot(s) ? scoreCandidate(s) : -1,
             branch: s.branch || '',
@@ -2085,7 +2172,9 @@ async function findSlotAttempt(
         lifecycle !== 'ready' ||
         row.agent === 'working' ||
         slotClaimBlocker(row, runId, getRun) ||
-        (typeof row.current_run_id === 'string' && pickerActiveOwners.has(row.current_run_id))
+        (typeof row.current_run_id === 'string' && pickerActiveOwners.has(row.current_run_id)) ||
+        // A slot under a prepare guard is not offered; the picker resumes when the guard clears.
+        activePrepareSlots.has(slot.slot)
       )
         continue;
       pickerSlots.push(slot);
@@ -2101,7 +2190,11 @@ async function findSlotAttempt(
 
     const desc =
       reason === 'no_free_slots'
-        ? `No eligible free slots for **${run.project}**. Selection resumes automatically when an allowed slot is ready.`
+        ? `No eligible free slots for **${run.project}**.${
+            guardedFreeSlots.length
+              ? ` ${guardedFreeSlots.join(', ')} read${guardedFreeSlots.length === 1 ? 's' : ''} free but ${guardedFreeSlots.length === 1 ? 'is' : 'are'} still preparing or being serviced.`
+              : ''
+          } Selection resumes automatically when an allowed slot is ready.`
         : reason === 'missing_required_resources'
           ? `No free slots for **${run.project}** have the isolated simulator resources required by **${requiredPrepareProfile}**. Selection resumes automatically when an allowed resource slot is ready.`
           : !skipPrepare
@@ -2132,6 +2225,8 @@ async function findSlotAttempt(
           )
           .map((slot) => ({
             slot: slot.slot,
+            // A free slot under a prepare guard is skipped; its guard clearing is a change.
+            preparing: activePrepareSlots.has(slot.slot),
             machine: slot.machine,
             enabled: slot.enabled,
             dispatchable: slot.dispatchable,
