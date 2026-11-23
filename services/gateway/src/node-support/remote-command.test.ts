@@ -504,6 +504,56 @@ test('after a delivery misses its deadline, the next command starts a fresh one'
   assert.equal(node.uploads.length, 2, 'the stalled delivery was not joined');
 });
 
+test('a command after a deadline nobody watched starts a fresh delivery', async (t) => {
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  t.after(() => node.release());
+  const vars = farmVars(farm.name, 'mini-x-1');
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+  // A budgeted hook gives up before the deadline, so no waiter sees it pass.
+  await assert.rejects(
+    resolveRemoteFarmCommand(vars, cmd, {
+      io: { ...node.io, deliveryDeadlineMs: 100 },
+      budgetMs: 20,
+    }),
+    NodeSupportPendingError,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  const next = resolveRemoteFarmCommand(vars, cmd, { io: node.io });
+  await node.waitForUploads(2);
+  node.release();
+  assert.match(await next, /support\/[0-9a-f]{64}\//);
+});
+
+test(
+  "another slot never waits on a stalled machine upload past that upload's deadline",
+  { timeout: 10_000 },
+  async (t) => {
+    resetRemoteFarmCommandCache();
+    const farm = await withTempFarm(t);
+    const node = gatedNode();
+    t.after(() => node.release());
+    const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+    // Slot 1's hook starts the machine upload with a short deadline and gives up.
+    await assert.rejects(
+      resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-1'), cmd, {
+        io: { ...node.io, deliveryDeadlineMs: 100 },
+        budgetMs: 20,
+      }),
+      NodeSupportPendingError,
+    );
+    // Slot 2 arrives while that upload is still within its deadline, and outlives it.
+    const other = resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-2'), cmd, { io: node.io });
+    await node.waitForUploads(2);
+    node.release();
+    assert.match(await other, /support\/[0-9a-f]{64}\//);
+    assert.equal(node.uploads.length, 2, 'slot 2 uploaded on its own');
+  },
+);
+
 test('a budget that runs out names the bundle, its phase and the bytes left', async (t) => {
   resetRemoteFarmCommandCache();
   const farm = await withTempFarm(t);

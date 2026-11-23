@@ -347,10 +347,10 @@ function ensureOnce(
   selectSlot: boolean,
 ): Delivery {
   const slotKey = `${vars.slotId}\0${farmPathsForSlot(vars).code.support}\0${local.hash}\0${selectSlot}`;
-  const existing = pendingEnsures.get(slotKey);
-  if (existing) return existing;
   const machineKey = `${vars.machine}\0${farmPathsForSlot(vars).code.support}\0${local.hash}`;
-  const upload = machinePublishes.get(machineKey);
+  const existing = current(pendingEnsures.get(slotKey));
+  if (existing) return existing;
+  const upload = current(machinePublishes.get(machineKey));
   const progress: NodeSupportDeliveryProgress = {
     phase: 'starting',
     sentBytes: 0,
@@ -371,12 +371,10 @@ function ensureOnce(
   delivery.promise = (async () => {
     try {
       if (upload) {
-        // That upload's failure is reported to its own caller. This slot then
-        // runs its own ensure, which retries the publish if it is still needed.
-        await upload.promise.then(
-          () => undefined,
-          () => undefined,
-        );
+        // That upload's failure is reported to its own caller, and past its
+        // deadline it is dropped. This slot then runs its own ensure, which
+        // retries the publish if it is still needed.
+        await settledOrExpired(upload);
         delivery.progress = progress;
       }
       return await ensureNodeSupportBundle(vars, projectVars.runtimeDir ?? '.agent', {
@@ -393,6 +391,42 @@ function ensureOnce(
   pendingEnsures.set(slotKey, delivery);
   if (!upload) machinePublishes.set(machineKey, delivery);
   return delivery;
+}
+
+/**
+ * The delivery to join, or undefined when there is none or it is past its
+ * deadline. An expired delivery is dropped here, whether or not anyone was
+ * waiting when its deadline passed, so the caller starts a fresh one.
+ */
+function current(delivery: Delivery | undefined): Delivery | undefined {
+  if (!delivery || delivery.deadlineAt > Date.now()) return delivery;
+  forgetDelivery(delivery);
+  return undefined;
+}
+
+/** Wait for another slot's upload to settle, at most until that upload's deadline. */
+async function settledOrExpired(upload: Delivery): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<void>((resolve) => {
+    timer = setTimeout(
+      () => {
+        forgetDelivery(upload);
+        resolve();
+      },
+      Math.max(0, upload.deadlineAt - Date.now()),
+    );
+  });
+  try {
+    await Promise.race([
+      upload.promise.then(
+        () => undefined,
+        () => undefined,
+      ),
+      expired,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Drop the entries this delivery registered, never a newer delivery's. */
