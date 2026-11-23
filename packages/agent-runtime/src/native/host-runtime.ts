@@ -5,21 +5,27 @@ import { join } from 'node:path';
 import { RUNTIME_VERSION } from '../version.js';
 
 import { NATIVE_HOST_VERSION_SKEW } from './host-unavailable.js';
+import { currentRuntimeBuild } from './runtime-build.js';
 import { type HostIdentity, requestHost } from './ipc.js';
 import { readJson, type RecordedProcess, recordedProcessAlive } from './storage.js';
 
 export function nativeHostVersionSkew(host: HostIdentity) {
   return Object.assign(
     new Error(
-      `Native host runtime version skew: node ${RUNTIME_VERSION}, host ${host.runtimeVersion ?? 'unknown (legacy)'}. ` +
+      `Native host runtime version skew: node ${RUNTIME_VERSION} (build ${currentRuntimeBuild().slice(0, 12)}), host ${host.runtimeVersion ?? 'unknown (legacy)'} (build ${host.runtimeBuild?.slice(0, 12) ?? 'unknown'}). ` +
         'Existing sessions remain available. Finish or close them, then redeploy. Legacy hosts without an upgrade fence require the documented controlled native-host refresh.',
     ),
     { code: NATIVE_HOST_VERSION_SKEW },
   );
 }
 
+/** The host runs this installed runtime: the same version and the same built code. */
+export function nativeHostRunsCurrentRuntime(host: HostIdentity): boolean {
+  return host.runtimeVersion === RUNTIME_VERSION && host.runtimeBuild === currentRuntimeBuild();
+}
+
 export function assertNativeHostRuntime(host: HostIdentity): void {
-  if (host.runtimeVersion !== RUNTIME_VERSION) throw nativeHostVersionSkew(host);
+  if (!nativeHostRunsCurrentRuntime(host)) throw nativeHostVersionSkew(host);
 }
 
 /** Lifecycle only: stop only after the running host atomically fences its admissions. */
