@@ -3,7 +3,6 @@
 import {
   type AgentContext,
   type ArtifactRef,
-  cancelledRunHoldReason,
   contextIdFor,
   Events,
   type FlowType,
@@ -12,7 +11,6 @@ import {
   isHeldForResultDecision,
   isSettledBlockedRun,
   isSettledCompletionFailure,
-  isTerminalRunStatus,
   pendingResultDecision,
   PipelineSteps,
   pipelineStepsForRun,
@@ -29,6 +27,7 @@ import {
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/config.js';
 import {
   currentReleaseGatewayInstance,
+  RUN_CLEANUP_TOKEN_PREFIX,
   SLOT_CLEANUP_STOP_UNCONFIRMED,
   SLOT_PHASE_RELEASING,
   SLOT_RELEASE_GATEWAY_INSTANCE,
@@ -212,6 +211,8 @@ export interface RunRecoveryCollaborators {
   dispatchPromptAccepted?: (run: Run, worker: AgentContext) => Promise<boolean>;
   /** The node this slot's commands need when it isn't connected, else null. */
   absentExecutionNode?: (slotId: string) => Promise<string | null>;
+  /** Read-only census of an interrupted release's checkout: what is still live there, else null. */
+  releaseFenceBlocker?: (run: Run) => Promise<string | null>;
   /** Settles when the node connects, or rejects when its reconnect wait runs out. */
   waitForExecutionNode?: (machine: string) => Promise<void>;
   /** Clear a run error that only settled native workers carry, from recorded state. */
@@ -1502,6 +1503,7 @@ type OrphanRecoveryCollaborators = Pick<
   | 'retryOccupiedRunSlot'
   | 'resumeInterruptedRecovery'
   | 'absentExecutionNode'
+  | 'releaseFenceBlocker'
 >;
 
 export function reconcileOrphanedSlots(deps: OrphanRecoveryCollaborators): Promise<void> {
@@ -1600,11 +1602,12 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
         );
         continue;
       }
-      // A run-cleanup fence (the token fenceRunSlotCleanup writes) that a previous gateway
-      // raised has no owner left. Reopen it as the hold that cleanup settles on failure, and
-      // let the occupied-slot retry redo the same terminal cleanup: it stops the run's
-      // workers again and takes the workspace census before fencing, and it keeps a
-      // cancelled run's checkout for replay. A plain release fence keeps the backstop.
+      // A done or failed run's own cleanup fence (fenceRunSlotCleanup's run-cleanup token)
+      // that a previous gateway raised has no owner left. Once the read-only census finds
+      // nothing still live in the checkout, reopen it as the hold that cleanup settles on
+      // failure and let the occupied-slot retry redo the same terminal cleanup. A cancelled
+      // owner, a release retry's token, a native owner and an expired fence keep the wait
+      // and the backstop: their intent or their quiescence is not provable here.
       const instance = await deps.readSlotField(slot.slot, SLOT_RELEASE_GATEWAY_INSTANCE);
       const token = await deps.readSlotField(slot.slot, 'cleanup_release_token');
       const ownerId =
@@ -1612,14 +1615,24 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
         (await deps.readSlotField(slot.slot, 'cleanup_run_id'));
       const owner = typeof ownerId === 'string' ? deps.getRun(ownerId) : undefined;
       if (
+        stalledFor < STALE_RELEASE_RECLAIM_MS &&
+        deps.releaseFenceBlocker &&
         typeof instance === 'string' &&
         instance &&
         instance !== currentReleaseGatewayInstance() &&
         typeof token === 'string' &&
-        token &&
+        token.startsWith(RUN_CLEANUP_TOKEN_PREFIX) &&
         owner &&
-        isTerminalRunStatus(owner.status)
+        (owner.status === 'done' || owner.status === 'failed') &&
+        owner.transport !== 'native'
       ) {
+        const blocker = await deps.releaseFenceBlocker(owner);
+        if (blocker) {
+          console.log(
+            `[run-engine] reconcile: ${slot.slot} interrupted run cleanup stays fenced: ${blocker}`,
+          );
+          continue;
+        }
         const reopened = await deps.updateSlotStatusIf(
           slot.slot,
           (row) =>
@@ -1635,10 +1648,7 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
           {
             lifecycle: 'held',
             phase: 'occupied',
-            held_reason:
-              owner.status === 'cancelled'
-                ? cancelledRunHoldReason(owner.id)
-                : 'Run cleanup was interrupted by a gateway restart; retrying it.',
+            held_reason: 'Run cleanup was interrupted by a gateway restart; retrying it.',
             [SLOT_RELEASING_SINCE]: null,
             [SLOT_RELEASE_GATEWAY_INSTANCE]: null,
             cleanup_release_token: null,

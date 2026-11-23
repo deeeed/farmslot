@@ -1823,6 +1823,10 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
         ),
       );
     },
+    releaseFenceBlocker: async (run) => {
+      const { slotTeardownBlocker } = await import('../run-lifecycle/slot-teardown.js');
+      return slotTeardownBlocker(run, { inspectReleaseFence: true });
+    },
     quarantineLeakedRun,
     stopRunOwnedWorkers: async (run) => {
       const { stopRunOwnedTmuxWorkers } = await import('../runners/owned-stop.js');
