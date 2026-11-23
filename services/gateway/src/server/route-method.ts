@@ -1595,6 +1595,7 @@ async function routeAuthorizedMethod(
           ...(observationCapabilities?.fileAppends === 1 ? { fileAppends: 1 as const } : {}),
           ...(observationCapabilities?.workspace === 1 ? { workspace: 1 as const } : {}),
           ...(observationCapabilities?.textReads === 1 ? { textReads: 1 as const } : {}),
+          ...(observationCapabilities?.batchReads === 1 ? { batchReads: 1 as const } : {}),
         },
         () => {
           if (

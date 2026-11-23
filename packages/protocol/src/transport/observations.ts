@@ -8,6 +8,8 @@ export interface NodeObservationCapabilities {
   workspace?: 1;
   /** The node answers `fs.readText` and `fs.isFile`. */
   textReads?: 1;
+  /** The node answers `fs.readFiles`. */
+  batchReads?: 1;
 }
 
 export type NodeTmuxWorkerObservation =
