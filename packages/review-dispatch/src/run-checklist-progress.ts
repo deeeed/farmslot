@@ -4,6 +4,7 @@ import {
   type RunListRow,
   shouldAcceptTaskProgressUpdate,
   type TaskProgressStructured,
+  type TaskProgressSummary,
   type TaskProgressUpdatedPayload,
   type TaskStepSubtaskProgress,
 } from '@farmslot/protocol';
@@ -68,7 +69,7 @@ export interface RunChecklistProgressView {
 /** Both clients render the gateway's checklist counts without inferring totals from hint text. */
 export function runChecklistProgressView(
   run: RunListRow,
-  progress: TaskProgressStructured | null | undefined,
+  progress: TaskProgressStructured | TaskProgressSummary | null | undefined,
 ): RunChecklistProgressView | null {
   if (!runChecklistProgressTarget(run)) return null;
   const ci = run.steps.find(
@@ -80,13 +81,14 @@ export function runChecklistProgressView(
 
 /** Display projection for an already-held checklist, independent of whether its reader is active. */
 export function runChecklistProgressSummary(
-  effective: TaskProgressStructured | null | undefined,
+  effective: TaskProgressStructured | TaskProgressSummary | null | undefined,
 ): RunChecklistProgressView | null {
   const completed = effective?.completedSteps;
   const total = effective?.totalSteps;
   let label = effective?.currentStep;
   if (!total || completed === undefined) return null;
-  const current = effective?.phases
+  // A list row's summary carries no steps; the gateway already named the current one.
+  const current = (effective && 'phases' in effective ? effective.phases : [])
     .flatMap((phase) => phase.steps)
     .find((step) => step.status === 'running');
   label =

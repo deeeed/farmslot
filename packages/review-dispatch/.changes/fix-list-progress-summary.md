@@ -1,0 +1,1 @@
+- `runChecklistProgressView` and `runChecklistProgressSummary` accept a task progress summary without steps, and label it with the gateway-named current step.
