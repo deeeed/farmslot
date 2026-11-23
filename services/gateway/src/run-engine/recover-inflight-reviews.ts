@@ -69,6 +69,7 @@ import { signalFreshSince, terminalWorkerSignalFromRaw } from '../tasks/worker-s
 
 import {
   buildPublishGateReviewStatus,
+  isGateDecision,
   normalizeExhaustedReviewContinuation,
   pendingReviewContinuation,
   reviewNeedsContinuation,
@@ -87,16 +88,34 @@ export interface PublicationReviewRecoveryResult {
   terminalErrors: Array<{ contextId: string; message: string }>;
 }
 
-/** Recover the operator gate even when a prior poll already ingested its findings. */
+/**
+ * Recover the operator gate even when a prior poll already ingested its findings. Given the run,
+ * also when its gate shows no decision and no recoverable reviewer can still finish (failed or
+ * blocked): waiting would hold the gate with no way forward until the watcher budget ends.
+ */
 export function publicationReviewRecoveryNeedsReplay(
   result: PublicationReviewRecoveryResult,
   reviews: ReviewStatus[] = [],
+  run?: Run,
 ): boolean {
   return (
     result.recoveredIds.length > 0 ||
     (result.repairedIds?.length ?? 0) > 0 ||
     (result.relaunchIds?.length ?? 0) > 0 ||
-    pendingReviewContinuation(reviews) !== undefined
+    pendingReviewContinuation(reviews) !== undefined ||
+    (run !== undefined && gateWaitsOnNoReviewer(run))
+  );
+}
+
+function gateWaitsOnNoReviewer(run: Run): boolean {
+  const reviews = run.engineState?.publishGate?.reviews ?? [];
+  const recoverable = (run.agentContexts ?? []).filter((ctx) =>
+    reviewerContextNeedsRecovery(ctx, reviews, { includeFailed: true, includeBlocked: true }),
+  );
+  return (
+    recoverable.length > 0 &&
+    recoverable.every((ctx) => ctx.status === 'failed' || ctx.status === 'blocked') &&
+    !run.decisions.some((decision) => isGateDecision(decision) && !decision.resolvedAt)
   );
 }
 

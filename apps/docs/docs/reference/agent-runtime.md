@@ -273,7 +273,7 @@ Pi and OpenCode run natively for chat and workers (ADR-057 Amendment 12).
 
 ## Managed native reviewer approval policy
 
-The gateway sets the private worker launch `approvalPolicy` to `never` only for the review role. Native Codex applies that policy to both `thread/start` and `thread/resume`. Reviewers keep the run's safety tier and the same sandbox, Git metadata write roots and optional filesystem policy they already had. Producing workers and standalone sessions keep their existing approval defaults.
+The gateway sets the private worker launch `approvalPolicy` to `never` only for the review role. Native Codex applies that policy to both `thread/start` and `thread/resume`. ACP reviewers grant each tool request, and native Claude reviewers launch with `--dangerously-skip-permissions`, so the sandboxed tier no longer constrains Claude reviewers. Codex reviewers keep the run's safety tier and the same sandbox, Git metadata write roots and optional filesystem policy they already had. Producing workers and standalone sessions keep their existing approval defaults.
 
 This optional private field accepts only `never`. It is not a public session parameter. The gateway rederives it on reviewer resume; it does not enter the launch digest, so applying the approved policy does not invalidate retained reviewer sessions. The tier, environment and filesystem grants remain digest-bound. The gateway continues to deny any unexpected approval request, and never grants sandbox escalation.
 
