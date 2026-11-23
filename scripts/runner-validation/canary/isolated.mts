@@ -855,7 +855,7 @@ function survivePhase(
 // ---------------------------------------------------------------- scripted reviewer
 type AgentContext = NonNullable<Run['agentContexts']>[number];
 
-interface ScriptedReviewer {
+export interface ScriptedReviewer {
   /** Arms holds/review to swallow every reviewer turn; clears what an earlier run left. */
   start(): Promise<void>;
   /** The accepted reviewer whose swallowed turn the test has not answered. */
@@ -873,7 +873,7 @@ interface ScriptedReviewer {
 
 const execFileAsync = promisify(execFile);
 
-function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
+export function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
   const hold = path.join(stack.holds, 'review');
   const answered = new Set<string>();
   // The proxy logs `… swallowed` per turn it answered and `… completed` per batch it ended.
