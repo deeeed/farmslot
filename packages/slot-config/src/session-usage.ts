@@ -918,13 +918,31 @@ export function readPiAssistantUsage(
     typeof cost === 'object' &&
     'totalFromProvider' in cost &&
     cost.totalFromProvider === true;
-  // Pi initializes this counter to zero even when a stream supplies no usage.
+  const noUsage = inputTokens + outputTokens + cacheCreation + cacheRead === 0;
+  // A request that failed before any response (an HTTP error such as a 520, no content streamed)
+  // billed nothing: it is a zero-cost turn, not an unpriced one that voids the session's cost.
   if (
     !providerCharge &&
-    costUsd === 0 &&
-    inputTokens + outputTokens + cacheCreation + cacheRead === 0
+    noUsage &&
+    // Local providers stay unpriced (below), so this zero is never their cost.
+    !(provider && ['ollama', 'sparks', 'localsparks', 'lmstudio'].includes(provider)) &&
+    'stopReason' in message &&
+    message.stopReason === 'error' &&
+    'content' in message &&
+    Array.isArray(message.content) &&
+    message.content.length === 0
   )
-    costUsd = null;
+    return {
+      inputTokens,
+      outputTokens,
+      cacheCreation,
+      cacheRead,
+      totalTokens: 0,
+      costUsd: 0,
+      model,
+    };
+  // Pi initializes this counter to zero even when a stream supplies no usage.
+  if (!providerCharge && costUsd === 0 && noUsage) costUsd = null;
   if (!providerCharge && pricing !== undefined) {
     if (
       pricing === 'legacy'

@@ -276,6 +276,42 @@ test('a tmux Pi receipt quotes gateway LiteLLM rates only through the request en
     assert.match(failed, /total_tokens=1100/);
     assert.doesNotMatch(failed, /^cost_usd=/m);
   }
+  // A request that failed before any response (f0d9f67e: a Cloudflare 520) has no content and no
+  // usage: nothing was billed, so it neither adds cost nor leaves the session unpriced.
+  const empty = (stopReason: string, content: unknown[] = []) => ({
+    type: 'message',
+    id: 'a2',
+    parentId: 'r2',
+    message: {
+      role: 'assistant',
+      provider: 'litellm',
+      model: 'glm',
+      stopReason,
+      content,
+      errorMessage: '520 Error 520: Web server is returning an unknown error',
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+    },
+  });
+  for (const options of [{ liteLlmRoute: route }, { liteLlmPrices: route.prices }]) {
+    const priced = await summarize([...bound, request('r2', gateway), empty('error')], options);
+    assert.match(priced, /cost_usd=0\.0012000000/);
+    assert.match(priced, /turns=2\n/);
+    assert.match(priced, /total_tokens=1100\n/);
+  }
+  // A local provider's failed turn is still not a priced zero.
+  const local = empty('error');
+  const localOnly = await summarize(
+    [user, { ...local, parentId: 'u1', message: { ...local.message, provider: 'ollama' } }],
+    { liteLlmPrices: route.prices },
+  );
+  assert.doesNotMatch(localOnly, /^cost_usd=/m);
+  assert.match(localOnly, /cost_reason=local, unpriced/);
+  // An aborted stream, or a failure after streaming began, may still have been billed.
+  for (const unverified of [empty('aborted'), empty('error', [{ type: 'text', text: 'partial' }])])
+    assert.doesNotMatch(
+      await summarize([...bound, request('r2', gateway), unverified], { liteLlmRoute: route }),
+      /^cost_usd=/m,
+    );
   const charged = turn('a1', 'u1', { total: 0.0042, totalFromProvider: true });
   for (const options of [{ liteLlmRoute: route }, { liteLlmPrices: new Map() }]) {
     const mixed = await summarize([user, charged, turn('a2', 'a1')], options);
