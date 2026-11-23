@@ -1,0 +1,1 @@
+- A run's `taskNote` reaches task init as its own `operatorNote` field instead of being folded into `taskDocumentAdditions`, so the renderer can place it ahead of the task and give it a checklist step. A note no longer lands at the bottom of the document, where a pr-complete worker missed one entirely (run 1b7b8662, MetaMask/metamask-mobile#39654).

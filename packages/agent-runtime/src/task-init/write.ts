@@ -23,11 +23,11 @@ import {
   REFERENCE_CHECKOUTS_INPUT,
   type ReferenceCheckout,
   renderAcceptanceCriteria,
+  TASK_DOCUMENT,
 } from './task-document.js';
 
 export { quoteMarkCommandWord } from './runtime-command.js';
-
-export const TASK_DOCUMENT = 'TASK.md';
+export { TASK_DOCUMENT } from './task-document.js';
 export const MARK_SHIM = 'mark';
 /** Whole-command override for existing unfrozen mark shims. */
 export const MARK_COMMAND_ENV = 'FARMSLOT_MARK_CMD';

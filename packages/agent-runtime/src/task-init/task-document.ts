@@ -12,6 +12,7 @@ import path from 'node:path';
 
 import {
   DEFAULT_BRANCH,
+  enumerateChecklistCheckboxes,
   EXECUTION_CHECKLIST_DOCUMENT,
   type ExecutionTemplateReference,
   type FrozenReviewRulePack,
@@ -33,6 +34,63 @@ export const BUG_INPUT = 'inputs/bug-input.json';
 export const REFERENCE_CHECKOUTS_INPUT = 'inputs/reference-checkouts.json';
 /** Optional project-owned addendum rendered into TASK.md (relative to `templates/`). */
 export const TASK_DOCUMENT_ADDENDUM_TEMPLATE = 'task-document.md';
+/** The task document itself. Declared here, where it is rendered; `write.ts` re-exports it. */
+export const TASK_DOCUMENT = 'TASK.md';
+
+export const OPERATOR_NOTE_HEADING = '## Operator note';
+
+/**
+ * The operator's note, as a section the worker reads before the task it changes.
+ *
+ * It used to be appended to the end of the document. In run 1b7b8662 that put a
+ * repin instruction on line 945 of a 947-line TASK.md, and the worker — following
+ * CHECKLIST.md, which never mentioned it — did everything else and not that. A
+ * note is an override, so it is read before what it overrides.
+ *
+ * The heading has to stay clear of CHECKLIST_SKIP_SECTIONS (`task`, `description`,
+ * `comments`, …) or the appended step below would stop counting as a step.
+ */
+export function operatorNoteSection(note: string | undefined): string {
+  const text = note?.trim();
+  if (!text) return '';
+  return [
+    OPERATOR_NOTE_HEADING,
+    '',
+    'From the operator who dispatched this run. It overrides the defaults below; where it',
+    'conflicts with a checklist step, follow the note and record that in the step.',
+    '',
+    text,
+  ].join('\n');
+}
+
+/**
+ * One markable step for the note, APPENDED after the template's last step.
+ *
+ * Never inserted: `freezeChecklistDeclarations` freezes proof, deterministic and
+ * optional declarations by stepNumber, and templates carry their own references
+ * (`mark 14`, `--step 19`). Appending leaves every existing number untouched —
+ * the move `legacyTaskCheck` already makes for the migration check.
+ */
+export function appendOperatorNoteStep(
+  checklist: string,
+  taskDir: string,
+  note: string | undefined,
+): string {
+  if (!note?.trim()) return checklist;
+  const nextStep = enumerateChecklistCheckboxes(checklist).length + 1;
+  return [
+    checklist.trimEnd(),
+    '',
+    '',
+    OPERATOR_NOTE_HEADING,
+    '',
+    `- [ ] ${nextStep}. Carry out the operator note`,
+    `  Read \`${OPERATOR_NOTE_HEADING}\` at the top of \`${taskDir}/${TASK_DOCUMENT}\` and do what it says.`,
+    '  It overrides the steps above. If you cannot, stop with `mark blocked` naming the conflict;',
+    '  never mark this step for a note you did not carry out.',
+    '',
+  ].join('\n');
+}
 
 /** Shared instructions for a maintenance task and an inline CI-fix checklist. */
 /**
@@ -193,6 +251,8 @@ export interface TaskDocumentInput {
   /** Static review supplies its enforced completion command instead of development guidance. */
   completionInstructions?: string;
   hasTicketData: boolean;
+  /** Operator note from dispatch (`--task-note`), rendered ahead of the task it overrides. */
+  operatorNote?: string;
   /**
    * Read-only checkouts of other codebases this task compares against, one per
    * `reference_repos` key the project declares. An absent one is listed as absent:
@@ -265,6 +325,8 @@ export function buildTaskDocument(input: TaskDocumentInput): string {
   if (vars.MODE === 'interactive') {
     sections.push(buildOperatorWaitInstructions(taskDir), '');
   }
+  const operatorNote = operatorNoteSection(input.operatorNote);
+  if (operatorNote) sections.push(operatorNote, '');
   sections.push(
     '## Task',
     '',

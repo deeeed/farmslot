@@ -42,6 +42,7 @@ import {
 import { requiredSkillsTaskSection } from './required-skills.js';
 import { installedTaskCommands, retainedMarkCommand } from './runtime-command.js';
 import {
+  appendOperatorNoteStep,
   buildBranchUpdateGuardCommand,
   buildBranchUpdateInstructions,
   buildHandoffMetadata,
@@ -50,6 +51,7 @@ import {
   type HandoffExecutionTemplate,
   type HandoffMetadata,
   type HandoffSourceKind,
+  operatorNoteSection,
   type ReferenceCheckout,
   renderReferenceCheckoutInputs,
 } from './task-document.js';
@@ -171,6 +173,11 @@ export interface TaskInitSpec {
   bugInput?: unknown;
   operatorPlan?: string;
   taskDocumentAdditions?: string;
+  /**
+   * Operator note from dispatch. Rendered ahead of `## Task` and, when the run
+   * has a checklist, appended to it as a final step the worker has to mark.
+   */
+  operatorNote?: string;
   artifactOnlyReplay?: ArtifactOnlyReplay;
   authored?: Pick<WriteTaskDirInput, 'taskMarkdown' | 'checklistMarkdown' | 'handoff'>;
   /** ADR-049 Amendment 3: the frozen required skill set (see `freezeRequiredSkills`). */
@@ -289,6 +296,7 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
             ? renderTemplatePlaceholders(spec.addendum, vars, 'Task document addendum')
             : null,
           hasTicketData: spec.bugInput !== undefined,
+          ...(spec.operatorNote ? { operatorNote: spec.operatorNote } : {}),
           ...(spec.referenceCheckouts?.length
             ? { referenceCheckouts: spec.referenceCheckouts }
             : {}),
@@ -302,6 +310,19 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
       /^(#.+\n)/,
       (_match, heading: string) => `${heading}\n${spec.modePreamble}\n`,
     );
+  // A plan-shaped task document is the rendered template, not buildTaskDocument's
+  // output, so the note is placed the same way the mode preamble is: under the title.
+  if (operatorPlan !== undefined && spec.operatorNote && !spec.authored) {
+    const section = operatorNoteSection(spec.operatorNote);
+    if (section)
+      taskMarkdown = taskMarkdown.replace(
+        /^(#.+\n)/,
+        (_match, heading: string) => `${heading}\n${section}\n`,
+      );
+  }
+  // C: the note is also a step, so completing the run means having carried it out.
+  if (checklistMarkdown !== null && spec.operatorNote)
+    checklistMarkdown = appendOperatorNoteStep(checklistMarkdown, taskDirLabel, spec.operatorNote);
   if (spec.taskDocumentAdditions)
     taskMarkdown = `${taskMarkdown.trimEnd()}${spec.taskDocumentAdditions.startsWith('\n') ? '' : '\n\n'}${spec.taskDocumentAdditions}`;
   // Frozen once: an authored task keeps the set its handoff already carries.

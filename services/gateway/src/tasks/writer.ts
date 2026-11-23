@@ -119,7 +119,7 @@ import { buildQaTaskSection, writeQaInput } from './qa-input.js';
 import { resolveReferenceCheckouts } from './reference-checkouts.js';
 import { runContractSection, shouldApplyArtifactOnlyTaskPolicy } from './run-contract.js';
 import { stackSection } from './stack-section.js';
-import { renderAcceptanceCriteria, taskNoteSection } from './task-document.js';
+import { renderAcceptanceCriteria } from './task-document.js';
 import {
   localCheckWithBaseRef,
   readWorkerTerminalProjectConfig,
@@ -1395,7 +1395,6 @@ export async function writeTaskFile(
   const { executionTemplate: _reference, ...portableProvenance } = templateProvenance;
   const additions =
     (await appendTaskContext('')) +
-    taskNoteSection(run.taskNote) +
     (run.engineState?.evalExperiment?.blind?.executionPolicy === 'normal-slot'
       ? '\nDo not look up the original answer: do not fetch or read newer Git history, reference PRs or patches, earlier task artifacts, or other checkouts to find the fix.\n'
       : '') +
@@ -1476,6 +1475,9 @@ export async function writeTaskFile(
     taskDocumentAdditions,
     terminalContract,
     bugInput: run.ticketData ?? undefined,
+    // The operator's note is an override, so the renderer puts it ahead of the task
+    // and appends a step for it; it is no longer tacked onto the end of the document.
+    ...(run.taskNote ? { operatorNote: run.taskNote } : {}),
     ...(referenceCheckouts.length ? { referenceCheckouts } : {}),
     ...(splitChecklist
       ? {}

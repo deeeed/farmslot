@@ -2,6 +2,7 @@
 // `projects/<project>/templates/worker/` directory.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { access, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
@@ -11,6 +12,7 @@ import test, { after, before } from 'node:test';
 import { applyArtifactOnlyTaskPolicy, assertArtifactOnlyTaskGuard } from '@farmslot/agent-runtime';
 import {
   DEFAULT_DEV_INTERACTIVE_PROFILE,
+  enumerateChecklistCheckboxes,
   PLANNING_CONTEXT_MAX_RELATIONS,
   type PlanningContextProjection,
   type Run,
@@ -1453,7 +1455,7 @@ for (const policy of ['normal-slot', undefined] as const) {
   });
 }
 
-test('a task note is one ## Note section in the generated TASK.md', async (t) => {
+test('an operator note is one section, ahead of the Task block it overrides', async (t) => {
   const note =
     'This is an evaluation. Work only in this checkout. Do not search other checkouts, branches, PRs, git history beyond the base, or the web for an existing fix.';
   const run = makeRun('EVAL-NOTE', 'task-note');
@@ -1465,13 +1467,30 @@ test('a task note is one ## Note section in the generated TASK.md', async (t) =>
   });
   taskPath = await writeTaskFixture(run, { skipCollisionCheck: true });
   const task = await readFile(taskPath, 'utf8');
-  assert.equal(task.match(/^## Note$/gm)?.length, 1);
-  assert.match(task, new RegExp(`## Note\\n\\n${note.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.equal(task.match(/^## Operator note$/gm)?.length, 1);
+  assert.match(
+    task,
+    new RegExp(`## Operator note\\n[\\s\\S]*${note.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+  );
+  // Run 1b7b8662 put this section on line 945 of 947 and the worker never read it.
+  assert.ok(
+    task.indexOf('## Operator note') < task.indexOf('## Task'),
+    'the note precedes the Task block',
+  );
+  // C: the note is also a step, appended after the template's last one, so a run
+  // cannot complete while claiming nothing about it.
+  const checklistPath = path.join(path.dirname(taskPath), 'CHECKLIST.md');
+  assert.ok(existsSync(checklistPath), 'the run has an execution checklist');
+  const items = enumerateChecklistCheckboxes(await readFile(checklistPath, 'utf8'));
+  const last = items[items.length - 1];
+  assert.match(last.rawLabel, /Carry out the operator note/);
+  assert.equal(last.stepNumber, items.length);
+
   const plain = makeRun('EVAL-NOTE-ABSENT', 'task-note-absent');
   plain.project = legacyProject;
   const plainPath = await writeTaskFixture(plain, { skipCollisionCheck: true });
   t.after(async () => {
     await rm(path.dirname(plainPath), { recursive: true, force: true });
   });
-  assert.doesNotMatch(await readFile(plainPath, 'utf8'), /^## Note$/m);
+  assert.doesNotMatch(await readFile(plainPath, 'utf8'), /^## Operator note$/m);
 });
