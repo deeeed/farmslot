@@ -938,8 +938,20 @@ export function scriptedReviewer(stack: RemoteNodeStack, log: Log): ScriptedRevi
         `${JSON.stringify({ schemaVersion: 1, verdict: issues ? 'issues' : 'pass', issues: issues ? [finding] : [] })}\n`,
       );
       const checklist = path.basename(context.taskFile);
-      // In the environment the reviewer's own commands get (the proxy records it, secrets left out).
-      const env = JSON.parse(await readFile(`${hold}-env.json`, 'utf8')) as NodeJS.ProcessEnv;
+      // In the environment the reviewer's own commands get (the proxy records it per thread and
+      // last-seen, secrets left out).
+      const envFile =
+        context.runnerSessionId && existsSync(`${hold}.env-${context.runnerSessionId}.json`)
+          ? `${hold}.env-${context.runnerSessionId}.json`
+          : `${hold}-env.json`;
+      let env: NodeJS.ProcessEnv;
+      try {
+        env = JSON.parse(await readFile(envFile, 'utf8')) as NodeJS.ProcessEnv;
+      } catch (error) {
+        throw new ScriptedReviewerFault(
+          `the scripted reviewer could not read the reviewer's environment: ${String(error)}`,
+        );
+      }
       const mark = async (...args: string[]) => {
         try {
           await execFileAsync(
@@ -962,19 +974,22 @@ export function scriptedReviewer(stack: RemoteNodeStack, log: Log): ScriptedRevi
       await mark('complete', '--mark-last');
       // End the swallowed turn, as the reviewer's own turn would end.
       const before = count(' completed');
-      // End this reviewer's thread only (the global `complete` would end any stale swallowed turn).
-      // The proxy reacts to the marker's file event; write it again in case one was missed.
-      const done = context.runnerSessionId
+      // End this reviewer's thread first (the global `complete` would end any stale swallowed turn);
+      // the last attempt falls back to the global marker in case the thread id did not match. The
+      // proxy reacts to the marker's file event, so each attempt writes it again.
+      const thread = context.runnerSessionId
         ? `${hold}.complete-${context.runnerSessionId}`
         : undefined;
       let ended = false;
+      let global = false;
       for (let attempt = 0; attempt < 3 && !ended; attempt++) {
-        if (done) {
-          await rm(done, { force: true });
-          await writeFile(done, 'complete\n');
-        } else {
-          if (attempt) await writeFile(hold, 'swallow\n');
+        global = !thread || attempt === 2;
+        if (global) {
+          await writeFile(hold, 'swallow\n');
           await writeFile(hold, 'complete\n');
+        } else {
+          await rm(thread!, { force: true });
+          await writeFile(thread!, 'complete\n');
         }
         ended = await poll(
           'the proxy to end the swallowed turn',
@@ -983,8 +998,14 @@ export function scriptedReviewer(stack: RemoteNodeStack, log: Log): ScriptedRevi
         ).catch(() => false);
       }
       // A later turn on the same thread (the loop-2 re-review) must be swallowed again.
-      if (done) await rm(done, { force: true });
-      else await writeFile(hold, 'swallow\n');
+      if (thread) await rm(thread, { force: true });
+      await writeFile(hold, 'swallow\n');
+      if (ended && global && thread)
+        await log('scripted reviewer: only the global marker ended the turn', {
+          runId: run.id,
+          loop,
+          cause: `no swallowed turn on thread ${context.runnerSessionId}`,
+        });
       // Then the run decides: REVIEW fails once its reviewer is gone or inactive past its limit.
       if (!ended)
         await log('scripted reviewer: the proxy never ended an answered reviewer turn', {
