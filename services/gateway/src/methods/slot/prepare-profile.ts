@@ -1,6 +1,12 @@
 // methods/slot/prepare-profile.ts — prepare profile resolution + precondition checks (ADR-037)
 
-import { PREPARE_PHASES, type PreparePhase, type PrepareRequirement } from '@farmslot/protocol';
+import { requiredSkillPaths, selectRequiredSkills } from '@farmslot/agent-runtime/task-init';
+import {
+  parseRequiredSkillsConfig,
+  PREPARE_PHASES,
+  type PreparePhase,
+  type PrepareRequirement,
+} from '@farmslot/protocol';
 
 import {
   execOnSlot,
@@ -138,6 +144,10 @@ export interface RequirementCheckContext {
    * precedes the git phase).
    */
   prepareRef?: string;
+  /** The flow this prepare serves, when the caller knows it (dispatch does). */
+  flow?: string;
+  /** The run's effective domain, resolved before selection (prepare.ts). */
+  domain?: string;
   /**
    * The project default branch. Exposed to the artifact_check hook as
    * {{prepare_default_ref}} so a probe can implement ordered resolution — try
@@ -252,6 +262,7 @@ export function probeFailureReason(stdout: string, stderr: string): string | und
 export async function checkPrepareRequirement(
   requirement: PrepareRequirement,
   ctx: RequirementCheckContext,
+  exec: typeof execOnSlot = execOnSlot,
 ): Promise<RequirementCheckResult> {
   const {
     vars,
@@ -261,11 +272,13 @@ export async function checkPrepareRequirement(
     prepareRef,
     prepareDefaultRef,
     prepareBaseSha,
+    flow,
+    domain,
   } = ctx;
   switch (requirement) {
     case 'deps_current': {
       const sentinel = depsSentinelPath(runtimeDir);
-      const r = await execOnSlot(
+      const r = await exec(
         vars,
         `cd ${shellQuote(vars.remoteRepo)} && cat ${shellQuote(sentinel)} 2>/dev/null`,
       );
@@ -273,7 +286,7 @@ export async function checkPrepareRequirement(
       if (!recorded) {
         return { requirement, ok: false, detail: `no deps sentinel at ${sentinel}` };
       }
-      const currentR = await execOnSlot(vars, buildDepsFingerprintCommand(vars.remoteRepo));
+      const currentR = await exec(vars, buildDepsFingerprintCommand(vars.remoteRepo));
       const current = currentR.stdout.trim();
       if (!current) {
         return { requirement, ok: false, detail: 'no deps inputs found to fingerprint' };
@@ -291,7 +304,7 @@ export async function checkPrepareRequirement(
       if (!hook) {
         return { requirement, ok: false, detail: 'project has no dev_server_check hook' };
       }
-      const r = await execOnSlot(
+      const r = await exec(
         vars,
         withProjectMachineEnv(
           `cd ${shellQuote(vars.remoteRepo)} && ${hook}`,
@@ -326,7 +339,7 @@ export async function checkPrepareRequirement(
       if (!hook) {
         return { requirement, ok: false, detail: 'project has no artifact_check hook' };
       }
-      const r = await execOnSlot(
+      const r = await exec(
         vars,
         withProjectMachineEnv(
           `cd ${shellQuote(vars.remoteRepo)} && ${hook}`,
@@ -345,6 +358,65 @@ export async function checkPrepareRequirement(
         detail: reason
           ? `artifact_check exited ${r.exitCode}: ${reason}`
           : `artifact_check exited ${r.exitCode}`,
+      };
+    }
+    case 'required_skills_present': {
+      // Release clears the farm-owned paths a pack declares in
+      // `fixtures.owned_paths` — the installed skills among them — and prepare's
+      // deps phase restores them. A profile that skips deps (attach runs only
+      // `health`) therefore reaches task init with a required skill missing, and
+      // the run is refused before dispatch with "Refresh the slot skills, then
+      // prepare again." This check lets such a profile fall back to one that
+      // reinstalls them instead.
+      //
+      // It asks for the files `required_skills` names, not every `current`
+      // owned path: a pack's owned_paths is the registry of what the farm may
+      // remove, much of which a given repo never installs (va-mmcx-terminal-farm
+      // declares 129 and a healthy prepared slot has 33), so requiring all of
+      // them would send every attach to its fallback. These are exactly the
+      // files task init refuses on. A file that exists but changed is task
+      // init's own, separate refusal; selection has no frozen set to compare.
+      // A pack with no rule at all is not a failure: nothing can be refused for
+      // a skill it never requires.
+      const config = projectJson.required_skills
+        ? parseRequiredSkillsConfig(projectJson.required_skills)
+        : undefined;
+      // The flow, platform and domain this prepare is for are resolved before
+      // selection runs, so the check asks for the same rule selection task init
+      // will freeze — not the union of every rule, which could demand a skill
+      // this run never needs. The path list itself comes from agent-runtime, so
+      // the two cannot drift apart.
+      const required = config
+        ? requiredSkillPaths(
+            config,
+            selectRequiredSkills(config, {
+              flow: flow ?? '',
+              platform: vars.platform ?? '',
+              ...(domain ? { domain } : {}),
+            }),
+          )
+        : [];
+      if (!required.length)
+        return { requirement, ok: true, detail: 'no required skills for this selection' };
+      const r = await exec(
+        vars,
+        `cd ${shellQuote(vars.remoteRepo)} && rc=0; for p in ${required
+          .map((file) => shellQuote(file))
+          .join(' ')}; do [ -e "$p" ] || { printf '%s ' "$p"; rc=1; }; done; exit $rc`,
+      );
+      if (r.exitCode === 0)
+        return {
+          requirement,
+          ok: true,
+          detail: `required skill files present (${required.length})`,
+        };
+      const missing = r.stdout.trim() || r.stderr.trim();
+      return {
+        requirement,
+        ok: false,
+        detail: missing
+          ? `missing required skill file(s): ${missing}`
+          : 'required skill files unreadable',
       };
     }
     case 'health_ok': {
