@@ -92,19 +92,19 @@ after(() => {
 });
 
 test(
-  'terminal cleanup stops this slot’s agent-browser daemon and keeps shared sessions',
+  'terminal cleanup stops this slot’s and task-named agent-browser daemons, keeping default',
   { skip },
   async () => {
-    const slotSession = await orphanDaemon(repo, vars.slotId);
-    const elsewhere = await orphanDaemon(other, `${vars.slotId}-moved`);
-    const shared = await orphanDaemon(repo, 'default');
+    const slotSession = await orphanDaemon(other, vars.slotId);
     const named = await orphanDaemon(repo, 'tat4626-settings');
+    const namedElsewhere = await orphanDaemon(other, 'tat4626-stable');
+    const shared = await orphanDaemon(repo, 'default');
 
     assert.equal(await reapSlotBrowserSession(vars, { includeSlotProfiles: true }), null);
-    assert.equal(alive(slotSession), false, 'the slot session daemon is stopped');
+    assert.equal(alive(slotSession), false, 'the slot session daemon is stopped wherever it runs');
+    assert.equal(alive(named), false, 'a task-named session started in this checkout is stopped');
     assert.equal(alive(shared), true, 'the default session may serve workers on other slots');
-    assert.equal(alive(named), true, 'another named session is not this slot’s');
-    assert.equal(alive(elsewhere), true);
+    assert.equal(alive(namedElsewhere), true, 'a named session started outside the checkout stays');
   },
 );
 

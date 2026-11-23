@@ -26,11 +26,13 @@ function escapeRegExp(value: string): string {
  * detached and either uses a browser profile inside the slot checkout after
  * its workers are verified stopped (includeSlotProfiles), or is
  * on its CDP port and tied to the checkout by cwd or arguments. With the same
- * verification, a detached agent-browser daemon of this slot's session goes too:
- * dispatch sets AGENT_BROWSER_SESSION to the slot id, and the daemon listens on
- * `<session>.sock`. It binds no CDP port and, left in the checkout, made every
- * later teardown skip the slot (macpro-mmt-5, 2026-11-20). Any other session,
- * 'default' included, may be shared by workers on other slots: it is logged and
+ * verification, a detached agent-browser daemon goes too when its session (the
+ * `<session>.sock` it listens on) is this slot's (dispatch sets AGENT_BROWSER_SESSION
+ * to the slot id), or is any named session other than 'default' and its cwd is in
+ * the checkout: the cwd names the worker that started it and a named session is
+ * not shared. Such daemons bind no CDP port and, left in the checkout, made every
+ * later teardown skip the slot (four task sessions on macpro-mmt-5, 2026-11-20).
+ * 'default' is the one session workers on other slots share: it is logged and
  * kept. Descendants
  * go with it. While a capability lease on the slot still holds or keeps providers warm, its release
  * effect decides and nothing is reaped; a process a lease recorded is never
@@ -120,10 +122,13 @@ export async function reapSlotBrowserSession(
       repos.some((repo) => isWithinPath(repo, path.posix.normalize(profile)));
     const inRepo = cwd !== undefined && repos.some((repo) => isWithinPath(repo, cwd));
     const daemon = opts.includeSlotProfiles && agentBrowsers.has(row.pid);
-    const slotDaemon = daemon && sessions.get(row.pid) === vars.slotId;
+    const session = sessions.get(row.pid);
+    const slotDaemon =
+      daemon &&
+      (session === vars.slotId || (inRepo && session !== undefined && session !== 'default'));
     if (daemon && !slotDaemon && inRepo && row.parent === '1')
       console.log(
-        `[browser-session] ${vars.slotId}: kept agent-browser daemon ${row.pid} in the checkout; its session ${sessions.get(row.pid) ?? 'unknown'} is not this slot's`,
+        `[browser-session] ${vars.slotId}: kept agent-browser daemon ${row.pid} in the checkout; its session ${session ?? 'unknown'} may be shared`,
       );
     return (
       row.parent === '1' &&
