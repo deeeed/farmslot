@@ -1,0 +1,1 @@
+- `readLegacyStorageFacts` reports a Run bundle store whose volume is not mounted as `unavailable` with its bound root, instead of throwing `ENOENT` from `realpath`. A store that is present still has its pairing checked. `readLegacyStorageFacts` is exported from `@farmslot/protocol/node/farm-paths`.

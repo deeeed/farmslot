@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
 import type { FarmPaths, LegacyFarmStorageFacts } from './farm-paths.js';
@@ -39,6 +39,20 @@ export function readLegacyStorageFacts(paths: FarmPaths): LegacyFarmStorageFacts
   }
   const binding = readOptional(path.join(paths.state.runs, 'bundle-store.json'));
   if (binding === undefined) return { runBundles: configured ?? paths.data.runBundles };
+  // The store may sit on a volume that is not mounted. Its pairing cannot be
+  // checked then, but reporting must not fail: a node that threw here never
+  // connected (macwork, c910ssd unmounted). The bound root is reported as is,
+  // and whatever uses it meets the outage there.
+  if (record(binding) && typeof binding.root === 'string') {
+    const missing = [binding.root, configured].find(
+      (root): root is string => typeof root === 'string' && !existsSync(root),
+    );
+    if (missing)
+      return {
+        runBundles: binding.root,
+        unavailable: `Run bundle store ${missing} is unavailable (is its volume mounted?)`,
+      };
+  }
   if (
     !record(binding) ||
     binding.version !== 1 ||

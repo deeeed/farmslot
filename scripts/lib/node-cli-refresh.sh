@@ -14,7 +14,7 @@
 # snapshots and links belong to the selected instance. On
 # a local deploy the CLI is the operator's own, so it is refreshed only on request.
 if [[ "$IS_LOCAL" == true && "$REFRESH_CLI" != true ]]; then
-  echo "[deploy] local deploy: node CLI left as is; pass --refresh-cli to install the deployed revision"
+  echo "[deploy] local deploy: node CLI left as is; to install the deployed revision as the CLI, run deploy-node.sh <machine> --cli-only (it never touches the node service)"
 else
   CLI_SHA=$(git -C "$REPO_ROOT" rev-parse --verify HEAD 2>/dev/null || true)
   if [[ ! "$CLI_SHA" =~ ^[0-9a-f]{40,64}$ ]]; then

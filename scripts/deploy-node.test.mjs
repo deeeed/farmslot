@@ -1060,11 +1060,49 @@ test('deploy-node leaves the CLI as is on a local deploy by default', (t) => {
 
   assert.match(
     output,
-    /local deploy: node CLI left as is; pass --refresh-cli to install the deployed revision/,
+    /local deploy: node CLI left as is; to install the deployed revision as the CLI, run deploy-node\.sh <machine> --cli-only/,
   );
   assert.equal(fs.readlinkSync(path.join(fixture.home, '.local/bin/farmslot')), operatorCli);
   assert.equal(fs.existsSync(fixture.cliRoot), false);
   assert.deepEqual(fixture.calls(), []);
+});
+
+// A local redeploy without --node-token-file used to write a service definition
+// with no token. launchd kept the loaded job until its next bootstrap, then the
+// node failed gateway authentication with token_missing (macwork, Nov 22 -> 24).
+const unitPath = (fixture) => path.join(fixture.home, '.config/systemd/user/farmslot-node.service');
+const unitToken = (fixture) =>
+  /^Environment="FARMSLOT_NODE_TOKEN=(.*)"$/m.exec(fs.readFileSync(unitPath(fixture), 'utf8'))?.[1];
+
+test('a local deploy keeps the node token the existing service definition carries', (t) => {
+  const fixture = cliFixture(t);
+  fixture.write(
+    'home/.config/systemd/user/farmslot-node.service',
+    '[Unit]\nDescription=old\n[Service]\nEnvironment="FARMSLOT_NODE_TOKEN=fixture-kept-token"\n',
+  );
+  const output = fixture.deploy({ machine: localMachine(), nodeTokenFile: false });
+  assert.equal(unitToken(fixture), 'fixture-kept-token');
+  assert.match(output, /keeping the node token the existing service definition carries/);
+  assert.doesNotMatch(output, /fixture-kept-token/, 'the token is never printed');
+});
+
+test('a local deploy refuses to write a service definition without a node token', (t) => {
+  const fixture = cliFixture(t);
+  assert.throws(
+    () => fixture.deploy({ machine: localMachine(), nodeTokenFile: false }),
+    (error) => {
+      assert.match(String(error.stderr), /no node token for /);
+      assert.match(String(error.stderr), /--cli-only/);
+      return true;
+    },
+  );
+  assert.equal(fs.existsSync(unitPath(fixture)), false, 'no service definition is written');
+});
+
+test('a local deploy writes a service definition without a token only when asked', (t) => {
+  const fixture = cliFixture(t);
+  fixture.deploy({ machine: localMachine(), nodeTokenFile: false, args: ['--no-node-token'] });
+  assert.equal(unitToken(fixture), undefined);
 });
 
 test('deploy-node installs the CLI on a local deploy with --refresh-cli', (t) => {
