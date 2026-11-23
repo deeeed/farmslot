@@ -55,7 +55,7 @@ test('kernel birth evidence permits attestation without signalling a reused PID 
     });
     writeFileSync(journal, entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
     const restored = new NativeSessionManager(fixtureState.root);
-    const confirmed = restored.confirmWorkerStopped(
+    const confirmed = await restored.confirmWorkerStopped(
       'owner',
       original.id,
       original.generation,

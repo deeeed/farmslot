@@ -175,7 +175,7 @@ const server = createServer({ allowHalfOpen: true }, (socket) => {
             value = await manager.closeWorker(p.owner, p.id, p.generation, p.leaseId);
             break;
           case NATIVE_WORKER_CONFIRM_STOPPED:
-            value = manager.confirmWorkerStopped(p.owner, p.id, p.generation, p.leaseId);
+            value = await manager.confirmWorkerStopped(p.owner, p.id, p.generation, p.leaseId);
             break;
           case NATIVE_WORKER_INTERRUPT:
             manager.assertWorkerLease(p.owner, p.id, p.generation, p.leaseId);

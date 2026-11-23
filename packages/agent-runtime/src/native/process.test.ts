@@ -37,6 +37,7 @@ test(
     assert.ok(result.evidence, 'exit callback must retain structured evidence');
     assert.equal(result.evidence.exitCode, null);
     assert.equal(result.evidence.signal, 'SIGTERM');
+    assert.equal(await child.verifyStoppedProcessTree(), true);
     assert.equal(result.evidence.stderrTail.length, 50);
     assert.equal(result.evidence.stderrTail.at(-1), 'line 59');
     assert.ok(!JSON.stringify(result.evidence).includes(secret));
@@ -106,7 +107,7 @@ test('a stop error cannot become successful cleanup while process absence remain
     throw new Error('Owned process cleanup unconfirmed');
   });
   // The actual child is stopped, but this negative withholds the OS absence proof.
-  t.mock.method(NativeProcessTree.prototype, 'empty', async () => false);
+  const census = t.mock.method(NativeProcessTree.prototype, 'empty', async () => false);
   const child = new JsonLineProcess(
     process.execPath,
     ['-e', 'process.stdout.write(JSON.stringify({ready:true})+"\\n");setInterval(()=>{},1000);'],
@@ -120,6 +121,9 @@ test('a stop error cannot become successful cleanup while process absence remain
   await started;
   await assert.rejects(child.close(), /Owned process cleanup unconfirmed/);
   assert.equal(stopped, false);
+  assert.equal(await child.verifyStoppedProcessTree(), false);
+  census.mock.restore();
+  assert.equal(await child.verifyStoppedProcessTree(), true);
 });
 
 // A Claude Read of a 409,378-byte PNG streams one 1,092,250-byte line: the image is in both the
