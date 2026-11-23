@@ -140,6 +140,12 @@ export default async function (pi: {
       ? null // Response chunks can extend an idle deadline until the overall review deadline.
       : timeoutMs * (PI_REQUEST_TIMEOUT_RETRIES + 1) + retrySettlementMarginMs;
   let timeoutFailure: string | null = null;
+  // Only an abort WE caused may be reported as a request timeout. `timeoutFailure`
+  // is sticky for the rest of the turn, and it used to be read ahead of the turn's
+  // own ending, so a turn that ended some other way inherited the timeout text
+  // (36cc77e1 reported "timed out after 300000ms and one retry" for a turn that
+  // was aborted 8 s after an unrelated warning).
+  let abortedByTimeout = false;
   let abortOperation: (() => void) | undefined;
   const originalFetch = globalThis.fetch;
   const boundedFetch = deadlinePiFetch(
@@ -148,6 +154,7 @@ export default async function (pi: {
     () => {
       if (abortOperation) {
         timeoutFailure = `Pi model request timed out after ${timeoutMs}ms and one retry`;
+        abortedByTimeout = true;
         abortOperation();
       }
     },
@@ -340,6 +347,13 @@ export default async function (pi: {
   const readOnlyReview = process.env.FARMSLOT_PI_WORKSPACE_TRUST === 'untrusted';
   if (!readOnlyReview) pi.on('project_trust', async () => ({ trusted: 'yes' as const }));
 
+  // Pi's bash tool has no default timeout. A call without one gets 600 seconds, enough for test
+  // runs and builds while capping runaway searches; an explicit timeout, longer or shorter, is kept.
+  pi.on('tool_call', (event: { toolName?: string; input?: { timeout?: unknown } }) => {
+    if (event.toolName === 'bash' && event.input && event.input.timeout === undefined)
+      event.input.timeout = 600;
+  });
+
   pi.on('model_select', (event: { model: PiThinkingModel }, ctx: PiShutdownContext) => {
     checkThinking(event.model, ctx);
   });
@@ -387,6 +401,7 @@ export default async function (pi: {
       if (!text) return;
       boundedFetch.reset();
       timeoutFailure = null;
+      abortedByTimeout = false;
       abortOperation = () => {
         // Persist before cancellation: settling can be delayed or skipped by the runner.
         writePiHook({
@@ -466,11 +481,21 @@ export default async function (pi: {
     terminalFailure = piTurnFailure(event.messages);
   });
   pi.on('agent_before_settle', async (event: { outcome?: string }) => {
-    terminalFailure =
-      timeoutFailure ??
-      (event.outcome === 'error'
-        ? terminalFailure || 'Pi runner failed before completing its turn'
-        : null);
+    const outcome = typeof event.outcome === 'string' ? event.outcome : undefined;
+    // A turn ended on purpose by something other than the model: a guard, an
+    // operator, a cancelled session. The outcome name is carried verbatim
+    // because this SDK publishes no enum for it, and a reason naming the real
+    // ending beats inheriting whatever text happened to be set earlier. Only
+    // names that clearly mean "stopped deliberately" are matched, so a clean
+    // completion can never be turned into a failure by this branch.
+    const abortedOutcome = outcome !== undefined && /abort|cancel|interrupt/i.test(outcome);
+    terminalFailure = abortedByTimeout
+      ? timeoutFailure
+      : abortedOutcome
+        ? `Pi turn was aborted before it completed (outcome=${outcome}); the model reported no failure of its own`
+        : outcome === 'error'
+          ? terminalFailure || 'Pi runner failed before completing its turn'
+          : null;
   });
 
   pi.on(
@@ -479,7 +504,11 @@ export default async function (pi: {
       _event: unknown,
       ctx: { cwd?: string; sessionManager?: { getSessionFile?: () => string | null } },
     ) => {
-      const failure = configurationFailure ?? timeoutFailure ?? terminalFailure;
+      // `timeoutFailure` is reported only when it is what ended the turn. Read
+      // unconditionally, it outranked the turn's own ending for the rest of the
+      // turn, which is how an intentional abort was labelled a model timeout.
+      const failure =
+        configurationFailure ?? (abortedByTimeout ? timeoutFailure : terminalFailure);
       writePiHook({
         obsDir: obsDir(),
         event: failure ? 'StopFailure' : 'Stop',

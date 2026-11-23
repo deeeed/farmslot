@@ -11,7 +11,9 @@ import {
   createAdapterRegistry,
   type ProjectRuntime,
 } from '@farmslot/adapter-sdk';
+import type { ReadinessRecord } from '@farmslot/protocol';
 
+import { readCommandJournal } from '../src/harness/command-journal.js';
 import {
   configureHarnessAdapters,
   configureHarnessHost,
@@ -453,6 +455,10 @@ describe('project log views', () => {
     assert.equal(await handleLogs(parseLogs(args), { announce, compact }), 0);
     assert.equal(await handleLogs(parseLogs([...args, '--full']), { announce, compact }), 0);
     assert.equal(
+      await handleLogs(parseLogs([...args, '--full', '--follow']), { announce, compact }),
+      0,
+    );
+    assert.equal(
       await handleLogs(parseLogs([...args, '--source', 'build', '--follow']), { announce }),
       0,
     );
@@ -465,6 +471,31 @@ describe('project log views', () => {
       { source: 'client', logFile: app, mode: 'full' },
       { source: 'build', logFile: build, mode: 'raw' },
     ]);
+  });
+
+  test('--full prints the whole log and exits; only --follow keeps tail open', async () => {
+    const { args, app } = setup();
+    const record = path.join(tempRoot(), 'tail-argv.jsonl');
+    const tail = path.join(tempRoot(), 'tail');
+    fs.writeFileSync(
+      tail,
+      `#!${process.execPath}\nrequire('node:fs').appendFileSync(${JSON.stringify(record)}, JSON.stringify(process.argv.slice(2)) + '\\n');\n`,
+      { mode: 0o700 },
+    );
+    process.env[`${harnessHost().envPrefix}_SCRIPT_BIN_TAIL`] = tail;
+    assert.equal(await handleLogs(parseLogs([...args, '--full'])), 0);
+    assert.equal(await handleLogs(parseLogs([...args, '--full', '--follow'])), 0);
+    assert.deepEqual(
+      fs
+        .readFileSync(record, 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as string[]),
+      [
+        ['-n', '+1', app],
+        ['-n', '+1', '-F', app],
+      ],
+    );
   });
 
   test('refusals reach --json callers as envelopes, --events before the log file', async () => {
@@ -1388,15 +1419,21 @@ describe('prepare', () => {
       bin,
       [
         '#!/usr/bin/env node',
+        "const fs = require('node:fs');",
         'const [step] = process.argv.slice(2);',
         "const results = JSON.parse(process.env.STEP_RESULTS || '{}');",
+        'const wallet = process.env.FRESH_WALLET_FILE;',
+        "if (wallet && step === 'seed' && !results.seed) fs.writeFileSync(wallet, 'seeded');",
+        "const needsWallet = step === 'verify' || (step === 'launch' && process.argv.includes('--verify'));",
+        'const missingWallet = wallet && needsWallet && !fs.existsSync(wallet);',
+        'const exitCode = results[step] ?? (missingWallet ? 1 : 0);',
         "if (step === 'launch' && process.env.STAGE_LINES) process.stderr.write('[2/5] metro: bundling 61% (4,210/6,900 modules), 1m42s\\n');",
         "if (step === 'doctor' && process.env.CR_PROGRESS) process.stderr.write('x\\r'.repeat(10000));",
         "if (step === 'doctor' && process.env.LONG_TAIL) process.stderr.write('boom: cause\\n' + 'y'.repeat(9000));",
         "if (step === 'status' && !results.status) console.log(JSON.stringify({ devices: [{ platform: process.env.DEVICE_PLATFORM || 'phone', selected: true }] }));",
-        "else console.log(JSON.stringify({ step, args: process.argv.slice(3), ...(results[step] ? { error: { message: step + ' broke' } } : {}) }));",
+        "else console.log(JSON.stringify({ step, args: process.argv.slice(3), ...(exitCode ? { error: { message: missingWallet ? 'WALLET_STATE_REQUIRED' : step + ' broke' } } : {}) }));",
         // exitCode, not exit(): stderr to a pipe drains first.
-        'process.exitCode = results[step] ?? 0;',
+        'process.exitCode = exitCode;',
       ].join('\n'),
     );
     fs.chmodSync(bin, 0o755);
@@ -1502,6 +1539,108 @@ describe('prepare', () => {
     assert.equal(record.ready, true);
     assert.ok(!fs.existsSync(path.join(artifacts, 'prepare', 'progress.json')));
   });
+
+  test('launch verification defaults stay strict and the opt-in seeds before standalone verify', async () => {
+    for (const verifyLaunch of [undefined, true, false]) {
+      shopHost();
+      configureHarnessHost({ ...harnessHost(), journaledCommands: ['prepare'] });
+      const root = tempRoot();
+      process.env.SHOP_HARNESS_EXECUTABLE = fakeBin(root);
+      process.env.FRESH_WALLET_FILE = path.join(root, 'wallet');
+      process.env.STAGE_LINES = '1';
+      useAdapters(
+        fakeAdapter('shop', { readiness: { prepare: { devicePlatform: () => 'phone' } } }),
+      );
+      const target = tempRoot();
+      const artifacts = path.join(root, 'artifacts');
+      const argv = [
+        '--platform',
+        'shop',
+        '--target',
+        target,
+        '--artifacts-dir',
+        artifacts,
+        '--json-stream',
+      ];
+      const { result, events } = await captureStdout(() =>
+        captureStderr(() =>
+          withCommandJournal(
+            'prepare',
+            ['prepare', ...argv],
+            () => handlePrepare(argv, { usage: 'u', steps: [fixtureStep], verifyLaunch }),
+            { target, runtimeDir: 'runtime' },
+          ),
+        ),
+      );
+      const deferred = verifyLaunch === false;
+      assert.equal(result.result, deferred ? 0 : 1);
+      const record = JSON.parse(
+        fs.readFileSync(path.join(artifacts, 'sandbox.json'), 'utf8'),
+      ) as ReadinessRecord;
+      assert.deepEqual(
+        record.steps.map((step) => step.status),
+        deferred
+          ? ['pass', 'pass', 'pass', 'pass', 'pass']
+          : ['pass', 'pass', 'fail', 'skipped', 'skipped'],
+      );
+      assert.equal(record.ready, deferred);
+      assert.equal(fs.existsSync(process.env.FRESH_WALLET_FILE), deferred);
+      const launch = JSON.parse(
+        fs.readFileSync(path.join(artifacts, 'prepare/launch.json'), 'utf8'),
+      );
+      assert.equal(launch.args.includes('--verify'), !deferred);
+      if (deferred) {
+        const verify = JSON.parse(
+          fs.readFileSync(path.join(artifacts, 'prepare/verify.json'), 'utf8'),
+        );
+        assert.deepEqual(verify.args, ['--json', '--adapter', 'shop', '--target', target]);
+      } else assert.equal(record.steps[2]?.reason, 'WALLET_STATE_REQUIRED');
+      const launchStages = events.filter((event) => event.event === 'stage' && event.index === 3);
+      assert.ok(launchStages.length > 0);
+      assert.ok(
+        launchStages.every((event) => event.stage === (deferred ? 'launch' : 'launch --verify')),
+      );
+      const journal = readCommandJournal(target, 'runtime').record;
+      assert.equal(journal?.command, 'prepare');
+      assert.equal(journal?.verdict, deferred ? 'pass' : 'fail');
+      assert.equal(journal?.exitCode, deferred ? 0 : 1);
+      assert.equal(events.at(-1)?.status, deferred ? 'pass' : 'fail');
+      assert.ok(!fs.existsSync(path.join(artifacts, 'prepare/progress.json')));
+    }
+  });
+
+  for (const failure of ['launch', 'seed', 'verify']) {
+    test(`launch verification opt-in preserves ${failure} failure and skipped successors`, async () => {
+      shopHost();
+      const root = tempRoot();
+      process.env.SHOP_HARNESS_EXECUTABLE = fakeBin(root);
+      process.env.FRESH_WALLET_FILE = path.join(root, 'wallet');
+      process.env.STEP_RESULTS = JSON.stringify({ [failure]: 7 });
+      useAdapters(
+        fakeAdapter('shop', { readiness: { prepare: { devicePlatform: () => 'phone' } } }),
+      );
+      const target = tempRoot();
+      const artifacts = path.join(root, 'artifacts');
+      const { result, stdout } = await capture(() =>
+        handlePrepare(
+          ['--platform', 'shop', '--target', target, '--artifacts-dir', artifacts, '--json'],
+          { usage: 'u', steps: [fixtureStep], verifyLaunch: false },
+        ),
+      );
+      assert.equal(result, 1);
+      const record = JSON.parse(stdout) as ReadinessRecord;
+      assert.equal(record.ready, false);
+      const failedIndex = ['doctor', 'status', 'launch', 'seed', 'verify'].indexOf(failure);
+      for (const [index, step] of record.steps.entries()) {
+        assert.equal(
+          step.status,
+          index < failedIndex ? 'pass' : index === failedIndex ? 'fail' : 'skipped',
+        );
+        if (index === failedIndex) assert.equal(step.exitCode, 7);
+        if (index > failedIndex) assert.equal(step.reason, 'previous step failed');
+      }
+    });
+  }
 
   test('shows each step as a stage on stderr, nests the launch stages, and keeps stdout one document', async () => {
     shopHost();

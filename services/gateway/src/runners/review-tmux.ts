@@ -128,7 +128,8 @@ export async function recoverReviewTmuxSession(run: Run, assertCurrent: () => vo
   await persistRunNow(getRun(run.id)!, 'recover exact reviewer session');
 }
 
-async function reviewEnvironment(run: Run) {
+/** The environment a static tmux reviewer is launched with: project, domain, pool, then frozen support. */
+export async function reviewEnvironment(run: Run) {
   const w = run.reviewWorkspace!;
   const project = await loadProjectVars(run.project);
   const pool = await loadMachinePool(w.machine);
@@ -189,6 +190,12 @@ async function reviewTerminalCompaction(
       : await execNativeNodeArgv(run.nativeOwnerPrincipalId!, workspace.machine, argv, 190000);
   if (result.exitCode !== 0) throw new Error(result.stderr || 'Review compaction operation failed');
   return JSON.parse(result.stdout);
+}
+
+function continuedReviewEffort(run: Run, runner: string | null | undefined): string | null {
+  if (runner === 'claude' && (run.effort ?? null) === null)
+    return run.repeatReviewContext?.session?.effort ?? null;
+  return run.effort ?? null;
 }
 
 export function verifiedWarmReviewSessionId(run: Run): string | undefined {
@@ -318,7 +325,7 @@ export async function reviewTmuxOperation(
       model: run.metrics.model,
       promptPath: path.posix.join(w.taskPath, '.terminal-prompt.txt'),
       repo: w.checkoutPath,
-      effort: run.effort,
+      effort: continuedReviewEffort(run, runner) ?? undefined,
       trustWorkspace: true,
       workspaceTrust: 'untrusted',
       reviewReadOnlyRoots: reviewWorkspaceReadOnlyRoots(w),
@@ -495,7 +502,7 @@ export async function launchReviewTmux(
     label: 'Review',
     runner: run.metrics.runner,
     model: run.metrics.model,
-    effort: run.effort,
+    effort: continuedReviewEffort(run, run.metrics.runner) ?? undefined,
     status: 'launching' as const,
     runnerSessionId,
     ...(runnerSessionPath ? { runnerSessionPath } : {}),

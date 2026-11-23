@@ -4,7 +4,7 @@ import {
   type Run,
   type RunReviewResult,
 } from '@farmslot/protocol';
-import { resolveReviewMode } from '@farmslot/review-dispatch';
+import { defaultEffortForRunner, resolveReviewMode } from '@farmslot/review-dispatch';
 
 import { reviewPRIdentity } from '../review/pr-identity.js';
 import { incrementalReviewAvailable } from '../run-engine/engine-decisions.js';
@@ -47,7 +47,8 @@ function matchingWorkspaceReviewer(run: WorkspaceReviewerRun, prior: Run) {
     run.project === prior.project &&
     reviewer?.role === 'review' &&
     reviewer.status === 'complete' &&
-    (reviewer.effort ?? null) === (run.effort ?? null) &&
+    ((reviewer.effort ?? null) === (run.effort ?? null) ||
+      (reviewer.runner === 'claude' && (run.effort ?? null) === null)) &&
     prior.reviewWorkspace?.machine === run.reviewWorkspaceTarget?.machine &&
     reviewer?.runner === run.metrics.runner &&
     reviewer.model === run.metrics.model;
@@ -64,6 +65,22 @@ export function rereviewWorkspaceReviewer(run: Run) {
   if (!['done', 'failed', 'blocked'].includes(run.status)) return undefined;
   if (run.status === 'blocked' && !run.reviewWorkspace?.executionStoppedAt) return undefined;
   return matchingWorkspaceReviewer(run, run);
+}
+
+/** Select the effort before either managed workspace transport starts its reviewer. */
+export function workspaceReviewDispatchEffort(run: Run): string | undefined {
+  if (
+    run.effort != null ||
+    run.metrics.runner !== 'claude' ||
+    run.agentContexts?.some((context) => context.id === 'review')
+  ) {
+    return run.effort;
+  }
+  const session = run.repeatReviewContext?.session;
+  if (resolveReviewMode({ run }) === 'warm' || session?.fallback) {
+    return session?.effort ?? undefined;
+  }
+  return defaultEffortForRunner('claude', run.metrics.model) ?? undefined;
 }
 
 /** Follow only stopped, no-verdict transfers; the validated baseline remains unchanged. */
@@ -85,6 +102,9 @@ export function resolveWorkspaceContinuationSource(
     const successor = read(successorId);
     const successorOwner = successor && runPrincipalOwner(successor);
     const owner = runPrincipalOwner(run);
+    const successorEffort =
+      successor?.effort ??
+      (run.metrics.runner === 'claude' ? successor?.repeatReviewContext?.session?.effort : null);
     if (
       !successor ||
       !isTerminalRunStatus(successor.status) ||
@@ -110,7 +130,8 @@ export function resolveWorkspaceContinuationSource(
       !samePrincipalOwner(owner, successorOwner) ||
       successor.metrics.runner !== run.metrics.runner ||
       successor.metrics.model !== run.metrics.model ||
-      (successor.effort ?? null) !== (run.effort ?? null) ||
+      ((successorEffort ?? null) !== (run.effort ?? null) &&
+        !(run.metrics.runner === 'claude' && (run.effort ?? null) === null)) ||
       successor.repeatReviewContext?.session?.reviewId !== reviewer.reviewId ||
       successor.repeatReviewContext.session.priorSessionId !== reviewer.runnerSessionId
     )
@@ -151,6 +172,8 @@ export function configureWorkspaceContinuity(
       repository: context.repository,
       prNumber: context.prNumber,
       lastReviewedHeadSha: context.priorReviewedHeadSha,
+      // An explicit cold launch uses its own effort. A warm expiry keeps the compatible reviewer.
+      effort: mode === 'cold' ? (run.effort ?? null) : (reviewer.effort ?? null),
       fallback: {
         reason: 'retention-expired',
         detail: `Retained reviewer expired at ${expiresAt}; starting a cold review.`,
@@ -206,6 +229,7 @@ export function configureWorkspaceContinuity(
       repository: context.repository,
       prNumber: context.prNumber,
       lastReviewedHeadSha: context.priorReviewedHeadSha,
+      effort: reviewer.effort ?? null,
       fallback: {
         reason: fallbackReason,
         detail:
@@ -231,6 +255,7 @@ export function configureWorkspaceContinuity(
     priorRunId: source.id,
     priorSessionId: reviewer.runnerSessionId,
     sessionId: reviewer.runnerSessionId,
+    effort: reviewer.effort ?? null,
   };
 }
 

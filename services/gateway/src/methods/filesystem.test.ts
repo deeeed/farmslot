@@ -413,6 +413,87 @@ test('serveRunArtifact prefers a recipe package for undeclared stale root media'
   });
 });
 
+test('a pinned current-artifacts link serves root media beside a promoted recording', async (t) => {
+  await withRemoteRun(t, async ({ runId, liveRunDir, taskDir }) => {
+    const artifact = 'artifacts/video.mp4';
+    const rootMedia = 'exact root recording';
+    await writeFile(path.join(taskDir, artifact), rootMedia);
+    await writeFile(path.join(liveRunDir, 'video.mp4'), 'promoted recording');
+    const digest = createHash('sha256').update(rootMedia).digest('hex');
+    const selectors = new URLSearchParams({
+      runId,
+      path: artifact,
+      recipeRunId: 'current-artifacts',
+      v: digest,
+    });
+    const req = { url: '/api/run-artifact?' + selectors, headers: { host: 'localhost' } } as any;
+    const res = new MockResponse();
+    await serveRetainedFixture(req, res as any);
+    await new Promise((resolve) => res.on('finish', resolve));
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.body, rootMedia);
+    assert.equal(res.headers.ETag, JSON.stringify(digest));
+  });
+});
+
+test('a legacy saved gate can play task media from the retained run bundle', async (t) => {
+  await withRemoteRun(t, async ({ runId, liveRunDir, taskDir }) => {
+    const artifactPath = 'artifacts/video.mp4';
+    const bytes = 'legacy gate recording';
+    await writeFile(path.join(taskDir, artifactPath), bytes);
+    await writeFile(path.join(liveRunDir, 'video.mp4'), 'unrelated recipe recording');
+    const gateId = 'legacy-gate';
+    updateRun(runId, {
+      decisions: [
+        {
+          id: gateId,
+          type: 'engine_human_gate',
+          title: 'Review',
+          description: '',
+          actions: [],
+          createdAt: '2026-11-20T00:00:00Z',
+          resolvedAt: '2026-11-20T00:01:00Z',
+          payload: {
+            kind: 'ready',
+            repo: null,
+            prNumber: null,
+            branch: 'fixture',
+            workerReport: '',
+            diffStat: { files: 0, additions: 0, deletions: 0 },
+          },
+        },
+      ],
+    });
+    const selectors = new URLSearchParams({
+      runId,
+      path: artifactPath,
+      recipeRunId: 'current-artifacts',
+      v: createHash('sha256').update(bytes).digest('hex'),
+    });
+    await retainFixtureTask(taskDir, getRun(runId)!, await runBundleStore(true));
+    const server = createServer((req, res) => void serveRunArtifact(req, res));
+    t.after(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()));
+        }),
+    );
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    const url = new URL(`http://127.0.0.1:${address.port}/api/run-artifact`);
+    url.search = selectors.toString();
+    const response = await fetch(url);
+    assert.equal(response.status, 200, await response.clone().text());
+    assert.equal(await response.text(), bytes);
+
+    url.searchParams.set('decisionId', gateId);
+    const wrong = await fetch(url);
+    assert.equal(wrong.status, 404);
+    await wrong.text();
+  });
+});
+
 test('serveRunArtifact keeps declared task files distinct from selected recipe files', async (t) => {
   await withRemoteRun(t, async ({ runId, taskDir, liveRunDir, liveGroupId }) => {
     const files = [

@@ -456,6 +456,8 @@ const review = (runId: string, options: Partial<Parameters<typeof runNativeRevie
     validationDepth: 'static-code',
     mode: 'cold',
     reviewId: 'lineage-a',
+    // The review catalog fills this when the orchestrator launches. Direct launches must match.
+    effort: 'medium',
     ...options,
   });
 const reReview = (runId: string, options: Partial<Parameters<typeof review>[1]> = {}) =>

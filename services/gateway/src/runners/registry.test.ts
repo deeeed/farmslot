@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, it } from 'node:test';
 
 import {
@@ -16,6 +20,7 @@ import {
   buildLaunchCommand,
   type BuildLaunchOptions,
   buildRunnerSessionReloadCommand,
+  CLAUDE_WORKER_ENV_UNSET,
   withTaskRecipeTrustEnvironment,
 } from './launch-command.js';
 import { readPaneStateFromCapture } from './pane-state-script.js';
@@ -1938,7 +1943,7 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'claude', 'sonnet', PROMPT, { safetyTier: 'full-auto' });
       assert.match(
         cmd,
-        /unset CLAUDECODE && \/usr\/local\/bin\/claude --dangerously-skip-permissions --model sonnet/,
+        /unset CLAUDECODE && if \[ .+? \]; then unset TMUX; fi && \/usr\/local\/bin\/claude --dangerously-skip-permissions --model sonnet/,
       );
       assert.doesNotMatch(cmd, /--dangerously-bypass-approvals-and-sandbox/);
       assert.match(cmd, /--runner 'claude' --repo '\/tmp\/repo'/);
@@ -1956,7 +1961,7 @@ describe('buildLaunchCommand', () => {
       assert.match(cmd, /install-runner-observability\.mjs/);
       assert.match(
         cmd,
-        /cd '\/tmp\/repo' && unset CLAUDECODE && \/usr\/local\/bin\/claude --model sonnet --settings '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json'$/,
+        /cd '\/tmp\/repo' && unset CLAUDECODE && if \[ .+? \]; then unset TMUX; fi && \/usr\/local\/bin\/claude --model sonnet --settings '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json'$/,
       );
       assert.match(cmd, /install failed; continuing without hooks/);
       assert.match(cmd, /mkdir -p '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability'/);
@@ -1977,8 +1982,59 @@ describe('buildLaunchCommand', () => {
       assert.match(cmd, /install-runner-observability\.mjs/);
       assert.match(
         cmd,
-        /unset CLAUDECODE && cd \/tmp\/repo && \/usr\/local\/bin\/claude --settings '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json' --model opus \.task\/fix\/abc\/TASK\.md/,
+        /unset CLAUDECODE && if \[ .+? \]; then unset TMUX; fi && cd \/tmp\/repo && \/usr\/local\/bin\/claude --settings '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json' --model opus \.task\/fix\/abc\/TASK\.md/,
       );
+    });
+
+    it('drops a default-socket TMUX but keeps TMUX_PANE on every Claude worker launch path', () => {
+      // iTerm's user-level agent hook asks iTerm for the session showing $TMUX's
+      // pane and never returns for a detached worker pane.
+      const vars = makeVars({ dispatchCmd: 'cd {repo} && {claude_path} --model {model}' });
+      const commands = [
+        ['inline', buildLaunchCommand(makeVars({ dispatchCmd: '' }), 'claude', 'opus', PROMPT)],
+        [
+          'dispatch_cmd',
+          buildLaunchCommand(vars, 'claude', 'opus', PROMPT, { claudeUsesDispatchCmd: true }),
+        ],
+        ['reload', buildRunnerSessionReloadCommand(vars, 'claude', 'opus', 'sess-1')],
+      ] as const;
+      for (const [name, cmd] of commands) {
+        assert.ok(cmd.includes(`${CLAUDE_WORKER_ENV_UNSET} && `), name);
+        assert.doesNotMatch(cmd, /TMUX_PANE/, name);
+      }
+      const tmuxTmpdir = mkdtempSync(path.join(os.tmpdir(), 'claude-worker-tmux-'));
+      const fallbackSocket = path.join(
+        realpathSync(tmuxTmpdir),
+        `tmux-${process.getuid?.()}`,
+        'default',
+      );
+      const envAfterUnset = (tmux: string, tmpdir = tmuxTmpdir): string =>
+        execFileSync(
+          'bash',
+          ['-c', `${CLAUDE_WORKER_ENV_UNSET} && printf '%s|%s' "\${TMUX-unset}" "$TMUX_PANE"`],
+          {
+            env: { PATH: process.env.PATH, TMUX: tmux, TMUX_PANE: '%7', TMUX_TMPDIR: tmpdir },
+            encoding: 'utf8',
+          },
+        );
+      try {
+        assert.equal(envAfterUnset(`${fallbackSocket},1889,55`), 'unset|%7');
+        // tmux falls back to /tmp when TMUX_TMPDIR is missing.
+        const tmpSocket = path.join(realpathSync('/tmp'), `tmux-${process.getuid?.()}`, 'default');
+        assert.equal(envAfterUnset(`${tmpSocket},1,0`, path.join(tmuxTmpdir, 'gone')), 'unset|%7');
+        // An existing non-directory is not skipped by tmux, so TMUX keeps its routing.
+        const notDir = path.join(tmuxTmpdir, 'file');
+        writeFileSync(notDir, '');
+        assert.equal(envAfterUnset(`${tmpSocket},1,0`, notDir), `${tmpSocket},1,0|%7`);
+        for (const kept of [
+          path.join(path.dirname(fallbackSocket), 'cross-model-demo'),
+          '/private/tmp/isolated/default',
+        ]) {
+          assert.equal(envAfterUnset(`${kept},1889,55`), `${kept},1889,55|%7`);
+        }
+      } finally {
+        rmSync(tmuxTmpdir, { recursive: true, force: true });
+      }
     });
 
     it('preserves selected effort once across the Claude tmux launch paths', () => {
@@ -2765,7 +2821,7 @@ describe('buildRunnerSessionReloadCommand', () => {
     assert.match(cmd, /install-runner-observability\.mjs/);
     assert.match(
       cmd,
-      /cd '\/tmp\/repo' && unset CLAUDECODE && \/opt\/bin\/claude --dangerously-skip-permissions --model sonnet --settings '\/tmp\/\.farmslot-runtime\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json' --resume 'session-123' 'Read and execute TASK.md'$/,
+      /cd '\/tmp\/repo' && unset CLAUDECODE && if \[ .+? \]; then unset TMUX; fi && \/opt\/bin\/claude --dangerously-skip-permissions --model sonnet --settings '\/tmp\/\.farmslot-runtime\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json' --resume 'session-123' 'Read and execute TASK.md'$/,
     );
     assert.match(
       cmd,
@@ -2886,6 +2942,46 @@ describe('runnerPaneComposerDraftState (ADR-032 Phase 3A fail-closed composer re
     assert.equal(runnerPaneComposerDraftState('', 'claude'), 'unknown');
   });
 
+  it('checks the framed Pi editor without using the previous turn as input', () => {
+    const rule = '─'.repeat(40);
+    const footer = '~/repo\n↑1 ↓1 5.9%/128k (auto) fixture-model\nfs idle';
+    assert.equal(
+      runnerPaneComposerDraftState(`Error: previous turn\n${rule}\n\n${rule}\n${footer}`, 'pi'),
+      'empty',
+    );
+    const dimRail = '\x1b[2m' + rule;
+    const caret = '\x1b[0;7m \x1b[0m';
+    assert.equal(
+      runnerPaneComposerDraftState(
+        `${dimRail}\noutput\n${dimRail}\n\n${rule}\n${caret}\n${dimRail}\n${footer}`,
+        'pi',
+      ),
+      'empty',
+    );
+    assert.equal(
+      runnerPaneComposerDraftState(`${rule}\npending draft\n${rule}\n${footer}`, 'pi'),
+      'draft',
+    );
+    assert.equal(
+      runnerPaneComposerDraftState(`${rule}\npending draft\n${rule}\n\n${rule}\n${footer}`, 'pi'),
+      'unknown',
+    );
+    assert.equal(
+      runnerPaneComposerDraftState(`${rule}\n\n${rule}\nold scrollback`, 'pi'),
+      'unknown',
+    );
+  });
+
+  it('never uses a previously failed Pi prompt as buffered input', () => {
+    const rule = '─'.repeat(40);
+    const previous = 'Continue the task';
+    const footer = '~/repo\n↑1 ↓1 5.9%/128k (auto) fixture-model';
+    const failed = `${previous}\nError: timeout\n${rule}\n\n${rule}\n${footer}`;
+    assert.equal(runnerPaneHasBufferedInstruction(failed, previous, 'pi'), false);
+    const waiting = `${rule}\n ${previous}\n${rule}\n${footer}`;
+    assert.equal(runnerPaneHasBufferedInstruction(waiting, previous, 'pi'), true);
+  });
+
   it('reports draft for a busy/queued composer', () => {
     assert.equal(runnerPaneComposerDraftState('· Composing…\n❯\n', 'claude'), 'draft');
   });
@@ -2927,7 +3023,13 @@ describe('reasoning effort capability', () => {
     assert.equal(runnerSupportsEffort('codex', 'gpt-6-luna', 'ultra'), false);
     assert.equal(runnerSupportsEffort('codex', 'gpt-5.4', 'ultra'), false);
     assert.equal(runnerSupportsEffort('codex', 'gpt-6-astra', '--help'), false);
-    assert.equal(runnerSupportsEffort('claude', 'sonnet', 'high'), false);
+    assert.equal(runnerSupportsEffort('claude', 'sonnet', 'low'), true);
+    assert.equal(runnerSupportsEffort('claude', 'opus', 'medium'), true);
+    assert.equal(runnerSupportsEffort('claude', 'sonnet', 'high'), true);
+    assert.equal(runnerSupportsEffort('claude', 'sonnet', 'xhigh'), true);
+    assert.equal(runnerSupportsEffort('claude', 'sonnet', 'max'), true);
+    assert.equal(runnerSupportsEffort('claude', 'sonnet', 'ultra'), false);
+    assert.equal(runnerSupportsEffort('claude', 'sonnet', '--help'), false);
     assert.equal(runnerSupportsEffort('claude', 'sonnet'), true);
   });
 });

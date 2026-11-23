@@ -1,8 +1,10 @@
 import {
   type AgentContext,
+  isAcceptedFixAttempt,
   isReviewRoundNoVerdictSettlement,
   type ReviewAttempt,
   type ReviewContinuationContext,
+  reviewEndsWithAcceptedFix,
   type ReviewGatePayload,
   type ReviewIssue,
   type ReviewMode,
@@ -148,8 +150,12 @@ export function lastValidatedReview(review: ReviewStatus | undefined):
   const results: Array<
     ReviewAttempt & Pick<ReviewStatus, 'reviewedHeadSha' | 'reviewerSessionId'>
   > = review ? [review, ...[...(review.attempts ?? [])].reverse()] : [];
+  // A gateway-accepted fix is not a reviewer result: the baseline stays the head and
+  // findings the reviewer last saw, so a re-review covers the accepted patch.
   const result = results.find(
-    (candidate) => candidate.verdict === 'pass' || candidate.verdict === 'issues',
+    (candidate) =>
+      (candidate.verdict === 'pass' || candidate.verdict === 'issues') &&
+      !(candidate === review ? reviewEndsWithAcceptedFix(review) : isAcceptedFixAttempt(candidate)),
   );
   const headSha =
     result?.reviewSnapshot?.source === 'unavailable'
@@ -242,7 +248,11 @@ export function claimWarmReviewerSession(
     throw new WarmReviewRefusal('session-busy', 'the retained reviewer is running');
   if (session.model !== scope.model)
     throw new WarmReviewRefusal('model-mismatch', 'the retained reviewer cannot change model');
-  if (session.effort !== scope.effort)
+  // An omitted Claude effort means the recorded launch, including a pre-upgrade unset effort.
+  if (
+    session.effort !== scope.effort &&
+    !(scope.runner === 'claude' && (scope.effort ?? null) === null)
+  )
     throw new WarmReviewRefusal('effort-mismatch', 'the retained reviewer cannot change effort');
   if (options.consume)
     warmSessions.set(sessionKey(scope), { ...session, runId: scope.runId, busy: true });

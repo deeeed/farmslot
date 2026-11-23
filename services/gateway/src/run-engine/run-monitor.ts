@@ -1,6 +1,7 @@
 // run-monitor.ts — Per-run monitoring: violation detection, nudge sending, decision creation
 // Ported from farm-monitor skill logic to be gateway-resident and persistent.
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 
 import {
   type AgentContext,
@@ -360,6 +361,7 @@ export async function prepareWarmBudgetBaselineForHandoff(
         nudgeCount: current.metrics.nudgeCount,
         lastPollAt: now,
         startedAt: current.monitorState?.startedAt ?? now,
+        budgetWindowId: randomUUID(),
         lastPaneHash: current.monitorState?.lastPaneHash,
         lastStructuredProgressAt: current.monitorState?.lastStructuredProgressAt,
         // A fresh baseline opens a new accounting window, so the warn-once latch and
@@ -396,6 +398,8 @@ interface MonitorState {
   startedAt: number;
   operatorWaitMs: number;
   operatorResumedAt: number;
+  /** Stable across monitor takeover and timeout extensions. */
+  budgetWindowId: string;
   /** The soft-budget guard's delivery state — see budget-delivery-state.ts. */
   delivery: BudgetDeliveryState;
   /** Runner id the guard's current verdict was reached about. */
@@ -468,6 +472,41 @@ export function migrateLegacyBudgetUsage(persisted?: {
   };
 }
 
+function budgetWindowIdOf(state?: RunMonitorState): string | undefined {
+  return state?.budgetWindowId ?? state?.startedAt;
+}
+
+/**
+ * The persisted delivery record, but only if it belongs to `windowStartedAt`.
+ *
+ * A warning is a fact about an accounting window. A replay that pins a fresh
+ * baseline opens a window that has had no warning, so adopting the previous
+ * window's record would either suppress the new window's warning or warn about
+ * usage it never saw. A record with no window recorded predates this field and
+ * is adopted, which keeps a restart across the upgrade from re-warning a pane.
+ */
+export function restoreBudgetDeliveryForWindow(
+  persisted:
+    | {
+        budgetDelivery?: BudgetDeliveryState;
+        budgetDeliveryWindow?: string;
+        budgetWarned?: boolean;
+        budgetNudgeSent?: boolean;
+        budgetNudgeAttempts?: number;
+        budgetFirstDeferredAt?: number;
+      }
+    | undefined,
+  windowStartedAt: string | undefined,
+): BudgetDeliveryState {
+  if (
+    persisted?.budgetDeliveryWindow !== undefined &&
+    windowStartedAt !== undefined &&
+    persisted.budgetDeliveryWindow !== windowStartedAt
+  )
+    return initialBudgetDeliveryState();
+  return restoreBudgetDeliveryState(persisted);
+}
+
 /**
  * Rebuild the guard's delivery state from what a previous monitor persisted.
  *
@@ -523,21 +562,154 @@ export function resolveMonitorDecision(decisionId: string, actionId: string): vo
   }
 }
 
-/** Reset the persisted monitor clock so a restart cannot immediately re-timeout. */
-export function persistMonitorWindowStart(runId: string, startedAtMs: number = Date.now()): void {
+/**
+ * Reset the persisted monitor clock so a restart cannot immediately re-timeout.
+ *
+ * A new window starts with no gate wait behind it: the credit exists so that
+ * answering a card does not shorten the window it was raised in, and carrying it
+ * into the next window would make every later window longer by every card the
+ * run has ever sat on.
+ *
+ * An open card's marker is kept. The wait did not end because the window turned
+ * over, and a restart reads that marker to credit the slice nothing was
+ * watching; recovery caps it to the window, so it cannot over-credit.
+ *
+ * `closedDecisionId` is the card this reset answers — an operator extending the
+ * window from the card itself. That card's wait is over, so its marker goes;
+ * any other open card's marker stays. Without this, extending a re-presented
+ * handoff card that has no waiter left would leave a marker nothing will ever
+ * clear, and the next restart would credit every minute since the extension.
+ */
+export function persistMonitorWindowStart(
+  runId: string,
+  startedAtMs: number = Date.now(),
+  options: { closedDecisionId?: string } = {},
+): void {
   const run = getRun(runId);
   if (!run) return;
   const startedAt = new Date(startedAtMs).toISOString();
   const prev = run.monitorState;
+  const closesOpenWait =
+    options.closedDecisionId !== undefined && prev?.gateWaitDecisionId === options.closedDecisionId;
   updateRun(runId, {
     monitorState: prev
-      ? { ...prev, startedAt }
+      ? {
+          ...prev,
+          startedAt,
+          budgetWindowId: budgetWindowIdOf(prev),
+          gateWaitMs: 0,
+          ...(closesOpenWait
+            ? { gateWaitStartedAt: undefined, gateWaitDecisionId: undefined }
+            : {}),
+        }
       : {
           nudgeCount: run.metrics.nudgeCount,
           lastPollAt: startedAt,
           startedAt,
         },
   });
+}
+
+/**
+ * Record that the monitor is waiting on a card, before it blocks on it.
+ *
+ * Written through to disk: the whole point of the marker is to survive a
+ * process that does not come back, and `updateRun` alone only changes memory.
+ */
+async function persistGateWaitStart(
+  runId: string,
+  waitingSinceMs: number,
+  decisionId: string,
+  options: { windowStartedAtMs?: number; generation?: number } = {},
+): Promise<void> {
+  const run = getRun(runId);
+  if (!run) return;
+  const { windowStartedAtMs, generation } = options;
+  // A retired loop is about to be refused its card anyway (createBlockedDecision
+  // checks the same generation), and a marker for a card that never appears is
+  // a wait nothing will ever answer: the next restart would credit every minute
+  // since it was written.
+  if (generation !== undefined && (run.engineState?.generation ?? 0) !== generation) return;
+  // A card can be raised before the first poll has persisted any monitor state
+  // (a runner failure observed on the first observation). Returning here would
+  // leave that wait unmarked, so the state is seeded instead.
+  const prev = run.monitorState ?? {
+    nudgeCount: run.metrics.nudgeCount,
+    lastPollAt: new Date(windowStartedAtMs ?? waitingSinceMs).toISOString(),
+    startedAt: new Date(windowStartedAtMs ?? waitingSinceMs).toISOString(),
+  };
+  updateRun(runId, {
+    monitorState: {
+      ...prev,
+      gateWaitStartedAt: new Date(waitingSinceMs).toISOString(),
+      gateWaitDecisionId: decisionId,
+    },
+  });
+  await persistRunNow(getRun(runId)!, 'gate wait started');
+}
+
+/**
+ * Store the accumulated wait and drop the open-card marker in ONE durable write.
+ *
+ * Clearing the marker first and leaving `gateWaitMs` to the next poll's persist
+ * loses the credit to any restart in between — which is exactly the window the
+ * marker exists to cover. Storing the total in the same write means a recovered
+ * monitor either sees the marker (and credits the slice itself) or sees the
+ * total that already includes it, never neither.
+ */
+async function commitGateWait(
+  runId: string,
+  totalMs: number,
+  options: { ownedDecisionId?: string; windowStartedAtMs?: number } = {},
+): Promise<void> {
+  const run = getRun(runId);
+  if (!run) return;
+  const { ownedDecisionId, windowStartedAtMs } = options;
+  // No state means there is no marker to drop and no window to credit. Creating
+  // one here wrote this caller's window back after a replay had cleared it —
+  // including for a card that was refused and never appeared. Whoever owns the
+  // run's monitor state creates it; settlement only amends it.
+  const prev = run.monitorState;
+  if (!prev) return;
+  // Two separate questions, and conflating them left orphan markers behind.
+  //
+  // The MARKER belongs to a decision: only the wait that opened a card may drop
+  // its marker, and it has to drop it wherever the window has gone since. A card
+  // this loop raised and then had refused — a retired generation — would
+  // otherwise leave a marker nothing answers, and the next restart would credit
+  // every minute since it was written.
+  //
+  // The CREDIT belongs to a window: a replayed monitor that reset the clock owns
+  // the accounting now, and this loop's total was measured against a window
+  // nobody is in, so writing it would charge the new window for the old one's
+  // cards. Within one window the credit only grows, so the larger total is live.
+  const ownsMarker = ownedDecisionId === undefined || prev.gateWaitDecisionId === ownedDecisionId;
+  const sameWindow = monitorWindowMatches(prev, windowStartedAtMs);
+  const gateWaitMs = !sameWindow
+    ? (prev.gateWaitMs ?? 0)
+    : ownsMarker
+      ? totalMs
+      : Math.max(prev.gateWaitMs ?? 0, totalMs);
+  const settled = ownsMarker ? { gateWaitStartedAt: undefined, gateWaitDecisionId: undefined } : {};
+  const dropsMarker =
+    ownsMarker && (prev.gateWaitStartedAt !== undefined || prev.gateWaitDecisionId !== undefined);
+  if (prev.gateWaitMs === gateWaitMs && !dropsMarker) return;
+  updateRun(runId, { monitorState: { ...prev, gateWaitMs, ...settled } });
+  await persistRunNow(getRun(runId)!, 'gate wait settled');
+}
+
+/**
+ * Whether persisted monitor state still belongs to the window a caller measured.
+ *
+ * A caller with no window to name (startup recovery, which adopts whatever the
+ * persisted window is) matches by definition.
+ */
+function monitorWindowMatches(
+  state: { startedAt: string },
+  windowStartedAtMs: number | undefined,
+): boolean {
+  if (windowStartedAtMs === undefined) return true;
+  return state.startedAt === new Date(windowStartedAtMs).toISOString();
 }
 
 // ─── Main monitoring loop ───
@@ -1056,7 +1228,19 @@ export interface MonitorObservations {
   waitForWorker?: typeof waitForWorkerStart;
   violations?: typeof detectViolations;
   question?: typeof readOpenWorkerQuestion;
+  /** Test seam for the resume that follows a cleared runner failure. */
+  deliverResume?: typeof sendOneShotWorkerInstruction;
 }
+
+/**
+ * Cards whose wait must NOT grant the worker a fresh stuck window.
+ *
+ * A max-nudges card is raised because the worker is already stuck; Continue
+ * resets the nudge count so nudging resumes, and treating the operator's
+ * reading time as inactivity grace would silence both the next nudge and the
+ * timeout card for another full stuck window.
+ */
+const STUCK_GRACE_EXEMPT_DECISIONS = new Set(['max_nudges']);
 
 export async function monitorRun(
   runId: string,
@@ -1072,13 +1256,65 @@ export async function monitorRun(
   const waitForWorker = observations.waitForWorker ?? waitForWorkerStart;
   const observeViolations = observations.violations ?? detectViolations;
   const observeQuestion = observations.question ?? readOpenWorkerQuestion;
-  const createMonitorDecision = (
+  const deliverInstruction = observations.deliverResume ?? sendOneShotWorkerInstruction;
+  // Time spent waiting on a card the monitor raised is the monitor's own wait,
+  // not the worker going quiet, so it is excluded from the execution timeout.
+  // It cannot live in state.operatorWaitMs: that field is recomputed from the
+  // worker's waitingForOperator signal on every poll, so anything added to it is
+  // overwritten. Restored below from monitorState.gateWaitMs.
+  const gateWait = { ms: 0 };
+  // Assigned once `state` exists below. The wrapper runs only inside the poll
+  // loop, so it is always set by then.
+  let monitorState: MonitorState | undefined;
+  const createMonitorDecision = async (
     id: string,
     reason: string,
     description: string,
     actions?: RunDecision['actions'],
     question?: HandoffQuestionProbe,
-  ) => createBlockedDecision(id, reason, description, actions, { signal, generation }, question);
+  ) => {
+    const waitingSince = Date.now();
+    // The card's id is allocated here, not inside the decision, so the wait
+    // marker and the card an operator answers carry the same identity. (The
+    // `id` parameter is the run.) Without that, Extend — which can only name
+    // the decision it resolves — never matches the marker it should clear.
+    const decisionId = randomUUID();
+    // Persisted before the wait, so a restart while the operator is still
+    // reading the card can credit the slice this process never finished.
+    await persistGateWaitStart(runId, waitingSince, decisionId, {
+      windowStartedAtMs: monitorState?.startedAt,
+      generation,
+    });
+    try {
+      return await createBlockedDecision(
+        id,
+        reason,
+        description,
+        actions,
+        { signal, generation },
+        question,
+        decisionId,
+      );
+    } finally {
+      gateWait.ms += Date.now() - waitingSince;
+      // One durable write: the credit lands with the marker's removal, and only
+      // the marker this wait wrote is removed.
+      await commitGateWait(runId, gateWait.ms, {
+        ownedDecisionId: decisionId,
+        windowStartedAtMs: monitorState?.startedAt,
+      });
+      // The worker was idle for as long as the card was up, and that idleness
+      // is ours, not its. Without this the next poll can see a stuck window
+      // that elapsed entirely while a human was reading, and spend a nudge in
+      // the same iteration as the answer.
+      //
+      // Not for `max_nudges`: there the worker is already stuck, Continue means
+      // "resume nudging", and granting it a fresh stuck window would stop both
+      // the next nudge and the timeout card for another full window.
+      if (monitorState && !STUCK_GRACE_EXEMPT_DECISIONS.has(reason))
+        monitorState.operatorResumedAt = Date.now();
+    }
+  };
   // A failure the runner itself reported (an expired login) waits for the operator in a
   // runner_unavailable decision with the worker kept, instead of failing the step (#1427, F328).
   // Continue answers that failed turn: its record stays until the next hook event, so it must not
@@ -1103,6 +1339,12 @@ export async function monitorRun(
           `${error.message} Restore the provider account or authentication in the retained runner pane, then choose Continue. The worktree and current task state are preserved.`,
         );
         if (actionId === 'abort') return 'aborted';
+        // Continue answers the failed turn, and answering it has to reach the
+        // worker. The pane is sitting on a turn that died mid-flight; without a
+        // resume it stays there until some later violation happens to nudge it,
+        // which is how 5424deb9 was re-blocked 11 s after Continue with its
+        // session untouched.
+        await deliverRunnerResume(error.message, error.observedAt);
         answeredFailureAt = error.observedAt;
       }
     }
@@ -1130,9 +1372,86 @@ export async function monitorRun(
   const snapshots: MonitorSnapshot[] = [];
   let exitReason: MonitorResult['exitReason'] = 'worker-done';
 
+  /**
+   * Continue the worker after the operator cleared a runner failure.
+   *
+   * The stuck and idle branches deliver through `sendNudge`; a
+   * `runner_unavailable` card used to fall through with nothing sent, so the
+   * pane kept whatever half-finished turn it died on.
+   */
+  const deliverRunnerResume = async (message: string, failedAt?: number): Promise<void> => {
+    const context = currentMonitorContext();
+    // Not sendNudge: a provider outage the operator already fixed is not the
+    // worker stalling, so it must not spend the stuck/idle escalation budget.
+    //
+    // A delivery that throws must not end the monitor either: the operator has
+    // already cleared the failure, and a run that keeps being watched can still
+    // be resumed by hand, while a dead monitor cannot.
+    let delivery: WorkerInstructionDelivery = 'not-attempted';
+    try {
+      delivery = await deliverInstruction(
+        runId,
+        slotId,
+        {
+          text: buildNudgeMessage({
+            slotId,
+            role: context?.role,
+            contextId: context?.id,
+            type: 'error',
+            message,
+            nudgeSent: null,
+            timestamp: new Date().toISOString(),
+          }),
+          key: 'runner-resume',
+          channel: 'run-monitor-resume',
+          acceptanceSinceMs: failedAt === undefined ? undefined : failedAt + 1,
+        },
+        context?.role,
+        context?.id,
+      );
+    } catch (error) {
+      console.warn(
+        `[run-monitor] run ${runId.slice(0, 8)} — runner resume could not be sent: ${(error as Error).message}`,
+      );
+      return;
+    }
+    if (delivery === 'not-attempted') {
+      // Nothing reached the pane. Say so rather than leaving the operator to
+      // infer it from a run that does not move.
+      console.warn(
+        `[run-monitor] run ${runId.slice(0, 8)} — runner resume not delivered (${delivery}); the worker may still be waiting on its failed turn`,
+      );
+      return;
+    }
+    snapshots.push({ timestamp: new Date().toISOString(), trigger: 'nudge' });
+  };
+
   // Restore from persisted state if available (gateway restart recovery)
   const persisted = run.monitorState;
+  gateWait.ms = persisted?.gateWaitMs ?? 0;
+  // A card that was still open when this process went down: the operator kept
+  // reading it while nothing was watching, so that slice is gate wait too.
+  // Without it a restart mid-card charges the downtime to the worker and the
+  // first poll can re-raise the very timeout the operator was answering.
+  const interruptedGateWaitAt = persisted?.gateWaitStartedAt
+    ? Date.parse(persisted.gateWaitStartedAt)
+    : Number.NaN;
+  if (Number.isFinite(interruptedGateWaitAt)) {
+    // Capped at the window itself: a marker written before the current window
+    // (a clock stepped backwards between the two writes, then corrected) would
+    // otherwise credit more than the window has elapsed and drive the timeout
+    // check negative, so the run would never time out.
+    const windowStartedAt = Date.parse(persisted?.startedAt ?? '') || Date.now();
+    gateWait.ms += Math.min(
+      Math.max(0, Date.now() - interruptedGateWaitAt),
+      Math.max(0, Date.now() - windowStartedAt),
+    );
+    // Store the recovered slice before anything else can fail: another restart
+    // in this window would otherwise drop it with the marker.
+    await commitGateWait(runId, gateWait.ms, { ownedDecisionId: persisted?.gateWaitDecisionId });
+  }
   const restoredBudgetUsage = restoreBudgetUsageState(persisted?.budgetUsage);
+  const budgetWindowId = budgetWindowIdOf(persisted) ?? new Date(now).toISOString();
 
   const state: MonitorState = persisted
     ? {
@@ -1145,7 +1464,8 @@ export async function monitorRun(
         operatorResumedAt: persisted.operatorResumedAt
           ? Date.parse(persisted.operatorResumedAt)
           : 0,
-        delivery: restoreBudgetDeliveryState(persisted),
+        budgetWindowId,
+        delivery: restoreBudgetDeliveryForWindow(persisted, budgetWindowId),
         budgetUsage: restoredBudgetUsage,
       }
     : {
@@ -1156,9 +1476,11 @@ export async function monitorRun(
         startedAt: now,
         operatorWaitMs: 0,
         operatorResumedAt: 0,
+        budgetWindowId,
         delivery: initialBudgetDeliveryState(),
         budgetUsage: emptyBudgetUsageSampleState(),
       };
+  monitorState = state;
   // Also restore nudge count from persisted state
   if (persisted && persisted.nudgeCount > run.metrics.nudgeCount) {
     updateRun(runId, { metrics: { ...run.metrics, nudgeCount: persisted.nudgeCount } });
@@ -1683,6 +2005,8 @@ export async function monitorRun(
           delivery: state.delivery,
           budgetUsage: state.budgetUsage,
           monitorStartedAt: new Date(state.startedAt).toISOString(),
+          budgetWindowId: state.budgetWindowId,
+          generation,
           agentStatus,
           sendNudge: true,
         });
@@ -1755,6 +2079,9 @@ export async function monitorRun(
             exitReason = 'aborted';
             return { pollCount, exitReason, violations: allViolations, snapshots };
           }
+          // Same as the observed-failure path: Continue has to reach the worker.
+          const failedAt = Date.parse(v.timestamp);
+          await deliverRunnerResume(v.message, Number.isFinite(failedAt) ? failedAt : undefined);
           continue;
         }
 
@@ -1861,7 +2188,22 @@ export async function monitorRun(
 
       // 4. Persist monitor state to Run (survives gateway restart)
       const currentForPersist = getRun(runId);
-      if (currentForPersist) {
+      // A replayed monitor owns this run's monitor state now. This loop's
+      // snapshot — window start, nudge view, gate credit, progress timestamps —
+      // describes a window nobody is in, so publishing it would hand the
+      // replacement the retiring loop's accounting: a fresh window charged for
+      // cards it never showed, or a restored old progress timestamp that makes
+      // the replacement skip its own snapshots. The loop keeps observing until it
+      // unwinds; it just stops writing.
+      //
+      // Replay clears monitorState outright and takes a new generation, so an
+      // absent state is not proof that this loop may write: the generation is.
+      const ownsMonitorState =
+        (currentForPersist?.engineState?.generation ?? 0) === generation &&
+        (!currentForPersist?.monitorState ||
+          (monitorWindowMatches(currentForPersist.monitorState, state.startedAt) &&
+            budgetWindowIdOf(currentForPersist.monitorState) === state.budgetWindowId));
+      if (currentForPersist && ownsMonitorState) {
         const structuredProgressAt = new Date(state.lastStructuredProgressAt).toISOString();
         const announceProgress = structuredProgressMovedMinute(
           currentForPersist.monitorState?.lastStructuredProgressAt,
@@ -1872,16 +2214,38 @@ export async function monitorRun(
             nudgeCount: currentForPersist.metrics.nudgeCount,
             lastPollAt: new Date().toISOString(),
             startedAt: new Date(state.startedAt).toISOString(),
+            budgetWindowId: state.budgetWindowId,
             lastPaneHash: state.lastPaneHash,
             lastStructuredProgressAt: structuredProgressAt,
             operatorWaitMs: state.operatorWaitMs,
+            // This loop's view of the gate credit is a snapshot, not the only
+            // one: a replayed monitor sharing this window can be holding a card
+            // open right now, and within one window the credit only grows, so the
+            // larger total is the live one. The window itself is fenced above.
+            gateWaitMs: Math.max(gateWait.ms, currentForPersist.monitorState?.gateWaitMs ?? 0),
+            ...(currentForPersist.monitorState?.gateWaitStartedAt
+              ? {
+                  gateWaitStartedAt: currentForPersist.monitorState.gateWaitStartedAt,
+                  ...(currentForPersist.monitorState.gateWaitDecisionId
+                    ? { gateWaitDecisionId: currentForPersist.monitorState.gateWaitDecisionId }
+                    : {}),
+                }
+              : {}),
             ...(state.operatorResumedAt
               ? { operatorResumedAt: new Date(state.operatorResumedAt).toISOString() }
               : {}),
-            // Not budgetDelivery: pollRunBudgetGuard is its sole writer. Merging a
-            // second writer's value with Math.max hid a lost update rather than
-            // preventing one — it cannot tell "someone got there first" from "mine is
-            // stale". One writer means there is nothing to merge.
+            // The guard produces this record; this write must not delete it.
+            // Rebuilding monitorState without it dropped the whole warn-once fact
+            // on every poll, so a restart or a second Pause/Resume typed the same
+            // warning into the same pane again. Carried, never merged: whatever the
+            // guard last wrote for this window stands.
+            ...(currentForPersist.monitorState?.budgetDelivery
+              ? {
+                  budgetDelivery: currentForPersist.monitorState.budgetDelivery,
+                  budgetDeliveryWindow:
+                    currentForPersist.monitorState.budgetDeliveryWindow ?? state.budgetWindowId,
+                }
+              : {}),
             budgetUsage: state.budgetUsage,
           },
         });
@@ -1895,7 +2259,7 @@ export async function monitorRun(
 
       // 5. Check total timeout. Elapsed time alone never stops a progressing worker:
       // it times out once it also has no structured activity for the stuck window.
-      const elapsed = Date.now() - state.startedAt - state.operatorWaitMs;
+      const elapsed = Date.now() - state.startedAt - state.operatorWaitMs - gateWait.ms;
       if (
         !waitingForOperator &&
         elapsed > config.totalTimeoutMs &&
@@ -1929,6 +2293,7 @@ export async function monitorRun(
           // Avoid immediately reopening the same timeout decision if the operator resolved the
           // handoff but the signal read races with a file write/delete.
           state.startedAt = Date.now();
+          gateWait.ms = 0;
           persistMonitorWindowStart(runId, state.startedAt);
           continue;
         }
@@ -1943,6 +2308,7 @@ export async function monitorRun(
         }
         // "continue" — extend by another full timeout period
         state.startedAt = Date.now();
+        gateWait.ms = 0;
         persistMonitorWindowStart(runId, state.startedAt);
       }
     }
@@ -2361,36 +2727,46 @@ function buildNudgeMessage(violation: MonitorViolation): string {
       return '[Orchestrator] Continue without waiting. Follow TASK.md exactly.';
     case 'budget':
       return buildUsageBudgetNudgeMessage(violation.message);
+    case 'error':
+      // The operator cleared the runner failure. The pane still holds the turn
+      // that died, so say what to do with it rather than just "continue".
+      return '[Orchestrator] The runner is available again. Continue the current task from where it stopped, per TASK.md; do not start over.';
     default:
       return '[Orchestrator] Continue working on the current task.';
   }
 }
 
 /**
- * Outcome of one budget-nudge delivery.
+ * Outcome of one one-shot pane instruction.
  *
  * `not-attempted` means the pane was never touched, so the attempt must not count
  * against MAX_BUDGET_NUDGE_ATTEMPTS — otherwise a few transient holds would burn the
  * cap and the worker would never hear about a real breach.
  */
-export type BudgetNudgeDelivery = 'confirmed' | 'attempted' | 'queued' | 'not-attempted';
+export type WorkerInstructionDelivery = 'confirmed' | 'attempted' | 'queued' | 'not-attempted';
 
 /**
- * One-shot budget warning into the worker pane. Does not increment metrics.nudgeCount
- * (stuck/idle max_nudges is a separate escalation budget).
+ * One-shot instruction into the worker pane: a usage-budget warning, or the
+ * resume that follows an operator clearing a runner failure. Does not increment
+ * metrics.nudgeCount (stuck/idle max_nudges is a separate escalation budget, and
+ * a provider outage the operator fixed must not burn it).
+ *
+ * The caller owns the exact text, the dedup key and the send channel. This used
+ * to wrap every message as a usage-budget warning, which told a worker being
+ * resumed after a provider outage to `mark` the current checklist item.
  *
  * Returns `confirmed` only when the instruction was accepted and submitted. Expected
  * unavailability (missing run, non-tmux-nudgeable runner) returns `not-attempted`
  * without throwing. Unexpected delivery failures propagate so callers do not stamp a
  * false nudgeSent.
  */
-export async function sendBudgetNudge(
+export async function sendOneShotWorkerInstruction(
   runId: string,
   slotId: string,
-  message: string,
+  instruction: { text: string; key: string; channel: string; acceptanceSinceMs?: number },
   role?: AgentRole,
   contextId?: string,
-): Promise<BudgetNudgeDelivery> {
+): Promise<WorkerInstructionDelivery> {
   const run = getRun(runId);
   if (!run) return 'not-attempted';
   if (!(await workerNudgesSupported(run, slotId))) {
@@ -2403,8 +2779,8 @@ export async function sendBudgetNudge(
       slotId,
       role,
       contextId,
-      key: 'budget',
-      text: buildUsageBudgetNudgeMessage(message),
+      key: instruction.key,
+      text: instruction.text,
     });
   const vars = await loadSlotVars(slotId);
   const context = selectAgentContext(run, { role, contextId });
@@ -2415,11 +2791,12 @@ export async function sendBudgetNudge(
     vars,
     session,
     run.metrics.runner ?? 'claude',
-    buildUsageBudgetNudgeMessage(message),
-    'run-monitor-budget',
+    instruction.text,
+    instruction.channel,
     undefined,
     {
       recovery: { runId, emit: broadcastFn },
+      acceptanceSinceMs: instruction.acceptanceSinceMs,
       ...retainedSessionSendOption(retainedSession),
     },
   );
@@ -2428,13 +2805,13 @@ export async function sendBudgetNudge(
   // the worker would never be told. Text that landed unconfirmed is a spent attempt.
   if (outcome === 'held-untouched') {
     console.log(
-      `[run-monitor] budget nudge held without reaching the composer for run ${runId.slice(0, 8)}`,
+      `[run-monitor] ${instruction.key} instruction held without reaching the composer for run ${runId.slice(0, 8)}`,
     );
     return 'not-attempted';
   }
   if (outcome === 'typed-unconfirmed') return 'attempted';
   console.log(
-    `[run-monitor] budget nudge sent to run ${runId.slice(0, 8)}: ${message.slice(0, 120)}`,
+    `[run-monitor] ${instruction.key} instruction sent to run ${runId.slice(0, 8)}: ${instruction.text.slice(0, 120)}`,
   );
   broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
   return 'confirmed';
@@ -2552,8 +2929,8 @@ export async function pollBudgetGuardStep(params: {
    * Optional local host stub for focused tests. Production monitor always loads real vars.
    */
   localVarsStub?: { host: string; machine: string; slotId: string; remoteRepo?: string };
-  /** Test seam for confirmed-delivery retry behavior; production uses sendBudgetNudge. */
-  deliverNudge?: typeof sendBudgetNudge;
+  /** Test seam for confirmed-delivery retry behavior; production uses sendOneShotWorkerInstruction. */
+  deliverNudge?: typeof sendOneShotWorkerInstruction;
   /** Test seam for the runner's turn state; production reads runner observability. */
   runnerMidTurnStub?: boolean;
 }): Promise<PollBudgetGuardStepResult> {
@@ -2662,10 +3039,14 @@ export async function pollBudgetGuardStep(params: {
         });
       } else if (run && !shouldSkipMonitorNudge(run, deliveryViolation, params.agentStatus)) {
         try {
-          const outcome = await (params.deliverNudge ?? sendBudgetNudge)(
+          const outcome = await (params.deliverNudge ?? sendOneShotWorkerInstruction)(
             params.runId,
             params.slotId,
-            decision.message,
+            {
+              text: buildUsageBudgetNudgeMessage(decision.message),
+              key: 'budget',
+              channel: 'run-monitor-budget',
+            },
             context?.role,
             context?.id,
           );
@@ -2715,12 +3096,9 @@ export async function pollBudgetGuardStep(params: {
   };
 }
 
-/**
- * Production budget tick: resolve the run's live session, execute the bounded
- * guard, and durably persist warning/delivery state before returning. Scripted
- * runner validation calls this same entry point against a real runner session.
- */
-export async function pollRunBudgetGuard(params: {
+const budgetNudgesInFlight = new Set<string>();
+
+interface RunBudgetGuardPoll {
   runId: string;
   slotId: string;
   maxTurns: number | null;
@@ -2729,11 +3107,41 @@ export async function pollRunBudgetGuard(params: {
   delivery?: BudgetDeliveryState;
   budgetUsage?: BudgetUsageSampleState;
   monitorStartedAt?: string;
+  budgetWindowId?: string;
+  /** The caller's engine generation; its write is dropped once that has moved. */
+  generation?: number;
   agentStatus: AgentLiveStatus;
   sendNudge: boolean;
-}): Promise<PollBudgetGuardStepResult> {
+}
+
+/**
+ * Production budget tick: resolve the run's live session, execute the bounded
+ * guard, and durably persist warning/delivery state before returning. Scripted
+ * runner validation calls this same entry point against a real runner session.
+ */
+export async function pollRunBudgetGuard(
+  params: RunBudgetGuardPoll,
+  pollBudget = pollBudgetGuardStep,
+): Promise<PollBudgetGuardStepResult> {
+  // Pause can leave a send unwinding as Resume starts another monitor. Keep
+  // this run's send slot until the first transport outcome is persisted.
+  const ownsSend = params.sendNudge && !budgetNudgesInFlight.has(params.runId);
+  if (ownsSend) budgetNudgesInFlight.add(params.runId);
+  try {
+    return await pollRunBudgetGuardState(params, pollBudget, ownsSend);
+  } finally {
+    if (ownsSend) budgetNudgesInFlight.delete(params.runId);
+  }
+}
+
+async function pollRunBudgetGuardState(
+  params: RunBudgetGuardPoll,
+  pollBudget: typeof pollBudgetGuardStep,
+  sendNudge: boolean,
+): Promise<PollBudgetGuardStepResult> {
   const run = getRun(params.runId);
   if (!run) throw new Error(`Run not found: ${params.runId}`);
+  const monitorStateAtStart = run.monitorState;
   const vars = await loadSlotVars(params.slotId);
   const context = selectAgentContext(run, { role: primaryRoleForFlow(run.flowType) });
   const retainedSession = resolveRunRetainedSessionBinding(run, context);
@@ -2741,7 +3149,26 @@ export async function pollRunBudgetGuard(params: {
     run.transport === 'native' || retainedSession.binding
       ? null
       : await resolveRunnerSessionForRun(run, vars);
-  const tick = await pollBudgetGuardStep({
+  // A warning the worker has already been told about is a durable fact about a
+  // session a Resume keeps. A replacement monitor starts from the snapshot it
+  // read at startup, which can predate the retiring tick's write, so trusting
+  // that snapshot types the same warning into the same pane a second time. A
+  // settled record on the run therefore wins over this caller's view; an
+  // unsettled one does not, because the caller's is then the fresher sample.
+  // The window this tick measures. Whoever owns the persisted state owns its
+  // clock, so a tick whose own window is not the persisted one is retired and
+  // its result belongs to nobody.
+  const tickWindow =
+    params.budgetWindowId ?? params.monitorStartedAt ?? budgetWindowIdOf(monitorStateAtStart);
+  const callerDelivery =
+    params.delivery ?? restoreBudgetDeliveryForWindow(monitorStateAtStart, tickWindow);
+  const persistedBefore = restoreBudgetDeliveryForWindow(monitorStateAtStart, tickWindow);
+  const startingDelivery =
+    (budgetGuardSettled(persistedBefore) && !budgetGuardSettled(callerDelivery)) ||
+    persistedBefore.attempts > callerDelivery.attempts
+      ? persistedBefore
+      : callerDelivery;
+  const tick = await pollBudget({
     runId: params.runId,
     slotId: params.slotId,
     flowType: run.flowType,
@@ -2753,37 +3180,93 @@ export async function pollRunBudgetGuard(params: {
       null,
     maxTurns: params.maxTurns,
     maxTotalTokens: params.maxTotalTokens,
-    delivery: params.delivery ?? restoreBudgetDeliveryState(run.monitorState),
+    delivery: startingDelivery,
     budgetUsage:
-      params.budgetUsage ?? run.monitorState?.budgetUsage ?? emptyBudgetUsageSampleState(),
+      params.budgetUsage ?? monitorStateAtStart?.budgetUsage ?? emptyBudgetUsageSampleState(),
     agentStatus: params.agentStatus,
-    sendNudge: params.sendNudge,
+    sendNudge,
+    deliverNudge: (...args) => {
+      const state = getRun(params.runId)?.monitorState;
+      if (state) {
+        const live = restoreBudgetDeliveryForWindow(state, tickWindow);
+        if (budgetWindowIdOf(state) !== tickWindow || budgetGuardSettled(live))
+          return Promise.resolve('not-attempted');
+      }
+      return sendOneShotWorkerInstruction(...args);
+    },
   });
 
   const current = getRun(params.runId);
   if (!current) throw new Error(`Run disappeared during budget poll: ${params.runId}`);
   const now = new Date().toISOString();
+  // This guard owns its delivery and usage state and nothing else. Rebuilding
+  // the record from a field list dropped whatever it does not name — the
+  // operator-wait and gate-wait accounting, including the open-card marker — and
+  // stamped the window from this caller's memory, which hands a retiring loop's
+  // window back to a run a replay has already moved on. Keep the record and
+  // override only what this tick produced.
+  const prev = current.monitorState;
+  // The tick above read a remote transcript, which takes long enough for a
+  // replay or a pause/resume to land: a new generation, sometimes monitorState
+  // cleared with it. The *samples* that tick produced describe a window nobody
+  // is in, and its clock would put this caller's window back, so neither is
+  // written once this caller is retired.
+  //
+  // Its DELIVERY state is different, and dropping that was a second bug: a
+  // warning this tick confirmed into the worker's own pane is a fact about a
+  // retained session, which a resume keeps. Forgetting it lets the replacement
+  // type the same warning again. So a retired tick still records what it
+  // delivered, and nothing else.
+  const retired =
+    params.generation !== undefined && (current.engineState?.generation ?? 0) !== params.generation;
+  // A new baseline can keep startedAt. Fence both live and retired polls by
+  // the actual budget window, and never recreate cleared state from a retired poll.
+  if ((prev && budgetWindowIdOf(prev) !== tickWindow) || (retired && !prev)) {
+    console.warn(
+      `[run-monitor] run ${params.runId.slice(0, 8)} — dropped a budget tick from a replaced accounting window`,
+    );
+    return tick;
+  }
+  const windowId = tickWindow ?? now;
+  const persistedDelivery = restoreBudgetDeliveryForWindow(prev, windowId);
+  const attemptsSpent = tick.delivery.attempts - startingDelivery.attempts;
+  let delivery = tick.delivery;
+  if (!isDeepStrictEqual(persistedBefore, persistedDelivery)) {
+    // A replacement poll may already have spent another attempt. Retain its
+    // state and apply only this poll's confirmed or newly typed delivery.
+    if (tick.nudgeSent) {
+      delivery = { ...tick.delivery, attempts: persistedDelivery.attempts };
+    } else if (attemptsSpent > 0) {
+      delivery = advanceBudgetDelivery(persistedDelivery, { kind: 'delivery-typed' });
+    } else {
+      delivery = persistedDelivery;
+    }
+  }
   updateRun(params.runId, {
-    monitorState: {
-      nudgeCount: current.metrics.nudgeCount,
-      lastPollAt: now,
-      startedAt: params.monitorStartedAt ?? current.monitorState?.startedAt ?? now,
-      lastPaneHash: current.monitorState?.lastPaneHash,
-      lastStructuredProgressAt: current.monitorState?.lastStructuredProgressAt,
-      budgetDelivery: tick.delivery,
-      budgetUsage: tick.budgetUsage,
-    },
+    monitorState:
+      retired && prev
+        ? { ...prev, budgetDelivery: delivery, budgetDeliveryWindow: windowId }
+        : {
+            ...prev,
+            nudgeCount: current.metrics.nudgeCount,
+            lastPollAt: now,
+            startedAt: prev?.startedAt ?? params.monitorStartedAt ?? now,
+            budgetWindowId: windowId,
+            budgetDelivery: delivery,
+            budgetDeliveryWindow: windowId,
+            budgetUsage: tick.budgetUsage,
+          },
   });
   // Flush when an attempt was actually spent. Run writes persist in the background, so
   // a crash in that window would forget the attempt and buy the pane more typed copies.
-  if (tick.delivery.attempts !== (params.delivery?.attempts ?? 0)) {
+  if (delivery.attempts > persistedDelivery.attempts || tick.nudgeSent) {
     const flushed = getRun(params.runId);
     if (flushed) await persistRunNow(flushed, 'budget-nudge-attempt');
   }
   if (tick.violation) {
     broadcastFn(Events.MONITOR_VIOLATION, { violation: tick.violation });
   }
-  return tick;
+  return { ...tick, delivery };
 }
 
 // ─── Decision creation + wait ───
@@ -3039,6 +3522,8 @@ async function createBlockedDecision(
   ],
   owner: { signal: AbortSignal; generation: number },
   question?: HandoffQuestionProbe,
+  /** Pre-allocated so a caller can record the card's identity before it exists. */
+  decisionId: string = randomUUID(),
 ): Promise<string> {
   const run = getRun(runId);
   if (!run) throw new Error('Run not found');
@@ -3073,7 +3558,7 @@ async function createBlockedDecision(
       : undefined;
 
   const decision: RunDecision = {
-    id: randomUUID(),
+    id: decisionId,
     type: `monitor_${reason}`,
     title: `Run ${runId.slice(0, 8)} — ${reason.replace('_', ' ')}`,
     description:

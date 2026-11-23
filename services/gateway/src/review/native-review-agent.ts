@@ -93,6 +93,7 @@ import {
   readTerminalReviewSignal,
   refundedNativeReviewer,
   type ReReviewContinuation,
+  resolveNativeReviewLaunchEffort,
   type ReviewAgentResult,
   reviewChecklistMarkPrompt,
   reviewerChecklistBasename,
@@ -405,6 +406,7 @@ async function runNativeReviewAttempt(
   let primaryFailure: unknown;
   let measuredUsage: RunnerSessionUsage | undefined;
   let fallbackRecord: ReviewSessionFallback | undefined;
+  let launchEffort: string | null = null;
   try {
     const reviewSnapshot = await withNativeReviewMutation(async () => {
       admit();
@@ -497,6 +499,14 @@ async function runNativeReviewAttempt(
         : undefined;
       await admitReviewRound(runId, roundId);
       if (retained) retained = claimWarmReviewerSession(scope, { consume: true });
+      launchEffort = resolveNativeReviewLaunchEffort({
+        requestedEffort: input.effort?.trim() || null,
+        runner,
+        model,
+        retained: retained ? { effort: retained.effort ?? null } : null,
+        recovering,
+        contextEffort: context?.effort ?? null,
+      });
       if (!recovering) {
         admit();
         context = (await upsertAgentContext(runId, 'review', {
@@ -517,7 +527,7 @@ async function runNativeReviewAttempt(
           runner,
           model,
           ...(visualInput ? { pipelineVisualReviewInput: visualInput } : {}),
-          ...(input.effort?.trim() ? { effort: input.effort.trim() } : {}),
+          ...(launchEffort ? { effort: launchEffort } : {}),
           target: null,
         }))!;
         await removeSlotFiles(
@@ -739,7 +749,7 @@ async function runNativeReviewAttempt(
           runner,
           model,
           resultSchema,
-          effort: input.effort?.trim() || undefined,
+          effort: launchEffort || undefined,
           safetyTier: run.safetyTier ?? runnerDefaultSafetyTier(runner),
           project: projectVars.projectJson,
           projectVars,
@@ -1076,7 +1086,7 @@ async function runNativeReviewAttempt(
             reviewerSessionId,
             runner,
             model,
-            effort: input.effort,
+            effort: launchEffort,
             mode: 'cold',
             validationDepth,
             retryCount: 0,
@@ -1148,6 +1158,7 @@ async function runNativeReviewAttempt(
     if (!feedback.incomplete && context.runnerSessionId)
       registerWarmReviewerSession({
         ...scope,
+        effort: launchEffort,
         contextId,
         windowName: contextId,
         slotId: vars.slotId,
@@ -1183,7 +1194,7 @@ async function runNativeReviewAttempt(
             : reviewSnapshot.snapshot.headSha!,
         runner,
         model,
-        effort: input.effort?.trim() || null,
+        effort: launchEffort,
         ...(recordedFallback ? { fallback: recordedFallback } : {}),
       },
       reviewSnapshot: reviewSnapshot.snapshot,

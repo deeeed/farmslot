@@ -4,6 +4,43 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.50.6 - 2026-11-23
+
+- Pin the Recipe Runner 0.52.2 cohort.
+- `mark complete` refuses a task with engine proof attempts that nothing selects. An attempt is any directory under `artifacts/recipe-runs` holding an `evidence-manifest.json`, such as `<id>`, `attempts/<id>` or a deeper output path. If there's no `latest-valid-recipe-run.json`, the refusal lists the attempts, names any unreadable summaries, and, when a passing summary is found, prints the command that selects that attempt. If there's a selection but no regular-file `artifacts/recipe.json`, it names the recipe to copy. It never picks an attempt itself. Review and QA flows are exempt (QA keeps its own selection contract), and root `artifacts/evidence-manifest.json` declarations stay optional.
+- Native Pi sessions (`pi --mode rpc`) load a small extension that gives a bash call with no timeout 600 seconds, the same default as tmux Pi workers; an explicit timeout is kept.
+- Artifact-only comparison replays now rewrite a template's `git merge-base origin/<branch> HEAD` baseline to the recorded replay base. A standalone `git diff "$(…)"` becomes `git diff <base>`, or the working-tree `git diff` when no base is recorded, like the existing `main` rewrites. Pinned-start run 6562483b's fix-bug step diffed against the merge base with `main`, beside a guardrail forbidding `main` as the baseline.
+- New `lintWorkerTemplateProofSelection`: a worker template that runs recipe proof must name the selected proof attempt (`artifacts/latest-valid-recipe-run.json`). Review and QA flows are exempt. `yarn quality:worker-templates` applies it to flow templates and to pack-owned execution-template checklists (`execution_templates.sources[].root.projectPath`, with `subpath`). A template with its own designed proof layout opts out by name: `<!-- proof-selection: exempt (<reason>) -->`.
+
+## 0.50.5 - 2026-11-21
+
+- Pin the Protocol 0.92.0 producer cohort.
+- Native conversation streams reach viewers one update per frame: live delivery gathers events for 16 ms instead of 50 ms, so a stream emitting every 50 ms is no longer paired into 10 Hz updates. The 64 KB immediate flush, overflow and cursor behavior are unchanged.
+
+## 0.50.4 - 2026-11-21
+
+- New `scripts/litellm-endpoint.cjs` export: a digest identity for a LiteLLM base URL, never the URL itself.
+
+## 0.50.3 - 2026-11-19
+
+- Pin the structural inventory SDK cohort while retaining public protocol 0.91.0.
+
+## 0.50.2 - 2026-11-19
+
+- Claude ACP effort checks use the shared `CLAUDE_CLI_EFFORTS` list.
+- Pin the qualified invocation-timing SDK cohort with exact package dependencies.
+
+## 0.50.1 - 2026-11-19
+
+- Pin the shared composed-evidence SDK dependency cohort for consistent viewer data.
+- Claude Haiku 5.5 sessions are priced ($0.10 / $0.50 per million input / output tokens, with cache rates), so their receipts show cost.
+
+## 0.50.0 - 2026-11-18
+
+- Usage prices include GPT-6.2 Astra at $8 / $0.40 cached / $40 and GPT-6.2 Sol at $2 / $0.10 cached / $10, the published standard short-context rates. The GPT-6.1 Sol and GPT-6 Astra rows stay.
+- The task handoff carries `reviewRulePack`, a static review's rule pack frozen with its digest.
+- Allow a clean no-change exit when changed-file CI never ran. Failed or stale receipts still block.
+
 ## 0.49.0 - 2026-11-18
 
 - `task init` accepts `referenceCheckouts`: read-only checkouts of other codebases the task is compared against, already resolved by the caller. They are listed in the task document under `Reference checkouts (read-only)` with the revision to cite, and frozen in `inputs/reference-checkouts.json`. An absent one is recorded with `present: false` and named as absent in the document: a comparison nobody can read is blocked, and silence would read as unchecked. An operator plan bypasses the shared document builder, so the same list is appended to it.

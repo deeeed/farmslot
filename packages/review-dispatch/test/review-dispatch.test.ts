@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   assertPRExecutionProfile,
   assertPRReviewOptions,
+  CLAUDE_CLI_EFFORTS,
   DEFAULT_CODEX_EFFORT,
   DEFAULT_GROK_EFFORT,
   DEFAULT_PI_THINKING,
@@ -36,6 +37,7 @@ import {
   reviewRequestFromSequence,
   reviewSequenceForExecution,
   reviewSequenceFromRequest,
+  workerModelFromSelection,
 } from '../src/index.js';
 
 const cold: ReviewSelection = {
@@ -132,6 +134,61 @@ test('removed review fields and runner sentinel are rejected instead of normaliz
   assert.throws(() => assertReviewRequestPayload({ ...cold, mode: 'resume' }), /warm or cold/);
 });
 
+test('a claude opus medium review is admitted and an omitted effort is medium', () => {
+  const selection = {
+    runner: 'claude',
+    model: 'opus',
+    effort: 'medium',
+    mode: 'cold',
+  } as const;
+  assert.doesNotThrow(() => assertReviewSelection(selection));
+  assert.deepEqual(executionModelFromSelection(selection), selection);
+  assert.deepEqual(
+    executionModelFromSelection({ runner: 'claude', model: 'opus', effort: null, mode: 'cold' }),
+    { runner: 'claude', model: 'opus', effort: 'medium', mode: 'cold' },
+  );
+  const vm = new ReviewDispatchViewModel({
+    context: { allowedActions: ['request-review'] },
+    sequence: [selection],
+  });
+  assert.deepEqual(
+    vm.effortChoices(vm.rows[0].id).map((choice) => choice.value),
+    [null, 'low', 'medium', 'high', 'xhigh', 'max'],
+  );
+  assert.equal(vm.effortChoices(vm.rows[0].id)[0]?.label, 'Runner default · medium');
+  assert.throws(
+    () => assertReviewSelection({ runner: 'claude', model: 'opus', effort: 'ultra', mode: 'cold' }),
+    /Unsupported review effort for claude: ultra/,
+  );
+  assert.deepEqual(
+    createReviewDispatchCatalog().runners.find((runner) => runner.id === 'claude')?.efforts,
+    [...CLAUDE_CLI_EFFORTS],
+  );
+});
+
+test('an omitted claude worker effort stays unset and native chat does not advertise medium', () => {
+  const omitted = { runner: 'claude', model: 'opus', effort: null, mode: 'cold' as const };
+  assert.equal(executionModelFromSelection(omitted).effort, 'medium');
+  assert.equal(workerModelFromSelection(omitted).effort, null);
+  assert.equal(workerModelFromSelection({ ...omitted, effort: 'high' }).effort, 'high');
+  assert.equal(
+    workerModelFromSelection({ runner: 'codex', model: null, effort: null, mode: 'cold' }).effort,
+    DEFAULT_CODEX_EFFORT,
+  );
+  assert.equal(workerModelFromSelection({ ...omitted, mode: 'warm' }).effort, null);
+  const chat = catalogForNativeRunners([
+    {
+      runner: 'claude',
+      models: ['opus'],
+      defaultModel: 'opus',
+      modes: ['default'],
+      efforts: [...CLAUDE_CLI_EFFORTS],
+      defaultEffort: null,
+    },
+  ]);
+  assert.equal(chat.runners[0]?.defaultEffort, null);
+});
+
 test('catalog validation accepts registered custom runners and refuses unsupported efforts', () => {
   const catalog = createReviewDispatchCatalog({
     runners: [
@@ -164,7 +221,7 @@ test('catalog validation accepts registered custom runners and refuses unsupport
     /effort/,
   );
   assert.throws(
-    () => assertReviewSelection({ runner: 'claude', model: null, effort: 'high', mode: 'cold' }),
+    () => assertReviewSelection({ runner: 'cursor', model: null, effort: 'high', mode: 'cold' }),
     /effort/,
   );
 });

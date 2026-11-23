@@ -44,6 +44,29 @@ the typed target and shared lifecycle in one coordinated release, with no compat
 See [ADR-062](../../docs/adr/062-recorded-run-evidence.md) and its
 [specification](../../docs/reference/recorded-run-evidence.md).
 
+## Evidence flow projection
+
+`runEvidenceView(model, run?)` from `@farmslot/adapter-sdk/evidence` preserves the chronological
+steps, criteria and player data. Its optional `flow` adds the prepared invocation tree,
+execution-qualified occurrences, branch status, breadcrumbs and supplied progress. A missing or
+incompatible prepared source gives `flow: null`. Unknown totals remain null. Invocation timing is absent.
+
+Pending hosts pass the producer's existing `{tree, update}` through
+`EvidenceReviewInput.pendingFlow` alongside `pendingTrace`. Completed-folder readers already
+supply the retained resolution, summary and trace. Readers without producer flow data keep the
+legacy evidence view.
+
+Use `(recipeRunId, invocationId)` for tree rows and `(recipeRunId, traceIndex)` for occurrences.
+Criterion occurrence bindings preserve retained-source execution identity; legacy `traceIndexes`
+remain unchanged. Qualified cues use existing recording checks, and an untimed recording remains
+playable without a seek cue. `updateId` is opaque snapshot equality across displayed facts, not a
+cursor or evidence digest. Selection alone does not change it; changed evidence at the same trace
+length does. Each source snapshot is projected once and repeated reads return detached JSON.
+An idle HUD update has no terminal verdict; the root stays unknown until the summary supplies one.
+Pending occurrences use only the current trace; before its first write they stay empty.
+Mismatched recordings supply no cues and leave the prepared flow visible. Flow and coverage joins
+are computed on demand and reused for each immutable source snapshot.
+
 ## Source layout
 
 | path                         | owns                                                         |
@@ -88,3 +111,9 @@ A report model takes the existing output manifest and `OutputReviewPayload`.
 `readEvidenceReviewReport` verifies the selected report bytes against that manifest
 before returning text. Reviewers can open its case/check claims through the same
 model. No separate QA verdict reducer or player is needed.
+
+### Invocation timing
+
+`runEvidenceView(model, run?)` keeps its existing evidence export and version. Prepared flow rows add optional `timing: RunEvidenceInvocationTiming`; flow also supplies `claimTimings` and `unassignedTiming` from the shared recipe-runner projection. Display each metric's qualification and preserve null unknowns. An inclusive measurement does not imply a measured self duration. Shared AC work is not split equally or charged twice within a rollup. Retained source executions keep their own identity.
+
+The same values serve the viewer and run report. A timing-only change changes `updateId` even at unchanged trace length. Legacy Story, media files and seek cues keep their existing behavior. Hosts format the supplied projection without using media length, trace order or the current clock to guess elapsed durations.

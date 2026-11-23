@@ -1,4 +1,10 @@
-import { primaryRoleForFlow, type Run, type RunnerSessionUsage } from '@farmslot/protocol';
+import {
+  pendingSessionUsageLeaseIds,
+  primaryRoleForFlow,
+  type Run,
+  type RunnerSessionUsage,
+  verifiedSessionUsageLeaseIds,
+} from '@farmslot/protocol';
 
 import { loadSlotVars } from '../core/config.js';
 import { reviewWorkspaceCommandEnvOptions } from '../review-workspaces/skills.js';
@@ -6,9 +12,14 @@ import { reviewWorkspaceRunnerVars } from '../runners/review-workspace-context.j
 import { recoverWorkspaceUsageBindings } from '../runners/session-usage-recovery.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 
-import { recoveredWorkerSessionReceipt, upsertSessionUsage } from './agent-session-rows.js';
+import {
+  recoveredWorkerSessionReceipt,
+  sessionUsageKey,
+  upsertSessionUsage,
+} from './agent-session-rows.js';
 import { extractNativeAgentSessionUsage, nativeRunUsageWindow } from './native-session-usage.js';
 import {
+  contextChecklistMarks,
   extractRunnerSessionUsage,
   extractRunWorkerSessionUsage,
   receiptChecklistMarks,
@@ -19,18 +30,7 @@ import { workspaceUsageMetrics } from './session-usage-result.js';
 export function recordRunSessionUsage(runId: string, receipt: RunnerSessionUsage): void {
   const run = getRun(runId);
   if (!run) return;
-  const rows =
-    receipt.requestId && receipt.identityKind === 'conversation'
-      ? (run.sessionUsage ?? []).filter(
-          (row) =>
-            !(
-              row.identityKind === 'request' &&
-              row.runner === receipt.runner &&
-              row.requestId === receipt.requestId
-            ),
-        )
-      : (run.sessionUsage ?? []);
-  updateRun(runId, { sessionUsage: upsertSessionUsage(rows, receipt) });
+  updateRun(runId, { sessionUsage: upsertSessionUsage(run.sessionUsage ?? [], receipt) });
 }
 
 /** Completion's worker discovery can recover sessions whose old context was replaced. */
@@ -73,12 +73,17 @@ function completedMeasurement(
   usage: RunnerSessionUsage,
 ): RunnerSessionUsage {
   const { error: _oldError, ...metadata } = row;
+  const coveredLeases = new Set(verifiedSessionUsageLeaseIds(usage));
   const costUsd = usage.costUsd ?? null;
   const startedAt = row.startedAt ? Date.parse(row.startedAt) : NaN;
   const end = Date.parse(row.completedAt ?? usage.measuredAt);
   return {
     ...metadata,
     ...usage,
+    usageLeaseIdsVerified: usage.usageLeaseIdsVerified,
+    pendingUsageLeaseIds: pendingSessionUsageLeaseIds(row).filter(
+      (lease) => !coveredLeases.has(lease),
+    ),
     costUsd,
     costStatus: costUsd === null ? 'unpriced' : 'estimated',
     costReason:
@@ -90,6 +95,7 @@ function completedMeasurement(
         ? Math.max(0, end - startedAt)
         : (row.durationMs ?? null),
     captureGaps: [
+      ...(usage.captureGaps ?? []),
       ...(usage.source === 'unavailable' ? [usage.error ?? 'Session usage unavailable'] : []),
       ...(!Number.isFinite(startedAt) ? ['Session start time is unavailable'] : []),
       ...(!usage.actualModel ? ['Actual model has not been reported'] : []),
@@ -124,13 +130,16 @@ function workerChecklistMarks(run: Run, row: RunnerSessionUsage) {
         return transcript ? [transcript] : [];
       }),
   );
-  return receiptChecklistMarks(run, context, Math.max(1, transcripts.size));
+  return {
+    checklistMarks: receiptChecklistMarks(run, context, Math.max(1, transcripts.size)),
+    parentChecklistMarks: contextChecklistMarks(run, context),
+  };
 }
 
 async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSessionUsage> {
   try {
     const slotId = row.slotId ?? run.slotId ?? run.id;
-    const checklistMarks = workerChecklistMarks(run, row);
+    const marks = workerChecklistMarks(run, row);
     if (row.nativeSession) {
       const workspace = row.role === 'review' ? run.reviewWorkspace : undefined;
       return completedMeasurement(
@@ -150,7 +159,7 @@ async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSession
           runnerSessionPath: row.runnerSessionPath,
           nativeSession: row.nativeSession,
           usageWindow: nativeRunUsageWindow(run, row),
-          checklistMarks,
+          ...marks,
         }),
       );
     }
@@ -167,7 +176,15 @@ async function measure(run: Run, row: RunnerSessionUsage): Promise<RunnerSession
         runner: row.runner,
         runnerSessionId: row.runnerSessionId,
         runnerSessionPath: row.runnerSessionPath,
-        checklistMarks,
+        ...marks,
+        ...(!row.slotId && run.reviewWorkspace
+          ? {
+              launchPricing: {
+                environment: async () =>
+                  (await import('../runners/review-tmux.js')).reviewEnvironment(run),
+              },
+            }
+          : {}),
       }),
     );
   } catch {
@@ -197,17 +214,42 @@ export function captureRunSessionUsage(runId: string): Promise<void> {
         recovered === current
           ? current
           : updateRun(runId, { agentContexts: recovered.agentContexts });
+      // Settlement follows the active bindings, independently of the last receipt's bounds.
+      const nativeCompletion = new Map<string, string | null>();
+      for (const context of run.agentContexts ?? []) {
+        if (!context.nativeSession) continue;
+        const key = sessionUsageKey(context);
+        if (!key) continue;
+        const completed =
+          context.completedAt ??
+          context.nativeSession.closedAt ??
+          context.nativeSession.releasedAt ??
+          null;
+        const previous = nativeCompletion.get(key);
+        nativeCompletion.set(
+          key,
+          !completed || previous === null
+            ? null
+            : previous && previous > completed
+              ? previous
+              : completed,
+        );
+      }
       for (const row of run.sessionUsage ?? []) {
         if (row.identityKind === 'request') continue;
-        // A terminal receipt already measured after settlement needs no second read.
+        const key = row.nativeSession && sessionUsageKey(row);
+        const completedAt =
+          key && nativeCompletion.has(key) ? nativeCompletion.get(key) : row.completedAt;
+        // Only a settled measurement covering all observed leases can skip the read.
         if (
+          !pendingSessionUsageLeaseIds(row).length &&
           row.source !== 'unavailable' &&
           !row.error &&
-          row.completedAt &&
-          row.measuredAt >= row.completedAt
+          completedAt &&
+          row.measuredAt >= completedAt
         )
           continue;
-        const measured = await measure(run, row);
+        const measured = await measure(run, { ...row, completedAt });
         recordRunSessionUsage(runId, measured);
       }
       const latest = getRun(runId);

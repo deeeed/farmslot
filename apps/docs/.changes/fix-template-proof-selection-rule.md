@@ -1,0 +1,1 @@
+- The worker template quality reference gains a "Recipe proof selection" section: templates that run recipe proof name the selected attempt (`artifacts/latest-valid-recipe-run.json`), and before evidence from a separate base run is declared before-only with clean provenance at an eligible base. It also documents the named opt-out.

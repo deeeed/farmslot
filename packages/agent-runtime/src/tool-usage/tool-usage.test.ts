@@ -70,6 +70,31 @@ test('claude: tool_use counted once across repeated records', async () => {
   assert.equal(usage.toolCalls, 1);
 });
 
+test('claude: a Haiku 5.5 session is priced from its rate card', () => {
+  const live = createLiveToolUsage('claude')!;
+  live.append(
+    Buffer.from(
+      `${JSON.stringify({
+        type: 'assistant',
+        timestamp: t(1),
+        message: {
+          id: 'm1',
+          model: 'claude-haiku-5-5',
+          content: [{ type: 'tool_use', id: 'u1', name: 'Bash' }],
+          usage: {
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            cache_creation_input_tokens: 1_000_000,
+            cache_read_input_tokens: 1_000_000,
+          },
+        },
+      })}\n`,
+    ),
+  );
+  // $0.10 input + $0.50 output + $0.125 cache write + $0.01 cache read, per million tokens.
+  assert.equal(live.summary([])!.costUsd?.toFixed(3), '0.735');
+});
+
 test('codex: executed items win over the code-mode exec wrapper', async () => {
   const file = await jsonl('codex.jsonl', [
     {

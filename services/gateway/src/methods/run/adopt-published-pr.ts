@@ -1,10 +1,14 @@
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 
 import {
+  Events,
   type EvidenceAttestationApprover,
   githubPullUrl,
   type HumanPublicationAdoptionReceipt,
+  isHeldForResultDecision,
   parseGitHubPullUrl,
+  pendingResultDecision,
   PipelineSteps,
   pipelineStepsForRun,
   PUBLICATION_ADOPTION_ACTION,
@@ -12,6 +16,7 @@ import {
   type Run,
   type RunAdoptPublishedPrParams,
   type RunAdoptPublishedPrResult,
+  type RunDecision,
   type RunGatePrerequisiteReason,
   sameEvidenceAttestationApprover,
 } from '@farmslot/protocol';
@@ -62,6 +67,30 @@ export interface PublicationAdoptionDependencies {
   releaseSlot?: typeof releaseCompletedRunSlot;
   compareContent?: typeof comparePublishedContent;
 }
+
+/**
+ * Whether this hold's result was pending when the publication was adopted: created by then and
+ * not resolved before it. Restart and recapture re-present the same result as a new decision
+ * and supersede the old one after the adoption, keeping its stop, delivered head and findings
+ * digest. A hold a replay superseded before the adoption does not count.
+ */
+function heldAtAdoption(run: Run, held: RunDecision, adoptedAt: string): boolean {
+  if (held.payload?.kind !== 'result-decision') return false;
+  const { stoppedAt, findingsDigest, delivered } = held.payload;
+  return run.decisions.some(
+    (decision) =>
+      (decision.id === held.id ||
+        (decision.resolvedAction === 'superseded' && decision.resolvedAt! >= adoptedAt)) &&
+      decision.payload?.kind === 'result-decision' &&
+      decision.payload.stoppedAt === stoppedAt &&
+      decision.payload.findingsDigest === findingsDigest &&
+      isDeepStrictEqual(decision.payload.delivered, delivered) &&
+      decision.createdAt <= adoptedAt,
+  );
+}
+
+/** In-flight adoption acceptances by run and result decision. */
+const adoptionAcceptances = new Map<string, Promise<Run>>();
 
 const CONTENT_MATCH_REASON = 'Published PR content matches the reviewed patch.';
 
@@ -319,6 +348,7 @@ export async function runAdoptPublishedPr(
     };
   }
   let completed = false;
+  let acceptedResultDecisionId: string | null = null;
   let teardownSlotId: string | null = null;
   return withRunTransition<RunAdoptPublishedPrResult>(initial.id, async () => {
     const currentApprover = authorize();
@@ -372,6 +402,24 @@ export async function runAdoptPublishedPr(
     };
     if (projectionRefusals.length) return { ...result, continuation: 'refused' };
     if (result.archived || !getRun(run.id) || run.status === 'done') return result;
+    // An attested adoption is the person's acceptance of a REVIEW hold. It is
+    // settled after this transition, through the result decision's own path.
+    const held =
+      // Receipts without a match predate content matching and were attested.
+      (receipt!.match?.type ?? 'attested') === 'attested' && isHeldForResultDecision(run)
+        ? pendingResultDecision(run)
+        : undefined;
+    // Only the hold the receipt was recorded against: same generation (a replay or
+    // a new round bumps it), and that result already held at adoption time.
+    if (
+      held?.payload?.kind === 'result-decision' &&
+      held.payload.stoppedAt === 'review' &&
+      (run.engineState?.generation ?? 0) === receipt!.generation &&
+      heldAtAdoption(run, held, receipt!.adoptedAt)
+    ) {
+      acceptedResultDecisionId = held.id;
+      return result;
+    }
     const continuationIdentity = adoptionIdentity(run);
     try {
       result.refusals = await (
@@ -457,6 +505,39 @@ export async function runAdoptPublishedPr(
     return { ...result, continuation: resumed ? 'resumed' : 'waiting' };
   })
     .then(async (result) => {
+      if (acceptedResultDecisionId) {
+        const decisionId = acceptedResultDecisionId;
+        const adopted = receipt!;
+        const { resolveResultDecision } = await import('../../run-completion/result-decision.js');
+        // Concurrent identical adoptions share one settlement and its outcome.
+        const key = `${initial.id}\0${decisionId}`;
+        let settlement = adoptionAcceptances.get(key);
+        if (!settlement) {
+          settlement = resolveResultDecision(
+            { runId: initial.id, decisionId, actionId: 'accept-result', reason: adopted.reason },
+            {
+              adoptedPublication: {
+                principalId: adopted.approver.principalId,
+                receiptId: adopted.id,
+                generation: adopted.generation,
+              },
+            },
+          )
+            .then((run) => {
+              emit(Events.RUN_UPDATED, { run });
+              emit(Events.RUN_DECISION_RESOLVED, {
+                runId: run.id,
+                decisionId,
+                actionId: 'accept-result',
+              });
+              return run;
+            })
+            .finally(() => adoptionAcceptances.delete(key));
+          adoptionAcceptances.set(key, settlement);
+        }
+        const run = await settlement;
+        return { ...result, run, continuation: 'resumed' as const };
+      }
       if (!completed) return result;
       // Release can join another machine/run transition; never hold those keys here.
       const { collectCompletedRunSlotReleaseEffect } = await import('./lifecycle-control.js');

@@ -3,13 +3,21 @@ import {
   normalizeRecipeClaimId,
   normalizeRecipeRef,
   type RecipeFlowUpdate,
-  type RecipeInvocationAncestry,
   type RecipeInvocationNode,
   type RecipeInvocationTree,
 } from '@farmslot/protocol';
 
+import { buildRecipeInvocationAncestry } from './flow-ancestry.js';
+import { createRecipeInvocationTimingProjection } from './flow-timing.js';
+export { buildRecipeInvocationAncestry } from './flow-ancestry.js';
+
 import { extractWorkflowGraph, reachableNodes } from './graph.js';
 import type { ResolvedLibraryRecipe } from './library.js';
+
+/** Work counted by recipe progress and structural inventory. */
+export function isRecipeWorkNode(node: RecipeInvocationNode): boolean {
+  return node.action !== 'call' && node.action !== 'end';
+}
 
 export interface BuildRecipeInvocationTreeInput {
   rootRef: string;
@@ -101,35 +109,18 @@ export function buildRecipeInvocationTree(
   return { version: 1, rootId, nodes };
 }
 
-/** One ancestry index over the prepared tree, independent of execution history. */
-export function buildRecipeInvocationAncestry(
-  tree: RecipeInvocationTree,
-): ReadonlyMap<string, RecipeInvocationAncestry> {
-  const nodes = new Map(tree.nodes.map((node) => [node.id, node]));
-  const index = new Map<string, RecipeInvocationAncestry>();
-  const visit = (id: string): RecipeInvocationAncestry => {
-    const cached = index.get(id);
-    if (cached) return cached;
-    const node = nodes.get(id)!;
-    const parent = node.parentId === null ? null : visit(node.parentId);
-    const value: RecipeInvocationAncestry = {
-      parentId: node.parentId,
-      depth: parent === null ? 0 : parent.depth + 1,
-      breadcrumbs: [...(parent?.breadcrumbs ?? []), { id, label: node.label }],
-    };
-    index.set(id, value);
-    return value;
-  };
-  for (const node of tree.nodes) visit(node.id);
-  return index;
-}
-
 export interface RecipeFlowProjection {
   /** A non-pass graph outcome makes subsequent cleanup totals unknown. */
+  record(entry: unknown): void;
+  setRunInterval(value: unknown): void;
   invalidate(): RecipeFlowUpdate;
   start(id: string, phase?: 'main' | 'teardown'): RecipeFlowUpdate;
   complete(id: string, ok: boolean, next?: string): RecipeFlowUpdate;
-  finish(status: 'pass' | 'fail' | 'unknown', partial?: boolean): RecipeFlowUpdate;
+  finish(
+    status: 'pass' | 'fail' | 'unknown',
+    partial?: boolean,
+    fullTiming?: boolean,
+  ): RecipeFlowUpdate;
   snapshot(): RecipeFlowUpdate;
 }
 
@@ -141,6 +132,7 @@ export function createRecipeFlowProjection(
 ): RecipeFlowProjection {
   const nodes = new Map(tree.nodes.map((node) => [node.id, node]));
   const ancestry = buildRecipeInvocationAncestry(tree);
+  const timing = createRecipeInvocationTimingProjection(tree);
   const lengths = new Map<string, number | null>();
   const phases = new Map<string, 'main' | 'teardown'>();
   const pending = new Set<string>();
@@ -177,19 +169,29 @@ export function createRecipeFlowProjection(
       parent.parentId ? add(length(parent.next ?? parent.default), outside(parent)) : 0,
     );
   };
-  const executable = (node: RecipeInvocationNode) =>
-    node.action !== 'call' && node.action !== 'end';
+  const executable = isRecipeWorkNode;
   let completed = 0;
   let current = 0;
   let activeId: string | null = null;
   let interrupted = declaredPartial;
   let total = declaredPartial ? null : length(tree.rootId);
-  const snapshot = (): RecipeFlowUpdate => ({
+  const snapshot = (timingScope: 'none' | 'active' | 'all' = 'none'): RecipeFlowUpdate => ({
     version: 1,
     recipeRunId,
     rootId: tree.rootId,
     activeId,
     ancestry: activeId === null ? null : ancestry.get(activeId)!,
+    ...(timingScope === 'all'
+      ? { timing: timing.snapshot() }
+      : timingScope === 'active'
+        ? {
+            timing: timing.snapshot(
+              activeId === null
+                ? [tree.rootId]
+                : ancestry.get(activeId)!.breadcrumbs.map(({ id }) => id),
+            ),
+          }
+        : {}),
     progress: {
       current,
       completed,
@@ -199,12 +201,15 @@ export function createRecipeFlowProjection(
     },
   });
   return {
+    record: timing.record,
+    setRunInterval: timing.setRunInterval,
     invalidate() {
       interrupted = true;
       total = null;
       return snapshot();
     },
     start(id, phase = 'main') {
+      timing.start(id);
       const node = nodes.get(id)!;
       phases.set(id, phase);
       pending.add(id);
@@ -222,12 +227,12 @@ export function createRecipeFlowProjection(
       total = interrupted ? null : add(completed, length(next ?? null), outside(node));
       return snapshot();
     },
-    finish(status, partial = false) {
+    finish(status, partial = false, fullTiming = false) {
       activeId = null;
       current = completed;
       total = status === 'pass' && !partial && !declaredPartial ? completed : null;
-      return snapshot();
+      return snapshot(fullTiming ? 'all' : 'active');
     },
-    snapshot,
+    snapshot: () => snapshot('active'),
   };
 }

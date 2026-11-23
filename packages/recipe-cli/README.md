@@ -17,6 +17,13 @@ The package ships no executable. `runRecipeCli` and `registerDiscoveryCommands` 
 
 Docs: https://farmslot.io/docs/reference/recipe-discovery
 
+## Prepare host fixtures
+
+For non-headless platforms, `handlePrepare(argv, options)` defaults to `launch --verify`, host `steps`, then standalone
+`verify`. Hosts whose fixtures establish readiness can set `PrepareCommandOptions.verifyLaunch`
+to `false` to run launch without `--verify`, followed by those steps and the same standalone
+verification. Failure still stops the chain and records later steps as skipped.
+
 ## Source layout
 
 | path                                                | owns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |

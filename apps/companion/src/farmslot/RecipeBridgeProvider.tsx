@@ -2,11 +2,10 @@ import React, { createContext, useEffect, useMemo, useRef } from 'react';
 import { Dimensions, Platform, View } from 'react-native';
 import { FullWindowOverlay } from 'react-native-screens';
 
-import { hudPlacement } from '@farmslot/protocol/recipe';
-
 import { resolveRecipeUiObservation } from '../lib/recipe-ui-observation';
 
 import { useRecipeBridgeRelay } from './recipe-bridge-relay';
+import { normalizeHudState } from './recipe-hud-state';
 import { type FarmslotRecipeHudState, RecipeHud, useRecipeHudState } from './RecipeHud';
 
 export interface FarmslotRecipeBridgeCommand {
@@ -177,43 +176,4 @@ function defaultObserveUi(
 
 function isRecipeBridgeEnabled(): boolean {
   return Boolean(__DEV__ && process.env.EXPO_PUBLIC_FARMSLOT_RECIPE_BRIDGE === '1');
-}
-
-function normalizeHudState(payload: Record<string, unknown> | undefined): FarmslotRecipeHudState {
-  const status = parseStatus(payload?.status);
-  const progress = isRecord(payload?.progress) ? payload.progress : undefined;
-  return {
-    status,
-    intent: asString(
-      payload?.intent ?? payload?.text,
-      status === 'fail' ? 'Recipe failed' : 'Recipe HUD missing intent',
-    ),
-    currentStep: asOptionalNumber(
-      payload?.currentStep ?? payload?.current_step ?? progress?.current,
-    ),
-    totalSteps: asOptionalNumber(payload?.totalSteps ?? payload?.total_steps ?? progress?.total),
-    error: asOptionalString(payload?.error),
-    position: hudPlacement(payload?.display),
-  };
-}
-
-function parseStatus(value: unknown): FarmslotRecipeHudState['status'] {
-  if (value === 'idle' || value === 'running' || value === 'pass' || value === 'fail') return value;
-  return 'running';
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
-}
-
-function asString(value: unknown, fallback: string): string {
-  return typeof value === 'string' && value.trim() ? value : fallback;
-}
-
-function asOptionalString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value : undefined;
-}
-
-function asOptionalNumber(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }

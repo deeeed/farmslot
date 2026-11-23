@@ -1,5 +1,6 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, query, state } from 'lit/decorators.js';
+import { guard } from 'lit/directives/guard.js';
 
 import {
   type EvidenceReviewClaim,
@@ -22,7 +23,11 @@ import {
 } from '../workspace/visual-claim-judgment.js';
 import { workspaceArtifactBasename } from '../workspace/workspace-artifacts.js';
 
-import { INSPECTION_CONTEXT_CAPTION } from './evidence-reviewer-recording.js';
+import {
+  evidenceRecordingPin,
+  evidenceReviewerTimeline,
+  INSPECTION_CONTEXT_CAPTION,
+} from './evidence-reviewer-recording.js';
 import type { EvidenceReviewerView } from './evidence-reviewer-url-state.js';
 import { gatewayMediaSrc } from './gateway-media-src.js';
 import type { MediaLightbox } from './media-lightbox.js';
@@ -43,6 +48,11 @@ export interface EvidenceReviewerSelection {
   judgments?: EvidenceReviewerJudgments;
   /** Where a shared link left the recording. */
   atMs?: number;
+  timelinePage?: number;
+  allowHistoricalTimeline?: boolean;
+  recordingPath?: string;
+  recordingRevision?: string;
+  linkedRecordingUnavailable?: true;
   /** The step whose check a shared link left open, by trace index. */
   check?: number;
   /** Bumped each time the host applies a link: the review then shows that link's view. */
@@ -59,6 +69,7 @@ export interface EvidenceReviewerJudgments extends Pick<
 
 const NAV_WIDTH_KEY = 'farmslot:evidence-review-nav-width';
 const DEFAULT_NAV_WIDTH = 340;
+const TIMELINE_PAGE_SIZE = 25;
 
 /** The criteria pane's width: 240-720px; CSS also keeps it under 60% of the review. */
 export function clampReviewNavWidth(width: number): number {
@@ -84,6 +95,9 @@ export class EvidenceReviewer extends LitElement {
   @state() private order: 'video' | 'criteria' = 'video';
   /** The screenshot in the main view instead of the recording. */
   @state() private still: LightboxItem | null = null;
+  @state() private timelineOpen = false;
+  @state() private timelinePage = 0;
+  @state() private timelineActiveStep: number | null = null;
   @query('media-lightbox') private player?: MediaLightbox;
   @query('nav') private nav?: HTMLElement;
 
@@ -229,6 +243,15 @@ export class EvidenceReviewer extends LitElement {
       margin: 0;
       padding: 0 0 ${unsafeCSS(spacing.sm)};
     }
+    .recording-timeline > summary {
+      cursor: pointer;
+      padding: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.md)};
+      border-bottom: 1px solid ${unsafeCSS(colors.bgCard)};
+    }
+    .recording-timeline .step {
+      width: 100%;
+      grid-template-columns: 6.5em 3em minmax(0, 1fr);
+    }
     .step-row {
       display: flex;
       align-items: center;
@@ -366,6 +389,13 @@ export class EvidenceReviewer extends LitElement {
     return model.recordingForPath(recording.path)?.videoPath;
   }
 
+  /** Criterion rows belong to the current trace. Retained traces have their own timeline. */
+  private get criterionVideoPath(): string | undefined {
+    const recording = this.selection?.recording;
+    const source = recording && this.model?.recordingTimelineForPath(recording.path);
+    return source?.current && source.timeline ? this.videoPath : undefined;
+  }
+
   private get hasTimeline(): boolean {
     return this.selection?.recording
       ? (this.model?.recordingForPath(this.selection.recording.path)?.hasTimeline ?? false)
@@ -383,7 +413,7 @@ export class EvidenceReviewer extends LitElement {
   private toc(order: 'video' | 'criteria' = 'criteria'): EvidenceReviewTocEntry[] {
     const model = this.model;
     if (!model) return [];
-    const videoPath = this.videoPath;
+    const videoPath = this.criterionVideoPath;
     if (this.tocs?.model !== model || this.tocs.videoPath !== videoPath)
       this.tocs = { model, videoPath, byOrder: new Map() };
     let entries = this.tocs.byOrder.get(order);
@@ -400,8 +430,13 @@ export class EvidenceReviewer extends LitElement {
   }
 
   private stepMs(step: EvidenceReviewOccurrence): number | null {
-    const path = this.videoPath;
-    return path ? (this.model?.markerSeekMs(path, step.traceIndex, 'start') ?? null) : null;
+    if (this.failedVideoUrl && this.failedVideoUrl === this.recording?.url) return null;
+    const path = this.criterionVideoPath;
+    const duration =
+      this.measuredDuration?.url === this.recording?.url ? this.measuredDuration?.ms : undefined;
+    return path
+      ? (this.model?.markerSeekMs(path, step.traceIndex, 'start', duration) ?? null)
+      : null;
   }
 
   /** The criterion's screenshots, served like the rest of its evidence. */
@@ -441,19 +476,33 @@ export class EvidenceReviewer extends LitElement {
   private appliedModel?: EvidenceReviewModel;
   /** Where the recording should be once it shows: a criterion start, a step, or a resume point. */
   private pendingSeekMs: number | null = null;
+  private pausePendingSeek = false;
   private resumeMs: number | null = null;
 
   protected willUpdate(changed: Map<string, unknown>): void {
     const selection = this.selection;
     if (!selection) return;
     // A link's moment and step check apply once, when the host applies that link.
-    const newLink = changed.has('selection') && selection.link !== this.applied?.link;
+    const newLink =
+      changed.has('selection') &&
+      (selection.link !== this.applied?.link ||
+        (selection.link !== undefined &&
+          this.applied?.linkedRecordingUnavailable &&
+          !selection.linkedRecordingUnavailable));
     const reopened =
       newLink ||
       (changed.has('selection') &&
         (selection.claimId !== this.applied?.claimId ||
           selection.recording?.url !== this.applied?.recording?.url ||
           selection.opened?.path !== this.applied?.opened?.path));
+    if (newLink) {
+      this.player?.cancelPendingSeek();
+      this.timelineOpen = selection.timelinePage !== undefined;
+      this.timelinePage = selection.timelinePage ?? 0;
+    } else if (selection.recording?.path !== this.applied?.recording?.path) {
+      this.timelinePage = 0;
+    }
+    const previous = this.applied;
     this.applied = selection;
     if (reopened) this.claimId = selection.claimId;
     const claimChanged = this.claimId !== this.appliedClaim;
@@ -469,7 +518,17 @@ export class EvidenceReviewer extends LitElement {
       !model.selectClaim(this.claimId)
     )
       model.clearSelection();
-    if (!claimChanged && !reopened) return;
+    if (!claimChanged && !reopened) {
+      const path = selection.recording?.path;
+      if (
+        path &&
+        previous &&
+        !previous.model.recordingForPath(path) &&
+        model.recordingForPath(path)
+      )
+        this.announce(this.shown);
+      return;
+    }
     // A refreshed evidence model keeps what is on screen; a new criterion or file starts over.
     const claim = this.claim();
     const opened =
@@ -477,11 +536,21 @@ export class EvidenceReviewer extends LitElement {
         ? selection.opened
         : undefined;
     this.activeStep = null;
+    this.timelineActiveStep = null;
     this.resumeMs = null;
     const start = claim ? this.startMs(claim) : null;
-    const linkedAt = newLink ? selection.atMs : undefined;
+    const linkedAt = newLink && !selection.linkedRecordingUnavailable ? selection.atMs : undefined;
+    this.pausePendingSeek = linkedAt !== undefined;
+    const explicitVideo =
+      reopened &&
+      (selection.opened
+        ? isVideoLightboxItem(selection.opened)
+        : Boolean(selection.recordingPath && !selection.linkedRecordingUnavailable));
     const linkedCheck =
-      newLink && claim && this.steps(claim).some((step) => step.traceIndex === selection.check)
+      newLink &&
+      !selection.linkedRecordingUnavailable &&
+      claim &&
+      this.steps(claim).some((step) => step.traceIndex === selection.check)
         ? selection.check
         : undefined;
     this.checkStep = linkedCheck ?? null;
@@ -490,7 +559,12 @@ export class EvidenceReviewer extends LitElement {
     if (
       opened ||
       !this.recording ||
-      (start === null && this.hasTimeline && claim && this.stills(claim).length)
+      (linkedAt === undefined &&
+        !explicitVideo &&
+        start === null &&
+        this.hasTimeline &&
+        claim &&
+        this.stills(claim).length)
     ) {
       this.still = opened ?? (claim ? (this.stills(claim)[0] ?? null) : null);
       this.pendingSeekMs = null;
@@ -501,10 +575,14 @@ export class EvidenceReviewer extends LitElement {
     this.announce({
       ...(this.still
         ? { path: this.still.path }
-        : linkedAt !== undefined
-          ? { atMs: linkedAt }
-          : {}),
+        : {
+            ...(explicitVideo && this.recording ? { path: this.recording.path } : {}),
+            ...(linkedAt !== undefined ? { atMs: linkedAt } : {}),
+          }),
       ...(linkedCheck !== undefined ? { check: linkedCheck } : {}),
+      ...(newLink && !selection.linkedRecordingUnavailable
+        ? { recordingPath: selection.recordingPath }
+        : {}),
     });
   }
 
@@ -528,9 +606,45 @@ export class EvidenceReviewer extends LitElement {
   private shown: Omit<EvidenceReviewerView, 'claimId'> = {};
 
   private announce(view: Omit<EvidenceReviewerView, 'claimId'> = {}) {
-    if (!this.claimId) return;
-    this.shown = view;
-    this.announced = { claimId: this.claimId, ...view };
+    if (
+      !this.claimId ||
+      (this.selection?.linkedRecordingUnavailable &&
+        (this.selection.recordingPath || this.selection.recordingRevision))
+    )
+      return;
+    const opened = this.selection?.opened;
+    const recordingPath = this.selection?.recording?.path;
+    const timedFile =
+      opened && isVideoLightboxItem(opened)
+        ? opened.path
+        : this.shown.path === recordingPath
+          ? recordingPath
+          : undefined;
+    const {
+      timelinePage: _page,
+      recordingPath: linkedRecordingPath,
+      recordingRevision: _revision,
+      ...moment
+    } = view;
+    this.shown = {
+      ...moment,
+      ...(!moment.path && this.timelineOpen && recordingPath
+        ? { path: recordingPath }
+        : moment.atMs !== undefined && !moment.path && timedFile
+          ? { path: timedFile }
+          : {}),
+      ...(this.timelineOpen ? { timelinePage: this.timelinePage } : {}),
+      ...(this.model &&
+      recordingPath &&
+      (this.timelineOpen ||
+        this.shown.recordingPath ||
+        linkedRecordingPath ||
+        moment.atMs !== undefined ||
+        moment.path === recordingPath)
+        ? evidenceRecordingPin(this.model, recordingPath)
+        : {}),
+    };
+    this.announced = { claimId: this.claimId, ...this.shown };
     this.requestUpdate();
   }
 
@@ -543,7 +657,8 @@ export class EvidenceReviewer extends LitElement {
     if (this.still || this.pendingSeekMs === null) return;
     const ms = this.pendingSeekMs;
     this.pendingSeekMs = null;
-    this.player?.seekToMs(ms);
+    this.player?.seekToMs(ms, this.recording?.url, this.pausePendingSeek);
+    this.pausePendingSeek = false;
   }
 
   private playerItems(): LightboxItem[] {
@@ -564,10 +679,15 @@ export class EvidenceReviewer extends LitElement {
     this.dispatchEvent(new CustomEvent('reviewer-claim', { detail: { claimId: claim.id } }));
   }
 
-  private chooseStep(step: EvidenceReviewOccurrence, ms: number) {
-    this.activeStep = step.traceIndex;
+  private chooseStep(traceIndex: number, ms: number, recordingPath?: string) {
+    this.activeStep = recordingPath ? null : traceIndex;
+    this.timelineActiveStep = recordingPath ? traceIndex : null;
+    this.announce({
+      atMs: ms,
+      path: recordingPath ?? this.recording?.path,
+      ...(this.checkStep !== null ? { check: this.checkStep } : {}),
+    });
     this.showVideo(ms);
-    this.announce({ atMs: ms });
   }
 
   private showCheck(step: EvidenceReviewOccurrence) {
@@ -624,7 +744,7 @@ export class EvidenceReviewer extends LitElement {
   private showVideo(ms: number | null = this.resumeMs ?? this.claimStartMs()) {
     if (this.still) this.still = null;
     if (ms === null) return;
-    if (this.player?.currentTimeMs() != null) this.player.seekToMs(ms);
+    if (this.player?.currentTimeMs() != null) this.player.seekToMs(ms, this.recording?.url);
     else this.pendingSeekMs = ms;
   }
 
@@ -694,7 +814,7 @@ export class EvidenceReviewer extends LitElement {
                 ? 'Untimed recording; no measured step position'
                 : 'Not in the recording'
               : ''}
-            @click=${() => ms !== null && this.chooseStep(step, ms)}
+            @click=${() => ms !== null && this.chooseStep(step.traceIndex, ms)}
           >
             <span class="muted"
               >${ms === null ? '—' : formatEvidenceReviewVideoTime(ms / 1000, false)}</span
@@ -714,6 +834,159 @@ export class EvidenceReviewer extends LitElement {
     </ol>`;
   }
 
+  private measuredDuration?: { url: string; ms: number };
+  private failedVideoUrl?: string;
+
+  private clearSelectedSeek() {
+    this.pendingSeekMs = null;
+    this.activeStep = null;
+    this.timelineActiveStep = null;
+    const { atMs: _unavailable, ...view } = this.shown;
+    this.announce(view);
+    this.requestUpdate();
+  }
+
+  private onVideoFailure(url: string, retriable: boolean) {
+    if (url !== this.recording?.url) return;
+    this.failedVideoUrl = url;
+    if (retriable) {
+      this.activeStep = null;
+      this.timelineActiveStep = null;
+      this.requestUpdate();
+    } else {
+      this.clearSelectedSeek();
+    }
+  }
+
+  private onVideoMetadata() {
+    const url = this.recording?.url;
+    const ms = url ? this.player?.videoDurationMs(url) : undefined;
+    if (url && ms !== undefined) {
+      this.measuredDuration = { url, ms };
+      if (this.failedVideoUrl === url) this.failedVideoUrl = undefined;
+    }
+    this.requestUpdate();
+  }
+
+  private timeline?: {
+    model: EvidenceReviewModel;
+    path: string;
+    allowHistorical: boolean;
+    projection: ReturnType<typeof evidenceReviewerTimeline>;
+  };
+
+  private renderRecordingTimeline(model: EvidenceReviewModel, path: string) {
+    const allowHistorical = this.selection?.allowHistoricalTimeline ?? false;
+    if (
+      this.timelineOpen &&
+      (this.timeline?.model !== model ||
+        this.timeline.path !== path ||
+        this.timeline.allowHistorical !== allowHistorical)
+    )
+      this.timeline = {
+        model,
+        path,
+        allowHistorical,
+        projection: evidenceReviewerTimeline(
+          model,
+          path,
+          this.timeline?.projection,
+          allowHistorical,
+        ),
+      };
+    const projection = this.timelineOpen ? this.timeline?.projection : undefined;
+    return html`<details
+      class="recording-timeline"
+      data-testid="recording-timeline"
+      ?open=${this.timelineOpen}
+      @toggle=${(event: Event) => {
+        const details = event.currentTarget as HTMLDetailsElement;
+        if (this.timelineOpen === details.open) return;
+        this.timelineOpen = details.open;
+        this.announce(this.shown);
+      }}
+      @keydown=${(event: KeyboardEvent) => {
+        if (event.key === ' ') event.stopPropagation();
+      }}
+    >
+      <summary>
+        Recording timeline${projection?.stepCount ? ` · ${projection.stepCount} steps` : ''}
+      </summary>
+      ${this.timelineOpen ? this.renderTimelineRows(projection, model, path) : nothing}
+    </details>`;
+  }
+
+  private showTimelinePage(page: number): void {
+    this.timelinePage = page;
+    this.announce(this.shown);
+  }
+
+  private renderTimelineRows(
+    projection: ReturnType<typeof evidenceReviewerTimeline>,
+    model: EvidenceReviewModel,
+    path: string,
+  ) {
+    if (!projection?.stepCount)
+      return html`<p class="detail">Timeline unavailable for this recording.</p>`;
+    const { stepCount } = projection;
+    const lastPage = Math.ceil(stepCount / TIMELINE_PAGE_SIZE) - 1;
+    const page = Math.min(this.timelinePage, lastPage);
+    const offset = page * TIMELINE_PAGE_SIZE;
+    const rows = projection.page(
+      offset,
+      TIMELINE_PAGE_SIZE,
+      model,
+      this.measuredDuration?.url === this.recording?.url ? this.measuredDuration?.ms : undefined,
+    );
+    const failed = Boolean(this.failedVideoUrl && this.failedVideoUrl === this.recording?.url);
+    return html`
+      ${failed ? html`<p class="detail" role="status">Recording could not load.</p>` : nothing}
+      <ol>
+        ${guard([rows, this.timelineActiveStep, path, failed], () =>
+          rows.map(
+            ({ traceIndex, atMs, timeLabel, intent, ok }) =>
+              html`<li>
+                <button
+                  class="step"
+                  data-trace-index=${traceIndex}
+                  aria-current=${this.timelineActiveStep === traceIndex}
+                  ?disabled=${failed || atMs === null}
+                  @click=${() =>
+                    !failed && atMs !== null && this.chooseStep(traceIndex, atMs, path)}
+                >
+                  <span class="muted">${timeLabel}</span>
+                  <span class=${ok ? 'ok' : 'fail'}>${ok ? 'pass' : 'fail'}</span>
+                  <span>${intent}</span>
+                </button>
+              </li>`,
+          ),
+        )}
+      </ol>
+      ${lastPage
+        ? html`<div class="order" aria-label="Timeline pages">
+            <button
+              class="btn"
+              ?disabled=${page === 0}
+              @click=${() => this.showTimelinePage(page - 1)}
+            >
+              Previous steps
+            </button>
+            <span class="muted"
+              >${offset + 1}–${Math.min(offset + TIMELINE_PAGE_SIZE, stepCount)} of
+              ${stepCount}</span
+            >
+            <button
+              class="btn"
+              ?disabled=${page === lastPage}
+              @click=${() => this.showTimelinePage(page + 1)}
+            >
+              Next steps
+            </button>
+          </div>`
+        : nothing}
+    `;
+  }
+
   /** The recording and the criterion's screenshots, one tap each into the main view. */
   private renderMedia(claim: EvidenceReviewClaim) {
     const stills = this.stills(claim);
@@ -725,8 +998,8 @@ export class EvidenceReviewer extends LitElement {
             aria-pressed=${!this.still}
             title="Recording"
             @click=${() => {
+              this.announce({ path: this.recording?.path });
               this.showVideo();
-              this.announce();
             }}
           >
             Video
@@ -750,6 +1023,13 @@ export class EvidenceReviewer extends LitElement {
   render() {
     const model = this.model;
     if (!model || !this.selection) return nothing;
+    if (this.selection.recordingRevision && this.selection.linkedRecordingUnavailable)
+      return html`<header>
+        <p role="status">The recording in this link is unavailable.</p>
+        <button class="btn" data-testid="evidence-review-close" @click=${() => this.close()}>
+          Close
+        </button>
+      </header>`;
     const current = this.claim();
     const row = current ? this.row(current) : undefined;
     const items = this.playerItems().map((item) =>
@@ -768,7 +1048,7 @@ export class EvidenceReviewer extends LitElement {
         </button>
       </header>
       <div class="body" style="--nav-width:${this.navWidth}px">
-        <nav aria-label="Acceptance criteria">
+        <nav aria-label="Evidence navigation">
           <div class="order" role="group" aria-label="Order">
             ${(
               [
@@ -786,6 +1066,12 @@ export class EvidenceReviewer extends LitElement {
                 </button>`,
             )}
           </div>
+          ${this.selection.recordingPath && this.selection.linkedRecordingUnavailable
+            ? html`<p class="muted" role="status">The recording in this link is unavailable.</p>`
+            : nothing}
+          ${this.selection.recording
+            ? this.renderRecordingTimeline(model, this.selection.recording.path)
+            : nothing}
           ${this.orderedClaims().map(({ claim, start }) => {
             const selected = claim.id === this.claimId;
             return html`<button
@@ -839,10 +1125,15 @@ export class EvidenceReviewer extends LitElement {
               owns-keys
               hide-timeline
               .confine=${false}
+              .autoplay=${this.selection.atMs === undefined}
               .items=${items}
               .selectedIndex=${0}
               .expandLabel=${current?.evidence.length ? 'All files' : ''}
               @lightbox-expand=${() => this.showFiles()}
+              @lightbox-video-metadata=${() => this.onVideoMetadata()}
+              @lightbox-seek-unavailable=${() => this.clearSelectedSeek()}
+              @lightbox-video-error=${(event: CustomEvent<{ url: string; retriable: boolean }>) =>
+                this.onVideoFailure(event.detail.url, event.detail.retriable)}
               @lightbox-moment=${(event: CustomEvent<{ ms: number }>) =>
                 this.announce({
                   atMs: event.detail.ms,

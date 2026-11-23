@@ -6,6 +6,34 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.31.2 - 2026-11-23
+
+- Pin the Recipe Runner 0.52.2 cohort.
+
+## 0.31.1 - 2026-11-21
+
+- Pin the Protocol 0.92.0 producer cohort.
+
+## 0.31.0 - 2026-11-21
+
+- Expose the verified recording timeline digest for evidence viewer index reuse.
+
+## 0.30.1 - 2026-11-19
+
+- Pin the structural inventory SDK cohort while retaining public protocol 0.91.0.
+
+## 0.30.0 - 2026-11-19
+
+- Expose qualified invocation timing through the shared evidence view, including unassigned costs and timing-sensitive snapshot equality.
+
+## 0.29.0 - 2026-11-19
+
+- Project composed-flow evidence through the existing shared view with execution-qualified bindings, nullable progress and snapshot equality; retain legacy chronological evidence.
+
+## 0.28.7 - 2026-11-18
+
+- Align published dependencies with @farmslot/protocol 0.90.0, @farmslot/recipe-runner 0.48.0.
+
 ## 0.28.6 - 2026-11-18
 
 - Update the exact dependency cohort for prepared recipe trees and overall progress.

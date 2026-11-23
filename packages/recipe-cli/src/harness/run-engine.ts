@@ -85,6 +85,8 @@ export type {
 export type RecipeEngineRunOptions = RecipeRunOptions & {
   /** Command-resolved task registration; the engine never reads ambient task paths. */
   claims?: RecipeRunRequest['claims'];
+  /** Identity from the command resolver, retained across preflight and recovery. */
+  selection?: RecipeRunRequest['selection'];
   comparisonDependencies?: RecipeRunRequest['comparisonDependencies'];
   /** Gateway repair scope bound to its separate task-owned repair recipe. */
   repairScope?: RecipeRunRequest['repairScope'];
@@ -437,6 +439,9 @@ async function resolveRecipeExecution<TMutation, TAllowlist extends ConsoleAllow
     ...trust,
     ...(librarySources ? { librarySources } : {}),
     adapter,
+    ...(runtimeOptions.selection
+      ? { selection: runtimeOptions.selection, recipePath: runtimeOptions.selection.path }
+      : {}),
     ...(runtimeOptions.params ? { params: runtimeOptions.params } : {}),
   };
   let plan: RecipeExecutionPlan | undefined;

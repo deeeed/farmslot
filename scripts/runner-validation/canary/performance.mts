@@ -113,6 +113,24 @@ export async function runPerformanceCanary(
       path.join(fixture, 'pool', 'performance.json'),
       JSON.stringify({ machine: 'performance-fixture', host: 'localhost', slots }),
     );
+    // The fleet snapshot a farm keeps beside its pool; fleet RPCs stat it and fail without one.
+    await writeFile(
+      path.join(fixture, '.farm-status.json'),
+      JSON.stringify({
+        checked_at: now,
+        slots: slots.map((slot) => ({
+          slot: slot.id,
+          machine: 'performance-fixture',
+          project: 'performance',
+          platform: 'cli',
+          repo: slot.repo,
+          lifecycle: 'ready',
+          phase: null,
+          agent: 'idle',
+          enabled: false,
+        })),
+      }),
+    );
     await writeFile(
       path.join(fixture, 'projects/performance/project.json'),
       JSON.stringify({

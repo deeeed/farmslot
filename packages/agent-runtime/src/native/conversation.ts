@@ -231,6 +231,9 @@ export class NativeConversationJournal {
   }
 }
 
+/** How long live delivery gathers new events before sending them together. */
+const LIVE_DELIVERY_WINDOW_MS = 16;
+
 /** A single bounded delivery queue. start() is called only after the initial reply is written. */
 export class NativeConversationSubscription {
   readonly initial: Exclude<NativeConversationUpdate, { kind: 'delta' }>;
@@ -293,7 +296,9 @@ export class NativeConversationSubscription {
 
   private schedule(): void {
     if (this.bytes >= 64 * 1024) this.flush();
-    else this.timer ??= setTimeout(() => this.flush(), 50);
+    // One 60 Hz frame: a viewer renders each update as it comes, and a stream emitting every
+    // ~50 ms is not paired into ~10 Hz deliveries. 64 KB still flushes at once.
+    else this.timer ??= setTimeout(() => this.flush(), LIVE_DELIVERY_WINDOW_MS);
   }
 
   private flush(): void {

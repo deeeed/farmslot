@@ -23,6 +23,8 @@ export interface RepeatReviewResumeBinding {
   repository: string;
   prNumber: number;
   lastReviewedHeadSha: string;
+  /** Effort recorded on the retained reviewer. Null is an unset launch. */
+  effort: string | null;
 }
 
 export type RepeatReviewResumePlan =
@@ -169,7 +171,11 @@ export function resolveRepeatReviewResumePlan(
     };
   }
   if (model && reviewer.model !== model) return { kind: 'refused', reason: 'model-mismatch' };
-  if ((effort ?? null) !== (reviewer.effort ?? null))
+  // An omitted Claude effort means the recorded launch, including a pre-upgrade unset effort.
+  if (
+    (effort ?? null) !== (reviewer.effort ?? null) &&
+    !(runner === 'claude' && (effort ?? null) === null)
+  )
     return { kind: 'refused', reason: 'effort-mismatch' };
   const reviewedHead = context.priorReviewedHeadSha;
   const headProvenance =
@@ -219,6 +225,7 @@ export function resolveRepeatReviewResumePlan(
         repository: context.repository,
         prNumber: context.prNumber,
         lastReviewedHeadSha: reviewedHead,
+        effort: reviewer.effort ?? null,
         fallback: {
           reason: 'session-resume-unsupported',
           detail:
@@ -241,6 +248,7 @@ export function resolveRepeatReviewResumePlan(
         priorRunId: prior.id,
         contextId: reviewer.id,
         runnerSessionId: reviewer.runnerSessionId,
+        effort: reviewer.effort ?? null,
       },
     };
   return {
@@ -254,6 +262,7 @@ export function resolveRepeatReviewResumePlan(
       contextId: reviewer.id,
       runnerSessionId: reviewer.runnerSessionId,
       runnerSessionPath: reviewer.runnerSessionPath!,
+      effort: reviewer.effort ?? null,
     },
   };
 }

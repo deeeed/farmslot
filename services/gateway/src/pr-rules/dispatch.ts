@@ -16,7 +16,7 @@ import {
   reviewResultForRun,
   type Run,
 } from '@farmslot/protocol';
-import { executionModelFromSelection, resolveReviewMode } from '@farmslot/review-dispatch';
+import { resolveReviewMode, workerModelFromSelection } from '@farmslot/review-dispatch';
 
 import {
   addItem,
@@ -406,8 +406,8 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
             runner: resolved.choices[0].runner,
             transport: resolved.choices[0].transport ?? (parent ? 'tmux' : undefined),
             nativeProfile: resolved.choices[0].nativeProfile,
-            model: executionModelFromSelection(resolved.choices[0]).model,
-            effort: executionModelFromSelection(resolved.choices[0]).effort ?? undefined,
+            model: workerModelFromSelection(resolved.choices[0]).model,
+            effort: workerModelFromSelection(resolved.choices[0]).effort ?? undefined,
             completionPolicy: 'artifact-only',
             reviewMode: review.options.mode,
             qaProfileId: review.options.qaProfileId,
@@ -520,7 +520,7 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
     const latestIntent = this.store.intent(intent.id);
     if (!latestIntent || fingerprint(latestIntent) !== resolvedFingerprint)
       throw new Error('PR constraints changed during execution resolution; retry admission');
-    const execution = executionModelFromSelection({
+    const execution = workerModelFromSelection({
       runner: item.runner ?? '',
       model: item.model ?? null,
       effort: item.effort ?? null,
@@ -537,7 +537,7 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
     ]);
     if (
       !prepared.choices.some((choice) => {
-        const execution = executionModelFromSelection(choice);
+        const execution = workerModelFromSelection(choice);
         return (
           JSON.stringify([
             choice.slotId ?? null,
@@ -563,7 +563,7 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
     const intent =
       item.prWork?.kind === 'review' ? this.store.intent(item.prWork.sourceId) : undefined;
     const proof = this.proofs.get(item.id);
-    const execution = executionModelFromSelection({
+    const execution = workerModelFromSelection({
       runner: item.runner ?? '',
       model: item.model ?? null,
       effort: item.effort ?? null,

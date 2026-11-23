@@ -20,9 +20,11 @@ import {
   type QueueClaim,
   RecordedEvidenceReadError,
   resolveRunSlotId,
+  retainedWorkerLifetimeSessions,
   type Run,
   type RunDecision,
   type RunEngineState,
+  type RunnerSessionUsage,
   type RunProbeWorkerSignalResult,
   type RunReplayStepParams,
   type RunReplayStepResult,
@@ -35,7 +37,7 @@ import {
   WORKER_TERMINAL_CONTRACT_INPUT,
   type WorkerSignal,
 } from '@farmslot/protocol';
-import { parseReviewSelection } from '@farmslot/review-dispatch';
+import { parseReviewSelection, pipelineReviewReceipts } from '@farmslot/review-dispatch';
 
 import { selectAgentContext } from '../../agents/contexts.js';
 import {
@@ -106,6 +108,7 @@ import {
 import { clearedRunnerSessionContextPatch } from '../../runners/session-record.js';
 import { requestedRunSlotId } from '../../runs/slot-pin.js';
 import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../../runs/store.js';
+import { mergeRunSessionReceipts } from '../../runtime/agent-session-rows.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { runWithSystemOriginator } from '../../security/work-originator.js';
 import { withRunSources } from '../../sources/runtime.js';
@@ -188,6 +191,72 @@ export function freshDispatchEngineStateForReplay(
   // A fresh dispatch starts a new task identity, so its own dispatch opens the evidence window.
   const { taskExecution: _resumedTask, ...rest } = engineState ?? {};
   return { ...rest, flags };
+}
+
+export function partitionReplayGateDecisions(
+  decisions: RunDecision[],
+  superseded: readonly RunDecision[],
+  keep: ((decision: RunDecision) => boolean) | undefined,
+): { retained: RunDecision[]; retiringGates: RunDecision[] } {
+  if (!keep) return { retained: decisions, retiringGates: [...superseded] };
+  const supersededIds = new Set(superseded.map(({ id }) => id));
+  const retained: RunDecision[] = [];
+  const retiringGates: RunDecision[] = [];
+  for (const decision of decisions) {
+    const audited = supersededIds.has(decision.id);
+    const kept = audited || keep(decision);
+    if (kept) retained.push(decision);
+    if (decision.payload?.kind === 'ready' && (audited || !kept)) retiringGates.push(decision);
+  }
+  return { retained, retiringGates };
+}
+
+function replayGateReceipts(
+  runId: string,
+  retiringGates: readonly RunDecision[],
+): RunnerSessionUsage[] {
+  const receipts: RunnerSessionUsage[] = [];
+  for (const decision of retiringGates) {
+    if (decision.payload?.kind !== 'ready') continue;
+    for (const review of decision.payload.reviews ?? []) {
+      const observations = [
+        { usage: review.usage, trace: review.session, sessionId: review.reviewerSessionId },
+        ...(review.attempts ?? []).map(({ usage, session }) => ({
+          usage,
+          trace: session,
+          sessionId: session?.sessionId,
+        })),
+      ];
+      for (const { usage, trace, sessionId } of observations) {
+        if (!usage) continue;
+        receipts.push({
+          ...usage,
+          role: 'review',
+          runner: usage.runner ?? trace?.runner ?? review.runner,
+          runnerSessionId: usage.runnerSessionId ?? trace?.sessionId ?? sessionId,
+          includesPriorRunLifetime:
+            usage.includesPriorRunLifetime ||
+            (trace?.priorRunId && trace.priorRunId !== runId ? true : undefined),
+        });
+      }
+    }
+  }
+  return receipts;
+}
+
+export function retainReplayLifetimeUsage(
+  run: Run,
+  inherited = retainedWorkerLifetimeSessions(run),
+): Run['sessionUsage'] {
+  const rows = run.sessionUsage;
+  if (!inherited.size || !rows) return rows;
+  const needsRetention = (row: RunnerSessionUsage) =>
+    row.scope !== 'run-delta' &&
+    !row.includesPriorRunLifetime &&
+    Boolean(row.runnerSessionId && inherited.has(row.runnerSessionId));
+  return rows.some(needsRetention)
+    ? rows.map((row) => (needsRetention(row) ? { ...row, includesPriorRunLifetime: true } : row))
+    : rows;
 }
 
 function assertReplayOutsideTerminalCleanup(run: Run): void {
@@ -2301,8 +2370,11 @@ async function replayRunStep(
       if (!keepHotSlotSkipPrepare) {
         delete newFlags.skipPrepare;
       }
-      const currentEngineState = getRun(params.runId)?.engineState ?? existing.engineState;
+      const current = getRun(params.runId) ?? existing;
+      const currentEngineState = current.engineState ?? existing.engineState;
+      const retainedUsage = retainReplayLifetimeUsage(current);
       updateRun(params.runId, {
+        ...(retainedUsage !== current.sessionUsage ? { sessionUsage: retainedUsage } : {}),
         engineState: { ...currentEngineState, flags: newFlags },
       });
       console.log(
@@ -2541,8 +2613,25 @@ async function replayRunStep(
     assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
     assertNativeReplayCurrent();
 
-    // Reset this step and all subsequent steps to pending
+    // The old step outputs identify the retained worker and may hold the only review receipt.
     const stepIdx = existing.steps.indexOf(step);
+    const beforeReset = getRun(params.runId) ?? existing;
+    const resetSteps = beforeReset.steps.slice(stepIdx);
+    const replayLifetimeSessions = resetSteps.some(({ name }) => name === PS.DISPATCH)
+      ? retainedWorkerLifetimeSessions(beforeReset)
+      : undefined;
+    const beforeResetUsage = replayLifetimeSessions
+      ? retainReplayLifetimeUsage(beforeReset, replayLifetimeSessions)
+      : beforeReset.sessionUsage;
+    const replayReviewReceipts = pipelineReviewReceipts({ id: beforeReset.id, steps: resetSteps });
+    if (replayReviewReceipts.length || beforeResetUsage !== beforeReset.sessionUsage)
+      updateRun(params.runId, {
+        sessionUsage: replayReviewReceipts.length
+          ? mergeRunSessionReceipts(beforeResetUsage ?? [], replayReviewReceipts)
+          : beforeResetUsage,
+      });
+
+    // Reset this step and all subsequent steps to pending
     for (let i = stepIdx; i < existing.steps.length; i++) {
       updateRunStep(params.runId, existing.steps[i].name, {
         status: 'pending',
@@ -2578,25 +2667,22 @@ async function replayRunStep(
     // A completion replay keeps the output review: it records the capture COMPLETE
     // reads, not a gate verdict. A task-generation replay recaptures, so it drops it.
     // Match by id: an output recapture during the replay clones the decision list.
-    const supersededIds = new Set(supersededGateAudit.map(({ id }) => id));
-    const clearedDecisions = replaysTaskGeneration
-      ? supersededGateAudit
-      : replaysCompletionOrGate
-        ? existing.decisions.filter(
-            (d) => supersededIds.has(d.id) || d.payload?.kind === 'output-review',
-          )
-        : replaysPostGate
-          ? existing.decisions
-          : existing.decisions.filter((d) => {
-              if (supersededIds.has(d.id)) return true;
-              if (d.resolvedAt) return false;
-              // Drop an unresolved decision whose owning step is being replayed
-              // (targetIdx onward re-runs and regenerates it). Preserve ones owned
-              // by steps before the target — still actionable — or of unknown
-              // ownership (prior default behavior).
-              const ownerIdx = decisionOwningStepIndex(d.type, flowSteps);
-              return ownerIdx < 0 || ownerIdx < targetIdx;
-            });
+    const { retained: clearedDecisions, retiringGates } = partitionReplayGateDecisions(
+      existing.decisions,
+      supersededGateAudit,
+      replaysTaskGeneration
+        ? () => false
+        : replaysCompletionOrGate
+          ? (decision) => decision.payload?.kind === 'output-review'
+          : replaysPostGate
+            ? undefined
+            : (decision) => {
+                if (decision.resolvedAt) return false;
+                // Keep unresolved decisions belonging to earlier steps or an unknown owner.
+                const owner = decisionOwningStepIndex(decision.type, flowSteps);
+                return owner < 0 || owner < targetIdx;
+              },
+    );
     // Reset run status, clear error and stale outcome
     const {
       outcome: _outcome,
@@ -2748,8 +2834,17 @@ async function replayRunStep(
     }
     assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
     assertNativeReplayCurrent();
+    const gateReceipts = replayGateReceipts(params.runId, retiringGates);
+    const retainedUsage = replayLifetimeSessions
+      ? retainReplayLifetimeUsage(currentBeforeReplayUpdate, replayLifetimeSessions)
+      : currentBeforeReplayUpdate.sessionUsage;
     updateRun(params.runId, {
       status: activeStatusForReplayStep(replayStepName),
+      ...(gateReceipts.length || retainedUsage !== currentBeforeReplayUpdate.sessionUsage
+        ? {
+            sessionUsage: mergeRunSessionReceipts(retainedUsage ?? [], gateReceipts),
+          }
+        : {}),
       error: undefined,
       completedAt: undefined,
       taskFile: replayTaskFile,

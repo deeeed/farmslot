@@ -262,3 +262,93 @@ test('expired WARM-only workspace intake retains an explicit cold fallback choic
     { ...choice, mode: 'cold' },
   ]);
 });
+
+// Codex r6 on #2333: a PR rule asks for a warm Claude review with effort
+// omitted, after the previous `high` review's workspace retention expired.
+// Workspace continuity resolves the retained reviewer's effort onto the cold
+// fallback session, and then this conversion dropped it — `choice.effort` is
+// null for an omitted request, so the queue launched the next review with no
+// effort at all and Claude fell back to its default. The whole point of the PR
+// is that a continued review keeps the effort it was launched with.
+test('an expired warm Claude review carries its recorded effort into the cold fallback', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-06T00:00:00Z') });
+  const { intent, prior } = fixture();
+  prior.slotId = null;
+  prior.transport = 'tmux';
+  prior.createdByPrincipalId = prior.nativeOwnerPrincipalId = 'owner';
+  prior.metrics.runner = 'claude';
+  prior.metrics.model = 'sonnet';
+  prior.reviewWorkspace = {
+    workspaceId: 'workspace',
+    machine: 'machine-a',
+    executionNodeId: 'machine-a',
+    checkoutPath: '/owned/source',
+    taskPath: '/owned/task',
+    artifactPath: '/owned/task/artifacts',
+    retainedAt: '2026-11-01T00:00:00Z',
+    executionStoppedAt: '2026-11-01T00:00:00Z',
+    retainedUntil: '2026-11-03T00:00:00Z',
+  };
+  Object.assign(prior.agentContexts![0], {
+    id: 'review',
+    runner: 'claude',
+    model: 'sonnet',
+    // What the expired review was launched with.
+    effort: 'high',
+  });
+  const omitted: PRExecutionChoice = {
+    machine: 'machine-a',
+    runner: 'claude',
+    model: 'sonnet',
+    transport: 'tmux',
+    // The rule did not ask for an effort, so the queue has none of its own.
+    effort: null,
+    mode: 'warm',
+  };
+
+  assert.deepEqual(preferRetainedReviewer(intent, 'project', [omitted], [prior]), [
+    { ...omitted, mode: 'cold', effort: 'high' },
+  ]);
+});
+
+// The other half of that line. A request that names its own effort is only
+// compatible with a reviewer recorded at the same one (`continuity.ts:50`), so a
+// different explicit effort is not a continuation at all: no retained preference
+// is returned and the queue launches it from the pool with the effort asked for.
+// This pins that the carry above cannot overwrite an explicit choice.
+test('an explicit effort that differs from the retained one is not continued', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-06T00:00:00Z') });
+  const { intent, prior } = fixture();
+  prior.slotId = null;
+  prior.transport = 'tmux';
+  prior.createdByPrincipalId = prior.nativeOwnerPrincipalId = 'owner';
+  prior.metrics.runner = 'claude';
+  prior.metrics.model = 'sonnet';
+  prior.reviewWorkspace = {
+    workspaceId: 'workspace',
+    machine: 'machine-a',
+    executionNodeId: 'machine-a',
+    checkoutPath: '/owned/source',
+    taskPath: '/owned/task',
+    artifactPath: '/owned/task/artifacts',
+    retainedAt: '2026-11-01T00:00:00Z',
+    executionStoppedAt: '2026-11-01T00:00:00Z',
+    retainedUntil: '2026-11-03T00:00:00Z',
+  };
+  Object.assign(prior.agentContexts![0], {
+    id: 'review',
+    runner: 'claude',
+    model: 'sonnet',
+    effort: 'high',
+  });
+  const explicit: PRExecutionChoice = {
+    machine: 'machine-a',
+    runner: 'claude',
+    model: 'sonnet',
+    transport: 'tmux',
+    effort: 'medium',
+    mode: 'warm',
+  };
+
+  assert.deepEqual(preferRetainedReviewer(intent, 'project', [explicit], [prior]), []);
+});

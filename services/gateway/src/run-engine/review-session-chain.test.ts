@@ -95,6 +95,7 @@ test('repeat review resumes only the exact prior reviewer binding', () => {
       contextId: 'review-context-1',
       runnerSessionId: 'session-1',
       runnerSessionPath: '/tmp/session-1.jsonl',
+      effort: null,
     },
   });
   assert.deepEqual(
@@ -264,6 +265,7 @@ test('native review continuity uses its owned stopped session without a tmux tra
         priorRunId: prior.id,
         contextId: prior.agentContexts![0].id,
         runnerSessionId: 'session-1',
+        effort: null,
       },
     },
   );
@@ -312,6 +314,19 @@ test('COLD never resolves a retained session, and WARM without head evidence ref
     reason: 'missing-session',
   });
   assert.deepEqual(resolveRepeatReviewResumePlan(current, prior, 'codex', 'gpt-6-astra', 'high'), {
+    kind: 'refused',
+    reason: 'effort-mismatch',
+  });
+  const claudePrior: Run = {
+    ...prior,
+    agentContexts: [
+      { ...prior.agentContexts![0], runner: 'claude', model: 'opus', effort: 'medium' },
+    ],
+  };
+  const resumed = resolveRepeatReviewResumePlan(current, claudePrior, 'claude', 'opus', null);
+  assert.equal(resumed.kind, 'resume');
+  if (resumed.kind === 'resume') assert.equal(resumed.binding.effort, 'medium');
+  assert.deepEqual(resolveRepeatReviewResumePlan(current, claudePrior, 'claude', 'opus', 'low'), {
     kind: 'refused',
     reason: 'effort-mismatch',
   });
@@ -390,15 +405,17 @@ test('an adapter without continuation uses the verified delta even without a sav
       runner: 'opencode',
       runnerSessionId: null,
       runnerSessionPath: null,
+      effort: 'high',
     })),
   };
-  const plan = resolveRepeatReviewResumePlan(current, source, 'opencode', 'gpt-6-astra');
+  const plan = resolveRepeatReviewResumePlan(current, source, 'opencode', 'gpt-6-astra', 'high');
   assert.equal(plan.kind, 'delta-cold');
   if (plan.kind !== 'delta-cold') return;
   assert.equal(plan.trace.reviewId, 'review-lineage-1');
   assert.equal(plan.trace.fallback?.reason, 'session-resume-unsupported');
   assert.deepEqual(plan.trace.fallback?.comparedRanges, ['1111111..2222222']);
   assert.equal(plan.trace.sessionId, undefined);
+  assert.equal(plan.trace.effort, 'high');
 });
 
 test('retained review lineage normalizes both current and prior pull URLs', () => {

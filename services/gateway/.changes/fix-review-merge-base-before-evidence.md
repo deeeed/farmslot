@@ -1,0 +1,3 @@
+- Review guidance names the publication merge base as a before baseline when the selected attempt is on the publication head, as publication already accepts (ADR-062), so a continuation run's true pre-change capture can qualify.
+- The gate summary says "automatic review skipped" when the pipeline review was skipped but requested reviews ran and are counted.
+- Groovy Gradle build scripts (`.gradle`) count as source in diff stats, like `.kts`.

@@ -263,6 +263,8 @@ function projectRecipeHostContext<T>(
           const commandOptions = {
             ...cli,
             ...invocation?.options,
+            // The provider check uses the full operator list. Keep that list for detail replay.
+            authorizeProvider: options.authorizedProviders ?? [],
             adapter: boundProvider.runtime.id,
           };
           const value = await withRecipeExecutionSignal(signal, () =>

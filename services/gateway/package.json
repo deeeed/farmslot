@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/gateway",
-  "version": "0.39.8",
+  "version": "0.39.11",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
@@ -15,6 +15,7 @@
     "test:blind-eval-git-live": "TSX_TSCONFIG_PATH=tsconfig.json node --import tsx --test src/evals/blind-git.live.ts src/evals/blind-submodules.live.ts src/evals/blind-seatbelt.live.ts src/evals/blind-launch-env.live.ts",
     "test:acceptance-watch-live": "node --import tsx --experimental-test-module-mocks src/tasks/watcher-acceptance.live.ts",
     "test:decision-advice-live": "node --import tsx src/methods/decision-advice.rpc.live.ts",
+    "test:prepare-reap-live": "TSX_TSCONFIG_PATH=tsconfig.json node --import tsx --test src/methods/slot/prepare-detached-groups.live.ts",
     "test:claude-hookless-progress": "TSX_TSCONFIG_PATH=tsconfig.json node --import tsx --experimental-test-module-mocks --test src/runners/claude-hookless-progress.live.ts",
     "test:publish-package-refresh-live": "TSX_TSCONFIG_PATH=tsconfig.json node --import tsx --experimental-test-module-mocks --test src/run-engine/publish-package-refresh.live.ts",
     "test:finished-slot-reclaim-live": "TSX_TSCONFIG_PATH=tsconfig.json node --import tsx --experimental-test-module-mocks --test src/run-lifecycle/finished-slot-reclaim.live.ts",

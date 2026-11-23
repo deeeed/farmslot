@@ -601,6 +601,7 @@ async function handleRunInner<TMutation, TAllowlist extends ConsoleAllowlist>(
     ...(repair.repairScope ? { repairScope: repair.repairScope } : {}),
     params,
     ...(librarySources ? { librarySources } : {}),
+    ...(validated.selection ? { selection: validated.selection } : {}),
     stdoutIsMachineContract: machine,
     onActionEvent: ({ nodeId, action, status }: RecipeNodeEvent) => {
       stream.node(nodeId, action, status);
@@ -1161,6 +1162,7 @@ async function handleRunPlan<TMutation, TAllowlist extends ConsoleAllowlist>(
       claims,
       params: effectiveParams,
       librarySources,
+      ...(validated.selection ? { selection: validated.selection } : {}),
       stdoutIsMachineContract: jsonOutput || stream.enabled,
     };
     const restoreEnvironment = activateRecipeRuntimeEnvironment(adapter, target, runtimeOptions);

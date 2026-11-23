@@ -30,9 +30,9 @@ import {
   assertReviewPolicy,
   assertReviewSequence,
   assertWarmReviewContext,
-  executionModelFromSelection,
   parseReviewRequestContext,
   resolveReviewMode,
+  workerModelFromSelection,
 } from '@farmslot/review-dispatch';
 
 import { withoutCleanupSignal } from '../core/cleanup-scope.js';
@@ -1456,7 +1456,7 @@ export async function selectPRQueueExecution(
   let refusal: NoDispatchableSlotError | undefined;
   for (const group of groups.values()) {
     const model = group[0];
-    const execution = executionModelFromSelection(model);
+    const execution = workerModelFromSelection(model);
     const allowedSlots = [
       ...new Set(
         group
@@ -1546,7 +1546,7 @@ async function selectQueuedReviewWorkspace(
   for (const choice of candidates) {
     let eligible = false;
     try {
-      const execution = executionModelFromSelection(choice);
+      const execution = workerModelFromSelection(choice);
       const proposed = { ...item, reviewWorkspaceTarget: { machine: choice.machine } };
       assertReviewWorkspacePlacement(proposed);
       const { queuedSourceCreationRequest, withSourceRequestPlanning } =

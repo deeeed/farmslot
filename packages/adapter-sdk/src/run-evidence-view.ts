@@ -1,6 +1,7 @@
 import {
   type AcceptanceStatusSummary,
   acceptanceVerdictLabel,
+  digestRecipeDocument,
   type RecipeClaimKind,
 } from '@farmslot/protocol';
 
@@ -12,6 +13,7 @@ import type {
   EvidenceReviewTiming,
 } from './evidence-review-model.js';
 import { proofStepGroups } from './evidence-review-toc.js';
+import type { RunEvidenceFlow, RunEvidenceFlowOccurrence } from './run-evidence-flow.js';
 
 /** Bumped only for a breaking change to the shape templates read. */
 export const RUN_EVIDENCE_VIEW_VERSION = 1;
@@ -59,6 +61,8 @@ export interface RunEvidenceCriterion {
   pair: { before: RunEvidenceFile; after: RunEvidenceFile } | null;
   /** The trace steps that prove it. */
   traceIndexes: number[];
+  /** Unlike legacy traceIndexes, these include each retained source's execution identity. */
+  occurrences?: RunEvidenceFlowOccurrence[];
   note?: string;
 }
 
@@ -95,6 +99,10 @@ export interface RunEvidenceStepGroup {
  */
 export interface RunEvidenceView {
   version: typeof RUN_EVIDENCE_VIEW_VERSION;
+  /** Equality only, never an ordering cursor or evidence authority. */
+  updateId?: string;
+  /** Missing prepared data keeps legacy evidence usable without inventing a tree. */
+  flow?: RunEvidenceFlow | null;
   run: RunEvidenceViewRun | null;
   summary: AcceptanceStatusSummary;
   /** Every criterion in the run's own order. */
@@ -127,22 +135,8 @@ function videos(model: EvidenceReviewModel): RunEvidenceVideo[] {
   return [...measured, ...[...new Set(untimed)].map((path) => ({ path, measured: false }))];
 }
 
-/** Project the shared review model; reads only, never moves the model's selection. */
-export function runEvidenceView(
-  model: EvidenceReviewModel,
-  run: RunEvidenceViewRun | null = null,
-): RunEvidenceView {
-  // A step seeks only its own execution's recording: a baseline's index is another trace's.
-  const stepCue = (traceIndex: number): RunEvidenceCue | null => {
-    for (const { videoPath } of model.currentRecordings) {
-      const startMs = model.markerSeekMs(videoPath, traceIndex, 'start');
-      const endMs = model.markerSeekMs(videoPath, traceIndex, 'end');
-      if (startMs !== null && endMs !== null)
-        return { videoPath: model.artifactPath(videoPath), startMs, endMs };
-    }
-    return null;
-  };
-  const runStart = Date.parse(run?.startedAt ?? model.currentOccurrences[0]?.startedAt ?? '');
+/** Materialize immutable source facts once; selection and run display facts stay outside. */
+function projectRunEvidenceView(model: EvidenceReviewModel, runStart: number): RunEvidenceView {
   const step = (occurrence: EvidenceReviewOccurrence): RunEvidenceStep => {
     const atMs = Date.parse(occurrence.startedAt ?? '') - runStart;
     return {
@@ -153,19 +147,19 @@ export function runEvidenceView(
       ok: occurrence.ok,
       proves: [...occurrence.proves],
       files: occurrence.artifacts.map(file),
-      cue: stepCue(occurrence.traceIndex),
+      cue: structuredClone(model.occurrenceCue(occurrence.traceIndex)),
       atMs: Number.isFinite(atMs) ? Math.max(0, atMs) : null,
     };
   };
   const steps = model.currentOccurrences.map(step);
   const byIndex = new Map(steps.map((entry) => [entry.traceIndex, entry]));
-  return {
+  const view: RunEvidenceView = {
     version: RUN_EVIDENCE_VIEW_VERSION,
-    run,
+    flow: structuredClone(model.flow ?? null),
+    run: null,
     summary: { ...model.summary },
     criteria: model.claims.map((claim) => {
       const clip = claim.clips[0];
-      const row = model.comparisons.find((entry) => entry.claim.id === claim.id);
       return {
         id: claim.id,
         text: claim.text,
@@ -182,11 +176,9 @@ export function runEvidenceView(
             }
           : null,
         files: claim.evidence.filter((entry) => entry.mediaType !== 'video').map(file),
-        pair:
-          row?.selectedBefore && row.selectedAfter
-            ? { before: file(row.selectedBefore), after: file(row.selectedAfter) }
-            : null,
+        pair: null,
         traceIndexes: [...new Set(claim.occurrences.map((entry) => entry.traceIndex))],
+        occurrences: structuredClone([...model.criterionOccurrences(claim.id)]),
         ...(claim.status?.note ? { note: claim.status.note } : {}),
       };
     }),
@@ -199,5 +191,44 @@ export function runEvidenceView(
     videos: videos(model),
     errors: [...model.errors],
     warnings: [...model.displayWarnings],
+  };
+  return view;
+}
+
+interface CachedProjection {
+  runStart: number;
+  view: RunEvidenceView;
+  digest: string;
+}
+
+const projections = new WeakMap<EvidenceReviewModel, CachedProjection>();
+
+/** Project the shared snapshot; reads only, never moves the model's selection. */
+export function runEvidenceView(
+  model: EvidenceReviewModel,
+  run: RunEvidenceViewRun | null = null,
+): RunEvidenceView {
+  const runStart = Date.parse(run?.startedAt ?? model.currentOccurrences[0]?.startedAt ?? '');
+  let cached = projections.get(model);
+  if (!cached || !Object.is(cached.runStart, runStart)) {
+    const view = projectRunEvidenceView(model, runStart);
+    cached = { runStart, view, digest: digestRecipeDocument(view) };
+    projections.set(model, cached);
+  }
+  // Callers receive JSON they can own without mutating the cached source snapshot.
+  const view = structuredClone(cached.view);
+  const comparisons = new Map(model.comparisons.map((row) => [row.claim.id, row]));
+  const pairs = view.criteria.map((criterion) => {
+    const row = comparisons.get(criterion.id);
+    criterion.pair =
+      row?.selectedBefore && row.selectedAfter
+        ? { before: file(row.selectedBefore), after: file(row.selectedAfter) }
+        : null;
+    return criterion.pair;
+  });
+  return {
+    ...view,
+    run: structuredClone(run),
+    updateId: digestRecipeDocument({ projection: cached.digest, run, pairs }),
   };
 }

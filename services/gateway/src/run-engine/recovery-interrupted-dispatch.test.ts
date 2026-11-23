@@ -178,6 +178,17 @@ function assertHeldOnCard(restart: Restart, label?: string) {
   assert.deepEqual(restart.slotWrites, [], label);
 }
 
+test('restart adoption keeps the effort stored with the delivery marker', async () => {
+  const run = dispatchingRun('claude', PROMPT_SENT_AT, { verifiedAt: PROMPT_SENT_AT });
+  run.agentContexts![0].effort = 'high';
+  const { restart, deps } = restartAt(run);
+
+  await recoverActiveRuns(deps);
+
+  assertAdopted(restart, 'claude effort');
+  assert.equal(restart.run.agentContexts?.[0]?.effort, 'high');
+});
+
 test('restart adopts a live worker whose launch carried its prompt and resumes at MONITOR', async () => {
   for (const runner of ['scripted', 'pi', 'opencode']) {
     const { restart, deps } = restartAt(dispatchingRun(runner, PROMPT_SENT_AT));

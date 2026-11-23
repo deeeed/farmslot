@@ -38,6 +38,25 @@ export function executionModelFromSelection(
   return { runner: row.runner, model, effort, mode: row.mode };
 }
 
+/** Worker launches keep an omitted Claude effort unset. Other runners still take the catalog default. */
+export function workerModelFromSelection(
+  selection: ReviewSelection,
+  catalog: ReviewDispatchCatalog = DEFAULT_REVIEW_DISPATCH_CATALOG,
+): ResolvedReviewDispatchExecutionModel {
+  const execution = executionModelFromSelection(selection, catalog);
+  if (execution.runner !== 'claude') return execution;
+  const effort = parseReviewSelection(
+    {
+      runner: selection.runner,
+      model: selection.model,
+      effort: selection.effort,
+      mode: selection.mode,
+    },
+    { catalog },
+  ).effort;
+  return effort === execution.effort ? execution : { ...execution, effort };
+}
+
 export function executionModelsFromReviewSequence(
   sequence: ReviewSequence,
   resources: readonly ReviewDispatchExecutionResources[] = [],

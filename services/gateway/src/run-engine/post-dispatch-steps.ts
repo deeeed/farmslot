@@ -31,6 +31,7 @@ import {
   resolveReviewDispatchDefaults,
   resolveReviewMode,
   reviewContextFromRequest,
+  workerModelFromSelection,
 } from '@farmslot/review-dispatch';
 
 import {
@@ -957,7 +958,14 @@ export async function executeReviewStep(
   const execution = reviewSelection ? executionModelFromSelection(reviewSelection) : null;
   // Without a sequence the project's review configuration selects the reviewer.
   const reviewer = execution
-    ? { reviewRunner: execution.runner, model: execution.model, effort: execution.effort }
+    ? {
+        reviewRunner: execution.runner,
+        model: execution.model,
+        effort:
+          reviewSelection && (reviewSelection.mode === 'warm' || execution.runner === 'claude')
+            ? (workerModelFromSelection(reviewSelection).effort ?? null)
+            : execution.effort,
+      }
     : {};
   const mode = reviewSelection?.mode ?? current.reviewMode;
   const primaryContext = current.reviewContext ?? current.prWork?.review?.options.reviewContext;

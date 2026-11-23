@@ -387,7 +387,7 @@ test('request validation refuses unsupported effort through the shared picker va
     overrideExecution: true,
     execution: {
       ...execution,
-      models: [{ runner: 'claude', model: 'opus', effort: 'high', mode: 'cold' as const }],
+      models: [{ runner: 'claude', model: 'opus', effort: 'ultra', mode: 'cold' as const }],
     },
   };
   assert.throws(() => buildPRRequest(draft, 'unsupported-effort'), /Unsupported review effort/);

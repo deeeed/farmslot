@@ -12,7 +12,10 @@ import { startRemoteNodeStack } from '../lib/remote-node-stack.mjs';
 
 import { runBlindDispatch } from './blind-dispatch.mjs';
 import { readCanaryTurns } from './blind-dispatch-proof.js';
-import { FULLFLOW_MODEL, FULLFLOW_PROJECT, FULLFLOW_SEED, fullflowPack } from './fullflow-fixture.mjs';
+import {
+  FULLFLOW_MODEL, FULLFLOW_PROJECT, FULLFLOW_QA_CRITERION, FULLFLOW_QA_SMOKE,
+  FULLFLOW_SEED, fullflowPack, validateFullflowQaArtifacts,
+} from './fullflow-fixture.mjs';
 import { REVIEWER } from './fixtures.mjs';
 import { FULLFLOW_CANCEL_REASON, fullflowCloseAction, fullflowFailure, fullflowGateFailure, fullflowNativeFailure, fullflowTerminal, fullflowTimings } from './fullflow-outcome.js';
 import type { IsolatedOptions } from './isolated.mjs';
@@ -167,9 +170,9 @@ export default function(pi) {
             create: () => ({
               project: FULLFLOW_PROJECT, slotId, ...worker, transport: 'native', modelQuestions: 'off',
               // Tiny-repo scope guidance; the real QA template and artifact contract still own completion.
-              initialContext: `${context} QA scope is solely the version CLI criterion on this seed, not the canary implementation. Use the generated TASK.md QA contract and actual smoke results for the suite/report. Keep helper scripts under the task directory so installed SDK imports resolve; never place them in /tmp. Write the required learnings.md and retrospective.md before the completion finalizer. Do not inspect framework implementation unless a generated contract is missing necessary information.`,
+              initialContext: `${context} QA scope is solely the version CLI criterion on this seed, not the canary implementation. ${FULLFLOW_QA_SMOKE} Use the generated TASK.md QA contract and actual smoke results for the suite/report. Keep helper scripts under the task directory so installed SDK imports resolve; never place them in /tmp. Write the required learnings.md and retrospective.md before the completion finalizer. Do not inspect framework implementation unless a generated contract is missing necessary information.`,
               mode: 'validation', flowType: 'qa', ticketOrPr: 'main', qaProfileId: 'pr',
-              qaInputs: { scope: { kind: 'ref', ref: 'main' }, criteria: ['node cli.mjs --version prints 1.0.0.'] },
+              qaInputs: { scope: { kind: 'ref', ref: 'main' }, criteria: [FULLFLOW_QA_CRITERION] },
               completionPolicy: 'artifact-only',
             }),
             decide: (decision, current) => {
@@ -268,8 +271,18 @@ export default function(pi) {
         if (name === 'fix-bug' && !refreshed) check.differences.push('publish-package-refresh: not reached');
         if (name === 'fix-bug' && !run.steps.some((step) => step.name === 'human-gate' && step.startedAt))
           check.differences.push('human-gate: not reached');
-        if (name === 'qa' && (!run.taskFile || !existsSync(path.join(path.dirname(run.taskFile), 'artifacts/report.html'))))
-          check.differences.push('qa-report: report.html not retained');
+        if (name === 'qa') {
+          const artifacts = run.taskFile && path.join(path.dirname(run.taskFile), 'artifacts');
+          if (!artifacts || !existsSync(path.join(artifacts, 'report.html')))
+            check.differences.push('qa-report: report.html not retained');
+          if (artifacts) {
+            try {
+              await validateFullflowQaArtifacts(artifacts);
+            } catch (error) {
+              check.differences.push(`qa-package: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          }
+        }
         if (name === 'fix-bug' && (!held || selectedClose !== 'hold')) check.differences.push('gate: offered hold was not accepted into the held state');
         if (selectedClose && !run.decisions.some((decision) => decision.resolvedAt && decision.resolvedAction === selectedClose))
           check.differences.push(`gate: ${selectedClose} resolution not recorded`);

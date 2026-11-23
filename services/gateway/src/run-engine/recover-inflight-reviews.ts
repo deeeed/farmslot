@@ -459,6 +459,7 @@ export function buildRecoveredReview(params: {
           continuity: mode === 'warm' ? ('resumed' as const) : ('fresh' as const),
           reviewId,
           sessionId: ctx.runnerSessionId,
+          effort: reviewerContextEffort(ctx),
           lastReviewedHeadSha: (mode === 'warm' ? priorHead : reviewSnapshot.headSha) ?? undefined,
           ...(mode === 'warm' ? { priorRunId: run.id, priorSessionId: ctx.runnerSessionId } : {}),
           fallback: ctx.reviewFallback,

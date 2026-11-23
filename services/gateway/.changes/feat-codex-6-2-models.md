@@ -1,2 +1,0 @@
-- Codex LB tiers and the Co-Pilot Astra default use `gpt-6.2-astra` at the published standard rates.
-- Saved `gpt-6-astra` pins stay registered on openai-codex and Codex LB. The native Co-Pilot runtime still defaults to `gpt-6.2-sol` at low effort.

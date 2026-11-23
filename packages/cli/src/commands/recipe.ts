@@ -208,20 +208,30 @@ export function registerRecipeCommand(program: Command): void {
     .argument('[directory]', 'Artifact package or task directory; defaults to the latest proof')
     .option('--target <path>', 'Checkout whose latest proof to inspect')
     .option('--validate', 'Validate the artifact package and runner provenance')
-    .addOption(new Option('--format <format>', 'Output format').choices(['text', 'markdown']))
+    .addOption(
+      new Option('--format <format>', 'Output format').choices(['text', 'markdown', 'transcript']),
+    )
     .option(
       '--command <text>',
       'Invocation displayed above the authored task run log (Markdown only)',
     )
-    .option('--out <file>', 'Write Markdown to this file instead of stdout')
+    .option(
+      '--transcript',
+      "Include the selected attempt's transcript in the validation logs (Markdown only)",
+    )
+    .option('--out <file>', 'Write Markdown or the transcript to this file instead of stdout')
     .action(async (directory: string | undefined, _options: unknown, cmd: Command) => {
       const output = new OutputContext(Boolean(cmd.optsWithGlobals().json));
       const emit = createEmitter(output, cmd);
       try {
         const shared = await import('@farmslot/recipe-cli/harness');
         const options = cmd.opts();
-        if ((options.out || options.command) && options.format !== 'markdown')
-          throw new Error('--out and --command require --format markdown.');
+        if (options.command && options.format !== 'markdown')
+          throw new Error('--command requires --format markdown.');
+        if (options.transcript && options.format !== 'markdown')
+          throw new Error('--transcript requires --format markdown.');
+        if (options.out && options.format !== 'markdown' && options.format !== 'transcript')
+          throw new Error('--out requires --format markdown or --format transcript.');
         const context = directory
           ? undefined
           : await shared.resolveProjectContext(
@@ -236,11 +246,17 @@ export function registerRecipeCommand(program: Command): void {
           command: options.command,
           out: options.out,
           validate: options.validate,
-          format: options.format === 'markdown' ? 'markdown' : 'text',
+          format:
+            options.format === 'markdown' || options.format === 'transcript'
+              ? options.format
+              : 'text',
+          transcript: Boolean(options.transcript),
         });
         const { artifactDir, summary, validation, out } = result;
         if (output.json) output.writeJson(result);
-        else if (options.format === 'markdown') {
+        else if (options.format === 'transcript') {
+          output.write(out ? `Transcript: ${out}\n` : body);
+        } else if (options.format === 'markdown') {
           output.write(out ? `Markdown: ${out}\n` : body);
           if (validation) output.write(`\nValidation: ${validation.status}\n`);
         } else {

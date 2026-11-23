@@ -233,7 +233,9 @@ arguments; the host supplies the observer sidecar path during closeout.
 
 Default UI policy records without author instructions, at ≤15 FPS and a
 1080-pixel maximum edge, and writes engine stills as WebP (`stillFormat`, above). Explicit operator off requires a reason and appears at the gate.
-Headless state-only execution does not require video. Proposed performance
+Headless state-only execution does not require video; its human-readable proof is
+the selected attempt's transcript (`farmslot recipe artifacts --format transcript`),
+derived from the frozen trace and package. Proposed performance
 budgets count the recorder, encoder and automatic derivation together:
 
 | Cost            | Acceptance target                                                                                                                                             |

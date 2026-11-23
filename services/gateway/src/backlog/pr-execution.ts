@@ -7,7 +7,7 @@ import {
   type PRSlotExecutionProfile,
   type PRSourceAccount,
 } from '@farmslot/protocol';
-import { executionModelFromSelection } from '@farmslot/review-dispatch';
+import { workerModelFromSelection } from '@farmslot/review-dispatch';
 
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
@@ -72,8 +72,8 @@ export async function resolvePRExecution(
         const target = {
           project,
           ...choice,
-          effort: executionModelFromSelection(choice).effort ?? undefined,
-          model: executionModelFromSelection(choice).model,
+          effort: workerModelFromSelection(choice).effort ?? undefined,
+          model: workerModelFromSelection(choice).model,
         };
         const admission = await inspectReviewWorkspaceTarget(target, context.ownerId);
         // Every authorized choice is priced for one list of options, so this keeps the
@@ -109,8 +109,8 @@ export async function resolvePRExecution(
     if (
       !runnerSupportsEffort(
         choice.runner,
-        executionModelFromSelection(choice).model,
-        executionModelFromSelection(choice).effort ?? undefined,
+        workerModelFromSelection(choice).model,
+        workerModelFromSelection(choice).effort ?? undefined,
       )
     ) {
       errors.push(`${choice.runner}/${choice.model}: unsupported effort ${choice.effort}`);

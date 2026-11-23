@@ -1,9 +1,24 @@
+export type { RecipeInvocationDecision, RecipeInvocationRouteIndex } from '../core/flow-route.js';
+export { createRecipeInvocationRouteIndex, recipeInvocationDecision } from '../core/flow-route.js';
+export type {
+  ProjectRecipeInvocationTimingInput,
+  RecipeInvocationTimingProjection,
+} from '../core/flow-timing.js';
+export {
+  createRecipeInvocationTimingProjection,
+  projectRecipeInvocationTiming,
+} from '../core/flow-timing.js';
 /** Portable evidence validation; importing this entry does not load capture or filesystem code. */
+export { buildRecipeInvocationAncestry } from '../core/flow-ancestry.js';
 export { proofDocument } from './assertions.js';
 export type { RecipeComparisonCapture, RecipeComparisonCaptureRow } from './capture-comparisons.js';
 export { groupRecipeCaptureComparisons } from './capture-comparisons.js';
 export type { OccurrenceRecordingCoverage } from './moments.js';
-export { indexRecordingTimelines, occurrenceRecordingCoverage } from './moments.js';
+export {
+  indexOccurrenceRecordingCoverage,
+  indexRecordingTimelines,
+  occurrenceRecordingCoverage,
+} from './moments.js';
 export type { RecordedClaimSource } from './package.js';
 export {
   deriveReviewedRecipeClaims,

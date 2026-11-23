@@ -368,3 +368,27 @@ Status: Accepted. Implements item 6 of the approved composed-flow SDK split for 
 The SDK projects parent, depth and labeled breadcrumbs from the same prepared invocation tree. The root has depth zero. Breadcrumbs retain each namespaced invocation ID and label, ordered from root through the selected invocation, so repeated calls remain distinct. The runner caches this projection once per prepared tree and supplies active ancestry on its existing flow updates. Consumers render that data without rebuilding ancestry or scanning execution history.
 
 Ancestry is an optional extension for older payloads. New updates carry null when no invocation is active. Progress qualifications and null totals remain unchanged. The prepared tree remains the common input for the later evidence view-model and timing work; no renderer or new event channel is introduced. ADR-062 Amendment 23 remains unchanged.
+
+## Amendment 10 (2026-11-19): Qualified invocation timing
+
+Status: Accepted under the approved composed-flow split, item 9, MANUAL-000187.
+
+The SDK uses recorded closed invocation windows to project inclusive elapsed time and self time. Self excludes the union of attributed direct-child windows. Repeated call IDs remain distinct; overlapping or shared windows count once in a rollup. A measured zero is valid. Missing, open, invalid or ambiguously attributed coverage stays unknown. Qualification is separate for inclusive and self; a partial number is a measured lower bound from complete qualified subsets, never an estimate from missing child costs.
+
+The existing prepared tree and execution trace remain authoritative. The runner maintains an interval index as trace entries arrive and publishes timing on the existing flow update and final summary, without rereading history per HUD event. The portable evidence projection uses the same calculator once per snapshot. An invocation may have measured inclusive time with unknown self. Costs with no explicit claim assignment remain in an unassigned timing rollup. Hosts render supplied data; playback offsets and wall-clock duration remain separate.
+
+Optional timing fields preserve old flow updates. `runEvidenceView` keeps the same version and projects qualified timing on its existing flow nodes; timing-only changes affect snapshot equality. No proof verdict, evidence authority, renderer, polling channel or device trial changes. ADR-062 Amendment 23 stays unchanged.
+
+Live timing updates are bounded to active ancestry. Full timing/claim/unassigned rollups are materialized once for final summary and evidence projection. The existing recorded branch calculation is shared by the timing and evidence owners. Trace provenance distinguishes measured execution from synthetic diagnostics; historical failed-zero ambiguity remains unknown.
+
+## Amendment 11 (2026-11-21): Run-local pending invocation flow
+
+Status: Accepted under MANUAL-000187 for the shared evidence viewer.
+
+The runner atomically replaces the optional run-local `.farmslot-recipe-flow.json` with the existing version 1 `RecipeFlowUpdate` when execution starts or closes an invocation, including nested calls and teardown. It uses the same incremental projection whether or not HUD is enabled. The file carries progress and ancestry. The viewer derives timing from recorded trace intervals.
+
+The pending reader pairs this file with the prepared tree in `recipe-resolution.json.flow`. The update must match `recipe-invocation.json.recipeRunId`, and the resolution root digest must match the invocation's recipe digest. The SDK checks the tree, root and active invocation. A missing or incompatible input leaves pending flow unavailable.
+
+The engine reserves the pending filename and its temporary sibling across case variants for transient flow. They are outside the evidence manifest and removed when the package is finalized. Completed viewers use the existing summary flow and prepared tree. The SDK's existing snapshot equality reflects active changes before a trace entry completes.
+
+With `includeRecordedEvidence`, the authorized `run.recipeRunsForRun` read may include transient `pendingFlow: { tree, update }` for the current run-owned recipe attempt. The gateway checks the selected attempt and the invocation ID and resolution digest defined above. It omits pending flow for decision-bound or retained execution reads and when current ownership or identity cannot be verified. Readers refresh through the existing run and artifact resource revisions. The retained evidence package and the artifact byte route keep their existing authority.

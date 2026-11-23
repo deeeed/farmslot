@@ -10,7 +10,7 @@ import {
   type QueueItem,
   type Run,
 } from '@farmslot/protocol';
-import { executionModelFromSelection, resolveReviewMode } from '@farmslot/review-dispatch';
+import { resolveReviewMode, workerModelFromSelection } from '@farmslot/review-dispatch';
 
 import {
   addItem,
@@ -281,8 +281,8 @@ export class PRRepairDispatcher implements PRQueueAdmissionHooks {
             project: repair.project,
             ticketOrPr: `${monitor.config.pr.repo}#${monitor.config.pr.number}`,
             runner: choice.runner,
-            model: executionModelFromSelection(choice).model,
-            effort: executionModelFromSelection(choice).effort ?? undefined,
+            model: workerModelFromSelection(choice).model,
+            effort: workerModelFromSelection(choice).effort ?? undefined,
             allowedSlots: [...new Set(execution.choices.map((entry) => entry.slotId))],
             autoDispatch: false,
             initialContext: `Handle these observed PR incidents without changing monitoring policy:\n${monitor.incidents
@@ -418,7 +418,7 @@ export class PRRepairDispatcher implements PRQueueAdmissionHooks {
     const latest = this.lookup(item);
     if (!latest || expected !== fingerprint(latest.monitor, latest.repair))
       throw new Error('Repair policy or evidence changed during admission');
-    const execution = executionModelFromSelection({
+    const execution = workerModelFromSelection({
       runner: item.runner ?? '',
       model: item.model ?? null,
       effort: item.effort ?? null,
@@ -432,7 +432,7 @@ export class PRRepairDispatcher implements PRQueueAdmissionHooks {
     ]);
     if (
       !prepared.choices.some((choice) => {
-        const execution = executionModelFromSelection(choice);
+        const execution = workerModelFromSelection(choice);
         return (
           JSON.stringify([choice.slotId, execution.runner, execution.model, execution.effort]) ===
           selection
@@ -445,7 +445,7 @@ export class PRRepairDispatcher implements PRQueueAdmissionHooks {
   assertCurrent(item: QueueItem): void {
     const current = this.lookup(item);
     const proof = this.proofs.get(item.id);
-    const execution = executionModelFromSelection({
+    const execution = workerModelFromSelection({
       runner: item.runner ?? '',
       model: item.model ?? null,
       effort: item.effort ?? null,

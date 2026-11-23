@@ -6,13 +6,14 @@ import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { Command } from 'commander';
+import { Command, CommanderError } from 'commander';
 
 import { shellQuote } from '@farmslot/recipe-cli/harness';
 
 import { fixtureHarness } from '../../test/helpers/project-doctor.js';
 
 import { registerDoctorCommand } from './doctor.js';
+import { registerRecipeCommand } from './recipe.js';
 import { projectRecipeHostOptions } from './recipe-project.js';
 
 const packageRoot = fileURLToPath(new URL('../..', import.meta.url));
@@ -278,6 +279,133 @@ function callPublic(
   assert.ifError(result.error);
   return result;
 }
+
+test('public project call list prints a working action-detail hint', async (t) => {
+  const root = callFixture(t);
+  const env = {
+    FARMSLOT_HOME: root,
+    FARMSLOT_POOL_DIR: path.join(root, 'no-pool'),
+    NO_COLOR: '1',
+  };
+  const previous = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, env);
+  t.after(() => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  async function invoke(args: string[], expectedExit = 0): Promise<string> {
+    const chunks: string[] = [];
+    const program = new Command().name('farmslot').option('--json').exitOverride();
+    program.configureOutput({ writeOut: (text) => chunks.push(text) });
+    registerRecipeCommand(program);
+    const write = process.stdout.write;
+    const tty = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+    const exitCode = process.exitCode;
+    process.exitCode = 0;
+    process.stdout.write = ((chunk: string | Uint8Array, ...args: unknown[]) => {
+      if (typeof chunk !== 'string')
+        return (write as (...items: unknown[]) => boolean).call(process.stdout, chunk, ...args);
+      chunks.push(chunk);
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      await program.parseAsync(args, { from: 'user' });
+      assert.equal(process.exitCode, expectedExit, chunks.join(''));
+    } catch (error) {
+      if (!(error instanceof CommanderError && error.code === 'commander.helpDisplayed'))
+        throw error;
+    } finally {
+      process.stdout.write = write;
+      if (tty) Object.defineProperty(process.stdout, 'isTTY', tty);
+      else Reflect.deleteProperty(process.stdout, 'isTTY');
+      process.exitCode = exitCode;
+    }
+    return chunks.join('');
+  }
+
+  const listing = await invoke([
+    'recipe',
+    'call',
+    '--list',
+    '--project',
+    'example',
+    '--projects-dir',
+    path.join(root, 'projects'),
+    '--adapter',
+    'headless',
+    '--target',
+    root,
+  ]);
+  assert.match(listing, /invocable actions \(headless\)/u);
+  function printedDetail(listOutput: string): string[] {
+    const hint = listOutput
+      .split('\n')
+      .find((line) => line.includes('Details and examples: '))
+      ?.split('Details and examples: ')[1];
+    assert.ok(hint);
+    assert.ok(hint.startsWith('farmslot recipe '));
+    const parsed = spawnSync(
+      '/bin/sh',
+      ['-c', 'farmslot() { printf "%s\\0" "$@"; }\n' + hint.replace('<name>', 'command')],
+      { encoding: 'utf8', timeout: 2000 },
+    );
+    assert.ifError(parsed.error);
+    assert.equal(parsed.status, 0, parsed.stderr);
+    return parsed.stdout.split('\0').filter(Boolean);
+  }
+
+  function assertSelectedSchema(detail: string): void {
+    assert.match(detail, /Execute an operator command\./u);
+    assert.match(detail, /Fields \(pass as <name>=<value>\):/u);
+    assert.match(detail, /\bcmd\s+string \(required\)/u);
+  }
+
+  const registered = printedDetail(listing);
+  assert.ok(!registered.includes('--authorize-provider'));
+  assertSelectedSchema(await invoke(registered));
+
+  const target = path.join(root, 'discovered');
+  const registry = path.join(root, 'empty registry');
+  fs.cpSync(path.join(root, 'projects/example'), target, { recursive: true });
+  fs.mkdirSync(path.join(target, 'artifacts'));
+  fs.mkdirSync(registry);
+  const provider = path.join(target, 'provider.mjs');
+  const discoveryArgs = ['--adapter', 'headless', '--projects-dir', registry, '--target', target];
+  for (const listArgs of [['call', '--list'], ['actions']]) {
+    const listOutput = await invoke([
+      'recipe',
+      ...listArgs,
+      ...discoveryArgs,
+      '--authorize-provider',
+      'provider.mjs',
+      '--authorize-provider',
+      provider,
+    ]);
+    const replay = printedDetail(listOutput);
+    assertSelectedSchema(await invoke(replay));
+    const suppliedProviders = replay.flatMap((arg, index) =>
+      arg === '--authorize-provider' ? [replay[index + 1]] : [],
+    );
+    assert.deepEqual(suppliedProviders, ['provider.mjs', provider]);
+    const executionHint = listOutput.split('\n').find((line) => /^(Use|Run):/u.test(line));
+    assert.ok(executionHint);
+    assert.doesNotMatch(
+      executionHint.split('  ·  Details and examples: ')[0]!,
+      /--authorize-provider/u,
+    );
+    const missing = replay.filter(
+      (arg, index) =>
+        arg !== '--authorize-provider' && replay[index - 1] !== '--authorize-provider',
+    );
+    missing.push('--json');
+    const denied = JSON.parse(await invoke(missing, 1));
+    assert.equal(denied.error.code, 'PROVIDER_UNAUTHORIZED');
+  }
+});
 
 test('public call refuses omitted diagnostic or task binding before executing', (t) => {
   const root = callFixture(t);

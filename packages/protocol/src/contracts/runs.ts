@@ -709,6 +709,8 @@ export interface ReviewFixDeltaSnapshot extends ReviewDiffSnapshot {
 }
 
 export interface RunnerSessionUsage {
+  /** Lifetime usage could include work before a retained handoff to this run. */
+  includesPriorRunLifetime?: true;
   /** Pipeline receipt metadata; optional only for older records. */
   model?: string | null;
   effort?: string | null;
@@ -727,8 +729,12 @@ export interface RunnerSessionUsage {
     import('./agents.js').NativeWorkerSessionBinding,
     'sessionId' | 'ownerPrincipalId' | 'executionNodeId' | 'stateDirectory'
   >;
-  /** All node-owned task leases contributing to this run's conversation receipt. */
+  /** Recorded task lease IDs. Older receipts can include observed, unmeasured leases. */
   usageLeaseIds?: string[];
+  /** The native transcript measurement verified every ID in usageLeaseIds. */
+  usageLeaseIdsVerified?: true;
+  /** Observed native task leases still awaiting a verified measurement. */
+  pendingUsageLeaseIds?: string[];
   startedAt?: string | null;
   completedAt?: string | null;
   durationMs?: number | null;
@@ -748,6 +754,10 @@ export interface RunnerSessionUsage {
   reasoningOutputTokens?: number | null;
   totalTokens?: number | null;
   costUsd?: number | null;
+  /** Provider-reported subtotal, including when the complete cost is unknown. */
+  providerReportedCostUsd?: number;
+  /** Pricing rule used by the gateway for a measured remote tmux Pi transcript. */
+  pricingScope?: 'remote-tmux-pi';
   measuredAt: string;
   source: 'runner-transcript' | 'provider-response' | 'unavailable';
   /** Transcript total at measurement time, or usage first observed within the owning run. */
@@ -1036,6 +1046,8 @@ export interface ReviewSummary {
     triggeredReWork: boolean;
     attempts: number;
     stale?: boolean;
+    /** The gateway accepted a worker fix without a reviewer; not a passing review. */
+    acceptedWithoutReview?: boolean;
     startedAt?: string;
     completedAt?: string;
   }>;
@@ -2050,6 +2062,8 @@ export interface RunMetrics {
   sessionCacheCreation?: number;
   sessionCacheRead?: number;
   sessionTotalTokens?: number;
+  /** Provider charges from an archive-only historical projection. Not an attempt cost. */
+  retainedArchiveProviderReportedCostUsd?: number;
   /** Whether the session fields are raw transcript totals or a retained-review generation delta. */
   sessionUsageScope?: 'session-total' | 'review-generation-delta' | 'review-chain-total';
   /** Raw retained transcript total used as the next review generation's subtraction baseline. */
@@ -2371,8 +2385,43 @@ export interface RunMonitorState {
   lastStructuredProgressAt?: string;
   /** Confirmed operator wait time excluded from the monitor's execution timeout. */
   operatorWaitMs?: number;
+  /**
+   * Time the monitor itself spent blocked on a decision card, excluded from the
+   * execution timeout.
+   *
+   * Separate from {@link operatorWaitMs}, which is recomputed each poll from the
+   * worker's own `waitingForOperator` signal and so cannot carry a wait the
+   * gateway owns. A run that sat on a `runner unavailable` card for a minute had
+   * that minute charged to the worker's monitoring window, and was re-blocked as
+   * "interactive handoff exceeded 90 min" seconds after Continue.
+   */
+  gateWaitMs?: number;
+  /**
+   * When the monitor started waiting on the card it is on now, written before
+   * the wait and cleared when it ends.
+   *
+   * A restart while an operator is still reading a card would otherwise lose
+   * that whole slice: the monitor only adds a wait to {@link gateWaitMs} once it
+   * finishes, so without this the recovered loop charges the time it was down to
+   * the worker and can re-block the run immediately.
+   */
+  gateWaitStartedAt?: string;
+  /**
+   * The decision {@link gateWaitStartedAt} belongs to.
+   *
+   * The marker alone cannot say whose wait it is, and more than one monitor can
+   * be alive for a run — a replayed loop raises its own card while the retiring
+   * one unwinds. Whatever ends a wait (its own settlement, or an operator
+   * extending the window from the card) may only clear the marker of the
+   * decision it actually answered.
+   */
+  gateWaitDecisionId?: string;
   /** Inactivity grace after explicit resume; this is not worker progress. */
   operatorResumedAt?: string;
+  /** A fresh transcript baseline gets a new ID, independent of the timeout clock. */
+  budgetWindowId?: string;
+  /** ID of the accounting window that produced the persisted delivery state. */
+  budgetDeliveryWindow?: string;
   /** True after a one-shot usage-budget warning was emitted for this monitor session. */
   budgetWarned?: boolean;
   /** True after a budget nudge was confirmed delivered (may retry while false). */
@@ -3037,6 +3086,8 @@ export interface MachineParkRecord {
 }
 
 export interface Run {
+  /** Opaque revision of accounting inputs on a run detail response. */
+  costAccountingRevision?: string;
   /** New PR-completion consumers; retained runs keep their frozen contracts. */
   acceptanceContractVersion?: 1;
   acceptanceExecutionContract?: AcceptanceExecutionContract;
@@ -3948,6 +3999,9 @@ export const DEFAULT_TASK_DIR = '.task';
  * Changing this value alters defaults across the dispatch wizard and gateway
  * dispatch path — verify all `DEFAULT_CLAUDE_MODEL` callers when touching it. */
 export const DEFAULT_CLAUDE_MODEL = 'opus';
+
+/** Claude CLI `--effort` levels. Review admission and native launch share this list. */
+export const CLAUDE_CLI_EFFORTS: readonly string[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 /** Default Codex model used when no slot/task/project/user override is set. */
 export const DEFAULT_CODEX_MODEL = 'gpt-6.2-sol';

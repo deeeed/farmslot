@@ -1,0 +1,335 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion conversation jank check",
+  "description": "Measures a native conversation on an Android device: open, stream a 200-delta turn sent from another client, then scroll back into the history, with adb gfxinfo framestats around each step (the jank.recipe.json method: a step fails below min_sustained_fps over any 500 ms of rendering; target_fps is reported, never failed on). Start native-stream-stack.mts (isolated gateway, synthetic Claude runner, no model), pair the app once with `PLATFORM=android ADB_SERIAL=<serial> node scripts/agentic/native-stream-proof.mjs pair`, then run with PLATFORM=android, ADB_SERIAL, METRO_PORT, NATIVE_STREAM_CONTROL and a new NATIVE_STREAM_STATE file. The streamed turn and the scroll also check the conversation's follow state from the app's proof frame: the app must show the turn's command completed through its completion cursor, and after the scroll a fling back to the end must resume following. require_follow=no reports follow without checking it; a before/after frame-rate pair runs both builds that way. Run it on the development variant with video off: screenrecord's encoder competes with the app for the frames being measured. The drags start at a fixed point inside the transcript (540, 1000 device px on a 1080x2424 screen); ui.scroll swipes from the screen edge and starts in the status bar on Android.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "min_sustained_fps": {
+        "type": "number",
+        "default": 30,
+        "description": "Fail a step whose lowest FPS over any 500 ms of continuous rendering is below this."
+      },
+      "target_fps": {
+        "type": "number",
+        "default": 60,
+        "description": "Reported, never failed on."
+      },
+      "require_follow": {
+        "type": "string",
+        "enum": ["yes", "no"],
+        "default": "yes",
+        "description": "no reports the follow state without checking it, for a build whose frame has none (before MANUAL-000190) and the frame-rate pair."
+      },
+      "frames": {
+        "type": "string",
+        "enum": ["on", "off"],
+        "default": "on",
+        "description": "off for an Android release build, which has no proof frame: frame-rate only, with require_follow=no."
+      }
+    }
+  },
+  "proofTargets": [
+    {
+      "id": "conversation-jank-budget",
+      "claim": "Streaming into and scrolling back through a native conversation hold the sustained FPS budget on this Android device; opening is measured and reported.",
+      "proofMode": "state"
+    },
+    {
+      "id": "conversation-follow",
+      "claim": "The reader follows the end while the turn streams and stops following after scrolling back (checked only with require_follow=yes).",
+      "proofMode": "state"
+    }
+  ],
+  "workflow": {
+    "entry": "setup",
+    "nodes": {
+      "setup": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-stream-proof.mjs setup",
+        "intent": "Create a synthetic Claude session and seed its earlier turns.",
+        "next": "open-start"
+      },
+      "open-start": {
+        "action": "app.performance_capture",
+        "phase": "start",
+        "id": "conversation-open",
+        "intent": "Start measuring the conversation's first render.",
+        "next": "open"
+      },
+      "open": {
+        "action": "command",
+        "cmd": "NATIVE_STREAM_FRAMES={{params.frames}} node scripts/agentic/native-stream-proof.mjs open",
+        "intent": "Open the session by deep link and wait for its history.",
+        "next": "at-end"
+      },
+      "at-end": {
+        "action": "command",
+        "cmd": "NATIVE_STREAM_FRAMES={{params.frames}} NATIVE_STREAM_REQUIRE_FOLLOW={{params.require_follow}} node scripts/agentic/native-stream-proof.mjs at-end",
+        "intent": "The rows rendered and the reader is at their end.",
+        "next": "open-end"
+      },
+      "open-end": {
+        "action": "app.performance_capture",
+        "phase": "end",
+        "id": "conversation-open",
+        "budget": {
+          "min_sustained_fps": "{{params.min_sustained_fps}}"
+        },
+        "targets": {
+          "fps": "{{params.target_fps}}"
+        },
+        "intent": "Close the open window against its budget.",
+        "next": "baseline"
+      },
+      "baseline": {
+        "action": "command",
+        "cmd": "NATIVE_STREAM_FRAMES={{params.frames}} node scripts/agentic/native-stream-proof.mjs baseline",
+        "intent": "Record what the app shows before the other client's turn is sent.",
+        "next": "stream-start"
+      },
+      "stream-start": {
+        "action": "app.performance_capture",
+        "phase": "start",
+        "id": "conversation-stream",
+        "intent": "Start measuring while another client's turn streams in.",
+        "next": "streams-following"
+      },
+      "streams-following": {
+        "action": "command",
+        "cmd": "NATIVE_STREAM_FRAMES={{params.frames}} NATIVE_STREAM_SEND=gateway NATIVE_STREAM_REQUIRE_FOLLOW={{params.require_follow}} node scripts/agentic/native-stream-proof.mjs streams-following",
+        "intent": "The streamed turn ends; every sample during it stayed at the end.",
+        "next": "follow-checked-stream"
+      },
+      "follow-checked-stream": {
+        "action": "switch",
+        "value": "{{params.require_follow}}",
+        "equals": "yes",
+        "intent": "Claim follow only when this run checked it.",
+        "cases": {
+          "match": "assert-streams-following"
+        },
+        "default": "stream-end"
+      },
+      "assert-streams-following": {
+        "action": "assert_output",
+        "source": "streams-following",
+        "stream": "stdout",
+        "match": "\"followChecked\":true",
+        "proves": ["conversation-follow"],
+        "intent": "The streamed turn reached the app and every follow check passed.",
+        "next": "stream-end"
+      },
+      "stream-end": {
+        "action": "app.performance_capture",
+        "phase": "end",
+        "id": "conversation-stream",
+        "budget": {
+          "min_sustained_fps": "{{params.min_sustained_fps}}",
+          "min_frames": 10
+        },
+        "targets": {
+          "fps": "{{params.target_fps}}"
+        },
+        "intent": "Close the streaming window against its budget.",
+        "next": "stream-fps-sampled"
+      },
+      "stream-fps-sampled": {
+        "action": "assert_output",
+        "source": "stream-end",
+        "assert": {
+          "path": "$.sustainedFps",
+          "operator": "gt",
+          "value": 0
+        },
+        "intent": "A 500 ms rendering stretch exists, so sustained FPS is measured.",
+        "next": "scroll-start"
+      },
+      "scroll-start": {
+        "action": "app.performance_capture",
+        "phase": "start",
+        "id": "conversation-scroll",
+        "intent": "Start measuring the scroll back into the history.",
+        "next": "scroll-1"
+      },
+      "scroll-1": {
+        "action": "ui.swipe",
+        "target": {
+          "x": 540,
+          "y": 1000
+        },
+        "direction": "down",
+        "distance": 700,
+        "duration_ms": 250,
+        "settle": false,
+        "intent": "The reader drags back toward earlier turns while frames are measured.",
+        "next": "scroll-1-settle"
+      },
+      "scroll-1-settle": {
+        "action": "wait",
+        "duration_ms": 800,
+        "intent": "Let the list come to rest.",
+        "next": "scroll-2"
+      },
+      "scroll-2": {
+        "action": "ui.swipe",
+        "target": {
+          "x": 540,
+          "y": 1000
+        },
+        "direction": "down",
+        "distance": 700,
+        "duration_ms": 250,
+        "settle": false,
+        "intent": "The reader keeps dragging back through the history.",
+        "next": "scroll-2-settle"
+      },
+      "scroll-2-settle": {
+        "action": "wait",
+        "duration_ms": 800,
+        "intent": "Let the list come to rest.",
+        "next": "scroll-3"
+      },
+      "scroll-3": {
+        "action": "ui.swipe",
+        "target": {
+          "x": 540,
+          "y": 1000
+        },
+        "direction": "down",
+        "distance": 700,
+        "duration_ms": 250,
+        "settle": false,
+        "intent": "The reader keeps dragging back through the history.",
+        "next": "scroll-3-settle"
+      },
+      "scroll-3-settle": {
+        "action": "wait",
+        "duration_ms": 800,
+        "intent": "Let the list come to rest.",
+        "next": "scroll-4"
+      },
+      "scroll-4": {
+        "action": "ui.swipe",
+        "target": {
+          "x": 540,
+          "y": 1000
+        },
+        "direction": "down",
+        "distance": 700,
+        "duration_ms": 250,
+        "settle": false,
+        "intent": "The reader keeps dragging back through the history.",
+        "next": "scroll-4-settle"
+      },
+      "scroll-4-settle": {
+        "action": "wait",
+        "duration_ms": 800,
+        "intent": "Let the list come to rest.",
+        "next": "scroll-end"
+      },
+      "scroll-end": {
+        "action": "app.performance_capture",
+        "phase": "end",
+        "id": "conversation-scroll",
+        "budget": {
+          "min_sustained_fps": "{{params.min_sustained_fps}}",
+          "min_frames": 10
+        },
+        "targets": {
+          "fps": "{{params.target_fps}}"
+        },
+        "intent": "Close the scroll window against its budget.",
+        "next": "scroll-fps-sampled"
+      },
+      "scroll-fps-sampled": {
+        "action": "assert_output",
+        "source": "scroll-end",
+        "assert": {
+          "path": "$.sustainedFps",
+          "operator": "gt",
+          "value": 0
+        },
+        "intent": "A 500 ms rendering stretch exists, so sustained FPS is measured.",
+        "next": "reader-away"
+      },
+      "reader-away": {
+        "action": "command",
+        "cmd": "NATIVE_STREAM_FRAMES={{params.frames}} NATIVE_STREAM_REQUIRE_FOLLOW={{params.require_follow}} node scripts/agentic/native-stream-proof.mjs reader-away",
+        "intent": "After scrolling back the reader no longer follows the end.",
+        "next": "follow-checked-away"
+      },
+      "follow-checked-away": {
+        "action": "switch",
+        "value": "{{params.require_follow}}",
+        "equals": "yes",
+        "intent": "Claim follow only when this run checked it.",
+        "cases": {
+          "match": "assert-reader-away"
+        },
+        "default": "report"
+      },
+      "assert-reader-away": {
+        "action": "assert_output",
+        "source": "reader-away",
+        "stream": "stdout",
+        "match": "\"followChecked\":true",
+        "proves": ["conversation-follow"],
+        "intent": "The reader-away follow check passed.",
+        "next": "return-fling"
+      },
+      "return-fling": {
+        "action": "ui.swipe",
+        "target": {
+          "x": 540,
+          "y": 1900
+        },
+        "direction": "up",
+        "distance": 1500,
+        "duration_ms": 80,
+        "settle": false,
+        "intent": "The reader flings back toward the end of the conversation.",
+        "next": "back-following"
+      },
+      "back-following": {
+        "action": "command",
+        "cmd": "NATIVE_STREAM_FRAMES={{params.frames}} NATIVE_STREAM_REQUIRE_FOLLOW={{params.require_follow}} node scripts/agentic/native-stream-proof.mjs back-following",
+        "intent": "Once the fling comes to rest at the end, the reader follows again.",
+        "next": "assert-back-following"
+      },
+      "assert-back-following": {
+        "action": "assert_output",
+        "source": "back-following",
+        "stream": "stdout",
+        "match": "\"followChecked\":true",
+        "proves": ["conversation-follow"],
+        "intent": "Follow resumed after the fling back to the end.",
+        "next": "report"
+      },
+      "report": {
+        "action": "app.performance_capture",
+        "phase": "report",
+        "title": "Companion conversation jank",
+        "intent": "Write the per-step report; a broken budget fails the run.",
+        "next": "check"
+      },
+      "check": {
+        "action": "assert_output",
+        "source": "report",
+        "assert": {
+          "path": "$.verdict",
+          "operator": "eq",
+          "value": "pass"
+        },
+        "intent": "Every measured step held its budget.",
+        "proves": ["conversation-jank-budget"],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

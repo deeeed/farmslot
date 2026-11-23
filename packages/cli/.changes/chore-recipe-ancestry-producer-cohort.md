@@ -1,0 +1,1 @@
+- Isolate release migration validation from live node-support files.

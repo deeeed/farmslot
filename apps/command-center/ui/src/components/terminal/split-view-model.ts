@@ -7,7 +7,12 @@ import type {
   TmuxWorkerWatchEntry,
   TmuxWorkerWatchItem,
 } from '@farmslot/protocol';
-import { hasUnsettledRunExecution } from '@farmslot/protocol';
+import {
+  hasUnsettledRunExecution,
+  refreshTmuxWorkerWatchItem,
+  tmuxWorkerWatchId,
+} from '@farmslot/protocol';
+import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import type { GlobalFilters } from '../../state.js';
 
@@ -46,6 +51,20 @@ export type TerminalPane =
   | { type: 'slot'; slotId: string; index: number };
 export type WorkerPaneFilter = 'adhoc' | 'all' | 'farmslot';
 
+interface WorkerTerminalInventory {
+  ready: boolean;
+  status: ResourceQueryState['status'];
+  targetPresent: boolean;
+  mountedOnCurrentConnection: boolean;
+}
+
+export function shouldRenderWorkerTerminal(inventory: WorkerTerminalInventory): boolean {
+  return (
+    inventory.targetPresent &&
+    (inventory.ready || (inventory.status === 'stale' && inventory.mountedOnCurrentConnection))
+  );
+}
+
 export function selectWorkspaceRuns(
   runs: readonly RunListRow[],
   filters: GlobalFilters,
@@ -77,6 +96,39 @@ export function isTmuxWorkerRef(value: unknown): value is TmuxWorkerRef {
     typeof (value as TmuxWorkerRef).session === 'string' &&
     typeof (value as TmuxWorkerRef).target === 'string'
   );
+}
+
+/** Window labels and indices describe the pane, but do not address its stream. */
+export function encodeWorkerTerminalRef({ nodeId, session, target }: TmuxWorkerRef): string {
+  return JSON.stringify({ nodeId, session, target });
+}
+
+/** A watched session has its own action target even when another session links the pane. */
+export function reconcileTerminalWatchlist(
+  items: readonly TmuxWorkerWatchItem[],
+  workers: readonly TmuxWorkerSummary[],
+): TmuxWorkerWatchEntry[] {
+  const live = new Map(workers.map((worker) => [encodeWorkerTerminalRef(worker.ref), worker]));
+  return items.map((item) => {
+    const id = encodeWorkerTerminalRef(item.ref);
+    const worker = live.get(id);
+    const current = worker ? refreshTmuxWorkerWatchItem(item, worker) : item;
+    return { id, ref: current.ref, item: current, worker, live: Boolean(worker) };
+  });
+}
+
+/** Keep exact session cards, but open just one terminal per pane. */
+export function selectWatchlistTerminalRefs(
+  entries: readonly TmuxWorkerWatchEntry[],
+  isCurrentSession: (ref: TmuxWorkerRef) => boolean,
+): TmuxWorkerRef[] {
+  const panes = new Map<string, TmuxWorkerRef>();
+  for (const { ref } of entries) {
+    const id = tmuxWorkerWatchId(ref);
+    const selected = panes.get(id);
+    if (!selected || (!isCurrentSession(selected) && isCurrentSession(ref))) panes.set(id, ref);
+  }
+  return [...panes.values()].slice(0, 4);
 }
 
 export function encodeWorkerRouteParam(ref: TmuxWorkerRef): string {

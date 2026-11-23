@@ -57,10 +57,12 @@ import {
   freshBlockedWorkerAttempt,
   freshDispatchEngineStateForReplay,
   normalizeReplayPrerequisites,
+  partitionReplayGateDecisions,
   readAdoptableTaskSignal,
   replaySlotReclaimCheck,
   ReplayTaskSignalProbeError,
   resetPublishGateApprovalForReplay,
+  retainReplayLifetimeUsage,
   rollbackReclaimedSlotReleaseOptions,
   runReplayStep,
   type RunReplayStepHooks,
@@ -832,75 +834,203 @@ test('human-gate replay preserves the reviewer plan for an active fix recovery',
   assert.equal(reset?.publishGate?.reviewSequenceRequestedAt, '2026-09-03T05:00:00.000Z');
 });
 
-test('runReplayStep abandons a retained handoff and re-enters normal dispatch', async (t) => {
-  const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
-  const priorDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
-  process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
-  const run = createRun({
-    flowType: 'fix-bug',
-    project: 'farmslot-farm',
-    ticketOrPr: `PROJ-${Date.now()}`,
-  });
-  const taskFile = '/tmp/farmslot-fresh-dispatch/TASK.md';
-  await writeFile(
-    statusFile,
-    `${JSON.stringify({
-      slots: [{ slot: 'macwork-ff-fresh-dispatch', lifecycle: 'busy', current_run_id: run.id }],
-    })}\n`,
-  );
-  updateRun(run.id, {
-    status: 'failed',
-    error: 'Retained runner handoff was not acknowledged',
-    slotId: 'macwork-ff-fresh-dispatch',
-    taskFile,
-    engineState: {
-      generation: 2,
-      flags: {
-        skipPrepare: true,
-        warmSessionReuse: true,
-        warmHandoffSucceeded: false,
+for (const freshDispatch of [true, false])
+  test(`dispatch replay preserves review receipts and inherited spend (${freshDispatch ? 'fresh' : 'ordinary'})`, async (t) => {
+    const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
+    const priorDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+    process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+    const run = createRun({
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      ticketOrPr: `PROJ-${Date.now()}`,
+    });
+    const taskFile = '/tmp/farmslot-fresh-dispatch/TASK.md';
+    await writeFile(
+      statusFile,
+      `${JSON.stringify({
+        slots: [{ slot: 'macwork-ff-fresh-dispatch', lifecycle: 'busy', current_run_id: run.id }],
+      })}\n`,
+    );
+    updateRun(run.id, {
+      status: 'failed',
+      error: 'Retained runner handoff was not acknowledged',
+      slotId: 'macwork-ff-fresh-dispatch',
+      taskFile,
+      agentContexts: [
+        {
+          id: 'worker',
+          label: 'Retained worker',
+          role: 'fix-bug',
+          runner: 'pi',
+          runnerSessionId: 'retained-worker',
+          runId: run.id,
+          slotId: 'macwork-ff-fresh-dispatch',
+          status: 'complete',
+          target: { session: 'worker', target: 'worker:0' },
+        },
+      ],
+      sessionUsage: [
+        {
+          runner: 'pi',
+          runnerSessionId: 'retained-worker',
+          role: 'fix-bug',
+          measuredAt: '2026-11-20T00:00:00Z',
+          source: 'runner-transcript',
+          costUsd: 1,
+        },
+        {
+          runner: 'pi',
+          runnerSessionId: 'independent-review',
+          role: 'review',
+          measuredAt: '2026-11-20T00:00:00Z',
+          source: 'runner-transcript',
+          scope: 'run-delta',
+          totalTokens: 10,
+          costUsd: 1,
+        },
+        {
+          runner: 'pi',
+          runnerSessionId: 'step-only-review',
+          role: 'review',
+          measuredAt: '2026-11-20T00:00:02Z',
+          source: 'runner-transcript',
+          totalTokens: 150,
+          costStatus: 'unpriced',
+        },
+      ],
+      decisions: [
+        {
+          id: 'old-ready',
+          type: 'engine_human_gate',
+          title: 'Ready',
+          description: '',
+          actions: [],
+          createdAt: '2026-11-20T00:00:00Z',
+          resolvedAt: '2026-11-20T00:00:01Z',
+          payload: {
+            kind: 'ready',
+            prNumber: null,
+            repo: null,
+            branch: 'review',
+            diffStat: { files: 0, additions: 0, deletions: 0 },
+            workerReport: '',
+            reviews: [
+              {
+                id: 'gate-review',
+                verdict: 'pass',
+                mode: 'cold',
+                loopNumber: 1,
+                unresolvedCount: 0,
+                runner: 'pi',
+                reviewerSessionId: 'gate-only-review',
+                usage: {
+                  source: 'runner-transcript',
+                  measuredAt: '2026-11-20T00:00:00Z',
+                  costUsd: 4,
+                },
+              },
+            ],
+          },
+        },
+      ],
+      engineState: {
+        generation: 2,
+        flags: {
+          warmSessionReuse: true,
+          warmHandoffSucceeded: true,
+        },
       },
-    },
-    steps: run.steps.map((step) =>
-      step.name === 'find-slot' || step.name === 'write-task' || step.name === 'prepare'
-        ? {
-            ...step,
-            status: 'done',
-            outputs: step.name === 'write-task' ? { taskFile } : step.outputs,
-          }
-        : step.name === 'dispatch'
-          ? { ...step, status: 'failed' }
-          : step,
-    ),
-  });
+      steps: run.steps.map((step) =>
+        step.name === 'find-slot' || step.name === 'write-task' || step.name === 'prepare'
+          ? {
+              ...step,
+              status: 'done',
+              outputs: step.name === 'write-task' ? { taskFile } : step.outputs,
+            }
+          : step.name === 'dispatch'
+            ? { ...step, status: 'done', outputs: { warmHandoff: true, workerTarget: 'worker:0' } }
+            : step.name === 'review'
+              ? {
+                  ...step,
+                  status: 'done',
+                  outputs: {
+                    usage: {
+                      runner: 'pi',
+                      runnerSessionId: 'step-only-review',
+                      measuredAt: '2026-11-20T00:00:00Z',
+                      source: 'runner-transcript',
+                      costUsd: 2,
+                      totalTokens: 150,
+                      inputTokens: 100,
+                      outputTokens: 50,
+                      runnerSessionPath: '/tmp/retained-review.jsonl',
+                    },
+                    attempts: [
+                      {
+                        usage: {
+                          runner: 'pi',
+                          runnerSessionId: 'independent-review',
+                          measuredAt: '2026-11-20T00:00:01Z',
+                          source: 'runner-transcript',
+                          scope: 'session-total',
+                          totalTokens: 100,
+                          costUsd: 5,
+                        },
+                      },
+                    ],
+                  },
+                }
+              : step,
+      ),
+    });
 
-  t.after(async () => {
-    if (priorDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
-    else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = priorDisableStart;
-    if (priorStatus == null) await rm(statusFile, { force: true });
-    else await writeFile(statusFile, priorStatus);
-    if (getRun(run.id)) {
-      await evictTestRun(run.id, 'failed');
+    t.after(async () => {
+      if (priorDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+      else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = priorDisableStart;
+      if (priorStatus == null) await rm(statusFile, { force: true });
+      else await writeFile(statusFile, priorStatus);
+      if (getRun(run.id)) {
+        await evictTestRun(run.id, 'failed');
+      }
+    });
+
+    const replayed = await runReplayStep(
+      {
+        runId: run.id,
+        stepName: 'dispatch',
+        ...(freshDispatch ? { freshDispatch: true } : {}),
+        triggeredBy: 'operator',
+      },
+      () => {},
+      { startEngine: async () => {}, probeTaskSignal: async () => null },
+    );
+
+    assert.equal(replayed.run.status, 'dispatching');
+    assert.equal(replayed.run.error, undefined);
+    if (freshDispatch) {
+      assert.equal(replayed.run.engineState?.flags?.warmSessionReuse, undefined);
+      assert.equal(replayed.run.engineState?.flags?.warmHandoffSucceeded, undefined);
     }
+    const receipts = replayed.run.sessionUsage ?? [];
+    assert.equal(
+      receipts.find((row) => row.runnerSessionId === 'retained-worker')?.includesPriorRunLifetime,
+      true,
+    );
+    const independent = receipts.find((row) => row.runnerSessionId === 'independent-review');
+    assert.equal(independent?.costUsd, 1);
+    assert.equal(independent?.scope, 'run-delta');
+    assert.equal(independent?.totalTokens, 10);
+    assert.ok(!replayed.run.decisions.some(({ id }) => id === 'old-ready'));
+    assert.equal(receipts.find((row) => row.runnerSessionId === 'gate-only-review')?.costUsd, 4);
+    assert.equal(independent?.includesPriorRunLifetime, undefined);
+    const stepOnly = receipts.find((row) => row.runnerSessionId === 'step-only-review');
+    assert.equal(stepOnly?.costUsd, 2);
+    assert.notEqual(stepOnly?.costStatus, 'unpriced');
+    assert.equal(stepOnly?.inputTokens, 100);
+    assert.equal(stepOnly?.outputTokens, 50);
+    assert.equal(stepOnly?.runnerSessionPath, '/tmp/retained-review.jsonl');
+    assert.equal(replayed.run.steps.find((step) => step.name === 'dispatch')?.status, 'pending');
   });
-
-  const replayed = await runReplayStep(
-    {
-      runId: run.id,
-      stepName: 'dispatch',
-      freshDispatch: true,
-      triggeredBy: 'operator',
-    },
-    () => {},
-  );
-
-  assert.equal(replayed.run.status, 'dispatching');
-  assert.equal(replayed.run.error, undefined);
-  assert.equal(replayed.run.engineState?.flags?.warmSessionReuse, undefined);
-  assert.equal(replayed.run.engineState?.flags?.warmHandoffSucceeded, undefined);
-  assert.equal(replayed.run.engineState?.flags?.skipPrepare, undefined);
-  assert.equal(replayed.run.steps.find((step) => step.name === 'dispatch')?.status, 'pending');
-});
 
 test('a replay a service principal requests drives the run under its stored ownership', async (t) => {
   // Run 22e62daa: farm-automation's resume re-attached the monitor, and the
@@ -3251,6 +3381,17 @@ test('runReplayStep preserves skipPrepare for CI-watch chained follow-up replays
   assert.equal(replayed.engineState?.flags?.nudgeReuse, undefined);
 });
 
+test('post-gate replay retains the decision inventory without reading its entries', () => {
+  const history = new Proxy<RunDecision[]>([], {
+    get() {
+      assert.fail('post-gate replay inspected retained decision history');
+    },
+  });
+  const replay = partitionReplayGateDecisions(history, [], undefined);
+  assert.equal(replay.retained, history);
+  assert.deepEqual(replay.retiringGates, []);
+});
+
 test('runReplayStep preserves resolved publish approvals for post-gate publish retries', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',
@@ -4877,4 +5018,32 @@ test('a cleaned static review admits artifact-only monitor replay without replac
   );
   assert.deepEqual(replayed.reviewWorkspace, before?.reviewWorkspace);
   assert.equal(replayed.taskFile, before?.taskFile);
+});
+
+test('replay keeps the inherited lifetime exclusion on its receipt', async (t) => {
+  const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: 'REPLAY-COST' });
+  t.after(() => evictTestRun(run.id, 'failed'));
+  const base = {
+    runner: 'pi',
+    runnerSessionId: 'retained',
+    source: 'runner-transcript' as const,
+    measuredAt: '2026-11-20T00:00:00Z',
+    costUsd: 10,
+    role: 'primary',
+  };
+  updateRun(run.id, {
+    engineState: { ...run.engineState, flags: { nudgeReuse: true } },
+    sessionUsage: [
+      { ...base, scope: 'session-total' },
+      { ...base, runnerSessionId: 'scoped', scope: 'run-delta' },
+    ],
+  });
+  const saved = retainReplayLifetimeUsage(run);
+  assert.equal(saved?.[0]?.includesPriorRunLifetime, true);
+  assert.equal(saved?.[1]?.includesPriorRunLifetime, undefined);
+  assert.equal(
+    retainReplayLifetimeUsage({ ...run, sessionUsage: saved }),
+    saved,
+    'already-qualified receipts keep the same array',
+  );
 });

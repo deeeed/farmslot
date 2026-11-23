@@ -334,7 +334,7 @@ test('a fix recovered after a restart at the no-verdict cap is not re-reviewed a
   );
 });
 
-for (const sourceLinesChanged of [0, 50]) {
+for (const sourceLinesChanged of [0]) {
   test(`a recovered completed ${sourceLinesChanged}-line fix applies the review limit`, async (t) => {
     capturedFixOverride = {
       snapshot: {
@@ -395,6 +395,24 @@ for (const sourceLinesChanged of [0, 50]) {
     else assert.doesNotThrow(publication);
   });
 }
+
+// Recovery re-reads its findings from the checklist, which keeps no severity, so a small
+// fix cannot show they were all minor or nit and goes to a real re-review.
+test('a recovered completed 50-line fix without retained severities gets a real re-review', async (t) => {
+  capturedFixOverride = {
+    snapshot: {
+      source: 'local-git',
+      capturedAt: new Date().toISOString(),
+      fixBaseSha: 'a'.repeat(40),
+      fixHeadSha: 'b'.repeat(40),
+      diffStat: { files: 1, additions: 50, deletions: 0 },
+    },
+    artifactPaths: ['artifacts/fix-delta.diff'],
+    sourceLinesChanged: 50,
+  };
+  const { launches } = await recoveredFixAtCap(t, { status: 'complete' }, false);
+  assert.equal(launches, 1);
+});
 
 for (const artifact of [
   'pr-description.md',

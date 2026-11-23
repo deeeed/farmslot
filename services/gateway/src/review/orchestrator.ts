@@ -31,6 +31,7 @@ import {
   executionModelFromSelection,
   parseReviewSelection,
   resolveReviewMode,
+  workerModelFromSelection,
 } from '@farmslot/review-dispatch';
 
 import {
@@ -47,6 +48,7 @@ import { withMachineEnv } from '../core/project-env.js';
 import { onSlotReset } from '../core/state.js';
 import {
   resolveExactTmuxWindowPane,
+  resolveTmuxPaneId,
   respawnTmuxWindowWithCommand,
   shellQuote,
   TMUX_WINDOW_RESPAWN_SETTLE_MS,
@@ -101,12 +103,8 @@ import {
   taskDirRelPath,
 } from '../tasks/checklist-target.js';
 import { unwatchContext, watchContext } from '../tasks/watcher.js';
-import { signalIsNewerThanContext } from '../tasks/worker-signal-context.js';
-import {
-  normalizeWorkerSignal,
-  signalFreshSince,
-  terminalWorkerSignalFromRaw,
-} from '../tasks/worker-signals.js';
+import { recoveredFixSignalMatches } from '../tasks/worker-signal-context.js';
+import { normalizeWorkerSignal, terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 
 import { finishReviewCleanup } from './cleanup.js';
 import { parseReviewIssueBullets } from './issues.js';
@@ -426,6 +424,13 @@ export async function executeReview(
   return result;
 }
 
+function effortRecordedByReview(
+  result: { session?: { effort?: string | null } | null },
+  requested: string | null,
+): string | null {
+  return result.session && 'effort' in result.session ? (result.session.effort ?? null) : requested;
+}
+
 async function executeOwnedReview(
   runId: string,
   slotId: string,
@@ -477,12 +482,18 @@ async function executeOwnedReview(
   const mode = evalJudge
     ? 'cold'
     : resolveReviewMode({ explicitMode: options.mode, defaultMode: config.mode });
-  const effort = executionModelFromSelection({
+  const effortSelection = {
     runner: reviewRunner,
     model,
     effort: requestedEffort ?? null,
     mode,
-  }).effort;
+  };
+  // Warm keeps the recorded effort. An omitted Claude effort stays omitted here so recovery
+  // can read the admitted context. A fresh Claude launch fills medium in the native resolver.
+  const effort =
+    mode === 'warm' || reviewRunner === 'claude'
+      ? (workerModelFromSelection(effortSelection).effort ?? null)
+      : (executionModelFromSelection(effortSelection).effort ?? null);
   const primaryContext = run.reviewContext ?? run.prWork?.review?.options.reviewContext;
   const reviewId = evalJudge
     ? `eval-first-output-${runId}`
@@ -695,7 +706,7 @@ async function executeOwnedReview(
         reason: 'no-feedback-file',
         runner: reviewRunner,
         model,
-        effort: effort,
+        effort: effortRecordedByReview(result, effort),
         retryCount: firstRetryCount,
         validationDepth,
         usage: result.usage,
@@ -733,7 +744,7 @@ async function executeOwnedReview(
         timeline: result.timeline,
         runner: reviewRunner,
         model,
-        effort: effort,
+        effort: effortRecordedByReview(result, effort),
         retryCount: firstRetryCount,
         ...(evalJudge ? { maxRetries: 0 } : {}),
         durationMs: Date.now() - start,
@@ -764,7 +775,7 @@ async function executeOwnedReview(
       usage: retryResult.attempts?.at(-1)?.usage ?? retryResult.usage,
       runner: reviewRunner,
       model,
-      effort: effort,
+      effort: effortRecordedByReview(retryResult, effort),
     };
   } finally {
     // Completed reviewer sessions can be explicitly continued from the human gate, but
@@ -1078,6 +1089,8 @@ async function completeReviewFix(
     );
   }
   if (
+    // An open blocker or major, or a finding without a severity, needs a reviewer's verdict.
+    !result.issues.every((issue) => issue.severity === 'minor' || issue.severity === 'nit') ||
     fixDelta.sourceLinesChanged === undefined ||
     fixDelta.sourceLinesChanged > 50 ||
     !prior?.baseSha ||
@@ -2187,17 +2200,6 @@ export async function reconcileRecoveredFixPromptDelivery(
     status: 'blocked',
     reason: REVIEW_FIX_DELIVERY_UNCONFIRMED,
   };
-}
-
-/**
- * A recovered fix signal belongs to this pass: its own attempt, or one the worker reopened
- * after it, by the watcher's own rule (TAT-4006 7721a02b).
- */
-export function recoveredFixSignalMatches(signal: WorkerSignal, fixContext: AgentContext): boolean {
-  return fixContext.signalAttemptId
-    ? signal.attemptId === fixContext.signalAttemptId ||
-        signalIsNewerThanContext(signal, fixContext)
-    : signalFreshSince(signal, fixContext.attemptStartedAt ?? fixContext.startedAt);
 }
 
 /** The worker of a blocked fix pass reopened it and finished a newer attempt. */
@@ -3484,6 +3486,8 @@ export async function recordReviewFixRunnerSession(
   }
 }
 
+export { recoveredFixSignalMatches };
+
 export async function relaunchWorkerForFix(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runner: string,
@@ -3502,6 +3506,7 @@ export async function relaunchWorkerForFix(
   }
   const resolved = await resolveAgentTarget(vars.slotId, { runId, role: 'primary' });
   const parentRun = getRun(runId);
+  const relaunchGeneration = parentRun?.engineState?.generation ?? 0;
   const projectVars = await loadProjectVars(parentRun?.project ?? vars.projectName);
   const workerShell = (command: string) =>
     wrapWorkerShellCommand(command, {
@@ -3612,29 +3617,37 @@ export async function relaunchWorkerForFix(
     windowSeparator === -1
       ? null
       : workerTarget.slice(windowSeparator + 1).split('.', 1)[0] || null;
+  // The respawned pane's id is what later reads that worker after it exits (COMPLETE's
+  // progress check, restart recovery); a window name alone cannot tell it went away.
+  // list-panes resolves named and numeric (`slot:1`) targets alike.
+  // Best effort: the worker already runs, so a failed read is retried once it is proven live.
+  const readPaneId = async () => {
+    const listed = await resolveTmuxPaneId(vars, workerTarget).catch(() => null);
+    return listed && /^%\d+$/.test(listed) ? listed : undefined;
+  };
+  const paneId = await readPaneId();
+  const relaunchedTarget = {
+    session: resolved.session,
+    window,
+    pane: null,
+    target: workerTarget,
+    ...(paneId ? { paneId } : {}),
+  };
   await upsertAgentContext(runId, workerRole, {
     status: 'working',
     runner,
     model: effectiveModel,
     ...clearedRunnerSessionContextPatch(),
-    target: {
-      session: resolved.session,
-      window,
-      pane: null,
-      target: workerTarget,
-    },
+    target: relaunchedTarget,
   });
-  if (fixContext) {
+  // A finished pass stays settled: reopening it would let restart recovery credit its old
+  // signal to the next round before that round's findings are sent.
+  if (fixContext && replacesAttempt) {
     const updatedFixContext = await upsertAgentContext(runId, 'review-fix', {
       status: 'working',
       runner,
       model: effectiveModel,
-      target: {
-        session: resolved.session,
-        window,
-        pane: null,
-        target: workerTarget,
-      },
+      target: relaunchedTarget,
     });
     if (updatedFixContext) await watchContext(vars.slotId, updatedFixContext);
   }
@@ -3644,6 +3657,21 @@ export async function relaunchWorkerForFix(
   while (Date.now() < verifyDeadline) {
     if (await isWorkerAlive(vars, runner, runId)) {
       debugReviewLog(`[review] worker re-launched (${runner})`);
+      const latePaneId = paneId ? undefined : await readPaneId();
+      if (latePaneId) {
+        const target = { ...relaunchedTarget, paneId: latePaneId };
+        // Checked inside the context queue: a replay since this relaunch owns the contexts now.
+        const resolvePatch = (current: AgentContext | undefined) =>
+          current &&
+          (getRun(runId)?.engineState?.generation ?? 0) === relaunchGeneration &&
+          current.target?.target === workerTarget &&
+          !current.target.paneId
+            ? { target }
+            : null;
+        await upsertAgentContext(runId, workerRole, {}, { resolvePatch });
+        if (fixContext && replacesAttempt)
+          await upsertAgentContext(runId, 'review-fix', {}, { resolvePatch });
+      }
       return true;
     }
     await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -3652,7 +3680,7 @@ export async function relaunchWorkerForFix(
     `[review] run ${runId.slice(0, 8)} — relaunch left no live ${runner} session in ${workerTarget}`,
   );
   await markAgentContextStatus(runId, workerRole, 'failed');
-  if (fixContext) await markAgentContextStatus(runId, 'review-fix', 'failed');
+  if (fixContext && replacesAttempt) await markAgentContextStatus(runId, 'review-fix', 'failed');
   return false;
 }
 

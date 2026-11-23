@@ -17,7 +17,7 @@ import {
   sameNativeProfileReference,
   workspacePolicyMachines,
 } from '@farmslot/protocol';
-import { executionModelFromSelection, resolveReviewMode } from '@farmslot/review-dispatch';
+import { resolveReviewMode, workerModelFromSelection } from '@farmslot/review-dispatch';
 import { currentProjectSources } from '@farmslot/slot-config';
 
 import { GatewayMethodError } from '../core/method-error.js';
@@ -332,8 +332,8 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
         const target = {
           project: params.project,
           ...choice,
-          effort: executionModelFromSelection(choice).effort ?? undefined,
-          model: executionModelFromSelection(choice).model,
+          effort: workerModelFromSelection(choice).effort ?? undefined,
+          model: workerModelFromSelection(choice).model,
         };
         const inspected = await inspectReviewWorkspaceTarget(
           target,
@@ -374,8 +374,8 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
       ...params,
       reviewWorkspaceTarget: { machine: choice.machine },
       runner: choice.runner,
-      model: executionModelFromSelection(choice).model,
-      effort: executionModelFromSelection(choice).effort ?? undefined,
+      model: workerModelFromSelection(choice).model,
+      effort: workerModelFromSelection(choice).effort ?? undefined,
       transport: choice.transport,
       nativeProfile: choice.nativeProfile,
     };
@@ -406,8 +406,8 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
     !runnerSupportsModel(choice.runner, choice.model) ||
     !runnerSupportsEffort(
       choice.runner,
-      executionModelFromSelection(choice).model,
-      executionModelFromSelection(choice).effort ?? undefined,
+      workerModelFromSelection(choice).model,
+      workerModelFromSelection(choice).effort ?? undefined,
     )
   )
     unavailable('Selected runner/model/effort is unsupported');
@@ -423,8 +423,8 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
       )
       .map((candidate) => candidate.slotId),
     runner: choice.runner,
-    model: executionModelFromSelection(choice).model,
-    effort: executionModelFromSelection(choice).effort ?? undefined,
+    model: workerModelFromSelection(choice).model,
+    effort: workerModelFromSelection(choice).effort ?? undefined,
   };
   return { params: params as T, reviewQa, execution, sources: defaults.sources };
 }

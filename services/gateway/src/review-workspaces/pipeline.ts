@@ -81,6 +81,7 @@ import {
   bindWorkspaceReviewResult,
   compatibleWorkspaceReviewer,
   configureWorkspaceContinuity,
+  workspaceReviewDispatchEffort,
 } from './continuity.js';
 import { holdWorkspaceReview, waitingAtReviewGate } from './gate.js';
 import { createReviewWorkspaceProgressPublisher } from './progress.js';
@@ -946,6 +947,12 @@ async function executeOwnedReviewWorkspaceStep(
           }),
           'workspace review round',
         );
+      }
+      const current = currentWorkspaceRun(runId, generation);
+      const effort = workspaceReviewDispatchEffort(current);
+      if (effort != null && effort !== current.effort) {
+        await persistRunNow(updateRun(runId, { effort }), 'workspace reviewer launch effort');
+        check();
       }
       // A failed launch is a no-verdict end. One that may have started its
       // reviewer is reconciled later, so its round still counts.

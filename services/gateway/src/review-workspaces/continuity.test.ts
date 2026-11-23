@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { RepeatReviewContext, Run } from '@farmslot/protocol';
+import type { RepeatReviewContext, ReviewWorkspaceBinding, Run } from '@farmslot/protocol';
 
 import { assertPrimaryReviewContext } from '../run-engine/review-plan.js';
 
-import { configureWorkspaceContinuity } from './continuity.js';
+import {
+  configureWorkspaceContinuity,
+  resolveWorkspaceContinuationSource,
+  workspaceReviewDispatchEffort,
+} from './continuity.js';
 
 const prior = {
   id: 'prior',
@@ -46,6 +50,122 @@ const context = () =>
     session: { reviewId: 'lineage' },
   }) as RepeatReviewContext;
 
+test('an omitted Claude effort keeps the recorded workspace reviewer', () => {
+  const claudePrior = {
+    ...prior,
+    agentContexts: [
+      { ...prior.agentContexts![0], runner: 'claude', model: 'opus', effort: 'medium' },
+    ],
+  } as Run;
+  const claudeCurrent = {
+    ...current,
+    metrics: { runner: 'claude', model: 'opus' },
+  } as Run;
+  const result = context();
+  configureWorkspaceContinuity(claudeCurrent, claudePrior, result);
+  assert.equal(result.session?.continuity, 'resumed');
+  assert.equal(result.session?.effort, 'medium');
+  const unsetPrior = {
+    ...claudePrior,
+    agentContexts: [{ ...claudePrior.agentContexts![0], effort: null }],
+  } as Run;
+  const unset = context();
+  configureWorkspaceContinuity(claudeCurrent, unsetPrior, unset);
+  assert.equal(unset.session?.effort, null);
+  assert.throws(
+    () => configureWorkspaceContinuity({ ...claudeCurrent, effort: 'low' }, claudePrior, context()),
+    /WARM review unavailable/,
+  );
+});
+
+test('an explicit Claude effort can retry a stopped successor that inherited it', () => {
+  const workspace: ReviewWorkspaceBinding = {
+    workspaceId: 'workspace',
+    machine: 'machine',
+    executionNodeId: 'machine',
+    checkoutPath: '/fixture/review',
+    taskPath: '/fixture/review/task',
+    artifactPath: '/fixture/review/task/artifacts',
+    executionStoppedAt: '2026-11-18T00:00:00Z',
+  };
+  const baseline: Run = {
+    ...prior,
+    reviewWorkspace: { ...workspace, transferredTo: { runId: 'successor', generation: 1 } },
+    agentContexts: [
+      { ...prior.agentContexts![0], runner: 'claude', model: 'sonnet', effort: 'high' },
+    ],
+  };
+  const retry: Run = {
+    ...current,
+    id: 'retry',
+    metrics: { ...current.metrics, runner: 'claude', model: 'sonnet' },
+    effort: 'high',
+  };
+  const successor: Run = {
+    ...retry,
+    id: 'successor',
+    status: 'cancelled',
+    effort: undefined,
+    reviewWorkspace: {
+      ...workspace,
+      continuedFrom: {
+        runId: baseline.id,
+        headSha: 'a'.repeat(40),
+        baseSha: 'b'.repeat(40),
+        taskPath: workspace.taskPath,
+      },
+    },
+    repeatReviewContext: {
+      ...context(),
+      mode: 'warm',
+      session: {
+        mode: 'warm',
+        continuity: 'resumed',
+        reviewId: 'lineage',
+        priorSessionId: 'chat',
+        effort: 'high',
+      },
+    },
+  };
+  const read = (id: string) => (id === successor.id ? successor : undefined);
+  assert.equal(resolveWorkspaceContinuationSource(retry, baseline, read, 'lineage'), successor);
+  successor.effort = 'medium';
+  assert.throws(
+    () => resolveWorkspaceContinuationSource(retry, baseline, read, 'lineage'),
+    /retained workspace is held by its successor/,
+  );
+});
+
+test('workspace dispatch defaults only a fresh Claude review', () => {
+  const fresh: Run = {
+    ...current,
+    reviewMode: 'cold',
+    metrics: { ...current.metrics, runner: 'claude', model: 'sonnet' },
+  };
+  assert.equal(workspaceReviewDispatchEffort(fresh), 'medium');
+  assert.equal(workspaceReviewDispatchEffort({ ...fresh, effort: 'high' }), 'high');
+  assert.equal(
+    workspaceReviewDispatchEffort({ ...fresh, agentContexts: prior.agentContexts }),
+    undefined,
+  );
+  assert.equal(workspaceReviewDispatchEffort({ ...fresh, reviewMode: 'warm' }), undefined);
+  const fallback: RepeatReviewContext = {
+    ...context(),
+    mode: 'cold',
+    session: {
+      mode: 'cold',
+      continuity: 'fresh',
+      effort: null,
+      fallback: { reason: 'retention-expired', detail: 'expired', comparedRanges: [] },
+    },
+  };
+  assert.equal(
+    workspaceReviewDispatchEffort({ ...fresh, repeatReviewContext: fallback }),
+    undefined,
+  );
+  assert.equal(workspaceReviewDispatchEffort({ ...current, reviewMode: 'cold' }), undefined);
+});
+
 test('verified WARM workspace continuity retains exact PR lineage, session and last head', () => {
   const result = context();
   configureWorkspaceContinuity(current, prior, result);
@@ -60,6 +180,7 @@ test('verified WARM workspace continuity retains exact PR lineage, session and l
     priorRunId: 'prior',
     priorSessionId: 'chat',
     sessionId: 'chat',
+    effort: null,
   });
 });
 
@@ -212,6 +333,54 @@ test('only expiry permits an explicit COLD fallback and preserves the prior line
   assert.equal(live.mode, 'warm');
 });
 
+test('an explicit cold launch does not copy an expired reviewer effort', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-06T01:00:00Z') });
+  const source = {
+    ...prior,
+    completedAt: '2026-11-01T00:00:00Z',
+    reviewWorkspace: { ...prior.reviewWorkspace!, retentionDays: 2 },
+    agentContexts: [
+      { ...prior.agentContexts![0], runner: 'codex', model: 'gpt-6.1-sol', effort: 'ultra' },
+    ],
+  } as Run;
+  const cold = {
+    ...current,
+    reviewMode: 'cold' as const,
+    metrics: { runner: 'claude', model: 'opus' },
+    reviewContext: {
+      reviewLineages: [{ reviewId: 'lineage', repository: 'example/app', prNumber: 42 }],
+    },
+  };
+  const omitted = context();
+  configureWorkspaceContinuity(cold, source, omitted);
+  assert.equal(omitted.session?.continuity, 'fresh');
+  assert.equal(omitted.session?.effort, null);
+  const explicit = context();
+  configureWorkspaceContinuity({ ...cold, effort: 'medium' }, source, explicit);
+  assert.equal(explicit.session?.effort, 'medium');
+});
+
+test('a warm expiry keeps the recorded reviewer effort', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-06T01:00:00Z') });
+  const source = {
+    ...prior,
+    completedAt: '2026-11-01T00:00:00Z',
+    reviewWorkspace: { ...prior.reviewWorkspace!, retentionDays: 2 },
+    agentContexts: [
+      { ...prior.agentContexts![0], runner: 'claude', model: 'opus', effort: 'medium' },
+    ],
+  } as Run;
+  const result = context();
+  configureWorkspaceContinuity(
+    { ...current, metrics: { runner: 'claude', model: 'opus' } },
+    source,
+    result,
+  );
+  assert.equal(result.mode, 'cold');
+  assert.match(result.session?.fallback?.detail ?? '', /expired/);
+  assert.equal(result.session?.effort, 'medium');
+});
+
 test('explicit cold after expiry may use another authorized machine while preserving the expiry reason', (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-06T00:00:00Z') });
   const result = context();
@@ -252,9 +421,17 @@ test('every resumable terminal adapter preserves the exact retained conversation
 test('an unsupported adapter keeps the delta and prior findings in a fresh session', () => {
   const source = {
     ...prior,
-    agentContexts: prior.agentContexts!.map((c) => ({ ...c, runner: 'opencode' })),
+    agentContexts: prior.agentContexts!.map((c) => ({
+      ...c,
+      runner: 'opencode',
+      effort: 'medium',
+    })),
   };
-  const run = { ...current, metrics: { runner: 'opencode', model: 'model' } };
+  const run = {
+    ...current,
+    effort: 'medium',
+    metrics: { runner: 'opencode', model: 'model' },
+  };
   const result = {
     ...context(),
     currentHeadSha: 'b'.repeat(40),
@@ -266,6 +443,7 @@ test('an unsupported adapter keeps the delta and prior findings in a fresh sessi
   assert.equal(result.session?.reviewId, 'lineage');
   assert.equal(result.session?.sessionId, undefined);
   assert.equal(result.session?.fallback?.reason, 'session-resume-unsupported');
+  assert.equal(result.session?.effort, 'medium');
   assert.deepEqual(result.session?.fallback?.comparedRanges, [
     `${'a'.repeat(40)}..${'b'.repeat(40)}`,
   ]);
@@ -334,6 +512,39 @@ test('a stopped transferred attempt without a verdict keeps WARM and its validat
       /held by its successor/,
     );
   }
+  const claudeCurrent = {
+    ...current,
+    id: 'next',
+    metrics: { runner: 'claude', model: 'opus' },
+  } as Run;
+  const claudeSource = {
+    ...source,
+    agentContexts: [
+      { ...source.agentContexts![0], runner: 'claude', model: 'opus', effort: 'high' },
+    ],
+  };
+  const claudeInterrupted = {
+    ...interrupted,
+    metrics: { runner: 'claude', model: 'opus' },
+    effort: 'high',
+    agentContexts: claudeSource.agentContexts,
+  } as Run;
+  const claudeResult = { ...context(), currentHeadSha: 'b'.repeat(40) };
+  configureWorkspaceContinuity(claudeCurrent, claudeSource, claudeResult, undefined, [
+    claudeInterrupted,
+  ]);
+  assert.equal(claudeResult.session?.continuity, 'resumed');
+  assert.throws(
+    () =>
+      configureWorkspaceContinuity(
+        { ...claudeCurrent, effort: 'low' },
+        claudeSource,
+        { ...context(), currentHeadSha: 'b'.repeat(40) },
+        undefined,
+        [claudeInterrupted],
+      ),
+    /WARM review unavailable/,
+  );
 });
 
 test('a historical ancestry diagnosis defers to pinned scope qualification', () => {

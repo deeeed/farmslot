@@ -23,7 +23,11 @@ import {
   renderReviewResultInstructions,
   type ReviewRecommendation,
 } from '@farmslot/protocol/review-approval-policy.cjs';
-import { executionModelFromSelection, reviewArtifactDir } from '@farmslot/review-dispatch';
+import {
+  executionModelFromSelection,
+  reviewArtifactDir,
+  workerModelFromSelection,
+} from '@farmslot/review-dispatch';
 
 import { markAgentContextStatus, upsertAgentContext } from '../agents/contexts.js';
 import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
@@ -397,7 +401,8 @@ export function refundedNativeReviewer(
         typeof context.reviewLoopNumber === 'number' &&
         typeof context.reviewId === 'string' &&
         (!params.reviewId || context.reviewId === params.reviewId) &&
-        (context.effort ?? null) === (params.effort?.trim() || null) &&
+        ((context.effort ?? null) === (params.effort?.trim() || null) ||
+          (params.runner === 'claude' && !params.effort?.trim())) &&
         !!context.nativeSession?.acceptedAt &&
         !!context.nativeSession.closedAt &&
         !context.nativeSession.releasedAt &&
@@ -1138,6 +1143,29 @@ async function recoverRunningReviewAgent(params: {
   }
 }
 
+/** Explicit effort wins. A retained or recovered session keeps its recorded effort, including null. Medium is only a fresh Claude launch. */
+export function resolveNativeReviewLaunchEffort(input: {
+  requestedEffort: string | null;
+  runner: string;
+  model: string;
+  retained: { effort: string | null } | null;
+  recovering: boolean;
+  contextEffort?: string | null;
+}): string | null {
+  if (input.requestedEffort) return input.requestedEffort;
+  if (input.retained) return input.retained.effort;
+  if (input.recovering) return input.contextEffort ?? null;
+  if (input.runner !== 'claude') return null;
+  return (
+    executionModelFromSelection({
+      runner: input.runner,
+      model: input.model,
+      effort: null,
+      mode: 'cold',
+    }).effort ?? null
+  );
+}
+
 export async function runReviewAgent(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runner: string,
@@ -1159,12 +1187,13 @@ export async function runReviewAgent(
       'missing-session',
       'WARM requires the reviewId of the lineage being continued',
     );
-  const resolvedEffort = executionModelFromSelection({
-    runner,
-    model,
-    effort: effort ?? null,
-    mode,
-  }).effort;
+  const effortSelection = { runner, model, effort: effort ?? null, mode };
+  // Warm keeps the recorded effort. An omitted Claude effort stays omitted so a recovered
+  // context wins. A fresh Claude launch fills medium in the native resolver.
+  const resolvedEffort =
+    mode === 'warm' || runner === 'claude'
+      ? (workerModelFromSelection(effortSelection).effort ?? null)
+      : (executionModelFromSelection(effortSelection).effort ?? null);
   // Only already-admitted tmux attempts may finish on their original transport.
   // Every new pipeline admission uses the native reviewer contract.
   const retainedTmux = selectRecoverableReviewContext(getRun(_runId)?.agentContexts ?? [], {

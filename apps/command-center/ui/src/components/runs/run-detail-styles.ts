@@ -156,6 +156,30 @@ export const runDetailStyles = css`
     border-radius: ${unsafeCSS(radii.sm)};
     padding: ${unsafeCSS(spacing.sm)};
   }
+  .run-cost {
+    margin-bottom: ${unsafeCSS(spacing.sm)};
+    font-size: 12px;
+  }
+  .run-cost-heading,
+  .run-cost-phases {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: ${unsafeCSS(spacing.xs)} ${unsafeCSS(spacing.md)};
+  }
+  .run-cost-heading strong {
+    font-size: 14px;
+  }
+  .run-cost-phases {
+    margin: ${unsafeCSS(spacing.xs)} 0 0;
+  }
+  .run-cost-phases dd {
+    margin: 0;
+  }
+  .run-cost-phases small {
+    color: ${unsafeCSS(colors.textMuted)};
+    font-size: inherit;
+  }
   .meta-label {
     color: ${unsafeCSS(colors.textMuted)};
     margin-bottom: 2px;

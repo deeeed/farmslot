@@ -6,6 +6,34 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.31.35 - 2026-11-23
+
+- Pin the Recipe Runner 0.52.2 cohort.
+
+## 0.31.34 - 2026-11-21
+
+- Pin the Protocol 0.92.0 producer cohort.
+
+## 0.31.33 - 2026-11-21
+
+- Pin the pending flow and recording timeline producer cohort.
+
+## 0.31.32 - 2026-11-19
+
+- Pin the structural inventory SDK cohort while retaining public protocol 0.91.0.
+
+## 0.31.31 - 2026-11-19
+
+- Pin the qualified invocation-timing SDK cohort with exact package dependencies.
+
+## 0.31.30 - 2026-11-19
+
+- Pin the shared composed-evidence SDK dependency cohort for consistent viewer data.
+
+## 0.31.29 - 2026-11-18
+
+- Align published dependencies with @farmslot/agent-runtime 0.50.0, @farmslot/protocol 0.90.0, @farmslot/recipe-runner 0.48.0.
+
 ## 0.31.28 - 2026-11-18
 
 - Update the exact dependency cohort for prepared recipe trees and overall progress.

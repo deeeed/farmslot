@@ -26,6 +26,8 @@ import {
 
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/config.js';
 import {
+  currentReleaseGatewayInstance,
+  RUN_CLEANUP_TOKEN_PREFIX,
   SLOT_CLEANUP_STOP_UNCONFIRMED,
   SLOT_PHASE_RELEASING,
   SLOT_RELEASE_GATEWAY_INSTANCE,
@@ -209,6 +211,11 @@ export interface RunRecoveryCollaborators {
   dispatchPromptAccepted?: (run: Run, worker: AgentContext) => Promise<boolean>;
   /** The node this slot's commands need when it isn't connected, else null. */
   absentExecutionNode?: (slotId: string) => Promise<string | null>;
+  /**
+   * Read-only census of an interrupted release's checkout on `slotId`: what is still live
+   * there, else null. Refuses when the run is no longer bound to that slot.
+   */
+  releaseFenceBlocker?: (run: Run, slotId: string) => Promise<string | null>;
   /** Settles when the node connects, or rejects when its reconnect wait runs out. */
   waitForExecutionNode?: (machine: string) => Promise<void>;
   /** Clear a run error that only settled native workers carry, from recorded state. */
@@ -1499,6 +1506,7 @@ type OrphanRecoveryCollaborators = Pick<
   | 'retryOccupiedRunSlot'
   | 'resumeInterruptedRecovery'
   | 'absentExecutionNode'
+  | 'releaseFenceBlocker'
 >;
 
 export function reconcileOrphanedSlots(deps: OrphanRecoveryCollaborators): Promise<void> {
@@ -1595,6 +1603,86 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
             ? `[run-engine] reconcile: ${slot.slot} fenced 'releasing' with no stamp; stamped, reclaim after ${STALE_RELEASE_RECLAIM_MS / 60_000}m`
             : `[run-engine] reconcile: ${slot.slot} release fence moved while stamping; left alone`,
         );
+        continue;
+      }
+      // A done or failed run's own cleanup fence (fenceRunSlotCleanup's run-cleanup token)
+      // that a previous gateway raised has no owner left. Once the read-only census finds
+      // nothing still live in the checkout, reopen it as the hold that cleanup settles on
+      // failure and let the occupied-slot retry redo the same terminal cleanup. A cancelled
+      // owner, a release retry's token, a native owner and an expired fence keep the wait
+      // and the backstop: their intent or their quiescence is not provable here.
+      const instance = await deps.readSlotField(slot.slot, SLOT_RELEASE_GATEWAY_INSTANCE);
+      const token = await deps.readSlotField(slot.slot, 'cleanup_release_token');
+      const ownerId =
+        (await deps.readSlotField(slot.slot, 'current_run_id')) ??
+        (await deps.readSlotField(slot.slot, 'cleanup_run_id'));
+      const owner = typeof ownerId === 'string' ? deps.getRun(ownerId) : undefined;
+      if (
+        stalledFor < STALE_RELEASE_RECLAIM_MS &&
+        deps.releaseFenceBlocker &&
+        typeof instance === 'string' &&
+        instance &&
+        instance !== currentReleaseGatewayInstance() &&
+        typeof token === 'string' &&
+        token.startsWith(RUN_CLEANUP_TOKEN_PREFIX) &&
+        owner &&
+        owner.slotId === slot.slot &&
+        (owner.status === 'done' || owner.status === 'failed') &&
+        // The occupied-slot retry refuses these; reopening them would only relabel the hold.
+        !isCompletionPrerequisiteFailure(owner) &&
+        owner.transport !== 'native'
+      ) {
+        // An absent node or a failed census defers this slot alone, never the whole pass.
+        const census = deps.releaseFenceBlocker;
+        // A replay can rebind the owner while this pass awaits; the census and the write
+        // both act only while it is still bound to this slot.
+        const stillBound = () => deps.getRun(owner.id)?.slotId === slot.slot;
+        const blocker =
+          (await deps
+            .absentExecutionNode?.(slot.slot)
+            .then((node) => (node ? `node ${node} is not connected` : null))) ??
+          (await census(owner, slot.slot).catch(
+            (error: unknown) =>
+              `release fence census failed: ${error instanceof Error ? error.message : String(error)}`,
+          ));
+        if (blocker) {
+          console.log(
+            `[run-engine] reconcile: ${slot.slot} interrupted run cleanup stays fenced: ${blocker}`,
+          );
+          continue;
+        }
+        const reopened = await deps.updateSlotStatusIf(
+          slot.slot,
+          (row) =>
+            row.phase === SLOT_PHASE_RELEASING &&
+            row[SLOT_RELEASING_SINCE] === observedSince &&
+            row[SLOT_RELEASE_GATEWAY_INSTANCE] === instance &&
+            row.cleanup_release_token === token &&
+            // A census that outlasted the bound leaves the fence to the backstop.
+            (releasingFenceAgeMs(row[SLOT_RELEASING_SINCE], Date.now()) ?? Infinity) <
+              STALE_RELEASE_RECLAIM_MS &&
+            (row.current_run_id ?? row.cleanup_run_id ?? null) === owner.id &&
+            row[SLOT_CLEANUP_STOP_UNCONFIRMED] !== true &&
+            stillBound() &&
+            (Number(row.slot_epoch) || 0) === (slot.slotEpoch ?? 0) &&
+            !row.handoff_run_id &&
+            !row.workspace_recovery &&
+            !deps.isTerminalTeardownInFlight(slot.slot),
+          {
+            lifecycle: 'held',
+            phase: 'occupied',
+            held_reason: 'Run cleanup was interrupted by a gateway restart; retrying it.',
+            [SLOT_RELEASING_SINCE]: null,
+            [SLOT_RELEASE_GATEWAY_INSTANCE]: null,
+            cleanup_release_token: null,
+          },
+        );
+        console.log(
+          reopened
+            ? `[run-engine] reconcile: ${slot.slot} run cleanup interrupted by a gateway restart; retrying it`
+            : `[run-engine] reconcile: ${slot.slot} release fence moved while reopening; left alone`,
+        );
+        if (reopened) await deps.retryOccupiedRunSlot(slot.slot);
         continue;
       }
       if (stalledFor < STALE_RELEASE_RECLAIM_MS) {

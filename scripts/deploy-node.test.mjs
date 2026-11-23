@@ -1158,6 +1158,35 @@ test('deploy-node --packs-only syncs pack files and leaves the node install and 
   assert.deepEqual(fixture.calls(), []);
 });
 
+for (const mode of ['--packs-only', '--cli-only']) {
+  test(`deploy-node ${mode} dry-run resolves the same marker paths outside its checkout`, (t) => {
+    const { root, write } = deployFixture(t, 'node-deploy-cwd-');
+    const home = path.join(root, 'target home');
+    write(
+      'target home/config/instance.json',
+      JSON.stringify({ layout: 2, name: 'cwd-test', ports: { gateway: 8817 } }),
+    );
+    const script = path.join(root, 'scripts/deploy-node.sh');
+    const deploy = (cwd) =>
+      spawnSync('bash', [script, 'fixture', '--home', home, mode, '--dry-run'], {
+        cwd,
+        env: { HOME: path.join(root, 'home'), PATH: process.env.PATH },
+        encoding: 'utf8',
+        timeout: 5000,
+      });
+    const inside = deploy(root);
+    assert.ifError(inside.error);
+    assert.equal(inside.status, 0, inside.stderr);
+    assert.match(inside.stdout, /FARM_LAYOUT='2'/);
+    assert.match(inside.stdout, /GATEWAY_PORT='8817'/);
+
+    const outside = deploy(path.dirname(root));
+    assert.ifError(outside.error);
+    assert.equal(outside.status, 0, outside.stderr);
+    assert.equal(outside.stdout, inside.stdout);
+  });
+}
+
 test('deploy-node refuses --packs-only with a CLI refresh', (t) => {
   const fixture = cliFixture(t);
   for (const flag of ['--cli-only', '--refresh-cli'])
