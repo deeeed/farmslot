@@ -763,7 +763,9 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
         continue;
       }
 
-      if (publicationReviewRecoveryNeedsReplay(recoveryResult)) {
+      if (
+        publicationReviewRecoveryNeedsReplay(recoveryResult, undefined, deps.getRun(run.id) ?? run)
+      ) {
         try {
           await deps.replayHumanGate(run.id);
         } catch (err) {

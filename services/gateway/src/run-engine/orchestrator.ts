@@ -1708,9 +1708,11 @@ function rearmPublicationReviewRecovery(
           shouldAbort: () => settled,
         });
         if (settled) return;
+        const afterRecovery = getRun(latest.id) ?? latest;
         state.replayPending = publicationReviewRecoveryNeedsReplay(
           recoveryResult,
-          getRun(latest.id)?.engineState?.publishGate?.reviews,
+          afterRecovery.engineState?.publishGate?.reviews,
+          afterRecovery,
         );
         state.replayGeneration = getRun(latest.id)?.engineState?.generation ?? 0;
         if (!state.replayPending && recoveryResult.terminalErrors.length === 0) {
