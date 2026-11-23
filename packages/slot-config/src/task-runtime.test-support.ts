@@ -70,13 +70,20 @@ export async function taskPipe(t: test.TestContext) {
   const lines = createInterface({ input: stream })[Symbol.asyncIterator]();
   t.after(() => {
     // Wake a read still waiting on a fixture that never wrote or never exited, then stop.
+    let writer: number | undefined;
     try {
-      const writer = openSync(fifo, constants.O_WRONLY | constants.O_NONBLOCK);
+      writer = openSync(fifo, constants.O_WRONLY | constants.O_NONBLOCK);
       writeSync(writer, '\n');
-      closeSync(writer);
     } catch (error) {
-      // ENXIO: no reader is left, the stream already ended.
-      if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENXIO') throw error;
+      // ENXIO: no reader was left. EPIPE: the reader closed as this wrote. The stream ended.
+      if (
+        !(error instanceof Error) ||
+        !('code' in error) ||
+        (error.code !== 'ENXIO' && error.code !== 'EPIPE')
+      )
+        throw error;
+    } finally {
+      if (writer !== undefined) closeSync(writer);
     }
     stream.destroy();
     return rm(directory, { recursive: true, force: true });

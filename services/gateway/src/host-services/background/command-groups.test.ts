@@ -5,7 +5,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
-import { after, test, type TestContext } from 'node:test';
+import { after, test as nodeTest, type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { execLocal, signalProcessGroup } from '../../core/exec.js';
@@ -50,13 +50,19 @@ function fixtureEnv(mode: string, extra: NodeJS.ProcessEnv = {}) {
   const lines = createInterface({ input: stream })[Symbol.asyncIterator]();
   after(() => {
     // Wake a read still waiting on commands that never wrote or never exited, then stop.
+    let writer: number | undefined;
     try {
-      const writer = openSync(fifo, constants.O_WRONLY | constants.O_NONBLOCK);
+      writer = openSync(fifo, constants.O_WRONLY | constants.O_NONBLOCK);
       writeSync(writer, '\n');
-      closeSync(writer);
     } catch (error) {
-      // ENXIO: no reader is left, the stream already ended.
-      if ((error as NodeJS.ErrnoException).code !== 'ENXIO') throw error;
+      // ENXIO: no reader was left. EPIPE: the reader closed as this wrote. The stream ended.
+      if (
+        (error as NodeJS.ErrnoException).code !== 'ENXIO' &&
+        (error as NodeJS.ErrnoException).code !== 'EPIPE'
+      )
+        throw error;
+    } finally {
+      if (writer !== undefined) closeSync(writer);
     }
     stream.destroy();
   });
@@ -159,6 +165,14 @@ function watchdogs(child: number): number[] {
   return processes()
     .filter((p) => p.ppid === child && p.command.includes('while IFS= read -r l'))
     .map((p) => p.pid);
+}
+
+/**
+ * Every test here waits on processes dying, with no deadline of its own: one that never dies
+ * fails its test at this bound instead of taking the whole file down at the file timeout.
+ */
+function test(name: string, fn: (t: TestContext) => void | Promise<void>): void {
+  nodeTest(name, { timeout: 60_000 }, fn);
 }
 
 const probe = { entries: [], ssh: [] };

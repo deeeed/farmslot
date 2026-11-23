@@ -22,6 +22,9 @@ export const TASK_RUNTIME_TIMEOUT_MS = { init: 10 * 60_000, verify: 120_000 } as
  * descendant writes after that is dropped; the result itself arrives over IPC and is never cut.
  */
 export const TASK_OUTPUT_DRAIN_MS = 2000;
+// The usual worst case: the closeout's SIGKILL, the forced kill one closeout later, then the
+// output drain. The post-close group census can add up to 2 x closeout more, but by then the
+// groups were SIGKILLed and it is normally one ps call.
 export const TASK_RUNTIME_CLOSEOUT_MS = 2 * NODE_EXEC_CLOSEOUT_MS + TASK_OUTPUT_DRAIN_MS;
 
 export function parseTaskRuntimeRequest(value: unknown): TaskRuntimeRequest {
@@ -230,19 +233,33 @@ type TaskMessage =
   | { type: 'task-child' | 'task-child-exit' | 'task-child-reaped'; pid: number }
   | { type: 'task-stopping' };
 
-let nodeGroupId: Promise<number> | undefined;
-/** This process's group id, which need not be its pid (yarn farmdev); Node has no getpgid. */
-function nodeGroup(): Promise<number> {
-  nodeGroupId ??= new Promise((resolve, reject) =>
-    execFile('/bin/ps', ['-o', 'pgid=', '-p', String(process.pid)], (error, output) => {
-      const group = Number(output.trim());
-      if (error || !Number.isInteger(group) || group < 1)
-        reject(error ?? new Error(`Unreadable process group: ${output}`));
-      else resolve(group);
-    }),
-  );
-  return nodeGroupId;
+/** Caches `read`'s value once it succeeds; a failed read is tried again next time. */
+export function cachedOnSuccess<T>(read: () => Promise<T>): () => Promise<T> {
+  let cached: Promise<T> | undefined;
+  return () =>
+    (cached ??= read().catch((error: unknown) => {
+      cached = undefined;
+      throw error;
+    }));
 }
+
+/** This process's group id, which need not be its pid (yarn farmdev); Node has no getpgid. */
+const nodeGroup = cachedOnSuccess(
+  () =>
+    new Promise<number>((resolve, reject) =>
+      execFile(
+        '/bin/ps',
+        ['-o', 'pgid=', '-p', String(process.pid)],
+        { timeout: 2000 },
+        (error, output) => {
+          const group = Number(output.trim());
+          if (error || !Number.isInteger(group) || group < 1)
+            reject(error ?? new Error(`Unreadable process group: ${output}`));
+          else resolve(group);
+        },
+      ),
+    ),
+);
 
 /**
  * The task process's IPC messages; anything else is ignored. Provider code can send too, and
@@ -538,6 +555,8 @@ export async function runTaskRuntime(
       if (stopped) return;
       outputBytes += data.length;
       if (outputBytes > 8 * 1024 * 1024) {
+        // The bound fails the run even after a delivered result, as on the CLI transport.
+        delivered = false;
         stop(1, `maxBuffer exceeded after ${outputBytes} bytes`);
         return;
       }

@@ -3,7 +3,12 @@ import { execFileSync, spawn } from 'node:child_process';
 import path from 'node:path';
 import test from 'node:test';
 
-import { killExitedLeaderGroup, parseTaskMessage, runTaskRuntime } from './task-runtime.js';
+import {
+  cachedOnSuccess,
+  killExitedLeaderGroup,
+  parseTaskMessage,
+  runTaskRuntime,
+} from './task-runtime.js';
 import { alive, cliFixture, taskPipe } from './task-runtime.test-support.js';
 
 /** Exited children of this process that nobody waited for. */
@@ -207,15 +212,17 @@ test(
     const { root, cli } = await cliFixture(
       t,
       `import fs from 'node:fs';
-    import { spawnSync } from 'node:child_process';
+    import { spawn, spawnSync } from 'node:child_process';
     export async function runHostedTaskInit(taskPath: string) {
       // Only the task holds the pipe, so it ends when the task exits.
       const pipe = fs.openSync(${JSON.stringify(pipe.path)}, 'w');
       // Backgrounded by a synchronous script, so it is not a tracked task subprocess.
       spawnSync('/bin/sh', ['-c', 'sleep 600 3>&- & echo $! >&3'], { stdio: ['inherit', 'inherit', 'inherit', pipe] });
+      ${afterResult()}
       return { taskPath };
     }`,
     );
+    const resultRead = resultWatch(t);
     const controller = new AbortController();
     const pending = runTaskRuntime(
       {
@@ -229,9 +236,10 @@ test(
       controller.signal,
     );
     descendant = Number(await pipe.line());
-    // The task exited after delivering; the descendant still holds its output, so this
-    // cancel lands in the drain window. Without the drain the result would wait for the
-    // descendant's 600 s; without the delivered-result guard the cancel would replace it.
+    await resultRead(await pipe.line());
+    // The node read the result and the task exited; the descendant still holds its output,
+    // so this cancel lands in the drain window. Without the drain the result would wait for
+    // the descendant's 600 s; without the delivered-result guard the cancel would replace it.
     await pipe.closed();
     controller.abort();
     const result = await pending;
@@ -324,6 +332,50 @@ test(
     await pipe.closed();
   },
 );
+
+test(
+  'output past the bound after a delivered result still fails the run',
+  { timeout: 90_000 },
+  async (t) => {
+    const pipe = await taskPipe(t);
+    const { root, cli } = await cliFixture(
+      t,
+      `import fs from 'node:fs';
+    import { spawn } from 'node:child_process';
+    export async function runHostedTaskInit(taskPath: string) {
+      const pipe = fs.openSync(${JSON.stringify(pipe.path)}, 'w');
+      // After the result went out, more than the 8 MiB bound on stdout.
+      ${afterResult("process.stdout.write('x'.repeat(9 * 1024 * 1024));")}
+      return { taskPath };
+    }`,
+    );
+    const pending = runTaskRuntime(
+      {
+        action: 'init',
+        taskPath: path.join(root, 'task.json'),
+        supportDir: root,
+        env: { FARMSLOT_CLI: path.join(cli, 'bin/farmslot.mjs') },
+      },
+      root,
+    );
+    const result = await pending;
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stderr, /maxBuffer exceeded/);
+  },
+);
+
+test('a group read that fails is tried again rather than cached', async () => {
+  let reads = 0;
+  const read = cachedOnSuccess(async () => {
+    reads++;
+    if (reads === 1) throw new Error('ps: fork failed');
+    return 4242;
+  });
+  await assert.rejects(read(), /fork failed/);
+  assert.equal(await read(), 4242);
+  assert.equal(await read(), 4242);
+  assert.equal(reads, 2);
+});
 
 test(
   'a cancel after the task exited still stops its tracked subprocess',
