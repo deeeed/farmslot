@@ -68,7 +68,7 @@ import {
   retireNativeWorkersForSlot,
 } from '../../runners/native/worker.js';
 import { NativeWorkerOperationUncertainError } from '../../runners/native/worker-error.js';
-import { getRun } from '../../runs/store.js';
+import { getRun, getRunWithArchived } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { withSlotSources } from '../../sources/runtime.js';
 
@@ -196,6 +196,7 @@ async function slotPrepareWithSources(
   try {
     const stop = new AbortController();
     activePrepareAborts.set(params.slotId, {
+      runId: params.runId,
       abort: () => stop.abort(),
       settled: new Promise<void>((resolve) => (settle = resolve)),
     });
@@ -215,7 +216,8 @@ async function slotPrepareWithSources(
     // pass runId as a label and keep their existing checks.
     if (params.runId && opts?.requireRunOwnership) {
       const row = await readSlotRow(params.slotId);
-      const owner = getRun(params.runId);
+      // A run evicted from the live store is read from the archive: it has ended too.
+      const owner = getRun(params.runId) ?? (await getRunWithArchived(params.runId));
       if (
         !row ||
         (row.current_run_id !== params.runId && row.handoff_run_id !== params.runId) ||

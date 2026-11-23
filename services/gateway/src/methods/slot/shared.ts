@@ -76,7 +76,11 @@ export const activePrepareSessions = new Map<string, ActivePrepareSession>();
 /** In-flight prepare per slot, so a release can stop it and wait for it to
  * settle before reaping its scope: otherwise the prepare launches its
  * preflight holder after the release found nothing to reap. */
-export const activePrepareAborts = new Map<string, { abort: () => void; settled: Promise<void> }>();
+/** In-flight prepares by slot; runId names the run a prepare is for, when it is for one. */
+export const activePrepareAborts = new Map<
+  string,
+  { abort: () => void; settled: Promise<void>; runId?: string }
+>();
 
 export const DEFAULT_GATEWAY_PORT = 7777;
 

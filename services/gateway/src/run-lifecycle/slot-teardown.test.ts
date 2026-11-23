@@ -1659,6 +1659,7 @@ test('a pre-dispatch cancel stops and joins the run’s in-flight prepare before
   const events: string[] = [];
   let settle!: () => void;
   activePrepareAborts.set(SLOT_ID, {
+    runId: RUN_ID,
     abort: () => {
       events.push('abort');
       // The prepare unwinds after its abort, a moment later.
@@ -1687,15 +1688,15 @@ test('a pre-dispatch cancel stops and joins the run’s in-flight prepare before
   assert.equal(slotRow?.lifecycle, 'ready');
 });
 
-test('a pre-dispatch cancel never stops a prepare on a slot another run now owns', async (t) => {
+test('a pre-dispatch cancel never stops another run’s prepare on its slot', async (t) => {
   const { activePrepareAborts } = await import('../methods/slot/shared.js');
   let aborted = false;
   activePrepareAborts.set(SLOT_ID, {
+    runId: 'other-run',
     abort: () => (aborted = true),
     settled: new Promise<void>(() => {}),
   });
   t.after(() => activePrepareAborts.delete(SLOT_ID));
-  slotRow = { ...slotRow, current_run_id: 'other-run' };
   const preparing = {
     ...run,
     steps: [
@@ -1713,6 +1714,7 @@ test('a pre-dispatch cancel joins the prepare of a slot reserved for the run’s
   const { activePrepareAborts } = await import('../methods/slot/shared.js');
   let aborted = false;
   activePrepareAborts.set(SLOT_ID, {
+    runId: RUN_ID,
     abort: () => (aborted = true),
     settled: Promise.resolve(),
   });
@@ -1733,7 +1735,11 @@ test('a pre-dispatch cancel joins the prepare of a slot reserved for the run’s
 
 test('a pre-dispatch cancel whose prepare will not stop keeps the slot and names why', async (t) => {
   const { activePrepareAborts } = await import('../methods/slot/shared.js');
-  activePrepareAborts.set(SLOT_ID, { abort: () => {}, settled: new Promise<void>(() => {}) });
+  activePrepareAborts.set(SLOT_ID, {
+    runId: RUN_ID,
+    abort: () => {},
+    settled: new Promise<void>(() => {}),
+  });
   t.after(() => activePrepareAborts.delete(SLOT_ID));
   const preparing = {
     ...run,

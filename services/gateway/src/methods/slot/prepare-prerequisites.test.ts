@@ -141,11 +141,15 @@ mock.module('../../fleet/state.js', {
 });
 // Runs a test marks as ended; every other id reads the real (empty) store.
 const endedRuns = new Set<string>();
+const archivedRuns = new Set<string>();
 const store = await import('../../runs/store.js');
 mock.module('../../runs/store.js', {
   namedExports: {
     ...store,
     getRun: (id: string) => (endedRuns.has(id) ? { id, status: 'cancelled' } : store.getRun(id)),
+    // An ended run evicted from the live store is only in the archive.
+    getRunWithArchived: async (id: string) =>
+      archivedRuns.has(id) ? { id, status: 'cancelled' } : store.getRunWithArchived(id),
   },
 });
 const { slotPrepare } = await import('./prepare.js');
@@ -257,6 +261,15 @@ test('an engine prepare is refused when another run holds the slot or this run h
   slotRow = { current_run_id: 'ended-run', handoff_run_id: null };
   await assert.rejects(
     slotPrepare({ slotId: vars.slotId, runId: 'ended-run' }, () => undefined, undefined, {
+      requireRunOwnership: true,
+    }),
+    /no longer belongs to run/,
+  );
+  archivedRuns.add('archived-run');
+  t.after(() => archivedRuns.clear());
+  slotRow = { current_run_id: 'archived-run', handoff_run_id: null };
+  await assert.rejects(
+    slotPrepare({ slotId: vars.slotId, runId: 'archived-run' }, () => undefined, undefined, {
       requireRunOwnership: true,
     }),
     /no longer belongs to run/,

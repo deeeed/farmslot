@@ -1567,6 +1567,65 @@ test('the branch-affinity card does not offer a free slot still under a prepare 
   assert.deepEqual(offered, [free.slot]);
 });
 
+test('an automatic pick skips a free slot still under a prepare guard', async (t) => {
+  reset('dev', 'PROOF-9001');
+  expectedTarget = undefined;
+  const guarded = candidate('guarded-main', 'first', 'main');
+  const free = candidate('free-main', 'first', 'main');
+  slots.splice(0, slots.length, guarded, free);
+  activePrepareSlots.add(guarded.slot);
+  t.after(() => activePrepareSlots.delete('guarded-main'));
+  expectedSlot = free.slot;
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.outputs?.selectedSlot, free.slot);
+  assert.ok(!reuseCalls.includes(guarded.slot), 'the guarded slot is never considered');
+});
+
+test('the slot picker does not offer a slot still under a prepare guard', async (t) => {
+  reset('dev', 'TAT-9000');
+  defaultReuseOutcome = { kind: 'local-work', reason: 'dirty files' };
+  expectedTarget = undefined;
+  const selectable = candidate('selectable', 'macpro', 'fix/old');
+  const guarded = candidate('guarded', 'macpro', 'fix/guarded');
+  slots.splice(0, slots.length, selectable, guarded);
+  activePrepareSlots.add(guarded.slot);
+  t.after(() => activePrepareSlots.delete('guarded'));
+  pressureDecisions.set('macpro', loadDecision('macpro', 0.2));
+  expectedSlot = pickedSlot = selectable.slot;
+  await executeFindSlotStep(run.id, run, 0, context);
+  if (pickerPayload?.kind !== 'slot_picker') throw new Error('Missing slot picker');
+  assert.deepEqual(
+    pickerPayload.candidates.map((slot) => slot.slotId),
+    [selectable.slot],
+  );
+});
+
+test('a picked slot guarded after the card was shown is claimed only once the guard clears', async (t) => {
+  reset('dev', 'TAT-9000');
+  defaultReuseOutcome = { kind: 'local-work', reason: 'dirty files' };
+  expectedTarget = undefined;
+  const selectable = candidate('selectable', 'macpro', 'fix/old');
+  slots.splice(0, slots.length, selectable);
+  pressureDecisions.set('macpro', loadDecision('macpro', 0.2));
+  expectedSlot = pickedSlot = selectable.slot;
+  t.after(() => activePrepareSlots.delete('selectable'));
+  afterLoadWait = () => {
+    assert.deepEqual(claims, [], 'no claim while the guard holds');
+    activePrepareSlots.delete(selectable.slot);
+  };
+  await executeFindSlotStep(run.id, run, 0, {
+    ...context,
+    createEngineDecision: async (...args) => {
+      const action = await context.createEngineDecision(...args);
+      // Upkeep takes the guard between the card and the pick.
+      if (args[1] === 'no_suitable_slot') activePrepareSlots.add(selectable.slot);
+      return action;
+    },
+  });
+  assert.equal(loadWaits.length, 1, 'one wait for the guard');
+  assert.deepEqual(claims, [selectable.slot]);
+});
+
 test('a pinned fresh reuse on a node that lacks the run model is refused before teardown', async () => {
   reset('dev', 'deeeed/farmslot#1776');
   expectedTarget = undefined;

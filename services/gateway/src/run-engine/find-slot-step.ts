@@ -407,6 +407,44 @@ function acceptedAppBinding(run: Run | undefined): AppBindingMismatchPayload | u
  * this claim aborts its remaining writes instead of clobbering the claim.
  */
 
+/**
+ * A slot this run will prepare next must not be under another prepare guard: prepare would
+ * refuse it 'already preparing' (1b542e2f). Card picks and reuse claims reach the claim
+ * without the explicit-pick wait, and a guard can be taken after selection, so the claim
+ * waits for it the same way, as queue time.
+ */
+export async function waitForPrepareGuard(
+  runId: string,
+  generation: number,
+  slotId: string,
+  deps: {
+    preparing?: (slotId: string) => boolean;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<unknown>;
+    timeoutMs?: number;
+  } = {},
+): Promise<void> {
+  const {
+    preparing = (id) => activePrepareSlots.has(id),
+    now = Date.now,
+    sleep = delay,
+    timeoutMs = EXPLICIT_SLOT_RELEASE_WAIT_MS,
+  } = deps;
+  if (!preparing(slotId)) return;
+  await awaitAsQueueTime(runId, 'find-slot', async () => {
+    const deadline = now() + timeoutMs;
+    while (preparing(slotId)) {
+      if (runSupersededSince(getRun(runId), generation)) throw runChangedError(runId, slotId);
+      if (now() >= deadline)
+        throw slotClaimRefusedError(
+          slotId,
+          `Slot ${slotId} is still preparing after ${Math.round(timeoutMs / 60_000)}m`,
+        );
+      await sleep(EXPLICIT_SLOT_RELEASE_POLL_MS);
+    }
+  });
+}
+
 async function claimSelectedSlot(
   slotId: string,
   runId: string,
@@ -422,6 +460,7 @@ async function claimSelectedSlot(
     const slotRunner = (await readSlotRow(slotId))?.runner;
     assertNativeRunForSlot(run, typeof slotRunner === 'string' ? slotRunner : undefined);
   }
+  if (phase === 'preparing') await waitForPrepareGuard(runId, generation, slotId);
   // The gate for every claim, before source admission and the claim itself. Paths
   // that may change a slot before claiming it (safe reuse, takeovers, picks) asked
   // already and replay here; a clean scored pick, affinity, the skip-prepare preview

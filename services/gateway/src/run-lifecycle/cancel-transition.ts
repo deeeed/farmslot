@@ -7,6 +7,7 @@
 
 import { closeStepWait, Events, isSlotFreedByPark, type Run } from '@farmslot/protocol';
 
+import { runReachedDispatch } from '../agents/contexts.js';
 import { markBacklogRunObserved } from '../backlog/store.js';
 import { usesEvalTrialCapsule } from '../evals/trial-policy.js';
 import { invalidateWarmReviewerSessions } from '../review/session-mode.js';
@@ -237,26 +238,12 @@ async function broadcastTransitionEvent(event: string, payload: unknown): Promis
 }
 
 /**
- * A run cancelled before its worker was dispatched has nothing to replay: its dispatch step
- * never started. Such a cancel releases the slot instead of holding it (510ed181 kept
- * macpro-mmt-6 held from a cancel during prepare). A flow without a dispatch step keeps the hold.
+ * A run cancelled before its worker was dispatched has nothing to replay. Such a cancel
+ * releases the slot instead of holding it (510ed181 kept macpro-mmt-6 held from a cancel
+ * during prepare). A flow without a dispatch step keeps the hold.
  */
-export function cancelledBeforeDispatch(
-  run: Pick<Run, 'steps' | 'worktreeHeadAtDispatch' | 'agentContexts'>,
-): boolean {
-  const dispatch = run.steps.find((step) => step.name === 'dispatch');
-  if (!dispatch || dispatch.startedAt || dispatch.outputs || run.worktreeHeadAtDispatch)
-    return false;
-  // A replay clears the dispatch step, not what an earlier dispatch left on its workers.
-  return !(run.agentContexts ?? []).some(
-    (context) =>
-      context.startedAt ||
-      context.attemptStartedAt ||
-      context.promptDeliveryStartedAt ||
-      context.runnerSessionId ||
-      context.nativeSession ||
-      context.nativeSessionHistory?.length,
-  );
+export function cancelledBeforeDispatch(run: Parameters<typeof runReachedDispatch>[0]): boolean {
+  return !runReachedDispatch(run);
 }
 
 /**
@@ -272,7 +259,7 @@ export function defaultCancelCollaborators({
     { fence: RunSlotCleanupFence; blocker: string | null; succeeded: boolean; keep: boolean }
   >();
   // After dispatch a cancel keeps the slot for replay (ADR-054); before it there is nothing to replay.
-  const keeps = (run: Pick<Run, 'steps' | 'worktreeHeadAtDispatch' | 'agentContexts'>) =>
+  const keeps = (run: Parameters<typeof cancelledBeforeDispatch>[0]) =>
     keepForReplay && !cancelledBeforeDispatch(run);
   return {
     releaseWorkspace: async (run) => {
@@ -304,10 +291,8 @@ export function defaultCancelCollaborators({
       if (!state.keep && run.slotId) {
         const { activePrepareAborts } = await import('../methods/slot/shared.js');
         const inflight = activePrepareAborts.get(run.slotId);
-        // Only this run's own prepare, on a slot it holds or has reserved for a warm handoff:
-        // a stale slot id must not stop another owner's.
-        const row = inflight ? await readSlotRow(run.slotId) : null;
-        if (inflight && (row?.current_run_id === run.id || row?.handoff_run_id === run.id)) {
+        // Only this run's own prepare: a stale slot id must not stop another run's.
+        if (inflight?.runId === run.id) {
           const { RELEASE_PREPARE_STOP_TIMEOUT_MS } = await import('../methods/slot/release.js');
           const stopMs = prepareStopTimeoutMs ?? RELEASE_PREPARE_STOP_TIMEOUT_MS;
           inflight.abort();
