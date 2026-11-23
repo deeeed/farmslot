@@ -81,6 +81,28 @@ test('an explicit slot mid-release is previewed only after the release lands', a
   assert.ok(h.state.nowMs < EXPLICIT_SLOT_RELEASE_WAIT_MS);
 });
 
+// 1b542e2f picked macpro-mmt-4 while a finished recovery still held its prepare guard; prepare
+// then refused it 'already preparing' and the run failed.
+test('an explicit slot under a prepare guard is previewed only after the guard clears', async () => {
+  const h = harness([readyRow]);
+  let guarded = 2;
+  const sleep = h.deps.sleep;
+  const deps = {
+    ...h.deps,
+    preparing: () => guarded > 0,
+    sleep: async (ms: number) => {
+      assert.equal(h.state.previews, 0, 'preview must not run while the slot is still preparing');
+      guarded -= 1;
+      await sleep(ms);
+    },
+  };
+  const result = await previewWhenSlotClaimable('new-run', 0, SLOT, h.preview, deps);
+  assert.equal(result, 'previewed');
+  assert.equal(h.state.previews, 1);
+  assert.equal(h.state.sleeps, 2);
+  assert.equal(h.state.waits, 1, 'the wait counts as queue time');
+});
+
 test('a release that never lands fails after the bound, naming when it started', async () => {
   const h = harness([releasingRow]);
   await assert.rejects(

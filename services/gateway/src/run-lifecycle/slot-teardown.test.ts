@@ -1634,6 +1634,26 @@ test('cancel keeps the slot for replay past its own exiting helper and an editor
   assertKeptForReplay();
 });
 
+// 510ed181 on macpro-mmt-6, 11-23 16:21Z: cancelled while prepare resolved its base ref. Its worker
+// was never dispatched, so there was nothing to replay, yet the slot stayed held for it.
+test('a run cancelled before its worker was dispatched releases its slot', async () => {
+  const preparing = {
+    ...run,
+    steps: [
+      { name: 'prepare', status: 'skipped', startedAt: '2026-11-23T16:21:09.377Z' },
+      { name: 'dispatch', status: 'skipped' },
+    ],
+  } as Run;
+  const cancel = defaultCancelCollaborators();
+
+  await cancel.releaseCapabilities(preparing);
+  assert.equal(await cancel.releaseSlot(preparing), undefined);
+
+  assert.equal(slotRow?.lifecycle, 'ready');
+  assert.equal(slotRow?.current_run_id, null);
+  assert.equal(slotRow?.held_reason ?? null, null);
+});
+
 // macwork-mmt-3 on Arthur's cancels: the run's own finished worker had no exact pane identity.
 test('cancel stops its own worker without a pane identity the way slot.release does', async () => {
   workerBlocker = `Worker dev has no exact pane identity; cleanup deferred. Verify its window, then use farmslot slot release --keep-work ${SLOT_ID}`;
