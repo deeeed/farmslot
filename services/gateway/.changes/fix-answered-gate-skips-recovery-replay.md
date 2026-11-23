@@ -1,0 +1,1 @@
+- A gateway restart no longer overrides a gate the operator answers during startup. Recovery owed a gate replay and fired it after the operator had answered the gate, which aborted the review that answer requested. The owed replay now stands down once its gate is answered.

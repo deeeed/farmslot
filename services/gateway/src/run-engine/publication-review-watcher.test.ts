@@ -68,3 +68,39 @@ test('a pending gate retry stands down once another replay owns the gate (F311)'
   assert.deepEqual(replays, [untouched], 'only the gate nobody else replayed is retried');
   assert.equal(getRun(replayedByOperator)?.engineState?.publishGate?.reviewRecovery, undefined);
 });
+
+// Run 5d598e4a (audiolab #495): the gateway restarted with a fix pass active, so recovery owed a
+// gate replay. The operator answered the gate with Request review 16 s later; the engine resumed
+// HUMAN_GATE in the same generation and started that review. The owed replay then fired, took the
+// gate (gen 3 -> 4) and aborted the requested review, which was recorded as unavailable.
+test('a pending gate retry stands down once the operator has answered the gate', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const runId = preparingGate();
+  const gate = {
+    id: `gate-${runId}`,
+    type: 'engine_human_gate' as const,
+    title: 'Approve publication',
+    description: 'Review the package.',
+    actions: [{ id: 'request-review', label: 'Request review', style: 'secondary' as const }],
+    createdAt: new Date().toISOString(),
+  };
+  updateRun(runId, { decisions: [gate] });
+  t.after(async () => {
+    suspendPublicationReviewRecoveryForRun(runId);
+    updateRun(runId, { status: 'failed', completedAt: new Date().toISOString() });
+    await deleteRun(runId);
+  });
+  const before = replays.length;
+  assert.ok(rearmPublicationReviewRecoveryForRun(runId, { replayPending: true }));
+  updateRun(runId, {
+    decisions: [
+      { ...gate, resolvedAt: new Date().toISOString(), resolvedAction: 'request-review' },
+    ],
+  });
+
+  t.mock.timers.tick(60_000);
+  const deadline = performance.now() + 2_000;
+  while (replays.length === before && performance.now() < deadline) await flushed();
+
+  assert.deepEqual(replays.slice(before), [], 'the answered gate is not replayed');
+});
