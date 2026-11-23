@@ -245,6 +245,42 @@ test('a slot on a stale bundle gets the current bundle published and selected; l
   assert.deepEqual(rec.written.at(-1)!.paths, ['node-support-hash']);
 });
 
+test('an upload goes in chunks and records the bytes sent after each', async () => {
+  const { io, rec } = fakeIo({ remoteManifestHash: null });
+  const progress = { phase: '', sentBytes: 0, totalBytes: 0 };
+  const seen: number[] = [];
+  const upload = io.writeFiles;
+  io.writeFiles = async (vars, baseDir, files) => {
+    if (baseDir.includes('.incoming')) {
+      assert.equal(progress.phase, 'uploading');
+      seen.push(progress.sentBytes);
+    }
+    return upload(vars, baseDir, files);
+  };
+  const state = await ensureNodeSupportBundle(remoteVars(), '.agent', {
+    projectVars,
+    io,
+    progress,
+    uploadChunkBytes: 1,
+  });
+  const chunks = rec.written.filter((write) => write.base.includes('.incoming'));
+  assert.ok(chunks.length > 1, 'a bundle larger than one chunk is sent in several requests');
+  assert.equal(
+    chunks.reduce((count, chunk) => count + chunk.paths.length, 0),
+    JSON.parse(rec.manifests[0]).fileCount,
+    'every file is sent once',
+  );
+  assert.ok(progress.totalBytes > 0);
+  assert.equal(progress.sentBytes, progress.totalBytes, 'every byte is counted once sent');
+  assert.deepEqual(
+    seen,
+    [...seen].sort((a, b) => a - b),
+    'bytes sent only grow',
+  );
+  assert.equal(seen[0], 0);
+  assert.equal(state?.published, true);
+});
+
 test('a slot whose node already holds the current bundle is checked and repointed, never republished', async () => {
   const probe = fakeIo({ remoteManifestHash: null });
   const current = await ensureNodeSupportBundle(remoteVars(), '.agent', {
