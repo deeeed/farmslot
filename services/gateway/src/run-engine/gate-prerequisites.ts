@@ -769,7 +769,10 @@ export async function collectRunGateAssessment(
     reasons.push({
       code: 'acceptance-unreadable',
       prerequisite: 'acceptance',
-      message: 'The registered acceptance criteria or their verdicts could not be read.',
+      // The reader's own words name what failed (a changed registration, an
+      // invalid ledger, an unretained bundle); without them the hold says only
+      // that something is unreadable and an operator cannot act on it.
+      message: `The registered acceptance criteria or their verdicts could not be read: ${acceptance.error}`,
       actionId: 'hold',
     });
   } else if (acceptance.issues.length) {

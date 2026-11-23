@@ -42,6 +42,7 @@ const { captureRunOutput, acknowledgeRunOutput, retainFinalRunArtifacts } =
 const {
   acquisitionTaskDirToken,
   retainedRecipeRunGroups,
+  retainedRunBundleRef,
   retainedRunTaskDirectory,
   retainRunArtifacts,
   readRetainedRunText,
@@ -149,6 +150,40 @@ test('unretained artifact discovery refuses without any live slot fallback', asy
     userAction: `farmslot runs bundle retain ${f.runId}`,
   });
   assert.equal(await readFile(path.join(f.taskDir, 'artifacts/report.html'), 'utf8'), f.body);
+});
+
+test('a failed capture explains the refusal only while nothing is retained', async () => {
+  const f = await fixture();
+  updateRun(f.runId, {
+    slotId: 'unavailable-proof-slot',
+    status: 'done',
+    output: {
+      workerFinished: true,
+      capturedAt: new Date().toISOString(),
+      artifactManifest: [],
+      manifestDigest: '',
+      captureError: 'Storage unavailable: /Volumes/c910ssd is not mounted.',
+    },
+  });
+  await assert.rejects(runRecipeRunsForRun({ runId: f.runId }), {
+    code: 'RUN_ARTIFACTS_NOT_RETAINED',
+    message:
+      'Run artifacts are not retained: Storage unavailable: /Volumes/c910ssd is not mounted.',
+  });
+  // A run that retained a bundle and then failed a refresh keeps the bundle, so a
+  // lookup for a digest that bundle no longer has is not the capture failure.
+  updateRun(f.runId, {
+    artifactBundle: {
+      storeId: 'local',
+      bundleDigest: 'sha256:retained',
+      taskKey: f.runId,
+      manifestDigest: 'sha256:manifest',
+    },
+  });
+  assert.throws(() => retainedRunBundleRef(getRun(f.runId)!, undefined, 'sha256:absent'), {
+    code: 'RUN_ARTIFACTS_NOT_RETAINED',
+    message: 'Run artifacts are not retained.',
+  });
 });
 
 test('a run still working has no evidence to judge yet, not an evidence error', async () => {

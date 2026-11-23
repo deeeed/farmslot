@@ -27,8 +27,8 @@
       "claim": "A later file signal enters COMPLETE through the monitor continuation without another dispatch."
     },
     {
-      "id": "uncertain-delivery-reconciled",
-      "claim": "A second send-back reconciles the original uncertain instruction instead of sending another one."
+      "id": "uncertain-delivery-resumes-monitoring",
+      "claim": "An uncertain delivery resumes monitoring on one send-back, with no second result decision minted and no second instruction sent."
     }
   ],
   "workflow": {
@@ -48,7 +48,7 @@
         "stream": "stdout",
         "contains": "\"exactRefusalDelivered\":true",
         "proves": ["refusal-delivered"],
-        "next": "reconciled"
+        "next": "resumed"
       },
       "old": {
         "action": "assert_output",
@@ -72,13 +72,22 @@
         "action": "end",
         "status": "pass"
       },
-      "reconciled": {
+      "resumed": {
         "action": "assert_output",
-        "intent": "Require one observation of the original instruction on retry.",
+        "intent": "Require the resumed monitor with no second instruction sent.",
         "source": "prove",
         "stream": "stdout",
-        "contains": "\"deliveryObservations\":1",
-        "proves": ["uncertain-delivery-reconciled"],
+        "contains": "\"monitoringResumedWithoutOperator\":true",
+        "proves": ["uncertain-delivery-resumes-monitoring"],
+        "next": "no-second-decision"
+      },
+      "no-second-decision": {
+        "action": "assert_output",
+        "intent": "Require that no second result decision is minted for the refusal the worker has.",
+        "source": "prove",
+        "stream": "stdout",
+        "contains": "\"noSecondStaleDecision\":true",
+        "proves": ["uncertain-delivery-resumes-monitoring"],
         "next": "old"
       }
     }

@@ -1,11 +1,16 @@
-import { PipelineSteps, primaryRoleForFlow, type Run } from '@farmslot/protocol';
+import { PipelineSteps, primaryRoleForFlow, type Run, type WorkerSignal } from '@farmslot/protocol';
 
 import { selectAgentContext } from '../agents/contexts.js';
+import { resolveNativeContext } from '../agents/native-context.js';
 import { readSlotField } from '../core/state.js';
 import { continuePRCompletionStep } from '../methods/run/replay-step.js';
 import { probeWorkerSignalForRun } from '../run-engine/run-monitor.js';
 import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import { completionSendBackCommandId } from '../runners/native/worker-control.js';
+import {
+  deliverOperatorInstruction,
+  OperatorInstructionNotAttemptedError,
+} from '../runners/operator-instruction.js';
 import { deliverOperatorInstructionWithIntent } from '../runners/operator-instruction-intent.js';
 import { getRun, persistRunNow, updateRunStep } from '../runs/store.js';
 import {
@@ -22,12 +27,16 @@ interface CompletionDelivery {
   confirmed: boolean;
   startedAt?: number;
   note?: string;
+  /**
+   * The native host accepted this instruction into its command queue and has not
+   * submitted it. Nothing the running turn writes is an answer to it, so a newer
+   * consumed signal must not retire it (that would let a second send-back queue a
+   * second correction and both would run).
+   */
+  queued?: boolean;
 }
 
-function savedDelivery(run: Run): CompletionDelivery | undefined {
-  const value = run.steps.find((step) => step.name === PipelineSteps.DISPATCH)?.outputs
-    ?.completionSendBackDelivery;
-  if (value === undefined) return undefined;
+function parseDelivery(value: unknown): CompletionDelivery {
   if (
     !value ||
     typeof value !== 'object' ||
@@ -44,7 +53,8 @@ function savedDelivery(run: Run): CompletionDelivery | undefined {
     ('startedAt' in value &&
       value.startedAt !== undefined &&
       (typeof value.startedAt !== 'number' || !Number.isFinite(value.startedAt))) ||
-    ('note' in value && value.note !== undefined && typeof value.note !== 'string')
+    ('note' in value && value.note !== undefined && typeof value.note !== 'string') ||
+    ('queued' in value && value.queued !== undefined && typeof value.queued !== 'boolean')
   )
     throw new Error('The retained completion feedback intent is invalid');
   return {
@@ -57,7 +67,46 @@ function savedDelivery(run: Run): CompletionDelivery | undefined {
       ? { startedAt: value.startedAt }
       : {}),
     ...('note' in value && typeof value.note === 'string' ? { note: value.note } : {}),
+    ...('queued' in value && value.queued === true ? { queued: true } : {}),
   };
+}
+
+function savedDelivery(run: Run): CompletionDelivery | undefined {
+  const value = run.steps.find((step) => step.name === PipelineSteps.DISPATCH)?.outputs
+    ?.completionSendBackDelivery;
+  return value === undefined ? undefined : parseDelivery(value);
+}
+
+function savedReplacement(
+  outputs: Run['steps'][number]['outputs'],
+): { delivery: CompletionDelivery; signal: WorkerSignal } | undefined {
+  const value = outputs?.completionSendBackReplacement;
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object' || !('delivery' in value) || !('signal' in value))
+    throw new Error('The retained replacement feedback intent is invalid');
+  const signal = normalizeWorkerSignal(value.signal);
+  if (!signal.ok) throw new Error('The retained replacement feedback signal is invalid');
+  return { delivery: parseDelivery(value.delivery), signal: signal.signal };
+}
+
+/**
+ * A send-back whose instruction did not come back confirmed.
+ *
+ * `handedOver` says whether it was typed, submitted or durably queued. That
+ * decides what the engine may do next: an instruction the worker has cannot be
+ * un-sent, so the run has to wait for the worker's next signal rather than
+ * re-present the refusal the worker is already acting on (run 1ad82ba1,
+ * audiolab#526: the refusal was re-raised 6 s later and the worker's new signal
+ * 7 minutes after that was never read).
+ */
+export class CompletionFeedbackDeliveryError extends Error {
+  constructor(
+    message: string,
+    readonly handedOver: boolean,
+  ) {
+    super(message);
+    this.name = 'CompletionFeedbackDeliveryError';
+  }
 }
 
 /** Deliver the refusal once, then resume the retained monitor on a new signal. */
@@ -100,13 +149,28 @@ export async function sendBackCompletion(
   const initial = await assertOwner();
   const dispatch = initial.steps.find((step) => step.name === PipelineSteps.DISPATCH)!;
   const recorded = normalizeWorkerSignal(dispatch.outputs?.completionSendBackSignal);
+  const replacement = savedReplacement(dispatch.outputs);
   const monitor = initial.steps.find((step) => step.name === PipelineSteps.MONITOR)!;
   const consumed = normalizeWorkerSignal(monitor.outputs?.workerSignal);
   let delivery = savedDelivery(initial);
   // A later completed monitor ends this feedback operation. A retry or restart
   // before that point keeps its exact instruction and original signal floor.
+  //
+  // Consumption, not confirmation, is what ends it. This used to require
+  // `delivery.confirmed`, so an instruction whose delivery was never confirmed
+  // stayed retained even after the worker had answered it and the engine had
+  // consumed that answer: a later refusal then found an unconfirmed intent it
+  // could neither retry (its card is gone) nor re-word (the note and native
+  // withdrawal guards), which is the dead end the whole of this change is about.
+  // A newer terminal signal that a completed monitor consumed is evidence the
+  // worker moved on, whatever the delivery bookkeeping says.
+  //
+  // A native queued instruction is the exception: the host is still holding it,
+  // so a signal the running turn wrote is not an answer to it. Retiring it would
+  // let the next refusal queue a second correction beside the first.
   if (
-    delivery?.confirmed &&
+    delivery &&
+    !delivery.queued &&
     recorded.ok &&
     monitor.status === 'done' &&
     consumed.ok &&
@@ -115,11 +179,78 @@ export async function sendBackCompletion(
     delivery = undefined;
   if (delivery && (delivery.slotId !== slotId || delivery.contextId !== context.id || !recorded.ok))
     throw new Error('The retained completion feedback belongs to another worker');
-  if (delivery && note !== undefined && note !== delivery.note)
-    throw new Error('Reconcile the retained completion feedback before changing its operator note');
+  // A changed note used to be refused for any retained delivery, which left run
+  // 09501e29 with no move at all: its feedback was typed into the pane
+  // (`startedAt` set) but never confirmed, the worker never wrote a new signal,
+  // and its card was answered another way — so the instruction could neither be
+  // retried (its card is gone) nor replaced (this refusal). Every later
+  // send-back that worded its feedback differently was refused, permanently.
+  //
+  // What replacing has to answer for is the worker seeing two versions of the
+  // same feedback: `recordPending` writes `startedAt` before the transport call
+  // and only a `not-attempted` outcome clears it, so a delivery carrying one was
+  // typed into a composer or durably queued, and its text can still arrive.
+  //
+  // So the replacement says so in band. A delivery that was handed over is
+  // withdrawn by name in the new instruction, and the run records what it
+  // replaced; one that was never attempted is simply dropped. A CONFIRMED
+  // delivery still refuses: the worker is known to be working from that wording,
+  // and the operator reconciles it rather than withdrawing it underneath them.
+  //
+  // A NATIVE host is the exception. There a handed-over command sits in a durable
+  // queue that nothing may cancel (`worker-input` refuses to cancel a
+  // Farmslot-issued command), so the withdrawn turn can still run, finish and
+  // write its own terminal signal — and a withdrawal in the text of a message
+  // that arrives after it does not help. That one keeps refusing until the
+  // original is reconciled.
+  let superseded: CompletionDelivery | undefined;
+  const retainedBefore = delivery;
+  const editing = !!delivery && note !== undefined && note !== delivery.note;
+  const native =
+    (replacement || editing) &&
+    (initial.transport === 'native' || resolveNativeContext(initial, context) !== null);
+  if (replacement) {
+    if (native) throw new Error('A retained replacement cannot be delivered to a native worker');
+    if (
+      !delivery ||
+      delivery.confirmed ||
+      replacement.delivery.confirmed ||
+      replacement.delivery.slotId !== slotId ||
+      replacement.delivery.contextId !== context.id
+    )
+      throw new Error('The retained replacement feedback belongs to another worker or delivery');
+    if (note !== undefined && note !== replacement.delivery.note)
+      throw new Error(
+        'Reconcile the pending replacement feedback before changing its operator note',
+      );
+    superseded = delivery;
+    delivery = replacement.delivery;
+  } else if (delivery && editing) {
+    if (delivery.confirmed)
+      throw new Error(
+        'Reconcile the retained completion feedback before changing its operator note',
+      );
+    if (delivery.startedAt !== undefined && native)
+      throw new Error(
+        'The retained completion feedback is queued on the worker host and cannot be withdrawn; reconcile it before changing its operator note',
+      );
+    if (delivery.startedAt !== undefined) superseded = delivery;
+    console.warn(
+      `[send-back] run ${run.id.slice(0, 8)} — preparing replacement for feedback ${delivery.key}`,
+    );
+    delivery = undefined;
+  }
   const probe = await probeWorkerSignalForRun(run.id, slotId, context);
+  // A withdrawn or dropped delivery leaves the same stale signal behind it: the
+  // worker never wrote a new one, which is why its instruction was still
+  // outstanding. Replacing that instruction is exactly the case that has to be
+  // allowed to proceed on it, so the allowance follows whatever was retained
+  // when this send-back started — not only the copy that survived. Keying it on
+  // `superseded` alone stranded the next edit: a replacement that never reached
+  // the composer leaves nothing retained, and the operator's next attempt then
+  // failed on the signal probe instead of sending.
   const resumingStale =
-    delivery &&
+    retainedBefore &&
     recorded.ok &&
     probe.code === 'stale' &&
     probe.signal?.timestamp === recorded.signal.timestamp &&
@@ -133,7 +264,7 @@ export async function sendBackCompletion(
     parseStrictIsoMs(probe.signal.timestamp) === null
   )
     throw new Error(`Cannot establish the worker signal before send-back: ${probe.message}`);
-  const baseline = delivery && recorded.ok ? recorded.signal : probe.signal;
+  let baseline = replacement?.signal ?? (delivery && recorded.ok ? recorded.signal : probe.signal);
   delivery ??= {
     key: completionSendBackCommandId(decisionId),
     slotId,
@@ -141,30 +272,81 @@ export async function sendBackCompletion(
     confirmed: false,
     ...(note ? { note } : {}),
     text: [
+      // Named, not just "ignore the previous message": the earlier text may
+      // arrive after this one, so the worker needs to recognise which to drop.
+      ...(superseded
+        ? [
+            `An earlier instruction for this task is withdrawn. If a message arrives, or has arrived, that says "Completion was refused" and${superseded.note ? ` carries the operator feedback "${superseded.note}"` : ' carries no operator feedback'}, ignore it and follow this one instead.`,
+          ]
+        : []),
       'Completion was refused. Fix the following problem in this task:',
       feedback,
       ...(note ? [`Operator feedback: ${note}`] : []),
       `Keep the existing task and evidence ownership rules. When fixed, use the primary task marking command to write a new terminal signal at ${context.signalFile ?? 'the primary SIGNAL.json'}. The previous completion signal will not be reused.`,
     ].join('\n\n'),
   };
-  const persistDelivery = (next: CompletionDelivery, reason: string, clearStartedAt?: number) =>
+  const persistDelivery = (
+    next: CompletionDelivery,
+    reason: string,
+    clearStartedAt?: number,
+    // A handed-over replacement is promoted to the live instruction without being
+    // confirmed, so it takes the same write as a confirmed one: live record, its
+    // own signal floor, replacement cleared, superseded instruction withdrawn.
+    promote = false,
+  ) =>
     withRunTransition(run.id, async () => {
-      const latest = await assertOwner();
-      const step = latest.steps.find((entry) => entry.name === PipelineSteps.DISPATCH)!;
+      // A proved untouched edit can be cleared after a generation change.
+      // Its exact key and timestamp below must still match the saved candidate.
+      const latest =
+        superseded && clearStartedAt !== undefined ? getRun(run.id) : await assertOwner();
+      if (!latest || latest.readOnly) return;
+      const step = latest.steps.find((entry) => entry.name === PipelineSteps.DISPATCH);
+      if (!step) return;
       const previousOutputs = step.outputs;
       if (clearStartedAt !== undefined) {
-        const saved = savedDelivery(latest);
+        const saved = superseded
+          ? savedReplacement(previousOutputs)?.delivery
+          : savedDelivery(latest);
         if (!saved || saved.key !== next.key || saved.startedAt !== clearStartedAt) return;
         const { startedAt: _startedAt, ...untouched } = saved;
         next = untouched;
       }
-      updateRunStep(run.id, PipelineSteps.DISPATCH, {
-        outputs: {
-          ...previousOutputs,
-          completionSendBackSignal: baseline,
-          completionSendBackDelivery: next,
-        },
-      });
+      // Keep the original instruction and signal floor until the replacement
+      // is confirmed. A lost reply preserves the candidate for observe-only
+      // retry. An untouched composer hold clears only the candidate.
+      if (superseded && !next.confirmed && !promote) {
+        updateRunStep(run.id, PipelineSteps.DISPATCH, {
+          outputs: {
+            ...previousOutputs,
+            completionSendBackReplacement:
+              clearStartedAt === undefined ? { delivery: next, signal: baseline } : undefined,
+          },
+        });
+      } else {
+        const history = previousOutputs?.completionSendBackWithdrawn;
+        updateRunStep(run.id, PipelineSteps.DISPATCH, {
+          outputs: {
+            ...previousOutputs,
+            completionSendBackSignal: baseline,
+            completionSendBackDelivery: next,
+            ...(superseded
+              ? {
+                  completionSendBackReplacement: undefined,
+                  completionSendBackWithdrawn: [
+                    ...(Array.isArray(history) ? history : []),
+                    {
+                      key: superseded.key,
+                      ...(superseded.note ? { note: superseded.note } : {}),
+                      startedAt: superseded.startedAt,
+                      withdrawnAt: new Date().toISOString(),
+                      withdrawnBy: next.key,
+                    },
+                  ],
+                }
+              : {}),
+          },
+        });
+      }
       try {
         await persistRunNow(getRun(run.id)!, reason);
       } catch (error) {
@@ -174,23 +356,144 @@ export async function sendBackCompletion(
     });
   if (!delivery.confirmed) {
     const intent = delivery;
-    const result = await deliverOperatorInstructionWithIntent(
-      assertOwner,
-      { key: intent.key, text: intent.text, contextId: context.id, commandId: intent.key },
-      {
-        recordPending: async (begin) => {
-          const window = begin(intent.startedAt);
-          const { startedAt } = window;
-          await persistDelivery({ ...intent, startedAt }, 'completion send-back signal baseline');
-          return window;
-        },
-        clearPending: (startedAt) =>
-          persistDelivery(intent, 'untouched completion feedback can retry', startedAt),
-      },
-    );
-    if (result.delivery !== 'confirmed')
-      throw new Error(`Completion feedback delivery is ${result.delivery}; the run remains held.`);
-    delivery = { ...intent, startedAt: result.startedAt, confirmed: true };
+    const deliverReplacement = async () => {
+      let startedAt = intent.startedAt;
+      const beforeInput = async () => {
+        if (startedAt !== undefined) return;
+        const source = await probeWorkerSignalForRun(run.id, slotId, context);
+        if (
+          !source.signal ||
+          parseStrictIsoMs(source.signal.timestamp) === null ||
+          (!source.ok &&
+            source.code !== 'artifact_contract' &&
+            source.code !== 'non_terminal' &&
+            source.code !== 'stale')
+        )
+          throw new Error(`Cannot establish the worker signal at input: ${source.message}`);
+        if (signalNewerThanRecorded(baseline, source.signal)) baseline = source.signal;
+        const sendingAt = Date.now();
+        await persistDelivery(
+          { ...intent, startedAt: sendingAt },
+          'completion edit input boundary',
+        );
+        startedAt = sendingAt;
+      };
+      try {
+        const outcome = await deliverOperatorInstruction(
+          await assertOwner(),
+          intent.key,
+          intent.text,
+          intent.startedAt,
+          context.id,
+          intent.key,
+          intent.startedAt === undefined ? beforeInput : undefined,
+        );
+        if (outcome === 'not-attempted' && startedAt !== undefined)
+          await persistDelivery(intent, 'untouched completion edit can retry', startedAt);
+        if (outcome === 'confirmed' && startedAt === undefined)
+          throw new Error('Completion edit has no recorded worker input boundary');
+        return { delivery: outcome, startedAt };
+      } catch (error) {
+        if (error instanceof OperatorInstructionNotAttemptedError && startedAt !== undefined)
+          await persistDelivery(intent, 'untouched completion edit can retry', startedAt);
+        throw error;
+      }
+    };
+    const result = superseded
+      ? await deliverReplacement()
+      : await deliverOperatorInstructionWithIntent(
+          assertOwner,
+          { key: intent.key, text: intent.text, contextId: context.id, commandId: intent.key },
+          {
+            recordPending: async (begin) => {
+              const window = begin(intent.startedAt);
+              const { startedAt } = window;
+              await persistDelivery(
+                { ...intent, startedAt },
+                'completion send-back signal baseline',
+              );
+              return window;
+            },
+            clearPending: (startedAt) =>
+              persistDelivery(intent, 'untouched completion feedback can retry', startedAt),
+          },
+        );
+    if (result.delivery !== 'confirmed') {
+      // Only `unconfirmed` means the text actually left the gateway: a tmux
+      // composer took it and acceptance was not observed (run 1ad82ba1). A
+      // native `queued` command is the opposite — the host is holding it until
+      // the running turn ends, so it has NOT been submitted, and resuming the
+      // monitor there would let that running turn's signal end the step while
+      // the correction runs with nobody polling. That queued case is the one the
+      // withdrawal refusal above exists for; it keeps its card.
+      const handedOver = result.delivery === 'unconfirmed';
+      // A queued command is recorded as queued, so a later refusal can tell a
+      // correction the host is still holding from one the worker has answered.
+      if (result.delivery === 'queued' && result.startedAt !== undefined)
+        await persistDelivery(
+          { ...intent, startedAt: result.startedAt, queued: true },
+          'completion feedback queued by the host',
+        );
+      const failure = new CompletionFeedbackDeliveryError(
+        `Completion feedback delivery is ${result.delivery};${
+          handedOver
+            ? ' the worker may already have it, so monitoring resumes and the run will act on its next signal.'
+            : ' the run remains held.'
+        }`,
+        handedOver,
+      );
+      // Resuming happens here, under the same ownership and intent checks the
+      // confirmed path uses below, not in the caller's catch: a resume that
+      // cannot prove it still owns this run and this instruction could abort a
+      // monitor another transition had already restarted.
+      if (handedOver) {
+        const resumingKey = intent.key;
+        try {
+          // An edited instruction the composer took is the live one, and its
+          // record sits under `completionSendBackReplacement` with the signal
+          // floor it was typed against. Promote both through the same writer the
+          // confirmed path uses before monitoring resumes: otherwise the resume
+          // guard looks for this key and finds the original (round 10's strand),
+          // and the monitor would read the pre-edit floor and could consume a
+          // result the edit already superseded.
+          const handedOverEdit = superseded
+            ? savedReplacement(
+                (await assertOwner()).steps.find((entry) => entry.name === PipelineSteps.DISPATCH)
+                  ?.outputs,
+              )
+            : undefined;
+          if (handedOverEdit?.delivery.key === resumingKey) {
+            baseline = handedOverEdit.signal;
+            await persistDelivery(
+              handedOverEdit.delivery,
+              'completion edit promoted to the live instruction',
+              undefined,
+              true,
+            );
+          }
+          await continuePRCompletionStep(run.id, 'monitor', emit, async () => {
+            const latest = await assertOwner();
+            const saved = savedDelivery(latest);
+            if (!saved || saved.key !== resumingKey || saved.confirmed)
+              throw new Error('Completion feedback changed before monitor continuation');
+            return true;
+          });
+        } catch (resumeError) {
+          throw new AggregateError(
+            [failure, resumeError],
+            `${failure.message} Monitoring could not be resumed: ${
+              resumeError instanceof Error ? resumeError.message : String(resumeError)
+            }`,
+          );
+        }
+      }
+      throw failure;
+    }
+    // `queued` describes a command the host was still holding. Confirmation is
+    // the host accepting it, so the marker must not survive into the confirmed
+    // record, where it would block a later retirement for good.
+    const { queued: _queued, ...accepted } = intent;
+    delivery = { ...accepted, startedAt: result.startedAt, confirmed: true };
     await persistDelivery(delivery, 'completion feedback delivered');
   }
   const key = delivery.key;

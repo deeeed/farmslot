@@ -268,6 +268,17 @@ async function fixture(t: TestContext, native = true) {
   return store.getRun(run.id)!;
 }
 
+// A caller that resumes monitoring for a handed-over instruction reads this
+// outcome. A native host that refused before taking the text must stay
+// `not-attempted`, or that caller resumes for feedback nothing received.
+test('a native host that refused the text reports not-attempted, and a taken one unconfirmed', async (t) => {
+  const run = await fixture(t);
+  sendResult = 'not-attempted';
+  assert.equal(await deliverOperatorInstruction(run, 'unit', 'Instruction'), 'not-attempted');
+  sendResult = 'attempted';
+  assert.equal(await deliverOperatorInstruction(run, 'unit', 'Instruction'), 'unconfirmed');
+});
+
 test('native operator delivery preserves the caller command ID and permits the supported busy queue', async (t) => {
   const run = await fixture(t);
   sendResult = 'queued';
@@ -285,6 +296,25 @@ test('native operator delivery preserves the caller command ID and permits the s
   assert.equal(sends[0].logicalCommandId, 'caller-command');
   assert.equal(sends[0].allowBusyQueue, true);
   assert.equal(sends[0].contextId, 'primary');
+  assert.equal(resumes.length, 0);
+});
+
+test('an edited tmux instruction cannot fall through to a native send', async (t) => {
+  const run = await fixture(t);
+  const beforeInput = async () => assert.fail('Native send has no tmux input boundary');
+  await assert.rejects(
+    deliverOperatorInstruction(
+      run,
+      'unit',
+      'Edited instruction',
+      undefined,
+      'primary',
+      'edit',
+      beforeInput,
+    ),
+    OperatorInstructionNotAttemptedError,
+  );
+  assert.equal(sends.length, 0);
   assert.equal(resumes.length, 0);
 });
 
@@ -403,6 +433,28 @@ test('an uncertain stopped tmux reload never clears the delivery attempt', async
   assert.equal(await deliverOperatorInstruction(run, 'unit', 'Instruction', 100), 'unconfirmed');
   assert.equal(reloadAttempts, 1);
   assert.equal(tmuxCalls.at(-1)?.[6]?.observeOnly, true);
+});
+
+test('a stopped worker whose owner changes at the edit boundary was never resumed', async (t) => {
+  const run = await fixture(t, false);
+  tmuxStopped = true;
+  useRealContinuation = true;
+  const beforeInput = async () => {
+    store.updateRun(run.id, { slotId: null });
+  };
+  await assert.rejects(
+    deliverOperatorInstruction(
+      run,
+      'unit',
+      'Edited instruction',
+      undefined,
+      'primary',
+      'edit',
+      beforeInput,
+    ),
+    OperatorInstructionNotAttemptedError,
+  );
+  assert.equal(continuationOrder.includes('continue'), false);
 });
 
 test("a stopped tmux worker reloads with its run mode's question tool", async (t) => {

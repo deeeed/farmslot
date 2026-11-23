@@ -199,6 +199,7 @@ let feedbackWrites = 0,
   deliveryObservations = 0,
   firstDelivery;
 let completeCallsBeforeNewSignal,
+  staleDecisionsAfterResume,
   persistedOldSignalRejected = false;
 let proofClaims;
 let failure;
@@ -350,24 +351,29 @@ try {
     }),
     /delivery is unconfirmed/,
   );
-  assert.equal(monitorReads, 0);
-  assert.equal(completeCalls, 0);
-  const retry = (await client.call('run.get', { runId, view: 'snapshot' })).run;
-  const decision = retry.decisions.find(
-    (entry) => !entry.resolvedAt && entry.payload?.kind === 'result-decision',
-  );
-  assert.ok(decision);
-  await client.call('run.resolveDecision', {
-    runId,
-    decisionId: decision.id,
-    actionId: 'send-back',
-  });
+  // The refusal is reported to the operator, and because the composer took the
+  // text, the engine resumes monitoring itself rather than holding the stale
+  // decision again (run 1ad82ba1 raised a second identical decision 6 s later and
+  // never read the worker's corrected signal).
   assert.equal(feedbackWrites, 1);
-  assert.equal(deliveryObservations, 1);
   await deadline(
-    'Monitor never started before COMPLETE',
+    'Monitoring did not resume after an unconfirmed delivery',
     async () => ({ monitorReads, completeCalls }),
-    (value) => value.monitorReads >= 3 || value.completeCalls > 0,
+    (value) => value.monitorReads >= 1 || value.completeCalls > 0,
+  );
+  const resumed = (await client.call('run.get', { runId, view: 'snapshot' })).run;
+  staleDecisionsAfterResume = resumed.decisions.filter(
+    (entry) => !entry.resolvedAt && entry.payload?.kind === 'result-decision',
+  ).length;
+  assert.equal(
+    staleDecisionsAfterResume,
+    0,
+    'no second result decision may be minted for the refusal the worker is acting on',
+  );
+  assert.equal(
+    deliveryObservations,
+    0,
+    'the operator is not asked to send the same feedback a second time',
   );
   completeCallsBeforeNewSignal = completeCalls;
   assert.equal(completeCallsBeforeNewSignal, 0, 'COMPLETE must wait for new source evidence');
@@ -405,6 +411,8 @@ try {
     exactRefusalDelivered: deliveredContext === 'retained-worker' && feedbackWrites === 1,
     oldSignalIgnored: completeCallsBeforeNewSignal === 0 && persistedOldSignalRejected,
     newSignalReachedComplete: completeCalls === 1,
+    monitoringResumedWithoutOperator: monitorReads >= 1 && deliveryObservations === 0,
+    noSecondStaleDecision: staleDecisionsAfterResume === 0,
     feedbackWrites,
     deliveryObservations,
   };

@@ -133,7 +133,53 @@ test('nested-list normalized task acceptance stays readable and changed ticket t
     deterministic: passed,
     progress: idle,
   });
-  assert.ok(changed.reasons.some(({ code }) => code === 'acceptance-unreadable'));
+  const unreadable = changed.reasons.find(({ code }) => code === 'acceptance-unreadable');
+  assert.ok(unreadable);
+  assert.match(
+    unreadable.message,
+    /Original acceptance registration is missing or changed/,
+    'the hold must name what the reader refused, not only that something is unreadable',
+  );
+});
+
+test('an unretained run says why its capture failed instead of only naming acceptance', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'gate-capture-error-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, 'inputs'));
+  await mkdir(path.join(root, 'artifacts'));
+  const run = makeRun({
+    id: randomUUID(),
+    taskFile: path.join(root, 'TASK.md'),
+    ticketData: {
+      source: 'jira',
+      title: 'Capture failed',
+      description: '',
+      affectedArea: '',
+      stepsToReproduce: [],
+      screenshots: [],
+      labels: [],
+      acceptanceCriteria: ['The tooltip shows the maintenance margin copy'],
+    },
+  });
+  // The capture step records this and retains nothing: the bundle volume was
+  // unmounted (run 062f6a94). Nothing downstream can read the task directory.
+  run.output = {
+    workerFinished: true,
+    capturedAt: new Date().toISOString(),
+    artifactManifest: [],
+    manifestDigest: '',
+    captureError:
+      'Storage unavailable: /Volumes/c910ssd is not mounted. Reconnect the volume before using /Volumes/c910ssd/farmslot-data/farmslot-dev/run-bundles.',
+  };
+  assert.match((await readGateAcceptance(run)).error ?? '', /c910ssd is not mounted/);
+  const readiness = await collectRunGateReadiness(run, null, {
+    deterministic: passed,
+    progress: idle,
+  });
+  const unreadable = readiness.reasons.find(({ code }) => code === 'acceptance-unreadable');
+  assert.ok(unreadable);
+  assert.match(unreadable.message, /Run artifacts are not retained/);
+  assert.match(unreadable.message, /c910ssd is not mounted/);
 });
 
 test('artifact-only comparison and reportless output retain their digest fence without a review decision', async (t) => {
