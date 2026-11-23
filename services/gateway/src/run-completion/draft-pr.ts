@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { type ArtifactRef, type ReviewDiffSnapshot, type Run } from '@farmslot/protocol';
 
+import { isConventionalCommitSubject } from '../../../../scripts/quality/conventional-subject.mjs';
 import { getProjectField, inferArtifactPurpose } from '../core/index.js';
 import { contributionStack } from '../run-engine/diff-artifacts.js';
 import { loadProjectVarsOrNull } from '../run-engine/project-vars.js';
@@ -45,10 +46,6 @@ function namesOnlyTicketKey(text: string): boolean {
   return text.replace(/\b[A-Z][A-Z0-9]*-\d+\b/g, '').replace(/[\s\p{P}]/gu, '') === '';
 }
 
-// Same subject shape as scripts/quality/check-conventional-commits.mjs.
-const CONVENTIONAL_TITLE =
-  /^(?:build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(?:\([a-z0-9][a-z0-9._/-]*(?: *, *[a-z0-9][a-z0-9._/-]*)*\))?!?: \S.+$/;
-
 // The body's leading `# type(scope): summary` heading, which reviewers read
 // with the rest of the body.
 function bodyHeadingTitle(body: string): string | null {
@@ -73,11 +70,12 @@ function bodyHeadingTitle(body: string): string | null {
 export function buildDraftPrTitle(run: Run, draftBody: string): string {
   const heading = bodyHeadingTitle(draftBody);
   if (heading) return heading;
-  const rawTitle = run.ticketData?.title?.trim();
+  const rawTitle = run.ticketData?.title?.trim() ?? '';
   if (!rawTitle) return '';
+  // Judge the ticket title before platform-prefix and trailing-period cleanup.
+  if (isConventionalCommitSubject(rawTitle)) return rawTitle;
   const sanitized = sanitizeDraftPrTitleDescription(rawTitle);
   if (namesOnlyTicketKey(sanitized)) return '';
-  if (CONVENTIONAL_TITLE.test(sanitized)) return sanitized;
   const commitType = run.flowType === 'fix-bug' ? 'fix' : run.flowType === 'dev' ? 'feat' : 'chore';
   const scope = inferDraftPrTitleScope(run);
   const scopePart = scope ? `(${scope})` : '';

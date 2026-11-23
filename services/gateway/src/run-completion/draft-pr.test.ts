@@ -234,6 +234,17 @@ test('buildDraftPrTitle keeps a ticket title that already has a conventional pre
     buildDraftPrTitle(ci, ''),
     'ci: server requirements lock goes stale on every upstream release',
   );
+  assert.equal(
+    buildDraftPrTitle(makeRun({ ...dev, ticketData: manualTicketData('ci: x.') }), ''),
+    'ci: x.',
+  );
+  assert.equal(
+    buildDraftPrTitle(
+      makeRun({ ...dev, ticketData: manualTicketData('[Mobile] ci: update checks') }),
+      '',
+    ),
+    'feat: ci: update checks',
+  );
 });
 
 test('ticket PR titles preserve a leading acronym or identifier and lowercase an ordinary word', () => {
