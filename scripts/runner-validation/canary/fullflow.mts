@@ -53,7 +53,7 @@ import {
   fullflowTerminal,
   fullflowTimings,
 } from './fullflow-outcome.js';
-import { scriptedReviewer, type IsolatedOptions } from './isolated.mjs';
+import { scriptedReviewer, ScriptedReviewerFault, type IsolatedOptions } from './isolated.mjs';
 import { failureText, type CheckResult } from './outcome.mjs';
 import { driveRun, readSlot, retire } from './run-driver.mjs';
 import { fullflowScopeAudit } from './fullflow-scope.mjs';
@@ -561,6 +561,12 @@ export default function(pi) {
         check.observed = result.outcome;
         check.status = check.differences.length ? 'fail' : 'pass';
       } catch (error) {
+        // A harness fault the run never reached is unverified, not the product failing.
+        if (
+          error instanceof ScriptedReviewerFault &&
+          !fullflowFailure(run ?? { steps: [], decisions: [] })
+        )
+          check.status = 'unverified';
         // Last successful read preserves product failures even if an interrupt arrived afterward.
         check.error ??=
           fullflowFailure(run ?? { steps: [], decisions: [] }) ??

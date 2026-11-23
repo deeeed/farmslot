@@ -874,6 +874,9 @@ export interface ScriptedReviewer {
 
 const execFileAsync = promisify(execFile);
 
+/** The scripted reviewer itself could not answer: a harness fault, never the product's. */
+export class ScriptedReviewerFault extends Inconclusive {}
+
 export function scriptedReviewer(stack: RemoteNodeStack, log: Log): ScriptedReviewer {
   const hold = path.join(stack.holds, 'review');
   const answered = new Set<string>();
@@ -946,7 +949,7 @@ export function scriptedReviewer(stack: RemoteNodeStack, log: Log): ScriptedRevi
           );
         } catch (error) {
           const { stdout, stderr } = error as { stdout?: string; stderr?: string };
-          throw new Inconclusive(
+          throw new ScriptedReviewerFault(
             `the scripted reviewer's mark ${args.join(' ')} failed: ${`${stdout ?? ''}${stderr ?? ''}`.trim() || String(error)}`,
           );
         }
@@ -959,18 +962,29 @@ export function scriptedReviewer(stack: RemoteNodeStack, log: Log): ScriptedRevi
       await mark('complete', '--mark-last');
       // End the swallowed turn, as the reviewer's own turn would end.
       const before = count(' completed');
+      // End this reviewer's thread only (the global `complete` would end any stale swallowed turn).
       // The proxy reacts to the marker's file event; write it again in case one was missed.
+      const done = context.runnerSessionId
+        ? `${hold}.complete-${context.runnerSessionId}`
+        : undefined;
       let ended = false;
       for (let attempt = 0; attempt < 3 && !ended; attempt++) {
-        if (attempt) await writeFile(hold, 'swallow\n');
-        await writeFile(hold, 'complete\n');
+        if (done) {
+          await rm(done, { force: true });
+          await writeFile(done, 'complete\n');
+        } else {
+          if (attempt) await writeFile(hold, 'swallow\n');
+          await writeFile(hold, 'complete\n');
+        }
         ended = await poll(
           'the proxy to end the swallowed turn',
           async () => (count(' completed') > before ? true : undefined),
           15_000,
         ).catch(() => false);
       }
-      await writeFile(hold, 'swallow\n');
+      // A later turn on the same thread (the loop-2 re-review) must be swallowed again.
+      if (done) await rm(done, { force: true });
+      else await writeFile(hold, 'swallow\n');
       // Then the run decides: REVIEW fails once its reviewer is gone or inactive past its limit.
       if (!ended)
         await log('scripted reviewer: the proxy never ended an answered reviewer turn', {
