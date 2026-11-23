@@ -1,0 +1,3 @@
+- A run cancelled before its worker was dispatched releases its slot instead of keeping it held for replay; there is nothing to replay. Runs cancelled after dispatch keep the replay hold (ADR-054).
+- Workspace recovery and parked-work retention drop their in-process prepare guard before the slot reads ready again, so a run that claims the slot right away can prepare it.
+- Slot selection skips a slot still under a prepare guard. A run that asked for that slot waits for the guard, up to the same 5 minutes as a release, instead of failing with "already preparing".

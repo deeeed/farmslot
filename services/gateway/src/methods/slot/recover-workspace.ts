@@ -488,6 +488,10 @@ export async function recoverSlotWorkspace(
       }))
     )
       throw new Error('Recovery fence changed');
+    // Drop the prepare guard before the slot reads ready: a run that claims it right after
+    // must be able to prepare it (1b542e2f was refused 'already preparing' on macpro-mmt-4).
+    // The releasing fence still keeps prepares out until the ready transition lands.
+    activePrepareSlots.delete(params.slotId);
     if (!(await resetSlotIf(params.slotId, ownsFence, keepWarm, marker.id)))
       throw new Error('Recovery ready transition refused');
     await loadFleetStatus(true);

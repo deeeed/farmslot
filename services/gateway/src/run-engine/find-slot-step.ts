@@ -33,6 +33,7 @@ import {
   transitionSlotStatus,
   updateSlotStatus,
 } from '../core/index.js';
+import { activePrepareSlots } from '../core/native-worker-exclusion.js';
 import {
   loadFleetStatus,
   loadPoolConfigs,
@@ -828,6 +829,8 @@ export async function previewWhenSlotClaimable<T>(
     timeoutMs?: number;
     reclaimCancelled?: typeof reclaimCancelledSlot;
     wrapWait?: <W>(wait: () => Promise<W>) => Promise<W>;
+    /** An in-process prepare, recovery or upkeep still holds the slot's prepare guard. */
+    preparing?: (slotId: string) => boolean;
   } = {},
 ): Promise<T> {
   if (!slotId) return preview();
@@ -840,6 +843,7 @@ export async function previewWhenSlotClaimable<T>(
     timeoutMs = EXPLICIT_SLOT_RELEASE_WAIT_MS,
     reclaimCancelled = reclaimCancelledSlotForSelection,
     wrapWait = (wait) => awaitAsQueueTime(runId, 'find-slot', wait),
+    preparing = (id) => activePrepareSlots.has(id),
   } = deps;
   const assertRunUnchanged = () => {
     if (runSupersededSince(runLookup(runId), generation)) throw runChangedError(runId, slotId);
@@ -876,6 +880,24 @@ export async function previewWhenSlotClaimable<T>(
     });
   }
   if (blocker) throw await refuse(blocker);
+  if (preparing(slotId)) {
+    // A slot that reads free while its guard is still held would refuse this run's prepare
+    // ('already preparing', 1b542e2f). Wait for the guard the way a release is waited for.
+    blocker = await wrapWait(async () => {
+      const deadline = now() + timeoutMs;
+      while (preparing(slotId)) {
+        if (now() >= deadline)
+          throw slotClaimRefusedError(
+            slotId,
+            `Slot ${slotId} is still preparing after ${Math.round(timeoutMs / 60_000)}m`,
+          );
+        await sleep(EXPLICIT_SLOT_RELEASE_POLL_MS);
+        assertRunUnchanged();
+      }
+      return blockerOf(await readRow(slotId));
+    });
+    if (blocker) throw await refuse(blocker);
+  }
   assertRunUnchanged();
   let result: T;
   try {
@@ -1628,7 +1650,10 @@ async function findSlotAttempt(
       `No complete source plan for eligible slots:\n${reasons.join('\n')}`,
     );
   }
-  const freeSlots = projectSlots.filter(isFreeSlot);
+  // A slot still under a prepare guard is skipped, not picked and then refused at prepare.
+  const freeSlots = projectSlots.filter(
+    (slot) => isFreeSlot(slot) && !activePrepareSlots.has(slot.slot),
+  );
   const refreshableSlots = freeSlots.filter(
     (slot) => !automaticSlotLoadBlocker(slot, selectionOptions),
   );

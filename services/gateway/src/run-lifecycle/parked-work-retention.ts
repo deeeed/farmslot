@@ -83,13 +83,15 @@ export async function parkedWorkRetentionPass(now = new Date()): Promise<void> {
           `[parked-work retention] ${slotId}: ${error instanceof Error ? error.message : String(error)}`,
         );
       } finally {
+        // Free the prepare guard before the slot reads ready again, so a claim that lands
+        // right after the restore can prepare it.
+        activePrepareSlots.delete(slotId);
         if (claimed)
           await updateSlotStatusIf(slotId, owns, {
             lifecycle: row.lifecycle,
             phase: row.phase,
             releasing_since: null,
           });
-        activePrepareSlots.delete(slotId);
       }
     }
 }
