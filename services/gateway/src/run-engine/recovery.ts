@@ -1628,6 +1628,8 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
         owner &&
         owner.slotId === slot.slot &&
         (owner.status === 'done' || owner.status === 'failed') &&
+        // The occupied-slot retry refuses these; reopening them would only relabel the hold.
+        !isCompletionPrerequisiteFailure(owner) &&
         owner.transport !== 'native'
       ) {
         // An absent node or a failed census defers this slot alone, never the whole pass.
@@ -1660,6 +1662,7 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
             (releasingFenceAgeMs(row[SLOT_RELEASING_SINCE], Date.now()) ?? Infinity) <
               STALE_RELEASE_RECLAIM_MS &&
             (row.current_run_id ?? row.cleanup_run_id ?? null) === owner.id &&
+            row[SLOT_CLEANUP_STOP_UNCONFIRMED] !== true &&
             stillBound() &&
             (Number(row.slot_epoch) || 0) === (slot.slotEpoch ?? 0) &&
             !row.handoff_run_id &&

@@ -374,3 +374,60 @@ test('a deferred slot does not stop the pass, and a rebound owner is never reope
   for (const name of ['offline', 'rebound'])
     assert.equal((await state.readSlotRow(`${name}-slot`))?.phase, 'releasing', name);
 });
+
+test('a fence still carrying an unconfirmed cleanup stop keeps its truthful hold path', async () => {
+  const owner = makeRun({ id: 'owner-unconfirmed', status: 'done', slotId: 'restart-slot' });
+  await writeFile(
+    state.statusFile,
+    JSON.stringify({
+      slots: [
+        {
+          slot: 'restart-slot',
+          lifecycle: 'busy',
+          phase: 'releasing',
+          slot_epoch: 2,
+          current_run_id: owner.id,
+          releasing_since: new Date().toISOString(),
+          release_gateway_instance: 'previous-gateway',
+          cleanup_release_token: `${state.RUN_CLEANUP_TOKEN_PREFIX}unconfirmed`,
+          cleanup_stop_unconfirmed: true,
+        },
+      ],
+    }),
+  );
+  const retried: string[] = [];
+  await reconcileOrphanedSlots({
+    listRuns: () => ({ runs: [owner] }),
+    loadFleetStatus: async () => ({
+      slots: [
+        {
+          slot: 'restart-slot',
+          lifecycle: 'busy',
+          phase: 'releasing',
+          slotEpoch: 2,
+          currentRunId: owner.id,
+        },
+      ],
+    }),
+    isTerminalTeardownInFlight: () => false,
+    readSlotField: state.readSlotField,
+    getRun: (id) => (id === owner.id ? owner : undefined),
+    updateRun: () => {},
+    resetSlot: state.resetSlot,
+    resetSlotIf: state.resetSlotIf,
+    updateSlotStatusIf: state.updateSlotStatusIf,
+    broadcast: () => {},
+    retryOccupiedRunSlot: async (slotId) => {
+      retried.push(slotId);
+      return false;
+    },
+    resumeInterruptedRecovery: () => {
+      throw new Error('Ordinary release has no workspace recovery journal');
+    },
+    absentExecutionNode: async () => null,
+    releaseFenceBlocker: async () => null,
+  });
+  const row = await state.readSlotRow('restart-slot');
+  assert.equal(row?.phase, 'releasing', 'the backstop writes its truthful hold later');
+  assert.deepEqual(retried, []);
+});
