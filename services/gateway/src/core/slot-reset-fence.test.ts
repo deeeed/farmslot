@@ -148,6 +148,7 @@ async function reconcileAgainstStatusFile(statusPath: string) {
        }),
        isTerminalTeardownInFlight: () => false,
        readSlotField,
+       getRun: () => undefined,
        resetSlot,
        resetSlotIf,
        updateSlotStatusIf,
@@ -210,6 +211,7 @@ test('a releasing fence that moved under the reclaim keeps the new fence', async
          return observed;
        },
        resetSlot,
+       getRun: () => undefined,
        resetSlotIf,
        updateSlotStatusIf,
      });`,

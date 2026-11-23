@@ -25,14 +25,27 @@ function escapeRegExp(value: string): string {
  * and no lease records them (run 22e62daa). A process is reaped only when it is
  * detached and either uses a browser profile inside the slot checkout after
  * its workers are verified stopped (includeSlotProfiles), or is
- * on its CDP port and tied to the checkout by cwd or arguments. Descendants
- * go with it. While a capability lease on the slot still holds or keeps providers warm, its release
- * effect decides and nothing is reaped; a process a lease recorded is never
- * reaped. Returns a reason naming each process that survived SIGKILL.
+ * on its CDP port and tied to the checkout by cwd or arguments. With the same
+ * verification, a detached agent-browser daemon goes too when its session (the
+ * `<session>.sock` it listens on) is this slot's (dispatch sets AGENT_BROWSER_SESSION
+ * to the slot id), or is any named session other than 'default' and its cwd is in
+ * the checkout: the cwd names the worker that started it and a named session is
+ * not shared. Such daemons bind no CDP port and, left in the checkout, made every
+ * later teardown skip the slot (four task sessions on macpro-mmt-5, 2026-11-20).
+ * 'default' is the one session workers on other slots share: it is logged and
+ * kept. Descendants go with it. While a capability lease on the slot still holds
+ * or keeps providers warm, its release effect decides and nothing is reaped; a
+ * process a lease recorded is never reaped. Returns a reason naming each process
+ * that survived SIGKILL.
  */
 export async function reapSlotBrowserSession(
   vars: SlotVars,
-  opts: { stillOwned?: () => Promise<boolean>; includeSlotProfiles?: boolean } = {},
+  opts: {
+    stillOwned?: () => Promise<boolean>;
+    includeSlotProfiles?: boolean;
+    /** The slot's run is terminal and its workers are stopped: its agent-browser daemons go. */
+    stopSlotDaemons?: boolean;
+  } = {},
 ): Promise<string | null> {
   const configuredPort = vars.resourceVars?.cdp_port;
   const cdpPort = configuredPort && /^\d+$/.test(configuredPort) ? configuredPort : undefined;
@@ -47,20 +60,52 @@ export async function reapSlotBrowserSession(
         ? `pids=$(lsof -nP -iTCP:${cdpPort} -t 2>/dev/null | sort -u | paste -sd, -)`
         : "pids=''",
       'echo "--cdp-- $pids"',
+      // The executable as the kernel reports it (comm), not a whitespace-split argument.
+      `ab=$(ps -axo pid=,comm= | sed -nE 's#^ *([0-9]+) +(.*/)?agent-browser(-[A-Za-z0-9_-]+)?$#\\1#p' | paste -sd, -)`,
+      'echo "--agent-browser-- $ab"',
+      'pids=$(printf \'%s,%s\' "$pids" "$ab" | tr , \'\\n\' | grep . | paste -sd, -)',
       'if [ -n "$pids" ]; then lsof -a -d cwd -Fpn -p "$pids" 2>/dev/null; fi',
+      // A daemon's session is the name of the socket it listens on.
+      'echo "--agent-browser-sockets--"',
+      'if [ -n "$ab" ]; then lsof -a -U -Fpn -p "$ab" 2>/dev/null; fi',
       'true',
     ].join('\n'),
     { cwd: '/', timeout: 15_000 },
   );
   if (census.exitCode !== 0)
     return 'Browser session process census is unavailable; slot teardown was skipped';
-  const [table, after = ''] = census.stdout.split(/^--repo-- /m);
-  const [realRepo = '', cdpLine = '', ...cwdLines] = after.split('\n');
+  const [table, sections = ''] = census.stdout.split(/^--repo-- /m);
+  const [after = '', sockets = ''] = sections.split(/^--agent-browser-sockets--$/m);
+  const [realRepo = '', cdpLine = '', ...rest] = after.split('\n');
+  const daemonLine = rest.find((line) => line.startsWith('--agent-browser-- ')) ?? '';
+  const cwdLines = rest.filter((line) => line !== daemonLine);
+  const agentBrowsers = new Set(
+    daemonLine
+      .replace(/^--agent-browser-- /, '')
+      .split(',')
+      .filter(Boolean),
+  );
   const onPort = new Set(
     cdpLine
       .replace(/^--cdp-- /, '')
       .split(',')
       .filter(Boolean),
+  );
+  const listening = new Map<string, Set<string>>();
+  let socketPid = '';
+  for (const line of sockets.split('\n')) {
+    if (line.startsWith('p')) socketPid = line.slice(1);
+    else {
+      // Linux lsof appends the socket type (`n/path.sock type=STREAM (LISTEN)`); macOS does not.
+      const socket = /^n(?!->)(.+?\.sock)(?:\s+type=.*)?$/.exec(line)?.[1];
+      if (socket) listening.set(socketPid, (listening.get(socketPid) ?? new Set()).add(socket));
+    }
+  }
+  // One socket names the session; more than one (even with one basename) attributes nothing.
+  const sessions = new Map(
+    [...listening].flatMap(([pid, sockets]) =>
+      sockets.size === 1 ? [[pid, path.posix.basename([...sockets][0]!, '.sock')]] : [],
+    ),
   );
   const rows = parseProcessCensus(table);
   const cwds = new Map(parseLsofNames(cwdLines.join('\n')));
@@ -81,13 +126,28 @@ export async function reapSlotBrowserSession(
       profile !== undefined &&
       path.posix.isAbsolute(profile) &&
       repos.some((repo) => isWithinPath(repo, path.posix.normalize(profile)));
+    const inRepo = cwd !== undefined && repos.some((repo) => isWithinPath(repo, cwd));
+    const daemon = agentBrowsers.has(row.pid);
+    const session = sessions.get(row.pid);
+    // 'default' is the one session other slots share; no rule here may stop it.
+    const shared = session === 'default';
+    const slotDaemon =
+      opts.stopSlotDaemons &&
+      daemon &&
+      !shared &&
+      (session === vars.slotId || (inRepo && session !== undefined));
+    if (opts.stopSlotDaemons && daemon && !slotDaemon && inRepo && row.parent === '1')
+      console.log(
+        `[browser-session] ${vars.slotId}: kept agent-browser daemon ${row.pid} in the checkout; its session ${session ?? 'unknown'} may be shared`,
+      );
+    // An agent-browser daemon is decided by its session alone, never by profile or CDP port.
+    if (daemon) return row.parent === '1' && Boolean(slotDaemon);
     return (
       row.parent === '1' &&
       !isTmuxProcess(row.command) &&
       (ownedProfile ||
         ((onPort.has(row.pid) || portArg?.test(row.command)) &&
-          ((cwd !== undefined && repos.some((repo) => isWithinPath(repo, cwd))) ||
-            repoArg.test(row.command))))
+          (inRepo || repoArg.test(row.command))))
     );
   });
   if (candidates.length === 0) return null;
@@ -121,7 +181,9 @@ export async function reapSlotBrowserSession(
       const scope =
         onPort.has(pid) || portArg?.test(args)
           ? `on CDP port ${cdpPort}`
-          : 'with a profile in the slot repository';
+          : agentBrowsers.has(pid)
+            ? "of this slot's agent-browser session"
+            : 'with a profile in the slot repository';
       return `Browser session process ${pid} (${args.length > 120 ? `${args.slice(0, 117)}...` : args}) ${scope} did not stop`;
     })
     .join('; ');

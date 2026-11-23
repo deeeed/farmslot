@@ -51,7 +51,7 @@ A worker template that runs recipe proof tells the worker which attempt the task
 
 A task-root `artifacts/evidence-manifest.json` is optional. Use it only to declare extra evidence, such as captures from another attempt.
 
-A template whose proof uses a different designed layout opts out by name, with its reason: `<!-- proof-selection: exempt (<reason>) -->`. The MetaMask harness and perps templates do this, because their `artifacts/baseline` and `artifacts/after-fix` `[PROOF:]` layout is consumed by other tooling.
+A template whose proof uses a different designed layout opts out by name, with its reason: `<!-- proof-selection: exempt (<reason>) -->`.
 
 **Before evidence from a separate base run.** Run the base proof into its own attempt under `artifacts/recipe-runs`. If that passing run moves the selection, re-select the after attempt. Declare the base captures in the optional task-root `artifacts/evidence-manifest.json` as before evidence (`before_after_pairs[].before` or `videos.before`). A root `before_after_pairs` list or `videos` object replaces the selected attempt's, so put each pair's after path, or `videos.after`, in the same declaration. Publication admits a capture from another attempt only when that attempt keeps its `artifact-manifest.json` and a `product-provenance.json` that is clean, on the run branch or detached, and whose `git_ref` is an eligible base:
 
