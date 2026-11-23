@@ -1209,16 +1209,19 @@ function fixRoundDifferences(
   const before = fixContext(held)?.promptDeliveryStartedAt;
   const finalContext = fixContext(scenario.run);
   const final = finalContext?.promptDeliveryStartedAt;
-  // A resend is a newer delivery that its replacement attempt then signalled from.
-  const sentAgain = !!final && final !== before && (!before || final > before);
   const expectResend =
     step === 'review-fix-claude-card-dead' || step === 'review-fix-claude-card-silent';
+  // A kept worker keeps the held delivery; a resend is a newer delivery that its replacement
+  // attempt then signalled from. UTC ISO stamps of one width order as strings.
+  const sendsAsExpected = expectResend
+    ? !!before && !!final && final > before && (finalContext?.lastSignalAt ?? '') > final
+    : !!before && final === before;
   return [
-    ...(final ? [] : ['the run ended without a fix delivery']),
-    ...(!final || sentAgain === expectResend ? [] : [`fix sends: ${before ?? '-'} -> ${final}`]),
-    ...(expectResend && sentAgain && !((finalContext?.lastSignalAt ?? '') > final!)
-      ? ['the resent fix never signalled']
-      : []),
+    ...(sendsAsExpected
+      ? []
+      : [
+          `fix sends: ${before ?? '-'} -> ${final ?? '-'}, expected ${expectResend ? 'a newer delivery that signalled' : 'the held delivery kept'}`,
+        ]),
     ...(reviewDepth(scenario.run) === reviewDepth(baseline.run)
       ? []
       : [
