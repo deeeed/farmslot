@@ -552,14 +552,17 @@ const DECLARED = `- [ ] 1. Retain the failing baseline run [PROOF: ${BASELINE}]`
   writeFileSync(path.join(dir, 'CHECKLIST.md'), readFileSync(recorded, 'utf8'));
   const contract = { schemaVersion: 1, flowType: 'fix-bug', requireSignal: true };
   writeContract(dir, contract);
-  for (let step = 1; step <= 21; step += 1) {
+  for (let step = 1; step <= 20; step += 1) {
     const marked = spawnSync(process.execPath, [helper, dir, String(step)], { encoding: 'utf8' });
     assert.equal(marked.status, 0, `step ${step}: ${marked.stderr}`);
   }
   assert.deepEqual(checklistOrder.issues(dir, 'CHECKLIST.md', contract), []);
   const signal = JSON.parse(readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8'));
-  assert.equal(signal.checklistTiming.events.length, 21);
+  assert.equal(signal.checklistTiming.events.length, 20);
   assert.equal(signal.checklistTiming.outOfOrder, undefined);
+  // Step 21 says to finish with `mark complete --mark-last`, so marking it runs that.
+  const last = spawnSync(process.execPath, [helper, dir, '21'], { encoding: 'utf8' });
+  assert.match(last.stdout, /step 21 is the completion row: running mark complete --mark-last/);
 }
 
 // A gap left by a hand-edited checklist is refused at completion, and a skip the
