@@ -2307,34 +2307,81 @@ async function replayRunStep(
     // Replaying only the human gate must therefore refresh the worker-owned mirror
     // first; otherwise the new decision faithfully republishes stale report text.
     const runBeforeGateReplay = getRun(params.runId) ?? existing;
+    // A failed capture leaves no retained output and a recorded captureError that
+    // every completion prerequisite reads. Replaying COMPLETE without recapturing
+    // re-reads that same failure and refuses again, however long ago the operator
+    // fixed its cause (run 062f6a94: the bundle volume was remounted, and only a
+    // separate run.refreshMirror let the next replay pass).
+    const recaptureForComplete =
+      replayStepName === PS.COMPLETE && Boolean(runBeforeGateReplay.output?.captureError);
     if (
-      replayStepName === PS.HUMAN_GATE &&
+      (replayStepName === PS.HUMAN_GATE || recaptureForComplete) &&
       effectiveSlotId &&
       replayTaskFile &&
       !hasActiveReviewFix(runBeforeGateReplay)
     ) {
       assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
       assertNativeReplayCurrent();
-      updateRunStep(params.runId, PS.HUMAN_GATE, {
-        detail: 'Preparing operator decision: collecting worker artifacts',
+      updateRunStep(params.runId, recaptureForComplete ? PS.COMPLETE : PS.HUMAN_GATE, {
+        detail: recaptureForComplete
+          ? 'Retrying the failed artifact capture before re-reading the result'
+          : 'Preparing operator decision: collecting worker artifacts',
       });
+      // `assertReplayOwnsRun` only compares generations for a `done` run, and
+      // `assertNativeReplayCurrent` skips tmux, so neither fences the failed tmux
+      // run this fix is for. This does, and it is loaded before the capture so the
+      // check and the write that follows it have no await between them: a slow
+      // capture must not record its rejection on a newer replay's generation.
+      const assertOwnedGeneration = () => {
+        const live = getRun(params.runId);
+        if ((live?.engineState?.generation ?? 0) !== ownedGeneration)
+          throw new Error(
+            `Run ${params.runId} is owned by a newer replay (generation ${live?.engineState?.generation ?? 0} is not ${ownedGeneration})`,
+          );
+      };
+      const recordCaptureFailure = recaptureForComplete
+        ? (await import('../../run-completion/output.js')).failRunOutputCapture
+        : undefined;
       try {
         const copied = await (hooks.captureOutput ?? captureRunOutput)(params.runId, true, false, {
           forPublication: requiresPublicationApproval(runBeforeGateReplay),
         });
+        // Same fence on the success path: the gate that follows must be the one
+        // this replay owns, not a newer replay's.
+        if (recaptureForComplete) {
+          assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+          assertNativeReplayCurrent();
+          assertOwnedGeneration();
+        }
         console.log(
           `[run] replay from ${replayStepName} — refreshed ${copied} worker artifact(s) before rebuilding the gate`,
         );
       } catch (error) {
-        // Refused publication evidence is the gate's to show: its own package refresh refuses
-        // it the same way and presents the reason with an engine waiting. Failing the replay
-        // here left ba397e2c's gate with no engine.
-        if (!(error instanceof RecordedEvidenceReadError)) throw error;
-        // The package prepared before it no longer describes the worker's evidence.
-        await markPreparedPackageStale(params.runId);
-        console.warn(
-          `[run] replay from ${replayStepName} — publication evidence refused; the gate presents it: ${error.message}`,
-        );
+        // A recapture that fails again is the completion gate's to report, not the
+        // replay's to die on: record the fresh failure so the refusal names the
+        // current cause instead of the one the operator already fixed.
+        if (recaptureForComplete) {
+          // A capture rejects an attempt whose generation moved on, and a second
+          // replay may own the run by now. Recording this rejection on that newer
+          // generation would describe a capture it never asked for.
+          assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+          assertNativeReplayCurrent();
+          assertOwnedGeneration();
+          recordCaptureFailure!(params.runId, error);
+          console.warn(
+            `[run] replay from ${replayStepName} — artifact capture failed again; the gate presents it: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        } else {
+          // Refused publication evidence is the gate's to show: its own package refresh refuses
+          // it the same way and presents the reason with an engine waiting. Failing the replay
+          // here left ba397e2c's gate with no engine.
+          if (!(error instanceof RecordedEvidenceReadError)) throw error;
+          // The package prepared before it no longer describes the worker's evidence.
+          await markPreparedPackageStale(params.runId);
+          console.warn(
+            `[run] replay from ${replayStepName} — publication evidence refused; the gate presents it: ${error.message}`,
+          );
+        }
       }
     } else if (replayStepName === PS.HUMAN_GATE && hasActiveReviewFix(runBeforeGateReplay)) {
       console.log(

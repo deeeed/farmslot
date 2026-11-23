@@ -10,6 +10,7 @@ import {
   type Principal,
   reviewRoundBudgetLabel,
   type ReviewStatus,
+  type Run,
   type WorkerSignal,
 } from '@farmslot/protocol';
 
@@ -38,6 +39,63 @@ import {
   reviewerContextNeedsRecovery,
 } from './recover-inflight-reviews.js';
 import { deleteTestRunIfPresent, makeReadyGatePackage, makeRun } from './test-fixtures.js';
+
+// Runs 37e53d61 and 02463b6e: the dispatch review failed (review-unavailable, continuation pending)
+// and the gateway restarted before the gate presented its decision. The failed reviewer stayed
+// recoverable, so recovery polled it for hours and the gate sat in human-gating with no decision.
+test('a gate with no decision and no reviewer that can finish is presented, not polled', () => {
+  const result = { recoveredIds: [], terminalErrors: [] };
+  const review: ReviewStatus = {
+    id: 'dispatch-review',
+    source: 'dispatch',
+    mode: 'cold',
+    loopNumber: 1,
+    verdict: 'failed',
+    unresolvedCount: 0,
+    feedbackSent: false,
+    recoveryContinuationPending: true,
+  };
+  const gateRun = (reviewerStatus: 'failed' | 'blocked' | 'working', openGate = false): Run => ({
+    ...makeRun(),
+    agentContexts: [
+      {
+        id: 'rev-claude-native-a',
+        role: 'review',
+        label: 'rev-claude (opus)',
+        runId: 'run',
+        slotId: 'slot',
+        status: reviewerStatus,
+        artifactScope: review.id,
+        attemptStartedAt: '2026-11-23T03:07:31.952Z',
+      },
+    ],
+    decisions: openGate
+      ? [
+          {
+            id: 'gate',
+            type: 'engine_human_gate',
+            title: 'Approve publication',
+            description: 'Review the package.',
+            actions: [],
+            createdAt: '2026-11-23T03:20:00.000Z',
+          },
+        ]
+      : [],
+    engineState: { publishGate: { reviews: [review] } },
+  });
+  assert.equal(publicationReviewRecoveryNeedsReplay(result, [], gateRun('failed')), true);
+  assert.equal(publicationReviewRecoveryNeedsReplay(result, [], gateRun('blocked')), true);
+  assert.equal(
+    publicationReviewRecoveryNeedsReplay(result, [], gateRun('working')),
+    false,
+    'a reviewer still running is waited for',
+  );
+  assert.equal(
+    publicationReviewRecoveryNeedsReplay(result, [], gateRun('failed', true)),
+    false,
+    'a gate already showing its decision is left as it is',
+  );
+});
 
 test('an already-ingested ISSUES verdict restores its operator gate instead of polling forever', () => {
   const result = { recoveredIds: [], terminalErrors: [] };

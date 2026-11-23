@@ -4177,6 +4177,119 @@ async function blockedGateRun(t: test.TestContext, label: string, decisions: Run
   return run;
 }
 
+// Run 062f6a94: capture failed because the bundle volume was unmounted, so COMPLETE
+// refused. With the volume back, replaying COMPLETE refused again on the same recorded
+// captureError, and only run.refreshMirror (which recaptures) let the next replay pass.
+// A replay of COMPLETE must refresh the worker mirror itself when the recorded capture
+// failed, the same way a human-gate replay does.
+test('replaying complete after a failed capture recaptures the worker mirror first', async (t) => {
+  const slotId = await disposablePoolSlot(t, 'complete-recapture');
+  const taskFile = '/tmp/farmslot-complete-recapture/TASK.md';
+  const created = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+    slotId,
+  });
+  const doneThroughReview = new Set([
+    'write-task',
+    'find-slot',
+    'prepare',
+    'dispatch',
+    'monitor',
+    'review',
+  ]);
+  const run = updateRun(created.id, {
+    status: 'failed',
+    taskFile,
+    output: {
+      workerFinished: true,
+      capturedAt: new Date().toISOString(),
+      artifactManifest: [],
+      manifestDigest: '',
+      captureError:
+        'Storage unavailable: /Volumes/c910ssd is not mounted. Reconnect the volume before using /Volumes/c910ssd/farmslot-data/farmslot-dev/run-bundles.',
+    },
+    steps: created.steps.map((step) =>
+      doneThroughReview.has(step.name)
+        ? { ...step, status: 'done', outputs: step.name === 'write-task' ? { taskFile } : {} }
+        : step.name === 'complete'
+          ? {
+              ...step,
+              status: 'failed',
+              detail: 'The registered acceptance criteria or their verdicts could not be read.',
+            }
+          : step,
+    ),
+  });
+  await holdOnlySlot(t, slotId, {
+    lifecycle: 'held',
+    phase: 'occupied',
+    current_run_id: run.id,
+    slot_epoch: 4,
+  });
+  t.after(async () => {
+    cancelRunEngine(run.id);
+    if (!getRun(run.id)) return;
+    updateRun(run.id, { slotId: null });
+    await evictTestRun(run.id, 'failed');
+  });
+  const captured: string[] = [];
+  await runReplayStep({ runId: run.id, stepName: 'complete', triggeredBy: 'operator' }, () => {}, {
+    startEngine: async () => {},
+    captureOutput: async (runId) => {
+      captured.push(runId);
+      return 0;
+    },
+  }).catch(() => undefined);
+  assert.deepEqual(
+    captured,
+    [run.id],
+    'a stale capture failure must be refreshed before the gate re-reads the retained output',
+  );
+
+  // And when the retry fails too, the refusal must name the current cause, not the
+  // one the operator already fixed: the recorded failure is replaced, not kept.
+  await runReplayStep({ runId: run.id, stepName: 'complete', triggeredBy: 'operator' }, () => {}, {
+    startEngine: async () => {},
+    captureOutput: async () => {
+      throw new Error('Storage unavailable: /Volumes/c910ssd went away again.');
+    },
+  }).catch(() => undefined);
+  assert.match(
+    getRun(run.id)?.output?.captureError ?? '',
+    /went away again/,
+    'the fresh capture failure replaces the stale one the gate would otherwise report',
+  );
+
+  // And a second replay that took the run while the first capture was still
+  // running must not have the first one's rejection written onto its generation:
+  // `assertReplayOwnsRun` only compares generations for a `done` run and
+  // `assertNativeReplayCurrent` skips tmux, so neither covers this failed run.
+  const stale = getRun(run.id)?.output?.captureError;
+  await assert.rejects(
+    runReplayStep({ runId: run.id, stepName: 'complete', triggeredBy: 'operator' }, () => {}, {
+      startEngine: async () => {},
+      captureOutput: async (runId) => {
+        const current = getRun(runId)!;
+        updateRun(runId, {
+          engineState: {
+            ...current.engineState,
+            generation: (current.engineState?.generation ?? 0) + 1,
+          },
+        });
+        throw new Error('Storage unavailable: a newer replay owns this run.');
+      },
+    }),
+    /owned by a newer replay/,
+  );
+  assert.equal(
+    getRun(run.id)?.output?.captureError,
+    stale,
+    'the superseded replay records nothing on the newer generation',
+  );
+});
+
 // F311: a restart stopped a gate after the pipeline review and before its planned codex review.
 // Recovery's replay re-enters that gate with the plan; an operator's replay starts it fresh.
 test('an automatic human-gate replay keeps the reviews still planned for the gate (F311)', async (t) => {

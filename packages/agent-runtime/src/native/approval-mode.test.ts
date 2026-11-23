@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
@@ -159,3 +160,35 @@ test('new Claude ask explicitly resets the native policy before any input can be
     false,
   );
 });
+
+// Run 37e53d61: a sandboxed-tier run's Claude reviewer asked before every Bash and Write, the
+// gateway refuses reviewer approvals, and the review was recorded unavailable. A reviewer launch
+// (approvalPolicy 'never') runs its tools unasked, as ACP reviewers already do; a producing
+// sandboxed worker keeps asking.
+for (const reviewer of [true, false]) {
+  test(`a sandboxed Claude worker ${reviewer ? 'reviewer skips' : 'producer keeps'} permission prompts`, async (t) => {
+    const cwd = mkdtempSync(join(tmpdir(), 'native-claude-reviewer-'));
+    writeFileSync(join(cwd, 'claude'), fixture);
+    chmodSync(join(cwd, 'claude'), 0o700);
+    const manager = new NativeSessionManager(join(cwd, 'state'));
+    let id: string | undefined;
+    t.after(async () => {
+      if (id) await manager.close('owner', id);
+      rmSync(cwd, { recursive: true, force: true });
+    });
+    const session = await manager.ensure(
+      'owner',
+      { sessionId: randomUUID(), runner: 'claude', cwd },
+      {
+        leaseId: randomUUID(),
+        executable: join(cwd, 'claude'),
+        safetyTier: 'sandboxed',
+        ...(reviewer ? { approvalPolicy: 'never' as const } : {}),
+        environment: { set: {}, unset: [] },
+      },
+    );
+    id = session.id;
+    const argv = JSON.parse(readFileSync(join(cwd, 'argv'), 'utf8')) as string[];
+    assert.equal(argv.includes('--dangerously-skip-permissions'), reviewer);
+  });
+}
