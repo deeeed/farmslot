@@ -605,6 +605,10 @@ async function slotPrepareInner(
       prepareRef: branch,
       prepareDefaultRef: defaultBranch,
       prepareBaseSha: opts?.blindBaseSha,
+      // required_skills_present selects the same rules task init will freeze,
+      // which needs the flow and domain this prepare serves.
+      ...(params.flowType ? { flow: params.flowType } : {}),
+      ...(effectiveDomain ? { domain: effectiveDomain } : {}),
     },
     params.prepareProfile,
     (candidate, result) =>

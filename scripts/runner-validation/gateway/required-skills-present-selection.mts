@@ -15,7 +15,7 @@ import {
 const slotId = process.argv[2];
 if (!slotId) throw new Error('usage: required-skills-present-selection.mts <slot-id>');
 const vars = await loadSlotVars(slotId);
-const projectVars = await loadProjectVars(vars.project);
+const projectVars = await loadProjectVars(vars.projectName);
 const projectJson = { ...projectVars.projectJson } as Record<string, unknown>;
 // The deployed Terminal pack has no owned_paths_present requirement yet, so the
 // proof declares it on attach exactly as the pack would after this lands.
@@ -26,7 +26,14 @@ const prepare = JSON.parse(JSON.stringify(projectJson.prepare)) as {
 // (no dev server), so this variant requires only the skills check.
 prepare.profiles.attach.requires = ['required_skills_present'];
 projectJson.prepare = prepare;
-const ctx = { vars, projectJson: projectJson as never, projectVars, runtimeDir: 'temp/farmslot' };
+const ctx = {
+  vars,
+  projectJson: projectJson as never,
+  projectVars,
+  runtimeDir: 'temp/farmslot',
+  flow: process.argv[3] ?? 'fix-bug',
+  domain: (projectJson as { default_domain?: string }).default_domain,
+};
 const owned = await checkPrepareRequirement('required_skills_present', ctx);
 console.log(`required_skills_present ok=${owned.ok} detail=${owned.detail.slice(0, 220)}`);
 const selection = await selectPrepareProfile(ctx, 'attach', (profile, result) =>

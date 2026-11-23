@@ -316,6 +316,8 @@ test('checkPrepareRequirement required_skills_present fails when a named file is
         },
       },
       runtimeDir: '.agent',
+      flow: 'fix-bug',
+      domain: 'perps',
     },
     exec as never,
   );
@@ -338,6 +340,7 @@ test('checkPrepareRequirement required_skills_present passes when every named fi
         },
       },
       runtimeDir: '.agent',
+      flow: 'fix-bug',
     },
     (async () => ({ exitCode: 0, stdout: '', stderr: '' })) as never,
   );
@@ -352,6 +355,51 @@ test('checkPrepareRequirement required_skills_present passes when the pack decla
   });
   assert.equal(result.ok, true);
   assert.match(result.detail, /no required skills/);
+});
+
+// Selection knows the flow and domain this prepare serves, so the check asks for
+// the rules task init will freeze rather than every rule the pack declares.
+test('checkPrepareRequirement required_skills_present asks only for the matching rules', async () => {
+  const probed: string[] = [];
+  const projectJson = {
+    required_skills: {
+      root: '.agents/skills',
+      rules: [
+        {
+          id: 'perps-review',
+          when: { flows: ['dev', 'fix-bug'], domains: ['perps'] },
+          skills: [{ name: 'mms-perps-review-pr', files: ['SKILL.md'] }],
+        },
+        {
+          id: 'mobile-testing',
+          when: { flows: ['dev'], platforms: ['ios'] },
+          skills: [{ name: 'mms-mobile-testing', files: ['SKILL.md'] }],
+        },
+      ],
+    },
+  };
+  const exec = async (_vars: unknown, command: string) => {
+    probed.push(command);
+    return { exitCode: 0, stdout: '', stderr: '' };
+  };
+  const result = await checkPrepareRequirement(
+    'required_skills_present',
+    {
+      vars: { remoteRepo: '/repo', platform: 'cli' } as never,
+      projectJson,
+      runtimeDir: '.agent',
+      flow: 'fix-bug',
+      domain: 'perps',
+    },
+    exec as never,
+  );
+  assert.equal(result.ok, true);
+  assert.match(probed[0], /mms-perps-review-pr/);
+  assert.doesNotMatch(
+    probed[0],
+    /mms-mobile-testing/,
+    'a rule this run does not match is not asked for',
+  );
 });
 
 test('checkPrepareRequirement artifact_available fails when no artifact_check hook is declared', async () => {

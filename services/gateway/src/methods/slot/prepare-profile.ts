@@ -1,7 +1,6 @@
 // methods/slot/prepare-profile.ts — prepare profile resolution + precondition checks (ADR-037)
 
-import { posix } from 'node:path';
-
+import { requiredSkillPaths, selectRequiredSkills } from '@farmslot/agent-runtime/task-init';
 import {
   parseRequiredSkillsConfig,
   PREPARE_PHASES,
@@ -145,6 +144,10 @@ export interface RequirementCheckContext {
    * precedes the git phase).
    */
   prepareRef?: string;
+  /** The flow this prepare serves, when the caller knows it (dispatch does). */
+  flow?: string;
+  /** The run's effective domain, resolved before selection (prepare.ts). */
+  domain?: string;
   /**
    * The project default branch. Exposed to the artifact_check hook as
    * {{prepare_default_ref}} so a probe can implement ordered resolution — try
@@ -269,6 +272,8 @@ export async function checkPrepareRequirement(
     prepareRef,
     prepareDefaultRef,
     prepareBaseSha,
+    flow,
+    domain,
   } = ctx;
   switch (requirement) {
     case 'deps_current': {
@@ -373,21 +378,26 @@ export async function checkPrepareRequirement(
       // init's own, separate refusal; selection has no frozen set to compare.
       // A pack with no rule at all is not a failure: nothing can be refused for
       // a skill it never requires.
-      const skills = projectJson.required_skills
+      const config = projectJson.required_skills
         ? parseRequiredSkillsConfig(projectJson.required_skills)
         : undefined;
-      const files = skills
-        ? skills.rules.flatMap((rule) =>
-            rule.skills.flatMap((skill) =>
-              [...skill.files, ...(skill.review ? [skill.review.pack] : [])].map((file) =>
-                posix.join(skills.root, skill.name, file),
-              ),
-            ),
+      // The flow, platform and domain this prepare is for are resolved before
+      // selection runs, so the check asks for the same rule selection task init
+      // will freeze — not the union of every rule, which could demand a skill
+      // this run never needs. The path list itself comes from agent-runtime, so
+      // the two cannot drift apart.
+      const required = config
+        ? requiredSkillPaths(
+            config,
+            selectRequiredSkills(config, {
+              flow: flow ?? '',
+              platform: vars.platform ?? '',
+              ...(domain ? { domain } : {}),
+            }),
           )
         : [];
-      const required = [...new Set(files)];
       if (!required.length)
-        return { requirement, ok: true, detail: 'project declares no required skills' };
+        return { requirement, ok: true, detail: 'no required skills for this selection' };
       const r = await exec(
         vars,
         `cd ${shellQuote(vars.remoteRepo)} && rc=0; for p in ${required

@@ -87,6 +87,25 @@ function skillPath(config: RequiredSkillsConfig, skill: string, file: string): s
   return path.posix.join(config.root, skill, file);
 }
 
+/**
+ * Every checkout-relative file a selection requires, in selection order: each
+ * skill's declared files, then its review pack when it declares one.
+ *
+ * Task init freezes and checks exactly these, and prepare's
+ * `required_skills_present` requirement asks whether they exist before a profile
+ * that skips the install phase is chosen. Both read this one list, so a new kind
+ * of declared file cannot be frozen by one and ignored by the other.
+ */
+export function requiredSkillPaths(
+  config: RequiredSkillsConfig,
+  selection: RequiredSkillSelection,
+): string[] {
+  return selection.skills.flatMap((skill) => [
+    ...skill.files.map((file) => skillPath(config, skill.name, file)),
+    ...(skill.review ? [skillPath(config, skill.name, skill.review.pack)] : []),
+  ]);
+}
+
 function digest(repoRoot: string, relative: string): string | null {
   const file = path.join(repoRoot, relative);
   if (!existsSync(file) || !statSync(file).isFile()) return null;
