@@ -106,6 +106,8 @@ const abandon = (cause) => {
 process.on('disconnect', () => {
   if (!delivered) abandon();
 });
+// A notification whose write fails (the node is gone) is emitted here; stop like an orphan.
+process.on('error', abandon);
 const { createRequire } = require('node:module');
 const { pathToFileURL } = require('node:url');
 const path = require('node:path');
@@ -307,10 +309,11 @@ export async function runTaskRuntime(
     });
     let delivered = false;
     const stop = (exitCode: number, message: string) => {
-      // A result the task already delivered stands, even while a held pipe delays 'close'.
-      if (stopped || delivered || task.exitCode !== null || task.signalCode !== null) return;
+      // An exited task has nothing left to stop; its result stands while a held pipe drains.
+      if (stopped || task.exitCode !== null || task.signalCode !== null) return;
       stopped = true;
-      result = { stdout: '', stderr: message, exitCode };
+      // A result the task already delivered stands; the task is still stopped and bounded.
+      if (!delivered) result = { stdout: '', stderr: message, exitCode };
       closeout.terminate();
       if (task.connected) task.send({ type: 'task-stop' });
       terminate();

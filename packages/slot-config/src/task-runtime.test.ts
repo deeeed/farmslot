@@ -184,3 +184,51 @@ test('a task that crashes still has its subprocesses stopped', { timeout: 90_000
   assert.notEqual((await pending).exitCode, 0);
   assert.ok(await until(() => !alive(child), 5000), "the crashed task's subprocess is stopped");
 });
+
+test(
+  'cancelling a task that delivered while its subprocess runs keeps the result and stops it',
+  { timeout: 90_000 },
+  async (t) => {
+    const marker = path.join(await realpath(tmpdir()), `task-after-${process.pid}-${Date.now()}`);
+    t.after(() => {
+      if (existsSync(marker)) {
+        const pid = Number(readFileSync(marker, 'utf8'));
+        if (alive(pid)) process.kill(pid, 'SIGKILL');
+      }
+      return rm(marker, { force: true });
+    });
+    const { root, cli } = await cliFixture(
+      t,
+      `import fs from 'node:fs';
+    import { spawn } from 'node:child_process';
+    export async function runHostedTaskInit(taskPath: string) {
+      // A tracked subprocess the task does not wait for keeps it alive after its result.
+      const child = spawn('sleep', ['30'], { stdio: 'ignore' });
+      fs.writeFileSync(${JSON.stringify(marker)} + '.tmp', String(child.pid));
+      fs.renameSync(${JSON.stringify(marker)} + '.tmp', ${JSON.stringify(marker)});
+      return { taskPath };
+    }`,
+    );
+    const controller = new AbortController();
+    const pending = runTaskRuntime(
+      {
+        action: 'init',
+        taskPath: path.join(root, 'task.json'),
+        supportDir: root,
+        env: { FARMSLOT_CLI: path.join(cli, 'bin/farmslot.mjs') },
+      },
+      root,
+      process.env,
+      controller.signal,
+    );
+    assert.ok(await until(() => existsSync(marker), 60_000), 'the subprocess started');
+    const child = Number(readFileSync(marker, 'utf8'));
+    await until(() => false, 500);
+    const aborted = Date.now();
+    controller.abort();
+    const result = await pending;
+    assert.ok(Date.now() - aborted < 15_000, 'the cancel still ends the task');
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.ok(await until(() => !alive(child), 5000), 'the subprocess is stopped');
+  },
+);
