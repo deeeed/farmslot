@@ -1,0 +1,1 @@
+- A Pi turn whose request failed before any response (stopReason `error`, no content, zero usage, such as an HTTP 520) now counts as a zero-cost turn instead of leaving the whole session's cost unpriced. An aborted stream or a failure after content started, with zero usage, stays unpriced.
