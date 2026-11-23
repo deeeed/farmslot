@@ -57,6 +57,7 @@ const recovery: SlotRecovery = {
   error: 'Fixtures did not verify',
 };
 let recoveryPending = false;
+let slotRow: Record<string, unknown> | undefined;
 let refused = false;
 let transportFailure = false;
 let calls: string[] = [];
@@ -112,7 +113,8 @@ mock.module('../../core/index.js', {
     loadSlotVars: async () => ({ ...vars, resourceVars: {} }),
     loadProjectVars: async () => project,
     readSlotField: async () => null,
-    readSlotRow: async () => (recoveryPending ? { workspace_recovery: recovery } : null),
+    readSlotRow: async () =>
+      recoveryPending ? { workspace_recovery: recovery } : (slotRow ?? null),
     execOnSlot: executeOnSlot,
     slotWriteFiles: async () => {
       throw new Error('unexpected slot write');
@@ -219,4 +221,25 @@ test('a load-run prepare for a run that does not hold the slot is not refused fo
     ),
     (error: Error) => !/no longer belongs to run/.test(error.message),
   );
+});
+
+test('an engine prepare is refused when another run holds the slot or this run has ended', async (t) => {
+  recoveryPending = false;
+  t.after(() => (slotRow = undefined));
+  slotRow = { current_run_id: 'other-run-0001', handoff_run_id: null };
+  await assert.rejects(
+    slotPrepare({ slotId: vars.slotId, runId: 'cancelled-run' }, () => undefined, undefined, {
+      requireRunOwnership: true,
+    }),
+    /no longer belongs to run/,
+  );
+  // A warm handoff reserves the slot for the run: that counts as holding it.
+  slotRow = { current_run_id: 'other-run-0001', handoff_run_id: 'handoff-run' };
+  await assert.rejects(
+    slotPrepare({ slotId: vars.slotId, runId: 'handoff-run' }, () => undefined, undefined, {
+      requireRunOwnership: true,
+    }),
+    (error: Error) => !/no longer belongs to run/.test(error.message),
+  );
+  assert.deepEqual(calls.slice(0, 1), ['ownership'], 'the reserved run proceeds past the check');
 });

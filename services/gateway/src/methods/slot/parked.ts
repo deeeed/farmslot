@@ -60,6 +60,8 @@ export async function slotParked(value: unknown, emit: EventEmitter): Promise<Sl
   if (activePrepareSlots.has(slotId)) throw new Error('Slot is preparing or refreshing');
   assertNoNativeWorkerRecovery(slotId);
   await assertSlotNotOperatorRoot(vars, 'refresh');
+  // That check awaited: another restore or prepare may have taken the guard meanwhile.
+  if (activePrepareSlots.has(slotId)) throw new Error('Slot is preparing or refreshing');
   activePrepareSlots.add(slotId);
   // False once the guard is handed back before the slot reads ready; a prepare may own it then.
   let guardHeld = true;
