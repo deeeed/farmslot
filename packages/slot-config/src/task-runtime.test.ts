@@ -277,6 +277,133 @@ test(
 );
 
 test(
+  'a cancel after the task exited still stops its tracked subprocess',
+  { timeout: 90_000 },
+  async (t) => {
+    const pipe = await taskPipe(t);
+    let child = 0;
+    t.after(() => {
+      if (child && alive(child)) process.kill(child, 'SIGKILL');
+    });
+    const { root, cli } = await cliFixture(
+      t,
+      `import fs from 'node:fs';
+    import { spawn } from 'node:child_process';
+    export async function runHostedTaskInit(taskPath: string) {
+      // The task and its subprocess hold the pipe: it ends when both have exited.
+      const pipe = fs.openSync(${JSON.stringify(pipe.path)}, 'w');
+      // Tracked, holding the task's stdout, and not keeping the task alive.
+      const child = spawn('sleep', ['600'], { stdio: ['ignore', 'inherit', 'ignore', pipe] });
+      child.unref();
+      fs.writeSync(pipe, JSON.stringify({ task: process.pid, child: child.pid }) + '\\n');
+      return { taskPath };
+    }`,
+    );
+    const controller = new AbortController();
+    const pending = runTaskRuntime(
+      {
+        action: 'init',
+        taskPath: path.join(root, 'task.json'),
+        supportDir: root,
+        env: { FARMSLOT_CLI: path.join(cli, 'bin/farmslot.mjs') },
+      },
+      root,
+      process.env,
+      controller.signal,
+    );
+    const started = JSON.parse(await pipe.line()) as { task: number; child: number };
+    child = started.child;
+    // The runtime saw the task exit in the same callback that reaped it.
+    while (alive(started.task)) await new Promise((resolve) => setTimeout(resolve, 10));
+    // The subprocess holds the output, so this lands in the drain window.
+    controller.abort();
+    assert.equal((await pending).exitCode, 0, 'the delivered result stands');
+    await pipe.closed();
+  },
+);
+
+test(
+  'a result send on a closed channel is not a delivery: the task stops',
+  { timeout: 90_000 },
+  async (t) => {
+    const pipe = await taskPipe(t);
+    let child = 0;
+    t.after(() => {
+      if (child && alive(child)) process.kill(child, 'SIGKILL');
+    });
+    const { root, cli } = await cliFixture(
+      t,
+      `import fs from 'node:fs';
+    import { spawn } from 'node:child_process';
+    export async function runHostedTaskInit(taskPath: string) {
+      // The task and its subprocess hold the pipe: it ends when both have exited.
+      const pipe = fs.openSync(${JSON.stringify(pipe.path)}, 'w');
+      const child = spawn('sleep', ['600'], { stdio: ['ignore', 'ignore', 'ignore', pipe] });
+      fs.writeSync(pipe, String(child.pid) + '\\n');
+      // The channel reads closed when the result goes out.
+      Object.defineProperty(process, 'connected', { configurable: true, get: () => false });
+      return { taskPath };
+    }`,
+    );
+    const pending = runTaskRuntime(
+      {
+        action: 'init',
+        taskPath: path.join(root, 'task.json'),
+        supportDir: root,
+        env: { FARMSLOT_CLI: path.join(cli, 'bin/farmslot.mjs') },
+      },
+      root,
+    );
+    child = Number(await pipe.line());
+    assert.notEqual((await pending).exitCode, 0, 'no result arrived');
+    await pipe.closed();
+  },
+);
+
+test(
+  'a subprocess started after the result is still stopped by a cancel',
+  { timeout: 90_000 },
+  async (t) => {
+    const pipe = await taskPipe(t);
+    let child = 0;
+    t.after(() => {
+      if (child && alive(child)) process.kill(child, 'SIGKILL');
+    });
+    const { root, cli } = await cliFixture(
+      t,
+      `import fs from 'node:fs';
+    import { spawn } from 'node:child_process';
+    export async function runHostedTaskInit(taskPath: string) {
+      // The task and its subprocess hold the pipe: it ends when both have exited.
+      const pipe = fs.openSync(${JSON.stringify(pipe.path)}, 'w');
+      // Provider work that goes on after the result went out.
+      setTimeout(() => {
+        const child = spawn('sleep', ['600'], { stdio: ['ignore', 'ignore', 'ignore', pipe] });
+        fs.writeSync(pipe, String(child.pid) + '\\n');
+      }, 100);
+      return { taskPath };
+    }`,
+    );
+    const controller = new AbortController();
+    const pending = runTaskRuntime(
+      {
+        action: 'init',
+        taskPath: path.join(root, 'task.json'),
+        supportDir: root,
+        env: { FARMSLOT_CLI: path.join(cli, 'bin/farmslot.mjs') },
+      },
+      root,
+      process.env,
+      controller.signal,
+    );
+    child = Number(await pipe.line());
+    controller.abort();
+    assert.equal((await pending).exitCode, 0, 'the delivered result stands');
+    await pipe.closed();
+  },
+);
+
+test(
   'cancelling a task that delivered while its subprocess runs keeps the result and stops it',
   { timeout: 90_000 },
   async (t) => {
@@ -295,8 +422,12 @@ test(
       // A tracked subprocess the task does not wait for keeps it alive after its result.
       const child = spawn('sleep', ['600'], { stdio: ['ignore', 'ignore', 'ignore', pipe] });
       fs.writeSync(pipe, JSON.stringify({ task: process.pid, child: child.pid }) + '\\n');
-      // The task disconnects once its result went out.
-      process.once('disconnect', () => fs.writeSync(pipe, 'delivered\\n'));
+      // The task lets go of its channel once its result went out.
+      const unref = process.channel.unref.bind(process.channel);
+      process.channel.unref = () => {
+        unref();
+        fs.writeSync(pipe, 'delivered\\n');
+      };
       return { taskPath };
     }`,
     );

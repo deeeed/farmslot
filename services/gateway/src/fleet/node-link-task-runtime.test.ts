@@ -199,10 +199,12 @@ for (const size of [1024, 180000]) {
         timeoutMs: 4000,
         assertCurrent() {},
       };
-      // The clock stands still, so the command's 4 s deadline holds however long the task
-      // process takes to boot; the final authorize reuses that deadline.
-      t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
       const receipt = await invokeNodeLink(request, invocation);
+      const command = calls.find((entry) => entry.method === 'node.link.command')?.params;
+      assert(isNodeLinkCommand(command));
+      // The first command ran on the real clock. The checks below reuse its 4 s deadline, so
+      // the clock holds just inside it however long the task process took to boot.
+      t.mock.timers.enable({ apis: ['Date'], now: command.expiresAt - 1 });
       assert.equal(receipt.state, 'completed');
       assert.equal(receipt.closeoutConfirmed, true);
       const result = receipt.result;
@@ -220,8 +222,6 @@ for (const size of [1024, 180000]) {
       if (size === 1024) assert.deepEqual(await invokeNodeLink(request, invocation), receipt);
       else await assert.rejects(invokeNodeLink(request, invocation), { code: 'RESULT_EXPIRED' });
       assert.equal(await readFile(marker, 'utf8'), 'once\n');
-      const command = calls.find((entry) => entry.method === 'node.link.command')?.params;
-      assert(isNodeLinkCommand(command));
       await agent.handle('node.link.authorize', {
         authority,
         target: invocation.target,

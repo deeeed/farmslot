@@ -121,10 +121,12 @@ const parentPort = {
   postMessage: (message, done) =>
     process.connected ? process.send(message, done) : done?.(new Error('IPC channel closed')),
   // The result send's callback: a failed send was not delivered, so the task stops as if orphaned.
+  // A delivered task keeps the channel, so groups it starts later are still reported and a
+  // cancel still reaches it, but the channel no longer keeps it alive.
   close: (error) => {
     if (error) return abandon(error);
     delivered = true;
-    if (process.connected) process.disconnect();
+    process.channel?.unref();
   },
 };
 // The process groups this task owns, in memory its watchdog thread shares.
@@ -142,6 +144,8 @@ let abandoned = false;
 const abandon = (cause) => {
   if (abandoned) return;
   abandoned = true;
+  // Nothing new may start while the watchdog settles.
+  stopping = true;
   if (cause instanceof Error) console.error('Task stopped: ' + cause.message);
   // Nothing else may keep the task alive now; the watchdog ends it.
   watchdog.ref();
@@ -355,16 +359,13 @@ export async function runTaskRuntime(
       if (stopped && stoppingAcknowledged && !childRoots.size) killTask();
     };
     const signalChild = (pid: number, signal: NodeJS.Signals | 0) => {
-      let probing = true;
       try {
         process.kill(-pid, 0);
-        probing = false;
         if (signal !== 0) process.kill(-pid, signal);
       } catch (error) {
-        if (!isRecord(error) || (error.code !== 'ESRCH' && !(probing && error.code === 'EPERM')))
-          throw error;
-        // A finished or no-longer-owned group must not survive until a later
-        // cancellation, when its numeric ID may have been reused.
+        if (!isRecord(error) || (error.code !== 'ESRCH' && error.code !== 'EPERM')) throw error;
+        // A finished or no-longer-owned group (EPERM, on the probe or the signal) must not
+        // survive until a later cancellation, when its numeric ID may have been reused.
         children.delete(pid);
       }
     };
@@ -418,6 +419,8 @@ export async function runTaskRuntime(
       else {
         result = message;
         delivered = true;
+        // Output that follows the result counts against the same bound.
+        outputBytes = size;
       }
     });
     task.on('error', (error: Error) => {
@@ -458,7 +461,9 @@ export async function runTaskRuntime(
         try {
           // A cancellation result confirms both the task process and its async child
           // groups stopped. A forced end kills the task's own group, synchronous subprocesses included.
-          while (stopped && children.size) {
+          // Bounded: a group whose remaining member this process may not signal stays listed.
+          const census = Date.now() + 2 * NODE_EXEC_CLOSEOUT_MS;
+          while (stopped && children.size && Date.now() < census) {
             const groups = await new Promise<string>((done, fail) =>
               execFile('/bin/ps', ['-axo', 'pgid=,stat='], { timeout: 2000 }, (error, output) =>
                 error ? fail(error) : done(output),
@@ -478,7 +483,15 @@ export async function runTaskRuntime(
             stderr: taskError?.stack ?? `Task runtime exited without a result (exit ${code}).`,
             exitCode: code || 1,
           };
-          resolve({ ...outcome, stdout: stdout + outcome.stdout, stderr: stderr + outcome.stderr });
+          const survivors =
+            stopped && children.size
+              ? `Task groups still present: ${[...children].join(', ')}\n`
+              : '';
+          resolve({
+            ...outcome,
+            stdout: stdout + outcome.stdout,
+            stderr: stderr + survivors + outcome.stderr,
+          });
         } finally {
           clearTimeout(forcedKillTimer);
           closeout.dispose();
