@@ -64,7 +64,10 @@ import {
   buildNodeSupportPublishCommand,
   buildNodeSupportVerifyCommand,
 } from './publish-command.js';
-import { notifyNodeSupportSelection } from './selection-events.js';
+import {
+  notifyNodeSupportSelectionEnded,
+  notifyNodeSupportSelectionStarted,
+} from './selection-events.js';
 
 export interface NodeSupportBundleState {
   /** Directory the slot's hook and installer commands resolve against. */
@@ -398,7 +401,7 @@ export async function ensureNodeSupportBundle(
 
   // Always rewritten: another gateway or a prepare may have repointed the slot
   // since this process last looked, and the write is one small file.
-  const activateBundle = async (how: 'published' | 'current', publishCommand?: string) => {
+  const activateOnNode = async (how: 'published' | 'current', publishCommand?: string) => {
     progress.phase = publishCommand ? 'publishing' : 'activating';
     const selection = nodeSupportHashPath(vars.remoteRepo, runtimeDir);
     const readOnly = options.selectSlot === false;
@@ -434,8 +437,21 @@ export async function ensureNodeSupportBundle(
     console.log(
       `[node-support] ${vars.slotId} ${readOnly ? 'verified read-only' : 'now on'} bundle ${manifest.hash.slice(0, 8)} (${how}, ${files.length} files)`,
     );
-    if (!readOnly) notifyNodeSupportSelection(vars.slotId, supportDir);
     return true;
+  };
+  // A selecting activation is reported from its start: the node selects and may
+  // prune the slot's earlier bundle before the gateway hears back, and a failed
+  // activation may still have moved the slot.
+  const activateBundle = async (how: 'published' | 'current', publishCommand?: string) => {
+    if (options.selectSlot === false) return activateOnNode(how, publishCommand);
+    notifyNodeSupportSelectionStarted(vars.slotId);
+    let selected: string | null = null;
+    try {
+      if (await activateOnNode(how, publishCommand)) selected = supportDir;
+      return selected !== null;
+    } finally {
+      notifyNodeSupportSelectionEnded(vars.slotId, selected);
+    }
   };
   const verifyChecksums = async (dir: string, manifestFile: string): Promise<boolean> => {
     const result = await execSupport(

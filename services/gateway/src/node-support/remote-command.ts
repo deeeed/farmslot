@@ -125,20 +125,34 @@ interface HeldBundle {
 
 const verifiedBundles = new Map<string, { at: number; supportDir: string }>();
 /**
- * The bundle each slot selected last in this gateway. A slot moved to another
- * bundle may have its earlier one pruned, so a selected entry counts only while
- * it is the slot's latest selection: an entry for an earlier bundle would point
- * commands at a deleted directory (a dev-server shutdown that then left the
- * gateway running). Checked when an entry is written and when it is read, so a
- * delivery that finishes after a newer selection never caches its older bundle.
+ * The bundle each slot selected last in this gateway (null: unknown, after a
+ * failed activation), and the selecting activations still running per slot. A
+ * slot moved to another bundle may have its earlier one pruned, so a selected
+ * entry counts only while no selection for its slot is running and it is the
+ * slot's latest selection: an entry for an earlier bundle would point commands
+ * at a deleted directory (a dev-server shutdown that then left the gateway
+ * running). Checked when an entry is written and when it is read, so a delivery
+ * that finishes after a newer selection never caches its older bundle.
  * Read-only entries hold their own reader lease on the node, so they stay valid.
  * A selection made by another gateway is not seen here.
  */
-const latestSelection = new Map<string, string>();
-onNodeSupportSelection((slotId, supportDir) => latestSelection.set(slotId, supportDir));
+const latestSelection = new Map<string, string | null>();
+const selectionsRunning = new Map<string, number>();
+onNodeSupportSelection({
+  started(slotId) {
+    selectionsRunning.set(slotId, (selectionsRunning.get(slotId) ?? 0) + 1);
+  },
+  ended(slotId, supportDir) {
+    const running = (selectionsRunning.get(slotId) ?? 1) - 1;
+    if (running > 0) selectionsRunning.set(slotId, running);
+    else selectionsRunning.delete(slotId);
+    latestSelection.set(slotId, supportDir);
+  },
+});
 
 function selectionCurrent(slotId: string, supportDir: string, selectSlot: boolean): boolean {
   if (!selectSlot) return true;
+  if (selectionsRunning.has(slotId)) return false;
   // A selecting ensure records its selection before it returns, so a slot with
   // none recorded has had no selection that could make this entry stale.
   const latest = latestSelection.get(slotId);
@@ -622,6 +636,7 @@ export async function resolveSlotFarmCommand(
 export function resetRemoteFarmCommandCache(): void {
   verifiedBundles.clear();
   latestSelection.clear();
+  selectionsRunning.clear();
   localBundles.clear();
   pendingEnsures.clear();
   machinePublishes.clear();

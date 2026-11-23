@@ -871,7 +871,10 @@ test('a delivery that finishes after a newer selection never caches its older bu
     },
   };
   const first = resolveRemoteFarmCommand(vars, cmd, { io });
-  while (!held) await new Promise((resolve) => setTimeout(resolve, 10));
+  for (let waited = 0; !held; waited += 10) {
+    assert.ok(waited < 5_000, 'the first delivery reached its manifest read');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
   let now = Date.now();
   t.mock.method(Date, 'now', () => now);
   farm.editScript('echo v2\n');
@@ -887,6 +890,72 @@ test('a delivery that finishes after a newer selection never caches its older bu
   assert.equal(await resolveRemoteFarmCommand(vars, cmd, { io }), older);
   assert.ok(probes > before, 'bundle 1 is checked on the node again, not taken from the cache');
 });
+
+for (const outcome of ['still running', 'failed'] as const) {
+  test(`a cached bundle is not served while a selection for its slot is ${outcome}`, async (t) => {
+    // The node selects the new bundle and prunes the old one inside the
+    // activation, before the gateway hears back, and a failed activation may
+    // still have moved the slot.
+    resetRemoteFarmCommandCache();
+    const farm = await withTempFarm(t);
+    const node = gatedNode();
+    node.release();
+    const vars = farmVars(farm.name, 'mini-x-1');
+    const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+    let probes = 0;
+    let holdActivation = false;
+    let activationReached!: () => void;
+    const reached = new Promise<void>((resolve) => (activationReached = resolve));
+    let releaseActivation!: () => void;
+    const activationGate = new Promise<void>((resolve) => (releaseActivation = resolve));
+    t.after(() => releaseActivation());
+    // Large node-support commands are staged as a file and run with /bin/sh.
+    const staged = new Map<string, string>();
+    const isActivation = (command: string) =>
+      (staged.get(command) ?? command).includes('farmslot-node-support-activate');
+    const io: NodeSupportIo = {
+      ...node.io,
+      fileExists: async (...args) => {
+        probes++;
+        return node.io.fileExists(...args);
+      },
+      writeFile: async (vars, file, data) => {
+        staged.set(`/bin/sh ${shellExpressionForRemotePath(file)}`, data);
+        return node.io.writeFile(vars, file, data);
+      },
+      exec: async (vars, command, ...rest) => {
+        if (holdActivation && isActivation(command)) {
+          holdActivation = false;
+          activationReached();
+          if (outcome === 'failed') throw new Error('activation failed after selecting');
+          await activationGate;
+        }
+        return node.io.exec(vars, command, ...rest);
+      },
+    };
+    const first = await resolveRemoteFarmCommand(vars, cmd, { io });
+    let now = Date.now();
+    t.mock.method(Date, 'now', () => now);
+
+    // A command for bundle 2 reaches its selecting activation.
+    farm.editScript('echo v2\n');
+    now += 2_100;
+    holdActivation = true;
+    const moving = resolveRemoteFarmCommand(vars, cmd, { io });
+    await reached;
+    if (outcome === 'failed') await assert.rejects(moving);
+
+    // Bundle 1 again: the cached entry must not be used.
+    farm.editScript('echo v1\n');
+    now += 2_100;
+    const before = probes;
+    // Resolved while the bundle 2 activation is still held on the node.
+    assert.equal(await resolveRemoteFarmCommand(vars, cmd, { io }), first);
+    assert.ok(probes > before, 'bundle 1 is checked on the node again, not taken from the cache');
+    releaseActivation();
+    if (outcome === 'still running') await moving;
+  });
+}
 
 test('every direct node exec sender is reviewed for farm script references', async () => {
   // execOnSlot resolves farm refs for everything routed through it. A new call
