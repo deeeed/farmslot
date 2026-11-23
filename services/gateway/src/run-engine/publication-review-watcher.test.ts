@@ -2,6 +2,36 @@ import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 import { setImmediate as flushed } from 'node:timers/promises';
 
+// HUMAN_GATE holds on the operator's answer until the test releases it.
+let releaseGate = () => {};
+const heldGateResult = { inputs: {}, outputs: { skipped: true } };
+let gateEntered = 0;
+// Registered before anything loads the real module: it imports the engine back, which would bind
+// the real step first. Only HUMAN_GATE runs here; the other steps must not.
+const unexpectedStep = () => {
+  throw new Error('Only HUMAN_GATE runs in these tests');
+};
+mock.module('./post-dispatch-steps.js', {
+  namedExports: {
+    holdInteractiveCompletionForOperator: unexpectedStep,
+    persistedUpdateBranchNeedsReview: unexpectedStep,
+    shouldSkipRetrospectiveAtComplete: unexpectedStep,
+    reconcilePublishGateReviewPlanResult: unexpectedStep,
+    readyGateReviewSubjectMatches: unexpectedStep,
+    baseReviewPolicy: unexpectedStep,
+    executeMonitorStep: unexpectedStep,
+    executeReviewStep: unexpectedStep,
+    holdSlotForPublicationGate: unexpectedStep,
+    rerunReviewIfReviewedInputsChanged: unexpectedStep,
+    isFlowTerminalStep: unexpectedStep,
+    executeCompleteStep: unexpectedStep,
+    executeHumanGateStep: () =>
+      new Promise<typeof heldGateResult>((resolve) => {
+        gateEntered += 1;
+        releaseGate = () => resolve(heldGateResult);
+      }),
+  },
+});
 const replayStep = await import('../methods/run/replay-step.js');
 const replays: string[] = [];
 mock.module('../methods/run/replay-step.js', {
@@ -12,7 +42,7 @@ mock.module('../methods/run/replay-step.js', {
     },
   },
 });
-const { rearmPublicationReviewRecoveryForRun, suspendPublicationReviewRecoveryForRun } =
+const { rearmPublicationReviewRecoveryForRun, startRun, suspendPublicationReviewRecoveryForRun } =
   await import('./orchestrator.js');
 const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
 
@@ -70,37 +100,35 @@ test('a pending gate retry stands down once another replay owns the gate (F311)'
 });
 
 // Run 5d598e4a (audiolab #495): the gateway restarted with a fix pass active, so recovery owed a
-// gate replay. The operator answered the gate with Request review 16 s later; the engine resumed
-// HUMAN_GATE in the same generation and started that review. The owed replay then fired, took the
-// gate (gen 3 -> 4) and aborted the requested review, which was recorded as unavailable.
-test('a pending gate retry stands down once the operator has answered the gate', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
-  const runId = preparingGate();
-  const gate = {
-    id: `gate-${runId}`,
-    type: 'engine_human_gate' as const,
-    title: 'Approve publication',
-    description: 'Review the package.',
-    actions: [{ id: 'request-review', label: 'Request review', style: 'secondary' as const }],
-    createdAt: new Date().toISOString(),
-  };
-  updateRun(runId, { decisions: [gate] });
-  t.after(async () => {
-    suspendPublicationReviewRecoveryForRun(runId);
-    updateRun(runId, { status: 'failed', completedAt: new Date().toISOString() });
-    await deleteRun(runId);
-  });
-  const before = replays.length;
-  assert.ok(rearmPublicationReviewRecoveryForRun(runId, { replayPending: true }));
-  updateRun(runId, {
-    decisions: [
-      { ...gate, resolvedAt: new Date().toISOString(), resolvedAction: 'request-review' },
-    ],
-  });
+// gate replay. The operator answered the gate with Request review during startup; the answer
+// resumed HUMAN_GATE in the same generation and started that review. The owed replay then fired,
+// took the gate (gen 3 -> 4) and aborted the requested review. The answer may land before or after
+// recovery arms the watcher.
+for (const answered of ['before', 'after'] as const) {
+  test(`a pending gate retry stands down while the operator's answer drives the gate (${answered} arming)`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    const runId = preparingGate();
+    t.after(async () => {
+      releaseGate();
+      suspendPublicationReviewRecoveryForRun(runId);
+      updateRun(runId, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(runId);
+    });
+    const before = replays.length;
+    const entered = gateEntered;
+    const answer = () => void startRun(runId);
+    if (answered === 'before') answer();
+    assert.ok(rearmPublicationReviewRecoveryForRun(runId, { replayPending: true }));
+    if (answered === 'after') answer();
+    const engaged = performance.now() + 2_000;
+    while (gateEntered === entered && performance.now() < engaged) await flushed();
+    assert.equal(gateEntered, entered + 1, 'the answer resumed HUMAN_GATE');
 
-  t.mock.timers.tick(60_000);
-  const deadline = performance.now() + 2_000;
-  while (replays.length === before && performance.now() < deadline) await flushed();
+    t.mock.timers.tick(60_000);
+    const deadline = performance.now() + 2_000;
+    while (replays.length === before && performance.now() < deadline) await flushed();
 
-  assert.deepEqual(replays.slice(before), [], 'the answered gate is not replayed');
-});
+    assert.deepEqual(replays.slice(before), [], 'the gate the answer drives is not replayed');
+    assert.equal(getRun(runId)?.engineState?.publishGate?.reviewRecovery, undefined);
+  });
+}

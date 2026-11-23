@@ -127,7 +127,6 @@ import { teardownGateHeldAgentsIfNeeded } from './gate-held-lifecycle.js';
 import {
   buildNoChangeGateInputs,
   hasValidPrNumber,
-  isGateDecision,
   noChangeDispositionLabel,
   noChangeRejectionMessage,
 } from './gate-policy.js';
@@ -1499,6 +1498,11 @@ export function cancelRunEngine(runId: string): void {
   if (controller) controller.abort();
 }
 
+/** An engine loop drives the run's current generation. */
+function engineDrivesCurrentGeneration(run: Run): boolean {
+  return drivenGenerations.get(run.id) === (run.engineState?.generation ?? 0);
+}
+
 /** True while an engine loop drives the run (any generation). */
 export function isRunEngineDriven(runId: string): boolean {
   return drivenGenerations.has(runId);
@@ -1517,8 +1521,6 @@ const publicationReviewRecoveryWatchers = new Map<
     replayPending: boolean;
     /** The generation a pending gate replay was owed for; a newer one owns the gate. */
     replayGeneration: number;
-    /** Gate decisions open when the replay became owed; answering one ends that debt. */
-    replayGateDecisionIds: Set<string>;
   }
 >();
 
@@ -1567,20 +1569,11 @@ function rearmPublicationReviewRecovery(
 ): (() => void) | undefined {
   if (!run.slotId || !isPublicationReviewRecoveryHeld(run)) return undefined;
 
-  // The gate decisions open when the replay was owed: an operator answer to one of them takes the
-  // gate in the same generation, so the generation check below cannot see it.
-  const openGateDecisionIds = (owner: Run) =>
-    new Set(
-      owner.decisions
-        .filter((decision) => isGateDecision(decision) && !decision.resolvedAt)
-        .map(({ id }) => id),
-    );
   const existing = publicationReviewRecoveryWatchers.get(run.id);
   if (existing) {
     if (options?.replayPending) {
       existing.replayPending = true;
       existing.replayGeneration = run.engineState?.generation ?? 0;
-      existing.replayGateDecisionIds = openGateDecisionIds(run);
     }
     return existing.cleanup;
   }
@@ -1601,7 +1594,6 @@ function rearmPublicationReviewRecovery(
   const state = {
     replayPending: options?.replayPending ?? false,
     replayGeneration: run.engineState?.generation ?? 0,
-    replayGateDecisionIds: openGateDecisionIds(run),
     cleanup: (): void => {
       if (settled) return;
       settled = true;
@@ -1678,15 +1670,17 @@ function rearmPublicationReviewRecovery(
       state.cleanup();
       return;
     }
-    // Another replay (an operator's, or a later recovery) took the gate since this one was owed, or
-    // the operator answered it: replaying again would supersede that gate and its answer.
-    if (
-      state.replayPending &&
-      ((latest.engineState?.generation ?? 0) !== state.replayGeneration ||
-        latest.decisions.some(
-          (decision) => decision.resolvedAt && state.replayGateDecisionIds.has(decision.id),
-        ))
-    ) {
+    // Another replay (an operator's, or a later recovery) took the gate since this one was owed:
+    // replaying again would supersede the gate it presents.
+    if (state.replayPending && (latest.engineState?.generation ?? 0) !== state.replayGeneration) {
+      clearRecovery(latest);
+      state.cleanup();
+      return;
+    }
+    // An engine already drives this generation, e.g. the operator answered the gate during startup
+    // and that answer resumed HUMAN_GATE: a replay would take the gate and abort that work. An
+    // answer whose resume failed leaves no driver, so the replay still runs as its retry.
+    if (state.replayPending && engineDrivesCurrentGeneration(latest)) {
       clearRecovery(latest);
       state.cleanup();
       return;
@@ -1712,7 +1706,6 @@ function rearmPublicationReviewRecovery(
           getRun(latest.id)?.engineState?.publishGate?.reviews,
         );
         state.replayGeneration = getRun(latest.id)?.engineState?.generation ?? 0;
-        state.replayGateDecisionIds = openGateDecisionIds(getRun(latest.id) ?? latest);
         if (!state.replayPending && recoveryResult.terminalErrors.length === 0) {
           failures = 0;
           schedule(latest);
@@ -1743,6 +1736,12 @@ function rearmPublicationReviewRecovery(
           state.cleanup();
           return;
         }
+      }
+      const current = getRun(latest.id) ?? latest;
+      if (engineDrivesCurrentGeneration(current)) {
+        clearRecovery(current);
+        state.cleanup();
+        return;
       }
       await replayHumanGateForRecovery(latest.id);
       if (settled) return;
