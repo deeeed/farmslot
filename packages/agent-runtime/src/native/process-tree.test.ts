@@ -339,10 +339,15 @@ test('explicit confirmation remembers group changes and leaderless ownership', a
   const verify = { includeDetachedGroups: true };
   try {
     const tree = await NativeProcessTree.create(root);
-    census = `${root} 1 ${root} original root\n` + `${child} ${root} ${child} original child\n`;
+    census =
+      `${root} 1 ${root} original root\n` +
+      `${child} ${root} ${child} original child\n` +
+      `${member} ${root} ${leaderlessGroup} observed member\n`;
     await tree.capture();
 
-    census = `${child + 5} 1 ${child} unobserved worker\n`;
+    census =
+      `${child + 5} 1 ${child} unobserved worker\n` +
+      `${member + 5} 1 ${leaderlessGroup} unobserved member\n`;
     assert.equal(await tree.empty(verify), false, 'a known PID moved to a detached group');
     assert.equal(await tree.empty(), true, 'ordinary cleanup keeps its existing policy');
 
@@ -353,6 +358,107 @@ test('explicit confirmation remembers group changes and leaderless ownership', a
     assert.equal(await tree.empty(verify), true);
   } finally {
     mock.mock.restore();
+    syncBuiltinESMExports();
+  }
+});
+
+// A worker's detached group can die out and its ID be reused by an unrelated process that
+// double-forks into a leaderless group. Stop must never signal that stranger.
+test('a detached group that died out is forgotten, so its reused ID is never signaled', async (t) => {
+  const root = 100039821;
+  const launcher = root + 1;
+  const member = launcher + 1;
+  const foreign = launcher + 7;
+  const tree = new NativeProcessTree(root, {
+    snapshot: new Map([
+      [root, { pid: root, parent: process.pid, group: root, identity: 'original root' }],
+      [launcher, { pid: launcher, parent: root, group: launcher, identity: 'original launcher' }],
+    ]),
+  });
+  let census = `${member} 1 ${launcher} unobserved worker\n`;
+  const ps = t.mock.method(
+    childProcess,
+    'execFile',
+    (...args: Parameters<typeof childProcess.execFile>) => {
+      const callback = args.at(-1);
+      if (typeof callback !== 'function') throw new Error('Census callback missing');
+      queueMicrotask(() => callback(null, census, ''));
+      return new childProcess.ChildProcess();
+    },
+  );
+  const kill = t.mock.method(process, 'kill', (pid: number) => {
+    assert.notEqual(pid, foreign, 'a process outside the worker is never signaled');
+    return true;
+  });
+  syncBuiltinESMExports();
+  const verify = { includeDetachedGroups: true };
+  try {
+    assert.equal(await tree.empty(verify), false, 'the worker group still has a member');
+    census = '';
+    assert.equal(await tree.empty(verify), true, 'the group died out');
+    census = `${foreign} 1 ${launcher} foreign daemon in a reused leaderless group\n`;
+    assert.equal(await tree.empty(verify), true, 'a reused group ID is not the worker group');
+    await tree.stop(verify);
+    assert.equal(kill.mock.callCount(), 0);
+  } finally {
+    ps.mock.restore();
+    kill.mock.restore();
+    syncBuiltinESMExports();
+  }
+});
+
+// A stopped detached member must still be killed when the second census fails: left stopped it
+// holds its port, and close fails on it.
+test('a failed follow-up census still kills the detached members already stopped', async (t) => {
+  const root = 100039831;
+  const launcher = root + 1;
+  const member = launcher + 1;
+  const tree = new NativeProcessTree(root, {
+    snapshot: new Map([
+      [root, { pid: root, parent: process.pid, group: root, identity: 'original root' }],
+      [launcher, { pid: launcher, parent: root, group: launcher, identity: 'original launcher' }],
+    ]),
+  });
+  const rows = `${member} 1 ${launcher} dev server\n`;
+  let calls = 0;
+  const ps = t.mock.method(
+    childProcess,
+    'execFile',
+    (...args: Parameters<typeof childProcess.execFile>) => {
+      const callback = args.at(-1);
+      if (typeof callback !== 'function') throw new Error('Census callback missing');
+      calls += 1;
+      // The stop's first census reads the member; its follow-up census fails; the targeted
+      // reread answers only for the PIDs it names.
+      const argv = args[1];
+      const pidList = Array.isArray(argv) && argv[0] === '-p' ? String(argv[1]).split(',') : null;
+      const answer = pidList
+        ? rows
+            .split('\n')
+            .filter((line) => pidList.includes(line.split(' ')[0]))
+            .join('\n')
+        : rows;
+      queueMicrotask(() =>
+        calls === 2 ? callback(new Error('census failed'), '', '') : callback(null, answer, ''),
+      );
+      return new childProcess.ChildProcess();
+    },
+  );
+  const signals: Array<[number, string | number | undefined]> = [];
+  const kill = t.mock.method(process, 'kill', (pid: number, kind?: string | number) => {
+    signals.push([pid, kind]);
+    return true;
+  });
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(tree.stop({ includeDetachedGroups: true }), /census failed/);
+    assert.deepEqual(signals, [
+      [member, 'SIGSTOP'],
+      [member, 'SIGKILL'],
+    ]);
+  } finally {
+    ps.mock.restore();
+    kill.mock.restore();
     syncBuiltinESMExports();
   }
 });

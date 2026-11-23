@@ -303,7 +303,8 @@ export class NativeProcessTree {
     if (!observation?.identity) throw new Error('Native process identity is unavailable');
     this.rootIdentity = observation.identity;
     this.rootObservation = { ...observation };
-    this.applySnapshot(snapshot);
+    // A gated census reads only the root: it cannot show which groups died out.
+    this.applySnapshot(snapshot, { complete: !gated });
   }
   /** The constructor's census off the caller's event loop: for callers that can await it. */
   static async create(
@@ -347,7 +348,10 @@ export class NativeProcessTree {
       }
     };
   }
-  private applySnapshot(snapshot: Map<number, ProcessIdentity>): void {
+  private applySnapshot(
+    snapshot: Map<number, ProcessIdentity>,
+    { complete = true }: { complete?: boolean } = {},
+  ): void {
     const root = snapshot.get(this.root);
     if (root?.identity === this.rootIdentity) {
       this.owned.set(root.pid, root);
@@ -382,6 +386,13 @@ export class NativeProcessTree {
       if (leader?.group === group) this.detachedGroups.set(group, leader.identity);
       else if (!this.detachedGroups.has(group)) this.detachedGroups.set(group, undefined);
     }
+    // The kernel never reuses a group ID while a member exists. Once a full census shows a group
+    // empty it is gone for good, and a later group with that ID belongs to someone else.
+    if (complete) {
+      const live = new Set([...snapshot.values()].map(({ group }) => group));
+      for (const group of this.detachedGroups.keys())
+        if (!live.has(group)) this.detachedGroups.delete(group);
+    }
   }
   /** Last observed identities remain useful when a later census cannot be read. */
   snapshot(): ProcessIdentity[] {
@@ -408,31 +419,40 @@ export class NativeProcessTree {
       }
     };
     for (const entry of this.owned.values()) attempt(() => signal(entry, 'SIGSTOP', snapshot));
-    if (includeDetachedGroups)
-      for (const entry of this.detachedMembers(snapshot))
-        attempt(() => signal(entry, 'SIGSTOP', snapshot));
+    const stoppedDetached = includeDetachedGroups ? this.detachedMembers(snapshot) : [];
+    for (const entry of stoppedDetached) attempt(() => signal(entry, 'SIGSTOP', snapshot));
     let frozen: Map<number, ProcessIdentity>;
+    let complete = true;
     try {
       frozen = await this.capture();
     } catch (error) {
-      // A full census failure must not abandon the independently known stopped owners.
+      // A full census failure must not abandon the independently known stopped owners, nor the
+      // detached members already stopped: left stopped, they would hold their ports.
       errors.push(error);
       try {
-        frozen = await cleanupProcesses([...this.owned.keys()]);
+        frozen = await cleanupProcesses([
+          ...this.owned.keys(),
+          ...stoppedDetached.map(({ pid }) => pid),
+        ]);
       } catch (fallbackError) {
         throw new AggregateError(
           [...errors, fallbackError],
           'Native process tree cleanup censuses failed',
         );
       }
-      this.applySnapshot(frozen);
+      complete = false;
+      this.applySnapshot(frozen, { complete });
     }
     attempt(() => this.stopGroup(frozen));
     for (const entry of [...this.owned.values()].reverse())
       attempt(() => signal(entry, 'SIGKILL', frozen));
-    if (includeDetachedGroups)
-      for (const entry of this.detachedMembers(frozen))
-        attempt(() => signal(entry, 'SIGKILL', frozen));
+    // A partial census holds no group leaders, so it cannot prove a group; kill only the members
+    // already identified and stopped from the full census.
+    const detached =
+      includeDetachedGroups && complete
+        ? [...stoppedDetached, ...this.detachedMembers(frozen)]
+        : stoppedDetached;
+    for (const entry of detached) attempt(() => signal(entry, 'SIGKILL', frozen));
     if (errors.length)
       throw new AggregateError(
         errors,
