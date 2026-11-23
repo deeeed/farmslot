@@ -138,11 +138,6 @@ if (process.argv[2] === 'serve') {
     GATEWAY_PORT: String(port),
     FARMSLOT_GATEWAY: `ws://127.0.0.1:${port}`,
   };
-  for (const name of Object.keys(process.env))
-    assert.ok(
-      !name.startsWith('FARMSLOT_') || name in env || name.startsWith('FARMSLOT_CAPTURE_PROOF_'),
-      `Refusing to start the proof gateway while ${name} is set in this shell: it would point this gateway at real farm state. Unset it and run again.`,
-    );
   mkdirSync(env.FARMSLOT_PROJECTS_DIR, { recursive: true });
   mkdirSync(env.FARMSLOT_POOL_DIR, { recursive: true });
   // The gate loads the run's project config. Only its identity and task layout

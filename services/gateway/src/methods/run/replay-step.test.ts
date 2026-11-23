@@ -4261,6 +4261,33 @@ test('replaying complete after a failed capture recaptures the worker mirror fir
     /went away again/,
     'the fresh capture failure replaces the stale one the gate would otherwise report',
   );
+
+  // And a second replay that took the run while the first capture was still
+  // running must not have the first one's rejection written onto its generation:
+  // `assertReplayOwnsRun` only compares generations for a `done` run and
+  // `assertNativeReplayCurrent` skips tmux, so neither covers this failed run.
+  const stale = getRun(run.id)?.output?.captureError;
+  await assert.rejects(
+    runReplayStep({ runId: run.id, stepName: 'complete', triggeredBy: 'operator' }, () => {}, {
+      startEngine: async () => {},
+      captureOutput: async (runId) => {
+        const current = getRun(runId)!;
+        updateRun(runId, {
+          engineState: {
+            ...current.engineState,
+            generation: (current.engineState?.generation ?? 0) + 1,
+          },
+        });
+        throw new Error('Storage unavailable: a newer replay owns this run.');
+      },
+    }),
+    /owned by a newer replay/,
+  );
+  assert.equal(
+    getRun(run.id)?.output?.captureError,
+    stale,
+    'the superseded replay records nothing on the newer generation',
+  );
 });
 
 // F311: a restart stopped a gate after the pipeline review and before its planned codex review.

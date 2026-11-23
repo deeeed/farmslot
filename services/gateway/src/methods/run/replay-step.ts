@@ -2327,6 +2327,21 @@ async function replayRunStep(
           ? 'Retrying the failed artifact capture before re-reading the result'
           : 'Preparing operator decision: collecting worker artifacts',
       });
+      // `assertReplayOwnsRun` only compares generations for a `done` run, and
+      // `assertNativeReplayCurrent` skips tmux, so neither fences the failed tmux
+      // run this fix is for. This does, and it is loaded before the capture so the
+      // check and the write that follows it have no await between them: a slow
+      // capture must not record its rejection on a newer replay's generation.
+      const assertOwnedGeneration = () => {
+        const live = getRun(params.runId);
+        if ((live?.engineState?.generation ?? 0) !== ownedGeneration)
+          throw new Error(
+            `Run ${params.runId} is owned by a newer replay (generation ${live?.engineState?.generation ?? 0} is not ${ownedGeneration})`,
+          );
+      };
+      const recordCaptureFailure = recaptureForComplete
+        ? (await import('../../run-completion/output.js')).failRunOutputCapture
+        : undefined;
       try {
         const copied = await (hooks.captureOutput ?? captureRunOutput)(params.runId, true, false, {
           forPublication: requiresPublicationApproval(runBeforeGateReplay),
@@ -2336,6 +2351,7 @@ async function replayRunStep(
         if (recaptureForComplete) {
           assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
           assertNativeReplayCurrent();
+          assertOwnedGeneration();
         }
         console.log(
           `[run] replay from ${replayStepName} — refreshed ${copied} worker artifact(s) before rebuilding the gate`,
@@ -2350,8 +2366,8 @@ async function replayRunStep(
           // generation would describe a capture it never asked for.
           assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
           assertNativeReplayCurrent();
-          const { failRunOutputCapture } = await import('../../run-completion/output.js');
-          failRunOutputCapture(params.runId, error);
+          assertOwnedGeneration();
+          recordCaptureFailure!(params.runId, error);
           console.warn(
             `[run] replay from ${replayStepName} — artifact capture failed again; the gate presents it: ${error instanceof Error ? error.message : String(error)}`,
           );
