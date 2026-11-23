@@ -316,3 +316,61 @@ test('an owner bound to another slot and a census that outlasts the bound reopen
   assert.equal(late.row?.phase, 'releasing', 'the next pass gives it to the backstop');
   assert.deepEqual(late.retried, []);
 });
+
+test('a deferred slot does not stop the pass, and a rebound owner is never reopened', async () => {
+  const runs = new Map(
+    ['offline', 'healthy', 'rebound'].map((name) => [
+      name,
+      makeRun({ id: `owner-${name}`, status: 'done', slotId: `${name}-slot` }),
+    ]),
+  );
+  const fence = (name: string) => ({
+    slot: `${name}-slot`,
+    lifecycle: 'busy',
+    phase: 'releasing',
+    slot_epoch: 1,
+    current_run_id: `owner-${name}`,
+    releasing_since: new Date().toISOString(),
+    release_gateway_instance: 'previous-gateway',
+    cleanup_release_token: `${state.RUN_CLEANUP_TOKEN_PREFIX}${name}`,
+  });
+  await writeFile(state.statusFile, JSON.stringify({ slots: [...runs.keys()].map(fence) }));
+  const retried: string[] = [];
+  const deps: Deps = {
+    listRuns: () => ({ runs: [...runs.values()] }),
+    loadFleetStatus: async () => ({
+      slots: [...runs.keys()].map((name) => ({
+        slot: `${name}-slot`,
+        lifecycle: 'busy',
+        phase: 'releasing',
+        slotEpoch: 1,
+        currentRunId: `owner-${name}`,
+      })),
+    }),
+    isTerminalTeardownInFlight: () => false,
+    readSlotField: state.readSlotField,
+    getRun: (id) => [...runs.values()].find((run) => run.id === id),
+    updateRun: () => {},
+    resetSlot: state.resetSlot,
+    resetSlotIf: state.resetSlotIf,
+    updateSlotStatusIf: state.updateSlotStatusIf,
+    broadcast: () => {},
+    retryOccupiedRunSlot: async (slotId) => {
+      retried.push(slotId);
+      return false;
+    },
+    resumeInterruptedRecovery: () => {
+      throw new Error('Ordinary release has no workspace recovery journal');
+    },
+    absentExecutionNode: async (slotId) => {
+      // A find-slot replay rebinds this owner while the pass waits on the node check.
+      if (slotId === 'rebound-slot') runs.get('rebound')!.slotId = 'elsewhere';
+      return slotId === 'offline-slot' ? 'ri-node' : null;
+    },
+    releaseFenceBlocker: async () => null,
+  };
+  await reconcileOrphanedSlots(deps);
+  assert.deepEqual(retried, ['healthy-slot']);
+  for (const name of ['offline', 'rebound'])
+    assert.equal((await state.readSlotRow(`${name}-slot`))?.phase, 'releasing', name);
+});

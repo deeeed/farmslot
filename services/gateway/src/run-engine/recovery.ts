@@ -211,8 +211,11 @@ export interface RunRecoveryCollaborators {
   dispatchPromptAccepted?: (run: Run, worker: AgentContext) => Promise<boolean>;
   /** The node this slot's commands need when it isn't connected, else null. */
   absentExecutionNode?: (slotId: string) => Promise<string | null>;
-  /** Read-only census of an interrupted release's checkout: what is still live there, else null. */
-  releaseFenceBlocker?: (run: Run) => Promise<string | null>;
+  /**
+   * Read-only census of an interrupted release's checkout on `slotId`: what is still live
+   * there, else null. Refuses when the run is no longer bound to that slot.
+   */
+  releaseFenceBlocker?: (run: Run, slotId: string) => Promise<string | null>;
   /** Settles when the node connects, or rejects when its reconnect wait runs out. */
   waitForExecutionNode?: (machine: string) => Promise<void>;
   /** Clear a run error that only settled native workers carry, from recorded state. */
@@ -1629,11 +1632,14 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
       ) {
         // An absent node or a failed census defers this slot alone, never the whole pass.
         const census = deps.releaseFenceBlocker;
+        // A replay can rebind the owner while this pass awaits; the census and the write
+        // both act only while it is still bound to this slot.
+        const stillBound = () => deps.getRun(owner.id)?.slotId === slot.slot;
         const blocker =
           (await deps
             .absentExecutionNode?.(slot.slot)
             .then((node) => (node ? `node ${node} is not connected` : null))) ??
-          (await census(owner).catch(
+          (await census(owner, slot.slot).catch(
             (error: unknown) =>
               `release fence census failed: ${error instanceof Error ? error.message : String(error)}`,
           ));
@@ -1654,6 +1660,7 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
             (releasingFenceAgeMs(row[SLOT_RELEASING_SINCE], Date.now()) ?? Infinity) <
               STALE_RELEASE_RECLAIM_MS &&
             (row.current_run_id ?? row.cleanup_run_id ?? null) === owner.id &&
+            stillBound() &&
             (Number(row.slot_epoch) || 0) === (slot.slotEpoch ?? 0) &&
             !row.handoff_run_id &&
             !row.workspace_recovery &&

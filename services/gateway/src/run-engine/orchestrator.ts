@@ -1823,9 +1823,12 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
         ),
       );
     },
-    releaseFenceBlocker: async (run) => {
+    releaseFenceBlocker: async (run, slotId) => {
+      const current = getRun(run.id);
+      if (current?.slotId !== slotId)
+        return `run ${run.id.slice(0, 8)} is no longer bound to ${slotId}`;
       const { slotTeardownBlocker } = await import('../run-lifecycle/slot-teardown.js');
-      return slotTeardownBlocker(run, { inspectReleaseFence: true });
+      return slotTeardownBlocker(current, { inspectReleaseFence: true });
     },
     quarantineLeakedRun,
     stopRunOwnedWorkers: async (run) => {
