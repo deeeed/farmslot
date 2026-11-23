@@ -195,3 +195,14 @@ test('owner-validated recovery release keeps its internal prepare path', async (
   );
   assert.deepEqual(calls, ['ownership', 'prerequisites']);
 });
+
+// A cancel can release the slot between the engine's claim and its prepare call; the picker
+// may then have handed the slot to another run. The cancelled run must not prepare it.
+test('a run that no longer holds the slot is refused before any prepare effect', async () => {
+  recoveryPending = false;
+  await assert.rejects(
+    slotPrepare({ slotId: vars.slotId, runId: 'cancelled-run' }, () => undefined),
+    /no longer belongs to run/,
+  );
+  assert.deepEqual(calls, []);
+});

@@ -46,7 +46,10 @@ export async function parkedWorkRetentionPass(now = new Date()): Promise<void> {
         (await workspaceProtectedReason(slotId, row))
       )
         continue;
+      // The reads above awaited: another holder may have taken the guard since the first check.
+      if (activePrepareSlots.has(slotId)) continue;
       activePrepareSlots.add(slotId);
+      let guardHeld = true;
       let claimed = false;
       const owns = (current: Readonly<Record<string, unknown>>) =>
         current.slot_epoch === row.slot_epoch &&
@@ -85,7 +88,8 @@ export async function parkedWorkRetentionPass(now = new Date()): Promise<void> {
       } finally {
         // Free the prepare guard before the slot reads ready again, so a claim that lands
         // right after the restore can prepare it.
-        activePrepareSlots.delete(slotId);
+        if (guardHeld) activePrepareSlots.delete(slotId);
+        guardHeld = false;
         if (claimed)
           await updateSlotStatusIf(slotId, owns, {
             lifecycle: row.lifecycle,

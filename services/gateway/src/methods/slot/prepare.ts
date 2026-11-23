@@ -6,6 +6,7 @@ import { type FSWatcher, watch as chokidarWatch } from 'chokidar';
 
 import {
   DEFAULT_BRANCH,
+  isTerminalRunStatus,
   nativeWorkerBindingIsHeld,
   type PreparePhase,
   READINESS_RECORD,
@@ -208,6 +209,20 @@ async function slotPrepareWithSources(
       throw new Error(
         `Slot ${params.slotId} is being released; prepare it once the release finishes`,
       );
+    }
+    // A run prepares only the slot it still holds: a cancel may already have released it,
+    // and the picker may have handed it to another run (1b542e2f, macpro-mmt-4).
+    if (params.runId && !opts?.duringRelease) {
+      const row = await readSlotRow(params.slotId);
+      const owner = getRun(params.runId);
+      if (
+        !row ||
+        (row.current_run_id !== params.runId && row.handoff_run_id !== params.runId) ||
+        (owner && isTerminalRunStatus(owner.status))
+      )
+        throw new Error(
+          `Slot ${params.slotId} no longer belongs to run ${params.runId.slice(0, 8)}; refusing to prepare it`,
+        );
     }
     await assertWorkspaceRecoverySettled(params.slotId, opts?.duringRelease);
     const vars = await loadSlotVars(params.slotId);

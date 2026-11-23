@@ -333,7 +333,11 @@ export function defaultCancelCollaborators({
       const blocker = await slotOwnershipBlocker(run);
       const cleanupBlocker =
         [prepareBlocker, survivors, runtimeBlocker].filter(Boolean).join('; ') || null;
-      await recordSlotTeardownSkipped(run, blocker ?? cleanupBlocker);
+      // A prepare that would not stop is the reason the slot stays, whatever else holds it.
+      await recordSlotTeardownSkipped(
+        run,
+        blocker && prepareBlocker ? `${prepareBlocker}; ${blocker}` : (blocker ?? cleanupBlocker),
+      );
       state.blocker = blocker ?? (state.keep ? null : cleanupBlocker);
       state.succeeded = true;
       state.fence = await fenceRunSlotCleanup(run, state.blocker);
