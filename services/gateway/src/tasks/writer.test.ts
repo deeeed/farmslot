@@ -1715,12 +1715,36 @@ test('a review-pr run renders exactly the recorded bullets', async (t) => {
         },
       ],
     };
+    // An operator addition on a PR flow: the CHANGELOG claims PR runs are
+    // covered, so pin it here rather than only on fix-bug.
+    run.linkedTicketRefs = ['TAT-4700'];
   });
   assert.equal(
     section.trim(),
     [
       '- [TAT-4752](https://recorded.example.test/browse/TAT-4752) — Recorded title',
       '- [TAT-4740](https://recorded.example.test/browse/TAT-4740)',
+      '- [TAT-4700](https://recorded.example.test/browse/TAT-4700)',
+    ].join('\n'),
+  );
+});
+
+test('the run Jira link supplies the browse root on a dev run, ahead of the project base', async (t) => {
+  // refreshRunLinks stores the run's Jira link before the task is written, so a
+  // real dev run resolves through that link and the project base is only the
+  // fallback after it. Every other case here runs with no links at all.
+  const section = await linkedTicketsSection(t, 'linked-run-link', (run) => {
+    run.flowType = 'dev';
+    run.ticketOrPr = 'TAT-4752';
+    run.ticketData = { ...run.ticketData!, source: 'jira', jiraKey: 'TAT-4752' };
+    run.linkedTicketRefs = ['TAT-4740'];
+    run.links = [{ label: 'Jira', url: 'https://runlink.example.test/browse/TAT-4752' }];
+  });
+  assert.equal(
+    section.trim(),
+    [
+      '- [TAT-4752](https://runlink.example.test/browse/TAT-4752)',
+      '- [TAT-4740](https://runlink.example.test/browse/TAT-4740)',
     ].join('\n'),
   );
 });

@@ -1019,7 +1019,10 @@ export async function writeTaskFile(
   // TICKET_URL = deep link to the source (Jira browse URL, GitHub issue URL, or "")
   // Templates MUST use these generic names — NEVER hardcode JIRA/GITHUB_ISSUE.
   // This lets a future freeform/manual flow reuse the same template shape.
-  const jiraBaseUrl: string = (projectVars.projectJson as any)?.jira?.base_url ?? '';
+  // `jira.base_url` is typed but never validated, and this is now read for every
+  // run rather than only Jira ones, so a non-string value must not throw here.
+  const rawJiraBaseUrl = (projectVars.projectJson as any)?.jira?.base_url;
+  const jiraBaseUrl: string = typeof rawJiraBaseUrl === 'string' ? rawJiraBaseUrl : '';
   // One browse base for this project: TICKET_URL and the linked-ticket fallback
   // below must not drift apart.
   const jiraBrowseBase = jiraBaseUrl ? `${jiraBaseUrl.replace(/\/$/, '')}/browse/` : '';
@@ -1161,8 +1164,17 @@ export async function writeTaskFile(
   // names and where each one points, from a recorded ticket URL or the run's own
   // Jira link; the project's browse base covers the case where it has neither,
   // and with no base the ref stays unlinked rather than inventing a host.
+  // Recorded tickets keep the order the fetch recorded them in, so a PR-bound
+  // run's bullets do not move when its first linked key's fetch failed and a
+  // later key became `jiraKey`.
+  const recordedOrder = new Map(linked.map((entry, at) => [entry.ref.toUpperCase(), at]));
   const linkedView = runLinkedTicketsView(run)
     .tickets.filter((entry) => entry.named)
+    .sort(
+      (left, right) =>
+        (recordedOrder.get(left.ref) ?? recordedOrder.size) -
+        (recordedOrder.get(right.ref) ?? recordedOrder.size),
+    )
     .map((entry) => {
       const url = entry.url ?? (jiraBrowseBase ? `${jiraBrowseBase}${entry.ref}` : null);
       return `- ${url ? `[${entry.ref}](${url})` : entry.ref}${entry.title ? ` — ${entry.title}` : ''}`;
