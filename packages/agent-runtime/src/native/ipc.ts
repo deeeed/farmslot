@@ -37,6 +37,8 @@ import {
 export interface HostIdentity {
   /** Version loaded by the detached supervisor, not its current files on disk. */
   runtimeVersion?: string;
+  /** Content hash of the runtime code the host loaded (runtime-build.ts). */
+  runtimeBuild?: string;
   supportsRuntimeUpgrade?: boolean;
   supportsApprovalMode?: boolean;
   conversationStreaming?: 1;
