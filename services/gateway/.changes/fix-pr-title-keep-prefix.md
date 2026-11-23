@@ -1,0 +1,1 @@
+- A published PR title keeps a ticket title that is already a conventional subject. A dev run no longer turns `chore(scope): ...` or `ci: ...` into `feat: chore(scope): ...` or `feat: ci: ...`. A title without that prefix still gets the flow type.

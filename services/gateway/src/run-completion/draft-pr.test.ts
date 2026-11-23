@@ -217,6 +217,25 @@ test('buildDraftPrTitle keeps a leading ticket key upper-case', () => {
   assert.equal(buildDraftPrTitle(run, ''), 'feat: TAT-4037 Show market icons');
 });
 
+test('buildDraftPrTitle keeps a ticket title that already has a conventional prefix', () => {
+  const dev = { flowType: 'dev' as const };
+  const chore = makeRun({
+    ...dev,
+    ticketData: manualTicketData('chore(sherpa-onnx.rn): update sherpa-onnx to v2.0.2'),
+  });
+  const ci = makeRun({
+    ...dev,
+    ticketData: manualTicketData(
+      'ci: server requirements lock goes stale on every upstream release',
+    ),
+  });
+  assert.equal(buildDraftPrTitle(chore, ''), 'chore(sherpa-onnx.rn): update sherpa-onnx to v2.0.2');
+  assert.equal(
+    buildDraftPrTitle(ci, ''),
+    'ci: server requirements lock goes stale on every upstream release',
+  );
+});
+
 test('ticket PR titles preserve a leading acronym or identifier and lowercase an ordinary word', () => {
   for (const [title, description] of [
     ['ORDER_SIZE_MIN placeholder', 'ORDER_SIZE_MIN placeholder'],

@@ -45,6 +45,10 @@ function namesOnlyTicketKey(text: string): boolean {
   return text.replace(/\b[A-Z][A-Z0-9]*-\d+\b/g, '').replace(/[\s\p{P}]/gu, '') === '';
 }
 
+// Same subject shape as scripts/quality/check-conventional-commits.mjs.
+const CONVENTIONAL_TITLE =
+  /^(?:build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(?:\([a-z0-9][a-z0-9._/-]*(?: *, *[a-z0-9][a-z0-9._/-]*)*\))?!?: \S.+$/;
+
 // The body's leading `# type(scope): summary` heading, which reviewers read
 // with the rest of the body.
 function bodyHeadingTitle(body: string): string | null {
@@ -62,8 +66,9 @@ function bodyHeadingTitle(body: string): string | null {
 
 /**
  * The PR title a package records and approval publishes: the body's leading
- * conventional heading, else one built from the ticket title. Empty when
- * neither says more than a ticket key; approval refuses an empty title.
+ * conventional heading, else the ticket title when that title is already
+ * conventional, else one built from the ticket title. Empty when neither
+ * says more than a ticket key; approval refuses an empty title.
  */
 export function buildDraftPrTitle(run: Run, draftBody: string): string {
   const heading = bodyHeadingTitle(draftBody);
@@ -72,6 +77,7 @@ export function buildDraftPrTitle(run: Run, draftBody: string): string {
   if (!rawTitle) return '';
   const sanitized = sanitizeDraftPrTitleDescription(rawTitle);
   if (namesOnlyTicketKey(sanitized)) return '';
+  if (CONVENTIONAL_TITLE.test(sanitized)) return sanitized;
   const commitType = run.flowType === 'fix-bug' ? 'fix' : run.flowType === 'dev' ? 'feat' : 'chore';
   const scope = inferDraftPrTitleScope(run);
   const scopePart = scope ? `(${scope})` : '';
