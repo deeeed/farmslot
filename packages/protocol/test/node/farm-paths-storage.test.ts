@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -89,6 +97,22 @@ test('a configured root unlike the bound one still fails while the bound root is
     }),
   );
   assert.throws(() => readLegacyStorageFacts(paths), /does not match the configured root/);
+});
+
+test('a configured root reached through a link into the unmounted volume is unavailable, not a mismatch', (t) => {
+  // ~/farmslot-data -> /Volumes/c910ssd/farmslot-data: the link dangles while the
+  // volume is away, and the binding holds the real path.
+  const { root, paths, missingRoot } = homeWithUnmountedStore(t);
+  symlinkSync(path.join(root, 'Volumes/unmounted/farmslot-data'), path.join(root, 'farmslot-data'));
+  writeFileSync(
+    path.join(path.dirname(paths.data.runBundles), 'run-bundle-retention.json'),
+    JSON.stringify({
+      runBundleRetention: { storeRoot: path.join(root, 'farmslot-data/run-bundles') },
+    }),
+  );
+  const facts = readLegacyStorageFacts(paths);
+  assert.equal(facts.runBundles, missingRoot);
+  assert.ok(facts.unavailable);
 });
 
 test(

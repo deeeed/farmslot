@@ -1125,6 +1125,30 @@ test('--no-node-token refuses a FARMSLOT_NODE_TOKEN in the environment', (t) => 
   assert.equal(fs.existsSync(unitPath(fixture)), false);
 });
 
+test('a .env the node cannot read stops the token lookup instead of reading as no token', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'node-token-unreadable-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const install = path.join(root, 'farmslot-node');
+  // A directory named .env: the node's readFileSync fails on it, and so must this.
+  fs.mkdirSync(path.join(install, '.env'), { recursive: true });
+  const lookup = () =>
+    spawnSync(
+      'bash',
+      ['-c', `run() { eval "$@"; }; source ${JSON.stringify(nodeTokenLib)}; node_env_token_file`],
+      { env: { ...process.env, REMOTE_DIR: install }, encoding: 'utf8' },
+    );
+  let result = lookup();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /cannot read .*\.env/);
+  if (process.getuid?.() !== 0) {
+    fs.rmdirSync(path.join(install, '.env'));
+    fs.writeFileSync(path.join(install, '.env'), 'FARMSLOT_NODE_TOKEN=x\n', { mode: 0o000 });
+    result = lookup();
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /cannot read .*\.env/);
+  }
+});
+
 test('--no-node-token refuses a .env token the node would still use', (t) => {
   const fixture = cliFixture(t);
   fixture.write('home/farmslot-node/.env', 'FARMSLOT_NODE_TOKEN=stale-file-token\n');
@@ -1232,6 +1256,8 @@ test('only a .env the node would take a token from counts, as the node reads it'
     // The node strips the quotes, then trims.
     'FARMSLOT_NODE_TOKEN=" abc"',
     'FARMSLOT_NODE_TOKEN=\nFARMSLOT_NODE_TOKEN=x',
+    // The node's trim() also strips a byte-order mark.
+    '\ufeffFARMSLOT_NODE_TOKEN=x',
   ];
   for (const text of taken) {
     fs.writeFileSync(path.join(install, '.env'), `${text}\n`);

@@ -511,14 +511,20 @@ systemd_node_arguments() {
 source "$SCRIPT_DIR/lib/node-token.sh"
 NODE_ENV_TOKEN_FILE=""
 if [[ "$DRY_RUN" != true && "$NO_NODE_TOKEN" == true ]]; then
-  NODE_ENV_TOKEN_FILE=$(node_env_token_file)
+  if ! NODE_ENV_TOKEN_FILE=$(node_env_token_file); then
+    echo "[deploy] ERROR: a .env the node reads on $MACHINE cannot be read; fix or remove it first" >&2
+    exit 1
+  fi
   if [[ -n "$NODE_ENV_TOKEN_FILE" ]]; then
     echo "[deploy] ERROR: --no-node-token, but the node reads a token from $NODE_ENV_TOKEN_FILE; remove that line first" >&2
     exit 1
   fi
 fi
 if [[ "$DRY_RUN" != true && -z "${FARMSLOT_NODE_TOKEN:-}" && "$NO_NODE_TOKEN" != true ]]; then
-  NODE_ENV_TOKEN_FILE=$(node_env_token_file)
+  if ! NODE_ENV_TOKEN_FILE=$(node_env_token_file); then
+    echo "[deploy] ERROR: a .env the node reads on $MACHINE cannot be read; fix or remove it first" >&2
+    exit 1
+  fi
   if [[ -n "$NODE_ENV_TOKEN_FILE" ]]; then
     echo "[deploy] the node reads its token from $NODE_ENV_TOKEN_FILE; the service definition carries none"
   else

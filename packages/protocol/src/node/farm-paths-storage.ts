@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import type { FarmPaths, LegacyFarmStorageFacts } from './farm-paths.js';
@@ -27,6 +27,44 @@ function missing(file: string): boolean {
       return true;
     throw error;
   }
+}
+
+/**
+ * The real path a root would have once its volume is mounted: realpath where the
+ * path exists, else the real path of its deepest existing ancestor with the rest
+ * appended, following symlinks along the way even when their target is missing
+ * (a ~/farmslot-data link into an unmounted volume). The binding stores a real path.
+ */
+function resolvedRoot(root: string): string {
+  let current = path.resolve(root);
+  const rest: string[] = [];
+  for (let links = 0; links < 40; ) {
+    try {
+      return path.join(realpathSync(current), ...rest);
+    } catch (error) {
+      if (
+        !(error instanceof Error && 'code' in error) ||
+        (error.code !== 'ENOENT' && error.code !== 'ENOTDIR')
+      )
+        throw error;
+    }
+    let target: string | undefined;
+    try {
+      target = readlinkSync(current);
+    } catch {
+      target = undefined; // Not a link, or not there at all.
+    }
+    if (target !== undefined) {
+      current = path.resolve(path.dirname(current), target);
+      links += 1;
+      continue;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    rest.unshift(path.basename(current));
+    current = parent;
+  }
+  return path.join(current, ...rest);
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -72,7 +110,7 @@ export function readLegacyStorageFacts(paths: FarmPaths): LegacyFarmStorageFacts
   // the bound one, or is missing while the bound one is present, is a
   // misconfiguration, not an outage.
   if (missing(binding.root)) {
-    if (configured && configured !== path.resolve(binding.root))
+    if (configured && resolvedRoot(configured) !== resolvedRoot(binding.root))
       throw new Error(
         'Run bundle store pairing does not match the configured root; use the migration command.',
       );
