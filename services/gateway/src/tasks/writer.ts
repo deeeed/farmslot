@@ -1165,8 +1165,10 @@ export async function writeTaskFile(
   // Jira link; the project's browse base covers the case where it has neither,
   // and with no base the ref stays unlinked rather than inventing a host.
   // Recorded tickets keep the order the fetch recorded them in, so a PR-bound
-  // run's bullets do not move when its first linked key's fetch failed and a
-  // later key became `jiraKey`.
+  // run's bullets stay where they were when its first linked key's fetch failed
+  // and a later key became `jiraKey`, which `runLinkedTicketRefs` leads with.
+  // This stays in the document builder: the resolver's own order feeds
+  // `references`, whose leading-source contract the UI depends on.
   const recordedOrder = new Map(linked.map((entry, at) => [entry.ref.toUpperCase(), at]));
   const linkedView = runLinkedTicketsView(run)
     .tickets.filter((entry) => entry.named)

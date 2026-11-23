@@ -1762,3 +1762,41 @@ test('a base url with a trailing slash does not double it', async (t) => {
   assert.match(section, /\(https:\/\/jira\.example\.test\/browse\/TAT-4752\)/);
   assert.doesNotMatch(section, /\/\/browse/);
 });
+
+test('a failed first fetch does not reorder a review-pr run bullets', async (t) => {
+  // jiraKey is the first key whose fetch succeeded, and runLinkedTicketRefs leads
+  // with it, so without the document builder's ordering a run whose first linked
+  // key 404'd would publish its bullets in a different order than before.
+  const section = await linkedTicketsSection(t, 'linked-order', (run) => {
+    run.flowType = 'review-pr';
+    run.ticketOrPr = 'owner/repo#7';
+    run.ticketData = {
+      ...run.ticketData!,
+      source: 'both',
+      jiraKey: 'TAT-4752',
+      linkedTickets: [
+        {
+          ref: 'TAT-4740',
+          url: 'https://recorded.example.test/browse/TAT-4740',
+          title: '',
+          description: '',
+          source: 'jira',
+        },
+        {
+          ref: 'TAT-4752',
+          url: 'https://recorded.example.test/browse/TAT-4752',
+          title: 'Fetched second',
+          description: '',
+          source: 'jira',
+        },
+      ],
+    };
+  });
+  assert.equal(
+    section.trim(),
+    [
+      '- [TAT-4740](https://recorded.example.test/browse/TAT-4740)',
+      '- [TAT-4752](https://recorded.example.test/browse/TAT-4752) — Fetched second',
+    ].join('\n'),
+  );
+});
