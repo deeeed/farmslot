@@ -314,7 +314,7 @@ async function withTempFarm(t: test.TestContext): Promise<{
   return { name, editScript: (body) => writeFileSync(script, body) };
 }
 
-/** A node whose bundle uploads wait until released. */
+/** A node whose bundle uploads wait until released; `uploads` lists one entry per delivery. */
 function gatedNode(opts: { failUpload?: boolean } = {}) {
   const uploads: string[] = [];
   const uploadWaiters: Array<{ count: number; resolve: () => void }> = [];
@@ -349,6 +349,8 @@ function gatedNode(opts: { failUpload?: boolean } = {}) {
     },
     writeFiles: async (_vars, base) => {
       if (!base.includes('.incoming')) return; // the slot's selection record
+      // One delivery per incoming directory, however many requests it takes.
+      if (uploads.includes(base)) return;
       uploads.push(base);
       for (const waiter of uploadWaiters) {
         if (uploads.length >= waiter.count) waiter.resolve();
@@ -444,6 +446,351 @@ test('a delivery that fails after its budget ran out is reported to the next com
   await new Promise((resolve) => setTimeout(resolve, 20));
   // No unhandled rejection above; the retry surfaces the failure.
   await assert.rejects(resolveRemoteFarmCommand(vars, cmd, { io: node.io }), /upload failed/);
+});
+
+test('a wait without a budget lasts until the delivery finishes, past any short timeout', async (t) => {
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  const vars = farmVars(farm.name, 'mini-x-1');
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+  const waiting = resolveRemoteFarmCommand(vars, cmd, { io: node.io });
+  await node.waitForUploads(1);
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  node.release();
+  assert.match(await waiting, /support\/[0-9a-f]{64}\//);
+});
+
+test(
+  "a wait without a budget is held to the delivery's own deadline and names what is left",
+  { timeout: 10_000 },
+  async (t) => {
+    resetRemoteFarmCommandCache();
+    const farm = await withTempFarm(t);
+    const node = gatedNode();
+    t.after(() => node.release());
+    const vars = farmVars(farm.name, 'mini-x-1');
+    const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+    const error = await resolveRemoteFarmCommand(vars, cmd, {
+      io: { ...node.io, deliveryDeadlineMs: 100 },
+    }).then(
+      () => assert.fail('a delivery that never finishes cannot resolve'),
+      (reason: unknown) => reason,
+    );
+    assert.ok(error instanceof NodeSupportPendingError);
+    assert.match(
+      error.message,
+      /^node support bundle [0-9a-f]{8} for mini-x-1 was not delivered within its 100ms deadline \(uploading; \d+ of \d+ bytes left to send, \d+ files\)$/,
+    );
+  },
+);
+
+test('after a delivery misses its deadline, the next command starts a fresh one', async (t) => {
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  t.after(() => node.release());
+  const vars = farmVars(farm.name, 'mini-x-1');
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+  const io = { ...node.io, deliveryDeadlineMs: 100 };
+
+  await assert.rejects(resolveRemoteFarmCommand(vars, cmd, { io }), NodeSupportPendingError);
+  const next = resolveRemoteFarmCommand(vars, cmd, { io: node.io });
+  await node.waitForUploads(2);
+  node.release();
+  assert.match(await next, /support\/[0-9a-f]{64}\//);
+  assert.equal(node.uploads.length, 2, 'the stalled delivery was not joined');
+});
+
+test('a command after a deadline nobody watched starts a fresh delivery', async (t) => {
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  t.after(() => node.release());
+  const vars = farmVars(farm.name, 'mini-x-1');
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+  // A budgeted hook gives up before the deadline, so no waiter sees it pass.
+  await assert.rejects(
+    resolveRemoteFarmCommand(vars, cmd, {
+      io: { ...node.io, deliveryDeadlineMs: 100 },
+      budgetMs: 20,
+    }),
+    NodeSupportPendingError,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  const next = resolveRemoteFarmCommand(vars, cmd, { io: node.io });
+  await node.waitForUploads(2);
+  node.release();
+  assert.match(await next, /support\/[0-9a-f]{64}\//);
+});
+
+test(
+  "another slot never waits on a stalled machine upload past that upload's deadline",
+  { timeout: 10_000 },
+  async (t) => {
+    resetRemoteFarmCommandCache();
+    const farm = await withTempFarm(t);
+    const node = gatedNode();
+    t.after(() => node.release());
+    const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+    // Slot 1's hook starts the machine upload with a short deadline and gives up.
+    await assert.rejects(
+      resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-1'), cmd, {
+        io: { ...node.io, deliveryDeadlineMs: 100 },
+        budgetMs: 20,
+      }),
+      NodeSupportPendingError,
+    );
+    // Slot 2 arrives while that upload is still within its deadline, and outlives it.
+    const other = resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-2'), cmd, { io: node.io });
+    await node.waitForUploads(2);
+    node.release();
+    assert.match(await other, /support\/[0-9a-f]{64}\//);
+    assert.equal(node.uploads.length, 2, 'slot 2 uploaded on its own');
+  },
+);
+
+test(
+  'a cancelled wait returns at once and leaves the delivery for the next command',
+  { timeout: 10_000 },
+  async (t) => {
+    resetRemoteFarmCommandCache();
+    const farm = await withTempFarm(t);
+    const node = gatedNode();
+    t.after(() => node.release());
+    const vars = farmVars(farm.name, 'mini-x-1');
+    const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+    // A fresh delivery probes the node for its copy; a joined one does not.
+    let probes = 0;
+    const io: NodeSupportIo = {
+      ...node.io,
+      fileExists: async (...args) => {
+        probes++;
+        return node.io.fileExists(...args);
+      },
+    };
+    const controller = new AbortController();
+    const waiting = resolveRemoteFarmCommand(vars, cmd, { io, signal: controller.signal });
+    await node.waitForUploads(1);
+    const cancelledAt = Date.now();
+    controller.abort();
+    await assert.rejects(waiting);
+    assert.ok(Date.now() - cancelledAt < 1_000, 'the wait ends when it is cancelled');
+
+    const next = resolveRemoteFarmCommand(vars, cmd, { io });
+    // Let the next command reach its delivery before the first one can finish.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    node.release();
+    assert.match(await next, /support\/[0-9a-f]{64}\//);
+    assert.equal(node.uploads.length, 1, 'no second upload');
+    assert.equal(probes, 1, 'the next command joined the same delivery');
+  },
+);
+
+test(
+  "a slot that waited on another slot's upload gets its own full deadline for its delivery",
+  { timeout: 10_000 },
+  async (t) => {
+    resetRemoteFarmCommandCache();
+    const farm = await withTempFarm(t);
+    const node = gatedNode();
+    t.after(() => node.release());
+    const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+    // Slot 1's upload stalls; it gives up at once and its delivery expires
+    // ~400 ms after it started.
+    await assert.rejects(
+      resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-1'), cmd, {
+        io: { ...node.io, deliveryDeadlineMs: 400 },
+        budgetMs: 20,
+      }),
+      NodeSupportPendingError,
+    );
+    // Times below count from slot 1 giving up, just after its delivery started.
+    const started = Date.now();
+    const at = (ms: number) =>
+      new Promise((resolve) => setTimeout(resolve, Math.max(0, started + ms - Date.now())));
+    // Slot 2 joins at ~50 ms with an 800 ms deadline and waits on slot 1's
+    // upload until it expires (under ~400 ms), then starts its own: that
+    // delivery has 800 ms from there.
+    await at(50);
+    const other = resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-2'), cmd, {
+      io: { ...node.io, deliveryDeadlineMs: 800 },
+    });
+    await node.waitForUploads(2);
+    // Past a deadline counted from the join (~850 ms), within its own (~1150+ ms).
+    await at(1000);
+    node.release();
+    assert.match(await other, /support\/[0-9a-f]{64}\//);
+  },
+);
+
+test('an already-cancelled wait starts no delivery', async (t) => {
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode({ failUpload: true });
+  t.after(() => node.release());
+  const vars = farmVars(farm.name, 'mini-x-1');
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+  const unhandled: unknown[] = [];
+  const record = (reason: unknown) => unhandled.push(reason);
+  process.on('unhandledRejection', record);
+  t.after(() => process.off('unhandledRejection', record));
+
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    resolveRemoteFarmCommand(vars, cmd, { io: node.io, signal: controller.signal }),
+  );
+  node.release();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(node.uploads.length, 0, 'a cancelled caller starts nothing');
+  assert.deepEqual(unhandled, [], 'no delivery fails with nobody listening');
+});
+
+test('a slot that takes over an expired machine upload is the one later slots join', async (t) => {
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  t.after(() => node.release());
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+  // Slot 1's upload stalls and expires.
+  await assert.rejects(
+    resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-1'), cmd, {
+      io: { ...node.io, deliveryDeadlineMs: 200 },
+      budgetMs: 20,
+    }),
+    NodeSupportPendingError,
+  );
+  // Slot 2 waits on it, then uploads itself.
+  const second = resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-2'), cmd, { io: node.io });
+  await node.waitForUploads(2);
+  // Slot 3 arrives during slot 2's upload and must join it, not upload again.
+  const third = resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-3'), cmd, { io: node.io });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  node.release();
+  assert.equal((await Promise.all([second, third])).length, 2);
+  assert.equal(node.uploads.length, 2, 'one upload after the takeover');
+});
+
+test('slots waiting on an expired machine upload take it over once, not each', async (t) => {
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  t.after(() => node.release());
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+  // Slot 1's upload stalls; slots 2 and 3 are both waiting on it when it expires.
+  await assert.rejects(
+    resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-1'), cmd, {
+      io: { ...node.io, deliveryDeadlineMs: 200 },
+      budgetMs: 20,
+    }),
+    NodeSupportPendingError,
+  );
+  const waiting = ['mini-x-2', 'mini-x-3'].map((slot) =>
+    resolveRemoteFarmCommand(farmVars(farm.name, slot), cmd, { io: node.io }),
+  );
+  await node.waitForUploads(2);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  node.release();
+  assert.equal((await Promise.all(waiting)).length, 2);
+  assert.equal(node.uploads.length, 2, 'one takeover upload, joined by the other slot');
+});
+
+test('slots that joined a successful upload finish in parallel, not one after another', async (t) => {
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  t.after(() => node.release());
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+  // Slot 2's own activation hangs until released.
+  let releaseSlot2!: () => void;
+  const slot2Gate = new Promise<void>((resolve) => (releaseSlot2 = resolve));
+  t.after(() => releaseSlot2());
+  const io: NodeSupportIo = {
+    ...node.io,
+    exec: async (vars, command, ...rest) => {
+      if (vars.slotId === 'mini-x-2' && command.includes('farmslot-node-support-activate'))
+        await slot2Gate;
+      return node.io.exec(vars, command, ...rest);
+    },
+  };
+
+  const first = resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-1'), cmd, { io });
+  await node.waitForUploads(1);
+  const second = resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-2'), cmd, { io });
+  const third = resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-3'), cmd, { io });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  node.release();
+  await first;
+  const thirdDone = await Promise.race([
+    third.then(() => true),
+    new Promise((resolve) => setTimeout(() => resolve(false), 2_000)),
+  ]);
+  assert.equal(thirdDone, true, 'slot 3 does not wait for slot 2');
+  releaseSlot2();
+  await second;
+});
+
+test(
+  'a slot waiting through two uploads gets a fresh deadline after each',
+  { timeout: 10_000 },
+  async (t) => {
+    resetRemoteFarmCommandCache();
+    const farm = await withTempFarm(t);
+    const node = gatedNode();
+    t.after(() => node.release());
+    const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+    // Slot 1's upload stalls; it gives up at once and its delivery expires
+    // ~400 ms after it started.
+    await assert.rejects(
+      resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-1'), cmd, {
+        io: { ...node.io, deliveryDeadlineMs: 400 },
+        budgetMs: 20,
+      }),
+      NodeSupportPendingError,
+    );
+    const started = Date.now();
+    const at = (ms: number) =>
+      new Promise((resolve) => setTimeout(resolve, Math.max(0, started + ms - Date.now())));
+    // Slots 2 and 3 join at ~50 ms with 800 ms deadlines. One takes over at
+    // under ~400 ms; the other waits on it, past ~850 ms from its join.
+    await at(50);
+    const waiting = ['mini-x-2', 'mini-x-3'].map((slot) =>
+      resolveRemoteFarmCommand(farmVars(farm.name, slot), cmd, {
+        io: { ...node.io, deliveryDeadlineMs: 800 },
+      }),
+    );
+    await node.waitForUploads(2);
+    await at(1000);
+    node.release();
+    assert.equal((await Promise.all(waiting)).length, 2);
+  },
+);
+
+test('a budget that runs out names the bundle, its phase and the bytes left', async (t) => {
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  t.after(() => node.release());
+  const vars = farmVars(farm.name, 'mini-x-1');
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+  await assert.rejects(
+    resolveRemoteFarmCommand(vars, cmd, { io: node.io, budgetMs: 100 }),
+    (error: unknown) =>
+      error instanceof NodeSupportPendingError &&
+      /^node support bundle [0-9a-f]{8} for mini-x-1 still being delivered after 100ms \(\w[^;]*; \d+ of \d+ bytes left to send, \d+ files\)$/.test(
+        error.message,
+      ),
+  );
 });
 
 test('every direct node exec sender is reviewed for farm script references', async () => {

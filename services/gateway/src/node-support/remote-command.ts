@@ -28,8 +28,10 @@ import {
   type NodeSupportBundleInputs,
   nodeSupportBundlePaths,
   type NodeSupportBundleState,
+  type NodeSupportDeliveryProgress,
   type NodeSupportIo,
 } from './ensure.js';
+import { nodeSupportBundleBytes } from './files.js';
 
 const loadCore = lazyImport(() => import('../core/index.js'));
 
@@ -122,21 +124,46 @@ interface HeldBundle {
 
 const verifiedBundles = new Map<string, { at: number; supportDir: string }>();
 /**
+ * How long one delivery may take, from its start: a re-delivery after a node
+ * redeploy re-verifies every file and repoints the slot, which takes seconds to
+ * minutes. Longer than the slowest single step (activation, 180 s), so it bounds
+ * a delivery that stopped making progress rather than a slow one.
+ */
+export const NODE_SUPPORT_DELIVERY_DEADLINE_MS = 300_000;
+
+/** One delivery of a bundle to a slot, and how far it got. */
+interface Delivery {
+  promise: Promise<NodeSupportBundleState | null>;
+  slotKey: string;
+  machineKey: string;
+  slotId: string;
+  bundle: string;
+  files: number;
+  deadlineMs: number;
+  /** Counted from the start of this slot's own work: a wait on another slot's upload does not use it up. */
+  deadlineAt: number;
+  /** This delivery's own progress, or the machine upload's while it waits for that. */
+  progress: NodeSupportDeliveryProgress;
+}
+
+/**
  * One ensure per slot and bundle at a time. Keyed by the hash too, so a hook
  * expanded after a fast-forward never joins a publish of the older bundle.
  */
-const pendingEnsures = new Map<string, Promise<NodeSupportBundleState | null>>();
+const pendingEnsures = new Map<string, Delivery>();
 /**
  * The ensure currently uploading a bundle to a machine. Other slots on that
  * machine wait for it and then only verify and record their selection, rather
  * than each uploading the same files.
  */
-const machinePublishes = new Map<string, Promise<NodeSupportBundleState | null>>();
+const machinePublishes = new Map<string, Delivery>();
 const localBundles = new Map<string, HeldBundle>();
 
 /**
- * The caller's time budget ran out while the bundle was still being delivered.
- * The delivery keeps going for the next command. This one did not run: a hook
+ * The caller's time budget, or the delivery's own deadline, ran out while the
+ * bundle was still being delivered. The message names the bundle, the phase and
+ * the bytes left to send. Within its deadline the delivery keeps going for the
+ * next command; past it, the next command starts a new one. This one did not run: a hook
  * through `execOnSlot` reports a timeout, as it would had the node been slow,
  * and a resource command reports itself unavailable, so a pending delivery is
  * never read as a stopped resource.
@@ -319,65 +346,172 @@ function ensureOnce(
   local: LocalBundle,
   io: NodeSupportIo | undefined,
   selectSlot: boolean,
-): Promise<NodeSupportBundleState | null> {
+): Delivery {
   const slotKey = `${vars.slotId}\0${farmPathsForSlot(vars).code.support}\0${local.hash}\0${selectSlot}`;
-  const existing = pendingEnsures.get(slotKey);
-  if (existing) return existing;
   const machineKey = `${vars.machine}\0${farmPathsForSlot(vars).code.support}\0${local.hash}`;
-  const upload = machinePublishes.get(machineKey);
-  const pending: Promise<NodeSupportBundleState | null> = (async () => {
+  const existing = current(pendingEnsures.get(slotKey));
+  if (existing) return existing;
+  const upload = current(machinePublishes.get(machineKey));
+  const progress: NodeSupportDeliveryProgress = {
+    phase: 'starting',
+    sentBytes: 0,
+    totalBytes: nodeSupportBundleBytes(local.collected.files),
+  };
+  const deadlineMs = io?.deliveryDeadlineMs ?? NODE_SUPPORT_DELIVERY_DEADLINE_MS;
+  const delivery: Delivery = {
+    promise: Promise.resolve(null),
+    slotKey,
+    machineKey,
+    slotId: vars.slotId,
+    bundle: local.hash,
+    files: local.collected.files.length,
+    deadlineMs,
+    deadlineAt: Date.now() + deadlineMs,
+    progress: upload ? upload.progress : progress,
+  };
+  delivery.promise = (async () => {
     try {
       if (upload) {
-        // That upload's failure is reported to its own caller. This slot then
-        // runs its own ensure, which retries the publish if it is still needed.
-        await upload.then(
-          () => undefined,
-          () => undefined,
-        );
+        // That upload's failure is reported to its own caller, and past its
+        // deadline it is dropped. This slot then runs its own ensure, which
+        // retries the publish if it is still needed.
+        let ahead: Delivery | undefined = upload;
+        while (ahead) {
+          delivery.progress = ahead.progress;
+          const published = await settledOrExpired(ahead);
+          // Waiting does not use up this slot's own deadline.
+          delivery.deadlineAt = Date.now() + deadlineMs;
+          // A published bundle: this slot only verifies and repoints, alongside
+          // the others. An upload that failed or expired: the first slot to get
+          // here takes over as the machine's upload and the rest wait on it.
+          if (published) break;
+          ahead = current(machinePublishes.get(machineKey));
+          if (!ahead) machinePublishes.set(machineKey, delivery);
+        }
+        delivery.progress = progress;
       }
       return await ensureNodeSupportBundle(vars, projectVars.runtimeDir ?? '.agent', {
         projectVars,
         io,
         collected: local.collected,
         selectSlot,
+        progress,
       });
     } finally {
-      pendingEnsures.delete(slotKey);
-      // Only the slot that found no upload registered one, and nothing else
-      // replaces an entry while it stands.
-      if (!upload) machinePublishes.delete(machineKey);
+      forgetDelivery(delivery);
     }
   })();
-  pendingEnsures.set(slotKey, pending);
-  if (!upload) machinePublishes.set(machineKey, pending);
-  return pending;
+  // Each waiter reports the outcome to its own caller; a delivery that fails
+  // after every waiter left must not become an unhandled rejection, which
+  // would end the gateway.
+  delivery.promise.catch(() => undefined);
+  pendingEnsures.set(slotKey, delivery);
+  if (!upload) machinePublishes.set(machineKey, delivery);
+  return delivery;
 }
 
-async function withinBudget<T>(
-  work: Promise<T>,
-  budgetMs: number | undefined,
-  slotId: string,
-): Promise<T> {
-  if (budgetMs === undefined) return work;
+/**
+ * The delivery to join, or undefined when there is none or it is past its
+ * deadline. An expired delivery is dropped here, whether or not anyone was
+ * waiting when its deadline passed, so the caller starts a fresh one.
+ */
+function current(delivery: Delivery | undefined): Delivery | undefined {
+  if (!delivery || delivery.deadlineAt > Date.now()) return delivery;
+  forgetDelivery(delivery);
+  return undefined;
+}
+
+/**
+ * Wait for another slot's upload to settle, at most until that upload's
+ * deadline. True when it published the bundle.
+ */
+async function settledOrExpired(upload: Delivery): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const expired = new Promise<never>((_, reject) => {
+  const expired = new Promise<boolean>((resolve) => {
     timer = setTimeout(
-      () =>
-        reject(
-          new NodeSupportPendingError(
-            `node support bundle for ${slotId} still being delivered after ${budgetMs}ms`,
-          ),
-        ),
-      budgetMs,
+      () => {
+        forgetDelivery(upload);
+        resolve(false);
+      },
+      Math.max(0, upload.deadlineAt - Date.now()),
     );
   });
   try {
-    // A delivery that fails after the budget ran out is not lost: the pending
-    // entry clears and the next command on the slot runs it again and gets
-    // the error.
-    return await Promise.race([work, expired]);
+    return await Promise.race([
+      upload.promise.then(
+        () => true,
+        () => false,
+      ),
+      expired,
+    ]);
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/** Drop the entries this delivery registered, never a newer delivery's. */
+function forgetDelivery(delivery: Delivery): void {
+  if (pendingEnsures.get(delivery.slotKey) === delivery) pendingEnsures.delete(delivery.slotKey);
+  if (machinePublishes.get(delivery.machineKey) === delivery)
+    machinePublishes.delete(delivery.machineKey);
+}
+
+function describeDelivery(delivery: Delivery): string {
+  const { phase, sentBytes, totalBytes } = delivery.progress;
+  const left = Math.max(0, totalBytes - sentBytes);
+  return `${phase}; ${left} of ${totalBytes} bytes left to send, ${delivery.files} files`;
+}
+
+/**
+ * Wait for the delivery to finish or fail, at most until the caller's budget or
+ * the delivery's own deadline, whichever comes first.
+ */
+async function awaitDelivery(
+  delivery: Delivery,
+  budgetMs: number | undefined,
+  signal: AbortSignal | undefined,
+): Promise<NodeSupportBundleState | null> {
+  const budgetEndsAt = budgetMs === undefined ? Infinity : Date.now() + budgetMs;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    // A cancelled caller stops waiting; the delivery keeps going for the next command.
+    onAbort = () => reject(signal?.reason ?? new Error('node support wait cancelled'));
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener('abort', onAbort, { once: true });
+    const arm = () => {
+      const byBudget = budgetEndsAt < delivery.deadlineAt;
+      timer = setTimeout(
+        () => {
+          // A joiner's deadline restarts when its own work begins: keep waiting.
+          if (!byBudget && delivery.deadlineAt > Date.now()) return arm();
+          const bundle = `node support bundle ${delivery.bundle.slice(0, 8)} for ${delivery.slotId}`;
+          if (!byBudget) {
+            // Past its deadline the delivery no longer holds the slot: the next
+            // command starts a fresh one instead of joining a stalled one.
+            forgetDelivery(delivery);
+          }
+          reject(
+            new NodeSupportPendingError(
+              byBudget
+                ? `${bundle} still being delivered after ${budgetMs}ms (${describeDelivery(delivery)})`
+                : `${bundle} was not delivered within its ${delivery.deadlineMs}ms deadline (${describeDelivery(delivery)})`,
+            ),
+          );
+        },
+        Math.max(0, Math.min(budgetEndsAt, delivery.deadlineAt) - Date.now()),
+      );
+    };
+    arm();
+  });
+  try {
+    // A delivery that fails after the wait ended is not lost: the pending
+    // entry clears and the next command on the slot runs it again and gets
+    // the error.
+    return await Promise.race([delivery.promise, expired]);
+  } finally {
+    clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
   }
 }
 
@@ -392,10 +526,16 @@ export async function resolveRemoteFarmCommand(
   command: string,
   options: {
     io?: NodeSupportIo;
-    /** Maximum bundle delivery wait before the configured command timeout starts. */
+    /**
+     * Longest wait for the bundle delivery before the configured command timeout
+     * starts. Without one, the wait lasts until the delivery finishes or fails,
+     * bounded by the delivery's own deadline.
+     */
     budgetMs?: number;
     /** Preserve the slot support pointer while checking prerequisites. */
     selectSlot?: boolean;
+    /** Stop waiting when this aborts; the delivery itself continues. */
+    signal?: AbortSignal;
     /** Resolve a support directory itself, independently of hook script coverage. */
     supportRoot?: boolean;
   } = {},
@@ -426,10 +566,12 @@ export async function resolveRemoteFarmCommand(
     const mapped = remap(verified.supportDir, local.paths);
     return selectSlot ? mapped : wrapNodeSupportReadCommand(mapped, verified.supportDir);
   }
-  const state = await withinBudget(
+  // A caller cancelled while the bundle was being read starts no delivery.
+  options.signal?.throwIfAborted();
+  const state = await awaitDelivery(
     ensureOnce(vars, projectVars, local, options.io, selectSlot),
     options.budgetMs,
-    vars.slotId,
+    options.signal,
   );
   if (!state?.hash) return command;
   verifiedBundles.set(cacheKey, { at: Date.now(), supportDir: state.supportDir });

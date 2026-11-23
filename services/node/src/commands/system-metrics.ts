@@ -1,6 +1,6 @@
 // system-metrics.ts — Collect host-level CPU, memory, disk, load, thermal metrics
 
-import { execFile, execSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import os from 'node:os';
 
 import type {
@@ -71,9 +71,21 @@ function getCpuPercent(): number {
   return Math.round((1 - idleDelta / totalDelta) * 100);
 }
 
-function getDiskPercent(): number {
+/**
+ * A sampling command's output, without blocking the event loop: a sync call
+ * here stalled every request the node was serving for as long as it ran.
+ */
+function sampleOutput(file: string, args: string[]): Promise<string> {
+  return new Promise((resolveOutput, reject) => {
+    execFile(file, args, { timeout: 5000, encoding: 'utf-8' }, (error, stdout) =>
+      error ? reject(error) : resolveOutput(stdout),
+    );
+  });
+}
+
+async function getDiskPercent(): Promise<number> {
   try {
-    const output = execSync('df -k / | tail -1', { timeout: 5000, encoding: 'utf-8' });
+    const output = (await sampleOutput('df', ['-k', '/'])).trim().split('\n').at(-1) ?? '';
     const parts = output.trim().split(/\s+/);
     // df output: Filesystem 1K-blocks Used Available Use% Mounted
     // macOS: Filesystem 1024-blocks Used Available Capacity ...
@@ -85,10 +97,12 @@ function getDiskPercent(): number {
   }
 }
 
-function getThermalPressure(): 'nominal' | 'fair' | 'serious' | 'critical' | undefined {
+async function getThermalPressure(): Promise<
+  'nominal' | 'fair' | 'serious' | 'critical' | undefined
+> {
   if (process.platform !== 'darwin') return undefined;
   try {
-    const output = execSync('pmset -g therm 2>/dev/null', { timeout: 5000, encoding: 'utf-8' });
+    const output = await sampleOutput('pmset', ['-g', 'therm']);
     if (output.includes('CPU_Speed_Limit')) {
       const match = output.match(/CPU_Speed_Limit\s*=\s*(\d+)/);
       if (match) {
@@ -105,23 +119,26 @@ function getThermalPressure(): 'nominal' | 'fair' | 'serious' | 'critical' | und
   }
 }
 
-function getMemoryUsage(): { usedBytes: number; totalBytes: number } {
+async function getMemoryUsage(): Promise<{ usedBytes: number; totalBytes: number }> {
   const totalBytes = os.totalmem();
   if (process.platform === 'darwin') {
     // macOS: os.freemem() excludes inactive (file cache) → inflated "used".
     // Match Activity Monitor: App (internal) + Wired + Compressed.
     // sysctl vm.page_pageable_internal_count = anonymous app pages (matches AM "App Memory").
     try {
-      const sysctl = execSync('/usr/sbin/sysctl -n vm.page_pageable_internal_count hw.pagesize', {
-        timeout: 5000,
-        encoding: 'utf-8',
-      })
+      const sysctl = (
+        await sampleOutput('/usr/sbin/sysctl', [
+          '-n',
+          'vm.page_pageable_internal_count',
+          'hw.pagesize',
+        ])
+      )
         .trim()
         .split('\n');
       const internal = parseInt(sysctl[0], 10);
       const pageSize = parseInt(sysctl[1], 10);
 
-      const vmstat = execSync('vm_stat', { timeout: 5000, encoding: 'utf-8' });
+      const vmstat = await sampleOutput('vm_stat', []);
       const wired = parseInt(vmstat.match(/Pages wired down:\s+(\d+)/)?.[1] ?? '0', 10);
       const compressor = parseInt(
         vmstat.match(/Pages occupied by compressor:\s+(\d+)/)?.[1] ?? '0',
@@ -364,15 +381,14 @@ function processInventoryDue(params: Parameters<typeof processInventoryCadenceMs
 export async function collectMetrics(
   options: { consumeProcessInventory?: boolean; machine?: string } = {},
 ): Promise<SystemMetrics> {
-  const { usedBytes: usedMem, totalBytes: totalMem } = getMemoryUsage();
+  const [{ usedBytes: usedMem, totalBytes: totalMem }, diskPercent, thermalPressure] =
+    await Promise.all([getMemoryUsage(), getDiskPercent(), getThermalPressure()]);
   const [loadAvg1, loadAvg5] = os.loadavg();
   const cpuCores = os.cpus().length;
   const cpuPercent = getCpuPercent();
   const providerCliHealth = options.machine ? getProviderCliHealth(options.machine) : undefined;
   const [workerCliHealth, tcp] = await Promise.all([readWorkerCliHealth(), collectTcpMetrics()]);
   const memoryPercent = Math.round((usedMem / totalMem) * 100);
-  const diskPercent = getDiskPercent();
-  const thermalPressure = getThermalPressure();
   const consumeProcessInventory = options.consumeProcessInventory !== false;
   const processInventory = consumeProcessInventory ? pendingProcessInventory : undefined;
   if (consumeProcessInventory) pendingProcessInventory = undefined;
