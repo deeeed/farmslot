@@ -4,7 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { killExitedLeaderGroup, runTaskRuntime } from './task-runtime.js';
-import { alive, cliFixture, taskPipe, until } from './task-runtime.test-support.js';
+import { alive, cliFixture, taskPipe } from './task-runtime.test-support.js';
 
 /** Exited children of this process that nobody waited for. */
 function zombieChildren(): number {
@@ -35,7 +35,6 @@ test('task runs leave no unreaped child processes behind', { timeout: 60_000 }, 
     assert.equal(parsed.data.taskPath, path.join(root, `task-${run}.json`));
   }
   // The task itself is reaped before 'close'; a leaked esbuild would stay a zombie.
-  await until(() => zombieChildren() - before === 0, 500);
   assert.equal(zombieChildren() - before, 0, `${runs} task runs left unreaped children`);
 });
 
@@ -63,6 +62,21 @@ test("a reaped leader's group is killed only while no live process holds its id"
   ]);
 });
 
+/** A stand-in node: it starts the task and can then be killed without any cleanup. */
+function standInNode(root: string, cli: string) {
+  return spawn(
+    process.execPath,
+    [
+      ...process.execArgv,
+      '--input-type=module',
+      '-e',
+      `const { runTaskRuntime } = await import(${JSON.stringify(path.join(import.meta.dirname, 'task-runtime.ts'))});
+      await runTaskRuntime({ action: 'init', taskPath: ${JSON.stringify(path.join(root, 'task.json'))}, supportDir: ${JSON.stringify(root)}, env: { FARMSLOT_CLI: ${JSON.stringify(path.join(cli, 'bin/farmslot.mjs'))} } }, ${JSON.stringify(root)});`,
+    ],
+    { stdio: 'ignore' },
+  );
+}
+
 test('a task whose node dies stops itself and its subprocesses', { timeout: 90_000 }, async (t) => {
   const pipe = await taskPipe(t);
   const pids: number[] = [];
@@ -89,18 +103,7 @@ test('a task whose node dies stops itself and its subprocesses', { timeout: 90_0
       await new Promise(() => {});
     }`,
   );
-  // A stand-in node: it starts the task and is then killed without any cleanup.
-  const node = spawn(
-    process.execPath,
-    [
-      ...process.execArgv,
-      '--input-type=module',
-      '-e',
-      `const { runTaskRuntime } = await import(${JSON.stringify(path.join(import.meta.dirname, 'task-runtime.ts'))});
-      await runTaskRuntime({ action: 'init', taskPath: ${JSON.stringify(path.join(root, 'task.json'))}, supportDir: ${JSON.stringify(root)}, env: { FARMSLOT_CLI: ${JSON.stringify(path.join(cli, 'bin/farmslot.mjs'))} } }, ${JSON.stringify(root)});`,
-    ],
-    { stdio: 'ignore' },
-  );
+  const node = standInNode(root, cli);
   if (node.pid) pids.push(node.pid);
   const started = JSON.parse(await pipe.line()) as {
     task: number;
@@ -112,6 +115,36 @@ test('a task whose node dies stops itself and its subprocesses', { timeout: 90_0
   // The task, its subprocess and the grandchild of the leaderless group have all exited.
   await pipe.closed();
 });
+
+test(
+  'a task blocked in a synchronous call when its node dies still stops',
+  { timeout: 90_000 },
+  async (t) => {
+    const pipe = await taskPipe(t);
+    const pids: number[] = [];
+    t.after(() => {
+      for (const pid of pids) if (alive(pid)) process.kill(pid, 'SIGKILL');
+    });
+    const { root, cli } = await cliFixture(
+      t,
+      `import fs from 'node:fs';
+    import { spawnSync } from 'node:child_process';
+    export async function runHostedTaskInit() {
+      // The task and its synchronous subprocess hold the pipe: it ends when both have exited.
+      const pipe = fs.openSync(${JSON.stringify(pipe.path)}, 'w');
+      fs.writeSync(pipe, String(process.pid) + '\\n');
+      // The main thread is blocked here, so it never sees its node's disconnect.
+      spawnSync('/bin/sh', ['-c', 'echo $$ >&3; exec sleep 600'], { stdio: ['ignore', 'ignore', 'ignore', pipe] });
+    }`,
+    );
+    const node = standInNode(root, cli);
+    if (node.pid) pids.push(node.pid);
+    pids.push(Number(await pipe.line()), Number(await pipe.line()));
+    node.kill('SIGKILL');
+    // The task and the call it was blocked in have both exited.
+    await pipe.closed();
+  },
+);
 
 test(
   'a descendant holding the task output neither delays nor loses the result',
@@ -147,9 +180,9 @@ test(
       controller.signal,
     );
     descendant = Number(await pipe.line());
-    // The task exited after delivering; the descendant still holds its output. A cancel
-    // inside the drain window must not overwrite the result. Without the drain the result
-    // would wait for the descendant's 600 s.
+    // The task exited after delivering; the descendant still holds its output, so this
+    // cancel lands in the drain window. Without the drain the result would wait for the
+    // descendant's 600 s; without the delivered-result guard the cancel would replace it.
     await pipe.closed();
     controller.abort();
     const result = await pending;
@@ -205,6 +238,43 @@ test('a task that crashes still has its subprocesses stopped', { timeout: 90_000
   }
   assert.notEqual((await outcome).exitCode, 0);
 });
+
+test(
+  'a task that delivered but did not exit cleanly has its own group stopped',
+  { timeout: 90_000 },
+  async (t) => {
+    const pipe = await taskPipe(t);
+    let leftover = 0;
+    t.after(() => {
+      if (leftover && alive(leftover)) process.kill(leftover, 'SIGKILL');
+    });
+    const { root, cli } = await cliFixture(
+      t,
+      `import fs from 'node:fs';
+    import { spawnSync } from 'node:child_process';
+    export async function runHostedTaskInit(taskPath: string) {
+      // The task and its untracked leftover hold the pipe: it ends when both have exited.
+      const pipe = fs.openSync(${JSON.stringify(pipe.path)}, 'w');
+      spawnSync('/bin/sh', ['-c', 'sleep 600 >/dev/null 2>&1 & echo $! >&3'], { stdio: ['ignore', 'ignore', 'ignore', pipe] });
+      // Provider teardown fails after the result went out.
+      process.exitCode = 3;
+      return { taskPath };
+    }`,
+    );
+    const pending = runTaskRuntime(
+      {
+        action: 'init',
+        taskPath: path.join(root, 'task.json'),
+        supportDir: root,
+        env: { FARMSLOT_CLI: path.join(cli, 'bin/farmslot.mjs') },
+      },
+      root,
+    );
+    leftover = Number(await pipe.line());
+    assert.equal((await pending).exitCode, 0, 'the delivered result stands');
+    await pipe.closed();
+  },
+);
 
 test(
   'cancelling a task that delivered while its subprocess runs keeps the result and stops it',

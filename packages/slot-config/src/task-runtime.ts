@@ -45,6 +45,68 @@ export function parseTaskRuntimeRequest(value: unknown): TaskRuntimeRequest {
   return { action: value.action, taskPath: value.taskPath, supportDir: value.supportDir, env };
 }
 
+// Prune and signal the task's owned process groups, kept in a shared Int32Array, groups.
+const taskGroupHelpers = `
+// Drop groups that have since emptied, so a later signal cannot reach a reused group id.
+const pruneGroups = () => {
+  for (let i = 0; i < groups.length; i++) {
+    const pid = Atomics.load(groups, i);
+    if (!pid) continue;
+    try {
+      process.kill(-pid, 0);
+    } catch (error) {
+      // ESRCH: the group is gone. EPERM: it still exists under another owner, so it stays.
+      if (error.code === 'ESRCH') Atomics.compareExchange(groups, i, pid, 0);
+      else if (error.code !== 'EPERM') throw error;
+    }
+  }
+};
+const signalGroups = (signal) => {
+  for (let i = 0; i < groups.length; i++) {
+    const pid = Atomics.load(groups, i);
+    if (!pid) continue;
+    try {
+      process.kill(-pid, signal);
+    } catch (error) {
+      // A group that already ended is the expected case; anything else is reported.
+      if (error.code !== 'ESRCH') console.error('Task group ' + pid + ' was not stopped: ' + error.message);
+    }
+  }
+};
+`;
+
+// The task's watchdog thread. No node is left to escalate, so it does: SIGTERM the task's
+// groups, SIGKILL what remains after the node-exec closeout, then the task's own group.
+// The main thread asks for it on a dropped channel or a failed send. While the main thread
+// is blocked in a synchronous call it sees no disconnect, so the watchdog also stops once
+// the task has been reparented: its node is gone.
+const taskWatchdog = `
+const { parentPort, workerData: groups } = require('node:worker_threads');
+${taskGroupHelpers}
+const node = process.ppid;
+let stopping = false;
+const stop = () => {
+  if (stopping) return;
+  stopping = true;
+  clearInterval(orphaned);
+  pruneGroups();
+  signalGroups('SIGTERM');
+  const deadline = Date.now() + ${NODE_EXEC_CLOSEOUT_MS};
+  const settle = () => {
+    pruneGroups();
+    if (groups.some((_, i) => Atomics.load(groups, i)) && Date.now() < deadline)
+      return setTimeout(settle, 100);
+    signalGroups('SIGKILL');
+    process.kill(0, 'SIGKILL');
+  };
+  settle();
+};
+parentPort.on('message', stop);
+const orphaned = setInterval(() => {
+  if (process.ppid !== node) stop();
+}, 500);
+`;
+
 // Providers change process.env while loading. A child process keeps those changes
 // and the CLI's module-level config private. It is a process, not a worker thread:
 // tsx's ESM loader thread owns an esbuild service child, and a thread that exits
@@ -56,7 +118,8 @@ const workerData = JSON.parse(process.argv[1]);
 let delivered = false;
 const parentPort = {
   on: (event, listener) => process.on(event, listener),
-  postMessage: (message, done) => (process.connected ? process.send(message, done) : done?.()),
+  postMessage: (message, done) =>
+    process.connected ? process.send(message, done) : done?.(new Error('IPC channel closed')),
   // The result send's callback: a failed send was not delivered, so the task stops as if orphaned.
   close: (error) => {
     if (error) return abandon(error);
@@ -64,48 +127,25 @@ const parentPort = {
     if (process.connected) process.disconnect();
   },
 };
-// A worker thread died with its node; a process must not outlive it. If the channel drops
-// before the result went out, the node or gateway is gone: stop this task's groups and exit.
-const ownedGroups = new Set();
-// Drop groups that have since emptied, so a later signal cannot reach a reused group id.
-const pruneGroups = () => {
-  for (const pid of ownedGroups) {
-    try {
-      process.kill(-pid, 0);
-    } catch (error) {
-      // ESRCH: the group is gone. EPERM: it still exists under another owner, so it stays.
-      if (error.code === 'ESRCH') ownedGroups.delete(pid);
-      else if (error.code !== 'EPERM') throw error;
-    }
-  }
-};
-const signalGroups = (signal) => {
-  for (const pid of ownedGroups) {
-    try {
-      process.kill(-pid, signal);
-    } catch (error) {
-      // A group that already ended is the expected case; anything else is reported.
-      if (error.code !== 'ESRCH') console.error('Task group ' + pid + ' was not stopped: ' + error.message);
-    }
-  }
-};
-// No node is left to escalate, so the task does it: SIGTERM, then SIGKILL what remains.
+// The process groups this task owns, in memory its watchdog thread shares.
+const groups = new Int32Array(new SharedArrayBuffer(4 * 4096));
+${taskGroupHelpers}
+// A worker thread died with its node; a process must not outlive it. The watchdog stops
+// this task's groups, then the task's own group (what it runs synchronously or backgrounds
+// untracked, and itself), once the node is gone. It is started before tsx loads, so it
+// starts no child.
+const { Worker } = require('node:worker_threads');
+const watchdog = new Worker(${JSON.stringify(taskWatchdog)}, { eval: true, workerData: groups });
+watchdog.unref();
 // It runs once, whichever of a disconnect, a failed send or a failed write comes first.
 let abandoned = false;
 const abandon = (cause) => {
   if (abandoned) return;
   abandoned = true;
   if (cause instanceof Error) console.error('Task stopped: ' + cause.message);
-  pruneGroups();
-  signalGroups('SIGTERM');
-  const deadline = Date.now() + ${NODE_EXEC_CLOSEOUT_MS};
-  const settle = () => {
-    pruneGroups();
-    if (ownedGroups.size && Date.now() < deadline) return setTimeout(settle, 100);
-    signalGroups('SIGKILL');
-    process.exit(1);
-  };
-  settle();
+  // Nothing else may keep the task alive now; the watchdog ends it.
+  watchdog.ref();
+  watchdog.postMessage('abandon');
 };
 process.on('disconnect', () => {
   if (!delivered) abandon();
@@ -134,17 +174,11 @@ ChildProcess.prototype.spawn = function(options) {
   if (this.pid) {
     const pid = this.pid;
     pruneGroups();
-    ownedGroups.add(pid);
+    const free = groups.indexOf(0);
+    if (free < 0) console.error('Task group ' + pid + ' is not tracked: too many groups');
+    else Atomics.store(groups, free, pid);
     // Forget the group only once it is empty: a detached grandchild can outlive its leader.
-    this.once('close', () => {
-      try {
-        process.kill(-pid, 0);
-      } catch (error) {
-        // ESRCH: empty, forget it. EPERM: still there under another owner, keep it.
-        if (error.code === 'ESRCH') ownedGroups.delete(pid);
-        else if (error.code !== 'EPERM') throw error;
-      }
-    });
+    this.once('close', pruneGroups);
     parentPort.postMessage({ type: 'task-child', pid });
     this.once('exit', () => parentPort.postMessage({ type: 'task-child-reaped', pid }));
     this.once('close', () => parentPort.postMessage({ type: 'task-child-exit', pid }));
@@ -230,7 +264,8 @@ export function killExitedLeaderGroup(
     kill(-pgid, 'SIGKILL');
     return true;
   } catch (error) {
-    if (!isRecord(error) || error.code !== 'ESRCH') throw error;
+    // ESRCH: the group is empty. EPERM: a member we may not signal; the rest were.
+    if (!isRecord(error) || (error.code !== 'ESRCH' && error.code !== 'EPERM')) throw error;
     return false;
   }
 }
@@ -301,7 +336,8 @@ export async function runTaskRuntime(
       try {
         process.kill(-task.pid, 'SIGKILL');
       } catch (error) {
-        if (!isRecord(error) || error.code !== 'ESRCH') throw error;
+        // ESRCH: already gone. EPERM: a member we may not signal; the rest were.
+        if (!isRecord(error) || (error.code !== 'ESRCH' && error.code !== 'EPERM')) throw error;
       }
     };
     const timeout = TASK_RUNTIME_TIMEOUT_MS[request.action];
@@ -344,12 +380,13 @@ export async function runTaskRuntime(
     });
     let delivered = false;
     const stop = (exitCode: number, message: string) => {
-      // An exited task has nothing left to stop; its result stands while a held pipe drains.
-      if (stopped || task.exitCode !== null || task.signalCode !== null) return;
+      if (stopped) return;
       stopped = true;
-      // A result the task already delivered stands; the task is still stopped and bounded.
+      // A result the task already delivered stands; the task and its groups are still stopped.
       if (!delivered) result = { stdout: '', stderr: message, exitCode };
       closeout.terminate();
+      // An exited task has nothing left to signal itself; its tracked groups are closed out.
+      if (task.exitCode !== null || task.signalCode !== null) return;
       if (task.connected) task.send({ type: 'task-stop' });
       terminate();
     };
@@ -393,12 +430,11 @@ export async function runTaskRuntime(
     // after the task exits; 'close' would wait for it. Give the pipes a bounded drain.
     let drain: ReturnType<typeof setTimeout> | undefined;
     task.on('exit', (exitCode, exitSignal) => {
-      // A task that died without a result (crash, OOM, external kill) may have left untracked
-      // or synchronous subprocesses in its own group. Kill them now, in the tick its leader
-      // was reaped: later, the group id (the leader's pid) could belong to someone else. A
-      // task that delivered exits 0, possibly before its result message is read here.
-      if (!delivered && !stopped && (exitCode !== 0 || exitSignal) && task.pid)
-        killExitedLeaderGroup(task.pid);
+      // A task that did not end cleanly (crash, OOM, external kill, a forced end) may have
+      // left untracked or synchronous subprocesses in its own group. Kill them now, in the
+      // tick its leader was reaped: later, the group id (the leader's pid) could belong to
+      // someone else. A task that delivered exits 0, and its result may not be read yet here.
+      if ((exitCode !== 0 || exitSignal) && task.pid) killExitedLeaderGroup(task.pid);
       drain = setTimeout(() => {
         task.stdout?.destroy();
         task.stderr?.destroy();
@@ -410,9 +446,10 @@ export async function runTaskRuntime(
       clearTimeout(timer);
       clearTimeout(forcedKillTimer);
       clearTimeout(drain);
-      // A task that died without a result never stopped its tracked groups: close them out
-      // the way a cancellation does. Each group is probed before it is signalled.
-      if (!delivered && !stopped && children.size) {
+      // A task that died without a result, or did not end cleanly after it, never stopped its
+      // tracked groups: close them out the way a cancellation does. Each group is probed
+      // before it is signalled.
+      if (!stopped && children.size && (!delivered || code !== 0)) {
         stopped = true;
         closeout.terminate();
       }
