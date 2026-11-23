@@ -274,7 +274,16 @@ test('task progress shares run/context observations and keeps slot-only reads sc
   assert.deepEqual(query.dependencies, [
     { family: 'progress', runId: 'run' },
     { family: 'run', runId: 'run' },
+    { family: 'artifacts', runId: 'run' },
   ]);
+  assert.deepEqual(
+    resourceQuery('task.progress', { slotId: 'slot', runId: 'run', summary: true }).dependencies,
+    [
+      { family: 'progress', runId: 'run' },
+      { family: 'run', runId: 'run' },
+    ],
+    'a list summary does not reread on evidence-only changes',
+  );
   assert.deepEqual(resourceQuery('task.progress', { slotId: 'slot' }).dependencies, [
     { family: 'slot', slotId: 'slot' },
   ]);

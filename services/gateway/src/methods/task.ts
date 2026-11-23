@@ -127,7 +127,12 @@ export async function taskProgress(
   // Every live slot read, with or without an explicit task file, reports the viewed session's
   // spend. It reads beside the progress files, so the transcript tail adds no wait of its own.
   const spendSource =
-    !params.summary && live && !inactive && boundRun && params.slotId && !isTerminalRunStatus(boundRun.status)
+    !params.summary &&
+    live &&
+    !inactive &&
+    boundRun &&
+    params.slotId &&
+    !isTerminalRunStatus(boundRun.status)
       ? liveSpendSource(boundRun, context)
       : undefined;
   const spending = spendSource

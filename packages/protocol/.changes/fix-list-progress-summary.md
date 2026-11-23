@@ -1,1 +1,1 @@
-- `TaskProgressParams.summary` asks `task.progress` for `TaskProgressResult.summary` (done/total, current phase and step) instead of the full checklist. The `task.progress` cache entry depends on `progress` and `run` only; `artifacts` was redundant.
+- `TaskProgressParams.summary` asks `task.progress` for `TaskProgressResult.summary` (done/total, current phase and step) instead of the full checklist. A summary read depends on `progress` and `run` only; a full read still follows `artifacts`, which acceptance and evidence views need.

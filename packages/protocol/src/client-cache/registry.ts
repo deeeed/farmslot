@@ -1302,10 +1302,15 @@ export const RESOURCE_QUERY_DEFINITIONS = {
     live: true,
     dependencies: (params: unknown) => {
       const runId = params && typeof params === 'object' ? Reflect.get(params, 'runId') : undefined;
+      // A list row's summary shows no acceptance or evidence data, so it skips the
+      // evidence-only `artifacts` changes a full read follows.
       if (typeof runId === 'string' && runId)
         return [
           { family: 'progress', runId },
           { family: 'run', runId },
+          ...(params && typeof params === 'object' && Reflect.get(params, 'summary') === true
+            ? []
+            : [{ family: 'artifacts' as const, runId }]),
         ];
       return [{ family: 'slot', slotId: requiredId(params, 'slotId') }];
     },
