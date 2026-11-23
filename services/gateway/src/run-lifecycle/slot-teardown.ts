@@ -427,6 +427,7 @@ export async function slotTeardownBlocker(
     const browserBlocker = await reapSlotBrowserSession(vars, {
       stillOwned,
       includeSlotProfiles: true,
+      stopSlotDaemons: true,
     });
     if (browserBlocker) return browserBlocker;
   }
