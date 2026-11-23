@@ -391,8 +391,12 @@ export class NativeProcessTree {
       observations.unshift(this.rootObservation);
     return observations.map((identity) => ({ ...identity }));
   }
-  /** Freeze observed owners before the final ancestry scan, preventing new child launches. */
-  async stop(): Promise<void> {
+  /**
+   * Freeze observed owners before the final ancestry scan, preventing new child launches. With
+   * detached groups, members of the worker's own detached groups are frozen and killed too: a dev
+   * server the worker started keeps spawning after its launcher exits, unobserved.
+   */
+  async stop({ includeDetachedGroups = false } = {}): Promise<void> {
     const snapshot = await this.capture();
     const errors: unknown[] = [];
     const attempt = (operation: () => void) => {
@@ -404,6 +408,9 @@ export class NativeProcessTree {
       }
     };
     for (const entry of this.owned.values()) attempt(() => signal(entry, 'SIGSTOP', snapshot));
+    if (includeDetachedGroups)
+      for (const entry of this.detachedMembers(snapshot))
+        attempt(() => signal(entry, 'SIGSTOP', snapshot));
     let frozen: Map<number, ProcessIdentity>;
     try {
       frozen = await this.capture();
@@ -423,6 +430,9 @@ export class NativeProcessTree {
     attempt(() => this.stopGroup(frozen));
     for (const entry of [...this.owned.values()].reverse())
       attempt(() => signal(entry, 'SIGKILL', frozen));
+    if (includeDetachedGroups)
+      for (const entry of this.detachedMembers(frozen))
+        attempt(() => signal(entry, 'SIGKILL', frozen));
     if (errors.length)
       throw new AggregateError(
         errors,
@@ -433,16 +443,26 @@ export class NativeProcessTree {
     const snapshot = await cleanupProcesses();
     this.applySnapshot(snapshot);
     if (this.owned.size > 0) return false;
-    return ![...snapshot.values()].some(({ group }) => {
-      if (group === this.root) return true;
-      if (!includeDetachedGroups || !this.detachedGroups.has(group)) return false;
-      const identity = this.detachedGroups.get(group);
-      if (identity === undefined) return true;
-      // A new group leader proves reuse. Surviving members without a leader
-      // still belong to the observed group, even after reparenting.
-      const leader = snapshot.get(group);
-      return leader?.group !== group || leader.identity === identity;
-    });
+    return ![...snapshot.values()].some(
+      ({ group }) =>
+        group === this.root || (includeDetachedGroups && this.ownsDetachedGroup(group, snapshot)),
+    );
+  }
+  /**
+   * A detached group an owned member established, while it is provably the same group: its
+   * recorded leader still leads it, or it has no leader. Surviving members without a leader still
+   * belong to it after reparenting; a new leader proves the group ID was reused, also for a group
+   * first seen without one, since a leaderless group cannot regain its leader.
+   */
+  private ownsDetachedGroup(group: number, snapshot: Map<number, ProcessIdentity>): boolean {
+    if (group === this.root || !this.detachedGroups.has(group)) return false;
+    const leader = snapshot.get(group);
+    if (leader?.group !== group) return true;
+    const recorded = this.detachedGroups.get(group);
+    return recorded !== undefined && leader.identity === recorded;
+  }
+  private detachedMembers(snapshot: Map<number, ProcessIdentity>): ProcessIdentity[] {
+    return [...snapshot.values()].filter(({ group }) => this.ownsDetachedGroup(group, snapshot));
   }
   private stopGroup(snapshot: Map<number, ProcessIdentity>): void {
     const members = [...snapshot.values()].filter((entry) => entry.group === this.root);

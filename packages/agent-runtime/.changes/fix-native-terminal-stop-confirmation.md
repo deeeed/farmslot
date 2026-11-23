@@ -1,1 +1,2 @@
 - Confirm exited Codex workers only after their process owner verifies that the recorded processes and detached groups are gone.
+- Closing a Codex native worker also ends the background processes it left in its own detached process groups, such as a dev server whose launcher exited, when the group is provably the same one the worker started. Before this, close either leaked them or, with stop confirmation, failed on a survivor nothing signaled.

@@ -306,6 +306,14 @@ test('a detached group remains owned after its only observed launcher exits', as
   await exited;
   assert.equal(alive(worker), true);
   assert.equal(await tree.empty({ includeDetachedGroups: true }), false);
+  // A dev server the worker left behind is the worker's own: stop ends it, so close settles
+  // instead of failing on a survivor nothing signals.
+  await tree.stop({ includeDetachedGroups: true });
+  const stopped = Date.now() + 3_000;
+  while (alive(worker) && Date.now() < stopped)
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(alive(worker), false, 'stop ends the unobserved member of the detached group');
+  assert.equal(await tree.empty({ includeDetachedGroups: true }), true);
 });
 
 test('explicit confirmation remembers group changes and leaderless ownership', async (t) => {

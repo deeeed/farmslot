@@ -397,7 +397,7 @@ export class JsonLineProcess {
     }
     let stopError: unknown;
     try {
-      await this.tree.stop();
+      await this.tree.stop({ includeDetachedGroups: this.includeDetachedGroups });
     } catch (error) {
       // A group can disappear while shutdown snapshots are being taken. Accept
       // cleanup only after fresh OS evidence proves every tracked process and
