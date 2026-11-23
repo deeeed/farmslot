@@ -8,6 +8,7 @@ import {
   killExitedLeaderGroup,
   parseTaskMessage,
   runTaskRuntime,
+  withoutPreloads,
 } from './task-runtime.js';
 import { alive, cliFixture, taskPipe } from './task-runtime.test-support.js';
 
@@ -363,6 +364,46 @@ test(
     assert.match(result.stderr, /maxBuffer exceeded/);
   },
 );
+
+test(
+  'a second result past the bound after delivery still fails the run',
+  { timeout: 90_000 },
+  async (t) => {
+    const pipe = await taskPipe(t);
+    const { root, cli } = await cliFixture(
+      t,
+      `import fs from 'node:fs';
+    import { spawn } from 'node:child_process';
+    export async function runHostedTaskInit(taskPath: string) {
+      const pipe = fs.openSync(${JSON.stringify(pipe.path)}, 'w');
+      // Provider code sends its own result-shaped message, past the bound, after the result.
+      ${afterResult("process.send({ stdout: 'x'.repeat(9 * 1024 * 1024), stderr: '', exitCode: 0 });")}
+      return { taskPath };
+    }`,
+    );
+    const result = await runTaskRuntime(
+      {
+        action: 'init',
+        taskPath: path.join(root, 'task.json'),
+        supportDir: root,
+        env: { FARMSLOT_CLI: path.join(cli, 'bin/farmslot.mjs') },
+      },
+      root,
+    );
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stderr, /maxBuffer exceeded/);
+  },
+);
+
+test('NODE_OPTIONS reaches a task without its module preloads', () => {
+  assert.equal(
+    withoutPreloads(
+      '--max-old-space-size=8192 --import tsx -r ./hook.cjs --loader=x --require=y --trace-warnings',
+    ),
+    '--max-old-space-size=8192 --trace-warnings',
+  );
+  assert.equal(withoutPreloads('--import=tsx'), '');
+});
 
 test('a group read that fails is tried again rather than cached', async () => {
   let reads = 0;

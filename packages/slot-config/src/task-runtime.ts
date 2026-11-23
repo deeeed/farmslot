@@ -22,10 +22,10 @@ export const TASK_RUNTIME_TIMEOUT_MS = { init: 10 * 60_000, verify: 120_000 } as
  * descendant writes after that is dropped; the result itself arrives over IPC and is never cut.
  */
 export const TASK_OUTPUT_DRAIN_MS = 2000;
-// The usual worst case: the closeout's SIGKILL, the forced kill one closeout later, then the
-// output drain. The post-close group census can add up to 2 x closeout more, but by then the
-// groups were SIGKILLed and it is normally one ps call.
-export const TASK_RUNTIME_CLOSEOUT_MS = 2 * NODE_EXEC_CLOSEOUT_MS + TASK_OUTPUT_DRAIN_MS;
+// The worst case after a stop: the closeout's SIGKILL, the forced kill one closeout later,
+// the output drain, then the post-close group census (bounded at one closeout; by then the
+// groups were SIGKILLed and it is normally one ps call). The gateway waits this long.
+export const TASK_RUNTIME_CLOSEOUT_MS = 3 * NODE_EXEC_CLOSEOUT_MS + TASK_OUTPUT_DRAIN_MS;
 
 export function parseTaskRuntimeRequest(value: unknown): TaskRuntimeRequest {
   if (
@@ -48,11 +48,13 @@ export function parseTaskRuntimeRequest(value: unknown): TaskRuntimeRequest {
   return { action: value.action, taskPath: value.taskPath, supportDir: value.supportDir, env };
 }
 
-// Drop the task's owned process groups (a shared Int32Array, groups) that have since emptied,
-// so a later signal cannot reach a reused group id.
+// The task's owned process groups live in a shared Int32Array, groups: slot 0 holds how many
+// slots have ever been used, slots 1.. the group ids (0 when free). Drop groups that have
+// since emptied, so a later signal cannot reach a reused group id.
 const taskPruneGroups = `
 const pruneGroups = () => {
-  for (let i = 0; i < groups.length; i++) {
+  const used = Atomics.load(groups, 0);
+  for (let i = 1; i <= used; i++) {
     const pid = Atomics.load(groups, i);
     if (!pid) continue;
     try {
@@ -75,7 +77,8 @@ const taskWatchdog = `
 const { parentPort, workerData: { groups, node } } = require('node:worker_threads');
 ${taskPruneGroups}
 const signalGroups = (signal) => {
-  for (let i = 0; i < groups.length; i++) {
+  const used = Atomics.load(groups, 0);
+  for (let i = 1; i <= used; i++) {
     const pid = Atomics.load(groups, i);
     if (!pid) continue;
     try {
@@ -96,7 +99,10 @@ const stop = () => {
   const deadline = Date.now() + ${NODE_EXEC_CLOSEOUT_MS};
   const settle = () => {
     pruneGroups();
-    if (groups.some((_, i) => Atomics.load(groups, i)) && Date.now() < deadline)
+    const used = Atomics.load(groups, 0);
+    let tracked = false;
+    for (let i = 1; i <= used && !tracked; i++) tracked = Atomics.load(groups, i) !== 0;
+    if (tracked && Date.now() < deadline)
       return setTimeout(settle, 100);
     signalGroups('SIGKILL');
     process.kill(0, 'SIGKILL');
@@ -186,9 +192,15 @@ ChildProcess.prototype.spawn = function(options) {
   if (this.pid) {
     const pid = this.pid;
     pruneGroups();
-    const free = groups.indexOf(0);
-    if (free < 0) console.error('Task group ' + pid + ' is not tracked: too many groups');
-    else Atomics.store(groups, free, pid);
+    // The first free slot; a new one only when all used slots hold live groups.
+    const used = Atomics.load(groups, 0);
+    let slot = 1;
+    while (slot <= used && Atomics.load(groups, slot)) slot++;
+    if (slot >= groups.length) console.error('Task group ' + pid + ' is not tracked: too many groups');
+    else {
+      Atomics.store(groups, slot, pid);
+      if (slot > used) Atomics.store(groups, 0, slot);
+    }
     // Forget the group only once it is empty: a detached grandchild can outlive its leader.
     this.once('close', pruneGroups);
     parentPort.postMessage({ type: 'task-child', pid });
@@ -232,6 +244,19 @@ type TaskMessage =
   | ExecResult
   | { type: 'task-child' | 'task-child-exit' | 'task-child-reaped'; pid: number }
   | { type: 'task-stopping' };
+
+const PRELOAD_FLAGS = new Set(['--import', '--require', '-r', '--loader', '--experimental-loader']);
+/** NODE_OPTIONS without its module preloads: the flags above, as `--flag value` or `--flag=value`. */
+export function withoutPreloads(options: string): string {
+  const kept: string[] = [];
+  const tokens = options.split(/\s+/).filter(Boolean);
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i]!;
+    if (PRELOAD_FLAGS.has(token)) i++;
+    else if (!PRELOAD_FLAGS.has(token.split('=')[0]!)) kept.push(token);
+  }
+  return kept.join(' ');
+}
 
 /** Caches `read`'s value once it succeeds; a failed read is tried again next time. */
 export function cachedOnSuccess<T>(read: () => Promise<T>): () => Promise<T> {
@@ -361,15 +386,20 @@ export async function runTaskRuntime(
       : resolveFarmPaths({ role: 'node', env, checkoutRoot: support }).projects;
   env.FARMSLOT_CLI ||= path.join(selected.code.bin, 'farmslot');
   const executable = await realpath(env.FARMSLOT_CLI);
+  // Fail closed: without the node's group id a task could name it and have the node signal
+  // its own group. A failed read fails this task and is retried on the next one.
   const ownGroup = await nodeGroup();
   if (signal?.aborted) return cancelled();
   const packageRoot = path.resolve(path.dirname(executable), '..');
   env.TSX_TSCONFIG_PATH = path.join(packageRoot, 'tsconfig.json');
   env.TSX_DISABLE_CACHE = '1';
+  // A spawned node does not take the node's command-line tsx loader or test flags; only
+  // NODE_OPTIONS in env reaches it. The task loads tsx itself from the CLI, so a preload there
+  // (a loader or an --import) is dropped; other options (a heap ceiling) stay.
+  const nodeOptions = env.NODE_OPTIONS && withoutPreloads(env.NODE_OPTIONS);
+  if (nodeOptions) env.NODE_OPTIONS = nodeOptions;
+  else delete env.NODE_OPTIONS;
   return new Promise((resolve, reject) => {
-    // A spawned node does not take the node's command-line tsx loader or test flags (only
-    // NODE_OPTIONS in env would reach it, as it reaches the CLI transport; the node jobs set
-    // only a heap ceiling there): the CLI's own tsconfig selects its libraries.
     const task = spawn(
       process.execPath,
       [
@@ -466,8 +496,11 @@ export async function runTaskRuntime(
       if (stopped) return;
       const size =
         outputBytes + Buffer.byteLength(message.stdout) + Buffer.byteLength(message.stderr);
-      if (size > 8 * 1024 * 1024) stop(1, `maxBuffer exceeded after ${size} bytes`);
-      else {
+      if (size > 8 * 1024 * 1024) {
+        // The bound fails the run even after a delivered result (provider code can send too).
+        delivered = false;
+        stop(1, `maxBuffer exceeded after ${size} bytes`);
+      } else {
         result = message;
         delivered = true;
         // Output that follows the result counts against the same bound.
@@ -488,7 +521,13 @@ export async function runTaskRuntime(
       // left untracked or synchronous subprocesses in its own group. Kill them now, in the
       // tick its leader was reaped: later, the group id (the leader's pid) could belong to
       // someone else. A task that delivered exits 0, and its result may not be read yet here.
-      if ((exitCode !== 0 || exitSignal) && task.pid) killExitedLeaderGroup(task.pid);
+      if ((exitCode !== 0 || exitSignal) && task.pid)
+        try {
+          killExitedLeaderGroup(task.pid);
+        } catch (error) {
+          // Not thrown out of an event handler, where it would take the node down.
+          console.error(`Task group ${task.pid} was not stopped: ${String(error)}`);
+        }
       drain = setTimeout(() => {
         task.stdout?.destroy();
         task.stderr?.destroy();
@@ -513,7 +552,7 @@ export async function runTaskRuntime(
           // A cancellation result confirms both the task process and its async child
           // groups stopped. A forced end kills the task's own group, synchronous subprocesses included.
           // Bounded: a group whose remaining member this process may not signal stays listed.
-          const census = Date.now() + 2 * NODE_EXEC_CLOSEOUT_MS;
+          const census = Date.now() + NODE_EXEC_CLOSEOUT_MS;
           while (stopped && children.size && Date.now() < census) {
             const groups = await new Promise<string>((done, fail) =>
               execFile('/bin/ps', ['-axo', 'pgid=,stat='], { timeout: 2000 }, (error, output) =>
