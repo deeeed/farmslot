@@ -314,7 +314,7 @@ async function withTempFarm(t: test.TestContext): Promise<{
   return { name, editScript: (body) => writeFileSync(script, body) };
 }
 
-/** A node whose bundle uploads wait until released. */
+/** A node whose bundle uploads wait until released; `uploads` lists one entry per delivery. */
 function gatedNode(opts: { failUpload?: boolean } = {}) {
   const uploads: string[] = [];
   const uploadWaiters: Array<{ count: number; resolve: () => void }> = [];
@@ -349,6 +349,8 @@ function gatedNode(opts: { failUpload?: boolean } = {}) {
     },
     writeFiles: async (_vars, base) => {
       if (!base.includes('.incoming')) return; // the slot's selection record
+      // One delivery per incoming directory, however many requests it takes.
+      if (uploads.includes(base)) return;
       uploads.push(base);
       for (const waiter of uploadWaiters) {
         if (uploads.length >= waiter.count) waiter.resolve();
@@ -444,6 +446,80 @@ test('a delivery that fails after its budget ran out is reported to the next com
   await new Promise((resolve) => setTimeout(resolve, 20));
   // No unhandled rejection above; the retry surfaces the failure.
   await assert.rejects(resolveRemoteFarmCommand(vars, cmd, { io: node.io }), /upload failed/);
+});
+
+test('a wait without a budget lasts until the delivery finishes, past any short timeout', async (t) => {
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  const vars = farmVars(farm.name, 'mini-x-1');
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+  const waiting = resolveRemoteFarmCommand(vars, cmd, { io: node.io });
+  await node.waitForUploads(1);
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  node.release();
+  assert.match(await waiting, /support\/[0-9a-f]{64}\//);
+});
+
+test(
+  "a wait without a budget is held to the delivery's own deadline and names what is left",
+  { timeout: 10_000 },
+  async (t) => {
+    resetRemoteFarmCommandCache();
+    const farm = await withTempFarm(t);
+    const node = gatedNode();
+    t.after(() => node.release());
+    const vars = farmVars(farm.name, 'mini-x-1');
+    const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+    const error = await resolveRemoteFarmCommand(vars, cmd, {
+      io: { ...node.io, deliveryDeadlineMs: 100 },
+    }).then(
+      () => assert.fail('a delivery that never finishes cannot resolve'),
+      (reason: unknown) => reason,
+    );
+    assert.ok(error instanceof NodeSupportPendingError);
+    assert.match(
+      error.message,
+      /^node support bundle [0-9a-f]{8} for mini-x-1 was not delivered within its 100ms deadline \(uploading; \d+ of \d+ bytes left to send, \d+ files\)$/,
+    );
+  },
+);
+
+test('after a delivery misses its deadline, the next command starts a fresh one', async (t) => {
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  t.after(() => node.release());
+  const vars = farmVars(farm.name, 'mini-x-1');
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+  const io = { ...node.io, deliveryDeadlineMs: 100 };
+
+  await assert.rejects(resolveRemoteFarmCommand(vars, cmd, { io }), NodeSupportPendingError);
+  const next = resolveRemoteFarmCommand(vars, cmd, { io: node.io });
+  await node.waitForUploads(2);
+  node.release();
+  assert.match(await next, /support\/[0-9a-f]{64}\//);
+  assert.equal(node.uploads.length, 2, 'the stalled delivery was not joined');
+});
+
+test('a budget that runs out names the bundle, its phase and the bytes left', async (t) => {
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  t.after(() => node.release());
+  const vars = farmVars(farm.name, 'mini-x-1');
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+  await assert.rejects(
+    resolveRemoteFarmCommand(vars, cmd, { io: node.io, budgetMs: 100 }),
+    (error: unknown) =>
+      error instanceof NodeSupportPendingError &&
+      /^node support bundle [0-9a-f]{8} for mini-x-1 still being delivered after 100ms \(\w[^;]*; \d+ of \d+ bytes left to send, \d+ files\)$/.test(
+        error.message,
+      ),
+  );
 });
 
 test('every direct node exec sender is reviewed for farm script references', async () => {

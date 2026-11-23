@@ -886,7 +886,10 @@ export async function runPrepareCommand(
     const { NodeSupportPendingError, resolveRemoteFarmCommand } =
       await import('../../node-support/remote-command.js');
     try {
-      stagedCommand = await resolveRemoteFarmCommand(vars, wrappedCmd, { budgetMs: stageTimeout });
+      // No budget: wait for the delivery itself, bounded by its own deadline. A
+      // fixed 10 s wait lost to a normal re-delivery after a node redeploy (run
+      // 1a533f86), which finished seconds later.
+      stagedCommand = await resolveRemoteFarmCommand(vars, wrappedCmd);
     } catch (error) {
       if (!(error instanceof NodeSupportPendingError)) throw error;
       return failSetup('stage prepare script', {

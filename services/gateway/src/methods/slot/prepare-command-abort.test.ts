@@ -56,10 +56,12 @@ mock.module('../../node-support/remote-command.js', {
     resolveRemoteFarmCommand: async (
       _vars: unknown,
       command: string,
-      options: { budgetMs?: number },
+      options?: { budgetMs?: number },
     ) => {
       resolutions.push(command);
-      assert.equal(options.budgetMs, 10_000);
+      // Prepare waits on the delivery itself, bounded by the delivery's own
+      // deadline: a 10 s staging budget lost to a normal re-delivery (run 1a533f86).
+      assert.equal(options?.budgetMs, undefined);
       if (resolutionFailure) throw resolutionFailure;
       return realRemoteCommand.remapRemoteFarmRefs(command, '/node/support/selected', ['scripts']);
     },
@@ -255,7 +257,7 @@ test('configured workspace references resolve before remote prepare script publi
   assert.equal(resolutions.length, 1);
 });
 
-test('pending support delivery keeps the existing staging timeout and starts no wrapper', async () => {
+test('a delivery past its deadline fails staging as a timeout and starts no wrapper', async () => {
   resolutionFailure = new realRemoteCommand.NodeSupportPendingError(
     'Fixture support delivery pending',
   );
