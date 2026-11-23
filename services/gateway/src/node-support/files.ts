@@ -94,3 +94,10 @@ async function collectEntry(
 }
 
 export { supportHash } from '../../../../scripts/lib/runner-observability-bundle.mjs';
+
+/** Decoded size of the bundle's file contents. */
+export function nodeSupportBundleBytes(
+  files: readonly Pick<NodeSupportFile, 'contentBase64'>[],
+): number {
+  return files.reduce((total, file) => total + Buffer.byteLength(file.contentBase64, 'base64'), 0);
+}

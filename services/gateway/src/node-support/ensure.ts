@@ -53,7 +53,12 @@ import {
   type NodeSupportRetentionReferences,
   nodeSupportRetentionReferences,
 } from './activation.js';
-import { collectSupportFiles, type NodeSupportFile, supportHash } from './files.js';
+import {
+  collectSupportFiles,
+  type NodeSupportFile,
+  nodeSupportBundleBytes,
+  supportHash,
+} from './files.js';
 import { resolveNodeSupportPaths } from './paths.js';
 import {
   buildNodeSupportPublishCommand,
@@ -89,11 +94,6 @@ export interface NodeSupportDeliveryProgress {
  * directory, which is only published once every piece arrived and verified.
  */
 export const NODE_SUPPORT_UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
-
-/** Decoded size of the bundle's file contents. */
-export function nodeSupportBundleBytes(files: readonly Pick<NodeSupportFile, 'contentBase64'>[]) {
-  return files.reduce((total, file) => total + Buffer.byteLength(file.contentBase64, 'base64'), 0);
-}
 
 /** Slot I/O the sync runs through; injectable so tests can pin the protocol. */
 export interface NodeSupportIo {

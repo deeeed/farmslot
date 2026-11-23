@@ -25,13 +25,13 @@ import {
   collectNodeSupportBundle,
   ensureNodeSupportBundle,
   loadProjectVarsIfAny,
-  nodeSupportBundleBytes,
   type NodeSupportBundleInputs,
   nodeSupportBundlePaths,
   type NodeSupportBundleState,
   type NodeSupportDeliveryProgress,
   type NodeSupportIo,
 } from './ensure.js';
+import { nodeSupportBundleBytes } from './files.js';
 
 const loadCore = lazyImport(() => import('../core/index.js'));
 
