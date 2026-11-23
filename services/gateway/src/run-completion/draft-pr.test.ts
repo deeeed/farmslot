@@ -219,6 +219,30 @@ test('buildDraftPrTitle drops a leading issue tag', () => {
   });
   assert.equal(buildDraftPrTitle(bug, ''), 'fix: iOS: show the banner');
   assert.equal(buildDraftPrTitle(feature, ''), 'feat: add a lockfile check');
+  assert.equal(
+    buildDraftPrTitle(
+      makeRun({
+        flowType: 'fix-bug',
+        ticketData: manualTicketData('[Bug]: Ledger: unable to swap'),
+      }),
+      '',
+    ),
+    'fix: ledger: unable to swap',
+  );
+  assert.equal(
+    buildDraftPrTitle(
+      makeRun({
+        flowType: 'dev',
+        ticketData: manualTicketData('[FEATURE]: Add a lockfile check'),
+      }),
+      '',
+    ),
+    'feat: add a lockfile check',
+  );
+  assert.equal(
+    buildDraftPrTitle(makeRun({ flowType: 'fix-bug', ticketData: manualTicketData('[Bug]:') }), ''),
+    '',
+  );
 });
 
 test('buildDraftPrTitle keeps a leading ticket key upper-case', () => {

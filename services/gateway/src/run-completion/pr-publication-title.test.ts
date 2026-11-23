@@ -69,4 +69,21 @@ test('lightweight completion keeps a conventional ticket title', async () => {
     2418,
   );
   assert.deepEqual(titles, ['fix: iOS: show the banner [gate]']);
+
+  titleSuffix = '';
+  titles.length = 0;
+  await updatePRTitle(
+    { ...run, flowType: 'fix-bug', ticketData: manualTicketData('[Bug]: Ledger: unable to swap') },
+    'fixture/repo',
+    2418,
+  );
+  assert.deepEqual(titles, ['fix: ledger: unable to swap']);
+
+  titles.length = 0;
+  await updatePRTitle(
+    { ...run, flowType: 'fix-bug', ticketData: manualTicketData('[Bug]:') },
+    'fixture/repo',
+    2418,
+  );
+  assert.deepEqual(titles, []);
 });

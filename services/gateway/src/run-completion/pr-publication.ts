@@ -16,6 +16,7 @@ import { loadProjectVars } from '../core/config.js';
 import { github } from '../integrations/github-client.js';
 import { formatPrTitleSuffix } from '../tasks/writer.js';
 
+import { stripIssueBracketTag } from './draft-pr.js';
 import { lowercaseLeadingTitleWord } from './pr-title.js';
 import { localPrBodyPathResidues } from './publication-artifacts.js';
 import { assertPublicationTextSafe, PublicationSecretError } from './publication-secrets.js';
@@ -320,9 +321,8 @@ export async function updatePRTitle(run: Run, ciRepo: string, prNumber: number):
       run.flowType === 'fix-bug' ? 'fix' : run.flowType === 'dev' ? 'feat' : 'chore';
     const scope = pv?.projectJson.ci?.default_scope || '';
     const scopePart = scope ? `(${scope})` : '';
-    const desc = lowercaseLeadingTitleWord(
-      rawTitle.replace(/^\[(?:bug|feature)\]\s*/i, ''),
-    ).replace(/\.$/, '');
+    const desc = lowercaseLeadingTitleWord(stripIssueBracketTag(rawTitle)).replace(/\.$/, '');
+    if (!desc) return;
     newTitle = `${commitType}${scopePart}: ${desc}${titleSuffix}`;
   }
   await assertPublicationTextSafe(newTitle);

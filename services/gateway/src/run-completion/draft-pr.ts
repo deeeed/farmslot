@@ -34,8 +34,9 @@ function inferDraftPrTitleScope(run: Run): string {
   return '';
 }
 
-function stripIssueBracketTag(title: string): string {
-  return title.replace(/^\[(?:bug|feature)\]\s*/i, '');
+// Same optional separator as the platform prefix above: colon, em dash, or hyphen.
+export function stripIssueBracketTag(title: string): string {
+  return title.replace(/^\[(?:bug|feature)\]\s*[:—-]?\s*/i, '');
 }
 
 function sanitizeDraftPrTitleDescription(rawTitle: string): string {
