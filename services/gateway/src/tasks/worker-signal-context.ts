@@ -3,6 +3,8 @@ import type { AgentContext, AgentRole, WorkerSignal } from '@farmslot/protocol';
 import { TERMINAL_AGENT_STATUSES, upsertAgentContext } from '../agents/contexts.js';
 import { getRun } from '../runs/store.js';
 
+import { signalFreshSince } from './worker-signals.js';
+
 export function signalIsNewerThanContext(signal: WorkerSignal, context: AgentContext): boolean {
   // An opaque identity is authoritative on first adoption. This is the
   // migration path for persisted contexts created before attempt IDs existed,
@@ -84,4 +86,15 @@ export async function applyRunningWorkerSignalToContext(
     },
   );
   return updated !== null && rearmingTerminalContext && match.role === 'review';
+}
+
+/**
+ * A recovered fix signal belongs to this pass: its own attempt, or one the worker reopened
+ * after it, by the watcher's own rule (TAT-4006 7721a02b).
+ */
+export function recoveredFixSignalMatches(signal: WorkerSignal, fixContext: AgentContext): boolean {
+  return fixContext.signalAttemptId
+    ? signal.attemptId === fixContext.signalAttemptId ||
+        signalIsNewerThanContext(signal, fixContext)
+    : signalFreshSince(signal, fixContext.attemptStartedAt ?? fixContext.startedAt);
 }
