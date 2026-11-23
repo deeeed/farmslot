@@ -949,20 +949,20 @@ export function resolveClaudeBinary(preferred?: string | null): string {
 }
 
 /**
- * The env every worker shell starts with: project `command_env` (with the
- * run's or slot's domain overlay) around WORKER_ENV_PREFIX. Dispatch wraps its
- * runner launch here and `slot check` its runner probes, so a probe resolves
- * node and the runner exactly as the launch does.
- */
-/**
  * agent-browser names its daemon after the session: a slot session lets terminal cleanup tell
  * this slot's daemon from the 'default' one workers on other slots share. Every tmux worker
- * shell (launch and parked-session reload) starts with it.
+ * shell (dispatch, parked reload, retained reactivation and runtime recovery) starts with it.
  */
 export function agentBrowserSessionExport(slotId: string): string {
   return `export AGENT_BROWSER_SESSION=${shellQuote(slotId)}`;
 }
 
+/**
+ * The env every worker shell starts with: project `command_env` (with the
+ * run's or slot's domain overlay) around WORKER_ENV_PREFIX. Dispatch wraps its
+ * runner launch here and `slot check` its runner probes, so a probe resolves
+ * node and the runner exactly as the launch does.
+ */
 export function wrapWorkerShellCommand(
   command: string,
   context: {

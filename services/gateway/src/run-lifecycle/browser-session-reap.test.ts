@@ -63,7 +63,10 @@ async function orphanDaemon(
   const socket = path.join(socketDir, `${session}.sock`);
   // A stopped daemon leaves its socket file behind.
   rmSync(socket, { force: true });
-  if (secondSession) rmSync(path.join(socketDir, `${secondSession}.sock`), { force: true });
+  const second = secondSession.includes('/')
+    ? secondSession
+    : secondSession && path.join(socketDir, `${secondSession}.sock`);
+  if (second) rmSync(second, { force: true });
   const pid = spawnSync(
     'sh',
     [
@@ -75,7 +78,7 @@ async function orphanDaemon(
       DAEMON,
       socket,
       port,
-      secondSession && path.join(socketDir, `${secondSession}.sock`),
+      second,
     ],
     { encoding: 'utf8' },
   ).stdout.trim();
@@ -156,3 +159,27 @@ test('a daemon listening on more than one session socket is not attributed', { s
   assert.equal(alive(ambiguous), true);
   spawnSync('kill', [ambiguous]);
 });
+
+test(
+  'two sockets with one session name in different directories are not attributed',
+  { skip },
+  async () => {
+    const otherDir = mkdtempSync('/tmp/abr-');
+    try {
+      const ambiguous = await orphanDaemon(
+        repo,
+        'tat4626-reconciled',
+        '',
+        path.join(otherDir, 'tat4626-reconciled.sock'),
+      );
+      assert.equal(
+        await reapSlotBrowserSession(vars, { includeSlotProfiles: true, stopSlotDaemons: true }),
+        null,
+      );
+      assert.equal(alive(ambiguous), true);
+      spawnSync('kill', [ambiguous]);
+    } finally {
+      rmSync(otherDir, { recursive: true, force: true });
+    }
+  },
+);

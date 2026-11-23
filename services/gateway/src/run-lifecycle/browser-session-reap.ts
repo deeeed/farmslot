@@ -96,14 +96,13 @@ export async function reapSlotBrowserSession(
   for (const line of sockets.split('\n')) {
     if (line.startsWith('p')) socketPid = line.slice(1);
     else if (line.startsWith('n') && !line.startsWith('n->') && line.endsWith('.sock'))
-      listening.set(
-        socketPid,
-        (listening.get(socketPid) ?? new Set()).add(path.posix.basename(line.slice(1), '.sock')),
-      );
+      listening.set(socketPid, (listening.get(socketPid) ?? new Set()).add(line.slice(1)));
   }
-  // One socket names the session; more than one is ambiguous and attributes nothing.
+  // One socket names the session; more than one (even with one basename) attributes nothing.
   const sessions = new Map(
-    [...listening].flatMap(([pid, names]) => (names.size === 1 ? [[pid, [...names][0]!]] : [])),
+    [...listening].flatMap(([pid, sockets]) =>
+      sockets.size === 1 ? [[pid, path.posix.basename([...sockets][0]!, '.sock')]] : [],
+    ),
   );
   const rows = parseProcessCensus(table);
   const cwds = new Map(parseLsofNames(cwdLines.join('\n')));
