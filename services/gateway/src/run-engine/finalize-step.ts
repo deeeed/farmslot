@@ -304,14 +304,18 @@ export async function executeFinalizeStep(
   // 2. Restore slot lifecycle — may be stuck in 'review-gate' if gateway crashed mid human-gate
   emitWithBroadcast('substep', {
     name: 'slot-lifecycle',
-    detail: noCodeDisposition ? 'Releasing slot (no-code)' : 'Holding slot for ci-watch',
+    detail: noCodeDisposition
+      ? 'Releasing slot (no-code)'
+      : artifactOnly
+        ? 'Leaving slot to its release (artifact-only)'
+        : 'Holding slot for ci-watch',
   });
   try {
     if (noCodeDisposition) {
       const { releaseCompletedRunSlot } = await import('../methods/run/lifecycle-control.js');
       await releaseCompletedRunSlot(current);
-    } else {
-      // COMPLETE may already have released an artifact-only run's slot; only an owned one is held.
+    } else if (!artifactOnly) {
+      // ci-watch never watches an artifact-only run (no PR); its skip defers the release.
       await markRunSlotHeld(current.slotId, current.id, 'ci-watch');
     }
     broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });

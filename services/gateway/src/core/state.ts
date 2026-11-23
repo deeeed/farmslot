@@ -648,6 +648,14 @@ export async function markSlotHeld(slotId: string, phase: HeldPhase): Promise<vo
 }
 
 /**
+ * Whether two reads of a nullable slot-row field name the same value. A missing key and null are
+ * the same: resets write `null`, a fleet refresh drops some empty keys and fills in others.
+ */
+export function sameSlotField(a: unknown, b: unknown): boolean {
+  return (a ?? null) === (b ?? null);
+}
+
+/**
  * Hold a slot only while `runId` still owns it. A slot its run already released (COMPLETE of an
  * artifact-only run) stays released: held by no run, every recovery would refuse it (2aecebfe).
  */
