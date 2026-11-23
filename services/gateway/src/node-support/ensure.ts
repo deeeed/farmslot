@@ -55,8 +55,8 @@ import {
 } from './activation.js';
 import {
   collectSupportFiles,
-  type NodeSupportFile,
   nodeSupportBundleBytes,
+  type NodeSupportFile,
   supportHash,
 } from './files.js';
 import { resolveNodeSupportPaths } from './paths.js';
