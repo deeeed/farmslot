@@ -128,3 +128,306 @@ test('expired release fence keeps a dirty eval checkout held until owner retry c
   );
   assert.equal(JSON.parse(await readFile(state.statusFile, 'utf8')).slots[0].lifecycle, 'held');
 });
+
+interface DeadFence {
+  instance?: string;
+  ownerStatus: 'done' | 'cancelled' | 'failed' | 'monitoring';
+  token?: string | null;
+  ageMs?: number;
+  census?: string | null | (() => Promise<string | null>);
+  ownerSlot?: string;
+  absentNode?: string | null;
+}
+
+/** A fence a previous gateway raised for this run's cleanup, read by the restarted gateway. */
+async function reconcileFence({
+  instance = 'previous-gateway',
+  ownerStatus,
+  token = `${state.RUN_CLEANUP_TOKEN_PREFIX}previous`,
+  ageMs = 0,
+  census = null,
+  ownerSlot = 'restart-slot',
+  absentNode = null,
+}: DeadFence) {
+  const owner = makeRun({ id: `owner-${ownerStatus}`, status: ownerStatus, slotId: ownerSlot });
+  await writeFile(
+    state.statusFile,
+    JSON.stringify({
+      slots: [
+        {
+          slot: 'restart-slot',
+          lifecycle: 'busy',
+          phase: 'releasing',
+          slot_epoch: 2,
+          current_run_id: owner.id,
+          releasing_since: new Date(Date.now() - ageMs).toISOString(),
+          release_gateway_instance: instance,
+          cleanup_release_token: token,
+        },
+      ],
+    }),
+  );
+  const retried: Array<Record<string, unknown> | null> = [];
+  const inspected: string[] = [];
+  const deps: Deps = {
+    listRuns: () => ({ runs: [owner] }),
+    loadFleetStatus: async () => ({
+      slots: [
+        {
+          slot: 'restart-slot',
+          lifecycle: 'busy',
+          phase: 'releasing',
+          slotEpoch: 2,
+          currentRunId: owner.id,
+        },
+      ],
+    }),
+    isTerminalTeardownInFlight: () => false,
+    readSlotField: state.readSlotField,
+    getRun: (id) => (id === owner.id ? owner : undefined),
+    updateRun: () => {},
+    resetSlot: state.resetSlot,
+    resetSlotIf: state.resetSlotIf,
+    updateSlotStatusIf: state.updateSlotStatusIf,
+    broadcast: () => {},
+    retryOccupiedRunSlot: async (slotId) => {
+      retried.push(await state.readSlotRow(slotId));
+      return false;
+    },
+    resumeInterruptedRecovery: () => {
+      throw new Error('Ordinary release has no workspace recovery journal');
+    },
+    absentExecutionNode: async () => absentNode,
+    releaseFenceBlocker: async (run) => {
+      inspected.push(run.id);
+      const row = await state.readSlotRow('restart-slot');
+      assert.equal(row?.phase, 'releasing', 'the census runs while the fence still stands');
+      return typeof census === 'function' ? census() : census;
+    },
+  };
+  await reconcileOrphanedSlots(deps);
+  return { owner, retried, inspected, row: await state.readSlotRow('restart-slot') };
+}
+
+for (const ownerStatus of ['done', 'failed'] as const) {
+  test(`a previous gateway’s ${ownerStatus}-run cleanup fence reopens after a clean census and is retried`, async () => {
+    const { owner, retried, inspected, row } = await reconcileFence({ ownerStatus });
+    assert.deepEqual(inspected, [owner.id]);
+    assert.equal(row?.lifecycle, 'held');
+    assert.equal(row?.phase, 'occupied');
+    assert.equal(row?.current_run_id, owner.id);
+    assert.equal(row?.slot_epoch, 2);
+    assert.equal(row?.cleanup_stop_unconfirmed ?? null, null, 'the retry re-runs the stops itself');
+    assert.equal(row?.releasing_since ?? null, null);
+    assert.equal(row?.cleanup_release_token ?? null, null);
+    assert.equal(retried.length, 1, 'the same terminal cleanup is retried, not a full release');
+    assert.equal(retried[0]?.lifecycle, 'held');
+  });
+}
+
+test('a process still live in the checkout keeps the interrupted cleanup fenced', async () => {
+  const { retried, row } = await reconcileFence({
+    ownerStatus: 'done',
+    census: 'Process 4242 still uses the slot repository; slot teardown was skipped',
+  });
+  assert.equal(row?.phase, 'releasing');
+  assert.equal(row?.release_gateway_instance, 'previous-gateway');
+  assert.deepEqual(retried, []);
+});
+
+test('fences whose intent or quiescence is unproven keep the wait and the backstop', async () => {
+  for (const fence of [
+    { instance: state.currentReleaseGatewayInstance(), ownerStatus: 'done' },
+    { ownerStatus: 'monitoring' },
+    { ownerStatus: 'cancelled' },
+    { ownerStatus: 'done', token: null },
+    { ownerStatus: 'done', token: 'release-retry-token' },
+  ] satisfies DeadFence[]) {
+    const { retried, inspected, row } = await reconcileFence(fence);
+    assert.equal(row?.phase, 'releasing', JSON.stringify(fence));
+    assert.deepEqual([retried, inspected], [[], []], JSON.stringify(fence));
+  }
+  const expired = await reconcileFence({
+    ownerStatus: 'done',
+    ageMs: STALE_RELEASE_RECLAIM_MS + 1,
+  });
+  assert.equal(expired.row?.lifecycle, 'held');
+  assert.equal(expired.row?.cleanup_stop_unconfirmed, true, 'an expired fence takes the backstop');
+  assert.deepEqual(expired.retried, []);
+});
+
+test('a terminal run’s own cleanup fence carries the run-cleanup token recovery recognises', async () => {
+  const owner = makeRun({ id: 'fenced-owner', status: 'done', slotId: 'fence-writer' });
+  await writeFile(
+    state.statusFile,
+    JSON.stringify({
+      slots: [
+        {
+          slot: 'fence-writer',
+          lifecycle: 'busy',
+          phase: 'working',
+          slot_epoch: 3,
+          current_run_id: owner.id,
+        },
+      ],
+    }),
+  );
+  const { fenceRunSlotCleanup } = await import('../run-lifecycle/slot-teardown.js');
+  const fence = await fenceRunSlotCleanup(owner, null);
+  const row = await state.readSlotRow('fence-writer');
+  assert.equal(row?.phase, 'releasing');
+  assert.equal(row?.cleanup_release_token, fence.token);
+  assert.ok(String(fence.token).startsWith(state.RUN_CLEANUP_TOKEN_PREFIX));
+  assert.equal(row?.release_gateway_instance, state.currentReleaseGatewayInstance());
+});
+
+test('an offline node or a failed census defers only that slot, leaving its fence', async () => {
+  for (const fence of [
+    { ownerStatus: 'done', absentNode: 'ri-node' },
+    {
+      ownerStatus: 'done',
+      census: async () => {
+        throw new Error('No node connected for machine ri-node');
+      },
+    },
+  ] satisfies DeadFence[]) {
+    const { retried, row } = await reconcileFence(fence);
+    assert.equal(row?.phase, 'releasing');
+    assert.equal(row?.release_gateway_instance, 'previous-gateway');
+    assert.deepEqual(retried, []);
+  }
+});
+
+test('an owner bound to another slot and a census that outlasts the bound reopen nothing', async (t) => {
+  const moved = await reconcileFence({ ownerStatus: 'done', ownerSlot: 'other-slot' });
+  assert.equal(moved.row?.phase, 'releasing');
+  assert.deepEqual([moved.retried, moved.inspected], [[], []]);
+
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  t.after(() => t.mock.timers.reset());
+  const late = await reconcileFence({
+    ownerStatus: 'done',
+    ageMs: STALE_RELEASE_RECLAIM_MS - 1_000,
+    census: async () => {
+      t.mock.timers.tick(2_000);
+      return null;
+    },
+  });
+  assert.equal(late.row?.phase, 'releasing', 'the next pass gives it to the backstop');
+  assert.deepEqual(late.retried, []);
+});
+
+test('a deferred slot does not stop the pass, and a rebound owner is never reopened', async () => {
+  const runs = new Map(
+    ['offline', 'healthy', 'rebound'].map((name) => [
+      name,
+      makeRun({ id: `owner-${name}`, status: 'done', slotId: `${name}-slot` }),
+    ]),
+  );
+  const fence = (name: string) => ({
+    slot: `${name}-slot`,
+    lifecycle: 'busy',
+    phase: 'releasing',
+    slot_epoch: 1,
+    current_run_id: `owner-${name}`,
+    releasing_since: new Date().toISOString(),
+    release_gateway_instance: 'previous-gateway',
+    cleanup_release_token: `${state.RUN_CLEANUP_TOKEN_PREFIX}${name}`,
+  });
+  await writeFile(state.statusFile, JSON.stringify({ slots: [...runs.keys()].map(fence) }));
+  const retried: string[] = [];
+  const deps: Deps = {
+    listRuns: () => ({ runs: [...runs.values()] }),
+    loadFleetStatus: async () => ({
+      slots: [...runs.keys()].map((name) => ({
+        slot: `${name}-slot`,
+        lifecycle: 'busy',
+        phase: 'releasing',
+        slotEpoch: 1,
+        currentRunId: `owner-${name}`,
+      })),
+    }),
+    isTerminalTeardownInFlight: () => false,
+    readSlotField: state.readSlotField,
+    getRun: (id) => [...runs.values()].find((run) => run.id === id),
+    updateRun: () => {},
+    resetSlot: state.resetSlot,
+    resetSlotIf: state.resetSlotIf,
+    updateSlotStatusIf: state.updateSlotStatusIf,
+    broadcast: () => {},
+    retryOccupiedRunSlot: async (slotId) => {
+      retried.push(slotId);
+      return false;
+    },
+    resumeInterruptedRecovery: () => {
+      throw new Error('Ordinary release has no workspace recovery journal');
+    },
+    absentExecutionNode: async (slotId) => {
+      // A find-slot replay rebinds this owner while the pass waits on the node check.
+      if (slotId === 'rebound-slot') runs.get('rebound')!.slotId = 'elsewhere';
+      return slotId === 'offline-slot' ? 'ri-node' : null;
+    },
+    releaseFenceBlocker: async () => null,
+  };
+  await reconcileOrphanedSlots(deps);
+  assert.deepEqual(retried, ['healthy-slot']);
+  for (const name of ['offline', 'rebound'])
+    assert.equal((await state.readSlotRow(`${name}-slot`))?.phase, 'releasing', name);
+});
+
+test('a fence still carrying an unconfirmed cleanup stop keeps its truthful hold path', async () => {
+  const owner = makeRun({ id: 'owner-unconfirmed', status: 'done', slotId: 'restart-slot' });
+  await writeFile(
+    state.statusFile,
+    JSON.stringify({
+      slots: [
+        {
+          slot: 'restart-slot',
+          lifecycle: 'busy',
+          phase: 'releasing',
+          slot_epoch: 2,
+          current_run_id: owner.id,
+          releasing_since: new Date().toISOString(),
+          release_gateway_instance: 'previous-gateway',
+          cleanup_release_token: `${state.RUN_CLEANUP_TOKEN_PREFIX}unconfirmed`,
+          cleanup_stop_unconfirmed: true,
+        },
+      ],
+    }),
+  );
+  const retried: string[] = [];
+  await reconcileOrphanedSlots({
+    listRuns: () => ({ runs: [owner] }),
+    loadFleetStatus: async () => ({
+      slots: [
+        {
+          slot: 'restart-slot',
+          lifecycle: 'busy',
+          phase: 'releasing',
+          slotEpoch: 2,
+          currentRunId: owner.id,
+        },
+      ],
+    }),
+    isTerminalTeardownInFlight: () => false,
+    readSlotField: state.readSlotField,
+    getRun: (id) => (id === owner.id ? owner : undefined),
+    updateRun: () => {},
+    resetSlot: state.resetSlot,
+    resetSlotIf: state.resetSlotIf,
+    updateSlotStatusIf: state.updateSlotStatusIf,
+    broadcast: () => {},
+    retryOccupiedRunSlot: async (slotId) => {
+      retried.push(slotId);
+      return false;
+    },
+    resumeInterruptedRecovery: () => {
+      throw new Error('Ordinary release has no workspace recovery journal');
+    },
+    absentExecutionNode: async () => null,
+    releaseFenceBlocker: async () => null,
+  });
+  const row = await state.readSlotRow('restart-slot');
+  assert.equal(row?.phase, 'releasing', 'the backstop writes its truthful hold later');
+  assert.deepEqual(retried, []);
+});
