@@ -297,14 +297,14 @@ export async function slotReadFileIfExists(
   }
 }
 
+/** Machines whose batch read failed once already: the fallback is logged once per machine. */
+const batchFallbackWarned = new Set<string>();
+
 /**
  * The same locality, holding the files a read is about to ask for, fetched in one node request.
  * Only content and absence are held: a file that fails to read, every file on a node that does
  * not declare `batchReads`, and every local file are read one by one as before.
  */
-/** Machines whose batch read failed once already: the fallback is logged once per machine. */
-const batchFallbackWarned = new Set<string>();
-
 export async function slotPrefetchFiles<T extends SlotLocality>(
   ctx: T,
   filePaths: readonly string[],
