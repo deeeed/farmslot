@@ -16,6 +16,7 @@ import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 
 import { ensureWorkerContinuationReady } from './continuation-ready.js';
 import {
+  agentBrowserSessionExport,
   buildLaunchCommand,
   buildRunnerSessionReloadCommand,
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
@@ -287,7 +288,7 @@ async function relaunchRunnerWithArgvPrompt(
     await respawnTmuxWindowWithCommand(
       options.vars,
       owningWindowId,
-      `${WORKER_ENV_PREFIX} && ${launchCommand}`,
+      `${WORKER_ENV_PREFIX} && ${agentBrowserSessionExport(options.vars.slotId)} && ${launchCommand}`,
       { preserveWindowAfterExit: true, beforeRespawn: options.onPromptMutationStart },
     );
   } catch (error) {
@@ -464,7 +465,7 @@ async function reactivateRunnerSessionWithPrompt(
       };
     }
     await ensureNodeSupportBundle(options.vars, runtimeDir);
-    const command = `${WORKER_ENV_PREFIX} && ${buildRunnerSessionReloadCommand(
+    const command = `${WORKER_ENV_PREFIX} && ${agentBrowserSessionExport(options.vars.slotId)} && ${buildRunnerSessionReloadCommand(
       options.vars,
       runner,
       options.model,

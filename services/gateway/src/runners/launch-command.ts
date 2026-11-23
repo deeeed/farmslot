@@ -949,6 +949,15 @@ export function resolveClaudeBinary(preferred?: string | null): string {
 }
 
 /**
+ * agent-browser names its daemon after the session: a slot session lets terminal cleanup tell
+ * this slot's daemon from the 'default' one workers on other slots share. Every tmux worker
+ * shell (dispatch, parked reload, retained reactivation and runtime recovery) starts with it.
+ */
+export function agentBrowserSessionExport(slotId: string): string {
+  return `export AGENT_BROWSER_SESSION=${shellQuote(slotId)}`;
+}
+
+/**
  * The env every worker shell starts with: project `command_env` (with the
  * run's or slot's domain overlay) around WORKER_ENV_PREFIX. Dispatch wraps its
  * runner launch here and `slot check` its runner probes, so a probe resolves
@@ -966,12 +975,16 @@ export function wrapWorkerShellCommand(
   },
 ): string {
   const domain = resolveEffectiveDomain(context.runDomain, context.vars.domain);
-  return applyProjectCommandEnv(context.projectJson, `${WORKER_ENV_PREFIX} && ${command}`, {
-    ...(domain ? { domain } : {}),
-    ...(context.taskLibraries ? { taskLibraries: context.taskLibraries } : {}),
-    expandDomainValue: (value) =>
-      expandTemplate(value, context.vars, context.projectVars, { domain: domain ?? '' }),
-  });
+  return applyProjectCommandEnv(
+    context.projectJson,
+    `${WORKER_ENV_PREFIX} && ${agentBrowserSessionExport(context.vars.slotId)} && ${command}`,
+    {
+      ...(domain ? { domain } : {}),
+      ...(context.taskLibraries ? { taskLibraries: context.taskLibraries } : {}),
+      expandDomainValue: (value) =>
+        expandTemplate(value, context.vars, context.projectVars, { domain: domain ?? '' }),
+    },
+  );
 }
 
 /**
