@@ -15,6 +15,7 @@ import {
   fsIsFile,
   fsList,
   fsRead,
+  fsReadFiles,
   fsReadText,
   fsStat,
   fsWrite,
@@ -322,4 +323,29 @@ test('fsIsFile answers as [ -f ] did', async (t) => {
   for (const relPath of ['dir', 'missing.json', 'install.json/inner']) {
     assert.deepEqual(await fsIsFile({ root, relPath }), { isFile: false }, relPath);
   }
+});
+
+test('fsReadFiles answers each file in order: content, missing, or its own read error', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-node-fs-batch-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(path.join(root, 'a.md'), 'alpha', 'utf-8');
+  await symlink(path.join(root, 'a.md'), path.join(root, 'link.md'));
+
+  const result = await fsReadFiles({
+    files: [
+      { root, relPath: 'a.md' },
+      { root, relPath: 'missing.json' },
+      { root, relPath: 'link.md' },
+      { root, relPath: '../escape' },
+    ],
+  });
+  assert.deepEqual(result.files.slice(0, 2), [{ content: 'alpha' }, { missing: true }]);
+  await assert.rejects(fsRead({ root, relPath: 'link.md' }), (error: Error) => {
+    assert.deepEqual(result.files[2], { error: error.message });
+    return true;
+  });
+  await assert.rejects(fsRead({ root, relPath: '../escape' }), (error: Error) => {
+    assert.deepEqual(result.files[3], { error: error.message });
+    return true;
+  });
 });

@@ -83,8 +83,14 @@ export class AcceptanceReadError extends Error {
   }
 }
 
-function handoffPathFor(taskDir: string): string {
+/** Absolute path of the handoff whose criteria a task registered. */
+export function acceptanceHandoffPathFor(taskDir: string): string {
   return path.posix.join(taskDir, 'inputs', 'handoff.json');
+}
+
+/** Absolute path of the registered criteria projection beside the handoff. */
+export function acceptanceRegistrationPathFor(taskDir: string): string {
+  return path.posix.join(taskDir, ACCEPTANCE_REGISTRATION_INPUT);
 }
 
 /**
@@ -99,7 +105,7 @@ export async function readHandoffAcceptanceCriteria(
   ctx: SlotLocality,
   taskDir: string,
 ): Promise<AcceptanceCriterionRef[]> {
-  const handoffPath = handoffPathFor(taskDir);
+  const handoffPath = acceptanceHandoffPathFor(taskDir);
   let text: string | null;
   try {
     text = await slotReadFileIfExists(ctx, handoffPath);
@@ -129,7 +135,7 @@ export async function readHandoffAcceptanceCriteria(
       `invalid ${handoffPath}: task.acceptanceCriteria must be an array`,
     );
   }
-  const projectionPath = path.posix.join(taskDir, ACCEPTANCE_REGISTRATION_INPUT);
+  const projectionPath = acceptanceRegistrationPathFor(taskDir);
   const projectionText = await slotReadFileIfExists(ctx, projectionPath);
   if (projectionText === null) {
     if (

@@ -1,0 +1,1 @@
+- The node answers `fs.readFiles`: several files in one request, each with its content, `missing`, or its own read error. It declares this as the `batchReads` observation capability.
