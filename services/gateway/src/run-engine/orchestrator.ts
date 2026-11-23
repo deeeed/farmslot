@@ -1824,13 +1824,8 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
       );
     },
     releaseFenceBlocker: async (run, slotId) => {
-      const current = getRun(run.id);
-      if (current?.slotId !== slotId)
-        return `run ${run.id.slice(0, 8)} is no longer bound to ${slotId}`;
-      const { slotTeardownBlocker } = await import('../run-lifecycle/slot-teardown.js');
-      // A snapshot: the store mutates the live record, and the census rereads slotId across
-      // its awaits. Every probe stays on the slot whose fence this pass inspects.
-      return slotTeardownBlocker({ ...current, slotId }, { inspectReleaseFence: true });
+      const { releaseFenceCensus } = await import('./release-fence-census.js');
+      return releaseFenceCensus(run, slotId);
     },
     quarantineLeakedRun,
     stopRunOwnedWorkers: async (run) => {
