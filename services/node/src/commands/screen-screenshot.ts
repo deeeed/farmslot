@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -157,7 +158,7 @@ export async function screenshotForSlot(params: Record<string, unknown>): Promis
     // `simctl io` on a simulator that is not booted hangs instead of failing.
     if (!(await simulatorBooted(simName)))
       throw new Error(`iOS simulator ${simName} is not booted`);
-    const tmp = resolve(tmpdir(), `farmslot-thumb-sim-${Date.now()}.png`);
+    const tmp = resolve(tmpdir(), `farmslot-thumb-sim-${Date.now()}-${randomUUID()}.png`);
     try {
       await run('xcrun', ['simctl', 'io', simName, 'screenshot', '--type=png', tmp], {
         timeout: 10_000,
@@ -172,7 +173,7 @@ export async function screenshotForSlot(params: Record<string, unknown>): Promis
 
   // Resize with sips (macOS) if needed
   if (process.platform === 'darwin' && maxWidth > 0) {
-    const tmp = resolve(tmpdir(), `farmslot-thumb-resize-${Date.now()}.png`);
+    const tmp = resolve(tmpdir(), `farmslot-thumb-resize-${Date.now()}-${randomUUID()}.png`);
     try {
       await writeFile(tmp, pngBuf);
       await run('sips', ['-Z', String(maxWidth), tmp, '--out', tmp], { timeout: 5_000 });

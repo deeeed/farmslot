@@ -378,14 +378,17 @@ function ensureOnce(
         let ahead: Delivery | undefined = upload;
         while (ahead) {
           delivery.progress = ahead.progress;
-          await settledOrExpired(ahead);
-          // Slots that were waiting together: the first to get here takes
-          // over as the machine's upload and the rest wait on it in turn.
+          const published = await settledOrExpired(ahead);
+          // Waiting does not use up this slot's own deadline.
+          delivery.deadlineAt = Date.now() + deadlineMs;
+          // A published bundle: this slot only verifies and repoints, alongside
+          // the others. An upload that failed or expired: the first slot to get
+          // here takes over as the machine's upload and the rest wait on it.
+          if (published) break;
           ahead = current(machinePublishes.get(machineKey));
           if (!ahead) machinePublishes.set(machineKey, delivery);
         }
         delivery.progress = progress;
-        delivery.deadlineAt = Date.now() + deadlineMs;
       }
       return await ensureNodeSupportBundle(vars, projectVars.runtimeDir ?? '.agent', {
         projectVars,
@@ -418,23 +421,26 @@ function current(delivery: Delivery | undefined): Delivery | undefined {
   return undefined;
 }
 
-/** Wait for another slot's upload to settle, at most until that upload's deadline. */
-async function settledOrExpired(upload: Delivery): Promise<void> {
+/**
+ * Wait for another slot's upload to settle, at most until that upload's
+ * deadline. True when it published the bundle.
+ */
+async function settledOrExpired(upload: Delivery): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const expired = new Promise<void>((resolve) => {
+  const expired = new Promise<boolean>((resolve) => {
     timer = setTimeout(
       () => {
         forgetDelivery(upload);
-        resolve();
+        resolve(false);
       },
       Math.max(0, upload.deadlineAt - Date.now()),
     );
   });
   try {
-    await Promise.race([
+    return await Promise.race([
       upload.promise.then(
-        () => undefined,
-        () => undefined,
+        () => true,
+        () => false,
       ),
       expired,
     ]);
