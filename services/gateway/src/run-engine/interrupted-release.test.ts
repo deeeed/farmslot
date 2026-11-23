@@ -134,7 +134,9 @@ interface DeadFence {
   ownerStatus: 'done' | 'cancelled' | 'failed' | 'monitoring';
   token?: string | null;
   ageMs?: number;
-  census?: string | null;
+  census?: string | null | (() => Promise<string | null>);
+  ownerSlot?: string;
+  absentNode?: string | null;
 }
 
 /** A fence a previous gateway raised for this run's cleanup, read by the restarted gateway. */
@@ -144,12 +146,10 @@ async function reconcileFence({
   token = `${state.RUN_CLEANUP_TOKEN_PREFIX}previous`,
   ageMs = 0,
   census = null,
+  ownerSlot = 'restart-slot',
+  absentNode = null,
 }: DeadFence) {
-  const owner = makeRun({
-    id: `owner-${ownerStatus}`,
-    status: ownerStatus,
-    slotId: 'restart-slot',
-  });
+  const owner = makeRun({ id: `owner-${ownerStatus}`, status: ownerStatus, slotId: ownerSlot });
   await writeFile(
     state.statusFile,
     JSON.stringify({
@@ -197,12 +197,12 @@ async function reconcileFence({
     resumeInterruptedRecovery: () => {
       throw new Error('Ordinary release has no workspace recovery journal');
     },
-    absentExecutionNode: async () => null,
+    absentExecutionNode: async () => absentNode,
     releaseFenceBlocker: async (run) => {
       inspected.push(run.id);
       const row = await state.readSlotRow('restart-slot');
       assert.equal(row?.phase, 'releasing', 'the census runs while the fence still stands');
-      return census;
+      return typeof census === 'function' ? census() : census;
     },
   };
   await reconcileOrphanedSlots(deps);
@@ -279,4 +279,40 @@ test('a terminal run’s own cleanup fence carries the run-cleanup token recover
   assert.equal(row?.cleanup_release_token, fence.token);
   assert.ok(String(fence.token).startsWith(state.RUN_CLEANUP_TOKEN_PREFIX));
   assert.equal(row?.release_gateway_instance, state.currentReleaseGatewayInstance());
+});
+
+test('an offline node or a failed census defers only that slot, leaving its fence', async () => {
+  for (const fence of [
+    { ownerStatus: 'done', absentNode: 'ri-node' },
+    {
+      ownerStatus: 'done',
+      census: async () => {
+        throw new Error('No node connected for machine ri-node');
+      },
+    },
+  ] satisfies DeadFence[]) {
+    const { retried, row } = await reconcileFence(fence);
+    assert.equal(row?.phase, 'releasing');
+    assert.equal(row?.release_gateway_instance, 'previous-gateway');
+    assert.deepEqual(retried, []);
+  }
+});
+
+test('an owner bound to another slot and a census that outlasts the bound reopen nothing', async (t) => {
+  const moved = await reconcileFence({ ownerStatus: 'done', ownerSlot: 'other-slot' });
+  assert.equal(moved.row?.phase, 'releasing');
+  assert.deepEqual([moved.retried, moved.inspected], [[], []]);
+
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  t.after(() => t.mock.timers.reset());
+  const late = await reconcileFence({
+    ownerStatus: 'done',
+    ageMs: STALE_RELEASE_RECLAIM_MS - 1_000,
+    census: async () => {
+      t.mock.timers.tick(2_000);
+      return null;
+    },
+  });
+  assert.equal(late.row?.phase, 'releasing', 'the next pass gives it to the backstop');
+  assert.deepEqual(late.retried, []);
 });

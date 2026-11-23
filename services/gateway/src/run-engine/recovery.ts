@@ -1623,10 +1623,20 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
         typeof token === 'string' &&
         token.startsWith(RUN_CLEANUP_TOKEN_PREFIX) &&
         owner &&
+        owner.slotId === slot.slot &&
         (owner.status === 'done' || owner.status === 'failed') &&
         owner.transport !== 'native'
       ) {
-        const blocker = await deps.releaseFenceBlocker(owner);
+        // An absent node or a failed census defers this slot alone, never the whole pass.
+        const census = deps.releaseFenceBlocker;
+        const blocker =
+          (await deps
+            .absentExecutionNode?.(slot.slot)
+            .then((node) => (node ? `node ${node} is not connected` : null))) ??
+          (await census(owner).catch(
+            (error: unknown) =>
+              `release fence census failed: ${error instanceof Error ? error.message : String(error)}`,
+          ));
         if (blocker) {
           console.log(
             `[run-engine] reconcile: ${slot.slot} interrupted run cleanup stays fenced: ${blocker}`,
@@ -1640,6 +1650,9 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
             row[SLOT_RELEASING_SINCE] === observedSince &&
             row[SLOT_RELEASE_GATEWAY_INSTANCE] === instance &&
             row.cleanup_release_token === token &&
+            // A census that outlasted the bound leaves the fence to the backstop.
+            (releasingFenceAgeMs(row[SLOT_RELEASING_SINCE], Date.now()) ?? Infinity) <
+              STALE_RELEASE_RECLAIM_MS &&
             (row.current_run_id ?? row.cleanup_run_id ?? null) === owner.id &&
             (Number(row.slot_epoch) || 0) === (slot.slotEpoch ?? 0) &&
             !row.handoff_run_id &&
