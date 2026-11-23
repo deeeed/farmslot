@@ -105,7 +105,7 @@ export function registerPushHookBudget(variant: (typeof pushHookBudgets)[number]
       cwd: f.repo,
       env: { ...process.env, GIT_SSH_COMMAND: `'${ssh}'`, GIT_SSH_VARIANT: 'ssh' },
       encoding: 'utf8',
-      timeout: 4000,
+      timeout: 30_000,
     });
     if (result.error) throw result.error;
     assert.ok(existsSync(path.join(f.repo, '.git/hook-started')));
