@@ -65,8 +65,7 @@ const parentPort = {
 // A worker thread died with its node; a process must not outlive it. If the channel drops
 // before the result went out, the node or gateway is gone: stop this task's groups and exit.
 const ownedGroups = new Set();
-process.on('disconnect', () => {
-  if (delivered) return;
+const abandon = () => {
   for (const pid of ownedGroups) {
     try {
       process.kill(-pid, 'SIGTERM');
@@ -76,7 +75,13 @@ process.on('disconnect', () => {
     }
   }
   process.exit(1);
+};
+process.on('disconnect', () => {
+  if (!delivered) abandon();
 });
+// A send that fails because the node is gone must still stop the task's groups.
+process.on('error', abandon);
+process.on('SIGTERM', abandon);
 const { createRequire } = require('node:module');
 const { pathToFileURL } = require('node:url');
 const path = require('node:path');
@@ -221,10 +226,17 @@ export async function runTaskRuntime(
         taskProcess,
         JSON.stringify({ action: request.action, taskPath: request.taskPath, packageRoot }),
       ],
-      { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] },
+      // Its own process group: a forced end reaches what it runs synchronously or backgrounds
+      // untracked, and stopping the node job does not kill it before its own cleanup runs.
+      { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'], detached: true },
     );
     const killTask = () => {
-      if (task.exitCode === null && task.signalCode === null) task.kill('SIGKILL');
+      if (task.exitCode !== null || task.signalCode !== null || !task.pid) return;
+      try {
+        process.kill(-task.pid, 'SIGKILL');
+      } catch (error) {
+        if (!isRecord(error) || error.code !== 'ESRCH') throw error;
+      }
     };
     const timeout = TASK_RUNTIME_TIMEOUT_MS[request.action];
     let result: ExecResult | undefined;
@@ -323,7 +335,7 @@ export async function runTaskRuntime(
       const finish = async () => {
         try {
           // A cancellation result confirms both the task process and its async child
-          // groups stopped. Synchronous library probes finish before the process exits.
+          // groups stopped. A forced end kills the task's own group, synchronous subprocesses included.
           while (stopped && children.size) {
             const groups = await new Promise<string>((done, fail) =>
               execFile('/bin/ps', ['-axo', 'pgid=,stat='], { timeout: 2000 }, (error, output) =>
