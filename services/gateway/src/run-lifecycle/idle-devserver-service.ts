@@ -5,7 +5,7 @@ import { expandTemplate } from '../core/hooks.js';
 import { activePrepareSlots } from '../core/native-worker-exclusion.js';
 import { reportSlotResourceLifecycle } from '../core/resource-lifecycle-log.js';
 import { slotRealpath } from '../core/slot-io.js';
-import { markSlotStatusIf, readSlotRow } from '../core/state.js';
+import { markSlotStatusIf, readSlotRow, sameSlotField } from '../core/state.js';
 import {
   resolveTmuxSession,
   shellQuote,
@@ -305,9 +305,9 @@ const idleDevServers = new IdleDevServerReaper({
         slotId,
         (row) =>
           row.slot_epoch === expected.slot_epoch &&
-          row.current_run_id === expected.current_run_id &&
+          sameSlotField(row.current_run_id, expected.current_run_id) &&
           row.phase !== 'releasing' &&
-          (row.handoff_run_id ?? null) === (expected.handoff_run_id ?? null) &&
+          sameSlotField(row.handoff_run_id, expected.handoff_run_id) &&
           (admit?.() ?? true),
         fields,
       )
