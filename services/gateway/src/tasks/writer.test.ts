@@ -1648,3 +1648,14 @@ test('with no project jira base url a key stays unlinked rather than inventing a
   assert.doesNotMatch(section, /\[TAT-4740\]\(/);
   assert.doesNotMatch(section, /https?:\/\//);
 });
+
+test('a manual backlog ref is not published as a Jira link', async (t) => {
+  // MANUAL-000124 matches the Jira key shape, so resolving identities from
+  // ticketOrPr alone would hand the worker a dead browse URL on any project with
+  // a Jira base, while TICKET_URL stays empty for the same run.
+  const section = await linkedTicketsSection(t, 'linked-manual', (run) => {
+    run.ticketOrPr = 'MANUAL-000124';
+    run.ticketData = { ...run.ticketData!, source: 'manual' };
+  });
+  assert.equal(section, '');
+});

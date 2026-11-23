@@ -1020,11 +1020,14 @@ export async function writeTaskFile(
   // Templates MUST use these generic names — NEVER hardcode JIRA/GITHUB_ISSUE.
   // This lets a future freeform/manual flow reuse the same template shape.
   const jiraBaseUrl: string = (projectVars.projectJson as any)?.jira?.base_url ?? '';
+  // One browse base for this project: TICKET_URL and the linked-ticket fallback
+  // below must not drift apart.
+  const jiraBrowseBase = jiraBaseUrl ? `${jiraBaseUrl.replace(/\/$/, '')}/browse/` : '';
   let ticketRef = run.ticketOrPr;
   let ticketUrl = '';
   if (ticket.jiraKey) {
     ticketRef = ticket.jiraKey;
-    ticketUrl = jiraBaseUrl ? `${jiraBaseUrl.replace(/\/$/, '')}/browse/${ticket.jiraKey}` : '';
+    ticketUrl = jiraBrowseBase ? `${jiraBrowseBase}${ticket.jiraKey}` : '';
   } else if (ticket.githubIssue) {
     ticketRef = ticket.githubIssue;
     const m = ticket.githubIssue.match(/^([^#]+)#(\d+)$/);
@@ -1157,12 +1160,22 @@ export async function writeTaskFile(
   // task document on any flow. The resolver derives a browse root from a recorded
   // URL, which a Jira dev run has none of, so the project's own base is the last
   // fallback. With no base the ref stays unlinked rather than inventing a host.
-  const browseBase = jiraBaseUrl ? `${jiraBaseUrl.replace(/\/$/, '')}/browse/` : '';
-  const linkedView = runLinkedTicketsView(run).tickets.map((entry) => {
-    const url = entry.url ?? (browseBase ? `${browseBase}${entry.ref}` : null);
-    const title = linked.find((t) => t.ref.toUpperCase() === entry.ref)?.title;
-    return `- ${url ? `[${entry.ref}](${url})` : entry.ref}${title ? ` — ${title}` : ''}`;
-  });
+  // A ref is a Jira ticket only when something says so: the fetched key, a
+  // recorded linked ticket, or an operator's addition. ticketOrPr alone is not
+  // enough — a backlog run's MANUAL-000124 matches the Jira key shape, and
+  // linking it would publish a dead browse URL while TICKET_URL stays empty for
+  // the same run.
+  const jiraKeys = new Set(
+    [ticket.jiraKey, ...linked.map((entry) => entry.ref), ...(run.linkedTicketRefs ?? [])].flatMap(
+      (value) => (value ? [value.toUpperCase()] : []),
+    ),
+  );
+  const linkedView = runLinkedTicketsView(run)
+    .tickets.filter((entry) => jiraKeys.has(entry.ref))
+    .map((entry) => {
+      const url = entry.url ?? (jiraBrowseBase ? `${jiraBrowseBase}${entry.ref}` : null);
+      return `- ${url ? `[${entry.ref}](${url})` : entry.ref}${entry.title ? ` — ${entry.title}` : ''}`;
+    });
   vars.LINKED_TICKETS = linkedView.length > 0 ? linkedView.join('\n') : '_No linked tickets_';
   vars.LINKED_DESCRIPTIONS =
     linked.length > 0

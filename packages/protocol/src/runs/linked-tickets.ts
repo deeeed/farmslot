@@ -46,6 +46,8 @@ export function runLinkedTicketRefs(run: RunTicketSource): string[] {
 export interface LinkedRunTicketView {
   ref: string;
   url: string | null;
+  /** The recorded ticket's summary when this run fetched it, else null. */
+  title: string | null;
   operatorAdded: boolean;
 }
 export interface RunLinkedTicketsView {
@@ -67,13 +69,17 @@ export function runLinkedTicketsView(run: RunTicketSource): RunLinkedTicketsView
     .map((url) => url.match(/^(https?:\/\/[^?#]+\/browse\/)[A-Z][A-Z0-9]*-\d+(?:[?#].*)?$/i)?.[1])
     .find(Boolean);
   const pr = run.links?.find((link) => link.label === 'PR' && /^https?:\/\//.test(link.url));
-  const tickets = runLinkedTicketRefs(run).map((ref) => ({
-    ref,
-    url:
-      recorded.find((ticket) => ticket.ref.toUpperCase() === ref && /^https?:\/\//.test(ticket.url))
-        ?.url ?? (browseRoot ? `${browseRoot}${ref}` : null),
-    operatorAdded: operatorRefs.includes(ref),
-  }));
+  const tickets = runLinkedTicketRefs(run).map((ref) => {
+    const entry = recorded.find((ticket) => ticket.ref.toUpperCase() === ref);
+    return {
+      ref,
+      url:
+        (entry && /^https?:\/\//.test(entry.url) ? entry.url : undefined) ??
+        (browseRoot ? `${browseRoot}${ref}` : null),
+      title: entry?.title ?? null,
+      operatorAdded: operatorRefs.includes(ref),
+    };
+  });
   const sourcePr = parseGitHubRef(run.ticketOrPr) ?? parseGitHubPullUrl(run.ticketOrPr);
   const references: RunLinkedTicketsView['references'] = tickets.map(({ ref, url }) => ({
     ref,
