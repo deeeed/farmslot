@@ -389,6 +389,9 @@ export function currentReleaseGatewayInstance(): string {
 /** Automatic retries cannot confirm a command whose stop was not observed. */
 export const SLOT_CLEANUP_STOP_UNCONFIRMED = 'cleanup_stop_unconfirmed';
 
+/** Marks a terminal run's own cleanup fence (fenceRunSlotCleanup), apart from a release retry's. */
+export const RUN_CLEANUP_TOKEN_PREFIX = 'run-cleanup:';
+
 /** The releasing fence, stamped so a stalled one can be told from a live one. */
 export function slotReleasingFenceFields(now = new Date()): Record<string, unknown> {
   return {

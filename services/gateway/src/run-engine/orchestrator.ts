@@ -1823,6 +1823,10 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
         ),
       );
     },
+    releaseFenceBlocker: async (run, slotId) => {
+      const { releaseFenceCensus } = await import('./release-fence-census.js');
+      return releaseFenceCensus(run, slotId);
+    },
     quarantineLeakedRun,
     stopRunOwnedWorkers: async (run) => {
       const { stopRunOwnedTmuxWorkers } = await import('../runners/owned-stop.js');

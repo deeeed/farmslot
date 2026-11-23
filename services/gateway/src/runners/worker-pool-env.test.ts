@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -96,3 +96,31 @@ for (const scenario of ['pool-only', 'missing-pool', 'static-collision'] as cons
     }
   });
 }
+
+test('a tmux worker shell runs agent-browser in its slot session', () => {
+  const vars = makeVars();
+  const result = spawnSync(
+    '/bin/bash',
+    ['-c', wrapWorkerShellCommand('printf %s "$AGENT_BROWSER_SESSION"', { vars, projectJson: {} })],
+    { encoding: 'utf8', env: { PATH: process.env.PATH, AGENT_BROWSER_SESSION: 'default' } },
+  );
+  assert.equal(result.stdout, vars.slotId);
+});
+
+test('every tmux worker shell that starts from WORKER_ENV_PREFIX also exports the slot session', () => {
+  const src = fileURLToPath(new URL('../', import.meta.url));
+  const files = spawnSync('grep', ['-rl', '--include=*.ts', 'WORKER_ENV_PREFIX} && ', src], {
+    encoding: 'utf8',
+  })
+    .stdout.split('\n')
+    .filter((file) => file && !/\.(test|live)\.ts$/.test(file));
+  assert.ok(files.length >= 4, files.join(', '));
+  for (const file of files)
+    for (const line of readFileSync(file, 'utf8').split('\n'))
+      if (line.includes('WORKER_ENV_PREFIX} && '))
+        assert.match(
+          line,
+          /WORKER_ENV_PREFIX\} && \$\{agentBrowserSessionExport\(/,
+          `${file}: ${line.trim()}`,
+        );
+});
