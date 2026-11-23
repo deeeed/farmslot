@@ -25,7 +25,8 @@ for (const dir of [repo, other, path.dirname(bin)]) mkdirSync(dir, { recursive: 
 // A stand-in daemon: node under agent-browser's executable name, listening on `<session>.sock`.
 symlinkSync(process.execPath, bin);
 // argv: the session socket, then an optional TCP port (a daemon attached to the slot's CDP port).
-const DAEMON = `const net = require('node:net'); net.createServer().listen(process.argv[1]); if (process.argv[2]) net.createServer().listen(Number(process.argv[2]), '127.0.0.1'); setInterval(() => {}, 1e6)`;
+// argv: the session socket, an optional TCP port, then an optional second socket.
+const DAEMON = `const net = require('node:net'); net.createServer().listen(process.argv[1]); if (process.argv[2]) net.createServer().listen(Number(process.argv[2]), '127.0.0.1'); if (process.argv[3]) net.createServer().listen(process.argv[3]); setInterval(() => {}, 1e6)`;
 const CDP_PORT = '59547';
 
 const vars: SlotVars = {
@@ -53,20 +54,28 @@ const vars: SlotVars = {
 };
 
 /** A daemon the way agent-browser leaves one: detached (parent 1), cwd where it was started. */
-async function orphanDaemon(cwd: string, session: string, port = ''): Promise<string> {
+async function orphanDaemon(
+  cwd: string,
+  session: string,
+  port = '',
+  secondSession = '',
+): Promise<string> {
   const socket = path.join(socketDir, `${session}.sock`);
-  rmSync(socket, { force: true }); // A stopped daemon leaves its socket file behind.
+  // A stopped daemon leaves its socket file behind.
+  rmSync(socket, { force: true });
+  if (secondSession) rmSync(path.join(socketDir, `${secondSession}.sock`), { force: true });
   const pid = spawnSync(
     'sh',
     [
       '-c',
-      `cd "$1" && ("$2" -e "$3" "$4" "$5" </dev/null >/dev/null 2>&1 & echo $!)`,
+      `cd "$1" && ("$2" -e "$3" "$4" "$5" "$6" </dev/null >/dev/null 2>&1 & echo $!)`,
       'sh',
       cwd,
       bin,
       DAEMON,
       socket,
       port,
+      secondSession && path.join(socketDir, `${secondSession}.sock`),
     ],
     { encoding: 'utf8' },
   ).stdout.trim();
@@ -115,6 +124,7 @@ test(
     assert.equal(alive(named), false, 'a task-named session started in this checkout is stopped');
     assert.equal(alive(shared), true, 'the default session may serve workers on other slots');
     assert.equal(alive(namedElsewhere), true, 'a named session started outside the checkout stays');
+    spawnSync('kill', [shared, namedElsewhere]);
   },
 );
 
@@ -123,14 +133,26 @@ test(
   { skip },
   async () => {
     const slotSession = await orphanDaemon(repo, vars.slotId);
-    const named = await orphanDaemon(repo, 'tat4626-alternate');
-    // Prepare's clear, and a restart release that keeps its run alive.
+    // Attached to the slot's CDP port, which takes other detached helpers there.
+    const named = await orphanDaemon(repo, 'tat4626-alternate', CDP_PORT);
+    // Prepare's clear, and a release that has not proved its workers stopped.
     for (const opts of [{}, { includeSlotProfiles: true }])
       assert.equal(
-        await reapSlotBrowserSession({ ...vars, resourceVars: { cdp_port: '59543' } }, opts),
+        await reapSlotBrowserSession({ ...vars, resourceVars: { cdp_port: CDP_PORT } }, opts),
         null,
       );
     assert.equal(alive(slotSession), true);
     assert.equal(alive(named), true);
+    spawnSync('kill', [slotSession, named]);
   },
 );
+
+test('a daemon listening on more than one session socket is not attributed', { skip }, async () => {
+  const ambiguous = await orphanDaemon(repo, 'default', '', 'tat4626-config-before');
+  assert.equal(
+    await reapSlotBrowserSession(vars, { includeSlotProfiles: true, stopSlotDaemons: true }),
+    null,
+  );
+  assert.equal(alive(ambiguous), true);
+  spawnSync('kill', [ambiguous]);
+});

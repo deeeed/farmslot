@@ -940,14 +940,7 @@ async function slotReleaseImpl(
         return true;
       };
       await reap(() => cleanupSlotRunnerRuntimes(vars, { stillOwned }));
-      await reap(() =>
-        reapSlotBrowserSession(vars, {
-          stillOwned,
-          includeSlotProfiles: true,
-          // A restart release keeps its run alive; only a terminal or unowned slot loses daemons.
-          stopSlotDaemons: options?.restartRunId === undefined && (!boundOwner || ownerTerminal),
-        }),
-      );
+      await reap(() => reapSlotBrowserSession(vars, { stillOwned, includeSlotProfiles: true }));
       holdReason = reasons.join('; ') || null;
     }
     if (holdReason) {

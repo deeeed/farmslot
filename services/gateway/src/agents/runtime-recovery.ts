@@ -37,6 +37,7 @@ import { resolveDispatchSafetyTier } from '../methods/dispatch/safety-tier.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 import { assertRunNotArchiving } from '../run-lifecycle/archive-fence.js';
 import {
+  agentBrowserSessionExport,
   blindLaunchEnvironment,
   buildRunnerSessionReloadCommand,
   effectiveModelQuestionsForRun,
@@ -866,7 +867,7 @@ export async function restoreTmuxWorker(
         );
     }
     const blindTrialBoundary = blindTrialWorkerBoundary(run, selected.role);
-    const launchCommand = `${WORKER_ENV_PREFIX} && ${buildRunnerSessionReloadCommand(
+    const launchCommand = `${WORKER_ENV_PREFIX} && ${agentBrowserSessionExport(vars.slotId)} && ${buildRunnerSessionReloadCommand(
       vars,
       runner,
       selected.model ?? run.metrics.model,

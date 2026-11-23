@@ -91,13 +91,20 @@ export async function reapSlotBrowserSession(
       .split(',')
       .filter(Boolean),
   );
-  const sessions = new Map<string, string>();
+  const listening = new Map<string, Set<string>>();
   let socketPid = '';
   for (const line of sockets.split('\n')) {
     if (line.startsWith('p')) socketPid = line.slice(1);
     else if (line.startsWith('n') && !line.startsWith('n->') && line.endsWith('.sock'))
-      sessions.set(socketPid, path.posix.basename(line.slice(1), '.sock'));
+      listening.set(
+        socketPid,
+        (listening.get(socketPid) ?? new Set()).add(path.posix.basename(line.slice(1), '.sock')),
+      );
   }
+  // One socket names the session; more than one is ambiguous and attributes nothing.
+  const sessions = new Map(
+    [...listening].flatMap(([pid, names]) => (names.size === 1 ? [[pid, [...names][0]!]] : [])),
+  );
   const rows = parseProcessCensus(table);
   const cwds = new Map(parseLsofNames(cwdLines.join('\n')));
   const repos = [
@@ -121,7 +128,7 @@ export async function reapSlotBrowserSession(
     const daemon = agentBrowsers.has(row.pid);
     const session = sessions.get(row.pid);
     // 'default' is the one session other slots share; no rule here may stop it.
-    const shared = daemon && session === 'default';
+    const shared = session === 'default';
     const slotDaemon =
       opts.stopSlotDaemons &&
       daemon &&
@@ -131,13 +138,13 @@ export async function reapSlotBrowserSession(
       console.log(
         `[browser-session] ${vars.slotId}: kept agent-browser daemon ${row.pid} in the checkout; its session ${session ?? 'unknown'} may be shared`,
       );
+    // An agent-browser daemon is decided by its session alone, never by profile or CDP port.
+    if (daemon) return row.parent === '1' && Boolean(slotDaemon);
     return (
       row.parent === '1' &&
       !isTmuxProcess(row.command) &&
       (ownedProfile ||
-        slotDaemon ||
-        (!shared &&
-          (onPort.has(row.pid) || portArg?.test(row.command)) &&
+        ((onPort.has(row.pid) || portArg?.test(row.command)) &&
           (inRepo || repoArg.test(row.command))))
     );
   });
