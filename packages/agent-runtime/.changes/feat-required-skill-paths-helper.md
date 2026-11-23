@@ -1,0 +1,1 @@
+- `requiredSkillPaths(config, selection)` lists every checkout-relative file a required-skill selection needs — each skill's declared files, then its review pack. Task init's freeze and the gateway's prepare-time `required_skills_present` check both read it, so neither can require a file the other ignores.
