@@ -48,6 +48,11 @@ export interface LinkedRunTicketView {
   url: string | null;
   /** The recorded ticket's summary when this run fetched it, else null. */
   title: string | null;
+  /**
+   * True when the fetched key, a recorded linked ticket or an operator names this
+   * ref, as opposed to it only matching the Jira key shape of `ticketOrPr`.
+   */
+  named: boolean;
   operatorAdded: boolean;
 }
 export interface RunLinkedTicketsView {
@@ -69,6 +74,15 @@ export function runLinkedTicketsView(run: RunTicketSource): RunLinkedTicketsView
     .map((url) => url.match(/^(https?:\/\/[^?#]+\/browse\/)[A-Z][A-Z0-9]*-\d+(?:[?#].*)?$/i)?.[1])
     .find(Boolean);
   const pr = run.links?.find((link) => link.label === 'PR' && /^https?:\/\//.test(link.url));
+  // A ref is a ticket this run names only when the fetched key, a recorded
+  // linked ticket or an operator says so. `ticketOrPr` alone is not enough: a
+  // backlog run's MANUAL-000124 matches the Jira key shape, and treating it as a
+  // ticket publishes a dead browse URL. This is the one place that policy lives.
+  const named = new Set(
+    [run.ticketData?.jiraKey, ...recorded.map((ticket) => ticket.ref), ...operatorRefs].flatMap(
+      (value) => (value ? [value.toUpperCase()] : []),
+    ),
+  );
   const tickets = runLinkedTicketRefs(run).map((ref) => {
     const entry = recorded.find((ticket) => ticket.ref.toUpperCase() === ref);
     return {
@@ -76,7 +90,8 @@ export function runLinkedTicketsView(run: RunTicketSource): RunLinkedTicketsView
       url:
         (entry && /^https?:\/\//.test(entry.url) ? entry.url : undefined) ??
         (browseRoot ? `${browseRoot}${ref}` : null),
-      title: entry?.title ?? null,
+      title: entry?.title || null,
+      named: named.has(ref),
       operatorAdded: operatorRefs.includes(ref),
     };
   });

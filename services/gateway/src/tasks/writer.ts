@@ -1157,21 +1157,12 @@ export async function writeTaskFile(
   // ref, the recorded linked tickets and the operator's additions. Reading
   // ticket.linkedTickets alone missed both: only the PR-data path fills it, so dev
   // and fix-bug got no section, and operator refs live on the run and reached no
-  // task document on any flow. The resolver derives a browse root from a recorded
-  // URL, which a Jira dev run has none of, so the project's own base is the last
-  // fallback. With no base the ref stays unlinked rather than inventing a host.
-  // A ref is a Jira ticket only when something says so: the fetched key, a
-  // recorded linked ticket, or an operator's addition. ticketOrPr alone is not
-  // enough — a backlog run's MANUAL-000124 matches the Jira key shape, and
-  // linking it would publish a dead browse URL while TICKET_URL stays empty for
-  // the same run.
-  const jiraKeys = new Set(
-    [ticket.jiraKey, ...linked.map((entry) => entry.ref), ...(run.linkedTicketRefs ?? [])].flatMap(
-      (value) => (value ? [value.toUpperCase()] : []),
-    ),
-  );
+  // task document on any flow. The resolver answers both which refs this run
+  // names and where each one points, from a recorded ticket URL or the run's own
+  // Jira link; the project's browse base covers the case where it has neither,
+  // and with no base the ref stays unlinked rather than inventing a host.
   const linkedView = runLinkedTicketsView(run)
-    .tickets.filter((entry) => jiraKeys.has(entry.ref))
+    .tickets.filter((entry) => entry.named)
     .map((entry) => {
       const url = entry.url ?? (jiraBrowseBase ? `${jiraBrowseBase}${entry.ref}` : null);
       return `- ${url ? `[${entry.ref}](${url})` : entry.ref}${entry.title ? ` — ${entry.title}` : ''}`;

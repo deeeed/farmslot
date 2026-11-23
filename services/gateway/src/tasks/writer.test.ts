@@ -1659,3 +1659,82 @@ test('a manual backlog ref is not published as a Jira link', async (t) => {
   });
   assert.equal(section, '');
 });
+
+test('a key named by every source renders exactly once', async (t) => {
+  // assert.match would pass a rendering that repeated the key, so this one pins
+  // the whole section.
+  const section = await linkedTicketsSection(t, 'linked-dedupe', (run) => {
+    run.ticketOrPr = 'TAT-4752';
+    run.linkedTicketRefs = ['TAT-4752'];
+    run.ticketData = {
+      ...run.ticketData!,
+      source: 'jira',
+      jiraKey: 'TAT-4752',
+      linkedTickets: [
+        {
+          ref: 'TAT-4752',
+          url: 'https://jira.example.test/browse/TAT-4752',
+          title: 'Only once',
+          description: '',
+          source: 'jira',
+        },
+      ],
+    };
+  });
+  assert.equal(
+    section.trim(),
+    '- [TAT-4752](https://jira.example.test/browse/TAT-4752) — Only once',
+  );
+});
+
+test('a review-pr run renders exactly the recorded bullets', async (t) => {
+  // The PR-bound flows are the behaviour that must not move, so assert the whole
+  // section on the flow that actually populates linkedTickets, with one entry
+  // whose title is empty.
+  const section = await linkedTicketsSection(t, 'linked-review-pr', (run) => {
+    run.flowType = 'review-pr';
+    run.ticketOrPr = 'owner/repo#7';
+    run.ticketData = {
+      ...run.ticketData!,
+      source: 'both',
+      jiraKey: 'TAT-4752',
+      linkedTickets: [
+        {
+          ref: 'TAT-4752',
+          url: 'https://recorded.example.test/browse/TAT-4752',
+          title: 'Recorded title',
+          description: '',
+          source: 'jira',
+        },
+        {
+          ref: 'TAT-4740',
+          url: 'https://recorded.example.test/browse/TAT-4740',
+          title: '',
+          description: '',
+          source: 'jira',
+        },
+      ],
+    };
+  });
+  assert.equal(
+    section.trim(),
+    [
+      '- [TAT-4752](https://recorded.example.test/browse/TAT-4752) — Recorded title',
+      '- [TAT-4740](https://recorded.example.test/browse/TAT-4740)',
+    ].join('\n'),
+  );
+});
+
+test('a base url with a trailing slash does not double it', async (t) => {
+  const section = await linkedTicketsSection(
+    t,
+    'linked-trailing-slash',
+    (run) => {
+      run.ticketOrPr = 'TAT-4752';
+      run.ticketData = { ...run.ticketData!, source: 'jira', jiraKey: 'TAT-4752' };
+    },
+    'https://jira.example.test/',
+  );
+  assert.match(section, /\(https:\/\/jira\.example\.test\/browse\/TAT-4752\)/);
+  assert.doesNotMatch(section, /\/\/browse/);
+});
