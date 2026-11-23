@@ -1,9 +1,17 @@
 import path from 'node:path';
 
 import { DEFAULT_TASK_DIR } from '@farmslot/protocol';
+import { currentFarmPaths, legacyRemoteFarmPaths } from '@farmslot/protocol/node/farm-paths';
+import { reportedFarmPaths } from '@farmslot/slot-config';
 
 import { resolveProjectRuntimeDirName, resolveProjectTaskDirName } from '../core/config.js';
-import { execOnSlot, getProjectField, type RawProjectJson, type SlotVars } from '../core/index.js';
+import {
+  execOnSlot,
+  getProjectField,
+  isLocal,
+  type RawProjectJson,
+  type SlotVars,
+} from '../core/index.js';
 import { shellQuote } from '../core/tmux.js';
 import { flowDir } from '../intelligence/engine.js';
 
@@ -403,6 +411,16 @@ export function parseTaskScratchParkOutput(stdout: string): TaskScratchParkResul
   return result;
 }
 
+/** The slot machine's farm home: its path report, else this gateway's, else the legacy node default. */
+function slotFarmHome(vars: SlotVars): string {
+  return (
+    reportedFarmPaths(vars.machine)?.home ??
+    (isLocal(vars.host, vars.machine)
+      ? currentFarmPaths('gateway').home
+      : legacyRemoteFarmPaths(vars.machineEnv).home)
+  );
+}
+
 export async function parkTaskScratch(
   vars: SlotVars,
   projectJson: RawProjectJson,
@@ -411,7 +429,7 @@ export async function parkTaskScratch(
     repo: vars.remoteRepo,
     taskDirName: resolveProjectTaskDirName(projectJson),
     slotId: vars.slotId,
-    parkHome: '~/.farmslot-dev',
+    parkHome: slotFarmHome(vars),
   });
   const result = await execOnSlot(vars, command, {
     cwd: vars.remoteRepo,

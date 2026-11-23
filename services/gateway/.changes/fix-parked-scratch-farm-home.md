@@ -1,0 +1,1 @@
+- Release scratch parking resolves its `parked-scratch` root from the slot machine's farm home (its path report, this gateway's paths, or the legacy node default) instead of a hard-coded `~/.farmslot-dev`.
