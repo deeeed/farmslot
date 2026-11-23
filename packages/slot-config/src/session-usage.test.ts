@@ -157,6 +157,182 @@ test('Claude multi-block messages count once across serialized incremental windo
   assert.match(out, /cost_usd=0\.2053/);
 });
 
+test('a Claude session that switches models is priced per message', async (t) => {
+  const home = makeTmpDir();
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const sessionPath = path.join(home, 'session.jsonl');
+  const reply = (id: string, model: string) =>
+    JSON.stringify({
+      type: 'assistant',
+      message: { id, model, usage: { input_tokens: 1_000_000, output_tokens: 0 } },
+    });
+  writeFileSync(
+    sessionPath,
+    [reply('m1', 'claude-haiku-5-5'), reply('m2', 'claude-opus-5-5')].join('\n') + '\n',
+  );
+  const out = await runSessionUsage({
+    repo: home,
+    slotId: 'fixture',
+    action: 'total',
+    forcedPath: sessionPath,
+    forcedRunner: 'claude',
+  });
+  // 1M Haiku 5.5 input at $0.10 plus 1M Opus 5.5 input at $4, not 2M at the first model's rate.
+  assert.match(out, /cost_usd=4\.1000/);
+});
+
+test('a windowed Claude session prices output and cache per message, once per id, and a model-less message at the last model', async (t) => {
+  const home = makeTmpDir();
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const sessionPath = path.join(home, 'session.jsonl');
+  const M = 1_000_000;
+  const record = (id: string, timestamp: string, usage: Record<string, number>, model?: string) =>
+    JSON.stringify({
+      type: 'assistant',
+      timestamp,
+      message: { id, ...(model ? { model } : {}), usage },
+    });
+  const all = {
+    input_tokens: M,
+    output_tokens: M,
+    cache_creation_input_tokens: M,
+    cache_read_input_tokens: M,
+  };
+  writeFileSync(
+    sessionPath,
+    [
+      // Before the window: not this run's work.
+      record('m0', '2026-11-19T13:00:00Z', { input_tokens: M }, 'claude-opus-5-5'),
+      record('m1', '2026-11-19T14:01:00Z', all, 'claude-haiku-5-5'),
+      record(
+        'm2',
+        '2026-11-19T14:02:00Z',
+        { output_tokens: M, cache_creation_input_tokens: M, cache_read_input_tokens: M },
+        'claude-opus-5-5',
+      ),
+      // A replayed record of m1 counts once.
+      record('m1', '2026-11-19T14:03:00Z', all, 'claude-haiku-5-5'),
+      // No model: priced at the most recent model named (Opus).
+      record('m3', '2026-11-19T14:04:00Z', { output_tokens: M }),
+    ].join('\n') + '\n',
+  );
+  const out = await runSessionUsage({
+    repo: home,
+    slotId: 'fixture',
+    action: 'total',
+    forcedPath: sessionPath,
+    forcedRunner: 'claude',
+    usageWindow: { startedAt: '2026-11-19T14:00:00Z' },
+  });
+  // Haiku 0.10 + 0.50 + 0.125 + 0.01; Opus output 20 + write 5 + read 0.4; model-less Opus output 20.
+  assert.match(out, /cost_usd=46\.1350/);
+});
+
+test('a Claude message recorded before any model is named is priced at the first model named', async (t) => {
+  const home = makeTmpDir();
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const sessionPath = path.join(home, 'session.jsonl');
+  writeFileSync(
+    sessionPath,
+    [
+      JSON.stringify({
+        type: 'assistant',
+        message: { id: 'm1', usage: { input_tokens: 1_000_000 } },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        message: { id: 'm2', model: 'claude-opus-5-5', usage: { input_tokens: 1_000_000 } },
+      }),
+    ].join('\n') + '\n',
+  );
+  const out = await runSessionUsage({
+    repo: home,
+    slotId: 'fixture',
+    action: 'total',
+    forcedPath: sessionPath,
+    forcedRunner: 'claude',
+  });
+  assert.match(out, /cost_usd=8\.0000/);
+});
+
+test('a replayed Claude record does not change the model a later model-less message is priced at', async (t) => {
+  const home = makeTmpDir();
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const sessionPath = path.join(home, 'session.jsonl');
+  const M = 1_000_000;
+  const record = (id: string, usage: Record<string, number>, model?: string) =>
+    JSON.stringify({ type: 'assistant', message: { id, ...(model ? { model } : {}), usage } });
+  writeFileSync(
+    sessionPath,
+    [
+      record('m1', { input_tokens: M }, 'claude-haiku-5-5'),
+      record('m2', { input_tokens: M }, 'claude-opus-5-5'),
+      record('m1', { input_tokens: M }, 'claude-haiku-5-5'),
+      record('m3', { output_tokens: M }),
+    ].join('\n') + '\n',
+  );
+  const out = await runSessionUsage({
+    repo: home,
+    slotId: 'fixture',
+    action: 'total',
+    forcedPath: sessionPath,
+    forcedRunner: 'claude',
+  });
+  // Haiku input 0.10 + Opus input 4 + model-less output at Opus 20, the replay ignored.
+  assert.match(out, /cost_usd=24\.1000/);
+});
+
+test('a run window keeps the model named before it for a model-less message inside it', async (t) => {
+  const home = makeTmpDir();
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const sessionPath = path.join(home, 'session.jsonl');
+  writeFileSync(
+    sessionPath,
+    [
+      JSON.stringify({
+        type: 'assistant',
+        timestamp: '2026-11-19T13:00:00Z',
+        message: { id: 'm0', model: 'claude-opus-5-5', usage: { input_tokens: 1_000_000 } },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        timestamp: '2026-11-19T14:01:00Z',
+        message: { id: 'm1', usage: { output_tokens: 1_000_000 } },
+      }),
+    ].join('\n') + '\n',
+  );
+  const out = await runSessionUsage({
+    repo: home,
+    slotId: 'fixture',
+    action: 'total',
+    forcedPath: sessionPath,
+    forcedRunner: 'claude',
+    usageWindow: { startedAt: '2026-11-19T14:00:00Z' },
+  });
+  // Only the in-window output counts, at Opus: 1M x $20.
+  assert.match(out, /cost_usd=20\.0000/);
+});
+
+test('a Claude message on an unpriced model leaves the session unpriced', async (t) => {
+  const home = makeTmpDir();
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const sessionPath = path.join(home, 'session.jsonl');
+  const reply = (id: string, model: string) =>
+    JSON.stringify({ type: 'assistant', message: { id, model, usage: { input_tokens: 10 } } });
+  writeFileSync(
+    sessionPath,
+    [reply('m1', 'claude-haiku-5-5'), reply('m2', 'claude-unlisted-9')].join('\n') + '\n',
+  );
+  const out = await runSessionUsage({
+    repo: home,
+    slotId: 'fixture',
+    action: 'total',
+    forcedPath: sessionPath,
+    forcedRunner: 'claude',
+  });
+  assert.doesNotMatch(out, /cost_usd=/);
+});
+
 // ─── Codex ────────────────────────────────────────────────────────────────────
 
 test('runSessionUsage does not double-count Codex detail fields', async () => {
