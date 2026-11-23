@@ -16,7 +16,7 @@ import {
   wireRequest,
 } from './task-runtime.test-support.js';
 
-// The CLI/thread parity pairs live in task-runtime-parity.live.ts
+// The CLI/task-process parity pairs live in task-runtime-parity.live.ts
 // (`yarn test:task-runtime-parity-live`). This keeps one real CLI start in the default suite.
 test(
   'fresh init preserves task bytes, modes and provenance: CLI baseline',
@@ -41,7 +41,7 @@ test('runtime transport rejects malformed actions, paths and environments', () =
     );
 });
 
-test('task threads keep machine providers, pack roots and module environment isolated', async () => {
+test('task processes keep machine providers, pack roots and module environment isolated', async () => {
   const fakeCli = path.join(root, 'environment-cli');
   fs.mkdirSync(path.join(fakeCli, 'src/commands'), { recursive: true });
   fs.mkdirSync(path.join(fakeCli, 'bin'));
@@ -67,7 +67,7 @@ test('task threads keep machine providers, pack roots and module environment iso
     const provider = process.env.MM_HARNESS_PACKAGE_ROOT;
     export async function runHostedTaskInit() {
       process.env.MM_HARNESS_PACKAGE_ROOT = 'provider-loaded';
-      return { pid: process.pid, provider, pool: process.env.FARMSLOT_POOL_DIR,
+      return { ppid: process.ppid, provider, pool: process.env.FARMSLOT_POOL_DIR,
         projects: process.env.FARMSLOT_PROJECTS_DIR, root: process.env.FARMSLOT_ROOT ?? null,
         forceColor: process.env.FORCE_COLOR ?? null };
     }
@@ -103,7 +103,8 @@ test('task threads keep machine providers, pack roots and module environment iso
   assert.deepEqual(
     results.map((result) => JSON.parse(result.stdout).data),
     ['one', 'two'].map((provider) => ({
-      pid: process.pid,
+      // Each task runs in its own process under this one.
+      ppid: process.pid,
       provider,
       pool: path.join(root, 'pool'),
       projects: path.join(inherited.HOME || os.homedir(), 'captured/projects'),
@@ -168,7 +169,7 @@ test(
 );
 
 test(
-  'forced child closeout reaps the process before its thread exits',
+  'forced child closeout reaps the process before its task process exits',
   { timeout: 5000 },
   async (t) => {
     const fakeCli = path.join(root, 'environment-cli');
@@ -178,10 +179,9 @@ test(
       path.join(fakeCli, 'src/commands/hosted-task-init.ts'),
       `
     import { spawn } from 'node:child_process';
-    import { parentPort } from 'node:worker_threads';
     import fs from 'node:fs';
     export async function runHostedTaskInit() {
-      parentPort.on('message', () => fs.writeFileSync(${JSON.stringify(acknowledged)}, 'stopping'));
+      process.on('message', () => fs.writeFileSync(${JSON.stringify(acknowledged)}, 'stopping'));
       spawn(process.execPath, ['-e', ${JSON.stringify(`require('node:fs').writeFileSync(${JSON.stringify(marker)}, JSON.stringify({pid:process.pid}));process.on('SIGTERM',()=>{});setInterval(()=>{},100);`)}], { stdio: 'ignore' });
       await new Promise(() => {});
     }
@@ -309,10 +309,9 @@ test(
       path.join(fakeCli, 'src/commands/hosted-task-init.ts'),
       `
     import {spawn} from 'node:child_process';
-    import {parentPort} from 'node:worker_threads';
     import fs from 'node:fs';
     export async function runHostedTaskInit() {
-      parentPort.on('message',()=>fs.writeFileSync(${JSON.stringify(acknowledged)},'stopping'));
+      process.on('message',()=>fs.writeFileSync(${JSON.stringify(acknowledged)},'stopping'));
       const child=spawn(process.execPath,['-e',${JSON.stringify(childCode)}]);
       child.once('exit',()=>fs.writeFileSync(${JSON.stringify(exited)},'exited'));
       await new Promise(()=>{});

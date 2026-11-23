@@ -1,8 +1,7 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { Worker } from 'node:worker_threads';
 
 import {
   createNodeExecCloseout,
@@ -41,11 +40,19 @@ export function parseTaskRuntimeRequest(value: unknown): TaskRuntimeRequest {
   return { action: value.action, taskPath: value.taskPath, supportDir: value.supportDir, env };
 }
 
-// Providers change process.env while loading. A worker keeps those changes and
-// the CLI's module-level config private without starting a CLI process. Resolve
-// every import from the selected installation, just as its bin/farmslot.mjs does.
-const taskWorker = `
-const { parentPort, workerData } = require('node:worker_threads');
+// Providers change process.env while loading. A child process keeps those changes
+// and the CLI's module-level config private. It is a process, not a worker thread:
+// tsx's ESM loader thread owns an esbuild service child, and a thread that exits
+// leaves that child unreaped, one zombie of the node per task. Resolve every import
+// from the selected installation, just as its bin/farmslot.mjs does.
+const taskProcess = `
+const workerData = JSON.parse(process.argv[1]);
+// IPC stands in for a worker port. A message after the parent closed the channel is dropped.
+const parentPort = {
+  on: (event, listener) => process.on(event, listener),
+  postMessage: (message, done) => (process.connected ? process.send(message, done) : done?.()),
+  close: () => process.connected && process.disconnect(),
+};
 const { createRequire } = require('node:module');
 const { pathToFileURL } = require('node:url');
 const path = require('node:path');
@@ -92,22 +99,43 @@ ChildProcess.prototype.spawn = function(options) {
       const { verifySelectedTask } = await import(pathToFileURL(fromCli.resolve('@farmslot/recipe-cli/harness')).href);
       result = verifySelectedTask(workerData.taskPath);
     }
-    parentPort.postMessage({ stdout: JSON.stringify(result, null, 2) + '\\n', stderr: '', exitCode: 0 });
-    parentPort.close();
+    parentPort.postMessage({ stdout: JSON.stringify(result, null, 2) + '\\n', stderr: '', exitCode: 0 }, parentPort.close);
   } catch (error) {
     const exitCode = error instanceof Error && typeof error.exitCode === 'number' ? error.exitCode : 1;
     result = errorEnvelope(command, error);
     if (workerData.action === 'init') result.exitCode = exitCode;
-    parentPort.postMessage({ stdout: JSON.stringify(result, null, 2) + '\\n', stderr: '', exitCode });
-    parentPort.close();
+    parentPort.postMessage({ stdout: JSON.stringify(result, null, 2) + '\\n', stderr: '', exitCode }, parentPort.close);
   }
 })().catch((error) => { throw error; });
 `;
 
+type TaskMessage =
+  | ExecResult
+  | { type: 'task-child' | 'task-child-exit' | 'task-child-reaped'; pid: number }
+  | { type: 'task-stopping' };
+
+/** The task process's IPC messages; anything else is ignored. */
+function parseTaskMessage(raw: unknown): TaskMessage | undefined {
+  if (!isRecord(raw)) return undefined;
+  if (raw.type === 'task-stopping') return { type: 'task-stopping' };
+  if (
+    (raw.type === 'task-child' || raw.type === 'task-child-exit' || raw.type === 'task-child-reaped') &&
+    typeof raw.pid === 'number'
+  )
+    return { type: raw.type, pid: raw.pid };
+  if (
+    typeof raw.stdout === 'string' &&
+    typeof raw.stderr === 'string' &&
+    typeof raw.exitCode === 'number'
+  )
+    return { stdout: raw.stdout, stderr: raw.stderr, exitCode: raw.exitCode };
+  return undefined;
+}
+
 /**
  * Same installation, pool, pack and machine environment as the CLI transport.
  * Provider initializers use their explicit checkout context and absolute paths;
- * daemon threads cannot provide a process-wide cwd or process.chdir per task.
+ * the task process keeps its node's cwd.
  */
 export async function runTaskRuntime(
   request: TaskRuntimeRequest,
@@ -151,30 +179,34 @@ export async function runTaskRuntime(
   env.TSX_TSCONFIG_PATH = path.join(packageRoot, 'tsconfig.json');
   env.TSX_DISABLE_CACHE = '1';
   return new Promise((resolve, reject) => {
-    const worker = new Worker(taskWorker, {
-      eval: true,
-      env,
-      // Do not inherit the gateway's tsx loader or test flags into the CLI's
-      // independent loader. Its own tsconfig selects its installed libraries.
-      execArgv: [],
-      workerData: { action: request.action, taskPath: request.taskPath, packageRoot },
-      stdout: true,
-      stderr: true,
-    });
+    // A spawned node does not inherit the gateway's tsx loader or test flags: the
+    // CLI's own tsconfig selects its installed libraries.
+    const task = spawn(
+      process.execPath,
+      [
+        '-e',
+        taskProcess,
+        JSON.stringify({ action: request.action, taskPath: request.taskPath, packageRoot }),
+      ],
+      { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] },
+    );
+    const killTask = () => {
+      if (task.exitCode === null && task.signalCode === null) task.kill('SIGKILL');
+    };
     const timeout = TASK_RUNTIME_TIMEOUT_MS[request.action];
     let result: ExecResult | undefined;
     let stdout = '';
     let stderr = '';
     let outputBytes = 0;
     let stopped = false;
-    let workerError: Error | undefined;
+    let taskError: Error | undefined;
     const children = new Set<number>();
     const childRoots = new Set<number>();
     let stoppingAcknowledged = false;
-    let forcedThreadTimer: ReturnType<typeof setTimeout> | undefined;
+    let forcedKillTimer: ReturnType<typeof setTimeout> | undefined;
     const terminate = () => {
       if (stopped && stoppingAcknowledged && !childRoots.size)
-        void worker.terminate().catch(reject);
+        killTask();
     };
     const signalChild = (pid: number, signal: NodeJS.Signals | 0) => {
       let probing = true;
@@ -193,10 +225,10 @@ export async function runTaskRuntime(
     const closeout = createNodeExecCloseout((signal) => {
       for (const pid of children) signalChild(pid, signal);
       if (signal === 'SIGKILL') {
-        if (!stoppingAcknowledged) void worker.terminate().catch(reject);
+        if (!stoppingAcknowledged) killTask();
         else
-          forcedThreadTimer = setTimeout(() => {
-            void worker.terminate().catch(reject);
+          forcedKillTimer = setTimeout(() => {
+            killTask();
           }, NODE_EXEC_CLOSEOUT_MS);
       }
     });
@@ -205,21 +237,16 @@ export async function runTaskRuntime(
       stopped = true;
       result = { stdout: '', stderr: message, exitCode };
       closeout.terminate();
-      worker.postMessage({ type: 'task-stop' });
+      if (task.connected) task.send({ type: 'task-stop' });
       terminate();
     };
     const abort = () => stop(130, 'Task execution cancelled.');
     signal?.addEventListener('abort', abort, { once: true });
     if (signal?.aborted) abort();
     const timer = setTimeout(() => stop(124, `command timed out after ${timeout}ms`), timeout);
-    worker.on(
-      'message',
-      (
-        message:
-          | ExecResult
-          | { type: 'task-child' | 'task-child-exit' | 'task-child-reaped'; pid: number }
-          | { type: 'task-stopping' },
-      ) => {
+    task.on('message', (raw: unknown) => {
+        const message = parseTaskMessage(raw);
+        if (!message) return;
         if ('type' in message) {
           if (message.type === 'task-stopping') stoppingAcknowledged = true;
           else if (message.type === 'task-child-reaped') signalChild(message.pid, 0);
@@ -239,21 +266,22 @@ export async function runTaskRuntime(
           outputBytes + Buffer.byteLength(message.stdout) + Buffer.byteLength(message.stderr);
         if (size > 8 * 1024 * 1024) stop(1, `maxBuffer exceeded after ${size} bytes`);
         else result = message;
-      },
-    );
-    worker.on('error', (error: Error) => {
-      workerError = error;
+    });
+    task.on('error', (error: Error) => {
+      taskError = error;
       stopped = true;
       closeout.terminate();
     });
-    worker.on('exit', (code) => {
+    // 'close' follows exit and the end of the task's stdout and stderr.
+    task.on('close', (exitCode, exitSignal) => {
+      const code = exitCode ?? (exitSignal ? 1 : 0);
       clearTimeout(timer);
-      clearTimeout(forcedThreadTimer);
+      clearTimeout(forcedKillTimer);
       signal?.removeEventListener('abort', abort);
       const finish = async () => {
         try {
-          // A cancellation result confirms both the thread and its async child
-          // groups stopped. Synchronous library probes finish before thread exit.
+          // A cancellation result confirms both the task process and its async child
+          // groups stopped. Synchronous library probes finish before the process exits.
           while (stopped && children.size) {
             const groups = await new Promise<string>((done, fail) =>
               execFile('/bin/ps', ['-axo', 'pgid=,stat='], { timeout: 2000 }, (error, output) =>
@@ -271,12 +299,12 @@ export async function runTaskRuntime(
           }
           const outcome = result ?? {
             stdout: '',
-            stderr: workerError?.stack ?? `Task runtime exited without a result (exit ${code}).`,
+            stderr: taskError?.stack ?? `Task runtime exited without a result (exit ${code}).`,
             exitCode: code || 1,
           };
           resolve({ ...outcome, stdout: stdout + outcome.stdout, stderr: stderr + outcome.stderr });
         } finally {
-          clearTimeout(forcedThreadTimer);
+          clearTimeout(forcedKillTimer);
           closeout.dispose();
         }
       };
@@ -293,7 +321,7 @@ export async function runTaskRuntime(
       if (stream === 'stdout') stdout += data.toString();
       else stderr += data.toString();
     };
-    worker.stdout.on('data', (data: Buffer) => append('stdout', data));
-    worker.stderr.on('data', (data: Buffer) => append('stderr', data));
+    task.stdout?.on('data', (data: Buffer) => append('stdout', data));
+    task.stderr?.on('data', (data: Buffer) => append('stderr', data));
   });
 }
