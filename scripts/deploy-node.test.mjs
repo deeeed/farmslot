@@ -1125,6 +1125,21 @@ test('--no-node-token refuses a FARMSLOT_NODE_TOKEN in the environment', (t) => 
   assert.equal(fs.existsSync(unitPath(fixture)), false);
 });
 
+test('--no-node-token refuses a .env token the node would still use', (t) => {
+  const fixture = cliFixture(t);
+  fixture.write('home/farmslot-node/.env', 'FARMSLOT_NODE_TOKEN=stale-file-token\n');
+  assert.throws(
+    () =>
+      fixture.deploy({ machine: localMachine(), nodeTokenFile: false, args: ['--no-node-token'] }),
+    (error) => {
+      assert.match(String(error.stderr), /--no-node-token, but the node reads a token from/);
+      assert.doesNotMatch(String(error.stderr), /stale-file-token/);
+      return true;
+    },
+  );
+  assert.equal(fs.existsSync(unitPath(fixture)), false);
+});
+
 test('a local deploy does not take a blank .env token for a token', (t) => {
   const fixture = cliFixture(t);
   // The node strips the quotes, finds nothing and ignores this file.
@@ -1189,28 +1204,38 @@ test('the existing systemd unit token is read back exactly, escaping included', 
   assert.equal(read.trimEnd(), 'a\\b"c$d%e');
 });
 
-test('only a .env the node would take a token from counts', (t) => {
+test('only a .env the node would take a token from counts, as the node reads it', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'node-token-env-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const install = path.join(root, 'farmslot-node');
   fs.mkdirSync(install);
   const probe = () => sourceNodeToken('node_env_token_file', { REMOTE_DIR: install }).trimEnd();
-  for (const line of [
+  const ignored = [
     'FARMSLOT_NODE_TOKEN=',
     'FARMSLOT_NODE_TOKEN=""',
     "FARMSLOT_NODE_TOKEN='  '",
+    'FARMSLOT_NODE_TOKEN="',
     '# FARMSLOT_NODE_TOKEN=x',
-  ]) {
-    fs.writeFileSync(path.join(install, '.env'), `${line}\n`);
-    assert.equal(probe(), '', `ignored: ${line}`);
+    // The node drops only a literal "export " prefix, so this key is not the token.
+    'export\tFARMSLOT_NODE_TOKEN=x',
+    // A later line wins.
+    'FARMSLOT_NODE_TOKEN=x\nFARMSLOT_NODE_TOKEN=',
+  ];
+  for (const text of ignored) {
+    fs.writeFileSync(path.join(install, '.env'), `${text}\n`);
+    assert.equal(probe(), '', `ignored: ${JSON.stringify(text)}`);
   }
-  for (const line of [
+  const taken = [
     'FARMSLOT_NODE_TOKEN=x',
     'export FARMSLOT_NODE_TOKEN="x"',
     '  FARMSLOT_NODE_TOKEN = x',
-  ]) {
-    fs.writeFileSync(path.join(install, '.env'), `${line}\n`);
-    assert.equal(probe(), path.join(install, '.env'), `taken: ${line}`);
+    // The node strips the quotes, then trims.
+    'FARMSLOT_NODE_TOKEN=" abc"',
+    'FARMSLOT_NODE_TOKEN=\nFARMSLOT_NODE_TOKEN=x',
+  ];
+  for (const text of taken) {
+    fs.writeFileSync(path.join(install, '.env'), `${text}\n`);
+    assert.equal(probe(), path.join(install, '.env'), `taken: ${JSON.stringify(text)}`);
   }
 });
 

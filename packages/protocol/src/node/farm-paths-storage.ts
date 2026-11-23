@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import type { FarmPaths, LegacyFarmStorageFacts } from './farm-paths.js';
@@ -9,6 +9,22 @@ function readOptional(file: string): unknown {
     return JSON.parse(readFileSync(file, 'utf8'));
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
+    throw error;
+  }
+}
+
+/** True when the path does not exist; any other failure to stat it is thrown, as readOptional does. */
+function missing(file: string): boolean {
+  try {
+    statSync(file);
+    return false;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      (error.code === 'ENOENT' || error.code === 'ENOTDIR')
+    )
+      return true;
     throw error;
   }
 }
@@ -52,14 +68,20 @@ export function readLegacyStorageFacts(paths: FarmPaths): LegacyFarmStorageFacts
   // The bound store may sit on a volume that is not mounted. Its ownership cannot
   // be checked then, but reporting must not fail: a node that threw here never
   // connected (macwork, c910ssd unmounted). The bound root is reported as is, and
-  // whatever uses it meets the outage there. A configured root that is missing
-  // while the bound one is present is a misconfiguration, not an outage.
-  if (!existsSync(binding.root))
+  // whatever uses it meets the outage there. A configured root that differs from
+  // the bound one, or is missing while the bound one is present, is a
+  // misconfiguration, not an outage.
+  if (missing(binding.root)) {
+    if (configured && configured !== path.resolve(binding.root))
+      throw new Error(
+        'Run bundle store pairing does not match the configured root; use the migration command.',
+      );
     return {
       runBundles: binding.root,
       unavailable: `Run bundle store ${binding.root} is unavailable (is its volume mounted?)`,
     };
-  if (configured && !existsSync(configured))
+  }
+  if (configured && missing(configured))
     throw new Error(
       'Run bundle store pairing does not match the configured root; use the migration command.',
     );

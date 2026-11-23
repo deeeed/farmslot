@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -79,3 +79,31 @@ test('a malformed binding still fails before any volume check', (t) => {
   );
   assert.throws(() => readLegacyStorageFacts(paths), /does not match the canonical Run store/);
 });
+
+test('a configured root unlike the bound one still fails while the bound root is missing', (t) => {
+  const { root, paths } = homeWithUnmountedStore(t);
+  writeFileSync(
+    path.join(path.dirname(paths.data.runBundles), 'run-bundle-retention.json'),
+    JSON.stringify({
+      runBundleRetention: { storeRoot: path.join(root, 'Volumes/typo/run-bundles') },
+    }),
+  );
+  assert.throws(() => readLegacyStorageFacts(paths), /does not match the configured root/);
+});
+
+test(
+  'a bound root that cannot be read is an error, not an unmounted volume',
+  { skip: process.getuid?.() === 0 && 'root reads every directory' },
+  (t) => {
+    const { root, paths, missingRoot } = homeWithUnmountedStore(t);
+    const locked = path.join(root, 'Volumes');
+    mkdirSync(missingRoot, { recursive: true });
+    chmodSync(locked, 0o000);
+    try {
+      assert.throws(() => readLegacyStorageFacts(paths), { code: 'EACCES' });
+    } finally {
+      // Before the fixture's own cleanup, which cannot delete a locked directory.
+      chmodSync(locked, 0o755);
+    }
+  },
+);

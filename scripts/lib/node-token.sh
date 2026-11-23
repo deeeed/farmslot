@@ -4,12 +4,41 @@
 # into a variable, never printed by these functions.
 
 # The .env in or above the install dir whose FARMSLOT_NODE_TOKEN the node uses,
-# if any. Matches the node's own reading (services/node/src/gateway-credential.ts):
-# an optional `export`, spaces around the key and value, one pair of quotes, and a
-# value that is not blank once those are removed.
+# if any. A line-for-line port of the node's reading
+# (services/node/src/gateway-credential.ts readEnvFile and nonEmpty): trim the
+# line, skip blanks and comments, drop a literal "export " prefix, split at the
+# first "=", trim key and value, strip one pair of matching quotes, let a later
+# line win, and take the value only when it is not blank. The value is never printed.
+NODE_ENV_TOKEN_READER='import os, sys
+d = os.path.abspath(sys.argv[1])
+while True:
+    f = os.path.join(d, ".env")
+    if os.path.isfile(f):
+        values = {}
+        for raw in open(f, encoding="utf-8", errors="replace").read().split("\n"):
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[len("export "):].strip()
+            eq = line.find("=")
+            if eq <= 0:
+                continue
+            key, value = line[:eq].strip(), line[eq + 1:].strip()
+            if (value.startswith("\"") and value.endswith("\"")) or (
+                value.startswith("\x27") and value.endswith("\x27")
+            ):
+                value = value[1:-1]
+            values[key] = value
+        if values.get("FARMSLOT_NODE_TOKEN", "").strip():
+            print(f)
+            break
+    parent = os.path.dirname(d)
+    if parent == d:
+        break
+    d = parent'
 node_env_token_file() {
-  local pattern='^[[:space:]]*(export[[:space:]]+)?FARMSLOT_NODE_TOKEN[[:space:]]*=[[:space:]]*["'"'"']?[^"'"'"'[:space:]]'
-  run "d=$(printf '%q' "$REMOTE_DIR"); while :; do if grep -qsE $(printf '%q' "$pattern") \"\$d/.env\"; then printf '%s\\n' \"\$d/.env\"; break; fi; [ \"\$d\" = / ] && break; d=\$(dirname \"\$d\"); done" 2>/dev/null || true
+  run "python3 -c $(printf '%q' "$NODE_ENV_TOKEN_READER") $(printf '%q' "$REMOTE_DIR")" 2>/dev/null || true
 }
 
 # The FARMSLOT_NODE_TOKEN the target's existing service definition carries, if any:

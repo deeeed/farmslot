@@ -510,6 +510,13 @@ systemd_node_arguments() {
 # the install dir first, then the existing service definition. Never printed.
 source "$SCRIPT_DIR/lib/node-token.sh"
 NODE_ENV_TOKEN_FILE=""
+if [[ "$DRY_RUN" != true && "$NO_NODE_TOKEN" == true ]]; then
+  NODE_ENV_TOKEN_FILE=$(node_env_token_file)
+  if [[ -n "$NODE_ENV_TOKEN_FILE" ]]; then
+    echo "[deploy] ERROR: --no-node-token, but the node reads a token from $NODE_ENV_TOKEN_FILE; remove that line first" >&2
+    exit 1
+  fi
+fi
 if [[ "$DRY_RUN" != true && -z "${FARMSLOT_NODE_TOKEN:-}" && "$NO_NODE_TOKEN" != true ]]; then
   NODE_ENV_TOKEN_FILE=$(node_env_token_file)
   if [[ -n "$NODE_ENV_TOKEN_FILE" ]]; then
