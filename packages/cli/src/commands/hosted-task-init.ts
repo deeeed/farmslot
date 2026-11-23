@@ -237,6 +237,7 @@ function isHostedRequest(value: unknown): value is HostedTaskInitRequest {
       'taskDirLabel',
       'domain',
       'modePreamble',
+      'operatorNote',
       'operatorPlan',
       'taskDocumentAdditions',
     ]) ||

@@ -50,6 +50,9 @@ import {
   type HandoffExecutionTemplate,
   type HandoffMetadata,
   type HandoffSourceKind,
+  insertOperatorNoteStep,
+  insertUnderTitle,
+  operatorNoteSection,
   type ReferenceCheckout,
   renderReferenceCheckoutInputs,
 } from './task-document.js';
@@ -171,6 +174,14 @@ export interface TaskInitSpec {
   bugInput?: unknown;
   operatorPlan?: string;
   taskDocumentAdditions?: string;
+  /**
+   * Operator note from dispatch. Rendered under the task document's title, ahead
+   * of the `## Task` block it overrides. On a split-checklist run it is also
+   * inserted into the checklist, in front of the completion row, as a step the
+   * worker has to mark; an operator plan gets the section only, because that plan
+   * is numbered a second time into the task document.
+   */
+  operatorNote?: string;
   artifactOnlyReplay?: ArtifactOnlyReplay;
   authored?: Pick<WriteTaskDirInput, 'taskMarkdown' | 'checklistMarkdown' | 'handoff'>;
   /** ADR-049 Amendment 3: the frozen required skill set (see `freezeRequiredSkills`). */
@@ -289,6 +300,7 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
             ? renderTemplatePlaceholders(spec.addendum, vars, 'Task document addendum')
             : null,
           hasTicketData: spec.bugInput !== undefined,
+          ...(spec.operatorNote ? { operatorNote: spec.operatorNote } : {}),
           ...(spec.referenceCheckouts?.length
             ? { referenceCheckouts: spec.referenceCheckouts }
             : {}),
@@ -298,10 +310,27 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
       spec.referenceCheckouts,
     ).join('\n')}\n`;
   if (operatorPlan !== undefined && spec.modePreamble)
-    taskMarkdown = taskMarkdown.replace(
-      /^(#.+\n)/,
-      (_match, heading: string) => `${heading}\n${spec.modePreamble}\n`,
-    );
+    taskMarkdown = insertUnderTitle(taskMarkdown, spec.modePreamble);
+  // A plan-shaped task document is the rendered template, not buildTaskDocument's
+  // output, so the note is placed the same way the mode preamble is: under the title.
+  // A lightweight template opens with a frontmatter fence, which insertUnderTitle skips.
+  if (operatorPlan !== undefined && !spec.authored)
+    taskMarkdown = insertUnderTitle(taskMarkdown, operatorNoteSection(spec.operatorNote));
+  // The note is also a step, so completing the run means having carried it out.
+  //
+  // Only on the split-checklist path. An operator plan is rendered a second time
+  // into TASK.md (`INTERACTIVE_CHECKLIST`), numbered independently from the same
+  // source list, so inserting a step here would shift CHECKLIST.md's numbers out
+  // from under the numbers the worker reads in TASK.md: it would run `mark N` for
+  // the publication row and tick the note instead. On that path the note is placed
+  // under the title above, and an operator is steering the run.
+  if (
+    checklistMarkdown !== null &&
+    operatorPlan === undefined &&
+    spec.operatorNote &&
+    !spec.authored
+  )
+    checklistMarkdown = insertOperatorNoteStep(checklistMarkdown, taskDirLabel, spec.operatorNote);
   if (spec.taskDocumentAdditions)
     taskMarkdown = `${taskMarkdown.trimEnd()}${spec.taskDocumentAdditions.startsWith('\n') ? '' : '\n\n'}${spec.taskDocumentAdditions}`;
   // Frozen once: an authored task keeps the set its handoff already carries.

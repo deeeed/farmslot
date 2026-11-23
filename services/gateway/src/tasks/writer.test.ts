@@ -2,6 +2,7 @@
 // `projects/<project>/templates/worker/` directory.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { access, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
@@ -11,12 +12,14 @@ import test, { after, before } from 'node:test';
 import { applyArtifactOnlyTaskPolicy, assertArtifactOnlyTaskGuard } from '@farmslot/agent-runtime';
 import {
   DEFAULT_DEV_INTERACTIVE_PROFILE,
+  enumerateChecklistCheckboxes,
   PLANNING_CONTEXT_MAX_RELATIONS,
   type PlanningContextProjection,
   type Run,
 } from '@farmslot/protocol';
 import { normalizeRawRuntimeCapabilities } from '@farmslot/slot-config';
 
+import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
 import { farmslotRoot } from '../projects/repo-root.js';
 
 import { writeTaskFixture } from './writer.test-support.js';
@@ -1453,7 +1456,35 @@ for (const policy of ['normal-slot', undefined] as const) {
   });
 }
 
-test('a task note is one ## Note section in the generated TASK.md', async (t) => {
+// The fixture slot `demo-ff-1` lives on machine `farmslot-demo` (pool/farmslot-demo.json).
+// A task write consults the connected-node registry for that machine's agent-runtime
+// release, so these tests declare one.
+const fixtureSocket = { readyState: 1, send() {} } as unknown as import('ws').WebSocket;
+function registerFixtureNode(runtimeVersion: string): void {
+  registerNode(
+    'farmslot-demo',
+    1,
+    fixtureSocket,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { node: { runtimeVersion } },
+  );
+}
+
+test('an operator note is one section, ahead of the Task block it overrides', async (t) => {
+  // The gateway only sends `operatorNote` to a node whose agent-runtime renders it;
+  // below that release it keeps the old end-of-document section, so the fixture has
+  // to declare a current node or it would exercise the fallback instead.
+  registerFixtureNode('0.51.0');
+  t.after(() => unregisterByWs(fixtureSocket));
   const note =
     'This is an evaluation. Work only in this checkout. Do not search other checkouts, branches, PRs, git history beyond the base, or the web for an existing fix.';
   const run = makeRun('EVAL-NOTE', 'task-note');
@@ -1465,13 +1496,58 @@ test('a task note is one ## Note section in the generated TASK.md', async (t) =>
   });
   taskPath = await writeTaskFixture(run, { skipCollisionCheck: true });
   const task = await readFile(taskPath, 'utf8');
-  assert.equal(task.match(/^## Note$/gm)?.length, 1);
-  assert.match(task, new RegExp(`## Note\\n\\n${note.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.equal(task.match(/^## Operator note$/gm)?.length, 1);
+  assert.match(
+    task,
+    new RegExp(`## Operator note\\n[\\s\\S]*${note.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+  );
+  // Run 1b7b8662 put this section on line 945 of 947 and the worker never read it.
+  assert.ok(
+    task.indexOf('## Operator note') < task.indexOf('## Task'),
+    'the note precedes the Task block',
+  );
+  // The note is also a step, in front of the template's `mark complete --mark-last`
+  // row so that --mark-last cannot tick it on the worker's behalf.
+  const checklistPath = path.join(path.dirname(taskPath), 'CHECKLIST.md');
+  assert.ok(existsSync(checklistPath), 'the run has an execution checklist');
+  const items = enumerateChecklistCheckboxes(await readFile(checklistPath, 'utf8'));
+  assert.match(items[items.length - 2].rawLabel, /Carry out the operator note/);
+  assert.doesNotMatch(items[items.length - 1].rawLabel, /Carry out the operator note/);
+  for (const item of items) {
+    const printed = item.rawLabel.match(/^(?:\*\*)?(\d+)\./);
+    if (printed) assert.equal(Number(printed[1]), item.stepNumber, item.rawLabel);
+  }
+
   const plain = makeRun('EVAL-NOTE-ABSENT', 'task-note-absent');
   plain.project = legacyProject;
   const plainPath = await writeTaskFixture(plain, { skipCollisionCheck: true });
   t.after(async () => {
     await rm(path.dirname(plainPath), { recursive: true, force: true });
   });
-  assert.doesNotMatch(await readFile(plainPath, 'utf8'), /^## Note$/m);
+  assert.doesNotMatch(await readFile(plainPath, 'utf8'), /^## Operator note$/m);
+});
+
+test('a node older than the renderer keeps the note, as the end-of-document section', async (t) => {
+  // Dropping the note entirely on an un-redeployed node would be worse than the bug
+  // this fixes, so the gateway degrades to the old placement instead.
+  registerFixtureNode('0.50.6');
+  t.after(() => unregisterByWs(fixtureSocket));
+  const note = 'Repin the preview before anything else.';
+  const run = makeRun('EVAL-NOTE-OLD-NODE', 'task-note-old-node');
+  run.project = legacyProject;
+  run.taskNote = note;
+  const taskPath = await writeTaskFixture(run, { skipCollisionCheck: true });
+  t.after(async () => {
+    await rm(path.dirname(taskPath), { recursive: true, force: true });
+  });
+  const task = await readFile(taskPath, 'utf8');
+  assert.doesNotMatch(task, /^## Operator note$/m);
+  assert.match(task, /^## Note$/m);
+  assert.ok(task.includes(note), 'the note still reaches the worker');
+  const checklist = path.join(path.dirname(taskPath), 'CHECKLIST.md');
+  assert.doesNotMatch(
+    await readFile(checklist, 'utf8'),
+    /Carry out the operator note/,
+    'no step the old renderer never explained',
+  );
 });
