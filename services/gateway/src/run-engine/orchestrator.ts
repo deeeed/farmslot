@@ -1498,9 +1498,16 @@ export function cancelRunEngine(runId: string): void {
   if (controller) controller.abort();
 }
 
-/** An engine loop drives the run's current generation. */
-function engineDrivesCurrentGeneration(run: Run): boolean {
-  return drivenGenerations.get(run.id) === (run.engineState?.generation ?? 0);
+/**
+ * An engine loop drives the run's current generation and is not parked on an open decision, i.e.
+ * it is working the gate (the operator's answer resumed it). A loop parked on its own decision
+ * still needs a replay to re-present the gate with what recovery ingested.
+ */
+function engineWorksCurrentGeneration(run: Run): boolean {
+  return (
+    drivenGenerations.get(run.id) === (run.engineState?.generation ?? 0) &&
+    !run.decisions.some((decision) => !decision.resolvedAt && hasEngineDecisionWaiter(decision.id))
+  );
 }
 
 /** True while an engine loop drives the run (any generation). */
@@ -1677,10 +1684,10 @@ function rearmPublicationReviewRecovery(
       state.cleanup();
       return;
     }
-    // An engine already drives this generation, e.g. the operator answered the gate during startup
+    // An engine already works this generation, e.g. the operator answered the gate during startup
     // and that answer resumed HUMAN_GATE: a replay would take the gate and abort that work. An
     // answer whose resume failed leaves no driver, so the replay still runs as its retry.
-    if (state.replayPending && engineDrivesCurrentGeneration(latest)) {
+    if (state.replayPending && engineWorksCurrentGeneration(latest)) {
       clearRecovery(latest);
       state.cleanup();
       return;
@@ -1738,7 +1745,7 @@ function rearmPublicationReviewRecovery(
         }
       }
       const current = getRun(latest.id) ?? latest;
-      if (engineDrivesCurrentGeneration(current)) {
+      if (engineWorksCurrentGeneration(current)) {
         clearRecovery(current);
         state.cleanup();
         return;

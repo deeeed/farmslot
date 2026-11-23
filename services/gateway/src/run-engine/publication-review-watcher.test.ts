@@ -6,6 +6,7 @@ import { setImmediate as flushed } from 'node:timers/promises';
 let releaseGate = () => {};
 const heldGateResult = { inputs: {}, outputs: { skipped: true } };
 let gateEntered = 0;
+let parkOnGateDecision = false;
 // Registered before anything loads the real module: it imports the engine back, which would bind
 // the real step first. Only HUMAN_GATE runs here; the other steps must not.
 const unexpectedStep = () => {
@@ -25,11 +26,19 @@ mock.module('./post-dispatch-steps.js', {
     rerunReviewIfReviewedInputsChanged: unexpectedStep,
     isFlowTerminalStep: unexpectedStep,
     executeCompleteStep: unexpectedStep,
-    executeHumanGateStep: () =>
-      new Promise<typeof heldGateResult>((resolve) => {
-        gateEntered += 1;
+    executeHumanGateStep: async (runId: string) => {
+      gateEntered += 1;
+      if (parkOnGateDecision) {
+        // The loop presents its gate and waits on the operator, as HUMAN_GATE does.
+        await createEngineDecision(runId, 'engine_human_gate', 'Approve publication', [
+          { id: 'approve', label: 'Approve', style: 'primary' },
+        ]);
+        return heldGateResult;
+      }
+      return new Promise<typeof heldGateResult>((resolve) => {
         releaseGate = () => resolve(heldGateResult);
-      }),
+      });
+    },
   },
 });
 const replayStep = await import('../methods/run/replay-step.js');
@@ -45,6 +54,7 @@ mock.module('../methods/run/replay-step.js', {
 const { rearmPublicationReviewRecoveryForRun, startRun, suspendPublicationReviewRecoveryForRun } =
   await import('./orchestrator.js');
 const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
+const { createEngineDecision, resolveEngineDecision } = await import('./engine-decisions.js');
 
 /** A run whose HUMAN_GATE is still preparing its decision on a slot. */
 function preparingGate(): string {
@@ -132,3 +142,39 @@ for (const answered of ['before', 'after'] as const) {
     assert.equal(getRun(runId)?.engineState?.publishGate?.reviewRecovery, undefined);
   });
 }
+
+// A loop parked on its own open gate decision is not working the gate: when recovery ingests a
+// late reviewer result for it (index.ts re-arms on a terminal reviewer's newer signal), only the
+// replay re-presents that gate with the result.
+test('a gate replay still runs for a loop parked on its open gate decision', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const runId = preparingGate();
+  parkOnGateDecision = true;
+  t.after(async () => {
+    parkOnGateDecision = false;
+    for (const decision of getRun(runId)?.decisions ?? [])
+      resolveEngineDecision(decision.id, 'approve');
+    suspendPublicationReviewRecoveryForRun(runId);
+    updateRun(runId, { status: 'failed', completedAt: new Date().toISOString() });
+    await deleteRun(runId);
+  });
+  const before = replays.length;
+  void startRun(runId);
+  const parked = performance.now() + 2_000;
+  while (
+    !getRun(runId)?.decisions.some((decision) => !decision.resolvedAt) &&
+    performance.now() < parked
+  )
+    await flushed();
+  assert.ok(
+    getRun(runId)?.decisions.some((decision) => !decision.resolvedAt),
+    'the loop presented its gate',
+  );
+  assert.ok(rearmPublicationReviewRecoveryForRun(runId, { replayPending: true }));
+
+  t.mock.timers.tick(60_000);
+  const deadline = performance.now() + 5_000;
+  while (replays.length === before && performance.now() < deadline) await flushed();
+
+  assert.deepEqual(replays.slice(before), [runId], 'the parked gate is replayed');
+});
