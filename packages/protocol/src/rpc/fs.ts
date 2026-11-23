@@ -201,6 +201,9 @@ export interface NodeFsReadTextResult {
   content: string;
 }
 
+/** The most files one `fs.readFiles` request may name. */
+export const NODE_FS_READ_FILES_MAX_FILES = 64;
+
 /**
  * Several `fs.read`s in one request. Nodes declare it as the `batchReads` observation
  * capability. Each entry answers in order: the content, `missing` for a file that does not

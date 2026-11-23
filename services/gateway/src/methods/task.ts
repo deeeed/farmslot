@@ -404,11 +404,10 @@ async function readTaskProgress(
       );
     // An explicit TASK.md (Slot View passes the worker context's task file) still
     // resolves to the sibling CHECKLIST.md when it exists; role checklists pass through.
-    const effectiveMdPath = await resolveTaskProgressMarkdownPathForSlot(
-      vars,
-      resolveExplicitTaskFile(vars.remoteRepo, params.taskFile),
-    );
-    const markdown = await slotReadFile(vars, effectiveMdPath);
+    const explicitPath = resolveExplicitTaskFile(vars.remoteRepo, params.taskFile);
+    const io = await slotPrefetchFiles(vars, progressReadFiles(explicitPath, params.summary));
+    const effectiveMdPath = await resolveTaskProgressMarkdownPathForSlot(io, explicitPath);
+    const markdown = await slotReadFile(io, effectiveMdPath);
     const result: TaskProgressResult = {
       slotId: params.slotId,
       role: params.role,
@@ -419,7 +418,7 @@ async function readTaskProgress(
     const runId = params.runId ?? slot?.currentRunId;
     const run = runId ? getRun(runId) : undefined;
     await progressFromChecklist(
-      vars,
+      io,
       effectiveMdPath,
       flowType,
       markdown,
