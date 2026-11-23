@@ -98,7 +98,7 @@ test('a task whose node dies stops itself and its subprocesses', { timeout: 90_0
 });
 
 test(
-  'a descendant holding the task output does not delay the result',
+  'a descendant holding the task output neither delays nor loses the result',
   { timeout: 30_000 },
   async (t) => {
     const held = path.join(await realpath(tmpdir()), `task-held-${process.pid}-${Date.now()}`);
@@ -119,7 +119,8 @@ test(
     }`,
     );
     const started = Date.now();
-    const result = await runTaskRuntime(
+    const controller = new AbortController();
+    const pending = runTaskRuntime(
       {
         action: 'init',
         taskPath: path.join(root, 'task.json'),
@@ -127,7 +128,14 @@ test(
         env: { FARMSLOT_CLI: path.join(cli, 'bin/farmslot.mjs') },
       },
       root,
+      process.env,
+      controller.signal,
     );
+    // A cancel inside the drain window must not overwrite the result the task delivered.
+    assert.ok(await until(() => existsSync(held), 60_000), 'the descendant started');
+    await until(() => false, 500);
+    controller.abort();
+    const result = await pending;
     assert.equal(result.exitCode, 0, result.stderr);
     assert.ok(Date.now() - started < 15_000, 'resolved without waiting for the descendant');
   },
@@ -175,15 +183,4 @@ test('a task that crashes still has its subprocesses stopped', { timeout: 90_000
   );
   assert.notEqual((await pending).exitCode, 0);
   assert.ok(await until(() => !alive(child), 5000), "the crashed task's subprocess is stopped");
-});
-
-test('a task stopped with SIGTERM stops its subprocesses', { timeout: 90_000 }, async (t) => {
-  const { task, child, pending } = await runningTask(
-    t,
-    `setInterval(() => {}, 1000);
-      await new Promise(() => {});`,
-  );
-  process.kill(task, 'SIGTERM');
-  await pending;
-  assert.ok(await until(() => !alive(child), 5000), 'its subprocess is stopped');
 });

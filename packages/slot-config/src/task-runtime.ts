@@ -73,29 +73,39 @@ const pruneGroups = () => {
     try {
       process.kill(-pid, 0);
     } catch (error) {
+      // ESRCH: the group is gone. EPERM: it still exists under another owner, so it stays.
       if (error.code === 'ESRCH') ownedGroups.delete(pid);
+      else if (error.code !== 'EPERM') throw error;
     }
   }
 };
-const abandon = (cause) => {
-  if (cause instanceof Error) console.error('Task stopped: ' + cause.message);
-  pruneGroups();
+const signalGroups = (signal) => {
   for (const pid of ownedGroups) {
     try {
-      process.kill(-pid, 'SIGTERM');
+      process.kill(-pid, signal);
     } catch (error) {
       // A group that already ended is the expected case; anything else is reported.
       if (error.code !== 'ESRCH') console.error('Task group ' + pid + ' was not stopped: ' + error.message);
     }
   }
-  process.exit(1);
+};
+// No node is left to escalate, so the task does it: SIGTERM, then SIGKILL what remains.
+const abandon = (cause) => {
+  if (cause instanceof Error) console.error('Task stopped: ' + cause.message);
+  pruneGroups();
+  signalGroups('SIGTERM');
+  const deadline = Date.now() + ${NODE_EXEC_CLOSEOUT_MS};
+  const settle = () => {
+    pruneGroups();
+    if (ownedGroups.size && Date.now() < deadline) return setTimeout(settle, 100);
+    signalGroups('SIGKILL');
+    process.exit(1);
+  };
+  settle();
 };
 process.on('disconnect', () => {
   if (!delivered) abandon();
 });
-// A send that fails because the node is gone must still stop the task's groups.
-process.on('error', abandon);
-process.on('SIGTERM', () => abandon());
 const { createRequire } = require('node:module');
 const { pathToFileURL } = require('node:url');
 const path = require('node:path');
@@ -122,7 +132,9 @@ ChildProcess.prototype.spawn = function(options) {
       try {
         process.kill(-pid, 0);
       } catch (error) {
+        // ESRCH: empty, forget it. EPERM: still there under another owner, keep it.
         if (error.code === 'ESRCH') ownedGroups.delete(pid);
+        else if (error.code !== 'EPERM') throw error;
       }
     });
     parentPort.postMessage({ type: 'task-child', pid });
@@ -293,8 +305,10 @@ export async function runTaskRuntime(
           }, NODE_EXEC_CLOSEOUT_MS);
       }
     });
+    let delivered = false;
     const stop = (exitCode: number, message: string) => {
-      if (stopped) return;
+      // A result the task already delivered stands, even while a held pipe delays 'close'.
+      if (stopped || delivered || task.exitCode !== null || task.signalCode !== null) return;
       stopped = true;
       result = { stdout: '', stderr: message, exitCode };
       closeout.terminate();
@@ -326,7 +340,10 @@ export async function runTaskRuntime(
       const size =
         outputBytes + Buffer.byteLength(message.stdout) + Buffer.byteLength(message.stderr);
       if (size > 8 * 1024 * 1024) stop(1, `maxBuffer exceeded after ${size} bytes`);
-      else result = message;
+      else {
+        result = message;
+        delivered = true;
+      }
     });
     task.on('error', (error: Error) => {
       taskError = error;
@@ -350,10 +367,18 @@ export async function runTaskRuntime(
       clearTimeout(forcedKillTimer);
       clearTimeout(drain);
       // A task that died without a result (crash, OOM, external kill) never stopped its
-      // tracked groups: close them out the way a cancellation does.
-      if (!result && children.size && !stopped) {
-        stopped = true;
-        closeout.terminate();
+      // tracked groups: close them out the way a cancellation does, and kill what it left in
+      // its own group (untracked or synchronous subprocesses).
+      if (!delivered && !stopped) {
+        try {
+          if (task.pid) process.kill(-task.pid, 'SIGKILL');
+        } catch (error) {
+          if (!isRecord(error) || error.code !== 'ESRCH') throw error;
+        }
+        if (children.size) {
+          stopped = true;
+          closeout.terminate();
+        }
       }
       signal?.removeEventListener('abort', abort);
       const finish = async () => {
