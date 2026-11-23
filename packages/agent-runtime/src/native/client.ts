@@ -24,11 +24,10 @@ import type {
 } from '@farmslot/protocol';
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
-import { RUNTIME_VERSION } from '../version.js';
-
 import { subscribeHost } from './conversation-ipc.js';
 import {
   assertNativeHostRuntime,
+  nativeHostRunsCurrentRuntime,
   nativeHostVersionSkew,
   retireIdleNativeHost,
 } from './host-runtime.js';
@@ -222,7 +221,7 @@ export class NativeSessionClient {
   /** Explicit lifecycle operation. Deployment invokes it from the login/GUI context. */
   async warm(): Promise<void> {
     const host = await this.host();
-    if (host.runtimeVersion === RUNTIME_VERSION) return;
+    if (nativeHostRunsCurrentRuntime(host)) return;
     if (!(await retireIdleNativeHost(this.root, host))) throw nativeHostVersionSkew(host);
     assertNativeHostRuntime(await this.host());
   }

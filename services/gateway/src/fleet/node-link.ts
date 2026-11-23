@@ -48,6 +48,7 @@ export interface NodeLinkInvocation {
   timeoutMs?: number;
   signal?: AbortSignal;
   assertCurrent(): void | Promise<void>;
+  onDispatch?(node: ConnectedNode): void;
   onStarted?(command: NodeLinkCommand): void;
   onOutput?(stream: 'stdout' | 'stderr', text: string): void;
   onReset?(snapshot: unknown): void;
@@ -244,6 +245,9 @@ async function invokeUnqueued(
           error instanceof NodeTransportUnavailableError ? error.reason : 'timeout',
           node.ws,
           requestId ? awaitOwedCloseout(requestId, node.ws) : undefined,
+          error instanceof NodeTransportUnavailableError && error.cause instanceof Error
+            ? error
+            : undefined,
         );
       const abort = () => {
         if (!dispatched || cancelling) return;
@@ -288,6 +292,7 @@ async function invokeUnqueued(
             dispatched = true;
             requestId = id;
           },
+          onSent: () => invocation.onDispatch?.(node),
         });
         receipt = await Promise.race([response, cancellation]);
       } catch (error) {

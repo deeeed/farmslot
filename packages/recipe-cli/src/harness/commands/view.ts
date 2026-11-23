@@ -11,6 +11,7 @@ import { formatEvidenceReviewVideoTime } from '@farmslot/adapter-sdk/evidence';
 import {
   isRecipeRunFolder,
   listRunEvidenceHistory,
+  readRunEvidencePageSnapshot,
   readRunEvidenceView,
   runEvidenceLive,
   runEvidenceSignature,
@@ -171,11 +172,13 @@ export async function serveRunEvidence(
         return send(response, 404, 'No such file in this run.');
       return sendFile(request, response, file);
     }
-    const view = await readRunEvidenceView(run);
-    if (rest.length === 1 && rest[0] === 'view.json')
+    if (rest.length === 1 && rest[0] === 'view.json') {
+      const view = await readRunEvidenceView(run);
       return send(response, 200, `${JSON.stringify(view, null, 2)}\n`, CONTENT_TYPES['.json']);
+    }
     if (rest.length > 1 || (rest.length === 1 && rest[0] !== ''))
       return send(response, 404, 'Not found.');
+    const { view, version } = await readRunEvidencePageSnapshot(run);
     const context: RunEvidencePageContext = {
       fileUrl: (file) => fileUrl(id, file),
       runUrl: runPath,
@@ -185,9 +188,10 @@ export async function serveRunEvidence(
         `data-seek-video="${escapeHtml(cue.videoPath)}" data-seek-ms="${Math.round(cue.startMs)}"`,
       history: listRunEvidenceHistory(root),
     };
-    const live = runEvidenceLive(view)
-      ? { versionUrl: `${runPath(id)}version`, version: runEvidenceSignature(run) }
-      : null;
+    const live =
+      version !== null && runEvidenceLive(view)
+        ? { versionUrl: `${runPath(id)}version`, version }
+        : null;
     return send(
       response,
       200,

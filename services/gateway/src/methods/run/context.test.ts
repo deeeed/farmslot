@@ -49,7 +49,11 @@ test('snapshot reads return the stored gate without inspecting an unreachable wo
       },
     ],
   });
-  assert.deepEqual(await runGet({ runId: run.id, view: 'snapshot' }), { run: stored });
+  const snapshot = await runGet({ runId: run.id, view: 'snapshot' });
+  const { costAccountingRevision, ...storedFacts } = snapshot.run;
+  assert.ok(costAccountingRevision, 'first paint carries the prepared revision');
+  assert.deepEqual(snapshot, { run: { ...stored, costAccountingRevision } });
+  assert.deepEqual(storedFacts, stored);
   assert.equal(getRun(run.id), stored, 'a display read must not rewrite readiness or decisions');
 });
 
@@ -196,7 +200,10 @@ test('ordinary details carry the stored list version before display enrichment',
     await deleteRun(run.id);
   });
   const expected = runListVersion(trimRunForList(run));
+  const snapshot = await runGet({ runId: run.id, view: 'snapshot' });
   const result = await runGet({ runId: run.id });
+  assert.ok(snapshot.run.costAccountingRevision);
+  assert.equal(snapshot.run.costAccountingRevision, result.run.costAccountingRevision);
   assert.equal(result.listVersion, expected);
   assert.equal(result.run.id, run.id);
 });

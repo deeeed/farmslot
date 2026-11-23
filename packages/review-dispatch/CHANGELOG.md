@@ -4,6 +4,18 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.26.1 - 2026-11-23
+
+- Pin the Recipe Runner 0.52.2 cohort.
+
+## 0.26.0 - 2026-11-21
+
+- Read verified review receipts from retained pipeline step results.
+
+## 0.25.18 - 2026-11-21
+
+- Pin the pending flow and recording timeline producer cohort.
+
 ## 0.25.17 - 2026-11-19
 
 - Pin the structural inventory SDK cohort while retaining public protocol 0.91.0.

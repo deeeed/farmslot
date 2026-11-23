@@ -65,6 +65,7 @@ type HudPublisher = (
 
 export interface ExecuteRecipeOptions {
   flow?: RecipeFlowProjection;
+  publishPendingFlow?(update: RecipeFlowUpdate): Promise<void>;
   signal?: AbortSignal;
   ref: string;
   adapter?: string;
@@ -142,6 +143,8 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
   };
   const nextCallStack = [...callStack, options.ref];
   let failureCause: RecipeFailureCause | undefined;
+  const publishFlow = (update: RecipeFlowUpdate | undefined) =>
+    update && options.publishPendingFlow?.(update);
 
   const runGraph = async (
     entry: string,
@@ -278,7 +281,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
 
       let context: ActionExecutionContext | undefined;
       try {
-        options.flow?.start(namespacedNodeId, phase);
+        await publishFlow(options.flow?.start(namespacedNodeId, phase));
         if (options.prepareNode) {
           await options.prepareNode(namespacedNodeId, node, signal);
           startedAt = new Date();
@@ -389,7 +392,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
           ...(observations ? { observations } : {}),
           ...(observationWarnings.length ? { observationWarnings } : {}),
         });
-        options.flow?.complete(namespacedNodeId, true, prefix + next);
+        await publishFlow(options.flow?.complete(namespacedNodeId, true, prefix + next));
         if (options.publishHudProgress) {
           const ok = await options.publishHudProgress('pass', {
             nodeId: namespacedNodeId,
@@ -484,7 +487,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
           error: message,
           ...recipeFailureTraceFields(failure),
         });
-        options.flow?.complete(namespacedNodeId, false);
+        await publishFlow(options.flow?.complete(namespacedNodeId, false));
         // A failed delivery already recorded this diagnostic. Do not emit it twice.
         if (failureHudAvailable) await publishFailure();
         if (
@@ -505,7 +508,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
   const mainStatus = await withRecipeExecutionSignal(options.signal, () =>
     runGraph(graph.entry, graph.mainNodeCount, options.stopAfterNode, options.signal),
   );
-  if (mainStatus !== 'pass') options.flow?.invalidate();
+  if (mainStatus !== 'pass') await publishFlow(options.flow?.invalidate());
   const teardownSignal = options.signal ? new AbortController().signal : undefined;
   const teardownEntry = graph.teardownEntry;
   const teardownStatus = teardownEntry

@@ -1,0 +1,1 @@
+- The idle dev-server cap logs a structured line, `[idle-devserver] slot=… resource=… decision=…`, whenever its decision for a slot or dev server changes: why it skips (slot not quiet, status, retained lease, no stop authority and the exact reason, stop refusal), when the idle limit will stop the server, and the stop.

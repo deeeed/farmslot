@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const {
   resolveWorkerTerminalContract,
   lintWorkerTemplateAgainstContract,
+  lintWorkerTemplateProofSelection,
   lintWorkerTemplateStructure,
   expandedArtifactsForCommand,
   templateTerminalCommands,
@@ -129,6 +130,190 @@ const structureGood = [
   '- [ ] `{{TASK_DIR}}/mark complete --mark-last`',
 ].join('\n');
 assert.deepEqual(lintWorkerTemplateStructure(structureGood), []);
+
+// A template that runs recipe proof names the selected attempt (audiolab #529: proof attempts
+// that nothing selected). The root evidence-manifest.json stays optional.
+const proofStep = '- [ ] Run the app recipe and validate its artifact package.';
+assert.match(
+  lintWorkerTemplateProofSelection(proofStep, 'dev').join(' '),
+  /does not name the selected proof attempt/,
+);
+assert.match(
+  lintWorkerTemplateProofSelection('- [ ] Run the same proof after the fix.', 'fix-bug').join(' '),
+  /selected proof attempt/,
+);
+assert.deepEqual(
+  lintWorkerTemplateProofSelection(
+    `${proofStep} Claim the attempt selected in \`artifacts/latest-valid-recipe-run.json\`.`,
+    'dev',
+  ),
+  [],
+);
+for (const flow of ['review', 'review-pr', 'qa', 'qa.site-build'])
+  assert.deepEqual(lintWorkerTemplateProofSelection(proofStep, flow), [], flow);
+assert.deepEqual(lintWorkerTemplateProofSelection('- [ ] Write the report.', 'dev'), []);
+// Lines that forbid or only diagnose proof run none; delegated task-bound proof still counts.
+for (const line of [
+  'Do not run tests, builds, recipes or probes.',
+  'Never rerun proof here.',
+  'Run the recipe with --unbound for diagnostics.',
+  'Run `env -u RECIPE_TASK_DIR -u FARMSLOT_TASK_DIR farmslot recipe run smoke` for diagnostics.',
+])
+  assert.deepEqual(lintWorkerTemplateProofSelection(line, 'ci-fix'), [], line);
+assert.match(
+  lintWorkerTemplateProofSelection(
+    'Follow TASK.md for task-bound recipe proof.',
+    'pr-complete',
+  ).join(' '),
+  /selected proof attempt/,
+);
+assert.deepEqual(lintWorkerTemplateProofSelection(proofStep, 'qa-site-build'), []);
+assert.match(
+  lintWorkerTemplateProofSelection(
+    'Run `env -u RECIPE_TASK_DIR FARMSLOT_TASK_DIR="{{TASK_DIR}}" farmslot recipe run smoke`.',
+    'dev',
+  ).join(' '),
+  /selected proof attempt/,
+  'one binding still set is task proof',
+);
+// A negation after the run instruction does not hide it; a forbidden example after e.g. stays forbidden.
+assert.match(
+  lintWorkerTemplateProofSelection(
+    '- [ ] Run the task recipe and do not use manual checks as evidence.',
+    'dev',
+  ).join(' '),
+  /selected proof attempt/,
+);
+assert.deepEqual(
+  lintWorkerTemplateProofSelection(
+    'Never start other proof, e.g. `farmslot recipe run smoke`.',
+    'dev',
+  ),
+  [],
+);
+// A negation in another clause of the same line does not hide the run instruction.
+assert.match(
+  lintWorkerTemplateProofSelection(
+    '- [ ] Run the task recipe with a fresh attempt. An unavailable surface is blocked, never a manual-check substitute.',
+    'dev',
+  ).join(' '),
+  /selected proof attempt/,
+);
+assert.match(
+  lintWorkerTemplateProofSelection(`${proofStep} See latest-valid-recipe-run.json.`, 'dev').join(
+    ' ',
+  ),
+  /selected proof attempt/,
+  'the full selection path is required',
+);
+// A designed non-selection layout opts out by name, and only with a reason.
+assert.deepEqual(
+  lintWorkerTemplateProofSelection(
+    `<!-- proof-selection: exempt (baseline/after-fix [PROOF:] layout) -->\n${proofStep}`,
+    'dev',
+  ),
+  [],
+);
+assert.match(
+  lintWorkerTemplateProofSelection(`<!-- proof-selection: exempt () -->\n${proofStep}`, 'dev').join(
+    ' ',
+  ),
+  /selected proof attempt/,
+);
+
+// The checker applies the rule to execution-template checklists named by project.json.
+{
+  const { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } = require('node:fs');
+  const { tmpdir } = require('node:os');
+  const path = require('node:path');
+  const { spawnSync } = require('node:child_process');
+  const project = mkdtempSync(path.join(tmpdir(), 'proof-selection-pack-'));
+  try {
+    writeFileSync(
+      path.join(project, 'project.json'),
+      JSON.stringify({
+        execution_templates: {
+          sources: [
+            { id: 'project:x', kind: 'workspace', root: { projectPath: 'checklists' } },
+            {
+              id: 'pack:y',
+              kind: 'package',
+              root: { projectPath: 'templates' },
+              subpath: 'catalog',
+            },
+          ],
+        },
+      }),
+    );
+    mkdirSync(path.join(project, 'checklists', 'dev'), { recursive: true });
+    mkdirSync(path.join(project, 'checklists', 'qa'), { recursive: true });
+    writeFileSync(path.join(project, 'checklists', 'dev', 'default.md'), `# Dev\n\n${proofStep}\n`);
+    writeFileSync(path.join(project, 'checklists', 'qa', 'default.md'), `# QA\n\n${proofStep}\n`);
+    mkdirSync(path.join(project, 'templates', 'catalog', 'fix-bug'), { recursive: true });
+    writeFileSync(
+      path.join(project, 'templates', 'catalog', 'fix-bug', 'default.md'),
+      `# Fix\n\n${proofStep}\n`,
+    );
+    const check = () =>
+      spawnSync(
+        process.execPath,
+        [path.join(__dirname, 'check-worker-template-contract.mjs'), project],
+        {
+          encoding: 'utf8',
+        },
+      );
+    let result = check();
+    assert.equal(result.status, 1, result.stdout);
+    assert.match(result.stderr, /checklists\/dev\/default\.md: runs recipe proof/);
+    assert.doesNotMatch(result.stderr, /checklists\/qa/);
+    assert.match(result.stderr, /templates\/catalog\/fix-bug\/default\.md: runs recipe proof/);
+    rmSync(path.join(project, 'templates'), { recursive: true });
+    // Frontmatter decides the flow; body text that looks like frontmatter does not.
+    writeFileSync(
+      path.join(project, 'checklists', 'qa', 'default.md'),
+      `---\r\nflow: "dev"\r\n---\r\n# QA dir, dev flow\n\n${proofStep}\n`,
+    );
+    mkdirSync(path.join(project, 'checklists', 'dev2'), { recursive: true });
+    writeFileSync(
+      path.join(project, 'checklists', 'dev2', 'body.md'),
+      `# Dev\n\nflow: qa\n\n${proofStep}\n`,
+    );
+    result = check();
+    assert.match(result.stderr, /checklists\/qa\/default\.md: runs recipe proof/);
+    assert.match(result.stderr, /checklists\/dev2\/body\.md: runs recipe proof/);
+    // Indented frontmatter keys resolve like the catalog; an empty block lets no body text in.
+    writeFileSync(
+      path.join(project, 'checklists', 'qa', 'default.md'),
+      `---\n  flow: dev\n---\n# QA dir, dev flow\n\n${proofStep}\n`,
+    );
+    writeFileSync(
+      path.join(project, 'checklists', 'dev2', 'body.md'),
+      `---\n---\nflow: qa\n\n${proofStep}\n`,
+    );
+    result = check();
+    assert.match(result.stderr, /checklists\/qa\/default\.md: runs recipe proof/);
+    assert.match(result.stderr, /checklists\/dev2\/body\.md: runs recipe proof/);
+    rmSync(path.join(project, 'checklists', 'dev2'), { recursive: true });
+    writeFileSync(path.join(project, 'checklists', 'qa', 'default.md'), `# QA\n\n${proofStep}\n`);
+    writeFileSync(
+      path.join(project, 'checklists', 'dev', 'default.md'),
+      `# Dev\n\n${proofStep} Claim the attempt in \`artifacts/latest-valid-recipe-run.json\`.\n`,
+    );
+    result = check();
+    assert.equal(result.status, 0, result.stderr);
+    const config = JSON.parse(readFileSync(path.join(project, 'project.json'), 'utf8'));
+    config.execution_templates.sources.push({
+      id: 'escape',
+      kind: 'workspace',
+      root: { projectPath: '..' },
+    });
+    writeFileSync(path.join(project, 'project.json'), JSON.stringify(config));
+    result = check();
+    assert.match(result.stderr, /execution template source escape resolves outside the pack/);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+}
 
 // Reviewer flows require the artifacts their templates actually produce, not learnings.
 const reviewContract = resolveWorkerTerminalContract(null, 'review');

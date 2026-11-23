@@ -492,8 +492,12 @@ export const claudeNativeAdapter: NativeAdapter = {
         '--permission-prompt-tool',
         'stdio',
         ...(options.approvalMode !== undefined ? ['--allow-dangerously-skip-permissions'] : []),
+        // A reviewer launch (approvalPolicy 'never', no live approval mode) has every approval
+        // refused by the gateway, so it must not ask: on the sandboxed tier it could not run its
+        // marker or write its result. ACP reviewers already grant their tools the same way.
         ...(options.approvalMode === 'bypass' ||
         options.processSandbox ||
+        (options.approvalMode === undefined && options.approvalPolicy === 'never') ||
         (options.safetyTier && options.safetyTier !== 'sandboxed')
           ? ['--dangerously-skip-permissions']
           : []),

@@ -6,6 +6,10 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.4.12 - 2026-11-21
+
+- Pin the Protocol 0.92.0 producer cohort.
+
 ## 0.4.11 - 2026-11-19
 
 - Pin the qualified invocation-timing SDK cohort with exact package dependencies.

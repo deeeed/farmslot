@@ -119,6 +119,24 @@ export function applyArtifactOnlyTaskPolicy(
     /git diff main\.\.HEAD/g,
     literalReplacement(hasBase ? `git diff ${replayBase}` : 'git diff'),
   );
+  // `git merge-base origin/<default> HEAD` is the same main-relative baseline (run
+  // 6562483b's fix-bug step 7). It resolved to the pin there only by luck. A standalone
+  // `git diff "$(…)"` reads the base or, without one, the working tree; with a base, every
+  // other use takes the base, keeping any quotes around a larger word. Without a base other
+  // uses stay: dropping them would break the commands that depend on them.
+  const mergeBase = String.raw`\$\(git merge-base origin\/[^\s)"]+ HEAD\)`;
+  result = result.replace(
+    // Only when the merge base is the sole revision: followed by `--`, a separator or the end.
+    new RegExp(
+      String.raw`git diff (?:"${mergeBase}"|${mergeBase})(?=\s*(?:[\x60&;|)]|--(?:\s|$)|$))`,
+      'gm',
+    ),
+    literalReplacement(hasBase ? `git diff ${replayBase}` : 'git diff'),
+  );
+  if (hasBase)
+    result = result
+      .replace(new RegExp(`"${mergeBase}"`, 'g'), literalReplacement(replayBase))
+      .replace(new RegExp(mergeBase, 'g'), literalReplacement(replayBase));
   if (hasBase) {
     result = result.replace(
       /git log main\.\.HEAD/g,

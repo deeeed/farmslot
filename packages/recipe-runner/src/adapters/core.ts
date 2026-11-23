@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import type { RecipeArtifactManifestEntry } from '@farmslot/protocol';
 
+import { assertNotPendingFlowArtifact } from '../core/artifact-destination.js';
 import { type AssertionNode, parseAssertionNode } from '../core/assertions.js';
 import { assertRecipeActive, recipeAbortError, RecipeExecutionError } from '../core/failure.js';
 import {
@@ -305,6 +306,7 @@ function defineIndexArtifactsAdapter(): ActionHandler {
       const entries: RecipeArtifactManifestEntry[] = [];
       for (const artifact of node.artifacts) {
         const entry = parseArtifactEntry(artifact, context.nodeId);
+        assertNotPendingFlowArtifact(entry.path);
         await copyFileWithinRoots(
           context.projectRoot,
           entry.path,
@@ -571,7 +573,7 @@ function assertAtomicValue(
   }
 }
 
-function evaluateAtomicValue(actual: unknown, operator: string, expected: unknown): boolean {
+export function evaluateAtomicValue(actual: unknown, operator: string, expected: unknown): boolean {
   switch (operator) {
     case 'exists':
       return actual !== undefined;

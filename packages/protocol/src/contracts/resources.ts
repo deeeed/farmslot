@@ -63,7 +63,11 @@ export interface SlotActionSummary {
 export interface ResourceWatchConfig {
   type: ResourceWatchType;
   path?: string; // pid-file: PID file path (template vars expanded by gateway)
-  port?: string; // port-listen: port number or template var (e.g. "{{port}}")
+  /**
+   * port-listen: the port to watch. pid-file: optional port the process serves; with it the idle
+   * dev-server cap can verify a PID-file process after a gateway restart. Number or template var.
+   */
+  port?: string;
   cmd?: string; // process-poll: shell command (template vars expanded by gateway)
   /** Optional typed provider that lets a new node coalesce the command while old nodes use cmd. */
   provider?: ResourceWatchProvider;

@@ -232,6 +232,14 @@ test('the rendered review runs the pre-check on the slot checkout', async (t) =>
   assert.doesNotMatch(section, /Not run/);
   assert.ok(section.includes(`Recorded baseline: ${'d'.repeat(40)}`));
   assert.ok(section.includes(`Full publication merge base: ${baseSha}, selected head: ${headSha}`));
+  // Run 936cad9f: a continuation run's recorded base is not the pre-change merge base, and
+  // publication admits before evidence on that merge base (ADR-062), so review must too.
+  assert.ok(
+    section.includes(
+      `Before evidence may also match the full publication merge base ${baseSha}, only when the selected attempt's clean git_ref is the publication head ${headSha}.`,
+    ),
+    section,
+  );
   assert.match(section, /take precedence over project-pack git_ref and branch checks/);
   assert.match(section, /Project requirements for behavior and acceptance evidence still apply/);
 });

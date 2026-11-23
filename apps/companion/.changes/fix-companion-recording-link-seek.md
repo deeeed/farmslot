@@ -1,0 +1,1 @@
+- Restore the saved recording time when opening a timed evidence link on Android.

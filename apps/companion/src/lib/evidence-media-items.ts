@@ -105,7 +105,14 @@ export function selectedEvidenceMediaItem(
     evidenceModel: model,
     initialTraceIndex: model.playback.clip?.traceIndex,
     ...(sharedOwner
-      ? { sharedArtifact: { ...sharedOwner, path, traceIndex: model.playback.clip?.traceIndex } }
+      ? {
+          sharedArtifact: {
+            ...sharedOwner,
+            path,
+            ...(claim ? { criterionId: claim.id } : {}),
+            traceIndex: model.playback.clip?.traceIndex,
+          },
+        }
       : {}),
     authHeaders,
     resolveArtifactUrl,
@@ -179,6 +186,7 @@ export function evidenceViewerSessionItems(
         runId: opening.sharedArtifact.runId,
         slotId: opening.sharedArtifact.slotId,
         recipeRunId: opening.sharedArtifact.recipeRunId,
+        decisionId: opening.sharedArtifact.decisionId,
       }
     : undefined;
   const context = opening.resolveArtifactUrl

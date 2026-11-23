@@ -6,6 +6,18 @@ All notable changes to `@farmslot/adapter-sdk` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.31.2 - 2026-11-23
+
+- Pin the Recipe Runner 0.52.2 cohort.
+
+## 0.31.1 - 2026-11-21
+
+- Pin the Protocol 0.92.0 producer cohort.
+
+## 0.31.0 - 2026-11-21
+
+- Expose the verified recording timeline digest for evidence viewer index reuse.
+
 ## 0.30.1 - 2026-11-19
 
 - Pin the structural inventory SDK cohort while retaining public protocol 0.91.0.

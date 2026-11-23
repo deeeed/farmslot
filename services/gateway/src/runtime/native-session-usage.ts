@@ -41,7 +41,12 @@ export function nativeRunUsageWindow(
   run: Run,
   session: Pick<
     RunnerSessionUsage,
-    'runner' | 'runnerSessionId' | 'startedAt' | 'completedAt' | 'usageLeaseIds'
+    | 'runner'
+    | 'runnerSessionId'
+    | 'startedAt'
+    | 'completedAt'
+    | 'usageLeaseIds'
+    | 'pendingUsageLeaseIds'
   >,
 ): SessionUsageWindow {
   const starts = [
@@ -57,11 +62,12 @@ export function nativeRunUsageWindow(
   const nativeLeaseIds = [
     ...new Set([
       ...(session.usageLeaseIds ?? []),
+      ...(session.pendingUsageLeaseIds ?? []),
       ...(run.sessionUsage ?? [])
         .filter(
           (row) => row.runner === session.runner && row.runnerSessionId === session.runnerSessionId,
         )
-        .flatMap((row) => row.usageLeaseIds ?? []),
+        .flatMap((row) => [...(row.usageLeaseIds ?? []), ...(row.pendingUsageLeaseIds ?? [])]),
       ...(run.agentContexts ?? [])
         .filter(
           (row) => row.runner === session.runner && row.runnerSessionId === session.runnerSessionId,
@@ -98,6 +104,7 @@ export interface NativeAgentUsageInput {
 interface NativeAgentUsageResolution {
   usage: RunnerSessionUsage;
   usageWindow?: SessionUsageWindow;
+  verifiedLeaseIds?: string[];
 }
 
 /**
@@ -160,9 +167,11 @@ export async function resolveNativeAgentSessionUsage(
 ): Promise<NativeAgentUsageResolution> {
   const { runner, runnerSessionId, nativeSession, vars } = input;
   let usageWindow: SessionUsageWindow | undefined;
+  let verifiedLeaseIds: string[] | undefined;
   const unavailable = (error: string): NativeAgentUsageResolution => ({
     usage: unavailableRunnerSessionUsage({ runner, runnerSessionId, error }),
     usageWindow,
+    verifiedLeaseIds,
   });
   if (!nativeSession || !runnerSessionId)
     return unavailable('Agent session has no recorded native conversation identity');
@@ -232,6 +241,7 @@ export async function resolveNativeAgentSessionUsage(
       row.runnerSessionId !== runnerSessionId
     )
       return unavailable('Agent session accounting response identity changed');
+    let resolvedWindow: SessionUsageWindow | undefined;
     if ('usageWindow' in row && row.usageWindow !== undefined) {
       const window = row.usageWindow;
       if (
@@ -247,13 +257,27 @@ export async function resolveNativeAgentSessionUsage(
             Date.parse(window.completedAt) < Date.parse(window.startedAt)))
       )
         return unavailable('Invalid node-resolved usage window');
-      usageWindow = {
+      resolvedWindow = {
         startedAt: window.startedAt,
         ...('completedAt' in window && typeof window.completedAt === 'string'
           ? { completedAt: window.completedAt }
           : {}),
       };
     }
+    const requestedLeases = input.usageWindow?.nativeLeaseIds;
+    if (requestedLeases && resolvedWindow) {
+      const coveredLeases = new Set<string>();
+      const resolvedLeases = 'capturedLeaseIds' in row ? row.capturedLeaseIds : undefined;
+      if (!Array.isArray(resolvedLeases) || !resolvedLeases.length)
+        return unavailable('Native accounting response lacks verified task lease coverage');
+      for (const lease of resolvedLeases) {
+        if (typeof lease !== 'string' || !requestedLeases.includes(lease))
+          return unavailable('Native accounting response names an unrequested task lease');
+        coveredLeases.add(lease);
+      }
+      verifiedLeaseIds = [...coveredLeases];
+    }
+    usageWindow = resolvedWindow;
     if ('error' in row && typeof row.error === 'string') return unavailable(row.error);
     if (input.usageWindow && !usageWindow)
       return unavailable('Native accounting response lacks a resolved usage window');
@@ -273,9 +297,13 @@ export async function resolveNativeAgentSessionUsage(
       usage: {
         ...usage,
         ...(input.usageWindow ? { startedAt: input.usageWindow.startedAt } : {}),
+        ...(verifiedLeaseIds && !usage.error && usage.source !== 'unavailable'
+          ? { usageLeaseIds: verifiedLeaseIds, usageLeaseIdsVerified: true as const }
+          : {}),
         scope: input.usageWindow ? 'run-delta' : 'session-total',
       },
       usageWindow,
+      verifiedLeaseIds,
     };
   } catch (error) {
     // Supporting accounting must not change lifecycle outcomes when history is unavailable.

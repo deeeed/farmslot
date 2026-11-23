@@ -1,1 +1,0 @@
-- Record mm-harness 0.96.37 as a consumer of recipe-runner 0.51.0 and protocol 0.91.0. It uses the structural inventory export and pins recipe-cli 0.35.27 for named recipe identity.

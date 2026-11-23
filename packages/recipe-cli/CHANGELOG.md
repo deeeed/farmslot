@@ -6,6 +6,20 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.32 - 2026-11-23
+
+- Pin the Recipe Runner 0.52.2 cohort.
+- Add the `transcript` artifacts format: a deterministic, redacted transcript of a retained attempt (node results with asserted values, recipe digest, clean commit, network, claims) for headless proof; Markdown includes it in the Validation Logs when `transcript` is set.
+- `logs --full` prints the whole selected log and exits; only `--follow` keeps `tail -F` open and announces a live follow (`--full --follow` still streams the whole log).
+
+## 0.35.31 - 2026-11-21
+
+- Pin the Protocol 0.92.0 producer cohort.
+
+## 0.35.30 - 2026-11-21
+
+- Read active invocation progress from a run folder while HUD is off.
+
 ## 0.35.29 - 2026-11-21
 
 - Keep the invoked executable in action detail hints and display category names that can be copied into filters.

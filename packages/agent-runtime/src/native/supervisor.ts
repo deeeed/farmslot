@@ -9,6 +9,7 @@ import { RUNTIME_VERSION } from '../version.js';
 import { recoverStoppedNativeHost } from './host-cleanup-recovery.js';
 import { socketDirectory } from './ipc.js';
 import { NativeProcessTree } from './process-tree.js';
+import { currentRuntimeBuild } from './runtime-build.js';
 import {
   alive,
   appendDurable,
@@ -87,6 +88,7 @@ const socket = join(socketDirectory(root), 's');
 privateDirectory(socketDirectory(root));
 durableWrite(join(root, 'host.json'), {
   runtimeVersion: RUNTIME_VERSION,
+  runtimeBuild: currentRuntimeBuild(),
   supportsRuntimeUpgrade: true,
   supportsApprovalMode: true,
   supportsStandaloneDelegation: true,

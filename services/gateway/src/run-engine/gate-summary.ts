@@ -27,6 +27,7 @@ import {
   PipelineSteps,
   qualifyingPassingReviews,
   type ReadyGatePrPackage,
+  reviewEndsWithAcceptedFix,
   type ReviewStatus,
   type ReviewSummary,
   type Run,
@@ -47,6 +48,9 @@ import {
 } from '../runtime/session-usage-selection.js';
 
 import { publicationReviewMatchesPreparedPackage } from './gate-policy.js';
+
+// The final head was never reviewed, so the gateway's acceptance is not shown as a review verdict.
+const ACCEPTED_FIX_WITHOUT_REVIEW = 'fix accepted without re-review';
 
 /** Family flows whose token cost rolls up into a root gate's grand total. */
 const FIX_LOOP_FLOWS: ReadonlySet<FlowType> = new Set<FlowType>(['pr-complete', 'update-branch']);
@@ -208,6 +212,7 @@ function buildReview(
     return {
       status,
       ...(status === 'skipped' && stepReason ? { reason: stepReason } : {}),
+      ...(reviewEndsWithAcceptedFix(latest) ? { reason: ACCEPTED_FIX_WITHOUT_REVIEW } : {}),
       verdict: latest.verdict,
       feedbackSent: latest.feedbackSent === true,
       unresolvedCount: openReviewFindingCount(latest),
@@ -269,6 +274,7 @@ export function buildReviewSummary(
     feedbackSent: r.feedbackSent === true,
     triggeredReWork: triggeredReWork(r, reviews),
     attempts: r.attempts?.length ?? 1,
+    ...(reviewEndsWithAcceptedFix(r) ? { acceptedWithoutReview: true } : {}),
     ...(preparedPackage
       ? { stale: !publicationReviewMatchesPreparedPackage(r, preparedPackage) }
       : r.stale != null
@@ -296,7 +302,13 @@ export function buildReviewSummary(
     passingReviews,
     totalUnresolved,
     didAnyReviewTriggerReWork,
-    summaryText: buildReviewSummaryText(review, summaries, passingReviews),
+    summaryText: buildReviewSummaryText(
+      review,
+      summaries,
+      passingReviews,
+      review?.reason === ACCEPTED_FIX_WITHOUT_REVIEW ||
+        requestedEntries.some(reviewEndsWithAcceptedFix),
+    ),
   };
 }
 
@@ -304,12 +316,16 @@ function buildReviewSummaryText(
   review: ReviewSummary['review'],
   reviews: ReviewSummary['reviews'],
   passingReviews: number,
+  acceptedFix: boolean,
 ): string {
   const parts: string[] = [];
-  if (review) {
+  if (acceptedFix) parts.push(ACCEPTED_FIX_WITHOUT_REVIEW);
+  else if (review) {
+    // A skipped pipeline review is not the requested reviews that ran and are counted next.
+    const requestedRan = reviews.some((entry) => entry.verdict !== 'skipped');
     parts.push(
       review.status === 'skipped'
-        ? `review skipped (${review.reason ?? 'no reason recorded'})`
+        ? `${requestedRan ? 'automatic review' : 'review'} skipped (${review.reason ?? 'no reason recorded'})`
         : `review ${review.verdict ?? review.status}`,
     );
   }

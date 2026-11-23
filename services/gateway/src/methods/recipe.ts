@@ -3,6 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
+import { runEvidencePending } from '@farmslot/adapter-sdk/evidence';
 import {
   conformanceChecksPass,
   Events,
@@ -59,7 +60,7 @@ import {
   resolvePathWithinRemoteBase,
   shellExpressionForRemotePath,
 } from '../core/remote-paths.js';
-import { slotRealpath } from '../core/slot-io.js';
+import { slotMkdir, slotRealpath } from '../core/slot-io.js';
 import {
   claimSlotStatusIf,
   onSlotReset,
@@ -69,12 +70,15 @@ import {
 } from '../core/state.js';
 import { resolveTmuxSession, shellQuote } from '../core/tmux.js';
 import { assertTargetInInventory } from '../fleet/device-inventory.js';
+import type { ConnectedNode } from '../fleet/machine-registry.js';
 import { NodeExecUnconfirmedError } from '../fleet/node-rpc.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import {
   attachLiveRecipeContext,
   listRecipeRunArtifactGroupsForRun,
 } from '../live-recipe/context.js';
+import { bindPendingRecipeAttempt } from '../live-recipe/pending-flow.js';
+import { resourceRevisions } from '../resources/revisions.js';
 import { prepareRunPostureForValidation } from '../run-engine/resource-posture.js';
 import { withTaskRecipeTrustEnvironment } from '../runners/launch-command.js';
 import { getRun, updateRun } from '../runs/store.js';
@@ -1176,7 +1180,7 @@ async function buildRecipeExecutionCommand(
   playbackSlowMs: number | undefined,
   recordVideo: boolean | undefined,
   target?: RuntimeCapabilityTarget,
-): Promise<{ recipePath: string; artifactRoot: string; command: string }> {
+): Promise<{ recipePath: string; artifactRoot: string; command: string; taskDir: string }> {
   assertValidArtifactRunId(artifactRunId);
   const workerTaskDir = resolveWorkerTaskDir(run, slotVars, projectVars.projectJson);
   if (!workerTaskDir) {
@@ -1236,6 +1240,7 @@ async function buildRecipeExecutionCommand(
     recipePath: slotRecipePath,
     artifactRoot: slotRecipeRunArtifactsDir,
     command: recipeCmd,
+    taskDir: workerTaskDir,
   };
 }
 
@@ -1654,6 +1659,7 @@ async function executeRecipeRerunJob(args: {
   let slotRecipeRunArtifactsDir = '';
   const active = activeReruns.get(slotId)!;
   let owner: RecipeSlotOwner = null;
+  let releasePendingFlow: (() => void) | undefined;
 
   const complete = (detail: { exitCode: number; error?: string; artifactRoot?: string }): void => {
     emit(Events.SCRIPT_COMPLETE, {
@@ -1671,6 +1677,7 @@ async function executeRecipeRerunJob(args: {
     const slotVars = await loadSlotVars(slotId);
     const projectVars = await loadProjectVars(run.project);
     const projectJson = projectVars.projectJson;
+    const launchTask = { id: runId, taskFile: run.taskFile, slotId: run.slotId };
 
     const built = await buildRecipeExecutionCommand(
       run,
@@ -1787,22 +1794,22 @@ async function executeRecipeRerunJob(args: {
     const timeoutMs = typeof rawTimeout === 'number' ? rawTimeout : DEFAULT_TIMEOUT_MS;
     const recipeCmd = built.command;
 
+    const liveRecipeContext: LiveRecipeContext = {
+      source: 'recipe-run-live',
+      recipeRunId: requestId,
+      artifactRoot: slotRecipeRunArtifactsDir,
+      artifactManifest: null,
+      recipeJson: null,
+      recipeQualityArtifact: null,
+      qualityReport: null,
+      workerLearnings: null,
+      isStale: false,
+      selectionReason: 'latest-run',
+    };
     let liveContextPublished = false;
     const publishLiveRecipeContext = () => {
       if (liveContextPublished) return;
       liveContextPublished = true;
-      const liveRecipeContext: LiveRecipeContext = {
-        source: 'recipe-run-live',
-        recipeRunId: requestId,
-        artifactRoot: slotRecipeRunArtifactsDir,
-        artifactManifest: null,
-        recipeJson: null,
-        recipeQualityArtifact: null,
-        qualityReport: null,
-        workerLearnings: null,
-        isStale: false,
-        selectionReason: 'latest-run',
-      };
       const updatedRun = updateRun(runId, { liveRecipeContext });
       emit(Events.RUN_UPDATED, { run: updatedRun });
     };
@@ -1818,11 +1825,43 @@ async function executeRecipeRerunJob(args: {
     ) {
       throw new Error('Slot ownership changed during recipe preflight.');
     }
+    const currentRun = getRun(runId);
+    const launchEpoch = currentOwner?.slot_epoch;
+    let bindFlow: ((node: ConnectedNode | undefined) => void) | undefined;
+    if (
+      currentRun &&
+      runEvidencePending(currentRun) &&
+      currentRun.taskFile === launchTask.taskFile &&
+      currentRun.slotId === launchTask.slotId &&
+      currentOwner?.current_run_id === runId &&
+      typeof launchEpoch === 'number'
+    ) {
+      // Arm on the parent before the runner's first atomic sidecar rename.
+      await slotMkdir(slotVars, slotRecipeRunArtifactsDir);
+      const outputOwner = await readSlotRow(slotId);
+      if (
+        outputOwner?.current_run_id !== runId ||
+        outputOwner.slot_epoch !== launchEpoch ||
+        outputOwner?.phase === SLOT_PHASE_RELEASING
+      ) {
+        throw new Error('Slot ownership changed while preparing the recipe artifact directory.');
+      }
+      bindFlow = (node) => {
+        if (releasePendingFlow) return;
+        releasePendingFlow = bindPendingRecipeAttempt(launchTask, liveRecipeContext, {
+          taskDir: built.taskDir,
+          slot: { id: slotId, epoch: launchEpoch },
+          node,
+        });
+        resourceRevisions.advance({ family: 'artifacts', runId });
+      };
+    }
     publishLiveRecipeContext();
     const result = await execOnSlot(slotVars, recipeCmd, {
       timeout: timeoutMs,
       signal: abortController.signal,
       closeoutTimeoutMs: RECIPE_CLOSEOUT_MS,
+      onDispatch: bindFlow,
       onOutput: (stream, data) => {
         publishLiveRecipeContext();
         emit(Events.SCRIPT_OUTPUT, { requestId, stream, data, timestamp: Date.now() });
@@ -1887,6 +1926,7 @@ async function executeRecipeRerunJob(args: {
     complete({ exitCode: 1, error: message, artifactRoot: slotRecipeRunArtifactsDir });
     console.warn(`[recipe] rerun ${requestId} failed: ${message}`);
   } finally {
+    releasePendingFlow?.();
     releaseRecipeTracking(slotId, active);
   }
 }

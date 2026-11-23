@@ -47,6 +47,9 @@ export function useAcceptanceEvidenceViewer(input: AcceptanceEvidenceViewerInput
 
   const row = acceptance.view?.rows.find((candidate) => candidate.criterion.id === criterionId);
   const runId = run?.id ?? '';
+  const decisionId = run?.decisions.find(
+    (decision) => decision.id === input.decisionId && decision.payload?.kind === 'ready',
+  )?.id;
   const resolveArtifactUrl = useCallback(
     (path: string) =>
       acceptance.evidenceModel?.report
@@ -99,6 +102,7 @@ export function useAcceptanceEvidenceViewer(input: AcceptanceEvidenceViewerInput
           path: item.path,
           slotId: run?.slotId ?? undefined,
           recipeRunId: acceptance.recipeRunId ?? undefined,
+          decisionId,
           criterionId,
         },
       })),
@@ -108,6 +112,7 @@ export function useAcceptanceEvidenceViewer(input: AcceptanceEvidenceViewerInput
       acceptance.recipeRunId,
       authHeaders,
       criterionId,
+      decisionId,
       resolveArtifactUrl,
       run?.slotId,
       runId,

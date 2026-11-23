@@ -26,6 +26,7 @@ import {
   type ReadyGatePrPackage,
   reasonWithoutRemedy,
   RecordedEvidenceReadError,
+  reviewEndsWithAcceptedFix,
   reviewFindingIsSettled,
   type ReviewStatus,
   type Run,
@@ -564,8 +565,13 @@ async function acceptableHeadFindings(
         publicationReviewMatchesPreparedPackage(review, preparedPackage) &&
         !validIds.has(review.id),
     ) ||
-    validInputs.filter((review) => publicationReviewMatchesPreparedPackage(review, preparedPackage))
-      .length === 0 ||
+    // The override accepts findings a reviewer recorded on this head; a gateway-accepted
+    // fix has none, since no reviewer saw it.
+    validInputs.filter(
+      (review) =>
+        !reviewEndsWithAcceptedFix(review) &&
+        publicationReviewMatchesPreparedPackage(review, preparedPackage),
+    ).length === 0 ||
     reviewFixInProgress(run) ||
     reviews.some((review) => review.verdict === 'pending')
   )
@@ -763,7 +769,10 @@ export async function collectRunGateAssessment(
     reasons.push({
       code: 'acceptance-unreadable',
       prerequisite: 'acceptance',
-      message: 'The registered acceptance criteria or their verdicts could not be read.',
+      // The reader's own words name what failed (a changed registration, an
+      // invalid ledger, an unretained bundle); without them the hold says only
+      // that something is unreadable and an operator cannot act on it.
+      message: `The registered acceptance criteria or their verdicts could not be read: ${acceptance.error}`,
       actionId: 'hold',
     });
   } else if (acceptance.issues.length) {

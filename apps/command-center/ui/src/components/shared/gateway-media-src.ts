@@ -153,13 +153,15 @@ export class GatewayMedia extends AsyncDirective {
   private source: string | undefined;
   private lastUrl: string | undefined;
   private lastFormat: GatewayMediaFormat = 'url';
+  private onError?: () => void;
   private abort: AbortController | undefined;
   private media: Awaited<ReturnType<typeof loadGatewayMedia>> | undefined;
   private initial: ReturnType<typeof unsafeHTML> | typeof nothing = nothing;
 
-  render(url: string, format: GatewayMediaFormat = 'url') {
+  render(url: string, format: GatewayMediaFormat = 'url', onError?: () => void) {
     this.lastUrl = url;
     this.lastFormat = format;
+    this.onError = onError;
     if (
       !(format === 'html'
         ? hasGatewayMediaAuth()
@@ -196,6 +198,7 @@ export class GatewayMedia extends AsyncDirective {
         // more for another URL, when the view mounts again, or when the gateway connection
         // comes back after a drop or restart.
         this.setValue(this.initial);
+        this.onError?.();
         this.retryOnReconnect(abort.signal);
         // Fetch failures remain visible and never fall back to a credential-bearing URL.
         console.error('Gateway media could not be loaded.', error);
@@ -216,7 +219,7 @@ export class GatewayMedia extends AsyncDirective {
         if (!dropped) return;
         unsubscribe();
         this.source = undefined;
-        if (this.lastUrl) this.setValue(this.render(this.lastUrl, this.lastFormat));
+        if (this.lastUrl) this.setValue(this.render(this.lastUrl, this.lastFormat, this.onError));
       });
       // Another source, a remount or the view closing calls release(), which aborts the failed
       // load and so ends this watch: a closed view is never loaded again.
@@ -230,7 +233,7 @@ export class GatewayMedia extends AsyncDirective {
   }
 
   protected reconnected(): void {
-    if (this.lastUrl) this.setValue(this.render(this.lastUrl, this.lastFormat));
+    if (this.lastUrl) this.setValue(this.render(this.lastUrl, this.lastFormat, this.onError));
   }
 
   private value(content: string, format: GatewayMediaFormat) {

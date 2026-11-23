@@ -94,6 +94,7 @@ import {
   RunFocusedArtifactCard,
   RunReviewWorkspaceSummary,
 } from './components/run-detail-panels';
+import { RunCostCard } from './components/RunCostCard';
 import { RunDetailHeaderCard } from './components/RunDetailHeaderCard';
 import { RunDetailSkeleton } from './components/RunDetailSkeleton';
 import { RunPosturePanel } from './components/RunPosturePanel';
@@ -605,6 +606,7 @@ export default function RunDetailScreen() {
             />
           ) : null}
         </RunDetailHeaderCard>
+        <RunCostCard run={run} />
 
         {reviewStatus ? (
           <Text accessibilityLiveRegion="polite" style={baseStyles.textSecondary}>

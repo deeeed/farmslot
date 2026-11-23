@@ -8,6 +8,7 @@ import {
   isRecord,
   PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   qualifyingPassingReviews,
+  reviewEndsWithAcceptedFix,
   type ReviewLineageOption,
   type ReviewPolicy,
   type ReviewRequestContext,
@@ -102,6 +103,7 @@ export function remainingExplicitReviewPlan(
     if (
       !isQualifyingReview(review) ||
       review.verdict !== 'pass' ||
+      reviewEndsWithAcceptedFix(review) ||
       review.unresolvedCount !== 0 ||
       (scope.source && review.source !== scope.source) ||
       (Number.isFinite(requestedAt) && Date.parse(review.completedAt ?? '') < requestedAt) ||

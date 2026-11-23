@@ -1,0 +1,1 @@
+- The idle dev-server cap runs on its own 60 s sweep over slots with a running or stale resource. It used to run only inside opt-in full-fleet health polling, so on a gateway without `FARMSLOT_RESOURCE_POLL_ALL` it never ran. Its log now also reports a sweep skipped by a held run transition, the check that refused a stop, and a slot turning quiet.

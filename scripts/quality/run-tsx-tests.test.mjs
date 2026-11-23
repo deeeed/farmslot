@@ -383,6 +383,8 @@ const SHARED_STATE_READ_ONLY = {
   'src/fleet/status-bindings.test.ts': 'uses a private mkdtemp farm root and status path',
   'src/core/state-read-cache.test.ts': 'sets a private mkdtemp status path before state imports',
   'src/fleet/status-commit-race.test.ts': 'uses a private mkdtemp farm root and status path',
+  'src/live-recipe/pending-flow-slot.test.ts':
+    'writes only its private mkdtemp pool and fleet status selected before Gateway imports',
   'src/methods/native-catalog-targets.test.ts':
     'mocks core config and fleet state; poolDir is an inert fixture value',
   'src/methods/run/extend-review-budget.test.ts':

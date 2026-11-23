@@ -87,6 +87,40 @@ function skillPath(config: RequiredSkillsConfig, skill: string, file: string): s
   return path.posix.join(config.root, skill, file);
 }
 
+/**
+ * One skill's checkout-relative files: its declared files, and its review pack
+ * when it declares one. The single place that knows a required skill's layout.
+ */
+function skillFilePaths(
+  config: RequiredSkillsConfig,
+  skill: SelectedRequiredSkill,
+): { files: string[]; pack?: string } {
+  return {
+    files: skill.files.map((file) => skillPath(config, skill.name, file)),
+    ...(skill.review ? { pack: skillPath(config, skill.name, skill.review.pack) } : {}),
+  };
+}
+
+/**
+ * Every checkout-relative file a selection requires, in selection order: each
+ * skill's declared files, then its review pack when it declares one.
+ *
+ * `freezeRequiredSkills` below freezes exactly these, and prepare's
+ * `required_skills_present` requirement asks whether they exist before a profile
+ * that skips the install phase is chosen. Both reach them through
+ * `skillFilePaths`, so a new kind of declared file cannot be frozen by one and
+ * ignored by the other.
+ */
+export function requiredSkillPaths(
+  config: RequiredSkillsConfig,
+  selection: RequiredSkillSelection,
+): string[] {
+  return selection.skills.flatMap((skill) => {
+    const paths = skillFilePaths(config, skill);
+    return [...paths.files, ...(paths.pack ? [paths.pack] : [])];
+  });
+}
+
 function digest(repoRoot: string, relative: string): string | null {
   const file = path.join(repoRoot, relative);
   if (!existsSync(file) || !statSync(file).isFile()) return null;
@@ -143,15 +177,15 @@ export function freezeRequiredSkills(
   const gaps: string[] = [];
   const skills: FrozenRequiredSkill[] = selection.skills.map((skill) => {
     const missing: string[] = [];
-    const files = skill.files.map((file) => {
-      const relative = skillPath(config, skill.name, file);
+    const paths = skillFilePaths(config, skill);
+    const files = paths.files.map((relative) => {
       const sha256 = digest(repoRoot, relative);
       if (sha256 === null) missing.push(relative);
       return { path: relative, sha256: sha256 ?? '' };
     });
     let review: FrozenRequiredSkill['review'];
-    if (skill.review) {
-      const relative = skillPath(config, skill.name, skill.review.pack);
+    if (skill.review && paths.pack) {
+      const relative = paths.pack;
       const pack = readPack(repoRoot, relative);
       if (pack === null) missing.push(relative);
       else {

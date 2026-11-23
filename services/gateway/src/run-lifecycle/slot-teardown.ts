@@ -17,6 +17,7 @@ import {
   ownsRunSlotCleanup,
   readSlotRow,
   resetSlotIf,
+  RUN_CLEANUP_TOKEN_PREFIX,
   SLOT_CLEANUP_STOP_UNCONFIRMED,
   SLOT_PHASE_RELEASING,
   SLOT_RELEASING_SINCE,
@@ -124,7 +125,7 @@ export async function fenceRunSlotCleanup(
   if (!run.slotId) return { before: null };
   const before = await readSlotRow(run.slotId);
   if (blocker) return { before };
-  const token = randomUUID();
+  const token = `${RUN_CLEANUP_TOKEN_PREFIX}${randomUUID()}`;
   const marked = await markSlotStatusIf(
     run.slotId,
     (slot) =>
@@ -426,6 +427,7 @@ export async function slotTeardownBlocker(
     const browserBlocker = await reapSlotBrowserSession(vars, {
       stillOwned,
       includeSlotProfiles: true,
+      stopSlotDaemons: true,
     });
     if (browserBlocker) return browserBlocker;
   }

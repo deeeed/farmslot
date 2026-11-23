@@ -10,7 +10,7 @@ import { createNodeExecCloseout, type ExecResult, observeNodeExecAbort } from '@
 import { currentProjectSources, sourceExecutionEnvironment } from '@farmslot/slot-config';
 
 import { commandIncludesFarmPath, currentFarmPaths } from '../fleet/farm-paths.js';
-import { getNode } from '../fleet/machine-registry.js';
+import { type ConnectedNode, getNode } from '../fleet/machine-registry.js';
 import { usesNodeLink } from '../fleet/node-link-policy.js';
 import { nodeExec, nodeExecArgv } from '../fleet/node-rpc.js';
 import { executionKind, measureManagedOperation } from '../observability/performance.js';
@@ -101,6 +101,7 @@ export interface ExecOptions {
   cwd?: string;
   timeout?: number;
   onOutput?: (stream: string, data: string) => void;
+  onSpawn?: () => void;
   signal?: AbortSignal;
   closeoutTimeoutMs?: number;
   maxBuffer?: number;
@@ -264,6 +265,7 @@ function spawnLocalProcess(
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: useProcessGroup,
       });
+      if (opts?.onSpawn) proc.once('spawn', opts.onSpawn);
       if (proc.pid !== undefined && owner) {
         owner.started(proc);
         watchCommand(proc);
@@ -396,6 +398,8 @@ function spawnLocalProcess(
 // ─── ExecOnSlotOptions ───
 
 export interface ExecOnSlotOptions extends ExecOptions {
+  /** Reports a successful local spawn or an accepted transport write. */
+  onDispatch?: (node: ConnectedNode | undefined) => void;
   /** Read-only probes may deliver a bundle without selecting it for the slot. */
   selectNodeSupport?: boolean;
 }
@@ -444,6 +448,7 @@ export async function execOnSlot(
       cwd,
       timeout: opts.timeout,
       onOutput: opts.onOutput,
+      onSpawn: opts.onDispatch ? () => opts.onDispatch?.(undefined) : undefined,
       signal,
       closeoutTimeoutMs: opts.closeoutTimeoutMs,
       maxBuffer: opts.maxBuffer,
@@ -482,6 +487,7 @@ export async function execOnSlot(
     nodeExec(slotVars.machine, cmd, cwd, {
       timeout,
       onOutput: opts.onOutput,
+      onDispatch: opts.onDispatch,
       maxBuffer: opts.maxBuffer,
       noRetry: opts.noRetry,
       signal,
