@@ -114,8 +114,8 @@ if [[ "$PACKS_ONLY" == true && "$REFRESH_CLI" == true ]]; then
   echo '[deploy] ERROR: --packs-only cannot be combined with --cli-only or --refresh-cli' >&2
   exit 1
 fi
-if [[ "$NO_NODE_TOKEN" == true && -n "$NODE_TOKEN_FILE" ]]; then
-  echo '[deploy] ERROR: --no-node-token and --node-token-file contradict each other' >&2
+if [[ "$NO_NODE_TOKEN" == true && ( -n "$NODE_TOKEN_FILE" || -n "${FARMSLOT_NODE_TOKEN:-}" ) ]]; then
+  echo '[deploy] ERROR: --no-node-token contradicts --node-token-file or a FARMSLOT_NODE_TOKEN in the environment' >&2
   exit 1
 fi
 if [[ "$PACKS_ONLY" == true && -n "$NODE_TOKEN_FILE" ]]; then
@@ -503,35 +503,22 @@ systemd_node_arguments() {
   python3 -c 'import sys; print(" ".join("\"" + arg.replace("\\", "\\\\").replace("\"", "\\\"").replace("%", "%%").replace("$", "$$") + "\"" for arg in sys.argv[1:]))' "${NODE_SERVICE_ARGS[@]}"
 }
 
-# An update keeps the node credential the target's service definition already
-# carries. Rewriting the definition without it strands the node: launchd keeps
-# the loaded job until it is next bootstrapped, then the node fails gateway
-# authentication with token_missing (macwork, Nov 22 → Nov 24). The value is read
-# into this process and never printed.
-if [[ "$DRY_RUN" != true && -z "${FARMSLOT_NODE_TOKEN:-}" && "$NO_NODE_TOKEN" != true ]]; then
-  if [[ "$REMOTE_OS" == Darwin ]]; then
-    token_plist=$(printf '%q' "$REMOTE_HOME/Library/LaunchAgents/${PLIST_NAME}.plist")
-    token_key=EnvironmentVariables.FARMSLOT_NODE_TOKEN
-    if run "test -f $token_plist" &&
-      run "/usr/bin/plutil -extract $token_key raw -o /dev/null $token_plist" 2>/dev/null; then
-      FARMSLOT_NODE_TOKEN=$(run "/usr/bin/plutil -extract $token_key raw -o - $token_plist")
-    fi
-  else
-    token_unit=$(printf '%q' "$REMOTE_HOME/.config/systemd/user/${UNIT_NAME}.service")
-    FARMSLOT_NODE_TOKEN=$(run "if test -f $token_unit; then sed -n 's/^Environment=\"FARMSLOT_NODE_TOKEN=\\(.*\\)\"\$/\\1/p' $token_unit | head -1; fi" 2>/dev/null |
-      sed 's/\\"/"/g; s/\\\\/\\/g')
-  fi
-  if [[ -n "$FARMSLOT_NODE_TOKEN" ]]; then
-    echo "[deploy] keeping the node token the existing service definition carries"
-  fi
-fi
-# The node also reads FARMSLOT_NODE_TOKEN from a .env in or above its install dir
-# (services/node/src/gateway-credential.ts): a token there is a token too.
+# An update keeps the node token the target already uses. Rewriting the service
+# definition without it strands the node: launchd keeps the loaded job until it is
+# next bootstrapped, then the node fails gateway authentication with token_missing
+# (macwork, Nov 22 -> Nov 24). Checked in the node's own order: a .env in or above
+# the install dir first, then the existing service definition. Never printed.
+source "$SCRIPT_DIR/lib/node-token.sh"
 NODE_ENV_TOKEN_FILE=""
 if [[ "$DRY_RUN" != true && -z "${FARMSLOT_NODE_TOKEN:-}" && "$NO_NODE_TOKEN" != true ]]; then
-  NODE_ENV_TOKEN_FILE=$(run "d=$(printf '%q' "$REMOTE_DIR"); while :; do if grep -qsE '^(export )?FARMSLOT_NODE_TOKEN=.+' \"\$d/.env\"; then printf '%s\\n' \"\$d/.env\"; break; fi; [ \"\$d\" = / ] && break; d=\$(dirname \"\$d\"); done" 2>/dev/null || true)
+  NODE_ENV_TOKEN_FILE=$(node_env_token_file)
   if [[ -n "$NODE_ENV_TOKEN_FILE" ]]; then
     echo "[deploy] the node reads its token from $NODE_ENV_TOKEN_FILE; the service definition carries none"
+  else
+    FARMSLOT_NODE_TOKEN=$(service_definition_node_token)
+    if [[ -n "$FARMSLOT_NODE_TOKEN" ]]; then
+      echo "[deploy] keeping the node token the existing service definition carries"
+    fi
   fi
 fi
 if [[ "$DRY_RUN" != true && -z "${FARMSLOT_NODE_TOKEN:-}" && -z "$NODE_ENV_TOKEN_FILE" && "$NO_NODE_TOKEN" != true ]]; then

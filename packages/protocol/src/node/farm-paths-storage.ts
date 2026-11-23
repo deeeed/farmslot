@@ -39,20 +39,6 @@ export function readLegacyStorageFacts(paths: FarmPaths): LegacyFarmStorageFacts
   }
   const binding = readOptional(path.join(paths.state.runs, 'bundle-store.json'));
   if (binding === undefined) return { runBundles: configured ?? paths.data.runBundles };
-  // The store may sit on a volume that is not mounted. Its pairing cannot be
-  // checked then, but reporting must not fail: a node that threw here never
-  // connected (macwork, c910ssd unmounted). The bound root is reported as is,
-  // and whatever uses it meets the outage there.
-  if (record(binding) && typeof binding.root === 'string') {
-    const missing = [binding.root, configured].find(
-      (root): root is string => typeof root === 'string' && !existsSync(root),
-    );
-    if (missing)
-      return {
-        runBundles: binding.root,
-        unavailable: `Run bundle store ${missing} is unavailable (is its volume mounted?)`,
-      };
-  }
   if (
     !record(binding) ||
     binding.version !== 1 ||
@@ -63,6 +49,20 @@ export function readLegacyStorageFacts(paths: FarmPaths): LegacyFarmStorageFacts
     !path.isAbsolute(binding.root)
   )
     throw new Error('Run bundle store pairing does not match the canonical Run store.');
+  // The bound store may sit on a volume that is not mounted. Its ownership cannot
+  // be checked then, but reporting must not fail: a node that threw here never
+  // connected (macwork, c910ssd unmounted). The bound root is reported as is, and
+  // whatever uses it meets the outage there. A configured root that is missing
+  // while the bound one is present is a misconfiguration, not an outage.
+  if (!existsSync(binding.root))
+    return {
+      runBundles: binding.root,
+      unavailable: `Run bundle store ${binding.root} is unavailable (is its volume mounted?)`,
+    };
+  if (configured && !existsSync(configured))
+    throw new Error(
+      'Run bundle store pairing does not match the configured root; use the migration command.',
+    );
   if (configured && realpathSync(configured) !== realpathSync(binding.root))
     throw new Error(
       'Run bundle store pairing does not match the configured root; use the migration command.',

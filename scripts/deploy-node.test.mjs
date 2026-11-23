@@ -64,6 +64,7 @@ const deployFixture = (t, prefix) => {
     'scripts/lib/worker-env-prefix.sh',
     'scripts/lib/tmux-bin.sh',
     'scripts/lib/node-cli-refresh.sh',
+    'scripts/lib/node-token.sh',
     'scripts/lib/deploy-paths.mts',
     'services/node/package.json',
   ])
@@ -185,7 +186,8 @@ case $command in
     [[ $command == *' -o /dev/null '* ]] || printf '%s\n' "$RENDER_NATIVE_OWNER"
     ;;
   '/usr/bin/plutil -lint '*) [ "$RENDER_CAPTURE_MODE" != corrupt ] ;;
-  '/usr/bin/plutil -extract '*) [ "$RENDER_CAPTURE_MODE" = retained ] && echo /opt/homebrew/bin/capture-helper ;;
+  '/usr/bin/plutil -extract EnvironmentVariables.CAPTURE_HELPER_PATH '*) [ "$RENDER_CAPTURE_MODE" = retained ] && echo /opt/homebrew/bin/capture-helper ;;
+  '/usr/bin/plutil -extract '*) exit 1 ;;
 esac
 `;
 
@@ -1103,6 +1105,113 @@ test('a local deploy writes a service definition without a token only when asked
   const fixture = cliFixture(t);
   fixture.deploy({ machine: localMachine(), nodeTokenFile: false, args: ['--no-node-token'] });
   assert.equal(unitToken(fixture), undefined);
+});
+
+test('--no-node-token refuses a FARMSLOT_NODE_TOKEN in the environment', (t) => {
+  const fixture = cliFixture(t);
+  assert.throws(
+    () =>
+      fixture.deploy({
+        machine: localMachine(),
+        nodeTokenFile: false,
+        args: ['--no-node-token'],
+        env: { FARMSLOT_NODE_TOKEN: 'fixture-ambient-token' },
+      }),
+    (error) => {
+      assert.match(String(error.stderr), /--no-node-token contradicts/);
+      return true;
+    },
+  );
+  assert.equal(fs.existsSync(unitPath(fixture)), false);
+});
+
+test('a local deploy does not take a blank .env token for a token', (t) => {
+  const fixture = cliFixture(t);
+  // The node strips the quotes, finds nothing and ignores this file.
+  fixture.write('home/farmslot-node/.env', 'FARMSLOT_NODE_TOKEN=""\n');
+  assert.throws(
+    () => fixture.deploy({ machine: localMachine(), nodeTokenFile: false }),
+    (error) => {
+      assert.match(String(error.stderr), /no node token for /);
+      return true;
+    },
+  );
+  assert.equal(fs.existsSync(unitPath(fixture)), false);
+});
+
+// scripts/lib/node-token.sh, sourced with a local `run` as a local deploy has it.
+const nodeTokenLib = path.join(repo, 'scripts/lib/node-token.sh');
+const sourceNodeToken = (call, env) =>
+  execFileSync(
+    'bash',
+    ['-c', `run() { eval "$@"; }; source ${JSON.stringify(nodeTokenLib)}; ${call}`],
+    { env: { ...process.env, ...env }, encoding: 'utf8' },
+  );
+
+test(
+  'the existing launchd plist token is read back exactly, XML escaping included',
+  { skip: !fs.existsSync('/usr/bin/plutil') && 'needs /usr/bin/plutil (macOS)' },
+  (t) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'node-token-plist-'));
+    t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+    fs.mkdirSync(path.join(home, 'Library/LaunchAgents'), { recursive: true });
+    const token = 'fixture&token<"with>escapes';
+    const plist = path.join(home, 'Library/LaunchAgents/com.example.node.plist');
+    execFileSync('python3', [
+      '-c',
+      'import plistlib,sys; plistlib.dump({"EnvironmentVariables":{"FARMSLOT_NODE_TOKEN":sys.argv[2]}}, open(sys.argv[1],"wb"))',
+      plist,
+      token,
+    ]);
+    const read = sourceNodeToken('service_definition_node_token', {
+      REMOTE_OS: 'Darwin',
+      REMOTE_HOME: home,
+      PLIST_NAME: 'com.example.node',
+    });
+    assert.equal(read.trimEnd(), token);
+  },
+);
+
+test('the existing systemd unit token is read back exactly, escaping included', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'node-token-unit-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(home, '.config/systemd/user'), { recursive: true });
+  // As deploy-node writes it: backslash and quote escaped.
+  fs.writeFileSync(
+    path.join(home, '.config/systemd/user/farmslot-node.service'),
+    '[Service]\nEnvironment="FARMSLOT_NODE_TOKEN=a\\\\b\\"c$d%e"\n',
+  );
+  const read = sourceNodeToken('service_definition_node_token', {
+    REMOTE_OS: 'Linux',
+    REMOTE_HOME: home,
+    UNIT_NAME: 'farmslot-node',
+  });
+  assert.equal(read.trimEnd(), 'a\\b"c$d%e');
+});
+
+test('only a .env the node would take a token from counts', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'node-token-env-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const install = path.join(root, 'farmslot-node');
+  fs.mkdirSync(install);
+  const probe = () => sourceNodeToken('node_env_token_file', { REMOTE_DIR: install }).trimEnd();
+  for (const line of [
+    'FARMSLOT_NODE_TOKEN=',
+    'FARMSLOT_NODE_TOKEN=""',
+    "FARMSLOT_NODE_TOKEN='  '",
+    '# FARMSLOT_NODE_TOKEN=x',
+  ]) {
+    fs.writeFileSync(path.join(install, '.env'), `${line}\n`);
+    assert.equal(probe(), '', `ignored: ${line}`);
+  }
+  for (const line of [
+    'FARMSLOT_NODE_TOKEN=x',
+    'export FARMSLOT_NODE_TOKEN="x"',
+    '  FARMSLOT_NODE_TOKEN = x',
+  ]) {
+    fs.writeFileSync(path.join(install, '.env'), `${line}\n`);
+    assert.equal(probe(), path.join(install, '.env'), `taken: ${line}`);
+  }
 });
 
 test('deploy-node installs the CLI on a local deploy with --refresh-cli', (t) => {
