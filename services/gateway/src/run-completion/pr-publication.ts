@@ -11,10 +11,12 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
+import { isConventionalCommitSubject } from '../../../../scripts/quality/conventional-subject.mjs';
 import { loadProjectVars } from '../core/config.js';
 import { github } from '../integrations/github-client.js';
 import { formatPrTitleSuffix } from '../tasks/writer.js';
 
+import { stripIssueBracketTag } from './draft-pr.js';
 import { lowercaseLeadingTitleWord } from './pr-title.js';
 import { localPrBodyPathResidues } from './publication-artifacts.js';
 import { assertPublicationTextSafe, PublicationSecretError } from './publication-secrets.js';
@@ -307,14 +309,22 @@ export async function updatePRTitle(run: Run, ciRepo: string, prNumber: number):
 
   const pv = await loadProjectVars(run.project).catch(() => null);
 
-  // Build conventional commit title: fix(scope): description, preserving any
-  // configured human-gate suffix without breaking Conventional Commit title linters.
-  const commitType = run.flowType === 'fix-bug' ? 'fix' : run.flowType === 'dev' ? 'feat' : 'chore';
-  const scope = pv?.projectJson.ci?.default_scope || '';
-  const scopePart = scope ? `(${scope})` : '';
+  // A ticket title that is already conventional is the published title. The
+  // flow prefix is only for a title that is not. A configured suffix stays.
+  const rawTitle = run.ticketData.title.trim();
   const titleSuffix = formatPrTitleSuffix(pv?.projectJson.ci?.pr_title_suffix);
-  const desc = lowercaseLeadingTitleWord(run.ticketData.title).replace(/\.$/, '');
-  const newTitle = `${commitType}${scopePart}: ${desc}${titleSuffix}`;
+  let newTitle: string;
+  if (isConventionalCommitSubject(rawTitle)) {
+    newTitle = `${rawTitle}${titleSuffix}`;
+  } else {
+    const commitType =
+      run.flowType === 'fix-bug' ? 'fix' : run.flowType === 'dev' ? 'feat' : 'chore';
+    const scope = pv?.projectJson.ci?.default_scope || '';
+    const scopePart = scope ? `(${scope})` : '';
+    const desc = lowercaseLeadingTitleWord(stripIssueBracketTag(rawTitle)).replace(/\.$/, '');
+    if (!desc) return;
+    newTitle = `${commitType}${scopePart}: ${desc}${titleSuffix}`;
+  }
   await assertPublicationTextSafe(newTitle);
 
   try {
