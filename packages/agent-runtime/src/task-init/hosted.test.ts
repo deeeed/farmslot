@@ -54,6 +54,41 @@ test('operator task preambles preserve replacement patterns once after the headi
   assert.equal(document.split(preamble).length - 1, 1);
 });
 
+// An operator plan is rendered a second time into the task document, numbered
+// independently from the same source list, so a note step inserted into the plan
+// would shift the checklist's numbers out from under the numbers the worker reads
+// and `mark N` for one row would tick the note instead.
+test('an operator note on a plan path is a section, never a plan step', async (t) => {
+  const input = await spec(t);
+  const plan = '# Operator plan\n\n- [ ] 1. Prove the fix\n- [ ] 2. Hand back\n';
+  const result = await taskInit({
+    ...input,
+    template: { ...input.template, explicitId: undefined },
+    operatorPlan: plan,
+    operatorNote: 'Repin the preview before anything else.',
+  });
+  const checklist = await readFile(result.checklist!, 'utf8');
+  const document = await readFile(result.taskDocument, 'utf8');
+  // The note still reaches the worker, under the title.
+  assert.match(document, /^## Operator note$/m);
+  assert.match(document, /Repin the preview before anything else\./);
+  // The plan is passed through with its own numbering untouched.
+  assert.doesNotMatch(checklist, /Carry out the operator note/);
+  assert.equal(checklist.trimEnd(), plan.trimEnd());
+});
+
+test('an operator note on the split path is both a section and a step', async (t) => {
+  const input = await spec(t);
+  const result = await taskInit({
+    ...input,
+    operatorNote: 'Repin the preview before anything else.',
+  });
+  const checklist = await readFile(result.checklist!, 'utf8');
+  const document = await readFile(result.taskDocument, 'utf8');
+  assert.match(document, /^## Operator note$/m);
+  assert.match(checklist, /Carry out the operator note/);
+});
+
 test('replay policy covers appended context before recording the rendered digest', async (t) => {
   const input = await spec(t);
   const result = await taskInit({

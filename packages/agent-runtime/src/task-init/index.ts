@@ -314,7 +314,19 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
   if (operatorPlan !== undefined && !spec.authored)
     taskMarkdown = insertUnderTitle(taskMarkdown, operatorNoteSection(spec.operatorNote));
   // The note is also a step, so completing the run means having carried it out.
-  if (checklistMarkdown !== null && spec.operatorNote && !spec.authored)
+  //
+  // Only on the split-checklist path. An operator plan is rendered a second time
+  // into TASK.md (`INTERACTIVE_CHECKLIST`), numbered independently from the same
+  // source list, so inserting a step here would shift CHECKLIST.md's numbers out
+  // from under the numbers the worker reads in TASK.md: it would run `mark N` for
+  // the publication row and tick the note instead. On that path the note is placed
+  // under the title above, and an operator is steering the run.
+  if (
+    checklistMarkdown !== null &&
+    operatorPlan === undefined &&
+    spec.operatorNote &&
+    !spec.authored
+  )
     checklistMarkdown = insertOperatorNoteStep(checklistMarkdown, taskDirLabel, spec.operatorNote);
   if (spec.taskDocumentAdditions)
     taskMarkdown = `${taskMarkdown.trimEnd()}${spec.taskDocumentAdditions.startsWith('\n') ? '' : '\n\n'}${spec.taskDocumentAdditions}`;
