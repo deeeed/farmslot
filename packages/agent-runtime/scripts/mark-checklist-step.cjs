@@ -715,25 +715,27 @@ const taskDir = path.dirname(signalPath);
  * `mark N` names that row, every other row is checked, and the signal is
  * running. Null otherwise.
  *
- * Every template ends with a row whose only instruction is `mark complete
- * --mark-last`. A worker that ticks it with `mark N` instead claims the run is
- * done, yet the signal stays running and the gateway waits for it forever (run
- * ee26591f, fix round 2). Re-marking a row already ticked that way is the same
- * claim, so a worker stuck there recovers by repeating it.
+ * Every template ends with a row that tells the worker to run `<task>/mark
+ * complete --mark-last`, on the row's own line or under it, some with
+ * `--checklist`/`--signal` before `complete`. A worker that ticks it with
+ * `mark N` instead claims the run is done, yet the signal stays running and the
+ * gateway waits for it forever (run ee26591f, fix round 2). Re-marking a row
+ * already ticked that way is the same claim, so a worker stuck there recovers
+ * by repeating it. Only the command form counts (`/mark`), so prose such as
+ * "do not mark complete" never routes.
  */
 function completionRowFlags() {
   if (stepNumber == null || skipReason !== null) return null;
-  const { lines, items } = parseChecklist(fs.readFileSync(taskPath, 'utf8'));
+  const { items } = parseChecklist(fs.readFileSync(taskPath, 'utf8'));
   const last = items[items.length - 1];
   if (!last || last.stepNumber !== stepNumber) return null;
   if (items.slice(0, -1).some((entry) => !entry.checked)) return null;
   if (readJson(signalPath).status !== 'running') return null;
-  // The row's own instruction lines: the indented lines under it.
-  const body = [];
-  for (let line = last.lineIndex + 1; line < lines.length && /^\s+\S/.test(lines[line]); line += 1)
-    body.push(lines[line]);
-  const instruction = body.join('\n').match(/\bmark complete((?:[ \t]+--[a-z-]+)*)/);
+  const instruction = `${last.rawLabel}\n${last.detail ?? ''}`.match(
+    /\/mark(?:[ \t]+--(?:checklist|signal)[ \t]+\S+)*[ \t]+complete\b((?:[ \t]+--[a-z-]+)*)/,
+  );
   if (!instruction) return null;
+  // The current checklist and signal are passed below, so only the flags are kept.
   const flags = instruction[1].trim().split(/\s+/).filter(Boolean);
   return [...new Set(['--mark-last', ...flags])].filter((flag) =>
     ['--mark-last', '--no-review', '--skip-learnings'].includes(flag),

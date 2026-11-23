@@ -9,8 +9,17 @@ const { CHECKLIST_TARGET_MANIFEST } = require('../scripts/checklist-target.cjs')
 
 const helper = path.join(__dirname, '..', 'scripts', 'mark-checklist-step.cjs');
 
-/** A review-fix round whose final row tells the worker to run `mark complete --mark-last`. */
-function fixRound(t, { finalRow, report = true } = {}) {
+/**
+ * A review-fix round. `finalRow(mark)` writes its last row from the task's mark
+ * path; by default the row tells the worker to run `mark complete --mark-last`.
+ */
+function fixRound(
+  t,
+  {
+    finalRow = (mark) => ['- [ ] 2. Complete the task', `  \`${mark} complete --mark-last\`.`],
+    report = true,
+  } = {},
+) {
   const dir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-completion-row-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(
@@ -24,8 +33,7 @@ function fixRound(t, { finalRow, report = true } = {}) {
       '',
       '- [ ] 1. Fix each reported issue',
       '  Fix the issues.',
-      finalRow ?? '- [ ] 2. Complete the task',
-      ...(finalRow ? [] : [`  \`${path.join(dir, 'mark')} complete --mark-last\`.`]),
+      ...finalRow(path.join(dir, 'mark')),
       '',
     ].join('\n'),
   );
@@ -87,11 +95,50 @@ test('a refused completion keeps the signal running until the row is marked agai
   assert.equal(signal(dir).status, 'complete');
 });
 
-test('a final row that does not instruct completion is only ticked', (t) => {
-  const dir = fixRound(t, { finalRow: '- [ ] 2. Push the branch' });
-  assert.equal(mark(dir, '1').status, 0);
-  const result = mark(dir, '2');
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(checklist(dir), /- \[x\] 2\. Push the branch/);
-  assert.equal(signal(dir).status, 'running');
-});
+// The shipped templates' other completion rows: the command on the row's own
+// line (worker/fix-bug.md), and the role form with --checklist/--signal after a
+// blank line in a fence (worker/review-fix.md, worker/ci-fix.md).
+for (const [form, finalRow] of [
+  [
+    'on the row line',
+    (mark) => [
+      `- [ ] **2. Write completion signal** — run: \`${mark} complete --mark-last\` (validates the report)`,
+      '      **Do NOT `/exit`.** Stay alive and idle.',
+    ],
+  ],
+  [
+    'with --checklist and --signal',
+    (mark) => [
+      '- [ ] **2. Write REVIEW-FIX-SIGNAL.json:**',
+      '',
+      '  ```bash',
+      `  ${mark} --checklist REVIEW-FIX.md --signal REVIEW-FIX-SIGNAL.json complete --mark-last`,
+      '  ```',
+    ],
+  ],
+]) {
+  test(`marking a completion row that gives the command ${form} completes the signal`, (t) => {
+    const dir = fixRound(t, { finalRow });
+    assert.equal(mark(dir, '1').status, 0);
+    const result = mark(dir, '2');
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(signal(dir).status, 'complete');
+  });
+}
+
+for (const [kind, finalRow] of [
+  ['no completion command', () => ['- [ ] 2. Push the branch']],
+  [
+    'only prose about completing',
+    () => ['- [ ] 2. Push the branch', '  Do not mark complete while merge conflicts remain.'],
+  ],
+]) {
+  test(`a final row with ${kind} is only ticked`, (t) => {
+    const dir = fixRound(t, { finalRow });
+    assert.equal(mark(dir, '1').status, 0);
+    const result = mark(dir, '2');
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(checklist(dir), /- \[x\] 2\. Push the branch/);
+    assert.equal(signal(dir).status, 'running');
+  });
+}
