@@ -12,7 +12,8 @@ import {
   type RunGetResult,
   type RunListRow,
   type SlotStatus,
-  type TaskProgressStructured,
+  type TaskProgressResult,
+  type TaskProgressSummary,
   viewTextField,
 } from '@farmslot/protocol';
 import { resourceQuery } from '@farmslot/protocol/client-cache';
@@ -52,7 +53,7 @@ export class MachineGroup extends LitElement {
   @property() machine = '';
   @property({ type: Array }) slots: SlotStatus[] = [];
   @property({ attribute: false }) onlineMachines: Set<string> = new Set();
-  @property({ attribute: false }) slotProgress: Map<string, TaskProgressStructured> = new Map();
+  @property({ attribute: false }) slotProgress: Map<string, TaskProgressSummary> = new Map();
   @property({ attribute: false }) slotRuns: Map<string, RunListRow> = new Map();
   @property({ attribute: false }) machineHealth?: MachineHealth;
   @property({ attribute: false }) slotThumbnails: Map<string, { data: string; ts: number }> =
@@ -77,6 +78,10 @@ export class MachineGroup extends LitElement {
   @state() private expandedSlotId: string | null = null;
   /** The expanded slot's run as run.get stores it: the full pipeline renders detail; the row's mini pipeline shows until it lands. */
   private readonly expandedRunDetail = new ResourceQueryController<RunGetResult>(this, () =>
+    this.requestUpdate(),
+  );
+  /** The full pipeline shows steps and child units; the rows above carry only a summary. */
+  private readonly expandedRunProgress = new ResourceQueryController<TaskProgressResult>(this, () =>
     this.requestUpdate(),
   );
   /** Accounts panel open (subscription matrix lives under a button, not header clutter). */
@@ -953,6 +958,14 @@ ${deployHint}"
         ? resourceQuery<RunGetResult>(Methods.RUN_GET, { runId: run.id, view: 'snapshot' })
         : undefined,
     );
+    this.expandedRunProgress.setQuery(
+      run && this.expandedSlotId && this.slotProgress.has(this.expandedSlotId)
+        ? resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, {
+            slotId: this.expandedSlotId,
+            runId: run.id,
+          })
+        : undefined,
+    );
   }
 
   render() {
@@ -1303,7 +1316,12 @@ ${deployHint}"
           </div>
         </div>
         ${detail?.id === run.id
-          ? html`<run-pipeline .run=${detail} .taskProgress=${tp}></run-pipeline>`
+          ? html`<run-pipeline
+              .run=${detail}
+              .taskProgress=${this.expandedRunProgress.belongsToWorkspace
+                ? this.expandedRunProgress.state.data?.structured
+                : undefined}
+            ></run-pipeline>`
           : html`<run-pipeline-mini
               .run=${run}
               .steps=${run.steps}

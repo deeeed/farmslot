@@ -127,7 +127,7 @@ export async function taskProgress(
   // Every live slot read, with or without an explicit task file, reports the viewed session's
   // spend. It reads beside the progress files, so the transcript tail adds no wait of its own.
   const spendSource =
-    live && !inactive && boundRun && params.slotId && !isTerminalRunStatus(boundRun.status)
+    !params.summary && live && !inactive && boundRun && params.slotId && !isTerminalRunStatus(boundRun.status)
       ? liveSpendSource(boundRun, context)
       : undefined;
   const spending = spendSource
@@ -202,7 +202,31 @@ export async function taskProgress(
       );
   }
   checkSource?.();
-  return result;
+  return params.summary ? summaryResult(result) : result;
+}
+
+/** A list row's view of a read: counts and the current step, nothing else crosses the wire. */
+export function summaryResult(result: TaskProgressResult): TaskProgressResult {
+  const { slotId, role, contextId, structured } = result;
+  const running = structured?.phases
+    .flatMap((phase) => phase.steps)
+    .find((step) => step.status === 'running')?.name;
+  return {
+    slotId,
+    ...(role ? { role } : {}),
+    ...(contextId ? { contextId } : {}),
+    markdown: '',
+    ...(structured
+      ? {
+          summary: {
+            completedSteps: structured.completedSteps,
+            totalSteps: structured.totalSteps,
+            currentPhase: structured.currentPhase,
+            currentStep: structured.currentStep?.trim() || running || null,
+          },
+        }
+      : {}),
+  };
 }
 
 /** Admission follows the same retained/live choice as the read, rather than requiring a live slot. */
@@ -332,6 +356,7 @@ async function readTaskProgress(
       markdown: source.markdown,
       structured,
     };
+    if (params.summary) return result;
     if (!params.taskFile) {
       await attachSubtaskProgress(source.io, source.checklistPath, 'review-pr', structured);
       await attachOperations(source.io, source.checklistPath, structured);
@@ -434,7 +459,8 @@ async function readTaskProgress(
   const schema = generateTaskSchema(markdown, flowType);
   if (schema.phases.length > 0) {
     result.structured = joinSchemaWithMarkdown(schema, markdown);
-    await attachSubtaskProgress(vars, effectiveMdPath, flowType, result.structured);
+    if (!params.summary)
+      await attachSubtaskProgress(vars, effectiveMdPath, flowType, result.structured);
     // Self-review (and similar) templates' last step is "write SIGNAL.json + /exit".
     // The worker exits before it can mark the box `[x]`, so the markdown stays at
     // N-1/N forever even though the role's signal already declared completion.
@@ -445,6 +471,7 @@ async function readTaskProgress(
       reconcileFinalStepFromSignal(result.structured);
     }
   }
+  if (params.summary) return result;
   if (result.structured) {
     await attachOperations(vars, effectiveMdPath, result.structured);
     await attachChecklistTiming(vars, effectiveMdPath, result.structured, activeRun, context);

@@ -9,6 +9,7 @@ import {
   runStepDisplayDetail,
   runStepDisplayStatus,
   type TaskProgressStructured,
+  type TaskProgressSummary,
 } from '@farmslot/protocol';
 import { recoveredReviewFailureColor, runRecoveredReviewFailures } from '@farmslot/review-dispatch';
 
@@ -56,7 +57,7 @@ export class RunPipelineMini extends LitElement {
   @property({ attribute: false }) run?: RunListRow;
   @property({ attribute: false }) steps: RunStep[] = [];
   @property() flowType: FlowType = 'fix-bug';
-  @property({ attribute: false }) taskProgress?: TaskProgressStructured;
+  @property({ attribute: false }) taskProgress?: TaskProgressStructured | TaskProgressSummary;
   @property() taskProgressError?: string;
   @property({ attribute: false }) retryProgress?: () => void;
   @property({ type: Boolean }) taskProgressStale = false;

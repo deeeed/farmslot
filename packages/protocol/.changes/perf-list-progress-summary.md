@@ -1,0 +1,1 @@
+- `TaskProgressParams.summary` asks `task.progress` for `TaskProgressResult.summary` (done/total, current phase and step) instead of the full checklist. The `task.progress` cache entry depends on `progress` and `run` only; `artifacts` was redundant.

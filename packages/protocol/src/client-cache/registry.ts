@@ -1306,7 +1306,6 @@ export const RESOURCE_QUERY_DEFINITIONS = {
         return [
           { family: 'progress', runId },
           { family: 'run', runId },
-          { family: 'artifacts', runId },
         ];
       return [{ family: 'slot', slotId: requiredId(params, 'slotId') }];
     },

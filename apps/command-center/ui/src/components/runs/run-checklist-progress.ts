@@ -1,7 +1,7 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
-import type { RunListRow, TaskProgressStructured } from '@farmslot/protocol';
+import type { RunListRow, TaskProgressStructured, TaskProgressSummary } from '@farmslot/protocol';
 import { runChecklistProgressSummary, runChecklistProgressView } from '@farmslot/review-dispatch';
 import { publicationGateCssVariables } from '@farmslot/theme';
 
@@ -13,7 +13,7 @@ import { subtaskPresentation } from '../progress-tracker/subtask-block.js';
 @customElement('run-checklist-progress')
 export class RunChecklistProgress extends LitElement {
   @property({ attribute: false }) run?: RunListRow;
-  @property({ attribute: false }) progress?: TaskProgressStructured | null;
+  @property({ attribute: false }) progress?: TaskProgressStructured | TaskProgressSummary | null;
   @property() error?: string;
   @property({ attribute: false }) acknowledgedAt?: string;
   @property({ attribute: false }) retry?: () => void;
