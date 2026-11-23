@@ -320,7 +320,8 @@ test(
     );
     const delay = globalThis.setTimeout;
     const waitFor = async (condition: () => boolean) => {
-      const deadline = Date.now() + 1000;
+      // A task process boots node, tsx and the CLI before its fixture runs.
+      const deadline = Date.now() + 5000;
       while (!condition() && Date.now() < deadline)
         await new Promise((resolve) => delay(resolve, 5));
       assert(condition(), 'expected closeout progress');

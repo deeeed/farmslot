@@ -17,12 +17,12 @@ export type TaskRuntimeRequest = NodeLinkTaskRuntimeInput;
 // Loaded-node task initialization samples reached 265s retaining CLI/provider
 // inputs. Keep the existing ten-minute budget and two-minute verification cap.
 export const TASK_RUNTIME_TIMEOUT_MS = { init: 10 * 60_000, verify: 120_000 } as const;
-export const TASK_RUNTIME_CLOSEOUT_MS = 2 * NODE_EXEC_CLOSEOUT_MS;
 /**
  * How long a finished task's stdout and stderr may stay open, held by a descendant. Output a
  * descendant writes after that is dropped; the result itself arrives over IPC and is never cut.
  */
 export const TASK_OUTPUT_DRAIN_MS = 2000;
+export const TASK_RUNTIME_CLOSEOUT_MS = 2 * NODE_EXEC_CLOSEOUT_MS + TASK_OUTPUT_DRAIN_MS;
 
 export function parseTaskRuntimeRequest(value: unknown): TaskRuntimeRequest {
   if (
@@ -57,7 +57,9 @@ let delivered = false;
 const parentPort = {
   on: (event, listener) => process.on(event, listener),
   postMessage: (message, done) => (process.connected ? process.send(message, done) : done?.()),
-  close: () => {
+  // The result send's callback: a failed send was not delivered, so the task stops as if orphaned.
+  close: (error) => {
+    if (error) return abandon(error);
     delivered = true;
     if (process.connected) process.disconnect();
   },
@@ -65,7 +67,19 @@ const parentPort = {
 // A worker thread died with its node; a process must not outlive it. If the channel drops
 // before the result went out, the node or gateway is gone: stop this task's groups and exit.
 const ownedGroups = new Set();
-const abandon = () => {
+// Drop groups that have since emptied, so a later signal cannot reach a reused group id.
+const pruneGroups = () => {
+  for (const pid of ownedGroups) {
+    try {
+      process.kill(-pid, 0);
+    } catch (error) {
+      if (error.code === 'ESRCH') ownedGroups.delete(pid);
+    }
+  }
+};
+const abandon = (cause) => {
+  if (cause instanceof Error) console.error('Task stopped: ' + cause.message);
+  pruneGroups();
   for (const pid of ownedGroups) {
     try {
       process.kill(-pid, 'SIGTERM');
@@ -81,7 +95,7 @@ process.on('disconnect', () => {
 });
 // A send that fails because the node is gone must still stop the task's groups.
 process.on('error', abandon);
-process.on('SIGTERM', abandon);
+process.on('SIGTERM', () => abandon());
 const { createRequire } = require('node:module');
 const { pathToFileURL } = require('node:url');
 const path = require('node:path');
@@ -101,6 +115,7 @@ ChildProcess.prototype.spawn = function(options) {
   const result = spawn.call(this, { ...options, detached: true });
   if (this.pid) {
     const pid = this.pid;
+    pruneGroups();
     ownedGroups.add(pid);
     // Forget the group only once it is empty: a detached grandchild can outlive its leader.
     this.once('close', () => {
@@ -157,7 +172,9 @@ function parseTaskMessage(raw: unknown): TaskMessage | undefined {
   if (!isRecord(raw)) return undefined;
   if (raw.type === 'task-stopping') return { type: 'task-stopping' };
   if (
-    (raw.type === 'task-child' || raw.type === 'task-child-exit' || raw.type === 'task-child-reaped') &&
+    (raw.type === 'task-child' ||
+      raw.type === 'task-child-exit' ||
+      raw.type === 'task-child-reaped') &&
     typeof raw.pid === 'number'
   )
     return { type: raw.type, pid: raw.pid };
@@ -250,8 +267,7 @@ export async function runTaskRuntime(
     let stoppingAcknowledged = false;
     let forcedKillTimer: ReturnType<typeof setTimeout> | undefined;
     const terminate = () => {
-      if (stopped && stoppingAcknowledged && !childRoots.size)
-        killTask();
+      if (stopped && stoppingAcknowledged && !childRoots.size) killTask();
     };
     const signalChild = (pid: number, signal: NodeJS.Signals | 0) => {
       let probing = true;
@@ -290,27 +306,27 @@ export async function runTaskRuntime(
     if (signal?.aborted) abort();
     const timer = setTimeout(() => stop(124, `command timed out after ${timeout}ms`), timeout);
     task.on('message', (raw: unknown) => {
-        const message = parseTaskMessage(raw);
-        if (!message) return;
-        if ('type' in message) {
-          if (message.type === 'task-stopping') stoppingAcknowledged = true;
-          else if (message.type === 'task-child-reaped') signalChild(message.pid, 0);
-          else if (message.type === 'task-child-exit') {
-            childRoots.delete(message.pid);
-            signalChild(message.pid, 0);
-          } else {
-            children.add(message.pid);
-            childRoots.add(message.pid);
-            if (stopped) signalChild(message.pid, 'SIGTERM');
-          }
-          terminate();
-          return;
+      const message = parseTaskMessage(raw);
+      if (!message) return;
+      if ('type' in message) {
+        if (message.type === 'task-stopping') stoppingAcknowledged = true;
+        else if (message.type === 'task-child-reaped') signalChild(message.pid, 0);
+        else if (message.type === 'task-child-exit') {
+          childRoots.delete(message.pid);
+          signalChild(message.pid, 0);
+        } else {
+          children.add(message.pid);
+          childRoots.add(message.pid);
+          if (stopped) signalChild(message.pid, 'SIGTERM');
         }
-        if (stopped) return;
-        const size =
-          outputBytes + Buffer.byteLength(message.stdout) + Buffer.byteLength(message.stderr);
-        if (size > 8 * 1024 * 1024) stop(1, `maxBuffer exceeded after ${size} bytes`);
-        else result = message;
+        terminate();
+        return;
+      }
+      if (stopped) return;
+      const size =
+        outputBytes + Buffer.byteLength(message.stdout) + Buffer.byteLength(message.stderr);
+      if (size > 8 * 1024 * 1024) stop(1, `maxBuffer exceeded after ${size} bytes`);
+      else result = message;
     });
     task.on('error', (error: Error) => {
       taskError = error;
@@ -320,8 +336,9 @@ export async function runTaskRuntime(
     // 'close' follows exit and the end of the task's stdout and stderr.
     // A detached grandchild that inherited the task's stdout or stderr keeps the pipes open
     // after the task exits; 'close' would wait for it. Give the pipes a bounded drain.
+    let drain: ReturnType<typeof setTimeout> | undefined;
     task.on('exit', () => {
-      const drain = setTimeout(() => {
+      drain = setTimeout(() => {
         task.stdout?.destroy();
         task.stderr?.destroy();
       }, TASK_OUTPUT_DRAIN_MS);
@@ -331,6 +348,13 @@ export async function runTaskRuntime(
       const code = exitCode ?? (exitSignal ? 1 : 0);
       clearTimeout(timer);
       clearTimeout(forcedKillTimer);
+      clearTimeout(drain);
+      // A task that died without a result (crash, OOM, external kill) never stopped its
+      // tracked groups: close them out the way a cancellation does.
+      if (!result && children.size && !stopped) {
+        stopped = true;
+        closeout.terminate();
+      }
       signal?.removeEventListener('abort', abort);
       const finish = async () => {
         try {
