@@ -57,4 +57,16 @@ test('lightweight completion keeps a conventional ticket title', async () => {
     2418,
   );
   assert.deepEqual(titles, ['feat: show market icons [gate]']);
+
+  titles.length = 0;
+  await updatePRTitle(
+    {
+      ...run,
+      flowType: 'fix-bug',
+      ticketData: manualTicketData('[BUG] iOS: show the banner'),
+    },
+    'fixture/repo',
+    2418,
+  );
+  assert.deepEqual(titles, ['fix: iOS: show the banner [gate]']);
 });

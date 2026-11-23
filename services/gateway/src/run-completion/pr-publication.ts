@@ -320,7 +320,9 @@ export async function updatePRTitle(run: Run, ciRepo: string, prNumber: number):
       run.flowType === 'fix-bug' ? 'fix' : run.flowType === 'dev' ? 'feat' : 'chore';
     const scope = pv?.projectJson.ci?.default_scope || '';
     const scopePart = scope ? `(${scope})` : '';
-    const desc = lowercaseLeadingTitleWord(rawTitle).replace(/\.$/, '');
+    const desc = lowercaseLeadingTitleWord(
+      rawTitle.replace(/^\[(?:bug|feature)\]\s*/i, ''),
+    ).replace(/\.$/, '');
     newTitle = `${commitType}${scopePart}: ${desc}${titleSuffix}`;
   }
   await assertPublicationTextSafe(newTitle);

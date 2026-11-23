@@ -34,11 +34,14 @@ function inferDraftPrTitleScope(run: Run): string {
   return '';
 }
 
+function stripIssueBracketTag(title: string): string {
+  return title.replace(/^\[(?:bug|feature)\]\s*/i, '');
+}
+
 function sanitizeDraftPrTitleDescription(rawTitle: string): string {
-  return rawTitle
-    .trim()
-    .replace(/^\[(core|extension|mobile|terminal|mm[em])\]\s*[:—-]?\s*/i, '')
-    .replace(/[.\s]+$/, '');
+  return stripIssueBracketTag(
+    rawTitle.trim().replace(/^\[(core|extension|mobile|terminal|mm[em])\]\s*[:—-]?\s*/i, ''),
+  ).replace(/[.\s]+$/, '');
 }
 
 // A ticket key alone (`TAT-4138`, `[TAT-4138]:`) names the ticket, not the change.

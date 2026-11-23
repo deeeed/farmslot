@@ -208,6 +208,19 @@ test('buildDraftPrTitle strips the Terminal platform prefix', () => {
   );
 });
 
+test('buildDraftPrTitle drops a leading issue tag', () => {
+  const bug = makeRun({
+    flowType: 'fix-bug',
+    ticketData: manualTicketData('[BUG] iOS: show the banner'),
+  });
+  const feature = makeRun({
+    flowType: 'dev',
+    ticketData: manualTicketData('[FEATURE] Add a lockfile check'),
+  });
+  assert.equal(buildDraftPrTitle(bug, ''), 'fix: iOS: show the banner');
+  assert.equal(buildDraftPrTitle(feature, ''), 'feat: add a lockfile check');
+});
+
 test('buildDraftPrTitle keeps a leading ticket key upper-case', () => {
   const run = makeRun({
     flowType: 'dev',
