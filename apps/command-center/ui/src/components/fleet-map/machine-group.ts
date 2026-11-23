@@ -958,11 +958,13 @@ ${deployHint}"
         ? resourceQuery<RunGetResult>(Methods.RUN_GET, { runId: run.id, view: 'snapshot' })
         : undefined,
     );
+    // The same slot and run the summary row reads, so the pipeline shows that row's checklist.
+    const slot = this.slots.find((entry) => entry.slot === this.expandedSlotId);
     this.expandedRunProgress.setQuery(
-      run && this.expandedSlotId && this.slotProgress.has(this.expandedSlotId)
+      run && slot && this.slotProgress.has(slot.slot)
         ? resourceQuery<TaskProgressResult>(Methods.TASK_PROGRESS, {
-            slotId: this.expandedSlotId,
-            runId: run.id,
+            slotId: slot.slot,
+            ...(slot.currentRunId ? { runId: slot.currentRunId } : {}),
           })
         : undefined,
     );
