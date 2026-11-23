@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { RUNTIME_VERSION } from '../version.js';
 
 import { NATIVE_HOST_VERSION_SKEW } from './host-unavailable.js';
-import { currentRuntimeBuild } from './runtime-build.js';
 import { type HostIdentity, requestHost } from './ipc.js';
+import { currentRuntimeBuild } from './runtime-build.js';
 import { readJson, type RecordedProcess, recordedProcessAlive } from './storage.js';
 
 export function nativeHostVersionSkew(host: HostIdentity) {
