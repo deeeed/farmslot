@@ -473,6 +473,14 @@ test('artifact-only finalize leaves the slot to its release instead of holding i
   );
 });
 
+test('a run that is not artifact-only, with no PR yet, still holds its slot for ci-watch', async () => {
+  ciWatchHolds.length = 0;
+  // ci-watch can still find this run's PR, so finalize keeps the slot for it.
+  run.prNumber = undefined;
+  await executeFinalizeStep(run.id, context);
+  assert.deepEqual(ciWatchHolds, [`${run.slotId}:ci-watch`]);
+});
+
 test('Pi completion followed by finalize retains all worker-session tokens and cost', async () => {
   run.flowType = 'dev';
   run.completionPolicy = 'artifact-only';
