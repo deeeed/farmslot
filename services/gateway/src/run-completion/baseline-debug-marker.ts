@@ -44,6 +44,8 @@ export async function isTicketMarkerCommit(
   /** Names an added import bound, checked at the end against the loggers actually logged through. */
   const importedBindings = new Set<string>();
   const loggedThrough = new Set<string>();
+  /** `console.error` is admitted for the global console only, never an import bound as `console`. */
+  let loggedConsoleError = false;
   const finishHunk = () => {
     if (!added.length) return true;
     const source = ts.createSourceFile('marker.ts', added.join('\n'), ts.ScriptTarget.Latest, true);
@@ -121,6 +123,8 @@ export async function isTicketMarkerCommit(
       if (!prefix?.startsWith(`[${ticket}] BUG_MARKER:`) || call.arguments.some(writesValue))
         return false;
       loggedThrough.add(loggerObject);
+      if (ts.isPropertyAccessExpression(call.expression) && call.expression.name.text === 'error')
+        loggedConsoleError = true;
       markers += 1;
       return true;
     };
@@ -157,9 +161,12 @@ export async function isTicketMarkerCommit(
    * by a marker in another, so the sets close and reset at each file boundary.
    */
   const closeFile = (): boolean => {
-    const justified = [...importedBindings].every((name) => loggedThrough.has(name));
+    const justified =
+      [...importedBindings].every((name) => loggedThrough.has(name)) &&
+      !(loggedConsoleError && importedBindings.has('console'));
     importedBindings.clear();
     loggedThrough.clear();
+    loggedConsoleError = false;
     return justified;
   };
 

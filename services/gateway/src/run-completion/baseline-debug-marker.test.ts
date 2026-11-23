@@ -106,6 +106,22 @@ index 123abcd..456abcd 100644
 +  console.error('[${ticket}] BUG_MARKER: size field cleared before submit');
 `}`;
   assert.equal(await isTicketMarkerCommit(terminal, base, marker, ticket), true);
+  // An added import bound as `console` shadows the global: its error() is that logger's.
+  const shadowed = terminal.replace(
+    '@@ -12,0 +13 @@',
+    "@@ -1,0 +2 @@\n+import console from '../util/Logger';\n@@ -12,0 +13 @@",
+  );
+  assert.equal(await isTicketMarkerCommit(shadowed, base, marker, ticket), false);
+  assert.equal(
+    await isTicketMarkerCommit(
+      shadowed.replace('console.error(', 'console.log('),
+      base,
+      marker,
+      ticket,
+    ),
+    true,
+    'the import is a logger and the marker logs through it',
+  );
 });
 
 for (const [name, changed] of [
