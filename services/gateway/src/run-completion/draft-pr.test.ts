@@ -208,6 +208,43 @@ test('buildDraftPrTitle strips the Terminal platform prefix', () => {
   );
 });
 
+test('buildDraftPrTitle drops a leading issue tag', () => {
+  const bug = makeRun({
+    flowType: 'fix-bug',
+    ticketData: manualTicketData('[BUG] iOS: show the banner'),
+  });
+  const feature = makeRun({
+    flowType: 'dev',
+    ticketData: manualTicketData('[FEATURE] Add a lockfile check'),
+  });
+  assert.equal(buildDraftPrTitle(bug, ''), 'fix: iOS: show the banner');
+  assert.equal(buildDraftPrTitle(feature, ''), 'feat: add a lockfile check');
+  assert.equal(
+    buildDraftPrTitle(
+      makeRun({
+        flowType: 'fix-bug',
+        ticketData: manualTicketData('[Bug]: Ledger: unable to swap'),
+      }),
+      '',
+    ),
+    'fix: ledger: unable to swap',
+  );
+  assert.equal(
+    buildDraftPrTitle(
+      makeRun({
+        flowType: 'dev',
+        ticketData: manualTicketData('[FEATURE]: Add a lockfile check'),
+      }),
+      '',
+    ),
+    'feat: add a lockfile check',
+  );
+  assert.equal(
+    buildDraftPrTitle(makeRun({ flowType: 'fix-bug', ticketData: manualTicketData('[Bug]:') }), ''),
+    '',
+  );
+});
+
 test('buildDraftPrTitle keeps a leading ticket key upper-case', () => {
   const run = makeRun({
     flowType: 'dev',
@@ -215,6 +252,36 @@ test('buildDraftPrTitle keeps a leading ticket key upper-case', () => {
   });
 
   assert.equal(buildDraftPrTitle(run, ''), 'feat: TAT-4037 Show market icons');
+});
+
+test('buildDraftPrTitle keeps a ticket title that already has a conventional prefix', () => {
+  const dev = { flowType: 'dev' as const };
+  const chore = makeRun({
+    ...dev,
+    ticketData: manualTicketData('chore(sherpa-onnx.rn): update sherpa-onnx to v2.0.2'),
+  });
+  const ci = makeRun({
+    ...dev,
+    ticketData: manualTicketData(
+      'ci: server requirements lock goes stale on every upstream release',
+    ),
+  });
+  assert.equal(buildDraftPrTitle(chore, ''), 'chore(sherpa-onnx.rn): update sherpa-onnx to v2.0.2');
+  assert.equal(
+    buildDraftPrTitle(ci, ''),
+    'ci: server requirements lock goes stale on every upstream release',
+  );
+  assert.equal(
+    buildDraftPrTitle(makeRun({ ...dev, ticketData: manualTicketData('ci: x.') }), ''),
+    'ci: x.',
+  );
+  assert.equal(
+    buildDraftPrTitle(
+      makeRun({ ...dev, ticketData: manualTicketData('[Mobile] ci: update checks') }),
+      '',
+    ),
+    'feat: ci: update checks',
+  );
 });
 
 test('ticket PR titles preserve a leading acronym or identifier and lowercase an ordinary word', () => {
