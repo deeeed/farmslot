@@ -569,15 +569,12 @@ async function sendBack(
       // `sendBackCompletion` resumes monitoring itself for an instruction the
       // worker may already have, under its own ownership checks. The run is
       // monitoring again, so it must not be held on the refusal it just left.
+      // Only a plain delivery error means the resume succeeded. An AggregateError
+      // is `sendBackCompletion` reporting that it could NOT resume, so the run
+      // must be held again: round 10 found that treating it as resumed left the
+      // operator with neither a decision nor a Replay action.
       const { CompletionFeedbackDeliveryError } = await import('./completion-send-back.js');
-      const resumed =
-        error instanceof CompletionFeedbackDeliveryError
-          ? error.handedOver
-          : error instanceof AggregateError &&
-            error.errors.some(
-              (cause) => cause instanceof CompletionFeedbackDeliveryError && cause.handedOver,
-            );
-      if (resumed) throw error;
+      if (error instanceof CompletionFeedbackDeliveryError && error.handedOver) throw error;
       if (isHeldForResultDecision(getRun(run.id) ?? run)) {
         try {
           await holdRunForResultDecision(run.id, stoppedAt, reason);

@@ -441,6 +441,41 @@ export async function sendBackCompletion(
       if (handedOver) {
         const resumingKey = intent.key;
         try {
+          // An edited instruction the composer took is the live one, and its
+          // record sits under `completionSendBackReplacement` with the signal
+          // floor it was typed against. Promote both before monitoring resumes:
+          // otherwise the resume guard looks for this key and finds the original
+          // (round 10's strand), and the monitor would read the pre-edit floor and
+          // could consume a result the edit already superseded.
+          if (superseded)
+            await withRunTransition(run.id, async () => {
+              const latest = await assertOwner();
+              const step = latest.steps.find((entry) => entry.name === PipelineSteps.DISPATCH);
+              const replacement = savedReplacement(step?.outputs);
+              if (!step || !replacement || replacement.delivery.key !== resumingKey) return;
+              const history = step.outputs?.completionSendBackWithdrawn;
+              updateRunStep(run.id, PipelineSteps.DISPATCH, {
+                outputs: {
+                  ...step.outputs,
+                  completionSendBackSignal: replacement.signal,
+                  completionSendBackDelivery: replacement.delivery,
+                  completionSendBackReplacement: undefined,
+                  // Promotion makes the edit the live instruction, so the
+                  // instruction it replaced is withdrawn by name here, exactly as
+                  // a confirmed replacement records it.
+                  completionSendBackWithdrawn: [
+                    ...(Array.isArray(history) ? history : []),
+                    {
+                      key: superseded.key,
+                      ...(superseded.note ? { note: superseded.note } : {}),
+                      startedAt: superseded.startedAt,
+                      withdrawnAt: new Date().toISOString(),
+                      withdrawnBy: replacement.delivery.key,
+                    },
+                  ],
+                },
+              });
+            });
           await continuePRCompletionStep(run.id, 'monitor', emit, async () => {
             const latest = await assertOwner();
             const saved = savedDelivery(latest);
@@ -459,7 +494,11 @@ export async function sendBackCompletion(
       }
       throw failure;
     }
-    delivery = { ...intent, startedAt: result.startedAt, confirmed: true };
+    // `queued` describes a command the host was still holding. Confirmation is
+    // the host accepting it, so the marker must not survive into the confirmed
+    // record, where it would block a later retirement for good.
+    const { queued: _queued, ...accepted } = intent;
+    delivery = { ...accepted, startedAt: result.startedAt, confirmed: true };
     await persistDelivery(delivery, 'completion feedback delivered');
   }
   const key = delivery.key;

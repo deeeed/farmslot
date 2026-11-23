@@ -1469,6 +1469,85 @@ test('an uncertain edit keeps its delivery window until it can be confirmed', as
   assert.ok(Array.isArray(withdrawn) && withdrawn.length === 1);
 });
 
+// Codex r10, first major: `queued` described a command the host was holding, and
+// confirmation spread it into the confirmed record, where it blocked retirement
+// for good: a later refusal could neither re-word the feedback nor send a new one.
+test('confirming a queued correction clears the marker that holds back retirement', async () => {
+  await heldQa();
+  run.transport = 'native';
+  delivery = 'queued';
+  await assert.rejects(
+    resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' }),
+    /delivery is queued/,
+  );
+  const dispatchOutputs = () => run.steps.find((step) => step.name === S.DISPATCH)?.outputs;
+  assert.equal(
+    (dispatchOutputs()?.completionSendBackDelivery as { queued?: boolean }).queued,
+    true,
+  );
+  delivery = 'confirmed';
+  run.decisions = [await buildResultDecision(run, 'complete')];
+  await resolveResultDecision({
+    runId: run.id,
+    decisionId: pending().id,
+    actionId: 'send-back',
+  });
+  const saved = dispatchOutputs()?.completionSendBackDelivery as {
+    queued?: boolean;
+    confirmed?: boolean;
+  };
+  assert.equal(saved.confirmed, true);
+  assert.equal(saved.queued, undefined, 'the host accepted it, so it is no longer queued');
+});
+
+// Codex r10, second major: an edited instruction the composer took is recorded
+// under `completionSendBackReplacement`, so a resume that looked for its key in
+// `completionSendBackDelivery` threw, and the caller read that failure as proof
+// the monitor had resumed — the run kept neither a decision nor a Replay. The
+// edit is the live instruction, so promote it and its floor, then resume.
+test('a handed-over edit becomes the live instruction before monitoring resumes', async () => {
+  await heldQa();
+  delivery = 'queued';
+  await assert.rejects(
+    resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'Keep the video.',
+    }),
+    /delivery is queued/,
+  );
+  const dispatchOutputs = () => run.steps.find((step) => step.name === S.DISPATCH)?.outputs;
+  const editFloor = { ...priorSignal, timestamp: '2026-10-28T00:17:00.000Z' };
+  beforeDelivery = () => {
+    currentSignal = editFloor;
+  };
+  delivery = 'unconfirmed';
+  run.decisions = [await buildResultDecision(run, 'complete')];
+  await assert.rejects(
+    resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'Replace the video.',
+    }),
+    /delivery is unconfirmed/,
+  );
+  beforeDelivery = undefined;
+  const live = dispatchOutputs()?.completionSendBackDelivery as { key?: string };
+  assert.equal(live.key, feedback.at(-1)?.key, 'the edit is the saved instruction');
+  assert.equal(dispatchOutputs()?.completionSendBackReplacement, undefined);
+  assert.deepEqual(
+    dispatchOutputs()?.completionSendBackSignal,
+    editFloor,
+    'and the monitor reads the floor the edit was typed against, not the pre-edit one',
+  );
+  assert.ok(
+    replays.some(({ stepName }) => stepName === 'monitor'),
+    'monitoring resumed for the instruction it has',
+  );
+});
+
 // Codex r5, third major: after a queued correction runs and its signal is
 // consumed, a new refusal still saw the old delivery as unconfirmed — so a
 // changed note hit the native withdrawal guard and an unchanged one retried the
