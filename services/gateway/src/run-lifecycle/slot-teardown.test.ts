@@ -1654,6 +1654,56 @@ test('a run cancelled before its worker was dispatched releases its slot', async
   assert.equal(slotRow?.held_reason ?? null, null);
 });
 
+test('a pre-dispatch cancel stops and joins the run’s in-flight prepare before releasing', async (t) => {
+  const { activePrepareAborts } = await import('../methods/slot/shared.js');
+  const events: string[] = [];
+  let settle!: () => void;
+  activePrepareAborts.set(SLOT_ID, {
+    abort: () => {
+      events.push('abort');
+      // The prepare unwinds after its abort, a moment later.
+      globalThis.setImmediate(() => {
+        events.push('prepare settled');
+        settle();
+      });
+    },
+    settled: new Promise<void>((resolve) => (settle = resolve)),
+  });
+  t.after(() => activePrepareAborts.delete(SLOT_ID));
+  const preparing = {
+    ...run,
+    steps: [
+      { name: 'prepare', status: 'skipped', startedAt: '2026-11-23T16:21:09.377Z' },
+      { name: 'dispatch', status: 'skipped' },
+    ],
+  } as Run;
+  const cancel = defaultCancelCollaborators();
+
+  await cancel.releaseCapabilities(preparing);
+  events.push('capabilities released');
+  await cancel.releaseSlot(preparing);
+
+  assert.deepEqual(events, ['abort', 'prepare settled', 'capabilities released']);
+  assert.equal(slotRow?.lifecycle, 'ready');
+});
+
+test('a replayed run whose earlier dispatch left its outputs keeps the replay hold', async () => {
+  // Replay clears the dispatch step's start; what the earlier dispatch recorded stays.
+  const replayed = {
+    ...run,
+    steps: [
+      { name: 'prepare', status: 'skipped' },
+      { name: 'dispatch', status: 'skipped', outputs: { runner: 'pi' } },
+    ],
+  } as Run;
+  const cancel = defaultCancelCollaborators();
+
+  await cancel.releaseCapabilities(replayed);
+  await cancel.releaseSlot(replayed);
+
+  assertKeptForReplay();
+});
+
 // macwork-mmt-3 on Arthur's cancels: the run's own finished worker had no exact pane identity.
 test('cancel stops its own worker without a pane identity the way slot.release does', async () => {
   workerBlocker = `Worker dev has no exact pane identity; cleanup deferred. Verify its window, then use farmslot slot release --keep-work ${SLOT_ID}`;

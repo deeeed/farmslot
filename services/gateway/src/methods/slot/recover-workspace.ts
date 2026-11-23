@@ -129,6 +129,8 @@ export async function recoverSlotWorkspace(
     return refuse('protected', 'Slot is preparing or refreshing');
   assertNoNativeWorkerRecovery(params.slotId);
   activePrepareSlots.add(params.slotId);
+  // Set false once this recovery hands the guard back; a prepare may own it after that.
+  let guardHeld = true;
   beginTerminalTeardown(params.slotId);
   let recovery: SlotRecovery | undefined;
   let claimed = false;
@@ -492,6 +494,7 @@ export async function recoverSlotWorkspace(
     // must be able to prepare it (1b542e2f was refused 'already preparing' on macpro-mmt-4).
     // The releasing fence still keeps prepares out until the ready transition lands.
     activePrepareSlots.delete(params.slotId);
+    guardHeld = false;
     if (!(await resetSlotIf(params.slotId, ownsFence, keepWarm, marker.id)))
       throw new Error('Recovery ready transition refused');
     await loadFleetStatus(true);
@@ -530,7 +533,8 @@ export async function recoverSlotWorkspace(
     );
   } finally {
     invalidateSlotWorkspaceObservations(params.slotId);
-    activePrepareSlots.delete(params.slotId);
+    // Only this recovery's own guard: a run that claimed the ready slot may hold it now.
+    if (guardHeld) activePrepareSlots.delete(params.slotId);
     endTerminalTeardown(params.slotId);
   }
 }

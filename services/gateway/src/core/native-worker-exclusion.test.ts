@@ -33,3 +33,14 @@ test('already-admitted prepare refuses recovery until preparation exits', () => 
   const release = acquireNativeWorkerRecovery(slot);
   release();
 });
+
+test('clearing a prepare guard is announced once, adding or missing ones are not', (t) => {
+  const announced: string[] = [];
+  activePrepareSlots.onCleared((slotId) => announced.push(slotId));
+  t.after(() => activePrepareSlots.onCleared(() => {}));
+  activePrepareSlots.add('slot-a');
+  assert.deepEqual(announced, []);
+  assert.equal(activePrepareSlots.delete('slot-a'), true);
+  assert.equal(activePrepareSlots.delete('slot-a'), false);
+  assert.deepEqual(announced, ['slot-a']);
+});

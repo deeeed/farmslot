@@ -701,6 +701,10 @@ export async function commitSlotClaim(
   }
 }
 
+// A guard that clears on a slot reading ready changes what selection may pick: announce it
+// as a slot change, so a run waiting in the slot picker re-checks.
+activePrepareSlots.onCleared((slotId) => resourceRevisions.advance({ family: 'slot', slotId }));
+
 /** How long an explicit slot pick waits for an in-flight release to land. */
 export const EXPLICIT_SLOT_RELEASE_WAIT_MS = 5 * 60 * 1000;
 const EXPLICIT_SLOT_RELEASE_POLL_MS = 2000;
@@ -2157,6 +2161,8 @@ async function findSlotAttempt(
           )
           .map((slot) => ({
             slot: slot.slot,
+            // A free slot under a prepare guard is skipped; its guard clearing is a change.
+            preparing: activePrepareSlots.has(slot.slot),
             machine: slot.machine,
             enabled: slot.enabled,
             dispatchable: slot.dispatchable,

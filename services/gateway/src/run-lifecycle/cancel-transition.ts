@@ -241,9 +241,15 @@ async function broadcastTransitionEvent(event: string, payload: unknown): Promis
  * never started. Such a cancel releases the slot instead of holding it (510ed181 kept
  * macpro-mmt-6 held from a cancel during prepare). A flow without a dispatch step keeps the hold.
  */
-export function cancelledBeforeDispatch(run: Pick<Run, 'steps'>): boolean {
+export function cancelledBeforeDispatch(run: Pick<Run, 'steps' | 'worktreeHeadAtDispatch'>): boolean {
   const dispatch = run.steps.find((step) => step.name === 'dispatch');
-  return Boolean(dispatch && !dispatch.startedAt);
+  // A replay clears the step's start, but never the head recorded at an earlier dispatch.
+  return Boolean(
+    dispatch &&
+      !dispatch.startedAt &&
+      !dispatch.outputs &&
+      !run.worktreeHeadAtDispatch,
+  );
 }
 
 /**
@@ -255,10 +261,11 @@ export function defaultCancelCollaborators({
 }: { keepForReplay?: boolean } = {}): CancelCollaborators {
   const cleanup = new Map<
     string,
-    { fence: RunSlotCleanupFence; blocker: string | null; succeeded: boolean }
+    { fence: RunSlotCleanupFence; blocker: string | null; succeeded: boolean; keep: boolean }
   >();
   // After dispatch a cancel keeps the slot for replay (ADR-054); before it there is nothing to replay.
-  const keeps = (run: Pick<Run, 'steps'>) => keepForReplay && !cancelledBeforeDispatch(run);
+  const keeps = (run: Pick<Run, 'steps' | 'worktreeHeadAtDispatch'>) =>
+    keepForReplay && !cancelledBeforeDispatch(run);
   return {
     releaseWorkspace: async (run) => {
       const { teardownReviewWorkspace } = await import('../review-workspaces/pipeline.js');
@@ -278,8 +285,29 @@ export function defaultCancelCollaborators({
         fence: { before: null } as RunSlotCleanupFence,
         blocker: null as string | null,
         succeeded: false,
+        keep: keeps(run),
       };
       cleanup.set(run.id, state);
+      // A run cancelled before dispatch may still be preparing its slot. Stop and join that
+      // prepare before the slot is released, as slot.release does; one that will not stop
+      // keeps the slot held for the run instead of publishing it ready under a live prepare.
+      if (!state.keep && run.slotId) {
+        const { activePrepareAborts } = await import('../methods/slot/shared.js');
+        const inflight = activePrepareAborts.get(run.slotId);
+        if (inflight) {
+          const { RELEASE_PREPARE_STOP_TIMEOUT_MS } = await import('../methods/slot/release.js');
+          inflight.abort();
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const stopped = await Promise.race([
+            inflight.settled.then(() => true),
+            new Promise<boolean>((resolve) => {
+              timer = setTimeout(() => resolve(false), RELEASE_PREPARE_STOP_TIMEOUT_MS);
+            }),
+          ]);
+          clearTimeout(timer);
+          if (!stopped) state.keep = true;
+        }
+      }
       const { readSlotRow } = await import('../core/index.js');
       state.fence.before = run.slotId ? await readSlotRow(run.slotId) : null;
       await cancelNativeRunWorkers(run.id, { machineTransitionHeld: true });
@@ -291,7 +319,7 @@ export function defaultCancelCollaborators({
       const blocker = await slotOwnershipBlocker(run);
       const cleanupBlocker = [survivors, runtimeBlocker].filter(Boolean).join('; ') || null;
       await recordSlotTeardownSkipped(run, blocker ?? cleanupBlocker);
-      state.blocker = blocker ?? (keeps(run) ? null : cleanupBlocker);
+      state.blocker = blocker ?? (state.keep ? null : cleanupBlocker);
       state.succeeded = true;
       state.fence = await fenceRunSlotCleanup(run, state.blocker);
     },
@@ -324,7 +352,7 @@ export function defaultCancelCollaborators({
         // Keep replay by default; on-demand selection releases the confirmed owned cleanup.
         // A reclaimed blind trial gets its original Git back while it still owns the slot.
         let releaseBlocker = blocker;
-        const keepSlot = keeps(run);
+        const keepSlot = state ? state.keep : keeps(run);
         if (
           !releaseBlocker &&
           !keepSlot &&
