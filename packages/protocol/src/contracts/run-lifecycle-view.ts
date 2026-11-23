@@ -1,8 +1,9 @@
 import { isRecord } from '../recipe/common.js';
 import type { WorkerOperatorWait } from '../transport/signal.js';
 
+import { reviewPublicationPending } from './review-publication.js';
 import type { RunGatePrerequisiteReason, RunGateReadiness } from './run-gate-readiness.js';
-import type { RunStatus, RunStep, RunStepStatus } from './runs.js';
+import type { Run, RunStatus, RunStep, RunStepStatus } from './runs.js';
 
 /** A step as the clients show it: `blocked` marks the step a blocked run stopped at. */
 export type RunStepDisplayStatus = RunStepStatus | 'blocked';
@@ -164,22 +165,54 @@ export function gateDisplayReasons(decision: GateDecisionFields): RunGatePrerequ
   );
 }
 
-/** A run's status as a badge shows it: a run at its open human gate needs a decision. */
-export function runDisplayStatus(run: {
-  status: RunStatus;
-  decisions?: readonly GateDecisionFields[];
-}): string {
-  return gateDecisionWait(run)?.label ?? run.status;
+/** The label for a finished review whose requested PR publication has not landed yet. */
+export const PUBLISHING_REVIEW_LABEL = 'Publishing review';
+
+/** A finished run's publication fields, when the caller has them. */
+type PublicationFields = Partial<Pick<Run, 'prWork' | 'reviewPublication'>>;
+
+function publishingReview(run: { status: RunStatus } & PublicationFields): boolean {
+  return reviewPublicationPending({
+    status: run.status,
+    prWork: run.prWork,
+    reviewPublication: run.reviewPublication,
+  });
+}
+
+/**
+ * A run's status as a badge shows it: a run at its open human gate needs a decision, and a
+ * finished review still posting to its PR reads as publishing, never done.
+ */
+export function runDisplayStatus(
+  run: {
+    status: RunStatus;
+    decisions?: readonly GateDecisionFields[];
+  } & PublicationFields,
+): string {
+  return (
+    gateDecisionWait(run)?.label ?? (publishingReview(run) ? PUBLISHING_REVIEW_LABEL : run.status)
+  );
 }
 
 /** Both clients and the CLI present the gateway's state and prerequisite reasons. */
-export function deriveRunLifecycleView(input: {
-  status: RunStatus;
-  gateReadiness?: unknown;
-  waitingForOperator?: WorkerOperatorWait;
-  error?: string | null;
-  decisions?: readonly GateDecisionFields[];
-}): RunLifecycleView {
+export function deriveRunLifecycleView(
+  input: {
+    status: RunStatus;
+    gateReadiness?: unknown;
+    waitingForOperator?: WorkerOperatorWait;
+    error?: string | null;
+    decisions?: readonly GateDecisionFields[];
+  } & PublicationFields,
+): RunLifecycleView {
+  if (publishingReview(input))
+    return {
+      status: input.status,
+      label: PUBLISHING_REVIEW_LABEL,
+      activityLabel: PUBLISHING_REVIEW_LABEL,
+      tone: 'running',
+      canAdvance: false,
+      reasons: [],
+    };
   const blockedReason = blockedRunReason(input.error);
   const gateWait = gateDecisionWait(input);
   const readiness = isGateReadiness(input.gateReadiness) ? input.gateReadiness : undefined;

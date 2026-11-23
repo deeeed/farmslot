@@ -18,6 +18,7 @@ import {
   type PRTriggerRuleConfig,
   type QaAfterReview,
   resolvePRWorkflowDefaults,
+  reviewPublicationPending,
   reviewPublicationPolicyForRun,
   reviewResultForRun,
   type Run,
@@ -322,35 +323,56 @@ export class PRRuleService {
   }
 
   private async reconcileReviewPublications(): Promise<void> {
-    for (const run of await getAllRunsWithArchived()) {
-      if (
-        run.status !== 'done' ||
-        !reviewPublicationPolicyForRun(run)?.enabled ||
-        run.reviewPublication?.receipt?.state === 'published' ||
-        run.reviewPublication?.error
-      )
-        continue;
-      const owner =
-        run.reviewPublication?.gate?.publication ??
-        run.reviewPublication?.direct ??
-        run.prWork?.review;
-      if (!owner || !this.authorized(owner.ownerId, owner.ownerGeneration ?? 0)) continue;
-      const ownerId = owner.ownerId;
-      try {
-        await runWithPrincipalOwner(owner, () => this.publishReview(ownerId, run.id));
-      } catch (error) {
-        if (error instanceof ReviewPublicationInProgressError) continue;
-        // Publication failure is durable and visible; the completed static review stays available.
-        // A new explicit retry reconciles uncertain provider outcomes instead of polling forever.
-        const recorded = (await getRunWithArchived(run.id))?.reviewPublication?.error;
-        if (!recorded) {
-          await updateReviewPublication(run.id, {
-            error: error instanceof Error ? error.message : String(error),
-          });
-          this.notifyRunChange(run.id);
-        }
-      }
+    for (const run of await getAllRunsWithArchived()) await this.reconcileReviewPublication(run);
+  }
+
+  /**
+   * Publish one completed review the moment it finishes, instead of waiting for the next sweep.
+   * The sweep still retries; either way the run ends with a receipt or a recorded error.
+   */
+  async publishCompletedReview(runId: string): Promise<void> {
+    const run = await getRunWithArchived(runId);
+    if (run) await this.reconcileReviewPublication(run);
+  }
+
+  private async reconcileReviewPublication(run: Run): Promise<void> {
+    if (!reviewPublicationPending(run)) return;
+    const owner =
+      run.reviewPublication?.gate?.publication ??
+      run.reviewPublication?.direct ??
+      run.prWork?.review;
+    // A publish that cannot run must say why, not wait forever behind a skipped sweep.
+    const refusal = !owner
+      ? 'Review publication has no owner'
+      : !this.authorized(owner.ownerId, owner.ownerGeneration ?? 0)
+        ? `Publication owner ${owner.ownerId} has no automation authority`
+        : undefined;
+    if (refusal || !owner) {
+      await this.recordPublicationError(run.id, refusal ?? 'Review publication has no owner');
+      return;
     }
+    const ownerId = owner.ownerId;
+    try {
+      const receipt = await runWithPrincipalOwner(owner, () => this.publishReview(ownerId, run.id));
+      console.log(
+        `[review-publication] run ${run.id.slice(0, 8)} published ${receipt.state} ${receipt.url ?? ''}`.trim(),
+      );
+    } catch (error) {
+      if (error instanceof ReviewPublicationInProgressError) return;
+      // Publication failure is durable and visible; the completed static review stays available.
+      // A new explicit retry reconciles uncertain provider outcomes instead of polling forever.
+      await this.recordPublicationError(
+        run.id,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  private async recordPublicationError(runId: string, error: string): Promise<void> {
+    console.warn(`[review-publication] run ${runId.slice(0, 8)} not published: ${error}`);
+    if ((await getRunWithArchived(runId))?.reviewPublication?.error) return;
+    await updateReviewPublication(runId, { error });
+    this.notifyRunChange(runId);
   }
 
   reconcileQaAfterReviews(): Promise<void> {
