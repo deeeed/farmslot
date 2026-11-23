@@ -1828,7 +1828,9 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
       if (current?.slotId !== slotId)
         return `run ${run.id.slice(0, 8)} is no longer bound to ${slotId}`;
       const { slotTeardownBlocker } = await import('../run-lifecycle/slot-teardown.js');
-      return slotTeardownBlocker(current, { inspectReleaseFence: true });
+      // A snapshot: the store mutates the live record, and the census rereads slotId across
+      // its awaits. Every probe stays on the slot whose fence this pass inspects.
+      return slotTeardownBlocker({ ...current, slotId }, { inspectReleaseFence: true });
     },
     quarantineLeakedRun,
     stopRunOwnedWorkers: async (run) => {
