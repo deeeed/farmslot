@@ -68,14 +68,22 @@ async function orphanDaemon(cwd: string, session: string): Promise<string> {
     { encoding: 'utf8' },
   ).stdout.trim();
   assert.match(pid, /^\d+$/, 'fixture daemon started');
-  // The subshell exits at once; wait for the daemon to run as the reparented executable.
-  for (let tries = 0; tries < 50; tries++) {
-    const row = spawnSync('ps', ['-o', 'ppid=,comm=', '-p', pid], { encoding: 'utf8' }).stdout;
-    if (row.trim() === `1 ${bin}` && existsSync(socket)) return pid;
+  for (let tries = 0; tries < 100 && !existsSync(socket); tries++)
     await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  throw new Error(`fixture daemon ${pid} never ran detached as ${bin}`);
+  assert.ok(existsSync(socket), `fixture daemon ${pid} listens on ${socket}`);
+  // macOS reports the exec'd path, Linux a short name; either is agent-browser's.
+  const comm = spawnSync('ps', ['-o', 'comm=', '-p', pid], { encoding: 'utf8' }).stdout.trim();
+  assert.match(comm, /(?:^|\/)agent-browser/);
+  return pid;
 }
+const parentOf = (pid: string) =>
+  spawnSync('ps', ['-o', 'ppid=', '-p', pid], { encoding: 'utf8' }).stdout.trim();
+// The reaper takes only detached processes (parent 1); a host whose orphans go to a
+// subreaper cannot stage one.
+const probe = await orphanDaemon(other, 'probe');
+const detachedToInit = parentOf(probe) === '1';
+spawnSync('kill', [probe]);
+const skip = !detachedToInit && 'orphans reparent to a subreaper on this host';
 const alive = (pid: string) => spawnSync('kill', ['-0', pid]).status === 0;
 after(() => {
   spawnSync('pkill', ['-f', bin]);
@@ -83,20 +91,24 @@ after(() => {
   rmSync(socketDir, { recursive: true, force: true });
 });
 
-test('terminal cleanup stops this slot’s agent-browser daemon and keeps shared sessions', async () => {
-  const slotSession = await orphanDaemon(repo, vars.slotId);
-  const elsewhere = await orphanDaemon(other, `${vars.slotId}-moved`);
-  const shared = await orphanDaemon(repo, 'default');
-  const named = await orphanDaemon(repo, 'tat4626-settings');
+test(
+  'terminal cleanup stops this slot’s agent-browser daemon and keeps shared sessions',
+  { skip },
+  async () => {
+    const slotSession = await orphanDaemon(repo, vars.slotId);
+    const elsewhere = await orphanDaemon(other, `${vars.slotId}-moved`);
+    const shared = await orphanDaemon(repo, 'default');
+    const named = await orphanDaemon(repo, 'tat4626-settings');
 
-  assert.equal(await reapSlotBrowserSession(vars, { includeSlotProfiles: true }), null);
-  assert.equal(alive(slotSession), false, 'the slot session daemon is stopped');
-  assert.equal(alive(shared), true, 'the default session may serve workers on other slots');
-  assert.equal(alive(named), true, 'another named session is not this slot’s');
-  assert.equal(alive(elsewhere), true);
-});
+    assert.equal(await reapSlotBrowserSession(vars, { includeSlotProfiles: true }), null);
+    assert.equal(alive(slotSession), false, 'the slot session daemon is stopped');
+    assert.equal(alive(shared), true, 'the default session may serve workers on other slots');
+    assert.equal(alive(named), true, 'another named session is not this slot’s');
+    assert.equal(alive(elsewhere), true);
+  },
+);
 
-test('cleanup that has not verified the run stopped leaves the slot daemon', async () => {
+test('cleanup that has not verified the run stopped leaves the slot daemon', { skip }, async () => {
   const slotSession = await orphanDaemon(repo, vars.slotId);
   // With a CDP port the census runs; the daemon is neither on it nor using a slot profile.
   assert.equal(
