@@ -40,7 +40,12 @@ function escapeRegExp(value: string): string {
  */
 export async function reapSlotBrowserSession(
   vars: SlotVars,
-  opts: { stillOwned?: () => Promise<boolean>; includeSlotProfiles?: boolean } = {},
+  opts: {
+    stillOwned?: () => Promise<boolean>;
+    includeSlotProfiles?: boolean;
+    /** The slot's run is terminal and its workers are stopped: its agent-browser daemons go. */
+    stopSlotDaemons?: boolean;
+  } = {},
 ): Promise<string | null> {
   const configuredPort = vars.resourceVars?.cdp_port;
   const cdpPort = configuredPort && /^\d+$/.test(configuredPort) ? configuredPort : undefined;
@@ -56,21 +61,13 @@ export async function reapSlotBrowserSession(
         : "pids=''",
       'echo "--cdp-- $pids"',
       // The executable as the kernel reports it (comm), not a whitespace-split argument.
-      ...(opts.includeSlotProfiles
-        ? [
-            `ab=$(ps -axo pid=,comm= | sed -nE 's#^ *([0-9]+) +(.*/)?agent-browser(-[A-Za-z0-9_-]+)?$#\\1#p' | paste -sd, -)`,
-            'echo "--agent-browser-- $ab"',
-            'pids=$(printf \'%s,%s\' "$pids" "$ab" | tr , \'\\n\' | grep . | paste -sd, -)',
-          ]
-        : []),
+      `ab=$(ps -axo pid=,comm= | sed -nE 's#^ *([0-9]+) +(.*/)?agent-browser(-[A-Za-z0-9_-]+)?$#\\1#p' | paste -sd, -)`,
+      'echo "--agent-browser-- $ab"',
+      'pids=$(printf \'%s,%s\' "$pids" "$ab" | tr , \'\\n\' | grep . | paste -sd, -)',
       'if [ -n "$pids" ]; then lsof -a -d cwd -Fpn -p "$pids" 2>/dev/null; fi',
       // A daemon's session is the name of the socket it listens on.
-      ...(opts.includeSlotProfiles
-        ? [
-            'echo "--agent-browser-sockets--"',
-            'if [ -n "$ab" ]; then lsof -a -U -Fpn -p "$ab" 2>/dev/null; fi',
-          ]
-        : []),
+      'echo "--agent-browser-sockets--"',
+      'if [ -n "$ab" ]; then lsof -a -U -Fpn -p "$ab" 2>/dev/null; fi',
       'true',
     ].join('\n'),
     { cwd: '/', timeout: 15_000 },
@@ -98,7 +95,7 @@ export async function reapSlotBrowserSession(
   let socketPid = '';
   for (const line of sockets.split('\n')) {
     if (line.startsWith('p')) socketPid = line.slice(1);
-    else if (line.startsWith('n/') && line.endsWith('.sock'))
+    else if (line.startsWith('n') && !line.startsWith('n->') && line.endsWith('.sock'))
       sessions.set(socketPid, path.posix.basename(line.slice(1), '.sock'));
   }
   const rows = parseProcessCensus(table);
@@ -121,12 +118,16 @@ export async function reapSlotBrowserSession(
       path.posix.isAbsolute(profile) &&
       repos.some((repo) => isWithinPath(repo, path.posix.normalize(profile)));
     const inRepo = cwd !== undefined && repos.some((repo) => isWithinPath(repo, cwd));
-    const daemon = opts.includeSlotProfiles && agentBrowsers.has(row.pid);
+    const daemon = agentBrowsers.has(row.pid);
     const session = sessions.get(row.pid);
+    // 'default' is the one session other slots share; no rule here may stop it.
+    const shared = daemon && session === 'default';
     const slotDaemon =
+      opts.stopSlotDaemons &&
       daemon &&
-      (session === vars.slotId || (inRepo && session !== undefined && session !== 'default'));
-    if (daemon && !slotDaemon && inRepo && row.parent === '1')
+      !shared &&
+      (session === vars.slotId || (inRepo && session !== undefined));
+    if (opts.stopSlotDaemons && daemon && !slotDaemon && inRepo && row.parent === '1')
       console.log(
         `[browser-session] ${vars.slotId}: kept agent-browser daemon ${row.pid} in the checkout; its session ${session ?? 'unknown'} may be shared`,
       );
@@ -135,7 +136,8 @@ export async function reapSlotBrowserSession(
       !isTmuxProcess(row.command) &&
       (ownedProfile ||
         slotDaemon ||
-        ((onPort.has(row.pid) || portArg?.test(row.command)) &&
+        (!shared &&
+          (onPort.has(row.pid) || portArg?.test(row.command)) &&
           (inRepo || repoArg.test(row.command))))
     );
   });

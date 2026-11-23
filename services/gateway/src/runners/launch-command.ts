@@ -954,6 +954,15 @@ export function resolveClaudeBinary(preferred?: string | null): string {
  * runner launch here and `slot check` its runner probes, so a probe resolves
  * node and the runner exactly as the launch does.
  */
+/**
+ * agent-browser names its daemon after the session: a slot session lets terminal cleanup tell
+ * this slot's daemon from the 'default' one workers on other slots share. Every tmux worker
+ * shell (launch and parked-session reload) starts with it.
+ */
+export function agentBrowserSessionExport(slotId: string): string {
+  return `export AGENT_BROWSER_SESSION=${shellQuote(slotId)}`;
+}
+
 export function wrapWorkerShellCommand(
   command: string,
   context: {
@@ -966,12 +975,9 @@ export function wrapWorkerShellCommand(
   },
 ): string {
   const domain = resolveEffectiveDomain(context.runDomain, context.vars.domain);
-  // agent-browser names its daemon after the session: a slot session lets terminal cleanup
-  // tell this slot's daemon from one other workers share ('default').
-  const agentBrowserSession = `export AGENT_BROWSER_SESSION=${shellQuote(context.vars.slotId)}`;
   return applyProjectCommandEnv(
     context.projectJson,
-    `${WORKER_ENV_PREFIX} && ${agentBrowserSession} && ${command}`,
+    `${WORKER_ENV_PREFIX} && ${agentBrowserSessionExport(context.vars.slotId)} && ${command}`,
     {
       ...(domain ? { domain } : {}),
       ...(context.taskLibraries ? { taskLibraries: context.taskLibraries } : {}),
