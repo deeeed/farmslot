@@ -9,6 +9,7 @@ import {
   buildOperatorWaitInstructions,
   type HandoffSourceKind,
   inspectTaskAcceptanceState,
+  OPERATOR_NOTE_RUNTIME_VERSION,
   parseProjectWorkerTemplateFileName,
   portableProjectRepo,
   readTaskDocumentAddendum,
@@ -30,6 +31,7 @@ import {
   isBranchUpdateStrategy,
   isLightweightInteractiveDevRun,
   type PlanningContextProjection,
+  releaseAtLeast,
   type RepeatReviewContext,
   type Run,
   runOutputReviewEnabled,
@@ -78,6 +80,7 @@ import {
   buildFollowUpScopeContractSection,
   materializeInheritedContext,
 } from '../family-observability/context.js';
+import { getNode } from '../fleet/machine-registry.js';
 import {
   buildSmartBranch,
   flowDir as computeFlowDir,
@@ -119,7 +122,7 @@ import { buildQaTaskSection, writeQaInput } from './qa-input.js';
 import { resolveReferenceCheckouts } from './reference-checkouts.js';
 import { runContractSection, shouldApplyArtifactOnlyTaskPolicy } from './run-contract.js';
 import { stackSection } from './stack-section.js';
-import { renderAcceptanceCriteria } from './task-document.js';
+import { renderAcceptanceCriteria, taskNoteSection } from './task-document.js';
 import {
   localCheckWithBaseRef,
   readWorkerTerminalProjectConfig,
@@ -1393,8 +1396,16 @@ export async function writeTaskFile(
             : 'text';
   const addendum = await readTaskDocumentAddendum(projectVars.projectTemplatesDir);
   const { executionTemplate: _reference, ...portableProvenance } = templateProvenance;
+  // A node older than OPERATOR_NOTE_RUNTIME_VERSION ignores `operatorNote` and would
+  // drop the note entirely, so it keeps the old end-of-document section until it is
+  // redeployed. An unreported runtime counts as old.
+  const nodeRendersOperatorNote = releaseAtLeast(
+    getNode(slotVars.machine)?.runtimeVersion,
+    OPERATOR_NOTE_RUNTIME_VERSION,
+  );
   const additions =
     (await appendTaskContext('')) +
+    (nodeRendersOperatorNote ? '' : taskNoteSection(run.taskNote)) +
     (run.engineState?.evalExperiment?.blind?.executionPolicy === 'normal-slot'
       ? '\nDo not look up the original answer: do not fetch or read newer Git history, reference PRs or patches, earlier task artifacts, or other checkouts to find the fix.\n'
       : '') +
@@ -1475,9 +1486,9 @@ export async function writeTaskFile(
     taskDocumentAdditions,
     terminalContract,
     bugInput: run.ticketData ?? undefined,
-    // The operator's note is an override, so the renderer puts it ahead of the task
-    // and appends a step for it; it is no longer tacked onto the end of the document.
-    ...(run.taskNote ? { operatorNote: run.taskNote } : {}),
+    // The operator's note is an override: the renderer puts it ahead of the task and
+    // gives it a checklist step, instead of tacking it onto the end of the document.
+    ...(run.taskNote && nodeRendersOperatorNote ? { operatorNote: run.taskNote } : {}),
     ...(referenceCheckouts.length ? { referenceCheckouts } : {}),
     ...(splitChecklist
       ? {}

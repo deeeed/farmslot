@@ -5,8 +5,9 @@ import test from 'node:test';
 import { enumerateChecklistCheckboxes } from '@farmslot/protocol';
 
 import {
-  appendOperatorNoteStep,
   buildTaskDocument,
+  insertOperatorNoteStep,
+  insertUnderTitle,
   normalizeAcceptanceCriteria,
   renderAcceptanceCriteria,
   renderReferenceCheckoutInputs,
@@ -117,12 +118,13 @@ test('a task document without an operator note carries no note heading', () => {
   assert.doesNotMatch(document, /^## Operator note$/m);
 });
 
-// C: the note becomes a step the worker must mark. It is APPENDED, never
-// inserted: the worker-terminal contract freezes proof, deterministic and
-// optional declarations by stepNumber (write.ts freezeChecklistDeclarations),
-// and templates carry internal references like `mark 14`. Appending shifts
-// nothing.
-test('an operator note appends one final checklist step and renumbers nothing', () => {
+// The note becomes a step the worker must mark. It is inserted BEFORE the
+// checklist's last row, because every farm template ends with its
+// `mark complete --mark-last` row: a step after that row leaves two boxes open,
+// so --mark-last refuses, and once the worker ticks the completion row to get
+// past that, --mark-last ticks this one for them. The note would be claimed
+// without being carried out.
+test('an operator note step goes in front of the completion row, renumbering it', () => {
   const checklist = [
     '# PR-complete checklist',
     '',
@@ -135,38 +137,60 @@ test('an operator note appends one final checklist step and renumbers nothing', 
     '',
     '## Finish',
     '',
-    '- [ ] 3. Complete',
-    '  `mark complete`.',
+    '- [ ] **3. Signal completion** — run: `mark complete --mark-last`',
     '',
   ].join('\n');
-  const before = enumerateChecklistCheckboxes(checklist);
-  assert.deepEqual(
-    before.map((item) => item.stepNumber),
-    [1, 2, 3],
-  );
 
-  const withNote = appendOperatorNoteStep(
-    checklist,
-    '/tmp/task',
-    'Repin onto the combined preview.',
-  );
+  const withNote = insertOperatorNoteStep(checklist, 'temp/tasks/x', 'Repin onto the preview.');
   const after = enumerateChecklistCheckboxes(withNote);
-  assert.equal(after.length, before.length + 1);
-  // Every pre-existing step keeps its number and its text.
-  for (const [index, item] of before.entries()) {
-    assert.equal(after[index].stepNumber, item.stepNumber);
-    assert.equal(after[index].rawLabel, item.rawLabel);
+  assert.equal(after.length, 4);
+  // The note is second to last; the completion row stays last.
+  assert.match(after[2].rawLabel, /Carry out the operator note/);
+  assert.match(after[3].rawLabel, /Signal completion/);
+  // Every label's printed number matches the number `mark N` targets, including
+  // the completion row that moved from 3 to 4.
+  for (const item of after) {
+    const printed = item.rawLabel.match(/^(?:\*\*)?(\d+)\./);
+    assert.ok(printed, `step ${item.stepNumber} prints its number`);
+    assert.equal(Number(printed[1]), item.stepNumber);
   }
-  const appended = after[after.length - 1];
-  assert.equal(appended.stepNumber, 4);
-  assert.match(appended.rawLabel, /4\. Carry out the operator note/);
-  // It points at the section A renders, so the worker does not have to search.
+  // Steps before the insertion keep their numbers and their text.
+  const before = enumerateChecklistCheckboxes(checklist);
+  for (const index of [0, 1]) {
+    assert.equal(after[index].stepNumber, before[index].stepNumber);
+    assert.equal(after[index].rawLabel, before[index].rawLabel);
+  }
   assert.match(withNote, /## Operator note/);
-  assert.ok(withNote.startsWith(checklist.trimEnd()), 'the template is appended to, not rewritten');
 });
 
 test('no operator note leaves the checklist byte-identical', () => {
   const checklist = '# Checklist\n\n- [ ] 1. Only step\n';
-  assert.equal(appendOperatorNoteStep(checklist, '/tmp/task', ''), checklist);
-  assert.equal(appendOperatorNoteStep(checklist, '/tmp/task', undefined), checklist);
+  assert.equal(insertOperatorNoteStep(checklist, '/tmp/task', ''), checklist);
+  assert.equal(insertOperatorNoteStep(checklist, '/tmp/task', undefined), checklist);
+});
+
+// A rendered lightweight template opens with a frontmatter fence, so a regex
+// anchored at `^#` matches nothing and the section is silently lost.
+test('a section is inserted under the title even behind a frontmatter fence', () => {
+  const template = [
+    '---',
+    'checklist: none',
+    '---',
+    '',
+    '# Worker: Interactive Dev',
+    '',
+    'Body.',
+  ].join('\n');
+  const placed = insertUnderTitle(template, '## Operator note\n\nRepin first.');
+  assert.ok(
+    placed.indexOf('## Operator note') > placed.indexOf('# Worker: Interactive Dev'),
+    'the note follows the title',
+  );
+  assert.ok(placed.indexOf('## Operator note') < placed.indexOf('Body.'), 'and precedes the body');
+  assert.ok(placed.startsWith('---\nchecklist: none\n---'), 'the frontmatter is untouched');
+});
+
+test('a document with no heading still keeps the section, and an empty one changes nothing', () => {
+  assert.match(insertUnderTitle('Just prose.\n', '## Operator note\n\nDo it.'), /## Operator note/);
+  assert.equal(insertUnderTitle('# Title\n\nBody.\n', ''), '# Title\n\nBody.\n');
 });

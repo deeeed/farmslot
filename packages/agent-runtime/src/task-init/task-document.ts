@@ -40,6 +40,15 @@ export const TASK_DOCUMENT = 'TASK.md';
 export const OPERATOR_NOTE_HEADING = '## Operator note';
 
 /**
+ * The agent-runtime release whose task init renders `operatorNote`.
+ *
+ * An older node ignores the field and silently drops the note, which is worse
+ * than the bug this fixes, so the gateway checks a node's reported runtime
+ * against this and falls back to the old end-of-document append below it.
+ */
+export const OPERATOR_NOTE_RUNTIME_VERSION = '0.51.0';
+
+/**
  * The operator's note, as a section the worker reads before the task it changes.
  *
  * It used to be appended to the end of the document. In run 1b7b8662 that put a
@@ -48,7 +57,7 @@ export const OPERATOR_NOTE_HEADING = '## Operator note';
  * note is an override, so it is read before what it overrides.
  *
  * The heading has to stay clear of CHECKLIST_SKIP_SECTIONS (`task`, `description`,
- * `comments`, …) or the appended step below would stop counting as a step.
+ * `comments`, …) or the step below would stop counting as a step.
  */
 export function operatorNoteSection(note: string | undefined): string {
   const text = note?.trim();
@@ -64,32 +73,72 @@ export function operatorNoteSection(note: string | undefined): string {
 }
 
 /**
- * One markable step for the note, APPENDED after the template's last step.
+ * Put a section under the document's title.
  *
- * Never inserted: `freezeChecklistDeclarations` freezes proof, deterministic and
- * optional declarations by stepNumber, and templates carry their own references
- * (`mark 14`, `--step 19`). Appending leaves every existing number untouched —
- * the move `legacyTaskCheck` already makes for the migration check.
+ * A rendered template may open with a frontmatter fence (`dev-interactive.md`
+ * does), so matching `^#` against the first line silently inserts nothing and
+ * loses the section. Skip the fence, insert after the first ATX heading, and
+ * fall back to prepending when the document has no heading at all.
  */
-export function appendOperatorNoteStep(
+export function insertUnderTitle(markdown: string, section: string): string {
+  if (!section.trim()) return markdown;
+  const lines = markdown.split('\n');
+  let index = 0;
+  if (lines[0]?.trim() === '---') {
+    const close = lines.findIndex((line, at) => at > 0 && line.trim() === '---');
+    if (close > 0) index = close + 1;
+  }
+  const heading = lines.findIndex((line, at) => at >= index && /^#\s+\S/.test(line));
+  const at = heading === -1 ? index : heading + 1;
+  lines.splice(at, 0, '', section);
+  return lines.join('\n');
+}
+
+/** `- [ ] **12. Label**` and `- [ ] 12. Label` both carry the number the worker reads. */
+const CHECKBOX_NUMBER = /^(\s*- \[[ xX]\]\s*(?:\*\*)?)(\d+)\./;
+
+/**
+ * One markable step for the note, inserted just before the checklist's last step.
+ *
+ * Not appended: every farm template ends with its `mark complete --mark-last`
+ * row (`pr-complete.md:62`, `fix-bug.md:98`, `review-pr.md:91`, `dev.md:137`,
+ * `update-branch.md:41`). A step after that row leaves two boxes open, so
+ * `--mark-last` refuses (`mark-checklist-step.cjs:391-403`); and once the worker
+ * ticks the completion row to get past that, `--mark-last` ticks the last open
+ * box, which is this one (`:639-641`). The note would be claimed without being
+ * carried out — the failure this step exists to prevent.
+ *
+ * Inserting is safe for the frozen contract: `freezeChecklistDeclarations` runs
+ * on the final checklist text inside `writeTaskDir`, after this rewrite, so proof,
+ * deterministic and optional declarations are keyed off the numbers that ship.
+ * The labels of the steps that move are renumbered with them, so what the worker
+ * reads matches what `mark N` targets.
+ */
+export function insertOperatorNoteStep(
   checklist: string,
   taskDir: string,
   note: string | undefined,
 ): string {
   if (!note?.trim()) return checklist;
-  const nextStep = enumerateChecklistCheckboxes(checklist).length + 1;
-  return [
-    checklist.trimEnd(),
-    '',
-    '',
-    OPERATOR_NOTE_HEADING,
-    '',
-    `- [ ] ${nextStep}. Carry out the operator note`,
+  const items = enumerateChecklistCheckboxes(checklist);
+  const lines = checklist.split('\n');
+  // No steps at all: there is no completion row to sit in front of.
+  const at = items.length ? items[items.length - 1].lineIndex : lines.length;
+  const stepNumber = items.length || 1;
+  lines.splice(
+    at,
+    0,
+    `- [ ] ${stepNumber}. Carry out the operator note`,
     `  Read \`${OPERATOR_NOTE_HEADING}\` at the top of \`${taskDir}/${TASK_DOCUMENT}\` and do what it says.`,
     '  It overrides the steps above. If you cannot, stop with `mark blocked` naming the conflict;',
     '  never mark this step for a note you did not carry out.',
-    '',
-  ].join('\n');
+  );
+  for (let line = at + 4; line < lines.length; line += 1)
+    lines[line] = lines[line].replace(
+      CHECKBOX_NUMBER,
+      (_match, prefix: string, number: string) => `${prefix}${Number(number) + 1}.`,
+    );
+  return lines.join('\n');
 }
 
 /** Shared instructions for a maintenance task and an inline CI-fix checklist. */
