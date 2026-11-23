@@ -106,7 +106,12 @@ test('a task whose node dies stops itself and its subprocesses', { timeout: 30_0
     export async function runHostedTaskInit() {
       // A tracked provider subprocess, as an init that runs tooling has.
       const child = spawn('sleep', ['30'], { stdio: 'ignore' });
-      fs.writeFileSync(${JSON.stringify(marker)} + '.tmp', JSON.stringify({ task: process.pid, child: child.pid }));
+      // And one whose leader exits at once, leaving a grandchild in its group.
+      const leader = spawn('/bin/sh', ['-c', 'sleep 30 >/dev/null 2>&1 & echo $!'], { stdio: ['ignore', 'pipe', 'ignore'] });
+      let grandchild = '';
+      leader.stdout.on('data', (data) => (grandchild += data));
+      await new Promise((resolve) => leader.once('close', resolve));
+      fs.writeFileSync(${JSON.stringify(marker)} + '.tmp', JSON.stringify({ task: process.pid, child: child.pid, grandchild: Number(grandchild) }));
       fs.renameSync(${JSON.stringify(marker)} + '.tmp', ${JSON.stringify(marker)});
       // Long provider work keeps the event loop busy, as a 10-minute init does.
       setInterval(() => {}, 1000);
@@ -127,11 +132,19 @@ test('a task whose node dies stops itself and its subprocesses', { timeout: 30_0
   );
   if (node.pid) pids.push(node.pid);
   assert.ok(await until(() => existsSync(marker), 20_000), 'the task started');
-  const { task, child } = JSON.parse(readFileSync(marker, 'utf8')) as { task: number; child: number };
-  pids.push(task, child);
+  const { task, child, grandchild } = JSON.parse(readFileSync(marker, 'utf8')) as {
+    task: number;
+    child: number;
+    grandchild: number;
+  };
+  pids.push(task, child, grandchild);
   node.kill('SIGKILL');
   assert.ok(await until(() => !alive(task), 5000), 'the task exits once its node is gone');
   assert.ok(await until(() => !alive(child), 5000), 'and stops its own subprocess');
+  assert.ok(
+    await until(() => !alive(grandchild), 5000),
+    'and the group of a subprocess whose leader already exited',
+  );
 });
 
 test('a descendant holding the task output does not delay the result', { timeout: 30_000 }, async (t) => {
