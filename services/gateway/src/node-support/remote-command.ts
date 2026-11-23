@@ -140,6 +140,7 @@ interface Delivery {
   bundle: string;
   files: number;
   deadlineMs: number;
+  /** Counted from the start of this slot's own work: a wait on another slot's upload does not use it up. */
   deadlineAt: number;
   /** This delivery's own progress, or the machine upload's while it waits for that. */
   progress: NodeSupportDeliveryProgress;
@@ -376,6 +377,7 @@ function ensureOnce(
         // retries the publish if it is still needed.
         await settledOrExpired(upload);
         delivery.progress = progress;
+        delivery.deadlineAt = Date.now() + deadlineMs;
       }
       return await ensureNodeSupportBundle(vars, projectVars.runtimeDir ?? '.agent', {
         projectVars,
@@ -449,29 +451,40 @@ function describeDelivery(delivery: Delivery): string {
 async function awaitDelivery(
   delivery: Delivery,
   budgetMs: number | undefined,
+  signal: AbortSignal | undefined,
 ): Promise<NodeSupportBundleState | null> {
-  const deadlineLeft = Math.max(0, delivery.deadlineAt - Date.now());
-  const byBudget = budgetMs !== undefined && budgetMs < deadlineLeft;
+  signal?.throwIfAborted();
+  const budgetEndsAt = budgetMs === undefined ? Infinity : Date.now() + budgetMs;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
   const expired = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => {
-        const bundle = `node support bundle ${delivery.bundle.slice(0, 8)} for ${delivery.slotId}`;
-        if (!byBudget) {
-          // Past its deadline the delivery no longer holds the slot: the next
-          // command starts a fresh one instead of joining a stalled one.
-          forgetDelivery(delivery);
-        }
-        reject(
-          new NodeSupportPendingError(
-            byBudget
-              ? `${bundle} still being delivered after ${budgetMs}ms (${describeDelivery(delivery)})`
-              : `${bundle} was not delivered within its ${delivery.deadlineMs}ms deadline (${describeDelivery(delivery)})`,
-          ),
-        );
-      },
-      byBudget ? budgetMs : deadlineLeft,
-    );
+    // A cancelled caller stops waiting; the delivery keeps going for the next command.
+    onAbort = () => reject(signal?.reason ?? new Error('node support wait cancelled'));
+    signal?.addEventListener('abort', onAbort, { once: true });
+    const arm = () => {
+      const byBudget = budgetEndsAt < delivery.deadlineAt;
+      timer = setTimeout(
+        () => {
+          // A joiner's deadline restarts when its own work begins: keep waiting.
+          if (!byBudget && delivery.deadlineAt > Date.now()) return arm();
+          const bundle = `node support bundle ${delivery.bundle.slice(0, 8)} for ${delivery.slotId}`;
+          if (!byBudget) {
+            // Past its deadline the delivery no longer holds the slot: the next
+            // command starts a fresh one instead of joining a stalled one.
+            forgetDelivery(delivery);
+          }
+          reject(
+            new NodeSupportPendingError(
+              byBudget
+                ? `${bundle} still being delivered after ${budgetMs}ms (${describeDelivery(delivery)})`
+                : `${bundle} was not delivered within its ${delivery.deadlineMs}ms deadline (${describeDelivery(delivery)})`,
+            ),
+          );
+        },
+        Math.max(0, Math.min(budgetEndsAt, delivery.deadlineAt) - Date.now()),
+      );
+    };
+    arm();
   });
   try {
     // A delivery that fails after the wait ended is not lost: the pending
@@ -480,6 +493,7 @@ async function awaitDelivery(
     return await Promise.race([delivery.promise, expired]);
   } finally {
     clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
   }
 }
 
@@ -502,6 +516,8 @@ export async function resolveRemoteFarmCommand(
     budgetMs?: number;
     /** Preserve the slot support pointer while checking prerequisites. */
     selectSlot?: boolean;
+    /** Stop waiting when this aborts; the delivery itself continues. */
+    signal?: AbortSignal;
     /** Resolve a support directory itself, independently of hook script coverage. */
     supportRoot?: boolean;
   } = {},
@@ -535,6 +551,7 @@ export async function resolveRemoteFarmCommand(
   const state = await awaitDelivery(
     ensureOnce(vars, projectVars, local, options.io, selectSlot),
     options.budgetMs,
+    options.signal,
   );
   if (!state?.hash) return command;
   verifiedBundles.set(cacheKey, { at: Date.now(), supportDir: state.supportDir });

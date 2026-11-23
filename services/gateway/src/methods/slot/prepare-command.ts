@@ -889,8 +889,11 @@ export async function runPrepareCommand(
       // No budget: wait for the delivery itself, bounded by its own deadline. A
       // fixed 10 s wait lost to a normal re-delivery after a node redeploy (run
       // 1a533f86), which finished seconds later.
-      stagedCommand = await resolveRemoteFarmCommand(vars, wrappedCmd);
+      stagedCommand = await resolveRemoteFarmCommand(vars, wrappedCmd, { signal: opts?.signal });
     } catch (error) {
+      // A cancel while the bundle is still arriving: nothing launched yet, and
+      // a release waiting to stop this prepare must not outwait the delivery.
+      if (opts?.signal?.aborted) return { stdout: '', stderr: 'aborted', exitCode: 130 };
       if (!(error instanceof NodeSupportPendingError)) throw error;
       return failSetup('stage prepare script', {
         stdout: '',

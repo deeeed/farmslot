@@ -554,6 +554,69 @@ test(
   },
 );
 
+test(
+  'a cancelled wait returns at once and leaves the delivery for the next command',
+  { timeout: 10_000 },
+  async (t) => {
+    resetRemoteFarmCommandCache();
+    const farm = await withTempFarm(t);
+    const node = gatedNode();
+    t.after(() => node.release());
+    const vars = farmVars(farm.name, 'mini-x-1');
+    const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+    const controller = new AbortController();
+    const waiting = resolveRemoteFarmCommand(vars, cmd, { io: node.io, signal: controller.signal });
+    await node.waitForUploads(1);
+    const cancelledAt = Date.now();
+    controller.abort();
+    await assert.rejects(waiting);
+    assert.ok(Date.now() - cancelledAt < 1_000, 'the wait ends when it is cancelled');
+
+    const next = resolveRemoteFarmCommand(vars, cmd, { io: node.io });
+    node.release();
+    assert.match(await next, /support\/[0-9a-f]{64}\//);
+    assert.equal(node.uploads.length, 1, 'the next command joined the same delivery');
+  },
+);
+
+test(
+  "a slot that waited on another slot's upload gets its own full deadline for its delivery",
+  { timeout: 10_000 },
+  async (t) => {
+    resetRemoteFarmCommandCache();
+    const farm = await withTempFarm(t);
+    const node = gatedNode();
+    t.after(() => node.release());
+    const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+    // Slot 1's upload stalls; it gives up at once and its delivery expires
+    // ~400 ms after it started.
+    await assert.rejects(
+      resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-1'), cmd, {
+        io: { ...node.io, deliveryDeadlineMs: 400 },
+        budgetMs: 20,
+      }),
+      NodeSupportPendingError,
+    );
+    // Times below count from slot 1 giving up, just after its delivery started.
+    const started = Date.now();
+    const at = (ms: number) =>
+      new Promise((resolve) => setTimeout(resolve, Math.max(0, started + ms - Date.now())));
+    // Slot 2 joins at ~50 ms with an 800 ms deadline and waits on slot 1's
+    // upload until it expires (under ~400 ms), then starts its own: that
+    // delivery has 800 ms from there.
+    await at(50);
+    const other = resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-2'), cmd, {
+      io: { ...node.io, deliveryDeadlineMs: 800 },
+    });
+    await node.waitForUploads(2);
+    // Past a deadline counted from the join (~850 ms), within its own (~1150+ ms).
+    await at(1000);
+    node.release();
+    assert.match(await other, /support\/[0-9a-f]{64}\//);
+  },
+);
+
 test('a budget that runs out names the bundle, its phase and the bytes left', async (t) => {
   resetRemoteFarmCommandCache();
   const farm = await withTempFarm(t);
