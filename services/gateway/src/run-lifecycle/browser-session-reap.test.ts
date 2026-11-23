@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { after, mock, test } from 'node:test';
+import { after, afterEach, mock, test } from 'node:test';
 
 import type { SlotVars } from '../core/config.js';
 
@@ -54,6 +54,13 @@ const vars: SlotVars = {
 };
 
 /** A daemon the way agent-browser leaves one: detached (parent 1), cwd where it was started. */
+const started = new Set<string>();
+// A failed case must not leave a daemon holding a socket or port the next case needs.
+afterEach(() => {
+  for (const pid of started) spawnSync('kill', [pid]);
+  started.clear();
+});
+
 async function orphanDaemon(
   cwd: string,
   session: string,
@@ -83,6 +90,7 @@ async function orphanDaemon(
     { encoding: 'utf8' },
   ).stdout.trim();
   assert.match(pid, /^\d+$/, 'fixture daemon started');
+  started.add(pid);
   for (let tries = 0; tries < 100 && !existsSync(socket); tries++)
     await new Promise((resolve) => setTimeout(resolve, 20));
   assert.ok(existsSync(socket), `fixture daemon ${pid} listens on ${socket}`);

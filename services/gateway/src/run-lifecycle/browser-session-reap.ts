@@ -95,8 +95,11 @@ export async function reapSlotBrowserSession(
   let socketPid = '';
   for (const line of sockets.split('\n')) {
     if (line.startsWith('p')) socketPid = line.slice(1);
-    else if (line.startsWith('n') && !line.startsWith('n->') && line.endsWith('.sock'))
-      listening.set(socketPid, (listening.get(socketPid) ?? new Set()).add(line.slice(1)));
+    else {
+      // Linux lsof appends the socket type (`n/path.sock type=STREAM (LISTEN)`); macOS does not.
+      const socket = /^n(?!->)(.+?\.sock)(?:\s+type=.*)?$/.exec(line)?.[1];
+      if (socket) listening.set(socketPid, (listening.get(socketPid) ?? new Set()).add(socket));
+    }
   }
   // One socket names the session; more than one (even with one basename) attributes nothing.
   const sessions = new Map(
