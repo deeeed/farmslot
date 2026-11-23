@@ -34,6 +34,7 @@ import {
   releaseAtLeast,
   type RepeatReviewContext,
   type Run,
+  runLinkedTicketsView,
   runOutputReviewEnabled,
   type RunTicketData,
   type TaskSchema,
@@ -1149,10 +1150,20 @@ export async function writeTaskFile(
   //   LINKED_DESCRIPTIONS — each ticket's full description, separated by ---
   // Both render as empty-state placeholder strings when there are no links.
   const linked = ticket.linkedTickets ?? [];
-  vars.LINKED_TICKETS =
-    linked.length > 0
-      ? linked.map((t) => `- [${t.ref}](${t.url})${t.title ? ` — ${t.title}` : ''}`).join('\n')
-      : '_No linked tickets_';
+  // Ticket identities come from the one shared resolver, which merges the run's own
+  // ref, the recorded linked tickets and the operator's additions. Reading
+  // ticket.linkedTickets alone missed both: only the PR-data path fills it, so dev
+  // and fix-bug got no section, and operator refs live on the run and reached no
+  // task document on any flow. The resolver derives a browse root from a recorded
+  // URL, which a Jira dev run has none of, so the project's own base is the last
+  // fallback. With no base the ref stays unlinked rather than inventing a host.
+  const browseBase = jiraBaseUrl ? `${jiraBaseUrl.replace(/\/$/, '')}/browse/` : '';
+  const linkedView = runLinkedTicketsView(run).tickets.map((entry) => {
+    const url = entry.url ?? (browseBase ? `${browseBase}${entry.ref}` : null);
+    const title = linked.find((t) => t.ref.toUpperCase() === entry.ref)?.title;
+    return `- ${url ? `[${entry.ref}](${url})` : entry.ref}${title ? ` — ${title}` : ''}`;
+  });
+  vars.LINKED_TICKETS = linkedView.length > 0 ? linkedView.join('\n') : '_No linked tickets_';
   vars.LINKED_DESCRIPTIONS =
     linked.length > 0
       ? linked
