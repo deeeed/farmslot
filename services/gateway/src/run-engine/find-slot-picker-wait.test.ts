@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { activePrepareSlots } from '../core/native-worker-exclusion.js';
 import { runResolveDecision } from '../methods/run.js';
-import { GatewayResourceRevisions } from '../resources/revisions.js';
+import { GatewayResourceRevisions, resourceRevisions } from '../resources/revisions.js';
 import { createRun, deleteRun, getRun, updateRun, updateRunStep } from '../runs/store.js';
 
 import {
@@ -93,6 +94,29 @@ test('a held slot becoming ready wakes the same decision for normal reselection'
   assert.equal(getRun(h.run.id)?.requestedSlotId, null);
   assert.equal(hasEngineDecisionWaiter(id), false);
 });
+
+test(
+  'a prepare guard clearing wakes the picker through the gateway revisions',
+  { timeout: 10_000 },
+  async (t) => {
+    const h = fixture(t);
+    activePrepareSlots.add('guarded-slot');
+    t.after(() => activePrepareSlots.delete('guarded-slot'));
+    const result = waitForSlotPickerChange(
+      h.run.id,
+      0,
+      new Set(['guarded-slot']),
+      'guarded',
+      async () => (activePrepareSlots.has('guarded-slot') ? 'guarded' : 'ready'),
+      h.decide,
+      resourceRevisions,
+    );
+    await h.waiting();
+    // No fleet change: only the cleared guard can wake it.
+    activePrepareSlots.delete('guarded-slot');
+    assert.equal(await result, 'retry');
+  },
+);
 
 test('unrelated slots and unchanged observations do not retry selection', async (t) => {
   const h = fixture(t);

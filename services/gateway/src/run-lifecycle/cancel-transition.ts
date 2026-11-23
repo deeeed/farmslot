@@ -7,6 +7,7 @@
 
 import { closeStepWait, Events, isSlotFreedByPark, type Run } from '@farmslot/protocol';
 
+import { runReachedDispatch } from '../agents/contexts.js';
 import { markBacklogRunObserved } from '../backlog/store.js';
 import { usesEvalTrialCapsule } from '../evals/trial-policy.js';
 import { invalidateWarmReviewerSessions } from '../review/session-mode.js';
@@ -237,16 +238,29 @@ async function broadcastTransitionEvent(event: string, payload: unknown): Promis
 }
 
 /**
+ * A run cancelled before its worker was dispatched has nothing to replay. Such a cancel
+ * releases the slot instead of holding it (510ed181 kept macpro-mmt-6 held from a cancel
+ * during prepare). A flow without a dispatch step keeps the hold.
+ */
+export function cancelledBeforeDispatch(run: Parameters<typeof runReachedDispatch>[0]): boolean {
+  return !runReachedDispatch(run);
+}
+
+/**
  * Production collaborators. Slot teardown is imported lazily to keep the
  * `core`/`methods/slot` chain out of the transition module's import graph.
  */
 export function defaultCancelCollaborators({
   keepForReplay = true,
-}: { keepForReplay?: boolean } = {}): CancelCollaborators {
+  prepareStopTimeoutMs,
+}: { keepForReplay?: boolean; prepareStopTimeoutMs?: number } = {}): CancelCollaborators {
   const cleanup = new Map<
     string,
-    { fence: RunSlotCleanupFence; blocker: string | null; succeeded: boolean }
+    { fence: RunSlotCleanupFence; blocker: string | null; succeeded: boolean; keep: boolean }
   >();
+  // After dispatch a cancel keeps the slot for replay (ADR-054); before it there is nothing to replay.
+  const keeps = (run: Parameters<typeof cancelledBeforeDispatch>[0]) =>
+    keepForReplay && !cancelledBeforeDispatch(run);
   return {
     releaseWorkspace: async (run) => {
       const { teardownReviewWorkspace } = await import('../review-workspaces/pipeline.js');
@@ -266,9 +280,36 @@ export function defaultCancelCollaborators({
         fence: { before: null } as RunSlotCleanupFence,
         blocker: null as string | null,
         succeeded: false,
+        keep: keeps(run),
       };
       cleanup.set(run.id, state);
+      // A run cancelled before dispatch may still be preparing its slot. Stop and join that
+      // prepare before the slot is released, as slot.release does; one that will not stop
+      // keeps the slot held for the run instead of publishing it ready under a live prepare.
+      let prepareBlocker: string | null = null;
       const { readSlotRow } = await import('../core/index.js');
+      if (!state.keep && run.slotId) {
+        const { activePrepareAborts } = await import('../methods/slot/shared.js');
+        const inflight = activePrepareAborts.get(run.slotId);
+        // Only this run's own prepare: a stale slot id must not stop another run's.
+        if (inflight?.runId === run.id) {
+          const { RELEASE_PREPARE_STOP_TIMEOUT_MS } = await import('../methods/slot/release.js');
+          const stopMs = prepareStopTimeoutMs ?? RELEASE_PREPARE_STOP_TIMEOUT_MS;
+          inflight.abort();
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const stopped = await Promise.race([
+            inflight.settled.then(() => true),
+            new Promise<boolean>((resolve) => {
+              timer = setTimeout(() => resolve(false), stopMs);
+            }),
+          ]);
+          clearTimeout(timer);
+          if (!stopped) {
+            state.keep = true;
+            prepareBlocker = `In-flight prepare did not stop within ${Math.round(stopMs / 1000)}s; slot kept for the cancelled run`;
+          }
+        }
+      }
       state.fence.before = run.slotId ? await readSlotRow(run.slotId) : null;
       await cancelNativeRunWorkers(run.id, { machineTransitionHeld: true });
       // Cancel stops what the run started; only another active run keeps its slot
@@ -277,9 +318,14 @@ export function defaultCancelCollaborators({
       await releaseRunOwnedCapabilities(run);
       const runtimeBlocker = await shutdownRunSlotResources(run);
       const blocker = await slotOwnershipBlocker(run);
-      const cleanupBlocker = [survivors, runtimeBlocker].filter(Boolean).join('; ') || null;
-      await recordSlotTeardownSkipped(run, blocker ?? cleanupBlocker);
-      state.blocker = blocker ?? (keepForReplay ? null : cleanupBlocker);
+      const cleanupBlocker =
+        [prepareBlocker, survivors, runtimeBlocker].filter(Boolean).join('; ') || null;
+      // A prepare that would not stop is named next to whatever else keeps the slot.
+      await recordSlotTeardownSkipped(
+        run,
+        blocker && prepareBlocker ? `${prepareBlocker}; ${blocker}` : (blocker ?? cleanupBlocker),
+      );
+      state.blocker = blocker ?? (state.keep ? null : cleanupBlocker);
       state.succeeded = true;
       state.fence = await fenceRunSlotCleanup(run, state.blocker);
     },
@@ -312,9 +358,10 @@ export function defaultCancelCollaborators({
         // Keep replay by default; on-demand selection releases the confirmed owned cleanup.
         // A reclaimed blind trial gets its original Git back while it still owns the slot.
         let releaseBlocker = blocker;
+        const keepSlot = state ? state.keep : keeps(run);
         if (
           !releaseBlocker &&
-          !keepForReplay &&
+          !keepSlot &&
           usesEvalTrialCapsule(run.engineState?.evalExperiment?.blind)
         ) {
           const { restoreFinishedBlindTrialGit } = await import('../evals/blind-trial.js');
@@ -322,14 +369,14 @@ export function defaultCancelCollaborators({
           if (releaseBlocker) await recordSlotTeardownSkipped(run, releaseBlocker);
         }
         const kept = await releaseRunSlotOwnership(run, fence, releaseBlocker, {
-          keepForReplay,
-          collectRecipes: !keepForReplay,
+          keepForReplay: keepSlot,
+          collectRecipes: !keepSlot,
         });
         if (releaseBlocker) return { skipped: releaseBlocker };
         if (!kept) return { skipped: 'Slot ownership changed during cancellation' };
         const blindCandidate = Boolean(run.engineState?.evalExperiment?.blind?.firstOutput);
         // A reclaimed artifact-only run cannot replay any more: its own commits are parked.
-        if (!keepForReplay && (blindCandidate || parksBranchCommits(run))) {
+        if (!keepSlot && (blindCandidate || parksBranchCommits(run))) {
           const { reuseSafeIdleSlot } = await import('./safe-idle-slot.js');
           const result = await reuseSafeIdleSlot(run.slotId!, broadcastTransitionEvent, {
             epoch: Number(fence.before?.slot_epoch) || 0,
@@ -342,7 +389,7 @@ export function defaultCancelCollaborators({
         }
         await broadcastTransitionEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
         console.log(
-          `[run-lifecycle] ${keepForReplay ? 'kept' : 'released'} slot ${run.slotId} for cancelled run ${run.id}`,
+          `[run-lifecycle] ${keepSlot ? 'kept' : 'released'} slot ${run.slotId} for cancelled run ${run.id}`,
         );
       } catch (error) {
         await settleFailedRunSlotCleanup(run, fence, error);

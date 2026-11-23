@@ -582,3 +582,13 @@ its owner. A failed proof still releases its permit; failed cleanup stays visibl
 Deploy the updated gateway and CLI before enabling the pack declaration. Existing
 frozen tasks adopt the updated pack through supported task refresh/repin. Preserve
 their identity, progress and evidence; do not rewrite retained inputs in place.
+
+## Amendment: a cancel before dispatch releases the slot (2026-11-24)
+
+A cancel keeps the slot for replay only once the run's worker was dispatched. A run cancelled before that, for example during prepare, has nothing to replay, so the cancel releases its slot. It first stops and joins the run's in-flight prepare, bounded like `slot.release`. A prepare that won't stop keeps the slot held, and the run names why. "Dispatched" means any of:
+
+- the dispatch step started or recorded outputs;
+- a head was recorded at dispatch;
+- a worker context carries a start, a prompt delivery, a runner session or a native session.
+
+Replays reset the dispatch step, not these markers. 510ed181 kept macpro-mmt-6 held after a cancel during prepare on 2026-11-23. The engine's prepare now also refuses a slot its run no longer holds, so a cancel that frees the slot early can't be followed by the cancelled run resetting it.
