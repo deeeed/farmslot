@@ -666,6 +666,31 @@ test('a slot that takes over an expired machine upload is the one later slots jo
   assert.equal(node.uploads.length, 2, 'one upload after the takeover');
 });
 
+test('slots waiting on an expired machine upload take it over once, not each', async (t) => {
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  t.after(() => node.release());
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+  // Slot 1's upload stalls; slots 2 and 3 are both waiting on it when it expires.
+  await assert.rejects(
+    resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-1'), cmd, {
+      io: { ...node.io, deliveryDeadlineMs: 200 },
+      budgetMs: 20,
+    }),
+    NodeSupportPendingError,
+  );
+  const waiting = ['mini-x-2', 'mini-x-3'].map((slot) =>
+    resolveRemoteFarmCommand(farmVars(farm.name, slot), cmd, { io: node.io }),
+  );
+  await node.waitForUploads(2);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  node.release();
+  assert.equal((await Promise.all(waiting)).length, 2);
+  assert.equal(node.uploads.length, 2, 'one takeover upload, joined by the other slot');
+});
+
 test('a budget that runs out names the bundle, its phase and the bytes left', async (t) => {
   resetRemoteFarmCommandCache();
   const farm = await withTempFarm(t);

@@ -375,11 +375,17 @@ function ensureOnce(
         // That upload's failure is reported to its own caller, and past its
         // deadline it is dropped. This slot then runs its own ensure, which
         // retries the publish if it is still needed.
-        await settledOrExpired(upload);
+        let ahead: Delivery | undefined = upload;
+        while (ahead) {
+          delivery.progress = ahead.progress;
+          await settledOrExpired(ahead);
+          // Slots that were waiting together: the first to get here takes
+          // over as the machine's upload and the rest wait on it in turn.
+          ahead = current(machinePublishes.get(machineKey));
+          if (!ahead) machinePublishes.set(machineKey, delivery);
+        }
         delivery.progress = progress;
         delivery.deadlineAt = Date.now() + deadlineMs;
-        // Taking over an upload that expired: later slots join this one.
-        if (!current(machinePublishes.get(machineKey))) machinePublishes.set(machineKey, delivery);
       }
       return await ensureNodeSupportBundle(vars, projectVars.runtimeDir ?? '.agent', {
         projectVars,

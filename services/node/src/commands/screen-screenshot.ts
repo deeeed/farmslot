@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
-import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 
@@ -161,13 +162,9 @@ export async function screenshotForSlot(params: Record<string, unknown>): Promis
       await run('xcrun', ['simctl', 'io', simName, 'screenshot', '--type=png', tmp], {
         timeout: 10_000,
       });
-      pngBuf = readFileSync(tmp);
+      pngBuf = await readFile(tmp);
     } finally {
-      try {
-        unlinkSync(tmp);
-      } catch {
-        /* ignore */
-      }
+      await rm(tmp, { force: true });
     }
   } else {
     throw new Error(`Unsupported thumbnail platform: ${platform}`);
@@ -177,15 +174,11 @@ export async function screenshotForSlot(params: Record<string, unknown>): Promis
   if (process.platform === 'darwin' && maxWidth > 0) {
     const tmp = resolve(tmpdir(), `farmslot-thumb-resize-${Date.now()}.png`);
     try {
-      writeFileSync(tmp, pngBuf);
+      await writeFile(tmp, pngBuf);
       await run('sips', ['-Z', String(maxWidth), tmp, '--out', tmp], { timeout: 5_000 });
-      pngBuf = readFileSync(tmp);
+      pngBuf = await readFile(tmp);
     } finally {
-      try {
-        unlinkSync(tmp);
-      } catch {
-        /* ignore */
-      }
+      await rm(tmp, { force: true });
     }
   }
 
