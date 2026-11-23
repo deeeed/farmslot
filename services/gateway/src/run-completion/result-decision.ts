@@ -566,19 +566,18 @@ async function sendBack(
       // the lead recovered it by replaying monitor by hand. So that is what the
       // engine does now: resume monitoring and let the worker's next signal
       // settle it, instead of holding the old refusal again.
+      // `sendBackCompletion` resumes monitoring itself for an instruction the
+      // worker may already have, under its own ownership checks. The run is
+      // monitoring again, so it must not be held on the refusal it just left.
       const { CompletionFeedbackDeliveryError } = await import('./completion-send-back.js');
-      if (error instanceof CompletionFeedbackDeliveryError && error.handedOver) {
-        const { continuePRCompletionStep } = await import('../methods/run/replay-step.js');
-        try {
-          await continuePRCompletionStep(run.id, 'monitor', broadcastEvent, async () => true);
-        } catch (resumeError) {
-          throw new AggregateError(
-            [error, resumeError],
-            `${(error as Error).message} Monitoring could not be resumed: ${(resumeError as Error).message}`,
-          );
-        }
-        throw error;
-      }
+      const resumed =
+        error instanceof CompletionFeedbackDeliveryError
+          ? error.handedOver
+          : error instanceof AggregateError &&
+            error.errors.some(
+              (cause) => cause instanceof CompletionFeedbackDeliveryError && cause.handedOver,
+            );
+      if (resumed) throw error;
       if (isHeldForResultDecision(getRun(run.id) ?? run)) {
         try {
           await holdRunForResultDecision(run.id, stoppedAt, reason);

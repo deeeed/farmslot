@@ -1477,19 +1477,19 @@ test('an uncertain edit keeps its delivery window until it can be confirmed', as
 // bookkeeping says.
 test('a consumed newer signal retires an unconfirmed intent for the next refusal', async () => {
   await heldQa();
-  run.transport = 'native';
-  delivery = 'queued';
+  run.transport = 'tmux';
+  delivery = 'unconfirmed';
   await assert.rejects(
     resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' }),
-    /delivery is queued/,
+    /delivery is unconfirmed/,
   );
   const first = run.steps.find((step) => step.name === S.DISPATCH)?.outputs
     ?.completionSendBackDelivery;
   assert.ok(first && typeof first === 'object' && 'key' in first);
   assert.equal((first as { confirmed?: boolean }).confirmed, false);
 
-  // The queued correction ran: the worker wrote a newer terminal signal and the
-  // monitor consumed it.
+  // The composer's text reached the worker: it wrote a newer terminal signal and
+  // the resumed monitor consumed it.
   currentSignal = { ...priorSignal, timestamp: '2026-10-28T00:16:01.000Z' };
   run.steps.find((step) => step.name === S.MONITOR)!.outputs = { workerSignal: currentSignal };
   delivery = 'confirmed';
@@ -1516,4 +1516,33 @@ test('a consumed newer signal retires an unconfirmed intent for the next refusal
     /An earlier instruction for this task is withdrawn/,
     'and nothing is withdrawn, because the first instruction already ran',
   );
+});
+
+// The other half of that rule. A native host that queued a command has not
+// submitted it, so a signal the running turn wrote is not an answer to it.
+// Retiring the intent there would let this refusal queue a second correction
+// beside the first, and both would run.
+test('a consumed newer signal does not retire a correction the host still holds', async () => {
+  await heldQa();
+  run.transport = 'native';
+  delivery = 'queued';
+  await assert.rejects(
+    resolveResultDecision({ runId: run.id, decisionId: pending().id, actionId: 'send-back' }),
+    /delivery is queued/,
+  );
+  currentSignal = { ...priorSignal, timestamp: '2026-10-28T00:16:01.000Z' };
+  run.steps.find((step) => step.name === S.MONITOR)!.outputs = { workerSignal: currentSignal };
+  delivery = 'confirmed';
+  await holdRunForResultDecision(run.id, 'complete', 'Completion refused again');
+  const sentBefore = feedback.length;
+  await assert.rejects(
+    resolveResultDecision({
+      runId: run.id,
+      decisionId: pending().id,
+      actionId: 'send-back',
+      reason: 'Different note for the second refusal.',
+    }),
+    /queued on the worker host and cannot be withdrawn/,
+  );
+  assert.equal(feedback.length, sentBefore, 'no second correction is sent beside the queued one');
 });

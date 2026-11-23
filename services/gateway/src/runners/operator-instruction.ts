@@ -94,7 +94,18 @@ export async function deliverOperatorInstruction(
       allowBusyQueue: true,
       assertCurrent,
     });
-    return result === 'confirmed' ? 'confirmed' : result === 'queued' ? 'queued' : 'unconfirmed';
+    // `not-attempted` must survive: the host refused before taking the text (a
+    // pending SDK approval, a closed binding, a slot that moved on), and a caller
+    // that resumes monitoring on "unconfirmed" would otherwise resume for an
+    // instruction nothing ever received. Only `attempted` means the host has it
+    // without having accepted it yet.
+    return result === 'confirmed'
+      ? 'confirmed'
+      : result === 'queued'
+        ? 'queued'
+        : result === 'attempted'
+          ? 'unconfirmed'
+          : 'not-attempted';
   }
   let reloadAttempted = false;
   try {

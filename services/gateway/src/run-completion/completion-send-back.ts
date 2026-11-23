@@ -27,6 +27,13 @@ interface CompletionDelivery {
   confirmed: boolean;
   startedAt?: number;
   note?: string;
+  /**
+   * The native host accepted this instruction into its command queue and has not
+   * submitted it. Nothing the running turn writes is an answer to it, so a newer
+   * consumed signal must not retire it (that would let a second send-back queue a
+   * second correction and both would run).
+   */
+  queued?: boolean;
 }
 
 function parseDelivery(value: unknown): CompletionDelivery {
@@ -46,7 +53,8 @@ function parseDelivery(value: unknown): CompletionDelivery {
     ('startedAt' in value &&
       value.startedAt !== undefined &&
       (typeof value.startedAt !== 'number' || !Number.isFinite(value.startedAt))) ||
-    ('note' in value && value.note !== undefined && typeof value.note !== 'string')
+    ('note' in value && value.note !== undefined && typeof value.note !== 'string') ||
+    ('queued' in value && value.queued !== undefined && typeof value.queued !== 'boolean')
   )
     throw new Error('The retained completion feedback intent is invalid');
   return {
@@ -59,6 +67,7 @@ function parseDelivery(value: unknown): CompletionDelivery {
       ? { startedAt: value.startedAt }
       : {}),
     ...('note' in value && typeof value.note === 'string' ? { note: value.note } : {}),
+    ...('queued' in value && value.queued === true ? { queued: true } : {}),
   };
 }
 
@@ -155,8 +164,13 @@ export async function sendBackCompletion(
   // withdrawal guards), which is the dead end the whole of this change is about.
   // A newer terminal signal that a completed monitor consumed is evidence the
   // worker moved on, whatever the delivery bookkeeping says.
+  //
+  // A native queued instruction is the exception: the host is still holding it,
+  // so a signal the running turn wrote is not an answer to it. Retiring it would
+  // let the next refusal queue a second correction beside the first.
   if (
     delivery &&
+    !delivery.queued &&
     recorded.ok &&
     monitor.status === 'done' &&
     consumed.ok &&
@@ -405,7 +419,14 @@ export async function sendBackCompletion(
       // the correction runs with nobody polling. That queued case is the one the
       // withdrawal refusal above exists for; it keeps its card.
       const handedOver = result.delivery === 'unconfirmed';
-      throw new CompletionFeedbackDeliveryError(
+      // A queued command is recorded as queued, so a later refusal can tell a
+      // correction the host is still holding from one the worker has answered.
+      if (result.delivery === 'queued' && result.startedAt !== undefined)
+        await persistDelivery(
+          { ...intent, startedAt: result.startedAt, queued: true },
+          'completion feedback queued by the host',
+        );
+      const failure = new CompletionFeedbackDeliveryError(
         `Completion feedback delivery is ${result.delivery};${
           handedOver
             ? ' the worker may already have it, so monitoring resumes and the run will act on its next signal.'
@@ -413,6 +434,30 @@ export async function sendBackCompletion(
         }`,
         handedOver,
       );
+      // Resuming happens here, under the same ownership and intent checks the
+      // confirmed path uses below, not in the caller's catch: a resume that
+      // cannot prove it still owns this run and this instruction could abort a
+      // monitor another transition had already restarted.
+      if (handedOver) {
+        const resumingKey = intent.key;
+        try {
+          await continuePRCompletionStep(run.id, 'monitor', emit, async () => {
+            const latest = await assertOwner();
+            const saved = savedDelivery(latest);
+            if (!saved || saved.key !== resumingKey || saved.confirmed)
+              throw new Error('Completion feedback changed before monitor continuation');
+            return true;
+          });
+        } catch (resumeError) {
+          throw new AggregateError(
+            [failure, resumeError],
+            `${failure.message} Monitoring could not be resumed: ${
+              resumeError instanceof Error ? resumeError.message : String(resumeError)
+            }`,
+          );
+        }
+      }
+      throw failure;
     }
     delivery = { ...intent, startedAt: result.startedAt, confirmed: true };
     await persistDelivery(delivery, 'completion feedback delivered');

@@ -268,6 +268,17 @@ async function fixture(t: TestContext, native = true) {
   return store.getRun(run.id)!;
 }
 
+// A caller that resumes monitoring for a handed-over instruction reads this
+// outcome. A native host that refused before taking the text must stay
+// `not-attempted`, or that caller resumes for feedback nothing received.
+test('a native host that refused the text reports not-attempted, and a taken one unconfirmed', async (t) => {
+  const run = await fixture(t);
+  sendResult = 'not-attempted';
+  assert.equal(await deliverOperatorInstruction(run, 'unit', 'Instruction'), 'not-attempted');
+  sendResult = 'attempted';
+  assert.equal(await deliverOperatorInstruction(run, 'unit', 'Instruction'), 'unconfirmed');
+});
+
 test('native operator delivery preserves the caller command ID and permits the supported busy queue', async (t) => {
   const run = await fixture(t);
   sendResult = 'queued';
