@@ -55,6 +55,7 @@ let relaunchCommand: string | undefined;
 let rawRelaunchCommand = '';
 let relaunchProbe: ((command: string) => string) | undefined;
 let relaunchPaneId: string | undefined;
+let paneIdMisses = 0;
 mock.module('../core/tmux-launch-script.js', {
   namedExports: {
     writeTmuxLaunchScript: async (_vars: unknown, _target: string, command: string) => {
@@ -103,8 +104,13 @@ mock.module('../core/exec.js', {
           stderr: '',
           stdout: '## Findings\n\n- **a.ts:1** — fix the finding\n- **b.ts:2** — fix the other\n',
         };
-      if (relaunchPaneId && command.includes("-F '#{pane_id}'"))
+      if (relaunchPaneId && command.includes("-F '#{pane_id}'")) {
+        if (paneIdMisses > 0) {
+          paneIdMisses -= 1;
+          return { exitCode: 1, stderr: 'lost connection', stdout: '' };
+        }
         return { exitCode: 0, stderr: '', stdout: `${relaunchPaneId}\n` };
+      }
       if (tmuxTimeouts?.test(command)) return { exitCode: 124, stderr: '', stdout: '' };
       if (command.includes('tmux')) return { exitCode: 0, stderr: '', stdout: `${paneCommand}\n` };
       throw new Error(`Unexpected recovery fixture command: ${command}`);
@@ -814,6 +820,21 @@ test('a review-fix relaunch records the pane it respawned on the worker and fix 
   assert.equal(await relaunchWorkerForFix(vars, 'scripted', 'scripted', run.id), true);
   const contexts = getRun(run.id)!.agentContexts!;
   assert.equal(contexts.find((context) => context.role === 'dev')?.target?.paneId, '%7');
+  assert.equal(fixContext(run.id)?.target?.paneId, '%7');
+});
+
+test('a pane id the first read missed is recorded once the relaunched worker is proven live', async (t) => {
+  const run = await reviewFixRunAtReload(t, 'tmux', 'scripted');
+  paneCommand = 'scripted-runner';
+  withPrimaryWorker(run.id);
+  fixSignal = runningCurrentAttempt;
+  relaunchPaneId = '%7';
+  paneIdMisses = 1;
+  t.after(() => {
+    relaunchPaneId = undefined;
+    paneIdMisses = 0;
+  });
+  assert.equal(await relaunchWorkerForFix(vars, 'scripted', 'scripted', run.id), true);
   assert.equal(fixContext(run.id)?.target?.paneId, '%7');
 });
 
