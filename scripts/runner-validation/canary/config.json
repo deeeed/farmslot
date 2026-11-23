@@ -54,7 +54,7 @@
       "target": "isolated",
       "signature": "slot: expected ready/-, observed busy/releasing",
       "differences": ["^slot: expected ready/-, observed busy/releasing$"],
-      "ledger": "owner cx-runs: after a gateway restart with the node away during slot release, the slot stays busy/releasing (nightly triage 2026-11-23)"
+      "ledger": "owner cx-fixes: after a gateway restart with the node away during slot release, the slot stays busy/releasing (nightly triage 2026-11-23)"
     }
   ],
   "live": {

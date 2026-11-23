@@ -1124,14 +1124,6 @@ function cardObservations(scenario: ScenarioResult): string[] {
   ];
 }
 
-/**
- * The reviews a survive hold must still have run: the outcome comparison doesn't see them. A
- * recovered fix costs what an uninterrupted one does: `extraReviewers` is only for the variants
- * whose reviewer is real work (a fix too large to accept, a worker lost before its fix).
- * `refusedResumes` is the proxy's doing, not recovery's: a swallowed turn never reaches codex, so
- * that thread cannot resume and its re-review falls back cold. With real turns the review row
- * resumes the same session, no fallback and no no-verdict receipt.
- */
 /** A ri-pipe run's REVIEW belongs to the test: one pass receipt, from a turn the proxy swallowed. */
 function passReviewDifferences(scenario: ScenarioResult): string[] {
   const reviews = scenario.outcome.reviews.join(', ') || '-';
@@ -1150,14 +1142,39 @@ function failOnModelCalls(result: CheckResult): CheckResult {
   return result;
 }
 
-function reviewRoundDifferences(
-  scenario: ScenarioResult,
-  baseline: ScenarioResult,
-  extraReviewers: number,
-  refusedResumes: number,
-): string[] {
+/**
+ * The reviews a survive hold must still have run: the outcome comparison doesn't see them. A
+ * recovered fix costs what an uninterrupted one does, the large fix and the lost worker included:
+ * as many reviewers as the same-night baseline, one turn each, none falling back cold. (The proxy
+ * persists a swallowed turn's input, so its thread resumes like a real one.)
+ */
+/**
+ * The large fix is past the gateway's 50-line limit: only a reviewer can accept it, so its loop 2
+ * must be a reviewer's verdict, not the gateway accepting the worker's fix.
+ */
+function reviewerAcceptedDifferences(run: Run): string[] {
+  const loop2 = (
+    (
+      run.steps.find((step) => step.name === 'review')?.outputs as
+        | { attempts?: Array<{ loopNumber?: number; timeline?: Array<{ kind?: string }> }> }
+        | undefined
+    )?.attempts ?? []
+  )
+    .filter((attempt) => attempt.loopNumber === 2)
+    .at(-1);
+  return [
+    ...(loop2?.timeline?.some((entry) => entry.kind === 'worker-fix')
+      ? ['loop 2 passed by gateway acceptance, not a reviewer verdict']
+      : []),
+    ...(contexts(run, 'review').some((context) => context.reviewLoopNumber === 2)
+      ? []
+      : ['no loop 2 reviewer ran']),
+  ];
+}
+
+function reviewRoundDifferences(scenario: ScenarioResult, baseline: ScenarioResult): string[] {
   const seen = reviewVerdicts(scenario.run);
-  const expected = reviewVerdicts(baseline.run).reviewers + extraReviewers + refusedResumes;
+  const expected = reviewVerdicts(baseline.run).reviewers;
   const fallbacks = contexts(scenario.run, 'review').flatMap((context) =>
     context.reviewFallback ? [context.reviewFallback.detail] : [],
   );
@@ -1168,15 +1185,10 @@ function reviewRoundDifferences(
     ...(seen.reviewers === expected
       ? []
       : [`${seen.reviewers} reviewers ran, expected ${expected}`]),
-    ...(scenario.reviewerTurns === seen.reviewers - refusedResumes
+    ...(scenario.reviewerTurns === seen.reviewers
       ? []
       : [`${scenario.reviewerTurns ?? 0} reviewer turns for ${seen.reviewers} reviewers`]),
-    ...(fallbacks.length === refusedResumes
-      ? []
-      : [`${fallbacks.length} reviewers fell back cold`]),
-    ...fallbacks
-      .filter((detail) => !detail?.includes('has not produced a live session'))
-      .map((detail) => `a refused resume the proxy does not explain: ${detail}`),
+    ...fallbacks.map((detail) => `a reviewer fell back cold: ${detail}`),
   ];
 }
 
@@ -1195,12 +1207,21 @@ function fixRoundDifferences(
   const held = scenario.cardRun ?? scenario.heldRun;
   if (!held) return ['the fix round was never held'];
   const before = fixContext(held)?.promptDeliveryStartedAt;
-  const final = fixContext(scenario.run)?.promptDeliveryStartedAt;
-  const sentAgain = before !== final;
+  const finalContext = fixContext(scenario.run);
+  const final = finalContext?.promptDeliveryStartedAt;
   const expectResend =
     step === 'review-fix-claude-card-dead' || step === 'review-fix-claude-card-silent';
+  // A kept worker keeps the held delivery; a resend is a newer delivery that its replacement
+  // attempt then signalled from. UTC ISO stamps of one width order as strings.
+  const sendsAsExpected = expectResend
+    ? !!before && !!final && final > before && (finalContext?.lastSignalAt ?? '') > final
+    : !!before && final === before;
   return [
-    ...(sentAgain === expectResend ? [] : [`fix sends: ${before ?? '-'} -> ${final ?? '-'}`]),
+    ...(sendsAsExpected
+      ? []
+      : [
+          `fix sends: ${before ?? '-'} -> ${final ?? '-'}, expected ${expectResend ? 'a newer delivery that signalled' : 'the held delivery kept'}`,
+        ]),
     ...(reviewDepth(scenario.run) === reviewDepth(baseline.run)
       ? []
       : [
@@ -1696,8 +1717,6 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
     const claudeFix = step.startsWith('review-fix-claude');
     const fixCard = step.startsWith('review-fix-claude-card');
     const reviewFix = step.startsWith('review-fix');
-    const large = step === 'review-fix-large';
-    const extraReviewers = large || step === 'review-fix-claude-card-dead' ? 1 : 0;
     let baseline: ScenarioResult;
     const result = await check(
       {
@@ -1764,7 +1783,10 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
             card || fixCard ? withoutCard(scenario.outcome) : scenario.outcome,
           ),
           ...(scripted
-            ? reviewRoundDifferences(scenario, baseline, extraReviewers, large ? 1 : 0)
+            ? [
+                ...reviewRoundDifferences(scenario, baseline),
+                ...(step === 'review-fix-large' ? reviewerAcceptedDifferences(scenario.run) : []),
+              ]
             : passReviewDifferences(scenario)),
           ...(card ? cardDifferences(scenario, step) : []),
           ...(fixCard && !scenario.cardRun ? ['the run never waited on the card'] : []),
