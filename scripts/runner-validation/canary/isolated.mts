@@ -1001,10 +1001,11 @@ export function scriptedReviewer(stack: RemoteNodeStack, log: Log): ScriptedRevi
       if (thread) await rm(thread, { force: true });
       await writeFile(hold, 'swallow\n');
       if (ended && global && thread)
-        await log('scripted reviewer: only the global marker ended the turn', {
+        await log('scripted reviewer: only the global marker ended a swallowed turn', {
           runId: run.id,
           loop,
-          cause: `no swallowed turn on thread ${context.runnerSessionId}`,
+          // The proxy's `completed` line names no thread, so either cause fits.
+          cause: `thread ${context.runnerSessionId} did not end: its id did not match, or this reviewer is gone and an earlier run's stale turn ended instead (REVIEW then fails on inactivity)`,
         });
       // Then the run decides: REVIEW fails once its reviewer is gone or inactive past its limit.
       if (!ended)
