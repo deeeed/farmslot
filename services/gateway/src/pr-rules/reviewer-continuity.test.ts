@@ -314,11 +314,13 @@ test('an expired warm Claude review carries its recorded effort into the cold fa
 // The other half of that line. A request that names its own effort is only
 // compatible with a reviewer recorded at the same one (`continuity.ts:50`), so a
 // different explicit effort is not a continuation at all and no retained
-// preference is returned. What happens next is the caller's: under a warm-only
-// rule the intent stays in `needs-configuration` until a cold choice is
-// separately authorized (`dispatch.ts:345-353`), rather than launching from the
-// pool. What this case pins is narrower and is the point: the carry above can
-// never overwrite an explicit effort.
+// preference is returned. What happens next is the caller's, and it is not a
+// launch: with no authorized choice left, dispatch sets `needs-configuration`
+// and returns before queueing (`dispatch.ts:339-353`). That state is not
+// permanent — keeping the rule warm, or asking for the retained effort, lets
+// reconciliation hold the intent again (`intents.ts:172`). What this case pins
+// is narrower: for this mismatch the carry above returns nothing, so it can
+// never overwrite the effort the request asked for.
 test('an explicit effort that differs from the retained one is not continued', (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-06T00:00:00Z') });
   const { intent, prior } = fixture();
