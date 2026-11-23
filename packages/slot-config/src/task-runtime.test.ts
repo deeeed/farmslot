@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -10,7 +11,10 @@ import { runTaskRuntime } from './task-runtime.js';
 const repoRoot = path.resolve(import.meta.dirname, '../../..');
 
 /** A CLI installation with the files the task runtime imports through the CLI's own tsx. */
-async function cliFixture(t: test.TestContext): Promise<{ root: string; cli: string }> {
+async function cliFixture(
+  t: test.TestContext,
+  init?: string,
+): Promise<{ root: string; cli: string }> {
   const root = await realpath(await mkdtemp(path.join(tmpdir(), 'task-runtime-reap-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   const cli = path.join(root, 'packages/cli');
@@ -34,9 +38,25 @@ async function cliFixture(t: test.TestContext): Promise<{ root: string; cli: str
   );
   await writeFile(
     path.join(cli, 'src/commands/hosted-task-init.ts'),
-    'export async function runHostedTaskInit(taskPath: string) { return { taskPath, pid: process.pid }; }',
+    init ??
+      'export async function runHostedTaskInit(taskPath: string) { return { taskPath, pid: process.pid }; }',
   );
   return { root, cli };
+}
+
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+async function until(condition: () => boolean, limitMs: number): Promise<boolean> {
+  const deadline = Date.now() + limitMs;
+  while (!condition() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
+  return condition();
 }
 
 /** Exited children of this process that nobody waited for. */
@@ -67,7 +87,70 @@ test('task runs leave no unreaped child processes behind', { timeout: 60_000 }, 
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.data.taskPath, path.join(root, `task-${run}.json`));
   }
-  // An exited child is reaped on its parent's next turn; give that a moment.
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  // The task itself is reaped before 'close'; a leaked esbuild would stay a zombie.
+  await until(() => zombieChildren() - before === 0, 500);
   assert.equal(zombieChildren() - before, 0, `${runs} task runs left unreaped children`);
+});
+
+test('a task whose node dies stops instead of running on', { timeout: 30_000 }, async (t) => {
+  const marker = path.join(await realpath(tmpdir()), `task-orphan-${process.pid}-${Date.now()}`);
+  t.after(() => rm(marker, { force: true }));
+  const { root, cli } = await cliFixture(
+    t,
+    `import fs from 'node:fs';
+    export async function runHostedTaskInit() {
+      fs.writeFileSync(${JSON.stringify(marker)}, String(process.pid));
+      // Long provider work keeps the event loop busy, as a 10-minute init does.
+      setInterval(() => {}, 1000);
+      await new Promise(() => {});
+    }`,
+  );
+  // A stand-in node: it starts the task and is then killed without any cleanup.
+  const node = spawn(
+    process.execPath,
+    [
+      ...process.execArgv,
+      '--input-type=module',
+      '-e',
+      `const { runTaskRuntime } = await import(${JSON.stringify(path.join(import.meta.dirname, 'task-runtime.ts'))});
+      await runTaskRuntime({ action: 'init', taskPath: ${JSON.stringify(path.join(root, 'task.json'))}, supportDir: ${JSON.stringify(root)}, env: { FARMSLOT_CLI: ${JSON.stringify(path.join(cli, 'bin/farmslot.mjs'))} } }, ${JSON.stringify(root)});`,
+    ],
+    { stdio: 'ignore' },
+  );
+  assert.ok(await until(() => existsSync(marker), 20_000), 'the task started');
+  const task = Number(readFileSync(marker, 'utf8'));
+  node.kill('SIGKILL');
+  assert.ok(await until(() => !alive(task), 5000), 'the task exits once its node is gone');
+});
+
+test('a descendant holding the task output does not delay the result', { timeout: 30_000 }, async (t) => {
+  const held = path.join(await realpath(tmpdir()), `task-held-${process.pid}-${Date.now()}`);
+  t.after(() => {
+    if (existsSync(held)) {
+      const pid = Number(readFileSync(held, 'utf8'));
+      if (alive(pid)) process.kill(pid, 'SIGKILL');
+    }
+    return rm(held, { force: true });
+  });
+  const { root, cli } = await cliFixture(
+    t,
+    `import { spawnSync } from 'node:child_process';
+    export async function runHostedTaskInit(taskPath: string) {
+      // Backgrounded by a synchronous script, so it is not a tracked task subprocess.
+      spawnSync('/bin/sh', ['-c', 'sleep 30 & echo $! > ${held}'], { stdio: 'inherit' });
+      return { taskPath };
+    }`,
+  );
+  const started = Date.now();
+  const result = await runTaskRuntime(
+    {
+      action: 'init',
+      taskPath: path.join(root, 'task.json'),
+      supportDir: root,
+      env: { FARMSLOT_CLI: path.join(cli, 'bin/farmslot.mjs') },
+    },
+    root,
+  );
+  assert.equal(result.exitCode, 0, result.stderr);
+  assert.ok(Date.now() - started < 15_000, 'resolved without waiting for the descendant');
 });

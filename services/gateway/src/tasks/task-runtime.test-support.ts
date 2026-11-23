@@ -8,7 +8,7 @@ import { after } from 'node:test';
 import { projectWorkerTemplateSource, selectExecutionTemplate } from '@farmslot/agent-runtime';
 import type { TaskRuntimeRequest } from '@farmslot/slot-config/task-runtime';
 
-// One installed CLI fixture shared by task-runtime.test.ts and the CLI/task-process
+// One installed CLI fixture shared by task-runtime.test.ts and the CLI/thread
 // parity suite in task-runtime-parity.live.ts.
 export const repo = path.resolve(import.meta.dirname, '../../../..');
 export const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'task-runtime-')));

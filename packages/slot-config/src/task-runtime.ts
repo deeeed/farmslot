@@ -18,6 +18,8 @@ export type TaskRuntimeRequest = NodeLinkTaskRuntimeInput;
 // inputs. Keep the existing ten-minute budget and two-minute verification cap.
 export const TASK_RUNTIME_TIMEOUT_MS = { init: 10 * 60_000, verify: 120_000 } as const;
 export const TASK_RUNTIME_CLOSEOUT_MS = 2 * NODE_EXEC_CLOSEOUT_MS;
+/** How long a finished task's stdout and stderr may stay open, held by a descendant. */
+export const TASK_OUTPUT_DRAIN_MS = 2000;
 
 export function parseTaskRuntimeRequest(value: unknown): TaskRuntimeRequest {
   if (
@@ -48,11 +50,25 @@ export function parseTaskRuntimeRequest(value: unknown): TaskRuntimeRequest {
 const taskProcess = `
 const workerData = JSON.parse(process.argv[1]);
 // IPC stands in for a worker port. A message after the parent closed the channel is dropped.
+let delivered = false;
 const parentPort = {
   on: (event, listener) => process.on(event, listener),
   postMessage: (message, done) => (process.connected ? process.send(message, done) : done?.()),
-  close: () => process.connected && process.disconnect(),
+  close: () => {
+    delivered = true;
+    if (process.connected) process.disconnect();
+  },
 };
+// A worker thread died with its node; a process must not outlive it. If the channel drops
+// before the result went out, the node or gateway is gone: stop this task's groups and exit.
+const ownedGroups = new Set();
+process.on('disconnect', () => {
+  if (delivered) return;
+  for (const pid of ownedGroups) {
+    try { process.kill(-pid, 'SIGTERM'); } catch {}
+  }
+  process.exit(1);
+});
 const { createRequire } = require('node:module');
 const { pathToFileURL } = require('node:url');
 const path = require('node:path');
@@ -72,6 +88,8 @@ ChildProcess.prototype.spawn = function(options) {
   const result = spawn.call(this, { ...options, detached: true });
   if (this.pid) {
     const pid = this.pid;
+    ownedGroups.add(pid);
+    this.once('close', () => ownedGroups.delete(pid));
     parentPort.postMessage({ type: 'task-child', pid });
     this.once('exit', () => parentPort.postMessage({ type: 'task-child-reaped', pid }));
     this.once('close', () => parentPort.postMessage({ type: 'task-child-exit', pid }));
@@ -179,8 +197,8 @@ export async function runTaskRuntime(
   env.TSX_TSCONFIG_PATH = path.join(packageRoot, 'tsconfig.json');
   env.TSX_DISABLE_CACHE = '1';
   return new Promise((resolve, reject) => {
-    // A spawned node does not inherit the gateway's tsx loader or test flags: the
-    // CLI's own tsconfig selects its installed libraries.
+    // A spawned node does not take the node's command-line tsx loader or test flags (only
+    // NODE_OPTIONS in env would reach it): the CLI's own tsconfig selects its libraries.
     const task = spawn(
       process.execPath,
       [
@@ -273,6 +291,15 @@ export async function runTaskRuntime(
       closeout.terminate();
     });
     // 'close' follows exit and the end of the task's stdout and stderr.
+    // A detached grandchild that inherited the task's stdout or stderr keeps the pipes open
+    // after the task exits; 'close' would wait for it. Give the pipes a bounded drain.
+    task.on('exit', () => {
+      const drain = setTimeout(() => {
+        task.stdout?.destroy();
+        task.stderr?.destroy();
+      }, TASK_OUTPUT_DRAIN_MS);
+      drain.unref();
+    });
     task.on('close', (exitCode, exitSignal) => {
       const code = exitCode ?? (exitSignal ? 1 : 0);
       clearTimeout(timer);
