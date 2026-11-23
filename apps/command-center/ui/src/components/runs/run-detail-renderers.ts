@@ -732,7 +732,6 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             : nothing}
           ${publication.enabled &&
           r.status === 'done' &&
-          !publishing &&
           r.reviewPublication?.receipt?.state !== 'published'
             ? html`
                 <button
@@ -744,7 +743,9 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
                     ? 'Checking publication…'
                     : r.reviewPublication?.error || r.reviewPublication?.receipt
                       ? 'Retry publication'
-                      : 'Publish now'}
+                      : publishing
+                        ? 'Check publication'
+                        : 'Publish now'}
                 </button>
               `
             : nothing}

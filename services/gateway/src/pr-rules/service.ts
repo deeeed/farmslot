@@ -323,7 +323,8 @@ export class PRRuleService {
   }
 
   private async reconcileReviewPublications(): Promise<void> {
-    for (const run of await getAllRunsWithArchived()) await this.reconcileReviewPublication(run);
+    for (const run of await getAllRunsWithArchived())
+      if (reviewPublicationPending(run)) await this.publishCompletedReview(run.id);
   }
 
   /**
@@ -331,24 +332,23 @@ export class PRRuleService {
    * The sweep still retries; either way the run ends with a receipt or a recorded error.
    */
   async publishCompletedReview(runId: string): Promise<void> {
+    // Read the run now: a sweep's earlier copy can predate a receipt or error that just landed.
     const run = await getRunWithArchived(runId);
-    if (run) await this.reconcileReviewPublication(run);
-  }
-
-  private async reconcileReviewPublication(run: Run): Promise<void> {
-    if (!reviewPublicationPending(run)) return;
+    if (!run || !reviewPublicationPending(run)) return;
     const owner =
       run.reviewPublication?.gate?.publication ??
       run.reviewPublication?.direct ??
       run.prWork?.review;
     // A publish that cannot run must say why, not wait forever behind a skipped sweep.
-    const refusal = !owner
-      ? 'Review publication has no owner'
-      : !this.authorized(owner.ownerId, owner.ownerGeneration ?? 0)
-        ? `Publication owner ${owner.ownerId} has no automation authority`
-        : undefined;
-    if (refusal || !owner) {
-      await this.recordPublicationError(run.id, refusal ?? 'Review publication has no owner');
+    if (!owner) {
+      await this.recordPublicationError(run.id, 'Review publication has no owner');
+      return;
+    }
+    if (!this.authorized(owner.ownerId, owner.ownerGeneration ?? 0)) {
+      await this.recordPublicationError(
+        run.id,
+        `Publication owner ${owner.ownerId} has no automation authority`,
+      );
       return;
     }
     const ownerId = owner.ownerId;
