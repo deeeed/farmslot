@@ -842,6 +842,52 @@ for (const via of ['a command', 'a direct ensure (prepare)'] as const) {
   });
 }
 
+test('a delivery that finishes after a newer selection never caches its older bundle', async (t) => {
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  node.release();
+  const vars = farmVars(farm.name, 'mini-x-1');
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+  // The first delivery publishes and selects bundle 1, then waits on its
+  // post-publish manifest read until the second has selected bundle 2.
+  let releaseFirst!: () => void;
+  const firstHeld = new Promise<void>((resolve) => (releaseFirst = resolve));
+  t.after(() => releaseFirst());
+  let held = false;
+  let probes = 0;
+  const io: NodeSupportIo = {
+    ...node.io,
+    fileExists: async (...args) => {
+      probes++;
+      return node.io.fileExists(...args);
+    },
+    readFile: async (vars, file) => {
+      if (!held && file.endsWith('/manifest.json') && file.includes('/support/')) {
+        held = true;
+        await firstHeld;
+      }
+      return node.io.readFile(vars, file);
+    },
+  };
+  const first = resolveRemoteFarmCommand(vars, cmd, { io });
+  while (!held) await new Promise((resolve) => setTimeout(resolve, 10));
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  farm.editScript('echo v2\n');
+  now += 2_100;
+  const second = await resolveRemoteFarmCommand(vars, cmd, { io });
+  releaseFirst();
+  const older = await first;
+  assert.notEqual(older, second);
+
+  farm.editScript('echo v1\n');
+  now += 2_100;
+  const before = probes;
+  assert.equal(await resolveRemoteFarmCommand(vars, cmd, { io }), older);
+  assert.ok(probes > before, 'bundle 1 is checked on the node again, not taken from the cache');
+});
+
 test('every direct node exec sender is reviewed for farm script references', async () => {
   // execOnSlot resolves farm refs for everything routed through it. A new call
   // site that sends `exec` to a node directly would bypass that and reopen F15

@@ -123,19 +123,27 @@ interface HeldBundle {
   check?: Promise<boolean>;
 }
 
-const verifiedBundles = new Map<
-  string,
-  { at: number; supportDir: string; slotId: string; selectSlot: boolean }
->();
-// A slot moved to another bundle may have its earlier one pruned; a selected
-// entry for that earlier bundle would point commands at a deleted directory
-// (a dev-server shutdown that then left the gateway running). Read-only entries
-// hold their own reader lease on the node, so they stay valid.
-onNodeSupportSelection((slotId, supportDir) => {
-  for (const [key, entry] of verifiedBundles)
-    if (entry.slotId === slotId && entry.selectSlot && entry.supportDir !== supportDir)
-      verifiedBundles.delete(key);
-});
+const verifiedBundles = new Map<string, { at: number; supportDir: string }>();
+/**
+ * The bundle each slot selected last in this gateway. A slot moved to another
+ * bundle may have its earlier one pruned, so a selected entry counts only while
+ * it is the slot's latest selection: an entry for an earlier bundle would point
+ * commands at a deleted directory (a dev-server shutdown that then left the
+ * gateway running). Checked when an entry is written and when it is read, so a
+ * delivery that finishes after a newer selection never caches its older bundle.
+ * Read-only entries hold their own reader lease on the node, so they stay valid.
+ * A selection made by another gateway is not seen here.
+ */
+const latestSelection = new Map<string, string>();
+onNodeSupportSelection((slotId, supportDir) => latestSelection.set(slotId, supportDir));
+
+function selectionCurrent(slotId: string, supportDir: string, selectSlot: boolean): boolean {
+  if (!selectSlot) return true;
+  // A selecting ensure records its selection before it returns, so a slot with
+  // none recorded has had no selection that could make this entry stale.
+  const latest = latestSelection.get(slotId);
+  return latest === undefined || latest === supportDir;
+}
 /**
  * How long one delivery may take, from its start: a re-delivery after a node
  * redeploy re-verifies every file and repoints the slot, which takes seconds to
@@ -575,7 +583,11 @@ export async function resolveRemoteFarmCommand(
   const selectSlot = options.selectSlot !== false;
   const cacheKey = `${vars.slotId}\0${farmPathsForSlot(vars).code.support}\0${local.hash}\0${selectSlot}`;
   const verified = verifiedBundles.get(cacheKey);
-  if (verified && Date.now() - verified.at < VERIFIED_TTL_MS) {
+  if (
+    verified &&
+    Date.now() - verified.at < VERIFIED_TTL_MS &&
+    selectionCurrent(vars.slotId, verified.supportDir, selectSlot)
+  ) {
     const mapped = remap(verified.supportDir, local.paths);
     return selectSlot ? mapped : wrapNodeSupportReadCommand(mapped, verified.supportDir);
   }
@@ -587,12 +599,8 @@ export async function resolveRemoteFarmCommand(
     options.signal,
   );
   if (!state?.hash) return command;
-  verifiedBundles.set(cacheKey, {
-    at: Date.now(),
-    supportDir: state.supportDir,
-    slotId: vars.slotId,
-    selectSlot,
-  });
+  if (selectionCurrent(vars.slotId, state.supportDir, selectSlot))
+    verifiedBundles.set(cacheKey, { at: Date.now(), supportDir: state.supportDir });
   const mapped = remap(state.supportDir, state.paths);
   return selectSlot ? mapped : wrapNodeSupportReadCommand(mapped, state.supportDir);
 }
@@ -613,6 +621,7 @@ export async function resolveSlotFarmCommand(
 /** Test seam: forget what this process verified. */
 export function resetRemoteFarmCommandCache(): void {
   verifiedBundles.clear();
+  latestSelection.clear();
   localBundles.clear();
   pendingEnsures.clear();
   machinePublishes.clear();
