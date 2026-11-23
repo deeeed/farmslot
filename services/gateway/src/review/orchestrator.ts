@@ -48,6 +48,7 @@ import { withMachineEnv } from '../core/project-env.js';
 import { onSlotReset } from '../core/state.js';
 import {
   resolveExactTmuxWindowPane,
+  resolveTmuxPaneId,
   respawnTmuxWindowWithCommand,
   shellQuote,
   TMUX_WINDOW_RESPAWN_SETTLE_MS,
@@ -102,12 +103,8 @@ import {
   taskDirRelPath,
 } from '../tasks/checklist-target.js';
 import { unwatchContext, watchContext } from '../tasks/watcher.js';
-import { signalIsNewerThanContext } from '../tasks/worker-signal-context.js';
-import {
-  normalizeWorkerSignal,
-  signalFreshSince,
-  terminalWorkerSignalFromRaw,
-} from '../tasks/worker-signals.js';
+import { recoveredFixSignalMatches } from '../tasks/worker-signal-context.js';
+import { normalizeWorkerSignal, terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 
 import { finishReviewCleanup } from './cleanup.js';
 import { parseReviewIssueBullets } from './issues.js';
@@ -2205,17 +2202,6 @@ export async function reconcileRecoveredFixPromptDelivery(
   };
 }
 
-/**
- * A recovered fix signal belongs to this pass: its own attempt, or one the worker reopened
- * after it, by the watcher's own rule (TAT-4006 7721a02b).
- */
-export function recoveredFixSignalMatches(signal: WorkerSignal, fixContext: AgentContext): boolean {
-  return fixContext.signalAttemptId
-    ? signal.attemptId === fixContext.signalAttemptId ||
-        signalIsNewerThanContext(signal, fixContext)
-    : signalFreshSince(signal, fixContext.attemptStartedAt ?? fixContext.startedAt);
-}
-
 /** The worker of a blocked fix pass reopened it and finished a newer attempt. */
 export function blockedFixPassReopened(
   fixContext: Pick<AgentContext, 'signalAttemptId'>,
@@ -3500,6 +3486,8 @@ export async function recordReviewFixRunnerSession(
   }
 }
 
+export { recoveredFixSignalMatches };
+
 export async function relaunchWorkerForFix(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runner: string,
@@ -3630,7 +3618,9 @@ export async function relaunchWorkerForFix(
       : workerTarget.slice(windowSeparator + 1).split('.', 1)[0] || null;
   // The respawned pane's id is what later reads that worker after it exits (COMPLETE's
   // progress check, restart recovery); a window name alone cannot tell it went away.
-  const paneId = (await resolveExactTmuxWindowPane(vars, workerTarget))?.paneId;
+  // list-panes resolves named and numeric (`slot:1`) targets alike.
+  const listedPane = await resolveTmuxPaneId(vars, workerTarget);
+  const paneId = listedPane && /^%\d+$/.test(listedPane) ? listedPane : undefined;
   const relaunchedTarget = {
     session: resolved.session,
     window,

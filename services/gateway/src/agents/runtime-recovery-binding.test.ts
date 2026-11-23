@@ -363,17 +363,29 @@ test('a fix pass whose worker exited after its terminal signal is left to the re
       timestamp: '2026-11-22T23:18:05.989Z',
       checklist: { total: 3, done: 3, items: [] },
     });
-  const cases: Array<[string, string | undefined, AgentContext['status']]> = [
-    ['finished this attempt', signal('complete', 'attempt-fix-1'), 'working'],
-    ['still running', signal('running', 'attempt-fix-1'), 'failed'],
-    ["an earlier attempt's completion", signal('complete', 'attempt-fix-0'), 'failed'],
-    ['no signal', undefined, 'failed'],
-  ];
-  for (const [label, raw, expected] of cases) {
+  const reopened = JSON.stringify({
+    ...JSON.parse(signal('complete', 'attempt-fix-2')),
+    timestamp: '2026-11-22T23:19:00.000Z',
+  });
+  const earlier = JSON.stringify({
+    ...JSON.parse(signal('complete', 'attempt-fix-0')),
+    timestamp: '2026-11-22T23:10:00.000Z',
+  });
+  const cases: Array<[string, string | undefined, AgentContext['status'], AgentContext['role']?]> =
+    [
+      ['finished this attempt', signal('complete', 'attempt-fix-1'), 'working'],
+      ['a reopened attempt finished after it', reopened, 'working'],
+      ['still running', signal('running', 'attempt-fix-1'), 'failed'],
+      ["an earlier attempt's completion", earlier, 'failed'],
+      ['no signal', undefined, 'failed'],
+      // Only REVIEW's fix recovery consumes a terminal signal from an exited worker.
+      ['a CI fix with the same signal', signal('complete', 'attempt-fix-1'), 'failed', 'ci-fix'],
+    ];
+  for (const [label, raw, expected, role] of cases) {
     fixture();
     paneSession = 'slot-1';
     run.status = 'reviewing';
-    run.agentContexts = [run.agentContexts![0]!, fixContext()];
+    run.agentContexts = [run.agentContexts![0]!, { ...fixContext(), ...(role ? { role } : {}) }];
     runnerAlive = false;
     fixSignal = raw;
 

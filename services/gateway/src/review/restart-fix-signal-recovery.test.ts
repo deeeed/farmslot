@@ -54,7 +54,7 @@ let relaunchEnvironment: RawProjectJson['command_env'];
 let relaunchCommand: string | undefined;
 let rawRelaunchCommand = '';
 let relaunchProbe: ((command: string) => string) | undefined;
-let relaunchPane: { paneId: string; panePid: string } | undefined;
+let relaunchPaneId: string | undefined;
 mock.module('../core/tmux-launch-script.js', {
   namedExports: {
     writeTmuxLaunchScript: async (_vars: unknown, _target: string, command: string) => {
@@ -103,6 +103,8 @@ mock.module('../core/exec.js', {
           stderr: '',
           stdout: '## Findings\n\n- **a.ts:1** — fix the finding\n- **b.ts:2** — fix the other\n',
         };
+      if (relaunchPaneId && command.includes("-F '#{pane_id}'"))
+        return { exitCode: 0, stderr: '', stdout: `${relaunchPaneId}\n` };
       if (tmuxTimeouts?.test(command)) return { exitCode: 124, stderr: '', stdout: '' };
       if (command.includes('tmux')) return { exitCode: 0, stderr: '', stdout: `${paneCommand}\n` };
       throw new Error(`Unexpected recovery fixture command: ${command}`);
@@ -206,9 +208,6 @@ const originalTmux = await import('../core/tmux.js');
 mock.module('../core/tmux.js', {
   namedExports: {
     ...originalTmux,
-    resolveExactTmuxWindowPane: async (
-      ...args: Parameters<typeof originalTmux.resolveExactTmuxWindowPane>
-    ) => relaunchPane ?? originalTmux.resolveExactTmuxWindowPane(...args),
     respawnTmuxWindowWithCommand: async (
       ...args: Parameters<typeof originalTmux.respawnTmuxWindowWithCommand>
     ) => {
@@ -807,9 +806,9 @@ test('a review-fix relaunch records the pane it respawned on the worker and fix 
   const run = await reviewFixRunAtReload(t, 'tmux', 'scripted');
   paneCommand = 'scripted-runner';
   withPrimaryWorker(run.id);
-  relaunchPane = { paneId: '%7', panePid: '4242' };
+  relaunchPaneId = '%7';
   t.after(() => {
-    relaunchPane = undefined;
+    relaunchPaneId = undefined;
   });
   assert.equal(await relaunchWorkerForFix(vars, 'scripted', 'scripted', run.id), true);
   const contexts = getRun(run.id)!.agentContexts!;
