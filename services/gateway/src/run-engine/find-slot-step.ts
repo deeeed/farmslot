@@ -1710,8 +1710,10 @@ async function findSlotAttempt(
       allowedSlots: run.allowedSlots ?? null,
       ...selectionOptions,
     });
+    // A slot still under a prepare guard is not reused: prepare would refuse it.
     if (
       affinitySlot &&
+      !activePrepareSlots.has(affinitySlot.slot) &&
       !eligibleFreeSlots.some(
         (slot) =>
           (compareSlotModelAvailability(slot, affinitySlot, selectionOptions) ||
@@ -1807,7 +1809,7 @@ async function findSlotAttempt(
             prMatchKind: top.prMatchKind,
             canNudge: top.canNudge,
           },
-          freeSlotCandidates: projectSlots.filter(isFreeSlot).map((s) => ({
+          freeSlotCandidates: freeSlots.map((s) => ({
             slotId: s.slot,
             score: isEligibleFreeSlot(s) ? scoreCandidate(s) : -1,
             branch: s.branch || '',

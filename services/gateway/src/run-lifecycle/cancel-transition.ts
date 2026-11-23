@@ -304,8 +304,10 @@ export function defaultCancelCollaborators({
       if (!state.keep && run.slotId) {
         const { activePrepareAborts } = await import('../methods/slot/shared.js');
         const inflight = activePrepareAborts.get(run.slotId);
-        // Only this run's own prepare: a stale slot id must not stop another owner's.
-        if (inflight && (await readSlotRow(run.slotId))?.current_run_id === run.id) {
+        // Only this run's own prepare, on a slot it holds or has reserved for a warm handoff:
+        // a stale slot id must not stop another owner's.
+        const row = inflight ? await readSlotRow(run.slotId) : null;
+        if (inflight && (row?.current_run_id === run.id || row?.handoff_run_id === run.id)) {
           const { RELEASE_PREPARE_STOP_TIMEOUT_MS } = await import('../methods/slot/release.js');
           const stopMs = prepareStopTimeoutMs ?? RELEASE_PREPARE_STOP_TIMEOUT_MS;
           inflight.abort();
@@ -333,7 +335,6 @@ export function defaultCancelCollaborators({
       const blocker = await slotOwnershipBlocker(run);
       const cleanupBlocker =
         [prepareBlocker, survivors, runtimeBlocker].filter(Boolean).join('; ') || null;
-      // A prepare that would not stop is the reason the slot stays, whatever else holds it.
       // A prepare that would not stop is named next to whatever else keeps the slot.
       await recordSlotTeardownSkipped(
         run,

@@ -1709,6 +1709,28 @@ test('a pre-dispatch cancel never stops a prepare on a slot another run now owns
   assert.equal(aborted, false, "the other run's prepare keeps running");
 });
 
+test('a pre-dispatch cancel joins the prepare of a slot reserved for the run’s warm handoff', async (t) => {
+  const { activePrepareAborts } = await import('../methods/slot/shared.js');
+  let aborted = false;
+  activePrepareAborts.set(SLOT_ID, {
+    abort: () => (aborted = true),
+    settled: Promise.resolve(),
+  });
+  t.after(() => activePrepareAborts.delete(SLOT_ID));
+  slotRow = { ...slotRow, current_run_id: 'other-run', handoff_run_id: RUN_ID };
+  const preparing = {
+    ...run,
+    steps: [
+      { name: 'prepare', status: 'skipped', startedAt: '2026-11-23T16:21:09.377Z' },
+      { name: 'dispatch', status: 'skipped' },
+    ],
+  } as Run;
+
+  await defaultCancelCollaborators().releaseCapabilities(preparing);
+
+  assert.equal(aborted, true, 'the reserved run’s prepare is stopped before release');
+});
+
 test('a pre-dispatch cancel whose prepare will not stop keeps the slot and names why', async (t) => {
   const { activePrepareAborts } = await import('../methods/slot/shared.js');
   activePrepareAborts.set(SLOT_ID, { abort: () => {}, settled: new Promise<void>(() => {}) });

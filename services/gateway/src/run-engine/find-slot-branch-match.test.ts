@@ -21,6 +21,7 @@ import { sourceTestLock, sourceTestMaterialization } from '../sources/source.tes
 await import('../runtime/mock-pty.test-support.js');
 const { makeRun } = await import('./test-fixtures.js');
 const store = await import('../runs/store.js');
+const { activePrepareSlots } = await import('../core/native-worker-exclusion.js');
 const fleet = await import('../fleet/state.js');
 const core = await import('../core/index.js');
 const branches = await import('../methods/dispatch/branch-checkout.js');
@@ -1509,6 +1510,61 @@ test('branch affinity never claims a held slot whose node lacks the run model', 
   assert.equal(result.outputs?.selectedSlot, free.slot);
   assert.notEqual(result.outputs?.selectionMethod, 'affinity');
   assert.deepEqual(claims, [free.slot]);
+});
+
+test('branch affinity skips a held slot still under a prepare guard', async (t) => {
+  reset('pr-complete', 'example-org/terminal#210');
+  affinitySlot = { ...candidate('held-guarded', 'node-a', branch), lifecycle: 'held' };
+  const free = candidate('free-a', 'node-a', 'main');
+  slots.splice(0, slots.length, affinitySlot, free);
+  cleanSlots.add(free.slot);
+  expectedSlot = free.slot;
+  activePrepareSlots.add(affinitySlot.slot);
+  t.after(() => activePrepareSlots.delete('held-guarded'));
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.outputs?.selectedSlot, free.slot);
+  assert.notEqual(result.outputs?.selectionMethod, 'affinity');
+  assert.deepEqual(claims, [free.slot]);
+});
+
+test('the branch-affinity card does not offer a free slot still under a prepare guard', async (t) => {
+  reset('pr-complete', 'example-org/terminal#210');
+  const busy: SlotStatus = {
+    ...candidate('busy-a', 'node-a', branch),
+    lifecycle: 'busy',
+    agent: 'working',
+  };
+  const guarded = candidate('free-guarded', 'node-a', 'main');
+  const free = candidate('free-a', 'node-a', 'main');
+  slots.splice(0, slots.length, busy, guarded, free);
+  activePrepareSlots.add(guarded.slot);
+  t.after(() => activePrepareSlots.delete('free-guarded'));
+  nudgeCandidates = [
+    {
+      slot: busy,
+      uncommittedCount: 0,
+      uncommittedFiles: [],
+      nudgeCount: 0,
+      ctxPct: null,
+      prMatchKind: 'branch-slug',
+      riskFlags: [],
+      canNudge: false,
+    },
+  ];
+  const offered: string[] = [];
+  await assert.rejects(
+    executeFindSlotStep(run.id, run, 0, {
+      ...context,
+      createEngineDecision: async (_id, reason, _description, _actions, payload) => {
+        assert.equal(reason, 'branch_affinity_nudge');
+        assert.ok(payload?.kind === 'branch_affinity_nudge');
+        offered.push(...payload.freeSlotCandidates.map((slot) => slot.slotId));
+        return 'abort';
+      },
+    }),
+    /Aborted: branch-affinity nudge declined/,
+  );
+  assert.deepEqual(offered, [free.slot]);
 });
 
 test('a pinned fresh reuse on a node that lacks the run model is refused before teardown', async () => {

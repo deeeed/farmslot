@@ -139,6 +139,15 @@ const fleet = await import('../../fleet/state.js');
 mock.module('../../fleet/state.js', {
   namedExports: { ...fleet, loadFleetStatus: async () => ({ slots: [] }) },
 });
+// Runs a test marks as ended; every other id reads the real (empty) store.
+const endedRuns = new Set<string>();
+const store = await import('../../runs/store.js');
+mock.module('../../runs/store.js', {
+  namedExports: {
+    ...store,
+    getRun: (id: string) => (endedRuns.has(id) ? { id, status: 'cancelled' } : store.getRun(id)),
+  },
+});
 const { slotPrepare } = await import('./prepare.js');
 const { slotCheck } = await import('./check.js');
 beforeEach(() => {
@@ -242,4 +251,14 @@ test('an engine prepare is refused when another run holds the slot or this run h
     (error: Error) => !/no longer belongs to run/.test(error.message),
   );
   assert.deepEqual(calls.slice(0, 1), ['ownership'], 'the reserved run proceeds past the check');
+  // The row still names the run, but the run has ended.
+  endedRuns.add('ended-run');
+  t.after(() => endedRuns.clear());
+  slotRow = { current_run_id: 'ended-run', handoff_run_id: null };
+  await assert.rejects(
+    slotPrepare({ slotId: vars.slotId, runId: 'ended-run' }, () => undefined, undefined, {
+      requireRunOwnership: true,
+    }),
+    /no longer belongs to run/,
+  );
 });
