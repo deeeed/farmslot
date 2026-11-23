@@ -105,7 +105,8 @@ export async function isTicketMarkerCommit(
       const loggerObject =
         ts.isPropertyAccessExpression(call.expression) &&
         ts.isIdentifier(call.expression.expression) &&
-        call.expression.name.text === 'log'
+        (call.expression.name.text === 'log' ||
+          (call.expression.expression.text === 'console' && call.expression.name.text === 'error'))
           ? call.expression.expression.text
           : undefined;
       if (!loggerObject || !loggerObjects.has(loggerObject)) return false;

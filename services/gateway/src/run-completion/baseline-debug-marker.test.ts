@@ -97,6 +97,17 @@ index 123abcd..456abcd 100644
   assert.equal(await isTicketMarkerCommit(terminal, base, marker, ticket), true);
 });
 
+test('a marker admits console.error', async () => {
+  const terminal = `${marker}\0${base}\0debug(${ticket}): add reproduction marker\0\n${`diff --git a/src/perps/order.ts b/src/perps/order.ts
+index 123abcd..456abcd 100644
+--- a/src/perps/order.ts
++++ b/src/perps/order.ts
+@@ -12,0 +13 @@
++  console.error('[${ticket}] BUG_MARKER: size field cleared before submit');
+`}`;
+  assert.equal(await isTicketMarkerCommit(terminal, base, marker, ticket), true);
+});
+
 for (const [name, changed] of [
   [
     'an import of something the marker never logs through',
