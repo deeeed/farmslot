@@ -17,8 +17,8 @@ import { FULLFLOW_MODEL } from './fullflow-fixture.mjs';
 //            a restart with the worker or reviewer mid-turn in DISPATCH, MONITOR, REVIEW, its fix
 //            round, HUMAN_GATE prep and FINALIZE, which must leave it alive (no model call: the test
 //            answers the reviewer), and a Pi-runner worker in MONITOR whose model stream drops as
-//            the gateway restarts. --with-review adds one reviewed run (two codex gpt-6-luna calls):
-//            REVIEW and its fix round.
+//            the gateway restarts. --with-review adds one reviewed run whose reviewer turns the test answers
+//            (no model call): REVIEW and its fix round.
 //
 //   recovery  seven concurrent recovery cases on disposable slots, zero inference.
 //             Hard ceiling 120 s including cleanup; cases over 5 s print step attribution.
@@ -145,16 +145,16 @@ const available: readonly string[] =
   profile === 'fullflow'
     ? ['marker-contract', ...FULLFLOW_CASES]
     : profile === 'recovery'
-    ? RECOVERY_CASES
-    : profile === 'canary'
-      ? ['lifecycle', 'f324', 'native-check', 'monitor']
-      : [
-          'performance',
-          ...RESTART_STEPS,
-          'review-past-wait',
-          'worker-survives',
-          ...(withReview ? ['review'] : []),
-        ];
+      ? RECOVERY_CASES
+      : profile === 'canary'
+        ? ['lifecycle', 'f324', 'native-check', 'monitor']
+        : [
+            'performance',
+            ...RESTART_STEPS,
+            'review-past-wait',
+            'worker-survives',
+            ...(withReview ? ['review'] : []),
+          ];
 for (const name of only ?? [])
   if (!available.includes(name)) throw new Error(`Case ${name} does not run in profile ${profile}`);
 const wants = (name: (typeof CASES)[number]) => !only || only.includes(name);
@@ -195,13 +195,21 @@ const reviews =
   plan.review ||
   plan.reviewPastWait ||
   plan.survive.some((step) => step === 'review' || step === 'review-fix');
-const fullflowWorker = arg('model') === 'haiku'
-  ? { runner: 'claude', model: 'haiku' }
-  : FULLFLOW_MODEL;
-if (profile === 'fullflow' && arg('model') && !['haiku', FULLFLOW_MODEL.model].includes(arg('model')!))
+const fullflowWorker =
+  arg('model') === 'haiku' ? { runner: 'claude', model: 'haiku' } : FULLFLOW_MODEL;
+if (
+  profile === 'fullflow' &&
+  arg('model') &&
+  !['haiku', FULLFLOW_MODEL.model].includes(arg('model')!)
+)
   throw new Error('--model for fullflow must be haiku or litellm/deepseek-v4p1-flash');
 const fullflowModels = profile === 'fullflow' && FULLFLOW_CASES.some(wants);
-const models = profile === 'fullflow' ? (fullflowModels ? [fullflowWorker.model, REVIEWER.model] : []) : ['scripted', ...(reviews ? [REVIEWER.model] : [])];
+const models =
+  profile === 'fullflow'
+    ? fullflowModels
+      ? [fullflowWorker.model, REVIEWER.model]
+      : []
+    : ['scripted', ...(reviews ? [REVIEWER.model] : [])];
 const refused = models.filter((model) => !config.modelAllowlist.includes(model));
 
 await mkdir(evidence, { recursive: true });
@@ -252,10 +260,10 @@ const finish = () =>
         profile === 'fullflow'
           ? 'canary-fullflow'
           : profile === 'canary'
-          ? 'canary'
-          : profile === 'recovery'
-            ? 'canary-recovery'
-            : 'canary-nightly',
+            ? 'canary'
+            : profile === 'recovery'
+              ? 'canary-recovery'
+              : 'canary-nightly',
       head,
       startedAt,
       resultsFile,
@@ -298,13 +306,19 @@ try {
   }
   if (fullflowModels)
     await runFullflow({
-      root, evidence, log, reaper, onCheck,
+      root,
+      evidence,
+      log,
+      reaper,
+      onCheck,
       worker: fullflowWorker,
       cases: FULLFLOW_CASES.filter(wants),
       ownerTag: process.env.CANARY_STAMP ?? String(process.pid),
       cliSnapshots: expand(arg('cli-snapshots') ?? path.join(evidence, 'cli-snapshots')),
       ...(arg('cli-snapshot') ? { cliSnapshot: expand(arg('cli-snapshot')!) } : {}),
-      onCleanup: (stop) => { stopStack = stop; },
+      onCleanup: (stop) => {
+        stopStack = stop;
+      },
     });
   if (profile === 'recovery')
     await runRecoveryMatrix({

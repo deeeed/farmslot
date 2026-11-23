@@ -47,14 +47,6 @@
         "^slot: expected ready/-, observed busy/working$"
       ],
       "ledger": "owner cx-engine: a gateway restart during the review-fix round loses the scripted fix worker (\"Live scripted retained handoff was not accepted\"), REVIEW restarts loop 1 and the run stays reviewing (nightly triage 2026-11-23)"
-    },
-    {
-      "case": "release",
-      "variant": "node-away",
-      "target": "isolated",
-      "signature": "slot: expected ready/-, observed busy/releasing",
-      "differences": ["^slot: expected ready/-, observed busy/releasing$"],
-      "ledger": "owner cx-fixes: after a gateway restart with the node away during slot release, the slot stays busy/releasing (nightly triage 2026-11-23)"
     }
   ],
   "live": {
