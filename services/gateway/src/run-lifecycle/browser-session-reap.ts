@@ -33,10 +33,10 @@ function escapeRegExp(value: string): string {
  * not shared. Such daemons bind no CDP port and, left in the checkout, made every
  * later teardown skip the slot (four task sessions on macpro-mmt-5, 2026-11-20).
  * 'default' is the one session workers on other slots share: it is logged and
- * kept. Descendants
- * go with it. While a capability lease on the slot still holds or keeps providers warm, its release
- * effect decides and nothing is reaped; a process a lease recorded is never
- * reaped. Returns a reason naming each process that survived SIGKILL.
+ * kept. Descendants go with it. While a capability lease on the slot still holds
+ * or keeps providers warm, its release effect decides and nothing is reaped; a
+ * process a lease recorded is never reaped. Returns a reason naming each process
+ * that survived SIGKILL.
  */
 export async function reapSlotBrowserSession(
   vars: SlotVars,

@@ -24,7 +24,6 @@ const socketDir = mkdtempSync('/tmp/abr-');
 for (const dir of [repo, other, path.dirname(bin)]) mkdirSync(dir, { recursive: true });
 // A stand-in daemon: node under agent-browser's executable name, listening on `<session>.sock`.
 symlinkSync(process.execPath, bin);
-// argv: the session socket, then an optional TCP port (a daemon attached to the slot's CDP port).
 // argv: the session socket, an optional TCP port, then an optional second socket.
 const DAEMON = `const net = require('node:net'); net.createServer().listen(process.argv[1]); if (process.argv[2]) net.createServer().listen(Number(process.argv[2]), '127.0.0.1'); if (process.argv[3]) net.createServer().listen(process.argv[3]); setInterval(() => {}, 1e6)`;
 const CDP_PORT = '59547';
