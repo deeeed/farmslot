@@ -6,8 +6,8 @@
 // - restart cases: a run held at a known point in a step, the gateway restarted (node up, or node
 //   away past recovery's node wait), the hold released; the run must end like a same-night
 //   no-restart baseline (scripted, so it costs nothing).
-// - review: one reviewed run (codex, two model calls) held at its review, its fix round and its
-//   re-review, restarting at each; its expected end is derived from the verdicts it recorded.
+// - review: one reviewed run held at its review, its fix round and its re-review, restarting at
+//   each; the test answers its codex reviewer's turns (loop 1 issues, loop 2 pass; no model call).
 // - review-past-wait: a reviewer whose turn the proxy answers itself (no model call), restarted
 //   with its node away past REVIEW's 120 s reconnect wait.
 // - worker-survives: a run held with its worker or reviewer mid-turn in DISPATCH, MONITOR, REVIEW,
@@ -558,8 +558,8 @@ function fixInCheckout(slotRepo: string): boolean {
       { encoding: 'utf8' },
     ).split('\n');
     return present.includes('src/format-name.ts') && !present.includes('src/debug-trace.ts');
-  } catch {
-    return false;
+  } catch (error) {
+    throw new Inconclusive(`could not read the slot checkout for the fix: ${String(error)}`);
   }
 }
 
@@ -862,6 +862,8 @@ interface ScriptedReviewer {
   pending(run: Run): AgentContext | undefined;
   /** The reviewer turns the proxy swallowed: one per reviewer unless a prompt was sent again. */
   turns(): number;
+  /** Answered turns the proxy never ended: their reviewer was gone. */
+  unended(): number;
   /** Answers it: `fix-then-pass` flags loop 1 and passes later loops; `pass` always passes. */
   answer(
     run: Run,
@@ -876,6 +878,7 @@ const execFileAsync = promisify(execFile);
 function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
   const hold = path.join(stack.holds, 'review');
   const answered = new Set<string>();
+  let unended = 0;
   // The proxy logs `… swallowed` per turn it answered and `… completed` per batch it ended.
   const count = (word: string) =>
     (existsSync(`${hold}.hit`) ? readFileSync(`${hold}.hit`, 'utf8') : '')
@@ -884,10 +887,12 @@ function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
   return {
     async start() {
       answered.clear();
+      unended = 0;
       await rm(`${hold}.hit`, { force: true });
       await writeFile(hold, 'swallow\n');
     },
     turns: () => count(' swallowed'),
+    unended: () => unended,
     pending(run) {
       if (count(' swallowed') <= answered.size) return undefined;
       return contexts(run, 'review').find(
@@ -963,7 +968,9 @@ function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
         'the proxy to end the swallowed turn',
         async () => (count(' completed') > before ? true : undefined),
         15_000,
-      ).catch(() => undefined);
+      ).catch(() => {
+        unended += 1;
+      });
       await writeFile(hold, 'swallow\n');
       return `loop ${loop}: ${issues ? 'issues' : 'pass'}`;
     },
@@ -1251,6 +1258,8 @@ interface ScenarioResult extends DrivenRun {
   unreached: HoldStep[];
   /** Under a scripted review: the reviewer turns the proxy swallowed. */
   reviewerTurns?: number;
+  /** Under a scripted review: answered turns the proxy never ended. */
+  reviewerUnended?: number;
   /** For a worker-survives hold: what was watched, and what the restart did to it. */
   watched?: string[];
   survival?: string[];
@@ -1525,7 +1534,9 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
         typedMidTurn: await readFile(path.join(stack.holds, 'claude-input.log'), 'utf8').catch(
           () => '',
         ),
-        ...(shape.scriptedReview ? { reviewerTurns: reviewer.turns() } : {}),
+        ...(shape.scriptedReview
+          ? { reviewerTurns: reviewer.turns(), reviewerUnended: reviewer.unended() }
+          : {}),
       };
     } finally {
       if (shape.scriptedReview) await reviewer.stop(dir);
@@ -1819,7 +1830,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
   }
 
   if (options.review) {
-    // One reviewed run, four restarts; the test answers both reviewer turns (no model call).
+    // One reviewed run, three restarts; the test answers both reviewer turns (no model call).
     const model = `scripted worker, ${REVIEWER.runner} reviewer whose turns the test answers (no model call)`;
     const reviewCheck = await check(
       { case: 'review', variant: 'node-up', model, hold: HOLDS.review },
@@ -1847,6 +1858,12 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
           ...(result.reviewerTurns === verdicts.reviewers
             ? []
             : [`${result.reviewerTurns ?? 0} reviewer turns for ${verdicts.reviewers} reviewers`]),
+          // The test writes each verdict itself: the reviewer must still be there to end its turn.
+          ...(result.reviewerUnended
+            ? [
+                `${result.reviewerUnended} answered reviewer turns never ended: the reviewer was gone`,
+              ]
+            : []),
           // The scripted re-review passes whatever it reads: the fix must still be in the checkout.
           ...(result.fixLanded === false
             ? ["the fix round's commit was gone from the checkout at the re-review"]

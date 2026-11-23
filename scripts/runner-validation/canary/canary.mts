@@ -190,11 +190,8 @@ const plan =
         survive: wants('worker-survives') ? surviveSteps : [],
       };
 
-// The models those cases would use, checked before anything is dispatched.
-const reviews =
-  plan.review ||
-  plan.reviewPastWait ||
-  plan.survive.some((step) => step === 'review' || step === 'review-fix');
+// The models those cases would use, checked before anything is dispatched. Outside fullflow
+// every reviewer turn is answered by the test or the proxy, so nothing calls a model.
 const fullflowWorker =
   arg('model') === 'haiku' ? { runner: 'claude', model: 'haiku' } : FULLFLOW_MODEL;
 if (
@@ -209,7 +206,7 @@ const models =
     ? fullflowModels
       ? [fullflowWorker.model, REVIEWER.model]
       : []
-    : ['scripted', ...(reviews ? [REVIEWER.model] : [])];
+    : ['scripted'];
 const refused = models.filter((model) => !config.modelAllowlist.includes(model));
 
 await mkdir(evidence, { recursive: true });
