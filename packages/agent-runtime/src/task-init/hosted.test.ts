@@ -69,9 +69,17 @@ test('an operator note on a plan path is a section, never a plan step', async (t
   });
   const checklist = await readFile(result.checklist!, 'utf8');
   const document = await readFile(result.taskDocument, 'utf8');
-  // The note still reaches the worker, under the title.
+  // The note still reaches the worker, under the title and before the body.
   assert.match(document, /^## Operator note$/m);
   assert.match(document, /Repin the preview before anything else\./);
+  assert.ok(
+    document.indexOf('# Worker') < document.indexOf('## Operator note'),
+    'the note follows the title',
+  );
+  assert.ok(
+    document.indexOf('## Operator note') < document.indexOf('Prove behavior'),
+    'and precedes the rendered template body',
+  );
   // The plan is passed through with its own numbering untouched.
   assert.doesNotMatch(checklist, /Carry out the operator note/);
   assert.equal(checklist.trimEnd(), plan.trimEnd());

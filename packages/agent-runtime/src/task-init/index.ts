@@ -175,8 +175,11 @@ export interface TaskInitSpec {
   operatorPlan?: string;
   taskDocumentAdditions?: string;
   /**
-   * Operator note from dispatch. Rendered ahead of `## Task` and, when the run
-   * has a checklist, appended to it as a final step the worker has to mark.
+   * Operator note from dispatch. Rendered under the task document's title, ahead
+   * of the `## Task` block it overrides. On a split-checklist run it is also
+   * inserted into the checklist, in front of the completion row, as a step the
+   * worker has to mark; an operator plan gets the section only, because that plan
+   * is numbered a second time into the task document.
    */
   operatorNote?: string;
   artifactOnlyReplay?: ArtifactOnlyReplay;
