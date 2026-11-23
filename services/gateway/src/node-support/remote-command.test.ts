@@ -957,6 +957,81 @@ for (const outcome of ['still running', 'failed'] as const) {
   });
 }
 
+test('after two selections for a slot overlap, neither bundle is served from the cache', async (t) => {
+  // The node runs overlapping activations in its own order; the gateway only
+  // sees the order their responses arrive in, so it cannot tell which one the
+  // slot ended on, and the other may have been pruned.
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  node.release();
+  const vars = farmVars(farm.name, 'mini-x-1');
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+  const staged = new Map<string, string>();
+  const gates: Array<{ reached: () => void; release: () => void; wait: Promise<void> }> = [];
+  let holds = 0;
+  let probes = 0;
+  const hold = () => {
+    let release!: () => void;
+    const wait = new Promise<void>((resolve) => (release = resolve));
+    let reached!: () => void;
+    const arrived = new Promise<void>((resolve) => (reached = resolve));
+    const gate = { reached, release, wait };
+    gates.push(gate);
+    return arrived;
+  };
+  t.after(() => gates.forEach((gate) => gate.release()));
+  const io: NodeSupportIo = {
+    ...node.io,
+    fileExists: async (...args) => {
+      probes++;
+      return node.io.fileExists(...args);
+    },
+    writeFile: async (vars, file, data) => {
+      staged.set(`/bin/sh ${shellExpressionForRemotePath(file)}`, data);
+      return node.io.writeFile(vars, file, data);
+    },
+    exec: async (vars, command, ...rest) => {
+      if (
+        holds > 0 &&
+        (staged.get(command) ?? command).includes('farmslot-node-support-activate')
+      ) {
+        const gate = gates[gates.length - holds];
+        holds--;
+        gate.reached();
+        await gate.wait;
+      }
+      return node.io.exec(vars, command, ...rest);
+    },
+  };
+  await resolveRemoteFarmCommand(vars, cmd, { io });
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+
+  // Bundle 2's selection starts and is held on the node...
+  farm.editScript('echo v2\n');
+  now += 2_100;
+  const firstHeld = hold();
+  const secondHeld = hold();
+  holds = 2;
+  const toBundle2 = resolveRemoteFarmCommand(vars, cmd, { io });
+  await firstHeld;
+  // ...and bundle 1's selection starts while it runs.
+  farm.editScript('echo v1\n');
+  now += 2_100;
+  const toBundle1 = resolveRemoteFarmCommand(vars, cmd, { io });
+  await secondHeld;
+  // Bundle 2's response arrives first, bundle 1's last.
+  gates[0].release();
+  await toBundle2;
+  gates[1].release();
+  const bundle1 = await toBundle1;
+
+  const before = probes;
+  assert.equal(await resolveRemoteFarmCommand(vars, cmd, { io }), bundle1);
+  assert.ok(probes > before, 'bundle 1 is checked on the node again, not taken from the cache');
+});
+
 test('every direct node exec sender is reviewed for farm script references', async () => {
   // execOnSlot resolves farm refs for everything routed through it. A new call
   // site that sends `exec` to a node directly would bypass that and reopen F15

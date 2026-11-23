@@ -138,15 +138,26 @@ const verifiedBundles = new Map<string, { at: number; supportDir: string }>();
  */
 const latestSelection = new Map<string, string | null>();
 const selectionsRunning = new Map<string, number>();
+/**
+ * Slots whose selections overlapped. The node runs them in its own order and
+ * the gateway only sees the order their responses arrive in, so after an
+ * overlap the slot's selection is unknown until one runs on its own.
+ */
+const selectionsOverlapped = new Set<string>();
 onNodeSupportSelection({
   started(slotId) {
-    selectionsRunning.set(slotId, (selectionsRunning.get(slotId) ?? 0) + 1);
+    const running = selectionsRunning.get(slotId) ?? 0;
+    if (running > 0) selectionsOverlapped.add(slotId);
+    selectionsRunning.set(slotId, running + 1);
   },
   ended(slotId, supportDir) {
     const running = (selectionsRunning.get(slotId) ?? 1) - 1;
-    if (running > 0) selectionsRunning.set(slotId, running);
-    else selectionsRunning.delete(slotId);
-    latestSelection.set(slotId, supportDir);
+    if (running > 0) {
+      selectionsRunning.set(slotId, running);
+      return;
+    }
+    selectionsRunning.delete(slotId);
+    latestSelection.set(slotId, selectionsOverlapped.delete(slotId) ? null : supportDir);
   },
 });
 
@@ -637,6 +648,7 @@ export function resetRemoteFarmCommandCache(): void {
   verifiedBundles.clear();
   latestSelection.clear();
   selectionsRunning.clear();
+  selectionsOverlapped.clear();
   localBundles.clear();
   pendingEnsures.clear();
   machinePublishes.clear();
