@@ -65,6 +65,7 @@ import {
   claimSlotStatusIf,
   onSlotReset,
   readSlotRow,
+  sameSlotField,
   SLOT_PHASE_RELEASING,
   updateSlotStatusIf,
 } from '../core/state.js';
@@ -135,9 +136,9 @@ async function holdUnconfirmedRecipe(
     await updateSlotStatusIf(
       slotId,
       (row) =>
-        row.current_run_id === before.current_run_id &&
+        sameSlotField(row.current_run_id, before.current_run_id) &&
         row.slot_epoch === before.slot_epoch &&
-        row.handoff_run_id === before.handoff_run_id &&
+        sameSlotField(row.handoff_run_id, before.handoff_run_id) &&
         row.phase !== SLOT_PHASE_RELEASING,
       held,
     );

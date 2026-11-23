@@ -12,6 +12,8 @@ import { assertStatusFileWritable, resolveStatusFilePath } from '../projects/rep
 import { assertCleanupCurrent, withoutCleanupSignal } from './cleanup-scope.js';
 import { farmslotRoot, readJsonFile } from './config.js';
 
+export { sameSlotField } from './same-slot-field.js';
+
 const statusFile = resolveStatusFilePath(farmslotRoot());
 
 /** Called with the slotId whenever resetSlot runs (higher layers register cleanups). */

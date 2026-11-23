@@ -12,7 +12,7 @@ import type { RawProjectJson, SlotVars } from '../core/config.js';
 import type { execOnSlot } from '../core/exec.js';
 import { withFarmGitConfig } from '../core/farm-git.js';
 import { findUnpushedSlotCommits } from '../core/git-publication.js';
-import { readSlotRow, updateSlotStatusIf } from '../core/state.js';
+import { readSlotRow, sameSlotField, updateSlotStatusIf } from '../core/state.js';
 import { shellQuote } from '../core/tmux.js';
 import { usesEvalTrialCapsule } from '../evals/trial-policy.js';
 import { excludeSlotScaffolding } from '../fleet/slot-scaffolding.js';
@@ -51,14 +51,21 @@ interface SlotWorkCapture extends ParkedCapture {
   /** The slot still has the owner it had when this capture was taken. */
   ownerUnchanged(): Promise<boolean>;
 }
+/**
+ * Absent and null are the same owner: a release writes `cleanup_run_id: null`, and a fleet
+ * refresh that lands mid-park rewrites the row without the key. Strict equality read that as a
+ * new owner and stranded the slot in workspace recovery (fac3db01 on macpro-mm-4).
+ */
 function sameParkingOwner(
   current: Readonly<Record<string, unknown>>,
   expected: Readonly<Record<string, unknown>>,
 ): boolean {
   return (
     ['slot_epoch', 'current_run_id', 'cleanup_run_id', 'handoff_run_id', 'phase'].every(
-      (key) => current[key] === expected[key],
-    ) && JSON.stringify(current.workspace_recovery) === JSON.stringify(expected.workspace_recovery)
+      (key) => sameSlotField(current[key], expected[key]),
+    ) &&
+    JSON.stringify(current.workspace_recovery ?? null) ===
+      JSON.stringify(expected.workspace_recovery ?? null)
   );
 }
 
