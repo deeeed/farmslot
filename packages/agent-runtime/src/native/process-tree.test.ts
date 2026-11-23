@@ -463,6 +463,64 @@ test('a failed follow-up census still kills the detached members already stopped
   }
 });
 
+// Shutdown routinely mixes an exited owned PID with the stopped detached server: the targeted
+// `ps -p` then exits 1 while printing the server. Stop must still kill it.
+test('a targeted reread that names an exited PID still kills the stopped detached member', async (t) => {
+  const root = 100039841;
+  const launcher = root + 1;
+  const member = launcher + 1;
+  const tree = new NativeProcessTree(root, {
+    snapshot: new Map([
+      [root, { pid: root, parent: process.pid, group: root, identity: 'original root' }],
+      [launcher, { pid: launcher, parent: root, group: launcher, identity: 'original launcher' }],
+    ]),
+  });
+  const rootRow = `${root} ${process.pid} ${root} original root`;
+  const memberRow = `${member} 1 ${launcher} dev server`;
+  let calls = 0;
+  const ps = t.mock.method(
+    childProcess,
+    'execFile',
+    (...args: Parameters<typeof childProcess.execFile>) => {
+      const callback = args.at(-1);
+      if (typeof callback !== 'function') throw new Error('Census callback missing');
+      calls += 1;
+      const argv = args[1];
+      const targeted = Array.isArray(argv) && argv[0] === '-p';
+      queueMicrotask(() => {
+        // First census: the root and the server. Follow-up census: fails. Targeted reread of
+        // the root and the server: the root has exited, so ps exits 1 and prints the server.
+        if (targeted) callback(Object.assign(new Error('ps: exit 1'), { code: 1 }), memberRow, '');
+        else if (calls === 2) callback(new Error('census failed'), '', '');
+        else callback(null, `${rootRow}\n${memberRow}\n`, '');
+      });
+      return new childProcess.ChildProcess();
+    },
+  );
+  const signals: Array<[number, string | number | undefined]> = [];
+  const kill = t.mock.method(process, 'kill', (pid: number, kind?: string | number) => {
+    if (kind === 0 && pid === root)
+      throw Object.assign(new Error('no such process'), { code: 'ESRCH' });
+    if (kind !== 0) signals.push([pid, kind]);
+    return true;
+  });
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(tree.stop({ includeDetachedGroups: true }), /census failed/);
+    assert.deepEqual(
+      signals.filter(([pid]) => pid === member),
+      [
+        [member, 'SIGSTOP'],
+        [member, 'SIGKILL'],
+      ],
+    );
+  } finally {
+    ps.mock.restore();
+    kill.mock.restore();
+    syncBuiltinESMExports();
+  }
+});
+
 test('a distinct leader in the detached group proves numeric group reuse', async (t) => {
   const root = 100039801;
   const launcher = root + 1;

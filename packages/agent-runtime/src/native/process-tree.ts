@@ -187,7 +187,11 @@ async function cleanupProcesses(pids?: number[]): Promise<Map<number, ProcessIde
           if (!error) resolve(parseProcesses(output));
           else {
             try {
-              if (error.code === 1 && pids?.every((pid) => !alive(pid))) resolve(new Map());
+              // A targeted `ps -p` exits 1 when any named PID is gone, still printing the rest.
+              // Keep the printed rows when every PID missing from them is really gone.
+              const printed = error.code === 1 && pids ? parseProcesses(output) : undefined;
+              if (printed && pids!.every((pid) => printed.has(pid) || !alive(pid)))
+                resolve(printed);
               else reject(error);
             } catch (probeError) {
               reject(probeError);
