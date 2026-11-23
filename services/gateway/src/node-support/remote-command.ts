@@ -378,6 +378,8 @@ function ensureOnce(
         await settledOrExpired(upload);
         delivery.progress = progress;
         delivery.deadlineAt = Date.now() + deadlineMs;
+        // Taking over an upload that expired: later slots join this one.
+        if (!current(machinePublishes.get(machineKey))) machinePublishes.set(machineKey, delivery);
       }
       return await ensureNodeSupportBundle(vars, projectVars.runtimeDir ?? '.agent', {
         projectVars,
@@ -390,6 +392,10 @@ function ensureOnce(
       forgetDelivery(delivery);
     }
   })();
+  // Each waiter reports the outcome to its own caller; a delivery that fails
+  // after every waiter left must not become an unhandled rejection, which
+  // would end the gateway.
+  delivery.promise.catch(() => undefined);
   pendingEnsures.set(slotKey, delivery);
   if (!upload) machinePublishes.set(machineKey, delivery);
   return delivery;
@@ -453,14 +459,14 @@ async function awaitDelivery(
   budgetMs: number | undefined,
   signal: AbortSignal | undefined,
 ): Promise<NodeSupportBundleState | null> {
-  signal?.throwIfAborted();
   const budgetEndsAt = budgetMs === undefined ? Infinity : Date.now() + budgetMs;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let onAbort: (() => void) | undefined;
   const expired = new Promise<never>((_, reject) => {
     // A cancelled caller stops waiting; the delivery keeps going for the next command.
     onAbort = () => reject(signal?.reason ?? new Error('node support wait cancelled'));
-    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener('abort', onAbort, { once: true });
     const arm = () => {
       const byBudget = budgetEndsAt < delivery.deadlineAt;
       timer = setTimeout(
@@ -548,6 +554,8 @@ export async function resolveRemoteFarmCommand(
     const mapped = remap(verified.supportDir, local.paths);
     return selectSlot ? mapped : wrapNodeSupportReadCommand(mapped, verified.supportDir);
   }
+  // A caller cancelled while the bundle was being read starts no delivery.
+  options.signal?.throwIfAborted();
   const state = await awaitDelivery(
     ensureOnce(vars, projectVars, local, options.io, selectSlot),
     options.budgetMs,

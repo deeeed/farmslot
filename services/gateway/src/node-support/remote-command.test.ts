@@ -617,6 +617,55 @@ test(
   },
 );
 
+test('an already-cancelled wait starts no delivery', async (t) => {
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode({ failUpload: true });
+  t.after(() => node.release());
+  const vars = farmVars(farm.name, 'mini-x-1');
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+  const unhandled: unknown[] = [];
+  const record = (reason: unknown) => unhandled.push(reason);
+  process.on('unhandledRejection', record);
+  t.after(() => process.off('unhandledRejection', record));
+
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    resolveRemoteFarmCommand(vars, cmd, { io: node.io, signal: controller.signal }),
+  );
+  node.release();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(node.uploads.length, 0, 'a cancelled caller starts nothing');
+  assert.deepEqual(unhandled, [], 'no delivery fails with nobody listening');
+});
+
+test('a slot that takes over an expired machine upload is the one later slots join', async (t) => {
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  t.after(() => node.release());
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+  // Slot 1's upload stalls and expires.
+  await assert.rejects(
+    resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-1'), cmd, {
+      io: { ...node.io, deliveryDeadlineMs: 200 },
+      budgetMs: 20,
+    }),
+    NodeSupportPendingError,
+  );
+  // Slot 2 waits on it, then uploads itself.
+  const second = resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-2'), cmd, { io: node.io });
+  await node.waitForUploads(2);
+  // Slot 3 arrives during slot 2's upload and must join it, not upload again.
+  const third = resolveRemoteFarmCommand(farmVars(farm.name, 'mini-x-3'), cmd, { io: node.io });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  node.release();
+  assert.equal((await Promise.all([second, third])).length, 2);
+  assert.equal(node.uploads.length, 2, 'one upload after the takeover');
+});
+
 test('a budget that runs out names the bundle, its phase and the bytes left', async (t) => {
   resetRemoteFarmCommandCache();
   const farm = await withTempFarm(t);

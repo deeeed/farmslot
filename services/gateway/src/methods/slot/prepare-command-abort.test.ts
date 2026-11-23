@@ -67,10 +67,11 @@ mock.module('../../node-support/remote-command.js', {
       if (resolutionFailure) throw resolutionFailure;
       if (resolutionWaitsForCancel)
         await new Promise((_, reject) => {
-          if (!options?.signal) return; // never settles: the test times out
-          options.signal.addEventListener('abort', () => reject(new Error('cancelled')), {
-            once: true,
-          });
+          const signal = options?.signal;
+          if (!signal) return; // never settles: the test times out
+          if (signal.aborted) reject(new Error('cancelled'));
+          else
+            signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
         });
       return realRemoteCommand.remapRemoteFarmRefs(command, '/node/support/selected', ['scripts']);
     },
