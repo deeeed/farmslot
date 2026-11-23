@@ -201,8 +201,22 @@ test('owner-validated recovery release keeps its internal prepare path', async (
 test('a run that no longer holds the slot is refused before any prepare effect', async () => {
   recoveryPending = false;
   await assert.rejects(
-    slotPrepare({ slotId: vars.slotId, runId: 'cancelled-run' }, () => undefined),
+    slotPrepare({ slotId: vars.slotId, runId: 'cancelled-run' }, () => undefined, undefined, {
+      requireRunOwnership: true,
+    }),
     /no longer belongs to run/,
   );
   assert.deepEqual(calls, []);
+});
+
+// Load-run binds a finished run to a free slot: runId there is a label, not an ownership claim.
+test('a load-run prepare for a run that does not hold the slot is not refused for it', async () => {
+  recoveryPending = false;
+  await assert.rejects(
+    slotPrepare(
+      { slotId: vars.slotId, runId: 'finished-run', bindRunId: 'finished-run' },
+      () => undefined,
+    ),
+    (error: Error) => !/no longer belongs to run/.test(error.message),
+  );
 });

@@ -27,6 +27,8 @@ export type SlotPrepareResult = {
 export interface SlotPrepareInternalOptions {
   /** The keep-warm re-prepare a release runs while it still holds the releasing fence. */
   duringRelease?: boolean;
+  /** Engine prepare: refuse unless `params.runId` still holds the slot and is not terminal. */
+  requireRunOwnership?: boolean;
   stripClean?: boolean;
   /** Reuse the run's existing work branch without resetting or cleaning it. */
   preserveBranch?: boolean;

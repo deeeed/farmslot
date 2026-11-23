@@ -210,9 +210,10 @@ async function slotPrepareWithSources(
         `Slot ${params.slotId} is being released; prepare it once the release finishes`,
       );
     }
-    // A run prepares only the slot it still holds: a cancel may already have released it,
-    // and the picker may have handed it to another run (1b542e2f, macpro-mmt-4).
-    if (params.runId && !opts?.duringRelease) {
+    // The engine prepares only a slot its run still holds: a cancel may already have released
+    // it, and the picker may have handed it to another run. Other callers (load-run binding)
+    // pass runId as a label and keep their existing checks.
+    if (params.runId && opts?.requireRunOwnership) {
       const row = await readSlotRow(params.slotId);
       const owner = getRun(params.runId);
       if (

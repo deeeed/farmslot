@@ -334,6 +334,7 @@ export function defaultCancelCollaborators({
       const cleanupBlocker =
         [prepareBlocker, survivors, runtimeBlocker].filter(Boolean).join('; ') || null;
       // A prepare that would not stop is the reason the slot stays, whatever else holds it.
+      // A prepare that would not stop is named next to whatever else keeps the slot.
       await recordSlotTeardownSkipped(
         run,
         blocker && prepareBlocker ? `${prepareBlocker}; ${blocker}` : (blocker ?? cleanupBlocker),

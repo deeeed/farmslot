@@ -2121,7 +2121,9 @@ async function findSlotAttempt(
         lifecycle !== 'ready' ||
         row.agent === 'working' ||
         slotClaimBlocker(row, runId, getRun) ||
-        (typeof row.current_run_id === 'string' && pickerActiveOwners.has(row.current_run_id))
+        (typeof row.current_run_id === 'string' && pickerActiveOwners.has(row.current_run_id)) ||
+        // A slot under a prepare guard is not offered; the picker resumes when the guard clears.
+        activePrepareSlots.has(slot.slot)
       )
         continue;
       pickerSlots.push(slot);

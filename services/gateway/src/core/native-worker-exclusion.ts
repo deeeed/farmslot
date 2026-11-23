@@ -13,7 +13,17 @@ class PrepareGuards extends Set<string> {
 
   override delete(slotId: string): boolean {
     const removed = super.delete(slotId);
-    if (removed) for (const listener of this.listeners) listener(slotId);
+    // Deletes run in finally blocks: a failing listener must not mask their error or cleanup.
+    if (removed)
+      for (const listener of this.listeners) {
+        try {
+          listener(slotId);
+        } catch (error) {
+          console.error(
+            `[prepare-guard] clear listener failed for ${slotId}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
     return removed;
   }
 }
