@@ -709,6 +709,63 @@ function resolveTarget(taskPath, stepNumber, markLast) {
 }
 
 const taskDir = path.dirname(signalPath);
+
+/**
+ * The flags of the `mark complete` a final row tells the worker to run, when
+ * `mark N` names that row, every other row is checked, and the signal is
+ * running. Null otherwise.
+ *
+ * Every template ends with a row that tells the worker to run `<task>/mark
+ * complete --mark-last`, on the row's own line or under it, some with
+ * `--checklist`/`--signal` before `complete`. A worker that ticks it with
+ * `mark N` instead claims the run is done, yet the signal stays running and the
+ * gateway waits for it forever (run ee26591f, fix round 2). Re-marking a row
+ * already ticked that way is the same claim, so a worker stuck there recovers
+ * by repeating it. Only the command form counts (`/mark`), so prose such as
+ * "do not mark complete" never routes.
+ */
+function completionRowFlags() {
+  if (stepNumber == null || skipReason !== null) return null;
+  const { items } = parseChecklist(fs.readFileSync(taskPath, 'utf8'));
+  const last = items[items.length - 1];
+  if (!last || last.stepNumber !== stepNumber) return null;
+  if (items.slice(0, -1).some((entry) => !entry.checked)) return null;
+  if (readJson(signalPath).status !== 'running') return null;
+  const instruction = `${last.rawLabel}\n${last.detail ?? ''}`.match(
+    /\/mark(?:[ \t]+--(?:checklist|signal)[ \t]+\S+)*[ \t]+complete\b((?:[ \t]+--[a-z-]+)*)/,
+  );
+  if (!instruction) return null;
+  // The current checklist and signal are passed below, so only the flags are kept.
+  const flags = instruction[1].trim().split(/\s+/).filter(Boolean);
+  return [...new Set(['--mark-last', ...flags])].filter((flag) =>
+    ['--mark-last', '--no-review', '--skip-learnings'].includes(flag),
+  );
+}
+
+const completionFlags = completionRowFlags();
+if (completionFlags) {
+  // Run the instructed command itself, so the claim passes every check
+  // `mark complete` makes. A refusal says why, and marking the row again retries.
+  console.log(
+    `step ${stepNumber} is the completion row: running mark complete ${completionFlags.join(' ')}`,
+  );
+  const completed = spawnSync(
+    process.execPath,
+    [
+      __filename,
+      taskDir,
+      '--checklist',
+      path.basename(taskPath),
+      '--signal',
+      path.basename(signalPath),
+      'complete',
+      ...completionFlags,
+    ],
+    { stdio: 'inherit' },
+  );
+  process.exit(completed.status ?? 1);
+}
+
 function autonomousContract() {
   try {
     return loadTerminalContract(taskDir, taskPath)?.mode === 'autonomous';
