@@ -120,6 +120,18 @@ function terminalEffects(collaborators: TerminalTransitionCollaborators): RunTra
       },
     },
     {
+      name: 'review-publication',
+      severity: 'advisory',
+      // A completed review the operator chose to publish posts now, not at the next PR-rules
+      // sweep; the run shows publishing until a receipt or an error lands.
+      apply: async ({ run }) => {
+        if (run.flowType !== 'review-pr') return 'skipped';
+        const { publishCompletedReview } = await import('../methods/pr-rules.js');
+        publishCompletedReview(run.id);
+        return 'ok';
+      },
+    },
+    {
       name: 'slot-cleanup',
       severity: 'advisory',
       // The last teardown, and the whole reason this module exists: tmux teardown is slow and

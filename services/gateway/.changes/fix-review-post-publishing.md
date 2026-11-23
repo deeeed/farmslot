@@ -1,0 +1,3 @@
+- A completed review whose operator chose Publish now posts to its PR as part of completing, instead of waiting for the next PR-rules sweep, which could take minutes. The sweep is still the retry.
+- When a publish can't run because the publication owner is missing or has no automation authority, the error is now recorded on the run. Before, it was skipped silently on every sweep, so the run never posted and never reported an error.
+- Each publish result logs one `[review-publication]` line.

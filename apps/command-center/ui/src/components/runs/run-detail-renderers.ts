@@ -23,6 +23,7 @@ import {
   type PRStatus,
   resolveRunSlotId,
   reviewChainForRun,
+  reviewPublicationPending,
   reviewPublicationPolicyForRun,
   type Run,
   type RunDecision,
@@ -634,6 +635,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
     ctx.siblings.filter((s) => s.lane === 'comparison').length + (r.lane === 'comparison' ? 1 : 0);
   const actionsBlocked = ctx._actionsBlocked();
   const publication = reviewPublicationPolicyForRun(r);
+  const publishing = reviewPublicationPending(r);
   const hasGatePanel = r.decisions.some(
     (decision) =>
       !decision.resolvedAt &&
@@ -700,9 +702,11 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
               ? 'Published'
               : r.reviewPublication?.error
                 ? 'Needs attention'
-                : publication.enabled
-                  ? 'Requested'
-                  : 'Farmslot results only'}</strong
+                : publishing
+                  ? 'Publishing…'
+                  : publication.enabled
+                    ? 'Requested'
+                    : 'Farmslot results only'}</strong
           >
           <span>
             ·
@@ -739,7 +743,9 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
                     ? 'Checking publication…'
                     : r.reviewPublication?.error || r.reviewPublication?.receipt
                       ? 'Retry publication'
-                      : 'Publish now'}
+                      : publishing
+                        ? 'Check publication'
+                        : 'Publish now'}
                 </button>
               `
             : nothing}
