@@ -285,7 +285,15 @@ export async function sendBackCompletion(
       `Keep the existing task and evidence ownership rules. When fixed, use the primary task marking command to write a new terminal signal at ${context.signalFile ?? 'the primary SIGNAL.json'}. The previous completion signal will not be reused.`,
     ].join('\n\n'),
   };
-  const persistDelivery = (next: CompletionDelivery, reason: string, clearStartedAt?: number) =>
+  const persistDelivery = (
+    next: CompletionDelivery,
+    reason: string,
+    clearStartedAt?: number,
+    // A handed-over replacement is promoted to the live instruction without being
+    // confirmed, so it takes the same write as a confirmed one: live record, its
+    // own signal floor, replacement cleared, superseded instruction withdrawn.
+    promote = false,
+  ) =>
     withRunTransition(run.id, async () => {
       // A proved untouched edit can be cleared after a generation change.
       // Its exact key and timestamp below must still match the saved candidate.
@@ -306,7 +314,7 @@ export async function sendBackCompletion(
       // Keep the original instruction and signal floor until the replacement
       // is confirmed. A lost reply preserves the candidate for observe-only
       // retry. An untouched composer hold clears only the candidate.
-      if (superseded && !next.confirmed) {
+      if (superseded && !next.confirmed && !promote) {
         updateRunStep(run.id, PipelineSteps.DISPATCH, {
           outputs: {
             ...previousOutputs,
@@ -443,39 +451,26 @@ export async function sendBackCompletion(
         try {
           // An edited instruction the composer took is the live one, and its
           // record sits under `completionSendBackReplacement` with the signal
-          // floor it was typed against. Promote both before monitoring resumes:
-          // otherwise the resume guard looks for this key and finds the original
-          // (round 10's strand), and the monitor would read the pre-edit floor and
-          // could consume a result the edit already superseded.
-          if (superseded)
-            await withRunTransition(run.id, async () => {
-              const latest = await assertOwner();
-              const step = latest.steps.find((entry) => entry.name === PipelineSteps.DISPATCH);
-              const replacement = savedReplacement(step?.outputs);
-              if (!step || !replacement || replacement.delivery.key !== resumingKey) return;
-              const history = step.outputs?.completionSendBackWithdrawn;
-              updateRunStep(run.id, PipelineSteps.DISPATCH, {
-                outputs: {
-                  ...step.outputs,
-                  completionSendBackSignal: replacement.signal,
-                  completionSendBackDelivery: replacement.delivery,
-                  completionSendBackReplacement: undefined,
-                  // Promotion makes the edit the live instruction, so the
-                  // instruction it replaced is withdrawn by name here, exactly as
-                  // a confirmed replacement records it.
-                  completionSendBackWithdrawn: [
-                    ...(Array.isArray(history) ? history : []),
-                    {
-                      key: superseded.key,
-                      ...(superseded.note ? { note: superseded.note } : {}),
-                      startedAt: superseded.startedAt,
-                      withdrawnAt: new Date().toISOString(),
-                      withdrawnBy: replacement.delivery.key,
-                    },
-                  ],
-                },
-              });
-            });
+          // floor it was typed against. Promote both through the same writer the
+          // confirmed path uses before monitoring resumes: otherwise the resume
+          // guard looks for this key and finds the original (round 10's strand),
+          // and the monitor would read the pre-edit floor and could consume a
+          // result the edit already superseded.
+          const handedOverEdit = superseded
+            ? savedReplacement(
+                (await assertOwner()).steps.find((entry) => entry.name === PipelineSteps.DISPATCH)
+                  ?.outputs,
+              )
+            : undefined;
+          if (handedOverEdit?.delivery.key === resumingKey) {
+            baseline = handedOverEdit.signal;
+            await persistDelivery(
+              handedOverEdit.delivery,
+              'completion edit promoted to the live instruction',
+              undefined,
+              true,
+            );
+          }
           await continuePRCompletionStep(run.id, 'monitor', emit, async () => {
             const latest = await assertOwner();
             const saved = savedDelivery(latest);
