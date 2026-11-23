@@ -21,6 +21,9 @@ import {
   type NodeFsReadBase64Params,
   type NodeFsReadChunkParams,
   type NodeFsReadChunkResult,
+  type NodeFsReadFileEntry,
+  type NodeFsReadFilesParams,
+  type NodeFsReadFilesResult,
   type NodeFsReadTextParams,
   type NodeFsReadTextResult,
   type NodeFsRenameParams,
@@ -174,6 +177,22 @@ export async function fsRead(params: NodeFsPathParams): Promise<{ content: strin
   } finally {
     await handle?.close();
   }
+}
+
+/** Each file as `fsRead` reads it; a missing file or a failed read stays in its own entry. */
+export async function fsReadFiles(params: NodeFsReadFilesParams): Promise<NodeFsReadFilesResult> {
+  return {
+    files: await Promise.all(
+      params.files.map(async (file): Promise<NodeFsReadFileEntry> => {
+        try {
+          return { content: (await fsRead(file)).content };
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { missing: true };
+          return { error: (error as Error).message };
+        }
+      }),
+    ),
+  };
 }
 
 export async function fsWrite(params: NodeFsWriteParams): Promise<{ ok: true; hash?: string }> {

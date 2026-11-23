@@ -29,7 +29,7 @@ import {
   type WorkerSignalStatus,
 } from '@farmslot/protocol';
 
-import { type SlotLocality, slotReadFileIfExists } from '../core/slot-io.js';
+import { type SlotLocality, slotPrefetchFiles, slotReadFileIfExists } from '../core/slot-io.js';
 import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
 
 import { parseChecklistTiming } from './checklist-timing.js';
@@ -364,6 +364,13 @@ export async function readSubtaskUnits(
   units: readonly SubtaskIndexUnit[],
   suffix = '',
 ): Promise<SubtaskUnitRead[]> {
+  ctx = await slotPrefetchFiles(
+    ctx,
+    units.flatMap((unit) => [
+      path.join(taskDir, `${unit.checklist}${suffix}`),
+      path.join(taskDir, `${unit.signal}${suffix}`),
+    ]),
+  );
   const reads: SubtaskUnitRead[] = [];
   for (const unit of units) {
     const checklistPath = path.join(taskDir, `${unit.checklist}${suffix}`);

@@ -32,8 +32,10 @@ import {
   type FileTransferPhase,
   type NodeFsReadChunkParams,
   type NodeFsReadChunkResult,
+  type NodeFsReadFilesResult,
 } from '@farmslot/protocol';
 
+import { getNode } from '../fleet/machine-registry.js';
 import { usesNodeLink } from '../fleet/node-link-policy.js';
 import {
   assertNodeReconnectCurrent,
@@ -70,6 +72,8 @@ export interface SlotLocality {
     params: unknown,
     options?: { timeout?: number; requireSameConnection?: boolean },
   ) => Promise<unknown>;
+  /** Files one read fetched together: the content, or null for a file that does not exist. */
+  prefetched?: ReadonlyMap<string, string | null>;
 }
 
 export type SlotCopyAdmission = (sourcePath: string, destinationPath: string) => Promise<boolean>;
@@ -193,6 +197,13 @@ async function assertConcreteDirRoot(
 // ─── slotReadFile ───
 
 export async function slotReadFile(ctx: SlotLocality, filePath: string): Promise<string> {
+  const held = ctx.prefetched?.get(filePath);
+  if (held !== undefined) {
+    if (held !== null) return held;
+    throw Object.assign(new Error(`ENOENT: no such file or directory, open '${filePath}'`), {
+      code: 'ENOENT',
+    });
+  }
   if (local(ctx)) {
     return readFile(filePath, 'utf-8');
   }
@@ -248,6 +259,8 @@ export async function slotRealpath(ctx: SlotLocality, filePath: string): Promise
 // ─── slotFileExists ───
 
 export async function slotFileExists(ctx: SlotLocality, filePath: string): Promise<boolean> {
+  const held = ctx.prefetched?.get(filePath);
+  if (held !== undefined) return held !== null;
   if (local(ctx)) {
     return existsSync(expandTilde(filePath));
   }
@@ -281,6 +294,40 @@ export async function slotReadFileIfExists(
   } catch (error) {
     return absentOrThrow(ctx, filePath, error);
   }
+}
+
+/**
+ * The same locality, holding the files a read is about to ask for, fetched in one node request.
+ * Only content and absence are held: a file that fails to read, every file on a node that does
+ * not declare `batchReads`, and every local file are read one by one as before.
+ */
+export async function slotPrefetchFiles<T extends SlotLocality>(
+  ctx: T,
+  filePaths: readonly string[],
+): Promise<T> {
+  const wanted = [...new Set(filePaths)].filter((file) => !ctx.prefetched?.has(file));
+  if (
+    local(ctx) ||
+    wanted.length < 2 ||
+    getNode(ctx.machine)?.observationCapabilities?.batchReads !== 1
+  )
+    return ctx;
+  let result: NodeFsReadFilesResult;
+  try {
+    result = (await requestFor(ctx)('fs.readFiles', {
+      files: wanted.map((file) => nodePathParams(file)),
+    })) as NodeFsReadFilesResult;
+  } catch {
+    // The reads that follow ask one by one and report the failure themselves.
+    return ctx;
+  }
+  const prefetched = new Map(ctx.prefetched);
+  wanted.forEach((file, index) => {
+    const entry = result.files[index];
+    if (entry && 'content' in entry) prefetched.set(file, entry.content);
+    else if (entry && 'missing' in entry) prefetched.set(file, null);
+  });
+  return { ...ctx, prefetched };
 }
 
 // ─── slotListDir ───

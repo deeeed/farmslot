@@ -38,6 +38,7 @@ import {
   ORCHESTRATOR_LOCALITY,
   slotFileExists,
   type SlotLocality,
+  slotPrefetchFiles,
   slotReadFile,
 } from '../core/slot-io.js';
 import { loadFleetStatus } from '../fleet/state.js';
@@ -53,7 +54,12 @@ import {
 import { inheritedAcceptanceView } from '../run-completion/inherited-acceptance-view.js';
 import { loadProjectVarsOrNull } from '../run-engine/project-vars.js';
 import { getRun, listRuns } from '../runs/store.js';
-import { readAcceptanceStatusForDisplay } from '../tasks/acceptance-status.js';
+import {
+  acceptanceHandoffPathFor,
+  acceptanceRegistrationPathFor,
+  acceptanceStatusPathFor,
+  readAcceptanceStatusForDisplay,
+} from '../tasks/acceptance-status.js';
 import { checklistTimingContext, isRecord } from '../tasks/checklist-timing.js';
 import { attachChecklistTiming } from '../tasks/checklist-timing-read.js';
 import { liveSpendSource, progressChecklistMarks, readLiveSpend } from '../tasks/live-spend.js';
@@ -68,6 +74,7 @@ import {
   buildSubtaskEntry,
   readSubtaskIndex,
   readSubtaskUnits,
+  subtaskIndexPathFor,
   subtaskUnitsForParentChecklist,
 } from '../tasks/subtasks.js';
 import { generateTaskSchema } from '../tasks/writer.js';
@@ -450,8 +457,9 @@ async function readTaskProgress(
     const taskFile = context.taskFile;
     effectiveMdPath = path.isAbsolute(taskFile) ? taskFile : path.join(vars.remoteRepo, taskFile);
   }
-  effectiveMdPath = await resolveTaskProgressMarkdownPathForSlot(vars, effectiveMdPath);
-  const markdown = await slotReadFile(vars, effectiveMdPath);
+  const io = await slotPrefetchFiles(vars, progressReadFiles(effectiveMdPath, params.summary));
+  effectiveMdPath = await resolveTaskProgressMarkdownPathForSlot(io, effectiveMdPath);
+  const markdown = await slotReadFile(io, effectiveMdPath);
   const result: TaskProgressResult = {
     slotId: params.slotId,
     role: context?.role ?? params.role,
@@ -465,7 +473,7 @@ async function readTaskProgress(
   if (schema.phases.length > 0) {
     result.structured = joinSchemaWithMarkdown(schema, markdown);
     if (!params.summary)
-      await attachSubtaskProgress(vars, effectiveMdPath, flowType, result.structured);
+      await attachSubtaskProgress(io, effectiveMdPath, flowType, result.structured);
     // Self-review (and similar) templates' last step is "write SIGNAL.json + /exit".
     // The worker exits before it can mark the box `[x]`, so the markdown stays at
     // N-1/N forever even though the role's signal already declared completion.
@@ -478,12 +486,34 @@ async function readTaskProgress(
   }
   if (params.summary) return result;
   if (result.structured) {
-    await attachOperations(vars, effectiveMdPath, result.structured);
-    await attachChecklistTiming(vars, effectiveMdPath, result.structured, activeRun, context);
+    await attachOperations(io, effectiveMdPath, result.structured);
+    await attachChecklistTiming(io, effectiveMdPath, result.structured, activeRun, context);
   }
-  await attachAcceptanceStatus(vars, effectiveMdPath, result, activeRun);
+  await attachAcceptanceStatus(io, effectiveMdPath, result, activeRun);
 
   return result;
+}
+
+/**
+ * Every file a progress read of this checklist asks for beside it, so a remote slot answers them
+ * in one node request. The child units it names are fetched together once the index is read.
+ */
+function progressReadFiles(candidate: string, summary?: true): string[] {
+  const checklist = resolveTaskProgressMarkdownPath(candidate);
+  const taskDir = path.dirname(checklist);
+  // A summary reads the checklist alone.
+  if (summary) return [candidate, checklist];
+  return [
+    candidate,
+    checklist,
+    ...[candidate, checklist].map((file) =>
+      path.join(taskDir, signalFileForChecklist(path.basename(file))),
+    ),
+    subtaskIndexPathFor(taskDir),
+    acceptanceStatusPathFor(taskDir),
+    acceptanceHandoffPathFor(taskDir),
+    acceptanceRegistrationPathFor(taskDir),
+  ];
 }
 
 /**
@@ -501,6 +531,8 @@ async function progressFromChecklist(
   context?: AgentContext | null,
   retained = false,
 ): Promise<void> {
+  // A retained copy is read on the gateway, where reads cost no node request.
+  if (!retained) io = await slotPrefetchFiles(io, progressReadFiles(mdPath));
   if (markdown !== null) {
     const schema = generateTaskSchema(markdown, flowType);
     if (schema.phases.length > 0) {
