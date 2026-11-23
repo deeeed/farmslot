@@ -266,6 +266,7 @@ export default function(pi) {
       let selectedClose: string | undefined;
       let held = false;
       let codexBefore = 0;
+      let reviewsAnswered = 0;
       const cursors = new Map<string, number>();
       const context = `Isolated fullflow canary. Work only in your tiny slot checkout and its generated task directory. Read-only support is limited to the task pin and ${root}. Never enumerate other checkouts or worktrees, inspect credentials, keys or logins, or contact live services, persistent Farmslot homes or foreign tmux servers. Never build or repair support tooling. On a missing prerequisite, retain its exact error and mark blocked. Never push, publish packages, post comments or contact GitHub. Keep all commits local. This tiny package has no app/runtime; use only CLI command assertions and npm test for CI. Stop and mark blocked with the exact engine message if task-bound baseline/acceptance commands refuse evidence. Never edit task tooling or alter baseline history to bypass a refusal.`;
       try {
@@ -486,6 +487,7 @@ export default function(pi) {
             watch: async ({ run: current }) => {
               const answered = await reviewer.answer(current, stack.slotRepo(slotId), 'pass');
               if (!answered) return undefined;
+              reviewsAnswered += 1;
               check.observations.push(`scripted reviewer answered ${answered}`);
               return 'again';
             },
@@ -517,7 +519,7 @@ export default function(pi) {
             check.differences.push(`${step}: did not complete`);
         if (name === 'fix-bug' && !refreshed)
           check.differences.push('publish-package-refresh: not reached');
-        if (name === 'fix-bug' && reviewer.turns() < 1)
+        if (name === 'fix-bug' && reviewsAnswered < 1)
           check.differences.push('review: the test answered no reviewer turn');
         const reviewerCalls = (await codexCalls()) - codexBefore;
         if (reviewerCalls)
@@ -574,16 +576,15 @@ export default function(pi) {
         if (run) {
           check.failureText = check.error ?? failureText(run);
           check.timingsS = { ...fullflowTimings(run, ended), ...check.timingsS };
-          check.modelCalls = (run.sessionUsage ?? []).reduce(
-            (sum, usage) => sum + (usage.turns ?? 0),
-            0,
-          );
+          // The codex reviewer's turns are the test's (counted by the proxy above), not model calls.
+          const workerUsage = (run.sessionUsage ?? []).filter((usage) => usage.runner !== 'codex');
+          check.modelCalls = workerUsage.reduce((sum, usage) => sum + (usage.turns ?? 0), 0);
           const receiptsFile = turnsFile;
           if (worker.runner === 'pi' && existsSync(receiptsFile)) {
             const scoped = await readCanaryTurns(receiptsFile, stack.slotRepo(slotId));
             check.modelCalls =
               scoped.length +
-              (run.sessionUsage ?? [])
+              workerUsage
                 .filter((usage) => usage.runner !== 'pi')
                 .reduce((sum, usage) => sum + (usage.turns ?? 0), 0);
             await writeJson(path.join(dir, 'pi-turns.json'), scoped);

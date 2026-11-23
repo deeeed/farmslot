@@ -959,24 +959,25 @@ export function scriptedReviewer(stack: RemoteNodeStack, log: Log): ScriptedRevi
       await mark('complete', '--mark-last');
       // End the swallowed turn, as the reviewer's own turn would end.
       const before = count(' completed');
-      await writeFile(hold, 'complete\n');
-      const ended = await poll(
-        'the proxy to end the swallowed turn',
-        async () => (count(' completed') > before ? true : undefined),
-        15_000,
-      ).catch(() => false);
+      // The proxy reacts to the marker's file event; write it again in case one was missed.
+      let ended = false;
+      for (let attempt = 0; attempt < 3 && !ended; attempt++) {
+        if (attempt) await writeFile(hold, 'swallow\n');
+        await writeFile(hold, 'complete\n');
+        ended = await poll(
+          'the proxy to end the swallowed turn',
+          async () => (count(' completed') > before ? true : undefined),
+          15_000,
+        ).catch(() => false);
+      }
       await writeFile(hold, 'swallow\n');
-      // The run decides what that means: REVIEW fails if its reviewer is gone, and a live proxy that
-      // missed the marker leaves REVIEW waiting until the shape's timeout. Name the cause either way.
+      // Then the run decides: REVIEW fails once its reviewer is gone or inactive past its limit.
       if (!ended)
-        await log(
-          'scripted reviewer: the proxy never ended an answered reviewer turn within 15 s',
-          {
-            runId: run.id,
-            loop,
-            cause: 'the reviewer is gone, or the proxy missed the marker write',
-          },
-        );
+        await log('scripted reviewer: the proxy never ended an answered reviewer turn', {
+          runId: run.id,
+          loop,
+          cause: 'the reviewer is gone, or the proxy missed three marker writes',
+        });
       return `loop ${loop}: ${issues ? 'issues' : 'pass'}`;
     },
     async stop(dir) {
