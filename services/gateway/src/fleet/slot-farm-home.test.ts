@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 
 import type { NodeFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 const gatewayHome = mkdtempSync(path.join(tmpdir(), 'slot-farm-home-'));
 process.env.FARMSLOT_HOME = gatewayHome;
+after(() => rmSync(gatewayHome, { recursive: true, force: true }));
 const { setNodeFarmPathsLookup } = await import('@farmslot/slot-config');
 const { currentFarmPaths } = await import('@farmslot/protocol/node/farm-paths');
 const { slotFarmHome } = await import('./slot-storage-cleanup.js');
