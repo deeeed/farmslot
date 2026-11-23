@@ -206,6 +206,9 @@ export interface NodeFsReadTextResult {
  * capability. Each entry answers in order: the content, `missing` for a file that does not
  * exist, or the error its own `fs.read` would have thrown.
  */
+/** The most files one `fs.readFiles` request may name. */
+export const NODE_FS_READ_FILES_MAX_FILES = 64;
+
 export interface NodeFsReadFilesParams {
   files: NodeFsPathParams[];
 }

@@ -30,6 +30,7 @@ import {
   FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
   FILE_TRANSFER_SMALL_FILE_THRESHOLD_BYTES,
   type FileTransferPhase,
+  NODE_FS_READ_FILES_MAX_FILES,
   type NodeFsReadChunkParams,
   type NodeFsReadChunkResult,
   type NodeFsReadFilesResult,
@@ -301,11 +302,16 @@ export async function slotReadFileIfExists(
  * Only content and absence are held: a file that fails to read, every file on a node that does
  * not declare `batchReads`, and every local file are read one by one as before.
  */
+/** Machines whose batch read failed once already: the fallback is logged once per machine. */
+const batchFallbackWarned = new Set<string>();
+
 export async function slotPrefetchFiles<T extends SlotLocality>(
   ctx: T,
   filePaths: readonly string[],
 ): Promise<T> {
-  const wanted = [...new Set(filePaths)].filter((file) => !ctx.prefetched?.has(file));
+  const wanted = [...new Set(filePaths)]
+    .filter((file) => !ctx.prefetched?.has(file))
+    .slice(0, NODE_FS_READ_FILES_MAX_FILES);
   if (
     local(ctx) ||
     wanted.length < 2 ||
@@ -317,8 +323,14 @@ export async function slotPrefetchFiles<T extends SlotLocality>(
     result = (await requestFor(ctx)('fs.readFiles', {
       files: wanted.map((file) => nodePathParams(file)),
     })) as NodeFsReadFilesResult;
-  } catch {
+  } catch (error) {
     // The reads that follow ask one by one and report the failure themselves.
+    if (!batchFallbackWarned.has(ctx.machine)) {
+      batchFallbackWarned.add(ctx.machine);
+      console.warn(
+        `[slot-io] fs.readFiles failed on ${ctx.machine}; reading files one by one: ${(error as Error).message}`,
+      );
+    }
     return ctx;
   }
   const prefetched = new Map(ctx.prefetched);
