@@ -411,14 +411,17 @@ export function parseTaskScratchParkOutput(stdout: string): TaskScratchParkResul
   return result;
 }
 
-/** The slot machine's farm home: its path report, else this gateway's, else the legacy node default. */
-function slotFarmHome(vars: SlotVars): string {
-  return (
-    reportedFarmPaths(vars.machine)?.home ??
-    (isLocal(vars.host, vars.machine)
-      ? currentFarmPaths('gateway').home
-      : legacyRemoteFarmPaths(vars.machineEnv).home)
-  );
+/**
+ * The slot machine's farm home, resolved exactly as blind trials resolve the home their
+ * sandbox denies (blind-trial.ts blindFarmPaths): a layout-2 path report, else this
+ * gateway's paths for a local slot, else the legacy node default with the pool env.
+ */
+export function slotFarmHome(vars: Pick<SlotVars, 'machine' | 'host' | 'machineEnv'>): string {
+  const report = reportedFarmPaths(vars.machine);
+  if (report?.layout === 2) return report.home;
+  return isLocal(vars.host, vars.machine)
+    ? currentFarmPaths('gateway').home
+    : legacyRemoteFarmPaths(vars.machineEnv).home;
 }
 
 export async function parkTaskScratch(
