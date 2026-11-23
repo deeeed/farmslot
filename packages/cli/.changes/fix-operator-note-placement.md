@@ -1,0 +1,1 @@
+- Hosted task init validates the `operatorNote` field on a task request, so an operator note is transported with the rest of the task data.

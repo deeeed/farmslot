@@ -65,3 +65,18 @@ export function reviewPublicationPolicyForRun(
     run.reviewPublication?.direct?.policy
   );
 }
+
+/**
+ * A finished review whose requested PR publication has neither a published receipt nor an
+ * error yet. Until one lands the run is publishing, not done: posting by hand duplicates it.
+ */
+export function reviewPublicationPending(
+  run: Pick<import('./runs.js').Run, 'status' | 'prWork' | 'reviewPublication'>,
+): boolean {
+  return (
+    run.status === 'done' &&
+    reviewPublicationPolicyForRun(run)?.enabled === true &&
+    run.reviewPublication?.receipt?.state !== 'published' &&
+    !run.reviewPublication?.error
+  );
+}

@@ -1,0 +1,3 @@
+- Fixed two problems that could leave a finished artifact-only run's slot stuck in workspace recovery, where a plain `slot release` refused it:
+  - Parking registration treated a missing and a null `cleanup_run_id` (and the other owner fields) as a change of owner. A fleet refresh that rewrote the row during a park made the release fail with "disappeared before parking registration".
+  - Finalize no longer holds an artifact-only run's slot for ci-watch. ci-watch never watches one, and its own skip already queues the slot release.

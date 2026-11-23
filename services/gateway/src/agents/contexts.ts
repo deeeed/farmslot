@@ -12,6 +12,7 @@ import {
   contextIdFor,
   isReviewerAgentRole,
   isReviewerWindowName,
+  PipelineSteps,
   primaryRoleForFlow,
   type Run,
   selectLatestReviewerContext,
@@ -534,5 +535,28 @@ export function contextLaunched(context: AgentContext): boolean {
     context.runnerSessionArchive ||
     context.nativeSession ||
     context.nativeSessionHistory?.length,
+  );
+}
+
+/**
+ * Whether a run's worker was ever dispatched. Replay resets the dispatch step's timing, so
+ * the records a dispatch leaves on the run and its workers also count. A run without a
+ * dispatch step, or whose dispatch step ran or finished, counts as dispatched.
+ */
+export function runReachedDispatch(
+  run: Pick<Run, 'steps' | 'engineState' | 'worktreeHeadAtDispatch' | 'metrics' | 'agentContexts'>,
+): boolean {
+  const dispatch = run.steps.find((step) => step.name === PipelineSteps.DISPATCH);
+  if (!dispatch || dispatch.startedAt || dispatch.outputs) return true;
+  if (dispatch.status !== 'pending' && dispatch.status !== 'skipped') return true;
+  return Boolean(
+    run.engineState?.taskExecution ||
+    run.engineState?.workspaceReviewDispatchGeneration !== undefined ||
+    run.worktreeHeadAtDispatch ||
+    run.metrics?.runnerSessionId ||
+    run.agentContexts?.some(
+      (context) =>
+        contextLaunched(context) || context.attemptStartedAt || context.promptDeliveryStartedAt,
+    ),
   );
 }

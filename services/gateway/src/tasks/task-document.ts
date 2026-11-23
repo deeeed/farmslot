@@ -57,7 +57,13 @@ const TASK_BLOCK_KEYS: ReadonlyArray<{ key: string; optional?: boolean; label?: 
   { key: 'ADB_SERIAL', optional: true },
 ];
 
-/** One `## Note` section, or an empty string when the caller sent no note. */
+/**
+ * The legacy `## Note` section, appended to the end of the task document.
+ *
+ * Kept only for nodes older than OPERATOR_NOTE_RUNTIME_VERSION, whose task init
+ * ignores the `operatorNote` field: on those, this is how the note still reaches
+ * the worker at all. Remove once every node is past that release.
+ */
 export function taskNoteSection(note: string | undefined): string {
   const text = note?.trim();
   if (!text) return '';

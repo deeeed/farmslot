@@ -392,3 +392,55 @@ test('listed gate reasons keep a finding but drop a fix the gate does not offer'
     [fixTwo, requestReviews],
   );
 });
+
+test('a finished review still posting to its PR reads as publishing until a receipt or error lands', () => {
+  const publication = {
+    gate: {
+      decisionId: 'decision-1',
+      publication: {
+        ownerId: 'owner',
+        pr: { host: 'github.com', repo: 'owner/repo', number: 7 },
+        requested: true,
+        policy: {
+          enabled: true as const,
+          source: 'request' as const,
+          teamId: 'team-1',
+          account: { host: 'github.com', login: 'publisher' },
+        },
+      },
+    },
+    checkedAt: '2026-11-23T11:27:43.000Z',
+  };
+  const pending = { status: 'done' as const, decisions: [], reviewPublication: publication };
+  assert.equal(runDisplayStatus(pending), 'Publishing review');
+  const view = deriveRunLifecycleView(pending);
+  assert.equal(view.label, 'Publishing review');
+  assert.equal(view.activityLabel, 'Publishing review');
+  assert.equal(view.tone, 'running');
+
+  const failed = { ...pending, reviewPublication: { ...publication, error: 'PR changed' } };
+  assert.equal(runDisplayStatus(failed), 'done');
+  assert.equal(deriveRunLifecycleView(failed).label, 'Done');
+
+  const posted = {
+    ...pending,
+    reviewPublication: {
+      ...publication,
+      receipt: {
+        version: 1 as const,
+        state: 'published' as const,
+        runId: 'run',
+        ownerId: 'owner',
+        account: { host: 'github.com', login: 'publisher' },
+        pr: { host: 'github.com', repo: 'owner/repo', number: 7 },
+        headSha: 'a'.repeat(40),
+        contentSha256: 'c'.repeat(64),
+        marker: 'marker',
+        event: 'COMMENT' as const,
+        attemptedAt: '2026-11-23T11:27:44.000Z',
+      },
+    },
+  };
+  assert.equal(runDisplayStatus(posted), 'done');
+  assert.equal(deriveRunLifecycleView(posted).tone, 'ok');
+});

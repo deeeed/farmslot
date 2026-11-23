@@ -74,6 +74,9 @@ test(
       engineState: { prepareBranch: { slotId: f.slotId, branch: f.branch, started: true } },
     });
     const { executePrepareStep } = await import('./dispatch-lifecycle-steps.js');
+    // A replay re-claims its slot before prepare; the engine prepares only a slot it holds.
+    const { updateSlotStatusIf } = await import('../core/state.js');
+    await updateSlotStatusIf(f.slotId, () => true, { current_run_id: current.id });
     const monitors = new Map();
     const result = await executePrepareStep(current.id, {
       activeMonitors: monitors,

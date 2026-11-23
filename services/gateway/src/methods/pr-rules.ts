@@ -113,6 +113,19 @@ export async function initPRRules(
   return service;
 }
 
+/**
+ * Publish a review the moment its run completes; the scheduled sweep stays the retry. Never
+ * throws: the service records a failure on the run, and a later sweep or retry picks it up.
+ */
+export function publishCompletedReview(runId: string): void {
+  if (!service) return;
+  void service.publishCompletedReview(runId).catch((error: unknown) => {
+    console.warn(
+      `[review-publication] run ${runId.slice(0, 8)} immediate publish failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
+}
+
 /** Existing file watcher integration. Never reinitializes schedulers or publication owners. */
 export async function reloadPRRulesFromFile(): Promise<void> {
   if (!service) throw new Error('PR rules are not initialized');

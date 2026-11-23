@@ -22,6 +22,8 @@ const staged: StagedFiles[] = [];
 let writeFailure: Error | undefined;
 const resolutions: string[] = [];
 let resolutionFailure: Error | undefined;
+/** The bundle wait lasts until the prepare is cancelled, as a stalled delivery would. */
+let resolutionWaitsForCancel = false;
 /** Runs when the wrapper launch (respawn-pane) is issued. */
 let onLaunch: (() => void) | null;
 const fakeExec = async (cmd: string) => {
@@ -56,11 +58,21 @@ mock.module('../../node-support/remote-command.js', {
     resolveRemoteFarmCommand: async (
       _vars: unknown,
       command: string,
-      options: { budgetMs?: number },
+      options?: { budgetMs?: number; signal?: AbortSignal },
     ) => {
       resolutions.push(command);
-      assert.equal(options.budgetMs, 10_000);
+      // Prepare waits on the delivery itself, bounded by the delivery's own
+      // deadline: a 10 s staging budget lost to a normal re-delivery (run 1a533f86).
+      assert.equal(options?.budgetMs, undefined);
       if (resolutionFailure) throw resolutionFailure;
+      if (resolutionWaitsForCancel)
+        await new Promise((_, reject) => {
+          const signal = options?.signal;
+          if (!signal) return; // never settles: the test times out
+          if (signal.aborted) reject(new Error('cancelled'));
+          else
+            signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
+        });
       return realRemoteCommand.remapRemoteFarmRefs(command, '/node/support/selected', ['scripts']);
     },
   },
@@ -94,6 +106,7 @@ beforeEach(() => {
   writeFailure = undefined;
   resolutions.length = 0;
   resolutionFailure = undefined;
+  resolutionWaitsForCancel = false;
   onLaunch = null;
 });
 
@@ -255,7 +268,7 @@ test('configured workspace references resolve before remote prepare script publi
   assert.equal(resolutions.length, 1);
 });
 
-test('pending support delivery keeps the existing staging timeout and starts no wrapper', async () => {
+test('a delivery past its deadline fails staging as a timeout and starts no wrapper', async () => {
   resolutionFailure = new realRemoteCommand.NodeSupportPendingError(
     'Fixture support delivery pending',
   );
@@ -267,6 +280,24 @@ test('pending support delivery keeps the existing staging timeout and starts no 
   assert.equal(staged.length, 0);
   assert.ok(!commands.some((command) => command.includes('respawn-pane')));
 });
+
+test(
+  'a cancel while waiting for the support bundle returns at once and starts no wrapper',
+  { timeout: 10_000 },
+  async () => {
+    resolutionWaitsForCancel = true;
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 20);
+    const result = await runPrepareCommand(vars, await logPath(), 'printf %s ~/farmslot-node', {
+      signal: controller.signal,
+      windowLabel: 'cancel-support',
+      phase: 'deps',
+    });
+    assert.equal(result.exitCode, 130);
+    assert.equal(staged.length, 0);
+    assert.ok(!commands.some((command) => command.includes('respawn-pane')));
+  },
+);
 
 test('a failed script transfer refuses before the wrapper launches', async () => {
   const controller = new AbortController();

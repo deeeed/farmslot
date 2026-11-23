@@ -1,0 +1,1 @@
+- `releaseAtLeast(version, minimum)` answers whether a peer's reported release is at least `minimum`, with an unreported or unparseable version answering false. A caller gating a new behavior on node support degrades instead of assuming the node is current.

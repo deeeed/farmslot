@@ -9,6 +9,7 @@ import {
   markSlotStatusIf,
   readSlotRow,
   resetSlotIf,
+  sameSlotField,
   SLOT_PHASE_RELEASING,
   slotOwnershipReleaseFields,
   statusFile,
@@ -321,3 +322,12 @@ for (const fence of [
     const after = await readSlotFixture(slotId);
     assert.equal(after.cleanup_run_id, fence.cleanup_run_id ?? 'predecessor');
   });
+
+test('a slot field read as missing and as null is the same value; real values still differ', () => {
+  assert.equal(sameSlotField(undefined, null), true);
+  assert.equal(sameSlotField(null, undefined), true);
+  assert.equal(sameSlotField('run-a', 'run-a'), true);
+  assert.equal(sameSlotField('run-a', null), false);
+  assert.equal(sameSlotField(undefined, 'run-a'), false);
+  assert.equal(sameSlotField('run-a', 'run-b'), false);
+});

@@ -1,5 +1,7 @@
 import { isTerminalRunStatus, type Run, type SlotResource } from '@farmslot/protocol';
 
+import { sameSlotField } from '../core/same-slot-field.js';
+
 import type { ProcessCensusRow } from './process-census.js';
 
 export const DEVSERVER_IDLE_LIMIT_MS = 15 * 60_000;
@@ -78,7 +80,7 @@ export class IdleDevServerReaper {
     const row = await this.deps.row(slotId);
     if (!row) return 'slot row unavailable';
     if (row.slot_epoch !== expected.slot_epoch) return 'slot epoch changed';
-    if (row.current_run_id !== expected.current_run_id) return 'slot owner changed';
+    if (!sameSlotField(row.current_run_id, expected.current_run_id)) return 'slot owner changed';
     if (row.phase === 'releasing') return 'slot releasing';
     if (row.lifecycle === 'manual') return 'manual slot';
     if (row.handoff_run_id) return 'slot handoff in progress';
@@ -288,9 +290,9 @@ export class IdleDevServerReaper {
       if (
         !current ||
         current.slot_epoch !== row.slot_epoch ||
-        current.current_run_id !== row.current_run_id ||
+        !sameSlotField(current.current_run_id, row.current_run_id) ||
         current.phase === 'releasing' ||
-        (current.handoff_run_id ?? null) !== (row.handoff_run_id ?? null)
+        !sameSlotField(current.handoff_run_id, row.handoff_run_id)
       )
         throw new Error('Slot owner changed or is releasing during dev server re-prepare');
     };
