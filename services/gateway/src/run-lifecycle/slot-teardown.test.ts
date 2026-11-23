@@ -1687,13 +1687,46 @@ test('a pre-dispatch cancel stops and joins the run’s in-flight prepare before
   assert.equal(slotRow?.lifecycle, 'ready');
 });
 
-test('a replayed run whose earlier dispatch left its outputs keeps the replay hold', async () => {
-  // Replay clears the dispatch step's start; what the earlier dispatch recorded stays.
-  const replayed = {
+test('a pre-dispatch cancel never stops a prepare on a slot another run now owns', async (t) => {
+  const { activePrepareAborts } = await import('../methods/slot/shared.js');
+  let aborted = false;
+  activePrepareAborts.set(SLOT_ID, {
+    abort: () => (aborted = true),
+    settled: new Promise<void>(() => {}),
+  });
+  t.after(() => activePrepareAborts.delete(SLOT_ID));
+  slotRow = { ...slotRow, current_run_id: 'other-run' };
+  const preparing = {
     ...run,
     steps: [
+      { name: 'prepare', status: 'skipped', startedAt: '2026-11-23T16:21:09.377Z' },
+      { name: 'dispatch', status: 'skipped' },
+    ],
+  } as Run;
+
+  await defaultCancelCollaborators().releaseCapabilities(preparing);
+
+  assert.equal(aborted, false, "the other run's prepare keeps running");
+});
+
+test('a replayed run whose earlier dispatch started a worker keeps the replay hold', async () => {
+  // Replay resets the dispatch step; the worker context the earlier dispatch started stays.
+  const replayed = {
+    ...run,
+    agentContexts: [
+      {
+        id: 'fix-bug',
+        role: 'fix-bug',
+        label: 'fix-bug',
+        status: 'failed',
+        slotId: SLOT_ID,
+        runId: RUN_ID,
+        startedAt: '2026-11-23T16:00:00.000Z',
+      },
+    ],
+    steps: [
       { name: 'prepare', status: 'skipped' },
-      { name: 'dispatch', status: 'skipped', outputs: { runner: 'pi' } },
+      { name: 'dispatch', status: 'skipped' },
     ],
   } as Run;
   const cancel = defaultCancelCollaborators();

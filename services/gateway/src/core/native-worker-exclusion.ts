@@ -5,8 +5,11 @@
 class PrepareGuards extends Set<string> {
   private cleared?: (slotId: string) => void;
 
-  onCleared(listener: (slotId: string) => void): void {
+  /** Replaces the clear listener and returns the previous one. */
+  onCleared(listener?: (slotId: string) => void): ((slotId: string) => void) | undefined {
+    const previous = this.cleared;
     this.cleared = listener;
+    return previous;
   }
 
   override delete(slotId: string): boolean {

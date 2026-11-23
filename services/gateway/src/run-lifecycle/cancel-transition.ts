@@ -241,14 +241,20 @@ async function broadcastTransitionEvent(event: string, payload: unknown): Promis
  * never started. Such a cancel releases the slot instead of holding it (510ed181 kept
  * macpro-mmt-6 held from a cancel during prepare). A flow without a dispatch step keeps the hold.
  */
-export function cancelledBeforeDispatch(run: Pick<Run, 'steps' | 'worktreeHeadAtDispatch'>): boolean {
+export function cancelledBeforeDispatch(
+  run: Pick<Run, 'steps' | 'worktreeHeadAtDispatch' | 'agentContexts'>,
+): boolean {
   const dispatch = run.steps.find((step) => step.name === 'dispatch');
-  // A replay clears the step's start, but never the head recorded at an earlier dispatch.
-  return Boolean(
-    dispatch &&
-      !dispatch.startedAt &&
-      !dispatch.outputs &&
-      !run.worktreeHeadAtDispatch,
+  if (!dispatch || dispatch.startedAt || dispatch.outputs || run.worktreeHeadAtDispatch)
+    return false;
+  // A replay clears the dispatch step, not what an earlier dispatch left on its workers.
+  return !(run.agentContexts ?? []).some(
+    (context) =>
+      context.startedAt ||
+      context.promptDeliveryStartedAt ||
+      context.runnerSessionId ||
+      context.nativeSession ||
+      context.nativeSessionHistory?.length,
   );
 }
 
@@ -264,7 +270,7 @@ export function defaultCancelCollaborators({
     { fence: RunSlotCleanupFence; blocker: string | null; succeeded: boolean; keep: boolean }
   >();
   // After dispatch a cancel keeps the slot for replay (ADR-054); before it there is nothing to replay.
-  const keeps = (run: Pick<Run, 'steps' | 'worktreeHeadAtDispatch'>) =>
+  const keeps = (run: Pick<Run, 'steps' | 'worktreeHeadAtDispatch' | 'agentContexts'>) =>
     keepForReplay && !cancelledBeforeDispatch(run);
   return {
     releaseWorkspace: async (run) => {
@@ -291,10 +297,13 @@ export function defaultCancelCollaborators({
       // A run cancelled before dispatch may still be preparing its slot. Stop and join that
       // prepare before the slot is released, as slot.release does; one that will not stop
       // keeps the slot held for the run instead of publishing it ready under a live prepare.
+      let prepareBlocker: string | null = null;
+      const { readSlotRow } = await import('../core/index.js');
       if (!state.keep && run.slotId) {
         const { activePrepareAborts } = await import('../methods/slot/shared.js');
         const inflight = activePrepareAborts.get(run.slotId);
-        if (inflight) {
+        // Only this run's own prepare: a stale slot id must not stop another owner's.
+        if (inflight && (await readSlotRow(run.slotId))?.current_run_id === run.id) {
           const { RELEASE_PREPARE_STOP_TIMEOUT_MS } = await import('../methods/slot/release.js');
           inflight.abort();
           let timer: ReturnType<typeof setTimeout> | undefined;
@@ -305,10 +314,12 @@ export function defaultCancelCollaborators({
             }),
           ]);
           clearTimeout(timer);
-          if (!stopped) state.keep = true;
+          if (!stopped) {
+            state.keep = true;
+            prepareBlocker = `In-flight prepare did not stop within ${Math.round(RELEASE_PREPARE_STOP_TIMEOUT_MS / 1000)}s; slot kept for the cancelled run`;
+          }
         }
       }
-      const { readSlotRow } = await import('../core/index.js');
       state.fence.before = run.slotId ? await readSlotRow(run.slotId) : null;
       await cancelNativeRunWorkers(run.id, { machineTransitionHeld: true });
       // Cancel stops what the run started; only another active run keeps its slot
@@ -317,7 +328,8 @@ export function defaultCancelCollaborators({
       await releaseRunOwnedCapabilities(run);
       const runtimeBlocker = await shutdownRunSlotResources(run);
       const blocker = await slotOwnershipBlocker(run);
-      const cleanupBlocker = [survivors, runtimeBlocker].filter(Boolean).join('; ') || null;
+      const cleanupBlocker =
+        [prepareBlocker, survivors, runtimeBlocker].filter(Boolean).join('; ') || null;
       await recordSlotTeardownSkipped(run, blocker ?? cleanupBlocker);
       state.blocker = blocker ?? (state.keep ? null : cleanupBlocker);
       state.succeeded = true;
