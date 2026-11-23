@@ -419,26 +419,32 @@ export async function waitForPrepareGuard(
   slotId: string,
   deps: {
     preparing?: (slotId: string) => boolean;
+    runLookup?: (id: string) => Pick<Run, 'status' | 'engineState'> | undefined;
     now?: () => number;
     sleep?: (ms: number) => Promise<unknown>;
     timeoutMs?: number;
+    wrapWait?: (wait: () => Promise<void>) => Promise<void>;
   } = {},
 ): Promise<void> {
   const {
     preparing = (id) => activePrepareSlots.has(id),
+    runLookup = getRun,
     now = Date.now,
     sleep = delay,
     timeoutMs = EXPLICIT_SLOT_RELEASE_WAIT_MS,
+    wrapWait = (wait) => awaitAsQueueTime(runId, 'find-slot', wait),
   } = deps;
   if (!preparing(slotId)) return;
-  await awaitAsQueueTime(runId, 'find-slot', async () => {
+  await wrapWait(async () => {
     const deadline = now() + timeoutMs;
     while (preparing(slotId)) {
-      if (runSupersededSince(getRun(runId), generation)) throw runChangedError(runId, slotId);
+      if (runSupersededSince(runLookup(runId), generation)) throw runChangedError(runId, slotId);
+      // A conflict: find-slot selects again (skipping the slot) instead of failing the run.
       if (now() >= deadline)
         throw slotClaimRefusedError(
           slotId,
           `Slot ${slotId} is still preparing after ${Math.round(timeoutMs / 60_000)}m`,
+          true,
         );
       await sleep(EXPLICIT_SLOT_RELEASE_POLL_MS);
     }
@@ -495,6 +501,10 @@ async function claimSelectedSlot(
       const capabilityRefusal = slotCapabilityBlocker(slotId, requiredCapabilities, catalogs);
       if (capabilityRefusal) throw new Error(`Slot ${slotId}: ${capabilityRefusal}`);
       if (runSupersededSince(getRun(runId), generation)) throw runChangedError(runId, slotId);
+      // A guard taken while this claim waited on admission (sources, catalogs) would refuse
+      // the run's prepare: refuse as a conflict, so find-slot selects again.
+      if (phase === 'preparing' && activePrepareSlots.has(slotId))
+        throw slotClaimRefusedError(slotId, `Slot ${slotId} is preparing`, true);
       // Record the binding only after source revalidation. Automatic replans keep their
       // original open request, while the claim and any teardown see this exact target.
       if (current?.slotId !== slotId) updateRun(runId, { slotId });

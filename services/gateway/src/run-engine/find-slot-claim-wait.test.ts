@@ -9,6 +9,7 @@ import {
   previewWhenSlotClaimable,
   slotClaimAllowed,
   splitGuardedFreeSlots,
+  waitForPrepareGuard,
 } from './find-slot-step.js';
 
 const SLOT = 'macpro-mm-pixel6';
@@ -728,4 +729,25 @@ test('a pinned new run reclaims a cancelled holder before previewing', async () 
   });
   assert.equal(result, 'previewed');
   assert.equal(h.state.previews, 1);
+});
+
+test('a guard that outlasts the claim wait is a conflict, so find-slot selects again', async () => {
+  let nowMs = 0;
+  let sleeps = 0;
+  const waited = waitForPrepareGuard('new-run', 0, SLOT, {
+    preparing: () => true,
+    runLookup: () => ({ status: 'slot-finding' }),
+    now: () => nowMs,
+    sleep: async (ms) => {
+      nowMs += ms;
+      sleeps++;
+    },
+    timeoutMs: 6_000,
+    wrapWait: (wait) => wait(),
+  });
+  await assert.rejects(waited, (error: { claimConflict?: { slotId: string } }) => {
+    assert.equal(error.claimConflict?.slotId, SLOT);
+    return true;
+  });
+  assert.equal(sleeps, 3);
 });

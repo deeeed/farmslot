@@ -435,6 +435,23 @@ mock.module('../run-lifecycle/safe-idle-slot.js', {
     },
   },
 });
+// Runs while a selected slot's claim is admitted, after the guard wait and before the claim.
+let duringClaimAdmission: ((slotId: string) => void) | undefined;
+const capabilities = await import('./slot-capability-requirements.js');
+mock.module('./slot-capability-requirements.js', {
+  namedExports: {
+    ...capabilities,
+    replaySlotCapabilityRequirements: async () => undefined,
+    slotCapabilityCatalogs: async (
+      ...args: Parameters<typeof capabilities.slotCapabilityCatalogs>
+    ) => {
+      // A claim reads one slot's catalog; selection reads the project's.
+      const [slotIds] = args;
+      if (slotIds.length === 1) duringClaimAdmission?.(slotIds[0]!);
+      return capabilities.slotCapabilityCatalogs(...args);
+    },
+  },
+});
 const { resolveDispatchPreviewFromFleet } = await import('../methods/dispatch/preview.js');
 const { nodeModelCatalogs } = await import('../runners/model-catalog.js');
 const { executeFindSlotStep } = await import('./find-slot-step.js');
@@ -449,10 +466,6 @@ mock.module('./orchestrator.js', {
       return 1;
     },
   },
-});
-const capabilities = await import('./slot-capability-requirements.js');
-mock.module('./slot-capability-requirements.js', {
-  namedExports: { ...capabilities, replaySlotCapabilityRequirements: async () => undefined },
 });
 const { runReplayStep } = await import('../methods/run/replay-step.js');
 
@@ -505,6 +518,7 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
   pressureDecisions = new Map();
   loadWaits.length = 0;
   afterLoadWait = undefined;
+  duringClaimAdmission = undefined;
   expectedSlot = 'macpro-mmt-1';
   refreshedSlots.length = 0;
   nudgeCandidates = [];
@@ -1579,6 +1593,29 @@ test('an automatic pick skips a free slot still under a prepare guard', async (t
   const result = await executeFindSlotStep(run.id, run, 0, context);
   assert.equal(result.outputs?.selectedSlot, free.slot);
   assert.ok(!reuseCalls.includes(guarded.slot), 'the guarded slot is never considered');
+});
+
+test('a slot guarded while its claim is admitted is refused as a conflict and another is picked', async (t) => {
+  reset('dev', 'PROOF-9001');
+  expectedTarget = undefined;
+  const first = candidate('first-main', 'first', 'main');
+  const second = candidate('second-main', 'first', 'main');
+  slots.splice(0, slots.length, first, second);
+  t.after(() => activePrepareSlots.delete('first-main'));
+  expectedSlot = first.slot;
+  duringClaimAdmission = (slotId) => {
+    assert.equal(slotId, first.slot);
+    duringClaimAdmission = undefined;
+    // Upkeep takes the guard on the slot this claim is about to take.
+    activePrepareSlots.add(first.slot);
+    expectedSlot = second.slot;
+  };
+  // A lost claim selects again after a short pause.
+  afterLoadWait = () => {};
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.deepEqual(loadWaits, [1_000]);
+  assert.deepEqual(claims, [second.slot]);
+  assert.equal(result.outputs?.selectedSlot, second.slot);
 });
 
 test('the slot picker does not offer a slot still under a prepare guard', async (t) => {
