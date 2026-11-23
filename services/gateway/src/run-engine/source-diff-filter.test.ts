@@ -28,6 +28,9 @@ test('isSourceCodePath accepts source/config files and rejects binary assets', (
   assert.equal(isSourceCodePath('src/{old name.ts => new name.ts}'), true);
   assert.equal(isSourceCodePath('package.json'), true);
   assert.equal(isSourceCodePath('Dockerfile'), true);
+  // audiolab #528 changed only Groovy Gradle build scripts; .kts was already source.
+  assert.equal(isSourceCodePath('packages/audio-studio/android/build.gradle'), true);
+  assert.equal(isSourceCodePath('android/settings.gradle'), true);
   assert.equal(isSourceCodePath('yarn.lock'), false);
   assert.equal(isSourceCodePath('packages/app/pnpm-lock.yaml'), false);
   assert.equal(isSourceCodePath('assets/logo.png'), false);

@@ -1208,6 +1208,51 @@ test('recovery holds a human-gating run while its reviewer is still in flight', 
   assert.equal(calls.broadcasted, 0);
 });
 
+// Runs 37e53d61 and 02463b6e: the gate's dispatch review failed (a placeholder a late signal could
+// still replace) and the gateway restarted before the gate presented its decision. Holding the gate
+// for that reviewer left the operator nothing but cancel; startup presents the gate instead.
+test('startup presents a gate whose only reviewer failed instead of holding it', async () => {
+  const run = withRecoverableReviewer(
+    minimalActiveRun({
+      ticketOrPr: 'RECOVERY-REVIEW-FAILED-PLACEHOLDER',
+      familyRootTicketOrPr: 'RECOVERY-REVIEW-FAILED-PLACEHOLDER',
+      taskFile: '/tmp/farmslot-recovery-review-failed-placeholder/TASK.md',
+      status: 'human-gating',
+      steps: [{ name: 'human-gate', status: 'running' }],
+      decisions: [],
+    }),
+  );
+  run.agentContexts = run.agentContexts!.map((context) => ({
+    ...context,
+    status: 'failed',
+    artifactScope: 'dispatch-review',
+  }));
+  run.engineState = {
+    ...run.engineState,
+    publishGate: {
+      ...run.engineState?.publishGate,
+      reviews: [
+        {
+          id: 'dispatch-review',
+          source: 'dispatch',
+          mode: 'cold',
+          loopNumber: 1,
+          verdict: 'failed',
+          unresolvedCount: 0,
+          feedbackSent: false,
+          recoveryContinuationPending: true,
+        },
+      ],
+    },
+  };
+  const { deps, calls } = publicationReviewRecoveryDeps(run);
+
+  await recoverActiveRuns(deps);
+
+  assert.deepEqual(calls.replayed, [run.id]);
+  assert.deepEqual(calls.rearmed, []);
+});
+
 test('recovery clears a settled native run error before holding a gate whose reviewer is in flight', async () => {
   // TAT-4160 4f0ff296: the publication-review branch skips runtime reconciliation, so the
   // stale host-stop error from finished reviewers must clear before it.
@@ -2493,6 +2538,7 @@ test('orphan reconcile leaves a releasing fence that is still young', async () =
     }),
     isTerminalTeardownInFlight: () => false,
     readSlotField: async () => new Date(Date.now() - 5_000).toISOString(),
+    getRun: () => undefined,
     resetSlot: async (slotId: string) => reset.push(slotId),
   } as unknown as RunRecoveryCollaborators;
 

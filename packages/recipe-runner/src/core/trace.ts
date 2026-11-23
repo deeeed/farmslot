@@ -12,6 +12,7 @@ export function recordSyntheticFailure(
 ): void {
   const now = new Date().toISOString();
   traceWriter.record({
+    intervalSource: 'diagnostic',
     nodeId,
     action: action ?? 'unknown',
     startedAt: now,

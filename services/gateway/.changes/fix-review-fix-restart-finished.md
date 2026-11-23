@@ -1,0 +1,2 @@
+- A gateway restart no longer drops a review fix that finished while the gateway was down. Restart recovery marked the fix pass failed because its worker had exited, so the run started round-1 review again and sat in reviewing. Recovery now leaves a worker context whose own signal reports its current attempt finished for the step that owns it.
+- A worker relaunched for a review fix keeps its tmux pane id. Without it, once that worker finished and exited, COMPLETE could not confirm it idle and stopped the run on a result decision.

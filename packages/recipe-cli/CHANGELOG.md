@@ -6,6 +6,49 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.35.32 - 2026-11-23
+
+- Pin the Recipe Runner 0.52.2 cohort.
+- Add the `transcript` artifacts format: a deterministic, redacted transcript of a retained attempt (node results with asserted values, recipe digest, clean commit, network, claims) for headless proof; Markdown includes it in the Validation Logs when `transcript` is set.
+- `logs --full` prints the whole selected log and exits; only `--follow` keeps `tail -F` open and announces a live follow (`--full --follow` still streams the whole log).
+
+## 0.35.31 - 2026-11-21
+
+- Pin the Protocol 0.92.0 producer cohort.
+
+## 0.35.30 - 2026-11-21
+
+- Read active invocation progress from a run folder while HUD is off.
+
+## 0.35.29 - 2026-11-21
+
+- Keep the invoked executable in action detail hints and display category names that can be copied into filters.
+
+## 0.35.28 - 2026-11-21
+
+- Group human action lists by category and show short descriptions, a four-parameter preview, visible risk labels, and a shortcut to full details and call examples.
+- Preserve explicit catalog choices in detail commands. Project CLI detail hints also carry provider authorization explicitly supplied by the operator.
+
+## 0.35.27 - 2026-11-20
+
+- Retain named catalog selection and root identity through preflight and recovery so reports can bind timing to the selected recipe. After upgrading, regenerate and reapprove outstanding plans for named recipes.
+
+## 0.35.26 - 2026-11-19
+
+- Pin the structural inventory SDK cohort while retaining public protocol 0.91.0.
+
+## 0.35.25 - 2026-11-19
+
+- Preserve explicit operator library flags in catalog retry hints without authorizing discovered or task-local adapter modules.
+
+## 0.35.24 - 2026-11-19
+
+- Pin the qualified invocation-timing SDK cohort with exact package dependencies.
+
+## 0.35.23 - 2026-11-19
+
+- Provide composed evidence metadata through the existing folder reader and keep the shared evidence entry portable for browser consumers.
+
 ## 0.35.22 - 2026-11-19
 
 - Let embedded prepare hosts opt out of verification during launch so fixtures can establish readiness before the existing final verification. The default order and failure handling remain unchanged.

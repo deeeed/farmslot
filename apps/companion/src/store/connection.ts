@@ -61,6 +61,10 @@ import {
   readGatewayProfilePersonSession,
 } from '../lib/gateway-profiles';
 import { notifyRunCompleted, notifyViolation } from '../lib/notifications';
+import {
+  type StartupWorkspace,
+  startupWorkspaceAfterConnectionChange,
+} from '../lib/startup-run-destination';
 import type { WorkspaceAccess } from '../lib/workspace-access';
 
 import { resetFarmState } from './reset-farm-state';
@@ -107,6 +111,7 @@ interface ConnectionStore {
   probeInProgress: boolean;
   lastSyncError: string | null;
   initializing: boolean;
+  startupWorkspace?: StartupWorkspace | null;
   init: () => Promise<void>;
   setGatewayUrl: (url: string) => Promise<void>;
   setActiveProfile: (profileId: string) => Promise<void>;
@@ -212,6 +217,11 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           status,
           principalId,
           workspaceAccess,
+          startupWorkspace: startupWorkspaceAfterConnectionChange(
+            get().startupWorkspace,
+            client.resourceConnectionReason,
+            status === 'connected' ? { principalId, workspaceAccess } : undefined,
+          ),
           activeProfileHttpAuthHeaders: client.httpAuthHeaders,
           personSession: client.personDeviceSession,
           authorityEpoch: get().authorityEpoch + (authorityChanged ? 1 : 0),
@@ -229,6 +239,11 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       set({
         signedOut,
         personSession: session?.session ?? null,
+        startupWorkspace: {
+          profileId: activeProfile?.id ?? '',
+          gatewayUrl: url,
+          principalId: session?.session.principalId ?? null,
+        },
         gatewayUrl: url,
         profiles,
         activeProfileId: activeProfile?.id ?? '',
@@ -794,6 +809,7 @@ function connectionIdentityTransition(
       ? {
           principalId: null,
           workspaceAccess: 'none' as const,
+          startupWorkspace: null,
           authorityEpoch: current.authorityEpoch + 1,
           lastSyncError: null,
           ...livenessPatch(INITIAL_CONNECTION_LIVENESS),

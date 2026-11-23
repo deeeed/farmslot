@@ -21,13 +21,25 @@ export interface IdleDevServerDeps {
     refresh?: boolean,
   ): IdleDevServerPointer | undefined | Promise<IdleDevServerPointer | undefined>;
   census(slotId: string): Promise<ProcessCensusRow[]>;
-  write(slotId: string, expected: SlotRow, fields: Record<string, unknown>): Promise<boolean>;
+  /** `admit` is checked inside the conditional write, after its row predicate. */
+  write(
+    slotId: string,
+    expected: SlotRow,
+    fields: Record<string, unknown>,
+    admit?: () => boolean,
+  ): Promise<boolean>;
   stop(
     slotId: string,
     rows: ProcessCensusRow[],
     roots: ProcessCensusRow[],
     stillOwned: () => Promise<boolean>,
-  ): Promise<boolean>;
+  ): Promise<true | string>;
+  /** Times this resource stopped being observed running or stale; a change restarts its window. */
+  observed?(slotId: string, resourceId: string): number;
+  /** The sweep's latest decision for a slot or one of its dev servers; repeated values may be dropped. */
+  decide?(slotId: string, resourceId: string | undefined, decision: string): void;
+  /** Why the latest pointer call for this resource returned nothing; read once. */
+  explain?(slotId: string, resourceId: string): string | undefined;
   ready(
     slotId: string,
     resourceId: string,
@@ -38,6 +50,7 @@ export interface IdleDevServerDeps {
 
 interface IdleCandidate {
   since: number;
+  observed: number;
   epoch: unknown;
   owner: unknown;
   process: ProcessCensusRow;
@@ -56,57 +69,98 @@ export class IdleDevServerReaper {
 
   constructor(private readonly deps: IdleDevServerDeps) {}
 
-  private async quiet(slotId: string, expected: SlotRow, resourceId?: string): Promise<boolean> {
+  /** Why the slot is not quiet enough to stop its idle dev server, or null when it is. */
+  private async quietBlocker(
+    slotId: string,
+    expected: SlotRow,
+    resourceId?: string,
+  ): Promise<string | null> {
     const row = await this.deps.row(slotId);
-    if (
-      !row ||
-      row.slot_epoch !== expected.slot_epoch ||
-      row.current_run_id !== expected.current_run_id ||
-      row.phase === 'releasing' ||
-      row.lifecycle === 'manual' ||
-      row.handoff_run_id ||
-      (row.warm === true && !row.current_run_id) ||
-      this.deps.preparing(slotId) ||
-      (resourceId !== undefined && (await this.deps.retained(slotId, resourceId)))
-    )
-      return false;
+    if (!row) return 'slot row unavailable';
+    if (row.slot_epoch !== expected.slot_epoch) return 'slot epoch changed';
+    if (row.current_run_id !== expected.current_run_id) return 'slot owner changed';
+    if (row.phase === 'releasing') return 'slot releasing';
+    if (row.lifecycle === 'manual') return 'manual slot';
+    if (row.handoff_run_id) return 'slot handoff in progress';
+    if (row.warm === true && !row.current_run_id) return 'warm slot';
+    if (this.deps.preparing(slotId)) return 'slot preparing';
+    if (resourceId !== undefined && (await this.deps.retained(slotId, resourceId)))
+      return 'retained by a capability lease';
     const runs = slotWorkerRuns(this.deps.runs(), slotId, row.current_run_id);
-    if (row.current_run_id && !runs.some((run) => run.id === row.current_run_id)) return false;
-    if (!runs.length && row.agent === 'working') return false;
+    if (row.current_run_id && !runs.some((run) => run.id === row.current_run_id))
+      return 'slot owner run unavailable';
+    if (!runs.length && row.agent === 'working') return 'slot agent working';
     for (const run of runs) {
       const progress = await this.deps.progress(run);
-      if (progress !== 'idle' && progress !== 'awaiting-input') return false;
+      if (progress !== 'idle' && progress !== 'awaiting-input')
+        return `run ${run.id.slice(0, 8)} ${progress}`;
     }
-    return true;
+    return null;
+  }
+
+  private decide(slotId: string, resourceId: string | undefined, decision: string): void {
+    this.deps.decide?.(slotId, resourceId, decision);
+  }
+
+  /**
+   * Dev servers the cap may stop: watched, with boot and health hooks, and observed running or
+   * stale. An unobserved server loses its idle window.
+   */
+  async eligible(slotId: string): Promise<SlotResource[]> {
+    const devServers = (await this.deps.resources(slotId)).filter(
+      (resource) => resource.definition.type === 'dev-server',
+    );
+    const configured = new Set(devServers.map((resource) => `${slotId}/${resource.id}`));
+    for (const key of this.idle.keys())
+      if (key.startsWith(`${slotId}/`) && !configured.has(key)) this.idle.delete(key);
+    return devServers.filter((resource) => {
+      let skip: string | undefined;
+      if (!resource.definition.watch) skip = 'skip: no watch';
+      else if (!resource.definition.hooks?.boot || !resource.definition.hooks.health)
+        skip = 'skip: no boot and health hooks';
+      else if (resource.status !== 'running' && resource.status !== 'stale')
+        skip = `skip: status ${resource.status}`;
+      if (!skip) return true;
+      this.idle.delete(`${slotId}/${resource.id}`);
+      this.decide(slotId, resource.id, skip);
+      return false;
+    });
+  }
+
+  /** A slot the sweep no longer observes restarts its idle windows when it returns. */
+  forget(slotId: string): void {
+    for (const key of this.idle.keys()) if (key.startsWith(`${slotId}/`)) this.idle.delete(key);
   }
 
   async sweep(slotId: string): Promise<void> {
-    const row = await this.deps.row(slotId);
     const prefix = `${slotId}/`;
-    if (!row || !(await this.quiet(slotId, row))) {
+    const resources = await this.eligible(slotId);
+    if (!resources.length) return;
+    const row = await this.deps.row(slotId);
+    const blocker = row ? await this.quietBlocker(slotId, row) : 'slot row unavailable';
+    if (!row || blocker) {
       for (const key of this.idle.keys()) if (key.startsWith(prefix)) this.idle.delete(key);
+      this.decide(slotId, undefined, `skip: ${blocker}`);
       return;
     }
-    const resources = (await this.deps.resources(slotId)).filter(
-      (resource) =>
-        resource.definition.type === 'dev-server' &&
-        resource.definition.hooks?.boot &&
-        resource.definition.hooks.health &&
-        (resource.status === 'running' || resource.status === 'stale'),
-    );
+    this.decide(slotId, undefined, 'quiet');
     let rows: ProcessCensusRow[] | undefined;
     for (const resource of resources) {
       const key = `${prefix}${resource.id}`;
       if (await this.deps.retained(slotId, resource.id)) {
         this.idle.delete(key);
+        this.decide(slotId, resource.id, 'skip: retained by a capability lease');
         continue;
       }
       const pointer = await this.deps.pointer(slotId, resource.id, !this.idle.has(key));
       // A port-only health result without a watched PID grants no stop authority.
       if (!pointer) {
         this.idle.delete(key);
+        const why = this.deps.explain?.(slotId, resource.id) ?? 'no watched process';
+        this.decide(slotId, resource.id, `skip: no stop authority (${why})`);
         continue;
       }
+      const observed = this.deps.observed?.(slotId, resource.id) ?? 0;
       let candidate = this.idle.get(key);
       if (
         !candidate ||
@@ -114,23 +168,33 @@ export class IdleDevServerReaper {
         candidate.process.identity !== pointer.identity ||
         candidate.process.group !== pointer.group ||
         candidate.epoch !== row.slot_epoch ||
-        candidate.owner !== row.current_run_id
+        candidate.owner !== row.current_run_id ||
+        candidate.observed !== observed
       ) {
         rows ??= await this.deps.census(slotId);
         const process = rows.find((process) => process.pid === String(pointer.pid));
         if (!process || pointer.identity !== process.identity || pointer.group !== process.group) {
           this.idle.delete(key);
+          this.decide(slotId, resource.id, 'skip: watched process not in the census');
           continue;
         }
         candidate = {
           since: this.deps.now(),
+          observed,
           epoch: row.slot_epoch,
           owner: row.current_run_id,
           process,
         };
         this.idle.set(key, candidate);
       }
-      if (this.deps.now() - candidate.since < DEVSERVER_IDLE_LIMIT_MS) continue;
+      if (this.deps.now() - candidate.since < DEVSERVER_IDLE_LIMIT_MS) {
+        this.decide(
+          slotId,
+          resource.id,
+          `idle: pid ${candidate.process.pid} stops after ${new Date(candidate.since + DEVSERVER_IDLE_LIMIT_MS).toISOString()}`,
+        );
+        continue;
+      }
       rows ??= await this.deps.census(slotId);
       const root = rows.find(
         (process) =>
@@ -140,31 +204,75 @@ export class IdleDevServerReaper {
       );
       if (!root) {
         this.idle.delete(key);
+        this.decide(slotId, resource.id, 'skip: watched process exited or changed identity');
+        continue;
+      }
+      // An observation lost since the window started (even during this sweep) restarts it.
+      const unobserved = () =>
+        (this.deps.observed?.(slotId, resource.id) ?? 0) !== candidate.observed;
+      if (unobserved()) {
+        this.idle.delete(key);
+        this.decide(slotId, resource.id, 'skip at stop: observation lost');
         continue;
       }
       // Write-ahead intent survives a gateway restart between signals and settlement.
       const current = await this.deps.row(slotId);
-      if (!current || !(await this.quiet(slotId, row, resource.id))) return;
+      const late = current
+        ? await this.quietBlocker(slotId, row, resource.id)
+        : 'slot row unavailable';
+      if (!current || late) {
+        this.decide(slotId, resource.id, `skip at stop: ${late}`);
+        return;
+      }
       const prior = Array.isArray(current.idle_devservers)
         ? current.idle_devservers.filter((id): id is string => typeof id === 'string')
         : [];
       if (
-        !(await this.deps.write(slotId, row, {
-          idle_devservers: [...new Set([...prior, resource.id])],
-          idle_devserver_epoch: row.slot_epoch,
-        }))
-      )
+        !(await this.deps.write(
+          slotId,
+          row,
+          {
+            idle_devservers: [...new Set([...prior, resource.id])],
+            idle_devserver_epoch: row.slot_epoch,
+          },
+          () => !unobserved(),
+        ))
+      ) {
+        if (unobserved()) this.idle.delete(key);
+        this.decide(
+          slotId,
+          resource.id,
+          unobserved() ? 'skip at stop: observation lost' : 'skip at stop: slot row write refused',
+        );
         return;
+      }
+      let lost: string | undefined;
       const stopped = await this.deps.stop(slotId, rows, [root], async () => {
         const current = await this.deps.pointer(slotId, resource.id, true);
-        return (
-          current?.pid === pointer.pid &&
-          current.identity === pointer.identity &&
-          current.group === pointer.group &&
-          (await this.quiet(slotId, row, resource.id))
-        );
+        if (
+          current?.pid !== pointer.pid ||
+          current.identity !== pointer.identity ||
+          current.group !== pointer.group
+        ) {
+          lost = current
+            ? `watched process changed (${current.pid !== pointer.pid ? `pid ${current.pid}` : current.identity !== pointer.identity ? 'identity' : 'process group'})`
+            : (this.deps.explain?.(slotId, resource.id) ?? 'watched process lost');
+          return false;
+        }
+        // Last, after every awaited check: a loss during them still refuses.
+        lost =
+          (await this.quietBlocker(slotId, row, resource.id)) ??
+          (unobserved() ? 'observation lost' : undefined);
+        return !lost;
       });
-      if (stopped) this.idle.delete(key);
+      if (stopped === true) this.idle.delete(key);
+      this.decide(
+        slotId,
+        resource.id,
+        stopped === true
+          ? `stopped pid ${root.pid} after the idle limit`
+          : `skip at stop: ${lost ?? stopped}`,
+      );
     }
   }
 

@@ -6,6 +6,22 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.92.0 - 2026-11-21
+
+- Allow Command Center review links to share the recording, recipe attempt, and timeline page.
+- Include an optional accounting revision on run detail reads and mark journal-verified usage lease coverage.
+- The run evidence response can carry transient invocation flow for the current recipe attempt while recorded evidence is pending.
+- Worker terminal subscribe responses and exit events identify the adopted subscription so clients can ignore exits from superseded subscriptions.
+- Preserve the provider-reported subtotal and pricing scope on remote tmux Pi receipts. Expose the known subtotal when usage is recovered from a retained transcript.
+
+## 0.91.0 - 2026-11-19
+
+- Add optional qualified invocation timing to recipe flow updates, preserving unknown measurements.
+- `RunMonitorState` gains `gateWaitMs`: time the monitor itself spent blocked on a decision card, excluded from the execution timeout and kept separate from `operatorWaitMs`, which is recomputed each poll from the worker's own `waitingForOperator` signal and so cannot carry a wait the gateway owns.
+- `RunMonitorState` also gains `gateWaitStartedAt`: when the monitor started waiting on the card it is on now, so a restart mid-card can credit the slice the previous process never finished.
+- `RunMonitorState` also gains `gateWaitDecisionId`: the decision `gateWaitStartedAt` belongs to, so that only whatever answers that decision clears its marker. More than one monitor can be alive for a run, and the marker alone cannot say whose wait it is.
+- `CLAUDE_CLI_EFFORTS` is the Claude CLI effort list: low, medium, high, xhigh, and max.
+
 ## 0.90.0 - 2026-11-18
 
 - Codex defaults to `gpt-6.2-sol`, including backlog and roadmap refinement. `gpt-6.2-sol` and `gpt-6.2-astra` are known models with the full reasoning set, and `gpt-6.1-sol` stays selectable.

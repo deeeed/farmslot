@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Pressable, Text, View } from 'react-native';
 
 import {
@@ -8,7 +8,12 @@ import {
   type Run,
   RUN_VIEW_FIELDS,
 } from '@farmslot/protocol';
-import { type ReviewHistoryFix, type ReviewHistoryRoundCard } from '@farmslot/review-dispatch';
+import {
+  type ReviewHistoryFix,
+  type ReviewHistoryRoundCard,
+  reviewRoundCosts,
+  runCostReceipts,
+} from '@farmslot/review-dispatch';
 
 import { MobileDiffViewer } from '../../../components/MobileDiffViewer';
 import { useViewState, useViewToggle } from '../../../components/view-state';
@@ -20,10 +25,12 @@ type History = ReturnType<typeof useReviewHistory>;
 
 function ReviewRoundCard({
   card,
+  cost,
   history,
   onOpenArtifact,
 }: {
   card: ReviewHistoryRoundCard;
+  cost?: string;
   history: History;
   onOpenArtifact: (path: string) => void;
 }) {
@@ -87,6 +94,7 @@ function ReviewRoundCard({
             </Text>
           ) : null}
           {round.failureReason ? <Text style={styles.issues}>{round.failureReason}</Text> : null}
+          {cost ? <Text style={styles.meta}>{cost}</Text> : null}
           {round.usageLabel ? <Text style={styles.meta}>{round.usageLabel}</Text> : null}
           {round.findings.map((finding) => {
             const source =
@@ -254,6 +262,15 @@ export function ReviewHistoryPanel({
         params: { runId: run.id, artifact: path },
       }));
   const history = useReviewHistory(run, chain ?? reviewChainForRun(run));
+  const costs = useMemo(
+    () =>
+      reviewRoundCosts(
+        runCostReceipts(run),
+        history.cards.map(({ round }) => round),
+        run,
+      ),
+    [run, history.cards],
+  );
   if (!history.chain.length && !history.events.length && !history.activeReplay) return null;
   return (
     <View style={styles.section} testID="run-review-history">
@@ -288,6 +305,7 @@ export function ReviewHistoryPanel({
           <ReviewRoundCard
             key={card.round.key}
             card={card}
+            cost={costs.get(card.round.key)}
             history={history}
             onOpenArtifact={openArtifact}
           />

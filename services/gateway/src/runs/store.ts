@@ -114,6 +114,7 @@ import { currentSessionOriginator } from '../security/work-originator.js';
 import { captureRunCreationRequest } from '../sources/creation-request.js';
 
 import { emitAnalyticsForTerminalRun } from './analytics.js';
+import { noteCostAccountingWrite, noteCostReadyIndex } from './cost-accounting-revision.js';
 import { forgetRunListRow } from './list-version.js';
 import { isLeakedGatewayTestFixture, isLeakedGatewayTestRun } from './test-run-leak.js';
 
@@ -799,6 +800,7 @@ export async function loadAllRuns(): Promise<void> {
       const changed = normalizePersistedRun(run);
       const previous = runs.get(run.id);
       runs.set(run.id, run);
+      noteCostAccountingWrite(run);
       noteReviewWorkspaceRetirement(run, true);
       publishRunResources(
         captureRunResources(run),
@@ -1316,6 +1318,7 @@ export function createRun(params: RunCreateParams, options?: RunRecordBuildOptio
   const run = buildRunRecord(params, options);
   if (runs.has(run.id)) throw new Error('Run creation identity is already registered');
   runs.set(run.id, run);
+  noteCostAccountingWrite(run);
   noteReviewWorkspaceRetirement(run);
   if (!options?.deferBackgroundPersist) {
     persistRunBackground(run, 'create');
@@ -1450,11 +1453,14 @@ export function recordAdoptedTmuxWorker(id: string, partial: Partial<Run>): Run 
 function retainDecisionHistory(run: Run, decisions: RunDecision[]): RunDecision[] {
   if (decisions === run.decisions) return [];
   const remaining = new Map<string, RunDecision[]>();
-  for (const decision of decisions) {
+  let readyIndex = -1;
+  for (const [index, decision] of decisions.entries()) {
+    if (decision.payload?.kind === 'ready') readyIndex = index;
     const entries = remaining.get(decision.id) ?? [];
     entries.push(decision);
     remaining.set(decision.id, entries);
   }
+  noteCostReadyIndex(decisions, readyIndex);
   const unmatched = run.decisions.filter((decision) => {
     const entries = remaining.get(decision.id);
     const index = entries?.findIndex((entry) => isDeepStrictEqual(entry, decision)) ?? -1;
@@ -1755,6 +1761,7 @@ export function updateRun(id: string, partial: Partial<Run>, authorization?: sym
       );
     });
   }
+  noteCostAccountingWrite(run);
   persistRunBackground(run, 'update');
   publishRunResources(captureRunResources(run), previousResources);
   return run;
@@ -1820,6 +1827,7 @@ export function updateRunStep(id: string, stepName: string, update: Partial<RunS
     Object.assign(step, partial);
   }
   run.updatedAt = new Date().toISOString();
+  if (stepName === 'dispatch' || stepName.includes('review')) noteCostAccountingWrite(run);
   persistRunBackground(run, 'step update');
   publishRunResources(captureRunResources(run));
   return run;

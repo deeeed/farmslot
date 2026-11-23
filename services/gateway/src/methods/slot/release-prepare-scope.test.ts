@@ -34,6 +34,7 @@ let ownedSupport = false;
 let recycledRuntime: ChildProcess | undefined;
 let events: string[];
 let reapFails: boolean;
+let runnerCleanupBlocker: string | null = null;
 let finalRetentionError: Error | null = null;
 let emitted: Array<{ event: string; payload: Record<string, unknown> }>;
 let claimBeforeMark = false;
@@ -335,6 +336,15 @@ mock.module('../../runners/native/worker.js', {
 const realRuns = await import('../../runs/store.js');
 
 const realOutput = await import('../../run-completion/output.js');
+const codexDaemon = await import('../../runners/codex-daemon.js');
+mock.module('../../runners/codex-daemon.js', {
+  namedExports: {
+    ...codexDaemon,
+    cleanupCodexSlotRuntime: async (
+      ...args: Parameters<typeof codexDaemon.cleanupCodexSlotRuntime>
+    ) => runnerCleanupBlocker ?? codexDaemon.cleanupCodexSlotRuntime(...args),
+  },
+});
 mock.module('../../run-completion/output.js', {
   namedExports: {
     ...realOutput,
@@ -370,6 +380,7 @@ beforeEach(async () => {
   slotRow = { slot: SLOT_ID, lifecycle: 'ready', phase: null, slot_epoch: 1 };
   events = [];
   reapFails = false;
+  runnerCleanupBlocker = null;
   finalRetentionError = null;
   emitted = [];
   claimBeforeMark = false;
@@ -577,6 +588,46 @@ test('a preflight group that survives the reap keeps the slot held and fails the
   assert.ok(!events.includes('reset'), 'readiness is never published');
   const completed = emitted.find((entry) => entry.event === 'script.complete');
   assert.equal(completed?.payload.exitCode, 1);
+});
+
+// macpro-mmt-1: release refused on a surviving preflight group, and the run's detached
+// recipe browser and harness kept running for days because the browser reap was skipped.
+test('a surviving preflight group still lets the release stop the detached browser session', async () => {
+  reapFails = true;
+  cdpPort = '9542';
+  browserSession = new Map([
+    [11425, false],
+    [20419, false],
+  ]);
+
+  await assert.rejects(
+    slotRelease({ slotId: SLOT_ID, keepWork: true }, emit),
+    /stays held: Prepare scope cleanup failed: preflight group 4242 survived/,
+  );
+
+  assert.equal(browserSession.size, 0, 'the detached browser session outlived the release');
+  assert.ok(events.includes('browser-session-reap'));
+  assert.equal(slotRow.lifecycle, 'held');
+  assert.ok(!events.includes('reset'), 'readiness is never published');
+});
+
+test('every release reap still runs and the held reason names each failure', async () => {
+  reapFails = true;
+  runnerCleanupBlocker = 'Runner runtime 777 survived cleanup';
+  cdpPort = '9542';
+  browserSession = new Map([
+    [11425, false],
+    [20419, true],
+  ]);
+
+  await assert.rejects(slotRelease({ slotId: SLOT_ID, keepWork: true }, emit), /stays held/);
+
+  assert.ok(events.includes('browser-session-reap'));
+  assert.deepEqual([...browserSession.keys()], [20419]);
+  const reason = String(slotRow.held_reason);
+  assert.match(reason, /preflight group 4242 survived/);
+  assert.match(reason, /Runner runtime 777 survived cleanup/);
+  assert.match(reason, /20419/);
 });
 
 test('a prepare that never stops keeps the slot held and fails the release', async () => {

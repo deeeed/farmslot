@@ -337,6 +337,7 @@ test('mirrored review loops add no attempt the review already records', async (t
     verdict: 'issues',
     unresolvedCount: 1,
     maxRetries: 1,
+    usage: { source: 'runner-transcript', measuredAt: '2026-10-20T01:00:00Z', costUsd: 2 },
     attempts: [
       {
         mode: 'cold',
@@ -365,6 +366,8 @@ test('mirrored review loops add no attempt the review already records', async (t
     [review],
   );
 
+  assert.equal(augmented?.attempts?.[0]?.usage, undefined);
+  assert.equal(augmented?.usage?.costUsd, 2);
   assert.deepEqual(
     augmented!.attempts?.map((attempt) => [attempt.loopNumber, attempt.completedAt]),
     [

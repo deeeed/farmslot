@@ -1,0 +1,1 @@
+- The generated recipe CLI reference says `logs --full` prints the whole log; add `--follow` to keep streaming.

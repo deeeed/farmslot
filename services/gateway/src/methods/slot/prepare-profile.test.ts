@@ -277,6 +277,131 @@ test('probeFailureReason prefers stdout but falls back to stderr', () => {
   assert.equal(probeFailureReason('', '  \n \n'), undefined);
 });
 
+// Release clears the farm-owned paths a pack declares in fixtures.owned_paths —
+// the installed skills among them — and prepare's deps phase restores them. A
+// profile that skips deps (attach runs only `health`) therefore reaches task init
+// with a required skill missing and the run is refused before dispatch. This
+// check lets such a profile fall back to one that reinstalls them.
+test('checkPrepareRequirement required_skills_present fails when a named file is missing', async () => {
+  const probed: string[] = [];
+  const exec = async (_vars: unknown, command: string) => {
+    probed.push(command);
+    return { exitCode: 1, stdout: '.agents/skills/mms-perps-review-pr/SKILL.md ', stderr: '' };
+  };
+  const result = await checkPrepareRequirement(
+    'required_skills_present',
+    {
+      vars: { remoteRepo: '/repo' } as never,
+      projectJson: {
+        required_skills: {
+          root: '.agents/skills',
+          rules: [
+            {
+              id: 'perps-review',
+              when: { flows: ['dev', 'fix-bug'], domains: ['perps'] },
+              skills: [
+                {
+                  name: 'mms-perps-review-pr',
+                  files: ['SKILL.md'],
+                  review: { pack: 'references/pack.json', client: 'terminal', level: 'static' },
+                },
+              ],
+            },
+          ],
+        },
+        // A pack's owned_paths registry is far wider than what a repo installs,
+        // so it is deliberately not what this check reads.
+        fixtures: {
+          owned_paths: [{ path: '.agents/skills/mms-never-installed', state: 'current' }],
+        },
+      },
+      runtimeDir: '.agent',
+      flow: 'fix-bug',
+      domain: 'perps',
+    },
+    exec as never,
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /mms-perps-review-pr\/SKILL\.md/);
+  assert.equal(probed.length, 1);
+  assert.match(probed[0], /references\/pack\.json/, 'the review pack is required too');
+  assert.doesNotMatch(probed[0], /mms-never-installed/, 'owned_paths are not probed');
+});
+
+test('checkPrepareRequirement required_skills_present passes when every named file exists', async () => {
+  const result = await checkPrepareRequirement(
+    'required_skills_present',
+    {
+      vars: { remoteRepo: '/repo' } as never,
+      projectJson: {
+        required_skills: {
+          root: '.agents/skills',
+          rules: [{ id: 'r', skills: [{ name: 'mms-perps-review-pr', files: ['SKILL.md'] }] }],
+        },
+      },
+      runtimeDir: '.agent',
+      flow: 'fix-bug',
+    },
+    (async () => ({ exitCode: 0, stdout: '', stderr: '' })) as never,
+  );
+  assert.equal(result.ok, true);
+});
+
+test('checkPrepareRequirement required_skills_present passes when the pack declares none', async () => {
+  const result = await checkPrepareRequirement('required_skills_present', {
+    vars: { remoteRepo: '/repo' } as never,
+    projectJson: {},
+    runtimeDir: '.agent',
+  });
+  assert.equal(result.ok, true);
+  assert.match(result.detail, /no required skills/);
+});
+
+// Selection knows the flow and domain this prepare serves, so the check asks for
+// the rules task init will freeze rather than every rule the pack declares.
+test('checkPrepareRequirement required_skills_present asks only for the matching rules', async () => {
+  const probed: string[] = [];
+  const projectJson = {
+    required_skills: {
+      root: '.agents/skills',
+      rules: [
+        {
+          id: 'perps-review',
+          when: { flows: ['dev', 'fix-bug'], domains: ['perps'] },
+          skills: [{ name: 'mms-perps-review-pr', files: ['SKILL.md'] }],
+        },
+        {
+          id: 'mobile-testing',
+          when: { flows: ['dev'], platforms: ['ios'] },
+          skills: [{ name: 'mms-mobile-testing', files: ['SKILL.md'] }],
+        },
+      ],
+    },
+  };
+  const exec = async (_vars: unknown, command: string) => {
+    probed.push(command);
+    return { exitCode: 0, stdout: '', stderr: '' };
+  };
+  const result = await checkPrepareRequirement(
+    'required_skills_present',
+    {
+      vars: { remoteRepo: '/repo', platform: 'cli' } as never,
+      projectJson,
+      runtimeDir: '.agent',
+      flow: 'fix-bug',
+      domain: 'perps',
+    },
+    exec as never,
+  );
+  assert.equal(result.ok, true);
+  assert.match(probed[0], /mms-perps-review-pr/);
+  assert.doesNotMatch(
+    probed[0],
+    /mms-mobile-testing/,
+    'a rule this run does not match is not asked for',
+  );
+});
+
 test('checkPrepareRequirement artifact_available fails when no artifact_check hook is declared', async () => {
   // Missing-hook path needs no slot exec: expandHook returns '' and the check
   // fails with a teaching detail before any remote command runs.

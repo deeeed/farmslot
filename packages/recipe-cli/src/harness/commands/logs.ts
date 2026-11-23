@@ -187,15 +187,12 @@ export async function handleLogs(
       signal,
     });
   }
-  if (full || optionFlag(options, 'follow')) announce(full ? 'full' : 'raw');
+  // Only --follow streams; --full alone prints the whole log and exits.
+  const follow = optionFlag(options, 'follow');
+  if (follow) announce(full ? 'full' : 'raw');
   const result = await spawnScriptStreaming(
     'tail',
-    [
-      '-n',
-      optionFlag(options, 'full') ? '+1' : lines,
-      ...(optionFlag(options, 'full') || optionFlag(options, 'follow') ? ['-F'] : []),
-      source.path,
-    ],
+    ['-n', full ? '+1' : lines, ...(follow ? ['-F'] : []), source.path],
     target,
     { forward: 'original', capture: false },
   );

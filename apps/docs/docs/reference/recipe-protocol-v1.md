@@ -526,6 +526,15 @@ Simple recipes need no composition, proof targets, or teardown. Use only what th
 
 `RecipeFlowUpdate` carries recipeRunId, rootId, activeId and progress. Progress contains current, completed, total, remaining and qualification (`exact` or `unknown`). current is the active executable action's one-based ordinal, or completed between actions. remaining includes the active action. Calls and end controls are not actions for these counters. Retries are action occurrences. Null totals/remaining preserve unresolved route lengths; failure and partial completion retain unknown qualification. The summary stores final progress at flow; existing HUD payloads carry the update at recipe_flow. The existing HUD progress fields remain compatible until consumers adopt the shared update.
 
+While an invocation is in flight, the runner atomically replaces the optional
+`.farmslot-recipe-flow.json` with the existing version 1 `RecipeFlowUpdate`, including
+when HUD is off. It carries progress and ancestry from the live execution
+projection. The reader combines it with `recipe-resolution.json.flow` only
+when the update's recipeRunId matches `recipe-invocation.json` and the
+resolution root digest matches the invocation recipe digest. A missing or
+incompatible pair leaves pending flow unavailable. The engine reserves the
+pending filename and its temporary sibling across case variants and removes them after finalization. Completed packages use `summary.json.flow`.
+
 Tree construction happens once after static resolution. Updates use prepared route lengths and the bounded invocation ancestry; they do not scan prior trace entries or reload libraries. Labels and explicit claim bindings come from the resolved documents/evidence plan. Packages predating these optional fields have no prepared-flow data.
 
 ### Invocation ancestry
@@ -533,3 +542,17 @@ Tree construction happens once after static resolution. Updates use prepared rou
 `RecipeFlowUpdate.ancestry` is optional for compatibility with older producers. New producers set it to null when activeId is null. Otherwise it contains parentId, depth and breadcrumbs, each with an invocation id and label. Root depth is zero; breadcrumbs include the root and the active invocation. Their last ID equals activeId, their first ID equals rootId, and parentId is the preceding breadcrumb ID or null for the root. Repeated calls retain distinct namespaced IDs even when their labels match.
 
 `buildRecipeInvocationAncestry` in recipe-runner projects a read-only index from the prepared tree. The runner caches that index once and places the selected value on the existing HUD recipe_flow update. Ancestry availability never changes progress counters or qualifications. The index and updates add no history scan, polling, process or Git operation.
+
+### Qualified invocation timing
+
+`RecipeFlowUpdate.timing` is an optional SDK projection over the same prepared invocation IDs. Each row supplies inclusiveMs and selfMs, each number or null, and separate measured/partial/unknown qualifications. Inclusive is the union of recorded closed invocation windows. Self subtracts the union of direct-child windows fully attributed inside those windows. Missing child coverage can leave inclusive measured while self is unknown. Partial numbers are lower bounds over qualified closed subsets; subtracting only the known children never qualifies self. Zero is measured; no recording duration, current clock or trace-order estimate is allowed.
+
+The root uses the recorded run window. The timing index consumes each execution occurrence once. Snapshot projection reuses indexed intervals; it performs no file read, polling, process launch or Git command. Repeated calls keep distinct invocation IDs. Rollups union shared spans rather than summing nested or overlapping rows. Explicit claim bindings own attribution; unassigned self work is retained with its contributing invocation IDs and qualification. Retained executions are never charged to the current one.
+
+The shared evidence view adds invocation timing and an explicit unassigned rollup to its existing flow. Legacy Story, evidence links and playback cues remain unchanged. Timing changes participate in updateId equality. Packages with no measured intervals keep unknown timing; missing flow stays unavailable.
+
+Live `RecipeFlowUpdate.timing.scope` is `active`: its nodes contain only the active invocation ancestry, and full rollups are absent. It is not a replacement for the prepared tree. Progress mutation alone performs no timing snapshot. Final summaries and portable report projections use `scope: all`, retaining all nodes and claim/unassigned rollups once the recorded execution ends. Both use the same interval index and shared recorded branch resolver.
+
+New trace entries distinguish `intervalSource: execution` from `diagnostic`. Synthetic failure timestamps do not measure an invocation. Older failed zero-length rows without provenance are ambiguous and stay unknown; explicit executed zero-length windows stay measured. Failure completion records its closed interval before the HUD update. Rollup invocationIds list only qualified contributors; unknown candidates still affect completeness.
+
+Active timing is conservative over possible direct children and never resolves whole-tree reachability, including after a branch decision. Full reports apply the shared recorded route. HUD-disabled execution does no per-node live timing snapshot. A legacy failed-zero terminal qualifies only with its recorded terminal status. For a recorded failing UI assertion, an acknowledged failure caption precedes the automatic still; its final measured completion update follows capture. This adds one bounded HUD delivery on that failure path, with no polling, processes or Git calls in the calculator.

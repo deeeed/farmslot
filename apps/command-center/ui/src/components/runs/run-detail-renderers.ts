@@ -1,4 +1,4 @@
-import { html, nothing } from 'lit';
+import { html, nothing, type TemplateResult } from 'lit';
 import { keyed } from 'lit/directives/keyed.js';
 
 import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
@@ -71,6 +71,7 @@ import {
 } from './review-execution-location.js';
 import type { RunLifecycleAction } from './run-detail-actions.js';
 import { renderCancelledRunSlotChoices } from './run-detail-cancelled-slot-renderers.js';
+import { renderRunCost } from './run-detail-cost.js';
 import {
   canLaunchComparisonSibling,
   canReplayRunSteps,
@@ -258,6 +259,7 @@ export function renderInteractiveDevGate(run: Run, ctx: InteractiveDevGateRender
 
 export interface RunEvidenceRenderContext {
   selectedSharedEvidence?: boolean;
+  composedEvidence?: TemplateResult;
   taskProgress?: TaskProgressStructured | null;
   evidenceLightboxItems: LightboxItem[];
   evidenceLightboxOpen: boolean;
@@ -297,7 +299,7 @@ export function renderRunEvidence(
   includeOverlay = true,
 ): unknown {
   return html`<section data-shared-run-panel="evidence" tabindex="-1">
-      ${renderRunEvidenceContent(run, ctx)}
+      ${ctx.composedEvidence ?? nothing} ${renderRunEvidenceContent(run, ctx)}
     </section>
     ${includeOverlay ? renderEvidenceLightbox(ctx) : nothing}`;
 }
@@ -755,6 +757,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           ${r.qaAfterReview.error ? html`<p>${r.qaAfterReview.error}</p>` : nothing}
         </div>`
       : nothing}
+    ${renderRunCost(r)}
     <div class="meta">
       <div class="meta-item">
         <div class="meta-label">ID</div>
@@ -1015,12 +1018,6 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
                   1`
                 : nothing}
             </div>
-          </div>`
-        : nothing}
-      ${r.metrics.costEstimate
-        ? html`<div class="meta-item">
-            <div class="meta-label">Cost</div>
-            <div class="meta-value">$${r.metrics.costEstimate.toFixed(2)}</div>
           </div>`
         : nothing}
       ${r.metrics.sessionInputTokens || r.metrics.sessionOutputTokens

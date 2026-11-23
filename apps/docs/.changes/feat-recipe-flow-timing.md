@@ -1,0 +1,1 @@
+- Document qualified invocation timing, bounded live updates and explicit unknown measurements.

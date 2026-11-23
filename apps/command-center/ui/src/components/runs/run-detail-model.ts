@@ -12,6 +12,7 @@ import type {
   Run,
   RunDecision,
   RunListRow,
+  RunRecipeRunsForRunResult,
   RunStep,
   TaskOperation,
   TaskProgressResult,
@@ -460,6 +461,25 @@ export function runDetailDesiredRecipeRunId(input: {
     input.currentRecipeRunId,
     input.gatewaySelectedRecipeRunId,
   ]);
+}
+
+/** A named review attempt stays pending while its own recipe read loads. */
+export function recipeReviewLinkFailure(
+  query: Pick<ResourceQueryController<RunRecipeRunsForRunResult>, 'state' | 'failingSince'>,
+  attempt: string,
+  frozen: boolean,
+  now: number,
+): string | undefined {
+  const failure = readFailureText(query, now);
+  if (failure) return `Could not load the recipe attempt in this review link. ${failure}`;
+  const { state } = query;
+  if (
+    state.status === 'ready' &&
+    state.data &&
+    (frozen || !state.data.recipeRuns.some(({ id }) => id === attempt))
+  )
+    return 'The recipe attempt in this review link is unavailable.';
+  return undefined;
 }
 
 export interface InteractiveDevActionModel {

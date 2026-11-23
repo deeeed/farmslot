@@ -18,6 +18,7 @@ import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 
 import { ensureWorkerContinuationReady } from './continuation-ready.js';
 import {
+  agentBrowserSessionExport,
   blindLaunchEnvironment,
   buildRunnerSessionReloadCommand,
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
@@ -823,7 +824,7 @@ export async function reloadRunnerForPark(
     }
     promptAcceptanceBaselineMs = baseline;
     await ensureNodeSupportBundle(options.vars, handle.runtimeDir ?? '.agent');
-    command = `${WORKER_ENV_PREFIX} && ${buildRunnerSessionReloadCommand(
+    command = `${WORKER_ENV_PREFIX} && ${agentBrowserSessionExport(options.vars.slotId)} && ${buildRunnerSessionReloadCommand(
       options.vars,
       runnerId,
       handle.model,

@@ -149,13 +149,18 @@ export type PreparePhase = (typeof PREPARE_PHASES)[number];
  * hook, health_ok → health_check + ready_indicator pipeline,
  * artifact_available → artifact_check hook (a fast, seconds-scale probe that
  * reports whether the profile's prebuilt artifact could be resolved; failure
- * walks the profile's fallback).
+ * walks the profile's fallback), required_skills_present → every file the
+ * pack's `required_skills` rules name exists in the checkout (release clears the
+ * farm-owned paths that hold them and the deps phase restores them, so a profile
+ * that skips deps falls back to one that does rather than dispatching a run task
+ * init would refuse).
  */
 export const PREPARE_REQUIREMENTS = [
   'deps_current',
   'dev_server_up',
   'health_ok',
   'artifact_available',
+  'required_skills_present',
 ] as const;
 export type PrepareRequirement = (typeof PREPARE_REQUIREMENTS)[number];
 

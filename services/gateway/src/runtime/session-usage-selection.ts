@@ -3,9 +3,12 @@ import {
   primaryRoleForFlow,
   type Run,
   type RunnerSessionUsage,
+  sessionUsageIncludesPriorRun,
 } from '@farmslot/protocol';
+import { pipelineReviewReceipts } from '@farmslot/review-dispatch';
 
 import {
+  mergeRunSessionReceipts,
   registerContextSessionUsage,
   sessionUsageKey,
   upsertSessionUsage,
@@ -19,6 +22,18 @@ export const isHelperSession = (row: RunnerSessionUsage): boolean =>
 
 /** Canonical receipts first; old result/metric-only records remain readable. */
 export function allRunSessionUsageReceipts(run: Run): RunnerSessionUsage[] {
+  return sessionUsageInventory(run, []);
+}
+
+/** Family observability includes historical pipeline-only attempts. Gate reads use the ledger. */
+export function familyRunSessionUsageReceipts(run: Run): RunnerSessionUsage[] {
+  return sessionUsageInventory(run, pipelineReviewReceipts(run));
+}
+
+function sessionUsageInventory(
+  run: Run,
+  pipeline: readonly RunnerSessionUsage[],
+): RunnerSessionUsage[] {
   let rows = registerContextSessionUsage(run, run.updatedAt) ?? [];
   for (const review of run.engineState?.publishGate?.reviews ?? []) {
     if (!review.usage) continue;
@@ -37,6 +52,8 @@ export function allRunSessionUsageReceipts(run: Run): RunnerSessionUsage[] {
     };
     rows = sessionUsageKey(receipt) ? upsertSessionUsage(rows, receipt) : [...rows, receipt];
   }
+
+  if (pipeline.length) rows = mergeRunSessionReceipts(rows, pipeline);
 
   if (
     !rows.some(
@@ -114,7 +131,11 @@ export function allRunSessionUsageReceipts(run: Run): RunnerSessionUsage[] {
 
 /** Accounting accepts verified tokens or USD independently; inventories retain all rows. */
 export function runSessionUsageReceipts(run: Run): RunnerSessionUsage[] {
-  return allRunSessionUsageReceipts(run).filter(
+  return capturedSessionUsage(allRunSessionUsageReceipts(run));
+}
+
+export function capturedSessionUsage(rows: readonly RunnerSessionUsage[]): RunnerSessionUsage[] {
+  return rows.filter(
     (row) =>
       row.source !== 'unavailable' &&
       !row.error &&
@@ -122,8 +143,20 @@ export function runSessionUsageReceipts(run: Run): RunnerSessionUsage[] {
   );
 }
 
+/** Family totals use attributable receipts while keeping inherited captures in their inventory. */
+export function familySessionUsageContributions(
+  runs: readonly Run[],
+  inventory: (run: Run) => readonly RunnerSessionUsage[],
+) {
+  return sessionUsageContributions(runs, inventory, { omitInheritedLifetime: true });
+}
+
 /** Attribute only a conversation's growth to a later run; never sum warm snapshots. */
-export function sessionUsageContributions(runs: readonly Run[]): Map<string, RunnerSessionUsage[]> {
+export function sessionUsageContributions(
+  runs: readonly Run[],
+  inventory: (run: Run) => readonly RunnerSessionUsage[] = allRunSessionUsageReceipts,
+  options: { omitInheritedLifetime?: boolean } = {},
+): Map<string, RunnerSessionUsage[]> {
   const result = new Map<string, RunnerSessionUsage[]>();
   const counters = [
     'inputTokens',
@@ -136,11 +169,12 @@ export function sessionUsageContributions(runs: readonly Run[]): Map<string, Run
   ] as const;
   type Counter = (typeof counters)[number];
   const seen = new Map<string, Partial<Record<Counter, number>>>();
+  const unknownInheritedCost = new Set<string>();
   for (const run of [...runs].sort(
     (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
   )) {
     const contributions: RunnerSessionUsage[] = [];
-    for (const row of runSessionUsageReceipts(run)) {
+    for (const row of capturedSessionUsage(inventory(run))) {
       if (row.scope === 'run-delta') {
         const key = sessionUsageKey(row);
         if (key) {
@@ -156,6 +190,8 @@ export function sessionUsageContributions(runs: readonly Run[]): Map<string, Run
         continue;
       }
       const key = sessionUsageKey(row);
+      const inherited = options.omitInheritedLifetime && sessionUsageIncludesPriorRun(row);
+      if (key && inherited && row.costUsd == null) unknownInheritedCost.add(key);
       const previous = key ? seen.get(key) : undefined;
       const highWater = { ...previous };
       const contribution = { ...row };
@@ -166,12 +202,19 @@ export function sessionUsageContributions(runs: readonly Run[]): Map<string, Run
         const value = row[field];
         if (typeof value !== 'number' || !Number.isFinite(value)) continue;
         const before = previous?.[field];
+        if (field === 'costUsd' && key && unknownInheritedCost.delete(key)) {
+          // The first lifetime USD read after an unpriced inherited snapshot sets the baseline.
+          highWater[field] = before === undefined ? value : Math.max(before, value);
+          contribution.costUsd = null;
+          continue;
+        }
         contribution[field] = before === undefined ? value : Math.max(0, value - before);
         if (before === undefined || value > before) contributes = true;
         highWater[field] = before === undefined ? value : Math.max(before, value);
       }
       if (key) seen.set(key, highWater);
-      if (contributes) contributions.push(contribution);
+      // An inherited observation is still a high-water mark for the next receipt.
+      if (contributes && !inherited) contributions.push(contribution);
     }
     result.set(run.id, contributions);
   }

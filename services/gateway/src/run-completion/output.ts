@@ -15,9 +15,14 @@ import {
   runOutputReviewEnabled,
   type RunStatus,
 } from '@farmslot/protocol';
-import { parseRunBundleMissingData, waitForRunBundleQueueTurn } from '@farmslot/run-bundle';
+import {
+  isRunBundleMedia,
+  parseRunBundleMissingData,
+  waitForRunBundleQueueTurn,
+} from '@farmslot/run-bundle';
 
 import { GATEWAY_OWNED_DIFF_ARTIFACT_PATHS } from '../core/artifact-copy-policy.js';
+import { failedBeforeWorkerLaunch } from '../run-lifecycle/pre-worker-failure.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 
 import { type ArtifactMirrorOptions, refreshArtifactMirror } from './artifact-mirror.js';
@@ -225,13 +230,21 @@ export function captureRunOutput(
 
 /** Keep final raw artifacts without rewriting the report snapshot the person judged. */
 export function retainFinalRunArtifacts(runId: string): Promise<number> {
-  return queueOutputCapture(
-    runId,
-    Boolean(getRun(runId)?.slotId),
-    false,
-    { requireSourceArtifacts: true },
-    'final-result',
-  );
+  return queueOutputCapture(runId, Boolean(getRun(runId)?.slotId), false, {}, 'final-result');
+}
+
+/**
+ * Decided when the capture runs, after any queued capture committed: a missing source is a
+ * loss only once there was output to lose. A run that positively failed before its worker
+ * launched and retained nothing has no final result; an empty source then copies and
+ * prunes nothing, the gateway's mirrored task files are captured, and release can proceed.
+ */
+function finalResultMirrorOptions(run: Run): ArtifactMirrorOptions {
+  return failedBeforeWorkerLaunch(run) &&
+    !run.output?.artifactManifest.length &&
+    !run.output?.artifactBundle
+    ? { keepMirrorWithoutSource: true }
+    : { requireSourceArtifacts: true };
 }
 
 type CapturePurpose = 'snapshot' | 'final-result';
@@ -274,15 +287,48 @@ async function captureRunOutputNow(
   if (taskFile !== attempt.taskFile || generation !== attempt.generation)
     throw new Error('Run attempt changed while retrieving output; refresh the current attempt');
   const acquisition = options.acquisition ?? createRunArtifactAcquisition(run);
-  const copied =
-    mirror && !run.reviewWorkspace
-      ? await refreshArtifactMirror(run, { ...options, acquisition })
-      : 0;
+  let sourceEmpty = false;
+  const finalPolicy = purpose === 'final-result' ? finalResultMirrorOptions(run) : undefined;
+  const mirrorOptions: ArtifactMirrorOptions = finalPolicy?.keepMirrorWithoutSource
+    ? {
+        ...options,
+        ...finalPolicy,
+        onEmptySource: () => {
+          sourceEmpty = true;
+        },
+      }
+    : { ...options, ...finalPolicy };
+  let copied = 0;
+  if (mirror && !run.reviewWorkspace)
+    copied = await refreshArtifactMirror(run, { ...mirrorOptions, acquisition });
+  else mirrorOptions.onEmptySource?.();
+  const scanned = await scanArtifacts(path.dirname(taskFile));
+  // A retried release must not replace what an earlier final retention kept (media can be
+  // acquired straight into that bundle and its staging copy removed) with a capture of a
+  // source the mirror found empty or could not inspect. A retained capture removes its
+  // media from the gateway task, so media still there was not retained: rather than a
+  // replacement that could drop what the earlier bundle kept, release stops and holds it.
+  if (sourceEmpty && run.artifactBundle) {
+    const media = scanned.filter((artifact) => isRunBundleMedia(artifact.path));
+    // Authored tasks outside the managed roots keep their media after a retained capture,
+    // so a file counts as retained when the earlier bundle holds the same bytes.
+    const kept = media.length
+      ? new Map(
+          (await retainedRunArtifactManifest(run, run.artifactBundle))
+            .filter((entry) => entry.availability === 'available')
+            .map((entry) => [entry.path, entry.sha256]),
+        )
+      : new Map<string, string | undefined>();
+    const unretained = media.filter(
+      (artifact) => !artifact.sha256 || kept.get(artifact.path) !== artifact.sha256,
+    );
+    if (unretained.length === 0) return 0;
+    throw new Error(
+      `Final result artifacts were not retained: ${unretained.map((artifact) => artifact.path).join(', ')} remain in the gateway task after an earlier final retention`,
+    );
+  }
   const artifactsByPath = new Map(
-    [...(await scanArtifacts(path.dirname(taskFile))), ...acquisition.media].map((artifact) => [
-      artifact.path,
-      artifact,
-    ]),
+    [...scanned, ...acquisition.media].map((artifact) => [artifact.path, artifact]),
   );
   if (workerFinished || options.forPublication) {
     let selection: Awaited<ReturnType<typeof resolvePublicationManifest>> = null;

@@ -19,6 +19,7 @@ export * from './review-history-content.js';
 export * from './review-history-timeline.js';
 export * from './run-activity.js';
 export * from './run-checklist-progress.js';
+export * from './run-cost.js';
 export * from './run-results.js';
 export * from './run-review-failures.js';
 export * from './types.js';

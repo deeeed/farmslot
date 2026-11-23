@@ -92,3 +92,45 @@ test('ancestry decoding preserves legacy updates and validates active identity a
     assert.equal(isRecipeFlowUpdate({ ...legacy, ancestry: invalid }), false);
   assert.equal(isRecipeFlowUpdate({ ...legacy, activeId: null, ancestry }), false);
 });
+
+test('timing decoding preserves measured zero and separately qualified unknown self', () => {
+  const update: RecipeFlowUpdate = {
+    version: 1,
+    recipeRunId: 'execution',
+    rootId: '$root',
+    activeId: null,
+    progress: { current: 1, completed: 1, total: 1, remaining: 0, qualification: 'exact' },
+    timing: {
+      scope: 'all',
+      nodes: {
+        $root: {
+          inclusiveMs: 10,
+          selfMs: null,
+          qualification: { inclusive: 'measured', self: 'unknown' },
+        },
+      },
+      claimTimings: {},
+      unassignedTiming: { durationMs: 0, qualification: 'measured', invocationIds: ['zero'] },
+    },
+  };
+  assert.equal(isRecipeFlowUpdate(update), true);
+  const original = update.timing!;
+  assert.equal(
+    isRecipeFlowUpdate({ ...update, timing: { scope: 'active', nodes: original.nodes } }),
+    true,
+  );
+  assert.equal(
+    isRecipeFlowUpdate({ ...update, timing: { scope: 'all', nodes: original.nodes } }),
+    false,
+  );
+  for (const bad of [
+    { inclusiveMs: -1, selfMs: null, qualification: { inclusive: 'measured', self: 'unknown' } },
+    { inclusiveMs: null, selfMs: null, qualification: { inclusive: 'measured', self: 'unknown' } },
+    { inclusiveMs: 10, selfMs: 11, qualification: { inclusive: 'measured', self: 'measured' } },
+    { inclusiveMs: 10, selfMs: 0, qualification: { inclusive: 'measured', self: 'unknown' } },
+  ])
+    assert.equal(
+      isRecipeFlowUpdate({ ...update, timing: { ...original, nodes: { $root: bad } } }),
+      false,
+    );
+});

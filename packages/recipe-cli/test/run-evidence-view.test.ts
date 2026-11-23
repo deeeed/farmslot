@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { EventEmitter, once } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,10 +8,16 @@ import test, { type TestContext } from 'node:test';
 
 import { createEvidenceReviewModel, runEvidenceView } from '@farmslot/adapter-sdk/evidence';
 import {
+  isRecipeFlowUpdate,
+  isRecord,
   RECIPE_ACTION_MANIFEST_SCHEMA_URL,
   type RecordedEvidencePackageInput,
 } from '@farmslot/protocol';
-import { createRecipeRunner, createStandardCoreAdapters } from '@farmslot/recipe-runner';
+import {
+  createRecipeRunner,
+  createStandardCoreAdapters,
+  RECIPE_PENDING_FLOW_FILE,
+} from '@farmslot/recipe-runner';
 
 import { serveRunEvidence } from '../src/harness/commands/view.js';
 import { resolveProjectContext, resolveProjectViewer } from '../src/harness/context.js';
@@ -412,8 +419,21 @@ test('recipe view serves a read-only page, the files and the view-model of one r
   const server = await serveRunEvidence({ dir });
   t.after(() => server.close());
   assert.match(server.url, /^http:\/\/127\.0\.0\.1:\d+\/runs\/proof-1\/$/u);
-  const page = await get(server.url);
+  const nested = path.join(dir, 'resolved-recipes');
+  fs.mkdirSync(nested, { recursive: true });
+  let signatureScans = 0;
+  const readdir = fs.readdirSync;
+  const readDirectories = t.mock.method(
+    fs,
+    'readdirSync',
+    (...args: Parameters<typeof readdir>) => {
+      if (args[0] === nested) signatureScans++;
+      return readdir(...args);
+    },
+  );
+  const page = await get(server.url).finally(() => readDirectories.mock.restore());
   assert.equal(page.status, 200);
+  assert.equal(signatureScans, 0, 'completed HTML pages skip the live folder signature');
   assert.match(page.body, /<code>check-1<\/code>/u);
   assert.match(page.body, /data-seek-video="video\.mp4" data-seek-ms="0"/u);
   assert.match(page.body, /id="step-1"/u);
@@ -509,4 +529,367 @@ test('criterion text is escaped on the page', async (t) => {
   const body = (await get(server.url)).body;
   assert.doesNotMatch(body, /<img src=x/u);
   assert.match(body, /&lt;img src=x onerror=alert\(1\)&gt;/u);
+});
+
+test(
+  'a HUD-disabled active run reaches the pending flow reader before trace completion',
+  { timeout: 2000 },
+  async (t) => {
+    const root = runsRoot(t);
+    const artifactsDir = path.join(root, 'active-run');
+    const events = new EventEmitter();
+    const entered = once(events, 'entered');
+    const release = once(events, 'release');
+    const runner = createRecipeRunner({
+      actionManifest: {
+        $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+        actions: {
+          'app.status': {
+            description: 'Hold the active fixture node.',
+            schema: { type: 'object', properties: {}, additionalProperties: false },
+            examples: [{ action: 'app.status', intent: 'Read current status.', next: 'done' }],
+          },
+          end: { description: 'Finish.', examples: [{ action: 'end', status: 'pass' }] },
+        },
+      },
+      hud: false,
+      defaultSource: { kind: 'operator', trust: 'trusted' },
+      adapters: [
+        {
+          action: 'app.status',
+          source: { kind: 'bundled', trust: 'trusted' },
+          async execute() {
+            events.emit('entered');
+            await release;
+            return { output: { ready: true } };
+          },
+        },
+      ],
+    });
+    const running = runner.run({
+      recipeDocument: {
+        $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+        title: 'Read active flow without HUD.',
+        workflow: {
+          entry: 'hold',
+          nodes: {
+            hold: { action: 'app.status', intent: 'Read status.', next: 'done' },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+      projectRoot: root,
+      artifactsDir,
+      recordVideo: false,
+      recordingReason: 'Headless flow fixture has no recording.',
+    });
+    try {
+      await Promise.race([
+        entered,
+        running.then(() => assert.fail('run finished before the active probe')),
+      ]);
+      const view = await readRunEvidenceView(artifactsDir);
+      assert.equal(view.run?.status, 'running');
+      assert.equal(
+        view.steps.length,
+        0,
+        'the held action has not recorded a completed trace entry',
+      );
+      assert.ok(
+        view.flow,
+        'a live producer update must reach the shared reader independently of HUD',
+      );
+      const invocation = JSON.parse(
+        fs.readFileSync(path.join(artifactsDir, 'recipe-invocation.json'), 'utf8'),
+      );
+      assert.equal(view.flow.recipeRunId, invocation.recipeRunId);
+      assert.equal(view.flow.activeId, 'hold');
+    } finally {
+      events.emit('release');
+      await running;
+    }
+  },
+);
+
+test(
+  'HUD-off pending flow follows repeated calls, a branch, and teardown',
+  { timeout: 4000 },
+  async (t) => {
+    const root = runsRoot(t);
+    const artifactsDir = path.join(root, 'composed-run');
+    const events = new EventEmitter();
+    let entered = once(events, 'entered');
+    let releaseAll = false;
+    const schema = 'https://farmslot.io/schemas/recipe-v1.schema.json';
+    const end = { action: 'end', status: 'pass' };
+    const action = { action: 'example.observe', intent: 'Read fixture status.' };
+    const library = writeRun(root, 'library', {
+      'recipes/child.recipe.json': JSON.stringify({
+        $schema: schema,
+        title: 'Read the nested status.',
+        workflow: {
+          entry: 'observe',
+          nodes: {
+            observe: { ...action, cases: { match: 'done' }, default: 'skipped' },
+            skipped: { ...action, next: 'done' },
+            done: end,
+          },
+        },
+      }),
+    });
+    const runner = createRecipeRunner({
+      actionManifest: {
+        $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+        actions: {
+          'example.observe': {
+            description: 'Read fixture status.',
+            execution_capabilities: [],
+            schema: { type: 'object', properties: {}, additionalProperties: false },
+            result_cases: ['match'],
+            examples: [{ ...action, next: 'done' }],
+          },
+          call: {
+            description: 'Run the child.',
+            examples: [{ action: 'call', ref: 'child', intent: 'Run the child.', next: 'done' }],
+          },
+          end: { description: 'Finish.', examples: [end] },
+        },
+      },
+      hud: false,
+      defaultSource: { kind: 'operator', trust: 'trusted' },
+      adapters: [
+        {
+          action: action.action,
+          source: { kind: 'bundled', trust: 'trusted' },
+          async execute(node, context) {
+            if (!releaseAll) {
+              const release = once(events, 'release');
+              events.emit('entered', context.nodeId);
+              await release;
+            }
+            return node.cases ? { case: 'match' } : {};
+          },
+        },
+      ],
+    });
+    const running = runner.run({
+      recipeDocument: {
+        $schema: schema,
+        title: 'Run the child twice, then clean up.',
+        workflow: {
+          entry: 'first',
+          teardown: 'cleanup',
+          nodes: {
+            first: { action: 'call', ref: 'child', intent: 'Run the first child.', next: 'second' },
+            second: { action: 'call', ref: 'child', intent: 'Run the second child.', next: 'done' },
+            done: end,
+            cleanup: { ...action, next: 'cleaned' },
+            cleaned: end,
+          },
+        },
+      },
+      projectRoot: root,
+      artifactsDir,
+      librarySources: [{ root: library, provenance: { kind: 'library', trust: 'trusted' } }],
+      recordVideo: false,
+      recordingReason: 'Headless flow fixture has no recording.',
+    });
+    const pendingFile = path.join(artifactsDir, RECIPE_PENDING_FLOW_FILE);
+    try {
+      const readActive = async (expected: string) => {
+        const [nodeId] = await Promise.race([
+          entered,
+          running.then(() => assert.fail('run finished before the active probe')),
+        ]);
+        assert.equal(nodeId, expected);
+        const view = await readRunEvidenceView(artifactsDir);
+        assert.equal(view.run?.status, 'running');
+        assert.equal(view.flow?.activeId, expected);
+        return view;
+      };
+      const advance = () => {
+        entered = once(events, 'entered');
+        events.emit('release');
+      };
+      const first = await readActive('first/observe');
+      assert.equal(first.steps.length, 0);
+      assert.deepEqual(first.flow?.nodes.find(({ id }) => id === 'first/observe')?.breadcrumbIds, [
+        '$root',
+        'first',
+        'first/observe',
+      ]);
+      assert.equal(first.flow?.progress.total, null);
+      const snapshot = fs.readFileSync(pendingFile, 'utf8');
+      const update: unknown = JSON.parse(snapshot);
+      assert.ok(isRecipeFlowUpdate(update));
+      const fixedTime = new Date('2026-01-01T00:00:00.000Z');
+      fs.utimesSync(pendingFile, fixedTime, fixedTime);
+      const signature = runEvidenceSignature(artifactsDir);
+      const swap = path.join(artifactsDir, 'fixture-flow-swap.json');
+      const foreignId =
+        (update.recipeRunId.startsWith('a') ? 'b' : 'a') + update.recipeRunId.slice(1);
+      const foreignSnapshot = JSON.stringify({ ...update, recipeRunId: foreignId }, null, 2) + '\n';
+      assert.equal(Buffer.byteLength(foreignSnapshot), Buffer.byteLength(snapshot));
+      fs.writeFileSync(swap, foreignSnapshot);
+      fs.utimesSync(swap, fixedTime, fixedTime);
+      assert.equal(fs.statSync(swap).mtimeMs, fs.statSync(pendingFile).mtimeMs);
+      fs.renameSync(swap, pendingFile);
+      assert.notEqual(runEvidenceSignature(artifactsDir), signature);
+      const stale = await readRunEvidenceView(artifactsDir);
+      assert.equal(stale.flow, null);
+      assert.deepEqual(stale.steps, first.steps);
+      assert.notEqual(stale.updateId, first.updateId);
+      fs.writeFileSync(pendingFile, snapshot);
+      assert.equal((await readRunEvidenceView(artifactsDir)).updateId, first.updateId);
+
+      const resolutionFile = path.join(artifactsDir, 'recipe-resolution.json');
+      const resolutionText = fs.readFileSync(resolutionFile, 'utf8');
+      const resolution: unknown = JSON.parse(resolutionText);
+      assert.ok(isRecord(resolution) && isRecord(resolution.root));
+      fs.writeFileSync(
+        resolutionFile,
+        JSON.stringify({ ...resolution, root: { ...resolution.root, digest: 'foreign-digest' } }),
+      );
+      assert.equal((await readRunEvidenceView(artifactsDir)).flow, null);
+      fs.writeFileSync(resolutionFile, resolutionText);
+
+      const server = await serveRunEvidence({ dir: artifactsDir });
+      t.after(() => server.close());
+      const traceFile = path.join(artifactsDir, 'trace.json');
+      fs.writeFileSync(
+        swap,
+        JSON.stringify({
+          ...update,
+          activeId: null,
+          ancestry: null,
+          progress: { ...update.progress, current: update.progress.completed },
+        }),
+      );
+      const pageVersion = runEvidenceSignature(artifactsDir);
+      const readFile = fs.readFileSync;
+      let advancedDuringRead = false;
+      const duringRead = t.mock.method(
+        fs,
+        'readFileSync',
+        (...args: Parameters<typeof readFile>) => {
+          if (args[0] === traceFile && !advancedDuringRead) {
+            fs.renameSync(swap, pendingFile);
+            advancedDuringRead = true;
+          }
+          return readFile(...args);
+        },
+      );
+      try {
+        const response = await fetch(server.url);
+        assert.equal(response.status, 200);
+        const page = await response.text();
+        assert.equal(advancedDuringRead, true);
+        assert.ok(
+          page.includes(`data-version="${pageVersion}"`),
+          'page must keep its pre-read version',
+        );
+        const live = await fetch(new URL('version', server.url));
+        assert.notEqual(await live.text(), pageVersion);
+        assert.equal((await readRunEvidenceView(artifactsDir)).flow?.activeId, null);
+      } finally {
+        duringRead.mock.restore();
+        fs.writeFileSync(pendingFile, snapshot);
+      }
+
+      advance();
+      const second = await readActive('second/observe');
+      assert.equal(second.flow?.recipeRunId, first.flow?.recipeRunId);
+      assert.equal(second.flow?.nodes.find(({ id }) => id === 'first/skipped')?.status, 'skipped');
+      assert.equal(second.flow?.progress.completed, 1);
+
+      advance();
+      const cleanup = await readActive('cleanup');
+      assert.equal(
+        cleanup.flow?.nodes.find(({ id }) => id === 'second/skipped')?.status,
+        'skipped',
+      );
+      assert.equal(cleanup.flow?.progress.completed, 2);
+    } finally {
+      releaseAll = true;
+      events.emit('release');
+      await running;
+    }
+    assert.equal(fs.existsSync(pendingFile), false);
+    const complete = await readRunEvidenceView(artifactsDir);
+    assert.equal(complete.run?.status, 'pass');
+    assert.equal(complete.flow?.activeId, null);
+    assert.equal(complete.flow?.progress.completed, 3);
+  },
+);
+
+test('a recipe-flow.json report survives HUD-off artifact closeout', async (t) => {
+  const root = runsRoot(t);
+  const artifactsDir = path.join(root, 'report-run');
+  const report = '{"report":"authored recipe flow"}\n';
+  fs.writeFileSync(path.join(root, 'recipe-flow.json'), report);
+  const index = {
+    action: 'index_artifacts',
+    intent: 'Retain the author report.',
+    artifacts: ['recipe-flow.json'],
+    next: 'done',
+  };
+  const end = { action: 'end', status: 'pass' };
+  const runner = createRecipeRunner({
+    actionManifest: {
+      $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+      actions: {
+        index_artifacts: {
+          description: 'Index the author report.',
+          schema: {
+            type: 'object',
+            required: ['artifacts'],
+            properties: { artifacts: { type: 'array', items: { type: 'string' } } },
+            additionalProperties: false,
+          },
+          examples: [index],
+        },
+        end: { description: 'Finish.', examples: [end] },
+      },
+    },
+    hud: false,
+    defaultSource: { kind: 'operator', trust: 'trusted' },
+    adapters: createStandardCoreAdapters().filter(({ action }) => action === 'index_artifacts'),
+  });
+  const recipeDocument = {
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    title: 'Retain the author report.',
+    workflow: { entry: 'index', nodes: { index, done: end } },
+  };
+  const result = await runner.run({ recipeDocument, projectRoot: root, artifactsDir });
+  assert.equal(result.status, 'pass');
+  assert.equal(fs.readFileSync(path.join(artifactsDir, 'recipe-flow.json'), 'utf8'), report);
+  assert.match(fs.readFileSync(result.artifactManifestPath, 'utf8'), /"path": "recipe-flow.json"/u);
+
+  for (const name of [RECIPE_PENDING_FLOW_FILE, `${RECIPE_PENDING_FLOW_FILE}.partial`]) {
+    const alias = name.toUpperCase();
+    fs.writeFileSync(path.join(root, alias), report);
+    const denied = await runner.run({
+      recipeDocument: {
+        ...recipeDocument,
+        workflow: {
+          ...recipeDocument.workflow,
+          nodes: { index: { ...index, artifacts: [alias] }, done: end },
+        },
+      },
+      projectRoot: root,
+      artifactsDir: path.join(root, `denied-${alias}`),
+    });
+    assert.equal(denied.status, 'fail', 'pending flow names are reserved across case variants');
+    assert.match(fs.readFileSync(denied.tracePath, 'utf8'), /reserved for pending recipe flow/u);
+    assert.equal(fs.readFileSync(path.join(root, alias), 'utf8'), report);
+
+    const occupied = path.join(root, `occupied-${alias}`);
+    fs.mkdirSync(occupied);
+    fs.writeFileSync(path.join(occupied, alias), report);
+    await assert.rejects(
+      runner.run({ recipeDocument, projectRoot: root, artifactsDir: occupied }),
+      /already contains a retained attempt/u,
+    );
+    assert.equal(fs.readFileSync(path.join(occupied, alias), 'utf8'), report);
+  }
 });

@@ -11,7 +11,10 @@ import {
 
 import { createStandardCoreAdapters } from '../src/adapters/core.js';
 import { createRecipeRunner } from '../src/core/runner.js';
-import { occurrenceRecordingCoverage } from '../src/evidence/moments.js';
+import {
+  indexOccurrenceRecordingCoverage,
+  occurrenceRecordingCoverage,
+} from '../src/evidence/moments.js';
 
 // TAT-4355 f84790b3: the last two assertion ranges overran the original video.
 const originalDurationMs = 36_006.667;
@@ -168,3 +171,40 @@ for (const continuousSegments of [false, true]) {
     }
   });
 }
+
+test('indexed recording coverage preserves gaps, spanning markers and untimed fallback', () => {
+  const timeline = (
+    videoPath: string,
+    startRangeMs: [number, number],
+    endRangeMs: [number, number],
+  ): RecipeRecordingTimelineDocument => ({
+    version: 1,
+    videoPath,
+    videoDigest: 'digest',
+    traceDigest: 'trace',
+    durationMs: 10,
+    framesMs: [0, 9],
+    clock: { source: 'clock', earliestZeroUnixMs: 0, latestZeroUnixMs: 0 },
+    markers: [
+      { traceIndex: 0, nodeId: 'step', action: 'assert', ok: true, startRangeMs, endRangeMs },
+    ],
+  });
+  const timelines = new Map([
+    ['first', timeline('first', [9, 9], [11, 11])],
+    ['second', timeline('second', [-1, -1], [1, 1])],
+  ]);
+  for (const gapBefore of [false, true]) {
+    const segments = [
+      { videoPath: 'first', videoDigest: 'digest' },
+      { videoPath: 'second', videoDigest: 'digest', gapBefore },
+      { videoPath: 'untimed', videoDigest: 'digest' },
+    ];
+    const indexed = indexOccurrenceRecordingCoverage(segments, timelines);
+    for (const traceIndex of [0, 1])
+      assert.deepEqual(
+        indexed(traceIndex),
+        occurrenceRecordingCoverage(traceIndex, segments, timelines),
+      );
+    assert.equal(indexed(0).timing, gapBefore ? 'untimed' : 'measured');
+  }
+});

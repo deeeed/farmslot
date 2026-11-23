@@ -4,13 +4,21 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { digestRecipeDocument, RECIPE_ACTION_MANIFEST_SCHEMA_URL } from '@farmslot/protocol';
+import {
+  digestRecipeDocument,
+  isRecord,
+  RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+  validateRecipeArtifactPackage,
+} from '@farmslot/protocol';
 
 import { createStandardCoreAdapters } from '../src/adapters/core.js';
 import { createStandardUiAdapters } from '../src/adapters/ui.js';
 import { RecipeExecutionError, RUNTIME_CONNECTION_CLOSED } from '../src/core/failure.js';
 import { createRecipeRunner } from '../src/core/runner.js';
+import { readRecordedEvidencePackage } from '../src/evidence/read-package.js';
 import { loneCaptureInterruption } from '../src/recording/capture-helper-interruption.js';
+
+import { framePng } from './fixtures/png.js';
 
 const manifest = {
   $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
@@ -344,5 +352,142 @@ for (const outcome of ['start-failed', 'cancelled', 'headless'] as const) {
       result.claims.recording.status,
       outcome === 'headless' ? 'not-required' : 'failed',
     );
+  });
+}
+
+for (const hudAvailable of [true, false]) {
+  test(`a recorded failing UI assertion ${hudAvailable ? 'paints failure before its still and closes timing' : 'retains a valid package after persistent HUD failure'}`, async (t) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'failed-ui-hud-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const events: string[] = [];
+    let lastHud = 'unavailable';
+    const updates: Record<string, unknown>[] = [];
+    const runner = createRecipeRunner({
+      actionManifest: {
+        ...manifest,
+        actions: {
+          ...manifest.actions,
+          'ui.wait_for': {
+            description: 'Check visible fixture control',
+            schema: {
+              type: 'object',
+              properties: { selector: { type: 'string' } },
+              additionalProperties: false,
+            },
+            examples: [
+              {
+                action: 'ui.wait_for',
+                intent: 'Check fixture',
+                selector: '#expected',
+                next: 'done',
+              },
+            ],
+          },
+        },
+      },
+      defaultSource: { kind: 'operator', trust: 'trusted' },
+      adapters: createStandardUiAdapters({
+        actions: ['ui.wait_for', 'app.hud'],
+        transport: {
+          async execute(action, node) {
+            if (action === 'ui.wait_for') throw new Error('Fixture control is absent');
+            if (!hudAvailable && node.status === 'fail') {
+              events.push('hud:refused');
+              throw new Error('Fixture persistent HUD disconnect');
+            }
+            lastHud = String(node.status);
+            events.push(`hud:${lastHud}${node.phase === 'complete' ? ':complete' : ''}`);
+            updates.push(structuredClone(node));
+            return {};
+          },
+        },
+      }).map((adapter) => ({ ...adapter, source: { kind: 'bundled', trust: 'trusted' } })),
+      recording: {
+        videoRecorder: {
+          name: 'unit-fixture',
+          async start(request) {
+            return {
+              async snapshot(file) {
+                events.push(`snapshot:${lastHud}`);
+                await writeFile(file, framePng());
+                return { provider: 'unit-fixture', sourceTimestampMs: Date.now(), segmentIndex: 0 };
+              },
+              async stop() {
+                await writeFile(request.outputPath, 'unit-fixture-video');
+                return {
+                  segments: [
+                    {
+                      path: path.basename(request.outputPath),
+                      timingUnavailableReason: 'Unit fixture has no media clock',
+                    },
+                  ],
+                };
+              },
+            };
+          },
+        },
+      },
+    });
+    const result = await runner.run({
+      recipeDocument: {
+        ...recipe,
+        workflow: {
+          entry: 'expect_control',
+          nodes: {
+            expect_control: {
+              action: 'ui.wait_for',
+              intent: 'Verify the fixture control',
+              selector: '#expected',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+      projectRoot: root,
+      artifactsDir: path.join(root, 'artifacts'),
+      recordVideo: { target: { kind: 'pid', pid: 123 }, stillFormat: 'png' },
+    });
+    assert.equal(result.status, 'fail');
+    if (hudAvailable)
+      assert.deepEqual(events.slice(0, 4), [
+        'hud:running',
+        'hud:fail',
+        'snapshot:fail',
+        'hud:fail',
+      ]);
+    else assert.deepEqual(events.slice(0, 3), ['hud:running', 'hud:refused', 'snapshot:running']);
+    const summary = JSON.parse(await readFile(result.summaryPath, 'utf8'));
+    const trace = JSON.parse(await readFile(result.tracePath, 'utf8'));
+    const entries = Array.isArray(trace) ? trace : trace.entries;
+    const entryIndex = entries.findIndex(
+      (entry: { nodeId: string }) => entry.nodeId === 'expect_control',
+    );
+    const artifacts = JSON.parse(await readFile(result.artifactManifestPath, 'utf8'));
+    const still = artifacts.artifacts.find(
+      (entry: { type: string; nodeId: string }) =>
+        entry.type === 'screenshot' && entry.nodeId === 'expect_control',
+    );
+    assert.equal(still.metadata.recordedEvidence.traceIndex, entryIndex);
+    if (!hudAvailable) {
+      assert.equal(
+        entries.filter((entry: { nodeId: string }) => entry.nodeId === 'expect_control:hud:fail')
+          .length,
+        1,
+      );
+      const read = await readRecordedEvidencePackage(path.dirname(result.summaryPath));
+      const validation = validateRecipeArtifactPackage(read.input);
+      assert.equal(validation.status, 'valid', JSON.stringify(validation.findings));
+      assert.equal(summary.flow.timing.nodes.expect_control.qualification.inclusive, 'measured');
+      return;
+    }
+    const completed = updates
+      .filter((update) => update.status === 'fail' && update.phase !== 'complete')
+      .at(-1)!;
+    assert.ok(isRecord(completed.recipe_flow) && isRecord(completed.recipe_flow.timing));
+    const timing = completed.recipe_flow.timing;
+    assert.ok(isRecord(timing.nodes));
+    assert.deepEqual(timing.nodes.expect_control, summary.flow.timing.nodes.expect_control);
+    assert.equal(summary.flow.timing.nodes.expect_control.qualification.inclusive, 'measured');
   });
 }

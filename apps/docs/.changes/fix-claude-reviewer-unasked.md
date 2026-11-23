@@ -1,0 +1,1 @@
+- The agent-runtime reference says native Claude reviewers skip permission prompts, so the sandboxed tier no longer constrains them.

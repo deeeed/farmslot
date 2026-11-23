@@ -1,11 +1,10 @@
 {
-  "version": "0.39.9",
-  "date": "2026-11-18",
+  "version": "0.39.11",
+  "date": "2026-11-21",
   "items": [
-    "Review holds and spent fix budgets stay amber instead of appearing as failures.",
-    "The recipe SDK exposes labeled ancestry for nested and repeated calls.",
-    "Static reviews can load a project rule pack and record its digest in the review handoff.",
-    "Session recovery resumes PI workers by saved transcript and refuses missing or empty history.",
-    "Publication verifies the selected recipe attempt's task actions while preserving older attempts."
+    "Keep the run detail accounting revision stable through unrelated progress updates",
+    "Run Detail can read the active, run-owned recipe flow before its first trace step, including with HUD disabled",
+    "Price remote tmux Pi LiteLLM receipts from gateway rates only when a completed turn matches a direct request to the pricing endpoint. Keep tokens and provider-reported charges. Older transcripts and replies without verified route evidence remain unpriced, with no lookup on the remote node",
+    "Reattach worker terminals to a verified session and pane instead of reusing detached clients"
   ]
 }

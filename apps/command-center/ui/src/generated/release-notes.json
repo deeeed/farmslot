@@ -1,11 +1,11 @@
 {
-  "version": "0.36.9",
-  "date": "2026-11-18",
+  "version": "0.36.11",
+  "date": "2026-11-21",
   "items": [
-    "Review holds and spent fix budgets stay amber instead of appearing as failures.",
-    "The recipe SDK exposes labeled ancestry for nested and repeated calls.",
-    "Static reviews can load a project rule pack and record its digest in the review handoff.",
-    "Session recovery resumes PI workers by saved transcript and refuses missing or empty history.",
-    "Publication verifies the selected recipe attempt's task actions while preserving older attempts."
+    "View the full execution timeline in evidence review, including setup and steps with no verified video position",
+    "View the known run cost by phase, receipt coverage, and verified costs for individual review rounds",
+    "View inclusive and self timing, criterion rollups, and unassigned time in composed recipe evidence",
+    "View the active recipe flow in Run Detail while a recipe runs, before its first step completes",
+    "Keep worker terminals, Sessions layout and End session focus steady during inventory refreshes"
   ]
 }

@@ -251,7 +251,13 @@
                 "uniqueItems": true,
                 "items": {
                   "type": "string",
-                  "enum": ["deps_current", "dev_server_up", "health_ok", "artifact_available"]
+                  "enum": [
+                    "deps_current",
+                    "dev_server_up",
+                    "health_ok",
+                    "artifact_available",
+                    "required_skills_present"
+                  ]
                 },
                 "description": "Framework precondition checks that must pass before this profile runs. Any failure falls back to the profile named in 'fallback'."
               },
@@ -1949,7 +1955,7 @@
                 },
                 "port": {
                   "type": "string",
-                  "description": "Port to check (for port-listen type)."
+                  "description": "Port to check (for port-listen type). For pid-file, the optional port the process serves: the idle dev-server cap uses it to verify a PID-file process after a gateway restart."
                 },
                 "cmd": {
                   "type": "string",

@@ -28,6 +28,21 @@ export interface NativeSessionUsageRequest {
   parentChecklistMarks?: ChecklistMark[];
 }
 
+/** Gateway LiteLLM prices bound to the endpoint they were loaded from (`liteLlmEndpointId`). */
+export interface LiteLlmRouteRates {
+  endpointId: string;
+  prices: Array<[string, PiModelCostMetadata]>;
+}
+
+/**
+ * A tmux Pi receipt's gateway pricing. `liteLlmPrices` is empty so a node without route binding
+ * leaves LiteLLM turns unpriced; `liteLlmRoute` prices the turns whose request entry recorded it.
+ */
+export interface TmuxPiReceiptPricing {
+  liteLlmPrices: [];
+  liteLlmRoute?: LiteLlmRouteRates;
+}
+
 const SESSION_USAGE_MODULE = String.raw`
 import { access, realpath } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -215,6 +230,7 @@ async function contextFor(request) {
     if (!Number.isFinite(start) || (end !== undefined && (!Number.isFinite(end) || end < start)))
       throw Error('Native usage journal has invalid command timestamps');
     matched.usageWindow = { startedAt: new Date(start).toISOString(), ...(end === undefined ? {} : { completedAt: new Date(end).toISOString() }) };
+    matched.capturedLeaseIds = [...new Set(submissions.slice(first, next < 0 ? undefined : next).map(event => commands.get(event.commandId)))];
   }
   return matched;
 }
@@ -277,9 +293,11 @@ const measured = new Map();
 const results = [];
 for (const request of input) {
   let usageWindow;
+  let capturedLeaseIds;
   try {
     const context = await contextFor(request);
     usageWindow = context.usageWindow || request.usageWindow;
+    capturedLeaseIds = context.capturedLeaseIds;
     const file = await locate(request, context);
     const key = JSON.stringify([request.provider, request.runnerSessionId, file, request.liteLlmPrices, usageWindow, request.checklistMarks]);
     let output = measured.get(key);
@@ -289,8 +307,8 @@ for (const request of input) {
         throw Error('Installed accounting module did not apply the requested run usage window');
       measured.set(key, output);
     }
-    results.push({ key: request.key, runnerSessionId: request.runnerSessionId, sessionPath: file, output, usageWindow });
-  } catch (error) { results.push({ key: request.key, runnerSessionId: request.runnerSessionId, error: error.message, usageWindow }); }
+    results.push({ key: request.key, runnerSessionId: request.runnerSessionId, sessionPath: file, output, usageWindow, capturedLeaseIds });
+  } catch (error) { results.push({ key: request.key, runnerSessionId: request.runnerSessionId, error: error.message, usageWindow, capturedLeaseIds }); }
 }
 const maxBytes = Number(process.argv[3]);
 let output = JSON.stringify(results);
@@ -347,6 +365,7 @@ export function forcedSessionUsageArgv(
   modulePath?: string,
   checklistMarks?: ChecklistMark[],
   receiptBudget?: { maxBytes: number; parentChecklistMarks?: ChecklistMark[] },
+  pricing?: TmuxPiReceiptPricing,
 ): string[] {
   // Most parent marks are already in the expanded list. Keep references to
   // those marks so they do not double the remote shell argument on large ledgers.
@@ -361,7 +380,7 @@ export function forcedSessionUsageArgv(
 const input = JSON.parse(process.argv[1]);
 
 try {
-  const options = { repo: '', slotId: input.slotId, action: 'total', forcedPath: input.sessionPath, forcedRunner: input.runner, checklistMarks: input.checklistMarks };
+  const options = { repo: '', slotId: input.slotId, action: 'total', forcedPath: input.sessionPath, forcedRunner: input.runner, checklistMarks: input.checklistMarks, ...(input.liteLlmPrices ? { liteLlmPrices: new Map(input.liteLlmPrices) } : {}), ...(input.liteLlmRoute ? { liteLlmRoute: { endpointId: input.liteLlmRoute.endpointId, prices: new Map(input.liteLlmRoute.prices) } } : {}) };
   let output = await runSessionUsage(options);
   if (input.receiptBudget && exceedsBudget(output, input.receiptBudget.maxBytes)) {
     const marks = parentMarks(input.receiptBudget.parentChecklistMarks, input.checklistMarks);
@@ -387,7 +406,14 @@ try {
     '--input-type=module',
     '-e',
     program,
-    JSON.stringify({ slotId, runner, sessionPath, checklistMarks, receiptBudget: budget }),
+    JSON.stringify({
+      slotId,
+      runner,
+      sessionPath,
+      checklistMarks,
+      receiptBudget: budget,
+      ...pricing,
+    }),
     modulePath ?? '',
   ];
 }

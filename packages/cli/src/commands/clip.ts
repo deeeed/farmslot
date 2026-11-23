@@ -65,15 +65,23 @@ export function clipPushParams(
 }
 
 /**
+ * tmux arguments that name this pane's session. Claude workers start without a
+ * default-socket TMUX (so iTerm's agent hook exits), so TMUX_PANE alone also counts.
+ */
+export function tmuxSessionArgs(env: NodeJS.ProcessEnv): string[] | undefined {
+  const pane = env.TMUX_PANE && /^%\d+$/.test(env.TMUX_PANE) ? env.TMUX_PANE : undefined;
+  if (!env.TMUX && !pane) return undefined;
+  return ['display-message', '-p', ...(pane ? ['-t', pane] : []), '#S'];
+}
+
+/**
  * The tmux session this command runs in, so a clip says which lane sent it. The source is only
  * a label: when tmux cannot answer (no binary, a stale socket) the clip is sent without one.
  */
 function tmuxSession(): string | undefined {
-  if (!process.env.TMUX) return undefined;
-  const target = process.env.TMUX_PANE ? ['-t', process.env.TMUX_PANE] : [];
-  const result = spawnSync('tmux', ['display-message', '-p', ...target, '#S'], {
-    encoding: 'utf8',
-  });
+  const args = tmuxSessionArgs(process.env);
+  if (!args) return undefined;
+  const result = spawnSync('tmux', args, { encoding: 'utf8' });
   if (result.error || result.status !== 0) return undefined;
   return result.stdout.trim() || undefined;
 }

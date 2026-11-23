@@ -220,4 +220,8 @@ export const reviewHistoryStyles = css`
     text-overflow: ellipsis;
     display: block;
   }
+  .review-history-round > summary > .round-accounting {
+    grid-column: 1 / -1;
+    white-space: normal;
+  }
 `;
