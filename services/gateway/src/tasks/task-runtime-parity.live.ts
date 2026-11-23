@@ -18,7 +18,7 @@ import {
   wireRequest,
 } from './task-runtime.test-support.js';
 
-// CLI/thread parity: each case cold-loads the CLI module graph once per transport (~1 s on
+// CLI/task-process parity: each case cold-loads the CLI module graph once per transport (~1 s on
 // CI), so this suite runs by hand via `yarn test:task-runtime-parity-live`, not in `yarn test`.
 function snapshot() {
   return fs
@@ -66,7 +66,7 @@ function parityCase<Fixture>(
   test(`${name}: CLI baseline`, { timeout: CASE }, async () => {
     fixture = { value: await baseline() };
   });
-  test(`${name}: thread parity`, { timeout: CASE }, async (t) => {
+  test(`${name}: task-process parity`, { timeout: CASE }, async (t) => {
     assert(fixture, 'CLI baseline completed');
     await verify(t, fixture.value);
   });
@@ -88,7 +88,7 @@ parityCase(
       env,
     );
     t.diagnostic(
-      `CLI fresh init ${before.ms.toFixed(1)} ms; thread fresh init ${(performance.now() - started).toFixed(1)} ms`,
+      `CLI fresh init ${before.ms.toFixed(1)} ms; task-process fresh init ${(performance.now() - started).toFixed(1)} ms`,
     );
     assert.equal(actual.exitCode, 0, actual.stdout + actual.stderr);
     assert.deepEqual(
@@ -136,7 +136,7 @@ parityCase(
     const started = performance.now();
     const actual = await runTaskRuntime(request, root, env);
     t.diagnostic(
-      `CLI verify ${before.ms.toFixed(1)} ms; thread verify ${(performance.now() - started).toFixed(1)} ms`,
+      `CLI verify ${before.ms.toFixed(1)} ms; task-process verify ${(performance.now() - started).toFixed(1)} ms`,
     );
     assert.equal(actual.exitCode, 0, actual.stdout + actual.stderr);
     assert.equal(actual.stdout, before.stdout);

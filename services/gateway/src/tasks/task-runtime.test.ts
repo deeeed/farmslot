@@ -319,12 +319,10 @@ test(
   `,
     );
     const delay = globalThis.setTimeout;
+    // A task process boots node, tsx and the CLI before its fixture runs. No deadline of its
+    // own: the test's timeout bounds the wait.
     const waitFor = async (condition: () => boolean) => {
-      // A task process boots node, tsx and the CLI before its fixture runs.
-      const deadline = Date.now() + 5000;
-      while (!condition() && Date.now() < deadline)
-        await new Promise((resolve) => delay(resolve, 5));
-      assert(condition(), 'expected closeout progress');
+      while (!condition()) await new Promise((resolve) => delay(resolve, 5));
     };
     t.mock.timers.enable({ apis: ['setTimeout'] });
     const killCalls: Parameters<typeof process.kill>[] = [];

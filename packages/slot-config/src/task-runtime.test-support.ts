@@ -1,6 +1,9 @@
+import { execFileSync } from 'node:child_process';
+import { closeSync, constants, createReadStream, openSync, writeSync } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { createInterface } from 'node:readline';
 import type test from 'node:test';
 
 const repoRoot = path.resolve(import.meta.dirname, '../../..');
@@ -52,4 +55,41 @@ export async function until(condition: () => boolean, limitMs: number): Promise<
   const deadline = Date.now() + limitMs;
   while (!condition() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
   return condition();
+}
+
+/**
+ * A FIFO a task fixture opens for writing and hands to its subprocesses. The test reads the
+ * lines the fixture writes, and `closed()` resolves once every process holding it has exited:
+ * no deadline, the test's own timeout is the only bound.
+ */
+export async function taskPipe(t: test.TestContext) {
+  const directory = await realpath(await mkdtemp(path.join(tmpdir(), 'task-pipe-')));
+  const fifo = path.join(directory, 'pipe');
+  execFileSync('mkfifo', [fifo]);
+  const stream = createReadStream(fifo, { encoding: 'utf8' });
+  const lines = createInterface({ input: stream })[Symbol.asyncIterator]();
+  t.after(() => {
+    // Wake a read still waiting on a fixture that never wrote or never exited, then stop.
+    try {
+      const writer = openSync(fifo, constants.O_WRONLY | constants.O_NONBLOCK);
+      writeSync(writer, '\n');
+      closeSync(writer);
+    } catch (error) {
+      // ENXIO: no reader is left, the stream already ended.
+      if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENXIO') throw error;
+    }
+    stream.destroy();
+    return rm(directory, { recursive: true, force: true });
+  });
+  return {
+    path: fifo,
+    async line(): Promise<string> {
+      const next = await lines.next();
+      if (next.done) throw new Error('the task pipe closed before the expected line');
+      return next.value;
+    },
+    async closed(): Promise<void> {
+      while (!(await lines.next()).done);
+    },
+  };
 }

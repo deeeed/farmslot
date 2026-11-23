@@ -606,7 +606,7 @@ export async function nodeExecArgv(
   return nodeExecRequest(machine, { argv, cwd }, opts);
 }
 
-/** Task libraries execute in a node worker with the same owned closeout as exec. */
+/** Task libraries execute in a child process of the node with the same owned closeout as exec. */
 export async function nodeTaskRuntime(
   machine: string,
   request: import('@farmslot/slot-config/task-runtime').TaskRuntimeRequest,

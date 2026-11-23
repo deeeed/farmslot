@@ -199,6 +199,9 @@ for (const size of [1024, 180000]) {
         timeoutMs: 4000,
         assertCurrent() {},
       };
+      // The clock stands still, so the command's 4 s deadline holds however long the task
+      // process takes to boot; the final authorize reuses that deadline.
+      t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
       const receipt = await invokeNodeLink(request, invocation);
       assert.equal(receipt.state, 'completed');
       assert.equal(receipt.closeoutConfirmed, true);

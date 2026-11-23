@@ -1,13 +1,10 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { realpath, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { runTaskRuntime } from './task-runtime.js';
-import { alive, cliFixture, until } from './task-runtime.test-support.js';
+import { killExitedLeaderGroup, runTaskRuntime } from './task-runtime.js';
+import { alive, cliFixture, taskPipe, until } from './task-runtime.test-support.js';
 
 /** Exited children of this process that nobody waited for. */
 function zombieChildren(): number {
@@ -42,27 +39,51 @@ test('task runs leave no unreaped child processes behind', { timeout: 60_000 }, 
   assert.equal(zombieChildren() - before, 0, `${runs} task runs left unreaped children`);
 });
 
+test("a reaped leader's group is killed only while no live process holds its id", () => {
+  const calls: [number, NodeJS.Signals | 0][] = [];
+  const kill =
+    (probe: 'alive' | 'ESRCH' | 'EPERM') => (pid: number, signal: NodeJS.Signals | 0) => {
+      calls.push([pid, signal]);
+      if (signal === 0 && probe !== 'alive') throw Object.assign(new Error(probe), { code: probe });
+      return true;
+    };
+  // The id was reused by a live process (ours to signal or not): its group is not ours.
+  assert.equal(killExitedLeaderGroup(4242, kill('alive')), false);
+  assert.equal(killExitedLeaderGroup(4242, kill('EPERM')), false);
+  assert.deepEqual(calls, [
+    [4242, 0],
+    [4242, 0],
+  ]);
+  calls.length = 0;
+  // Nothing holds the id: what is left in the group is the reaped task's.
+  assert.equal(killExitedLeaderGroup(4242, kill('ESRCH')), true);
+  assert.deepEqual(calls, [
+    [4242, 0],
+    [-4242, 'SIGKILL'],
+  ]);
+});
+
 test('a task whose node dies stops itself and its subprocesses', { timeout: 90_000 }, async (t) => {
-  const marker = path.join(await realpath(tmpdir()), `task-orphan-${process.pid}-${Date.now()}`);
+  const pipe = await taskPipe(t);
   const pids: number[] = [];
   t.after(() => {
     for (const pid of pids) if (alive(pid)) process.kill(pid, 'SIGKILL');
-    return rm(marker, { force: true });
   });
   const { root, cli } = await cliFixture(
     t,
     `import fs from 'node:fs';
     import { spawn } from 'node:child_process';
     export async function runHostedTaskInit() {
+      // The task and every subprocess below hold the pipe: it ends when all of them have exited.
+      const pipe = fs.openSync(${JSON.stringify(pipe.path)}, 'w');
       // A tracked provider subprocess, as an init that runs tooling has.
-      const child = spawn('sleep', ['30'], { stdio: 'ignore' });
+      const child = spawn('sleep', ['600'], { stdio: ['ignore', 'ignore', 'ignore', pipe] });
       // And one whose leader exits at once, leaving a grandchild in its group.
-      const leader = spawn('/bin/sh', ['-c', 'sleep 30 >/dev/null 2>&1 & echo $!'], { stdio: ['ignore', 'pipe', 'ignore'] });
+      const leader = spawn('/bin/sh', ['-c', 'sleep 600 >/dev/null 2>&1 & echo $!'], { stdio: ['ignore', 'pipe', 'ignore', pipe] });
       let grandchild = '';
       leader.stdout.on('data', (data) => (grandchild += data));
       await new Promise((resolve) => leader.once('close', resolve));
-      fs.writeFileSync(${JSON.stringify(marker)} + '.tmp', JSON.stringify({ task: process.pid, child: child.pid, grandchild: Number(grandchild) }));
-      fs.renameSync(${JSON.stringify(marker)} + '.tmp', ${JSON.stringify(marker)});
+      fs.writeSync(pipe, JSON.stringify({ task: process.pid, child: child.pid, grandchild: Number(grandchild) }) + '\\n');
       // Long provider work keeps the event loop busy, as a 10-minute init does.
       setInterval(() => {}, 1000);
       await new Promise(() => {});
@@ -81,44 +102,38 @@ test('a task whose node dies stops itself and its subprocesses', { timeout: 90_0
     { stdio: 'ignore' },
   );
   if (node.pid) pids.push(node.pid);
-  assert.ok(await until(() => existsSync(marker), 60_000), 'the task started');
-  const { task, child, grandchild } = JSON.parse(readFileSync(marker, 'utf8')) as {
+  const started = JSON.parse(await pipe.line()) as {
     task: number;
     child: number;
     grandchild: number;
   };
-  pids.push(task, child, grandchild);
+  pids.push(started.task, started.child, started.grandchild);
   node.kill('SIGKILL');
-  assert.ok(await until(() => !alive(task), 5000), 'the task exits once its node is gone');
-  assert.ok(await until(() => !alive(child), 5000), 'and stops its own subprocess');
-  assert.ok(
-    await until(() => !alive(grandchild), 5000),
-    'and the group of a subprocess whose leader already exited',
-  );
+  // The task, its subprocess and the grandchild of the leaderless group have all exited.
+  await pipe.closed();
 });
 
 test(
   'a descendant holding the task output neither delays nor loses the result',
-  { timeout: 30_000 },
+  { timeout: 60_000 },
   async (t) => {
-    const held = path.join(await realpath(tmpdir()), `task-held-${process.pid}-${Date.now()}`);
+    const pipe = await taskPipe(t);
+    let descendant = 0;
     t.after(() => {
-      if (existsSync(held)) {
-        const pid = Number(readFileSync(held, 'utf8'));
-        if (alive(pid)) process.kill(pid, 'SIGKILL');
-      }
-      return rm(held, { force: true });
+      if (descendant && alive(descendant)) process.kill(descendant, 'SIGKILL');
     });
     const { root, cli } = await cliFixture(
       t,
-      `import { spawnSync } from 'node:child_process';
+      `import fs from 'node:fs';
+    import { spawnSync } from 'node:child_process';
     export async function runHostedTaskInit(taskPath: string) {
+      // Only the task holds the pipe, so it ends when the task exits.
+      const pipe = fs.openSync(${JSON.stringify(pipe.path)}, 'w');
       // Backgrounded by a synchronous script, so it is not a tracked task subprocess.
-      spawnSync('/bin/sh', ['-c', 'sleep 30 & echo $! > ${held}'], { stdio: 'inherit' });
+      spawnSync('/bin/sh', ['-c', 'sleep 600 3>&- & echo $! >&3'], { stdio: ['inherit', 'inherit', 'inherit', pipe] });
       return { taskPath };
     }`,
     );
-    const started = Date.now();
     const controller = new AbortController();
     const pending = runTaskRuntime(
       {
@@ -131,35 +146,42 @@ test(
       process.env,
       controller.signal,
     );
-    // A cancel inside the drain window must not overwrite the result the task delivered.
-    assert.ok(await until(() => existsSync(held), 60_000), 'the descendant started');
-    await until(() => false, 500);
+    descendant = Number(await pipe.line());
+    // The task exited after delivering; the descendant still holds its output. A cancel
+    // inside the drain window must not overwrite the result. Without the drain the result
+    // would wait for the descendant's 600 s.
+    await pipe.closed();
     controller.abort();
     const result = await pending;
     assert.equal(result.exitCode, 0, result.stderr);
-    assert.ok(Date.now() - started < 15_000, 'resolved without waiting for the descendant');
+    assert.ok(alive(descendant), 'the result came back while the descendant still ran');
   },
 );
 
-/** A task that has started a tracked `sleep 30`, with both pids, and a handle on its result. */
-async function runningTask(t: test.TestContext, then: string) {
-  const marker = path.join(await realpath(tmpdir()), `task-live-${process.pid}-${Date.now()}`);
+test('a task that crashes still has its subprocesses stopped', { timeout: 90_000 }, async (t) => {
+  const pipe = await taskPipe(t);
   const pids: number[] = [];
   t.after(() => {
     for (const pid of pids) if (alive(pid)) process.kill(pid, 'SIGKILL');
-    return rm(marker, { force: true });
   });
   const { root, cli } = await cliFixture(
     t,
     `import fs from 'node:fs';
-    import { spawn } from 'node:child_process';
+    import { spawn, spawnSync } from 'node:child_process';
     export async function runHostedTaskInit() {
-      const child = spawn('sleep', ['30'], { stdio: 'ignore' });
-      fs.writeFileSync(${JSON.stringify(marker)} + '.tmp', JSON.stringify({ task: process.pid, child: child.pid }));
-      fs.renameSync(${JSON.stringify(marker)} + '.tmp', ${JSON.stringify(marker)});
-      ${then}
+      // The task and both subprocesses hold the pipe: it ends when all of them have exited.
+      const pipe = fs.openSync(${JSON.stringify(pipe.path)}, 'w');
+      // A tracked subprocess in its own group.
+      const child = spawn('sleep', ['600'], { stdio: ['ignore', 'ignore', 'ignore', pipe] });
+      // An untracked one in the task's own group, holding the task's output.
+      const untracked = spawnSync('/bin/sh', ['-c', 'sleep 600 >&2 & echo $!'], { stdio: ['ignore', 'pipe', 'inherit', pipe] });
+      fs.writeSync(pipe, JSON.stringify({ child: child.pid, untracked: Number(untracked.stdout) }) + '\\n');
+      setTimeout(() => { throw new Error('provider crashed'); }, 50);
+      await new Promise(() => {});
     }`,
   );
+  // Timers are faked so the output drain never ends: the result must not depend on it.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const pending = runTaskRuntime(
     {
       action: 'init',
@@ -169,43 +191,42 @@ async function runningTask(t: test.TestContext, then: string) {
     },
     root,
   );
-  assert.ok(await until(() => existsSync(marker), 60_000), 'the task started');
-  const started = JSON.parse(readFileSync(marker, 'utf8')) as { task: number; child: number };
-  pids.push(started.task, started.child);
-  return { ...started, pending };
-}
-
-test('a task that crashes still has its subprocesses stopped', { timeout: 90_000 }, async (t) => {
-  const { child, pending } = await runningTask(
-    t,
-    `setTimeout(() => { throw new Error('provider crashed'); }, 50);
-      await new Promise(() => {});`,
-  );
-  assert.notEqual((await pending).exitCode, 0);
-  assert.ok(await until(() => !alive(child), 5000), "the crashed task's subprocess is stopped");
+  let settled = false;
+  const outcome = pending.finally(() => (settled = true));
+  const started = JSON.parse(await pipe.line()) as { child: number; untracked: number };
+  pids.push(started.child, started.untracked);
+  // The untracked subprocess holds the task's output and the drain never ends, so both
+  // subprocesses stop only if the task's group was killed as it exited.
+  await pipe.closed();
+  // Advance the runtime's own short waits (the closeout's group census) until it settles.
+  while (!settled) {
+    t.mock.timers.tick(100);
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.notEqual((await outcome).exitCode, 0);
 });
 
 test(
   'cancelling a task that delivered while its subprocess runs keeps the result and stops it',
   { timeout: 90_000 },
   async (t) => {
-    const marker = path.join(await realpath(tmpdir()), `task-after-${process.pid}-${Date.now()}`);
+    const pipe = await taskPipe(t);
+    const pids: number[] = [];
     t.after(() => {
-      if (existsSync(marker)) {
-        const pid = Number(readFileSync(marker, 'utf8'));
-        if (alive(pid)) process.kill(pid, 'SIGKILL');
-      }
-      return rm(marker, { force: true });
+      for (const pid of pids) if (alive(pid)) process.kill(pid, 'SIGKILL');
     });
     const { root, cli } = await cliFixture(
       t,
       `import fs from 'node:fs';
     import { spawn } from 'node:child_process';
     export async function runHostedTaskInit(taskPath: string) {
+      // The task and its subprocess hold the pipe: it ends when both have exited.
+      const pipe = fs.openSync(${JSON.stringify(pipe.path)}, 'w');
       // A tracked subprocess the task does not wait for keeps it alive after its result.
-      const child = spawn('sleep', ['30'], { stdio: 'ignore' });
-      fs.writeFileSync(${JSON.stringify(marker)} + '.tmp', String(child.pid));
-      fs.renameSync(${JSON.stringify(marker)} + '.tmp', ${JSON.stringify(marker)});
+      const child = spawn('sleep', ['600'], { stdio: ['ignore', 'ignore', 'ignore', pipe] });
+      fs.writeSync(pipe, JSON.stringify({ task: process.pid, child: child.pid }) + '\\n');
+      // The task disconnects once its result went out.
+      process.once('disconnect', () => fs.writeSync(pipe, 'delivered\\n'));
       return { taskPath };
     }`,
     );
@@ -221,14 +242,12 @@ test(
       process.env,
       controller.signal,
     );
-    assert.ok(await until(() => existsSync(marker), 60_000), 'the subprocess started');
-    const child = Number(readFileSync(marker, 'utf8'));
-    await until(() => false, 500);
-    const aborted = Date.now();
+    const started = JSON.parse(await pipe.line()) as { task: number; child: number };
+    pids.push(started.task, started.child);
+    assert.equal(await pipe.line(), 'delivered');
     controller.abort();
-    const result = await pending;
-    assert.ok(Date.now() - aborted < 15_000, 'the cancel still ends the task');
-    assert.equal(result.exitCode, 0, result.stderr);
-    assert.ok(await until(() => !alive(child), 5000), 'the subprocess is stopped');
+    // Without the stop the task would run until its subprocess's 600 s end.
+    assert.equal((await pending).exitCode, 0);
+    await pipe.closed();
   },
 );

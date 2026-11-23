@@ -90,7 +90,11 @@ const signalGroups = (signal) => {
   }
 };
 // No node is left to escalate, so the task does it: SIGTERM, then SIGKILL what remains.
+// It runs once, whichever of a disconnect, a failed send or a failed write comes first.
+let abandoned = false;
 const abandon = (cause) => {
+  if (abandoned) return;
+  abandoned = true;
   if (cause instanceof Error) console.error('Task stopped: ' + cause.message);
   pruneGroups();
   signalGroups('SIGTERM');
@@ -106,7 +110,9 @@ const abandon = (cause) => {
 process.on('disconnect', () => {
   if (!delivered) abandon();
 });
-// A notification whose write fails (the node is gone) is emitted here; stop like an orphan.
+// Node emits 'error' on process only for the IPC channel: a notification sent without a
+// callback (task-child, task-stopping) whose write failed because the node is gone. Stop like
+// an orphan.
 process.on('error', abandon);
 const { createRequire } = require('node:module');
 const { pathToFileURL } = require('node:url');
@@ -202,6 +208,34 @@ function parseTaskMessage(raw: unknown): TaskMessage | undefined {
 }
 
 /**
+ * SIGKILL what a reaped group leader left in its process group. The group id is the leader's
+ * pid, and a reaped pid can be reused: a live process holding it is not our leader, so then
+ * nothing is signalled. Call it as the leader is reaped, before the id can come round again.
+ */
+export function killExitedLeaderGroup(
+  pgid: number,
+  kill: (pid: number, signal: NodeJS.Signals | 0) => unknown = process.kill,
+): boolean {
+  try {
+    kill(pgid, 0);
+    return false;
+  } catch (error) {
+    if (!isRecord(error) || error.code !== 'ESRCH') {
+      // EPERM: a process we may not signal holds the pid, so it is not our leader.
+      if (isRecord(error) && error.code === 'EPERM') return false;
+      throw error;
+    }
+  }
+  try {
+    kill(-pgid, 'SIGKILL');
+    return true;
+  } catch (error) {
+    if (!isRecord(error) || error.code !== 'ESRCH') throw error;
+    return false;
+  }
+}
+
+/**
  * Same installation, pool, pack and machine environment as the CLI transport.
  * Provider initializers use their explicit checkout context and absolute paths;
  * the task process keeps its node's cwd.
@@ -249,7 +283,8 @@ export async function runTaskRuntime(
   env.TSX_DISABLE_CACHE = '1';
   return new Promise((resolve, reject) => {
     // A spawned node does not take the node's command-line tsx loader or test flags (only
-    // NODE_OPTIONS in env would reach it): the CLI's own tsconfig selects its libraries.
+    // NODE_OPTIONS in env would reach it, as it reaches the CLI transport; the node jobs set
+    // only a heap ceiling there): the CLI's own tsconfig selects its libraries.
     const task = spawn(
       process.execPath,
       [
@@ -357,7 +392,13 @@ export async function runTaskRuntime(
     // A detached grandchild that inherited the task's stdout or stderr keeps the pipes open
     // after the task exits; 'close' would wait for it. Give the pipes a bounded drain.
     let drain: ReturnType<typeof setTimeout> | undefined;
-    task.on('exit', () => {
+    task.on('exit', (exitCode, exitSignal) => {
+      // A task that died without a result (crash, OOM, external kill) may have left untracked
+      // or synchronous subprocesses in its own group. Kill them now, in the tick its leader
+      // was reaped: later, the group id (the leader's pid) could belong to someone else. A
+      // task that delivered exits 0, possibly before its result message is read here.
+      if (!delivered && !stopped && (exitCode !== 0 || exitSignal) && task.pid)
+        killExitedLeaderGroup(task.pid);
       drain = setTimeout(() => {
         task.stdout?.destroy();
         task.stderr?.destroy();
@@ -369,19 +410,11 @@ export async function runTaskRuntime(
       clearTimeout(timer);
       clearTimeout(forcedKillTimer);
       clearTimeout(drain);
-      // A task that died without a result (crash, OOM, external kill) never stopped its
-      // tracked groups: close them out the way a cancellation does, and kill what it left in
-      // its own group (untracked or synchronous subprocesses).
-      if (!delivered && !stopped) {
-        try {
-          if (task.pid) process.kill(-task.pid, 'SIGKILL');
-        } catch (error) {
-          if (!isRecord(error) || error.code !== 'ESRCH') throw error;
-        }
-        if (children.size) {
-          stopped = true;
-          closeout.terminate();
-        }
+      // A task that died without a result never stopped its tracked groups: close them out
+      // the way a cancellation does. Each group is probed before it is signalled.
+      if (!delivered && !stopped && children.size) {
+        stopped = true;
+        closeout.terminate();
       }
       signal?.removeEventListener('abort', abort);
       const finish = async () => {
