@@ -16,6 +16,7 @@ import {
   type RunDecisionPayload,
   SLOT_DESTRUCTIVE_OPS,
   SLOT_STALE_BRANCH_SCORE_PENALTY,
+  type SlotStatus,
 } from '@farmslot/protocol';
 import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 import { withProjectSources } from '@farmslot/slot-config';
@@ -705,6 +706,26 @@ export async function commitSlotClaim(
 // as a slot change, so a run waiting in the slot picker re-checks.
 activePrepareSlots.onCleared((slotId) => resourceRevisions.advance({ family: 'slot', slotId }));
 
+/**
+ * Free slots split by whether a prepare guard still holds them. A guarded slot is skipped,
+ * not picked and then refused at prepare ('already preparing', 1b542e2f on macpro-mmt-4).
+ */
+export function splitGuardedFreeSlots<
+  S extends Pick<SlotStatus, 'slot' | 'missingFromPool' | 'lifecycle' | 'agent'>,
+>(
+  slots: readonly S[],
+  guarded: (slotId: string) => boolean = (slotId) => activePrepareSlots.has(slotId),
+): { free: S[]; guarded: string[] } {
+  const free: S[] = [];
+  const held: string[] = [];
+  for (const slot of slots) {
+    if (!isFreeSlot(slot)) continue;
+    if (guarded(slot.slot)) held.push(slot.slot);
+    else free.push(slot);
+  }
+  return { free, guarded: held };
+}
+
 /** How long an explicit slot pick waits for an in-flight release to land. */
 export const EXPLICIT_SLOT_RELEASE_WAIT_MS = 5 * 60 * 1000;
 const EXPLICIT_SLOT_RELEASE_POLL_MS = 2000;
@@ -864,16 +885,23 @@ export async function previewWhenSlotClaimable<T>(
   await reclaimCancelled(slotId, runId);
   assertRunUnchanged();
   let blocker = blockerOf(await readRow(slotId));
-  if (blocker?.kind === 'releasing') {
+  // A slot mid-release, or one that reads free while a prepare guard still holds it (it would
+  // refuse this run's prepare 'already preparing', 1b542e2f), is waited for, not refused.
+  const waiting = (current: typeof blocker) =>
+    current?.kind === 'releasing' || (!current && preparing(slotId));
+  if (waiting(blocker)) {
     // One read decides both whether to wait and whether it counts as queue time.
     blocker = await wrapWait(async () => {
       const deadline = now() + timeoutMs;
       let current = blocker;
-      while (current?.kind === 'releasing') {
+      while (waiting(current)) {
         if (now() >= deadline) {
+          const minutes = Math.round(timeoutMs / 60_000);
           throw slotClaimRefusedError(
             slotId,
-            `${current.detail}, still releasing after ${Math.round(timeoutMs / 60_000)}m`,
+            current?.kind === 'releasing'
+              ? `${current.detail}, still releasing after ${minutes}m`
+              : `Slot ${slotId} is still preparing after ${minutes}m`,
           );
         }
         await sleep(EXPLICIT_SLOT_RELEASE_POLL_MS);
@@ -884,24 +912,6 @@ export async function previewWhenSlotClaimable<T>(
     });
   }
   if (blocker) throw await refuse(blocker);
-  if (preparing(slotId)) {
-    // A slot that reads free while its guard is still held would refuse this run's prepare
-    // ('already preparing', 1b542e2f). Wait for the guard the way a release is waited for.
-    blocker = await wrapWait(async () => {
-      const deadline = now() + timeoutMs;
-      while (preparing(slotId)) {
-        if (now() >= deadline)
-          throw slotClaimRefusedError(
-            slotId,
-            `Slot ${slotId} is still preparing after ${Math.round(timeoutMs / 60_000)}m`,
-          );
-        await sleep(EXPLICIT_SLOT_RELEASE_POLL_MS);
-        assertRunUnchanged();
-      }
-      return blockerOf(await readRow(slotId));
-    });
-    if (blocker) throw await refuse(blocker);
-  }
   assertRunUnchanged();
   let result: T;
   try {
@@ -1654,10 +1664,7 @@ async function findSlotAttempt(
       `No complete source plan for eligible slots:\n${reasons.join('\n')}`,
     );
   }
-  // A slot still under a prepare guard is skipped, not picked and then refused at prepare.
-  const freeSlots = projectSlots.filter(
-    (slot) => isFreeSlot(slot) && !activePrepareSlots.has(slot.slot),
-  );
+  const { free: freeSlots, guarded: guardedFreeSlots } = splitGuardedFreeSlots(projectSlots);
   const refreshableSlots = freeSlots.filter(
     (slot) => !automaticSlotLoadBlocker(slot, selectionOptions),
   );
@@ -2130,7 +2137,11 @@ async function findSlotAttempt(
 
     const desc =
       reason === 'no_free_slots'
-        ? `No eligible free slots for **${run.project}**. Selection resumes automatically when an allowed slot is ready.`
+        ? `No eligible free slots for **${run.project}**.${
+            guardedFreeSlots.length
+              ? ` ${guardedFreeSlots.join(', ')} read${guardedFreeSlots.length === 1 ? 's' : ''} free but ${guardedFreeSlots.length === 1 ? 'is' : 'are'} still preparing or being serviced.`
+              : ''
+          } Selection resumes automatically when an allowed slot is ready.`
         : reason === 'missing_required_resources'
           ? `No free slots for **${run.project}** have the isolated simulator resources required by **${requiredPrepareProfile}**. Selection resumes automatically when an allowed resource slot is ready.`
           : !skipPrepare

@@ -8,6 +8,7 @@ import {
   EXPLICIT_SLOT_RELEASE_WAIT_MS,
   previewWhenSlotClaimable,
   slotClaimAllowed,
+  splitGuardedFreeSlots,
 } from './find-slot-step.js';
 
 const SLOT = 'macpro-mm-pixel6';
@@ -101,6 +102,36 @@ test('an explicit slot under a prepare guard is previewed only after the guard c
   assert.equal(h.state.previews, 1);
   assert.equal(h.state.sleeps, 2);
   assert.equal(h.state.waits, 1, 'the wait counts as queue time');
+});
+
+test('a slot whose guard clears into a release waits for the release, not a refusal', async () => {
+  const h = harness([readyRow, releasingRow, readyRow]);
+  let guarded = 1;
+  const sleep = h.deps.sleep;
+  const deps = {
+    ...h.deps,
+    preparing: () => guarded > 0,
+    sleep: async (ms: number) => {
+      guarded -= 1;
+      await sleep(ms);
+    },
+  };
+  assert.equal(await previewWhenSlotClaimable('new-run', 0, SLOT, h.preview, deps), 'previewed');
+  assert.equal(h.state.sleeps, 2, 'one wait for the guard, one for the release');
+});
+
+test('scored selection skips a free slot that a prepare guard still holds', () => {
+  const slot = (id: string, lifecycle: 'ready' | 'busy') =>
+    ({ slot: id, lifecycle, agent: 'idle' }) as const;
+  const split = splitGuardedFreeSlots(
+    [slot('free', 'ready'), slot('guarded', 'ready'), slot('busy', 'busy')],
+    (slotId) => slotId === 'guarded',
+  );
+  assert.deepEqual(
+    split.free.map((slot) => slot.slot),
+    ['free'],
+  );
+  assert.deepEqual(split.guarded, ['guarded']);
 });
 
 test('a release that never lands fails after the bound, naming when it started', async () => {

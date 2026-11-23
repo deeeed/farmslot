@@ -3,18 +3,17 @@
  * run waiting for a slot that read ready under the guard re-checks without a fleet change.
  */
 class PrepareGuards extends Set<string> {
-  private cleared?: (slotId: string) => void;
+  private readonly listeners = new Set<(slotId: string) => void>();
 
-  /** Replaces the clear listener and returns the previous one. */
-  onCleared(listener?: (slotId: string) => void): ((slotId: string) => void) | undefined {
-    const previous = this.cleared;
-    this.cleared = listener;
-    return previous;
+  /** Calls `listener` for each cleared guard; returns its unsubscribe. */
+  onCleared(listener: (slotId: string) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
   override delete(slotId: string): boolean {
     const removed = super.delete(slotId);
-    if (removed) this.cleared?.(slotId);
+    if (removed) for (const listener of this.listeners) listener(slotId);
     return removed;
   }
 }

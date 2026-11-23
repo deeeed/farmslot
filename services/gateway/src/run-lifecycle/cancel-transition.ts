@@ -251,6 +251,7 @@ export function cancelledBeforeDispatch(
   return !(run.agentContexts ?? []).some(
     (context) =>
       context.startedAt ||
+      context.attemptStartedAt ||
       context.promptDeliveryStartedAt ||
       context.runnerSessionId ||
       context.nativeSession ||
@@ -264,7 +265,8 @@ export function cancelledBeforeDispatch(
  */
 export function defaultCancelCollaborators({
   keepForReplay = true,
-}: { keepForReplay?: boolean } = {}): CancelCollaborators {
+  prepareStopTimeoutMs,
+}: { keepForReplay?: boolean; prepareStopTimeoutMs?: number } = {}): CancelCollaborators {
   const cleanup = new Map<
     string,
     { fence: RunSlotCleanupFence; blocker: string | null; succeeded: boolean; keep: boolean }
@@ -305,18 +307,19 @@ export function defaultCancelCollaborators({
         // Only this run's own prepare: a stale slot id must not stop another owner's.
         if (inflight && (await readSlotRow(run.slotId))?.current_run_id === run.id) {
           const { RELEASE_PREPARE_STOP_TIMEOUT_MS } = await import('../methods/slot/release.js');
+          const stopMs = prepareStopTimeoutMs ?? RELEASE_PREPARE_STOP_TIMEOUT_MS;
           inflight.abort();
           let timer: ReturnType<typeof setTimeout> | undefined;
           const stopped = await Promise.race([
             inflight.settled.then(() => true),
             new Promise<boolean>((resolve) => {
-              timer = setTimeout(() => resolve(false), RELEASE_PREPARE_STOP_TIMEOUT_MS);
+              timer = setTimeout(() => resolve(false), stopMs);
             }),
           ]);
           clearTimeout(timer);
           if (!stopped) {
             state.keep = true;
-            prepareBlocker = `In-flight prepare did not stop within ${Math.round(RELEASE_PREPARE_STOP_TIMEOUT_MS / 1000)}s; slot kept for the cancelled run`;
+            prepareBlocker = `In-flight prepare did not stop within ${Math.round(stopMs / 1000)}s; slot kept for the cancelled run`;
           }
         }
       }

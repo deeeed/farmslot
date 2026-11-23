@@ -1709,6 +1709,27 @@ test('a pre-dispatch cancel never stops a prepare on a slot another run now owns
   assert.equal(aborted, false, "the other run's prepare keeps running");
 });
 
+test('a pre-dispatch cancel whose prepare will not stop keeps the slot and names why', async (t) => {
+  const { activePrepareAborts } = await import('../methods/slot/shared.js');
+  activePrepareAborts.set(SLOT_ID, { abort: () => {}, settled: new Promise<void>(() => {}) });
+  t.after(() => activePrepareAborts.delete(SLOT_ID));
+  const preparing = {
+    ...run,
+    steps: [
+      { name: 'prepare', status: 'skipped', startedAt: '2026-11-23T16:21:09.377Z' },
+      { name: 'dispatch', status: 'skipped' },
+    ],
+  } as Run;
+  const cancel = defaultCancelCollaborators({ prepareStopTimeoutMs: 20 });
+
+  await cancel.releaseCapabilities(preparing);
+  await cancel.releaseSlot(preparing);
+
+  assert.equal(slotRow?.lifecycle, 'held');
+  assert.equal(slotRow?.current_run_id, RUN_ID);
+  assert.match(String(runUpdates.at(-1)?.slotTeardownSkipped), /In-flight prepare did not stop/);
+});
+
 test('a replayed run whose earlier dispatch started a worker keeps the replay hold', async () => {
   // Replay resets the dispatch step; the worker context the earlier dispatch started stays.
   const replayed = {
