@@ -12,7 +12,7 @@ import {
 } from '../runners/runner-observability.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
-import type { NodeSupportIo } from './ensure.js';
+import { ensureNodeSupportBundle, type NodeSupportIo } from './ensure.js';
 import {
   hasRemoteFarmRef,
   NodeSupportPendingError,
@@ -792,6 +792,55 @@ test('a budget that runs out names the bundle, its phase and the bytes left', as
       ),
   );
 });
+
+/** The gated node with its manifest probes counted: a probe means a round trip, not the cache. */
+function countingNode() {
+  const node = gatedNode();
+  node.release();
+  let probes = 0;
+  const io: NodeSupportIo = {
+    ...node.io,
+    fileExists: async (...args) => {
+      probes++;
+      return node.io.fileExists(...args);
+    },
+  };
+  return { io, probes: () => probes };
+}
+
+for (const via of ['a command', 'a direct ensure (prepare)'] as const) {
+  test(`a slot moved to another bundle by ${via} never reuses its earlier bundle from the cache`, async (t) => {
+    // Moving the slot's selection lets the node prune the earlier bundle, so a
+    // cached verification of it would point commands at a deleted directory
+    // (the dev-server shutdown on mini-ff-1 that left a gateway on its port).
+    resetRemoteFarmCommandCache();
+    const farm = await withTempFarm(t);
+    const node = countingNode();
+    const vars = farmVars(farm.name, 'mini-x-1');
+    const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+    const first = await resolveRemoteFarmCommand(vars, cmd, { io: node.io });
+    let now = Date.now();
+    t.mock.method(Date, 'now', () => now);
+
+    farm.editScript('echo v2\n');
+    now += 2_100; // past the local bundle's recheck interval
+    if (via === 'a command') {
+      assert.notEqual(await resolveRemoteFarmCommand(vars, cmd, { io: node.io }), first);
+    } else {
+      const moved = await ensureNodeSupportBundle(vars, '.agent', { io: node.io });
+      assert.ok(moved?.hash && !first.includes(moved.hash), 'the slot now selects bundle 2');
+    }
+
+    farm.editScript('echo v1\n');
+    now += 2_100;
+    const probes = node.probes();
+    assert.equal(await resolveRemoteFarmCommand(vars, cmd, { io: node.io }), first);
+    assert.ok(
+      node.probes() > probes,
+      'bundle 1 is checked on the node again, not taken from the cache',
+    );
+  });
+}
 
 test('every direct node exec sender is reviewed for farm script references', async () => {
   // execOnSlot resolves farm refs for everything routed through it. A new call

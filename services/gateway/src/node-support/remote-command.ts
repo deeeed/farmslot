@@ -32,6 +32,7 @@ import {
   type NodeSupportIo,
 } from './ensure.js';
 import { nodeSupportBundleBytes } from './files.js';
+import { onNodeSupportSelection } from './selection-events.js';
 
 const loadCore = lazyImport(() => import('../core/index.js'));
 
@@ -122,7 +123,19 @@ interface HeldBundle {
   check?: Promise<boolean>;
 }
 
-const verifiedBundles = new Map<string, { at: number; supportDir: string }>();
+const verifiedBundles = new Map<
+  string,
+  { at: number; supportDir: string; slotId: string; selectSlot: boolean }
+>();
+// A slot moved to another bundle may have its earlier one pruned; a selected
+// entry for that earlier bundle would point commands at a deleted directory
+// (a dev-server shutdown that then left the gateway running). Read-only entries
+// hold their own reader lease on the node, so they stay valid.
+onNodeSupportSelection((slotId, supportDir) => {
+  for (const [key, entry] of verifiedBundles)
+    if (entry.slotId === slotId && entry.selectSlot && entry.supportDir !== supportDir)
+      verifiedBundles.delete(key);
+});
 /**
  * How long one delivery may take, from its start: a re-delivery after a node
  * redeploy re-verifies every file and repoints the slot, which takes seconds to
@@ -574,7 +587,12 @@ export async function resolveRemoteFarmCommand(
     options.signal,
   );
   if (!state?.hash) return command;
-  verifiedBundles.set(cacheKey, { at: Date.now(), supportDir: state.supportDir });
+  verifiedBundles.set(cacheKey, {
+    at: Date.now(),
+    supportDir: state.supportDir,
+    slotId: vars.slotId,
+    selectSlot,
+  });
   const mapped = remap(state.supportDir, state.paths);
   return selectSlot ? mapped : wrapNodeSupportReadCommand(mapped, state.supportDir);
 }

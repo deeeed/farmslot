@@ -64,6 +64,7 @@ import {
   buildNodeSupportPublishCommand,
   buildNodeSupportVerifyCommand,
 } from './publish-command.js';
+import { notifyNodeSupportSelection } from './selection-events.js';
 
 export interface NodeSupportBundleState {
   /** Directory the slot's hook and installer commands resolve against. */
@@ -433,6 +434,7 @@ export async function ensureNodeSupportBundle(
     console.log(
       `[node-support] ${vars.slotId} ${readOnly ? 'verified read-only' : 'now on'} bundle ${manifest.hash.slice(0, 8)} (${how}, ${files.length} files)`,
     );
+    if (!readOnly) notifyNodeSupportSelection(vars.slotId, supportDir);
     return true;
   };
   const verifyChecksums = async (dir: string, manifestFile: string): Promise<boolean> => {
