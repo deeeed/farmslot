@@ -33,8 +33,8 @@ export interface FixtureCommand {
 
 const env = process.env;
 const pipe = env.FIXTURE_PIPE;
-// Longer than any test's timeout: only a kill ends them in time.
-const hang = `exec 3>'${pipe}'; echo $$ >&3; sleep 600 & echo $! >&3; wait`;
+// Past the runner's 180 s file timeout: only a kill ends them in time.
+const hang = `exec 3>'${pipe}'; echo $$ >&3; sleep 300 & echo $! >&3; wait`;
 const resistant = `exec 3>'${pipe}'; echo $$ >&3; trap 'echo term >&3' TERM; while :; do sleep 0.1; done`;
 const closeoutTimeoutMs = Number(env.FIXTURE_CLOSEOUT_MS ?? 200);
 const timeout = Number(env.FIXTURE_TIMEOUT_MS ?? 120_000);

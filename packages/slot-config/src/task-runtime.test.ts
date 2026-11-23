@@ -64,19 +64,52 @@ test("a reaped leader's group is killed only while no live process holds its id"
 
 test('a task can name only a real subprocess group, never the node’s own or every process', () => {
   // Signalled negated: 0 is the node's own group, 1 (-1) every process it may signal.
-  for (const pid of [0, -0, 1, -4242, 1.5, Number.NaN, Infinity, process.pid, '4242'])
-    assert.equal(parseTaskMessage({ type: 'task-child', pid }), undefined, `pid ${String(pid)}`);
-  assert.deepEqual(parseTaskMessage({ type: 'task-child-exit', pid: 4242 }), {
+  // 777 stands for the node's own process group, which need not be its pid.
+  for (const pid of [0, -0, 1, -4242, 1.5, Number.NaN, Infinity, process.pid, 777, '4242'])
+    assert.equal(
+      parseTaskMessage({ type: 'task-child', pid }, 777),
+      undefined,
+      `pid ${String(pid)}`,
+    );
+  assert.deepEqual(parseTaskMessage({ type: 'task-child-exit', pid: 4242 }, 777), {
     type: 'task-child-exit',
     pid: 4242,
   });
-  assert.equal(parseTaskMessage({ stdout: '', stderr: '', exitCode: 0.5 }), undefined);
-  assert.deepEqual(parseTaskMessage({ stdout: 'x', stderr: '', exitCode: 3 }), {
+  assert.equal(parseTaskMessage({ stdout: '', stderr: '', exitCode: 0.5 }, 777), undefined);
+  assert.deepEqual(parseTaskMessage({ stdout: 'x', stderr: '', exitCode: 3 }, 777), {
     stdout: 'x',
     stderr: '',
     exitCode: 3,
   });
 });
+
+/**
+ * Fixture code that runs once the task's result went out: `then`, and a tracked `true` whose
+ * exit the task reports on the same ordered channel as the result, after it. The marker's
+ * pid is written to the pipe as "marker <pid>".
+ */
+const afterResult = (then = '') => `
+      const unref = process.channel.unref.bind(process.channel);
+      process.channel.unref = () => {
+        unref();
+        ${then}
+        const marker = spawn('true', [], { stdio: 'ignore' });
+        fs.writeSync(pipe, 'marker ' + marker.pid + '\\n');
+      };`;
+
+/**
+ * Watches this process's group probes. `read(line)` resolves once the runtime probed the
+ * marker named in `line`: it reads that child's exit only after the task's result.
+ */
+function resultWatch(t: test.TestContext) {
+  const kill = t.mock.method(process, 'kill');
+  return async (line: string) => {
+    const marker = Number(line.replace(/^marker /, ''));
+    assert.ok(marker > 1, line);
+    while (!kill.mock.calls.some(({ arguments: [pid, signal] }) => pid === -marker && signal === 0))
+      await new Promise((resolve) => setTimeout(resolve, 10));
+  };
+}
 
 /** A stand-in node: it starts the task and can then be killed without any cleanup. */
 function standInNode(root: string, cli: string) {
@@ -312,9 +345,11 @@ test(
       const child = spawn('sleep', ['600'], { stdio: ['ignore', 'inherit', 'ignore', pipe] });
       child.unref();
       fs.writeSync(pipe, JSON.stringify({ task: process.pid, child: child.pid }) + '\\n');
+      ${afterResult()}
       return { taskPath };
     }`,
     );
+    const resultRead = resultWatch(t);
     const controller = new AbortController();
     const pending = runTaskRuntime(
       {
@@ -329,6 +364,7 @@ test(
     );
     const started = JSON.parse(await pipe.line()) as { task: number; child: number };
     child = started.child;
+    await resultRead(await pipe.line());
     // The runtime saw the task exit in the same callback that reaped it.
     while (alive(started.task)) await new Promise((resolve) => setTimeout(resolve, 10));
     // The subprocess holds the output, so this lands in the drain window.
@@ -393,13 +429,13 @@ test(
       // The task and its subprocess hold the pipe: it ends when both have exited.
       const pipe = fs.openSync(${JSON.stringify(pipe.path)}, 'w');
       // Provider work that goes on after the result went out.
-      setTimeout(() => {
+      ${afterResult(`
         const child = spawn('sleep', ['600'], { stdio: ['ignore', 'ignore', 'ignore', pipe] });
-        fs.writeSync(pipe, String(child.pid) + '\\n');
-      }, 100);
+        fs.writeSync(pipe, String(child.pid) + '\\n');`)}
       return { taskPath };
     }`,
     );
+    const resultRead = resultWatch(t);
     const controller = new AbortController();
     const pending = runTaskRuntime(
       {
@@ -413,6 +449,7 @@ test(
       controller.signal,
     );
     child = Number(await pipe.line());
+    await resultRead(await pipe.line());
     controller.abort();
     assert.equal((await pending).exitCode, 0, 'the delivered result stands');
     await pipe.closed();
@@ -438,15 +475,11 @@ test(
       // A tracked subprocess the task does not wait for keeps it alive after its result.
       const child = spawn('sleep', ['600'], { stdio: ['ignore', 'ignore', 'ignore', pipe] });
       fs.writeSync(pipe, JSON.stringify({ task: process.pid, child: child.pid }) + '\\n');
-      // The task lets go of its channel once its result went out.
-      const unref = process.channel.unref.bind(process.channel);
-      process.channel.unref = () => {
-        unref();
-        fs.writeSync(pipe, 'delivered\\n');
-      };
+      ${afterResult()}
       return { taskPath };
     }`,
     );
+    const resultRead = resultWatch(t);
     const controller = new AbortController();
     const pending = runTaskRuntime(
       {
@@ -461,7 +494,7 @@ test(
     );
     const started = JSON.parse(await pipe.line()) as { task: number; child: number };
     pids.push(started.task, started.child);
-    assert.equal(await pipe.line(), 'delivered');
+    await resultRead(await pipe.line());
     controller.abort();
     // Without the stop the task would run until its subprocess's 600 s end.
     assert.equal((await pending).exitCode, 0);

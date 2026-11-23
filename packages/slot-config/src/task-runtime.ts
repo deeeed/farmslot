@@ -230,23 +230,37 @@ type TaskMessage =
   | { type: 'task-child' | 'task-child-exit' | 'task-child-reaped'; pid: number }
   | { type: 'task-stopping' };
 
-/**
- * A pid a task may name as a subprocess group. The node signals it negated, so 0 would reach
- * the node's own group, 1 (-1) every process it may signal, and its own pid its own group.
- */
-function taskGroupPid(value: unknown): value is number {
-  return Number.isInteger(value) && Number(value) > 1 && value !== process.pid;
+let nodeGroupId: Promise<number> | undefined;
+/** This process's group id, which need not be its pid (yarn farmdev); Node has no getpgid. */
+function nodeGroup(): Promise<number> {
+  nodeGroupId ??= new Promise((resolve, reject) =>
+    execFile('/bin/ps', ['-o', 'pgid=', '-p', String(process.pid)], (error, output) => {
+      const group = Number(output.trim());
+      if (error || !Number.isInteger(group) || group < 1)
+        reject(error ?? new Error(`Unreadable process group: ${output}`));
+      else resolve(group);
+    }),
+  );
+  return nodeGroupId;
 }
 
-/** The task process's IPC messages; anything else is ignored. Provider code can send too. */
-export function parseTaskMessage(raw: unknown): TaskMessage | undefined {
+/**
+ * The task process's IPC messages; anything else is ignored. Provider code can send too, and
+ * the node signals a named group negated: 0 would reach the node's own group, 1 (-1) every
+ * process it may signal, its own pid or group id its own group. Those fail closed.
+ */
+export function parseTaskMessage(raw: unknown, ownGroup: number): TaskMessage | undefined {
   if (!isRecord(raw)) return undefined;
   if (raw.type === 'task-stopping') return { type: 'task-stopping' };
   if (
     (raw.type === 'task-child' ||
       raw.type === 'task-child-exit' ||
       raw.type === 'task-child-reaped') &&
-    taskGroupPid(raw.pid)
+    typeof raw.pid === 'number' &&
+    Number.isInteger(raw.pid) &&
+    raw.pid > 1 &&
+    raw.pid !== process.pid &&
+    raw.pid !== ownGroup
   )
     return { type: raw.type, pid: raw.pid };
   if (
@@ -330,6 +344,7 @@ export async function runTaskRuntime(
       : resolveFarmPaths({ role: 'node', env, checkoutRoot: support }).projects;
   env.FARMSLOT_CLI ||= path.join(selected.code.bin, 'farmslot');
   const executable = await realpath(env.FARMSLOT_CLI);
+  const ownGroup = await nodeGroup();
   if (signal?.aborted) return cancelled();
   const packageRoot = path.resolve(path.dirname(executable), '..');
   env.TSX_TSCONFIG_PATH = path.join(packageRoot, 'tsconfig.json');
@@ -415,7 +430,7 @@ export async function runTaskRuntime(
     if (signal?.aborted) abort();
     const timer = setTimeout(() => stop(124, `command timed out after ${timeout}ms`), timeout);
     task.on('message', (raw: unknown) => {
-      const message = parseTaskMessage(raw);
+      const message = parseTaskMessage(raw, ownGroup);
       if (!message) return;
       if ('type' in message) {
         if (message.type === 'task-stopping') stoppingAcknowledged = true;

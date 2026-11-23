@@ -41,7 +41,7 @@ let fixtures = 0;
 /**
  * A fixture child's environment and the FIFO its commands hold: they write their pids to it,
  * and `closed()` resolves once every one of them has exited. No deadline of its own: the
- * commands sleep 600 s, past the runner's file timeout, so only a kill ends them in time.
+ * commands sleep 300 s, past the runner's 180 s file timeout, so only a kill ends them in time.
  */
 function fixtureEnv(mode: string, extra: NodeJS.ProcessEnv = {}) {
   const fifo = path.join(directory, `pipe-${++fixtures}`);
