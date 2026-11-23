@@ -3,7 +3,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import path from 'node:path';
 import test from 'node:test';
 
-import { killExitedLeaderGroup, runTaskRuntime } from './task-runtime.js';
+import { killExitedLeaderGroup, parseTaskMessage, runTaskRuntime } from './task-runtime.js';
 import { alive, cliFixture, taskPipe } from './task-runtime.test-support.js';
 
 /** Exited children of this process that nobody waited for. */
@@ -60,6 +60,22 @@ test("a reaped leader's group is killed only while no live process holds its id"
     [4242, 0],
     [-4242, 'SIGKILL'],
   ]);
+});
+
+test('a task can name only a real subprocess group, never the node’s own or every process', () => {
+  // Signalled negated: 0 is the node's own group, 1 (-1) every process it may signal.
+  for (const pid of [0, -0, 1, -4242, 1.5, Number.NaN, Infinity, process.pid, '4242'])
+    assert.equal(parseTaskMessage({ type: 'task-child', pid }), undefined, `pid ${String(pid)}`);
+  assert.deepEqual(parseTaskMessage({ type: 'task-child-exit', pid: 4242 }), {
+    type: 'task-child-exit',
+    pid: 4242,
+  });
+  assert.equal(parseTaskMessage({ stdout: '', stderr: '', exitCode: 0.5 }), undefined);
+  assert.deepEqual(parseTaskMessage({ stdout: 'x', stderr: '', exitCode: 3 }), {
+    stdout: 'x',
+    stderr: '',
+    exitCode: 3,
+  });
 });
 
 /** A stand-in node: it starts the task and can then be killed without any cleanup. */

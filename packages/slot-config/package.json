@@ -16,7 +16,8 @@
     "format:check": "prettier --check .",
     "lint": "eslint \"src/**/*.ts\"",
     "quality": "prettier --check . && eslint \"src/**/*.ts\" && tsc --noEmit && yarn test",
-    "test": "node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src"
+    "test": "node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src",
+    "test:task-runtime-forced-end-live": "TSX_TSCONFIG_PATH=tsconfig.json node --import tsx --test src/task-runtime-forced-end.live.ts"
   },
   "dependencies": {
     "@farmslot/agent-runtime": "workspace:*",

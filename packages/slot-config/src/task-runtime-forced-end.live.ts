@@ -9,7 +9,7 @@ import { runTaskRuntime } from './task-runtime.js';
 import { alive, cliFixture, until } from './task-runtime.test-support.js';
 
 // Bounded by the 5 s node-exec closeout, so it runs outside the default suite:
-// TSX_TSCONFIG_PATH=tsconfig.json node --import tsx --test src/task-runtime-forced-end.live.ts
+// yarn test:task-runtime-forced-end-live
 test('cancelling a task stops what it runs synchronously', { timeout: 30_000 }, async (t) => {
   const marker = path.join(await realpath(tmpdir()), `task-sync-${process.pid}-${Date.now()}`);
   t.after(() => {

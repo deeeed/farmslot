@@ -45,9 +45,9 @@ export function parseTaskRuntimeRequest(value: unknown): TaskRuntimeRequest {
   return { action: value.action, taskPath: value.taskPath, supportDir: value.supportDir, env };
 }
 
-// Prune and signal the task's owned process groups, kept in a shared Int32Array, groups.
-const taskGroupHelpers = `
-// Drop groups that have since emptied, so a later signal cannot reach a reused group id.
+// Drop the task's owned process groups (a shared Int32Array, groups) that have since emptied,
+// so a later signal cannot reach a reused group id.
+const taskPruneGroups = `
 const pruneGroups = () => {
   for (let i = 0; i < groups.length; i++) {
     const pid = Atomics.load(groups, i);
@@ -61,6 +61,16 @@ const pruneGroups = () => {
     }
   }
 };
+`;
+
+// The task's watchdog thread. No node is left to escalate, so it does: SIGTERM the task's
+// groups, SIGKILL what remains after the node-exec closeout, then the task's own group.
+// The main thread asks for it on a dropped channel or a failed send. While the main thread
+// is blocked in a synchronous call it sees no disconnect, so the watchdog also stops once
+// the task has been reparented: its node is gone.
+const taskWatchdog = `
+const { parentPort, workerData: { groups, node } } = require('node:worker_threads');
+${taskPruneGroups}
 const signalGroups = (signal) => {
   for (let i = 0; i < groups.length; i++) {
     const pid = Atomics.load(groups, i);
@@ -73,17 +83,6 @@ const signalGroups = (signal) => {
     }
   }
 };
-`;
-
-// The task's watchdog thread. No node is left to escalate, so it does: SIGTERM the task's
-// groups, SIGKILL what remains after the node-exec closeout, then the task's own group.
-// The main thread asks for it on a dropped channel or a failed send. While the main thread
-// is blocked in a synchronous call it sees no disconnect, so the watchdog also stops once
-// the task has been reparented: its node is gone.
-const taskWatchdog = `
-const { parentPort, workerData: groups } = require('node:worker_threads');
-${taskGroupHelpers}
-const node = process.ppid;
 let stopping = false;
 const stop = () => {
   if (stopping) return;
@@ -102,9 +101,12 @@ const stop = () => {
   settle();
 };
 parentPort.on('message', stop);
+// The node that started the task is its parent; any other parent means the node is gone,
+// including before this thread started.
 const orphaned = setInterval(() => {
   if (process.ppid !== node) stop();
 }, 500);
+if (process.ppid !== node) stop();
 `;
 
 // Providers change process.env while loading. A child process keeps those changes
@@ -131,13 +133,16 @@ const parentPort = {
 };
 // The process groups this task owns, in memory its watchdog thread shares.
 const groups = new Int32Array(new SharedArrayBuffer(4 * 4096));
-${taskGroupHelpers}
+${taskPruneGroups}
 // A worker thread died with its node; a process must not outlive it. The watchdog stops
 // this task's groups, then the task's own group (what it runs synchronously or backgrounds
 // untracked, and itself), once the node is gone. It is started before tsx loads, so it
 // starts no child.
 const { Worker } = require('node:worker_threads');
-const watchdog = new Worker(${JSON.stringify(taskWatchdog)}, { eval: true, workerData: groups });
+const watchdog = new Worker(${JSON.stringify(taskWatchdog)}, {
+  eval: true,
+  workerData: { groups, node: workerData.node },
+});
 watchdog.unref();
 // It runs once, whichever of a disconnect, a failed send or a failed write comes first.
 let abandoned = false;
@@ -225,21 +230,30 @@ type TaskMessage =
   | { type: 'task-child' | 'task-child-exit' | 'task-child-reaped'; pid: number }
   | { type: 'task-stopping' };
 
-/** The task process's IPC messages; anything else is ignored. */
-function parseTaskMessage(raw: unknown): TaskMessage | undefined {
+/**
+ * A pid a task may name as a subprocess group. The node signals it negated, so 0 would reach
+ * the node's own group, 1 (-1) every process it may signal, and its own pid its own group.
+ */
+function taskGroupPid(value: unknown): value is number {
+  return Number.isInteger(value) && Number(value) > 1 && value !== process.pid;
+}
+
+/** The task process's IPC messages; anything else is ignored. Provider code can send too. */
+export function parseTaskMessage(raw: unknown): TaskMessage | undefined {
   if (!isRecord(raw)) return undefined;
   if (raw.type === 'task-stopping') return { type: 'task-stopping' };
   if (
     (raw.type === 'task-child' ||
       raw.type === 'task-child-exit' ||
       raw.type === 'task-child-reaped') &&
-    typeof raw.pid === 'number'
+    taskGroupPid(raw.pid)
   )
     return { type: raw.type, pid: raw.pid };
   if (
     typeof raw.stdout === 'string' &&
     typeof raw.stderr === 'string' &&
-    typeof raw.exitCode === 'number'
+    typeof raw.exitCode === 'number' &&
+    Number.isInteger(raw.exitCode)
   )
     return { stdout: raw.stdout, stderr: raw.stderr, exitCode: raw.exitCode };
   return undefined;
@@ -329,7 +343,12 @@ export async function runTaskRuntime(
       [
         '-e',
         taskProcess,
-        JSON.stringify({ action: request.action, taskPath: request.taskPath, packageRoot }),
+        JSON.stringify({
+          action: request.action,
+          taskPath: request.taskPath,
+          packageRoot,
+          node: process.pid,
+        }),
       ],
       // Its own process group: a forced end reaches what it runs synchronously or backgrounds
       // untracked, and stopping the node job does not kill it before its own cleanup runs.
