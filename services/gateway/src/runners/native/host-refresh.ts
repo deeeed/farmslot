@@ -49,6 +49,8 @@ export function sessionsNeedingAPerson(
 export async function gatewayNativeRefreshPolicy(
   sessions: NativeSessionInfo[],
 ): Promise<ReadonlyMap<string, string>> {
+  // Only a census with live sessions looks at runs; a busy result is reused for a few seconds.
+  if (!sessions.length) return new Map();
   const { getAllRuns } = await import('../../runs/store.js');
   return sessionsNeedingAPerson(getAllRuns(), sessions);
 }

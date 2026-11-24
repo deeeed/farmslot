@@ -75,8 +75,6 @@ export type NativeHostRefreshPolicy = (
 
 /** How long a busy census answers launches before the host is asked again. */
 const NATIVE_REFRESH_BUSY_REUSE_MS = 5_000;
-/** How long a refresh waits for requests already on their way to the host. */
-const NATIVE_REFRESH_DRAIN_MS = 30_000;
 
 const NATIVE_ADMISSION_METHODS: readonly string[] = [
   'create',
@@ -86,14 +84,39 @@ const NATIVE_ADMISSION_METHODS: readonly string[] = [
   NATIVE_WORKER_TRANSFER,
 ];
 
+/** Requests that start or change runner work; a refresh never stops a host under one. */
+const NATIVE_WORK_METHODS: readonly string[] = [
+  ...NATIVE_ADMISSION_METHODS,
+  'send',
+  'steer',
+  'setApprovalMode',
+  NATIVE_WORKER_SEND,
+  NATIVE_WORKER_STEER,
+  NATIVE_WORKER_COMPACT,
+];
+
 /** A session journal's owner, from its first line (the session's info record). */
 async function journalOwner(file: string): Promise<string | undefined> {
-  const handle = await open(file, 'r');
+  let handle;
+  try {
+    handle = await open(file, 'r');
+  } catch (error) {
+    // Removed since the directory was read: nothing to count.
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
+    throw error;
+  }
   try {
     const lines = handle.readLines({ start: 0 });
     for await (const line of lines) {
       lines.close();
-      const record: unknown = JSON.parse(line);
+      let record: unknown;
+      try {
+        record = JSON.parse(line);
+      } catch (error) {
+        // A torn first line has no session in it yet, as the host's own reader treats it.
+        if (error instanceof SyntaxError) return undefined;
+        throw error;
+      }
       if (!record || typeof record !== 'object' || !('info' in record)) return undefined;
       const info: unknown = record.info;
       return info && typeof info === 'object' && 'ownerPrincipalId' in info
@@ -116,9 +139,8 @@ export class NativeSessionClient {
   private refreshing?: Promise<{ refreshed: boolean; busy: string[] }>;
   /** A refresh that found the host busy, reused briefly so launches don't re-census it each time. */
   private lastBusy?: { at: number; hostPid: number; result: { refreshed: false; busy: string[] } };
-  /** Requests on their way to the host; a refresh waits for them before taking its census. */
+  /** Requests adding work that are on their way to the host; any of them holds a refresh. */
   private inFlight = 0;
-  private drained?: () => void;
   /** Journal file name to owner: each journal's first line is read once. */
   private readonly journalOwners = new Map<string, string>();
   constructor(
@@ -311,6 +333,9 @@ export class NativeSessionClient {
     const names = existsSync(directory)
       ? (await readdir(directory)).filter((name) => name.endsWith('.journal'))
       : [];
+    const present = new Set(names);
+    for (const name of this.journalOwners.keys())
+      if (!present.has(name)) this.journalOwners.delete(name);
     for (const name of names)
       if (!this.journalOwners.has(name)) {
         const owner = await journalOwner(join(directory, name));
@@ -333,7 +358,7 @@ export class NativeSessionClient {
       host,
       busy,
       this.refreshPolicy
-        ? 'It is refreshed at the next launch or service restart once no live session is busy.'
+        ? 'It is refreshed at a later launch or service restart once no live session is busy.'
         : 'It is refreshed when its service next starts, once every runner has stopped.',
     );
   }
@@ -354,19 +379,9 @@ export class NativeSessionClient {
       Date.now() - this.lastBusy.at < NATIVE_REFRESH_BUSY_REUSE_MS
     )
       return this.lastBusy.result;
-    // Requests already on their way finish first; new ones wait for this refresh in call().
-    if (this.inFlight) {
-      const drained = new Promise<void>((resolve) => (this.drained = resolve));
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const settled = await Promise.race([
-        drained.then(() => true),
-        new Promise<boolean>((resolve) => {
-          timer = setTimeout(() => resolve(false), NATIVE_REFRESH_DRAIN_MS);
-        }),
-      ]);
-      clearTimeout(timer);
-      if (!settled) return this.busy(host, ['requests still in flight']);
-    }
+    // A request adding work is already on its way: stopping now could cut it off.
+    if (this.inFlight)
+      return this.busy(host, [`${this.inFlight} request(s) on their way to the host`]);
     if (await retireIdleNativeHost(this.root, host)) return { refreshed: true, busy: [] };
     if (!this.refreshPolicy) return { refreshed: false, busy: [] };
     const live = await this.liveSessionsOf(host);
@@ -400,23 +415,42 @@ export class NativeSessionClient {
   private async call<T>(request: HostRequest): Promise<T> {
     const passive = request.method === 'list' || passiveHostReads.getStore() === true;
     if (passive) return this.dispatch<T>(request, this.existingHost(), []);
-    // A refresh in progress decides which sessions to stop; nothing else reaches the host then.
-    // Its outcome is the caller's that asked for it, so a failure only ends this wait.
-    while (this.refreshing) await this.refreshing.catch(() => undefined);
-    let host = await this.host();
-    let busy: string[] = [];
-    if (NATIVE_ADMISSION_METHODS.includes(request.method) && !nativeHostRunsCurrentRuntime(host)) {
-      const refresh = await this.refreshStaleHost();
-      if (refresh.refreshed) host = await this.host();
-      else busy = refresh.busy;
-    }
-    this.inFlight += 1;
+    // Reads, interrupts, closes and answers add no work; they never wait for a refresh.
+    if (!NATIVE_WORK_METHODS.includes(request.method))
+      return this.dispatch<T>(request, await this.host(), []);
+    await this.enterWork();
+    let counted = true;
     try {
+      let host = await this.host();
+      let busy: string[] = [];
+      if (
+        this.refreshPolicy &&
+        NATIVE_ADMISSION_METHODS.includes(request.method) &&
+        !nativeHostRunsCurrentRuntime(host)
+      ) {
+        // This launch is not on its way to the old host; the refresh may stop it.
+        this.inFlight -= 1;
+        counted = false;
+        const refresh = await this.refreshStaleHost();
+        await this.enterWork();
+        counted = true;
+        host = await this.host();
+        busy = refresh.refreshed ? [] : refresh.busy;
+      }
       return await this.dispatch<T>(request, host, busy);
     } finally {
-      this.inFlight -= 1;
-      if (!this.inFlight) this.drained?.();
+      if (counted) this.inFlight -= 1;
     }
+  }
+
+  /**
+   * Count a request that adds work, once no refresh is deciding: the count is taken in the
+   * same tick the wait ends, so a refresh that starts later sees it and leaves the host alone.
+   */
+  private async enterWork(): Promise<void> {
+    // A refresh's outcome belongs to the caller that asked for it; a failure only ends this wait.
+    while (this.refreshing) await this.refreshing.catch(() => undefined);
+    this.inFlight += 1;
   }
 
   private async dispatch<T>(

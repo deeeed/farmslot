@@ -256,6 +256,9 @@ interface SessionRecord {
   turnEnd?: { done: Promise<void>; abandon(reason: string): void };
 }
 
+/** How long an idle-runner upgrade fence holds without the stop that should follow it. */
+const IDLE_RUNNER_FENCE_MS = 60_000;
+
 /** Runs only inside the local host. Synchronous fsync orders intent before native input. */
 export class NativeSessionManager {
   private sessions = new Map<string, SessionRecord>();
@@ -308,7 +311,14 @@ export class NativeSessionManager {
                       : undefined;
       if (reason) busy.push(`${record.info.id} (${reason})`);
     }
-    if (!busy.length) this.upgradePrepared = true;
+    if (!busy.length) {
+      this.upgradePrepared = true;
+      // The supervisor's stop follows at once. If it never comes (the stop failed, or the
+      // service that fenced died), the fence lifts so the idle sessions take input again.
+      setTimeout(() => {
+        this.upgradePrepared = false;
+      }, IDLE_RUNNER_FENCE_MS).unref();
+    }
     return busy;
   }
 
@@ -1914,7 +1924,6 @@ export class NativeSessionManager {
     commandId: string,
     text: string,
   ): Promise<NativeSessionSendResult> {
-    this.assertAdmissionOpen();
     const record = this.owned(owner, id);
     const adapter = record.adapter;
     if (
@@ -1926,6 +1935,8 @@ export class NativeSessionManager {
       record.sending
     )
       return this.send(owner, id, commandId, text);
+    // A replay goes through send above, which answers it; new input waits out a fence.
+    this.assertAdmissionOpen();
     this.assertAccountCurrent(record);
     const command: StoredCommand = {
       text,

@@ -21,7 +21,7 @@ export function nativeHostVersionSkew(
   return Object.assign(
     new Error(
       `Native host runtime version skew: node ${RUNTIME_VERSION} (build ${currentRuntimeBuild().slice(0, 12)}), host ${host.runtimeVersion ?? 'unknown (legacy)'} (build ${host.runtimeBuild?.slice(0, 12) ?? 'unknown'}). ` +
-        `Existing sessions remain available; new launches wait for a refresh. ${refreshes} ` +
+        `Existing sessions remain available; new launches fail until the host is refreshed. ${refreshes} ` +
         (busy.length ? `Busy: ${busy.join('; ')}. ` : '') +
         'See docs/operations/native-host-refresh.md.',
     ),

@@ -56,6 +56,12 @@ if (values['stop-idle']) client.setRefreshPolicy(async () => new Map<string, str
 const { refreshed, busy } = await client.refreshStaleHost();
 if (refreshed) console.log('Retired. The next gateway or node launch starts the current runtime.');
 else {
-  console.log(busy.length ? `Not refreshed; busy: ${busy.join('; ')}` : 'Not refreshed.');
+  console.log(
+    busy.length
+      ? `Not refreshed; busy: ${busy.join('; ')}`
+      : values['stop-idle']
+        ? 'Not refreshed.'
+        : 'Not refreshed: live runners remain. Add --stop-idle to stop idle ones.',
+  );
   process.exitCode = 1;
 }

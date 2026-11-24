@@ -208,3 +208,82 @@ test('a fenced host takes no new input, so nothing starts between its census and
     await stopNativeStack(fixture);
   }
 });
+
+/** The host as a version before the idle-runner fence would record itself. */
+function olderHost(fixture: ReturnType<typeof setup>): HostIdentity {
+  const hostFile = join(fixture.root, 'host.json');
+  const before = readJson<HostIdentity>(hostFile);
+  const older: Record<string, unknown> = { ...before, runtimeVersion: '0.0.0' };
+  delete older.supportsIdleRunnerUpgrade;
+  writeFileSync(hostFile, JSON.stringify(older));
+  return before;
+}
+
+test('an older host without the idle-runner fence is still stopped once its sessions are idle', async () => {
+  const fixture = setup({ manualTurns: true });
+  const client = new NativeSessionClient(fixture.root);
+  client.setRefreshPolicy(keepNone);
+  try {
+    const { session } = await skewedHost(fixture, client);
+    await fixture.completeTurn();
+    await until(async () => (await client.inspect('owner', session.id)).state === 'idle');
+    const before = olderHost(fixture);
+
+    assert.deepEqual(await client.refreshStaleHost(), { refreshed: true, busy: [] });
+    await client.warm();
+    assert.notEqual(readJson<HostIdentity>(join(fixture.root, 'host.json')).pid, before.pid);
+    assert.equal((await client.inspect('owner', session.id)).state, 'failed');
+  } finally {
+    await stopNativeStack(fixture);
+  }
+});
+
+test('a send started in the same tick as a launch keeps an older host from being stopped', async () => {
+  const fixture = setup({ manualTurns: true });
+  const client = new NativeSessionClient(fixture.root);
+  client.setRefreshPolicy(keepNone);
+  try {
+    const { session } = await skewedHost(fixture, client);
+    await fixture.completeTurn();
+    await until(async () => (await client.inspect('owner', session.id)).state === 'idle');
+    const before = olderHost(fixture);
+
+    const launch = client.create('owner', { runner: 'codex', cwd: fixture.cwd });
+    const sent = client.send('owner', session.id, 'same-tick', 'second');
+    await assert.rejects(launch, {
+      message: /Busy: 1 request\(s\) on their way to the host/,
+    });
+    assert.equal((await sent).submitted, true, 'the send reached the old host and ran');
+    assert.equal(readJson<HostIdentity>(join(fixture.root, 'host.json')).pid, before.pid);
+    await fixture.completeTurn();
+    await until(async () => (await client.inspect('owner', session.id)).state === 'idle');
+    await client.close('owner', session.id);
+  } finally {
+    await stopNativeStack(fixture);
+  }
+});
+
+test('a busy result answers launches for a few seconds without a new census', async () => {
+  const fixture = setup({ manualTurns: true });
+  const client = new NativeSessionClient(fixture.root);
+  let censuses = 0;
+  try {
+    const { session } = await skewedHost(fixture, client);
+    await fixture.completeTurn();
+    await until(async () => (await client.inspect('owner', session.id)).state === 'idle');
+    client.setRefreshPolicy(async () => {
+      censuses += 1;
+      return new Map([[session.id, 'kept']]);
+    });
+    skew(fixture);
+
+    for (let attempt = 0; attempt < 3; attempt++)
+      await assert.rejects(client.create('owner', { runner: 'codex', cwd: fixture.cwd }), {
+        message: /\(kept\)/,
+      });
+    assert.equal(censuses, 1);
+    await client.close('owner', session.id);
+  } finally {
+    await stopNativeStack(fixture);
+  }
+});
