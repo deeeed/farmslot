@@ -12,7 +12,7 @@ import { writeJson } from '../lib/isolated-stack.mjs';
 import { startRemoteNodeStack } from '../lib/remote-node-stack.mjs';
 import { startRecoveryGithub } from './recovery-github.mjs';
 import { requireRecoveryFaultSupport } from './recovery-prerequisites.mjs';
-import { canaryPack, canaryRunParams, SEED } from './fixtures.mjs';
+import { canaryPack, canaryRunParams, REVIEWER, SEED } from './fixtures.mjs';
 import type { CheckResult } from './outcome.mjs';
 import { stepTimings } from './outcome.mjs';
 import type { Log } from './run-driver.mjs';
@@ -85,9 +85,7 @@ export async function runRecoveryMatrix(options: {
                   'silent-reviewer',
                   'out-of-band-commit',
                 ].includes(name),
-                runner: 'codex',
-                model: 'gpt-6-luna',
-                effort: 'low',
+                ...REVIEWER,
                 mode: 'cold',
                 max_retries: name === 'review-cap' ? 0 : 5,
                 review_timeout_min: 0.5,
@@ -319,9 +317,7 @@ export async function runRecoveryMatrix(options: {
             ? {
                 reviewMode: 'cold',
                 reviewValidationDepth: 'static-code',
-                reviewSequence: [
-                  { runner: 'codex', model: 'gpt-6-luna', effort: 'low', mode: 'cold' },
-                ],
+                reviewSequence: [{ ...REVIEWER, mode: 'cold' }],
               }
             : {}),
           ...extra,

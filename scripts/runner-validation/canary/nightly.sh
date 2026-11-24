@@ -14,7 +14,7 @@
 #   CANARY_HOME          evidence and CLI snapshots (~/farmslot-canary)
 #   CANARY_STATUS        status line (~/lanes/canary-nightly/STATUS.md)
 #   CANARY_REF           ref of origin to run (main)
-#   CANARY_NIGHTLY_ARGS  canary arguments (--with-review: the two codex gpt-6-luna reviews)
+#   CANARY_NIGHTLY_ARGS  canary arguments (--with-review: the reviewed run, its reviewer turns answered by the test)
 #   CANARY_KEEP_RUNS     evidence directories kept (14)
 #   CANARY_WAIT_MIN      how long to wait for another proof job on this host (90)
 set -uo pipefail
