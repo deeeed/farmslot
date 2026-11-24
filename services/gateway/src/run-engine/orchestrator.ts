@@ -57,6 +57,7 @@ import {
   prepareIdentityPath,
   reapSlotPrepareScope,
 } from '../methods/slot.js';
+import type { PrepareCommandError } from '../methods/slot/shared.js';
 import { isReviewerCapacityError } from '../review/terminal-result.js';
 import {
   executeReviewWorkspaceStep,
@@ -74,7 +75,7 @@ import {
   reserveRunArtifactMetadata,
   retainedRunArtifactManifest,
 } from '../run-completion/retained-artifacts.js';
-import { retainFailedStepLog } from '../run-lifecycle/failed-step-log.js';
+import { retainFailedStepLogs } from '../run-lifecycle/failed-step-log.js';
 import { STEP_TO_STATUS } from '../run-lifecycle/step-status.js';
 import {
   routeTerminalRunTransition,
@@ -1302,6 +1303,16 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
 
       console.error(`[run-engine] run ${runId.slice(0, 8)} step ${stepName} failed: ${msg}`);
 
+      // The run keeps its own copy of the failed logs before the slot's next prepare reuses
+      // them. Copied before the generation check below: nothing awaits between that check and
+      // the writes it guards, and a copy taken by a stale loop is harmless.
+      const failure: PrepareCommandError = err instanceof Error ? err : new Error(msg);
+      const {
+        failedLogPath,
+        relatedLogs,
+        message: failureMessage,
+      } = await retainFailedStepLogs(runId, failure, msg);
+
       // Stale loop — a replay started a new generation, don't overwrite its state
       if (getRunGeneration(runId) !== myGen) {
         console.log(
@@ -1313,15 +1324,7 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       // Persist partial I/O even on failure — valuable for debugging and fine-tuning
       const partialIO = stepPartialIO.get(runId);
       stepPartialIO.delete(runId);
-      const failedCommand = (err as any).failedCommand as string | undefined;
-      // The run keeps its own copy of the failed log before the slot's next prepare reuses it.
-      const { logPath: failedLogPath, message: failureMessage } = await retainFailedStepLog(
-        runId,
-        (err as any).failedLogPath as string | undefined,
-        msg,
-      );
-      const failedPhase = (err as any).failedPhase as string | undefined;
-      const relatedLogs = (err as any).relatedLogs as string[] | undefined;
+      const { failedCommand, failedPhase } = failure;
       const failureOutputs = {
         ...partialIO?.outputs,
         ...(failedCommand ? { failedCommand } : {}),

@@ -1008,7 +1008,7 @@ export async function runPrepareCommand(
   // and (b) onOutput observers (e.g. preflight's progress-marker parser). Tail errors are
   // observability-only — never fail the prepare on a tail glitch.
   let lastSize = 0;
-  const readTailChunk = async (): Promise<void> => {
+  const readTailOnce = async (): Promise<void> => {
     const sizeR = await exec(`wc -c < ${shellQuote(slotHostLogPath)} 2>/dev/null`, {
       timeout: 5_000,
     });
@@ -1018,10 +1018,20 @@ export async function runPrepareCommand(
       timeout: 10_000,
     });
     if (chunkR.stdout) {
-      void appendFile(logPath, chunkR.stdout);
+      // Awaited: the prepare's error can name this log as soon as the command returns, and a
+      // per-run copy of it must hold the final lines.
+      await appendFile(logPath, chunkR.stdout);
       opts?.onOutput?.('stdout', chunkR.stdout);
     }
     lastSize = size;
+  };
+  // One read at a time: the poll loop and the final drain must not append the same bytes twice,
+  // and the drain must wait for an append still in flight.
+  let tailing: Promise<void> = Promise.resolve();
+  const readTailChunk = (): Promise<void> => {
+    const read = tailing.then(readTailOnce, readTailOnce);
+    tailing = read.catch(() => undefined);
+    return read;
   };
   let tailAborted = false;
   const tailPromise = (async () => {
