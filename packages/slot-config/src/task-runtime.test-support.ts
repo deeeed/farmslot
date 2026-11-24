@@ -12,6 +12,7 @@ const repoRoot = path.resolve(import.meta.dirname, '../../..');
 export async function cliFixture(
   t: test.TestContext,
   init?: string,
+  checkoutEnv?: string,
 ): Promise<{ root: string; cli: string }> {
   const root = await realpath(await mkdtemp(path.join(tmpdir(), 'task-runtime-reap-')));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -28,7 +29,7 @@ export async function cliFixture(
   );
   await writeFile(
     path.join(cli, 'src/onboarding/env-file.ts'),
-    'export function loadCheckoutEnv() {}',
+    checkoutEnv ?? 'export function loadCheckoutEnv() {}',
   );
   await writeFile(
     path.join(cli, 'src/onboarding/workspace.ts'),
@@ -42,12 +43,27 @@ export async function cliFixture(
   return { root, cli };
 }
 
+const errorCode = (error: unknown) =>
+  error instanceof Error && 'code' in error ? error.code : undefined;
+
+/** Whether `pid` is still a process: ESRCH means gone; EPERM means it exists but isn't ours. */
 export const alive = (pid: number) => {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (errorCode(error) === 'ESRCH') return false;
+    if (errorCode(error) === 'EPERM') return true;
+    throw error;
+  }
+};
+
+/** SIGKILLs a process a test started, if it is still there: gone or adopted is fine. */
+export const killIfPresent = (pid: number) => {
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch (error) {
+    if (errorCode(error) !== 'ESRCH' && errorCode(error) !== 'EPERM') throw error;
   }
 };
 

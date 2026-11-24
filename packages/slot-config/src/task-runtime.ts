@@ -23,8 +23,8 @@ export const TASK_RUNTIME_TIMEOUT_MS = { init: 10 * 60_000, verify: 120_000 } as
  */
 export const TASK_OUTPUT_DRAIN_MS = 2000;
 // The worst case after a stop: the closeout's SIGKILL, the forced kill one closeout later,
-// the output drain, then the post-close group census (bounded at one closeout; by then the
-// groups were SIGKILLed and it is normally one ps call). The gateway waits this long.
+// the output drain, then the post-close group census (bounded at one closeout, after which
+// any group still listed is SIGKILLed). The gateway waits this long.
 export const TASK_RUNTIME_CLOSEOUT_MS = 3 * NODE_EXEC_CLOSEOUT_MS + TASK_OUTPUT_DRAIN_MS;
 
 export function parseTaskRuntimeRequest(value: unknown): TaskRuntimeRequest {
@@ -125,6 +125,8 @@ if (process.ppid !== node) stop();
 // from the selected installation, just as its bin/farmslot.mjs does.
 const taskProcess = `
 const workerData = JSON.parse(process.argv[1]);
+// What the node started this task with (NODE_OPTIONS without preloads).
+const startNodeOptions = process.env.NODE_OPTIONS;
 // IPC stands in for a worker port. A message after the parent closed the channel is dropped.
 let delivered = false;
 const parentPort = {
@@ -153,6 +155,8 @@ const watchdog = new Worker(${JSON.stringify(taskWatchdog)}, {
   workerData: { groups, node: workerData.node },
 });
 watchdog.unref();
+// Set once a stop or an abandon begins: no new subprocess starts after it.
+let stopping = false;
 // It runs once, whichever of a disconnect, a failed send or a failed write comes first.
 let abandoned = false;
 const abandon = (cause) => {
@@ -175,7 +179,6 @@ process.on('error', abandon);
 const { createRequire } = require('node:module');
 const { pathToFileURL } = require('node:url');
 const path = require('node:path');
-let stopping = false;
 parentPort.on('message', (message) => {
   if (message.type === 'task-stop') {
     stopping = true;
@@ -221,12 +224,16 @@ ChildProcess.prototype.spawn = function(options) {
   bootstrapFarmslotHome();
   const { okEnvelope, errorEnvelope } = await import(pathToFileURL(path.join(root, 'src/envelope.ts')).href);
   const command = workerData.action === 'init' ? 'internal.task-init' : 'task.verify';
-  // The full NODE_OPTIONS for the subprocesses provider code starts, put back only now: tsx
-  // and its esbuild worker are running, and a thread started with execArgv reads NODE_OPTIONS
-  // again, so restoring earlier would run the preloads inside this task. A thread provider
-  // code starts with execArgv will see them, as it would on the CLI transport.
-  if (workerData.nodeOptions === undefined) delete process.env.NODE_OPTIONS;
-  else process.env.NODE_OPTIONS = workerData.nodeOptions;
+  // The full NODE_OPTIONS for the subprocesses provider code starts, put back only now, after
+  // tsx registered and the CLI's first modules loaded: a thread started with execArgv re-reads
+  // NODE_OPTIONS, so restoring earlier ran the preloads inside this task. A thread started
+  // later with execArgv (esbuild's sync worker on a provider's first require of a .ts file, a
+  // provider's own Worker) sees them, as it would on the CLI transport. A value the checkout's
+  // env files set meanwhile is kept.
+  if (process.env.NODE_OPTIONS === startNodeOptions) {
+    if (workerData.nodeOptions === undefined) delete process.env.NODE_OPTIONS;
+    else process.env.NODE_OPTIONS = workerData.nodeOptions;
+  }
   let result;
   try {
     if (workerData.action === 'init') {
@@ -262,11 +269,16 @@ export function withoutPreloads(options: string): string {
   const tokens = options.match(/(?:[^ "]|"(?:[^"\\]|\\.)*")+/g) ?? [];
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i]!;
-    if (PRELOAD_FLAGS.has(token)) i++;
-    else if (!PRELOAD_FLAGS.has(token.split('=')[0]!)) kept.push(token);
+    // Node reads a flag name without its quotes and with _ for -.
+    const flag = (name: string) => name.replace(/"/g, '').replace(/_/g, '-');
+    if (PRELOAD_FLAGS.has(flag(token))) i++;
+    else if (!PRELOAD_FLAGS.has(flag(token.split('=')[0]!))) kept.push(token);
   }
   return kept.join(' ');
 }
+
+/** The ps the post-close census runs; a test points it elsewhere to make the census fail. */
+export const censusPs = { path: '/bin/ps' };
 
 /** Caches `read`'s value once it succeeds; a failed read is tried again next time. */
 export function cachedOnSuccess<T>(read: () => Promise<T>): () => Promise<T> {
@@ -574,8 +586,11 @@ export async function runTaskRuntime(
             let groups: string;
             try {
               groups = await new Promise<string>((done, fail) =>
-                execFile('/bin/ps', ['-axo', 'pgid=,stat='], { timeout: 2000 }, (error, output) =>
-                  error ? fail(error) : done(output),
+                execFile(
+                  censusPs.path,
+                  ['-axo', 'pgid=,stat='],
+                  { timeout: 2000 },
+                  (error, output) => (error ? fail(error) : done(output)),
                 ),
               );
             } catch (error) {
@@ -598,11 +613,13 @@ export async function runTaskRuntime(
             stderr: taskError?.stack ?? `Task runtime exited without a result (exit ${code}).`,
             exitCode: code || 1,
           };
+          // The census ended with groups left (its bound or a failed ps), possibly before the
+          // closeout's SIGKILL fired; dispose() below would cancel that, so kill them now.
+          const left = stopped ? [...children] : [];
+          for (const pid of left) signalChild(pid, 'SIGKILL');
           const survivors =
             censusFailure +
-            (stopped && children.size
-              ? `Task groups still present: ${[...children].join(', ')}\n`
-              : '');
+            (left.length ? `Task groups SIGKILLed after the census: ${left.join(', ')}\n` : '');
           resolve({
             ...outcome,
             stdout: stdout + outcome.stdout,

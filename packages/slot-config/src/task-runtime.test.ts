@@ -6,12 +6,13 @@ import test from 'node:test';
 
 import {
   cachedOnSuccess,
+  censusPs,
   killExitedLeaderGroup,
   parseTaskMessage,
   runTaskRuntime,
   withoutPreloads,
 } from './task-runtime.js';
-import { alive, cliFixture, taskPipe } from './task-runtime.test-support.js';
+import { alive, cliFixture, killIfPresent, taskPipe } from './task-runtime.test-support.js';
 
 /** Exited children of this process that nobody waited for. */
 function zombieChildren(): number {
@@ -137,7 +138,7 @@ test('a task whose node dies stops itself and its subprocesses', { timeout: 90_0
   const pipe = await taskPipe(t);
   const pids: number[] = [];
   t.after(() => {
-    for (const pid of pids) if (alive(pid)) process.kill(pid, 'SIGKILL');
+    for (const pid of pids) killIfPresent(pid);
   });
   const { root, cli } = await cliFixture(
     t,
@@ -179,7 +180,7 @@ test(
     const pipe = await taskPipe(t);
     const pids: number[] = [];
     t.after(() => {
-      for (const pid of pids) if (alive(pid)) process.kill(pid, 'SIGKILL');
+      for (const pid of pids) killIfPresent(pid);
     });
     const { root, cli } = await cliFixture(
       t,
@@ -209,7 +210,7 @@ test(
     const pipe = await taskPipe(t);
     let descendant = 0;
     t.after(() => {
-      if (descendant && alive(descendant)) process.kill(descendant, 'SIGKILL');
+      if (descendant) killIfPresent(descendant);
     });
     const { root, cli } = await cliFixture(
       t,
@@ -254,7 +255,7 @@ test('a task that crashes still has its subprocesses stopped', { timeout: 90_000
   const pipe = await taskPipe(t);
   const pids: number[] = [];
   t.after(() => {
-    for (const pid of pids) if (alive(pid)) process.kill(pid, 'SIGKILL');
+    for (const pid of pids) killIfPresent(pid);
   });
   const { root, cli } = await cliFixture(
     t,
@@ -305,7 +306,7 @@ test(
     const pipe = await taskPipe(t);
     let leftover = 0;
     t.after(() => {
-      if (leftover && alive(leftover)) process.kill(leftover, 'SIGKILL');
+      if (leftover) killIfPresent(leftover);
     });
     const { root, cli } = await cliFixture(
       t,
@@ -412,6 +413,8 @@ test('NODE_OPTIONS reaches a task without its module preloads', () => {
   );
   assert.equal(withoutPreloads('--title=a\tb --import x'), '--title=a\tb');
   assert.equal(withoutPreloads('--import=a\\ b'), 'b');
+  // Flag names as node reads them: quotes dropped, _ for -.
+  assert.equal(withoutPreloads('"--import" x --experimental_loader y --a=1'), '--a=1');
 });
 
 test(
@@ -486,6 +489,94 @@ test(
   },
 );
 
+/** Starts `init` in a task and crashes it right after; returns the pending result. */
+async function crashingTask(t: test.TestContext, init: string) {
+  const pipe = await taskPipe(t);
+  const pids: number[] = [];
+  t.after(() => {
+    for (const pid of pids) killIfPresent(pid);
+  });
+  const { root, cli } = await cliFixture(
+    t,
+    `import fs from 'node:fs';
+    import { spawn } from 'node:child_process';
+    export async function runHostedTaskInit() {
+      // The task and its subprocess hold the pipe: it ends when both have exited.
+      const pipe = fs.openSync(${JSON.stringify(pipe.path)}, 'w');
+      ${init}
+      fs.writeSync(pipe, String(child.pid) + '\\n');
+      setTimeout(() => { throw new Error('provider crashed'); }, 50);
+      await new Promise(() => {});
+    }`,
+  );
+  const pending = runTaskRuntime(
+    {
+      action: 'init',
+      taskPath: path.join(root, 'task.json'),
+      supportDir: root,
+      env: { FARMSLOT_CLI: path.join(cli, 'bin/farmslot.mjs') },
+    },
+    root,
+  );
+  pids.push(Number(await pipe.line()));
+  return { pending, pipe };
+}
+
+test(
+  'a crashed task’s group that ignores SIGTERM is still killed',
+  { timeout: 90_000 },
+  async (t) => {
+    const { pending, pipe } = await crashingTask(
+      t,
+      `const child = spawn('/bin/sh', ['-c', 'trap "" TERM; while :; do sleep 1; done'], { stdio: ['ignore', 'ignore', 'ignore', pipe] });`,
+    );
+    const result = await pending;
+    assert.notEqual(result.exitCode, 0);
+    // The census ended before the closeout's SIGKILL was due; the group was killed anyway.
+    await pipe.closed();
+  },
+);
+
+test(
+  'a census that cannot run still returns the result and kills what is left',
+  { timeout: 90_000 },
+  async (t) => {
+    censusPs.path = '/nonexistent/ps';
+    t.after(() => (censusPs.path = '/bin/ps'));
+    const { pending, pipe } = await crashingTask(
+      t,
+      `const child = spawn('sleep', ['600'], { stdio: ['ignore', 'ignore', 'ignore', pipe] });`,
+    );
+    const result = await pending;
+    assert.notEqual(result.exitCode, 0);
+    assert.match(result.stderr, /census failed/);
+    await pipe.closed();
+  },
+);
+
+test(
+  'a NODE_OPTIONS the checkout’s env files set is kept for provider code',
+  { timeout: 90_000 },
+  async (t) => {
+    const { root, cli } = await cliFixture(
+      t,
+      'export async function runHostedTaskInit() { return { nodeOptions: process.env.NODE_OPTIONS ?? null }; }',
+      'export function loadCheckoutEnv() { process.env.NODE_OPTIONS = "--max-old-space-size=1234"; }',
+    );
+    const result = await runTaskRuntime(
+      {
+        action: 'init',
+        taskPath: path.join(root, 'task.json'),
+        supportDir: root,
+        env: { FARMSLOT_CLI: path.join(cli, 'bin/farmslot.mjs') },
+      },
+      root,
+    );
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).data.nodeOptions, '--max-old-space-size=1234');
+  },
+);
+
 test('a group read that fails is tried again rather than cached', async () => {
   let reads = 0;
   const read = cachedOnSuccess(async () => {
@@ -506,7 +597,7 @@ test(
     const pipe = await taskPipe(t);
     let child = 0;
     t.after(() => {
-      if (child && alive(child)) process.kill(child, 'SIGKILL');
+      if (child) killIfPresent(child);
     });
     const { root, cli } = await cliFixture(
       t,
@@ -555,7 +646,7 @@ test(
     const pipe = await taskPipe(t);
     let child = 0;
     t.after(() => {
-      if (child && alive(child)) process.kill(child, 'SIGKILL');
+      if (child) killIfPresent(child);
     });
     const { root, cli } = await cliFixture(
       t,
@@ -593,7 +684,7 @@ test(
     const pipe = await taskPipe(t);
     let child = 0;
     t.after(() => {
-      if (child && alive(child)) process.kill(child, 'SIGKILL');
+      if (child) killIfPresent(child);
     });
     const { root, cli } = await cliFixture(
       t,
@@ -637,7 +728,7 @@ test(
     const pipe = await taskPipe(t);
     const pids: number[] = [];
     t.after(() => {
-      for (const pid of pids) if (alive(pid)) process.kill(pid, 'SIGKILL');
+      for (const pid of pids) killIfPresent(pid);
     });
     const { root, cli } = await cliFixture(
       t,

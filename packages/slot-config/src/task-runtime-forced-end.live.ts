@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { runTaskRuntime } from './task-runtime.js';
-import { alive, cliFixture, until } from './task-runtime.test-support.js';
+import { alive, cliFixture, killIfPresent, until } from './task-runtime.test-support.js';
 
 // Bounded by the 5 s node-exec closeout, so it runs outside the default suite:
 // yarn test:task-runtime-forced-end-live
@@ -15,7 +15,7 @@ test('cancelling a task stops what it runs synchronously', { timeout: 30_000 }, 
   t.after(() => {
     if (existsSync(marker)) {
       const pid = Number(readFileSync(marker, 'utf8'));
-      if (alive(pid)) process.kill(pid, 'SIGKILL');
+      killIfPresent(pid);
     }
     return rm(marker, { force: true });
   });
