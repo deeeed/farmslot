@@ -2205,11 +2205,26 @@ export async function recordParkedRunCommits(
 }
 
 /**
- * Times a slot release on its run. A run already archived keeps its record as it was: the
- * timing is an observation, not part of the archived execution.
+ * Runs a release of `slotId` for run `runId` and, when it frees the slot, records how long it
+ * took on the run. A run already archived keeps its record as it was: the timing is an
+ * observation, not part of the archived execution.
  */
-export function recordRunSlotRelease(id: string, release: NonNullable<Run['slotRelease']>): void {
-  if (getRun(id)) updateRun(id, { slotRelease: release });
+export async function timeRunSlotRelease<T extends { released: boolean }>(
+  runId: string,
+  slotId: string,
+  release: () => Promise<T>,
+): Promise<T> {
+  const startedAt = Date.now();
+  const result = await release();
+  if (result.released && getRun(runId))
+    updateRun(runId, {
+      slotRelease: {
+        slotId,
+        startedAt: new Date(startedAt).toISOString(),
+        durationMs: Date.now() - startedAt,
+      },
+    });
+  return result;
 }
 
 /** Ownership release records its checkout without rewriting archived execution. */

@@ -45,8 +45,12 @@ for (const runId of runIds) {
   console.log(JSON.stringify(summary));
   assert.ok(timing, `${runId}: COMPLETE has no timing`);
   assert.ok(timing.totalMs <= complete.durationMs, `${runId}: timing exceeds the step`);
+  // A local-first package (gate-held) times `package`; a direct completion times `pipeline`.
   if (run.flowType !== 'review-pr')
-    assert.ok(timing.phasesMs.pipeline > 0, `${runId}: no pipeline phase`);
+    assert.ok(
+      (timing.phasesMs.pipeline ?? 0) + (timing.phasesMs.package ?? 0) > 0,
+      `${runId}: no pipeline or package phase`,
+    );
   assert.ok(Number.isInteger(timing.bundleLock?.waitMs), `${runId}: no bundle-lock wait`);
   assert.ok(run.slotRelease?.durationMs >= 0, `${runId}: slot release was not timed`);
 }

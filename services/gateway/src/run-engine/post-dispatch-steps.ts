@@ -1934,11 +1934,15 @@ async function executeCompleteStepUnmeasured(
   broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
   if (shouldPrepareLocalFirstPackage(current)) {
     updateRunStep(runId, S.COMPLETE, { detail: 'Preparing local PR package...' });
-    const diffStat = await getDiffStat(current, { fresh: true });
-    const prepared = await prepareCompletionPackage(runId, {
-      diffStat,
-      requireArtifactMirror: true,
-    });
+    const diffStat = await timeCompletePhase('diffStat', () =>
+      getDiffStat(current, { fresh: true }),
+    );
+    const prepared = await timeCompletePhase('package', () =>
+      prepareCompletionPackage(runId, {
+        diffStat,
+        requireArtifactMirror: true,
+      }),
+    );
     await holdSlotForPublicationGate(current.slotId, broadcastFn);
     const cliCommand = `farmslot slot check ${current.slotId}`;
     return {
