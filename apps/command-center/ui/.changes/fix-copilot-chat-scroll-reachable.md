@@ -1,0 +1,1 @@
+- Co-Pilot chat scrolls on short windows, including with Settings open, and a new pending approval scrolls into view with its title and buttons. The native session composer scrolls as a whole instead of squeezing pending requests (every native session view). The cache status and the file transfer bar sit below the content instead of covering the bottom of every view.
