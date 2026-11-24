@@ -949,11 +949,55 @@ async function slotPrepareInner(
   // the frozen validation head the gateway derived from the PR: the slot lands
   // on that exact commit, on the PR branch, and nothing is pushed.
   const startRefPolicyApplies = params.flowType === 'dev' || params.flowType === 'fix-bug';
+  // Release keeps a work branch that holds unpushed commits, so a new run of the ticket finds
+  // it (dropParkedBranch). Before prepare deletes or resets a branch, those commits get a
+  // branch of their own: the guard's parked ref alone is pruned after the retention window.
+  // `name` defaults to the run's branch; `null` means whatever branch the checkout is on.
+  // `target` is where the branch moves; commits it still reaches are not stranded. One command:
+  // probe, keep and report, so a re-prepare pays one round trip per site.
+  const keptBranches: string[] = [];
+  const keepUnpushedBranch = async ({
+    name = branch,
+    target,
+  }: { name?: string | null; target?: string } = {}) => {
+    if (name === undefined) return;
+    const which = name === null ? '$(git symbolic-ref -q --short HEAD)' : shellQuote(name);
+    const keep = await execGit(
+      'keep-unpushed-branch',
+      vars,
+      withFarmGitConfig(
+        [
+          `cd ${shellQuote(vars.remoteRepo)} || exit 2`,
+          `b=${which}; [ -n "$b" ] || exit 0`,
+          // show-ref exits 1 for a missing ref; anything else is a failed check.
+          'git show-ref --verify --quiet "refs/heads/$b"; found=$?; [ "$found" -eq 1 ] && exit 0; [ "$found" -eq 0 ] || exit 2',
+          'head=$(git rev-parse --verify "refs/heads/$b") || exit 2',
+          `stranded=$(git rev-list --max-count=1 "$head" --not --remotes ${target ? shellQuote(target) : ''}) || exit 2`,
+          '[ -n "$stranded" ] || exit 0',
+          // A kept branch that is itself about to move gets a second suffix: naming the copy
+          // after the moving branch would leave its commits nowhere.
+          `kept="$b-kept-$(printf '%.12s' "$head")"`,
+          '[ "$(git rev-parse --verify --quiet "refs/heads/$kept")" = "$head" ] || git branch "$kept" "$head" || exit 3',
+          `printf '%s\\n' "$b" "$kept"`,
+        ].join('\n'),
+      ),
+    );
+    if (keep.exitCode !== 0)
+      throw new Error(
+        `${keep.exitCode === 3 ? 'Cannot keep' : 'Cannot check'} the unpushed commits of ${name ?? 'the current branch'} on ${vars.slotId}; the branch was not changed: ${(keep.stderr || keep.stdout).trim().slice(-200)}`,
+      );
+    const [source, kept] = keep.stdout.trim().split('\n');
+    if (!source || !kept) return;
+    keptBranches.push(kept);
+    opts?.onBranchKept?.(kept);
+    step('branch', `Kept unpushed commits of ${source} on ${kept}`);
+  };
   // Whatever path put the slot on the branch, the provenance must describe the
   // tree the run executes on: with a start ref the branch is reset to the
   // resolved commit, never left at whatever origin or the local branch holds.
   const resetBranchToStartRef = async () => {
     if (!resolvedStartRef) return;
+    await keepUnpushedBranch({ target: resolvedStartRef.resolvedSha });
     // The same index refresh every other reset --hard in this file runs first,
     // so a stale index.lock cannot fail it (the flag sweep runs as its own
     // command on the paths that need it: it ends with exit).
@@ -1106,6 +1150,7 @@ async function slotPrepareInner(
             `failed to clear skip-worktree/assume-unchanged flags on ${vars.slotId} (${vars.remoteRepo}): ${refreshCurrentBranchR.stderr.slice(-200) || refreshCurrentBranchR.stdout.slice(-200)}`,
           );
         }
+        await keepUnpushedBranch();
         const resetBranchR = await mutateGit(
           'reset-current-branch',
           `cd ${shellQuote(vars.remoteRepo)} && git reset --hard ${shellQuote(`origin/${branch}`)} && git clean -fd`,
@@ -1282,6 +1327,7 @@ async function slotPrepareInner(
       if (linkedWorktree) {
         // Git worktrees cannot checkout `main` when it is active in the primary clone.
         // Reset the current worktree branch directly to the resolved base commit instead.
+        await keepUnpushedBranch({ name: null, target: baseResetRef });
         const ffR = await mutateGit(
           'reset-linked-base',
           `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard ${shellQuote(baseResetRef)}; }`,
@@ -1364,6 +1410,7 @@ async function slotPrepareInner(
             `cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch} 2>/dev/null`,
           );
         }
+        await keepUnpushedBranch({ target: newBranchBase });
         await mutateGit(
           'delete-local-branch',
           `cd ${shellQuote(vars.remoteRepo)} && git branch -D ${shellQuote(branch)} 2>/dev/null`,
@@ -1394,6 +1441,7 @@ async function slotPrepareInner(
             )
           ).exitCode === 0;
         if (localExists) {
+          await keepUnpushedBranch();
           const coR = await mutateGit(
             'reset-tracking-branch',
             `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)} && git reset --hard ${shellQuote(`origin/${branch}`)}`,
@@ -1432,6 +1480,7 @@ async function slotPrepareInner(
         if (localExists) {
           if (forceNewBranch) {
             branchCreatedFromBase = true;
+            await keepUnpushedBranch({ target: newBranchBase });
             if (linkedWorktree) {
               await mutateGit(
                 'delete-local-replay-branch',
@@ -1933,6 +1982,7 @@ async function slotPrepareInner(
           ? [path.join(vars.remoteRepo, runtimeDir, 'ios-expo-build.log')]
           : [path.join(vars.remoteRepo, runtimeDir, 'android-build.log')]),
       ];
+      err.relatedLogsOnGateway = slotIsLocal;
       throw err;
     }
     const phaseSuffix = currentPreflightPhase ? ` after ${currentPreflightPhase}` : '';
@@ -2008,6 +2058,7 @@ async function slotPrepareInner(
     },
     ...(resolvedStartRef ? { startRef: resolvedStartRef } : {}),
     ...(resolvedStackBase ? { stackBase: resolvedStackBase } : {}),
+    ...(keptBranches.length ? { keptBranches } : {}),
   };
 }
 
