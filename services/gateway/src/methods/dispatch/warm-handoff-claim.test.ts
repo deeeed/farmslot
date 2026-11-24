@@ -157,6 +157,10 @@ mock.module('./execute.js', {
 });
 // The dev-server restore boots slot resources; record who asks for it and on which row.
 const restores: Array<{ runId: string; admitted: boolean }> = [];
+/** What the restore does to the row or how it fails; default: the boot clears the marker. */
+let onRestore: () => void = () => {
+  row = { ...row, idle_devservers: null, idle_devserver_epoch: null };
+};
 const idle = await import('../../run-lifecycle/idle-devserver-service.js');
 mock.module('../../run-lifecycle/idle-devserver-service.js', {
   namedExports: {
@@ -167,7 +171,7 @@ mock.module('../../run-lifecycle/idle-devserver-service.js', {
       admits?: (slot: Readonly<Record<string, unknown>>) => boolean,
     ) => {
       restores.push({ runId, admitted: admits?.({ ...row }) ?? false });
-      row = { ...row, idle_devservers: null, idle_devserver_epoch: null };
+      onRestore();
     },
   },
 });
@@ -362,4 +366,40 @@ test('a slot that another run reserves during the send is still refused after it
   await assert.rejects(handoff(child.id), /remains occupied/);
   assert.equal(row.current_run_id, null, "the parent's cleanup still owns the slot");
   assert.equal(row.cleanup_run_id, parent.id);
+});
+
+test('a failed dev-server restore keeps the retained worker for the operator', async (t) => {
+  const child = await chainedChild(t);
+  row = parentHold(child.id);
+  sends.length = 0;
+  onRestore = () => {
+    throw new Error('Slot is preparing or stopping its idle dev server; retry resume');
+  };
+  t.after(() => {
+    onRestore = () => {
+      row = { ...row, idle_devservers: null, idle_devserver_epoch: null };
+    };
+  });
+  const result = await handoff(child.id);
+  assert.equal(result.handedOff, false);
+  assert.equal(!result.handedOff && result.disposition, 'hold');
+  assert.match(!result.handedOff ? result.reason : '', /dev server restore .* retry resume/);
+  assert.equal(sends.length, 0);
+  assert.equal(row.cleanup_run_id, parent.id);
+});
+
+test('a slot that changes hands during the dev-server boot is refused before the send', async (t) => {
+  const child = await chainedChild(t);
+  row = parentHold(child.id);
+  sends.length = 0;
+  onRestore = () => {
+    row = { ...row, idle_devservers: null, idle_devserver_epoch: null, handoff_run_id: 'rival' };
+  };
+  t.after(() => {
+    onRestore = () => {
+      row = { ...row, idle_devservers: null, idle_devserver_epoch: null };
+    };
+  });
+  await assert.rejects(handoff(child.id), /remains occupied/);
+  assert.equal(sends.length, 0);
 });

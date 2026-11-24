@@ -278,10 +278,10 @@ export class IdleDevServerReaper {
     }
   }
 
-  /** Resume only what this cap deliberately stopped, through the configured boot path. */
   /**
-   * `admits` lets an owner restore on a row it does not own yet: a warm child on the hold its
-   * parent's cleanup left for it. The row must stay that row until the restore is done.
+   * Resume only what this cap deliberately stopped, through the configured boot path. `admits`
+   * lets an owner restore on a row it does not own yet (a warm child on the hold its parent's
+   * cleanup left for it); every ownership check then also requires the row to still admit it.
    */
   async restore(
     slotId: string,
@@ -291,7 +291,8 @@ export class IdleDevServerReaper {
     const row = await this.deps.row(slotId);
     if (!row || row.idle_devserver_epoch !== row.slot_epoch || !Array.isArray(row.idle_devservers))
       return;
-    if (ownerRunId && row.current_run_id !== ownerRunId && !admits?.(row))
+    const admitted = Boolean(ownerRunId && row.current_run_id !== ownerRunId);
+    if (admitted && !admits?.(row))
       throw new Error('Slot owner changed before dev server re-prepare');
     const assertOwner = async () => {
       const current = await this.deps.row(slotId);
@@ -300,7 +301,8 @@ export class IdleDevServerReaper {
         current.slot_epoch !== row.slot_epoch ||
         !sameSlotField(current.current_run_id, row.current_run_id) ||
         current.phase === 'releasing' ||
-        !sameSlotField(current.handoff_run_id, row.handoff_run_id)
+        !sameSlotField(current.handoff_run_id, row.handoff_run_id) ||
+        (admitted && !admits?.(current))
       )
         throw new Error('Slot owner changed or is releasing during dev server re-prepare');
     };

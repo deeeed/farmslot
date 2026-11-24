@@ -494,9 +494,22 @@ export async function warmSessionHandoffDispatch(
   const rowAtSend = await readSlotRow(params.slotId);
   if (rowAtSend && parentHoldForWarmChild(rowAtSend, claimant())) {
     const { restoreIdleDevServers } = await import('../../run-lifecycle/idle-devserver-service.js');
-    await restoreIdleDevServers(params.slotId, params.runId, (row) =>
-      parentHoldForWarmChild(row, claimant()),
-    );
+    try {
+      await restoreIdleDevServers(params.slotId, params.runId, (row) =>
+        parentHoldForWarmChild(row, claimant()),
+      );
+    } catch (error) {
+      // As a send that could not restore it: the retained worker is kept for the operator.
+      return {
+        handedOff: false,
+        disposition: 'hold',
+        reason: `Idle dev server restore before the warm handoff failed: ${(error as Error).message}`,
+      };
+    }
+    // A boot can take minutes: the slot must still be one this run can claim before the send.
+    const rowAfterRestore = await readSlotRow(params.slotId);
+    const blockedAfterRestore = rowAfterRestore && claimBlocker(rowAfterRestore);
+    if (blockedAfterRestore) throw refuseClaim(blockedAfterRestore);
   }
   const delivery = await deliverPromptWithRetainedFallback(deliveryOptions);
   if (!delivery.delivered) {

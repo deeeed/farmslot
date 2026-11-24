@@ -10,7 +10,7 @@ import { primaryRoleForFlow } from '@farmslot/protocol';
 
 // Live proof of c616be16's shape: the parent finishes while its chained warm child is already
 // active, the parent's real terminal release holds the slot for the child, and the child's real
-// warm handoff claims that hold and sends its prompt. Real: run store, slot status file, the
+// warm handoff sends its prompt and then claims that hold. Real: run store, slot status file, the
 // parent's terminal release (it stops at the ownership check, before any tmux call) and the
 // handoff's claims. Scripted: the runner layer (worker liveness, pane resolution, the prompt
 // send), which retained-handoff-smoke proves on its own, fleet status and watchers.
