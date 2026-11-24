@@ -774,7 +774,7 @@ function pinnedHarness(rows: Array<Record<string, unknown>>, holder: CleanupHold
     deps: {
       ...h.deps,
       waitForCleanupHold: true,
-      cleanupHoldRun: (id: string) => (id === holder.id ? holder : undefined),
+      cleanupHoldRun: async (id: string) => (id === holder.id ? holder : undefined),
     },
   };
 }
@@ -892,7 +892,7 @@ test('a claim refused by a cleanup hold is a conflict, so a pinned run waits aga
     commitSlotClaim(SLOT, 'new-run', 0, 'preparing', undefined, undefined, {
       ...held.deps,
       runLookup: () => ({ status: 'slot-finding' }),
-      cleanupHoldRun: (id) => (id === leaver.id ? leaver : undefined),
+      cleanupHoldRun: async (id) => (id === leaver.id ? leaver : undefined),
     }),
     (error: Error & { claimConflict?: { slotId: string } }) => {
       assert.match(error.message, /slot remains occupied/);
@@ -908,7 +908,7 @@ test('a claim refused by a cleanup hold is a conflict, so a pinned run waits aga
     commitSlotClaim(SLOT, 'new-run', 0, 'preparing', undefined, undefined, {
       ...other.deps,
       runLookup: () => ({ status: 'slot-finding' }),
-      cleanupHoldRun: (id) => (id === leaver.id ? leaver : undefined),
+      cleanupHoldRun: async (id) => (id === leaver.id ? leaver : undefined),
     }),
     (error: Error & { claimConflict?: unknown }) => error.claimConflict === undefined,
   );

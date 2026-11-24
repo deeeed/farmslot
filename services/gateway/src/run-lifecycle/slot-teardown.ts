@@ -85,14 +85,8 @@ export class RunOwnedResourceCleanupError extends Error {}
 export async function retryOccupiedRunSlot(slotId: string): Promise<boolean> {
   if (isTerminalTeardownInFlight(slotId)) return false;
   const before = await readSlotRow(slotId);
-  if (
-    before?.lifecycle !== 'held' ||
-    before.phase !== 'occupied' ||
-    before[SLOT_CLEANUP_STOP_UNCONFIRMED] === true
-  )
-    return false;
-  const runId = cleanupHoldRunId(before);
-  if (runId === undefined) return false; // An unidentified foreign hold grants no cleanup authority.
+  const runId = before ? cleanupHoldRunId(before) : undefined;
+  if (!before || runId === undefined) return false; // An unidentified foreign hold grants no cleanup authority.
   const run = await getRunWithArchived(runId);
   if (!occupiedHoldRetryable(slotId, before, run)) return false;
   if (isTerminalTeardownInFlight(slotId)) return false;

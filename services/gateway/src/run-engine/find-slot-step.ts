@@ -106,7 +106,7 @@ import {
   isCancelledSlotHolder,
   reclaimCancelledSlot,
 } from '../run-lifecycle/cancelled-slot-reclaim.js';
-import { cleanupHoldClearsSoon, type CleanupHoldRun } from '../run-lifecycle/cleanup-hold.js';
+import { cleanupHoldClearsSoon, type CleanupHoldLookup } from '../run-lifecycle/cleanup-hold.js';
 import { reclaimFinishedSlot } from '../run-lifecycle/finished-slot-reclaim.js';
 import { assertNativeSlotReplacementOwner } from '../runners/native/worker.js';
 import {
@@ -124,6 +124,7 @@ import {
   getAllRuns,
   getAllRunsWithArchived,
   getRun,
+  getRunWithArchived,
   persistRunNow,
   updateRun,
   updateRunStep,
@@ -597,7 +598,7 @@ export async function commitSlotClaim(
     readRow?: typeof readSlotRow;
     runLookup?: (id: string) => Pick<Run, 'status' | 'engineState'> | undefined;
     listSlotRuns?: () => Promise<SlotHistoryRun[]>;
-    cleanupHoldRun?: (id: string) => CleanupHoldRun | undefined;
+    cleanupHoldRun?: CleanupHoldLookup;
   } = {},
 ): Promise<void> {
   const {
@@ -607,7 +608,7 @@ export async function commitSlotClaim(
     readRow = readSlotRow,
     runLookup = getRun,
     listSlotRuns = getAllRunsWithArchived,
-    cleanupHoldRun = getRun,
+    cleanupHoldRun = getRunWithArchived,
   } = deps;
   const reservation = Boolean(opts?.takeoverLiveOwner || opts?.reserveOnly);
   const releaseRecoveryClaim = async (
@@ -703,7 +704,7 @@ export async function commitSlotClaim(
       // whose preview waits for it on a pinned slot.
       !blocker ||
         blocker.kind === 'live-owner' ||
-        (blocker.kind === 'occupied' && cleanupHoldClearsSoon(slotId, row, cleanupHoldRun)),
+        (blocker.kind === 'occupied' && (await cleanupHoldClearsSoon(slotId, row, cleanupHoldRun))),
     );
   }
   // The predicate passed, but a cancel, pause or replay can still land while
@@ -784,7 +785,10 @@ export function splitGuardedFreeSlots<
 
 /** How long an explicit slot pick waits for an in-flight release to land. */
 export const EXPLICIT_SLOT_RELEASE_WAIT_MS = 5 * 60 * 1000;
-/** How long a pinned slot waits for the previous run's cleanup; the held-slot pass runs each minute. */
+/**
+ * How long a pinned slot waits for the previous run's cleanup. The held-slot pass retries that
+ * cleanup every minute and does not count the waiting pin as the slot's holder.
+ */
 export const CLEANUP_HOLD_WAIT_MS = 2 * 60 * 1000;
 const EXPLICIT_SLOT_RELEASE_POLL_MS = 2000;
 
@@ -917,7 +921,7 @@ export async function previewWhenSlotClaimable<T>(
     preparing?: (slotId: string) => boolean;
     /** The slot is the run's own pin, so it may wait for the previous run's cleanup. */
     waitForCleanupHold?: boolean;
-    cleanupHoldRun?: (id: string) => CleanupHoldRun | undefined;
+    cleanupHoldRun?: CleanupHoldLookup;
     cleanupHoldTimeoutMs?: number;
   } = {},
 ): Promise<T> {
@@ -933,7 +937,7 @@ export async function previewWhenSlotClaimable<T>(
     wrapWait = (wait) => awaitAsQueueTime(runId, 'find-slot', wait),
     preparing = (id) => activePrepareSlots.has(id),
     waitForCleanupHold = false,
-    cleanupHoldRun = getRun,
+    cleanupHoldRun = getRunWithArchived,
     cleanupHoldTimeoutMs = CLEANUP_HOLD_WAIT_MS,
   } = deps;
   const assertRunUnchanged = () => {
@@ -952,20 +956,23 @@ export async function previewWhenSlotClaimable<T>(
   assertRunUnchanged();
   let row = await readRow(slotId);
   let blocker = blockerOf(row);
-  const cleanupHeld = (
+  const cleanupHeld = async (
     currentRow: Readonly<Record<string, unknown>> | null,
     current: typeof blocker,
   ) =>
     waitForCleanupHold &&
     current?.kind === 'occupied' &&
-    cleanupHoldClearsSoon(slotId, currentRow, cleanupHoldRun);
+    (await cleanupHoldClearsSoon(slotId, currentRow, cleanupHoldRun));
   // A slot mid-release, or one that reads free while a prepare guard still holds it (it would
   // refuse this run's prepare 'already preparing', 1b542e2f), is waited for, not refused.
-  const waiting = (currentRow: Readonly<Record<string, unknown>> | null, current: typeof blocker) =>
+  const waiting = async (
+    currentRow: Readonly<Record<string, unknown>> | null,
+    current: typeof blocker,
+  ) =>
     current?.kind === 'releasing' ||
     (!current && preparing(slotId)) ||
-    cleanupHeld(currentRow, current);
-  if (waiting(row, blocker)) {
+    (await cleanupHeld(currentRow, current));
+  if (await waiting(row, blocker)) {
     // One read decides both whether to wait and whether it counts as queue time.
     blocker = await wrapWait(async () => {
       const deadline = now() + timeoutMs;
@@ -973,8 +980,8 @@ export async function previewWhenSlotClaimable<T>(
       // release alternate: the cleanup bound runs from the first hold seen, not per phase.
       let cleanupSince: number | undefined;
       let current = blocker;
-      while (waiting(row, current)) {
-        if (current?.kind === 'occupied' && cleanupHeld(row, current)) {
+      while (await waiting(row, current)) {
+        if (current?.kind === 'occupied' && (await cleanupHeld(row, current))) {
           cleanupSince ??= now();
           if (now() - cleanupSince >= cleanupHoldTimeoutMs) {
             const minutes = Math.round(cleanupHoldTimeoutMs / 60_000);
@@ -1107,6 +1114,19 @@ async function consumeRunPressureAdmissionRef(
 }
 
 /**
+ * Whether a refused claim waits for this slot. The queue's own pick within a wider allowlist is
+ * not the caller's pin: a lost claim there selects again within the allowlist instead of waiting.
+ */
+function claimConflictPinned(
+  run: Pick<Run, 'queuedAt' | 'allowedSlots'>,
+  automaticLoadPinned: boolean,
+): boolean {
+  return run.queuedAt && run.allowedSlots && run.allowedSlots.length > 1
+    ? false
+    : automaticLoadPinned;
+}
+
+/**
  * `generation` is the engine attempt running this step: a cancel, pause or
  * replay that moves the run off it owns the run, and no claim may land for it.
  */
@@ -1122,10 +1142,7 @@ export async function executeFindSlotStep(
   const pick = run.slotId ? undefined : continuedOperatorPick(run);
   if (pick) run = updateRun(runId, { slotId: pick, requestedSlotId: pick });
   let automaticLoadPinned = isPinnedSlotSelection(run);
-  // The queue's own pick within a wider allowlist is not the caller's pin: a lost claim there
-  // selects again within the allowlist instead of waiting for the winner's whole run.
-  const conflictPinned =
-    run.queuedAt && run.allowedSlots && run.allowedSlots.length > 1 ? false : automaticLoadPinned;
+  const conflictPinned = claimConflictPinned(run, automaticLoadPinned);
   const requestedSlotId = run.slotId;
   let hostLoadWaitReason: string | undefined;
   let slotClaimWaitReason: string | undefined;
@@ -2451,8 +2468,9 @@ async function findSlotAttempt(
             ...capabilitySelection,
           },
         ),
-      // Only the run's own pin waits for the previous run's cleanup; a scored pick moves on.
-      { waitForCleanupHold: Boolean(run.slotId) },
+      // Only a pin waits for the previous run's cleanup, by the conflict loop's notion of one: a
+      // queue pick inside a wider allowlist selects again instead.
+      { waitForCleanupHold: claimConflictPinned(run, automaticLoadPinned) },
     );
   } catch (error) {
     if (!run.slotId && error instanceof AutomaticSlotLoadWaitError)

@@ -41,7 +41,6 @@ export function occupiedHoldRetryable<T extends CleanupHoldRun>(
     row.phase === 'occupied' &&
     row[SLOT_CLEANUP_STOP_UNCONFIRMED] !== true &&
     run &&
-    run.id === cleanupHoldRunId(row) &&
     run.slotId === slotId &&
     isTerminalRunStatus(run.status) &&
     // A cancelled run keeps the slot it still owns for replay until release,
@@ -52,18 +51,21 @@ export function occupiedHoldRetryable<T extends CleanupHoldRun>(
   );
 }
 
+/** How the held-slot pass finds the run whose cleanup it retries, archived runs included. */
+export type CleanupHoldLookup = (id: string) => Promise<CleanupHoldRun | undefined>;
+
 /**
  * A finished run's cleanup found a process still exiting in the slot repository. The held-slot
  * pass retries that cleanup every minute and releases the slot once the process is gone, so a
- * claim can wait for it instead of failing.
+ * claim can wait for it instead of failing. `lookup` must be the pass's own (getRunWithArchived).
  */
-export function cleanupHoldClearsSoon(
+export async function cleanupHoldClearsSoon(
   slotId: string,
   row: Readonly<Record<string, unknown>> | null,
-  lookup: (id: string) => CleanupHoldRun | undefined,
-): boolean {
+  lookup: CleanupHoldLookup,
+): Promise<boolean> {
   if (!row || row.current_run_id || row.handoff_run_id) return false;
   if (!isWorkspaceCensusReason(row.held_reason)) return false;
   const runId = cleanupHoldRunId(row);
-  return runId !== undefined && occupiedHoldRetryable(slotId, row, lookup(runId));
+  return runId !== undefined && occupiedHoldRetryable(slotId, row, await lookup(runId));
 }
