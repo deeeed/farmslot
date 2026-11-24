@@ -162,7 +162,7 @@ await json(runtimePool, {
     },
   ],
 });
-await json(path.join(fixture, '.farm-status.json'), {
+await json(path.join(fixture, 'test-fleet-status.json'), {
   checked_at: new Date().toISOString(),
   slots: [
     {
@@ -230,7 +230,7 @@ const gateway = spawn('yarn', ['workspace', '@farmslot/gateway', 'start'], {
     FARMSLOT_DISABLE_ORCHESTRATION: '1',
     NODE_TEST_CONTEXT: '1',
     FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
-    FARMSLOT_TEST_STATUS_FILE: path.join(fixture, '.farm-status.json'),
+    FARMSLOT_TEST_STATUS_FILE: path.join(fixture, 'test-fleet-status.json'),
     FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
     FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'test-automation',
   },

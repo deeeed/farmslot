@@ -99,7 +99,7 @@ for (const name of ['scripts', 'services', 'packages'])
   await symlink(path.join(root, name), path.join(fixture, name));
 await writeFile(path.join(fixture, 'CLAUDE.md'), '# Isolated node handshake fixture\n');
 await writeFile(
-  path.join(fixture, '.farm-status.json'),
+  path.join(fixture, 'test-fleet-status.json'),
   JSON.stringify({ checked_at: new Date().toISOString(), slots: [] }),
 );
 
@@ -164,7 +164,7 @@ const gateway = spawn('yarn', ['workspace', '@farmslot/gateway', 'start'], {
     FARMSLOT_DISABLE_ORCHESTRATION: '1',
     NODE_TEST_CONTEXT: '1',
     FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
-    FARMSLOT_TEST_STATUS_FILE: path.join(fixture, '.farm-status.json'),
+    FARMSLOT_TEST_STATUS_FILE: path.join(fixture, 'test-fleet-status.json'),
     FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
   },
 });
