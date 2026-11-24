@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploy-node.sh — Deploy/update farmslot node to any fleet machine
-# Usage: bash scripts/deploy-node.sh <machine> [gateway-ip] [--home dir | --instance dev|prod] [--dry-run] [--node-token-file path] [--refresh-cli|--cli-only|--packs-only]
+# Usage: bash scripts/deploy-node.sh <machine> [gateway-ip] [--home dir | --instance dev|prod] [--dry-run] [--node-token-file path | --no-node-token] [--refresh-cli|--cli-only|--packs-only]
 #
 # Supports:
 #   macOS local  (runner-local) — launchd LaunchAgent
@@ -46,6 +46,8 @@ INSTANCE="${FARMSLOT_NODE_INSTANCE:-prod}"
 DEPLOY_HOME=""
 DRY_RUN=false
 NODE_TOKEN_FILE=""
+# An explicit opt-out for a solo-mode gateway, which admits a node without a token.
+NO_NODE_TOKEN=false
 NODE_TOKEN_FROM_FILE=false
 REFRESH_CLI=false
 CLI_ONLY=false
@@ -80,6 +82,10 @@ while [[ $# -gt 0 ]]; do
       REFRESH_CLI=true
       shift
       ;;
+    --no-node-token)
+      NO_NODE_TOKEN=true
+      shift
+      ;;
     --packs-only)
       PACKS_ONLY=true
       shift
@@ -108,12 +114,16 @@ if [[ "$PACKS_ONLY" == true && "$REFRESH_CLI" == true ]]; then
   echo '[deploy] ERROR: --packs-only cannot be combined with --cli-only or --refresh-cli' >&2
   exit 1
 fi
+if [[ "$NO_NODE_TOKEN" == true && ( -n "$NODE_TOKEN_FILE" || -n "${FARMSLOT_NODE_TOKEN:-}" ) ]]; then
+  echo '[deploy] ERROR: --no-node-token contradicts --node-token-file or a FARMSLOT_NODE_TOKEN in the environment' >&2
+  exit 1
+fi
 if [[ "$PACKS_ONLY" == true && -n "$NODE_TOKEN_FILE" ]]; then
   echo '[deploy] ERROR: --packs-only needs no node token; drop --node-token-file' >&2
   exit 1
 fi
 
-MACHINE="${1:?Usage: deploy-node.sh <machine> [gateway-ip] [--home dir | --instance dev|prod] [--dry-run] [--node-token-file path] [--refresh-cli|--cli-only|--packs-only]}"
+MACHINE="${1:?Usage: deploy-node.sh <machine> [gateway-ip] [--home dir | --instance dev|prod] [--dry-run] [--node-token-file path | --no-node-token] [--refresh-cli|--cli-only|--packs-only]}"
 GATEWAY_IP="${2:-}"
 
 # --instance is the legacy deployment alias. An explicit --home selects the target marker.
@@ -492,6 +502,45 @@ launchd_node_arguments() {
 systemd_node_arguments() {
   python3 -c 'import sys; print(" ".join("\"" + arg.replace("\\", "\\\\").replace("\"", "\\\"").replace("%", "%%").replace("$", "$$") + "\"" for arg in sys.argv[1:]))' "${NODE_SERVICE_ARGS[@]}"
 }
+
+# An update keeps the node token the target already uses. Rewriting the service
+# definition without it strands the node: launchd keeps the loaded job until it is
+# next bootstrapped, then the node fails gateway authentication with token_missing
+# (macwork, Nov 22 -> Nov 24). Checked in the node's own order: a .env in or above
+# the install dir first, then the existing service definition. Never printed.
+source "$SCRIPT_DIR/lib/node-token.sh"
+NODE_ENV_TOKEN_FILE=""
+if [[ "$DRY_RUN" != true && "$NO_NODE_TOKEN" == true ]]; then
+  if ! NODE_ENV_TOKEN_FILE=$(node_env_token_file); then
+    echo "[deploy] ERROR: a .env the node reads on $MACHINE cannot be read; fix or remove it first" >&2
+    exit 1
+  fi
+  if [[ -n "$NODE_ENV_TOKEN_FILE" ]]; then
+    echo "[deploy] ERROR: --no-node-token, but the node reads a token from $NODE_ENV_TOKEN_FILE; remove that line first" >&2
+    exit 1
+  fi
+fi
+if [[ "$DRY_RUN" != true && -z "${FARMSLOT_NODE_TOKEN:-}" && "$NO_NODE_TOKEN" != true ]]; then
+  if ! NODE_ENV_TOKEN_FILE=$(node_env_token_file); then
+    echo "[deploy] ERROR: a .env the node reads on $MACHINE cannot be read; fix or remove it first" >&2
+    exit 1
+  fi
+  if [[ -n "$NODE_ENV_TOKEN_FILE" ]]; then
+    echo "[deploy] the node reads its token from $NODE_ENV_TOKEN_FILE; the service definition carries none"
+  else
+    FARMSLOT_NODE_TOKEN=$(service_definition_node_token)
+    if [[ -n "$FARMSLOT_NODE_TOKEN" ]]; then
+      echo "[deploy] keeping the node token the existing service definition carries"
+    fi
+  fi
+fi
+if [[ "$DRY_RUN" != true && -z "${FARMSLOT_NODE_TOKEN:-}" && -z "$NODE_ENV_TOKEN_FILE" && "$NO_NODE_TOKEN" != true ]]; then
+  echo "[deploy] ERROR: no node token for $MACHINE: none was given and the existing service definition carries none." >&2
+  echo "[deploy] A node without one fails gateway authentication (token_missing). Pass --node-token-file <private file>" >&2
+  echo "[deploy] (farmdev on macwork: ~/.farmslot-automation/<machine>-node-automation.secret), or --no-node-token for a solo-mode gateway." >&2
+  echo "[deploy] To refresh only the CLI, use --cli-only: it never rewrites the service definition." >&2
+  exit 1
+fi
 
 # The token the service definition carries as FARMSLOT_NODE_TOKEN, and that the
 # shadowed-token check compares against.
