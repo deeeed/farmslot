@@ -5,7 +5,6 @@ import { claudeCompactionArgs } from '@farmslot/agent-runtime/scripts/context-co
 import { piProviderEnvironment } from '../../../../scripts/runners/pi-farmslot-providers.mjs';
 
 import { resolvePiBinary, resolvePiModel } from './launch-command.js';
-import type { PaneClassifierResult } from './pane-classifier.js';
 import {
   runnerPaneContainsInstruction,
   runnerPaneHasQueuedInstruction,
@@ -416,16 +415,6 @@ export interface RunnerDefinition {
 }
 
 const UNSAFE_BROAD_PROCESS_MATCHERS = new Set(['.', '.*', 'node', 'bash', 'sh', 'zsh']);
-
-async function classifyRunnerPaneStateBestEffortLazy(opts: {
-  runner: string;
-  target: string;
-  pane: string;
-  expected: string;
-}): Promise<PaneClassifierResult> {
-  const { classifyRunnerPaneStateBestEffort } = await import('./pane-classifier.js');
-  return classifyRunnerPaneStateBestEffort(opts);
-}
 
 // Canonical id vocabulary lives in @farmslot/protocol (shared with slot-config
 // template expansion); re-exported so existing imports keep working.
@@ -1774,42 +1763,11 @@ export function runnerLaunchBlockerAutoActionKey(
 }
 
 /**
- * Map a high-confidence pane-classifier trust suggestion to a safe tmux key.
- * Prefer the deterministic launch-blocker auto-action when the pane still
- * matches; otherwise fall back to the runner's known trust confirmation key.
- * Returns null when the classifier result is not an actionable trust prompt.
- *
- * TRIGGER ONLY: the returned key is advisory. The classifier's judged pane can
- * be seconds stale by the time its verdict arrives, so delivery authorization
- * comes from resolveLaunchBlockerWithFreshEvidence, which re-captures the pane
- * and requires the deterministic detector to confirm.
- */
-export function keyForClassifierTrustAction(
-  classifier: { state: string; confidence: number; suggestedAction?: string },
-  runnerId: string | null | undefined,
-  pane: string,
-): string | null {
-  if (classifier.confidence < 0.8) return null;
-  if (classifier.state !== 'trust_prompt') return null;
-  if (classifier.suggestedAction !== 'send_yes' && classifier.suggestedAction !== 'send_enter') {
-    return null;
-  }
-  const runner = normalizeRunner(runnerId);
-  const blocker = detectRunnerLaunchBlocker(pane, runner);
-  const fromBlocker = runnerLaunchBlockerAutoActionKey(blocker?.autoAction ?? null, pane);
-  if (fromBlocker) return fromBlocker;
-  if (runner === 'cursor') return 'a';
-  if (runner === 'claude') return 'Down';
-  if (runner === 'grok') return 'Enter';
-  return null;
-}
-
-/**
  * Authorize and deliver a trust-prompt confirmation from FRESH evidence only.
  * Captures the pane untruncated (a `tail -80` window is what hid the prompt
  * from the deterministic detector in the first place) and sends the keystroke
  * the detector derives from that capture — never a key inferred from an older
- * pane or from classifier confidence alone, which could confirm the wrong UI
+ * pane, which could confirm the wrong UI
  * after a pane transition. `exec` runs a tmux subcommand on the slot; injected
  * so tests can pin target, key, and the no-evidence-no-send rule.
  */
@@ -1833,7 +1791,7 @@ export async function resolveLaunchBlockerWithFreshEvidence(opts: {
   if (!key) {
     if (opts.logNoFreshEvidence !== false) {
       console.log(
-        `[${opts.logPrefix}] classifier reported a trust prompt in ${opts.target} but the fresh capture shows no actionable trust blocker; not sending`,
+        `[${opts.logPrefix}] the fresh capture of ${opts.target} shows no actionable launch blocker; not sending`,
       );
     }
     return { outcome: 'no-fresh-evidence' };
@@ -3200,54 +3158,6 @@ async function submitRunnerInstruction(
   return outcome === 'sent' ? 'ok' : outcome === 'held-untouched' ? 'not-buffered' : 'stuck';
 }
 
-type ClassifierActionRecovery =
-  | { kind: 'ready'; pane: string }
-  | { kind: 'task-accepted'; pane: string };
-
-async function waitForPaneAfterClassifierAction(
-  vars: Awaited<ReturnType<typeof loadSlotVars>>,
-  target: string,
-  runner: string,
-  message: string,
-  marker: string,
-  opts: {
-    timeoutMs: number;
-    pollIntervalMs: number;
-    stabilityPolls: number;
-    structuredTaskAccepted?: () => Promise<boolean>;
-  },
-): Promise<ClassifierActionRecovery | null> {
-  const deadline = Date.now() + opts.timeoutMs;
-  let lastPane = '';
-  let stableCount = 0;
-  while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, opts.pollIntervalMs));
-    const pane = await captureTmuxPane(vars, target, 90);
-    if (opts.structuredTaskAccepted && (await opts.structuredTaskAccepted())) {
-      return { kind: 'task-accepted', pane };
-    }
-    if (runnerPaneShowsTaskAlreadyRunning(pane, message, marker, runner)) {
-      if (!opts.structuredTaskAccepted) return { kind: 'task-accepted', pane };
-      stableCount = 0;
-      lastPane = '';
-      continue;
-    }
-    if (!(await runnerLooksIdleObsFirst(vars, target, runner, pane))) {
-      stableCount = 0;
-      lastPane = '';
-      continue;
-    }
-    if (pane === lastPane) {
-      stableCount += 1;
-      if (stableCount >= opts.stabilityPolls) return { kind: 'ready', pane };
-    } else {
-      stableCount = 1;
-      lastPane = pane;
-    }
-  }
-  return null;
-}
-
 /**
  * ADR-032 Phase 3 hook-only send loop. Reached only when {@link isRunnerPaneRetired} is true.
  * The decision to send/hold uses hook readings ONLY — the pane predicates
@@ -3905,38 +3815,32 @@ export async function sendRunnerPostLaunchPrompt(
   let codexUpdatePromptAttempts = 0;
   const maxBlockerAutoAttempts = 2;
   const snapshottedBlockers = new Set<string>();
-  // The classifier is the timeout's second opinion. While it cannot be asked, the deterministic
-  // stable-pane rule gets one more readiness window instead of failing the dispatch at once.
-  let classifierOutageWaitMs = 0;
-  // The deadline's verdict when the classifier answered, reused by the failure path below.
-  const deadlineCheck: { pane?: string; classifier?: PaneClassifierResult } = {};
-  const extendForClassifierOutage = async (): Promise<boolean> => {
-    if (classifierOutageWaitMs) return false;
-    const pane = (
-      await execOnSlot(
-        vars,
-        tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -80`),
-      )
-    ).stdout;
-    const classifier = await classifyRunnerPaneStateBestEffortLazy({
-      runner,
-      target,
-      pane,
-      expected: 'post-launch prompt ready for task delivery',
-    });
-    if (!classifier.unavailable) {
-      deadlineCheck.pane = pane;
-      deadlineCheck.classifier = classifier;
-      return false;
+  // At the deadline an instruction still sitting in the input line gets the submit key once (the
+  // loop already ran the launch-blocker detector on every full capture), and the hooks-first
+  // stable-pane rule gets one more readiness window. No model is asked.
+  let deadlineActed = false;
+  const actAtDeadline = async (): Promise<boolean> => {
+    if (deadlineActed) return false;
+    deadlineActed = true;
+    const pane = await captureTmuxPane(vars, target, 90);
+    if (
+      runnerPaneShouldSubmitExistingInstruction(pane, message, marker, runner, {
+        allowMarkerOnly: true,
+      })
+    ) {
+      const key = runnerPromptSubmitKey(runner);
+      console.log(
+        `[${logPrefix}] the delivered instruction is still in the input line of ${target} at the readiness deadline; sending ${key} once`,
+      );
+      await execRunnerKeys(vars, target, runner, key);
     }
-    classifierOutageWaitMs = readyTimeoutMs;
     readyDeadline = Date.now() + readyTimeoutMs;
     console.warn(
-      `[${logPrefix}] pane classifier unavailable at the readiness deadline for ${target} (${classifier.reason}); waiting ${Math.round(readyTimeoutMs / 1000)}s more for a stable ready pane`,
+      `[${logPrefix}] ${target} not ready at the readiness deadline; waiting ${Math.round(readyTimeoutMs / 1000)}s more for a stable ready pane`,
     );
     return true;
   };
-  while (Date.now() < readyDeadline || (await extendForClassifierOutage())) {
+  while (Date.now() < readyDeadline || (await actAtDeadline())) {
     await new Promise((r) => setTimeout(r, pollIntervalMs));
     const pane = (
       await execOnSlot(
@@ -4146,181 +4050,13 @@ export async function sendRunnerPostLaunchPrompt(
     }
   }
 
-  let timeoutPaneForFailure = '';
-  let classifierForFailure: PaneClassifierResult | null = null;
   if (!ready) {
-    // The deadline check already asked the classifier when it answered; ask again only after
-    // the outage wait.
-    timeoutPaneForFailure =
-      deadlineCheck.pane ??
-      (
-        await execOnSlot(
-          vars,
-          tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -80`),
-        )
-      ).stdout;
-    classifierForFailure =
-      deadlineCheck.classifier ??
-      (await classifyRunnerPaneStateBestEffortLazy({
-        runner,
-        target,
-        pane: timeoutPaneForFailure,
-        expected: 'post-launch prompt ready for task delivery',
-      }));
-    if (classifierForFailure.confidence >= 0.8 && classifierForFailure.state === 'ready') {
-      console.log(
-        `[${logPrefix}] pane classifier accepted ${target} as ready: ${classifierForFailure.reason}`,
-      );
-      ready = true;
-      lastPane = timeoutPaneForFailure;
-    }
-    if (
-      !ready &&
-      classifierForFailure.confidence >= 0.8 &&
-      (classifierForFailure.suggestedAction === 'send_enter' ||
-        classifierForFailure.suggestedAction === 'send_ctrl_m') &&
-      (classifierForFailure.state === 'command_not_submitted' ||
-        classifierForFailure.state === 'prompt_buffered')
-    ) {
-      const key = classifierForFailure.suggestedAction === 'send_ctrl_m' ? 'C-m' : 'Enter';
-      console.log(
-        `[${logPrefix}] pane classifier suggested ${key} for ${target}: ${classifierForFailure.reason}`,
-      );
-      await execRunnerKeys(vars, target, runner, key);
-      const recovered = await waitForPaneAfterClassifierAction(
+    const timeoutPane = (
+      await execOnSlot(
         vars,
-        target,
-        runner,
-        message,
-        marker,
-        {
-          timeoutMs: Math.min(30_000, Math.max(readyTimeoutMs, 5_000)),
-          pollIntervalMs,
-          stabilityPolls,
-          structuredTaskAccepted,
-        },
-      );
-      if (recovered?.kind === 'task-accepted') {
-        console.log(
-          `[${logPrefix}] pane classifier submitted the buffered task in ${target}; skipping duplicate post-launch send`,
-        );
-        return;
-      }
-      if (recovered?.kind === 'ready') {
-        ready = true;
-        lastPane = recovered.pane;
-      } else {
-        timeoutPaneForFailure = (
-          await execOnSlot(
-            vars,
-            tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -80`),
-          )
-        ).stdout;
-        classifierForFailure = await classifyRunnerPaneStateBestEffortLazy({
-          runner,
-          target,
-          pane: timeoutPaneForFailure,
-          expected: 'post-launch prompt ready for task delivery after classifier action',
-        });
-      }
-    }
-    // Trust/directory prompts can be classified confidently (send_yes) even when
-    // the deterministic detector missed a truncated capture. The classifier only
-    // TRIGGERS a recheck here — its judged pane may be seconds stale, so the
-    // keystroke is authorized (and chosen) by the deterministic detector on a
-    // fresh untruncated capture, or not sent at all.
-    const trustSuggested =
-      !ready && classifierForFailure
-        ? keyForClassifierTrustAction(classifierForFailure, runner, timeoutPaneForFailure)
-        : null;
-    if (!ready && trustSuggested && classifierForFailure) {
-      console.log(
-        `[${logPrefix}] pane classifier reported trust_prompt in ${target}: ${classifierForFailure.reason}`,
-      );
-      const confirmed = await resolveLaunchBlockerWithFreshEvidence({
-        runnerId: runner,
-        target,
-        logPrefix,
-        exec: (tmuxCommand) => execOnSlot(vars, tmuxShellSnippet(tmuxCommand)),
-        sendKeys: (keys) => execRunnerKeys(vars, target, runner, keys),
-        refreshCodexHooks: async () => {
-          const refreshed = await execOnSlot(
-            vars,
-            buildRunnerObservabilityInstallCommand(vars, runner, vars.remoteRepo, opts.runtimeDir, {
-              accountLabel: opts.providerAccountLabel,
-            }),
-          );
-          if (refreshed.exitCode !== 0) {
-            throw new Error(
-              `Failed to refresh trusted Codex hooks for ${target}: ${
-                refreshed.stderr || refreshed.stdout || `exit ${refreshed.exitCode}`
-              }`,
-            );
-          }
-        },
-      });
-      if (confirmed.outcome !== 'sent') {
-        // No fresh deterministic evidence — fall through to the normal
-        // ready-timeout failure below with the classifier detail attached.
-      } else {
-        const recovered = await waitForPaneAfterClassifierAction(
-          vars,
-          target,
-          runner,
-          message,
-          marker,
-          {
-            timeoutMs: Math.min(30_000, Math.max(readyTimeoutMs, 5_000)),
-            pollIntervalMs,
-            stabilityPolls,
-            structuredTaskAccepted,
-          },
-        );
-        if (recovered?.kind === 'task-accepted') {
-          console.log(
-            `[${logPrefix}] pane classifier cleared trust prompt and task was already accepted in ${target}`,
-          );
-          return;
-        }
-        if (recovered?.kind === 'ready') {
-          ready = true;
-          lastPane = recovered.pane;
-        } else {
-          timeoutPaneForFailure = (
-            await execOnSlot(
-              vars,
-              tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -80`),
-            )
-          ).stdout;
-          classifierForFailure = await classifyRunnerPaneStateBestEffortLazy({
-            runner,
-            target,
-            pane: timeoutPaneForFailure,
-            expected: 'post-launch prompt ready for task delivery after trust action',
-          });
-        }
-      }
-    }
-  }
-
-  if (!ready) {
-    const timeoutPane =
-      timeoutPaneForFailure ||
-      (
-        await execOnSlot(
-          vars,
-          tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -80`),
-        )
-      ).stdout;
-    const classifier =
-      classifierForFailure ??
-      (await classifyRunnerPaneStateBestEffortLazy({
-        runner,
-        target,
-        pane: timeoutPane,
-        expected: 'post-launch prompt ready for task delivery',
-      }));
-    const classifierJson = JSON.stringify(classifier);
+        tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -80`),
+      )
+    ).stdout;
     let snapshotNote = '';
     if (opts.blockerSnapshotPath) {
       try {
@@ -4334,7 +4070,6 @@ export async function sendRunnerPostLaunchPrompt(
             'kind=ready-timeout',
             `summary=runner launch did not reach a stable ready state before prompt delivery timed out.`,
             `capturedAt=${new Date().toISOString()}`,
-            `classifier=${classifierJson}`,
             '',
             timeoutPane,
           ].join('\n'),
@@ -4344,13 +4079,9 @@ export async function sendRunnerPostLaunchPrompt(
         snapshotNote = ` Snapshot write failed: ${(err as Error).message}`;
       }
     }
-    const outageNote =
-      classifierOutageWaitMs && classifier.unavailable
-        ? ` (and ${classifierOutageWaitMs / 1000}s more while the pane classifier was unavailable)`
-        : '';
     throw new Error(
-      `Runner launch (${runner}) did not reach a stable ready state within ${readyTimeoutMs / 1000}s${outageNote} in tmux target ${target}. ` +
-        `Pane classifier: ${classifier.state}/${classifier.confidence} action=${classifier.suggestedAction} (${classifier.reason}). ` +
+      `Runner launch (${runner}) did not reach a stable ready state within ${readyTimeoutMs / 1000}s` +
+        `${deadlineActed ? ` (and ${readyTimeoutMs / 1000}s more after the deadline recheck)` : ''} in tmux target ${target}. ` +
         `Prompt delivery aborted to avoid sending into a half-booted runner TUI.${snapshotNote}\n` +
         `Last pane content:\n${timeoutPane}`,
     );

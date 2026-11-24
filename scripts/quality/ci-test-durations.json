@@ -828,7 +828,6 @@
   "services/gateway/src/runners/observability-send-decision.test.ts": 446,
   "services/gateway/src/runners/operator-instruction.test.ts": 1291,
   "services/gateway/src/runners/owned-stop.test.ts": 1448,
-  "services/gateway/src/runners/pane-classifier.test.ts": 953,
   "services/gateway/src/runners/pi-observability.test.ts": 1175,
   "services/gateway/src/runners/prompt-delivery-evidence.test.ts": 374,
   "services/gateway/src/runners/provider-account-ambient.test.ts": 580,

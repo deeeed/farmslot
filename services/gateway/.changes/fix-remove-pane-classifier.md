@@ -1,0 +1,1 @@
+- A runner launch that is not ready at its readiness deadline is rechecked deterministically on a fresh capture. A launch blocker gets its detector's key, an instruction left in the input line gets one submit key, and the hooks-first stable-pane check gets one more window. The LLM pane classifier is removed, so this path makes no model call.

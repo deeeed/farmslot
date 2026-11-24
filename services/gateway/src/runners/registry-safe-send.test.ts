@@ -48,6 +48,8 @@ let paneCaptureCount = 0;
 const paneCaptureCommands: string[] = [];
 let paneClearsAfterSubmit = true;
 let paneTextByCapture: string[] | null = null;
+/** Scripts the pane by time or by what was sent; wins over every other pane source. */
+let paneNow: (() => string) | null = null;
 let paneTextAfterLiteralSend: string | null = null;
 let paneTextAfterBareSend: string | null = null;
 let handoffRequirePromptDigestValues: Array<boolean | undefined> = [];
@@ -319,6 +321,7 @@ mock.module('../core/exec.js', {
         callOrder.push('pane:capture');
         paneCaptureCommands.push(cmd);
         paneCaptureCount += 1;
+        if (paneNow) return { exitCode: 0, stdout: paneNow(), stderr: '' };
         const scriptedPane = paneTextByCapture?.[paneCaptureCount - 1];
         if (scriptedPane !== undefined) {
           return { exitCode: 0, stdout: scriptedPane, stderr: '' };
@@ -346,27 +349,15 @@ mock.module('../core/exec.js', {
   },
 });
 
-// The pane classifier is a remote model; by default it is down, as with a refused credential.
-const classifierOutage = {
-  state: 'unknown',
-  confidence: 0,
-  suggestedAction: 'manual',
-  reason: 'classifier unavailable: 403 forbidden',
-  unavailable: true,
-} as const;
-let classifierVerdict: {
-  state: string;
-  confidence: number;
-  suggestedAction: string;
-  reason: string;
-  unavailable?: true;
-} = classifierOutage;
-let classifierCalls = 0;
-mock.module('./pane-classifier.js', {
+// The readiness path must never ask a model about the pane.
+let llmCalls = 0;
+const llm = await import('../llm/index.js');
+mock.module('../llm/index.js', {
   namedExports: {
-    classifyRunnerPaneStateBestEffort: async () => {
-      classifierCalls += 1;
-      return classifierVerdict;
+    ...llm,
+    callLLM: async () => {
+      llmCalls += 1;
+      throw new Error('no model may be asked about the pane');
     },
   },
 });
@@ -2824,7 +2815,7 @@ test('Pi refuses to touch the pane when the retained conversation changes before
 /** A runner whose pane shows it busy for `busyCaptures` reads, then idle at its prompt. */
 function startingRunner(t: TestContext, busyCaptures: number) {
   callOrder.length = 0;
-  classifierCalls = 0;
+  llmCalls = 0;
   paneCaptureCount = 0;
   paneClearsAfterSubmit = true;
   paneTextByCapture = Array.from({ length: busyCaptures }, () => '✻ Working…\n');
@@ -2833,7 +2824,7 @@ function startingRunner(t: TestContext, busyCaptures: number) {
   acknowledgePromptInput = true;
   t.after(() => {
     paneTextByCapture = null;
-    classifierVerdict = classifierOutage;
+    paneNow = null;
     activityReading = {
       value: 'idle',
       source: 'hook',
@@ -2851,66 +2842,61 @@ const slowStartOptions = {
   maxAttempts: 1,
 };
 
-// 961d55d3: the classifier's credential was refused, and a runner that settled a few seconds
-// after the readiness deadline failed the dispatch.
-test('an unavailable pane classifier gives the stable-pane rule one more readiness window', async (t) => {
-  startingRunner(t, 13);
-  await withVirtualTime(t, () =>
+const launch = (t: TestContext, runner = 'claude') =>
+  withVirtualTime(t, () =>
     sendRunnerPostLaunchPrompt(
       vars,
       target,
-      'claude',
+      runner,
       message,
       'TASK.md',
       '[test]',
       slowStartOptions,
     ),
   );
-  assert.equal(classifierCalls, 1);
-  assert.ok(callOrder.includes('tmux:send'), 'the prompt was delivered after the extended wait');
-});
 
-test('a runner still busy after the outage wait fails naming both waits and the outage', async (t) => {
-  startingRunner(t, 1_000);
-  await assert.rejects(
-    withVirtualTime(t, () =>
-      sendRunnerPostLaunchPrompt(
-        vars,
-        target,
-        'claude',
-        message,
-        'TASK.md',
-        '[test]',
-        slowStartOptions,
-      ),
-    ),
-    /within 10s \(and 10s more while the pane classifier was unavailable\) in tmux target/,
-  );
-  assert.equal(classifierCalls, 2);
-  assert.equal(callOrder.includes('tmux:send'), false);
-});
-
-test('an available pane classifier keeps the single readiness window and is asked once', async (t) => {
-  startingRunner(t, 1_000);
-  classifierVerdict = {
-    state: 'busy',
-    confidence: 0.9,
-    suggestedAction: 'wait',
-    reason: 'still starting',
+/** A pane that is busy until the readiness deadline, then `atDeadline()` until something is sent. */
+function busyUntilDeadline(t: TestContext, atDeadline: string, afterSend: string) {
+  startingRunner(t, 0);
+  paneTextByCapture = null;
+  const deadline = Date.now() + slowStartOptions.readyTimeoutMs;
+  const sendsBefore = () => promptInputCommands.length;
+  let sentAtDeadline: number | null = null;
+  paneNow = () => {
+    if (Date.now() < deadline) return '✻ Working…\n';
+    sentAtDeadline ??= sendsBefore();
+    return promptInputCommands.length > sentAtDeadline ? afterSend : atDeadline;
   };
+}
+
+// 961d55d3: a runner that settled a few seconds after the readiness deadline failed the dispatch.
+test('a runner that settles after the readiness deadline gets one more window, with no model asked', async (t) => {
+  startingRunner(t, 13);
+  await launch(t);
+  assert.ok(callOrder.includes('tmux:send'), 'the prompt was delivered after the extra wait');
+  assert.equal(llmCalls, 0);
+});
+
+test('a runner still busy after the extra window fails with its pane, naming both waits', async (t) => {
+  startingRunner(t, 1_000);
   await assert.rejects(
-    withVirtualTime(t, () =>
-      sendRunnerPostLaunchPrompt(
-        vars,
-        target,
-        'claude',
-        message,
-        'TASK.md',
-        '[test]',
-        slowStartOptions,
-      ),
-    ),
-    /within 10s in tmux target .*Pane classifier: busy\/0.9/s,
+    launch(t),
+    /within 10s \(and 10s more after the deadline recheck\) in tmux target .*Last pane content:\n✻ Working…/s,
   );
-  assert.equal(classifierCalls, 1);
+  assert.equal(callOrder.includes('tmux:send'), false);
+  assert.equal(llmCalls, 0);
+});
+
+test('an instruction still in the input line at the deadline gets one submit key and no resend', async (t) => {
+  promptInputCommands.length = 0;
+  busyUntilDeadline(t, `❯ ${message}\n`, `⏺ Reading TASK.md\n✻ Working…\n`);
+  await launch(t);
+  assert.equal(callOrder.filter((entry) => entry === 'tmux:send').length, 1);
+  assert.match(promptInputCommands[0]!, /send-keys -t '%1' Enter/);
+  assert.equal(
+    callOrder.includes('tmux:send-literal'),
+    false,
+    'the instruction is not typed again',
+  );
+  assert.equal(llmCalls, 0);
 });
