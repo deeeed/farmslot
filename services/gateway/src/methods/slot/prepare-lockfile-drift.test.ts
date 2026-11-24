@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { isLockfile, lockfileDrift, lockfileDriftAllowed } from './prepare-lockfile-drift.js';
+import {
+  isLockfile,
+  lockfileDrift,
+  lockfileDriftAllowed,
+  readLogTail,
+} from './prepare-lockfile-drift.js';
 
 // Yarn 4 colours its output and links each error code with a BEL-terminated OSC 8 hyperlink.
 const code = (id: string, slug: string) =>
@@ -26,6 +31,21 @@ test('an immutable install refusing to rewrite the lockfile names the first adde
   assert.deepEqual(lockfileDrift(log), { package: '@metamask/perps-controller' });
 });
 
+test('yarn names a patched, ranged or workspace descriptor the lockfile lacks', () => {
+  for (const [descriptor, name] of [
+    ['foo@patch:foo@npm%3A1.0.0#~/.yarn/patches/foo.patch::version=1.0.0&hash=abc', 'foo'],
+    ['foo@npm:>=1 <2', 'foo'],
+    ['@scope/a@workspace:packages/a', '@scope/a'],
+  ])
+    assert.deepEqual(
+      lockfileDrift(
+        `${arrow}${code('YN0000', 'unnamed')}: │ ${descriptor}: This package doesn't seem to be present in your lockfile; run "yarn install" to update the lockfile`,
+      ),
+      { package: name },
+      descriptor,
+    );
+});
+
 test('yarn classic and npm drift are recognised', () => {
   assert.deepEqual(
     lockfileDrift(
@@ -38,6 +58,15 @@ test('yarn classic and npm drift are recognised', () => {
       'npm ERR! `npm ci` can only install packages when your package.json and package-lock.json or npm-shrinkwrap.json are in sync.\nnpm ERR! Missing: left-pad@1.3.0 from lock file',
     ),
     { package: 'left-pad' },
+  );
+});
+
+test('a package added on a successful npm line is not taken for the drifted one', () => {
+  assert.deepEqual(
+    lockfileDrift(
+      '+ left-pad@1.3.0\nerror Your lockfile needs to be updated, but yarn was run with `--frozen-lockfile`.',
+    ),
+    { package: null },
   );
 });
 
@@ -61,4 +90,8 @@ test('only runs on an existing PR branch may update its lockfile', () => {
     ),
     [true, true, true, false],
   );
+});
+
+test('a log the command never wrote reads as empty', async () => {
+  assert.equal(await readLogTail(`/nonexistent-${process.pid}/deps.log`), '');
 });

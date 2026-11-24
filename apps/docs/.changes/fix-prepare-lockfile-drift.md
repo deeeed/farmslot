@@ -1,0 +1,1 @@
+- The prepare lifecycle reference documents `FARMSLOT_PREPARE_LOCKFILE_DRIFT=allow` for deps hooks: when it is set, the fallback marker, the lockfile-only allowance, the `lockfile-drift` failure kind and the supply-chain limit.

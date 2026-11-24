@@ -6,6 +6,8 @@ import { test } from 'node:test';
 import '../core/private-pool.test-support.js';
 
 // The shared fixture calls mock.module(...) and needs the module-mock test lane.
+import { LOCKFILE_DRIFT_FALLBACK_MARKER } from '../methods/slot/prepare-lockfile-drift.js';
+
 import {
   git,
   mockPrepareCommand,
@@ -57,11 +59,12 @@ test(
         return 1;
       }
       // The project's hook falls back to a mutable install, which rewrites the lockfile.
+      await writeFile(logPath, `${DRIFT_LOG}${LOCKFILE_DRIFT_FALLBACK_MARKER}\n`);
       await writeFile(hook.lock, '# lock\n"@metamask/perps-controller@npm:25.0.0":\n');
       return 0;
     });
     const events: unknown[] = [];
-    await slotPrepare(
+    const result = await slotPrepare(
       { slotId, branch: 'pr-branch', prepareProfile: 'core', flowType: 'pr-complete' },
       (_event, payload) => events.push(payload),
     );
@@ -70,6 +73,7 @@ test(
       JSON.stringify(events),
       /LOCKFILE DRIFT: prepare deps rewrote yarn\.lock on this PR branch; the worker must commit it/,
     );
+    assert.deepEqual(result.lockfilesRewritten, ['yarn.lock']);
   },
 );
 
@@ -132,5 +136,80 @@ test(
       /^Error: lockfile drift on PR branch: @metamask\/perps-controller .*commit the updated lockfile on pr-branch/,
     );
     assert.match(hook.commands[1]!, /export FARMSLOT_PREPARE_LOCKFILE_DRIFT=allow;/);
+  },
+);
+
+test(
+  'a forced new dev branch over a published one is not a PR branch',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, slotRepo } = await lockedFixture(t, 'drift-forced', 48866);
+    const hook = depsHook(t, slotRepo, async (_command, logPath) => {
+      await writeFile(logPath, DRIFT_LOG);
+      return 1;
+    });
+    await assert.rejects(
+      slotPrepare(
+        {
+          slotId,
+          branch: 'pr-branch',
+          prepareProfile: 'core',
+          flowType: 'dev',
+          forceNewBranch: true,
+        },
+        () => undefined,
+      ),
+      /^Error: lockfile drift: .*a dev run on a new branch may not update it/,
+    );
+    assert.doesNotMatch(hook.commands[0]!, /FARMSLOT_PREPARE_LOCKFILE_DRIFT/);
+  },
+);
+
+test(
+  'a dev replay of a published branch may update its drifted lockfile',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, slotRepo } = await lockedFixture(t, 'drift-replay', 48868);
+    await git(slotRepo, 'fetch', 'origin');
+    await git(slotRepo, 'branch', 'pr-branch', 'origin/pr-branch');
+    const hook = depsHook(t, slotRepo, async (command, logPath) => {
+      if (!command.includes('export FARMSLOT_PREPARE_LOCKFILE_DRIFT=allow;')) return 1;
+      await writeFile(logPath, `${DRIFT_LOG}${LOCKFILE_DRIFT_FALLBACK_MARKER}\n`);
+      await writeFile(hook.lock, '# lock\n"@metamask/perps-controller@npm:25.0.0":\n');
+      return 0;
+    });
+    const result = await slotPrepare(
+      { slotId, branch: 'pr-branch', prepareProfile: 'core', flowType: 'dev' },
+      () => undefined,
+      undefined,
+      { preserveBranch: true },
+    );
+    assert.deepEqual(result.lockfilesRewritten, ['yarn.lock']);
+  },
+);
+
+test(
+  'a hook that updated the lockfile and then failed otherwise is not reported as drift',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, slotRepo } = await lockedFixture(t, 'drift-then-other', 48870);
+    depsHook(t, slotRepo, async (_command, logPath) => {
+      await writeFile(
+        logPath,
+        `${DRIFT_LOG}${LOCKFILE_DRIFT_FALLBACK_MARKER}\n➤ YN0001: │ RequestError: getaddrinfo ENOTFOUND registry.yarnpkg.com\n`,
+      );
+      return 1;
+    });
+    await assert.rejects(
+      slotPrepare(
+        { slotId, branch: 'pr-branch', prepareProfile: 'core', flowType: 'pr-complete' },
+        () => undefined,
+      ),
+      (error: Error & { failureKind?: string }) => {
+        assert.equal(error.failureKind, undefined);
+        assert.doesNotMatch(error.message, /lockfile drift/);
+        return true;
+      },
+    );
   },
 );

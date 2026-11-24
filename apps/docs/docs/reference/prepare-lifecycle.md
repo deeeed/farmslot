@@ -187,6 +187,27 @@ cleanup; Farmslot does not do the default dev-server port cleanup before it.
 Project lifecycle hooks receive `FARMSLOT_PREPARE_PROFILE=<name>`, so a project
 can either use hook overrides or keep one hook script that branches internally.
 
+#### Lockfile drift on a PR branch
+
+The deps hook (`post_merge_install`) also receives
+`FARMSLOT_PREPARE_LOCKFILE_DRIFT=allow` when the run works on an existing PR
+branch: a `pr-complete` run, or a `dev` run whose branch was already on origin.
+Such a run may have to fix that branch's lockfile, so when its frozen install
+fails only because the lockfile and `package.json` disagree, the hook may run one
+mutable install. It prints `[farmslot] lockfile drift fallback` before that
+install. Prepare then accepts a deps phase that changed lockfiles only, when its
+log shows the drift, records them as `lockfilesRewritten` in the prepare step
+outputs and logs that the worker must commit them. Any other tracked change still
+fails prepare. A failure after the marker is reported as itself, not as drift.
+
+Without the flag, or when the hook does not fall back, a drift failure fails
+prepare with `failureKind: 'lockfile-drift'` in the step outputs and a message
+naming the package. `update-branch` and `review-pr` runs do not get the flag.
+
+A mutable install resolves whatever the lockfile lacks afresh, so it gives up the
+frozen-lockfile guarantee for those packages. That fits PR branches the farm owns;
+a hook must not fall back for a PR from an outside contributor.
+
 ### Runtime ensure profiles
 
 A common profile is an "ensure runtime" prepare: update code and generated
