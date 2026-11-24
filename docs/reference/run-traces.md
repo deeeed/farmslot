@@ -53,7 +53,7 @@ sha256, sizeBytes, capturedAt, answersRound?, reason?}`. A source whose size and
   `session-archives/<run>/<contextId>/transcript.jsonl` with only a single ref, reads
   as a one-element list whose `sessionKey` is `legacy`. That key exists only in
   this list view; it is never written to a ref. Nothing is moved or rewritten.
-- **Readers that change (PR 1).** The episode writer
+- **Readers that change.** The episode writer
   (`run-completion/run-episode.ts`) lists every session in `trajectory.agents` and
   [Run episodes](run-episodes.md) documents the per-session shape; the archive read
   helpers in `runners/session-archive.ts` resolve the path from the ref (above); the
