@@ -10,9 +10,40 @@ import lockfile, { type LockOptions } from 'proper-lockfile';
 
 import {
   openRunBundleStore,
+  type RunBundleLockTime,
+  withRunBundleLockTime,
   withRunBundleLockWaitBudget,
   withRunBundleStoreLock,
 } from './retained.js';
+
+test('lock time charges a waiter for its queue wait behind another holder and its own hold', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'retained-lock-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = await openRunBundleStore({
+    runsDir: path.join(root, 'runs'),
+    home: path.join(root, 'home'),
+    create: true,
+  });
+  const events = new EventEmitter();
+  const entered = once(events, 'holder');
+  const holder = withRunBundleStoreLock(store, async () => {
+    const release = once(events, 'release');
+    events.emit('holder');
+    await release;
+  });
+  await entered;
+  const time: RunBundleLockTime = { acquisitions: 0, waitMs: 0, heldMs: 0 };
+  const waiter = withRunBundleLockTime(time, () =>
+    withRunBundleStoreLock(store, () => new Promise<void>((resolve) => setTimeout(resolve, 30))),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  events.emit('release');
+  await Promise.all([holder, waiter]);
+  // Only the measured operation's acquisition counts, not the holder's.
+  assert.equal(time.acquisitions, 1);
+  assert.ok(time.waitMs >= 50, `waited ${time.waitMs}ms`);
+  assert.ok(time.heldMs >= 25 && time.heldMs < time.waitMs + 1_000, `held ${time.heldMs}ms`);
+});
 
 test('capture, GC and admission in one process wait without exhausting filesystem lock retries', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'retained-lock-'));
