@@ -11,13 +11,17 @@ import { readJson, type RecordedProcess, recordedProcessAlive } from './storage.
 
 /**
  * New launches refused by a host on another runtime. `busy` names the live sessions that keep
- * it from refreshing on its own; an empty list means it refreshes once its sessions go idle.
+ * it running; `refreshes` says when the refusing service refreshes it on its own.
  */
-export function nativeHostVersionSkew(host: HostIdentity, busy: readonly string[] = []) {
+export function nativeHostVersionSkew(
+  host: HostIdentity,
+  busy: readonly string[] = [],
+  refreshes = 'It is refreshed when its service next starts, once every runner has stopped.',
+) {
   return Object.assign(
     new Error(
       `Native host runtime version skew: node ${RUNTIME_VERSION} (build ${currentRuntimeBuild().slice(0, 12)}), host ${host.runtimeVersion ?? 'unknown (legacy)'} (build ${host.runtimeBuild?.slice(0, 12) ?? 'unknown'}). ` +
-        'Existing sessions remain available; new launches wait for the host to refresh, which it does on its own once no live session is busy. ' +
+        `Existing sessions remain available; new launches wait for a refresh. ${refreshes} ` +
         (busy.length ? `Busy: ${busy.join('; ')}. ` : '') +
         'See docs/operations/native-host-refresh.md.',
     ),
@@ -39,25 +43,30 @@ export async function retireIdleNativeHost(root: string, host: HostIdentity): Pr
   // Only the running host can fence admissions and account for launches before their
   // first reservation. A legacy journal census cannot establish quiescence.
   if (!host.supportsRuntimeUpgrade) return false;
-  return stopNativeHost(root, host, true);
+  return (await stopNativeHost(root, host, 'admissions')).stopped;
 }
 
 /**
- * Lifecycle only: stop a host whose live sessions the caller found idle, under the caller's
- * own admission lock (a skewed host gets no new admissions from it). The supervisor's cleanup
- * stops each idle runner and confirms it; the next host keeps their journals and reports them
- * for resume. Unlike retireIdleNativeHost there is no host-side fence: an older host only
- * fences once every runner process has already stopped.
+ * Lifecycle only: stop a host whose live sessions the caller found idle. The supervisor's
+ * cleanup stops each idle runner and confirms it; the next host keeps their journals and
+ * reports them for resume. A host that supports it fences admissions and new input first and
+ * names any session still busy (sending, compacting, finishing a turn, asked). An older host
+ * fences only once every runner has stopped, so the caller's own checks and admission lock
+ * are all that stand between its snapshot and the stop.
  */
-export function stopIdleSessionsNativeHost(root: string, host: HostIdentity): Promise<boolean> {
-  return stopNativeHost(root, host, false);
+export function stopIdleSessionsNativeHost(
+  root: string,
+  host: HostIdentity,
+): Promise<{ stopped: boolean; busy: string[] }> {
+  return stopNativeHost(root, host, host.supportsIdleRunnerUpgrade ? 'idle-runners' : 'none');
 }
 
 async function stopNativeHost(
   root: string,
   host: HostIdentity,
-  fenceAdmissions: boolean,
-): Promise<boolean> {
+  fence: 'admissions' | 'idle-runners' | 'none',
+): Promise<{ stopped: boolean; busy: string[] }> {
+  const unverified = { stopped: false, busy: [] };
   const supervisor = readJson<RecordedProcess>(join(root, 'lock', 'owner.json'));
   const worker = readJson<RecordedProcess>(join(root, 'worker.json'));
   if (
@@ -67,22 +76,23 @@ async function stopNativeHost(
     !recordedProcessAlive(supervisor) ||
     !recordedProcessAlive(worker)
   )
-    return false;
+    return unverified;
   const command = execFileSync('ps', ['-p', String(supervisor.pid), '-o', 'command='], {
     encoding: 'utf8',
     timeout: 5_000,
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
-  if (!command.includes('/native/supervisor.') || !command.endsWith(` ${root}`)) return false;
+  if (!command.includes('/native/supervisor.') || !command.endsWith(` ${root}`)) return unverified;
   const current = readJson<HostIdentity>(join(root, 'host.json'));
-  if (current.pid !== host.pid || current.token !== host.token) return false;
+  if (current.pid !== host.pid || current.token !== host.token) return unverified;
 
-  if (fenceAdmissions) {
-    const prepared = await requestHost<{ idle: boolean }>(host, {
+  if (fence !== 'none') {
+    const prepared = await requestHost<{ idle: boolean; busy?: string[] }>(host, {
       method: 'prepareUpgrade',
       owner: 'node-runtime-upgrade',
+      ...(fence === 'idle-runners' ? { idleRunners: true } : {}),
     });
-    if (prepared.idle !== true) return false;
+    if (prepared.idle !== true) return { stopped: false, busy: prepared.busy ?? [] };
   }
 
   await new Promise<void>((resolve, reject) => {
@@ -122,5 +132,5 @@ async function stopNativeHost(
   });
   if (recordedProcessAlive(worker))
     throw new Error('Native host cleanup is unconfirmed; previous host is still alive');
-  return true;
+  return { stopped: true, busy: [] };
 }

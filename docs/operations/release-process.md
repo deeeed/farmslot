@@ -149,9 +149,8 @@ branch. Merge required installation fixes before installing the release.
    refreshes after its own atomic admission fence confirms no pending starts or live
    sessions, through verified supervisor shutdown and confirmed cleanup. A busy or
    unconfirmed host keeps its sessions and remains readable; new launches, resumes
-   and transfers fail with `NATIVE_HOST_VERSION_SKEW`, naming the busy sessions. Finish/close
-   that work and redeploy the node to retry the refresh, or follow
-   [native host refresh](native-host-refresh.md). A legacy host without the upgrade-fence
+   and transfers fail with `NATIVE_HOST_VERSION_SKEW`. Finish/close that work and redeploy
+   the node to retry the refresh, or follow [native host refresh](native-host-refresh.md). A legacy host without the upgrade-fence
    capability cannot certify quiescence: use the controlled drain and verified native
    supervisor shutdown in step 2 once. Subsequent versioned hosts support automatic
    idle refresh. Session journals and credentials stay in place.

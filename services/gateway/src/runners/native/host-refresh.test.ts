@@ -39,10 +39,17 @@ function needingAPerson(runs: Run[], ids: string[]) {
   );
 }
 
-test('an active run’s dev worker and static review workspace keep the host; reviewers do not', () => {
+test('an active run’s own worker, CI fix and static review workspace keep the host; reviewers and review fixes do not', () => {
   const pipeline = run(
     { id: '2137ec52-6d2f-4cad-80f9-a60766346929', status: 'blocked' },
-    { agentContexts: [context('dev', 'worker'), context('review', 'reviewer')] },
+    {
+      agentContexts: [
+        context('dev', 'worker'),
+        context('review', 'reviewer'),
+        context('review-fix', 'review-fixer'),
+        context('ci-fix', 'ci-fixer'),
+      ],
+    },
   );
   const workspace = run(
     { id: 'aaaabbbb-0000-0000-0000-000000000000', status: 'reviewing' },
@@ -53,9 +60,15 @@ test('an active run’s dev worker and static review workspace keep the host; re
   );
 
   assert.deepEqual(
-    [...needingAPerson([pipeline, workspace], ['worker', 'reviewer', 'workspace', 'copilot'])],
+    [
+      ...needingAPerson(
+        [pipeline, workspace],
+        ['worker', 'reviewer', 'review-fixer', 'ci-fixer', 'workspace', 'copilot'],
+      ),
+    ],
     [
       ['worker', 'dev worker of run 2137ec52'],
+      ['ci-fixer', 'ci-fix worker of run 2137ec52'],
       ['workspace', 'static review workspace of run aaaabbbb'],
     ],
   );

@@ -50,7 +50,7 @@ for (const session of live)
   console.log(
     `  live ${session.id} ${session.state} ${session.runner} owner=${session.ownerPrincipalId} cwd=${session.cwd}`,
   );
-if (!values.refresh) process.exit(0);
+if (!values.refresh || nativeHostRunsCurrentRuntime(host)) process.exit(0);
 // --stop-idle keeps no session, so idle runners are stopped with the host; busy ones still hold it.
 if (values['stop-idle']) client.setRefreshPolicy(async () => new Map<string, string>());
 const { refreshed, busy } = await client.refreshStaleHost();

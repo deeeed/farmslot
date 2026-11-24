@@ -13,12 +13,13 @@ A native host is the detached supervisor and host process that runs native runne
 
 - **Node start.** A node refreshes its host before it registers, if every runner has stopped.
 - **Gateway start, and any launch on a host on another runtime.** The gateway refreshes its local host when every live session is idle:
-  - Idle runners are stopped, and their journals and saved runner identities are kept.
+  - Idle runners are stopped, and their journals and saved runner identities are kept. At startup the gateway then starts the current host.
   - The next host marks those sessions for resume. Warm reviewers, review fixes and messages to a worker then resume them on their own. A Command Center chat shows its resume action. The Co-Pilot starts again from Command Center.
-  - An active run's dev worker and static review workspace count as busy even when idle, because their next step would need a person.
-  - A session with a turn, approval or other request in flight is busy too.
+  - Some idle sessions of an active run count as busy, because their next step would need a person: its own worker (`primary`, `dev`, `fix-bug`), a CI fix and a static review workspace.
+  - A session with a turn, approval, compaction or other request in flight is busy too.
+  - Hosts from this version onward fence admissions and new input atomically before they stop, and name any session that is still busy. An older host can't be fenced while a runner is live. For one, the gateway relies on its own snapshot and admission lock. A request from another process, such as the manual script below, could still reach it in between.
 
-A host with a busy session keeps running. New launches fail, and the error lists the busy sessions. Once they finish, the next launch refreshes the host.
+A host with a busy session keeps running. New launches fail, and the error lists the busy sessions. Once they finish, the next launch, or the next gateway start, refreshes the host. A node refreshes its host only when the node starts, and only once every runner has stopped.
 
 ## Manual refresh
 
@@ -32,7 +33,7 @@ node --import tsx scripts/native-host-refresh.mts --root ~/.farmslot-dev/native-
 It prints the host's runtime and each live session, with its state, runner, owner and directory. Nothing changes.
 
 1. For each live session, find its run with `farmslot run list` and `farmslot run get <runId>`. Read its journal at `<root>/sessions/<id>.journal` if the owner is unclear: the first prompt names a Co-Pilot or a reviewer. Finish, close or cancel what must not stop. A dev worker or a static review workspace of an active run needs an operator afterwards.
-2. `--refresh` retires the host only if every runner has stopped. `--refresh --stop-idle` also stops idle runners, keeping their journals. A busy session still blocks it, and the output names it.
+2. `--refresh` retires the host only if every runner has stopped. `--refresh --stop-idle` also stops idle runners, keeping their journals. A busy session still blocks it, and the output names it. On a host older than this version, `--stop-idle` can't fence the gateway: a message the gateway sends at that moment would be lost. Run it while the gateway is stopped, or when nothing is using the host.
 3. The script never starts a host. The next native launch from the gateway or node starts one on the current runtime, from its own process and environment. Check the new `host.json`: a new `pid`, and `runtimeVersion` equal to the deployed version.
 
 Do not kill the supervisor or host processes by hand, and do not edit `host.json` or journals. The supervisor's own shutdown stops each runner and records the cleanup the next host relies on.

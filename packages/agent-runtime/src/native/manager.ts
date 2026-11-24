@@ -279,6 +279,39 @@ export class NativeSessionManager {
     return true;
   }
 
+  /**
+   * Fence admissions and new input for a refresh that stops idle runners too: a live runner
+   * whose session is idle, with nothing being sent, configured, compacted, finished or asked,
+   * doesn't block it; the supervisor's cleanup stops that runner. Returns the busy sessions
+   * and fences only when there are none.
+   */
+  prepareIdleRunnerUpgrade(): string[] {
+    const busy: string[] = [];
+    if (this.pendingAdmissions) busy.push(`${this.pendingAdmissions} launch(es) starting`);
+    for (const record of this.sessions.values()) {
+      if (record.info.processStopped) continue;
+      const reason =
+        record.info.state !== 'idle'
+          ? record.info.state
+          : record.sending
+            ? 'sending'
+            : record.configuring
+              ? 'configuring'
+              : record.compacting
+                ? 'compacting'
+                : record.turnEnd
+                  ? 'finishing a turn'
+                  : record.pendingRequests.size
+                    ? 'waiting on a request'
+                    : record.info.approvalModePending
+                      ? 'approval mode change pending'
+                      : undefined;
+      if (reason) busy.push(`${record.info.id} (${reason})`);
+    }
+    if (!busy.length) this.upgradePrepared = true;
+    return busy;
+  }
+
   private assertAdmissionOpen(): void {
     if (this.upgradePrepared)
       throw Object.assign(
@@ -1555,6 +1588,7 @@ export class NativeSessionManager {
     id: string,
     mode: NativeApprovalMode,
   ): Promise<NativeSessionInfo> {
+    this.assertAdmissionOpen();
     if (mode !== 'ask' && mode !== 'bypass') throw new Error('Unknown native approval mode');
     const record = this.owned(owner, id);
     this.assertUnmanagedSession(owner, id);
@@ -1595,6 +1629,7 @@ export class NativeSessionManager {
     leaseId: string,
     request: NativeContextCompactionRequest,
   ): Promise<NativeContextCompactionRecord> {
+    this.assertAdmissionOpen();
     this.assertWorkerLease(owner, id, generation, leaseId);
     const record = this.owned(owner, id);
     this.assertAccountCurrent(record);
@@ -1824,6 +1859,8 @@ export class NativeSessionManager {
         ...(existing.steered ? { steered: true } : {}),
       };
     }
+    // A fenced host takes no new input; a replay of a command it already has is answered above.
+    this.assertAdmissionOpen();
     if (
       record.compacting ||
       record.info.contextCompactions?.some((row) => ['pending', 'unconfirmed'].includes(row.status))
@@ -1877,6 +1914,7 @@ export class NativeSessionManager {
     commandId: string,
     text: string,
   ): Promise<NativeSessionSendResult> {
+    this.assertAdmissionOpen();
     const record = this.owned(owner, id);
     const adapter = record.adapter;
     if (
