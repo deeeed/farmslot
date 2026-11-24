@@ -1,0 +1,37 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "COMPLETE says where its time went",
+  "description": "Set FARMSLOT_GATEWAY to the gateway that ran the runs and FARMSLOT_COMPLETE_TIMING_RUN_IDS to space-separated finished run IDs (at least one fix-bug or dev run whose slot was released). Read-only: one run.get per run. Against a gateway without the phase timers the timing assertion fails; against one with them, each COMPLETE records its phases, bundle-lock wait and hold, and processes, and each run records its slot release duration.",
+  "proofTargets": [
+    {
+      "id": "complete-timed",
+      "claim": "A finished run's COMPLETE outputs carry per-phase wall time and its run-bundle lock wait and hold."
+    },
+    {
+      "id": "release-timed",
+      "claim": "A run whose slot was released records the release duration on the run."
+    }
+  ],
+  "workflow": {
+    "entry": "read",
+    "nodes": {
+      "read": {
+        "action": "command",
+        "intent": "Read each run through run.get and check its COMPLETE timing and slot release record.",
+        "cmd": "node scripts/runner-validation/gateway/complete-step-timing.mjs $FARMSLOT_COMPLETE_TIMING_RUN_IDS",
+        "timeout_ms": 120000,
+        "next": "timed"
+      },
+      "timed": {
+        "action": "assert_output",
+        "intent": "Every run checked has COMPLETE timing and a timed release.",
+        "source": "read",
+        "stream": "stdout",
+        "contains": "\"completeTimed\":true",
+        "proves": ["complete-timed", "release-timed"],
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
