@@ -56,6 +56,7 @@ import type {
 } from '../shared/artifact-browser-model.js';
 import { renderCollapsiblePanel } from '../shared/collapsible-panel.js';
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
+import { renderEvalRunBadge } from '../shared/eval-run-badge.js';
 import type { EvidenceReviewerSelection } from '../shared/evidence-reviewer.js';
 import type { EvidenceReviewerView } from '../shared/evidence-reviewer-url-state.js';
 import { getFileTransfersForRun } from '../shared/file-transfer-progress-store.js';
@@ -1456,6 +1457,7 @@ function renderRunDetailHeader(ctx: RunDetailViewContext, r: RunListRow, detail:
             >`
           : r.ticketOrPr}
       </h2>
+      ${renderEvalRunBadge(r)}
       <span
         class="status-badge ${activityLabel ? 'run-activity-label' : ''}"
         style="border:1px solid ${sc}; color:${sc}"
