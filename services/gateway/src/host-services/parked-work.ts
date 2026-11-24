@@ -22,6 +22,9 @@ const OPS = {
 } as const;
 registerHostOperations(Object.values(OPS));
 
+/** The slot command's limit; the program stops 10 s earlier and names the Git step it was on. */
+const PARKED_WORK_TIMEOUT_MS = 120_000;
+
 export class ParkedWorkError extends GatewayMethodError {
   constructor(code: string, message: string) {
     super(`PARKED_WORK_${code}`, message, {
@@ -166,9 +169,9 @@ async function request(
   exec: Executor,
 ): Promise<unknown> {
   return withHostOperation(OPS[op], async () => {
-    const command = `node -e ${shellQuote(PARKED_WORK_PROGRAM)} ${shellQuote(JSON.stringify({ ...parameters, op, repo: vars.remoteRepo }))}`;
+    const command = `node -e ${shellQuote(PARKED_WORK_PROGRAM)} ${shellQuote(JSON.stringify({ ...parameters, op, repo: vars.remoteRepo, budgetMs: PARKED_WORK_TIMEOUT_MS - 10_000 }))}`;
     const result = await exec(vars, withFarmGitConfig(command), {
-      timeout: 120_000,
+      timeout: PARKED_WORK_TIMEOUT_MS,
       maxBuffer: 64 * 1024 * 1024,
       noRetry: true,
       selectNodeSupport: false,

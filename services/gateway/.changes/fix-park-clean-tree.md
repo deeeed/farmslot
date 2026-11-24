@@ -1,1 +1,2 @@
 - Parking a clean checkout no longer saves a working-tree snapshot when an ignored folder hides only its contents (`.agents/skills/`) or ignores itself through its own rule file (husky's `.husky/_/.gitignore`): those paths survive a reset and clean, so they are not exposed.
+- Parked work stops 10 s before its slot command's timeout and names the Git step it was on (`GIT_TIMEOUT`), so a slow park says where it spent its time.
