@@ -33,6 +33,12 @@ test('bottom status row and transfer bar never overlay the content', () => {
     assert.doesNotMatch(css, /position:\s*fixed/, `${component.name} must stay in flow`);
   }
   const index = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
-  assert.match(index, /body \{[^}]*display: flex;[^}]*flex-direction: column;/);
-  assert.match(index, /farm-app \{\s*flex: 1 1 0;\s*min-height: 0;\s*\}/);
+  const rule = (selector: string) =>
+    [...index.matchAll(new RegExp(`(?:^|\\n)\\s*${selector} \\{([^}]*)\\}`, 'g'))]
+      .map((match) => match[1])
+      .join(';');
+  for (const declaration of [/display:\s*flex/, /flex-direction:\s*column/])
+    assert.match(rule('body'), declaration);
+  for (const declaration of [/flex:\s*1 1 0/, /min-height:\s*0/])
+    assert.match(rule('farm-app'), declaration);
 });

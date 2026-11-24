@@ -28,6 +28,7 @@ import {
   acPanelUnwrittenError,
   proveAcPanel,
 } from './ac-panel-proof.mjs';
+import { copilotPanelFixture, proveCopilotPanel } from './copilot-panel-proof.mjs';
 import { nativePanelFixture, proveNativePanel } from './native-panel-proof.mjs';
 import { proveRefetchNotices, recordBrowserProof } from './stable-layout-refetch-proof.mjs';
 
@@ -55,6 +56,7 @@ const refetchProof = process.env.FARMSLOT_LAYOUT_REFETCH === '1';
 const nativePanelProof = process.env.FARMSLOT_LAYOUT_NATIVE_PANEL === '1';
 const terminalLayoutProof = process.env.FARMSLOT_LAYOUT_TERMINAL === '1';
 const acPanelProof = process.env.FARMSLOT_LAYOUT_AC_PANEL === '1';
+const copilotPanelProof = process.env.FARMSLOT_LAYOUT_COPILOT === '1';
 const acCase = acPanelProof ? acPanelCase() : undefined;
 const legacyProof = process.env.FARMSLOT_LAYOUT_BEFORE === '1';
 const uiRoot = process.env.FARMSLOT_LAYOUT_UI_ROOT ?? path.join(source, 'apps/command-center/ui');
@@ -64,6 +66,7 @@ assert(
 );
 const now = Date.now();
 const nativeFixture = nativePanelFixture(now);
+const copilotFixture = copilotPanelFixture(now, nativeFixture);
 const decision = {
   id: 'layout-decision',
   title: 'Review the saved result',
@@ -173,6 +176,7 @@ const values = {
         }),
       }
     : {}),
+  ...(copilotPanelProof ? copilotFixture.values : {}),
   'run.list': () => ({
     runs: [terminalLayoutProof ? terminalRun : refetchProof ? gateRun : fixtureRun],
   }),
@@ -281,6 +285,7 @@ wss.on('connection', (socket) =>
           httpBearerAuth: false,
           voiceInstructionFormatting: false,
           workspaceAccess: 'farm',
+          ...(copilotPanelProof ? { conversationStreaming: 1 } : {}),
           resourceChanges: {
             version: 1,
             epoch,
@@ -622,6 +627,16 @@ try {
       viewport,
       releaseReplies,
     });
+  } else if (copilotPanelProof) {
+    await proveCopilotPanel({
+      cdp,
+      target,
+      browserCall,
+      output,
+      save,
+      frames,
+      fixture: copilotFixture,
+    });
   } else if (nativePanelProof) {
     await proveNativePanel({
       cdp,
@@ -803,13 +818,15 @@ if (failure || cleanupFailures.length)
 console.log(
   JSON.stringify({
     result: 'PASS',
-    widths: terminalLayoutProof
-      ? [1440, 1000]
-      : acPanelProof
-        ? [acCase.width]
-        : refetchProof && process.env.FARMSLOT_LAYOUT_EXPECT_SHIFT === '1'
-          ? [1280]
-          : [1280, 414],
+    widths: copilotPanelProof
+      ? [1005]
+      : terminalLayoutProof
+        ? [1440, 1000]
+        : acPanelProof
+          ? [acCase.width]
+          : refetchProof && process.env.FARMSLOT_LAYOUT_EXPECT_SHIFT === '1'
+            ? [1280]
+            : [1280, 414],
     observationRequests: frames.length,
     scope: 'isolated protocol fixture presentation',
   }),

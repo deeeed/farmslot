@@ -44,7 +44,8 @@ export class FileTransferProgressBanner extends LitElement {
       align-self: flex-end;
       box-sizing: border-box;
       width: min(420px, 100%);
-      max-height: 40vh;
+      /* About one transfer card plus the toolbar; more transfers scroll inside the bar. */
+      max-height: min(30vh, 112px);
       overflow-y: auto;
     }
     :host(:not([inline])) .ftp-stack {
