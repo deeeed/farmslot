@@ -969,7 +969,8 @@ async function slotPrepareInner(
         [
           `cd ${shellQuote(vars.remoteRepo)} || exit 2`,
           `b=${which}; [ -n "$b" ] || exit 0`,
-          'git show-ref --verify --quiet "refs/heads/$b" || exit 0',
+          // show-ref exits 1 for a missing ref; anything else is a failed check.
+          'git show-ref --verify --quiet "refs/heads/$b"; found=$?; [ "$found" -eq 1 ] && exit 0; [ "$found" -eq 0 ] || exit 2',
           'head=$(git rev-parse --verify "refs/heads/$b") || exit 2',
           `stranded=$(git rev-list --max-count=1 "$head" --not --remotes ${target ? shellQuote(target) : ''}) || exit 2`,
           '[ -n "$stranded" ] || exit 0',
