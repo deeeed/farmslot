@@ -304,12 +304,12 @@ even when the other fails.
   and that no run record references; reports, task views, archives and retained
   bundles are untouched. These caches are recreatable, so nothing is archived.
 - Orphan slot scaffolding: slot release collects scaffolding into
-  `.runs/slot-scaffolding/<slot>/<collection>` when no run owns the release, the
-  collection named by a UUID. A collection whose `manifest.json` (written last) is older than the retention age
-  MUST move to `FARMSLOT_RUN_ARCHIVE_ROOT` under the archive key
-  `slot-scaffolding-<slot>`, journaled in
-  `<archive-root>/slot-scaffolding-<slot>/manifest.json` exactly as a run's storage
-  manifest is, and restored the same way. A collection without `manifest.json` is
+  `.runs/slot-scaffolding/<slot>/<collection>` when no run owns the release, one
+  directory per collection named by a UUID. A collection whose `manifest.json`
+  (written last) is older than the retention age MUST move to
+  `FARMSLOT_RUN_ARCHIVE_ROOT` under the archive key `slot-scaffolding-<slot>`,
+  journaled in `<archive-root>/slot-scaffolding-<slot>/manifest.json` exactly as a
+  run's storage manifest is, and restored the same way. A collection without `manifest.json` is
   incomplete and stays. Nothing is deleted.
 
 When the archive root is unavailable (an unmounted volume, a failed write probe),
