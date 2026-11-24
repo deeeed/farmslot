@@ -23,7 +23,11 @@ import {
 
 export { isDispatchScoreStale, SLOT_STALE_BRANCH_SCORE_PENALTY };
 
-import { SLOT_PHASE_RELEASING, SLOT_RELEASING_SINCE } from '../../core/index.js';
+import {
+  SLOT_CLEANUP_STOP_UNCONFIRMED,
+  SLOT_PHASE_RELEASING,
+  SLOT_RELEASING_SINCE,
+} from '../../core/index.js';
 import {
   slotCapabilityBlocker,
   type SlotCapabilityCatalogs,
@@ -815,12 +819,71 @@ export function buildSlotClaimStatus(params: {
   };
 }
 
+/** The teardown hold a finished run leaves while another run on its slot is still active. */
+export function activeRunOnSlotReason(runId: string): string {
+  return `Another active run ${runId} uses this slot`;
+}
+
+/** A run that may inherit its parent's warm worker, and with it the parent's slot. */
+export type WarmChildClaimant = Pick<
+  Run,
+  'id' | 'status' | 'slotId' | 'parentRunId' | 'engineState'
+>;
+
+/**
+ * A warm child before its own claim: the row still names its parent, as owner or as the
+ * owner of a pending cleanup. The child's running steps do not hold this row yet.
+ */
+export function warmChildAwaitsParentRow(
+  run: WarmChildClaimant,
+  row: Readonly<Record<string, unknown>> | null | undefined,
+): boolean {
+  if (!row || !run.parentRunId || !run.engineState?.flags?.warmSessionReuse) return false;
+  if (TERMINAL_RUN_STATUSES.includes(run.status as RunStatus) || row.slot !== run.slotId)
+    return false;
+  if (row.current_run_id === run.id) return false;
+  if (row.handoff_run_id && row.handoff_run_id !== run.id) return false;
+  return (
+    row.current_run_id === run.parentRunId ||
+    (!row.current_run_id && row.cleanup_run_id === run.parentRunId)
+  );
+}
+
+/**
+ * The hold the parent's cleanup wrote only because this warm child was already active
+ * (`activeRunOnSlotReason`). The parent stopped nothing for it, so the child may claim it.
+ */
+export function parentHoldForWarmChild(
+  row: Readonly<Record<string, unknown>> | null | undefined,
+  run: WarmChildClaimant,
+): boolean {
+  return Boolean(
+    row &&
+    row.lifecycle === 'held' &&
+    row.phase === 'occupied' &&
+    !row.current_run_id &&
+    row[SLOT_CLEANUP_STOP_UNCONFIRMED] !== true &&
+    !row[SLOT_RELEASING_SINCE] &&
+    !row.cleanup_release_token &&
+    row.held_reason === activeRunOnSlotReason(run.id) &&
+    warmChildAwaitsParentRow(run, row),
+  );
+}
+
+/** The hold fields a claim of the parent's hold clears with ownership. */
+export const PARENT_HOLD_CLAIM_FIELDS = { held_reason: null, cleanup_run_id: null } as const;
+
 /**
  * Refuse CAS claims during teardown or while retained workspace occupants
  * hold the slot. A stale fleet selection must not overwrite either protection.
+ * The parent's hold for its warm child does not refuse that child.
  */
-export function slotClaimBlockedByRelease(slot: SlotClaimStatus): 'occupied' | 'releasing' | null {
-  if (slot.lifecycle === 'held' && slot.phase === 'occupied') return 'occupied';
+export function slotClaimBlockedByRelease(
+  slot: SlotClaimStatus,
+  claimant?: WarmChildClaimant,
+): 'occupied' | 'releasing' | null {
+  if (slot.lifecycle === 'held' && slot.phase === 'occupied')
+    return claimant && parentHoldForWarmChild(slot, claimant) ? null : 'occupied';
   return slot.phase === SLOT_PHASE_RELEASING ? 'releasing' : null;
 }
 
@@ -971,8 +1034,9 @@ export function slotClaimBlocker(
   slot: Readonly<Record<string, unknown>>,
   runId: string,
   ownerRunLookup: (id: string) => { status: string } | undefined,
+  claimant?: WarmChildClaimant,
 ): { kind: 'releasing' | 'occupied' | 'handoff' | 'live-owner'; detail: string } | null {
-  const release = slotClaimBlockedByRelease(slot);
+  const release = slotClaimBlockedByRelease(slot, claimant);
   if (release === 'releasing') {
     const since = slot[SLOT_RELEASING_SINCE];
     return {

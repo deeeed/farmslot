@@ -3,6 +3,8 @@ import test from 'node:test';
 
 import type { Run } from '@farmslot/protocol';
 
+import { activeRunOnSlotReason, type WarmChildClaimant } from '../methods/dispatch/slot-scoring.js';
+
 import {
   commitSlotClaim,
   EXPLICIT_SLOT_RELEASE_WAIT_MS,
@@ -750,4 +752,53 @@ test('a guard that outlasts the claim wait is a conflict, so find-slot selects a
     return true;
   });
   assert.equal(sleeps, 3);
+});
+
+const warmChild: WarmChildClaimant = {
+  id: 'new-run',
+  status: 'slot-finding',
+  slotId: SLOT,
+  parentRunId: 'parent-run',
+  engineState: { generation: 0, flags: { warmSessionReuse: true } },
+};
+// The hold the parent's cleanup writes when its warm child is already active.
+const parentHold = {
+  ...readyRow,
+  lifecycle: 'held',
+  phase: 'occupied',
+  current_run_id: null,
+  cleanup_run_id: 'parent-run',
+  held_reason: activeRunOnSlotReason('new-run'),
+  slot_epoch: 4,
+};
+
+test('a warm child claims the hold its parent left for it outright, ending the hold', async () => {
+  const status = pendingWriteStatus({ ...parentHold });
+  const claim = commitSlotClaim(SLOT, 'new-run', 0, 'working', 'working', undefined, {
+    ...status.deps,
+    runLookup: () => ({ status: 'slot-finding' }),
+    claimantLookup: () => warmChild,
+  });
+  await status.predicateDone;
+  status.release();
+  await claim;
+  const row = status.rows.get(SLOT)!;
+  assert.equal(row.current_run_id, 'new-run');
+  assert.equal(row.lifecycle, 'busy');
+  assert.equal(row.phase, 'working');
+  assert.equal(row.held_reason, null);
+  assert.equal(row.cleanup_run_id, null, "the child's own end can return the slot to idle");
+  assert.equal(row.handoff_run_id, null);
+});
+
+test('the parent hold still refuses any other run', async () => {
+  const status = pendingWriteStatus({ ...parentHold });
+  await assert.rejects(
+    commitSlotClaim(SLOT, 'other-run', 0, 'working', 'working', undefined, {
+      ...status.deps,
+      runLookup: () => ({ status: 'slot-finding' }),
+      claimantLookup: () => ({ ...warmChild, id: 'other-run' }),
+    }),
+    /slot remains occupied/,
+  );
 });

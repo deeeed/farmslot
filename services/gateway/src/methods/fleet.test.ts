@@ -11,7 +11,7 @@ import type { RawPoolJson } from '../core/index.js';
 import { markGhostSlots } from '../fleet/state.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
-import { isFreeSlot } from './dispatch/slot-scoring.js';
+import { activeRunOnSlotReason, isFreeSlot } from './dispatch/slot-scoring.js';
 import { makeRun } from './run/test-fixtures.js';
 import {
   buildFleetRefreshSnapshot,
@@ -1401,4 +1401,36 @@ test('fleet refresh preserves the durable parked inventory independently of reco
   const before = makeRefreshRow({ parked_work });
   const refreshed = buildFleetRefreshSnapshot([before], [makeRefreshRow()], [], 'now').slots[0];
   assert.deepEqual(refreshed.parked_work, parked_work);
+});
+
+test("a fleet refresh leaves a warm child's parent row alone until the child claims it", (t) => {
+  const lost = t.mock.method(console, 'error', () => {});
+  const child: Run = {
+    ...makeRun({
+      id: 'warm-child',
+      slotId: 'macwork-mm-4',
+      status: 'dispatching',
+      parentRunId: 'parent-run',
+      steps: [{ name: 'dispatch', status: 'running' }],
+    }),
+    engineState: { generation: 0, flags: { warmSessionReuse: true } },
+  };
+  const hold = makeRefreshRow({
+    lifecycle: 'held',
+    phase: 'occupied',
+    current_run_id: null,
+    cleanup_run_id: 'parent-run',
+    held_reason: activeRunOnSlotReason(child.id),
+    slot_epoch: 80,
+  });
+  const held = buildFleetRefreshSnapshot([hold], [makeRefreshRow()], [child], 'now').slots[0]!;
+  assert.equal(held.held_reason, activeRunOnSlotReason(child.id), 'the child can still claim it');
+  assert.equal(held.current_run_id, null);
+  assert.equal(held.cleanup_run_id, 'parent-run');
+  assert.equal(held.slot_epoch, 80);
+  const owned = makeRefreshRow({ lifecycle: 'busy', current_run_id: 'parent-run', slot_epoch: 81 });
+  const kept = buildFleetRefreshSnapshot([owned], [makeRefreshRow()], [child], 'now').slots[0]!;
+  assert.equal(kept.current_run_id, 'parent-run', 'the refresh does not bind the child');
+  assert.equal(kept.slot_epoch, 81);
+  assert.equal(lost.mock.callCount(), 0, 'no lost lease is reported for the child');
 });
