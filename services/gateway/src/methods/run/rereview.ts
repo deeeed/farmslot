@@ -17,17 +17,19 @@ import {
   buildFollowUpClassification,
   buildFollowUpLineage,
 } from '../../family-observability/context.js';
-import { loadFleetStatus, loadProjectConfig } from '../../fleet/state.js';
+import { loadFleetStatus, loadPoolConfigs, loadProjectConfig } from '../../fleet/state.js';
 import {
   assertRereviewable,
   liveReviewSessionSlot,
   rereviewTarget,
 } from '../../pr-rules/rereview-request.js';
 import { WarmReviewRefusal } from '../../review/session-mode.js';
+import { resolveWorkspaceReviewTemplate } from '../../review-workspaces/admission.js';
 import {
   bindWorkspaceReviewResult,
   rereviewWorkspaceReviewer,
 } from '../../review-workspaces/continuity.js';
+import { resolveReviewWorkspacePool } from '../../review-workspaces/pool.js';
 import {
   automatedRepeatReviewSelection,
   buildRepeatReviewContext,
@@ -77,6 +79,21 @@ async function supersedeBlockedReview(run: Run, successor: string): Promise<void
   );
   // No slot release follows a superseded review, so its episode is captured now.
   await captureEpisodeAfterRelease(run.id);
+}
+
+/** The configured static-review template, resolved as run.create resolves it. */
+async function currentWorkspaceTemplate(run: Run, machine: string) {
+  const [pools, project] = await Promise.all([loadPoolConfigs(), loadProjectConfig(run.project)]);
+  const templateId = project?.staticReview?.templateId;
+  if (!templateId)
+    throw new Error('Workspace re-review requires the project canonical static-review template');
+  return resolveWorkspaceReviewTemplate({
+    project: run.project,
+    pool: resolveReviewWorkspacePool(pools, machine, run.project),
+    mode: 'autonomous',
+    domain: run.domain ?? undefined,
+    executionTemplateId: templateId,
+  });
 }
 
 export async function runRereviewLatestHead(
@@ -142,6 +159,11 @@ async function rereviewWithSources(
         )
       : undefined;
 
+  // write-task requires a frozen template. This direct creation freezes the current configured
+  // one, as run.create's planner does, before the parent is re-checked below.
+  const frozenTemplate = workspace
+    ? await currentWorkspaceTemplate(run, workspace.machine)
+    : undefined;
   const reviewerHistory =
     runner && model && !run.reviewWorkspaceTarget ? await getAllRunsWithArchived() : [];
   // The parent may have been cancelled or superseded while history or GitHub answered.
@@ -150,13 +172,8 @@ async function rereviewWithSources(
   assertRereviewable(parent);
   if ((parent.engineState?.generation ?? 0) !== parentGeneration)
     throw new Error('Review changed during re-review admission');
-  // write-task requires the frozen template; the child continues under its parent's (the
-  // planner freezes it for run.create, which this direct creation does not pass through).
-  const frozenTemplate = workspace ? parent.executionTemplate : undefined;
   if (workspace) {
     assertNativeRunOwner(parent);
-    if (!frozenTemplate)
-      throw new Error('Workspace re-review requires the previous review frozen template');
     const retained = rereviewWorkspaceReviewer(parent);
     if (!retained || retained.reviewId !== reviewContext.reviewLineages[0]?.reviewId)
       throw new WarmReviewRefusal(
@@ -200,7 +217,7 @@ async function rereviewWithSources(
       ...(workspace
         ? {
             reviewWorkspaceTarget: workspace,
-            executionTemplateId: parent.executionTemplateId,
+            executionTemplateId: frozenTemplate?.id,
             transport: run.transport,
             nativeProfile: run.nativeProfile,
             reviewAutoFinish: false,
@@ -242,7 +259,7 @@ async function rereviewWithSources(
       : undefined,
   );
   updateRun(child.id, {
-    ...(frozenTemplate ? { executionTemplate: structuredClone(frozenTemplate) } : {}),
+    ...(frozenTemplate ? { executionTemplate: frozenTemplate } : {}),
     repeatReviewContext: context,
     reviewMode: context.mode,
     reviewValidationDepth: context.validationDepth,

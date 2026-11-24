@@ -50,8 +50,34 @@ const fleet = await import('../../fleet/state.js');
 mock.module('../../fleet/state.js', {
   namedExports: {
     ...fleet,
-    loadProjectConfig: async () => ({ ci: { repo: 'owner/repo' } }),
+    loadProjectConfig: async () => ({
+      ci: { repo: 'owner/repo' },
+      staticReview: { templateId: 'review-pr/default' },
+    }),
+    loadPoolConfigs: async () => [
+      {
+        machine: 'review-node',
+        project: 'review-fixture',
+        slots: [],
+        reviewWorkspaces: { enabled: true },
+      },
+    ],
     loadFleetStatus: async () => ({ slots: [] }),
+  },
+});
+const admission = await import('../../review-workspaces/admission.js');
+mock.module('../../review-workspaces/admission.js', {
+  namedExports: {
+    ...admission,
+    resolveWorkspaceReviewTemplate: async () => ({
+      id: 'review-pr/default',
+      sourceId: 'review-fixture',
+      flow: 'review-pr',
+      platforms: ['mobile'],
+      labels: [],
+      relativePath: 'templates/review-pr/default.md',
+      sha256: 'c'.repeat(64),
+    }),
   },
 });
 const engine = await import('../../run-engine/orchestrator.js');
@@ -116,15 +142,6 @@ function blockedParent(): Run {
       artifactPath: path.join(root, 'task/artifacts'),
       retainedAt: at,
       executionStoppedAt: at,
-    },
-    executionTemplate: {
-      id: 'review-pr/default',
-      sourceId: 'review-fixture',
-      flow: 'review-pr',
-      platforms: ['mobile'],
-      labels: [],
-      relativePath: 'templates/review-pr/default.md',
-      sha256: 'c'.repeat(64),
     },
     reviewWorkspaceSubject: {
       repository: 'owner/repo',

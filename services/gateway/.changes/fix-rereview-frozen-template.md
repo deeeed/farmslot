@@ -1,3 +1,3 @@
-- Workspace re-reviews (`run.rereviewLatestHead`) carry the parent's frozen execution template, so the child no longer fails write-task with "Static review requires its frozen template and source subject".
-- A continuation that fails before its reviewer launches hands the claimed workspace back to its predecessor instead of keeping it, so archiving the failed run no longer removes the predecessor's retained checkout.
-- A refused warm review names the mismatch (runner, model, effort, owner, machine...) and the requested and retained runner/model/effort.
+- Workspace re-reviews (`run.rereviewLatestHead`) freeze the current configured static-review template, as `run.create` does, so the child no longer fails write-task with "Static review requires its frozen template and source subject".
+- A continuation that fails before its reviewer launches no longer keeps the workspace it bound: it hands it back to its live predecessor, or records the run that won the claim, so archiving it no longer removes a retained checkout or stops another reviewer.
+- A refused warm review names the mismatch (runner, model, effort, owner, machine...) and the requested and retained runner/model/effort; workspace refusals name the run that holds the workspace.

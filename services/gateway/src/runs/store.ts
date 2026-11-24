@@ -2133,8 +2133,8 @@ export async function claimReviewWorkspaceTransfer(
 }
 
 /**
- * A continuation that never launched gives the workspace it claimed back to the run it came
- * from, live or archived, so that run's retained checkout and reviewer stay continuable.
+ * A continuation that never launched gives the workspace it claimed back to the live run it came
+ * from, so that run's retained checkout and reviewer stay continuable.
  */
 export async function returnReviewWorkspaceTransfer(
   predecessorId: string,
@@ -2147,6 +2147,10 @@ export async function returnReviewWorkspaceTransfer(
       return { ...run, reviewWorkspace: workspace };
     },
     (run) => {
+      // Only a live predecessor takes it back: an archived one has nothing to reclaim it.
+      assertRunNotArchiving(predecessorId);
+      if (getRun(predecessorId) !== run)
+        throw new Error('An archived review cannot take its workspace back');
       if (run.reviewWorkspace?.transferredTo?.runId !== successorId)
         throw new Error('Retained review workspace is not held by this continuation');
     },

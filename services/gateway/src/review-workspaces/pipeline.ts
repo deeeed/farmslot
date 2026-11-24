@@ -391,44 +391,80 @@ function reviewWorkspaceNeverLaunched(run: Run): boolean {
 }
 
 /**
- * A continuation that never launched its reviewer gives the claimed workspace back to the run it
- * continued from, instead of retaining it (where its archive would release the shared checkout).
- * This run is marked first, so an interrupted hand-back can never release the checkout, and a
- * retry completes the predecessor's side.
+ * A continuation that never launched its reviewer does not keep the workspace it bound:
+ * - its live predecessor still names it: the workspace goes back to the predecessor;
+ * - its claim never landed or was lost to another continuation: it records the run that holds the
+ *   workspace and stops or releases nothing;
+ * - its predecessor named it but is archived (or being archived): it owns the checkout and is
+ *   retained and released as before.
+ * This run is marked before the predecessor, so an interrupted hand-back never releases the checkout
+ * and a retry completes it. Returns true when this run no longer owns the workspace.
  */
-async function returnNeverLaunchedContinuation(run: Run): Promise<boolean> {
-  const workspace = run.reviewWorkspace;
-  const predecessorId = workspace?.continuedFrom?.runId;
+async function releaseNeverLaunchedContinuation(run: Run): Promise<boolean> {
+  const generation = run.engineState?.generation ?? 0;
+  const predecessorId = run.reviewWorkspace?.continuedFrom?.runId;
+  const handedOn = run.reviewWorkspace?.transferredTo;
   if (
-    !workspace ||
     !predecessorId ||
-    workspace.cleanedAt ||
-    (workspace.transferredTo && workspace.transferredTo.runId !== predecessorId) ||
+    run.reviewWorkspace?.cleanedAt ||
+    (handedOn && handedOn.runId !== predecessorId) ||
     !reviewWorkspaceNeverLaunched(run)
   )
     return false;
+  // Not currentWorkspaceRun: a half-done hand-back already marks this run as not owning it.
+  const sameGeneration = () => {
+    const latest = getRun(run.id);
+    if (!latest?.reviewWorkspace || (latest.engineState?.generation ?? 0) !== generation)
+      throw new Error('Review workspace execution no longer owns this run generation');
+    return latest;
+  };
   const predecessor = await getRunWithArchived(predecessorId);
-  if (predecessor?.reviewWorkspace?.transferredTo?.runId !== run.id)
-    return Boolean(workspace.transferredTo);
-  if (!workspace.transferredTo) {
-    const current = currentWorkspaceRun(run.id, run.engineState?.generation ?? 0, true);
+  const current = sameGeneration();
+  const binding = current.reviewWorkspace!;
+  if (binding.cleanedAt || !reviewWorkspaceNeverLaunched(current)) return false;
+  const mark = async (holder: { runId: string; generation: number } | undefined) => {
+    const latest = sameGeneration().reviewWorkspace!;
+    const { transferredTo: _previous, ...unclaimed } = latest;
     await persistRunNow(
       updateRun(run.id, {
         reviewWorkspace: {
-          ...current.reviewWorkspace!,
-          executionStoppedAt:
-            current.reviewWorkspace!.executionStoppedAt ?? new Date().toISOString(),
-          transferredTo: {
-            runId: predecessorId,
-            generation: predecessor.engineState?.generation ?? 0,
-          },
+          ...unclaimed,
+          executionStoppedAt: latest.executionStoppedAt ?? new Date().toISOString(),
+          ...(holder ? { transferredTo: holder } : {}),
         },
         reviewWorkspaceCleanupError: undefined,
       }),
-      'return never-launched review workspace to its predecessor',
+      holder
+        ? 'never-launched review continuation does not own its workspace'
+        : 'never-launched review continuation owns the workspace its archived predecessor gave it',
     );
+  };
+  const claim = predecessor?.reviewWorkspace?.transferredTo;
+  if (claim?.runId !== run.id) {
+    // The claim never landed, or another continuation won it: the predecessor or that run holds it.
+    const holder = claim ?? {
+      runId: predecessorId,
+      generation: predecessor?.engineState?.generation ?? 0,
+    };
+    if (binding.transferredTo?.runId !== holder.runId) await mark(holder);
+    return true;
   }
-  await returnReviewWorkspaceTransfer(predecessorId, run.id);
+  if (!getRun(predecessorId) || isRunArchiving(predecessorId)) {
+    if (binding.transferredTo) await mark(undefined);
+    return false;
+  }
+  if (!binding.transferredTo)
+    await mark({ runId: predecessorId, generation: predecessor!.engineState?.generation ?? 0 });
+  try {
+    await returnReviewWorkspaceTransfer(predecessorId, run.id);
+  } catch (error) {
+    // Archived while handing back: this run still owns the checkout.
+    if (!getRun(predecessorId) || isRunArchiving(predecessorId)) {
+      await mark(undefined);
+      return false;
+    }
+    throw error;
+  }
   return true;
 }
 
@@ -438,7 +474,7 @@ export async function teardownReviewWorkspace(
 ): Promise<void> {
   const run = getRun(runId);
   if (!run?.reviewWorkspace) return;
-  if (await returnNeverLaunchedContinuation(run)) return;
+  if (await releaseNeverLaunchedContinuation(run)) return;
   if (
     !run.reviewWorkspace.cleanedAt &&
     !run.reviewWorkspace.continuedFrom &&
@@ -523,8 +559,11 @@ export async function teardownReviewWorkspace(
 export async function cleanupReviewWorkspaceForArchive(runId: string): Promise<void> {
   const found = getRun(runId);
   if (!found?.reviewWorkspace || found.reviewWorkspace.cleanedAt) return;
-  // Runs that failed before this hand-back existed return their workspace here.
-  const run = (await returnNeverLaunchedContinuation(found)) ? getRun(runId)! : found;
+  assertRunArchivable(found);
+  assertNativeRunOwner(found);
+  if (!isRunArchiving(runId)) throw new Error('Review history archive no longer owns its request');
+  // Runs that failed before the hand-back existed give up their workspace here.
+  const run = (await releaseNeverLaunchedContinuation(found)) ? getRun(runId)! : found;
   const workspace = run.reviewWorkspace!;
   if (workspace.transferredTo) {
     assertRunArchivable(run);

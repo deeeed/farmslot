@@ -103,10 +103,19 @@ mock.module('../../external/github.js', {
 // Load the rest only after the GitHub mock, so engine-decisions binds the mocked lookup.
 const fleet = await import('../../fleet/state.js');
 const store = await import('../../runs/store.js');
+let staticReviewTemplateId: string | undefined = 'review-pr/default';
+const templateRequests: unknown[] = [];
+let duringTemplate: () => void = () => {};
 mock.module('../../fleet/state.js', {
   namedExports: {
     ...fleet,
-    loadProjectConfig: async () => ({ ci: { repo: 'owner/repo' } }),
+    loadProjectConfig: async () => ({
+      ci: { repo: 'owner/repo' },
+      ...(staticReviewTemplateId ? { staticReview: { templateId: staticReviewTemplateId } } : {}),
+    }),
+    loadPoolConfigs: async () => [
+      { machine: 'review-node', project: 'farm-a', slots: [], reviewWorkspaces: { enabled: true } },
+    ],
     loadFleetStatus: async () => ({
       slots: liveSlotAvailable
         ? [
@@ -118,6 +127,17 @@ mock.module('../../fleet/state.js', {
           ]
         : [],
     }),
+  },
+});
+const admission = await import('../../review-workspaces/admission.js');
+mock.module('../../review-workspaces/admission.js', {
+  namedExports: {
+    ...admission,
+    resolveWorkspaceReviewTemplate: async (input: { pool: { machine: string } }) => {
+      templateRequests.push(input);
+      duringTemplate();
+      return currentTemplate;
+    },
   },
 });
 mock.module('../../runs/store.js', {
@@ -440,22 +460,59 @@ const frozenTemplate: NonNullable<Run['executionTemplate']> = {
   relativePath: 'templates/review-pr/default.md',
   sha256: 'c'.repeat(64),
 };
+/** The catalog moved on after the parent ran. */
+const currentTemplate: NonNullable<Run['executionTemplate']> = {
+  ...frozenTemplate,
+  sha256: 'd'.repeat(64),
+};
 
-test('a workspace re-review child carries its parent frozen template for write-task', async () => {
+test('a workspace re-review child freezes the current configured template for write-task', async () => {
+  templateRequests.length = 0;
   runs.set(prior.id, workspacePrior());
   const result = await runRereviewLatestHead({ runId: prior.id });
   const child = runs.get(result.runId!)!;
-  assert.deepEqual(child.executionTemplate, frozenTemplate);
-  assert.notEqual(child.executionTemplate, frozenTemplate, 'a copy, not the parent object');
+  assert.deepEqual(child.executionTemplate, currentTemplate);
   assert.equal(child.executionTemplateId, 'review-pr/default');
+  assert.equal(templateRequests.length, 1);
+  assert.deepEqual(
+    {
+      ...(templateRequests[0] as Record<string, unknown>),
+      pool: (templateRequests[0] as { pool: { machine: string } }).pool.machine,
+    },
+    {
+      project: 'farm-a',
+      pool: 'review-node',
+      mode: 'autonomous',
+      domain: undefined,
+      executionTemplateId: 'review-pr/default',
+    },
+  );
 });
 
-test('a workspace parent without a frozen template refuses before creating a child', async () => {
-  const { executionTemplate: _template, ...parent } = workspacePrior();
-  runs.set(prior.id, parent);
-  await assert.rejects(runRereviewLatestHead({ runId: prior.id }), /frozen template/);
-  assert.equal(runs.size, 1);
-  assert.equal(runs.get(prior.id)!.status, 'done');
+test('a project without a static-review template refuses before creating a child', async () => {
+  staticReviewTemplateId = undefined;
+  try {
+    runs.set(prior.id, workspacePrior());
+    await assert.rejects(runRereviewLatestHead({ runId: prior.id }), /static-review template/);
+    assert.equal(runs.size, 1);
+    assert.equal(runs.get(prior.id)!.status, 'done');
+  } finally {
+    staticReviewTemplateId = 'review-pr/default';
+  }
+});
+
+test('a parent replayed while its template resolves gets no child', async () => {
+  runs.set(prior.id, workspacePrior());
+  duringTemplate = () => {
+    const parent = runs.get(prior.id)!;
+    runs.set(prior.id, { ...parent, engineState: { ...parent.engineState, generation: 1 } });
+  };
+  try {
+    await assert.rejects(runRereviewLatestHead({ runId: prior.id }), /changed during re-review/);
+    assert.equal(runs.size, 1);
+  } finally {
+    duringTemplate = () => {};
+  }
 });
 
 test('slotless rereview repairs retained lineage and starts directly without discovery filters', async () => {

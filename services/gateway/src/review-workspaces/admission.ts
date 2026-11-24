@@ -1,4 +1,6 @@
 import {
+  type ExecutionTemplateReference,
+  type ExecutionTemplateRunMode,
   isRecord,
   isTerminalRunStatus,
   type NativeProfileReference,
@@ -10,7 +12,7 @@ import {
   type WorkerTransport,
 } from '@farmslot/protocol';
 
-import { loadSlotVars } from '../core/config.js';
+import { loadProjectVars, loadSlotVars } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { loadPoolConfigs, loadProjectConfig } from '../fleet/state.js';
@@ -35,6 +37,7 @@ import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../
 import { withReviewWorkspaceExecutor } from '../runtime/workspace-terminal.js';
 import { ownsLocalNativeProfile } from '../security/native-owner.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
+import { resolveConfiguredExecutionTemplateForSlot } from '../tasks/execution-template-catalog.js';
 
 import { resolveReviewWorkspacePool } from './pool.js';
 import { retainedWorkspaceIsIdle } from './retention-policy.js';
@@ -287,6 +290,26 @@ export async function resolveReviewWorkspacePlatform(
 ): Promise<string> {
   const member = pool.slots.find((slot) => slot.project === project);
   return member ? (await loadSlotVars(member.id)).platform : pool.platform;
+}
+
+/** The current configured template a workspace review freezes at creation (run.create and re-review). */
+export async function resolveWorkspaceReviewTemplate(input: {
+  project: string;
+  pool: PoolConfig;
+  mode: ExecutionTemplateRunMode;
+  domain?: string;
+  executionTemplateId?: string;
+}): Promise<ExecutionTemplateReference> {
+  const projectVars = await loadProjectVars(input.project);
+  return (
+    await resolveConfiguredExecutionTemplateForSlot(projectVars, {
+      flow: 'review-pr',
+      platform: await resolveReviewWorkspacePlatform(input.pool, input.project),
+      runMode: input.mode,
+      explicitDomain: input.domain,
+      explicitId: input.executionTemplateId,
+    })
+  ).reference;
 }
 
 /** No device/slot reads: eligibility comes from machine opt-in, project, owner and runner. */

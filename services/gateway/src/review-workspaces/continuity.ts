@@ -45,6 +45,8 @@ function workspaceReviewerMismatches(run: WorkspaceReviewerRun, prior: Run): str
     mismatches.push('execution not stopped');
   if (!sameOwner) mismatches.push('owner');
   if (run.project !== prior.project) mismatches.push('project');
+  if (prior.reviewWorkspace?.machine !== run.reviewWorkspaceTarget?.machine)
+    mismatches.push('machine');
   if (reviewer?.role !== 'review' || reviewer.status !== 'complete') {
     mismatches.push('no completed reviewer');
     return mismatches;
@@ -54,8 +56,6 @@ function workspaceReviewerMismatches(run: WorkspaceReviewerRun, prior: Run): str
     !(reviewer.runner === 'claude' && (run.effort ?? null) === null)
   )
     mismatches.push('effort');
-  if (prior.reviewWorkspace?.machine !== run.reviewWorkspaceTarget?.machine)
-    mismatches.push('machine');
   if (reviewer.runner !== run.metrics.runner) mismatches.push('runner');
   if (reviewer.model !== run.metrics.model) mismatches.push('model');
   return mismatches;

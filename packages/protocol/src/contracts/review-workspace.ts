@@ -9,7 +9,7 @@ export function staticReviewReplayBlock(
 ): string | null {
   if (!run.reviewWorkspaceTarget) return null;
   if (run.reviewWorkspace?.transferredTo)
-    return 'This review workspace belongs to its successor. Continue the latest review run.';
+    return `This review workspace belongs to run ${run.reviewWorkspace.transferredTo.runId}. Continue that review run's lineage.`;
   if (run.reviewWorkspace?.retirement && !run.reviewWorkspace.cleanedAt)
     return 'Workspace retention cleanup is pending; retry after the owned operation settles.';
   const ownsAttempt = Boolean(
