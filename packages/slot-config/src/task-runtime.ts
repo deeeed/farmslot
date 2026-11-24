@@ -125,6 +125,9 @@ if (process.ppid !== node) stop();
 // from the selected installation, just as its bin/farmslot.mjs does.
 const taskProcess = `
 const workerData = JSON.parse(process.argv[1]);
+// The full NODE_OPTIONS for the subprocesses this task starts (its own node had no preloads).
+if (workerData.nodeOptions === undefined) delete process.env.NODE_OPTIONS;
+else process.env.NODE_OPTIONS = workerData.nodeOptions;
 // IPC stands in for a worker port. A message after the parent closed the channel is dropped.
 let delivered = false;
 const parentPort = {
@@ -246,10 +249,13 @@ type TaskMessage =
   | { type: 'task-stopping' };
 
 const PRELOAD_FLAGS = new Set(['--import', '--require', '-r', '--loader', '--experimental-loader']);
-/** NODE_OPTIONS without its module preloads: the flags above, as `--flag value` or `--flag=value`. */
+/**
+ * NODE_OPTIONS without its module preloads: the flags above, as `--flag value` or
+ * `--flag=value`. Values may be double-quoted with backslash escapes, as node reads them.
+ */
 export function withoutPreloads(options: string): string {
   const kept: string[] = [];
-  const tokens = options.split(/\s+/).filter(Boolean);
+  const tokens = options.match(/(?:[^\s"\\]|\\.|"(?:[^"\\]|\\.)*")+/g) ?? [];
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i]!;
     if (PRELOAD_FLAGS.has(token)) i++;
@@ -394,10 +400,13 @@ export async function runTaskRuntime(
   env.TSX_TSCONFIG_PATH = path.join(packageRoot, 'tsconfig.json');
   env.TSX_DISABLE_CACHE = '1';
   // A spawned node does not take the node's command-line tsx loader or test flags; only
-  // NODE_OPTIONS in env reaches it. The task loads tsx itself from the CLI, so a preload there
-  // (a loader or an --import) is dropped; other options (a heap ceiling) stay.
-  const nodeOptions = env.NODE_OPTIONS && withoutPreloads(env.NODE_OPTIONS);
-  if (nodeOptions) env.NODE_OPTIONS = nodeOptions;
+  // NODE_OPTIONS in env reaches it. The task loads tsx itself from the CLI, so the task's own
+  // node starts without preloads (a loader or an --import); other options (a heap ceiling)
+  // stay. The task puts the full value back before provider code runs, so the subprocesses it
+  // starts get NODE_OPTIONS as they do on the CLI transport.
+  const nodeOptions = env.NODE_OPTIONS;
+  const taskNodeOptions = nodeOptions && withoutPreloads(nodeOptions);
+  if (taskNodeOptions) env.NODE_OPTIONS = taskNodeOptions;
   else delete env.NODE_OPTIONS;
   return new Promise((resolve, reject) => {
     const task = spawn(
@@ -410,6 +419,7 @@ export async function runTaskRuntime(
           taskPath: request.taskPath,
           packageRoot,
           node: process.pid,
+          nodeOptions,
         }),
       ],
       // Its own process group: a forced end reaches what it runs synchronously or backgrounds
@@ -501,9 +511,10 @@ export async function runTaskRuntime(
         delivered = false;
         stop(1, `maxBuffer exceeded after ${size} bytes`);
       } else {
-        result = message;
+        // The first result stands; a later result-shaped message (provider code can send
+        // one) only counts against the bound, like output that follows the result.
+        if (!delivered) result = message;
         delivered = true;
-        // Output that follows the result counts against the same bound.
         outputBytes = size;
       }
     });
@@ -552,7 +563,8 @@ export async function runTaskRuntime(
           // A cancellation result confirms both the task process and its async child
           // groups stopped. A forced end kills the task's own group, synchronous subprocesses included.
           // Bounded: a group whose remaining member this process may not signal stays listed.
-          const census = Date.now() + NODE_EXEC_CLOSEOUT_MS;
+          // Each ps can take its 2 s timeout, so the last one starts in time to end by then.
+          const census = Date.now() + NODE_EXEC_CLOSEOUT_MS - 2000;
           while (stopped && children.size && Date.now() < census) {
             const groups = await new Promise<string>((done, fail) =>
               execFile('/bin/ps', ['-axo', 'pgid=,stat='], { timeout: 2000 }, (error, output) =>

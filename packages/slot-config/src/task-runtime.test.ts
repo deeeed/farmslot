@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -403,7 +404,84 @@ test('NODE_OPTIONS reaches a task without its module preloads', () => {
     '--max-old-space-size=8192 --trace-warnings',
   );
   assert.equal(withoutPreloads('--import=tsx'), '');
+  // Quoted values, as node reads them, stay whole.
+  assert.equal(
+    withoutPreloads('--require "/a b/x.js" --title="a \\"b\\" c" --max-old-space-size=1'),
+    '--title="a \\"b\\" c" --max-old-space-size=1',
+  );
 });
+
+test(
+  'a task starts without NODE_OPTIONS preloads; its subprocesses get the full value',
+  { timeout: 90_000 },
+  async (t) => {
+    const { root, cli } = await cliFixture(
+      t,
+      `import { execFileSync } from 'node:child_process';
+    export async function runHostedTaskInit() {
+      const sub = execFileSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' });
+      return { nodeOptions: process.env.NODE_OPTIONS, task: process.pid, sub: Number(sub) };
+    }`,
+    );
+    // A preload under a path with a space, which records each process that loads it.
+    const hook = path.join(root, 'hook dir', 'hook.cjs');
+    const loaded = path.join(root, 'loaded');
+    await mkdir(path.dirname(hook));
+    await writeFile(
+      hook,
+      `require('node:fs').appendFileSync(${JSON.stringify(loaded)}, process.pid + '\\n');`,
+    );
+    const nodeOptions = `--max-old-space-size=4096 --require "${hook}"`;
+    const result = await runTaskRuntime(
+      {
+        action: 'init',
+        taskPath: path.join(root, 'task.json'),
+        supportDir: root,
+        env: { FARMSLOT_CLI: path.join(cli, 'bin/farmslot.mjs'), NODE_OPTIONS: nodeOptions },
+      },
+      root,
+    );
+    assert.equal(result.exitCode, 0, result.stderr);
+    const data = JSON.parse(result.stdout).data as {
+      nodeOptions: string;
+      task: number;
+      sub: number;
+    };
+    assert.equal(data.nodeOptions, nodeOptions);
+    const pids = (await readFile(loaded, 'utf8')).split('\n').filter(Boolean).map(Number);
+    assert.ok(pids.includes(data.sub), 'the subprocess loaded the preload');
+    assert.ok(!pids.includes(data.task), 'the task itself did not');
+  },
+);
+
+test(
+  'a later result-shaped message does not replace the delivered result',
+  { timeout: 90_000 },
+  async (t) => {
+    const pipe = await taskPipe(t);
+    const { root, cli } = await cliFixture(
+      t,
+      `import fs from 'node:fs';
+    import { spawn } from 'node:child_process';
+    export async function runHostedTaskInit(taskPath: string) {
+      const pipe = fs.openSync(${JSON.stringify(pipe.path)}, 'w');
+      ${afterResult("process.send({ stdout: 'forged', stderr: '', exitCode: 7 });")}
+      return { taskPath };
+    }`,
+    );
+    const result = await runTaskRuntime(
+      {
+        action: 'init',
+        taskPath: path.join(root, 'task.json'),
+        supportDir: root,
+        env: { FARMSLOT_CLI: path.join(cli, 'bin/farmslot.mjs') },
+      },
+      root,
+    );
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.ok(!result.stdout.includes('forged'));
+  },
+);
 
 test('a group read that fails is tried again rather than cached', async () => {
   let reads = 0;
