@@ -1,6 +1,7 @@
 // 6582e7a5 (preflight) and b5da0c86 (deps), 2026-11-24: the run error named the slot's
 // prepare log, and the slot's next prepare overwrote it before anyone read it.
 import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,6 +10,11 @@ import { mock, test } from 'node:test';
 import { FLOW_STEPS, PipelineSteps as S, type Run, type RunStep } from '@farmslot/protocol';
 
 import '../runtime/mock-pty.test-support.js';
+
+// Run state under a temporary home, never the operator's.
+const home = mkdtempSync(path.join(os.tmpdir(), 'failed-prepare-log-home-'));
+process.env.FARMSLOT_HOME = home;
+test.after(() => rm(home, { recursive: true, force: true }));
 
 import type { PrepareCommandError } from '../methods/slot/shared.js';
 

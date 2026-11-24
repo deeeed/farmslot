@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { copyFile, mkdir } from 'node:fs/promises';
+import { copyFile, mkdir, open, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import { runSessionArchiveDir } from '../runs/store.js';
@@ -28,16 +28,22 @@ export async function retainFailedStepLogs(
 ): Promise<{ failedLogPath?: string; relatedLogs?: string[]; message: string }> {
   const stamp = now.toISOString().replace(/[:.]/g, '-');
   const dir = path.join(runSessionArchiveDir(runId), 'prepare-logs');
-  const keep = async (log: string): Promise<string> => {
+  const keep = async (log: string, related = false): Promise<string> => {
     const copy = path.join(
       dir,
       `${path.basename(log, '.log')}-${stamp}-${randomUUID().slice(0, 8)}.log`,
     );
     try {
+      const { size } = await stat(log);
       await mkdir(dir, { recursive: true, mode: 0o700 });
-      await copyFile(log, copy, constants.COPYFILE_EXCL);
+      if (size <= MAX_LOG_COPY_BYTES) await copyFile(log, copy, constants.COPYFILE_EXCL);
+      else await copyTail(log, copy, size);
       return copy;
     } catch (error) {
+      // A related log the phase never reached (a build log when preflight failed before the
+      // build) has nothing to keep.
+      if (related && error instanceof Error && 'code' in error && error.code === 'ENOENT')
+        return log;
       // The step still fails, naming the slot log; only the per-run copy is missing.
       console.warn(
         `[run-engine] run ${runId.slice(0, 8)}: could not keep a copy of ${log}: ${error instanceof Error ? error.message : String(error)}`,
@@ -48,7 +54,7 @@ export async function retainFailedStepLogs(
   const failedLogPath = logs.failedLogPath && (await keep(logs.failedLogPath));
   const relatedLogs =
     logs.relatedLogs && logs.relatedLogsOnGateway
-      ? await Promise.all(logs.relatedLogs.map(keep))
+      ? await Promise.all(logs.relatedLogs.map((log) => keep(log, true)))
       : logs.relatedLogs;
   if (!logs.failedLogPath || failedLogPath === logs.failedLogPath)
     return { failedLogPath: logs.failedLogPath, relatedLogs, message };
@@ -59,4 +65,24 @@ export async function retainFailedStepLogs(
       ? message.split(logs.failedLogPath).join(failedLogPath)
       : `${message} — log: ${failedLogPath}`,
   };
+}
+
+/** A log is copied whole up to this size; past it (a long-running metro.log), only its end. */
+const MAX_LOG_COPY_BYTES = 4 * 1024 * 1024;
+
+async function copyTail(log: string, copy: string, size: number): Promise<void> {
+  const source = await open(log, 'r');
+  try {
+    const buffer = Buffer.alloc(MAX_LOG_COPY_BYTES);
+    const { bytesRead } = await source.read(buffer, 0, buffer.length, size - buffer.length);
+    const target = await open(copy, 'wx', 0o600);
+    try {
+      await target.write(`[farmslot] the last ${bytesRead} of ${size} bytes of ${log}\n`);
+      await target.write(buffer.subarray(0, bytesRead));
+    } finally {
+      await target.close();
+    }
+  } finally {
+    await source.close();
+  }
 }

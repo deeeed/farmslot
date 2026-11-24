@@ -47,11 +47,13 @@ mock.module('../../core/tmux.js', {
 });
 // A write that lands late: the command's final output takes 2 s (of mocked time) to reach the
 // gateway log, while the footer prepare appends afterwards lands at once.
+let failAppends = false;
 const realFs = await import('node:fs/promises');
 mock.module('node:fs/promises', {
   namedExports: {
     ...realFs,
     appendFile: async (...args: Parameters<typeof realFs.appendFile>) => {
+      if (failAppends) throw new Error('ENOSPC: no space left on device');
       if (String(args[1]).includes(FINAL))
         await new Promise((resolve) => setTimeout(resolve, 2_000));
       return realFs.appendFile(...args);
@@ -94,4 +96,44 @@ test('a remote prepare returns only once its log holds the final output', async 
   const content = await readFile(log, 'utf8');
   assert.ok(content.includes(FINAL), content);
   assert.ok(content.indexOf(FINAL) < content.indexOf('[tmux] cmd exit=1'), content);
+});
+
+test('a gateway log that cannot be written does not stop the live output', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'farmslot-prepare-tail-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  failAppends = true;
+  exited = false;
+  t.after(() => {
+    failAppends = false;
+  });
+  const seen: string[] = [];
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let done = false;
+  const running = runPrepareCommand(
+    {
+      slotId: 'mini-mm-3',
+      host: 'mini',
+      machine: 'mini',
+      remoteRepo: '/slot',
+      session: 'mm-1',
+    } as SlotVars,
+    path.join(dir, 'deps.log'),
+    'yarn install',
+    {
+      windowLabel: 'run12346',
+      phase: 'deps',
+      tailPollIntervalMs: 10,
+      onOutput: (_stream, data) => seen.push(data),
+    },
+  )
+    .catch(() => undefined)
+    .finally(() => {
+      done = true;
+    });
+  while (!done) {
+    t.mock.timers.tick(10);
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  await running;
+  assert.ok(seen.join('').includes(FINAL));
 });

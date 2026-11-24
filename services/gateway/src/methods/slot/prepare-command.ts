@@ -1020,8 +1020,8 @@ export async function runPrepareCommand(
     if (chunkR.stdout) {
       // Awaited: the prepare's error can name this log as soon as the command returns, and a
       // per-run copy of it must hold the final lines.
-      await appendFile(logPath, chunkR.stdout);
       opts?.onOutput?.('stdout', chunkR.stdout);
+      await appendFile(logPath, chunkR.stdout);
     }
     lastSize = size;
   };
@@ -1030,6 +1030,7 @@ export async function runPrepareCommand(
   let tailing: Promise<void> = Promise.resolve();
   const readTailChunk = (): Promise<void> => {
     const read = tailing.then(readTailOnce, readTailOnce);
+    // The queue only orders reads; each caller still gets its own read's rejection.
     tailing = read.catch(() => undefined);
     return read;
   };

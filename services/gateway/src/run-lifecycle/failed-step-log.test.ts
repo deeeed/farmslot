@@ -113,3 +113,29 @@ test('a log that cannot be copied leaves the step naming the slot log', async (t
     message: 'no log',
   });
 });
+
+test('a log past 4 MiB keeps only its end, saying so', async (t) => {
+  const at = await slotLogs(t, { 'metro.log': `${'x'.repeat(5 * 1024 * 1024)}the end\n` });
+  const kept = await retainFailedStepLogs(
+    `failed-log-${process.pid}-f`,
+    { failedLogPath: at('metro.log') },
+    '',
+  );
+  const copy = await readFile(kept.failedLogPath!, 'utf8');
+  assert.match(copy, /^\[farmslot\] the last 4194304 of 5242888 bytes of /);
+  assert.ok(copy.endsWith('the end\n'));
+});
+
+test('a related log the phase never wrote is skipped without a warning', async (t) => {
+  const at = await slotLogs(t, { 'preflight.log': 'p\n' });
+  const warnings: string[] = [];
+  t.mock.method(console, 'warn', (line: string) => warnings.push(line));
+  const never = at('ios-expo-build.log');
+  const kept = await retainFailedStepLogs(
+    `failed-log-${process.pid}-g`,
+    { failedLogPath: at('preflight.log'), relatedLogs: [never], relatedLogsOnGateway: true },
+    '',
+  );
+  assert.deepEqual(kept.relatedLogs, [never]);
+  assert.deepEqual(warnings, []);
+});
