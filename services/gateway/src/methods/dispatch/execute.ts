@@ -1587,8 +1587,11 @@ export async function dispatchExecute(
   }
   step('claim', 'Slot claimed, lifecycle=busy(dispatching)');
 
-  // 2. Prepare slot
+  // 2. Prepare slot. Each wait below is its own sub-step, so dispatch timing shows which one
+  // a slow dispatch spent its time in instead of charging them all to `claim`.
+  step('pressure', 'Waiting for host pressure admission...');
   await runPressureGate();
+  step('retire', 'Retiring native workers left on the slot...');
   await retireNativeWorkersForSlot(params.slotId, params.runId, options.nativeRetainedFrom);
   if (!params.skipPrepare) {
     step('prepare', 'Preparing slot...');
@@ -1621,6 +1624,7 @@ export async function dispatchExecute(
     }
   }
   if (params.runId) {
+    step('baseline', 'Recording the dispatch baseline and checking inherited commit signatures...');
     const { captureWorktreeHeadSha } = await import('../../run-engine/diff-artifacts.js');
     const worktreeHeadAtDispatch = await captureWorktreeHeadSha(params.slotId);
     const dispatchRun = getRun(params.runId);
@@ -1654,13 +1658,16 @@ export async function dispatchExecute(
   // Retained native reconciliation returned above. This boundary also covers
   // replay and skip-prepare fallbacks that launch a fresh worker. A scripted
   // command that manages its own runtime gets none booted for it.
-  if (currentRun && !options.nativeRetainedFrom && scriptedCommand?.runtime !== 'self-managed')
+  if (currentRun && !options.nativeRetainedFrom && scriptedCommand?.runtime !== 'self-managed') {
+    step('runtime', 'Starting the run runtime...');
     await ensureRunRuntimeReady(
       params.slotId,
       currentRun.id,
       runPressureGate,
       options.assertCurrent,
     );
+  }
+  step('recipe-gate', 'Checking recipe readiness...');
   await runRecipeGate();
 
   // 3. Copy task to worker

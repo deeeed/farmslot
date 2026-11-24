@@ -11,6 +11,7 @@ import lockfile, { type LockOptions } from 'proper-lockfile';
 import {
   openRunBundleStore,
   type RunBundleLockTime,
+  timeBundleOp,
   withRunBundleLockTime,
   withRunBundleLockWaitBudget,
   withRunBundleStoreLock,
@@ -43,6 +44,44 @@ test('lock time charges a waiter for its queue wait behind another holder and it
   assert.equal(time.acquisitions, 1);
   assert.ok(time.waitMs >= 50, `waited ${time.waitMs}ms`);
   assert.ok(time.heldMs >= 25 && time.heldMs < time.waitMs + 1_000, `held ${time.heldMs}ms`);
+  // Holds are also kept by kind of holder, and the store operations inside them by name.
+  assert.deepEqual(Object.keys(time.holds ?? {}), ['bundle-store']);
+  assert.equal(time.holds?.['bundle-store']?.count, 1);
+  assert.equal(time.holds?.['bundle-store']?.heldMs, time.heldMs);
+  assert.equal(time.opsMs?.pairingCheck?.count, 1);
+});
+
+test('store operation times are self times: a nested operation is not counted in its parent too', async () => {
+  const time: RunBundleLockTime = { acquisitions: 0, waitMs: 0, heldMs: 0 };
+  const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  let wall = 0;
+  await withRunBundleLockTime(time, async () => {
+    const start = performance.now();
+    await timeBundleOp('outer', async () => {
+      await timeBundleOp('inner', () => pause(60));
+      await pause(30);
+    });
+    wall = performance.now() - start;
+  });
+  const outer = time.opsMs?.outer?.ms ?? -1;
+  const inner = time.opsMs?.inner?.ms ?? -1;
+  assert.ok(inner >= 55, `inner ${inner}ms`);
+  assert.ok(outer >= 25, `outer self ${outer}ms`);
+  // Self times partition the parent's wall time; overlapping wall times would add up to
+  // wall + inner (load slows both pauses alike, so this holds on a busy host too).
+  assert.ok(
+    outer + inner <= wall + 5,
+    `outer ${outer} + inner ${inner} > wall ${Math.round(wall)}`,
+  );
+  // Sub-millisecond calls add up instead of each rounding to 0.
+  const tiny: RunBundleLockTime = { acquisitions: 0, waitMs: 0, heldMs: 0 };
+  await withRunBundleLockTime(tiny, async () => {
+    for (let i = 0; i < 200; i++) await timeBundleOp('tiny', () => Promise.resolve());
+  });
+  assert.equal(tiny.opsMs?.tiny?.count, 200);
+  assert.ok((tiny.opsMs?.tiny?.ms ?? 0) > 0, 'sub-millisecond calls summed to 0');
+  // Outside a measured caller an operation only runs.
+  assert.equal(await timeBundleOp('unmeasured', async () => 'ran'), 'ran');
 });
 
 test('capture, GC and admission in one process wait without exhausting filesystem lock retries', async (t) => {
