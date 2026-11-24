@@ -161,7 +161,10 @@ mock.module('../../runners/session-reactivation.js', {
   namedExports: {
     ...reactivation,
     deliverPromptWithRetainedFallback: async () => {
-      sends.push({ ...row });
+      const worker = store
+        .getRun(activeChild)
+        ?.agentContexts?.find((context) => context.role === 'dev');
+      sends.push({ ...row, worker_status: worker?.status, worker_pane: worker?.target?.pane });
       const outcome = onSend();
       return outcome.delivered
         ? outcome
@@ -202,6 +205,8 @@ await store.persistRunNow(
   'warm claim fixture',
 );
 
+/** The child under test, whose worker record the send stub reads. */
+let activeChild = '';
 async function chainedChild(t: { after: (fn: () => Promise<void>) => void }) {
   const child = store.createRun({
     flowType: 'pr-complete',
@@ -220,6 +225,7 @@ async function chainedChild(t: { after: (fn: () => Promise<void>) => void }) {
     store.updateRun(child.id, { status: 'done' });
     await store.deleteRun(child.id);
   });
+  activeChild = child.id;
   return child;
 }
 const handoff = (runId: string) =>
@@ -247,7 +253,7 @@ const parentHold = (childId: string) => ({
   held_reason: activeRunOnSlotReason(childId),
   // P's idle cap stopped its dev server; the send restores it only for the slot's owner.
   idle_devserver_epoch: 9,
-  idle_devservers: [{ name: 'web' }],
+  idle_devservers: ['web'],
 });
 
 test("the warm child claims its parent's hold before the send and owns the slot after", async (t) => {
@@ -318,3 +324,51 @@ for (const [what, blocked, message] of [
     await assert.rejects(handoff(child.id), message);
     assert.equal(sends.length, 0);
   });
+
+test("the parent's pane is the child's recorded worker during the send, so a cancel stops it", async (t) => {
+  const child = await chainedChild(t);
+  row = parentHold(child.id);
+  sends.length = 0;
+  // The child is cancelled mid-send: its cleanup fences the slot it now owns.
+  onSend = () => {
+    row = { ...row, phase: 'releasing', releasing_since: '2026-11-25T03:00:00Z' };
+    return { delivered: false };
+  };
+  const result = await handoff(child.id);
+  assert.equal(result.handedOff, false);
+  assert.equal(sends[0]?.worker_status, 'launching', 'the cancel finds the worker to stop');
+  assert.equal(sends[0]?.worker_pane, '%7');
+  assert.equal(row.phase, 'releasing', 'the give-back does not overwrite the cancel fence');
+  assert.equal(row.current_run_id, child.id);
+  const worker = store.getRun(child.id)?.agentContexts?.find((context) => context.role === 'dev');
+  assert.equal(worker?.status, 'launching', 'the fenced cleanup still owns the worker record');
+});
+
+test('a send that lands and then fails to claim leaves the worker to the child cleanup', async (t) => {
+  const child = await chainedChild(t);
+  row = parentHold(child.id);
+  // Another run reserves the slot during the send, so the claim after it is refused.
+  onSend = () => {
+    row = { ...row, handoff_run_id: 'rival' };
+    return { delivered: true };
+  };
+  await assert.rejects(handoff(child.id), /reserved for another run/);
+  assert.equal(row.current_run_id, child.id, 'the landed send keeps the slot with the child');
+  const worker = store.getRun(child.id)?.agentContexts?.find((context) => context.role === 'dev');
+  assert.equal(worker?.target?.pane, '%7', "the child's cleanup stops the parent's pane");
+});
+
+test("a send that throws gives the parent's hold back and keeps its own error", async (t) => {
+  const child = await chainedChild(t);
+  row = parentHold(child.id);
+  const sendError = new Error('send transport failed');
+  onSend = () => {
+    throw sendError;
+  };
+  await assert.rejects(handoff(child.id), (error) => error === sendError);
+  assert.equal(row.current_run_id, null);
+  assert.equal(row.cleanup_run_id, parent.id);
+  assert.equal(row.held_reason, activeRunOnSlotReason(child.id));
+  const worker = store.getRun(child.id)?.agentContexts?.find((context) => context.role === 'dev');
+  assert.equal(worker?.status, 'failed', "the pane is the parent's again");
+});

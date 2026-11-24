@@ -55,6 +55,9 @@ test('a warm child whose worker died claims its parent hold for the fresh launch
     cleanup_run_id: 'parent-run',
     handoff_run_id: null,
     held_reason: activeRunOnSlotReason(child.id),
+    // The parent's idle cap stopped its dev server; the fresh launch must still restore it.
+    idle_devserver_epoch: 6,
+    idle_devservers: ['web'],
   });
   assert.equal(await claimWarmFallbackSlot(child, SLOT), true);
   const row = rows.get(SLOT)!;
@@ -63,6 +66,7 @@ test('a warm child whose worker died claims its parent hold for the fresh launch
   assert.equal(row.held_reason, null);
   assert.equal(row.cleanup_run_id, null);
   assert.equal(row.slot_epoch, 7);
+  assert.equal(row.idle_devserver_epoch, 7, 'the idle marker stays current');
 
   // Any other hold still blocks the fallback, as before.
   rows.set(SLOT, {

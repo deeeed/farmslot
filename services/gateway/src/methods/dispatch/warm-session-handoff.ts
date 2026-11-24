@@ -11,7 +11,11 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
-import { selectAgentContext, upsertAgentContext } from '../../agents/contexts.js';
+import {
+  markAgentContextStatus,
+  selectAgentContext,
+  upsertAgentContext,
+} from '../../agents/contexts.js';
 import {
   claimSlotStatusIf,
   farmslotRoot,
@@ -491,9 +495,25 @@ export async function warmSessionHandoffDispatch(
   };
   // The parent's hold for this run has no owner to keep, so the run takes the slot before the
   // send: delivery restores an idle-capped dev server only for the slot's owner, and the prompt
-  // never reaches a worker whose slot this run then fails to claim. A send that does not land
-  // gives the hold back for the parent's cleanup.
+  // never reaches a worker whose slot this run then fails to claim. The run records the parent's
+  // pane as its own worker in the same breath, so its cancel, failure or restart recovery stops
+  // that worker through its own cleanup. Only a send that did not land gives the hold back.
   let takenHold: { epoch: number; fields: Record<string, unknown> } | undefined;
+  // A cleanup that has already fenced the slot for this run keeps it: it stops the worker.
+  const giveBackHold = async () => {
+    if (!takenHold) return;
+    const { epoch, fields } = takenHold;
+    const returned = await updateSlotStatusIf(
+      params.slotId,
+      (slot) =>
+        slot.slot_epoch === epoch &&
+        slot.current_run_id === params.runId &&
+        slot.phase !== SLOT_PHASE_RELEASING,
+      fields,
+    );
+    // The parent's pane is the parent's again; this run never ran a turn there.
+    if (returned) await markAgentContextStatus(params.runId, workerRole, 'failed');
+  };
   const rowAtDelivery = await readSlotRow(params.slotId);
   if (rowAtDelivery && parentHoldForWarmChild(rowAtDelivery, claimant())) {
     const restore: Record<string, unknown> = {};
@@ -517,35 +537,52 @@ export async function warmSessionHandoffDispatch(
       },
       takeFields,
     );
-    if (taken.claimed && taken.epoch !== null)
+    if (taken.claimed && taken.epoch !== null) {
       takenHold = { epoch: taken.epoch, fields: { ...restore, current_run_id: null } };
-    else {
+      try {
+        primaryTarget.pane = await resolveTmuxPaneId(vars, workerTarget);
+        await upsertAgentContext(params.runId, workerRole, {
+          status: 'launching',
+          modelQuestions: effectiveModelQuestionsForRun(requestingRun),
+          taskFile: `${workerTaskDir}/TASK.md`,
+          signalFile: `${workerTaskDir}/SIGNAL.json`,
+          runner,
+          target: primaryTarget,
+          // The parent's conversation in that pane, so this run's cleanup can stop it exactly.
+          ...(runnerSessionContextPatch(
+            { runnerSessionId: retainedSessionId, runnerSessionPath: retainedSessionPath },
+            'retained warm handoff',
+          ) ?? {}),
+        });
+      } catch (error) {
+        await giveBackHold();
+        throw error;
+      }
+    } else {
       const now = await readSlotRow(params.slotId);
       const blocker = now && claimBlocker(now);
       if (blocker) throw refuseClaim(blocker);
     }
   }
-  const giveBackHold = async () => {
-    if (!takenHold) return;
-    const { epoch, fields } = takenHold;
-    await updateSlotStatusIf(
-      params.slotId,
-      (slot) => slot.slot_epoch === epoch && slot.current_run_id === params.runId,
-      fields,
-    );
-  };
   let delivery: Awaited<ReturnType<typeof deliverPromptWithRetainedFallback>>;
   try {
     delivery = await deliverPromptWithRetainedFallback(deliveryOptions);
   } catch (error) {
-    await giveBackHold();
+    try {
+      await giveBackHold();
+    } catch (giveBackError) {
+      // The send's own error decides how dispatch fails; the hold stays this run's to clean up.
+      console.warn(
+        `[warm-handoff] slot=${params.slotId} could not give the parent's hold back: ${String(giveBackError)}`,
+      );
+    }
     throw error;
   }
   if (!delivery.delivered) {
     await giveBackHold();
     return warmHandoffFailureFromRetainedDelivery(delivery);
   }
-  primaryTarget.pane = await resolveTmuxPaneId(vars, workerTarget);
+  if (!takenHold) primaryTarget.pane = await resolveTmuxPaneId(vars, workerTarget);
 
   const priorOwnerContext = binding.context;
   const priorNudgeCount = priorOwnerContext?.nudgeCount ?? 0;

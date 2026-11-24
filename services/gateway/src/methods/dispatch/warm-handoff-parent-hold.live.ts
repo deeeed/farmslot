@@ -10,9 +10,10 @@ import { primaryRoleForFlow } from '@farmslot/protocol';
 
 // Live proof of c616be16's shape: the parent finishes while its chained warm child is already
 // active, the parent's real terminal release holds the slot for the child, and the child's real
-// warm handoff claims that hold and sends its prompt. Real: run store, slot status file, terminal
-// release and teardown, claims. Scripted: the runner layer (worker liveness, pane resolution and
-// the prompt send), which retained-handoff-smoke proves on its own.
+// warm handoff claims that hold and sends its prompt. Real: run store, slot status file, the
+// parent's terminal release (it stops at the ownership check, before any tmux call) and the
+// handoff's claims. Scripted: the runner layer (worker liveness, pane resolution, the prompt
+// send), which retained-handoff-smoke proves on its own, fleet status and watchers.
 const root = mkdtempSync(path.join(os.tmpdir(), 'warm-handoff-live-'));
 for (const name of [
   'pool',
@@ -26,7 +27,7 @@ for (const name of [
   mkdirSync(path.join(root, name), { recursive: true });
 Object.assign(process.env, {
   NODE_TEST_CONTEXT: '1',
-  // Real tmux, on a private server: the teardown's pane census never sees the operator's sessions.
+  // Any tmux call goes to a private server, never the operator's sessions.
   TMUX_TMPDIR: path.join(root, 'tmux'),
   FARMSLOT_TEST_STATUS_FILE: path.join(root, 'status.json'),
   FARMSLOT_POOL_DIR: path.join(root, 'pool'),
@@ -36,7 +37,13 @@ Object.assign(process.env, {
   GIT_CONFIG_GLOBAL: '/dev/null',
   GIT_CONFIG_NOSYSTEM: '1',
 });
-after(() => rmSync(root, { recursive: true, force: true }));
+// Inside tmux, TMUX names the operator's server and wins over TMUX_TMPDIR.
+const operatorTmux = process.env.TMUX;
+delete process.env.TMUX;
+after(() => {
+  if (operatorTmux !== undefined) process.env.TMUX = operatorTmux;
+  rmSync(root, { recursive: true, force: true });
+});
 const repo = path.join(root, 'repo');
 const git = (...args: string[]) =>
   execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
