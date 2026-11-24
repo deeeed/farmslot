@@ -88,7 +88,7 @@ import {
   parksBranchCommits,
   recordReleasedCheckout,
 } from '../../run-lifecycle/validation-run-commits.js';
-import { recordGradedOutput } from '../../run-traces/output.js';
+import { recordCompletionAcceptance, recordGradedOutput } from '../../run-traces/output.js';
 import {
   assertNativeSlotReplacementOwner,
   cancelNativeRunWorkers,
@@ -994,6 +994,7 @@ async function slotReleaseImpl(
           });
           if (output) step('graded-output', `Graded diff ${output.sizeBytes} bytes`);
         }
+        void recordCompletionAcceptance(archiveRunId);
       } catch (err) {
         // Recycle must finish even if the transcript copy fails. The live file is
         // about to disappear with the slot workspace; aborting here would strand

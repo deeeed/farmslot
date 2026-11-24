@@ -1,7 +1,7 @@
 # Run traces
 
 Design specification for [ADR-039 Amendment 10](../adr/039-run-portable-bundles.md#amendment-10-2026-11-24-run-traces-as-private-training-data).
-**Status:** Accepted by Arthur, 2026-11-24. Implementation pending.
+**Status:** Accepted by Arthur, 2026-11-24. Implemented.
 
 A run trace is a run's agent transcripts plus its outcome labels, kept so that past
 runs can train and compare models. It reuses the episode ([Run episodes](run-episodes.md))
@@ -102,7 +102,7 @@ the implementing PR adds them, and until then the label is `null`.
 | `labels.cost[]`         | per context: `contextId, role, inputTokens, outputTokens, cacheReadTokens, totalTokens, usd, usdSource`          | worker: run metrics (`costEstimate` is the worker session's USD cost, plus the session token counts); reviewers: each review attempt's `usage`; `usdSource` is `recorded` or `null` when no price was recorded |
 | `labels.acceptance`     | `source (registered, derived or none), criteria[] {id, text, verdict}`                                           | the acceptance ledger snapshot on the run: the gate's `acceptanceStatus`, else a completion snapshot (_new run field_)                                                                                         |
 | `labels.reviewRounds[]` | `round, contextId, sessionKey, reviewer {runner, model}, verdict, unresolvedCount, fix {contextId, sessionKey}?` | review loops and their attempts (`loopNumber`, `verdict`, `unresolvedCount`)                                                                                                                                   |
-| `labels.gate`           | `outcome, decision, decidedAt`                                                                                   | resolved gate decisions                                                                                                                                                                                        |
+| `labels.gate`           | `outcome, decision, decidedAt`                                                                                   | the latest resolved `engine_human_gate` decision, with the run's outcome                                                                                                                                       |
 | `labels.attempts[]`     | `kind (dispatch, replay, recovery, infra-failure, operator), step, at, error?, recovery?`                        | step history and recovery records; replays and infra failures that leave no record today get an append-only attempt log (_new run field_)                                                                      |
 | `labels.infraOnly`      | true when the run ended on infra failures alone, with no agent outcome                                           | derived from `attempts` and the outcome                                                                                                                                                                        |
 | `labels.output`         | `diffSha256, source (committed, working-tree or parked-ref), ref, path`                                          | _new run field_, written at finalize and at release (a parked ref when release parks unpushed work); `path` names the retained diff (below)                                                                    |
@@ -110,8 +110,9 @@ the implementing PR adds them, and until then the label is `null`.
 
 **The graded diff is retained.** When finalize or release records `labels.output`,
 the gateway also writes the diff it graded, against `dispatchHead`, as
-`output/graded.diff` in the run's retained artifacts (Amendment 1), inside
-`withRunBundleStoreLock`, with the sha256 it records:
+`outputs/<run-id>/graded.diff` in the episode store, replaced by rename, with the
+sha256 it records. Retained bundles are content-addressed and immutable, so the
+diff sits beside the episode instead, and is kept as long as the episode:
 
 - **Committed** or **parked-ref** output: `git diff <dispatchHead> <ref>`.
 - **Working-tree** output: the tree is staged into a temporary index, then
@@ -121,9 +122,11 @@ the gateway also writes the diff it graded, against `dispatchHead`, as
   (a file that exists but is empty is not a valid index); then
   `GIT_INDEX_FILE=<that path> git add -A`, which honours `.gitignore`.
 
-The episode lists that file among its references. A diff larger than
-`runBundleRetention.maxBundleBytes` is recorded with its sha256 and size and no
-bytes.
+`labels.output.path` names that file, relative to the episode store. A diff larger
+than 32 MiB is recorded with its sha256 and size and no bytes. Finalize records
+the published commit; release records an unpublished working tree before the slot
+resets. A run with no ready-gate acceptance gets its completion snapshot from the
+ledger in its retained task directory, at release or `bundle retain`.
 
 Writing a new run field updates the run. The retention pass recaptures every
 episode whose run changed since its last pass, so a merge recorded after the run
@@ -177,9 +180,10 @@ an ask-why `why.md`, as `interviews/<run-id>/<n>-<kind>.md` in the episode store
 
 - `kind` is one of `why`, `debrief` or `note`; any other value is refused, so it
   never reaches a path unchecked.
-- `<n>` is the next three-digit number for the run, allocated by creating the file
-  with an exclusive create and retrying with the next number when it exists, so
-  concurrent records never overwrite each other.
+- `<n>` is the next three-digit number for the run, shared by every kind. It is
+  reserved by exclusively creating a hidden `.<n>` marker, retrying with the next
+  number when one exists, so concurrent records never take the same number or
+  overwrite each other. Export skips the markers.
 - Interviews are optional, append-only and exported beside the labels. Like
   episodes and grade files, they are kept forever with the run record.
 
@@ -219,10 +223,10 @@ not count.
 ```
 
 - Transcripts are read from `session-archives`, or from the run archive through
-  `<archive-root>/<run-id>/manifest.json` after archival. `task.md` and `output.diff`
-  come from the retained bundle or the archived task directory, through the
-  episode's file references. Each copy is checked against its recorded `sha256`; a
-  mismatch is listed in `index.jsonl` and the file is skipped.
+  `<archive-root>/<run-id>/manifest.json` after archival. `task.md` comes from the
+  run's retained bundle, read without opening or repairing the bundle store, and
+  `output.diff` from the episode store. Each copy is checked against its recorded
+  `sha256`; a mismatch is listed in `labels.json` and the file is skipped.
 - A missing transcript (node offline, slot reset, size limit) is reported in
   `index.jsonl` and `README.md` with its reason. Export never fails for it.
   Without `--update`, export refuses a non-empty `<dir>`.
@@ -312,6 +316,6 @@ Measured on the dev gateway, 2026-11-24:
   the History readers read it directly. Gzip reached 2.5x on a 40-transcript sample.
 - **Graded diff:** one batched Git command per finalize and per release that records
   the output (on the slot's node for a remote slot, one node call), plus a local
-  write of the diff into the retained artifacts.
+  write of the diff beside the episode.
 - **Labels:** a few kilobytes per episode.
 - **Export:** runs outside the gateway, so it costs the gateway nothing.

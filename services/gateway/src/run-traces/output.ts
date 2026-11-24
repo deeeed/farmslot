@@ -186,3 +186,32 @@ export function recordReplayedFailures(runId: string, replayedStep: string): voi
     ],
   });
 }
+
+/**
+ * Records the acceptance ledger at completion, read from the retained task directory, for a run
+ * whose ready gate recorded none. Advisory: a run without retained artifacts keeps it unset.
+ */
+export async function recordCompletionAcceptance(runId: string): Promise<void> {
+  try {
+    const run = getRun(runId);
+    if (!run || run.completionAcceptance) return;
+    if (
+      run.decisions.some(
+        (decision) => decision.payload?.kind === 'ready' && decision.payload.acceptanceStatus,
+      )
+    )
+      return;
+    const { retainedRunTaskDirectory } = await import('../run-completion/retained-artifacts.js');
+    const { readAcceptanceStatusLedger } = await import('../tasks/acceptance-status.js');
+    const { ORCHESTRATOR_LOCALITY } = await import('../core/slot-io.js');
+    const ledger = await readAcceptanceStatusLedger(
+      ORCHESTRATOR_LOCALITY,
+      await retainedRunTaskDirectory(run),
+    );
+    if (ledger && getRun(runId)) updateRun(runId, { completionAcceptance: ledger });
+  } catch (error) {
+    console.warn(
+      `[run-traces] ${runId.slice(0, 8)}: completion acceptance not recorded: ${(error as Error).message}`,
+    );
+  }
+}
