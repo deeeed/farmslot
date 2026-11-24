@@ -90,6 +90,7 @@ durableWrite(join(root, 'host.json'), {
   runtimeVersion: RUNTIME_VERSION,
   runtimeBuild: currentRuntimeBuild(),
   supportsRuntimeUpgrade: true,
+  supportsIdleRunnerUpgrade: true,
   supportsApprovalMode: true,
   supportsStandaloneDelegation: true,
   conversationStreaming: 1,

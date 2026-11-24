@@ -118,4 +118,6 @@ ADR-039 [Amendment 7](039-run-portable-bundles.md#amendment-7-2026-11-09-recreat
 
 ADR-039 [Amendment 8](039-run-portable-bundles.md#amendment-8-2026-11-13-seven-day-retention-for-runs-not-on-an-open-pr), Accepted by Arthur, 2026-11-13, keeps every run on an open PR and holds other settled runs 7 days by default (`runBundleRetention.runRetentionDays`) instead of 48 hours; an unsettled follow-up or review holds the runs it still reads.
 
+ADR-039 [Amendment 9](039-run-portable-bundles.md#amendment-9-2026-11-24-retention-for-stores-no-run-owns), Proposed 2026-11-24: the hourly retention turn runs the review execution cache cleanup and archives orphan slot scaffolding older than `runRetentionDays` with a restore manifest; an unavailable archive root skips the move with a warning.
+
 ADR-039 [Amendment 10](039-run-portable-bundles.md#amendment-10-2026-11-24-run-traces-as-private-training-data), Proposed 2026-11-24: run traces as private training data. Transcripts are archived when each agent session ends, episodes carry label values inline, external grades live in a sidecar, and an offline CLI exports a redacted local dataset ([run traces specification](../reference/run-traces.md)). ADR-056 Amendment 1 moves its snapshot to the end of each session.

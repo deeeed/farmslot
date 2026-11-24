@@ -631,6 +631,42 @@ and every other member with a live run record (members whose record was archived
 skipped), so dispatch is refused until the operator restores the storage of each such
 member from its archive manifest.
 
+## Amendment 9: 2026-11-24 retention for stores no run owns
+
+**Status:** Proposed.
+**Specification:** [Stores no run owns](../reference/retained-run-artifacts.md#stores-no-run-owns).
+
+### Decision
+
+Amendment 2 left shared review caches and slot scaffolding to their owners, and
+Amendment 7 kept shared review caches out of the run pass. Neither owner ever
+pruned them: on 2026-11-24 the macwork gateway held 4.5 GB of review support caches
+going back to September and 4.2 GB of slot scaffolding, most of it older than the
+retention age, with 22 GB left on its system disk. The review cache cleanup existed
+only behind the manual `run.cleanup` RPC, and scaffolding collected by a release
+with no owning run was never read or moved.
+
+The hourly retention turn now handles both after the run pass, each step
+independent of the other and of the run pass's result:
+
+- it runs the review execution cache cleanup that `run.cleanup` runs, with the same
+  protections (no cache a run still needs, none a run record references); and
+- it moves orphan slot scaffolding collections older than `runRetentionDays` to the
+  run archive with a restore manifest per slot, under Amendment 3's verified move.
+
+An unavailable archive root skips the scaffolding move with a gateway warning; it
+never fails the pass and never falls back to deleting.
+
+### Rationale and consequences
+
+The caches are recreatable and the cleanup's protections already gate `run.cleanup`,
+so deleting them follows Amendment 7. Scaffolding holds released task directories
+and runner observability with no run record to restore from, so it keeps Amendment
+3's archival. Scaffolding collected for a run already lives in that run's session
+archive and is unchanged. Session archives stay with their runs under the existing
+eligibility; they move to the run archive like other run storage when the run is
+eligible.
+
 ## Amendment 10: 2026-11-24 run traces as private training data
 
 **Status:** Proposed (2026-11-24). Needs Arthur's approval before implementation.

@@ -112,6 +112,7 @@ import {
 } from './resources/workspace-read.js';
 import { handleReviewFsChanged } from './review/orchestrator.js';
 import { invalidateReviewProgressForMachine } from './review/progress.js';
+import { nativeSessionManager } from './runners/native/manager.js';
 import { resolveNativeExecutionNode } from './runners/native/node.js';
 import { onPtyExit, unsubscribeAllPty } from './runtime/pty-stream.js';
 import {
@@ -599,13 +600,33 @@ export function initServerGlobals(): void {
   // reconnects.
   startScreenRelaunchWatcher();
 
-  // Init thumbnail cache (demand-driven — only polls when clients subscribe)
+  // A deploy can leave the gateway-local native host on the previous runtime: refresh it, and
+  // start the current one when that stopped it, before observing it. A busy host keeps running
+  // and refreshes at a later launch. Tests never touch the operator's host: every test runner
+  // context counts, as for the backlog store (node --test sets 'child-v8').
+  const nativeRefresh = process.env.NODE_TEST_CONTEXT
+    ? Promise.resolve()
+    : nativeSessionManager
+        .refreshStaleHost()
+        .then(async ({ refreshed, busy }) => {
+          if (refreshed) {
+            await nativeSessionManager.warm();
+            console.log('[native] refreshed the local host onto the current runtime');
+          } else if (busy.length)
+            console.warn(`[native] local host refresh waits for: ${busy.join('; ')}`);
+        })
+        // Startup goes on without it: launches retry the refresh, and observation reports
+        // an unavailable host rather than blocking the gateway.
+        .catch((error: unknown) => console.error('[native] local host refresh failed:', error));
   const nativeOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
   if (nativeOwner)
-    void nativeObservations.startLocal(nativeOwner).catch((error) => {
-      if (!(error instanceof NativeSourceUnavailable)) throw error;
-      // Source failure is published and marked reads expose error/Retry; no host launches.
-    });
+    void nativeRefresh.then(() =>
+      nativeObservations.startLocal(nativeOwner).catch((error) => {
+        if (!(error instanceof NativeSourceUnavailable)) throw error;
+        // Source failure is published and marked reads expose error/Retry; no host launches.
+      }),
+    );
+  // Init thumbnail cache (demand-driven — only polls when clients subscribe)
   initThumbnailCache(broadcastEvent);
   resourceRevisions.setPublisher((payload) => {
     if (

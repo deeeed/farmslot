@@ -50,8 +50,10 @@ import {
 import {
   formatRunRetention,
   retentionContext,
+  retentionTurn,
   RUN_RETENTION_DEPS,
   runRetentionPass,
+  sharedStoreRetentionPass,
 } from './retention.js';
 import { makeRun } from './test-fixtures.js';
 
@@ -1297,3 +1299,69 @@ test(
     assert.deepEqual(await f.manifest(), completed);
   },
 );
+
+test('the hourly pass cleans review caches and archives orphan scaffolding, each despite the other failing', async () => {
+  const calls: string[] = [];
+  const warn = () => assert.fail('nothing was skipped');
+  const failingCaches = await sharedStoreRetentionPass({
+    cleanReviewCaches: async () => {
+      calls.push('caches');
+      throw new Error('review cache store unreadable');
+    },
+    archiveScaffolding: async () => {
+      calls.push('scaffolding');
+      return {
+        archived: [{ source: '/runs/slot-scaffolding/s/c', bytes: 5 }],
+        pending: 0,
+        failed: [],
+      };
+    },
+    warn,
+  });
+  assert.deepEqual(calls, ['caches', 'scaffolding']);
+  assert.equal(failingCaches.reviewCaches, undefined);
+  assert.equal(failingCaches.scaffolding?.archived.length, 1);
+
+  const failingScaffolding = await sharedStoreRetentionPass({
+    cleanReviewCaches: async () => ['/runs/review-workspace-support/blobs/abc'],
+    archiveScaffolding: async () => {
+      throw new Error('scaffolding store unreadable');
+    },
+    warn,
+  });
+  assert.deepEqual(failingScaffolding.reviewCaches, ['/runs/review-workspace-support/blobs/abc']);
+  assert.equal(failingScaffolding.scaffolding, undefined);
+});
+
+test('a skipped scaffolding move raises a gateway warning with the waiting count', async () => {
+  const warnings: [string, string][] = [];
+  await sharedStoreRetentionPass({
+    cleanReviewCaches: async () => [],
+    archiveScaffolding: async () => ({
+      archived: [],
+      pending: 3,
+      skipped: 'Storage unavailable: /Volumes/c910ssd is not mounted.',
+      failed: [],
+    }),
+    warn: (type, summary) => warnings.push([type, summary]),
+  });
+  assert.deepEqual(warnings, [
+    [
+      'run-retention.scaffolding-archive-skipped',
+      '3 orphan slot scaffolding collection(s) stay on local disk: Storage unavailable: /Volumes/c910ssd is not mounted.',
+    ],
+  ]);
+});
+
+test('the hourly turn runs the shared-store pass after the run pass fails', async () => {
+  let shared = 0;
+  await retentionTurn(
+    async () => {
+      throw new Error('archive root unavailable');
+    },
+    async () => {
+      shared++;
+    },
+  );
+  assert.equal(shared, 1);
+});

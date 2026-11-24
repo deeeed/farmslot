@@ -2132,6 +2132,31 @@ export async function claimReviewWorkspaceTransfer(
   );
 }
 
+/**
+ * A continuation that never launched gives the workspace it claimed back to the live run it came
+ * from, so that run's retained checkout and reviewer stay continuable.
+ */
+export async function returnReviewWorkspaceTransfer(
+  predecessorId: string,
+  successorId: string,
+): Promise<Run> {
+  return commitRetainedRunMutation(
+    predecessorId,
+    (run) => {
+      const { transferredTo: _returned, ...workspace } = run.reviewWorkspace!;
+      return { ...run, reviewWorkspace: workspace };
+    },
+    (run) => {
+      // Only a live predecessor takes it back: an archived one has nothing to reclaim it.
+      assertRunNotArchiving(predecessorId);
+      if (getRun(predecessorId) !== run)
+        throw new Error('An archived review cannot take its workspace back');
+      if (run.reviewWorkspace?.transferredTo?.runId !== successorId)
+        throw new Error('Retained review workspace is not held by this continuation');
+    },
+  );
+}
+
 /** Retention records the restore manifest without evicting live or archived history. */
 export async function recordRunStorageArchive(id: string, manifest: string): Promise<void> {
   const url = pathToFileURL(manifest).href;
