@@ -23,7 +23,7 @@ import { FULLFLOW_MODEL } from './fullflow-fixture.mjs';
 //   recovery  seven concurrent recovery cases on disposable slots, zero inference.
 //             Hard ceiling 120 s including cleanup; cases over 5 s print step attribution.
 //   fullflow  isolated only: real farmslot-farm fix-bug and QA templates on a tiny Node repo.
-//             Pi LiteLLM DeepSeek workers (150 turns), Luna low reviewers; 25/15 min per case.
+//             Pi LiteLLM DeepSeek workers (150 turns), scripted reviewers (no model call); 25/15 min per case.
 //             --model haiku selects Claude instead, for hosts with an existing valid login.
 //             Refreshes package prep, holds publication, cancels, verifies retention, then releases.
 //             Baseline/acceptance refusals fail normally; never publish, post or push.
@@ -52,7 +52,6 @@ import { fileURLToPath } from 'node:url';
 
 import { cleanupOnExit, startReaper } from '../lib/isolated-stack.mjs';
 
-import { REVIEWER } from './fixtures.mjs';
 import {
   RESTART_STEPS,
   runIsolated,
@@ -190,8 +189,8 @@ const plan =
         survive: wants('worker-survives') ? surviveSteps : [],
       };
 
-// The models those cases would use, checked before anything is dispatched. Outside fullflow
-// every reviewer turn is answered by the test or the proxy, so nothing calls a model.
+// The models those cases would use, checked before anything is dispatched. Every reviewer turn is
+// answered by the test or the proxy, so only fullflow's worker calls a model.
 const fullflowWorker =
   arg('model') === 'haiku' ? { runner: 'claude', model: 'haiku' } : FULLFLOW_MODEL;
 if (
@@ -202,11 +201,7 @@ if (
   throw new Error('--model for fullflow must be haiku or litellm/deepseek-v4p1-flash');
 const fullflowModels = profile === 'fullflow' && FULLFLOW_CASES.some(wants);
 const models =
-  profile === 'fullflow'
-    ? fullflowModels
-      ? [fullflowWorker.model, REVIEWER.model]
-      : []
-    : ['scripted'];
+  profile === 'fullflow' ? (fullflowModels ? [fullflowWorker.model] : []) : ['scripted'];
 const refused = models.filter((model) => !config.modelAllowlist.includes(model));
 
 await mkdir(evidence, { recursive: true });
