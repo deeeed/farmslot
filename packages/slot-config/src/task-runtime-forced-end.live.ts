@@ -6,7 +6,13 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { runTaskRuntime } from './task-runtime.js';
-import { alive, cliFixture, killIfPresent, until } from './task-runtime.test-support.js';
+import {
+  alive,
+  cliFixture,
+  crashingTask,
+  killIfPresent,
+  until,
+} from './task-runtime.test-support.js';
 
 // Bounded by the 5 s node-exec closeout, so it runs outside the default suite:
 // yarn test:task-runtime-forced-end-live
@@ -49,3 +55,19 @@ test('cancelling a task stops what it runs synchronously', { timeout: 30_000 }, 
     'the synchronous probe is stopped with its task',
   );
 });
+
+// Also bounded by the closeout: the group only dies at its SIGKILL.
+test(
+  'a crashed task’s group that ignores SIGTERM is still killed',
+  { timeout: 90_000 },
+  async (t) => {
+    const { pending, pipe } = await crashingTask(
+      t,
+      `const child = spawn('/bin/sh', ['-c', 'trap "" TERM; while :; do sleep 1; done'], { stdio: ['ignore', 'ignore', 'ignore', pipe] });`,
+    );
+    const result = await pending;
+    assert.notEqual(result.exitCode, 0);
+    // The census runs until the closeout's SIGKILL is due, then kills what is left.
+    await pipe.closed();
+  },
+);

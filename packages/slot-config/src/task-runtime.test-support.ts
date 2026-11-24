@@ -6,6 +6,8 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import type test from 'node:test';
 
+import { runTaskRuntime } from './task-runtime.js';
+
 const repoRoot = path.resolve(import.meta.dirname, '../../..');
 
 /** A CLI installation with the files the task runtime imports through the CLI's own tsx. */
@@ -115,4 +117,37 @@ export async function taskPipe(t: test.TestContext) {
       while (!(await lines.next()).done);
     },
   };
+}
+
+/** Starts `init` in a task and crashes it right after; returns the pending result. */
+export async function crashingTask(t: test.TestContext, init: string) {
+  const pipe = await taskPipe(t);
+  const pids: number[] = [];
+  t.after(() => {
+    for (const pid of pids) killIfPresent(pid);
+  });
+  const { root, cli } = await cliFixture(
+    t,
+    `import fs from 'node:fs';
+    import { spawn } from 'node:child_process';
+    export async function runHostedTaskInit() {
+      // The task and its subprocess hold the pipe: it ends when both have exited.
+      const pipe = fs.openSync(${JSON.stringify(pipe.path)}, 'w');
+      ${init}
+      fs.writeSync(pipe, String(child.pid) + '\\n');
+      setTimeout(() => { throw new Error('provider crashed'); }, 50);
+      await new Promise(() => {});
+    }`,
+  );
+  const pending = runTaskRuntime(
+    {
+      action: 'init',
+      taskPath: path.join(root, 'task.json'),
+      supportDir: root,
+      env: { FARMSLOT_CLI: path.join(cli, 'bin/farmslot.mjs') },
+    },
+    root,
+  );
+  pids.push(Number(await pipe.line()));
+  return { pending, pipe };
 }

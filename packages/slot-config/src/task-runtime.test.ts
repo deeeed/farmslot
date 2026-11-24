@@ -12,7 +12,13 @@ import {
   runTaskRuntime,
   withoutPreloads,
 } from './task-runtime.js';
-import { alive, cliFixture, killIfPresent, taskPipe } from './task-runtime.test-support.js';
+import {
+  alive,
+  cliFixture,
+  crashingTask,
+  killIfPresent,
+  taskPipe,
+} from './task-runtime.test-support.js';
 
 /** Exited children of this process that nobody waited for. */
 function zombieChildren(): number {
@@ -489,54 +495,6 @@ test(
   },
 );
 
-/** Starts `init` in a task and crashes it right after; returns the pending result. */
-async function crashingTask(t: test.TestContext, init: string) {
-  const pipe = await taskPipe(t);
-  const pids: number[] = [];
-  t.after(() => {
-    for (const pid of pids) killIfPresent(pid);
-  });
-  const { root, cli } = await cliFixture(
-    t,
-    `import fs from 'node:fs';
-    import { spawn } from 'node:child_process';
-    export async function runHostedTaskInit() {
-      // The task and its subprocess hold the pipe: it ends when both have exited.
-      const pipe = fs.openSync(${JSON.stringify(pipe.path)}, 'w');
-      ${init}
-      fs.writeSync(pipe, String(child.pid) + '\\n');
-      setTimeout(() => { throw new Error('provider crashed'); }, 50);
-      await new Promise(() => {});
-    }`,
-  );
-  const pending = runTaskRuntime(
-    {
-      action: 'init',
-      taskPath: path.join(root, 'task.json'),
-      supportDir: root,
-      env: { FARMSLOT_CLI: path.join(cli, 'bin/farmslot.mjs') },
-    },
-    root,
-  );
-  pids.push(Number(await pipe.line()));
-  return { pending, pipe };
-}
-
-test(
-  'a crashed task’s group that ignores SIGTERM is still killed',
-  { timeout: 90_000 },
-  async (t) => {
-    const { pending, pipe } = await crashingTask(
-      t,
-      `const child = spawn('/bin/sh', ['-c', 'trap "" TERM; while :; do sleep 1; done'], { stdio: ['ignore', 'ignore', 'ignore', pipe] });`,
-    );
-    const result = await pending;
-    assert.notEqual(result.exitCode, 0);
-    // The census ended before the closeout's SIGKILL was due; the group was killed anyway.
-    await pipe.closed();
-  },
-);
-
 test(
   'a census that cannot run still returns the result and kills what is left',
   { timeout: 90_000 },
@@ -545,11 +503,13 @@ test(
     t.after(() => (censusPs.path = '/bin/ps'));
     const { pending, pipe } = await crashingTask(
       t,
-      `const child = spawn('sleep', ['600'], { stdio: ['ignore', 'ignore', 'ignore', pipe] });`,
+      // A group that ignores SIGTERM: only the kill after the failed census ends it in time.
+      `const child = spawn('/bin/sh', ['-c', 'trap "" TERM; while :; do sleep 1; done'], { stdio: ['ignore', 'ignore', 'ignore', pipe] });`,
     );
     const result = await pending;
     assert.notEqual(result.exitCode, 0);
     assert.match(result.stderr, /census failed/);
+    assert.match(result.stderr, /SIGKILLed after the census/);
     await pipe.closed();
   },
 );
@@ -561,7 +521,8 @@ test(
     const { root, cli } = await cliFixture(
       t,
       'export async function runHostedTaskInit() { return { nodeOptions: process.env.NODE_OPTIONS ?? null }; }',
-      'export function loadCheckoutEnv() { process.env.NODE_OPTIONS = "--max-old-space-size=1234"; }',
+      // Like the real loader, it only fills what is unset.
+      'export function loadCheckoutEnv() { process.env.NODE_OPTIONS ??= "--max-old-space-size=1234"; }',
     );
     const result = await runTaskRuntime(
       {
@@ -571,9 +532,36 @@ test(
         env: { FARMSLOT_CLI: path.join(cli, 'bin/farmslot.mjs') },
       },
       root,
+      // A node with no NODE_OPTIONS of its own.
+      Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'NODE_OPTIONS')),
     );
     assert.equal(result.exitCode, 0, result.stderr);
     assert.equal(JSON.parse(result.stdout).data.nodeOptions, '--max-old-space-size=1234');
+  },
+);
+
+test(
+  'the node’s NODE_OPTIONS wins over the checkout’s even when it is only preloads',
+  { timeout: 90_000 },
+  async (t) => {
+    const { root, cli } = await cliFixture(
+      t,
+      'export async function runHostedTaskInit() { return { nodeOptions: process.env.NODE_OPTIONS ?? null }; }',
+      'export function loadCheckoutEnv() { process.env.NODE_OPTIONS ??= "--max-old-space-size=1234"; }',
+    );
+    // Nothing loads it here: the task's own node starts without it, and provider code starts nothing.
+    const nodeOptions = `--require ${path.join(root, 'hook.cjs')}`;
+    const result = await runTaskRuntime(
+      {
+        action: 'init',
+        taskPath: path.join(root, 'task.json'),
+        supportDir: root,
+        env: { FARMSLOT_CLI: path.join(cli, 'bin/farmslot.mjs'), NODE_OPTIONS: nodeOptions },
+      },
+      root,
+    );
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).data.nodeOptions, nodeOptions);
   },
 );
 

@@ -22,9 +22,10 @@ export const TASK_RUNTIME_TIMEOUT_MS = { init: 10 * 60_000, verify: 120_000 } as
  * descendant writes after that is dropped; the result itself arrives over IPC and is never cut.
  */
 export const TASK_OUTPUT_DRAIN_MS = 2000;
-// The worst case after a stop: the closeout's SIGKILL, the forced kill one closeout later,
-// the output drain, then the post-close group census (bounded at one closeout, after which
-// any group still listed is SIGKILLed). The gateway waits this long.
+// The worst case after a stop: the closeout's SIGKILL (5 s), the forced kill one closeout later
+// (10 s), the output drain (12 s), then the post-close group census: one more second, plus a
+// last ps of up to 2 s (15 s), after which any group still listed is SIGKILLed. The gateway
+// waits 3 x closeout + drain, 17 s, which leaves 2 s for process and transport delays.
 export const TASK_RUNTIME_CLOSEOUT_MS = 3 * NODE_EXEC_CLOSEOUT_MS + TASK_OUTPUT_DRAIN_MS;
 
 export function parseTaskRuntimeRequest(value: unknown): TaskRuntimeRequest {
@@ -125,8 +126,6 @@ if (process.ppid !== node) stop();
 // from the selected installation, just as its bin/farmslot.mjs does.
 const taskProcess = `
 const workerData = JSON.parse(process.argv[1]);
-// What the node started this task with (NODE_OPTIONS without preloads).
-const startNodeOptions = process.env.NODE_OPTIONS;
 // IPC stands in for a worker port. A message after the parent closed the channel is dropped.
 let delivered = false;
 const parentPort = {
@@ -228,12 +227,9 @@ ChildProcess.prototype.spawn = function(options) {
   // tsx registered and the CLI's first modules loaded: a thread started with execArgv re-reads
   // NODE_OPTIONS, so restoring earlier ran the preloads inside this task. A thread started
   // later with execArgv (esbuild's sync worker on a provider's first require of a .ts file, a
-  // provider's own Worker) sees them, as it would on the CLI transport. A value the checkout's
-  // env files set meanwhile is kept.
-  if (process.env.NODE_OPTIONS === startNodeOptions) {
-    if (workerData.nodeOptions === undefined) delete process.env.NODE_OPTIONS;
-    else process.env.NODE_OPTIONS = workerData.nodeOptions;
-  }
+  // provider's own Worker) sees them, as it would on the CLI transport. As there, the node's
+  // value wins over the checkout's env files, which only fill what is unset.
+  if (workerData.nodeOptions !== undefined) process.env.NODE_OPTIONS = workerData.nodeOptions;
   let result;
   try {
     if (workerData.action === 'init') {
@@ -486,13 +482,19 @@ export async function runTaskRuntime(
           }, NODE_EXEC_CLOSEOUT_MS);
       }
     });
+    // When the closeout began: its SIGKILL is due one closeout later.
+    let closeoutStarted: number | undefined;
+    const startCloseout = () => {
+      closeoutStarted ??= Date.now();
+      closeout.terminate();
+    };
     let delivered = false;
     const stop = (exitCode: number, message: string) => {
       if (stopped) return;
       stopped = true;
       // A result the task already delivered stands; the task and its groups are still stopped.
       if (!delivered) result = { stdout: '', stderr: message, exitCode };
-      closeout.terminate();
+      startCloseout();
       // An exited task has nothing left to signal itself; its tracked groups are closed out.
       if (task.exitCode !== null || task.signalCode !== null) return;
       if (task.connected) task.send({ type: 'task-stop' });
@@ -537,7 +539,7 @@ export async function runTaskRuntime(
     task.on('error', (error: Error) => {
       taskError = error;
       stopped = true;
-      closeout.terminate();
+      startCloseout();
     });
     // 'close' follows exit and the end of the task's stdout and stderr.
     // A detached grandchild that inherited the task's stdout or stderr keeps the pipes open
@@ -571,7 +573,7 @@ export async function runTaskRuntime(
       // before it is signalled.
       if (!stopped && children.size && (!delivered || code !== 0)) {
         stopped = true;
-        closeout.terminate();
+        startCloseout();
       }
       signal?.removeEventListener('abort', abort);
       const finish = async () => {
@@ -580,7 +582,12 @@ export async function runTaskRuntime(
           // groups stopped. A forced end kills the task's own group, synchronous subprocesses included.
           // Bounded: a group whose remaining member this process may not signal stays listed.
           // Each ps can take its 2 s timeout, so the last one starts in time to end by then.
-          const census = Date.now() + NODE_EXEC_CLOSEOUT_MS - 2000;
+          // It runs until the closeout's own SIGKILL is due (a crash starts the closeout only
+          // at close), or one more second when that is past; each ps can add its 2 s timeout.
+          const census = Math.max(
+            (closeoutStarted ?? Date.now()) + NODE_EXEC_CLOSEOUT_MS,
+            Date.now() + 1000,
+          );
           let censusFailure = '';
           while (stopped && children.size && Date.now() < census) {
             let groups: string;
@@ -615,8 +622,9 @@ export async function runTaskRuntime(
           };
           // The census ended with groups left (its bound or a failed ps), possibly before the
           // closeout's SIGKILL fired; dispose() below would cancel that, so kill them now.
+          if (stopped) for (const pid of children) signalChild(pid, 'SIGKILL');
+          // What is still tracked after the signals: groups that answered ESRCH or EPERM left.
           const left = stopped ? [...children] : [];
-          for (const pid of left) signalChild(pid, 'SIGKILL');
           const survivors =
             censusFailure +
             (left.length ? `Task groups SIGKILLed after the census: ${left.join(', ')}\n` : '');
