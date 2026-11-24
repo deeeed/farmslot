@@ -236,6 +236,7 @@ const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: '
 const reaper = startReaper();
 let stopStack: (() => Promise<string[]>) | undefined;
 let stopLive: (() => Promise<string[]>) | undefined;
+let stopProofs: (() => Promise<string[]>) | undefined;
 let markerContract: Promise<void> | undefined;
 const checks: CheckResult[] = [];
 const cleanupErrors: string[] = [];
@@ -289,6 +290,7 @@ const cleanup = cleanupOnExit(async () => {
     cleanupErrors.push(`marker-contract: ${String(error)}`);
   }
   cleanupErrors.push(...((await stopLive?.()) ?? []));
+  cleanupErrors.push(...((await stopProofs?.()) ?? []));
   const stackErrors = (await stopStack?.()) ?? [];
   cleanupErrors.push(...stackErrors);
   // What could not be stopped stays with the reaper, which tries again when this process exits.
@@ -408,6 +410,10 @@ try {
       evidence,
       reviewModel: config.proofs.reviewModel,
       reaper,
+      cleaning: () => cleaning,
+      onCleanup: (stop) => {
+        stopProofs = stop;
+      },
       log,
       onCheck,
     });
