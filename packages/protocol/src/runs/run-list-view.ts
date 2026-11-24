@@ -52,8 +52,7 @@ export function selectRunList<R extends Run | RunListRow | RunListProjection>(
       (!query.machines?.length || onMachines(run, query.machines, query.slotMachines)) &&
       (!query.status || run.status === query.status) &&
       (!query.flow || run.flowType === query.flow) &&
-      (!query.lane ||
-        (query.lane === 'product' ? !isEvalRun(run) : run.lane === query.lane)) &&
+      (!query.lane || (query.lane === 'product' ? !isEvalRun(run) : run.lane === query.lane)) &&
       (!tag || normalizeRunTags(run.tags).includes(tag)) &&
       (!search || matchesSearch(run, search)),
   );
