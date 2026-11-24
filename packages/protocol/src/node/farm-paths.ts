@@ -4,6 +4,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { readLegacyStorageFacts } from './farm-paths-storage.js';
+
+export { readLegacyStorageFacts };
 import { expandHome } from './farmslot-home.js';
 
 export const FARM_INSTANCE_CLAIM = '.farmslot-instance';
@@ -23,6 +25,8 @@ export type FarmPathEnv = Readonly<Record<string, string | undefined>>;
 
 export interface LegacyFarmStorageFacts {
   runBundles: string;
+  /** Why the Run bundle store cannot be read now (its volume is not mounted), if so. */
+  unavailable?: string;
 }
 
 export interface ResolveFarmPathsOptions {

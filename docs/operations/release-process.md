@@ -114,10 +114,11 @@ branch. Merge required installation fixes before installing the release.
    bash scripts/deploy-node.sh <machine> <gateway-host> --instance dev --node-token-file <machine-credential-file>
    ```
 
-   Repeat for `--instance prod` when configured. Add `--refresh-cli` for the local
-   machine; remote deploys refresh the CLI automatically. On a machine whose node
-   runs elsewhere, such as the gateway machine's dev stack, use `--cli-only`: it
-   refreshes that machine's CLI without syncing or restarting a node service. Verify the immutable
+   Repeat for `--instance prod` when configured. Remote deploys refresh the CLI
+   automatically. To refresh only a machine's CLI, the local one included, use
+   `--cli-only`: it refreshes the CLI without syncing, rewriting or restarting a node
+   service. A full deploy keeps the node token the existing service definition
+   carries, and refuses when there is none and no `--node-token-file` was given. Verify the immutable
    CLI snapshot's `DEPLOYED-REVISION.json` names the merged release SHA. Dev and
    prod share one CLI per machine, so deploy both from that revision. Preserve
    credential-file inputs; service and preflight checks must use matching
