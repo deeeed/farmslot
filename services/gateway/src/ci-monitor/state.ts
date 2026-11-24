@@ -123,6 +123,27 @@ export function readDedup(runId: string): RunCiWatchState {
   return getRun(runId)?.ciWatchState ?? emptyCiWatchState();
 }
 
+/**
+ * True once an operator resolved a CI decision with `wait`. Automatic dispatch
+ * stays off for the rest of the watch: the operator is waiting on something the
+ * gateway cannot see, such as another PR merging.
+ */
+export function autoDispatchSuppressed(state: Pick<RunCiWatchState, 'operatorWaitAt'>): boolean {
+  return Boolean(state.operatorWaitAt);
+}
+
+/**
+ * Record a resolved CI decision action that changes later automatic behaviour.
+ * Only `wait` does: `retry` and `continue` are one-shot control actions, and the
+ * dispatch actions have already dispatched.
+ */
+export function recordCIDecisionAction(runId: string, actionId: string | null | undefined): void {
+  if (actionId !== 'wait') return;
+  mutateDedup(runId, (s) => {
+    s.operatorWaitAt = new Date().toISOString();
+  });
+}
+
 /** Operator chose Retry CI — allow inline fix another consecutive-attempt window. */
 export function resetInlineFixConsecutiveAttempts(runId: string): void {
   mutateDedup(runId, (s) => {

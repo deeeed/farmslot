@@ -3591,6 +3591,12 @@ export interface RunEngineState {
 export interface RunCiWatchState {
   /** Scope refusals stop automatic CI fix retries. */
   fixScopeRefusal?: string;
+  /**
+   * When an operator resolved a CI decision with `wait`. The operator has taken
+   * manual control of the PR, so every automatic dispatch category stays off for
+   * the rest of this watch; the decision gates still offer a dispatch explicitly.
+   */
+  operatorWaitAt?: string;
   branchMaintenanceOperation?: BranchMaintenanceOperation;
   /** Last successfully-dispatched fix fingerprint (bot-comment signature + HEAD sha). */
   dedup?: { signature: string; commitSha: string };

@@ -1,0 +1,1 @@
+- `RunCiWatchState.operatorWaitAt` records that an operator resolved a CI decision with `wait`. Automatic dispatch reads it and stays off for the rest of that watch, so a `wait` cannot be followed by a dispatch the operator did not ask for.

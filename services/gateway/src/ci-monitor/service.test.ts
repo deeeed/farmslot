@@ -145,3 +145,24 @@ test('parseCIFixProgress extracts checkbox counts and current item', () => {
 test('parseCIFixProgress returns undefined when no checkbox progress exists', () => {
   assert.equal(parseCIFixProgress('No structured progress here'), undefined);
 });
+
+test('a recorded operator wait stops every automatic dispatch category', () => {
+  // merge_conflict auto-dispatch is on by default (the assertion above proves
+  // it), which is how run fcfb5124 spawned an update-branch child after the
+  // operator asked to wait. Suppression has to beat the config, not sit beside it.
+  const config = resolveCIMonitorConfig({});
+  const waited = { operatorWaitAt: '2026-11-24T13:38:00.000Z' };
+
+  assert.equal(pickCIAutoDispatchAction('merge_conflict', [], config, waited), null);
+  assert.equal(pickCIAutoDispatchAction('bot_comments', [], config, waited), null);
+  assert.equal(pickCIAutoDispatchAction('bot_comments_early', [], config, waited), null);
+  assert.equal(
+    pickCIAutoDispatchAction('ci_failed', ['unit-tests'], config, waited),
+    null,
+    'a test failure must not auto-chain pr-complete after a wait either',
+  );
+
+  // Without the wait, the same inputs still auto-dispatch, so the guard cannot
+  // be a blanket disable.
+  assert.equal(pickCIAutoDispatchAction('merge_conflict', [], config, {}), 'dispatch-update-branch');
+});

@@ -9,6 +9,7 @@ import {
   type CIWatchPhase,
   Events,
   type PRStatus,
+  type RunCiWatchState,
   type RunDecision,
 } from '@farmslot/protocol';
 
@@ -33,7 +34,9 @@ import {
   mergeCIWatchOutputPatch,
   mutateDedup,
   readCIWatchPhaseSnapshot,
+  autoDispatchSuppressed,
   readDedup,
+  recordCIDecisionAction,
   recordInlineFixSuccess,
   resetInlineFixConsecutiveAttempts,
 } from './state.js';
@@ -670,7 +673,7 @@ export async function monitorCI(
     // Merge conflict — prefer update-branch (lighter), fallback to pr-complete
     if (mergeConflict) {
       console.log(`[ci-monitor] run ${runId.slice(0, 8)} — merge conflict detected`);
-      const autoAction = pickCIAutoDispatchAction('merge_conflict', [], config);
+      const autoAction = pickCIAutoDispatchAction('merge_conflict', [], config, readDedup(runId));
       if (autoAction) {
         console.log(
           `[ci-monitor] run ${runId.slice(0, 8)} — auto-dispatching ${autoAction} for merge conflict`,
@@ -812,7 +815,7 @@ export async function monitorCI(
           });
         }
 
-        const autoAction = pickCIAutoDispatchAction('bot_comments', [], config);
+        const autoAction = pickCIAutoDispatchAction('bot_comments', [], config, readDedup(runId));
         if (autoAction) {
           console.log(
             `[ci-monitor] run ${runId.slice(0, 8)} — auto-dispatching ${autoAction} for actionable bot comments`,
@@ -952,7 +955,7 @@ export async function monitorCI(
         });
       }
 
-      const autoAction = pickCIAutoDispatchAction('ci_failed', failedNames, config);
+      const autoAction = pickCIAutoDispatchAction('ci_failed', failedNames, config, readDedup(runId));
       if (autoAction) {
         console.log(
           `[ci-monitor] run ${runId.slice(0, 8)} — auto-dispatching ${autoAction} for failed checks`,
@@ -1071,7 +1074,7 @@ export async function monitorCI(
         });
       }
 
-      const autoAction = pickCIAutoDispatchAction('bot_comments_early', [], config);
+      const autoAction = pickCIAutoDispatchAction('bot_comments_early', [], config, readDedup(runId));
       if (autoAction) {
         console.log(
           `[ci-monitor] run ${runId.slice(0, 8)} — auto-dispatching ${autoAction} for early actionable bot comments`,
@@ -1108,7 +1111,25 @@ export async function monitorCI(
 
 // ─── Decision creation + wait ───
 
+/**
+ * Every resolved CI decision funnels through here, so this wrapper is the one
+ * place that records an action which changes later automatic behaviour. Run
+ * fcfb5124 was spawned by an auto-dispatch that ran after an operator chose
+ * `wait`, because nothing recorded the choice.
+ */
 async function createCIDecision(
+  runId: string,
+  reason: string,
+  description: string,
+  actions: Array<{ id: string; label: string; style: 'primary' | 'secondary' | 'danger' }>,
+  context?: Record<string, unknown>,
+): Promise<string> {
+  const actionId = await awaitCIDecisionAction(runId, reason, description, actions, context);
+  recordCIDecisionAction(runId, actionId);
+  return actionId;
+}
+
+async function awaitCIDecisionAction(
   runId: string,
   reason: string,
   description: string,
@@ -1241,7 +1262,12 @@ export function pickCIAutoDispatchAction(
   reason: 'merge_conflict' | 'bot_comments' | 'bot_comments_early' | 'ci_failed',
   failedChecks: string[],
   config: Pick<CIMonitorConfig, 'autoDispatch'>,
+  state: Pick<RunCiWatchState, 'operatorWaitAt'> = {},
 ): 'dispatch-update-branch' | 'dispatch-pr-complete' | null {
+  // An operator who chose `wait` is waiting on something the gateway cannot see.
+  // Nothing dispatches automatically after that, whatever the category config
+  // says; the decision gates still offer a dispatch explicitly.
+  if (autoDispatchSuppressed(state)) return null;
   switch (reason) {
     case 'merge_conflict':
       return config.autoDispatch.mergeConflicts ? 'dispatch-update-branch' : null;
