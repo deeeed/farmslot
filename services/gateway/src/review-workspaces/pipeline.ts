@@ -424,12 +424,19 @@ async function releaseNeverLaunchedContinuation(run: Run): Promise<boolean> {
   if (binding.cleanedAt || !reviewWorkspaceNeverLaunched(current)) return false;
   const mark = async (holder: { runId: string; generation: number } | undefined) => {
     const latest = sameGeneration().reviewWorkspace!;
-    const { transferredTo: _previous, ...unclaimed } = latest;
+    const { transferredTo: _previous, executionStoppedAt, ...unclaimed } = latest;
+    // Taking ownership back drops the stop a hand-back recorded, unless the run was already
+    // retained: teardown then stops and retains it, and retention expires it as before.
+    const stoppedAt = holder
+      ? (executionStoppedAt ?? new Date().toISOString())
+      : latest.retainedAt
+        ? executionStoppedAt
+        : undefined;
     await persistRunNow(
       updateRun(run.id, {
         reviewWorkspace: {
           ...unclaimed,
-          executionStoppedAt: latest.executionStoppedAt ?? new Date().toISOString(),
+          ...(stoppedAt ? { executionStoppedAt: stoppedAt } : {}),
           ...(holder ? { transferredTo: holder } : {}),
         },
         reviewWorkspaceCleanupError: undefined,
@@ -439,12 +446,17 @@ async function releaseNeverLaunchedContinuation(run: Run): Promise<boolean> {
         : 'never-launched review continuation owns the workspace its archived predecessor gave it',
     );
   };
-  const claim = predecessor?.reviewWorkspace?.transferredTo;
+  if (!predecessor) {
+    // An unreadable predecessor cannot be named as the holder: this run keeps the checkout.
+    if (binding.transferredTo) await mark(undefined);
+    return false;
+  }
+  const claim = predecessor.reviewWorkspace?.transferredTo;
   if (claim?.runId !== run.id) {
     // The claim never landed, or another continuation won it: the predecessor or that run holds it.
     const holder = claim ?? {
       runId: predecessorId,
-      generation: predecessor?.engineState?.generation ?? 0,
+      generation: predecessor.engineState?.generation ?? 0,
     };
     if (binding.transferredTo?.runId !== holder.runId) await mark(holder);
     return true;
@@ -454,7 +466,7 @@ async function releaseNeverLaunchedContinuation(run: Run): Promise<boolean> {
     return false;
   }
   if (!binding.transferredTo)
-    await mark({ runId: predecessorId, generation: predecessor!.engineState?.generation ?? 0 });
+    await mark({ runId: predecessorId, generation: predecessor.engineState?.generation ?? 0 });
   try {
     await returnReviewWorkspaceTransfer(predecessorId, run.id);
   } catch (error) {

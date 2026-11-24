@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
 
-import type { RunStatus } from '@farmslot/protocol';
+import type { Run, RunStatus } from '@farmslot/protocol';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-retention-closeout-'));
 Object.assign(process.env, {
@@ -43,6 +43,7 @@ const {
   claimReviewWorkspaceTransfer,
 } = await import('../runs/store.js');
 const { reconcileReviewWorkspaceCleanup, teardownReviewWorkspace } = await import('./pipeline.js');
+const { resolveWorkspaceContinuationSource } = await import('./continuity.js');
 const { retainedWorkspaceIsIdle } = await import('./retention-policy.js');
 
 test('a retained result keeps capacity until terminal reconciliation confirms the worker stop', async () => {
@@ -379,11 +380,33 @@ test('a continuation that launched its reviewer still releases its checkout on a
 
 test('after a hand-back the predecessor can be continued again', async () => {
   const { predecessor, successor } = neverLaunchedContinuation();
+  // A completed reviewer with a lineage, as a warm continuation requires.
+  updateRun(predecessor.id, {
+    agentContexts: [
+      {
+        ...predecessor.agentContexts![0],
+        status: 'complete',
+        reviewId: 'lineage',
+        model: 'gpt-6.1-sol',
+      },
+    ],
+  });
+  const next = {
+    ...getRun(predecessor.id)!,
+    id: 'next-continuation',
+    status: 'slot-finding' as const,
+  };
+  // The admission check a live claim runs (allocation passes it as assertCurrent).
+  const admit = (prior: Run) => {
+    resolveWorkspaceContinuationSource(next, prior, (id) => getRun(id), 'lineage');
+  };
+  // Before the hand-back the never-launched run still holds it.
+  assert.throws(() => admit(getRun(predecessor.id)!), /held by its successor/);
   await teardownReviewWorkspace(successor.id);
   const returned = getRun(predecessor.id)!;
-  const next = { runId: 'next-continuation', generation: 0 };
-  await claimReviewWorkspaceTransfer(predecessor.id, returned.reviewWorkspace!, next, () => {});
-  assert.deepEqual(getRun(predecessor.id)!.reviewWorkspace?.transferredTo, next);
+  const claim = { runId: next.id, generation: 0 };
+  await claimReviewWorkspaceTransfer(predecessor.id, returned.reviewWorkspace!, claim, admit);
+  assert.deepEqual(getRun(predecessor.id)!.reviewWorkspace?.transferredTo, claim);
 });
 
 test('an archived predecessor takes nothing back; the continuation releases the checkout', async () => {
@@ -435,4 +458,43 @@ test('a replay admitted while the hand-back reads its predecessor keeps the work
   await assert.rejects(teardown, /no longer owns this run generation/);
   assert.equal(getRun(successor.id)!.reviewWorkspace?.transferredTo, undefined);
   assert.equal(getRun(predecessor.id)!.reviewWorkspace?.transferredTo?.runId, successor.id);
+});
+
+test('an interrupted hand-back whose predecessor was archived is retained for expiry', async () => {
+  const { predecessor, successor } = neverLaunchedContinuation();
+  // The first write landed, then the predecessor was archived before the second.
+  updateRun(successor.id, {
+    reviewWorkspace: {
+      ...successor.reviewWorkspace!,
+      executionStoppedAt: '2026-11-24T05:12:39Z',
+      transferredTo: { runId: predecessor.id, generation: 0 },
+    },
+  });
+  assert.equal(await archiveRun(predecessor.id), true);
+  refuseStop = false;
+  await teardownReviewWorkspace(successor.id);
+  const owned = getRun(successor.id)!.reviewWorkspace!;
+  assert.equal(owned.transferredTo, undefined);
+  assert.ok(owned.retainedAt, 'retention can expire it');
+  assert.ok(owned.retainedUntil);
+  assert.ok(owned.executionStoppedAt);
+});
+
+test('a continuation whose predecessor cannot be read keeps and retains its checkout', async () => {
+  const { successor } = neverLaunchedContinuation();
+  updateRun(successor.id, {
+    reviewWorkspace: {
+      ...successor.reviewWorkspace!,
+      continuedFrom: {
+        ...successor.reviewWorkspace!.continuedFrom!,
+        runId: 'unreadable-predecessor',
+      },
+      transferredTo: { runId: 'unreadable-predecessor', generation: 0 },
+    },
+  });
+  refuseStop = false;
+  await teardownReviewWorkspace(successor.id);
+  const owned = getRun(successor.id)!.reviewWorkspace!;
+  assert.equal(owned.transferredTo, undefined);
+  assert.ok(owned.retainedAt);
 });
