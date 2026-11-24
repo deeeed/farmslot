@@ -18,7 +18,7 @@ A native host is the detached supervisor and host process that runs native runne
   - Some idle sessions of an active run count as busy, because their next step would need a person: its own worker (`primary`, `dev`, `fix-bug`), a CI fix and a static review workspace.
   - A session with a turn, approval, compaction or other request in flight is busy too.
   - A request from the gateway that adds work (a launch, a message, a compaction) and is already on its way to the host also holds it.
-  - Hosts from this version onward fence admissions and new input atomically before they stop, and name any session that is still busy. If the stop doesn't follow within a minute, the fence lifts. An older host can't be fenced while a runner is live; the gateway relies on its own census and request count. A request from another process, such as the manual script below, could still reach it in between.
+  - Hosts from this version onward fence admissions and new input atomically before they stop, and name any session that is still busy. If the stop doesn't follow within a minute, the fence lifts. An older host can't be fenced while a runner is live; the gateway relies on its own census and request count. A request from another process on the same state directory, such as the manual script below or a CLI command pointed at the gateway's root, could still reach it in between.
 
 A host with a busy session keeps running. New launches fail, and the error lists the busy sessions. Once they finish, the next launch, or the next gateway start, refreshes the host. A node refreshes its host only when the node starts, and only once every runner has stopped.
 

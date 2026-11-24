@@ -155,7 +155,8 @@ branch. Merge required installation fixes before installing the release.
    use the controlled drain and verified native supervisor shutdown in step 2 once. The
    gateway's local host needs no drain: the gateway stops it once its sessions are idle,
    unless an active run's worker, CI fix or static review workspace keeps it.
-   Subsequent versioned hosts support automatic idle refresh. Session journals and credentials stay in place.
+   Subsequent versioned hosts support automatic idle refresh. Session journals and
+   credentials stay in place.
 6. Resume native admissions and refresh downstream farm configurations only after
    these checks pass. Retain the previous CLI link and deployment revision for
    rollback. If checks fail, repeat the drain, node-service stop, verified native

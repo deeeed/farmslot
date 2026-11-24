@@ -257,7 +257,10 @@ test('a send started in the same tick as a launch keeps an older host from being
     assert.equal(readJson<HostIdentity>(join(fixture.root, 'host.json')).pid, before.pid);
     await fixture.completeTurn();
     await until(async () => (await client.inspect('owner', session.id)).state === 'idle');
-    await client.close('owner', session.id);
+    // That answer was not reused: once the send is done, the next launch refreshes the host.
+    const next = await client.create('owner', { runner: 'codex', cwd: fixture.cwd });
+    assert.notEqual(readJson<HostIdentity>(join(fixture.root, 'host.json')).pid, before.pid);
+    await client.close('owner', next.id);
   } finally {
     await stopNativeStack(fixture);
   }
@@ -330,7 +333,7 @@ test('a torn or empty journal does not stop the census', async () => {
   }
 });
 
-test('a fenced host answers a replayed steer, and the fence lifts if no stop follows', async () => {
+test('a fenced host answers a steer replayed through send, and the fence lifts if no stop follows', async () => {
   const fixture = setup({ manualTurns: true });
   process.env.FARMSLOT_NATIVE_IDLE_FENCE_MS = '500';
   const client = new NativeSessionClient(fixture.root);

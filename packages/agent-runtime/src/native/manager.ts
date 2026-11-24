@@ -263,7 +263,7 @@ const IDLE_RUNNER_FENCE_MS = Number(process.env.FARMSLOT_NATIVE_IDLE_FENCE_MS) |
 export class NativeSessionManager {
   private sessions = new Map<string, SessionRecord>();
   private upgradePrepared = false;
-  /** Lifts the latest idle-runner fence; cleared when another fence replaces it. */
+  /** Lifts the idle-runner fence; cleared when another fence replaces it, so it lifts only its own. */
   private idleRunnerFence?: ReturnType<typeof setTimeout>;
   private pendingAdmissions = 0;
 
@@ -294,6 +294,8 @@ export class NativeSessionManager {
    * and fences only when there are none.
    */
   prepareIdleRunnerUpgrade(): string[] {
+    // Already fenced for good (every runner stopped): nothing to add, and no timer may lift it.
+    if (this.upgradePrepared && !this.idleRunnerFence) return [];
     const busy: string[] = [];
     if (this.pendingAdmissions) busy.push(`${this.pendingAdmissions} launch(es) starting`);
     for (const record of this.sessions.values()) {
@@ -321,13 +323,11 @@ export class NativeSessionManager {
       // The supervisor's stop follows at once. If it never comes (the stop failed, or the
       // service that fenced died), the fence lifts so the idle sessions take input again.
       clearTimeout(this.idleRunnerFence);
-      const fence = setTimeout(() => {
-        if (this.idleRunnerFence !== fence) return;
+      this.idleRunnerFence = setTimeout(() => {
         this.idleRunnerFence = undefined;
         this.upgradePrepared = false;
       }, IDLE_RUNNER_FENCE_MS);
-      fence.unref();
-      this.idleRunnerFence = fence;
+      this.idleRunnerFence.unref();
     }
     return busy;
   }
@@ -335,7 +335,9 @@ export class NativeSessionManager {
   private assertAdmissionOpen(): void {
     if (this.upgradePrepared)
       throw Object.assign(
-        new Error('Native host is fenced for a runtime upgrade; new admission is blocked'),
+        new Error(
+          'Native host is fenced for a runtime upgrade; new launches and input are blocked while it refreshes',
+        ),
         { code: NATIVE_HOST_VERSION_SKEW },
       );
   }
@@ -1945,7 +1947,8 @@ export class NativeSessionManager {
       record.sending
     )
       return this.send(owner, id, commandId, text);
-    // A replay goes through send above, which answers it; new input waits out a fence.
+    // A replay goes through send above, which answers it. Defensive: a fence is only taken with
+    // no session running, and steering needs a running one.
     this.assertAdmissionOpen();
     this.assertAccountCurrent(record);
     const command: StoredCommand = {

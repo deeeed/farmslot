@@ -14,11 +14,11 @@ This doc defines the loop when the fix does **not** yet go through `run.create`.
 
 ## Two improvement paths
 
-| Path | When to use | Record | Fix | Prove |
-|------|-------------|--------|-----|-------|
-| **A — Agent-direct** (default for framework) | Gateway/prepare/dispatch/UI/script bugs; repro is unit test or local command | GitHub issue `dogfood` | Agent on feature branch → PR | Unit tests + `yarn typecheck` + targeted smoke |
-| **B — Run-mediated** | Needs slot, worker, recipe, device, or publication gate | GitHub issue + optional `run.create` | Autonomous/comparison run on `farmslot-farm` | Recipe + artifact contract + gate invariants |
-| **C — Run-learned** | Insight from a **completed** run | Retrospective + `learnings.md` | `run.proposeImprovement` / improvement engine (ADR-021) | Human apply + follow-up run |
+| Path                                         | When to use                                                                  | Record                               | Fix                                                     | Prove                                          |
+| -------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------- | ---------------------------------------------- |
+| **A — Agent-direct** (default for framework) | Gateway/prepare/dispatch/UI/script bugs; repro is unit test or local command | GitHub issue `dogfood`               | Agent on feature branch → PR                            | Unit tests + `yarn typecheck` + targeted smoke |
+| **B — Run-mediated**                         | Needs slot, worker, recipe, device, or publication gate                      | GitHub issue + optional `run.create` | Autonomous/comparison run on `farmslot-farm`            | Recipe + artifact contract + gate invariants   |
+| **C — Run-learned**                          | Insight from a **completed** run                                             | Retrospective + `learnings.md`       | `run.proposeImprovement` / improvement engine (ADR-021) | Human apply + follow-up run                    |
 
 **Rule:** If the bug is in `services/gateway`, `scripts/`, or `apps/command-center` and you can write a failing test without a worker — use **Path A**. Do not burn a slot to debug prepare timeouts.
 
@@ -135,13 +135,13 @@ Large dogfood efforts (e.g. observability E2E stabilization) use:
 
 ## Anti-patterns
 
-| Anti-pattern | Why wrong | Do instead |
-|--------------|-----------|------------|
-| Full E2E to debug prepare timeout | Confounds framework + worker + load | Path A issue + fixture timing smoke |
-| Reuse `done` run for gate proof | Skips human gate | Fresh dispatch; assert `blocked` |
-| Agent loop `run.create` without issue | Loses root cause trace | Open issue first |
-| Fix without test | Regresses silently | Failing test → fix → green |
-| Draft PR before gate approval | Violates local-first publication | Stop at `not_published` |
+| Anti-pattern                          | Why wrong                           | Do instead                          |
+| ------------------------------------- | ----------------------------------- | ----------------------------------- |
+| Full E2E to debug prepare timeout     | Confounds framework + worker + load | Path A issue + fixture timing smoke |
+| Reuse `done` run for gate proof       | Skips human gate                    | Fresh dispatch; assert `blocked`    |
+| Agent loop `run.create` without issue | Loses root cause trace              | Open issue first                    |
+| Fix without test                      | Regresses silently                  | Failing test → fix → green          |
+| Draft PR before gate approval         | Violates local-first publication    | Stop at `not_published`             |
 
 ---
 
