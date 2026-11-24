@@ -47,9 +47,8 @@ sha256, sizeBytes, capturedAt, answersRound?, reason?}`. A source whose size and
   `verifiedRunnerSessionArchivePath`) build the path from the ref's `sessionKey`,
   `<contextId>/<sessionKey>/transcript.jsonl`, and fall back to the legacy
   `<contextId>/transcript.jsonl` when the ref has no `sessionKey` or its key is
-  `legacy`. History and usage
-  go through these helpers, so they follow the new layout without changes of their
-  own.
+  `legacy`. History and usage go through these helpers, so they follow the new
+  layout without changes of their own.
 - **Legacy archives.** An archive written before this change, at
   `session-archives/<run>/<contextId>/transcript.jsonl` with only a single ref, reads
   as a one-element list whose `sessionKey` is `legacy`. That key exists only in
