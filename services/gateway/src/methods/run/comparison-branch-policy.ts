@@ -3,10 +3,7 @@ import type { RunCreateParams } from '@farmslot/protocol';
 import { buildSmartBranch } from '../../intelligence/engine.js';
 
 function variantSlug(variant: string): string {
-  return variant
-    .trim()
-    .toLowerCase()
-    .replace(/[#\\/]/g, '-');
+  return variant.trim().toLowerCase().replace(/[#\\/]/g, '-');
 }
 
 export function branchIncludesVariant(branch: string, variant: string): boolean {
