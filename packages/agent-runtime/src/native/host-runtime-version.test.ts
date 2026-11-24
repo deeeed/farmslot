@@ -247,7 +247,9 @@ test('an acknowledged upgrade fence refuses late admission through host IPC and 
   }
 });
 
-test('the idle stop waits longer for each live runner the supervisor stops in turn', () => {
+// A guard on the budget's arithmetic only: no test host is slow enough to show whether
+// stopIdleSessionsNativeHost passes it the live runner count.
+test('the idle-stop cleanup budget grows with each live runner', () => {
   assert.equal(nativeIdleStopCleanupMs(0), 10_000);
   assert.equal(nativeIdleStopCleanupMs(3), 55_000);
 });

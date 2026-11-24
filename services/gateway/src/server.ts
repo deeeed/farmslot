@@ -602,22 +602,22 @@ export function initServerGlobals(): void {
 
   // A deploy can leave the gateway-local native host on the previous runtime: refresh it, and
   // start the current one when that stopped it, before observing it. A busy host keeps running
-  // and refreshes at a later launch. Tests never touch the operator's host.
-  const nativeRefresh =
-    process.env.NODE_TEST_CONTEXT === '1'
-      ? Promise.resolve()
-      : nativeSessionManager
-          .refreshStaleHost()
-          .then(async ({ refreshed, busy }) => {
-            if (refreshed) {
-              await nativeSessionManager.warm();
-              console.log('[native] refreshed the local host onto the current runtime');
-            } else if (busy.length)
-              console.warn(`[native] local host refresh waits for: ${busy.join('; ')}`);
-          })
-          // Startup goes on without it: launches retry the refresh, and observation reports
-          // an unavailable host rather than blocking the gateway.
-          .catch((error: unknown) => console.error('[native] local host refresh failed:', error));
+  // and refreshes at a later launch. Tests never touch the operator's host: every test runner
+  // context counts, as for the backlog store (node --test sets 'child-v8').
+  const nativeRefresh = process.env.NODE_TEST_CONTEXT
+    ? Promise.resolve()
+    : nativeSessionManager
+        .refreshStaleHost()
+        .then(async ({ refreshed, busy }) => {
+          if (refreshed) {
+            await nativeSessionManager.warm();
+            console.log('[native] refreshed the local host onto the current runtime');
+          } else if (busy.length)
+            console.warn(`[native] local host refresh waits for: ${busy.join('; ')}`);
+        })
+        // Startup goes on without it: launches retry the refresh, and observation reports
+        // an unavailable host rather than blocking the gateway.
+        .catch((error: unknown) => console.error('[native] local host refresh failed:', error));
   const nativeOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
   if (nativeOwner)
     void nativeRefresh.then(() =>
