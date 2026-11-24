@@ -51,7 +51,7 @@ import {
 import { colors } from '../../styles/theme-tokens.js';
 import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 import { navigateHash, replaceHistoryEntryState } from '../../utils/url-state.js';
-import { evalRunBadgeStyles, renderEvalRunBadge } from '../shared/eval-run-badge.js';
+import { evalRunBadgeStyles, isEvalRun, renderEvalRunBadge } from '../shared/eval-run-badge.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
 import { readCurrent } from '../shared/read-current.js';
 import { canActOn, ResourceQueryController } from '../shared/resource-query-controller.js';
@@ -122,7 +122,7 @@ import {
   eligibilityLabel,
   familyCompletionColor,
   familyCompletionLabel,
-  isEvalRun,
+  isEvalCandidateRun,
   pickFamilyComparePair,
   resolveRunEngine,
   runDisplayColor,
@@ -952,6 +952,8 @@ export class RunList extends RunListState {
         (hasAutoRecoveryAttempt || Boolean(run.recoveryProposal)));
     const runnerLabel = runEngineLabel({ ...engine, effort: runWorkerEffort(run, engine) }) ?? '—';
     const progress = runProgressSummary(run);
+    // Beside the title when the row has one, otherwise first in the footer: never an extra line.
+    const evalBadge = renderEvalRunBadge(run, isEvalCandidateRun(run));
     const cells = [
       ...(showCheckbox
         ? [
@@ -1016,10 +1018,9 @@ export class RunList extends RunListState {
       },
       cells,
       summary:
-        (showSummary && run.summary) || isEvalRun(run)
+        showSummary && run.summary
           ? html`<div class="run-row-summary" role="gridcell">
-              ${renderEvalRunBadge(run)}
-              ${showSummary && run.summary ? renderRunTitle(run, 'run-title') : nothing}
+              ${evalBadge} ${renderRunTitle(run, 'run-title')}
             </div>`
           : undefined,
       footer: html`<div class="run-row-footer" role="gridcell">
@@ -1046,7 +1047,8 @@ export class RunList extends RunListState {
           >
         </div>
         <div class="run-row-affordances" @click=${(e: Event) => e.stopPropagation()}>
-          ${this.renderRunTags(run)} ${this.renderEvidenceSignals(run, evidenceSummary)}
+          ${showSummary && run.summary ? nothing : evalBadge} ${this.renderRunTags(run)}
+          ${this.renderEvidenceSignals(run, evidenceSummary)}
           <a class="ext-link" href=${familyRunHash(run.familyId, run.id)}>retrospective</a>
           ${disposition
             ? html`<span

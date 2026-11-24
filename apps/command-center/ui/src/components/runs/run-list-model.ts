@@ -16,12 +16,13 @@ import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import type { GlobalFilters } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
+import { isEvalRun } from '../shared/eval-run-badge.js';
 import { compareInventoryValues, sortInventoryRows } from '../shared/work-inventory-table-model.js';
 
 import { familyLearningTimeAgo } from './family-observability-run-detail-renderers.js';
 import { type RunInventorySortKey, runInventorySortValue } from './run-list-inventory.js';
 import type { RunLaneFilter, SortOption, StatusFilter, TabFilter } from './run-list-state.js';
-import { formatElapsed, isEvalRun } from './run-utils.js';
+import { formatElapsed } from './run-utils.js';
 
 /** Runs the gateway lets `run.archive` evict: terminal, or blocked with nothing left to advance. */
 export function isArchivableRun(

@@ -258,6 +258,7 @@ type EvalRunDisplayInput = Pick<Run, 'flowType' | 'lane' | 'ticketOrPr'> &
     engineState?: { evalExperiment?: RunEngineState['evalExperiment'] };
   };
 
+/** Eval candidates are comparison-lane runs too, so every one also satisfies `isEvalRun`. */
 export function isEvalCandidateRun(
   run: Pick<Run, 'lane' | 'ticketOrPr'> &
     Partial<Pick<Run, 'completionPolicy'>> & {
@@ -268,25 +269,6 @@ export function isEvalCandidateRun(
     Boolean(run.engineState?.evalExperiment) ||
     (run.lane === 'comparison' && /^EVAL-/i.test(run.ticketOrPr))
   );
-}
-
-/** Eval and comparison runs: the comparison lane, which every eval experiment also runs in. */
-export function isEvalRun(run: Partial<Pick<Run, 'lane'>>): boolean {
-  return run.lane === 'comparison';
-}
-
-/** The eval marker for a run list row or run detail header, with the compared variant. */
-export function evalRunBadge(
-  run: Partial<Pick<Run, 'lane'>> & { variant?: string | null },
-): { label: string; title: string } | null {
-  if (!isEvalRun(run)) return null;
-  const variant = run.variant?.trim();
-  return {
-    label: variant ? `EVAL · ${variant}` : 'EVAL',
-    title: variant
-      ? `Evaluation run (comparison lane), variant ${variant}`
-      : 'Evaluation run (comparison lane)',
-  };
 }
 
 export function runDisplayLabel(run: EvalRunDisplayInput): string {

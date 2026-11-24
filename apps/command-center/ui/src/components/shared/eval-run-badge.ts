@@ -3,7 +3,31 @@ import { css, html, nothing, unsafeCSS } from 'lit';
 import type { Run } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
-import { evalRunBadge } from '../runs/run-utils.js';
+
+type EvalRunBadgeInput = Partial<Pick<Run, 'lane'>> & { variant?: string | null };
+
+/** Eval and comparison runs: the comparison lane, which every eval experiment also runs in. */
+export function isEvalRun(run: Partial<Pick<Run, 'lane'>>): boolean {
+  return run.lane === 'comparison';
+}
+
+/**
+ * The eval marker for a run list row or run detail header, with the compared variant. When the
+ * flow badge already reads EVAL (eval candidates), the marker names only the variant.
+ */
+export function evalRunBadge(
+  run: EvalRunBadgeInput,
+  flowSaysEval = false,
+): { label: string; title: string } | null {
+  if (!isEvalRun(run)) return null;
+  const variant = run.variant?.trim();
+  if (!variant)
+    return flowSaysEval ? null : { label: 'EVAL', title: 'Evaluation run (comparison lane)' };
+  return {
+    label: flowSaysEval ? variant : `EVAL · ${variant}`,
+    title: `Evaluation run (comparison lane), variant ${variant}`,
+  };
+}
 
 /** Outlined so it never reads as a flow badge; shared by the run list rows and run detail header. */
 export const evalRunBadgeStyles = css`
@@ -21,8 +45,8 @@ export const evalRunBadgeStyles = css`
   }
 `;
 
-export function renderEvalRunBadge(run: Partial<Pick<Run, 'lane'>> & { variant?: string | null }) {
-  const badge = evalRunBadge(run);
+export function renderEvalRunBadge(run: EvalRunBadgeInput, flowSaysEval = false) {
+  const badge = evalRunBadge(run, flowSaysEval);
   if (!badge) return nothing;
   return html`<span class="badge eval-run-badge" data-testid="eval-run-badge" title=${badge.title}
     >${badge.label}</span

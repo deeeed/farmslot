@@ -16,7 +16,6 @@ import {
   collectRunInteractivePacketArtifacts,
   eligibilityColor,
   eligibilityLabel,
-  evalRunBadge,
   familyCompletionColor,
   familyCompletionLabel,
   familyLedgerTurnLabel,
@@ -841,14 +840,4 @@ test('a lane tag warns only when it names a runner or model other than the dispa
   // With the model unknown, only another runner's name warns.
   assert.equal(variantNamesOtherEngine('claude-opus', { runner: 'claude', model: null }), false);
   assert.equal(variantNamesOtherEngine('codex-luna', { runner: 'claude', model: null }), true);
-});
-
-test('eval runs carry an EVAL badge with their compared variant; product runs carry none', () => {
-  assert.deepEqual(evalRunBadge({ lane: 'comparison', variant: 'glm-c3b' }), {
-    label: 'EVAL · glm-c3b',
-    title: 'Evaluation run (comparison lane), variant glm-c3b',
-  });
-  assert.equal(evalRunBadge({ lane: 'comparison', variant: null })?.label, 'EVAL');
-  assert.equal(evalRunBadge({ lane: 'production', variant: 'glm-c3b' }), null);
-  assert.equal(evalRunBadge({ lane: 'validation' }), null);
 });

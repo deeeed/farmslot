@@ -1457,7 +1457,7 @@ function renderRunDetailHeader(ctx: RunDetailViewContext, r: RunListRow, detail:
             >`
           : r.ticketOrPr}
       </h2>
-      ${renderEvalRunBadge(r)}
+      ${renderEvalRunBadge(r, isEvalCandidateRun(r))}
       <span
         class="status-badge ${activityLabel ? 'run-activity-label' : ''}"
         style="border:1px solid ${sc}; color:${sc}"
