@@ -19,7 +19,9 @@ import type { ProjectPack } from '../lib/remote-node-stack.mjs';
 export const CANARY_PROJECT = 'farmslot-canary';
 export const PIPE_PROJECT = 'ri-pipe';
 export const REVIEW_PROJECT = 'ri-review';
-export const REVIEWER = { runner: 'codex', model: 'gpt-6-luna', effort: 'low' } as const;
+// The codex reviewer every canary case configures. Its model is nominal: the codex proxy swallows
+// each reviewer turn and the test answers it, so no case calls it.
+export const REVIEWER = { runner: 'codex', model: 'gpt-6.2-sol', effort: 'low' } as const;
 
 export const SEED: Record<string, string> = {
   'README.md': '# Restart invariant fixture\n\nA tiny repository the isolated slots clone.\n',
