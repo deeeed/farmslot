@@ -105,6 +105,7 @@ import {
   LOCKFILE_DRIFT_FALLBACK_MARKER,
   lockfileDrift,
   lockfileDriftAllowed,
+  lockfileRewrittenCommand,
   readLogTail,
 } from './prepare-lockfile-drift.js';
 import {
@@ -1801,15 +1802,11 @@ async function slotPrepareInner(
       driftAllowed && driftSeen
         ? async (file) =>
             isLockfile(file) &&
-            // One command: the lockfile still exists and the install rewrote it in the working
-            // tree, not only in the index.
             (
               await execGit(
                 'probe-rewritten-lockfile',
                 vars,
-                withFarmGitConfig(
-                  `cd ${shellQuote(vars.remoteRepo)} && test -f ${shellQuote(file)} && ! git diff --quiet -- ${shellQuote(file)}`,
-                ),
+                withFarmGitConfig(lockfileRewrittenCommand(vars.remoteRepo, file)),
               )
             ).exitCode === 0
         : undefined,

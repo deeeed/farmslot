@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import {
   isLockfile,
   lockfileDrift,
   lockfileDriftAllowed,
+  lockfileRewrittenCommand,
   readLogTail,
 } from './prepare-lockfile-drift.js';
 
@@ -94,4 +99,27 @@ test('only runs on an existing PR branch may update its lockfile', () => {
 
 test('a log the command never wrote reads as empty', async () => {
   assert.equal(await readLogTail(`/nonexistent-${process.pid}/deps.log`), '');
+});
+
+test('only a working-tree rewrite of the lockfile counts, and a Git error refuses it', (t) => {
+  const repo = mkdtempSync(join(tmpdir(), 'lockfile-rewritten-'));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
+  const git = (...args: string[]) =>
+    execFileSync('git', ['-c', 'user.name=T', '-c', 'user.email=t@localhost', ...args], {
+      cwd: repo,
+    });
+  git('init', '-q');
+  writeFileSync(join(repo, 'yarn.lock'), 'a\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'base');
+  const rewritten = () =>
+    spawnSync('sh', ['-c', lockfileRewrittenCommand(repo, 'yarn.lock')]).status === 0;
+  assert.equal(rewritten(), false, 'unchanged');
+  appendFileSync(join(repo, 'yarn.lock'), 'b\n');
+  assert.equal(rewritten(), true, 'rewritten in the working tree');
+  git('add', 'yarn.lock');
+  assert.equal(rewritten(), false, 'only staged');
+  appendFileSync(join(repo, 'yarn.lock'), 'c\n');
+  writeFileSync(join(repo, '.git', 'index'), 'not an index');
+  assert.equal(rewritten(), false, 'git diff failed');
 });

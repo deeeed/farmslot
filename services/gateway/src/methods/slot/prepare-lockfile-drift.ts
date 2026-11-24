@@ -2,6 +2,8 @@ import { open } from 'node:fs/promises';
 import path from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 
+import { shellQuote } from '../../core/tmux.js';
+
 const LOCKFILES = new Set([
   'yarn.lock',
   'package-lock.json',
@@ -12,6 +14,14 @@ const LOCKFILES = new Set([
 /** A lockfile a package manager rewrites when it and package.json disagree. */
 export function isLockfile(file: string): boolean {
   return LOCKFILES.has(path.posix.basename(file));
+}
+
+/**
+ * One slot command that exits 0 only when the install rewrote `file` in the working tree, not only
+ * in the index. A Git error refuses it: `git diff --quiet` exits 1 for a change, 0 for none.
+ */
+export function lockfileRewrittenCommand(repo: string, file: string): string {
+  return `cd ${shellQuote(repo)} && test -f ${shellQuote(file)} && { git diff --quiet -- ${shellQuote(file)}; test $? -eq 1; }`;
 }
 
 /**
