@@ -172,7 +172,7 @@ async function optionalText(file: string): Promise<string | undefined> {
   try {
     return await readFile(file, 'utf8');
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    if (missing(error)) return undefined;
     throw new StoreReadError(file, error);
   }
 }
@@ -435,11 +435,21 @@ export async function exportRunTraces(
       const interviewDir = path.join(stores.episodes, 'interviews', runId);
       if (existsSync(interviewDir)) {
         await mkdir(path.join(runDir, 'interviews'), { recursive: true });
-        for (const name of (await readdir(interviewDir)).filter((entry) => !entry.startsWith('.')))
-          await writeFile(
-            path.join(runDir, 'interviews', scrubber.name(name)),
-            scrubber.text(await readFile(path.join(interviewDir, name), 'utf8')),
-          );
+        let names: string[];
+        try {
+          names = (await readdir(interviewDir)).filter((entry) => !entry.startsWith('.'));
+        } catch (error) {
+          throw new StoreReadError(interviewDir, error);
+        }
+        for (const name of names) {
+          // Read like every other store file: an unreadable one skips this run, not the export.
+          const interview = await optionalText(path.join(interviewDir, name));
+          if (interview !== undefined)
+            await writeFile(
+              path.join(runDir, 'interviews', scrubber.name(name)),
+              scrubber.text(interview),
+            );
+        }
       }
 
       const grades = latestGrades(await gradeLines(stores, runId));

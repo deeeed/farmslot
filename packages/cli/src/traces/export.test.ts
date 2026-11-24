@@ -354,3 +354,24 @@ test('one unreadable run record skips its run, and index redactions are counted'
   const counts = JSON.parse(await readFile(path.join(out, 'redaction.json'), 'utf8'));
   assert.ok('indexAndReadme' in counts);
 });
+
+test(
+  'an unreadable interview skips its run, not the export',
+  { skip: process.getuid?.() === 0 && 'root reads every file' },
+  async (t) => {
+    const { root, s } = await stores(t);
+    const { chmod } = await import('node:fs/promises');
+    const file = path.join(s.episodes, 'interviews/run-1/001-why.md');
+    await chmod(file, 0o000);
+    try {
+      const result = await exportRunTraces({ out: path.join(root, 'out') }, s);
+      assert.match(
+        result.skipped.find((entry) => entry.runId === 'run-1')?.reason ?? '',
+        /001-why\.md/,
+      );
+    } finally {
+      // Before the fixture's own cleanup removes the directory.
+      await chmod(file, 0o644);
+    }
+  },
+);
