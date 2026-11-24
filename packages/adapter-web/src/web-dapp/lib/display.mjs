@@ -19,13 +19,15 @@ function envFlag(raw, label) {
 
 // Headless precedence: an explicit flag (--headless, or --headful as its
 // opposite) → the launch node (headless, or headful as its opposite) → env
-// TERMINAL_HEADLESS → headful.
+// TERMINAL_HEADLESS → headful, or headless when `sessionLocked` says the macOS
+// session is locked (a headful browser can't paint there).
 export function resolveHeadless({
   headless,
   headful,
   nodeHeadless,
   nodeHeadful,
   env = process.env,
+  sessionLocked = () => false,
 } = {}) {
   if (headless === true && headful === true)
     throw new Error('--headless and --headful are mutually exclusive.');
@@ -33,7 +35,12 @@ export function resolveHeadless({
   if (headful === true) return false;
   if (typeof nodeHeadless === 'boolean') return nodeHeadless;
   if (nodeHeadful === true) return false;
-  return envFlag(env.TERMINAL_HEADLESS, 'TERMINAL_HEADLESS') ?? false;
+  // An empty TERMINAL_HEADLESS chooses nothing, like an unset one.
+  const raw = env.TERMINAL_HEADLESS;
+  const fromEnv =
+    raw == null || String(raw).trim() === '' ? undefined : envFlag(raw, 'TERMINAL_HEADLESS');
+  if (fromEnv !== undefined) return fromEnv;
+  return sessionLocked() === true;
 }
 
 function slowMoValue(raw, label) {
