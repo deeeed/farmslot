@@ -1116,9 +1116,12 @@ async function slotPrepareInner(
     }
   }
   if (branch && opts?.preserveBranch) {
-    // A replay keeps its branch: it is a PR branch when origin has it. Only the flows that may
-    // update a drifted lockfile need to know.
-    if (replayBranchOnOrigin === undefined && lockfileDriftAllowed(params.flowType, true))
+    // A replay keeps its branch: it is a PR branch when origin has it. Only a flow whose
+    // permission depends on that (dev) needs to ask origin.
+    if (
+      replayBranchOnOrigin === undefined &&
+      lockfileDriftAllowed(params.flowType, true) !== lockfileDriftAllowed(params.flowType, false)
+    )
       replayBranchOnOrigin =
         (
           await execGit(
@@ -1748,7 +1751,18 @@ async function slotPrepareInner(
       installCmd,
       driftAllowed && driftSeen
         ? async (file) =>
-            isLockfile(file) && (await slotFileExists(vars, path.posix.join(vars.remoteRepo, file)))
+            isLockfile(file) &&
+            (await slotFileExists(vars, path.posix.join(vars.remoteRepo, file))) &&
+            // Rewritten in the working tree by the install, not only staged.
+            (
+              await execGit(
+                'probe-rewritten-lockfile',
+                vars,
+                withFarmGitConfig(
+                  `git -C ${shellQuote(vars.remoteRepo)} diff --quiet -- ${shellQuote(file)}`,
+                ),
+              )
+            ).exitCode === 1
         : undefined,
     );
     await execOnSlot(vars, buildDepsSentinelWriteCommand(vars.remoteRepo, runtimeDir));
