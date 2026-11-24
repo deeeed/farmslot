@@ -767,3 +767,11 @@ test('legacy review estimates respect the recorded cost scope', () => {
   };
   assert.doesNotMatch(litText(renderRunDetailView(ctx)), /Review estimate/);
 });
+
+test('an eval run names itself and its variant in the run detail header', () => {
+  const evalText = litText(
+    renderRunDetailView({ ...context(), run: { ...run, lane: 'comparison', variant: 'glm-c3b' } }),
+  );
+  inOrder(evalText, ['class="header"', '</h2>', 'EVAL · glm-c3b', 'status-badge']);
+  assert.ok(!litText(renderRunDetailView(context())).includes('eval-run-badge'));
+});

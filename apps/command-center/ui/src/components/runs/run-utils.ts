@@ -258,6 +258,7 @@ type EvalRunDisplayInput = Pick<Run, 'flowType' | 'lane' | 'ticketOrPr'> &
     engineState?: { evalExperiment?: RunEngineState['evalExperiment'] };
   };
 
+/** Eval candidates are comparison-lane runs too, so every one also satisfies `isEvalRun`. */
 export function isEvalCandidateRun(
   run: Pick<Run, 'lane' | 'ticketOrPr'> &
     Partial<Pick<Run, 'completionPolicy'>> & {
