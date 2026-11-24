@@ -11,12 +11,16 @@ import {
   slotMachineMap,
   type SlotStatus,
 } from '@farmslot/protocol';
-import { isSettledBlockedRun, selectRunList, TERMINAL_RUN_STATUSES } from '@farmslot/protocol';
+import {
+  isSettledBlockedRun,
+  productRunsFirst,
+  selectRunList,
+  TERMINAL_RUN_STATUSES,
+} from '@farmslot/protocol';
 import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import type { GlobalFilters } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
-import { isEvalRun } from '../shared/eval-run-badge.js';
 import { compareInventoryValues, sortInventoryRows } from '../shared/work-inventory-table-model.js';
 
 import { familyLearningTimeAgo } from './family-observability-run-detail-renderers.js';
@@ -215,7 +219,7 @@ function runListQuery(input: RunListFilters): RunListQuery {
     slotMachines: input.slotMachines,
     status: input.tab === 'active' || input.statusFilter === 'all' ? undefined : input.statusFilter,
     flow: input.flowFilter || undefined,
-    lane: input.laneFilter === 'product' ? undefined : input.laneFilter || undefined,
+    lane: input.laneFilter || undefined,
     tag: input.tagFilter,
     search: input.searchQuery,
   };
@@ -229,7 +233,7 @@ export function countRunListProjections(
   projections: readonly RunListProjection[],
   input: RunListFilters,
 ): { total: number; filtered: number } {
-  const matching = withoutHiddenEvals(selectRunList(projections, runListQuery(input)), input);
+  const matching = selectRunList(projections, runListQuery(input));
   return {
     total: projections.length,
     filtered: input.familyFilter
@@ -260,7 +264,7 @@ export function filterRunList(input: FilterRunListInput): readonly RunListRow[] 
         ? withLive(input.tagRuns)
         : input.runs
       : input.runs;
-  result = withoutHiddenEvals(selectRunList(result, runListQuery(input)), input);
+  result = selectRunList(result, runListQuery(input));
   if (input.familyFilter) {
     return sortRunList(
       result.filter((run) => run.familyId === input.familyFilter),
@@ -268,26 +272,6 @@ export function filterRunList(input: FilterRunListInput): readonly RunListRow[] 
     );
   }
   return productRunsFirst(sortRunList(result, input.sortBy));
-}
-
-function withoutHiddenEvals<R extends Partial<Pick<RunListRow, 'lane'>>>(
-  runs: readonly R[],
-  input: Pick<RunListFilters, 'laneFilter'>,
-): readonly R[] {
-  return input.laneFilter === 'product' ? runs.filter((run) => !isEvalRun(run)) : runs;
-}
-
-/** Product runs keep their order ahead of eval runs, which keep theirs. A family view stays in run order. */
-function productRunsFirst(runs: readonly RunListRow[]): readonly RunListRow[] {
-  return [...runs.filter((run) => !isEvalRun(run)), ...runs.filter(isEvalRun)];
-}
-
-/** Grouped views keep the same rule: a family of only eval runs lists after product families. */
-export function productFamiliesFirst<G extends { runs: readonly Pick<RunListRow, 'lane'>[] }>(
-  groups: readonly G[],
-): G[] {
-  const evalFamily = (group: G) => group.runs.every(isEvalRun);
-  return [...groups.filter((group) => !evalFamily(group)), ...groups.filter(evalFamily)];
 }
 
 function sortRunList(result: readonly RunListRow[], sortBy: SortOption): readonly RunListRow[] {

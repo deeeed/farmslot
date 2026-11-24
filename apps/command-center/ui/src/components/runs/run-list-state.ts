@@ -8,7 +8,7 @@ import type {
   QueueItem,
   RunCleanupResult,
   RunFamilyReadinessSummary,
-  RunLane,
+  RunListLaneFilter,
   RunListResult,
   RunListRow,
   RunListSummaryMeta,
@@ -25,7 +25,7 @@ import { resourcePresentationChanged } from '../../utils/resource-presentation.j
 export type TabFilter = 'active' | 'history' | 'all';
 export type StatusFilter = RunStatus | 'all';
 /** A run lane, or `product`: every lane except the eval/comparison lane. */
-export type RunLaneFilter = RunLane | 'product' | '';
+export type RunLaneFilter = RunListLaneFilter | '';
 export type SortOption =
   | 'newest'
   | 'oldest'

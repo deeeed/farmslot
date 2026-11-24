@@ -17,8 +17,10 @@ import type {
 } from '@farmslot/protocol';
 import {
   groupRunsByFamily,
+  isEvalRun,
   Methods,
   normalizeRunTags,
+  productFamiliesFirst,
   resolveRunSlotId,
   runDisplayStatus,
   runElapsedTimeView,
@@ -51,7 +53,7 @@ import {
 import { colors } from '../../styles/theme-tokens.js';
 import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 import { navigateHash, replaceHistoryEntryState } from '../../utils/url-state.js';
-import { evalRunBadgeStyles, isEvalRun, renderEvalRunBadge } from '../shared/eval-run-badge.js';
+import { evalRunBadgeStyles, renderEvalRunBadge } from '../shared/eval-run-badge.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
 import { readCurrent } from '../shared/read-current.js';
 import { canActOn, ResourceQueryController } from '../shared/resource-query-controller.js';
@@ -87,7 +89,6 @@ import {
   countRunListProjections,
   filterRunList,
   isArchivableRun,
-  productFamiliesFirst,
   runGradeColor,
   type RunListFilters,
   runListObservationAttributes,
