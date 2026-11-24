@@ -59,10 +59,12 @@ RPC `run.linkedTickets.set { runId, linkedTicketRefs }` replaces only the operat
 additions, persists the run and broadcasts `run.updated`, following `run.tags.set`.
 `RunMethods.setLinkedTickets` names it; CLI callers may use the existing generic
 `farmslot rpc` entry. `TASK.md` renders the refs `runLinkedTicketsView` marks
-`named` — the fetched key, a recorded linked ticket or an operator addition — so a
-worker sees the operator's keys for the next task written for that run; metadata
-edits still never rewrite an existing task file. There is no new worker/harness
-hook, task input, workflow action or wire version. The SDK addition requires a fresh minor package release.
+`named` — the fetched key, a recorded linked ticket or an operator addition. Keys
+already on the run when a task is written appear in that task, and keys added
+later reach the next task written for that run; metadata edits still never
+rewrite an existing task file. There is no new worker/harness hook, task
+variable, workflow action or wire version. The SDK addition requires a fresh
+minor package release.
 
 ## Run checklist progress
 
