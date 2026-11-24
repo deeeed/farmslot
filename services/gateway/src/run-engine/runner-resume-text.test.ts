@@ -17,6 +17,8 @@ import { mock, test } from 'node:test';
 
 import type { Run } from '@farmslot/protocol';
 
+import '../core/private-pool.test-support.js';
+
 await import('../runtime/mock-pty.test-support.js');
 
 const sends: { text: string; channel: string }[] = [];
@@ -48,7 +50,7 @@ mock.module('../agents/contexts.js', {
   },
 });
 
-const { farmslotRoot } = await import('../fleet/state.js');
+const { poolDirectory } = await import('../core/config.js');
 const { createRun, getRun, updateRun } = await import('../runs/store.js');
 const { sendOneShotWorkerInstruction } = await import('./run-monitor.js');
 const { deleteTestRunIfPresent } = await import('./test-fixtures.js');
@@ -62,7 +64,7 @@ async function fixture(t: { after: (fn: () => Promise<void> | void) => void }): 
   // The real sender resolves slot vars, so the slot needs a pool row.
   const project = `resume-text-${Math.random().toString(36).slice(2, 10)}`;
   const slotId = `${project}-slot`;
-  const poolFile = path.join(farmslotRoot(), 'pool', `${project}.json`);
+  const poolFile = path.join(poolDirectory(), `${project}.json`);
   await mkdir(path.dirname(poolFile), { recursive: true });
   await writeFile(
     poolFile,

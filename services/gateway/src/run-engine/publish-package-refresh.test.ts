@@ -12,6 +12,9 @@ import {
   type RunDecision,
 } from '@farmslot/protocol';
 
+import '../core/private-pool.test-support.js';
+
+import { poolDirectory } from '../core/config.js';
 import { execLocal } from '../core/exec.js';
 import { farmslotRoot } from '../fleet/state.js';
 import {
@@ -154,7 +157,7 @@ test('publish package refresh evidence summary uses shared path variants', () =>
 
 test('refreshPublishPackage fails closed when worker artifacts cannot be mirrored', async (t) => {
   const testId = `refresh-package-fail-${process.pid}-${Date.now()}`;
-  const poolFile = path.join(farmslotRoot(), 'pool', `${testId}.json`);
+  const poolFile = path.join(poolDirectory(), `${testId}.json`);
   const workerRepo = await mkdtemp(path.join(os.tmpdir(), `${testId}-worker-`));
   const taskRoot = path.join(farmslotRoot(), '.sandbox/farmslot-farm/tasks');
   const taskRelDir = `test/${testId}`;
@@ -248,7 +251,7 @@ test('refreshPublishPackage fails closed when worker artifacts cannot be mirrore
 });
 test('refreshReviewGate does not let worker artifacts overwrite gateway-owned package state', async (t) => {
   const testId = `refresh-review-gateway-owned-${process.pid}-${Date.now()}`;
-  const poolFile = path.join(farmslotRoot(), 'pool', `${testId}.json`);
+  const poolFile = path.join(poolDirectory(), `${testId}.json`);
   const workerRepo = await mkdtemp(path.join(os.tmpdir(), `${testId}-worker-`));
   const taskRoot = path.join(farmslotRoot(), '.sandbox/farmslot-farm/tasks');
   const taskRelDir = `test/${testId}`;

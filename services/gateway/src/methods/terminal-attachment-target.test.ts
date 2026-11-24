@@ -11,6 +11,8 @@ import { after, before, test } from 'node:test';
 
 import { TERMINAL_ATTACHMENT_CHUNK_BYTES } from '@farmslot/protocol';
 
+import '../core/private-pool.test-support.js';
+
 import { poolDirectory } from '../core/config.js';
 import { createRun, deleteRun, updateRun } from '../runs/store.js';
 

@@ -20,6 +20,9 @@ import test from 'node:test';
 
 import type { ReviewStatus } from '@farmslot/protocol';
 
+import '../core/private-pool.test-support.js';
+
+import { poolDirectory } from '../core/config.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { resourceRevisions } from '../resources/revisions.js';
 
@@ -38,7 +41,7 @@ import { makeRun } from './test-fixtures.js';
 
 test('refreshArtifactMirror preserves gateway-owned review artifacts while clearing stale worker files', async (t) => {
   const testId = `mirror-gateway-owned-${process.pid}-${Date.now()}`;
-  const poolFile = path.join(farmslotRoot(), 'pool', `${testId}.json`);
+  const poolFile = path.join(poolDirectory(), `${testId}.json`);
   const workerRepo = await mkdtemp(path.join(tmpdir(), `${testId}-worker-`));
   const taskRoot = path.join(farmslotRoot(), '.sandbox/farmslot-farm/tasks');
   const taskRelDir = `test/${testId}`;
@@ -274,7 +277,7 @@ test('refreshArtifactMirror copies a large multi-chunk fixture with local byte e
   const { createHash } = await import('node:crypto');
   const { FILE_TRANSFER_CHUNK_MAX_BYTES } = await import('@farmslot/protocol');
   const testId = `mirror-large-${process.pid}-${Date.now()}`;
-  const poolFile = path.join(farmslotRoot(), 'pool', `${testId}.json`);
+  const poolFile = path.join(poolDirectory(), `${testId}.json`);
   const workerRepo = await mkdtemp(path.join(tmpdir(), `${testId}-worker-`));
   const taskRoot = path.join(farmslotRoot(), '.sandbox/farmslot-farm/tasks');
   const taskRelDir = `test/${testId}`;
@@ -343,7 +346,7 @@ test('shouldClearLocalRecipeRunCache only clears when the worker pointer is trul
 
 test('refreshArtifactMirror rejects evidence-manifest references to internal artifacts', async (t) => {
   const testId = `mirror-internal-manifest-${process.pid}-${Date.now()}`;
-  const poolFile = path.join(farmslotRoot(), 'pool', `${testId}.json`);
+  const poolFile = path.join(poolDirectory(), `${testId}.json`);
   const workerRepo = await mkdtemp(path.join(tmpdir(), `${testId}-worker-`));
   const taskRoot = path.join(farmslotRoot(), '.sandbox/farmslot-farm/tasks');
   const taskRelDir = `test/${testId}`;
@@ -507,7 +510,7 @@ test('pruneRecipeRunHistory keeps cached history when promoted run cache is miss
 
 async function publishPackageFixture(t: test.TestContext, name: string) {
   const testId = `${name}-${process.pid}-${Date.now()}`;
-  const poolFile = path.join(farmslotRoot(), 'pool', `${testId}.json`);
+  const poolFile = path.join(poolDirectory(), `${testId}.json`);
   const workerRepo = await mkdtemp(path.join(tmpdir(), `${testId}-worker-`));
   const taskRelDir = `test/${testId}`;
   const taskDir = path.join(farmslotRoot(), '.sandbox/farmslot-farm/tasks', taskRelDir);

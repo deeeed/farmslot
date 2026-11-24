@@ -8,8 +8,10 @@ import test, { type TestContext } from 'node:test';
 
 import type { Run, WorkerSignal } from '@farmslot/protocol';
 
+import '../core/private-pool.test-support.js';
 import '../runtime/mock-pty.test-support.js';
 
+import { poolDirectory } from '../core/config.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { createRun, getRun, loadAllRuns, persistRunNow, updateRun } from '../runs/store.js';
 
@@ -25,7 +27,7 @@ import { trackOpenQuestion } from './worker-question.js';
 async function fixture(t: TestContext, consumedBeforeWaitMs = 2000) {
   const project = `operator-monitor-${randomUUID()}`;
   const projectDir = path.join(farmslotRoot(), 'projects', project);
-  const poolFile = path.join(farmslotRoot(), 'pool', `${project}.json`);
+  const poolFile = path.join(poolDirectory(), `${project}.json`);
   const worker = await mkdtemp(path.join(os.tmpdir(), 'operator-monitor-'));
   const taskDir = path.join(projectDir, 'tasks/dev/fixture');
   const signalFile = path.join(worker, 'SIGNAL.json');

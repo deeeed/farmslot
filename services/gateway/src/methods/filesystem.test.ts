@@ -13,6 +13,8 @@ import { WebSocket } from 'ws';
 
 import { DEFAULT_TASK_DIR } from '@farmslot/protocol';
 
+import '../core/private-pool.test-support.js';
+
 import { retainFixtureTask } from '../../../../packages/run-bundle/src/retained.test-support.js';
 import { getOrchestratorTaskRoot, poolDirectory, projectsDirectory } from '../core/config.js';
 import { statusFile } from '../core/state.js';

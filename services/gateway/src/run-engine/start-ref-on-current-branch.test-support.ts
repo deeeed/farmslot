@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 
 import type { ExecResult } from '@farmslot/protocol';
 
+import { poolDirectory } from '../core/config.js';
 import { claimSlotStatusIf } from '../core/state.js';
 
 // Real tmux only on the test runner's private server (scripts/quality/run-tsx-tests.mjs):
@@ -64,9 +65,8 @@ export async function slotFixture(
   const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), `farmslot-start-ref-${label}-`));
   const slotRepo = path.join(fixtureRoot, 'slot');
   const originRepo = path.join(fixtureRoot, 'origin.git');
-  const repoRoot = path.resolve(new URL('../../../../', import.meta.url).pathname);
   const slotId = `start-ref-${label}-${process.pid}`;
-  const poolPath = path.join(repoRoot, 'pool', `${slotId}.json`);
+  const poolPath = path.join(poolDirectory(), `${slotId}.json`);
   t.after(async () => {
     // Prepare's tmux phase opens a real session named after the slot.
     spawnSync('tmux', ['-S', tmuxSandbox!, 'kill-session', '-t', `=${slotId}`], {
