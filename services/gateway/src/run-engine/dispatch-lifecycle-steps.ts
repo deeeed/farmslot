@@ -50,7 +50,7 @@ import { createSubStepCollector, type SubStepCollector } from './sub-step-collec
 import { completeRunTaskInitialization } from './task-sync.js';
 import { WorkerLaunchInputsChangedError } from './worker-launch-preflight.js';
 
-interface StepIO {
+export interface StepIO {
   inputs?: Record<string, unknown>;
   outputs?: Record<string, unknown>;
 }

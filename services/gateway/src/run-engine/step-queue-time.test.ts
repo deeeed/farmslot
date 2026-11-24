@@ -5,7 +5,11 @@ import { type Run, runStepExecutionMs, runStepQueuedMs } from '@farmslot/protoco
 
 import { createRun, deleteRun, getRun, updateRun, updateRunStep } from '../runs/store.js';
 
-import { createPrepareProgressEmitter, keptBranchRecorder } from './dispatch-lifecycle-steps.js';
+import {
+  createPrepareProgressEmitter,
+  keptBranchRecorder,
+  type StepIO,
+} from './dispatch-lifecycle-steps.js';
 import { awaitAsQueueTime } from './find-slot-step.js';
 import { stepEntryTiming } from './orchestrator.js';
 import { mirrorMonitorStepProgress } from './run-monitor.js';
@@ -253,7 +257,7 @@ test('the monitor step mirrors structured worker progress', (t) => {
 test('a kept branch stays in the prepare outputs through later progress, for a prepare that then fails', (t) => {
   const run = devRun(t);
   updateRunStep(run.id, 'prepare', { status: 'running', startedAt: iso(T0) });
-  const stepPartialIO = new Map();
+  const stepPartialIO = new Map<string, StepIO>();
   const baseOutputs: Record<string, unknown> = { cliCommand: 'farmslot slot prepare slot-1' };
   const emit = createPrepareProgressEmitter({
     runId: run.id,
