@@ -59,6 +59,10 @@ type Ending =
   | 'completion-deferred'
   | 'completion-interrupted'
   | 'completion-invalid-idle'
+  | 'completion-unfinished-pass'
+  | 'completion-missing'
+  | 'completion-invalid-schema'
+  | 'completion-infra'
   | 'reattach-config-changed'
   | 'completion-invalid';
 let ending: Ending = 'verdict';
@@ -103,6 +107,8 @@ let loseCompletionReply = false;
 let completionLaunches = 0;
 let completionActivityPages: NativeSessionEvent[][] | undefined;
 let deferredClock: { now: number; polls: number } | undefined;
+/** Advanced by each read of an ended completion turn whose signal check cannot run. */
+let infraClock: { now: number } | undefined;
 const completionCase = () => ending.startsWith('completion-');
 
 // The reviewer's host, slot files and runner are scripted; the run store and the
@@ -135,8 +141,20 @@ mock.module('../run-engine/run-monitor.js', {
         };
       if (completionCase()) {
         const context = getRun(runId)!.agentContexts?.find((entry) => entry.role === 'review');
+        const continued = context?.nativeSession?.commandId !== binding.commandId;
+        if (continued && ending === 'completion-infra')
+          return {
+            ok: false,
+            code: 'terminal_contract_infrastructure',
+            message: 'slot contract check unavailable',
+          };
+        if (!continued && ending === 'completion-missing')
+          return { ok: false, code: 'missing', message: 'review signal missing' };
+        if (!continued && ending === 'completion-invalid-schema')
+          return { ok: false, code: 'invalid_schema', message: 'review signal has no status' };
         if (
           ending !== 'completion-unfinished' &&
+          ending !== 'completion-unfinished-pass' &&
           ending !== 'completion-provider-error' &&
           ending !== 'completion-interrupted' &&
           ending !== 'completion-closed-restart' &&
@@ -292,6 +310,7 @@ mock.module('../runners/native/worker-control.js', {
       if (completionCase()) {
         const current = getRun(_runId)!.agentContexts!.find((entry) => entry.role === 'review')!;
         const continued = current.nativeSession!.commandId !== binding.commandId;
+        if (continued && infraClock) infraClock.now += 11 * 60_000;
         return {
           session: {
             state:
@@ -503,7 +522,9 @@ mock.module('./feedback.js', {
           }
         : ['incomplete', 'command-error'].includes(ending)
           ? { verdict: 'pass', issues: [], incomplete: true }
-          : { verdict: 'issues', issues: [{ file: 'a.ts', description: 'finding' }] },
+          : ending === 'completion-unfinished-pass'
+            ? { verdict: 'pass', issues: [] }
+            : { verdict: 'issues', issues: [{ file: 'a.ts', description: 'finding' }] },
   },
 });
 mock.module('./native-reviewer-approvals.js', {
@@ -785,12 +806,83 @@ test('a failed native turn with valid findings receives one completion turn in t
   assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 1);
 });
 
-test('an unfinished completion turn fails instead of allocating another turn', async (t) => {
+// 961d55d3: a valid REQUEST_CHANGES result, then the re-asked turn ended without its mark.
+test('a completion turn that ends without its mark keeps its valid ISSUES result as the verdict', async (t) => {
   ending = 'completion-unfinished';
   completionCommands.length = 0;
   const run = await nativeRun(t);
-  await assert.rejects(review(run.id), /completion turn.*terminal signal/);
+  const result = await review(run.id);
+  assert.equal(result.verdict, 'issues');
+  assert.equal(completionCommands.length, 1, 'no second completion turn');
+  const context = getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
+  assert.equal(context.status, 'complete');
+  assert.ok(context.reviewResultValidatedAt);
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 1);
+});
+
+test('a PASS result without its terminal mark is not accepted and settles no-verdict', async (t) => {
+  ending = 'completion-unfinished-pass';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /PASS result is not accepted without one/);
   assert.equal(completionCommands.length, 1);
+  const context = getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
+  assert.equal(context.status, 'failed');
+  const budget = await runReviewRoundBudget(getRun(run.id)!);
+  assert.deepEqual([budget.used, budget.noVerdict], [0, 1]);
+});
+
+for (const [code, instruction] of [
+  ['missing', /If you never ran .* start, run it once now/],
+  ['invalid-schema', /Do not run start/],
+] as const)
+  test(`valid findings with a ${code} signal get the one completion re-ask`, async (t) => {
+    ending = `completion-${code}`;
+    completionCommands.length = 0;
+    const run = await nativeRun(t);
+    assert.equal((await review(run.id)).verdict, 'issues');
+    assert.equal(completionCommands.length, 1);
+    const context = getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
+    assert.match(context.nativeCommandText ?? '', instruction);
+  });
+
+test('an ended completion whose signal cannot be checked is re-read, then fails closed', async (t) => {
+  ending = 'completion-infra';
+  completionCommands.length = 0;
+  const clock = { now: Date.now() };
+  infraClock = clock;
+  t.mock.method(Date, 'now', () => clock.now);
+  t.after(() => {
+    infraClock = undefined;
+  });
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /terminal signal could not be checked/);
+  assert.equal(completionCommands.length, 1);
+});
+
+test('a valid result is not taken as the verdict of a settled round or an inactive reviewer', async (t) => {
+  ending = 'completion-turn';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  await review(run.id);
+  ending = 'completion-unfinished';
+  const { continueNativeReviewCompletion } = await import('./native-review-completion.js');
+  const control = await import('../runners/native/worker-control.js');
+  const reviewer = () => getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
+  const attempt = async () =>
+    continueNativeReviewCompletion({
+      runId: run.id,
+      vars,
+      context: reviewer(),
+      snapshot: await control.readNativeWorkerSnapshot(run.id, 'review', reviewer().id),
+      probe: { ok: false, code: 'non_terminal', message: 'running', signalFile: null },
+      assertCurrent: () => {},
+    });
+  // Complete, with its round settled by the verdict.
+  await assert.rejects(attempt(), /completion turn ended without a valid terminal signal/);
+  // Working again, but its round is still settled.
+  await upsertAgentContext(run.id, 'review', { id: reviewer().id, status: 'working' });
+  await assert.rejects(attempt(), /completion turn ended without a valid terminal signal/);
 });
 
 for (const progress of ['checklist-progress', 'tool-progress', 'paged-tools'] as const) {

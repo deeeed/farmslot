@@ -8,6 +8,7 @@ import { after, test, type TestContext } from 'node:test';
 import {
   type AgentContext,
   gateActionsForReadiness,
+  type NativeSessionReadResult,
   type ReviewStatus,
   type WorkerSignal,
 } from '@farmslot/protocol';
@@ -486,4 +487,116 @@ test('restart after result persistence repairs accounting before skipping an alr
   const stamp = restored.reviewRoundSettlements?.[round]?.at;
   await f.recover();
   assert.equal(getRun(f.run.id)!.reviewRoundSettlements?.[round]?.at, stamp);
+});
+
+// 961d55d3: the completion turn ended without its mark; the reviewer's ISSUES result is the verdict.
+test('restart recovery ingests the valid ISSUES result of a completion turn that ended without its mark', async (t) => {
+  const f = await fixture(t);
+  const slotRepo = path.resolve(f.taskDir, '../../..');
+  await writeFile(
+    path.join(f.taskDir, f.ctx.reviewResultFile!),
+    JSON.stringify({
+      schemaVersion: 1,
+      verdict: 'issues',
+      issues: [{ file: 'src/example.ts', description: 'Remaining finding' }],
+    }),
+  );
+  const running: WorkerSignal = {
+    status: 'running',
+    timestamp: f.ctx.completedAt!,
+    attemptId: 'attempt-1',
+  };
+  await writeFile(path.join(slotRepo, f.ctx.signalFile!), JSON.stringify(running));
+  const nativeSession = {
+    sessionId: 'native-session',
+    commandId: 'completion-command',
+    generation: 'generation',
+    leaseId: 'lease',
+    executionNodeId: 'node',
+    ownerPrincipalId: 'owner',
+  };
+  const current = getRun(f.run.id)!;
+  updateRun(f.run.id, {
+    agentContexts: [
+      {
+        ...f.ctx,
+        status: 'working',
+        completedAt: undefined,
+        nativeSession,
+        nativeCommandId: 'completion-command',
+        nativeCommandText: 'Finish the checklist and mark it complete.',
+      },
+    ],
+    engineState: {
+      ...current.engineState,
+      publishGate: {
+        ...current.engineState?.publishGate,
+        reviews: [{ ...f.existing, verdict: 'skipped', unresolvedCount: 0, attempts: [] }],
+      },
+    },
+  });
+  t.after(() =>
+    updateRun(f.run.id, {
+      agentContexts: getRun(f.run.id)?.agentContexts?.map((context) => ({
+        ...context,
+        nativeSession: { ...nativeSession, closedAt: new Date().toISOString() },
+      })),
+    }),
+  );
+  const snapshot: NativeSessionReadResult = {
+    session: {
+      id: 'native-session',
+      generation: 'generation',
+      hostPid: 10,
+      runner: 'claude',
+      nativeSessionId: 'reviewer-session',
+      ownerPrincipalId: 'owner',
+      executionNodeId: 'node',
+      accountContextId: 'account',
+      cwd: slotRepo,
+      executable: 'claude',
+      version: 'fixture',
+      mode: 'default',
+      accountMode: 'native',
+      state: 'idle',
+      capabilities: {
+        modes: ['default'],
+        streaming: true,
+        tools: true,
+        approvals: false,
+        questions: false,
+        interrupt: true,
+        resume: true,
+      },
+    },
+    events: [],
+    cursor: 0,
+    hasMore: false,
+    pendingRequests: [],
+    commands: [
+      {
+        commandId: 'completion-command',
+        generation: 'generation',
+        state: 'completed',
+        outcome: 'completed',
+        submitted: true,
+        accepted: true,
+      },
+    ],
+  };
+  const completion = await import('../review/native-review-completion.js');
+  t.mock.module('../review/native-review-completion.js', {
+    namedExports: { ...completion, continueNativeReviewCompletion: async () => 'result' },
+  });
+  const recovery = await recoverInflightPublicationReviews(f.run.id, f.run.slotId!, {
+    captureArtifacts: copyWorkerArtifacts,
+    readers: {
+      config: async () => ({ enabled: true, max_retries: 3 }),
+      package: async () => f.prepared,
+      native: async () => snapshot,
+    },
+  });
+  assert.deepEqual(recovery.recoveredIds, [f.existing.id]);
+  assert.equal(getRun(f.run.id)!.engineState?.publishGate?.reviews?.[0]?.verdict, 'issues');
+  assert.equal(getRun(f.run.id)!.agentContexts?.[0]?.status, 'complete');
 });

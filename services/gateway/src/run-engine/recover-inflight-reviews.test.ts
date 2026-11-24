@@ -1322,6 +1322,23 @@ test('buildRecoveredReview accepts signal-less completion for an attempt-scoped 
   assert.equal(review?.verdict, 'pass');
 });
 
+test('buildRecoveredReview takes an accepted ISSUES result without its terminal mark, never a PASS', () => {
+  const build = (verdict: 'issues' | 'pass') =>
+    buildRecoveredReview({
+      run: makeRun({ engineState: { publishGate: { reviews: [] } } }),
+      ctx: reviewerContext({ status: 'working', attemptStartedAt: '2026-07-16T10:00:00.000Z' }),
+      signal: terminalSignal({ status: 'running' }),
+      feedback:
+        verdict === 'issues'
+          ? { verdict, issues: [{ file: 'a.ts', description: 'bug' }] }
+          : { verdict, issues: [] },
+      reviewedPackage: undefined,
+      resultWithoutSignal: true,
+    });
+  assert.equal(build('issues')?.verdict, 'issues');
+  assert.equal(build('pass'), null);
+});
+
 test('buildRecoveredReview rejects a terminal signal from another attempt', () => {
   const review = buildRecoveredReview({
     run: makeRun({ engineState: { publishGate: { reviews: [] } } }),
