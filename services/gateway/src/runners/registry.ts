@@ -421,6 +421,7 @@ interface PaneClassifierResult {
   confidence: number;
   reason: string;
   suggestedAction?: string;
+  unavailable?: true;
 }
 
 async function classifyRunnerPaneStateBestEffortLazy(opts: {
@@ -3911,7 +3912,38 @@ export async function sendRunnerPostLaunchPrompt(
   let codexUpdatePromptAttempts = 0;
   const maxBlockerAutoAttempts = 2;
   const snapshottedBlockers = new Set<string>();
-  while (Date.now() < readyDeadline) {
+  // The classifier is the timeout's second opinion. While it cannot be asked, the deterministic
+  // stable-pane rule gets one more readiness window instead of failing the dispatch at once.
+  let classifierOutageWaitMs = 0;
+  // The deadline's verdict when the classifier answered, reused by the failure path below.
+  const deadlineCheck: { pane?: string; classifier?: PaneClassifierResult } = {};
+  const extendForClassifierOutage = async (): Promise<boolean> => {
+    if (classifierOutageWaitMs) return false;
+    const pane = (
+      await execOnSlot(
+        vars,
+        tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -80`),
+      )
+    ).stdout;
+    const classifier = await classifyRunnerPaneStateBestEffortLazy({
+      runner,
+      target,
+      pane,
+      expected: 'post-launch prompt ready for task delivery',
+    });
+    if (!classifier.unavailable) {
+      deadlineCheck.pane = pane;
+      deadlineCheck.classifier = classifier;
+      return false;
+    }
+    classifierOutageWaitMs = readyTimeoutMs;
+    readyDeadline = Date.now() + readyTimeoutMs;
+    console.warn(
+      `[${logPrefix}] pane classifier unavailable at the readiness deadline for ${target} (${classifier.reason}); waiting ${Math.round(readyTimeoutMs / 1000)}s more for a stable ready pane`,
+    );
+    return true;
+  };
+  while (Date.now() < readyDeadline || (await extendForClassifierOutage())) {
     await new Promise((r) => setTimeout(r, pollIntervalMs));
     const pane = (
       await execOnSlot(
@@ -4124,18 +4156,24 @@ export async function sendRunnerPostLaunchPrompt(
   let timeoutPaneForFailure = '';
   let classifierForFailure: PaneClassifierResult | null = null;
   if (!ready) {
-    timeoutPaneForFailure = (
-      await execOnSlot(
-        vars,
-        tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -80`),
-      )
-    ).stdout;
-    classifierForFailure = await classifyRunnerPaneStateBestEffortLazy({
-      runner,
-      target,
-      pane: timeoutPaneForFailure,
-      expected: 'post-launch prompt ready for task delivery',
-    });
+    // The deadline check already asked the classifier when it answered; ask again only after
+    // the outage wait.
+    timeoutPaneForFailure =
+      deadlineCheck.pane ??
+      (
+        await execOnSlot(
+          vars,
+          tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -80`),
+        )
+      ).stdout;
+    classifierForFailure =
+      deadlineCheck.classifier ??
+      (await classifyRunnerPaneStateBestEffortLazy({
+        runner,
+        target,
+        pane: timeoutPaneForFailure,
+        expected: 'post-launch prompt ready for task delivery',
+      }));
     if (classifierForFailure.confidence >= 0.8 && classifierForFailure.state === 'ready') {
       console.log(
         `[${logPrefix}] pane classifier accepted ${target} as ready: ${classifierForFailure.reason}`,
@@ -4313,8 +4351,12 @@ export async function sendRunnerPostLaunchPrompt(
         snapshotNote = ` Snapshot write failed: ${(err as Error).message}`;
       }
     }
+    const outageNote =
+      classifierOutageWaitMs && classifier.unavailable
+        ? ` (and ${classifierOutageWaitMs / 1000}s more while the pane classifier was unavailable)`
+        : '';
     throw new Error(
-      `Runner launch (${runner}) did not reach a stable ready state within ${readyTimeoutMs / 1000}s in tmux target ${target}. ` +
+      `Runner launch (${runner}) did not reach a stable ready state within ${readyTimeoutMs / 1000}s${outageNote} in tmux target ${target}. ` +
         `Pane classifier: ${classifier.state}/${classifier.confidence} action=${classifier.suggestedAction} (${classifier.reason}). ` +
         `Prompt delivery aborted to avoid sending into a half-booted runner TUI.${snapshotNote}\n` +
         `Last pane content:\n${timeoutPane}`,

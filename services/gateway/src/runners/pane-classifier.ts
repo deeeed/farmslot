@@ -23,6 +23,8 @@ export interface PaneClassifierResult {
   confidence: number;
   suggestedAction: PaneClassifierAction;
   reason: string;
+  /** The classifier could not be asked (auth refused, provider error); the verdict is a placeholder. */
+  unavailable?: true;
 }
 
 const STATES: ReadonlySet<PaneClassifierState> = new Set([
@@ -142,6 +144,7 @@ export async function classifyRunnerPaneStateBestEffort(opts: {
       confidence: 0,
       suggestedAction: 'manual',
       reason: `classifier unavailable: ${(err as Error).message.slice(0, 180)}`,
+      unavailable: true,
     };
   }
 }

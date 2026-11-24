@@ -346,6 +346,31 @@ mock.module('../core/exec.js', {
   },
 });
 
+// The pane classifier is a remote model; by default it is down, as with a refused credential.
+const classifierOutage = {
+  state: 'unknown',
+  confidence: 0,
+  suggestedAction: 'manual',
+  reason: 'classifier unavailable: 403 forbidden',
+  unavailable: true,
+} as const;
+let classifierVerdict: {
+  state: string;
+  confidence: number;
+  suggestedAction: string;
+  reason: string;
+  unavailable?: true;
+} = classifierOutage;
+let classifierCalls = 0;
+mock.module('./pane-classifier.js', {
+  namedExports: {
+    classifyRunnerPaneStateBestEffort: async () => {
+      classifierCalls += 1;
+      return classifierVerdict;
+    },
+  },
+});
+
 mock.module('./prompt-delivery-evidence.js', {
   namedExports: {
     readRunnerPromptAcceptance: (await import('./prompt-delivery-evidence.js'))
@@ -2794,4 +2819,74 @@ test('Pi refuses to touch the pane when the retained conversation changes before
     'held-untouched',
   );
   assert.equal(callOrder.includes('tmux:send-literal'), false);
+});
+
+/** A runner whose pane shows it busy for `busyCaptures` reads, then idle at its prompt. */
+function startingRunner(t: TestContext, busyCaptures: number) {
+  callOrder.length = 0;
+  classifierCalls = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = true;
+  paneTextByCapture = Array.from({ length: busyCaptures }, () => '✻ Working…\n');
+  activityReading = null;
+  promptAcceptedReading = null;
+  acknowledgePromptInput = true;
+  t.after(() => {
+    paneTextByCapture = null;
+    classifierVerdict = classifierOutage;
+    activityReading = {
+      value: 'idle',
+      source: 'hook',
+      confidence: 'high',
+      observedAt: Date.now(),
+    };
+  });
+}
+
+const slowStartOptions = {
+  readyTimeoutMs: 10_000,
+  stabilityPolls: 2,
+  pollIntervalMs: 1_000,
+  verifyWaitMs: 0,
+  maxAttempts: 1,
+};
+
+// 961d55d3: the classifier's credential was refused, and a runner that settled a few seconds
+// after the readiness deadline failed the dispatch.
+test('an unavailable pane classifier gives the stable-pane rule one more readiness window', async (t) => {
+  startingRunner(t, 13);
+  await withVirtualTime(t, () =>
+    sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', slowStartOptions),
+  );
+  assert.equal(classifierCalls, 1);
+  assert.ok(callOrder.includes('tmux:send'), 'the prompt was delivered after the extended wait');
+});
+
+test('a runner still busy after the outage wait fails naming both waits and the outage', async (t) => {
+  startingRunner(t, 1_000);
+  await assert.rejects(
+    withVirtualTime(t, () =>
+      sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', slowStartOptions),
+    ),
+    /within 10s \(and 10s more while the pane classifier was unavailable\) in tmux target/,
+  );
+  assert.equal(classifierCalls, 2);
+  assert.equal(callOrder.includes('tmux:send'), false);
+});
+
+test('an available pane classifier keeps the single readiness window and is asked once', async (t) => {
+  startingRunner(t, 1_000);
+  classifierVerdict = {
+    state: 'busy',
+    confidence: 0.9,
+    suggestedAction: 'wait',
+    reason: 'still starting',
+  };
+  await assert.rejects(
+    withVirtualTime(t, () =>
+      sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', slowStartOptions),
+    ),
+    /within 10s in tmux target .*Pane classifier: busy\/0.9/s,
+  );
+  assert.equal(classifierCalls, 1);
 });
