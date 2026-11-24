@@ -1,0 +1,1 @@
+- Dispatch records the waits it used to charge to `claim` as their own sub-steps: host pressure admission, native worker retirement, the dispatch baseline and inherited signature check, the run runtime start and the recipe gate. COMPLETE's `timing.bundleLock` also breaks run-bundle lock time down by kind of holder and by store operation (self times, which do not overlap).
