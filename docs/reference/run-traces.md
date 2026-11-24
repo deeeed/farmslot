@@ -46,22 +46,23 @@ sha256, sizeBytes, capturedAt, answersRound?, reason?}`. A source whose size and
   `runners/session-archive.ts` (`readRunnerSessionArchiveLines`,
   `verifiedRunnerSessionArchivePath`) build the path from the ref's `sessionKey`,
   `<contextId>/<sessionKey>/transcript.jsonl`, and fall back to the legacy
-  `<contextId>/transcript.jsonl` when the ref has no `sessionKey`. History and usage
+  `<contextId>/transcript.jsonl` when the ref has no `sessionKey` or its key is
+  `legacy`. History and usage
   go through these helpers, so they follow the new layout without changes of their
   own.
 - **Legacy archives.** An archive written before this change, at
   `session-archives/<run>/<contextId>/transcript.jsonl` with only a single ref, reads
-  as a one-element list whose `sessionKey` is `legacy`. Nothing is moved or rewritten.
-- **Readers that change (PR 1).** The episode writer (`run-completion/run-episode.ts`)
-  lists every session in `trajectory.agents` and [Run episodes](run-episodes.md)
-  documents the per-session shape; the archive read helpers in
-  `runners/session-archive.ts` resolve the path from the ref (above); the run store
-  and agent contexts
-  (`runs/store.ts`, `agents/contexts.ts`) patch the list; list rows
-  (`protocol/runs/list-row.ts`, `list-trim.ts`) trim the list as they trim the single
-  ref; the portable bundle (`protocol/runs/portable-bundle.ts`) strips the list's
-  local paths as it strips the single ref's; the review QA migration
-  (`run-engine/review-qa-migration.ts`) carries the list with the ref.
+  as a one-element list whose `sessionKey` is `legacy`. That key exists only in
+  this list view; it is never written to a ref. Nothing is moved or rewritten.
+- **Readers that change (PR 1).** The episode writer
+  (`run-completion/run-episode.ts`) lists every session in `trajectory.agents` and
+  [Run episodes](run-episodes.md) documents the per-session shape; the archive read
+  helpers in `runners/session-archive.ts` resolve the path from the ref (above); the
+  run store and agent contexts (`runs/store.ts`, `agents/contexts.ts`) patch the
+  list; list rows (`protocol/runs/list-row.ts`, `list-trim.ts`) trim the list as
+  they trim the single ref; the portable bundle (`protocol/runs/portable-bundle.ts`)
+  strips the list's local paths as it strips the single ref's; the review QA
+  migration (`run-engine/review-qa-migration.ts`) carries the list with the ref.
 - **Atomic write.** The copy goes to a temporary file in the session directory and
   is renamed into place. A failed copy deletes only its temporary file, never a
   previously captured transcript.
@@ -114,10 +115,12 @@ the gateway also writes the diff it graded, against `dispatchHead`, as
 `withRunBundleStoreLock`, with the sha256 it records:
 
 - **Committed** or **parked-ref** output: `git diff <dispatchHead> <ref>`.
-- **Working-tree** output: the tree is staged into a temporary index
-  (`GIT_INDEX_FILE=<tmp> git add -A`, which honours `.gitignore`), then
-  `git diff --cached <dispatchHead>` against it, so new untracked files are
-  included. The slot's own index is not touched.
+- **Working-tree** output: the tree is staged into a temporary index, then
+  `git diff --cached <dispatchHead>` reads it, so new untracked files are included
+  and the slot's own index is not touched. The temporary index starts as a copy of
+  the slot's index, so Git's stat cache hashes only changed files, at a fresh path
+  (a file that exists but is empty is not a valid index); then
+  `GIT_INDEX_FILE=<that path> git add -A`, which honours `.gitignore`.
 
 The episode lists that file among its references. A diff larger than
 `runBundleRetention.maxBundleBytes` is recorded with its sha256 and size and no
