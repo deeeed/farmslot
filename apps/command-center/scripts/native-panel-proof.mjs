@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
 
+import { probeUntil, watchPageErrors } from './proof-until.mjs';
 import { recordBrowserProof } from './stable-layout-refetch-proof.mjs';
 
 export function nativePanelFixture(now) {
@@ -129,29 +129,9 @@ export async function proveNativePanel({
   const before = process.env.FARMSLOT_LAYOUT_EXPECT_SHIFT === '1';
   const inspect = () =>
     cdp('eval', target, '--file', path.join(import.meta.dirname, 'probes/native-panel.js'));
-  const runtimeErrors = [];
-  const onRuntimeEvent = (raw) => {
-    const event = JSON.parse(String(raw));
-    if (event.method === 'Runtime.exceptionThrown') runtimeErrors.push(event.params);
-  };
-  emulation.on('message', onRuntimeEvent);
-  await browserCall('Runtime.enable');
-  async function until(accept, label, timeout = 45_000) {
-    const end = Date.now() + timeout;
-    let value;
-    do {
-      value = await inspect();
-      if (runtimeErrors.length) {
-        await save('runtime-errors', runtimeErrors);
-        assert.fail(runtimeErrors[0].exceptionDetails.exception?.description ?? 'Rendering failed');
-      }
-      if (accept(value)) return value;
-      await delay(100);
-    } while (Date.now() < end);
-    await save('timeout-' + label, value);
-    await save('runtime-errors', runtimeErrors);
-    assert.fail(label + ': ' + JSON.stringify(value));
-  }
+  const pageErrors = await watchPageErrors({ emulation, browserCall });
+  const runtimeErrors = pageErrors.errors;
+  const until = probeUntil({ inspect, save, errors: runtimeErrors });
   const click = () =>
     cdp('click', target, 'run-detail >>> [data-testid="run-native-history-toggle"]');
   const results = [];
@@ -485,5 +465,5 @@ export async function proveNativePanel({
       'Mounted observed-WebSocket presentation proof; no native host, worker, device, provider or gateway activation.',
   });
   assert.deepEqual(runtimeErrors, [], 'No uncaught rendering errors');
-  emulation.off('message', onRuntimeEvent);
+  pageErrors.stop();
 }
