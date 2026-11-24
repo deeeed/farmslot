@@ -1135,6 +1135,10 @@
       "surface": "typed-command",
       "command": "farmslot runs"
     },
+    "run.episode.recapture": {
+      "surface": "typed-command",
+      "command": "farmslot runs episodes recapture"
+    },
     "run.extendReviewBudget": {
       "surface": "typed-command",
       "command": "farmslot run extend-review-budget",
@@ -1160,9 +1164,17 @@
       "surface": "typed-command",
       "command": "farmslot run grade"
     },
+    "run.grade.external.record": {
+      "surface": "rpc-only",
+      "note": "Appends an external grade line (ADR-039 Amendment 10) via farmslot rpc run.grade.external.record."
+    },
     "run.interactiveDev.resolve": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "run.interview.record": {
+      "surface": "rpc-only",
+      "note": "Stores a post-run interview (ADR-039 Amendment 10) via farmslot rpc run.interview.record."
     },
     "run.linkedTickets.set": {
       "surface": "rpc-only",

@@ -241,6 +241,27 @@ export function registerRunsCommand(program: Command): void {
       }
     });
 
+  const episodes = runs.command('episodes').description('Run-end episodes (ADR-039 Amendment 4)');
+  episodes
+    .command('recapture')
+    .description('Rewrite the episodes of runs that ended in a range, with current label values')
+    .requiredOption('--since <date>', 'Ended at or after this date (ISO)')
+    .option('--until <date>', 'Ended at or before this date (ISO)')
+    .action(async (opts: { since: string; until?: string }, cmd: Command) => {
+      const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
+      try {
+        const result = await client.call<import('@farmslot/protocol').RunEpisodeRecaptureResult>(
+          'run.episode.recapture',
+          { since: opts.since, ...(opts.until ? { until: opts.until } : {}) },
+        );
+        if (emit.machine) emit.ok(result);
+        else output.write(`${result.queued} episode(s) queued for recapture\n`);
+      } catch (error) {
+        emit.fail(error);
+      }
+    });
+
   const bundle = runs.command('bundle').description('Inspect portable run bundles');
   bundle
     .command('retain <runId>')
