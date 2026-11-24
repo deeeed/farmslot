@@ -1,0 +1,26 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Co-Pilot approval reachable on a short window",
+  "description": "Use private GATEWAY_PORT/VITE_PORT, an owned headless Agent Chrome FARMSLOT_CDP_PORT and FARMSLOT_LAYOUT_EVIDENCE. Uses the real mounted Co-Pilot panel and native session view with a controlled fixture: a running Co-Pilot runtime and one pending approval. No native host, provider, device or gateway activation. To reproduce the original UI, select its FARMSLOT_LAYOUT_UI_ROOT and FARMSLOT_LAYOUT_EXPECT_SHIFT=1.",
+  "workflow": {
+    "entry": "prove",
+    "nodes": {
+      "prove": {
+        "action": "command",
+        "cmd": "FARMSLOT_LAYOUT_COPILOT=1 node --import tsx apps/command-center/scripts/prove-stable-layout.mjs",
+        "timeout_ms": 300000,
+        "intent": "At 1005x504 with Co-Pilot settings open, require the pending approval to scroll into view inside the content box, be the element under its own centre, stay clear of the status row and transfer bar, and deliver a real native.session.respond approve on click. Save the screenshot and measurements.",
+        "next": "result"
+      },
+      "result": {
+        "action": "assert_output",
+        "source": "prove",
+        "stream": "stdout",
+        "match": "\"result\":\"PASS\"",
+        "intent": "Require all mounted-client assertions and owned teardown to pass.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

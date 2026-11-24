@@ -50,7 +50,7 @@ import { createSubStepCollector, type SubStepCollector } from './sub-step-collec
 import { completeRunTaskInitialization } from './task-sync.js';
 import { WorkerLaunchInputsChangedError } from './worker-launch-preflight.js';
 
-interface StepIO {
+export interface StepIO {
   inputs?: Record<string, unknown>;
   outputs?: Record<string, unknown>;
 }
@@ -257,6 +257,26 @@ export function createPrepareProgressEmitter(params: {
   };
 }
 
+/**
+ * Records each branch prepare keeps in the step's outputs as it happens, so a prepare that fails
+ * later still names it. `baseOutputs` is the progress emitter's: every later event keeps it.
+ */
+export function keptBranchRecorder(
+  runId: string,
+  inputs: Record<string, unknown>,
+  baseOutputs: Record<string, unknown>,
+  stepPartialIO: Map<string, StepIO>,
+): (kept: string) => void {
+  return (kept) => {
+    const recorded = Array.isArray(baseOutputs.keptBranches) ? baseOutputs.keptBranches : [];
+    baseOutputs.keptBranches = [...recorded, kept];
+    stepPartialIO.set(runId, {
+      inputs,
+      outputs: { ...stepPartialIO.get(runId)?.outputs, keptBranches: baseOutputs.keptBranches },
+    });
+  };
+}
+
 export interface PrepareStepContext {
   activeMonitors: Map<string, AbortController>;
   broadcastFn: BroadcastFn;
@@ -364,10 +384,12 @@ export async function executePrepareStep(
 
   // Collect sub-step events and broadcast live progress
   const collector = createSubStepCollector();
+  // Shared with the progress emitter, which rebuilds the step's outputs from it on every event.
+  const prepareOutputs: Record<string, unknown> = { cliCommand, hostLoad };
   const emitWithBroadcast = createPrepareProgressEmitter({
     runId,
     inputs,
-    baseOutputs: { cliCommand, hostLoad },
+    baseOutputs: prepareOutputs,
     collector,
     stepPartialIO,
     broadcastFn,
@@ -435,6 +457,8 @@ export async function executePrepareStep(
   }
   activeMonitors.set(runId, prepareController);
   let selectedPrepareProfile: import('../methods/slot/shared.js').SlotPrepareResult['profile'];
+  let lockfilesRewritten: string[] | undefined;
+  let keptBranches: string[] | undefined;
   try {
     const prepareResult = await slotPrepare(
       {
@@ -486,6 +510,8 @@ export async function executePrepareStep(
               await prepareBlindTrialGit(runId, prepareController.signal);
             }
           : undefined,
+        // Recorded as it happens, so a prepare that fails later still names the kept branch.
+        onBranchKept: keptBranchRecorder(runId, inputs, prepareOutputs, stepPartialIO),
         // A replay re-resolves against the commit the run already recorded: a
         // branch or tag name would otherwise move the recorded base under the
         // preserved branch's commits.
@@ -516,6 +542,8 @@ export async function executePrepareStep(
       },
     );
     selectedPrepareProfile = prepareResult.profile;
+    lockfilesRewritten = prepareResult.lockfilesRewritten;
+    keptBranches = prepareResult.keptBranches;
     if (current.startRef) {
       if (!prepareResult.startRef) {
         throw new Error('startRef prepare completed without structured resolved provenance');
@@ -591,6 +619,9 @@ export async function executePrepareStep(
         : {}),
       cliCommand,
       ...(selectedPrepareProfile ? { profile: selectedPrepareProfile } : {}),
+      // Lockfiles prepare rewrote for a drifted PR branch: the worker must commit them.
+      ...(lockfilesRewritten?.length ? { lockfilesRewritten } : {}),
+      ...(keptBranches?.length ? { keptBranches } : {}),
       ...(preparedRun?.startRef ? { startRef: preparedRun.startRef } : {}),
       ...(lastOutput ? { lastOutput } : {}),
     },

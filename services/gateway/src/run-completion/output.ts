@@ -26,6 +26,7 @@ import { failedBeforeWorkerLaunch } from '../run-lifecycle/pre-worker-failure.js
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 
 import { type ArtifactMirrorOptions, refreshArtifactMirror } from './artifact-mirror.js';
+import { timeCompletePhase } from './phase-timing.js';
 import {
   publicationBaselineContext,
   resolvePublicationManifest,
@@ -262,7 +263,9 @@ function queueOutputCapture(
   const capture = () =>
     captureRunOutputNow(runId, mirror, workerFinished, options, attempt, purpose);
   const previous = capturesInFlight.get(runId) ?? Promise.resolve();
-  const next = waitForRunBundleQueueTurn(previous, `output capture of run ${runId}`).then(capture);
+  const next = timeCompletePhase('capture.queue', () =>
+    waitForRunBundleQueueTurn(previous, `output capture of run ${runId}`),
+  ).then(capture);
   // An expired capture refuses promptly, but its tail still orders followers behind the predecessor.
   const settled = Promise.allSettled([previous, next]).then(() => undefined);
   capturesInFlight.set(runId, settled);
@@ -300,9 +303,13 @@ async function captureRunOutputNow(
     : { ...options, ...finalPolicy };
   let copied = 0;
   if (mirror && !run.reviewWorkspace)
-    copied = await refreshArtifactMirror(run, { ...mirrorOptions, acquisition });
+    copied = await timeCompletePhase('capture.mirror', () =>
+      refreshArtifactMirror(run, { ...mirrorOptions, acquisition }),
+    );
   else mirrorOptions.onEmptySource?.();
-  const scanned = await scanArtifacts(path.dirname(taskFile));
+  const scanned = await timeCompletePhase('capture.scan', () =>
+    scanArtifacts(path.dirname(taskFile)),
+  );
   // A retried release must not replace what an earlier final retention kept (media can be
   // acquired straight into that bundle and its staging copy removed) with a capture of a
   // source the mirror found empty or could not inspect. A retained capture removes its
@@ -333,15 +340,17 @@ async function captureRunOutputNow(
   if (workerFinished || options.forPublication) {
     let selection: Awaited<ReturnType<typeof resolvePublicationManifest>> = null;
     try {
-      selection = await resolvePublicationManifest(
-        path.dirname(taskFile),
-        undefined,
-        undefined,
-        run.recordedEvidenceContractVersion ?? 0,
-        publicationBaselineContext(
-          run,
-          [...artifactsByPath.values()],
-          options.publicationComparison,
+      selection = await timeCompletePhase('capture.selection', () =>
+        resolvePublicationManifest(
+          path.dirname(taskFile),
+          undefined,
+          undefined,
+          run.recordedEvidenceContractVersion ?? 0,
+          publicationBaselineContext(
+            run,
+            [...artifactsByPath.values()],
+            options.publicationComparison,
+          ),
         ),
       );
     } catch (error) {
@@ -405,39 +414,47 @@ async function captureRunOutputNow(
     manifestDigest: outputManifestDigest(artifacts),
     ...(report ? { reportPath: report.path } : {}),
   };
-  const retained = await retainCapturedRunArtifacts({
-    run: { ...current, output },
-    artifacts,
-    acquireMedia: acquisition.acquireMedia,
-    manifestDigest: output.manifestDigest,
-    releaseStagingMedia: true,
-    commit: async (ref, missingData) => {
-      const latest = getRun(runId);
-      if (!latest || latest.taskFile !== taskFile || latest.engineState?.generation !== generation)
-        throw new Error('Run attempt changed while retaining output; refresh the current attempt');
-      if (purpose === 'final-result') {
-        await persistRunNow(
-          updateRun(runId, { artifactBundle: ref }),
-          'retained final result artifacts',
-        );
-        return;
-      }
-      const retainedOutput: RunOutput = {
-        ...output,
-        artifactBundle: ref,
-        retentionMissingData: missingData,
-      };
-      const updated = updateRun(runId, {
-        artifactBundle: ref,
-        output: retainedOutput,
-        decisions:
-          latest.status === 'cancelled'
-            ? latest.decisions
-            : outputReviewDecisions(latest, retainedOutput),
-      });
-      await persistRunNow(updated, 'retained run output');
-    },
-  });
+  const retained = await timeCompletePhase('capture.retain', () =>
+    retainCapturedRunArtifacts({
+      run: { ...current, output },
+      artifacts,
+      acquireMedia: acquisition.acquireMedia,
+      manifestDigest: output.manifestDigest,
+      releaseStagingMedia: true,
+      commit: async (ref, missingData) => {
+        const latest = getRun(runId);
+        if (
+          !latest ||
+          latest.taskFile !== taskFile ||
+          latest.engineState?.generation !== generation
+        )
+          throw new Error(
+            'Run attempt changed while retaining output; refresh the current attempt',
+          );
+        if (purpose === 'final-result') {
+          await persistRunNow(
+            updateRun(runId, { artifactBundle: ref }),
+            'retained final result artifacts',
+          );
+          return;
+        }
+        const retainedOutput: RunOutput = {
+          ...output,
+          artifactBundle: ref,
+          retentionMissingData: missingData,
+        };
+        const updated = updateRun(runId, {
+          artifactBundle: ref,
+          output: retainedOutput,
+          decisions:
+            latest.status === 'cancelled'
+              ? latest.decisions
+              : outputReviewDecisions(latest, retainedOutput),
+        });
+        await persistRunNow(updated, 'retained run output');
+      },
+    }),
+  );
   if (purpose === 'final-result') {
     const missing = retained.missingData.filter(
       (entry) => parseRunBundleMissingData(entry).reason !== 'excluded',

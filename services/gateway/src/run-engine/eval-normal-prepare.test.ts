@@ -14,6 +14,7 @@ const vars = makeVars({ slotId: 'fixture', platform: 'cli', projectName: 'fixtur
 let run: Run;
 let branchHead: string | undefined;
 let initializationCalls = 0;
+let lockfilesRewritten: string[] | undefined;
 const persistedIntents: boolean[] = [];
 
 const store = await import('../runs/store.js');
@@ -87,6 +88,7 @@ const prepare: typeof slotPrepare = async (_params, _emit, _signal, options) => 
     prepared: true,
     requestId: 'fixture-prepare',
     startRef: { requestedRef: base, resolvedSha: base, resolvedAt: '2026-11-15T00:00:00.000Z' },
+    ...(lockfilesRewritten ? { lockfilesRewritten } : {}),
   };
 };
 const slots = await import('../methods/slot/index.js');
@@ -101,6 +103,7 @@ beforeEach(() => {
   persistedIntents.length = 0;
   branchHead = undefined;
   initializationCalls = 0;
+  lockfilesRewritten = undefined;
   run = makeRun({
     id: 'normal-prepare',
     status: 'preparing',
@@ -186,4 +189,10 @@ test('normal-slot prepare preserves candidate progress and refuses a lost establ
   assert.equal(branchHead, candidate);
   branchHead = undefined;
   await assert.rejects(prepareRun(), /Replay cannot preserve/);
+});
+
+test('lockfiles prepare rewrote for a drifted PR branch reach the prepare step outputs', async () => {
+  lockfilesRewritten = ['yarn.lock'];
+  const result = await prepareRun();
+  assert.deepEqual(result.outputs?.lockfilesRewritten, ['yarn.lock']);
 });

@@ -1,0 +1,1 @@
+- `withRunBundleLockTime` also reports holds by kind of holder and the self time of each store operation the caller ran, excluding nested timed operations so the values do not overlap (store walk, reservations, housekeeping inventory, media archive, payload completion and copy, fsync, record writes, acquisition scan, manifest reads, pairing check).

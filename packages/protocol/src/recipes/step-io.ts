@@ -396,6 +396,32 @@ export interface CompleteStepOutput {
   slotDisposition: 'ci-watch' | 'released' | 'release-deferred' | 'gate-held';
   artifacts: ArtifactRef[];
   cliCommand?: string;
+  /** Where a successful COMPLETE spent its time. */
+  timing?: CompleteStepTiming;
+}
+
+/**
+ * Where COMPLETE spent its time. Phases can nest (a capture's bundle-lock wait is inside
+ * `capture`), so they need not add up to `totalMs`.
+ */
+export interface CompleteStepTiming {
+  totalMs: number;
+  phasesMs: Record<string, number>;
+  /** Queueing for and holding run-bundle locks, summed over acquisitions. */
+  bundleLock: {
+    acquisitions: number;
+    waitMs: number;
+    heldMs: number;
+    /** Waits and holds by kind of holder (`capture`, `media admission`, `repair`, ...). */
+    holds?: Record<string, { count: number; waitMs: number; heldMs: number }>;
+    /**
+     * Self time of the store operations the step ran (`storeWalk`, `payloadCopy`, ...), held or
+     * not. Each excludes the timed operations nested inside it, so they do not overlap.
+     */
+    opsMs?: Record<string, { count: number; ms: number }>;
+  };
+  /** Processes the step started, by kind (git, gh, ssh, ...), from the shared exec wrapper. */
+  exec: Record<string, { calls: number; ms: number }>;
 }
 
 // ─── finalize ───
