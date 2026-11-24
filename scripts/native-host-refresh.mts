@@ -27,8 +27,17 @@ const root = path.resolve(
   machine === 'local' ? values.root : path.join(values.root, 'nodes', encodeURIComponent(machine)),
 );
 const hostFile = path.join(root, 'host.json');
-if (!existsSync(hostFile)) {
-  console.log(`No host recorded at ${root}; the next launch starts runtime ${RUNTIME_VERSION}.`);
+const client = new NativeSessionClient(root, machine);
+let live;
+try {
+  live = existsSync(hostFile) ? await client.liveSessions() : undefined;
+} catch (error) {
+  // A recorded host that no longer runs (retired or stopped) is the same as none.
+  if (!(error instanceof Error && 'code' in error && error.code === 'NATIVE_SOURCE_UNAVAILABLE'))
+    throw error;
+}
+if (!live) {
+  console.log(`No host running at ${root}; the next launch starts runtime ${RUNTIME_VERSION}.`);
   process.exit(0);
 }
 const host = JSON.parse(readFileSync(hostFile, 'utf8'));
@@ -37,9 +46,7 @@ console.log(
     `build ${String(host.runtimeBuild ?? 'unknown').slice(0, 12)}; this checkout runs ${RUNTIME_VERSION}.` +
     (nativeHostRunsCurrentRuntime(host) ? ' It is current.' : ' It needs a refresh.'),
 );
-
-const client = new NativeSessionClient(root, machine);
-for (const session of await client.liveSessions())
+for (const session of live)
   console.log(
     `  live ${session.id} ${session.state} ${session.runner} owner=${session.ownerPrincipalId} cwd=${session.cwd}`,
   );
