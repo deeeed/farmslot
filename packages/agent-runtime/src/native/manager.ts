@@ -257,12 +257,14 @@ interface SessionRecord {
 }
 
 /** How long an idle-runner upgrade fence holds without the stop that should follow it. */
-const IDLE_RUNNER_FENCE_MS = 60_000;
+const IDLE_RUNNER_FENCE_MS = Number(process.env.FARMSLOT_NATIVE_IDLE_FENCE_MS) || 60_000;
 
 /** Runs only inside the local host. Synchronous fsync orders intent before native input. */
 export class NativeSessionManager {
   private sessions = new Map<string, SessionRecord>();
   private upgradePrepared = false;
+  /** Lifts the latest idle-runner fence; cleared when another fence replaces it. */
+  private idleRunnerFence?: ReturnType<typeof setTimeout>;
   private pendingAdmissions = 0;
 
   /** Atomically fence new admissions only when no live or pre-reservation work exists. */
@@ -279,6 +281,9 @@ export class NativeSessionManager {
       )
         return false;
     this.upgradePrepared = true;
+    // This fence holds for good: an earlier idle-runner fence must not lift it.
+    clearTimeout(this.idleRunnerFence);
+    this.idleRunnerFence = undefined;
     return true;
   }
 
@@ -315,9 +320,14 @@ export class NativeSessionManager {
       this.upgradePrepared = true;
       // The supervisor's stop follows at once. If it never comes (the stop failed, or the
       // service that fenced died), the fence lifts so the idle sessions take input again.
-      setTimeout(() => {
+      clearTimeout(this.idleRunnerFence);
+      const fence = setTimeout(() => {
+        if (this.idleRunnerFence !== fence) return;
+        this.idleRunnerFence = undefined;
         this.upgradePrepared = false;
-      }, IDLE_RUNNER_FENCE_MS).unref();
+      }, IDLE_RUNNER_FENCE_MS);
+      fence.unref();
+      this.idleRunnerFence = fence;
     }
     return busy;
   }

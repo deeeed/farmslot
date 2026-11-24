@@ -379,14 +379,17 @@ export class NativeSessionClient {
       Date.now() - this.lastBusy.at < NATIVE_REFRESH_BUSY_REUSE_MS
     )
       return this.lastBusy.result;
-    // A request adding work is already on its way: stopping now could cut it off.
+    // A request adding work is already on its way: stopping now could cut it off. It ends
+    // soon, so this answer is not reused like a census.
     if (this.inFlight)
-      return this.busy(host, [`${this.inFlight} request(s) on their way to the host`]);
+      return { refreshed: false, busy: [`${this.inFlight} request(s) on their way to the host`] };
     if (await retireIdleNativeHost(this.root, host)) return { refreshed: true, busy: [] };
     if (!this.refreshPolicy) return { refreshed: false, busy: [] };
     const live = await this.liveSessionsOf(host);
     const kept = await this.refreshPolicy(live);
     const busy = live.flatMap((session) => {
+      // A live runner (processStopped unset) whose session isn't idle is busy, whatever its
+      // state: a closed or failed one still has a process to reconcile.
       const reason =
         session.state !== 'idle'
           ? session.state
@@ -418,28 +421,22 @@ export class NativeSessionClient {
     // Reads, interrupts, closes and answers add no work; they never wait for a refresh.
     if (!NATIVE_WORK_METHODS.includes(request.method))
       return this.dispatch<T>(request, await this.host(), []);
-    await this.enterWork();
-    let counted = true;
-    try {
-      let host = await this.host();
-      let busy: string[] = [];
-      if (
-        this.refreshPolicy &&
-        NATIVE_ADMISSION_METHODS.includes(request.method) &&
-        !nativeHostRunsCurrentRuntime(host)
-      ) {
-        // This launch is not on its way to the old host; the refresh may stop it.
-        this.inFlight -= 1;
-        counted = false;
+    if (this.refreshPolicy && NATIVE_ADMISSION_METHODS.includes(request.method)) {
+      // A launch checks the host before it counts itself: it never goes to an old host, so
+      // it must not hold that host's refresh, nor another launch's.
+      while (this.refreshing) await this.refreshing.catch(() => undefined);
+      const host = await this.host();
+      if (!nativeHostRunsCurrentRuntime(host)) {
         const refresh = await this.refreshStaleHost();
-        await this.enterWork();
-        counted = true;
-        host = await this.host();
-        busy = refresh.refreshed ? [] : refresh.busy;
+        // Refused before any request reaches the old host (capability errors first).
+        if (!refresh.refreshed) return this.dispatch<T>(request, host, refresh.busy);
       }
-      return await this.dispatch<T>(request, host, busy);
+    }
+    await this.enterWork();
+    try {
+      return await this.dispatch<T>(request, await this.host(), []);
     } finally {
-      if (counted) this.inFlight -= 1;
+      this.inFlight -= 1;
     }
   }
 

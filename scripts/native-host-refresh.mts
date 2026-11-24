@@ -61,7 +61,7 @@ else {
       ? `Not refreshed; busy: ${busy.join('; ')}`
       : values['stop-idle']
         ? 'Not refreshed.'
-        : 'Not refreshed: live runners remain. Add --stop-idle to stop idle ones.',
+        : 'Not refreshed: the host is not idle or could not be verified. --stop-idle also stops idle runners.',
   );
   process.exitCode = 1;
 }

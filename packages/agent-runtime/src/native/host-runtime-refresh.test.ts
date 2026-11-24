@@ -1,6 +1,6 @@
 // @farmslot:serial. Uses an owned detached host and OS process cleanup.
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 
@@ -284,6 +284,88 @@ test('a busy result answers launches for a few seconds without a new census', as
     assert.equal(censuses, 1);
     await client.close('owner', session.id);
   } finally {
+    await stopNativeStack(fixture);
+  }
+});
+
+test('two launches at once on an idle older-runtime host share its refresh and both start', async () => {
+  const fixture = setup({ manualTurns: true });
+  const client = new NativeSessionClient(fixture.root);
+  client.setRefreshPolicy(keepNone);
+  try {
+    const { session } = await skewedHost(fixture, client);
+    await fixture.completeTurn();
+    await until(async () => (await client.inspect('owner', session.id)).state === 'idle');
+    const before = olderHost(fixture);
+
+    const launched = await Promise.all([
+      client.create('owner', { runner: 'codex', cwd: fixture.cwd }),
+      client.create('owner', { runner: 'codex', cwd: fixture.cwd }),
+    ]);
+
+    assert.equal(launched.length, 2);
+    assert.notEqual(readJson<HostIdentity>(join(fixture.root, 'host.json')).pid, before.pid);
+    for (const next of launched) await client.close('owner', next.id);
+  } finally {
+    await stopNativeStack(fixture);
+  }
+});
+
+test('a torn or empty journal does not stop the census', async () => {
+  const fixture = setup({ manualTurns: true });
+  const client = new NativeSessionClient(fixture.root);
+  client.setRefreshPolicy(keepNone);
+  try {
+    const { session } = await skewedHost(fixture, client);
+    await fixture.completeTurn();
+    await until(async () => (await client.inspect('owner', session.id)).state === 'idle');
+    mkdirSync(join(fixture.root, 'sessions'), { recursive: true });
+    writeFileSync(join(fixture.root, 'sessions', 'torn.journal'), '{"info":{"id":"torn"');
+    writeFileSync(join(fixture.root, 'sessions', 'empty.journal'), '');
+    skew(fixture);
+
+    assert.deepEqual(await client.refreshStaleHost(), { refreshed: true, busy: [] });
+  } finally {
+    await stopNativeStack(fixture);
+  }
+});
+
+test('a fenced host answers a replayed steer, and the fence lifts if no stop follows', async () => {
+  const fixture = setup({ manualTurns: true });
+  process.env.FARMSLOT_NATIVE_IDLE_FENCE_MS = '500';
+  const client = new NativeSessionClient(fixture.root);
+  try {
+    await client.warm();
+    const session = await client.create('owner', { runner: 'codex', cwd: fixture.cwd });
+    await client.send('owner', session.id, 'first-turn', 'first');
+    await fixture.completeTurn();
+    await until(async () => (await client.inspect('owner', session.id)).state === 'idle');
+    const host = readJson<HostIdentity>(join(fixture.root, 'host.json'));
+
+    assert.deepEqual(
+      await requestHost(host, { method: 'prepareUpgrade', owner: 'owner', idleRunners: true }),
+      { idle: true, busy: [] },
+    );
+    assert.equal((await client.steer('owner', session.id, 'first-turn', 'first')).accepted, true);
+    await assert.rejects(client.steer('owner', session.id, 'late-steer', 'late'), {
+      code: 'NATIVE_HOST_VERSION_SKEW',
+    });
+    // No stop came: the fence lifts and the idle session takes input again.
+    await until(async () => {
+      try {
+        await client.send('owner', session.id, 'after-fence', 'after');
+        return true;
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'NATIVE_HOST_VERSION_SKEW')
+          return false;
+        throw error;
+      }
+    });
+    await fixture.completeTurn();
+    await until(async () => (await client.inspect('owner', session.id)).state === 'idle');
+    await client.close('owner', session.id);
+  } finally {
+    delete process.env.FARMSLOT_NATIVE_IDLE_FENCE_MS;
     await stopNativeStack(fixture);
   }
 });
