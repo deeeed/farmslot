@@ -125,9 +125,6 @@ if (process.ppid !== node) stop();
 // from the selected installation, just as its bin/farmslot.mjs does.
 const taskProcess = `
 const workerData = JSON.parse(process.argv[1]);
-// The full NODE_OPTIONS for the subprocesses this task starts (its own node had no preloads).
-if (workerData.nodeOptions === undefined) delete process.env.NODE_OPTIONS;
-else process.env.NODE_OPTIONS = workerData.nodeOptions;
 // IPC stands in for a worker port. A message after the parent closed the channel is dropped.
 let delivered = false;
 const parentPort = {
@@ -224,6 +221,12 @@ ChildProcess.prototype.spawn = function(options) {
   bootstrapFarmslotHome();
   const { okEnvelope, errorEnvelope } = await import(pathToFileURL(path.join(root, 'src/envelope.ts')).href);
   const command = workerData.action === 'init' ? 'internal.task-init' : 'task.verify';
+  // The full NODE_OPTIONS for the subprocesses provider code starts, put back only now: tsx
+  // and its esbuild worker are running, and a thread started with execArgv reads NODE_OPTIONS
+  // again, so restoring earlier would run the preloads inside this task. A thread provider
+  // code starts with execArgv will see them, as it would on the CLI transport.
+  if (workerData.nodeOptions === undefined) delete process.env.NODE_OPTIONS;
+  else process.env.NODE_OPTIONS = workerData.nodeOptions;
   let result;
   try {
     if (workerData.action === 'init') {
@@ -251,11 +254,12 @@ type TaskMessage =
 const PRELOAD_FLAGS = new Set(['--import', '--require', '-r', '--loader', '--experimental-loader']);
 /**
  * NODE_OPTIONS without its module preloads: the flags above, as `--flag value` or
- * `--flag=value`. Values may be double-quoted with backslash escapes, as node reads them.
+ * `--flag=value`, tokenized as node reads NODE_OPTIONS.
  */
 export function withoutPreloads(options: string): string {
   const kept: string[] = [];
-  const tokens = options.match(/(?:[^\s"\\]|\\.|"(?:[^"\\]|\\.)*")+/g) ?? [];
+  // As node splits it: on spaces only, with backslash escapes only inside double quotes.
+  const tokens = options.match(/(?:[^ "]|"(?:[^"\\]|\\.)*")+/g) ?? [];
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i]!;
     if (PRELOAD_FLAGS.has(token)) i++;
@@ -565,12 +569,21 @@ export async function runTaskRuntime(
           // Bounded: a group whose remaining member this process may not signal stays listed.
           // Each ps can take its 2 s timeout, so the last one starts in time to end by then.
           const census = Date.now() + NODE_EXEC_CLOSEOUT_MS - 2000;
+          let censusFailure = '';
           while (stopped && children.size && Date.now() < census) {
-            const groups = await new Promise<string>((done, fail) =>
-              execFile('/bin/ps', ['-axo', 'pgid=,stat='], { timeout: 2000 }, (error, output) =>
-                error ? fail(error) : done(output),
-              ),
-            );
+            let groups: string;
+            try {
+              groups = await new Promise<string>((done, fail) =>
+                execFile('/bin/ps', ['-axo', 'pgid=,stat='], { timeout: 2000 }, (error, output) =>
+                  error ? fail(error) : done(output),
+                ),
+              );
+            } catch (error) {
+              // A failed census ends it: the groups it could not confirm are named, and the
+              // result (a delivered one included) still comes back.
+              censusFailure = `Task group census failed: ${error instanceof Error ? error.message : String(error)}\n`;
+              break;
+            }
             const live = new Set(
               groups.split('\n').flatMap((line) => {
                 const [group, state] = line.trim().split(/\s+/);
@@ -586,9 +599,10 @@ export async function runTaskRuntime(
             exitCode: code || 1,
           };
           const survivors =
-            stopped && children.size
+            censusFailure +
+            (stopped && children.size
               ? `Task groups still present: ${[...children].join(', ')}\n`
-              : '';
+              : '');
           resolve({
             ...outcome,
             stdout: stdout + outcome.stdout,

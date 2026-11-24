@@ -404,11 +404,14 @@ test('NODE_OPTIONS reaches a task without its module preloads', () => {
     '--max-old-space-size=8192 --trace-warnings',
   );
   assert.equal(withoutPreloads('--import=tsx'), '');
-  // Quoted values, as node reads them, stay whole.
+  // Tokenized as node does: quoted values stay whole, only spaces separate, and a backslash
+  // escapes only inside quotes.
   assert.equal(
     withoutPreloads('--require "/a b/x.js" --title="a \\"b\\" c" --max-old-space-size=1'),
     '--title="a \\"b\\" c" --max-old-space-size=1',
   );
+  assert.equal(withoutPreloads('--title=a\tb --import x'), '--title=a\tb');
+  assert.equal(withoutPreloads('--import=a\\ b'), 'b');
 });
 
 test(
