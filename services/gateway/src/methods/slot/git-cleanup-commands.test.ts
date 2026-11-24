@@ -8,9 +8,11 @@ import test from 'node:test';
 import {
   CLEAR_INDEX_FLAGS_COMMAND,
   CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND,
+  PRE_FETCH_CLEANUP_COMMAND,
   recreateBranchCommand,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
   REFRESH_REMOTE_REF_LOCKS_COMMAND,
+  REMOVE_STALE_TMP_PACKS_COMMAND,
 } from './git-cleanup-commands.js';
 
 function runBash(command: string, cwd?: string) {
@@ -266,4 +268,63 @@ test('recreateBranchCommand is refused, config kept, when another worktree holds
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('REMOVE_STALE_TMP_PACKS_COMMAND removes temporary packs a killed fetch left, and keeps live ones', () => {
+  const result = spawnSync(
+    'bash',
+    [
+      '-c',
+      `ROOT=$(mktemp -d)
+      HOLDER=
+      trap '[ -n "$HOLDER" ] && kill "$HOLDER" 2>/dev/null; command rm -rf "$ROOT"' EXIT
+      git init -q "$ROOT/repo"
+      cd "$ROOT/repo"
+      PACK=$(cd .git/objects/pack && pwd -P)
+      touch -t 202601010000 "$PACK/tmp_pack_stale" "$PACK/tmp_idx_stale" "$PACK/tmp_pack_held" "$PACK/pack-kept.pack"
+      touch "$PACK/tmp_pack_fresh"
+      # A process still writing an old-looking temporary pack keeps it.
+      bash -c 'exec 3<"$1"; sleep 30' _ "$PACK/tmp_pack_held" &
+      HOLDER=$!
+      for _ in $(seq 50); do lsof "$PACK/tmp_pack_held" >/dev/null 2>&1 && break; sleep 0.05; done
+      eval "$CMD"
+      ls "$PACK" | sort | tr '\\n' ' '`,
+    ],
+    { encoding: 'utf8', env: { ...process.env, CMD: REMOVE_STALE_TMP_PACKS_COMMAND } },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), 'pack-kept.pack tmp_pack_fresh tmp_pack_held');
+});
+
+test('REMOVE_STALE_TMP_PACKS_COMMAND removes nothing when lsof cannot check ownership', () => {
+  const result = spawnSync(
+    'bash',
+    [
+      '-c',
+      `ROOT=$(mktemp -d)
+      trap 'command rm -rf "$ROOT"' EXIT
+      git init -q "$ROOT/repo"
+      cd "$ROOT/repo"
+      touch -t 202601010000 .git/objects/pack/tmp_pack_stale
+      PATH=/nonexistent
+      eval "$CMD"
+      status=$?
+      PATH=/usr/bin:/bin
+      ls .git/objects/pack
+      exit $status`,
+    ],
+    {
+      encoding: 'utf8',
+      env: { ...process.env, CMD: REMOVE_STALE_TMP_PACKS_COMMAND.replace(/\bgit /g, `${'/usr/bin/git'} `) },
+    },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /tmp_pack_stale/);
+});
+
+test('the pre-fetch cleanup clears ref locks and stale temporary packs', () => {
+  assert.ok(PRE_FETCH_CLEANUP_COMMAND.includes(REMOVE_STALE_TMP_PACKS_COMMAND));
+  assert.ok(PRE_FETCH_CLEANUP_COMMAND.includes(REFRESH_REMOTE_REF_LOCKS_COMMAND));
 });

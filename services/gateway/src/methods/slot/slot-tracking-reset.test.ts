@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -241,4 +241,21 @@ test('idle refresh repairs an old unowned remote-ref lock before fetching', asyn
   await reset(slotVars(repo, 'stale-ref'), {}, undefined, 'main');
   assert.equal(git(repo, 'rev-parse', 'HEAD'), git(repo, 'rev-parse', 'origin/main'));
   git(repo, 'fetch', 'origin', 'main');
+});
+
+test('idle refresh removes temporary packs a killed fetch left, before fetching', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'idle-stale-tmp-pack-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'slot');
+  initPrimaryRepo(repo, path.join(root, 'origin.git'));
+  const pack = path.join(repo, git(repo, 'rev-parse', '--git-path', 'objects/pack'));
+  const stale = path.join(pack, 'tmp_pack_killed');
+  const fresh = path.join(pack, 'tmp_pack_receiving');
+  writeFileSync(stale, 'partial');
+  writeFileSync(fresh, 'partial');
+  const hourAgo = new Date(Date.now() - 61 * 60_000);
+  utimesSync(stale, hourAgo, hourAgo);
+  await reset(slotVars(repo, 'stale-tmp-pack'), {}, undefined, 'main');
+  assert.equal(existsSync(stale), false, 'an hour-old temporary pack is removed');
+  assert.equal(existsSync(fresh), true, 'a pack still being written is kept');
 });

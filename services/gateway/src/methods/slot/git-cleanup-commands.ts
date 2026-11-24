@@ -12,6 +12,16 @@ export const REFRESH_INDEX_AND_UNLOCK_COMMAND = `index_lock=$(git rev-parse --gi
 // them for git to report so a live fetch is never disturbed.
 export const REFRESH_REMOTE_REF_LOCKS_COMMAND = `now=$(date +%s); cleanup_git_lock() { lock="$1"; [ -f "$lock" ] || return 0; mtime=$(stat -f %m "$lock" 2>/dev/null) || mtime=$(stat -c %Y "$lock" 2>/dev/null || echo "$now"); if [ $((now - mtime)) -gt 30 ] && command -v lsof >/dev/null 2>&1 && ! lsof "$lock" >/dev/null 2>&1; then rm -f "$lock"; fi; }; remote_refs_dir=$(git rev-parse --git-path refs/remotes/origin 2>/dev/null || echo .git/refs/remotes/origin); if [ -d "$remote_refs_dir" ]; then find "$remote_refs_dir" -type f -name '*.lock' -print | while IFS= read -r lock; do cleanup_git_lock "$lock"; done; fi; packed_refs_lock=$(git rev-parse --git-path packed-refs.lock 2>/dev/null || echo .git/packed-refs.lock); cleanup_git_lock "$packed_refs_lock"`;
 
+// A fetch killed mid-transfer (its timeout's SIGKILL, a dropped ssh link) leaves
+// objects/pack/tmp_pack_* behind, and git only prunes them in a gc the farm rarely
+// runs: one slot had 3.55 GiB of them. Remove those untouched for an hour that no
+// process holds open. Without lsof, ownership can't be checked, so nothing is removed.
+// It never fails the command it precedes.
+export const REMOVE_STALE_TMP_PACKS_COMMAND = `pack_dir=$(git rev-parse --git-path objects/pack 2>/dev/null) && pack_dir=$(cd "$pack_dir" 2>/dev/null && pwd -P) && if command -v lsof >/dev/null 2>&1; then open_packs=$(lsof -Fn +d "$pack_dir" 2>/dev/null | sed -n 's/^n//p'); find "$pack_dir" -maxdepth 1 -type f \\( -name 'tmp_pack_*' -o -name 'tmp_idx_*' \\) -mmin +60 -print | while IFS= read -r tmp_pack; do case "\n$open_packs\n" in *"\n$tmp_pack\n"*) ;; *) rm -f "$tmp_pack" ;; esac; done; fi; true`;
+
+/** Before a fetch: stale remote ref locks, then stale temporary packs. */
+export const PRE_FETCH_CLEANUP_COMMAND = `${REFRESH_REMOTE_REF_LOCKS_COMMAND}; ${REMOVE_STALE_TMP_PACKS_COMMAND}`;
+
 // Same-branch prepares should still refresh/unlock after flag-sweep failures,
 // but the final exit status must preserve the flag-sweep failure.
 export const CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND = `flag_status=0; ${CLEAR_INDEX_FLAGS_COMMAND} || flag_status=$?; ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; exit $flag_status`;

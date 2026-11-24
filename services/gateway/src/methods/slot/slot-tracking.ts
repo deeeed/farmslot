@@ -37,7 +37,7 @@ import { mutateSlotGit } from '../../run-lifecycle/validation-run-commits.js';
 import {
   CLEAR_INDEX_FLAGS_COMMAND,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
-  REFRESH_REMOTE_REF_LOCKS_COMMAND,
+  PRE_FETCH_CLEANUP_COMMAND,
 } from './git-cleanup-commands.js';
 
 export type MergeMainStrategy = 'merge' | 'rebase';
@@ -249,7 +249,7 @@ export async function resetSlotRepoToIdle(
   const fetched = await execOnSlot(
     vars,
     withFarmGitConfig(
-      `cd ${repo} && { ${REFRESH_REMOTE_REF_LOCKS_COMMAND}; } && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+      `cd ${repo} && { ${PRE_FETCH_CLEANUP_COMMAND}; } && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
     ),
   );
   if (fetched.exitCode !== 0)

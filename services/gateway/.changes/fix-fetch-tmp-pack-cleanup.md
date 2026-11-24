@@ -1,0 +1,1 @@
+- A slot's pre-fetch cleanup (idle refresh, workspace fetch) and prepare's first fetch remove `objects/pack/tmp_pack_*` files a killed fetch left behind, once they are an hour old and no process holds them open.
