@@ -37,18 +37,26 @@ sha256, sizeBytes, capturedAt, answersRound?, reason?}`. A source whose size and
   and run metrics gain `metrics.runnerSessionArchives[]` (the worker), one ref per
   session in capture order. The existing single refs (`runnerSessionArchive` on a
   context, `metrics.runnerSessionArchive` for the worker) stay, and each always
-  points at that context's latest captured session. Readers that show or price one
-  session keep reading the single ref unchanged: History
-  (`methods/worker-session-history.ts`, `runners/session-archive.ts`) and usage
-  (`runtime/session-usage.ts`, `runners/claude-usage-sessions.ts`). Usage therefore
-  still counts the latest session per context, as today; summing every session is
-  not part of this change.
+  points at that context's latest captured session. History
+  (`methods/worker-session-history.ts`) and usage (`runtime/session-usage.ts`,
+  `runners/claude-usage-sessions.ts`) keep reading one session through the single
+  ref, so usage still counts the latest session per context, as today; summing
+  every session is not part of this change.
+- **Archive path resolution.** The archive read helpers in `runners/session-archive.ts`
+  (`readRunnerSessionArchiveLines`, `verifiedRunnerSessionArchivePath`) build the
+  path from the ref's `sessionKey`,
+  `<contextId>/<sessionKey>/transcript.jsonl`, and fall back to the legacy
+  `<contextId>/transcript.jsonl` when the ref has no `sessionKey`. History and usage
+  go through these helpers, so they follow the new layout without changes of their
+  own.
 - **Legacy archives.** An archive written before this change, at
   `session-archives/<run>/<contextId>/transcript.jsonl` with only a single ref, reads
   as a one-element list whose `sessionKey` is `legacy`. Nothing is moved or rewritten.
 - **Readers that change (PR 1).** The episode writer (`run-completion/run-episode.ts`)
   lists every session in `trajectory.agents` and [Run episodes](run-episodes.md)
-  documents the per-session shape; the run store and agent contexts
+  documents the per-session shape; the archive read helpers in
+  `runners/session-archive.ts` resolve the path from the ref (above); the run store
+  and agent contexts
   (`runs/store.ts`, `agents/contexts.ts`) patch the list; list rows
   (`protocol/runs/list-row.ts`, `list-trim.ts`) trim the list as they trim the single
   ref; the portable bundle (`protocol/runs/portable-bundle.ts`) strips the list's
@@ -101,11 +109,19 @@ the implementing PR adds them, and until then the label is `null`.
 | `labels.git`            | `startRef, dispatchHead, finalHead, prHead, mergeSha`                                                            | `startRef` and `dispatchHead` as today; the other three are _new run fields_                                                                                                                                   |
 
 **The graded diff is retained.** When finalize or release records `labels.output`,
-the gateway also writes the diff it graded, `git diff <dispatchHead>` against the
-committed head, the working tree or the parked ref, as `output/graded.diff` in the
-run's retained artifacts (Amendment 1), under the bundle lock, with the sha256 it
-records. The episode lists that file among its references. A diff larger than the
-retained-artifact limit is recorded with its sha256 and size and no bytes.
+the gateway also writes the diff it graded, against `dispatchHead`, as
+`output/graded.diff` in the run's retained artifacts (Amendment 1), inside
+`withRunBundleStoreLock`, with the sha256 it records:
+
+- **Committed** or **parked-ref** output: `git diff <dispatchHead> <ref>`.
+- **Working-tree** output: the tree is staged into a temporary index
+  (`GIT_INDEX_FILE=<tmp> git add -A`, which honours `.gitignore`), then
+  `git diff --cached <dispatchHead>` against it, so new untracked files are
+  included. The slot's own index is not touched.
+
+The episode lists that file among its references. A diff larger than
+`runBundleRetention.maxBundleBytes` is recorded with its sha256 and size and no
+bytes.
 
 Writing a new run field updates the run. The retention pass recaptures every
 episode whose run changed since its last pass, so a merge recorded after the run
@@ -263,8 +279,9 @@ and file names. Rules, in order:
 8. Machine names from the pool, which become `<machine>`.
 
 Each rule replaces a match in file contents with `[REDACTED:<rule>]`, and in file
-names with `REDACTED-<rule>` (no brackets or colon, which file systems handle badly),
-and counts it in `redaction.json`. A file the scrubber cannot read is left out, never exported raw.
+names with `REDACTED-<rule>` (no brackets or colon, which file systems handle
+badly), and counts it in `redaction.json`. A file the scrubber cannot read is left
+out, never exported raw.
 
 Redaction is a best-effort backstop, not a guarantee. An export is for the local
 machine only; sharing it, even internally, needs a human review first.
@@ -291,5 +308,8 @@ Measured on the dev gateway, 2026-11-24:
   the same size per session.
 - **Uncompressed at rest:** transcripts stay raw JSONL, because the Hub viewer and
   the History readers read it directly. Gzip reached 2.5x on a 40-transcript sample.
+- **Graded diff:** one batched Git command per finalize and per release that records
+  the output (on the slot's node for a remote slot, one node call), plus a local
+  write of the diff into the retained artifacts.
 - **Labels:** a few kilobytes per episode.
 - **Export:** runs outside the gateway, so it costs the gateway nothing.

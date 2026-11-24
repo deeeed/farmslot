@@ -43,7 +43,9 @@ Reviewer transcripts were often gone by slot release, and a context reused acros
 rounds kept only its last session. Archives are keyed by context and runner
 session, written through a temporary file and a rename, and captured one at a time
 per run. Contexts gain a list of per-session refs; the existing single ref stays
-and always points at the latest session, so History and usage read it as before.
+and always points at the latest session, and the archive read helpers resolve its
+path from its session key (falling back to the old path), so History and usage
+follow the new layout.
 Archives written before the change read as one session and are never moved. The
 details are in [Run traces](../reference/run-traces.md).
 
