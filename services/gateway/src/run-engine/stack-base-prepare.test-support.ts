@@ -27,14 +27,24 @@ export const needsTmuxSandbox = {
 const execFileAsync = promisify(execFile);
 
 const realPrepareCommand = await import('../methods/slot/prepare-command.js');
+type PrepareCommand = typeof realPrepareCommand.runPrepareCommand;
+const stateOnly: PrepareCommand = async (): Promise<ExecResult> => ({
+  stdout: 'state-only dependency phase completed\n',
+  stderr: '',
+  exitCode: 0,
+});
+let prepareCommand: PrepareCommand = stateOnly;
+/** Run `command` for prepare's hook commands in one test, then the state-only default again. */
+export function mockPrepareCommand(t: import('node:test').TestContext, command: PrepareCommand) {
+  prepareCommand = command;
+  t.after(() => {
+    prepareCommand = stateOnly;
+  });
+}
 mock.module('../methods/slot/prepare-command.js', {
   namedExports: {
     ...realPrepareCommand,
-    runPrepareCommand: async (): Promise<ExecResult> => ({
-      stdout: 'state-only dependency phase completed\n',
-      stderr: '',
-      exitCode: 0,
-    }),
+    runPrepareCommand: (...args: Parameters<PrepareCommand>) => prepareCommand(...args),
   },
 });
 const realFixtures = await import('../methods/slot/fixtures.js');

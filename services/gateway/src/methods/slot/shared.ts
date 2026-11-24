@@ -23,6 +23,8 @@ export type SlotPrepareResult = {
   stackBase?: StartRefResolution;
   /** Selected prepare profile + any precondition fallbacks taken (ADR-037). */
   profile?: { selected: string; requested?: string; fallbacks: PrepareProfileFallback[] };
+  /** Lockfiles the deps phase rewrote for a drifted PR branch; the worker must commit them. */
+  lockfilesRewritten?: string[];
   /** Branches prepare created to keep unpushed commits of a branch it deleted or reset. */
   keptBranches?: string[];
 };
@@ -54,6 +56,8 @@ export interface PrepareCommandError extends Error {
   failedCommand?: string;
   failedLogPath?: string;
   failedPhase?: string;
+  /** A failure the run can act on: the install refused a lockfile that does not match package.json. */
+  failureKind?: 'lockfile-drift';
   /** Slot-host paths: the slot's runtime logs. */
   relatedLogs?: string[];
   /** The slot is local, so its related logs are files the gateway can read. */

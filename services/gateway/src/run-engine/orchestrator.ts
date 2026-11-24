@@ -1324,12 +1324,13 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       // Persist partial I/O even on failure — valuable for debugging and fine-tuning
       const partialIO = stepPartialIO.get(runId);
       stepPartialIO.delete(runId);
-      const { failedCommand, failedPhase } = failure;
+      const { failedCommand, failedPhase, failureKind } = failure;
       const failureOutputs = {
         ...partialIO?.outputs,
         ...(failedCommand ? { failedCommand } : {}),
         ...(failedLogPath ? { failedLogPath } : {}),
         ...(failedPhase ? { failedPhase } : {}),
+        ...(failureKind ? { failureKind } : {}),
         ...(relatedLogs?.length ? { relatedLogs } : {}),
       };
       updateRunStep(runId, stepName, {

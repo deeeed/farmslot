@@ -21,6 +21,7 @@ import { checklistMarkerCommand, targetForChecklistBasename } from '../tasks/che
 import { readReviewFeedback } from './feedback.js';
 import { withNativeReviewMutation, withNativeReviewOperation } from './native-review-operation.js';
 import { reviewContextPolicyRound } from './review-round-budget.js';
+import { ReviewerProgressClock } from './reviewer-progress.js';
 import { reviewerFeedbackRelPath } from './template-paths.js';
 
 interface CompletionInput {
@@ -92,37 +93,39 @@ export async function continueNativeReviewCompletion(
       throw new NativeReviewCompletionError(
         'Native reviewer completion has no valid progress clock',
       );
-    let latest = acceptedAt;
-    const recordProgress = (at: string) => {
-      const value = Date.parse(at);
-      if (Number.isFinite(value) && value >= acceptedAt)
-        latest = Math.max(latest, Math.min(Date.now(), value));
-    };
+    // The same progress rules as the live monitor: tools and marks; an open tool gets longer.
+    const progress = new ReviewerProgressClock(acceptedAt, timeout);
     for (const event of probe.code === 'non_terminal'
       ? (probe.signal?.checklistTiming?.events ?? [])
       : [])
-      recordProgress(event.checkedAt);
-    let page = snapshot;
-    while (Number.isFinite(latest) && Date.now() - latest >= timeout) {
-      for (const event of page.events) {
-        if (
-          event.sessionId === context.nativeSession!.sessionId &&
-          event.commandId === context.nativeSession!.commandId &&
-          event.generation === context.nativeSession!.generation &&
-          ['command.accepted', 'tool.started', 'tool.completed'].includes(event.type)
-        )
-          recordProgress(event.at);
+      progress.record(event.checkedAt);
+    // Only the whole history can say the reviewer is idle: a later page may close an open tool,
+    // which shortens its limit again.
+    if (progress.expired()) {
+      for (let page = snapshot; ; ) {
+        for (const event of page.events) {
+          if (
+            event.sessionId === context.nativeSession!.sessionId &&
+            event.commandId === context.nativeSession!.commandId &&
+            event.generation === context.nativeSession!.generation
+          ) {
+            if (event.type === 'command.accepted') progress.record(event.at);
+            else progress.observe(event);
+          }
+        }
+        if (!page.hasMore) break;
+        page = await readNativeWorkerSnapshot(runId, 'review', context.id, {
+          after: page.cursor,
+          limit: 500,
+        });
+        current();
       }
-      if (Date.now() - latest < timeout) break;
-      if (!page.hasMore)
+      if (progress.expired())
         throw new NativeReviewCompletionError(
-          'Native reviewer completion turn exceeded its checklist/tool inactivity limit',
+          progress.toolOpen
+            ? 'Native reviewer completion turn exceeded its open-tool limit'
+            : 'Native reviewer completion turn exceeded its checklist/tool inactivity limit',
         );
-      page = await readNativeWorkerSnapshot(runId, 'review', context.id, {
-        after: page.cursor,
-        limit: 500,
-      });
-      current();
     }
   }
   if (adopted) return false;
