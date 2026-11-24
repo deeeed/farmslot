@@ -17,19 +17,21 @@ import {
   buildFollowUpClassification,
   buildFollowUpLineage,
 } from '../../family-observability/context.js';
-import { loadFleetStatus, loadPoolConfigs, loadProjectConfig } from '../../fleet/state.js';
+import { loadFleetStatus, loadProjectConfig } from '../../fleet/state.js';
 import {
   assertRereviewable,
   liveReviewSessionSlot,
   rereviewTarget,
 } from '../../pr-rules/rereview-request.js';
 import { WarmReviewRefusal } from '../../review/session-mode.js';
-import { resolveWorkspaceReviewTemplate } from '../../review-workspaces/admission.js';
+import {
+  resolveWorkspaceReviewTemplate,
+  reviewWorkspacePoolFor,
+} from '../../review-workspaces/admission.js';
 import {
   bindWorkspaceReviewResult,
   rereviewWorkspaceReviewer,
 } from '../../review-workspaces/continuity.js';
-import { resolveReviewWorkspacePool } from '../../review-workspaces/pool.js';
 import {
   automatedRepeatReviewSelection,
   buildRepeatReviewContext,
@@ -83,13 +85,16 @@ async function supersedeBlockedReview(run: Run, successor: string): Promise<void
 
 /** The configured static-review template, resolved as run.create resolves it. */
 async function currentWorkspaceTemplate(run: Run, machine: string) {
-  const [pools, project] = await Promise.all([loadPoolConfigs(), loadProjectConfig(run.project)]);
+  const [pool, project] = await Promise.all([
+    reviewWorkspacePoolFor(machine, run.project),
+    loadProjectConfig(run.project),
+  ]);
   const templateId = project?.staticReview?.templateId;
   if (!templateId)
     throw new Error('Workspace re-review requires the project canonical static-review template');
   return resolveWorkspaceReviewTemplate({
     project: run.project,
-    pool: resolveReviewWorkspacePool(pools, machine, run.project),
+    pool,
     mode: 'autonomous',
     domain: run.domain ?? undefined,
     executionTemplateId: templateId,

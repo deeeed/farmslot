@@ -292,6 +292,14 @@ export async function resolveReviewWorkspacePlatform(
   return member ? (await loadSlotVars(member.id)).platform : pool.platform;
 }
 
+/** The review-enabled pool a workspace review on this machine runs in. */
+export async function reviewWorkspacePoolFor(
+  machine: string,
+  project: string,
+): Promise<PoolConfig> {
+  return resolveReviewWorkspacePool(await loadPoolConfigs(), machine, project);
+}
+
 /** The current configured template a workspace review freezes at creation (run.create and re-review). */
 export async function resolveWorkspaceReviewTemplate(input: {
   project: string;
