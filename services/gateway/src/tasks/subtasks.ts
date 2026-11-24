@@ -26,9 +26,9 @@ import {
   type TaskProgressStructured,
   type TaskStepProgress,
   type TaskStepSubtaskProgress,
+  WORKER_SIGNAL_FILE,
   type WorkerSignalChecklistTiming,
   type WorkerSignalParentLink,
-  WORKER_SIGNAL_FILE,
   type WorkerSignalStatus,
 } from '@farmslot/protocol';
 

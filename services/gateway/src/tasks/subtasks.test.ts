@@ -400,7 +400,10 @@ test("a completion is refused only by its own children, not a parallel or stoppe
     assert.equal(completingParentSignal('REVIEW.rev-a.md', 'custom.json'), undefined);
     // No task file to derive from: only a derived name is scoped; anything else fails closed.
     assert.equal(completingParentSignal(null, 'SIGNAL.json'), 'SIGNAL.json');
-    assert.equal(completingParentSignal(null, 'REVIEW.rev-a-SIGNAL.json'), 'REVIEW.rev-a-SIGNAL.json');
+    assert.equal(
+      completingParentSignal(null, 'REVIEW.rev-a-SIGNAL.json'),
+      'REVIEW.rev-a-SIGNAL.json',
+    );
     assert.equal(completingParentSignal(null, 'custom.json'), undefined);
     assert.match(
       (await subtaskTerminalRefusal(LOCAL, settled, 'complete', undefined)) ?? '',
