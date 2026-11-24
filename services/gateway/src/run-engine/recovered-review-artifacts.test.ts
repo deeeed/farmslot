@@ -491,6 +491,12 @@ test('restart after result persistence repairs accounting before skipping an alr
 
 // 961d55d3: the completion turn ended without its mark; the reviewer's ISSUES result is the verdict.
 test('restart recovery ingests the valid ISSUES result of a completion turn that ended without its mark', async (t) => {
+  const previousOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'owner';
+  t.after(() => {
+    if (previousOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = previousOwner;
+  });
   const f = await fixture(t);
   const slotRepo = path.resolve(f.taskDir, '../../..');
   await writeFile(
@@ -535,14 +541,6 @@ test('restart recovery ingests the valid ISSUES result of a completion turn that
       },
     },
   });
-  t.after(() =>
-    updateRun(f.run.id, {
-      agentContexts: getRun(f.run.id)?.agentContexts?.map((context) => ({
-        ...context,
-        nativeSession: { ...nativeSession, closedAt: new Date().toISOString() },
-      })),
-    }),
-  );
   const snapshot: NativeSessionReadResult = {
     session: {
       id: 'native-session',

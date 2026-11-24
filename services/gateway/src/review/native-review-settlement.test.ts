@@ -836,7 +836,7 @@ for (const [code, instruction] of [
   ['missing', /If you never ran .* start, run it once now/],
   ['invalid-schema', /Do not run start/],
 ] as const)
-  test(`valid findings with a ${code} signal get the one completion re-ask`, async (t) => {
+  test(`valid findings whose signal reads ${code} get the one completion re-ask`, async (t) => {
     ending = `completion-${code}`;
     completionCommands.length = 0;
     const run = await nativeRun(t);
