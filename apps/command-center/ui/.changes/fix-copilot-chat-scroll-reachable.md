@@ -1,0 +1,1 @@
+- Co-Pilot chat scrolls on short windows, including with Settings open, so pending approvals and the composer stay reachable. The cache status and the file transfer bar sit below the content instead of covering the bottom of every view.

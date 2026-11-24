@@ -1,0 +1,38 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { mock, test } from 'node:test';
+
+// The cache status row and the transfer bar sit below the app in flow. As fixed overlays they
+// covered the bottom of every view, including the Co-Pilot composer and its approval controls.
+mock.module('@farmslot/local-store/browser', {
+  namedExports: {
+    browserResourceStoreDiagnostics: () => ({}),
+    createBrowserSqliteResourceStore: async () => ({}),
+  },
+});
+mock.module('../resource-cache.js', {
+  namedExports: {
+    getResourceCache: () => undefined,
+    getResourceStoreMetadata: () => undefined,
+    getResourceStoreNotice: () => '',
+    getResourceWorkspaceKey: () => '',
+    subscribeResourceCache: () => () => undefined,
+  },
+});
+mock.module('../gateway-client.js', { namedExports: { gateway: {} } });
+
+const { ResourceStoreNotice } = await import('./resource-store-notice.js');
+const { FileTransferProgressBanner } = await import('./shared/file-transfer-progress-banner.js');
+
+test('bottom status row and transfer bar never overlay the content', () => {
+  for (const component of [ResourceStoreNotice, FileTransferProgressBanner]) {
+    const css = [component.styles]
+      .flat()
+      .map((style) => String(style))
+      .join('\n');
+    assert.doesNotMatch(css, /position:\s*fixed/, `${component.name} must stay in flow`);
+  }
+  const index = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
+  assert.match(index, /body \{[^}]*display: flex;[^}]*flex-direction: column;/);
+  assert.match(index, /farm-app \{\s*flex: 1 1 0;\s*min-height: 0;\s*\}/);
+});

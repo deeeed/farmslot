@@ -313,12 +313,19 @@ export class ChatPanel extends LitElement {
       runtime && ['starting', 'running', 'reconnecting', 'stopping'].includes(runtime.status);
     const disabled = this.busy || !this.runtimeQuery.actable || !this.nativeCopilotSupported;
     return html`<style>
+        /* When the controls above the conversation leave too little height (short window,
+           settings open), the panel scrolls as a whole so the conversation, its approvals and the
+           composer stay reachable; otherwise the conversation fills the remaining height. */
         chat-panel {
           display: flex;
           flex-direction: column;
           flex: 1;
           min-height: 0;
+          overflow-y: auto;
           color: var(--fs-text-primary, #ddd);
+        }
+        chat-panel > :not(native-session-view) {
+          flex: none;
         }
         chat-panel .copilot-bar {
           display: flex;
@@ -329,9 +336,10 @@ export class ChatPanel extends LitElement {
           padding: 8px 16px;
           border-bottom: 1px solid var(--fs-border, #333);
         }
+        /* Room for the session's own header rows plus a readable timeline and a full composer. */
         chat-panel native-session-view {
-          flex: 1;
-          min-height: 0;
+          flex: 1 1 0;
+          min-height: 480px;
         }
         chat-panel .copilot-notice {
           min-height: 24px;
