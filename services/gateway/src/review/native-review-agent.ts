@@ -60,6 +60,7 @@ import {
   targetForChecklistBasename,
   taskDirRelPath,
 } from '../tasks/checklist-target.js';
+import { shouldApplyArtifactOnlyTaskPolicy } from '../tasks/run-contract.js';
 import { unwatchContext } from '../tasks/watcher.js';
 
 import { finishReviewCleanup } from './cleanup.js';
@@ -101,6 +102,7 @@ import {
   reviewerResultRelPath,
   reviewerScratchRule,
   scopeReviewFeedbackPath,
+  workingTreeReviewScope,
 } from './review-agent.js';
 import {
   admitReviewRound,
@@ -373,7 +375,11 @@ async function runNativeReviewAttempt(
       ),
     );
   const lastReviewedHeadSha = input.rereview?.lastReviewedHeadSha ?? retained?.lastReviewedHeadSha;
-  if (!recovering && lastReviewedHeadSha) {
+  // A comparison replay's output is its uncommitted working tree (its task says not to commit),
+  // so its re-review reads that tree instead of waiting for a commit that never comes. Other
+  // artifact-only runs commit their work locally and keep this gate.
+  const uncommittedWork = shouldApplyArtifactOnlyTaskPolicy(original);
+  if (!recovering && lastReviewedHeadSha && !uncommittedWork) {
     const tree = await execOnSlot(
       vars,
       'git rev-parse HEAD && git status --porcelain=v1 -z --untracked-files=all',
@@ -592,6 +598,10 @@ async function runNativeReviewAttempt(
         );
         // What this document gives the reviewer; a pass records it (F42).
         await noteReviewInputsAtLaunch(runId);
+        // The re-review scopes name commit ranges; a comparison replay's work is not in commits.
+        const workingTreeNote = uncommittedWork
+          ? workingTreeReviewScope(snapshot.snapshot.headSha ?? null)
+          : '';
         template = retained
           ? (snapshot.snapshot.interdiff
               ? interdiffReviewScope(
@@ -605,7 +615,9 @@ async function runNativeReviewAttempt(
                   priorHeadSha: retained.lastReviewedHeadSha,
                   currentHeadSha: snapshot.snapshot.headSha,
                   priorArtifactDir: `${retained.taskDir}/${reviewArtifactDir(retained.lastLoopNumber, retained.artifactScope)}`,
-                })) + template
+                })) +
+            workingTreeNote +
+            template
           : fallback
             ? (snapshot.snapshot.interdiff
                 ? interdiffReviewScope(
@@ -622,7 +634,9 @@ async function runNativeReviewAttempt(
                     rangeDiffPath: delta?.rangeDiffPath && `${taskDir}/${delta.rangeDiffPath}`,
                     deltaUnavailable: delta?.deltaUnavailable,
                     priorIssues: input.rereview!.priorIssues,
-                  })) + template
+                  })) +
+              workingTreeNote +
+              template
             : (original.engineState?.evalExperiment?.blind?.proof
                 ? `Judge the frozen proof output below against every ordered AC. The implementation is supplied input, not the worker's contribution. Read its exact QA base..head context and the recorded evidence files under ${taskDir}. Judge recipe quality, evidence fit, failures, missing coverage and each AC. Read recorded CI/receipts only. Never run tests, builds, recipes, installs or probes, and never request a product fix or worker retry.\n\nFrozen proof package:\n${await readProofOutput(original)}\n\n`
                 : original.engineState?.evalExperiment
