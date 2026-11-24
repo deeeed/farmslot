@@ -485,11 +485,21 @@ export async function launchWebDappBrowser(
   chmodSync(runtime, 0o700);
   const stateFile = path.join(runtime, 'browser.json');
   const appOrigin = `http://localhost:${appPort}`;
-  const headless = resolveHeadless({ headless: args.headless, headful: args.headful, env });
+  // The session is probed at most once: by the default display choice, or by
+  // the refusal below.
+  let locked;
+  const probeLock = () => (locked ??= sessionLocked());
+  const headless = resolveHeadless({
+    headless: args.headless,
+    headful: args.headful,
+    env,
+    sessionLocked: () => probeLock() === true,
+  });
   const slowMoMs = resolveSlowMo({ flag: args['slow-mo'], env });
-  // A headful browser can't paint while the macOS session is locked: refuse
-  // before starting, reusing or stopping one.
-  if (!headless && sessionLocked() === true) {
+  if (headless && locked === true) log('the macOS session is locked: launching headless');
+  // A headful browser that was asked for can't paint while the macOS session
+  // is locked: refuse before starting, reusing or stopping one.
+  if (!headless && probeLock() === true) {
     throw new Error(
       `SESSION_LOCKED: ${SESSION_LOCKED_MESSAGE}\nNext: ${SESSION_LOCKED_USER_ACTION}`,
     );
