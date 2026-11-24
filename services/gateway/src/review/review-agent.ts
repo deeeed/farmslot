@@ -218,6 +218,21 @@ that range only when the delta invalidates a prior assumption, and explain why i
 `;
 }
 
+/**
+ * A comparison replay leaves its work uncommitted, so a re-review's commit range can be empty:
+ * the reviewer reads the working tree instead.
+ */
+export function workingTreeReviewScope(headSha: string | null): string {
+  const head = headSha ?? 'HEAD';
+  return `## The work is uncommitted
+
+This comparison run keeps its implementation and review fixes in the working tree, not in commits,
+so the commit ranges above may hold no commits. Read the working tree: \`${GIT_DIFF_COMMAND} --stat ${head}\`,
+\`${GIT_DIFF_COMMAND} ${head}\` and \`git status --short\` for new files. That diff holds the whole
+implementation; the worker's report says what this fix round changed.
+`;
+}
+
 /** What an automatic re-review continues (ADR-063 Amendment 5). */
 export interface ReReviewContinuation {
   /** The lineage's last reviewed head. */
