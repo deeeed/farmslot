@@ -46,6 +46,8 @@ export interface SlotPrepareInternalOptions {
   stackBase?: { requestedRef: string };
   /** Called as soon as the stack base resolves, before any later prepare phase can fail. */
   onStackBaseResolved?: (resolution: StartRefResolution) => Promise<void>;
+  /** Called as soon as prepare keeps a branch's unpushed commits, before any later phase can fail. */
+  onBranchKept?: (branch: string) => void;
 }
 
 export interface PrepareCommandError extends Error {

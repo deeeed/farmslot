@@ -969,9 +969,12 @@ async function slotPrepareInner(
         [
           `cd ${shellQuote(vars.remoteRepo)} || exit 2`,
           `b=${which}; [ -n "$b" ] || exit 0`,
-          'head=$(git rev-parse --verify --quiet "refs/heads/$b") || exit 0',
+          'git show-ref --verify --quiet "refs/heads/$b" || exit 0',
+          'head=$(git rev-parse --verify "refs/heads/$b") || exit 2',
           `stranded=$(git rev-list --max-count=1 "$head" --not --remotes ${target ? shellQuote(target) : ''}) || exit 2`,
           '[ -n "$stranded" ] || exit 0',
+          // A kept branch that is itself about to move gets a second suffix: naming the copy
+          // after the moving branch would leave its commits nowhere.
           `kept="$b-kept-$(printf '%.12s' "$head")"`,
           '[ "$(git rev-parse --verify --quiet "refs/heads/$kept")" = "$head" ] || git branch "$kept" "$head" || exit 3',
           `printf '%s\\n' "$b" "$kept"`,
@@ -985,6 +988,7 @@ async function slotPrepareInner(
     const [source, kept] = keep.stdout.trim().split('\n');
     if (!source || !kept) return;
     keptBranches.push(kept);
+    opts?.onBranchKept?.(kept);
     step('branch', `Kept unpushed commits of ${source} on ${kept}`);
   };
   // Whatever path put the slot on the branch, the provenance must describe the

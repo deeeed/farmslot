@@ -487,6 +487,18 @@ export async function executePrepareStep(
               await prepareBlindTrialGit(runId, prepareController.signal);
             }
           : undefined,
+        // Recorded as it happens, so a prepare that fails later still names the kept branch.
+        onBranchKept: (kept) => {
+          const io = stepPartialIO.get(runId);
+          const recorded = io?.outputs?.keptBranches;
+          stepPartialIO.set(runId, {
+            inputs: io?.inputs ?? inputs,
+            outputs: {
+              ...io?.outputs,
+              keptBranches: [...(Array.isArray(recorded) ? recorded : []), kept],
+            },
+          });
+        },
         // A replay re-resolves against the commit the run already recorded: a
         // branch or tag name would otherwise move the recorded base under the
         // preserved branch's commits.

@@ -49,9 +49,12 @@ test(
     const branch = 'TAT-1-fix-reused';
     const fix = await leaveUnpushedCommit(slotRepo, branch);
     const events: unknown[] = [];
+    const announced: string[] = [];
     const result = await slotPrepare(
       { slotId, branch, prepareProfile: 'core', flowType: 'fix-bug', forceNewBranch: true },
       (_event, payload) => events.push(payload),
+      undefined,
+      { onBranchKept: (kept) => announced.push(kept) },
     );
     assert.equal(await git(slotRepo, 'branch', '--show-current'), branch);
     assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), mainHead, 'the new run starts fresh');
@@ -62,6 +65,7 @@ test(
       new RegExp(`Kept unpushed commits of ${branch} on ${kept}`),
     );
     assert.deepEqual(result.keptBranches, [kept], 'the run records the kept branch');
+    assert.deepEqual(announced, [kept], 'and hears of it before any later phase can fail');
   },
 );
 
