@@ -17,11 +17,13 @@ import {
   farmslotRoot,
   loadProjectVars,
   loadSlotVars,
+  nextSlotEpoch,
   type RawProjectJson,
   readSlotField,
   readSlotRow,
   resolveProjectTaskDirName,
   SLOT_PHASE_RELEASING,
+  updateSlotStatusIf,
 } from '../../core/index.js';
 import { resolveTmuxPaneId, resolveTmuxSession } from '../../core/tmux.js';
 import { isWorkerAlive } from '../../review/worker-lifecycle.js';
@@ -158,21 +160,30 @@ export function resolveWarmWorkerBinding(
   return { role, context, target };
 }
 
-export type WarmHandoffClaimBlocker = 'occupied' | 'releasing' | 'reserved';
+export type WarmHandoffClaimBlocker = 'occupied' | 'releasing' | 'reserved' | 'recovering';
 
 /**
  * What stops a warm handoff from claiming its slot: a release, a hold (except the parent's hold
- * for this run), or another run's handoff reservation. Read before delivery and in the claim.
+ * for this run), workspace recovery, or another run's handoff reservation. Read before delivery
+ * and in the claim.
  */
 export function warmHandoffClaimBlocker(
   slot: Readonly<Record<string, unknown>>,
   claimant: WarmChildClaimant,
 ): WarmHandoffClaimBlocker | null {
+  if (slot.workspace_recovery) return 'recovering';
   return (
     slotClaimBlockedByRelease(slot, claimant) ??
     (slot.handoff_run_id != null && slot.handoff_run_id !== claimant.id ? 'reserved' : null)
   );
 }
+
+const WARM_HANDOFF_REFUSALS: Record<WarmHandoffClaimBlocker, string> = {
+  occupied: 'remains occupied',
+  releasing: 'is mid-release',
+  reserved: 'is reserved for another run',
+  recovering: 'is under workspace recovery',
+};
 
 /**
  * Hand a CI-watch chained follow-up into a still-alive worker session left warm
@@ -424,13 +435,7 @@ export async function warmSessionHandoffDispatch(
   const refuseClaim = (blocker: WarmHandoffClaimBlocker | null) =>
     Object.assign(
       new Error(
-        `Slot ${params.slotId} ${
-          blocker === 'occupied'
-            ? 'remains occupied'
-            : blocker === 'reserved'
-              ? 'is reserved for another run'
-              : 'is mid-release'
-        }; warm handoff cannot claim it`,
+        `Slot ${params.slotId} ${WARM_HANDOFF_REFUSALS[blocker ?? 'releasing']}; warm handoff cannot claim it`,
       ),
       { code: SLOT_CLAIM_REFUSED_CODE },
     );
@@ -484,8 +489,60 @@ export async function warmSessionHandoffDispatch(
     acceptExistingLaunchAck: false,
     recovery: { runId: params.runId, emit },
   };
-  const delivery = await deliverPromptWithRetainedFallback(deliveryOptions);
+  // The parent's hold for this run has no owner to keep, so the run takes the slot before the
+  // send: delivery restores an idle-capped dev server only for the slot's owner, and the prompt
+  // never reaches a worker whose slot this run then fails to claim. A send that does not land
+  // gives the hold back for the parent's cleanup.
+  let takenHold: { epoch: number; fields: Record<string, unknown> } | undefined;
+  const rowAtDelivery = await readSlotRow(params.slotId);
+  if (rowAtDelivery && parentHoldForWarmChild(rowAtDelivery, claimant())) {
+    const restore: Record<string, unknown> = {};
+    const takeFields: Record<string, unknown> = {
+      lifecycle: 'busy',
+      phase: 'dispatching',
+      current_run_id: params.runId,
+      handoff_run_id: null,
+      ...PARENT_HOLD_CLAIM_FIELDS,
+    };
+    const taken = await claimSlotStatusIf(
+      params.slotId,
+      (slot) => {
+        if (!parentHoldForWarmChild(slot, claimant())) return false;
+        for (const key of ['lifecycle', 'phase', 'held_reason', 'cleanup_run_id'])
+          restore[key] = slot[key] ?? null;
+        // The idle-capped dev servers stay restorable under the claim's epoch.
+        if (slot.idle_devserver_epoch === slot.slot_epoch && Array.isArray(slot.idle_devservers))
+          takeFields.idle_devserver_epoch = nextSlotEpoch(slot);
+        return true;
+      },
+      takeFields,
+    );
+    if (taken.claimed && taken.epoch !== null)
+      takenHold = { epoch: taken.epoch, fields: { ...restore, current_run_id: null } };
+    else {
+      const now = await readSlotRow(params.slotId);
+      const blocker = now && claimBlocker(now);
+      if (blocker) throw refuseClaim(blocker);
+    }
+  }
+  const giveBackHold = async () => {
+    if (!takenHold) return;
+    const { epoch, fields } = takenHold;
+    await updateSlotStatusIf(
+      params.slotId,
+      (slot) => slot.slot_epoch === epoch && slot.current_run_id === params.runId,
+      fields,
+    );
+  };
+  let delivery: Awaited<ReturnType<typeof deliverPromptWithRetainedFallback>>;
+  try {
+    delivery = await deliverPromptWithRetainedFallback(deliveryOptions);
+  } catch (error) {
+    await giveBackHold();
+    throw error;
+  }
   if (!delivery.delivered) {
+    await giveBackHold();
     return warmHandoffFailureFromRetainedDelivery(delivery);
   }
   primaryTarget.pane = await resolveTmuxPaneId(vars, workerTarget);

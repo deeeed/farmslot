@@ -78,8 +78,6 @@ import {
   isFreeSlot,
   isReplaceableWarmSlot,
   isSlotClaimRefusedError,
-  PARENT_HOLD_CLAIM_FIELDS,
-  parentHoldForWarmChild,
   parkPreservedSlotIds,
   pickedSlotIneligibility,
   prepareProfileNeedsCompanionResource,
@@ -95,7 +93,6 @@ import {
   type SlotSelectionOptions,
   slotSelectionOptionsFor,
   validateSlotForDispatch,
-  type WarmChildClaimant,
 } from '../methods/dispatch/slot-scoring.js';
 import { resolveDispatchTargetBranch } from '../methods/dispatch/target-branch.js';
 import {
@@ -599,7 +596,6 @@ export async function commitSlotClaim(
     readRow?: typeof readSlotRow;
     runLookup?: (id: string) => Pick<Run, 'status' | 'engineState'> | undefined;
     listSlotRuns?: () => Promise<SlotHistoryRun[]>;
-    claimantLookup?: (id: string) => WarmChildClaimant | undefined;
   } = {},
 ): Promise<void> {
   const {
@@ -609,7 +605,6 @@ export async function commitSlotClaim(
     readRow = readSlotRow,
     runLookup = getRun,
     listSlotRuns = getAllRunsWithArchived,
-    claimantLookup = getRun,
   } = deps;
   const reservation = Boolean(opts?.takeoverLiveOwner || opts?.reserveOnly);
   const releaseRecoveryClaim = async (
@@ -671,21 +666,8 @@ export async function commitSlotClaim(
   const claim = await claimIf(
     slotId,
     (slot) => {
-      const claimant = claimantLookup(runId);
-      if (
-        !slotClaimAllowed(
-          slot,
-          runId,
-          generation,
-          runLookup,
-          Boolean(opts?.takeoverLiveOwner),
-          claimant,
-        )
-      )
+      if (!slotClaimAllowed(slot, runId, generation, runLookup, Boolean(opts?.takeoverLiveOwner)))
         return false;
-      // A warm child's claim of its parent's hold ends the hold with it.
-      if (!reservation && claimant && parentHoldForWarmChild(slot, claimant))
-        Object.assign(fields, PARENT_HOLD_CLAIM_FIELDS);
       overwritten = Object.fromEntries(Object.keys(fields).map((key) => [key, slot[key] ?? null]));
       ownerBefore = slot.current_run_id ?? null;
       // A retained delivery keeps this checkout and its stopped-server obligation.
@@ -845,10 +827,9 @@ export function slotClaimAllowed(
   generation: number,
   runLookup: (id: string) => Pick<Run, 'status' | 'engineState'> | undefined,
   takeoverLiveOwner: boolean,
-  claimant?: WarmChildClaimant,
 ): boolean {
   if (slotClaimAttemptEnded(runLookup(runId), generation)) return false;
-  const blocker = slotClaimBlocker(slot, runId, runLookup, claimant);
+  const blocker = slotClaimBlocker(slot, runId, runLookup);
   return blocker === null || (takeoverLiveOwner && blocker.kind === 'live-owner');
 }
 
@@ -1506,10 +1487,7 @@ async function findSlotAttempt(
         `Warm-session reuse slot '${run.slotId}' is ${warmSlot.lifecycle}; cannot hand off`,
       );
     }
-    // The parent's cleanup leaves its hold for this run when this run was already active.
-    const row = await readSlotRow(run.slotId);
-    const parentHold = parentHoldForWarmChild(row, run);
-    const blocked = slotClaimBlockedByRelease(row ?? warmSlot, run);
+    const blocked = slotClaimBlockedByRelease(warmSlot);
     if (blocked) {
       throw new Error(
         `Warm-session reuse slot '${run.slotId}' ${blocked === 'releasing' ? 'is mid-release' : 'remains occupied'}`,
@@ -1519,16 +1497,9 @@ async function findSlotAttempt(
     // gate as every other binding; the kill switch is the deliberate bypass.
     await assertEngineBoundSlotPressureAdmitted(runId, run, warmSlot.machine);
     // Take over the parent's ownership fence; DISPATCH decides warm vs fresh after liveness.
-    // The parent's hold has no owner to take over: claim it outright.
-    await claimSelectedSlot(
-      run.slotId,
-      runId,
-      generation,
-      context,
-      'working',
-      'working',
-      parentHold ? undefined : { takeoverLiveOwner: true },
-    );
+    await claimSelectedSlot(run.slotId, runId, generation, context, 'working', 'working', {
+      takeoverLiveOwner: true,
+    });
     return {
       inputs,
       outputs: {

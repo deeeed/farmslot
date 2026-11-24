@@ -660,24 +660,29 @@ export async function claimWarmFallbackSlot(run: Run, slotId: string): Promise<b
     const row = await readSlotRow(slotId);
     // The parent's cleanup held the slot for this run: the fresh launch claims it from here.
     if (parentHoldForWarmChild(row, current)) {
+      const heldFields: Record<string, unknown> = {
+        lifecycle: 'busy',
+        phase: 'dispatching',
+        current_run_id: run.id,
+        handoff_run_id: null,
+        ...PARENT_HOLD_CLAIM_FIELDS,
+      };
       const held = await claimSlotStatusIf(
         slotId,
         (slot) => {
           const latest = getRun(run.id);
-          return Boolean(
-            latest &&
-            latest.slotId === slotId &&
-            !runSupersededSince(latest, generation) &&
-            parentHoldForWarmChild(slot, latest),
-          );
+          if (
+            !latest ||
+            latest.slotId !== slotId ||
+            runSupersededSince(latest, generation) ||
+            !parentHoldForWarmChild(slot, latest)
+          )
+            return false;
+          if (slot.idle_devserver_epoch === slot.slot_epoch && Array.isArray(slot.idle_devservers))
+            heldFields.idle_devserver_epoch = nextSlotEpoch(slot);
+          return true;
         },
-        {
-          lifecycle: 'busy',
-          phase: 'dispatching',
-          current_run_id: run.id,
-          handoff_run_id: null,
-          ...PARENT_HOLD_CLAIM_FIELDS,
-        },
+        heldFields,
       );
       return held.claimed;
     }

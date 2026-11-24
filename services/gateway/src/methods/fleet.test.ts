@@ -1433,4 +1433,16 @@ test("a fleet refresh leaves a warm child's parent row alone until the child cla
   assert.equal(kept.current_run_id, 'parent-run', 'the refresh does not bind the child');
   assert.equal(kept.slot_epoch, 81);
   assert.equal(lost.mock.callCount(), 0, 'no lost lease is reported for the child');
+  // A child past its dispatch that loses its lease to its parent's row is still quarantined.
+  const monitoring: Run = {
+    ...child,
+    status: 'monitoring',
+    steps: [
+      { name: 'dispatch', status: 'done' },
+      { name: 'monitor', status: 'running' },
+    ],
+  };
+  const quarantined = buildFleetRefreshSnapshot([owned], [makeRefreshRow()], [monitoring], 'now')
+    .slots[0]!;
+  assert.match(String(quarantined.held_reason), /lost its lease/);
 });

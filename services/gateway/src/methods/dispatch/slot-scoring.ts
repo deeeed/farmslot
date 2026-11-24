@@ -828,17 +828,20 @@ export function activeRunOnSlotReason(runId: string): string {
 export type WarmChildClaimant = Pick<
   Run,
   'id' | 'status' | 'slotId' | 'parentRunId' | 'engineState'
->;
+> &
+  Partial<Pick<Run, 'steps'>>;
 
 /**
  * A warm child before its own claim: the row still names its parent, as owner or as the
- * owner of a pending cleanup. The child's running steps do not hold this row yet.
+ * owner of a pending cleanup. The child's steps before dispatch do not hold this row yet;
+ * once its dispatch is done, the row must name the child.
  */
 export function warmChildAwaitsParentRow(
   run: WarmChildClaimant,
   row: Readonly<Record<string, unknown>> | null | undefined,
 ): boolean {
   if (!row || !run.parentRunId || !run.engineState?.flags?.warmSessionReuse) return false;
+  if (run.steps?.some((step) => step.name === 'dispatch' && step.status === 'done')) return false;
   if (TERMINAL_RUN_STATUSES.includes(run.status as RunStatus) || row.slot !== run.slotId)
     return false;
   if (row.current_run_id === run.id) return false;
@@ -865,6 +868,7 @@ export function parentHoldForWarmChild(
     row[SLOT_CLEANUP_STOP_UNCONFIRMED] !== true &&
     !row[SLOT_RELEASING_SINCE] &&
     !row.cleanup_release_token &&
+    !row.workspace_recovery &&
     row.held_reason === activeRunOnSlotReason(run.id) &&
     warmChildAwaitsParentRow(run, row),
   );
@@ -1034,9 +1038,8 @@ export function slotClaimBlocker(
   slot: Readonly<Record<string, unknown>>,
   runId: string,
   ownerRunLookup: (id: string) => { status: string } | undefined,
-  claimant?: WarmChildClaimant,
 ): { kind: 'releasing' | 'occupied' | 'handoff' | 'live-owner'; detail: string } | null {
-  const release = slotClaimBlockedByRelease(slot, claimant);
+  const release = slotClaimBlockedByRelease(slot);
   if (release === 'releasing') {
     const since = slot[SLOT_RELEASING_SINCE];
     return {

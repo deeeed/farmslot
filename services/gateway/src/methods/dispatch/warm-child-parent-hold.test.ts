@@ -64,6 +64,17 @@ for (const [what, row, claimant] of [
     child,
   ],
   ['a hold another run reserved', { ...parentHold, handoff_run_id: 'rival' }, child],
+  [
+    'a hold under a cleanup release token',
+    { ...parentHold, cleanup_release_token: 'cleanup:x' },
+    child,
+  ],
+  ['a hold that names an owner', { ...parentHold, current_run_id: '12afdc85' }, child],
+  [
+    'a hold under workspace recovery',
+    { ...parentHold, workspace_recovery: { step: 'reset' } },
+    child,
+  ],
   ['a finished child', parentHold, { ...child, status: 'failed' }],
   ['a child without warm reuse', parentHold, { ...child, engineState: { generation: 0 } }],
   ['a child pinned elsewhere', parentHold, { ...child, slotId: 'mini-mm-2' }],
@@ -83,6 +94,11 @@ test('a warm child awaits its parent row while the parent owns it or owns its cl
     warmChildAwaitsParentRow({ ...child, engineState: { generation: 0 } }, owned),
     false,
   );
+  // Once its dispatch is done the row must name the child; a parent row then is a lost lease.
+  assert.equal(
+    warmChildAwaitsParentRow({ ...child, steps: [{ name: 'dispatch', status: 'done' }] }, owned),
+    false,
+  );
 });
 
 test("a replay of the warm child is refused on its parent's hold (pinned, not handled)", () => {
@@ -93,11 +109,11 @@ test("a replay of the warm child is refused on its parent's hold (pinned, not ha
   });
 });
 
-test('warm handoff checks its claim before the pressure gate and the prompt delivery', () => {
+test('the warm handoff source checks its claim before the PR baseline and the pressure gate', () => {
   const source = readFileSync(path.join(import.meta.dirname, 'warm-session-handoff.ts'), 'utf8');
   const check = source.indexOf('if (blockedBeforeDelivery) throw refuseClaim(');
   const baseline = source.indexOf('await recordRetainedPrBaseline(');
-  const delivery = source.indexOf('await deliverPromptWithRetainedFallback(');
-  assert.ok(check > 0, 'a claim check precedes delivery');
-  assert.ok(check < baseline && baseline < delivery);
+  const gate = source.indexOf('await enforceDispatchPressureGate(');
+  assert.ok(check > 0, 'a claim check precedes the baseline');
+  assert.ok(check < baseline && baseline < gate);
 });
