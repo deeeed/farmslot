@@ -12,8 +12,10 @@ export type FlowFilter =
   | 'pr-complete'
   | 'update-branch';
 /** `product` hides eval runs (the comparison lane). */
-export type LaneFilter = '' | 'product' | 'production' | 'validation' | 'comparison';
-export type SortOption = 'newest' | 'oldest' | 'duration';
+export const LANE_FILTERS = ['', 'product', 'production', 'validation', 'comparison'] as const;
+export type LaneFilter = (typeof LANE_FILTERS)[number];
+export const SORT_OPTIONS = ['newest', 'oldest', 'duration'] as const;
+export type SortOption = (typeof SORT_OPTIONS)[number];
 
 export interface RunFilters {
   flow: FlowFilter;
@@ -25,6 +27,27 @@ export interface RunFilters {
 
 const STORAGE_KEY = '@farmslot:runFilters';
 const DEFAULTS: RunFilters = { flow: '', lane: '', sort: 'newest', search: '', tag: '' };
+
+function choice<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return allowed.find((option) => option === value) ?? fallback;
+}
+
+/**
+ * Saved filters as this build can apply them. A choice this build does not know (one a newer
+ * build saved, then rolled back by an OTA) falls back to its default instead of hiding every run.
+ */
+export function restoredRunFilters(saved: Partial<Record<keyof RunFilters, unknown>>): RunFilters {
+  // Normalize a legacy persisted flow selection (e.g. pre-rename 'merge-main') so the saved
+  // filter still matches runs after a flow rename. Mirrors the gateway store's load-time migration.
+  const flow = typeof saved.flow === 'string' && saved.flow ? normalizeFlowType(saved.flow) : '';
+  return {
+    ...DEFAULTS,
+    flow,
+    lane: choice(saved.lane, LANE_FILTERS, DEFAULTS.lane),
+    sort: choice(saved.sort, SORT_OPTIONS, DEFAULTS.sort),
+    tag: typeof saved.tag === 'string' ? saved.tag : DEFAULTS.tag,
+  };
+}
 
 interface RunFilterStore {
   filters: RunFilters;
@@ -59,12 +82,7 @@ export const useRunFilterStore = create<RunFilterStore>((set, get) => ({
       const raw = await AsyncStorage.getItem(STORAGE_KEY);
       if (get().accountEpoch !== epoch) return;
       if (raw) {
-        const parsed = JSON.parse(raw);
-        const merged: RunFilters = { ...DEFAULTS, ...parsed, search: '' };
-        // Normalize a legacy persisted flow selection (e.g. pre-rename
-        // 'merge-main') so the saved filter still matches runs after a flow
-        // rename. Mirrors the gateway store's load-time migration.
-        merged.flow = merged.flow ? normalizeFlowType(merged.flow) : merged.flow;
+        const merged = restoredRunFilters(JSON.parse(raw));
         set({
           filters: merged,
           initialized: true,
