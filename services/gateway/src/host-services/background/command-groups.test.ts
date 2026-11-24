@@ -178,10 +178,11 @@ function test(name: string, fn: (t: TestContext) => void | Promise<void>): void 
 const probe = { entries: [], ssh: [] };
 
 /**
- * Returns once the child has registered the command it is running with its watchdog. The child
- * registers a command in the same synchronous step that spawns it, so the command can already
- * be running, and writing its pids, before the registration (core/exec.ts names this window). A
- * reply to a later request means the child's event loop has moved past that step.
+ * Returns once the child has registered its running commands with its watchdog. The child
+ * registers a command in the same synchronous step that spawns it (and re-registers every command
+ * in the step that starts a replacement watchdog), so a command can already be running, and
+ * writing its pids, before its registration (core/exec.ts names this window). A reply to a later
+ * request means the child's event loop has moved past that step.
  */
 async function registered(background: ForkedBackgroundHost): Promise<void> {
   await background.request(
@@ -190,6 +191,7 @@ async function registered(background: ForkedBackgroundHost): Promise<void> {
     { deadlineMs: 30_000 },
   );
 }
+
 /** No watchdog: only the child can kill its commands. */
 const ownCleanup = { FIXTURE_NO_WATCHDOG: '1' };
 
@@ -287,8 +289,8 @@ test('a watchdog that dies is replaced, and the replacement still kills the comm
     return replacement !== undefined;
   });
   assert.ok(replacement);
-  // The replacement learns the running command before it is needed.
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  // The child starts the replacement and registers the running command with it in one step.
+  await registered(background);
   process.kill(child, 'SIGKILL');
   await assert.rejects(pending, /signal SIGKILL/);
   // The command and its descendant died by the replacement.
