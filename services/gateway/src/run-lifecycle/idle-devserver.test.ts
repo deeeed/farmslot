@@ -406,3 +406,16 @@ test('an observation lost during an awaited quiet check writes no marker and sto
   await f.reaper.sweep('slot-a');
   assert.equal(f.stopped(), 0, 'a loss during the final quiet check refuses the stop');
 });
+
+test('a warm child restores the dev server on the hold its parent left for it, and only there', async () => {
+  const f = fixture('done');
+  await f.reaper.sweep('slot-a');
+  f.advance();
+  await f.reaper.sweep('slot-a');
+  // The parent's teardown held the slot for its active child: no owner, the parent's cleanup.
+  f.setRow({ current_run_id: null, cleanup_run_id: 'run-a' });
+  await assert.rejects(f.reaper.restore('slot-a', 'child-run'), /owner changed/);
+  await f.reaper.restore('slot-a', 'child-run', (row) => row.cleanup_run_id === 'run-a');
+  assert.equal(f.booted(), 1);
+  assert.equal(f.row().idle_devservers, null);
+});

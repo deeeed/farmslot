@@ -417,7 +417,11 @@ export async function reapIdleDevServers(slotId: string): Promise<void> {
 }
 
 /** Callers already own the run/machine transition; no reentrant lock. */
-export async function restoreIdleDevServers(slotId: string, runId: string): Promise<void> {
+export async function restoreIdleDevServers(
+  slotId: string,
+  runId: string,
+  admits?: (row: Readonly<Record<string, unknown>>) => boolean,
+): Promise<void> {
   const row = await readSlotRow(slotId);
   if (!row || row.idle_devserver_epoch !== row.slot_epoch || !Array.isArray(row.idle_devservers))
     return;
@@ -431,7 +435,7 @@ export async function restoreIdleDevServers(slotId: string, runId: string): Prom
   activePrepareSlots.add(slotId);
   activePrepareAborts.set(slotId, { abort: () => controller.abort(), settled });
   try {
-    await withCleanupSignal(controller.signal, () => idleDevServers.restore(slotId, runId));
+    await withCleanupSignal(controller.signal, () => idleDevServers.restore(slotId, runId, admits));
   } finally {
     activePrepareSlots.delete(slotId);
     activePrepareAborts.delete(slotId);

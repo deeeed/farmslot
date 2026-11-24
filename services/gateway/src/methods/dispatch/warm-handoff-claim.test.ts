@@ -155,16 +155,29 @@ mock.module('./execute.js', {
     enforceDispatchPressureGate: async () => undefined,
   },
 });
+// The dev-server restore boots slot resources; record who asks for it and on which row.
+const restores: Array<{ runId: string; admitted: boolean }> = [];
+const idle = await import('../../run-lifecycle/idle-devserver-service.js');
+mock.module('../../run-lifecycle/idle-devserver-service.js', {
+  namedExports: {
+    ...idle,
+    restoreIdleDevServers: async (
+      _slot: string,
+      runId: string,
+      admits?: (slot: Readonly<Record<string, unknown>>) => boolean,
+    ) => {
+      restores.push({ runId, admitted: admits?.({ ...row }) ?? false });
+      row = { ...row, idle_devservers: null, idle_devserver_epoch: null };
+    },
+  },
+});
 // The send itself: the runner adapters it drives are proved by their own live scenarios.
 const reactivation = await import('../../runners/session-reactivation.js');
 mock.module('../../runners/session-reactivation.js', {
   namedExports: {
     ...reactivation,
     deliverPromptWithRetainedFallback: async () => {
-      const worker = store
-        .getRun(activeChild)
-        ?.agentContexts?.find((context) => context.role === 'dev');
-      sends.push({ ...row, worker_status: worker?.status, worker_pane: worker?.target?.pane });
+      sends.push({ ...row });
       const outcome = onSend();
       return outcome.delivered
         ? outcome
@@ -205,8 +218,6 @@ await store.persistRunNow(
   'warm claim fixture',
 );
 
-/** The child under test, whose worker record the send stub reads. */
-let activeChild = '';
 async function chainedChild(t: { after: (fn: () => Promise<void>) => void }) {
   const child = store.createRun({
     flowType: 'pr-complete',
@@ -225,7 +236,6 @@ async function chainedChild(t: { after: (fn: () => Promise<void>) => void }) {
     store.updateRun(child.id, { status: 'done' });
     await store.deleteRun(child.id);
   });
-  activeChild = child.id;
   return child;
 }
 const handoff = (runId: string) =>
@@ -256,18 +266,24 @@ const parentHold = (childId: string) => ({
   idle_devservers: ['web'],
 });
 
-test("the warm child claims its parent's hold before the send and owns the slot after", async (t) => {
+test("the child restores the idle dev server on its parent's hold, sends, then claims the slot", async (t) => {
   const child = await chainedChild(t);
   row = parentHold(child.id);
   sends.length = 0;
+  restores.length = 0;
   onSend = () => ({ delivered: true });
   const result = await handoff(child.id);
   assert.equal(result.handedOff, true);
+  assert.deepEqual(restores, [{ runId: child.id, admitted: true }]);
   assert.equal(sends.length, 1);
   const atSend = sends[0]!;
-  assert.equal(atSend.current_run_id, child.id, 'the dev-server restore finds an owner');
-  assert.equal(atSend.idle_devserver_epoch, atSend.slot_epoch, 'the idle marker stays current');
-  assert.notEqual(atSend.agent, 'working', 'the worker is not marked working before the send');
+  assert.equal(
+    atSend.current_run_id,
+    null,
+    "the parent's cleanup still owns the slot during the send",
+  );
+  assert.equal(atSend.cleanup_run_id, parent.id);
+  assert.equal(atSend.idle_devservers, null, 'the dev server was restored before the send');
   assert.equal(row.current_run_id, child.id);
   assert.equal(row.lifecycle, 'busy');
   assert.equal(row.agent, 'working');
@@ -297,17 +313,26 @@ test("a parent's hold that lands during the send is claimed after it", async (t)
   assert.equal(row.cleanup_run_id, null);
 });
 
-test("a send that does not land gives the parent's hold back", async (t) => {
-  const child = await chainedChild(t);
-  row = parentHold(child.id);
-  onSend = () => ({ delivered: false });
-  const result = await handoff(child.id);
-  assert.equal(result.handedOff, false);
-  assert.equal(row.current_run_id, null);
-  assert.equal(row.lifecycle, 'held');
-  assert.equal(row.cleanup_run_id, parent.id);
-  assert.equal(row.held_reason, activeRunOnSlotReason(child.id));
-});
+// Guards: the hold stays the parent's through the send, so a send that fails changes nothing.
+for (const [what, send] of [
+  ['does not land', () => ({ delivered: false })],
+  [
+    'throws',
+    () => {
+      throw new Error('send transport failed');
+    },
+  ],
+] as const)
+  test(`a send that ${what} leaves the parent's hold for its cleanup`, async (t) => {
+    const child = await chainedChild(t);
+    row = parentHold(child.id);
+    onSend = send;
+    if (what === 'throws') await assert.rejects(handoff(child.id), /send transport failed/);
+    else assert.equal((await handoff(child.id)).handedOff, false);
+    assert.equal(row.current_run_id, null);
+    assert.equal(row.cleanup_run_id, parent.id);
+    assert.equal(row.held_reason, activeRunOnSlotReason(child.id));
+  });
 
 for (const [what, blocked, message] of [
   [
@@ -325,50 +350,16 @@ for (const [what, blocked, message] of [
     assert.equal(sends.length, 0);
   });
 
-test("the parent's pane is the child's recorded worker during the send, so a cancel stops it", async (t) => {
+// The one case left: a hold the child cannot claim appears during the send (named in the PR).
+test('a slot that another run reserves during the send is still refused after it', async (t) => {
   const child = await chainedChild(t);
   row = parentHold(child.id);
-  sends.length = 0;
-  // The child is cancelled mid-send: its cleanup fences the slot it now owns.
-  onSend = () => {
-    row = { ...row, phase: 'releasing', releasing_since: '2026-11-25T03:00:00Z' };
-    return { delivered: false };
-  };
-  const result = await handoff(child.id);
-  assert.equal(result.handedOff, false);
-  assert.equal(sends[0]?.worker_status, 'launching', 'the cancel finds the worker to stop');
-  assert.equal(sends[0]?.worker_pane, '%7');
-  assert.equal(row.phase, 'releasing', 'the give-back does not overwrite the cancel fence');
-  assert.equal(row.current_run_id, child.id);
-  const worker = store.getRun(child.id)?.agentContexts?.find((context) => context.role === 'dev');
-  assert.equal(worker?.status, 'launching', 'the fenced cleanup still owns the worker record');
-});
-
-test('a send that lands and then fails to claim leaves the worker to the child cleanup', async (t) => {
-  const child = await chainedChild(t);
-  row = parentHold(child.id);
-  // Another run reserves the slot during the send, so the claim after it is refused.
   onSend = () => {
     row = { ...row, handoff_run_id: 'rival' };
     return { delivered: true };
   };
-  await assert.rejects(handoff(child.id), /reserved for another run/);
-  assert.equal(row.current_run_id, child.id, 'the landed send keeps the slot with the child');
-  const worker = store.getRun(child.id)?.agentContexts?.find((context) => context.role === 'dev');
-  assert.equal(worker?.target?.pane, '%7', "the child's cleanup stops the parent's pane");
-});
-
-test("a send that throws gives the parent's hold back and keeps its own error", async (t) => {
-  const child = await chainedChild(t);
-  row = parentHold(child.id);
-  const sendError = new Error('send transport failed');
-  onSend = () => {
-    throw sendError;
-  };
-  await assert.rejects(handoff(child.id), (error) => error === sendError);
-  assert.equal(row.current_run_id, null);
+  // Reserved by another run, the row is no longer the parent's hold for this child.
+  await assert.rejects(handoff(child.id), /remains occupied/);
+  assert.equal(row.current_run_id, null, "the parent's cleanup still owns the slot");
   assert.equal(row.cleanup_run_id, parent.id);
-  assert.equal(row.held_reason, activeRunOnSlotReason(child.id));
-  const worker = store.getRun(child.id)?.agentContexts?.find((context) => context.role === 'dev');
-  assert.equal(worker?.status, 'failed', "the pane is the parent's again");
 });

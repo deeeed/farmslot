@@ -11,23 +11,17 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
-import {
-  markAgentContextStatus,
-  selectAgentContext,
-  upsertAgentContext,
-} from '../../agents/contexts.js';
+import { selectAgentContext, upsertAgentContext } from '../../agents/contexts.js';
 import {
   claimSlotStatusIf,
   farmslotRoot,
   loadProjectVars,
   loadSlotVars,
-  nextSlotEpoch,
   type RawProjectJson,
   readSlotField,
   readSlotRow,
   resolveProjectTaskDirName,
   SLOT_PHASE_RELEASING,
-  updateSlotStatusIf,
 } from '../../core/index.js';
 import { resolveTmuxPaneId, resolveTmuxSession } from '../../core/tmux.js';
 import { isWorkerAlive } from '../../review/worker-lifecycle.js';
@@ -493,96 +487,22 @@ export async function warmSessionHandoffDispatch(
     acceptExistingLaunchAck: false,
     recovery: { runId: params.runId, emit },
   };
-  // The parent's hold for this run has no owner to keep, so the run takes the slot before the
-  // send: delivery restores an idle-capped dev server only for the slot's owner, and the prompt
-  // never reaches a worker whose slot this run then fails to claim. The run records the parent's
-  // pane as its own worker in the same breath, so its cancel, failure or restart recovery stops
-  // that worker through its own cleanup. Only a send that did not land gives the hold back.
-  let takenHold: { epoch: number; fields: Record<string, unknown> } | undefined;
-  // A cleanup that has already fenced the slot for this run keeps it: it stops the worker.
-  const giveBackHold = async () => {
-    if (!takenHold) return;
-    const { epoch, fields } = takenHold;
-    const returned = await updateSlotStatusIf(
-      params.slotId,
-      (slot) =>
-        slot.slot_epoch === epoch &&
-        slot.current_run_id === params.runId &&
-        slot.phase !== SLOT_PHASE_RELEASING,
-      fields,
+  // The send restores an idle-capped dev server for the slot's owner. The parent's hold for this
+  // run has no owner, and it stays the parent's until this run claims it after the send, so a
+  // cancel or failure of this run still leaves the worker to the parent's cleanup. This run
+  // restores the dev server under its own id while the row is still that hold.
+  const rowAtSend = await readSlotRow(params.slotId);
+  if (rowAtSend && parentHoldForWarmChild(rowAtSend, claimant())) {
+    const { restoreIdleDevServers } = await import('../../run-lifecycle/idle-devserver-service.js');
+    await restoreIdleDevServers(params.slotId, params.runId, (row) =>
+      parentHoldForWarmChild(row, claimant()),
     );
-    // The parent's pane is the parent's again; this run never ran a turn there.
-    if (returned) await markAgentContextStatus(params.runId, workerRole, 'failed');
-  };
-  const rowAtDelivery = await readSlotRow(params.slotId);
-  if (rowAtDelivery && parentHoldForWarmChild(rowAtDelivery, claimant())) {
-    const restore: Record<string, unknown> = {};
-    const takeFields: Record<string, unknown> = {
-      lifecycle: 'busy',
-      phase: 'dispatching',
-      current_run_id: params.runId,
-      handoff_run_id: null,
-      ...PARENT_HOLD_CLAIM_FIELDS,
-    };
-    const taken = await claimSlotStatusIf(
-      params.slotId,
-      (slot) => {
-        if (!parentHoldForWarmChild(slot, claimant())) return false;
-        for (const key of ['lifecycle', 'phase', 'held_reason', 'cleanup_run_id'])
-          restore[key] = slot[key] ?? null;
-        // The idle-capped dev servers stay restorable under the claim's epoch.
-        if (slot.idle_devserver_epoch === slot.slot_epoch && Array.isArray(slot.idle_devservers))
-          takeFields.idle_devserver_epoch = nextSlotEpoch(slot);
-        return true;
-      },
-      takeFields,
-    );
-    if (taken.claimed && taken.epoch !== null) {
-      takenHold = { epoch: taken.epoch, fields: { ...restore, current_run_id: null } };
-      try {
-        primaryTarget.pane = await resolveTmuxPaneId(vars, workerTarget);
-        await upsertAgentContext(params.runId, workerRole, {
-          status: 'launching',
-          modelQuestions: effectiveModelQuestionsForRun(requestingRun),
-          taskFile: `${workerTaskDir}/TASK.md`,
-          signalFile: `${workerTaskDir}/SIGNAL.json`,
-          runner,
-          target: primaryTarget,
-          // The parent's conversation in that pane, so this run's cleanup can stop it exactly.
-          ...(runnerSessionContextPatch(
-            { runnerSessionId: retainedSessionId, runnerSessionPath: retainedSessionPath },
-            'retained warm handoff',
-          ) ?? {}),
-        });
-      } catch (error) {
-        await giveBackHold();
-        throw error;
-      }
-    } else {
-      const now = await readSlotRow(params.slotId);
-      const blocker = now && claimBlocker(now);
-      if (blocker) throw refuseClaim(blocker);
-    }
   }
-  let delivery: Awaited<ReturnType<typeof deliverPromptWithRetainedFallback>>;
-  try {
-    delivery = await deliverPromptWithRetainedFallback(deliveryOptions);
-  } catch (error) {
-    try {
-      await giveBackHold();
-    } catch (giveBackError) {
-      // The send's own error decides how dispatch fails; the hold stays this run's to clean up.
-      console.warn(
-        `[warm-handoff] slot=${params.slotId} could not give the parent's hold back: ${String(giveBackError)}`,
-      );
-    }
-    throw error;
-  }
+  const delivery = await deliverPromptWithRetainedFallback(deliveryOptions);
   if (!delivery.delivered) {
-    await giveBackHold();
     return warmHandoffFailureFromRetainedDelivery(delivery);
   }
-  if (!takenHold) primaryTarget.pane = await resolveTmuxPaneId(vars, workerTarget);
+  primaryTarget.pane = await resolveTmuxPaneId(vars, workerTarget);
 
   const priorOwnerContext = binding.context;
   const priorNudgeCount = priorOwnerContext?.nudgeCount ?? 0;
