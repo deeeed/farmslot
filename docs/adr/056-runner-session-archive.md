@@ -31,3 +31,15 @@ Operators can re-read Claude/Codex/Grok History after the slot forgets the file.
 - [ADR-023](023-runner-agnostic-tui-execution.md) — capability registry
 - [ADR-039](039-run-portable-bundles.md) — farmrun stays free of session bytes
 - [ADR-047](047-worker-session-history-panel.md) — History projection this snapshot feeds
+
+## Amendment 1: 2026-11-24 capture when the context ends
+
+**Status:** Proposed with [ADR-039 Amendment 9](039-run-portable-bundles.md#amendment-9-2026-11-24-run-traces-as-private-training-data).
+
+The snapshot is taken when an agent context ends (worker completion, each review
+round and review fix, before a replay or operator completion replaces it), with
+slot release kept as the backstop. Reviewer transcripts were often gone by slot
+release. The copy, the `missing`/`unsupported` records and the capability list are
+unchanged. The archive is still not eval evidence and still not a farmrun payload;
+it also feeds ADR-039 Amendment 9's private dataset export, which redacts its own
+copies and never edits the archive.
