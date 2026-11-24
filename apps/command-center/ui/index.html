@@ -27,6 +27,13 @@
         font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
         background: #0a0a0f;
         color: #e0e0e8;
+        /* The app fills what the bottom status row leaves; nothing overlays the app's content. */
+        display: flex;
+        flex-direction: column;
+      }
+      farm-app {
+        flex: 1 1 0;
+        min-height: 0;
       }
     </style>
     <script type="module" src="/src/main.ts"></script>

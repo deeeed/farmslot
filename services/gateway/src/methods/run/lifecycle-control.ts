@@ -55,7 +55,7 @@ import {
   resolveRunRetainedSessionBinding,
   retainedSessionSendOption,
 } from '../../runners/session-process.js';
-import { getRun, updateRun } from '../../runs/store.js';
+import { getRun, timeRunSlotRelease, updateRun } from '../../runs/store.js';
 
 import type { BlockedRunResumeCheck } from './replay-step.js';
 
@@ -358,9 +358,13 @@ async function attachForceCompletePrNumber(runId: string, prNumber: number): Pro
 
 export async function releaseCompletedRunSlot(run: Run): Promise<SlotReleaseResult> {
   const { withTerminalTeardown } = await import('../../run-engine/terminal-teardown-registry.js');
-  return run.slotId
-    ? withTerminalTeardown(run.slotId, () => releaseCompletedRunSlotOnce(run))
-    : releaseCompletedRunSlotOnce(run);
+  const slotId = run.slotId;
+  if (!slotId) return releaseCompletedRunSlotOnce(run);
+  // COMPLETE, the deferred terminal release, ci-watch and finalize free a finished run's slot
+  // here, not through slot.release: time it on the run the same way.
+  return timeRunSlotRelease(run.id, slotId, () =>
+    withTerminalTeardown(slotId, () => releaseCompletedRunSlotOnce(run)),
+  );
 }
 
 async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult> {

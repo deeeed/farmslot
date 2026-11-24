@@ -22,7 +22,7 @@ import {
 export class FileTransferProgressBanner extends LitElement {
   /** When set, only show transfers for this run (run-detail embed). */
   @property({ type: String, attribute: 'run-id' }) runId = '';
-  /** Inline layout for run-detail instead of fixed corner toast. */
+  /** Inline layout for run-detail instead of the bar docked under the shell content. */
   @property({ type: Boolean }) inline = false;
 
   @state() private _entries: FileTransferUiEntry[] = [];
@@ -37,12 +37,19 @@ export class FileTransferProgressBanner extends LitElement {
       pointer-events: none;
       font-family: ${unsafeCSS(fonts.mono)};
     }
+    /* Docked at the bottom of the shell's main column, in flow: it takes its own space and never
+       covers the content above it (chat composers and approval controls sit at the bottom). */
     :host(:not([inline])) {
-      position: fixed;
-      right: 16px;
-      bottom: 16px;
-      z-index: 1200;
-      max-width: min(420px, calc(100vw - 32px));
+      flex: none;
+      align-self: flex-end;
+      box-sizing: border-box;
+      width: min(420px, 100%);
+      /* About one transfer card plus the toolbar; more transfers scroll inside the bar. */
+      max-height: min(30vh, 112px);
+      overflow-y: auto;
+    }
+    :host(:not([inline])) .ftp-stack {
+      padding: 4px 16px;
     }
     :host([inline]) {
       pointer-events: auto;
