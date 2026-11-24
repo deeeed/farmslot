@@ -20,7 +20,7 @@ import { checklistMarkerCommand, targetForChecklistBasename } from '../tasks/che
 
 import { readReviewFeedback } from './feedback.js';
 import { withNativeReviewMutation, withNativeReviewOperation } from './native-review-operation.js';
-import { reviewContextPolicyRound } from './review-round-budget.js';
+import { reviewContextPolicyRound, reviewContextRoundId } from './review-round-budget.js';
 import { ReviewerProgressClock } from './reviewer-progress.js';
 import { reviewerFeedbackRelPath } from './template-paths.js';
 
@@ -37,10 +37,32 @@ interface CompletionInput {
 
 export class NativeReviewCompletionError extends Error {}
 
+/**
+ * A completion turn ended without a valid terminal signal and its result reads PASS. A PASS is
+ * not accepted without the terminal mark: that reviewer may have skipped verification, and a
+ * PASS satisfies the publish gate. The round settles no-verdict.
+ */
+export class NativeReviewPassWithoutSignalError extends NativeReviewCompletionError {}
+
+/**
+ * Signal states that get the one completion re-ask: the reviewer stopped before its terminal
+ * mark (`non_terminal`), never wrote a signal (`missing`), or wrote one that cannot be read as
+ * this attempt's. `artifact_contract` is a real gate and `terminal_contract_infrastructure` a
+ * gateway-side check that could not run, so neither is re-asked.
+ */
+const COMPLETION_REASK_CODES = new Set([
+  'non_terminal',
+  'missing',
+  'invalid_json',
+  'invalid_schema',
+  'stale',
+  'context_mismatch',
+]);
+
 /** One durable completion instruction per admitted reviewer, shared by live and restart recovery. */
 export async function continueNativeReviewCompletion(
   input: CompletionInput,
-): Promise<false | 'continued' | 'deferred'> {
+): Promise<false | 'continued' | 'deferred' | 'result'> {
   const { runId, vars, snapshot, probe } = input;
   const current = () => {
     input.assertCurrent();
@@ -68,6 +90,8 @@ export async function continueNativeReviewCompletion(
   };
   let { run, context } = current();
   if (!context.taskFile || !context.reviewResultFile || !context.runnerSessionId) return false;
+  // current() pins the task file; these stay valid when `context` is re-read below.
+  const { taskFile, reviewResultFile } = context;
   const command = snapshot.commands.find(
     (entry) => entry.commandId === context.nativeSession!.commandId,
   );
@@ -75,11 +99,58 @@ export async function continueNativeReviewCompletion(
   const adopted = reserved && context.nativeSession!.commandId === reserved;
   const ended = command?.state === 'completed' || command?.state === 'failed';
   if (adopted && !probe.ok && ended) {
+    if (probe.code === 'terminal_contract_infrastructure') {
+      // Restart recovery (enforceProgressTimeout) has no poll loop, so it fails closed now
+      // rather than ingest a verdict whose contract check never ran. The live monitor reads
+      // the probe again on its next poll and fails closed at its inactivity limit.
+      if (input.enforceProgressTimeout)
+        throw new NativeReviewCompletionError(
+          `Native reviewer terminal signal could not be checked after a restart: ${probe.message}`,
+        );
+      return false;
+    }
     const failure =
       command.outcome === 'failed'
         ? await readNativeWorkerCommandError(runId, 'review', context.id)
         : undefined;
-    current();
+    ({ run, context } = current());
+    // Only an active reviewer whose round has not settled can still produce its verdict.
+    const resultTakeable = (latest: ReturnType<typeof current>) => {
+      const roundId = reviewContextRoundId(latest.context);
+      const settlement = roundId ? latest.run.reviewRoundSettlements?.[roundId] : undefined;
+      return (
+        ['launching', 'working', 'waiting'].includes(latest.context.status) &&
+        Boolean(roundId) &&
+        (!settlement || settlement.kind === 'pending')
+      );
+    };
+    if (
+      command.outcome === 'completed' &&
+      !['closed', 'failed'].includes(snapshot.session.state) &&
+      COMPLETION_REASK_CODES.has(probe.code) &&
+      resultTakeable({ run, context })
+    ) {
+      // 961d55d3: the reviewer wrote a valid result and ended the re-asked turn without its mark.
+      const feedback = await readReviewFeedback(
+        vars,
+        path.posix.dirname(taskFile),
+        reviewerFeedbackRelPath(context.id),
+        reviewResultFile,
+        reviewContextPolicyRound(run, context),
+      );
+      // A cancel or settlement may have landed during the read.
+      const latest = current();
+      if (resultTakeable(latest) && !feedback.incomplete && !feedback.terminalInvalidReason) {
+        if (feedback.verdict !== 'issues')
+          throw new NativeReviewPassWithoutSignalError(
+            `Native reviewer completion turn ended without a valid terminal signal (${probe.code}); its PASS result is not accepted without one`,
+          );
+        console.warn(
+          `[review] ${runId.slice(0, 8)}: reviewer ${context.id}: no valid terminal signal (${probe.code}) after the completion re-ask; accepting its valid ISSUES result as the verdict`,
+        );
+        return 'result';
+      }
+    }
     throw new NativeReviewCompletionError(
       failure?.message ?? 'Native reviewer completion turn ended without a valid terminal signal',
       { cause: failure },
@@ -133,7 +204,7 @@ export async function continueNativeReviewCompletion(
     !reserved &&
     (!['launching', 'working', 'waiting'].includes(context.status) ||
       probe.ok ||
-      probe.code !== 'non_terminal' ||
+      !COMPLETION_REASK_CODES.has(probe.code) ||
       !ended ||
       !command.accepted ||
       command.outcome === 'interrupted' ||
@@ -158,10 +229,15 @@ export async function continueNativeReviewCompletion(
   if (feedback.incomplete || feedback.terminalInvalidReason) return false;
   if (!reserved) {
     const target = targetForChecklistBasename(path.posix.basename(context.taskFile));
+    const mark = checklistMarkerCommand(taskDir, target);
+    // A reviewer that never wrote a signal may never have run `mark start`.
     const text =
       `Continue this exact reviewer task in ${context.taskFile}. Preserve the existing findings, report and completed checklist steps. ` +
-      `Finish its remaining checklist and run ${checklistMarkerCommand(taskDir, target)} complete. ` +
-      'Do not run start, reset the checklist, rerun the diff or start /review. Return the required review output schema after the terminal mark.';
+      (probe.code === 'missing'
+        ? `Its checklist signal is missing. If you never ran ${mark} start, run it once now, then mark each step you completed with ${mark} <N>, finish the rest and run ${mark} complete. ` +
+          'Do not reset completed steps, rerun the diff or start /review. Return the required review output schema after the terminal mark.'
+        : `Finish its remaining checklist and run ${mark} complete. ` +
+          'Do not run start, reset the checklist, rerun the diff or start /review. Return the required review output schema after the terminal mark.');
     await withNativeReviewOperation(run, () =>
       withNativeReviewMutation(async () => {
         current();

@@ -99,7 +99,7 @@ for (const name of ['scripts', 'services', 'packages'])
   await symlink(path.join(root, name), path.join(fixture, name));
 await writeFile(path.join(fixture, 'CLAUDE.md'), '# Isolated node handshake fixture\n');
 await writeFile(
-  path.join(fixture, '.farm-status.json'),
+  path.join(fixture, 'test-fleet-status.json'),
   JSON.stringify({ checked_at: new Date().toISOString(), slots: [] }),
 );
 
@@ -110,7 +110,8 @@ const seeded = (() => {
     new CredentialStoreRuntime({ FARMSLOT_HOME: home }),
     true,
   );
-  const admin = writer.createPrincipal({ type: 'person', displayName: 'proof-admin' }, [
+  // A service principal: a long-lived credential for a person now needs a signed-in session.
+  const admin = writer.createPrincipal({ type: 'service', displayName: 'proof-admin' }, [
     { role: 'admin', scope: { kind: 'global' } },
   ]);
   const owner = writer.createPrincipal({ type: 'person', displayName: 'proof-owner' }, []);
@@ -164,7 +165,7 @@ const gateway = spawn('yarn', ['workspace', '@farmslot/gateway', 'start'], {
     FARMSLOT_DISABLE_ORCHESTRATION: '1',
     NODE_TEST_CONTEXT: '1',
     FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
-    FARMSLOT_TEST_STATUS_FILE: path.join(fixture, '.farm-status.json'),
+    FARMSLOT_TEST_STATUS_FILE: path.join(fixture, 'test-fleet-status.json'),
     FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
   },
 });
@@ -286,7 +287,7 @@ try {
     allOk =
       record(
         'non-node-credential-refused',
-        'auth.connect with a person credential is refused AUTH_FORBIDDEN with a node-subject action',
+        'auth.connect with a non-node credential is refused AUTH_FORBIDDEN with a node-subject action',
         refusal?.code === 'AUTH_FORBIDDEN' &&
           /node-subject principal/u.test(refusal.message) &&
           /issue a node credential/u.test(refusal.userAction ?? ''),
