@@ -5,6 +5,7 @@ import { claudeCompactionArgs } from '@farmslot/agent-runtime/scripts/context-co
 import { piProviderEnvironment } from '../../../../scripts/runners/pi-farmslot-providers.mjs';
 
 import { resolvePiBinary, resolvePiModel } from './launch-command.js';
+import type { PaneClassifierResult } from './pane-classifier.js';
 import {
   runnerPaneContainsInstruction,
   runnerPaneHasQueuedInstruction,
@@ -415,14 +416,6 @@ export interface RunnerDefinition {
 }
 
 const UNSAFE_BROAD_PROCESS_MATCHERS = new Set(['.', '.*', 'node', 'bash', 'sh', 'zsh']);
-
-interface PaneClassifierResult {
-  state: string;
-  confidence: number;
-  reason: string;
-  suggestedAction?: string;
-  unavailable?: true;
-}
 
 async function classifyRunnerPaneStateBestEffortLazy(opts: {
   runner: string;
