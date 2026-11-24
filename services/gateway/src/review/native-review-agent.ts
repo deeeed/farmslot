@@ -66,7 +66,10 @@ import { unwatchContext } from '../tasks/watcher.js';
 import { finishReviewCleanup } from './cleanup.js';
 import { logRecommendationCorrection, readReviewFeedback } from './feedback.js';
 import { interdiffFallback, interdiffReviewScope } from './interdiff.js';
-import { continueNativeReviewCompletion } from './native-review-completion.js';
+import {
+  continueNativeReviewCompletion,
+  NativeReviewPassWithoutSignalError,
+} from './native-review-completion.js';
 import {
   assertNativeReviewOperationCurrent,
   captureNativeReviewOperationCheck,
@@ -869,6 +872,7 @@ async function runNativeReviewAttempt(
     const progressClock = new ReviewerProgressClock(monitoringStartedAt, inactivityTimeoutMs);
     const pollMs = 500;
     let turnStarted = false;
+    let resultWithoutSignal = false;
     let eventCursor: number | undefined;
     // A slow or briefly unreachable node is not a reviewer failure: the reviewer runs on and its
     // progress waits on the node. Only a node silent for a whole inactivity window fails it.
@@ -965,6 +969,10 @@ async function runNativeReviewAttempt(
         probe,
         assertCurrent: admit,
       });
+      if (completion === 'result') {
+        resultWithoutSignal = true;
+        break;
+      }
       if (completion === 'continued') {
         context = admit().agentContexts!.find((candidate) => candidate.id === contextId)!;
         reviewBinding = context.nativeSession!;
@@ -1011,12 +1019,23 @@ async function runNativeReviewAttempt(
           throw new Error(
             `Native reviewer completed its turn but its terminal signal remains unavailable: ${probe.message}`,
           );
+        if (
+          command?.state === 'completed' &&
+          !probe.ok &&
+          probe.code === 'terminal_contract_infrastructure'
+        )
+          throw new Error(
+            `Native reviewer completed its turn but its terminal signal could not be checked: ${probe.message}`,
+          );
         throw new Error(progressClock.failureMessage(now, input.reviewTimeoutMs));
       }
       await completionWake.wait(pollMs);
     }
     admit();
-    const terminal = await readTerminalReviewSignal(vars, taskDir, target.signal);
+    // A valid ISSUES result accepted without its terminal mark has no signal to apply.
+    const terminal = resultWithoutSignal
+      ? undefined
+      : await readTerminalReviewSignal(vars, taskDir, target.signal);
     const feedback = applyTerminalReviewSignal(
       await readReviewFeedback(
         vars,
@@ -1027,6 +1046,11 @@ async function runNativeReviewAttempt(
       ),
       terminal,
     );
+    // The completion check accepted ISSUES only; a re-read that no longer says so is refused.
+    if (resultWithoutSignal && feedback.verdict !== 'issues')
+      throw new NativeReviewPassWithoutSignalError(
+        'Native reviewer result changed after it was accepted without a terminal signal; only an ISSUES result is taken without one',
+      );
     logRecommendationCorrection(contextId, feedback);
     const error = terminalReviewArtifactErrorForCompletion(
       contextId,
