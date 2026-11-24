@@ -106,6 +106,7 @@ import {
   getRun,
   getRunWithArchived,
   listRunsForSlotHistory,
+  recordRunSlotRelease,
   runsDirectory,
   runSessionArchiveDir,
 } from '../../runs/store.js';
@@ -213,6 +214,7 @@ export async function slotRelease(
     console.log(`[release] queueing differing release for ${params.slotId} behind in-flight one`);
     await inflight.promise.catch(() => undefined);
   }
+  const startedAt = new Date();
   // The reconciler's only view of a live teardown is the registry. Without
   // this, a release that outlived the stale-fence bound would be reclaimed
   // mid-teardown, now that refresh keeps the fence stamp it ages.
@@ -247,6 +249,15 @@ export async function slotRelease(
       if (error instanceof BoundReleaseClaimLostError)
         return { released: false, reason: error.message };
       throw error;
+    })
+    .then((result) => {
+      if (result.released && params.expectedRunId)
+        recordRunSlotRelease(params.expectedRunId, {
+          slotId: params.slotId,
+          startedAt: startedAt.toISOString(),
+          durationMs: Date.now() - startedAt.getTime(),
+        });
+      return result;
     })
     .finally(() => {
       if (inflightReleases.get(params.slotId)?.promise === teardown) {

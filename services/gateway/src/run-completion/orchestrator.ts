@@ -83,6 +83,7 @@ import {
   buildPackageEvidenceManifest,
   readCurrentPackageEvidence,
 } from './package-evidence-manifest.js';
+import { timeCompletePhase } from './phase-timing.js';
 import { PR_PROSE_ARTIFACT } from './pr-body-render.js';
 import {
   markPRReady,
@@ -1211,11 +1212,13 @@ export async function runCompletionPipeline(
   //    client instead of continuing when the mirror is incomplete.
   if (!isReviewPR) {
     try {
-      await captureRunOutput(runId, true, true, {
-        requireSourceArtifacts: options?.requireArtifactMirror,
-        forPublication: options?.forPublication,
-        publicationComparison: options?.publicationComparison,
-      });
+      await timeCompletePhase('capture', () =>
+        captureRunOutput(runId, true, true, {
+          requireSourceArtifacts: options?.requireArtifactMirror,
+          forPublication: options?.forPublication,
+          publicationComparison: options?.publicationComparison,
+        }),
+      );
       flags.artifactsCopied = true;
     } catch (err) {
       if (options?.requireArtifactMirror) {
@@ -1230,11 +1233,12 @@ export async function runCompletionPipeline(
     }
   }
 
-  if (!getRun(runId)?.output?.artifactBundle) await captureRunOutput(runId, false, true);
+  if (!getRun(runId)?.output?.artifactBundle)
+    await timeCompletePhase('capture', () => captureRunOutput(runId, false, true));
   run = getRun(runId) ?? run;
 
   // 0b. Extract worker session cost
-  await extractAndPersistSessionCost(runId);
+  await timeCompletePhase('sessionCost', () => extractAndPersistSessionCost(runId));
 
   // 1. Read worker's report from artifacts (now available locally)
   const reportArtifact = await readWorkerReportArtifact(run);
@@ -1268,7 +1272,8 @@ export async function runCompletionPipeline(
     options?.suppressPrMutation ||
     isNoCodeTerminalDisposition(updatedRun.metrics.disposition) ||
     isArtifactOnlyRun(updatedRun);
-  if (!suppressPrMutation) await currentDeterministicChecks(updatedRun);
+  if (!suppressPrMutation)
+    await timeCompletePhase('deterministicChecks', () => currentDeterministicChecks(updatedRun));
 
   // Resolve CI repo
   const pv = await loadProjectVars(updatedRun.project).catch(() => null);
@@ -1290,7 +1295,10 @@ export async function runCompletionPipeline(
     );
 
   // 2. Find PR number
-  const prNumber = !suppressPrMutation && ciRepo ? await findPRNumber(updatedRun, ciRepo) : null;
+  const prNumber =
+    !suppressPrMutation && ciRepo
+      ? await timeCompletePhase('findPr', () => findPRNumber(updatedRun, ciRepo))
+      : null;
   if (inheritedTarget && prNumber && prNumber !== inheritedTarget.prNumber)
     throw new GatewayMethodError(
       'RUN_GATE_NOT_READY',
@@ -1313,7 +1321,7 @@ export async function runCompletionPipeline(
       updatedRun,
       pv && getProjectField(pv.projectJson, 'default_branch'),
     );
-    await pushPublicationBranch(updatedRun, headSha, baseBranch);
+    await timeCompletePhase('push', () => pushPublicationBranch(updatedRun, headSha, baseBranch));
     flags.publishedHeadSha = headSha;
   }
 
@@ -1348,10 +1356,12 @@ export async function runCompletionPipeline(
   ) {
     await assertAcceptanceCurrent();
     try {
-      flags.prCommentPosted = await postPRComment(run, commentReport, commentRepo, commentNumber, {
-        failOnError: Boolean(options?.inheritedAcceptance),
-        inheritedAcceptance: options?.inheritedAcceptance,
-      });
+      flags.prCommentPosted = await timeCompletePhase('prComment', () =>
+        postPRComment(run, commentReport, commentRepo, commentNumber, {
+          failOnError: Boolean(options?.inheritedAcceptance),
+          inheritedAcceptance: options?.inheritedAcceptance,
+        }),
+      );
     } catch (error) {
       if (!options?.inheritedAcceptance) throw error;
       // Required provenance is a completion prerequisite. Preserve this run's
@@ -1375,7 +1385,7 @@ export async function runCompletionPipeline(
   if (!isReviewPR && ciRepo && prNumber) {
     await assertAcceptanceCurrent();
     try {
-      await updatePRTitle(run, ciRepo, prNumber);
+      await timeCompletePhase('prTitle', () => updatePRTitle(run, ciRepo, prNumber));
       flags.prTitleUpdated = true;
     } catch (err) {
       if (err instanceof PublicationSecretError) throw err;
@@ -1388,18 +1398,20 @@ export async function runCompletionPipeline(
   let completionEvidenceSelection: string[] | undefined;
   if (!isReviewPR && prNumber && run.taskFile) {
     await assertAcceptanceCurrent();
-    const { manifest, inventory } = await readCurrentPackageEvidence(updatedRun);
-    const published = await publishSelectedEvidence(
-      updatedRun,
-      prNumber,
-      {
-        selectedEvidenceKeys: allSelectedEvidenceKeysForPublication(inventory),
-        evidenceManifest: inventory,
-        trustedEvidenceManifest: manifest,
-      },
-      undefined,
-      flags.publishedHeadSha ?? (await snapshotHeadSha(updatedRun)),
-    );
+    const published = await timeCompletePhase('evidenceUpload', async () => {
+      const { manifest, inventory } = await readCurrentPackageEvidence(updatedRun);
+      return publishSelectedEvidence(
+        updatedRun,
+        prNumber,
+        {
+          selectedEvidenceKeys: allSelectedEvidenceKeysForPublication(inventory),
+          evidenceManifest: inventory,
+          trustedEvidenceManifest: manifest,
+        },
+        undefined,
+        flags.publishedHeadSha ?? (await snapshotHeadSha(updatedRun)),
+      );
+    });
     artifactUrls = published.artifactUrls;
     completionEvidenceSelection = published.selectedEvidenceKeys;
   }
@@ -1410,20 +1422,15 @@ export async function runCompletionPipeline(
     // Replace local artifact paths with uploaded URLs + auto-check author checklist boxes.
     // Fail-closed and ordered before markPRReady: a sanitization failure must leave the
     // PR in draft rather than publish a body that still exposes local-only paths.
-    await postProcessPRBody(
-      updatedRun,
-      ciRepo,
-      prNumber,
-      artifactUrls,
-      completionEvidenceSelection,
-      {
+    await timeCompletePhase('prBody', () =>
+      postProcessPRBody(updatedRun, ciRepo, prNumber, artifactUrls, completionEvidenceSelection, {
         failOnError: true,
-      },
+      }),
     );
     if (shouldMarkReadyAfterCompletion(updatedRun)) {
       await assertAcceptanceCurrent();
       try {
-        await markPRReady(ciRepo, prNumber);
+        await timeCompletePhase('markReady', () => markPRReady(ciRepo, prNumber));
         flags.prMarkedReady = true;
       } catch {
         /* tracked via flag */
@@ -1431,14 +1438,20 @@ export async function runCompletionPipeline(
     }
   }
 
-  if (flags.publishedHeadSha) await assertPublicationRemoteHead(updatedRun, flags.publishedHeadSha);
+  const publishedHeadSha = flags.publishedHeadSha;
+  if (publishedHeadSha)
+    await timeCompletePhase('remoteHeadCheck', () =>
+      assertPublicationRemoteHead(updatedRun, publishedHeadSha),
+    );
   if (!suppressPrMutation && ciRepo && prNumber)
-    await recordRunPRPublication(runId, ciRepo, prNumber);
+    await timeCompletePhase('recordPublication', () =>
+      recordRunPRPublication(runId, ciRepo, prNumber),
+    );
 
   // 6. Create retrospective decision for user review
   //    Skipped when flow has ci-watch (retrospective moves there) or human-gate (serves as quality check)
   if (!options?.skipRetrospective) {
-    await createRetrospective(run, report);
+    await timeCompletePhase('retrospective', () => createRetrospective(run, report));
     flags.retrospectiveCreated = true;
   }
 

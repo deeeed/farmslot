@@ -2204,6 +2204,14 @@ export async function recordParkedRunCommits(
   );
 }
 
+/**
+ * Times a slot release on its run. A run already archived keeps its record as it was: the
+ * timing is an observation, not part of the archived execution.
+ */
+export function recordRunSlotRelease(id: string, release: NonNullable<Run['slotRelease']>): void {
+  if (getRun(id)) updateRun(id, { slotRelease: release });
+}
+
 /** Ownership release records its checkout without rewriting archived execution. */
 export async function recordRunReleasedCheckout(
   id: string,
