@@ -101,6 +101,12 @@ import { openDevServerLogTailWindow, resolveDevServerLogPath } from './prepare-d
 import { createPrepareGitTimer } from './prepare-git-timing.js';
 import { verifyPrepareHealth } from './prepare-health.js';
 import {
+  isLockfile,
+  lockfileDrift,
+  lockfileDriftAllowed,
+  readLogTail,
+} from './prepare-lockfile-drift.js';
+import {
   buildDepsSentinelWriteCommand,
   checkPrepareRequirement,
   expandPrepareProfileHook,
@@ -390,6 +396,8 @@ async function slotPrepareInner(
   let resolvedStartRef: StartRefResolution | undefined;
   let resolvedStackBase: StartRefResolution | undefined;
   let branchCreatedFromBase = false;
+  // The work branch was on origin when prepare checked it out: an existing PR branch.
+  let workBranchPublished = false;
   const runtimeDir = projectVars?.runtimeDir || '.agent';
   const effectiveDomain = resolveEffectiveDomain(params.domain, vars.domain);
   const applyCommandEnv = (command: string) =>
@@ -529,6 +537,7 @@ async function slotPrepareInner(
     baseline: TrackedFilesSnapshot | null,
     phase: string,
     command: string,
+    allowed?: (file: string) => boolean,
   ): Promise<TrackedFilesSnapshot | null> => {
     if (!baseline) return null;
     const after = await snapshotTrackedFiles(baseline);
@@ -565,7 +574,20 @@ async function slotPrepareInner(
         ...changedSubmodules(baseline, after),
       ]),
     ].sort();
-    const message = trackedFilesChangedMessage(phase, command, vars.slotId, baseline, after, files);
+    const kept = allowed ? files.filter(allowed) : [];
+    if (kept.length)
+      step(
+        'tracked-files',
+        `LOCKFILE DRIFT: prepare ${phase} rewrote ${kept.join(', ')} on this PR branch; the worker must commit it`,
+      );
+    const message = trackedFilesChangedMessage(
+      phase,
+      command,
+      vars.slotId,
+      baseline,
+      after,
+      files.filter((file) => !kept.includes(file)),
+    );
     if (message) fail(message);
     return after;
   };
@@ -1097,6 +1119,7 @@ async function slotPrepareInner(
         ),
       );
       if (fetchBranchR.exitCode === 0) {
+        workBranchPublished = true;
         const refreshCurrentBranchR = await mutateGit(
           'clear-current-index-flags',
           `cd ${shellQuote(vars.remoteRepo)} && { ${CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND}; }`,
@@ -1342,6 +1365,7 @@ async function slotPrepareInner(
       // The work-branch fetch above already answered whether origin has the branch: it
       // succeeded, or it failed only because the ref is absent (any other failure threw).
       const remoteExists = fetchBranchR.exitCode === 0;
+      workBranchPublished = remoteExists;
       const newBranchBase =
         resolvedStartRef?.resolvedSha ??
         resolvedStackBase?.resolvedSha ??
@@ -1636,6 +1660,10 @@ async function slotPrepareInner(
     step('deps', `Deps install skipped (profile ${profileName()})`);
   } else {
     const installCmd = expandPrepareHook('post_merge_install') || 'yarn install --frozen-lockfile';
+    // A run on an existing PR branch must start even when that branch's lockfile drifted: fixing
+    // it may be the run's job. The install hook reads the flag and may update the lockfile.
+    const driftAllowed = lockfileDriftAllowed(params.flowType, workBranchPublished);
+    const driftEnv = driftAllowed ? 'export FARMSLOT_PREPARE_LOCKFILE_DRIFT=allow; ' : '';
     checkAborted();
     step('deps', `Installing deps: ${installCmd}`);
     const depsLogPath = phaseLog('deps');
@@ -1649,7 +1677,9 @@ async function slotPrepareInner(
       installR = await runPrepareCommand(
         vars,
         depsLogPath,
-        withProfileEnv(`cd ${shellQuote(vars.remoteRepo)} && ${applyCommandEnv(installCmd)}`),
+        withProfileEnv(
+          `cd ${shellQuote(vars.remoteRepo)} && ${driftEnv}${applyCommandEnv(installCmd)}`,
+        ),
         {
           cwd: vars.remoteRepo,
           timeout: depsTimeoutMs,
@@ -1665,21 +1695,30 @@ async function slotPrepareInner(
     } finally {
       clearInterval(depsHeartbeat);
     }
+    const drift = installR.exitCode !== 0 ? lockfileDrift(await readLogTail(depsLogPath)) : null;
     if (installR.exitCode !== 0) {
       const setupDetail = installR.stderr.trim();
       const setupFailed = /^(tmux |stage prepare)/.test(setupDetail);
       const err: PrepareCommandError = new Error(
         setupFailed
           ? `prepare deps setup failed: ${setupDetail} — log: ${depsLogPath}`
-          : `${installCmd} failed (exit ${installR.exitCode}) — log: ${depsLogPath}`,
+          : drift
+            ? `lockfile drift${workBranchPublished ? ' on PR branch' : ''}: ${drift.package ?? 'a dependency'} in package.json does not match the lockfile (${installCmd} failed, exit ${installR.exitCode}); commit the updated lockfile on ${branch ?? 'the branch'} — log: ${depsLogPath}`
+            : `${installCmd} failed (exit ${installR.exitCode}) — log: ${depsLogPath}`,
       );
       err.failedCommand = installCmd;
       err.failedLogPath = depsLogPath;
+      if (drift && !setupFailed) err.failureKind = 'lockfile-drift';
       throw err;
     }
     // Record the lockfile hash so deps_current precondition checks can prove
     // the installed tree matches the checked-out lockfiles.
-    trackedBaseline = await checkTrackedFiles(trackedBaseline, 'deps', installCmd);
+    trackedBaseline = await checkTrackedFiles(
+      trackedBaseline,
+      'deps',
+      installCmd,
+      driftAllowed ? isLockfile : undefined,
+    );
     await execOnSlot(vars, buildDepsSentinelWriteCommand(vars.remoteRepo, runtimeDir));
     step('deps', `Dependencies installed (log: ${depsLogPath})`);
   }

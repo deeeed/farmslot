@@ -50,6 +50,8 @@ export interface PrepareCommandError extends Error {
   failedCommand?: string;
   failedLogPath?: string;
   failedPhase?: string;
+  /** A failure the run can act on: the install refused a lockfile that does not match package.json. */
+  failureKind?: 'lockfile-drift';
   relatedLogs?: string[];
   /** Set when the harness readiness record could not be persisted after a failed preflight; the preflight error stays primary. */
   readinessError?: unknown;

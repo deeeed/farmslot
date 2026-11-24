@@ -1315,12 +1315,17 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       const failedCommand = (err as any).failedCommand as string | undefined;
       const failedLogPath = (err as any).failedLogPath as string | undefined;
       const failedPhase = (err as any).failedPhase as string | undefined;
+      const failureKind =
+        err instanceof Error && 'failureKind' in err && typeof err.failureKind === 'string'
+          ? err.failureKind
+          : undefined;
       const relatedLogs = (err as any).relatedLogs as string[] | undefined;
       const failureOutputs = {
         ...partialIO?.outputs,
         ...(failedCommand ? { failedCommand } : {}),
         ...(failedLogPath ? { failedLogPath } : {}),
         ...(failedPhase ? { failedPhase } : {}),
+        ...(failureKind ? { failureKind } : {}),
         ...(relatedLogs?.length ? { relatedLogs } : {}),
       };
       updateRunStep(runId, stepName, {
