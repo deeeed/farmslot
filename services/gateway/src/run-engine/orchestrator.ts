@@ -74,6 +74,7 @@ import {
   reserveRunArtifactMetadata,
   retainedRunArtifactManifest,
 } from '../run-completion/retained-artifacts.js';
+import { retainFailedStepLog } from '../run-lifecycle/failed-step-log.js';
 import { STEP_TO_STATUS } from '../run-lifecycle/step-status.js';
 import {
   routeTerminalRunTransition,
@@ -1313,7 +1314,12 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       const partialIO = stepPartialIO.get(runId);
       stepPartialIO.delete(runId);
       const failedCommand = (err as any).failedCommand as string | undefined;
-      const failedLogPath = (err as any).failedLogPath as string | undefined;
+      // The run keeps its own copy of the failed log before the slot's next prepare reuses it.
+      const { logPath: failedLogPath, message: failureMessage } = await retainFailedStepLog(
+        runId,
+        (err as any).failedLogPath as string | undefined,
+        msg,
+      );
       const failedPhase = (err as any).failedPhase as string | undefined;
       const relatedLogs = (err as any).relatedLogs as string[] | undefined;
       const failureOutputs = {
@@ -1325,7 +1331,7 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       };
       updateRunStep(runId, stepName, {
         status: 'failed',
-        detail: msg,
+        detail: failureMessage,
         inputs: partialIO?.inputs,
         outputs: failureOutputs,
       });
@@ -1333,7 +1339,8 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       // owned the slot (an in-flight release or rival claim does), so resetting
       // it here would clear the actual owner's lifecycle fence mid-teardown.
       const claimRefused = isSlotClaimRefusedError(err);
-      if (!claimRefused && (await holdRunForRunningAgents(runId, myGen, stepName, msg))) return;
+      if (!claimRefused && (await holdRunForRunningAgents(runId, myGen, stepName, failureMessage)))
+        return;
       // Skip remaining steps
       for (let j = i + 1; j < steps.length; j++) {
         updateRunStep(runId, steps[j], { status: 'skipped' });
@@ -1384,7 +1391,7 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
         actor: 'engine',
         patch: {
           status: 'failed',
-          error: msg,
+          error: failureMessage,
           completedAt: new Date().toISOString(),
           metrics: {
             ...failedRun.metrics,

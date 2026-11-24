@@ -1,0 +1,1 @@
+- A failed run keeps its own copy of the failed step's log. Prepare's phase logs are named per slot (`deps.log`, `preflight.log`), so the next prepare on that slot overwrote the evidence of a failed run. The copy goes to the run's own directory (removed with the run by retention), and the step detail, its `failedLogPath` output and the run error name the copy.
