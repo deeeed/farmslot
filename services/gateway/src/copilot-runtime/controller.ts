@@ -211,26 +211,13 @@ export class CopilotRuntimeController {
       };
     } else {
       const session = this.persisted.session;
-      const previous = session.checkout;
-      session.checkout = checkout;
       session.workload = this.workload(session.status === 'running');
       if (session.status === 'stopped' && session.effort === undefined)
         session.effort = resolveCopilotRunner({
           runner: session.runner,
           model: session.model,
         }).effort;
-      session.dangerousLaunch = dangerousLaunchBinding({
-        checkout,
-        runner: session.runner,
-        model: session.model,
-        effort: session.effort,
-      });
-      session.updatedAt = this.timestamp();
-      if (previous.head !== checkout.head || previous.branch !== checkout.branch)
-        await this.audit('checkout-transition', {
-          from: { branch: previous.branch, head: previous.head },
-          to: { branch: checkout.branch, head: checkout.head },
-        });
+      await this.applyCheckout(session, checkout);
     }
     await this.persist();
     try {
@@ -243,19 +230,32 @@ export class CopilotRuntimeController {
       const current = await this.inspectCheckout(this.checkout);
       if (!sameCheckout(checkout, current)) {
         // Keep what the checkout now is; an action's retry reads it again under a new watch.
-        const session = this.persisted.session;
-        session.checkout = current;
-        session.dangerousLaunch = dangerousLaunchBinding({
-          checkout: current,
-          runner: session.runner,
-          model: session.model,
-          effort: session.effort,
-        });
+        await this.applyCheckout(this.persisted.session, current);
         await this.persist();
         throw error;
       }
     }
     return { session: this.persisted.session };
+  }
+  /** Record a checkout snapshot, its dangerous-launch binding, and any branch or head move. */
+  private async applyCheckout(
+    session: CopilotRuntimeSession,
+    checkout: CopilotCheckoutIdentity,
+  ): Promise<void> {
+    const previous = session.checkout;
+    session.checkout = checkout;
+    session.dangerousLaunch = dangerousLaunchBinding({
+      checkout,
+      runner: session.runner,
+      model: session.model,
+      effort: session.effort,
+    });
+    session.updatedAt = this.timestamp();
+    if (previous.head !== checkout.head || previous.branch !== checkout.branch)
+      await this.audit('checkout-transition', {
+        from: { branch: previous.branch, head: previous.head },
+        to: { branch: checkout.branch, head: checkout.head },
+      });
   }
   /**
    * An action starts from a whole checkout snapshot. A write to the checkout during the snapshot

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -418,6 +418,9 @@ test('a status read still fails when the branch changed during it, and keeps the
   });
   await assert.rejects(() => controller.status(), /changed during the read/);
   assert.equal(controller.currentSession()?.checkout.branch, 'feat/switched');
+  const audit = await readFile(path.join(home, 'copilot-runtime', 'audit.jsonl'), 'utf8');
+  assert.equal(audit.match(/"checkout-transition"/g)?.length, 1, audit);
+  assert.match(audit, /"to":\{"branch":"feat\/switched"/);
   assert.equal(controller.currentSession()?.dangerousLaunch.branch, 'feat/switched');
   await rm(home, { recursive: true, force: true });
 });
