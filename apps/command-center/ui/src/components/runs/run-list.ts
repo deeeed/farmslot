@@ -51,6 +51,7 @@ import {
 import { colors } from '../../styles/theme-tokens.js';
 import { SLOT_OPERATION_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 import { navigateHash, replaceHistoryEntryState } from '../../utils/url-state.js';
+import { evalRunBadgeStyles, isEvalRun, renderEvalRunBadge } from '../shared/eval-run-badge.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
 import { readCurrent } from '../shared/read-current.js';
 import { canActOn, ResourceQueryController } from '../shared/resource-query-controller.js';
@@ -86,6 +87,7 @@ import {
   countRunListProjections,
   filterRunList,
   isArchivableRun,
+  productFamiliesFirst,
   runGradeColor,
   type RunListFilters,
   runListObservationAttributes,
@@ -120,6 +122,7 @@ import {
   eligibilityLabel,
   familyCompletionColor,
   familyCompletionLabel,
+  isEvalCandidateRun,
   pickFamilyComparePair,
   resolveRunEngine,
   runDisplayColor,
@@ -190,7 +193,7 @@ function sortOptionDirection(sort: SortOption): 'asc' | 'desc' {
 
 @customElement('run-list')
 export class RunList extends RunListState {
-  static styles = [runListStyles, flowBadgeStyles, workInventoryTableStyles];
+  static styles = [runListStyles, flowBadgeStyles, evalRunBadgeStyles, workInventoryTableStyles];
 
   private narrowMedia?: MediaQueryList;
   private readonly progressQueries = new Map<string, ResourceQueryController<TaskProgressResult>>();
@@ -655,7 +658,7 @@ export class RunList extends RunListState {
 
   render() {
     const filtered = this.filteredRuns;
-    const familyGroups = groupRunsByFamily(filtered);
+    const familyGroups = productFamiliesFirst(groupRunsByFamily(filtered));
     const showFamilyGroups =
       Boolean(this.familyFilter) ||
       this.laneFilter === 'comparison' ||
@@ -949,6 +952,8 @@ export class RunList extends RunListState {
         (hasAutoRecoveryAttempt || Boolean(run.recoveryProposal)));
     const runnerLabel = runEngineLabel({ ...engine, effort: runWorkerEffort(run, engine) }) ?? '—';
     const progress = runProgressSummary(run);
+    // Beside the title when the row has one, otherwise first in the footer: never an extra line.
+    const evalBadge = renderEvalRunBadge(run, isEvalCandidateRun(run));
     const cells = [
       ...(showCheckbox
         ? [
@@ -1004,7 +1009,7 @@ export class RunList extends RunListState {
       row: {
         id: run.id,
         selected: isSelected,
-        className: `run-card ${this.manageMode ? 'manage-mode' : ''}`,
+        className: `run-card ${isEvalRun(run) ? 'eval-run' : ''} ${this.manageMode ? 'manage-mode' : ''}`,
         testId: `runs-row-${run.id}`,
         onActivate: () => {
           this.manageMode ? this.toggleSelectId(run.id) : this.selectRun(run);
@@ -1015,7 +1020,7 @@ export class RunList extends RunListState {
       summary:
         showSummary && run.summary
           ? html`<div class="run-row-summary" role="gridcell">
-              ${renderRunTitle(run, 'run-title')}
+              ${evalBadge} ${renderRunTitle(run, 'run-title')}
             </div>`
           : undefined,
       footer: html`<div class="run-row-footer" role="gridcell">
@@ -1041,6 +1046,7 @@ export class RunList extends RunListState {
             >${timing.label}</span
           >
         </div>
+        ${showSummary && run.summary ? nothing : evalBadge}
         <div class="run-row-affordances" @click=${(e: Event) => e.stopPropagation()}>
           ${this.renderRunTags(run)} ${this.renderEvidenceSignals(run, evidenceSummary)}
           <a class="ext-link" href=${familyRunHash(run.familyId, run.id)}>retrospective</a>

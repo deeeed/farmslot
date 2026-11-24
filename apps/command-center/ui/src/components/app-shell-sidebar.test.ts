@@ -6,7 +6,7 @@ import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import { navigationHash } from '../utils/url-state.js';
 
-import { pinnedWorkerReadError } from './app-shell-nav-model.js';
+import { contentClassForRoute, pinnedWorkerReadError } from './app-shell-nav-model.js';
 
 test('F414 shell expansion and width survive route navigation without carrying route selections', () => {
   assert.equal(
@@ -59,4 +59,10 @@ test('F414 disconnected worker rows are quiet while genuine connected read failu
     pinnedWorkerReadError(state([], { code: 'AUTH_FORBIDDEN', message: 'Denied' })),
     'Denied',
   );
+});
+
+test('Co-Pilot gets a height-bounded content box so its conversation scrolls instead of being clipped', () => {
+  assert.equal(contentClassForRoute('copilot'), 'fa-content fa-content--stacked');
+  assert.equal(contentClassForRoute('native'), 'fa-content fa-content--stacked');
+  assert.equal(contentClassForRoute('runs'), 'fa-content');
 });

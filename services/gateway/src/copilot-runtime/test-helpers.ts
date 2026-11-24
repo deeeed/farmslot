@@ -202,6 +202,7 @@ export function testController(input: {
   owner?: () => string;
   buildBootstrap?: CopilotRuntimeControllerOptions['buildBootstrap'];
   observeCheckout?: CopilotRuntimeControllerOptions['observeCheckout'];
+  inspectCheckout?: CopilotRuntimeControllerOptions['inspectCheckout'];
 }) {
   const tmux = input.tmux ?? new FakeCopilotTmux();
   const native = input.native ?? new FakeCopilotNative();
@@ -215,7 +216,7 @@ export function testController(input: {
     checkout: input.checkout,
     emit: input.emit,
     now: input.now,
-    inspectCheckout: async () => ({ ...checkoutIdentity }),
+    inspectCheckout: input.inspectCheckout ?? (async () => ({ ...checkoutIdentity })),
     observeCheckout: input.observeCheckout ?? (async () => async () => undefined),
     buildBootstrap: input.buildBootstrap ?? (async () => '# deterministic test bootstrap'),
     workload: testWorkload,

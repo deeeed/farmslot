@@ -1,0 +1,1 @@
+- Add `withRunBundleLockTime`: sums the bundle-lock queue waits and holds an operation causes, so a caller can tell storage contention from its own work.

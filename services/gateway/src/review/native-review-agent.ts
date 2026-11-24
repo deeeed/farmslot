@@ -113,6 +113,7 @@ import {
   settleReviewRoundNoVerdict,
 } from './review-round-budget.js';
 import { noteReviewInputsAtLaunch } from './reviewed-inputs.js';
+import { ReviewerProgressClock } from './reviewer-progress.js';
 import {
   claimWarmReviewerSession,
   invalidateWarmReviewerSessions,
@@ -865,8 +866,7 @@ async function runNativeReviewAttempt(
     const acceptedAt = Date.parse(reviewBinding.acceptedAt ?? startedAt);
     let monitoringStartedAt = Math.min(Date.now(), acceptedAt);
     let deadline = monitoringStartedAt + input.reviewTimeoutMs;
-    let lastProgressAt = monitoringStartedAt;
-    let observedProgress = false;
+    const progressClock = new ReviewerProgressClock(monitoringStartedAt, inactivityTimeoutMs);
     const pollMs = 500;
     let turnStarted = false;
     let eventCursor: number | undefined;
@@ -882,12 +882,6 @@ async function runNativeReviewAttempt(
         console.warn(`[review] ${runId.slice(0, 8)}: reviewer reads deferred: ${error.message}`);
       }
       await completionWake!.wait(500);
-    };
-    const recordProgress = (at: string) => {
-      const timestamp = Date.parse(at);
-      if (!Number.isFinite(timestamp) || timestamp < monitoringStartedAt) return;
-      observedProgress = true;
-      lastProgressAt = Math.max(lastProgressAt, Math.min(Date.now(), timestamp));
     };
     while (true) {
       completionWake.beforeRead();
@@ -939,14 +933,9 @@ async function runNativeReviewAttempt(
           if (commandAcceptedAt > monitoringStartedAt) {
             monitoringStartedAt = commandAcceptedAt;
             deadline = commandAcceptedAt + input.reviewTimeoutMs;
-            if (lastProgressAt < commandAcceptedAt) {
-              lastProgressAt = commandAcceptedAt;
-              observedProgress = false;
-            }
+            progressClock.restart(commandAcceptedAt);
           }
-        } else if (event.type === 'tool.started' || event.type === 'tool.completed') {
-          recordProgress(event.at);
-        }
+        } else progressClock.observe(event);
       }
       let refused: number;
       try {
@@ -964,7 +953,7 @@ async function runNativeReviewAttempt(
       const probe = await probeWorkerSignalForRun(runId, vars.slotId, context);
       if (probe.ok || probe.code === 'non_terminal') {
         for (const event of probe.signal?.checklistTiming?.events ?? [])
-          recordProgress(event.checkedAt);
+          progressClock.record(event.checkedAt);
       }
       if (!probe.ok && probe.code === 'artifact_contract')
         throw new TerminalReviewArtifactError(probe.message);
@@ -1006,7 +995,7 @@ async function runNativeReviewAttempt(
       // activity that happened while the gateway was offline.
       if (snapshot.hasMore) continue;
       const now = Date.now();
-      if (now - lastProgressAt >= inactivityTimeoutMs || (now >= deadline && !observedProgress)) {
+      if (progressClock.expired(now) || (now >= deadline && !progressClock.observedProgress)) {
         if (!turnStarted && (!command || !['completed', 'failed'].includes(command.state)))
           throw new Error(
             `Native reviewer never started a turn within ${now - monitoringStartedAt}ms ` +
@@ -1022,10 +1011,7 @@ async function runNativeReviewAttempt(
           throw new Error(
             `Native reviewer completed its turn but its terminal signal remains unavailable: ${probe.message}`,
           );
-        throw new Error(
-          `Native reviewer made no checklist or tool progress for ${now - lastProgressAt}ms ` +
-            `(inactivity limit ${inactivityTimeoutMs}ms; review budget ${input.reviewTimeoutMs}ms)`,
-        );
+        throw new Error(progressClock.failureMessage(now, input.reviewTimeoutMs));
       }
       await completionWake.wait(pollMs);
     }
@@ -1275,6 +1261,7 @@ async function runNativeReviewAttempt(
       }
     }
     let stopped = true;
+    let stopConfirmed = false;
     if (
       !isUncertainReviewerOperation(failure) &&
       context?.nativeSession &&
@@ -1288,6 +1275,7 @@ async function runNativeReviewAttempt(
           admit();
           await cancelNativeWorkerContext(runId, context!);
         });
+        stopConfirmed = true;
       } catch (stopError) {
         stopped = false;
         primaryFailure = new AggregateError(
@@ -1297,6 +1285,22 @@ async function runNativeReviewAttempt(
         );
       }
     }
+    // A warm continuation stopped cleanly (inactivity, a missing signal, a failed command) keeps
+    // its lineage: the next warm round resumes this conversation from the last verdict instead
+    // of a cold review of the whole change (961d55d3). The verdict's head, loop and artifacts
+    // stay those of `retained`; only the session holder is this context.
+    if (
+      stopConfirmed &&
+      retained &&
+      context?.runnerSessionId === retained.runnerSessionId &&
+      !(failure instanceof NativeReviewResumeFailure) &&
+      !isTerminalReviewArtifactError(failure) &&
+      nativeReviewOperationIsCurrent() &&
+      run &&
+      !isTerminalRunStatus(run.status) &&
+      (run.engineState?.generation ?? 0) === generation
+    )
+      registerWarmReviewerSession({ ...retained, runId, contextId, windowName: contextId });
     // Failed/no-verdict conversations still consumed tokens. Capture only a settled,
     // current binding; an uncertain or superseded attempt remains an offline repair.
     if (
