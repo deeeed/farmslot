@@ -2861,6 +2861,7 @@ function readRetainedManifest(
   return timeBundleOp('manifestRead', () => readRetainedManifestUntimed(...args)) as ReturnType<
     typeof readRetainedManifestUntimed
   >;
+}
 
 /**
  * ADR-039 Amendment 10: one retained task file, read without opening the store, for offline
