@@ -714,8 +714,8 @@ ref stays and points at the latest session, and the archive read helpers resolve
 its path from the ref's session key, so History and usage follow the new layout.
 Archives written before this change read as a one-session list and are never
 moved. A copy writes to a temporary file and renames it; a failed copy never
-removes an earlier good one. One capture runs per run at a time, and slot release joins a
-pending one rather than racing it. The archive ref is patched on its own, never by
+removes an earlier good one. One capture runs per run at a time, and slot release
+joins a pending one rather than racing it. The archive ref is patched on its own, never by
 rewriting the whole metrics object. Before a replay relaunches a step, the old
 session is captured synchronously from the path saved when it ended, within a time
 limit; a timeout records `missing` and the replay proceeds. Other captures run
@@ -817,6 +817,7 @@ export, marked `export-table`.
   `run.grade.external.record`, `run.interview.record` and `run.episode.recapture`.
 - `farmslot runs traces export [--project] [--flow] [--since] [--until] [--family] [--has-grade] [--update] --out <dir>`, offline.
 - `farmslot runs episodes recapture --since <date> [--until <date>]`, a bulk episode
-  rewrite (through `run.episode.recapture`) for runs that ended before this change; `farmslot runs bundle retain <runId>` also retries
-  sessions still recorded `missing`.
+  rewrite (through `run.episode.recapture`) for runs that ended before this change;
+  `farmslot runs bundle retain <runId>` also retries sessions still recorded
+  `missing`.
 - `traces.enabled` in `project.json` (default `true`).

@@ -42,9 +42,9 @@ sha256, sizeBytes, capturedAt, answersRound?, reason?}`. A source whose size and
   `runners/claude-usage-sessions.ts`) keep reading one session through the single
   ref, so usage still counts the latest session per context, as today; summing
   every session is not part of this change.
-- **Archive path resolution.** The archive read helpers in `runners/session-archive.ts`
-  (`readRunnerSessionArchiveLines`, `verifiedRunnerSessionArchivePath`) build the
-  path from the ref's `sessionKey`,
+- **Archive path resolution.** The archive read helpers in
+  `runners/session-archive.ts` (`readRunnerSessionArchiveLines`,
+  `verifiedRunnerSessionArchivePath`) build the path from the ref's `sessionKey`,
   `<contextId>/<sessionKey>/transcript.jsonl`, and fall back to the legacy
   `<contextId>/transcript.jsonl` when the ref has no `sessionKey`. History and usage
   go through these helpers, so they follow the new layout without changes of their
