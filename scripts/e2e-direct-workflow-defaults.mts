@@ -471,6 +471,11 @@ try {
 
   // Workflow defaults only preselect runner, model, effort and transport; a manual choice passes
   // normal runner admission (review-workspaces/direct-defaults.ts). Placement stays refused.
+  const manual = await connection.call<DispatchPreviewResult>('dispatch.preview', {
+    ...base,
+    model: 'gpt-6.1-sol',
+  });
+  assert.equal(manual.preview.model, 'gpt-6.1-sol', 'a manual model replaces the preselected one');
   for (const patch of [
     { slotId: 'runtime' },
     { reviewWorkspaceTarget: { machine: 'no-capacity' } },
