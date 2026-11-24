@@ -306,8 +306,14 @@ export const nativeSessionStyles = css`
     overflow-y: auto;
     padding: 10px;
     border-top: 1px solid ${unsafeCSS(colors.bgCardHover)};
-    display: grid;
+    display: flex;
+    flex-direction: column;
     gap: 8px;
+  }
+  /* A crowded composer scrolls as a whole. Squeezing a child would hide pending approvals inside
+     their own scroll box (a scroll container's automatic minimum height is zero). */
+  .composer > * {
+    flex-shrink: 0;
   }
   .composer textarea {
     width: 100%;

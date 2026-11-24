@@ -195,7 +195,8 @@ branch: a `pr-complete` run, or a `dev` run whose branch was already on origin.
 Such a run may have to fix that branch's lockfile, so when its frozen install
 fails only because the lockfile and `package.json` disagree, the hook may run one
 mutable install. It prints `[farmslot] lockfile drift fallback` before that
-install. Prepare then accepts a deps phase that changed lockfiles only, when its
+install. It must not stage the lockfile: prepare accepts the rewrite only from the
+working tree. Prepare then accepts a deps phase that changed lockfiles only, when its
 log shows the drift, records them as `lockfilesRewritten` in the prepare step
 outputs and logs that the worker must commit them. Any other tracked change still
 fails prepare. A failure after the marker is reported as itself, not as drift.

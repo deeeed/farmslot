@@ -2,7 +2,6 @@ import {
   deriveRunLifecycleView,
   type FlowType,
   type Run,
-  type RunLane,
   type RunListDecision,
   type RunListProjection,
   type RunListQuery,
@@ -17,11 +16,12 @@ import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import type { GlobalFilters } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
+import { isEvalRun } from '../shared/eval-run-badge.js';
 import { compareInventoryValues, sortInventoryRows } from '../shared/work-inventory-table-model.js';
 
 import { familyLearningTimeAgo } from './family-observability-run-detail-renderers.js';
 import { type RunInventorySortKey, runInventorySortValue } from './run-list-inventory.js';
-import type { SortOption, StatusFilter, TabFilter } from './run-list-state.js';
+import type { RunLaneFilter, SortOption, StatusFilter, TabFilter } from './run-list-state.js';
 import { formatElapsed } from './run-utils.js';
 
 /** Runs the gateway lets `run.archive` evict: terminal, or blocked with nothing left to advance. */
@@ -199,7 +199,7 @@ export interface FilterRunListInput {
   tab: TabFilter;
   statusFilter: StatusFilter;
   flowFilter: FlowType | '';
-  laneFilter: RunLane | '';
+  laneFilter: RunLaneFilter;
   searchQuery: string;
   sortBy: SortOption;
 }
@@ -215,7 +215,7 @@ function runListQuery(input: RunListFilters): RunListQuery {
     slotMachines: input.slotMachines,
     status: input.tab === 'active' || input.statusFilter === 'all' ? undefined : input.statusFilter,
     flow: input.flowFilter || undefined,
-    lane: input.laneFilter || undefined,
+    lane: input.laneFilter === 'product' ? undefined : input.laneFilter || undefined,
     tag: input.tagFilter,
     search: input.searchQuery,
   };
@@ -229,7 +229,7 @@ export function countRunListProjections(
   projections: readonly RunListProjection[],
   input: RunListFilters,
 ): { total: number; filtered: number } {
-  const matching = selectRunList(projections, runListQuery(input));
+  const matching = withoutHiddenEvals(selectRunList(projections, runListQuery(input)), input);
   return {
     total: projections.length,
     filtered: input.familyFilter
@@ -260,11 +260,38 @@ export function filterRunList(input: FilterRunListInput): readonly RunListRow[] 
         ? withLive(input.tagRuns)
         : input.runs
       : input.runs;
-  result = selectRunList(result, runListQuery(input));
+  result = withoutHiddenEvals(selectRunList(result, runListQuery(input)), input);
   if (input.familyFilter) {
-    result = result.filter((run) => run.familyId === input.familyFilter);
+    return sortRunList(
+      result.filter((run) => run.familyId === input.familyFilter),
+      input.sortBy,
+    );
   }
-  switch (input.sortBy) {
+  return productRunsFirst(sortRunList(result, input.sortBy));
+}
+
+function withoutHiddenEvals<R extends Partial<Pick<RunListRow, 'lane'>>>(
+  runs: readonly R[],
+  input: Pick<RunListFilters, 'laneFilter'>,
+): readonly R[] {
+  return input.laneFilter === 'product' ? runs.filter((run) => !isEvalRun(run)) : runs;
+}
+
+/** Product runs keep their order ahead of eval runs, which keep theirs. A family view stays in run order. */
+function productRunsFirst(runs: readonly RunListRow[]): readonly RunListRow[] {
+  return [...runs.filter((run) => !isEvalRun(run)), ...runs.filter(isEvalRun)];
+}
+
+/** Grouped views keep the same rule: a family of only eval runs lists after product families. */
+export function productFamiliesFirst<G extends { runs: readonly Pick<RunListRow, 'lane'>[] }>(
+  groups: readonly G[],
+): G[] {
+  const evalFamily = (group: G) => group.runs.every(isEvalRun);
+  return [...groups.filter((group) => !evalFamily(group)), ...groups.filter(evalFamily)];
+}
+
+function sortRunList(result: readonly RunListRow[], sortBy: SortOption): readonly RunListRow[] {
+  switch (sortBy) {
     case 'oldest':
       return [...result].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     case 'duration':
@@ -276,8 +303,8 @@ export function filterRunList(input: FilterRunListInput): readonly RunListRow[] 
     case 'status':
     case 'status-desc': {
       // Preserve main's recency-aware secondary order (newest first on ties).
-      const inventoryKey = inventoryKeyForSortOption(input.sortBy);
-      const multiplier = input.sortBy.endsWith('-desc') ? -1 : 1;
+      const inventoryKey = inventoryKeyForSortOption(sortBy);
+      const multiplier = sortBy.endsWith('-desc') ? -1 : 1;
       return [...result].sort((a, b) => {
         const primary = compareInventoryValues(
           runInventorySortValue(a, inventoryKey),
@@ -295,8 +322,8 @@ export function filterRunList(input: FilterRunListInput): readonly RunListRow[] 
     case 'runner-desc':
     case 'updated':
     case 'updated-desc': {
-      const inventoryKey = inventoryKeyForSortOption(input.sortBy);
-      const direction = input.sortBy.endsWith('-desc') ? 'desc' : 'asc';
+      const inventoryKey = inventoryKeyForSortOption(sortBy);
+      const direction = sortBy.endsWith('-desc') ? 'desc' : 'asc';
       return sortInventoryRows(
         result,
         (run) => runInventorySortValue(run, inventoryKey),
