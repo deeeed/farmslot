@@ -22,6 +22,7 @@ const fields = {
   ]),
   lane: viewChoiceField<RunFilters['lane']>('lane', '', [
     '',
+    'product',
     'production',
     'validation',
     'comparison',

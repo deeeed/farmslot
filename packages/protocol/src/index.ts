@@ -48,6 +48,7 @@ export * from './runs/review-findings.js';
 export * from './runs/review-policy.js';
 export * from './runs/review-retries.js';
 export * from './runs/run-engine-label.js';
+export * from './runs/eval-runs.js';
 export * from './runs/run-family-groups.js';
 export * from './runs/run-list-filter.js';
 export * from './runs/run-list-observation.js';

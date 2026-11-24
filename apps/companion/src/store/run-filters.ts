@@ -11,7 +11,8 @@ export type FlowFilter =
   | 'dev'
   | 'pr-complete'
   | 'update-branch';
-export type LaneFilter = '' | 'production' | 'validation' | 'comparison';
+/** `product` hides eval runs (the comparison lane). */
+export type LaneFilter = '' | 'product' | 'production' | 'validation' | 'comparison';
 export type SortOption = 'newest' | 'oldest' | 'duration';
 
 export interface RunFilters {

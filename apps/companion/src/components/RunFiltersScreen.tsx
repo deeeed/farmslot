@@ -27,9 +27,10 @@ const FLOW_OPTIONS: { label: string; value: FlowFilter; color: string }[] = [
 
 const LANE_OPTIONS: { label: string; value: LaneFilter; color: string }[] = [
   { label: 'All', value: '', color: colors.textMuted },
+  { label: 'Hide evals', value: 'product', color: colors.accent },
   { label: 'Production', value: 'production', color: colors.statusOk },
   { label: 'Validation', value: 'validation', color: '#06b6d4' },
-  { label: 'Comparison', value: 'comparison', color: '#f59e0b' },
+  { label: 'Comparison (evals)', value: 'comparison', color: '#f59e0b' },
 ];
 
 const SORT_OPTIONS: { label: string; value: SortOption }[] = [

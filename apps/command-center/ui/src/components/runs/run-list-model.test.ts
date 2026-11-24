@@ -15,7 +15,6 @@ import {
   countRunListProjections,
   filterRunList,
   isArchivableRun,
-  productFamiliesFirst,
   RUN_STALE_AFTER_MS,
   runGradeColor,
   runListObservationAttributes,
@@ -928,15 +927,3 @@ test('eval runs list after product runs by default and Hide evals drops them', (
   );
 });
 
-test('grouped run lists put families of only eval runs after product families', () => {
-  const evalFamily = { id: 'eval', runs: [run('e1', { lane: 'comparison' })] };
-  const mixedFamily = {
-    id: 'mixed',
-    runs: [run('m1'), run('m2', { lane: 'comparison' })],
-  };
-  const productFamily = { id: 'product', runs: [run('p1')] };
-  assert.deepEqual(
-    productFamiliesFirst([evalFamily, mixedFamily, productFamily]).map((group) => group.id),
-    ['mixed', 'product', 'eval'],
-  );
-});

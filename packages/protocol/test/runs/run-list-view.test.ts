@@ -243,3 +243,19 @@ test('mergeRunsById keeps newest-first order and replaces overlapping ids', () =
   assert.deepEqual(ids(merged), ['a', 'b', 'c']);
   assert.equal(merged.find((run) => run.id === 'b')?.summary, 'updated');
 });
+
+test('selectRunList lane product hides eval runs and keeps every other lane', () => {
+  const runs = [
+    makeRun('production'),
+    makeRun('validation', { lane: 'validation' }),
+    makeRun('eval', { lane: 'comparison', variant: 'glm-c3b' }),
+  ];
+  assert.deepEqual(
+    selectRunList(runs, { scope: 'all', lane: 'product' }).map((run) => run.id),
+    ['production', 'validation'],
+  );
+  assert.deepEqual(
+    selectRunList(runs, { scope: 'all', lane: 'comparison' }).map((run) => run.id),
+    ['eval'],
+  );
+});
