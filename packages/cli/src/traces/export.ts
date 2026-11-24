@@ -9,6 +9,8 @@ import path from 'node:path';
 import { resolveReportedFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { readRetainedTaskFileReadOnly, runBundleRetentionSettings } from '@farmslot/run-bundle';
 
+import { loadProfiles, profilesPath } from '../gateway-profiles.js';
+
 import { grokToSessionTrace, priceCost } from './formats.js';
 import { type ScrubInputs, TraceScrubber } from './scrub.js';
 
@@ -33,6 +35,8 @@ export interface TraceExportStores {
   pool: string;
   bundleStoreRoot: string;
   home: string;
+  /** The client gateway profiles on this host (`farmslot gateway` logins). */
+  profiles: string;
 }
 
 export interface TraceExportResult {
@@ -52,6 +56,7 @@ export function gatewayTraceStores(env: NodeJS.ProcessEnv = process.env): TraceE
     pool: paths.pool,
     bundleStoreRoot: runBundleRetentionSettings(paths.home).storeRoot ?? paths.data.runBundles,
     home: paths.home,
+    profiles: profilesPath(env),
   };
   if (!existsSync(stores.episodes))
     throw new Error(
@@ -61,6 +66,13 @@ export function gatewayTraceStores(env: NodeJS.ProcessEnv = process.env): TraceE
 }
 
 const sha256 = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
+
+/** A gateway store file that exists but cannot be read or parsed. */
+class StoreReadError extends Error {
+  constructor(file: string, cause: unknown) {
+    super(`${file}: ${(cause as Error).message}`, { cause });
+  }
+}
 
 const missing = (error: unknown) =>
   ['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '');
@@ -72,12 +84,12 @@ async function readJson(file: string): Promise<Json | undefined> {
     raw = await readFile(file, 'utf8');
   } catch (error) {
     if (missing(error)) return undefined;
-    throw error;
+    throw new StoreReadError(file, error);
   }
   try {
     return JSON.parse(raw) as Json;
   } catch (error) {
-    throw new Error(`${file} is not valid JSON: ${(error as Error).message}`);
+    throw new StoreReadError(file, new Error(`not valid JSON: ${(error as Error).message}`));
   }
 }
 
@@ -86,7 +98,7 @@ async function jsonFiles(dir: string): Promise<string[]> {
     return (await readdir(dir)).filter((name) => name.endsWith('.json')).sort();
   } catch (error) {
     if (missing(error)) return [];
-    throw error;
+    throw new StoreReadError(dir, error);
   }
 }
 
@@ -108,7 +120,7 @@ async function transcriptBytes(
   try {
     return await readFile(source);
   } catch (error) {
-    if (!missing(error)) throw error;
+    if (!missing(error)) throw new StoreReadError(source, error);
     const manifest = await readJson(path.join(stores.runArchive, runId, 'manifest.json'));
     const entries = (manifest?.entries as Json[] | undefined) ?? [];
     for (const entry of entries) {
@@ -120,7 +132,7 @@ async function transcriptBytes(
         return await readFile(path.join(entry.destination, rel));
       } catch (error) {
         // Archived elsewhere or gone: reported missing below.
-        if (!missing(error)) throw error;
+        if (!missing(error)) throw new StoreReadError(entry.destination, error);
       }
     }
     return null;
@@ -138,7 +150,7 @@ async function gradeLines(stores: TraceExportStores, runId: string): Promise<Jso
       try {
         return JSON.parse(line) as Json;
       } catch {
-        throw new Error(`${file}:${index + 1} is not valid JSON`);
+        throw new StoreReadError(`${file}:${index + 1}`, new Error('not valid JSON'));
       }
     });
 }
@@ -161,7 +173,7 @@ async function optionalText(file: string): Promise<string | undefined> {
     return await readFile(file, 'utf8');
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-    throw error;
+    throw new StoreReadError(file, error);
   }
 }
 
@@ -188,11 +200,9 @@ export async function traceScrubInputs(
     if (match && secretName.test(match[1]!) && match[2]!.length >= 8) secretValues.push(match[2]!);
   }
   // Gateway tokens: the gateway stores only their hashes, so the raw tokens come from the client
-  // profiles on this host.
-  const profiles = await readJson(path.join(stores.home, 'gateways.json'));
-  for (const profile of Object.values((profiles?.gateways as Json | undefined) ?? {})) {
-    const secret = (profile as Json).secret;
-    if (typeof secret === 'string' && secret.length >= 8) secretValues.push(secret);
+  // profiles on this host (the node role's config), read and validated as the CLI reads them.
+  for (const profile of Object.values(loadProfiles(stores.profiles).gateways)) {
+    if (profile.secret && profile.secret.length >= 8) secretValues.push(profile.secret);
   }
   const automationDir = path.join(userHome, '.farmslot-automation');
   const automation = existsSync(automationDir)
@@ -480,7 +490,13 @@ export async function exportRunTraces(
       });
       exported += 1;
     } catch (error) {
-      skipped.push({ runId, reason: (error as Error).message });
+      // Only a store that cannot be read skips the run; a write failure (disk full) stops the
+      // export. Files the run wrote before the failure stay in its folder, as the reason says.
+      if (!(error instanceof StoreReadError)) throw error;
+      skipped.push({
+        runId,
+        reason: `${error.message}; a partial folder runs/${runId} may remain`,
+      });
     }
   }
 

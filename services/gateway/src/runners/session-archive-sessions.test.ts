@@ -327,3 +327,17 @@ test('a capture stands when only its manifest copy fails to write', async (t) =>
   await captureRunnerSession({ vars, runId: run.id, contextId: 'review' });
   assert.equal(archives('review').runnerSessionArchive?.status, 'captured');
 });
+
+test('each review round gets its own entry even when the source did not change', async (t) => {
+  const { run, session, archives } = await fixture(t);
+  await session('review', 'warm');
+  await captureRunnerSession({ vars, runId: run.id, contextId: 'review', round: 1 });
+  await captureRunnerSession({ vars, runId: run.id, contextId: 'review', round: 2 });
+  assert.deepEqual(
+    archives('review').runnerSessionArchives?.map((ref) => [ref.sessionKey, ref.round]),
+    [
+      ['warm-r1', 1],
+      ['warm-r2', 2],
+    ],
+  );
+});

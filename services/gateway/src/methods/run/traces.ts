@@ -136,7 +136,15 @@ export async function runEpisodeRecapture(
     // An episode file not written since `since` cannot describe a run updated since: skip the
     // parse, so the cost is one stat per older episode.
     const file = path.join(dir, name);
-    if ((await stat(file)).mtimeMs < sinceMs) continue;
+    let mtimeMs: number;
+    try {
+      ({ mtimeMs } = await stat(file));
+    } catch (error) {
+      // Removed since the listing: nothing to recapture.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      throw error;
+    }
+    if (mtimeMs < sinceMs) continue;
     let episode: { schema?: string; runId?: string; runUpdatedAt?: string };
     try {
       episode = JSON.parse(await readFile(file, 'utf8'));

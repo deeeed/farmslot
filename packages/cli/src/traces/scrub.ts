@@ -151,12 +151,13 @@ export class TraceScrubber {
     }
     if (Array.isArray(value)) return value.map((entry) => this.value(entry, key));
     if (value && typeof value === 'object') {
-      const out: Record<string, unknown> = {};
+      // No prototype: `constructor` or `__proto__` keys are plain own keys, as in the input.
+      const out: Record<string, unknown> = Object.create(null);
       for (const [entryKey, entry] of Object.entries(value)) {
         const base = this.apply(entryKey, token);
         let scrubbedKey = base;
         // Two keys redacted to the same token stay apart instead of overwriting each other.
-        for (let n = 2; scrubbedKey in out; n++) scrubbedKey = `${base}#${n}`;
+        for (let n = 2; Object.hasOwn(out, scrubbedKey); n++) scrubbedKey = `${base}#${n}`;
         out[scrubbedKey] = this.value(entry, entryKey);
       }
       return out;

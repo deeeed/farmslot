@@ -269,9 +269,11 @@ async function copyJsonlArchive(params: {
     if (legacy) return legacy;
     // An unchanged source already captured under any key (a round included) is not copied
     // again: the release backstop, which carries no round, finds a warm reviewer's last round.
+    // A reviewer round still gets its own entry when the source did not change since the last.
     const prior = params.refs.find(
       (ref) =>
         ref.status === 'captured' &&
+        (params.target.round === undefined || ref.round === params.target.round) &&
         ref.originalPath === sourcePath &&
         ref.sourceSize === stat.size &&
         ref.sourceMtimeMs === stat.mtimeMs,

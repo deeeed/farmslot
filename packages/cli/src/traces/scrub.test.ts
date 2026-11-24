@@ -135,3 +135,12 @@ test('generic key names keep their values; ref is not exempt; redacted keys neve
   const ref = JSON.parse(s.text(JSON.stringify({ ref: 'mail someone@example.org' }))).ref;
   assert.doesNotMatch(ref, /someone@example\.org/);
 });
+
+test('keys named like Object members stay plain keys and unchanged lines stay byte-exact', () => {
+  const line = '{"constructor":"x","__proto__":{"a":1},"toString":"y"}';
+  assert.equal(scrubber().text(line), line);
+  const changed = JSON.parse(
+    scrubber().text('{"__proto__":{"home":"/Users/deeeed/x"},"constructor":1}'),
+  );
+  assert.deepEqual(Object.keys(changed), ['__proto__', 'constructor']);
+});

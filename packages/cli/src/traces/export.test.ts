@@ -25,6 +25,7 @@ async function stores(t: TestContext) {
     pool: path.join(root, 'pool'),
     bundleStoreRoot: path.join(root, 'run-bundles'),
     home: path.join(root, 'home'),
+    profiles: path.join(root, 'home', 'config', 'gateways.json'),
   };
   await put(path.join(s.projects, 'farm', 'project.json'), '{}');
   await put(path.join(s.projects, 'private', 'project.json'), '{"traces":{"enabled":false}}');
@@ -328,7 +329,7 @@ test('provider values that are not secrets stay; client profile tokens are secre
     'OPENAI_BASE_URL=https://api.example.test/v1\nDEFAULT_MODEL=claude-opus-5-5\n',
   );
   await put(
-    path.join(s.home, 'gateways.json'),
+    s.profiles,
     JSON.stringify({
       active: 'local',
       gateways: { local: { url: 'ws://x', authMode: 'token', secret: 'client-profile-token-1' } },
