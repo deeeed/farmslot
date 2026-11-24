@@ -35,6 +35,7 @@ const {
   requireHandoffAcceptanceCriteria,
 } = require('./acceptance-ledger.cjs');
 const {
+  completingParentSignal,
   openSubtaskRefusal,
   openSubtaskUnits,
   runSubtaskCommand,
@@ -86,7 +87,8 @@ function printHelp() {
       '  stays done; only --skip waives one, and the two cannot be given together.',
       'Existing evidence manifests are validated before progress or success marks, with field errors on refusal.',
       'Operator: ./mark wait --who "name" --reason "..."; ./mark resume clears the wait without marking a row.',
-      'Child units: ./mark sub start <id> --step N --from <path|inline:text>, then ./mark sub <id> <n> | complete [--report PATH] [--mark-last] | blocked --reason "..." | status.',
+      'Child units: ./mark sub start <id> --step N --from <path|inline:text>, then ./mark sub <id> <rows> | complete [--report PATH] [--mark-last | --rows <rows>] | blocked --reason "..." | status.',
+      '  <rows> is one token: n, or a comma list of n and a-b (2,4-6); one call marks them all.',
       '  While a child owns step N, ./mark N is refused; the child complete ticks it. Run ./mark sub --help for the child verbs.',
       'Terminal:',
       '  ./mark complete [--mark-last] [--no-review] [--skip-learnings] [--skip-checklist]',
@@ -927,9 +929,12 @@ function assertStepNotOwnedBySubtask(stepNumber) {
   process.exit(1);
 }
 
-/** Every registered child must be settled before the parent reports success. */
+/** Every child of the completing checklist must be settled before it reports success. */
 function assertNoOpenSubtasks(command) {
-  const open = openSubtaskUnits(taskDir);
+  const open = openSubtaskUnits(
+    taskDir,
+    completingParentSignal(path.basename(taskPath), path.basename(signalPath)),
+  );
   if (open.length === 0) return;
   console.error(openSubtaskRefusal(open, command));
   process.exit(1);

@@ -5,6 +5,7 @@ All notable changes to `@farmslot/skills` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- The child-unit example marks the rows done so far in one call (`mark sub perps-review 1-4`) and finishes with `complete --rows`, instead of one call per row.
 
 ## 0.13.24 - 2026-11-23
 

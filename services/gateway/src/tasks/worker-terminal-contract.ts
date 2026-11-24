@@ -37,7 +37,7 @@ import {
 
 import { AcceptanceReadError, handoffListsAcceptanceCriteria } from './acceptance-status.js';
 import { agentRuntimeScriptForSlot } from './agent-runtime-script.js';
-import { subtaskTerminalRefusal } from './subtasks.js';
+import { completingParentSignal, subtaskTerminalRefusal } from './subtasks.js';
 import { isNoCodeTerminalDisposition, releasedNoChangeChecks } from './worker-signals.js';
 
 const require = createRequire(import.meta.url);
@@ -255,7 +255,13 @@ export async function validateTerminalSignalArtifacts(
         ? JSON.parse(await slotReadFile(vars, `${taskDir}/${WORKER_TERMINAL_CONTRACT_INPUT}`))
         : undefined;
   if (!isProofMeasurementContract(rootContract)) {
-    const openChild = await subtaskTerminalRefusal(vars, taskDir, terminalCommand);
+    // Keyed on the signal being validated, not the manifest, which may point at a reviewer.
+    const openChild = await subtaskTerminalRefusal(
+      vars,
+      taskDir,
+      terminalCommand,
+      completingParentSignal(checklistBasename, path.posix.basename(signalJsonPath)),
+    );
     if (openChild) return { ok: false, kind: 'artifact', message: openChild };
   }
   // The acceptance ledger (ADR-060 phase 5) is part of this signal's proof for the

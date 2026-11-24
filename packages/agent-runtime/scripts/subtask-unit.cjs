@@ -13,6 +13,7 @@ const {
   enumerateChecklistCheckboxes,
   isSettledSubtaskStatus,
   resolveChecklistTargetWithOverrides,
+  signalFileForChecklist,
   SUBTASK_ID_PATTERN,
   SUBTASK_INDEX_FILE,
   SUBTASKS_DIR,
@@ -23,6 +24,7 @@ const {
 const {
   atomicWrite,
   markStepInFile,
+  markStepInLines,
   parseChecklist,
   pickSignalPassthrough,
   operatorWaitHistory,
@@ -65,13 +67,16 @@ const SUB_USAGE = [
   '  sub start <id> --step N --from <path|template:<id>|inline:<text>> [--var K=V ...] [--checklist FILE.md]',
   '      register one child unit on parent step N: writes subtasks/<id>.md,',
   '      subtasks/index.json and subtasks/<id>-SIGNAL.json.',
-  '  sub <id> <n>                      tick child box n (child status running)',
-  '  sub <id> complete [--report PATH] [--mark-last] [--acceptance-result PATH]',
-  '                                    finish the child, tick the parent box',
+  '  sub <id> <rows>                   tick child boxes (child status running); rows is one',
+  '                                    token: n, or a comma list of n and a-b, like 2,4-6',
+  '  sub <id> complete [--report PATH] [--mark-last | --rows <rows>] [--acceptance-result PATH]',
+  '                                    finish the child, tick the parent box; --rows ticks the',
+  '                                    named final rows in the same call',
   '  sub <id> blocked --reason "..."   block the child and the parent signal',
   '  sub <id> status                   print the child projection as JSON',
   '',
   'A child unit has no flow terminal contract; --report is its only artifact rule.',
+  'Rows ticked in one call share one timestamp, so their per-row durations read as 0 ms.',
   'Placeholders in --from are rendered with the task vars from inputs/handoff.json',
   '(TASK_DIR, FLOW, PROJECT, DOMAIN, GH_REPO, TITLE, TICKET, TEMPLATE) plus --var.',
 ].join('\n');
@@ -132,13 +137,36 @@ function childStatus(taskDir, unit) {
 }
 
 /**
- * Registered units that have not finished. Settled means `complete` or `done`;
- * a `blocked` child is still open and still owns its parent step.
+ * The parent signal whose own children gate a completion of `checklist` into `signal`, or
+ * undefined to gate on every open child (ADR-060: a parent's contract governs its own
+ * children). A unit's parent signal is the one `mark` derives for its parent checklist, so the
+ * worker's TASK.md and CHECKLIST.md are one parent and a reviewer's REVIEW.<context>.md is only
+ * that reviewer's. A completion into a custom `--signal` cannot be matched that way and keeps
+ * the unscoped check, which fails closed.
  */
-function openSubtaskUnits(taskDir) {
+function completingParentSignal(checklist, signal) {
+  if (!signal) return undefined;
+  if (checklist && signalFileForChecklist(checklist) !== signal) return undefined;
+  return signal;
+}
+
+/**
+ * Registered units that have not finished. Settled means `complete` or `done`;
+ * a `blocked` child is still open and still owns its parent step. With
+ * `parentSignal` (from {@link completingParentSignal}), only that parent's units:
+ * another checklist's open child (a parallel reviewer's, or one left by a stopped
+ * reviewer) is that checklist's proof, not this one's.
+ */
+function openSubtaskUnits(taskDir, parentSignal) {
   const index = readSubtaskIndex(taskDir);
   if (!index) return [];
   return index.units
+    .filter(
+      (unit) =>
+        parentSignal === undefined ||
+        (typeof unit.parent?.checklist === 'string' &&
+          signalFileForChecklist(unit.parent.checklist) === parentSignal),
+    )
     .map((unit) => ({ unit, status: childStatus(taskDir, unit) }))
     .filter((entry) => !isSettledSubtaskStatus(entry.status));
 }
@@ -565,26 +593,78 @@ function subStart(taskDir, rest) {
   return 0;
 }
 
-function subStep(taskDir, unit, rawStep) {
-  const stepNumber = parseStepNumber(rawStep, 'subtask step');
-  const child = parsedChecklistFile(taskDir, unit.checklist);
-  const row = child.items.find((item) => item.stepNumber === stepNumber) ?? null;
-  if (!row) {
-    throw new SubtaskRefusal(`subtask ${unit.id} has no step ${stepNumber} in ${unit.checklist}`);
+/**
+ * The child rows one token names: `n`, or a comma list of `n` and `a-b` (`2,4-6`). Every row must
+ * exist in the child checklist. Zero, empty items, spaces, reversed ranges and a row named twice
+ * (overlapping ranges included) are refused before anything is written.
+ */
+function parseRowList(raw, child, unit) {
+  if (typeof raw !== 'string' || !/^\d+(-\d+)?(,\d+(-\d+)?)*$/.test(raw)) {
+    throw usageRefusal(
+      `subtask rows are one token: n, or a comma list of n and a-b like 2,4-6 (got ${raw})`,
+    );
   }
-  markStepInFile(child.absolute, row);
+  const last = Math.max(0, ...child.items.map((item) => item.stepNumber));
+  const numbers = [];
+  for (const part of raw.split(',')) {
+    const [from, to = from] = part.split('-').map(Number);
+    if (from < 1) throw usageRefusal(`subtask rows start at 1 (got ${part})`);
+    if (to < from) throw usageRefusal(`reversed range ${part}: write ${to}-${from}`);
+    if (to > last) {
+      throw new SubtaskRefusal(`subtask ${unit.id} has no step ${to} in ${unit.checklist}`);
+    }
+    for (let n = from; n <= to; n += 1) numbers.push(n);
+  }
+  const duplicate = numbers.find((n, i) => numbers.indexOf(n) !== i);
+  if (duplicate !== undefined) throw usageRefusal(`row ${duplicate} is named twice in ${raw}`);
+  return numbers.map((n) => {
+    const row = child.items.find((item) => item.stepNumber === n) ?? null;
+    if (!row) throw new SubtaskRefusal(`subtask ${unit.id} has no step ${n} in ${unit.checklist}`);
+    return row;
+  });
+}
+
+/**
+ * Tick every named row in one write of the child checklist. A row already ticked stays as it is,
+ * the same as a single `sub <id> n`.
+ */
+function tickRows(child, rows) {
+  const lines = [...child.lines];
+  let changed = false;
+  for (const row of rows) changed = markStepInLines(lines, row) || changed;
+  if (changed) atomicWrite(child.absolute, lines.join('\n'));
+}
+
+/**
+ * One timing event per row, deduplicated the way a single mark is: a row that already has an
+ * event keeps it. Rows marked in one call share one `checkedAt`, so per-row durations after the
+ * first read as 0 ms.
+ */
+function rowEvents(events, rows, now) {
+  return rows.reduce((acc, row) => appendTimingEvent(acc, row.stepNumber, row.label, now), events);
+}
+
+function subStep(taskDir, unit, rawRows) {
+  const child = parsedChecklistFile(taskDir, unit.checklist);
+  const rows = parseRowList(rawRows, child, unit);
+  tickRows(child, rows);
 
   const now = new Date().toISOString();
   const signal = readJson(path.join(taskDir, unit.signal));
   const timing = timingOf(signal, unit.checklist);
+  const lastRow = rows[rows.length - 1];
   writeChildSignal(taskDir, unit, {
     status: 'running',
-    stepLabel: row.label,
-    events: appendTimingEvent(timing.events, row.stepNumber, row.label, now),
+    stepLabel: lastRow.label,
+    events: rowEvents(timing.events, rows, now),
     now,
   });
   resumeParentSignal(taskDir, unit, now);
-  console.log(`marked subtask ${unit.id} ${stepNumber}: ${row.label}`);
+  console.log(
+    rows.length === 1
+      ? `marked subtask ${unit.id} ${lastRow.stepNumber}: ${lastRow.label}`
+      : `marked subtask ${unit.id} rows ${rawRows} (${rows.length} rows)`,
+  );
   return 0;
 }
 
@@ -609,9 +689,12 @@ function resumeParentSignal(taskDir, unit, now) {
 function subComplete(taskDir, unit, rest) {
   const flags = parseFlags(
     rest,
-    ['--report', '--mark-last', '--acceptance-result'],
+    ['--report', '--mark-last', '--acceptance-result', '--rows'],
     'sub complete',
   );
+  if (flags.rows !== undefined && flags['mark-last']) {
+    throw usageRefusal('--rows already names the final rows; drop --mark-last');
+  }
   if (flags.report !== undefined) {
     const reportAbs = path.join(taskDir, flags.report);
     if (!fs.existsSync(reportAbs) || !fs.statSync(reportAbs).isFile()) {
@@ -623,7 +706,11 @@ function subComplete(taskDir, unit, rest) {
   }
 
   const child = parsedChecklistFile(taskDir, unit.checklist);
-  const unchecked = child.items.filter((item) => !item.checked);
+  // Every check below runs before the first write: a refused `--rows` call ticks nothing.
+  const named = flags.rows !== undefined ? parseRowList(flags.rows, child, unit) : [];
+  const unchecked = child.items.filter(
+    (item) => !item.checked && !named.some((row) => row.stepNumber === item.stepNumber),
+  );
   const allowOneUnchecked = Boolean(flags['mark-last']);
   if (unchecked.length > (allowOneUnchecked ? 1 : 0)) {
     const summary = unchecked
@@ -633,11 +720,14 @@ function subComplete(taskDir, unit, rest) {
     throw new SubtaskRefusal(
       `subtask ${unit.id} checklist incomplete — ${unchecked.length} step(s) still [ ] ` +
         `(${summary}${unchecked.length > 5 ? '; …' : ''})` +
-        (allowOneUnchecked ? '' : ' — mark them, or pass --mark-last for the final box'),
+        (allowOneUnchecked
+          ? ''
+          : ' — mark them, name them with --rows, or pass --mark-last for the final box'),
     );
   }
   const lastRow =
     allowOneUnchecked && unchecked.length === 1 ? unchecked[unchecked.length - 1] : null;
+  const finalRows = lastRow ? [lastRow] : named;
   const projection = readJson(path.join(taskDir, ACCEPTANCE_REGISTRATION_INPUT));
   const admitted = projection.registration?.units?.find((row) => row.id === unit.id);
   if (admitted || flags['acceptance-result'] !== undefined) {
@@ -674,21 +764,20 @@ function subComplete(taskDir, unit, rest) {
       );
     }
   }
-  if (lastRow) markStepInFile(child.absolute, lastRow);
+  tickRows(child, finalRows);
 
   const now = new Date().toISOString();
   const signal = readJson(path.join(taskDir, unit.signal));
   const timing = timingOf(signal, unit.checklist);
-  const events = lastRow
-    ? appendTimingEvent(timing.events, lastRow.stepNumber, lastRow.label, now)
-    : timing.events;
+  const events = rowEvents(timing.events, finalRows, now);
+  const lastFinal = finalRows[finalRows.length - 1] ?? null;
   // No flow terminal contract for a child unit: no inferFlowType, no
   // terminalContractInputForChecklist, no check-task-artifact-contract.mjs.
   writeChildSignal(taskDir, unit, {
     status: 'complete',
     outcome: 'success',
     disposition: 'fixed',
-    stepLabel: lastRow?.label ?? signal.step ?? 'complete',
+    stepLabel: lastFinal?.label ?? signal.step ?? 'complete',
     ...(flags.report ? { reportPath: flags.report } : {}),
     events,
     now,
@@ -780,6 +869,14 @@ function runSubtaskCommand(taskDirRaw, args) {
     }
     if (verb === 'complete') return subComplete(taskDir, unit, args.slice(2));
     if (verb === 'blocked') return subBlocked(taskDir, unit, args.slice(2));
+    // A space-separated row list would otherwise tick the first row and drop the rest.
+    if (args.length > 2) {
+      throw usageRefusal(
+        verb === 'status'
+          ? 'sub <id> status takes no arguments'
+          : `sub <id> takes one row token; name several rows as 2,3,4 or 2-4 (got ${args.slice(1).join(' ')})`,
+      );
+    }
     if (verb === 'status') return subStatus(taskDir, unit);
     return subStep(taskDir, unit, verb);
   } catch (err) {
@@ -795,6 +892,7 @@ function runSubtaskCommand(taskDirRaw, args) {
 module.exports = {
   SUBTASK_INDEX_REL,
   SubtaskRefusal,
+  completingParentSignal,
   openSubtaskRefusal,
   openSubtaskUnits,
   readSubtaskIndex,
