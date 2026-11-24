@@ -334,7 +334,7 @@ describe('page script', () => {
     page.window.postMessage = (data, origin) => {
       assert.equal(origin, APP);
       if (data.target === 'metamask-inpage') replies.push(data.data);
-      else page.window.dispatchEvent({ type: 'message', origin: APP, data });
+      else page.window.dispatchEvent({ type: 'message', origin: APP, source: page.window, data });
     };
     const ask = async (name, id, method, params) => {
       page.window.postMessage(
@@ -380,7 +380,7 @@ describe('page script', () => {
     let answered = false;
     plain.window.postMessage = (data) => {
       if (data.target === 'metamask-inpage') answered = true;
-      else plain.window.dispatchEvent({ type: 'message', origin: APP, data });
+      else plain.window.dispatchEvent({ type: 'message', origin: APP, source: plain.window, data });
     };
     plain.window.postMessage(
       {

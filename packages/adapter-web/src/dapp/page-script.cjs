@@ -280,6 +280,7 @@ function pageMain(config, refusalReason) {
         const stored = JSON.parse(window.localStorage.getItem(streams.sessionKey) ?? '[]');
         return Array.isArray(stored) ? stored : [];
       } catch {
+        // Corrupt or blocked storage reads as no session.
         return [];
       }
     };
@@ -300,6 +301,7 @@ function pageMain(config, refusalReason) {
       for (const scope of saved) {
         sessionScopes[scope] = {
           accounts: accounts.map((address) => `${scope}:${address}`),
+          // The wallet methods the host signs and logs.
           methods: config.loggedMethods,
           notifications: [],
         };
@@ -358,7 +360,8 @@ function pageMain(config, refusalReason) {
       }
     };
     window.addEventListener('message', (event) => {
-      if (event.origin !== location.origin || event.data?.target !== streams.contentscript) return;
+      if (event.source !== window || event.origin !== location.origin) return;
+      if (event.data?.target !== streams.contentscript) return;
       const name = event.data.data?.name;
       const message = event.data.data?.data;
       if (!message || message.id === undefined || typeof message.method !== 'string') return;

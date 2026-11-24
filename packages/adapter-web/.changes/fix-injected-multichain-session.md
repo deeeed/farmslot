@@ -1,0 +1,1 @@
+- The injected wallet presented as MetaMask also answers the extension's window streams (`metamask-provider` and the `metamask-multichain-provider` session API), so apps that log in through `@metamask/connect-multichain`, such as the Web Terminal's Web3Auth login, finish starting and can connect.
