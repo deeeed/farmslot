@@ -68,20 +68,41 @@ function exposedIgnoredPaths(targets) {
   const ignored=nul(git(['ls-files','--others','--ignored','--exclude-standard','--directory','-z']).stdout);
   if(!ignored.length)return [];
   const gitdir=text(['rev-parse','--absolute-git-dir']), exposed=new Set();
+  // An untracked ignore file that is itself ignored survives a reset and clean, so its rules
+  // still apply (husky writes .husky/_/.gitignore with '*').
+  const localRules=ignored.filter(entry => path.posix.basename(entry)==='.gitignore');
   for(const target of new Set(targets)) {
-    const directory=fs.mkdtempSync(path.join(temporary,'ignore-rules-'));
     const entries=nul(git(['ls-tree','-r','-z',target]).stdout).flatMap(line => {
       const tab=line.indexOf('\t'), file=line.slice(tab+1), fields=line.slice(0,tab).split(' ');
       return path.posix.basename(file)==='.gitignore' && ['100644','100755'].includes(fields[0]) ? [{file,sha:fields[2]}] : [];
     });
     const blobs=readObjects(entries.map(e=>e.sha));
-    for(const [i,entry] of entries.entries()) {
-      if(!blobs[i]||blobs[i].type!=='blob')fail('INVALID_METADATA','Target ignore rules are unreadable');
-      const file=path.join(directory,entry.file); fs.mkdirSync(path.dirname(file),{recursive:true}); fs.writeFileSync(file,blobs[i].body);
+    let rules=localRules.filter(file => !entries.some(entry => entry.file===file));
+    for(;;) {
+      const directory=fs.mkdtempSync(path.join(temporary,'ignore-rules-'));
+      for(const [i,entry] of entries.entries()) {
+        if(!blobs[i]||blobs[i].type!=='blob')fail('INVALID_METADATA','Target ignore rules are unreadable');
+        const file=path.join(directory,entry.file); fs.mkdirSync(path.dirname(file),{recursive:true}); fs.writeFileSync(file,blobs[i].body);
+      }
+      for(const rule of rules) { const file=path.join(directory,rule); fs.mkdirSync(path.dirname(file),{recursive:true}); fs.copyFileSync(path.join(repo,rule),file); }
+      // Git evaluates its own rules, including the existing global and info exclusions.
+      const kept=paths => paths.length ? new Set(nul(git(['--git-dir='+gitdir,'--work-tree='+directory,'-C',directory,'check-ignore','--no-index','-z','--stdin'],{input:Buffer.from(paths.join('\0')+'\0'),allow:[1]}).stdout)) : new Set();
+      const first=kept(ignored);
+      let candidates=ignored.filter(file => !first.has(file));
+      // A listed directory is ignored as a whole here, while the target may ignore only paths
+      // inside it ('.agents/skills/' collapses to '.agents/'): judge the files it holds.
+      const directories=candidates.filter(file => file.endsWith('/'));
+      if(directories.length) {
+        const files=nul(git(['ls-files','--others','--ignored','--exclude-standard','-z','--',...directories]).stdout);
+        const second=kept(files);
+        candidates=candidates.filter(file => !file.endsWith('/')).concat(files.filter(file => !second.has(file)));
+      }
+      // A local rule file the reset would expose to clean takes its rules with it.
+      const lost=rules.filter(rule => candidates.includes(rule));
+      if(lost.length) { rules=rules.filter(rule => !lost.includes(rule)); continue; }
+      for(const file of candidates)exposed.add(file);
+      break;
     }
-    // Git evaluates its own rules, including the existing global and info exclusions.
-    const kept=new Set(nul(git(['--git-dir='+gitdir,'--work-tree='+directory,'-C',directory,'check-ignore','--no-index','-z','--stdin'],{input:Buffer.from(ignored.join('\0')+'\0'),allow:[1]}).stdout));
-    for(const file of ignored)if(!kept.has(file))exposed.add(file);
   }
   return [...exposed];
 }

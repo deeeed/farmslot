@@ -1,0 +1,1 @@
+- Parking a clean checkout no longer saves a working-tree snapshot when an ignored folder hides only its contents (`.agents/skills/`) or ignores itself through its own rule file (husky's `.husky/_/.gitignore`): those paths survive a reset and clean, so they are not exposed.

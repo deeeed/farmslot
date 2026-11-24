@@ -542,6 +542,26 @@ test('an ignored file that reset would expose to clean is retained in the origin
   assert.equal(await readFile(path.join(repo, '.gitignore'), 'utf8'), 'private-note\n');
 });
 
+// mini-mm-3 (run fcfb5124): a clean checkout was saved as a dirty working tree on every park.
+test('a clean checkout whose ignored folders hide only their contents parks no working tree', async (t) => {
+  const { vars, repo, git, options } = await fixture(t);
+  await writeFile(path.join(repo, '.gitignore'), '.agents/skills/\n');
+  git('add', '.gitignore');
+  git('commit', '-qm', 'ignore skills');
+  // A rule that ignores paths inside a folder: Git lists the whole folder as ignored.
+  await mkdir(path.join(repo, '.agents', 'skills', 'recipe'), { recursive: true });
+  await writeFile(path.join(repo, '.agents', 'skills', 'recipe', 'SKILL.md'), 'skill\n');
+  // An untracked rule file that ignores itself, as husky writes: clean keeps it and its rules.
+  await mkdir(path.join(repo, '.husky', '_'), { recursive: true });
+  await writeFile(path.join(repo, '.husky', '_', '.gitignore'), '*\n');
+  await writeFile(path.join(repo, '.husky', '_', 'h'), 'hook\n');
+  const capture = await parkGitWork(vars, options, localExec);
+  assert.deepEqual(
+    capture.receipts.map((receipt) => receipt.kind),
+    ['commits'],
+  );
+});
+
 test('restore evaluates ignored paths before and after checkout without sharing temporary rule state', async (t) => {
   const { vars, repo, git, options } = await fixture(t);
   await writeFile(path.join(repo, '.gitignore'), 'ignored-note\n');
