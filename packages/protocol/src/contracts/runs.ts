@@ -2458,6 +2458,28 @@ export interface RunRecoveryRuntimeProposal {
   generation: number;
 }
 
+/** ADR-039 Amendment 10: the output a run was graded on, and its retained diff. */
+export interface RunGradedOutput {
+  /** sha256 of the graded diff against the dispatch head. */
+  diffSha256: string;
+  source: 'committed' | 'working-tree' | 'parked-ref';
+  /** The commit or parked ref graded; the working tree has none. */
+  ref: string | null;
+  /** Retained-artifact path of the diff bytes; absent when the diff exceeded the bundle cap. */
+  path?: string;
+  sizeBytes: number;
+  recordedAt: string;
+}
+
+/** ADR-039 Amendment 10: an append-only attempt the step history and recovery records miss. */
+export interface RunAttemptLogEntry {
+  kind: 'dispatch' | 'replay' | 'recovery' | 'infra-failure' | 'operator';
+  step?: string;
+  at: string;
+  error?: string;
+  recovery?: string;
+}
+
 export interface RunReplayStep {
   id: string;
   attempt: number;
@@ -3337,6 +3359,15 @@ export interface Run {
   /** Monotonic per-candidate launch attempt, inherited from the queue item; lets run
    * observations tell a legitimate takeover from a stale echo of a superseded run. */
   launchAttempt?: number;
+  /** ADR-039 Amendment 10 trace fields, written when the run records them. */
+  gradedOutput?: RunGradedOutput;
+  /** Worktree head when the run finished; the PR head when it was published; the merge commit. */
+  finalHead?: string;
+  prHead?: string;
+  mergeSha?: string;
+  /** The acceptance ledger at completion, when no ready gate recorded one. */
+  completionAcceptance?: AcceptanceStatusLedger;
+  attemptLog?: RunAttemptLogEntry[];
   completedAt?: string;
   error?: string;
   /**

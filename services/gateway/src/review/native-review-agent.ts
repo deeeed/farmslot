@@ -30,6 +30,7 @@ import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { probeWorkerSignalForRun } from '../run-engine/run-monitor.js';
 import { stackPrBase } from '../run-engine/stack-base.js';
 import { copyTaskFilesToSlot } from '../run-engine/task-sync.js';
+import { captureSessionAtEnd } from '../run-traces/session-capture.js';
 import { validateNativeRunner } from '../runners/native/manager.js';
 import { nativeReviewerOwner, nativeReviewerResultSchema } from '../runners/native/review-owner.js';
 import { cancelNativeWorkerContext, dispatchNativeWorker } from '../runners/native/worker.js';
@@ -1148,6 +1149,8 @@ async function runNativeReviewAttempt(
     if (feedback.incomplete) await settleReviewRoundNoVerdict(runId, roundId, 'no-feedback-file');
     else await recordReviewRoundVerdict(runId, roundId, context);
     await stopSettledReviewer(runId, contextId);
+    // ADR-039 Amendment 10: this round's reviewer session is archived when the round settles.
+    captureSessionAtEnd({ runId, contextId, vars });
 
     if (retained && context.runnerSessionId !== retained.runnerSessionId)
       throw new WarmReviewRefusal(

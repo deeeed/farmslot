@@ -98,6 +98,7 @@ import {
   acquireRunTransition,
   withRunTransition,
 } from '../../run-lifecycle/transition-coordinator.js';
+import { captureSessionBeforeReplay } from '../../run-traces/session-capture.js';
 import {
   assertNativeRunner,
   assertSupportedRunnerSpelling,
@@ -2580,6 +2581,13 @@ async function replayRunStep(
       (existing.transport === 'native' ? nativeFreshRestart : true)
         ? { slotId: effectiveSlotId, taskFile: existing.taskFile }
         : null;
+    // ADR-039 Amendment 10: archive the worker session this replay replaces, synchronously and
+    // bounded, before the relaunch clears its binding.
+    if (relaunchesWorker && effectiveSlotId !== null) {
+      const { loadSlotVars } = await import('../../core/config.js');
+      const vars = await loadSlotVars(effectiveSlotId).catch(() => undefined);
+      if (vars) await captureSessionBeforeReplay({ runId: params.runId, vars });
+    }
     if (clearing) {
       try {
         const {

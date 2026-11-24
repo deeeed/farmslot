@@ -438,6 +438,21 @@ export async function archiveRunnerSessionsForSlotRelease(params: {
   const usage = await import('../runtime/agent-session-usage.js');
   await usage.recoverReleasedRunWorkerUsage(params.runId);
   await usage.captureRunSessionUsage(params.runId);
+  return captureAllRunnerSessions({ ...params, run });
+}
+
+/**
+ * Captures every session of a run not yet captured: the slot-release backstop, and
+ * `farmslot runs bundle retain` while the node still holds the files.
+ */
+export async function captureAllRunnerSessions(params: {
+  vars: SlotLocality;
+  runId: string;
+  run?: Run;
+}): Promise<SessionArchiveReleaseResult> {
+  const run = params.run ?? getRun(params.runId);
+  if (!run)
+    return { attempted: 0, captured: 0, missing: 0, skipped: 0, summary: `No run ${params.runId}` };
   let captured = 0;
   let missing = 0;
   let skipped = 0;
