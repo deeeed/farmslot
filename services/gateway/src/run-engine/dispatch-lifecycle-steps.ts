@@ -435,6 +435,7 @@ export async function executePrepareStep(
   }
   activeMonitors.set(runId, prepareController);
   let selectedPrepareProfile: import('../methods/slot/shared.js').SlotPrepareResult['profile'];
+  let keptBranches: string[] | undefined;
   try {
     const prepareResult = await slotPrepare(
       {
@@ -516,6 +517,7 @@ export async function executePrepareStep(
       },
     );
     selectedPrepareProfile = prepareResult.profile;
+    keptBranches = prepareResult.keptBranches;
     if (current.startRef) {
       if (!prepareResult.startRef) {
         throw new Error('startRef prepare completed without structured resolved provenance');
@@ -591,6 +593,7 @@ export async function executePrepareStep(
         : {}),
       cliCommand,
       ...(selectedPrepareProfile ? { profile: selectedPrepareProfile } : {}),
+      ...(keptBranches?.length ? { keptBranches } : {}),
       ...(preparedRun?.startRef ? { startRef: preparedRun.startRef } : {}),
       ...(lastOutput ? { lastOutput } : {}),
     },

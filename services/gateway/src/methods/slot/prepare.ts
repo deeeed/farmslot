@@ -950,45 +950,49 @@ async function slotPrepareInner(
   // on that exact commit, on the PR branch, and nothing is pushed.
   const startRefPolicyApplies = params.flowType === 'dev' || params.flowType === 'fix-bug';
   // Release keeps a work branch that holds unpushed commits, so a new run of the ticket finds
-  // it (dropParkedBranch). Before prepare deletes or resets that branch, those commits get a
+  // it (dropParkedBranch). Before prepare deletes or resets a branch, those commits get a
   // branch of their own: the guard's parked ref alone is pruned after the retention window.
-  // `target` is where the branch moves; commits it still reaches are not stranded.
-  const keepUnpushedBranch = async (target?: string) => {
-    if (!branch) return;
-    const ref = shellQuote(`refs/heads/${branch}`);
-    const probe = await execGit(
-      'probe-unpushed-branch',
-      vars,
-      withFarmGitConfig(
-        `cd ${shellQuote(vars.remoteRepo)} && { git rev-parse --verify --quiet ${ref} || exit 0; } && git rev-list --max-count=1 ${ref} --not --remotes ${target ? shellQuote(target) : ''}`,
-      ),
-    );
-    if (probe.exitCode !== 0)
-      throw new Error(
-        `Cannot check ${branch} for unpushed commits on ${vars.slotId}: ${(probe.stderr || probe.stdout).trim().slice(-200)}`,
-      );
-    const [head = '', stranded = ''] = probe.stdout.trim().split('\n');
-    if (!stranded) return;
-    const kept = `${branch}-kept-${head.slice(0, 12)}`;
+  // `name` defaults to the run's branch; `null` means whatever branch the checkout is on.
+  // `target` is where the branch moves; commits it still reaches are not stranded. One command:
+  // probe, keep and report, so a re-prepare pays one round trip per site.
+  const keptBranches: string[] = [];
+  const keepUnpushedBranch = async ({
+    name = branch,
+    target,
+  }: { name?: string | null; target?: string } = {}) => {
+    if (name === undefined) return;
+    const which = name === null ? '$(git symbolic-ref -q --short HEAD)' : shellQuote(name);
     const keep = await execGit(
       'keep-unpushed-branch',
       vars,
       withFarmGitConfig(
-        `cd ${shellQuote(vars.remoteRepo)} && { [ "$(git rev-parse --verify --quiet ${shellQuote(`refs/heads/${kept}`)})" = ${shellQuote(head)} ] || git branch ${shellQuote(kept)} ${shellQuote(head)}; }`,
+        [
+          `cd ${shellQuote(vars.remoteRepo)} || exit 2`,
+          `b=${which}; [ -n "$b" ] || exit 0`,
+          'head=$(git rev-parse --verify --quiet "refs/heads/$b") || exit 0',
+          `stranded=$(git rev-list --max-count=1 "$head" --not --remotes ${target ? shellQuote(target) : ''}) || exit 2`,
+          '[ -n "$stranded" ] || exit 0',
+          `kept="$b-kept-$(printf '%.12s' "$head")"`,
+          '[ "$(git rev-parse --verify --quiet "refs/heads/$kept")" = "$head" ] || git branch "$kept" "$head" || exit 3',
+          `printf '%s\\n' "$b" "$kept"`,
+        ].join('\n'),
       ),
     );
     if (keep.exitCode !== 0)
       throw new Error(
-        `Cannot keep the unpushed commits of ${branch} on ${kept} (${vars.slotId}); ${branch} was not changed: ${(keep.stderr || keep.stdout).trim().slice(-200)}`,
+        `${keep.exitCode === 3 ? 'Cannot keep' : 'Cannot check'} the unpushed commits of ${name ?? 'the current branch'} on ${vars.slotId}; the branch was not changed: ${(keep.stderr || keep.stdout).trim().slice(-200)}`,
       );
-    step('branch', `Kept unpushed commits of ${branch} on ${kept}`);
+    const [source, kept] = keep.stdout.trim().split('\n');
+    if (!source || !kept) return;
+    keptBranches.push(kept);
+    step('branch', `Kept unpushed commits of ${source} on ${kept}`);
   };
   // Whatever path put the slot on the branch, the provenance must describe the
   // tree the run executes on: with a start ref the branch is reset to the
   // resolved commit, never left at whatever origin or the local branch holds.
   const resetBranchToStartRef = async () => {
     if (!resolvedStartRef) return;
-    await keepUnpushedBranch(resolvedStartRef.resolvedSha);
+    await keepUnpushedBranch({ target: resolvedStartRef.resolvedSha });
     // The same index refresh every other reset --hard in this file runs first,
     // so a stale index.lock cannot fail it (the flag sweep runs as its own
     // command on the paths that need it: it ends with exit).
@@ -1318,6 +1322,7 @@ async function slotPrepareInner(
       if (linkedWorktree) {
         // Git worktrees cannot checkout `main` when it is active in the primary clone.
         // Reset the current worktree branch directly to the resolved base commit instead.
+        await keepUnpushedBranch({ name: null, target: baseResetRef });
         const ffR = await mutateGit(
           'reset-linked-base',
           `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard ${shellQuote(baseResetRef)}; }`,
@@ -1400,7 +1405,7 @@ async function slotPrepareInner(
             `cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch} 2>/dev/null`,
           );
         }
-        await keepUnpushedBranch();
+        await keepUnpushedBranch({ target: newBranchBase });
         await mutateGit(
           'delete-local-branch',
           `cd ${shellQuote(vars.remoteRepo)} && git branch -D ${shellQuote(branch)} 2>/dev/null`,
@@ -1470,7 +1475,7 @@ async function slotPrepareInner(
         if (localExists) {
           if (forceNewBranch) {
             branchCreatedFromBase = true;
-            await keepUnpushedBranch();
+            await keepUnpushedBranch({ target: newBranchBase });
             if (linkedWorktree) {
               await mutateGit(
                 'delete-local-replay-branch',
@@ -2047,6 +2052,7 @@ async function slotPrepareInner(
     },
     ...(resolvedStartRef ? { startRef: resolvedStartRef } : {}),
     ...(resolvedStackBase ? { stackBase: resolvedStackBase } : {}),
+    ...(keptBranches.length ? { keptBranches } : {}),
   };
 }
 

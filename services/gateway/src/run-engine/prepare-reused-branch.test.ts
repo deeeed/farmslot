@@ -49,7 +49,7 @@ test(
     const branch = 'TAT-1-fix-reused';
     const fix = await leaveUnpushedCommit(slotRepo, branch);
     const events: unknown[] = [];
-    await slotPrepare(
+    const result = await slotPrepare(
       { slotId, branch, prepareProfile: 'core', flowType: 'fix-bug', forceNewBranch: true },
       (_event, payload) => events.push(payload),
     );
@@ -61,6 +61,7 @@ test(
       JSON.stringify(events),
       new RegExp(`Kept unpushed commits of ${branch} on ${kept}`),
     );
+    assert.deepEqual(result.keptBranches, [kept], 'the run records the kept branch');
   },
 );
 
@@ -117,10 +118,80 @@ test(
 );
 
 test(
+  'a forced new branch over a published branch keeps the local commits ahead of it',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, slotRepo, mainHead } = await stackFixture(t, 'reuse-published', 48850);
+    const branch = 'TAT-6-fix-published';
+    // Published at main's head, so it has no unique commits and prepare may replace it.
+    await git(slotRepo, 'push', 'origin', `main:refs/heads/${branch}`);
+    await git(slotRepo, 'fetch', 'origin');
+    await git(slotRepo, 'checkout', '-b', branch, `origin/${branch}`);
+    await writeFile(path.join(slotRepo, 'fix.txt'), 'local only\n');
+    await git(slotRepo, 'add', 'fix.txt');
+    await git(slotRepo, 'commit', '-m', 'unpushed fix');
+    const fix = await git(slotRepo, 'rev-parse', 'HEAD');
+    await git(slotRepo, 'checkout', 'main');
+    await slotPrepare(
+      { slotId, branch, prepareProfile: 'core', flowType: 'fix-bug', forceNewBranch: true },
+      () => undefined,
+    );
+    assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), mainHead);
+    assert.deepEqual(await branchesWith(slotRepo, fix), [`${branch}-kept-${fix.slice(0, 12)}`]);
+  },
+);
+
+test(
+  'a linked worktree reset to base keeps the commits of the branch it had checked out',
+  needsTmuxSandbox,
+  async (t) => {
+    const branch = 'TAT-7-fix-linked';
+    const { slotId, slotRepo, mainHead } = await stackFixture(t, 'reuse-linked', 48852, {
+      linkedWorktreeOn: branch,
+    });
+    const stale = await git(slotRepo, 'rev-parse', 'HEAD');
+    await slotPrepare(
+      { slotId, branch, prepareProfile: 'core', flowType: 'fix-bug', forceNewBranch: true },
+      () => undefined,
+    );
+    assert.equal(await git(slotRepo, 'rev-parse', 'HEAD'), mainHead);
+    assert.deepEqual(await branchesWith(slotRepo, stale), [`${branch}-kept-${stale.slice(0, 12)}`]);
+  },
+);
+
+test(
+  'an earlier keep at the same head is reused; one at another commit stops prepare',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, slotRepo, mainHead } = await stackFixture(t, 'reuse-keep', 48854);
+    const branch = 'TAT-8-fix-keep';
+    const fix = await leaveUnpushedCommit(slotRepo, branch);
+    const kept = `${branch}-kept-${fix.slice(0, 12)}`;
+    await git(slotRepo, 'branch', kept, mainHead);
+    await assert.rejects(
+      slotPrepare(
+        { slotId, branch, prepareProfile: 'core', flowType: 'fix-bug', forceNewBranch: true },
+        () => undefined,
+      ),
+      /Cannot keep the unpushed commits of TAT-8-fix-keep .*the branch was not changed/s,
+    );
+    assert.equal(await git(slotRepo, 'rev-parse', branch), fix, 'the branch was not changed');
+
+    await git(slotRepo, 'branch', '-f', kept, fix);
+    const result = await slotPrepare(
+      { slotId, branch, prepareProfile: 'core', flowType: 'fix-bug', forceNewBranch: true },
+      () => undefined,
+    );
+    assert.deepEqual(result.keptBranches, [kept]);
+    assert.deepEqual(await branchesWith(slotRepo, fix), [kept]);
+  },
+);
+
+test(
   'a reused branch with nothing unpushed is recreated without keeping a copy',
   needsTmuxSandbox,
   async (t) => {
-    const { slotId, slotRepo, mainHead } = await stackFixture(t, 'reuse-clean', 48848);
+    const { slotId, slotRepo, mainHead } = await stackFixture(t, 'reuse-clean', 48856);
     const branch = 'TAT-5-fix-clean';
     await git(slotRepo, 'branch', branch, 'origin/main');
     await slotPrepare(

@@ -23,6 +23,8 @@ export type SlotPrepareResult = {
   stackBase?: StartRefResolution;
   /** Selected prepare profile + any precondition fallbacks taken (ADR-037). */
   profile?: { selected: string; requested?: string; fallbacks: PrepareProfileFallback[] };
+  /** Branches prepare created to keep unpushed commits of a branch it deleted or reset. */
+  keptBranches?: string[];
 };
 export interface SlotPrepareInternalOptions {
   /** The keep-warm re-prepare a release runs while it still holds the releasing fence. */
