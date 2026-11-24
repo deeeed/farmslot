@@ -509,7 +509,7 @@ test(
     const result = await pending;
     assert.notEqual(result.exitCode, 0);
     assert.match(result.stderr, /census failed/);
-    assert.match(result.stderr, /SIGKILLed after the census/);
+    assert.match(result.stderr, /SIGKILLed after the census \(not confirmed stopped\)/);
     await pipe.closed();
   },
 );

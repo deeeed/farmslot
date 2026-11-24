@@ -629,7 +629,7 @@ export async function runTaskRuntime(
           const survivors =
             censusFailure +
             (left.length
-              ? `Task groups SIGKILLed after the census (running at its last pass): ${left.join(', ')}\n`
+              ? `Task groups SIGKILLed after the census (${censusFailure ? 'not confirmed stopped' : 'running at its last pass'}): ${left.join(', ')}\n`
               : '');
           resolve({
             ...outcome,
