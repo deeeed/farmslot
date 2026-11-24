@@ -507,6 +507,20 @@ test('a comparison replay re-reviews its uncommitted fix at an unchanged head, r
   const task = reviewerTask(run.id, dispatches[1]!.contextId);
   assert.match(task, /## The work is uncommitted/);
   assert.ok(task.includes(`--stat ${head}`), 'the scope names the working-tree diff against HEAD');
+  // The delta is pinned at the unchanged head, so review.diff is empty: only the scope shows the fix.
+  assert.deepEqual(deltaCaptures, [head]);
+});
+
+test('a comparison replay re-reviewed over a rebase gets the working-tree scope with its interdiff', async (t) => {
+  const run = await prePublishRun(t, published);
+  updateRun(run.id, { completionPolicy: 'artifact-only', lane: 'comparison' });
+  await review(run.id);
+  worktreeStatus = ' M a.ts\0';
+  rebaseQualification = 'reliable';
+  const result = await reReview(run.id);
+  assert.equal(result.mode, 'warm');
+  assert.ok(result.reviewSnapshot?.interdiff);
+  assert.match(reviewerTask(run.id, dispatches.at(-1)!.contextId), /## The work is uncommitted/);
 });
 
 test('a comparison replay whose reviewer cannot resume gets the working-tree scope in the fresh session', async (t) => {

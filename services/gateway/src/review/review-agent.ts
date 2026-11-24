@@ -227,7 +227,7 @@ export function workingTreeReviewScope(headSha: string | null): string {
   return `## The work is uncommitted
 
 This comparison run keeps its implementation and review fixes in the working tree, not in commits,
-so the range above may hold no commits. Read the working tree: \`${GIT_DIFF_COMMAND} --stat ${head}\`,
+so the commit ranges above may hold no commits. Read the working tree: \`${GIT_DIFF_COMMAND} --stat ${head}\`,
 \`${GIT_DIFF_COMMAND} ${head}\` and \`git status --short\` for new files. That diff holds the whole
 implementation; the worker's report says what this fix round changed.
 `;
