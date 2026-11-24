@@ -965,14 +965,18 @@ export async function previewWhenSlotClaimable<T>(
     (await cleanupHoldClearsSoon(slotId, currentRow, cleanupHoldRun));
   // A slot mid-release, or one that reads free while a prepare guard still holds it (it would
   // refuse this run's prepare 'already preparing', 1b542e2f), is waited for, not refused.
-  const waiting = async (
+  // One classification per read: the cleanup check may look the leaver up in the archive.
+  const waitReason = async (
     currentRow: Readonly<Record<string, unknown>> | null,
     current: typeof blocker,
-  ) =>
-    current?.kind === 'releasing' ||
-    (!current && preparing(slotId)) ||
-    (await cleanupHeld(currentRow, current));
-  if (await waiting(row, blocker)) {
+  ): Promise<'cleanup' | 'release' | null> =>
+    (await cleanupHeld(currentRow, current))
+      ? 'cleanup'
+      : current?.kind === 'releasing' || (!current && preparing(slotId))
+        ? 'release'
+        : null;
+  let reason = await waitReason(row, blocker);
+  if (reason) {
     // One read decides both whether to wait and whether it counts as queue time.
     blocker = await wrapWait(async () => {
       const deadline = now() + timeoutMs;
@@ -980,8 +984,8 @@ export async function previewWhenSlotClaimable<T>(
       // release alternate: the cleanup bound runs from the first hold seen, not per phase.
       let cleanupSince: number | undefined;
       let current = blocker;
-      while (await waiting(row, current)) {
-        if (current?.kind === 'occupied' && (await cleanupHeld(row, current))) {
+      while (reason) {
+        if (reason === 'cleanup' && current) {
           cleanupSince ??= now();
           if (now() - cleanupSince >= cleanupHoldTimeoutMs) {
             const minutes = Math.round(cleanupHoldTimeoutMs / 60_000);
@@ -1003,6 +1007,7 @@ export async function previewWhenSlotClaimable<T>(
         assertRunUnchanged();
         row = await readRow(slotId);
         current = blockerOf(row);
+        reason = await waitReason(row, current);
       }
       return current;
     });
