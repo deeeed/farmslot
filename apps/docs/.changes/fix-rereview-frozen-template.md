@@ -1,0 +1,1 @@
+- The review modes reference states that a continuation that never launches its reviewer does not keep its workspace, that workspace re-reviews freeze the current static-review template, and that a refused retained reviewer names the mismatch.

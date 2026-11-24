@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
 
-import type { RunStatus } from '@farmslot/protocol';
+import type { Run, RunStatus } from '@farmslot/protocol';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-retention-closeout-'));
 Object.assign(process.env, {
@@ -34,9 +34,16 @@ mock.module('../runners/review-tmux.js', {
 const workspace = await import('./workspace.js');
 const cleanup = mock.fn(async (_runId: string) => {});
 mock.module('./workspace.js', { namedExports: { ...workspace, cleanupReviewWorkspace: cleanup } });
-const { createRun, getRun, updateRun, archiveRun, getAllRunsWithArchived } =
-  await import('../runs/store.js');
+const {
+  createRun,
+  getRun,
+  updateRun,
+  archiveRun,
+  getAllRunsWithArchived,
+  claimReviewWorkspaceTransfer,
+} = await import('../runs/store.js');
 const { reconcileReviewWorkspaceCleanup, teardownReviewWorkspace } = await import('./pipeline.js');
+const { resolveWorkspaceContinuationSource } = await import('./continuity.js');
 const { retainedWorkspaceIsIdle } = await import('./retention-policy.js');
 
 test('a retained result keeps capacity until terminal reconciliation confirms the worker stop', async () => {
@@ -282,4 +289,212 @@ test('archive of a transferred predecessor preserves the successor workspace and
   const saved = (await getAllRunsWithArchived()).find((candidate) => candidate.id === run.id);
   assert.deepEqual(saved?.reviewWorkspace?.transferredTo, transfer);
   assert.equal(saved?.reviewWorkspace?.cleanedAt, undefined);
+});
+
+/** 5b37dbe1: a warm continuation claimed its parent's workspace, then failed at write-task. */
+function neverLaunchedContinuation() {
+  const predecessor = retainedArchiveRun('done');
+  const successor = createRun(
+    {
+      flowType: 'review-pr',
+      project: 'fixture',
+      ticketOrPr: predecessor.ticketOrPr,
+      mode: 'autonomous',
+      runner: 'codex',
+      model: 'gpt-6.1-sol',
+      transport: 'tmux',
+      reviewWorkspaceTarget: { machine: 'local' },
+    },
+    { nativeOwnerPrincipalId: 'closeout-owner' },
+  );
+  updateRun(successor.id, {
+    status: 'failed',
+    error: 'Static review requires its frozen template and source subject',
+    reviewWorkspace: {
+      ...predecessor.reviewWorkspace!,
+      retainedAt: undefined,
+      retainedUntil: undefined,
+      executionStoppedAt: undefined,
+      continuedFrom: {
+        runId: predecessor.id,
+        headSha: 'a'.repeat(40),
+        baseSha: 'b'.repeat(40),
+        taskPath: '/owned/task',
+      },
+    },
+  });
+  const transfer = { runId: successor.id, generation: 0 };
+  updateRun(predecessor.id, {
+    reviewWorkspace: { ...predecessor.reviewWorkspace!, transferredTo: transfer },
+  });
+  return { predecessor: getRun(predecessor.id)!, successor: getRun(successor.id)! };
+}
+
+test('a continuation that fails before launch hands its workspace back at teardown', async () => {
+  const { predecessor, successor } = neverLaunchedContinuation();
+  const beforeCleanup = cleanup.mock.callCount();
+  const beforeStops = stops;
+  await teardownReviewWorkspace(successor.id);
+  assert.equal(cleanup.mock.callCount(), beforeCleanup);
+  assert.equal(stops, beforeStops, "the predecessor's stopped reviewer is not touched");
+  assert.equal(getRun(predecessor.id)!.reviewWorkspace?.transferredTo, undefined);
+  const returned = getRun(successor.id)!.reviewWorkspace!;
+  assert.deepEqual(returned.transferredTo, { runId: predecessor.id, generation: 0 });
+  assert.equal(returned.cleanedAt, undefined);
+  assert.ok(returned.executionStoppedAt);
+});
+
+test('archive of a never-launched continuation returns the checkout instead of releasing it', async () => {
+  const { predecessor, successor } = neverLaunchedContinuation();
+  const beforeCleanup = cleanup.mock.callCount();
+  assert.deepEqual(await runArchive({ runId: successor.id }, () => {}), { ok: true });
+  assert.equal(cleanup.mock.callCount(), beforeCleanup);
+  assert.equal(getRun(predecessor.id)!.reviewWorkspace?.transferredTo, undefined);
+  assert.equal(getRun(predecessor.id)!.reviewWorkspace?.cleanedAt, undefined);
+  const saved = (await getAllRunsWithArchived()).find((r) => r.id === successor.id);
+  assert.equal(saved?.reviewWorkspace?.cleanedAt, undefined);
+  assert.equal(saved?.reviewWorkspace?.transferredTo?.runId, predecessor.id);
+});
+
+test('a hand-back interrupted after its first write completes on the next attempt', async () => {
+  const { predecessor, successor } = neverLaunchedContinuation();
+  updateRun(successor.id, {
+    reviewWorkspace: {
+      ...successor.reviewWorkspace!,
+      executionStoppedAt: '2026-11-24T05:12:39Z',
+      transferredTo: { runId: predecessor.id, generation: 0 },
+    },
+  });
+  assert.deepEqual(await runArchive({ runId: successor.id }, () => {}), { ok: true });
+  assert.equal(getRun(predecessor.id)!.reviewWorkspace?.transferredTo, undefined);
+});
+
+test('a continuation that launched its reviewer still releases its checkout on archive', async () => {
+  const { successor } = neverLaunchedContinuation();
+  updateRun(successor.id, { engineState: { workspaceReviewDispatchGeneration: 0 } });
+  refuseStop = false;
+  const beforeCleanup = cleanup.mock.callCount();
+  assert.deepEqual(await runArchive({ runId: successor.id }, () => {}), { ok: true });
+  assert.equal(cleanup.mock.callCount(), beforeCleanup + 1);
+});
+
+test('after a hand-back the predecessor can be continued again', async () => {
+  const { predecessor, successor } = neverLaunchedContinuation();
+  // A completed reviewer with a lineage, as a warm continuation requires.
+  updateRun(predecessor.id, {
+    agentContexts: [
+      {
+        ...predecessor.agentContexts![0],
+        status: 'complete',
+        reviewId: 'lineage',
+        model: 'gpt-6.1-sol',
+      },
+    ],
+  });
+  const next = {
+    ...getRun(predecessor.id)!,
+    id: 'next-continuation',
+    status: 'slot-finding' as const,
+  };
+  // The admission check a live claim runs (allocation passes it as assertCurrent).
+  const admit = (prior: Run) => {
+    resolveWorkspaceContinuationSource(next, prior, (id) => getRun(id), 'lineage');
+  };
+  // Before the hand-back the never-launched run still holds it.
+  assert.throws(() => admit(getRun(predecessor.id)!), /held by its successor/);
+  await teardownReviewWorkspace(successor.id);
+  const returned = getRun(predecessor.id)!;
+  const claim = { runId: next.id, generation: 0 };
+  await claimReviewWorkspaceTransfer(predecessor.id, returned.reviewWorkspace!, claim, admit);
+  assert.deepEqual(getRun(predecessor.id)!.reviewWorkspace?.transferredTo, claim);
+});
+
+test('an archived predecessor takes nothing back; the continuation releases the checkout', async () => {
+  const { predecessor, successor } = neverLaunchedContinuation();
+  assert.equal(await archiveRun(predecessor.id), true);
+  refuseStop = false;
+  await teardownReviewWorkspace(successor.id);
+  assert.equal(getRun(successor.id)!.reviewWorkspace?.transferredTo, undefined);
+  const beforeCleanup = cleanup.mock.callCount();
+  assert.deepEqual(await runArchive({ runId: successor.id }, () => {}), { ok: true });
+  assert.equal(cleanup.mock.callCount(), beforeCleanup + 1);
+  const archived = (await getAllRunsWithArchived()).find((r) => r.id === predecessor.id);
+  assert.equal(archived?.reviewWorkspace?.transferredTo?.runId, successor.id);
+});
+
+test('a continuation that lost its claim stops and releases nothing of the winner', async () => {
+  const { predecessor, successor } = neverLaunchedContinuation();
+  const winner = { runId: 'winning-continuation', generation: 2 };
+  updateRun(predecessor.id, {
+    reviewWorkspace: { ...predecessor.reviewWorkspace!, transferredTo: winner },
+  });
+  const beforeCleanup = cleanup.mock.callCount();
+  const beforeStops = stops;
+  await teardownReviewWorkspace(successor.id);
+  assert.equal(stops, beforeStops, "the winner's reviewer is not stopped");
+  assert.deepEqual(getRun(successor.id)!.reviewWorkspace?.transferredTo, winner);
+  assert.deepEqual(getRun(predecessor.id)!.reviewWorkspace?.transferredTo, winner);
+  assert.deepEqual(await runArchive({ runId: successor.id }, () => {}), { ok: true });
+  assert.equal(cleanup.mock.callCount(), beforeCleanup);
+});
+
+test('a continuation whose claim never landed leaves the predecessor holding it', async () => {
+  const { predecessor, successor } = neverLaunchedContinuation();
+  const { transferredTo: _claim, ...unclaimed } = predecessor.reviewWorkspace!;
+  updateRun(predecessor.id, { reviewWorkspace: unclaimed });
+  const beforeCleanup = cleanup.mock.callCount();
+  assert.deepEqual(await runArchive({ runId: successor.id }, () => {}), { ok: true });
+  assert.equal(cleanup.mock.callCount(), beforeCleanup);
+  assert.equal(getRun(predecessor.id)!.reviewWorkspace?.transferredTo, undefined);
+  const saved = (await getAllRunsWithArchived()).find((r) => r.id === successor.id);
+  assert.equal(saved?.reviewWorkspace?.transferredTo?.runId, predecessor.id);
+});
+
+test('a replay admitted while the hand-back reads its predecessor keeps the workspace', async () => {
+  const { predecessor, successor } = neverLaunchedContinuation();
+  // The generation is read before the first await; the replay lands during it.
+  const teardown = teardownReviewWorkspace(successor.id);
+  updateRun(successor.id, { engineState: { generation: 1 } });
+  await assert.rejects(teardown, /no longer owns this run generation/);
+  assert.equal(getRun(successor.id)!.reviewWorkspace?.transferredTo, undefined);
+  assert.equal(getRun(predecessor.id)!.reviewWorkspace?.transferredTo?.runId, successor.id);
+});
+
+test('an interrupted hand-back whose predecessor was archived is retained for expiry', async () => {
+  const { predecessor, successor } = neverLaunchedContinuation();
+  // The first write landed, then the predecessor was archived before the second.
+  updateRun(successor.id, {
+    reviewWorkspace: {
+      ...successor.reviewWorkspace!,
+      executionStoppedAt: '2026-11-24T05:12:39Z',
+      transferredTo: { runId: predecessor.id, generation: 0 },
+    },
+  });
+  assert.equal(await archiveRun(predecessor.id), true);
+  refuseStop = false;
+  await teardownReviewWorkspace(successor.id);
+  const owned = getRun(successor.id)!.reviewWorkspace!;
+  assert.equal(owned.transferredTo, undefined);
+  assert.ok(owned.retainedAt, 'retention can expire it');
+  assert.ok(owned.retainedUntil);
+  assert.ok(owned.executionStoppedAt);
+});
+
+test('a continuation whose predecessor cannot be read keeps and retains its checkout', async () => {
+  const { successor } = neverLaunchedContinuation();
+  updateRun(successor.id, {
+    reviewWorkspace: {
+      ...successor.reviewWorkspace!,
+      continuedFrom: {
+        ...successor.reviewWorkspace!.continuedFrom!,
+        runId: 'unreadable-predecessor',
+      },
+      transferredTo: { runId: 'unreadable-predecessor', generation: 0 },
+    },
+  });
+  refuseStop = false;
+  await teardownReviewWorkspace(successor.id);
+  const owned = getRun(successor.id)!.reviewWorkspace!;
+  assert.equal(owned.transferredTo, undefined);
+  assert.ok(owned.retainedAt);
 });

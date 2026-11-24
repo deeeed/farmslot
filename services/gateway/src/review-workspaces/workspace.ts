@@ -66,7 +66,7 @@ function ownedRun(runId: string): Run {
     throw new Error('Review workspace requires an owned native review run without a slot');
   assertNativeRunOwner(run);
   if (run.reviewWorkspace?.transferredTo)
-    throw new Error('Review workspace belongs to its successor');
+    throw new Error(`Review workspace belongs to run ${run.reviewWorkspace.transferredTo.runId}`);
   return run;
 }
 

@@ -281,8 +281,8 @@ export async function reviewTmuxOperation(
   resumeCommandId?: string,
 ): Promise<ReviewTmuxOperationResult> {
   assertNativeRunOwner(run);
-  if ((getRun(run.id) ?? run).reviewWorkspace?.transferredTo)
-    throw new Error('Review workspace belongs to its successor');
+  const holder = (getRun(run.id) ?? run).reviewWorkspace?.transferredTo;
+  if (holder) throw new Error(`Review workspace belongs to run ${holder.runId}`);
   const w = run.reviewWorkspace!;
   const runner = run.metrics.runner!;
   // Set for a runner that resumes only by file, so the resume can be proved

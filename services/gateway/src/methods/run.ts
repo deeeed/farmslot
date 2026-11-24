@@ -112,7 +112,7 @@ import {
   assertReviewWorkspaceAdmitted,
   assertReviewWorkspacePlacement,
   inspectReviewWorkspaceTarget,
-  resolveReviewWorkspacePlatform,
+  resolveWorkspaceReviewTemplate,
   type ReviewWorkspaceAdmission,
 } from '../review-workspaces/admission.js';
 import { resolveDirectWorkflowDefaults } from '../review-workspaces/direct-defaults.js';
@@ -659,16 +659,13 @@ export async function planRunCreation(
   }
   let executionTemplateSnapshot: Run['executionTemplate'];
   if (workspaceAdmission) {
-    const projectVars = await loadProjectVars(params.project);
-    executionTemplateSnapshot = (
-      await resolveConfiguredExecutionTemplateForSlot(projectVars, {
-        flow: 'review-pr',
-        platform: await resolveReviewWorkspacePlatform(workspaceAdmission.pool, params.project),
-        runMode: params.mode ?? 'autonomous',
-        explicitDomain: params.domain,
-        explicitId: params.executionTemplateId,
-      })
-    ).reference;
+    executionTemplateSnapshot = await resolveWorkspaceReviewTemplate({
+      project: params.project,
+      pool: workspaceAdmission.pool,
+      mode: params.mode ?? 'autonomous',
+      domain: params.domain,
+      executionTemplateId: params.executionTemplateId,
+    });
   }
   if (projectConfig?.executionTemplates && params.slotId) {
     const [projectVars, slotVars] = await Promise.all([

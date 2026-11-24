@@ -1,0 +1,1 @@
+- A static review's replay refusal names the run that holds its workspace (its successor, or the predecessor a never-launched continuation handed it back to), and the `transferredTo` contract documents the hand-back.
