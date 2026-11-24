@@ -1281,7 +1281,6 @@ async function runNativeReviewAttempt(
       context?.runnerSessionId === retained.runnerSessionId &&
       !(failure instanceof NativeReviewResumeFailure) &&
       !isTerminalReviewArtifactError(failure) &&
-      !isUncertainReviewerOperation(failure) &&
       nativeReviewOperationIsCurrent() &&
       run &&
       !isTerminalRunStatus(run.status) &&

@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -57,9 +57,10 @@ test(
       `projects/${project}/templates/worker/review.static-code.md`,
       '# Review the text fixture\n\n- [ ] 1. Read message.txt and the diff.\n- [ ] 2. Record the review result and feedback, then mark this checklist complete.\n',
     );
-    const codex = await installScriptedCodex(
-      await mkdtemp(path.join(os.tmpdir(), 'scripted-codex-')),
-    );
+    // The native proof fixture removes `root`; the scripted binary lives outside it.
+    const codexDir = await mkdtemp(path.join(os.tmpdir(), 'scripted-codex-'));
+    t.after(() => rm(codexDir, { recursive: true, force: true }));
+    const codex = await installScriptedCodex(codexDir);
     await write(
       'pool/local.json',
       JSON.stringify({

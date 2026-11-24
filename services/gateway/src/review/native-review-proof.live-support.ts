@@ -1,7 +1,8 @@
 // A scripted Codex app-server for review proofs over the real gateway review path and native
 // host. It follows the reviewer prompt mechanically: one shell tool call, the checklist marks,
-// then the result files. No model is called.
-import { chmod, writeFile } from 'node:fs/promises';
+// then the result files. No model is called. Each turn's prompt, with the task file it names,
+// is kept as prompt-<n>.txt for the proof to read.
+import { chmod, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 /** What the next reviewer turn does; read from scenario.json beside the binary at each turn. */
@@ -37,6 +38,9 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
   send({ method: 'turn/started', params: { threadId: thread, turn: { id: turn } } });
   const mark = /run (\\S+ --checklist \\S+ --signal \\S+) N/.exec(text)?.[1];
   const files = /Write (\\S+?)(?: and (\\S+?))?, then /.exec(text);
+  const task = /Follow (\\S+) top-to-bottom/.exec(text)?.[1];
+  const turns = fs.readdirSync(dir).filter((name) => /^prompt-\\d+\\.txt$/.test(name)).length;
+  fs.writeFileSync(path.join(dir, 'prompt-' + (turns + 1) + '.txt'), text + (task && fs.existsSync(task) ? '\\n--- ' + task + '\\n' + fs.readFileSync(task, 'utf8') : ''));
   log({ at: new Date().toISOString(), cwd: process.cwd(), mark, files: files && files.slice(1) });
   const item = { id: 'tool-' + m.id, type: 'commandExecution', command: 'sleep (scripted)' };
   send({ method: 'item/started', params: { threadId: thread, turnId: turn, item: { ...item, status: 'inProgress' } } });
@@ -65,6 +69,16 @@ export async function installScriptedCodex(dir: string) {
   return {
     binary,
     turnsLog: path.join(dir, 'turns.log'),
+    /** Every turn's prompt and the task file it names, oldest first. */
+    prompts: async () => {
+      const names = (await readdir(dir)).filter((name) => /^prompt-\d+\.txt$/.test(name));
+      const turn = (name: string) => Number(/\d+/.exec(name)![0]);
+      return Promise.all(
+        names
+          .sort((a, b) => turn(a) - turn(b))
+          .map((name) => readFile(path.join(dir, name), 'utf8')),
+      );
+    },
     scenario: (next: ScriptedReviewScenario) =>
       writeFile(path.join(dir, 'scenario.json'), JSON.stringify(next)),
   };
