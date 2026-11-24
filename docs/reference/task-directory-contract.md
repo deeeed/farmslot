@@ -58,8 +58,11 @@ reuses one ticket renderer for run list and detail. The supported admin metadata
 RPC `run.linkedTickets.set { runId, linkedTicketRefs }` replaces only the operator
 additions, persists the run and broadcasts `run.updated`, following `run.tags.set`.
 `RunMethods.setLinkedTickets` names it; CLI callers may use the existing generic
-`farmslot rpc` entry. There is no new worker/harness hook, task input, workflow
-action or wire version. The SDK addition requires a fresh minor package release.
+`farmslot rpc` entry. `TASK.md` renders the refs `runLinkedTicketsView` marks
+`named` — the fetched key, a recorded linked ticket or an operator addition — so a
+worker sees the operator's keys for the next task written for that run; metadata
+edits still never rewrite an existing task file. There is no new worker/harness
+hook, task input, workflow action or wire version. The SDK addition requires a fresh minor package release.
 
 ## Run checklist progress
 

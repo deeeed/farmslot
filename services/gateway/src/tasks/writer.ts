@@ -1152,7 +1152,9 @@ export async function writeTaskFile(
   // ─── Linked tickets (plural, pre-rendered markdown) ───
   // A PR can reference multiple tickets ("Fixes PROJ-123, PROJ-456"). Templates
   // can't loop, so we pre-render two markdown blocks:
-  //   LINKED_TICKETS      — bullet list of "- [ref](url) — title"
+  //   LINKED_TICKETS      — bullet list of "- [ref](url) — title", dropping the
+  //                         title when the run never fetched that ticket and the
+  //                         link when no base resolves, leaving a bare "- ref"
   //   LINKED_DESCRIPTIONS — each ticket's full description, separated by ---
   // Both render as empty-state placeholder strings when there are no links.
   const linked = ticket.linkedTickets ?? [];
