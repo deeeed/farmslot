@@ -307,6 +307,92 @@ describe('page script', () => {
     assert.equal(preload().window.ethereum.isMetaMask, undefined);
   });
 
+  it('injected MetaMask: answers the extension streams so connect-multichain can start a session', async () => {
+    const page = preload({ injectedWallet: { ...INJECTED, isMetaMask: true } });
+    const store = new Map();
+    page.window.localStorage = {
+      getItem: (key) => store.get(key) ?? null,
+      setItem: (key, value) => store.set(key, value),
+      removeItem: (key) => store.delete(key),
+    };
+    // The host's strict wallet: on chain 42161, switches on request.
+    let chain = '0xa4b1';
+    page.window[REQUEST_BINDING] = (payload) => {
+      const { id, method, params } = JSON.parse(payload);
+      page.requests.push(method);
+      if (method === 'wallet_switchEthereumChain') chain = params[0].chainId;
+      const result =
+        {
+          eth_chainId: chain,
+          eth_accounts: ['0xaa'],
+          eth_requestAccounts: ['0xaa'],
+          personal_sign: '0xsig',
+        }[method] ?? null;
+      setImmediate(() => page.window.__farmslotWalletResolve(id, { result }));
+    };
+    const replies = [];
+    page.window.postMessage = (data, origin) => {
+      assert.equal(origin, APP);
+      if (data.target === 'metamask-inpage') replies.push(data.data);
+      else page.window.dispatchEvent({ type: 'message', origin: APP, data });
+    };
+    const ask = async (name, id, method, params) => {
+      page.window.postMessage(
+        {
+          target: 'metamask-contentscript',
+          data: { name, data: { jsonrpc: '2.0', id, method, params } },
+        },
+        APP,
+      );
+      for (let i = 0; i < 20 && !replies.some((r) => r.data.id === id); i++) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      return JSON.parse(JSON.stringify(replies.find((r) => r.data.id === id)));
+    };
+    const multichain = 'metamask-multichain-provider';
+    assert.deepEqual((await ask(multichain, 1, 'wallet_getSession')).data.result, {
+      sessionScopes: {},
+    });
+    const created = await ask(multichain, 2, 'wallet_createSession', {
+      optionalScopes: { 'eip155:421614': { methods: [], notifications: [], accounts: [] } },
+    });
+    assert.deepEqual(created.data.result.sessionScopes['eip155:421614'].accounts, [
+      'eip155:421614:0xaa',
+    ]);
+    assert.ok(replies.some((r) => r.data.method === 'wallet_sessionChanged'));
+    // A wallet call on the scope's chain goes to the host, switching chain first.
+    const signed = await ask(multichain, 3, 'wallet_invokeMethod', {
+      scope: 'eip155:421614',
+      request: { method: 'personal_sign', params: ['0x68', '0xaa'] },
+    });
+    assert.equal(signed.data.result, '0xsig');
+    assert.equal(chain, '0x66eee');
+    // The EIP-1193 stream answers from the same provider; a reload keeps the session.
+    assert.deepEqual((await ask('metamask-provider', 4, 'eth_accounts')).data.result, ['0xaa']);
+    assert.equal((await ask(multichain, 5, 'wallet_bogus')).data.error.code, 4200);
+    assert.deepEqual(JSON.parse(store.get('__farmslotMultichainSession')), ['eip155:421614']);
+    assert.equal((await ask(multichain, 6, 'wallet_revokeSession')).data.result, true);
+    assert.deepEqual((await ask(multichain, 7, 'wallet_getSession')).data.result, {
+      sessionScopes: {},
+    });
+    // A wallet not presented as MetaMask serves no extension stream.
+    const plain = preload();
+    let answered = false;
+    plain.window.postMessage = (data) => {
+      if (data.target === 'metamask-inpage') answered = true;
+      else plain.window.dispatchEvent({ type: 'message', origin: APP, data });
+    };
+    plain.window.postMessage(
+      {
+        target: 'metamask-contentscript',
+        data: { name: multichain, data: { id: 1, method: 'wallet_getSession' } },
+      },
+      APP,
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(answered, false);
+  });
+
   it('marks the preload ready only when the page provider is wrapped', () => {
     const ok = preload({ signer: 'extension', provider: { request: async () => null } });
     assert.equal(ok.window[PAGE_MARKER].wrapped, 1);
