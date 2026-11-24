@@ -16,6 +16,7 @@ import {
   type RunFamilyGroup,
   runListEvidenceSummary,
   type RunListRow,
+  selectRecentRunFamilyGroups,
   selectRunList,
   slotMachineMap,
   viewChoiceField,
@@ -778,13 +779,12 @@ function RunsScreen() {
   // Shortcuts follow the list: product families first, and no eval families under Hide evals.
   const recentFamilyShortcuts = useMemo(
     () =>
-      productFamiliesFirst(
-        groupRunsByFamily(
-          runFilters.lane === 'product'
-            ? filteredRuns.filter((run) => !isEvalRun(run))
-            : filteredRuns,
-        ),
-      ).slice(0, 3),
+      selectRecentRunFamilyGroups(
+        runFilters.lane === 'product'
+          ? selectRunList(filteredRuns, { scope: 'all', lane: 'product' })
+          : filteredRuns,
+        3,
+      ),
     [filteredRuns, runFilters.lane],
   );
 

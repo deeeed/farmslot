@@ -3,14 +3,16 @@ import { create } from 'zustand';
 
 import { normalizeFlowType } from '@farmslot/protocol';
 
-export type FlowFilter =
-  | ''
-  | 'fix-bug'
-  | 'review-pr'
-  | 'qa'
-  | 'dev'
-  | 'pr-complete'
-  | 'update-branch';
+export const FLOW_FILTERS = [
+  '',
+  'fix-bug',
+  'review-pr',
+  'qa',
+  'dev',
+  'pr-complete',
+  'update-branch',
+] as const;
+export type FlowFilter = (typeof FLOW_FILTERS)[number];
 /** `product` hides eval runs (the comparison lane). */
 export const LANE_FILTERS = ['', 'product', 'production', 'validation', 'comparison'] as const;
 export type LaneFilter = (typeof LANE_FILTERS)[number];
@@ -42,7 +44,7 @@ export function restoredRunFilters(saved: Partial<Record<keyof RunFilters, unkno
   const flow = typeof saved.flow === 'string' && saved.flow ? normalizeFlowType(saved.flow) : '';
   return {
     ...DEFAULTS,
-    flow,
+    flow: choice(flow, FLOW_FILTERS, DEFAULTS.flow),
     lane: choice(saved.lane, LANE_FILTERS, DEFAULTS.lane),
     sort: choice(saved.sort, SORT_OPTIONS, DEFAULTS.sort),
     tag: typeof saved.tag === 'string' ? saved.tag : DEFAULTS.tag,

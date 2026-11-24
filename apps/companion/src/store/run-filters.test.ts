@@ -17,11 +17,14 @@ test('saved run filters restore their known choices', () => {
 });
 
 test('a choice this build does not know falls back instead of hiding every run', () => {
-  assert.deepEqual(restoredRunFilters({ lane: 'future-lane', sort: 'random', flow: 3 }), {
-    flow: '',
-    lane: '',
-    sort: 'newest',
-    search: '',
-    tag: '',
-  });
+  assert.deepEqual(
+    restoredRunFilters({ lane: 'future-lane', sort: 'random', flow: 'future-flow' }),
+    {
+      flow: '',
+      lane: '',
+      sort: 'newest',
+      search: '',
+      tag: '',
+    },
+  );
 });

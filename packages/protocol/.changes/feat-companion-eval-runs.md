@@ -1,1 +1,1 @@
-- Shared eval-run helpers for run lists: isEvalRun (comparison lane), evalRunBadge, productRunsFirst and productFamiliesFirst, and RunListQuery lane 'product' to hide eval runs. Command Center and Companion use them.
+- Shared eval-run helpers for run lists: isEvalRun (comparison lane), evalRunBadge, productRunsFirst and productFamiliesFirst, and RunListQuery lane 'product' to hide eval runs. selectRecentRunFamilyGroups lists product families before eval-only ones. Command Center and Companion use them.
