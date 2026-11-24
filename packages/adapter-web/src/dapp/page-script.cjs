@@ -44,6 +44,16 @@ const ERROR_CATEGORIES = Object.freeze({
   [-32603]: 'internal',
 });
 
+// The MetaMask extension's window-message streams, which an injected wallet
+// presented as MetaMask also answers.
+const EXTENSION_STREAMS = Object.freeze({
+  contentscript: 'metamask-contentscript',
+  inpage: 'metamask-inpage',
+  provider: 'metamask-provider',
+  multichain: 'metamask-multichain-provider',
+  sessionKey: '__farmslotMultichainSession',
+});
+
 function pageMain(config, refusalReason) {
   if (window.top !== window || location.origin !== config.appOrigin) return;
   if (window[config.marker]) return;
@@ -249,7 +259,125 @@ function pageMain(config, refusalReason) {
       );
     window.addEventListener('eip6963:requestProvider', announce);
     announce();
+    if (config.injectedWallet.isMetaMask) serveExtensionStreams(provider);
     return;
+  }
+
+  // A wallet presented as MetaMask is taken for the extension, so apps also
+  // reach it over the extension's window streams (as @metamask/connect-multichain
+  // does): `metamask-provider` (EIP-1193 JSON-RPC) and `metamask-multichain-provider`
+  // (CAIP-25 sessions). Both are answered from the same provider, so every
+  // request still goes to the host and is logged. The session's scopes persist
+  // per profile, as the extension's permissions do.
+  function serveExtensionStreams(provider) {
+    const streams = config.extensionStreams;
+    const reply = (name, data) =>
+      window.postMessage({ target: streams.inpage, data: { name, data } }, location.origin);
+    const chainOf = (scope) => Number.parseInt(String(scope).split(':')[1], 10);
+    let saved = [];
+    const readScopes = () => {
+      try {
+        const stored = JSON.parse(window.localStorage.getItem(streams.sessionKey) ?? '[]');
+        return Array.isArray(stored) ? stored : [];
+      } catch {
+        // Corrupt or blocked storage reads as no session.
+        return [];
+      }
+    };
+    const writeScopes = (scopes) => {
+      try {
+        if (scopes.length) window.localStorage.setItem(streams.sessionKey, JSON.stringify(scopes));
+        else window.localStorage.removeItem(streams.sessionKey);
+      } catch {
+        // No storage (opaque origin): the session lasts for this document.
+      }
+      saved = scopes;
+    };
+    saved = readScopes();
+    const session = async () => {
+      if (!saved.length) return { sessionScopes: {} };
+      const accounts = await provider.request({ method: 'eth_accounts' });
+      const sessionScopes = {};
+      for (const scope of saved) {
+        sessionScopes[scope] = {
+          accounts: accounts.map((address) => `${scope}:${address}`),
+          // The wallet methods the host signs and logs.
+          methods: config.loggedMethods,
+          notifications: [],
+        };
+      }
+      return { sessionScopes };
+    };
+    const changed = async () =>
+      reply(streams.multichain, { method: 'wallet_sessionChanged', params: await session() });
+    const multichain = {
+      wallet_getSession: session,
+      async wallet_createSession(params) {
+        const requested = Object.keys({ ...params?.requiredScopes, ...params?.optionalScopes });
+        const scopes = requested.filter((scope) => /^eip155:\d+$/u.test(scope));
+        if (!scopes.length) {
+          scopes.push(
+            `eip155:${Number.parseInt(await provider.request({ method: 'eth_chainId' }), 16)}`,
+          );
+        }
+        await provider.request({ method: 'eth_requestAccounts' });
+        writeScopes(scopes);
+        const result = await session();
+        await changed();
+        return result;
+      },
+      async wallet_revokeSession() {
+        writeScopes([]);
+        await changed();
+        return true;
+      },
+      async wallet_invokeMethod(params) {
+        const chain = chainOf(params?.scope);
+        if (!saved.includes(params?.scope)) {
+          throw Object.assign(new Error(`${params?.scope} is not in the session.`), { code: 4100 });
+        }
+        if (Number.parseInt(await provider.request({ method: 'eth_chainId' }), 16) !== chain) {
+          await provider.request({
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: `0x${chain.toString(16)}` }],
+          });
+        }
+        return provider.request(params.request);
+      },
+    };
+    const answer = async (name, message, handle) => {
+      try {
+        reply(name, { jsonrpc: '2.0', id: message.id, result: await handle() });
+      } catch (error) {
+        reply(name, {
+          jsonrpc: '2.0',
+          id: message.id,
+          error: {
+            code: Number.isInteger(error?.code) ? error.code : -32603,
+            message: String(error?.message ?? error),
+          },
+        });
+      }
+    };
+    window.addEventListener('message', (event) => {
+      if (event.source !== window || event.origin !== location.origin) return;
+      if (event.data?.target !== streams.contentscript) return;
+      const name = event.data.data?.name;
+      const message = event.data.data?.data;
+      if (!message || message.id === undefined || typeof message.method !== 'string') return;
+      if (name === streams.provider) {
+        answer(name, message, () =>
+          provider.request({ method: message.method, params: message.params }),
+        );
+      } else if (name === streams.multichain) {
+        const handle = multichain[message.method];
+        answer(name, message, () => {
+          if (!handle)
+            throw Object.assign(new Error(`${message.method} is not supported`), { code: 4200 });
+          return handle(message.params);
+        });
+      }
+    });
   }
 
   // Extension mode: wrap whatever provider the wallet extension injects,
@@ -359,6 +487,7 @@ function pageScriptSource({ signer, appOrigin, refuseTypedData = null, injectedW
         ? { info: injectedWallet.info, isMetaMask: injectedWallet.isMetaMask === true }
         : null,
     errorCategories: ERROR_CATEGORIES,
+    extensionStreams: EXTENSION_STREAMS,
     loggedMethods: LOGGED_METHODS,
     marker: PAGE_MARKER,
     logBinding: LOG_BINDING,

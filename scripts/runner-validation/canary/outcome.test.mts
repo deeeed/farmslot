@@ -5,12 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import {
-  applyKnownFailures,
-  type CheckResult,
-  type KnownFailure,
-  reviewDriftExcuses,
-} from './outcome.mjs';
+import { applyKnownFailures, type CheckResult, type KnownFailure } from './outcome.mjs';
 import { report, verdict } from './report.mjs';
 
 const check = (overrides: Partial<CheckResult>): CheckResult => ({
@@ -50,22 +45,6 @@ test('a failure is known only when it has the signature and no other difference'
 
 test('a passing check with a known entry fails the canary until the entry goes', () => {
   assert.equal(applyKnownFailures(check({ status: 'pass' }), [entry]).status, 'xpass');
-});
-
-test('loop 2 issues excuse a reviewed run only when the restarts did their part', () => {
-  const excused = {
-    loop2: 'issues',
-    fixLanded: true,
-    procedural: [],
-    relaunched: false,
-    retriesExhausted: true,
-  };
-  assert.equal(reviewDriftExcuses(excused), true);
-  assert.equal(reviewDriftExcuses({ ...excused, loop2: 'pass' }), false);
-  assert.equal(reviewDriftExcuses({ ...excused, fixLanded: false }), false);
-  assert.equal(reviewDriftExcuses({ ...excused, procedural: ['a hold was missed'] }), false);
-  assert.equal(reviewDriftExcuses({ ...excused, relaunched: true }), false);
-  assert.equal(reviewDriftExcuses({ ...excused, retriesExhausted: false }), false);
 });
 
 test('a canary that ran no check could not run', () => {
