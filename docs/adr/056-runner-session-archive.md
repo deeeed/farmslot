@@ -34,7 +34,7 @@ Operators can re-read Claude/Codex/Grok History after the slot forgets the file.
 
 ## Amendment 1: 2026-11-24 capture when each session ends
 
-**Status:** Proposed with [ADR-039 Amendment 9](039-run-portable-bundles.md#amendment-9-2026-11-24-run-traces-as-private-training-data).
+**Status:** Proposed with [ADR-039 Amendment 10](039-run-portable-bundles.md#amendment-10-2026-11-24-run-traces-as-private-training-data).
 
 The snapshot is taken when each agent session ends (worker completion, each
 review round and review fix, before a replay or an operator completion replaces
@@ -53,5 +53,5 @@ Two statements in the decision above are out of date and are corrected here:
   storage.
 
 The archive is still not eval evidence and still not a farmrun payload. It also
-feeds ADR-039 Amendment 9's private dataset export, which redacts its own copies
+feeds ADR-039 Amendment 10's private dataset export, which redacts its own copies
 and never edits the archive.

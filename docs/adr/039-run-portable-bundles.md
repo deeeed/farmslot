@@ -631,7 +631,7 @@ and every other member with a live run record (members whose record was archived
 skipped), so dispatch is refused until the operator restores the storage of each such
 member from its archive manifest.
 
-## Amendment 9: 2026-11-24 run traces as private training data
+## Amendment 10: 2026-11-24 run traces as private training data
 
 **Status:** Proposed (2026-11-24). Needs Arthur's approval before implementation.
 **Builds on:** Amendment 4 (episodes), Amendments 3, 5 and 8 (archival and holds), [ADR-056](056-runner-session-archive.md) (session archives).

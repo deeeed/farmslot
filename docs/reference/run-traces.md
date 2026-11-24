@@ -1,6 +1,6 @@
 # Run traces
 
-Design specification for [ADR-039 Amendment 9](../adr/039-run-portable-bundles.md#amendment-9-2026-11-24-run-traces-as-private-training-data).
+Design specification for [ADR-039 Amendment 10](../adr/039-run-portable-bundles.md#amendment-10-2026-11-24-run-traces-as-private-training-data).
 **Status:** Proposed. Nothing here is implemented until the amendment is accepted.
 
 A run trace is a run's agent transcripts plus its outcome labels, kept so that past
