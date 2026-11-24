@@ -283,3 +283,90 @@ test('archive of a transferred predecessor preserves the successor workspace and
   assert.deepEqual(saved?.reviewWorkspace?.transferredTo, transfer);
   assert.equal(saved?.reviewWorkspace?.cleanedAt, undefined);
 });
+
+/** 5b37dbe1: a warm continuation claimed its parent's workspace, then failed at write-task. */
+function neverLaunchedContinuation() {
+  const predecessor = retainedArchiveRun('done');
+  const successor = createRun(
+    {
+      flowType: 'review-pr',
+      project: 'fixture',
+      ticketOrPr: predecessor.ticketOrPr,
+      mode: 'autonomous',
+      runner: 'codex',
+      model: 'gpt-6.1-sol',
+      transport: 'tmux',
+      reviewWorkspaceTarget: { machine: 'local' },
+    },
+    { nativeOwnerPrincipalId: 'closeout-owner' },
+  );
+  updateRun(successor.id, {
+    status: 'failed',
+    error: 'Static review requires its frozen template and source subject',
+    reviewWorkspace: {
+      ...predecessor.reviewWorkspace!,
+      retainedAt: undefined,
+      retainedUntil: undefined,
+      executionStoppedAt: undefined,
+      continuedFrom: {
+        runId: predecessor.id,
+        headSha: 'a'.repeat(40),
+        baseSha: 'b'.repeat(40),
+        taskPath: '/owned/task',
+      },
+    },
+  });
+  const transfer = { runId: successor.id, generation: 0 };
+  updateRun(predecessor.id, {
+    reviewWorkspace: { ...predecessor.reviewWorkspace!, transferredTo: transfer },
+  });
+  return { predecessor: getRun(predecessor.id)!, successor: getRun(successor.id)! };
+}
+
+test('a continuation that fails before launch hands its workspace back at teardown', async () => {
+  const { predecessor, successor } = neverLaunchedContinuation();
+  const beforeCleanup = cleanup.mock.callCount();
+  const beforeStops = stops;
+  await teardownReviewWorkspace(successor.id);
+  assert.equal(cleanup.mock.callCount(), beforeCleanup);
+  assert.equal(stops, beforeStops, "the predecessor's stopped reviewer is not touched");
+  assert.equal(getRun(predecessor.id)!.reviewWorkspace?.transferredTo, undefined);
+  const returned = getRun(successor.id)!.reviewWorkspace!;
+  assert.deepEqual(returned.transferredTo, { runId: predecessor.id, generation: 0 });
+  assert.equal(returned.cleanedAt, undefined);
+  assert.ok(returned.executionStoppedAt);
+});
+
+test('archive of a never-launched continuation returns the checkout instead of releasing it', async () => {
+  const { predecessor, successor } = neverLaunchedContinuation();
+  const beforeCleanup = cleanup.mock.callCount();
+  assert.deepEqual(await runArchive({ runId: successor.id }, () => {}), { ok: true });
+  assert.equal(cleanup.mock.callCount(), beforeCleanup);
+  assert.equal(getRun(predecessor.id)!.reviewWorkspace?.transferredTo, undefined);
+  assert.equal(getRun(predecessor.id)!.reviewWorkspace?.cleanedAt, undefined);
+  const saved = (await getAllRunsWithArchived()).find((r) => r.id === successor.id);
+  assert.equal(saved?.reviewWorkspace?.cleanedAt, undefined);
+  assert.equal(saved?.reviewWorkspace?.transferredTo?.runId, predecessor.id);
+});
+
+test('a hand-back interrupted after its first write completes on the next attempt', async () => {
+  const { predecessor, successor } = neverLaunchedContinuation();
+  updateRun(successor.id, {
+    reviewWorkspace: {
+      ...successor.reviewWorkspace!,
+      executionStoppedAt: '2026-11-24T05:12:39Z',
+      transferredTo: { runId: predecessor.id, generation: 0 },
+    },
+  });
+  assert.deepEqual(await runArchive({ runId: successor.id }, () => {}), { ok: true });
+  assert.equal(getRun(predecessor.id)!.reviewWorkspace?.transferredTo, undefined);
+});
+
+test('a continuation that launched its reviewer still releases its checkout on archive', async () => {
+  const { successor } = neverLaunchedContinuation();
+  updateRun(successor.id, { engineState: { workspaceReviewDispatchGeneration: 0 } });
+  refuseStop = false;
+  const beforeCleanup = cleanup.mock.callCount();
+  assert.deepEqual(await runArchive({ runId: successor.id }, () => {}), { ok: true });
+  assert.equal(cleanup.mock.callCount(), beforeCleanup + 1);
+});

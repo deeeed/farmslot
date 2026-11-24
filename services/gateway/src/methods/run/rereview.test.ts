@@ -160,6 +160,7 @@ mock.module('../../runs/store.js', {
         branch: params.branch ?? null,
         transport: params.transport,
         reviewWorkspaceTarget: params.reviewWorkspaceTarget,
+        executionTemplateId: params.executionTemplateId,
         reviewMode: params.reviewMode,
         reviewContext: params.reviewContext,
         effort: params.effort,
@@ -425,8 +426,37 @@ function workspacePrior(): Run {
     reviewAutoFinish: true,
     reviewResult: prior.reviewResult,
     agentContexts: [{ ...prior.agentContexts![0], id: 'review', slotId: null }],
+    executionTemplateId: 'review-pr/default',
+    executionTemplate: frozenTemplate,
   };
 }
+
+const frozenTemplate: NonNullable<Run['executionTemplate']> = {
+  id: 'review-pr/default',
+  sourceId: 'farm-a',
+  flow: 'review-pr',
+  platforms: ['mobile'],
+  labels: [],
+  relativePath: 'templates/review-pr/default.md',
+  sha256: 'c'.repeat(64),
+};
+
+test('a workspace re-review child carries its parent frozen template for write-task', async () => {
+  runs.set(prior.id, workspacePrior());
+  const result = await runRereviewLatestHead({ runId: prior.id });
+  const child = runs.get(result.runId!)!;
+  assert.deepEqual(child.executionTemplate, frozenTemplate);
+  assert.notEqual(child.executionTemplate, frozenTemplate, 'a copy, not the parent object');
+  assert.equal(child.executionTemplateId, 'review-pr/default');
+});
+
+test('a workspace parent without a frozen template refuses before creating a child', async () => {
+  const { executionTemplate: _template, ...parent } = workspacePrior();
+  runs.set(prior.id, parent);
+  await assert.rejects(runRereviewLatestHead({ runId: prior.id }), /frozen template/);
+  assert.equal(runs.size, 1);
+  assert.equal(runs.get(prior.id)!.status, 'done');
+});
 
 test('slotless rereview repairs retained lineage and starts directly without discovery filters', async () => {
   workspaceIntakeRuns.length = 0;

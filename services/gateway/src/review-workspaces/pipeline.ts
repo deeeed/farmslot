@@ -64,6 +64,7 @@ import {
   getRun,
   getRunWithArchived,
   persistRunNow,
+  returnReviewWorkspaceTransfer,
   updateRun,
   updateRunStep,
 } from '../runs/store.js';
@@ -389,12 +390,55 @@ function reviewWorkspaceNeverLaunched(run: Run): boolean {
   );
 }
 
+/**
+ * A continuation that never launched its reviewer gives the claimed workspace back to the run it
+ * continued from, instead of retaining it (where its archive would release the shared checkout).
+ * This run is marked first, so an interrupted hand-back can never release the checkout, and a
+ * retry completes the predecessor's side.
+ */
+async function returnNeverLaunchedContinuation(run: Run): Promise<boolean> {
+  const workspace = run.reviewWorkspace;
+  const predecessorId = workspace?.continuedFrom?.runId;
+  if (
+    !workspace ||
+    !predecessorId ||
+    workspace.cleanedAt ||
+    (workspace.transferredTo && workspace.transferredTo.runId !== predecessorId) ||
+    !reviewWorkspaceNeverLaunched(run)
+  )
+    return false;
+  const predecessor = await getRunWithArchived(predecessorId);
+  if (predecessor?.reviewWorkspace?.transferredTo?.runId !== run.id)
+    return Boolean(workspace.transferredTo);
+  if (!workspace.transferredTo) {
+    const current = currentWorkspaceRun(run.id, run.engineState?.generation ?? 0, true);
+    await persistRunNow(
+      updateRun(run.id, {
+        reviewWorkspace: {
+          ...current.reviewWorkspace!,
+          executionStoppedAt:
+            current.reviewWorkspace!.executionStoppedAt ?? new Date().toISOString(),
+          transferredTo: {
+            runId: predecessorId,
+            generation: predecessor.engineState?.generation ?? 0,
+          },
+        },
+        reviewWorkspaceCleanupError: undefined,
+      }),
+      'return never-launched review workspace to its predecessor',
+    );
+  }
+  await returnReviewWorkspaceTransfer(predecessorId, run.id);
+  return true;
+}
+
 export async function teardownReviewWorkspace(
   runId: string,
   options: { preserveInvalidOutput?: boolean } = {},
 ): Promise<void> {
   const run = getRun(runId);
   if (!run?.reviewWorkspace) return;
+  if (await returnNeverLaunchedContinuation(run)) return;
   if (
     !run.reviewWorkspace.cleanedAt &&
     !run.reviewWorkspace.continuedFrom &&
@@ -477,9 +521,11 @@ export async function teardownReviewWorkspace(
 
 /** Explicit archive releases the source checkout after the existing execution stop. */
 export async function cleanupReviewWorkspaceForArchive(runId: string): Promise<void> {
-  const run = getRun(runId);
-  const workspace = run?.reviewWorkspace;
-  if (!run || !workspace || workspace.cleanedAt) return;
+  const found = getRun(runId);
+  if (!found?.reviewWorkspace || found.reviewWorkspace.cleanedAt) return;
+  // Runs that failed before this hand-back existed return their workspace here.
+  const run = (await returnNeverLaunchedContinuation(found)) ? getRun(runId)! : found;
+  const workspace = run.reviewWorkspace!;
   if (workspace.transferredTo) {
     assertRunArchivable(run);
     assertNativeRunOwner(run);

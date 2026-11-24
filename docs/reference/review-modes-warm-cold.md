@@ -305,6 +305,13 @@ The optional fields ship in `@farmslot/protocol` 0.71.1. The gateway writes and 
   before inspection MUST NOT replace the last validated baseline. A binding
   transferred to a failed attempt MAY continue that provider session only with
   its gateway-owned no-verdict settlement and the earlier validated provenance.
+- A continuation that fails or is cancelled before its reviewer launches MUST
+  hand the claimed workspace back to the run it continued from (its
+  `transferredTo` names that run, and the predecessor's claim is cleared),
+  never retain or release it, so archiving it cannot remove the shared
+  checkout. A workspace re-review child carries its parent's frozen execution
+  template. A refused retained reviewer names each mismatch and the requested
+  and retained runner, model and effort.
 - Passing review eligibility requires its separate session, current reviewed
   head and verdict evidence. Choosing a different runner proves nothing.
 - A retained reviewer is a resumable session identity, not a running process.

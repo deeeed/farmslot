@@ -58,8 +58,16 @@ const engine = await import('../../run-engine/orchestrator.js');
 mock.module('../../run-engine/orchestrator.js', {
   namedExports: { ...engine, startRun: async () => {}, applyChainedRunEngineFlags: () => {} },
 });
-const { createRun, getAllRuns, getRun, updateRun, deleteRun, loadAllRuns, runsDirectory } =
-  await import('../../runs/store.js');
+const {
+  createRun,
+  getAllRuns,
+  getRun,
+  updateRun,
+  deleteRun,
+  loadAllRuns,
+  persistRunNow,
+  runsDirectory,
+} = await import('../../runs/store.js');
 const { runWithSessionOriginator } = await import('../../security/work-originator.js');
 const { runRereviewLatestHead } = await import('./rereview.js');
 const { assertPRRunActivation } = await import('../../backlog/pr-admission.js');
@@ -74,7 +82,8 @@ const reference: PRWorkReference = {
 
 afterEach(async () => {
   for (const run of getAllRuns()) {
-    updateRun(run.id, { status: 'done', reviewWorkspace: undefined });
+    // Awaited, so no queued background write recreates the file after its deletion.
+    await persistRunNow(updateRun(run.id, { status: 'done', reviewWorkspace: undefined }), 'test');
     await deleteRun(run.id);
   }
 });
@@ -107,6 +116,15 @@ function blockedParent(): Run {
       artifactPath: path.join(root, 'task/artifacts'),
       retainedAt: at,
       executionStoppedAt: at,
+    },
+    executionTemplate: {
+      id: 'review-pr/default',
+      sourceId: 'review-fixture',
+      flow: 'review-pr',
+      platforms: ['mobile'],
+      labels: [],
+      relativePath: 'templates/review-pr/default.md',
+      sha256: 'c'.repeat(64),
     },
     reviewWorkspaceSubject: {
       repository: 'owner/repo',

@@ -150,8 +150,13 @@ async function rereviewWithSources(
   assertRereviewable(parent);
   if ((parent.engineState?.generation ?? 0) !== parentGeneration)
     throw new Error('Review changed during re-review admission');
+  // write-task requires the frozen template; the child continues under its parent's (the
+  // planner freezes it for run.create, which this direct creation does not pass through).
+  const frozenTemplate = workspace ? parent.executionTemplate : undefined;
   if (workspace) {
     assertNativeRunOwner(parent);
+    if (!frozenTemplate)
+      throw new Error('Workspace re-review requires the previous review frozen template');
     const retained = rereviewWorkspaceReviewer(parent);
     if (!retained || retained.reviewId !== reviewContext.reviewLineages[0]?.reviewId)
       throw new WarmReviewRefusal(
@@ -195,6 +200,7 @@ async function rereviewWithSources(
       ...(workspace
         ? {
             reviewWorkspaceTarget: workspace,
+            executionTemplateId: parent.executionTemplateId,
             transport: run.transport,
             nativeProfile: run.nativeProfile,
             reviewAutoFinish: false,
@@ -236,6 +242,7 @@ async function rereviewWithSources(
       : undefined,
   );
   updateRun(child.id, {
+    ...(frozenTemplate ? { executionTemplate: structuredClone(frozenTemplate) } : {}),
     repeatReviewContext: context,
     reviewMode: context.mode,
     reviewValidationDepth: context.validationDepth,
