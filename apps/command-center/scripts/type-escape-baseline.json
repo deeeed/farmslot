@@ -126,10 +126,6 @@
       "count": 2
     },
     {
-      "key": "services/gateway/src/run-engine/orchestrator.ts:as-any:as any",
-      "count": 5
-    },
-    {
       "key": "services/gateway/src/runs/store.ts:as-any:as any",
       "count": 2
     },
