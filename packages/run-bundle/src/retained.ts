@@ -2706,3 +2706,32 @@ export async function materializeRunBundle(
     });
   });
 }
+
+/**
+ * ADR-039 Amendment 10: one retained task file, read without opening the store, for offline
+ * trace export. Returns null when the bundle or the file is not in place, or its bytes do not
+ * match the manifest; it never writes, migrates or repairs anything.
+ */
+export async function readRetainedTaskFileReadOnly(input: {
+  storeRoot: string;
+  bundleDigest: string;
+  taskKey: string;
+  relativePath: string;
+}): Promise<Buffer | null> {
+  try {
+    if (!BUNDLE_DIGEST.test(input.bundleDigest)) return null;
+    assertSafeBundleSegment(input.taskKey, 'task key');
+    assertSafeBundleRelativePath(input.relativePath);
+    const directory = path.join(input.storeRoot, 'sha256', input.bundleDigest);
+    const raw = await readFile(path.join(directory, 'manifest.json'), 'utf8');
+    if (sha256Text(raw) !== input.bundleDigest) return null;
+    const manifest = JSON.parse(raw) as RunBundleManifest;
+    const key = `tasks/${input.taskKey}/${input.relativePath}`;
+    const meta = manifest.entries[key];
+    if (!meta) return null;
+    const bytes = await readFile(resolvePathInsideRoot(directory, key));
+    return createHash('sha256').update(bytes).digest('hex') === meta.sha256 ? bytes : null;
+  } catch {
+    return null;
+  }
+}

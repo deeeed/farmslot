@@ -241,6 +241,52 @@ export function registerRunsCommand(program: Command): void {
       }
     });
 
+  const traces = runs
+    .command('traces')
+    .description('Private training traces: transcripts and labels (ADR-039 Amendment 10)');
+  traces
+    .command('export')
+    .description(
+      'Build a redacted local dataset from a run filter; runs offline on the gateway host',
+    )
+    .requiredOption('--out <dir>', 'Export directory (refused when not empty, unless --update)')
+    .option('--project <name>', 'Only this project')
+    .option('--flow <type>', 'Only this flow')
+    .option('--since <date>', 'Runs that ended at or after this date (ISO)')
+    .option('--until <date>', 'Runs that ended at or before this date (ISO)')
+    .option('--family <id>', 'Only this run family')
+    .option('--has-grade', 'Only runs with at least one external grade')
+    .option('--update', 'Refresh an existing export: add new transcripts, rewrite labels and index')
+    .action(
+      async (
+        opts: {
+          out: string;
+          project?: string;
+          flow?: string;
+          since?: string;
+          until?: string;
+          family?: string;
+          hasGrade?: boolean;
+          update?: boolean;
+        },
+        cmd: Command,
+      ) => {
+        const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
+        const emit = createEmitter(output, cmd);
+        try {
+          const { exportRunTraces } = await import('../traces/export.js');
+          const result = await exportRunTraces(opts);
+          if (emit.machine) emit.ok(result);
+          else
+            output.write(
+              `${result.exported} run(s) exported to ${opts.out}; transcripts ${result.transcripts.present} present, ${result.transcripts.missing} missing${result.skipped.length ? `; ${result.skipped.length} skipped` : ''}\n`,
+            );
+        } catch (error) {
+          emit.fail(error);
+        }
+      },
+    );
+
   const episodes = runs.command('episodes').description('Run-end episodes (ADR-039 Amendment 4)');
   episodes
     .command('recapture')

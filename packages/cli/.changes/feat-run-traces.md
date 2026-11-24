@@ -1,0 +1,1 @@
+- `farmslot runs traces export` builds a redacted, indexed local dataset of run transcripts and labels from a run filter, offline on the gateway host; `farmslot runs episodes recapture` rewrites episodes that ended in a range (ADR-039 Amendment 10).
