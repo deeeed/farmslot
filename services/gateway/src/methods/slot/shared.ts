@@ -54,7 +54,10 @@ export interface PrepareCommandError extends Error {
   failedCommand?: string;
   failedLogPath?: string;
   failedPhase?: string;
+  /** Slot-host paths: the slot's runtime logs. */
   relatedLogs?: string[];
+  /** The slot is local, so its related logs are files the gateway can read. */
+  relatedLogsOnGateway?: boolean;
   /** Set when the harness readiness record could not be persisted after a failed preflight; the preflight error stays primary. */
   readinessError?: unknown;
 }

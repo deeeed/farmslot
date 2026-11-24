@@ -1982,6 +1982,7 @@ async function slotPrepareInner(
           ? [path.join(vars.remoteRepo, runtimeDir, 'ios-expo-build.log')]
           : [path.join(vars.remoteRepo, runtimeDir, 'android-build.log')]),
       ];
+      err.relatedLogsOnGateway = slotIsLocal;
       throw err;
     }
     const phaseSuffix = currentPreflightPhase ? ` after ${currentPreflightPhase}` : '';
