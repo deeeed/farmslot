@@ -57,6 +57,7 @@ const recovery: SlotRecovery = {
   error: 'Fixtures did not verify',
 };
 let recoveryPending = false;
+let slotRow: Record<string, unknown> | undefined;
 let refused = false;
 let transportFailure = false;
 let calls: string[] = [];
@@ -112,7 +113,8 @@ mock.module('../../core/index.js', {
     loadSlotVars: async () => ({ ...vars, resourceVars: {} }),
     loadProjectVars: async () => project,
     readSlotField: async () => null,
-    readSlotRow: async () => (recoveryPending ? { workspace_recovery: recovery } : null),
+    readSlotRow: async () =>
+      recoveryPending ? { workspace_recovery: recovery } : (slotRow ?? null),
     execOnSlot: executeOnSlot,
     slotWriteFiles: async () => {
       throw new Error('unexpected slot write');
@@ -136,6 +138,19 @@ mock.module('./prepare-sentinel.js', {
 const fleet = await import('../../fleet/state.js');
 mock.module('../../fleet/state.js', {
   namedExports: { ...fleet, loadFleetStatus: async () => ({ slots: [] }) },
+});
+// Runs a test marks as ended; every other id reads the real (empty) store.
+const endedRuns = new Set<string>();
+const archivedRuns = new Set<string>();
+const store = await import('../../runs/store.js');
+mock.module('../../runs/store.js', {
+  namedExports: {
+    ...store,
+    getRun: (id: string) => (endedRuns.has(id) ? { id, status: 'cancelled' } : store.getRun(id)),
+    // An ended run evicted from the live store is only in the archive.
+    getRunWithArchived: async (id: string) =>
+      archivedRuns.has(id) ? { id, status: 'cancelled' } : store.getRunWithArchived(id),
+  },
 });
 const { slotPrepare } = await import('./prepare.js');
 const { slotCheck } = await import('./check.js');
@@ -194,4 +209,69 @@ test('owner-validated recovery release keeps its internal prepare path', async (
     /missing extension checkout/,
   );
   assert.deepEqual(calls, ['ownership', 'prerequisites']);
+});
+
+// A cancel can release the slot between the engine's claim and its prepare call; the picker
+// may then have handed the slot to another run. The cancelled run must not prepare it.
+test('a run that no longer holds the slot is refused before any prepare effect', async () => {
+  recoveryPending = false;
+  await assert.rejects(
+    slotPrepare({ slotId: vars.slotId, runId: 'cancelled-run' }, () => undefined, undefined, {
+      requireRunOwnership: true,
+    }),
+    /no longer belongs to run/,
+  );
+  assert.deepEqual(calls, []);
+});
+
+// Load-run binds a finished run to a free slot: runId there is a label, not an ownership claim.
+test('a load-run prepare for a run that does not hold the slot is not refused for it', async () => {
+  recoveryPending = false;
+  await assert.rejects(
+    slotPrepare(
+      { slotId: vars.slotId, runId: 'finished-run', bindRunId: 'finished-run' },
+      () => undefined,
+    ),
+    (error: Error) => !/no longer belongs to run/.test(error.message),
+  );
+});
+
+test('an engine prepare is refused when another run holds the slot or this run has ended', async (t) => {
+  recoveryPending = false;
+  t.after(() => (slotRow = undefined));
+  slotRow = { current_run_id: 'other-run-0001', handoff_run_id: null };
+  await assert.rejects(
+    slotPrepare({ slotId: vars.slotId, runId: 'cancelled-run' }, () => undefined, undefined, {
+      requireRunOwnership: true,
+    }),
+    /no longer belongs to run/,
+  );
+  // A warm handoff reserves the slot for the run: that counts as holding it.
+  slotRow = { current_run_id: 'other-run-0001', handoff_run_id: 'handoff-run' };
+  await assert.rejects(
+    slotPrepare({ slotId: vars.slotId, runId: 'handoff-run' }, () => undefined, undefined, {
+      requireRunOwnership: true,
+    }),
+    (error: Error) => !/no longer belongs to run/.test(error.message),
+  );
+  assert.deepEqual(calls.slice(0, 1), ['ownership'], 'the reserved run proceeds past the check');
+  // The row still names the run, but the run has ended.
+  endedRuns.add('ended-run');
+  t.after(() => endedRuns.clear());
+  slotRow = { current_run_id: 'ended-run', handoff_run_id: null };
+  await assert.rejects(
+    slotPrepare({ slotId: vars.slotId, runId: 'ended-run' }, () => undefined, undefined, {
+      requireRunOwnership: true,
+    }),
+    /no longer belongs to run/,
+  );
+  archivedRuns.add('archived-run');
+  t.after(() => archivedRuns.clear());
+  slotRow = { current_run_id: 'archived-run', handoff_run_id: null };
+  await assert.rejects(
+    slotPrepare({ slotId: vars.slotId, runId: 'archived-run' }, () => undefined, undefined, {
+      requireRunOwnership: true,
+    }),
+    /no longer belongs to run/,
+  );
 });

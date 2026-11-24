@@ -1,0 +1,1 @@
+- `fs.readFiles` refuses a request naming more than `NODE_FS_READ_FILES_MAX_FILES` (64) files.

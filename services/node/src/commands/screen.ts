@@ -526,7 +526,7 @@ async function addMacOsSink(
   const { slotId, maxFps = 15, maxSize = 720 } = config;
   const mc = ensureMachineCapture(maxFps, maxSize);
   if ((config.platform === 'chrome-extension' || config.platform === 'web') && !config.targetPid) {
-    const livePid = ensureLiveBrowserPid(config);
+    const livePid = await ensureLiveBrowserPid(config);
     if (livePid !== config.browserPid) {
       config = { ...config, browserPid: livePid };
     }

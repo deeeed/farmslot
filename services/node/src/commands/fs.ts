@@ -14,6 +14,7 @@ import {
   FILE_TRANSFER_CHUNK_MAX_BYTES,
   type FsConflictDetails,
   FsErrorCodes,
+  NODE_FS_READ_FILES_MAX_FILES,
   NODE_FS_READ_TEXT_MAX_BYTES,
   type NodeFsDeleteParams,
   type NodeFsIsFileResult,
@@ -181,6 +182,8 @@ export async function fsRead(params: NodeFsPathParams): Promise<{ content: strin
 
 /** Each file as `fsRead` reads it; a missing file or a failed read stays in its own entry. */
 export async function fsReadFiles(params: NodeFsReadFilesParams): Promise<NodeFsReadFilesResult> {
+  if (params.files.length > NODE_FS_READ_FILES_MAX_FILES)
+    throw new Error(`fs.readFiles accepts at most ${NODE_FS_READ_FILES_MAX_FILES} files`);
   return {
     files: await Promise.all(
       params.files.map(async (file): Promise<NodeFsReadFileEntry> => {

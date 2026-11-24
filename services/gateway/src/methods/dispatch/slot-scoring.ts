@@ -51,7 +51,9 @@ const COMPANION_PREPARE_PROFILES = new Set([
 
 type SlotClaimStatus = Readonly<Partial<Pick<SlotStatus, 'lifecycle' | 'phase'>>>;
 
-export function isFreeSlot(slot: SlotStatus): boolean {
+export function isFreeSlot(
+  slot: Pick<SlotStatus, 'missingFromPool' | 'lifecycle' | 'agent'>,
+): boolean {
   // Ghost slots (status-file entries absent from live pools) can never be
   // dispatched — selecting one fails run creation with SLOT_NOT_FOUND.
   if (slot.missingFromPool) return false;

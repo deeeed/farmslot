@@ -6,8 +6,8 @@
 // - restart cases: a run held at a known point in a step, the gateway restarted (node up, or node
 //   away past recovery's node wait), the hold released; the run must end like a same-night
 //   no-restart baseline (scripted, so it costs nothing).
-// - review: one reviewed run (codex, two model calls) held at its review, its fix round and its
-//   re-review, restarting at each; its expected end is derived from the verdicts it recorded.
+// - review: one reviewed run held at its review, its fix round and its re-review, restarting at
+//   each; the test answers its codex reviewer's turns (loop 1 issues, loop 2 pass; no model call).
 // - review-past-wait: a reviewer whose turn the proxy answers itself (no model call), restarted
 //   with its node away past REVIEW's 120 s reconnect wait.
 // - worker-survives: a run held with its worker or reviewer mid-turn in DISPATCH, MONITOR, REVIEW,
@@ -53,7 +53,6 @@ import {
   LIFECYCLE_OUTCOME,
   outcomeDifferences,
   outcomeObservations,
-  reviewDriftExcuses,
   REVIEWED_OUTCOME,
   reviewVerdicts,
   type RunOutcome,
@@ -266,6 +265,8 @@ interface HoldPhase {
   needsSlot?: boolean;
   /** Armed before the run is created, whatever `armAt` says (an idle runner). */
   prepare?(context: HoldContext): Promise<void>;
+  /** The held reviewer turn is the hold: the scripted reviewer leaves it unanswered until release. */
+  keepsReviewer?: boolean;
   /** Watch the run's worker after the restart, before the release; `release` lifts what kept it. */
   survive?: {
     release?(context: HoldContext): Promise<void>;
@@ -321,9 +322,9 @@ export const HOLDS: Record<RestartStep | 'review' | 'review-fix', string> = {
   release:
     "git on the run's slot waits while holds/git exists, armed once the run is terminal, so the slot teardown cannot finish; released while the gateway is down",
   review:
-    "the codex proxy holds the reviewer's output once the node accepted its turn, while holds/review exists",
+    "the codex proxy swallows the loop-1 reviewer's turn once the node accepted it; the test answers it (issues) after the restart",
   'review-fix':
-    'the relaunched scripted worker commits its fix with the fix round live, then waits on holds/fix before marking it complete; the gateway restarts with the node up and the fix completes while it is down. Then the codex proxy holds the loop-2 re-review for a restart with the node away',
+    'the relaunched scripted worker commits its fix with the fix round live, then waits on holds/fix before marking it complete; the gateway restarts with the node up and the fix completes while it is down. Then the proxy swallows the loop-2 re-review for a restart with the node away, and the test answers it (pass)',
 };
 
 function restartPhase(
@@ -419,13 +420,18 @@ const fixRoundHold = (
 
 /**
  * The reviewed run's holds: its loop-1 reviewer (node up), its fix round (node up, the fix
- * completing while the gateway is down), its loop-2 re-review (node away). The review-fix
- * worker-survives variants cover a restart with the fix still running.
+ * completing while the gateway is down), its loop-2 re-review (node away). Each reviewer turn is
+ * the scripted reviewer's, kept unanswered while its hold lasts. The review-fix worker-survives
+ * variants cover a restart with the fix still running.
  */
-function reviewPhases(stack: RemoteNodeStack, reviewFixNodeAwayMs: number): HoldPhase[] {
-  const review = marker(stack, 'review');
+function reviewPhases(
+  stack: RemoteNodeStack,
+  reviewFixNodeAwayMs: number,
+  reviewer: ScriptedReviewer,
+): HoldPhase[] {
   // Past what the gateway can accept itself, so the fix leads to the re-review held below.
   const large = marker(stack, 'large-leftover');
+  const pendingLoop = (run: Run) => reviewer.pending(run)?.reviewLoopNumber ?? 1;
   return [
     {
       step: 'review',
@@ -433,13 +439,14 @@ function reviewPhases(stack: RemoteNodeStack, reviewFixNodeAwayMs: number): Hold
       nodeAwayMs: reviewFixNodeAwayMs,
       armAt: 'create',
       prepare: large.arm,
-      arm: review.arm,
+      arm: async () => {},
       held: ({ run }) =>
-        review.hit() &&
         stepStatus(run, 'review') === 'running' &&
-        contexts(run, 'review').some((context) => context.nativeSession?.acceptedAt),
+        reviewer.pending(run) !== undefined &&
+        pendingLoop(run) === 1,
       missed: reviewHoldMissed,
-      release: review.release,
+      release: async () => {},
+      keepsReviewer: true,
     },
     {
       step: 'review-fix',
@@ -468,28 +475,24 @@ function reviewPhases(stack: RemoteNodeStack, reviewFixNodeAwayMs: number): Hold
           },
           120_000,
         );
-        await review.arm(context);
       },
     },
     {
       step: 'review-fix',
       restarts: ['node-away'],
       nodeAwayMs: reviewFixNodeAwayMs,
-      // Armed by the fix phase above, while the gateway was down.
       armAt: 'create',
       arm: async () => {},
       held: ({ run }) =>
-        review.hit() &&
         stepStatus(run, 'review') === 'running' &&
-        contexts(run, 'review').some(
-          (context) => (context.reviewLoopNumber ?? 0) >= 2 && context.nativeSession?.acceptedAt,
-        ),
+        reviewer.pending(run) !== undefined &&
+        pendingLoop(run) >= 2,
       missed: ({ run }) => SETTLED_STEP.has(stepStatus(run, 'review') ?? ''),
       // Read after the restarts: recovery could still lose the fix before the re-review reads it.
       release: async (context) => {
         context.fixLanded = fixInCheckout(context.slotRepo);
-        await review.release(context);
       },
+      keepsReviewer: true,
     },
   ];
 }
@@ -555,8 +558,8 @@ function fixInCheckout(slotRepo: string): boolean {
       { encoding: 'utf8' },
     ).split('\n');
     return present.includes('src/format-name.ts') && !present.includes('src/debug-trace.ts');
-  } catch {
-    return false;
+  } catch (error) {
+    throw new Inconclusive(`could not read the slot checkout for the fix: ${String(error)}`);
   }
 }
 
@@ -768,6 +771,7 @@ function survivePhase(
         missed: reviewHoldMissed,
         // The scripted reviewer answers the turn once this phase is past.
         release: async () => {},
+        keepsReviewer: true,
         survive: {},
       } satisfies HoldPhase;
     case 'review-fix': {
@@ -858,6 +862,8 @@ interface ScriptedReviewer {
   pending(run: Run): AgentContext | undefined;
   /** The reviewer turns the proxy swallowed: one per reviewer unless a prompt was sent again. */
   turns(): number;
+  /** Answered turns the proxy never ended: their reviewer was gone. */
+  unended(): number;
   /** Answers it: `fix-then-pass` flags loop 1 and passes later loops; `pass` always passes. */
   answer(
     run: Run,
@@ -872,6 +878,7 @@ const execFileAsync = promisify(execFile);
 function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
   const hold = path.join(stack.holds, 'review');
   const answered = new Set<string>();
+  let unended = 0;
   // The proxy logs `… swallowed` per turn it answered and `… completed` per batch it ended.
   const count = (word: string) =>
     (existsSync(`${hold}.hit`) ? readFileSync(`${hold}.hit`, 'utf8') : '')
@@ -880,10 +887,12 @@ function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
   return {
     async start() {
       answered.clear();
+      unended = 0;
       await rm(`${hold}.hit`, { force: true });
       await writeFile(hold, 'swallow\n');
     },
     turns: () => count(' swallowed'),
+    unended: () => unended,
     pending(run) {
       if (count(' swallowed') <= answered.size) return undefined;
       return contexts(run, 'review').find(
@@ -959,7 +968,9 @@ function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
         'the proxy to end the swallowed turn',
         async () => (count(' completed') > before ? true : undefined),
         15_000,
-      ).catch(() => undefined);
+      ).catch(() => {
+        unended += 1;
+      });
       await writeFile(hold, 'swallow\n');
       return `loop ${loop}: ${issues ? 'issues' : 'pass'}`;
     },
@@ -1247,6 +1258,8 @@ interface ScenarioResult extends DrivenRun {
   unreached: HoldStep[];
   /** Under a scripted review: the reviewer turns the proxy swallowed. */
   reviewerTurns?: number;
+  /** Under a scripted review: answered turns the proxy never ended. */
+  reviewerUnended?: number;
   /** For a worker-survives hold: what was watched, and what the restart did to it. */
   watched?: string[];
   survival?: string[];
@@ -1487,8 +1500,8 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
               await writeFile(path.join(task, 'canary-monitor-ready'), 'ready\n');
             }
             if (await watchPhase(view, summary, changedAt)) return 'again';
-            // A scripted review answers each reviewer turn, except one a REVIEW hold still keeps.
-            if (shape.scriptedReview && phases[current]?.step !== 'review') {
+            // A scripted review answers each reviewer turn, except one a hold still keeps.
+            if (shape.scriptedReview && !phases[current]?.keepsReviewer) {
               const answered = await reviewer.answer(run, hold.slotRepo, shape.scriptedReview);
               if (answered) {
                 await log(`${label}: scripted reviewer answered ${answered}`);
@@ -1521,7 +1534,9 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
         typedMidTurn: await readFile(path.join(stack.holds, 'claude-input.log'), 'utf8').catch(
           () => '',
         ),
-        ...(shape.scriptedReview ? { reviewerTurns: reviewer.turns() } : {}),
+        ...(shape.scriptedReview
+          ? { reviewerTurns: reviewer.turns(), reviewerUnended: reviewer.unended() }
+          : {}),
       };
     } finally {
       if (shape.scriptedReview) await reviewer.stop(dir);
@@ -1815,38 +1830,50 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
   }
 
   if (options.review) {
-    // One reviewed run: two model calls, four restarts; its end is derived from its verdicts.
-    const model = `scripted worker, ${REVIEWER.runner} ${REVIEWER.model} reviewer`;
-    let verdicts: ReturnType<typeof reviewVerdicts> | undefined;
-    let procedural: string[] = [];
-    let fixLanded = false;
-    let retriesExhausted = false;
+    // One reviewed run, three restarts; the test answers both reviewer turns (no model call).
+    const model = `scripted worker, ${REVIEWER.runner} reviewer whose turns the test answers (no model call)`;
     const reviewCheck = await check(
       { case: 'review', variant: 'node-up', model, hold: HOLDS.review },
-      () => runScenario('review', 'review', reviewPhases(stack, options.reviewFixNodeAwayMs)),
+      () =>
+        runScenario(
+          'review',
+          'scripted-review',
+          reviewPhases(stack, options.reviewFixNodeAwayMs, reviewer),
+        ),
       (result) => {
-        verdicts = reviewVerdicts(result.run);
-        // No fix round when loop 1 passes: its holds are not reached, which is no difference.
-        const expectedReviewers = verdicts.loop1 === 'pass' ? 1 : 2;
-        procedural = verdicts.loop1 === 'pass' ? result.refused : unreachedDifferences(result);
-        fixLanded = result.fixLanded === true;
-        retriesExhausted =
-          result.run.steps.find((step) => step.name === 'review')?.outputs?.maxRetriesExhausted ===
-          true;
+        const verdicts = reviewVerdicts(result.run);
         const differences = [
-          ...procedural,
+          ...unreachedDifferences(result),
           ...outcomeDifferences(REVIEWED_OUTCOME, result.outcome),
-          ...(verdicts.reviewers > expectedReviewers
+          ...(verdicts.loop1 === 'issues' && verdicts.loop2 === 'pass'
+            ? []
+            : [
+                `verdicts: expected loop 1 issues, loop 2 pass; observed ${verdicts.loop1 ?? '-'}, ${verdicts.loop2 ?? '-'}`,
+              ]),
+          ...(verdicts.reviewers > 2
             ? [
-                `${verdicts.reviewers} reviewers ran, expected ${expectedReviewers}: a reviewer was re-launched after a restart`,
+                `${verdicts.reviewers} reviewers ran, expected 2: a reviewer was re-launched after a restart`,
               ]
+            : []),
+          ...(result.reviewerTurns === verdicts.reviewers
+            ? []
+            : [`${result.reviewerTurns ?? 0} reviewer turns for ${verdicts.reviewers} reviewers`]),
+          // The test writes each verdict itself: the reviewer must still be there to end its turn.
+          ...(result.reviewerUnended
+            ? [
+                `${result.reviewerUnended} answered reviewer turns never ended: the reviewer was gone`,
+              ]
+            : []),
+          // The scripted re-review passes whatever it reads: the fix must still be in the checkout.
+          ...(result.fixLanded === false
+            ? ["the fix round's commit was gone from the checkout at the re-review"]
             : []),
         ];
         return {
           status: differences.length ? 'fail' : 'pass',
           differences,
           observations: [
-            `verdicts: loop 1 ${verdicts.loop1 ?? '?'}, loop 2 ${verdicts.loop2 ?? '-'}`,
+            `reviews: ${result.outcome.reviews.join(', ') || '-'}`,
             ...(result.outcome.superseded.length
               ? [`superseded cards: [${result.outcome.superseded.join(', ')}]`]
               : []),
@@ -1854,47 +1881,15 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
           expected: { ...REVIEWED_OUTCOME, superseded: [], reviews: [] },
         };
       },
+      { noModelCalls: true },
     );
-    if (reviewCheck.modelCalls > 2) {
-      reviewCheck.status = 'fail';
-      reviewCheck.differences.push(
-        `${reviewCheck.modelCalls} model calls, expected at most 2: a reviewer was re-launched after a restart`,
-      );
-    }
-    // Loop 2 returning issues can be the model's drift, not a restart's: that path is not modelled.
-    const loop1Pass = verdicts?.loop1 === 'pass';
-    const relaunched = reviewCheck.differences.some((entry) => entry.includes('re-launched'));
-    const loop2Drift = reviewDriftExcuses({
-      loop2: verdicts?.loop2,
-      fixLanded,
-      procedural,
-      relaunched,
-      retriesExhausted,
-    });
-    if (loop2Drift && reviewCheck.status === 'fail') {
-      reviewCheck.status = 'not-exercised';
-      reviewCheck.error = 'loop 2 returned issues (verdict drift): the restarts cannot be judged';
-    }
     onCheck(reviewCheck);
     onCheck({
       ...reviewCheck,
       case: 'review-fix',
       variant: 'node-up+node-away',
       hold: HOLDS['review-fix'],
-      // The same run as the review check, whose entry counts its model calls.
-      modelCalls: 0,
-      observations: [
-        ...reviewCheck.observations,
-        "shares the review check's run and its model calls",
-      ],
-      ...(loop1Pass || loop2Drift
-        ? {
-            status: 'not-exercised',
-            error: loop1Pass
-              ? 'loop 1 returned no issues (verdict drift): no fix round ran'
-              : reviewCheck.error,
-          }
-        : {}),
+      observations: [...reviewCheck.observations, "shares the review check's run"],
     });
   }
 

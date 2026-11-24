@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { NODE_FS_READ_TEXT_MAX_BYTES } from '@farmslot/protocol';
+import { NODE_FS_READ_FILES_MAX_FILES, NODE_FS_READ_TEXT_MAX_BYTES } from '@farmslot/protocol';
 
 import {
   fsDelete,
@@ -348,4 +348,13 @@ test('fsReadFiles answers each file in order: content, missing, or its own read 
     assert.deepEqual(result.files[3], { error: error.message });
     return true;
   });
+});
+
+test('fsReadFiles refuses more files than one request may name', async () => {
+  const files = Array.from({ length: NODE_FS_READ_FILES_MAX_FILES + 1 }, (_, index) => ({
+    root: tmpdir(),
+    relPath: `missing-${index}`,
+  }));
+  await assert.rejects(fsReadFiles({ files }), /at most 64 files/);
+  assert.equal((await fsReadFiles({ files: files.slice(1) })).files.length, 64);
 });

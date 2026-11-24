@@ -17,7 +17,8 @@ import type { WebSocket } from 'ws';
 // mock.module replaces a module wholesale, so the real namespaces are spread in
 // and only the fixtures these tests need are overridden.
 import * as realConfig from '../core/config.js';
-import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
+import type { SlotLocality } from '../core/slot-io.js';
+import { getAllNodes, registerNode, unregisterByWs } from '../fleet/machine-registry.js';
 import * as realFleetState from '../fleet/state.js';
 import * as realRunStore from '../runs/store.js';
 
@@ -25,6 +26,9 @@ const root = mkdtempSync(path.join(os.tmpdir(), 'gw-progress-batch-'));
 const taskDir = path.join(root, '.task', 'dev', 'demo');
 /** Every node request a read makes, by method. */
 const requests: string[] = [];
+/** Files named by each `fs.readFiles` request. */
+const batchSizes: number[] = [];
+let batchFails = false;
 
 function enoent(file: string): Error {
   return Object.assign(new Error(`ENOENT: no such file or directory, open '${file}'`), {
@@ -58,6 +62,8 @@ async function nodeRequest(method: string, raw: unknown): Promise<unknown> {
       };
     }
     case 'fs.readFiles':
+      if (batchFails) throw new Error('batch refused');
+      batchSizes.push((raw as { files: unknown[] }).files.length);
       return {
         files: (raw as { files: Array<{ root: string; relPath: string }> }).files.map((file) => {
           try {
@@ -205,4 +211,63 @@ test('a remote progress read fetches its files in batches, with the same result'
   const summary = await taskProgress({ slotId: 'slot-batch', summary: true });
   assert.equal(summary.summary?.completedSteps, 1);
   assert.deepEqual(requests, ['fs.readFiles'], 'a summary reads its checklist in one request');
+});
+
+test('an explicit checklist read is batched too', async () => {
+  connectNode(false);
+  requests.length = 0;
+  const taskFile = path.join('.task', 'dev', 'demo', 'CHECKLIST.md');
+  const perFile = await taskProgress({ slotId: 'slot-batch', taskFile });
+  const perFileRequests = [...requests];
+  connectNode(true);
+  requests.length = 0;
+  assert.deepEqual(await taskProgress({ slotId: 'slot-batch', taskFile }), perFile);
+  assert.deepEqual(
+    requests,
+    ['fs.readFiles', 'fs.readFiles', 'fs.list'],
+    perFileRequests.join(', '),
+  );
+});
+
+test('a node that refuses batches is read file by file, warned once', async (t) => {
+  connectNode(true);
+  const warn = t.mock.method(console, 'warn', () => {});
+  batchFails = true;
+  t.after(() => {
+    batchFails = false;
+  });
+  connectNode(false);
+  const expected = (await readCounted()).result;
+  connectNode(true);
+  const first = await readCounted();
+  const second = await readCounted();
+  assert.deepEqual(first.result, expected);
+  assert.deepEqual(second.result, expected);
+  assert(first.requests.includes('fs.read'), 'the read falls back to per-file reads');
+  const fallbacks = warn.mock.calls.filter((call) =>
+    String(call.arguments[0]).includes('fs.readFiles'),
+  );
+  assert.equal(fallbacks.length, 1);
+  assert.match(String(fallbacks[0]?.arguments[0]), /remote-batch.*batch refused/);
+});
+
+test('a batch names at most the files one request may carry', async () => {
+  connectNode(true);
+  const { slotPrefetchFiles } = await import('../core/slot-io.js');
+  const { NODE_FS_READ_FILES_MAX_FILES } = await import('@farmslot/protocol');
+  batchSizes.length = 0;
+  const files = Array.from({ length: NODE_FS_READ_FILES_MAX_FILES + 6 }, (_, index) =>
+    path.join(taskDir, `file-${index}.md`),
+  );
+  const held: SlotLocality = await slotPrefetchFiles(vars, files);
+  assert.deepEqual(batchSizes, [NODE_FS_READ_FILES_MAX_FILES]);
+  assert.equal(held.prefetched?.size, NODE_FS_READ_FILES_MAX_FILES);
+});
+
+test('node info carries the capabilities a node declared', () => {
+  connectNode(true);
+  assert.deepEqual(
+    getAllNodes().find((node) => node.machine === vars.machine)?.observationCapabilities,
+    { files: 1, batchReads: 1 },
+  );
 });

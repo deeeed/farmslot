@@ -253,14 +253,21 @@ const writeTask = (runId: string) =>
     broadcastFn: () => undefined,
     stepPartialIO: new Map(),
   });
+const claimFor = async (runId: string) => {
+  const { updateSlotStatusIf } = await import('../core/state.js');
+  await updateSlotStatusIf(slotId, () => true, { current_run_id: runId });
+};
 const prepare = (runId: string, skipPrepare = false) =>
-  executePrepareStep(runId, {
-    activeMonitors: new Map(),
-    broadcastFn: () => undefined,
-    getRunFlags: () => (skipPrepare ? { skipPrepare: true } : undefined),
-    normalizeEvalReplayForTaskWrite: async (_id, run) => run,
-    stepPartialIO: new Map(),
-  });
+  // The engine prepares only a slot its run holds; find-slot's claim is skipped here.
+  claimFor(runId).then(() =>
+    executePrepareStep(runId, {
+      activeMonitors: new Map(),
+      broadcastFn: () => undefined,
+      getRunFlags: () => (skipPrepare ? { skipPrepare: true } : undefined),
+      normalizeEvalReplayForTaskWrite: async (_id, run) => run,
+      stepPartialIO: new Map(),
+    }),
+  );
 const workerTaskDir = (taskFile: string) =>
   path.join(
     repo,
