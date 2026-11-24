@@ -1,1 +1,0 @@
-- A Terminal (web-dapp) launch with no display choice runs headless when the macOS session is locked, instead of refusing with SESSION_LOCKED. Headful stays the default when the screen can paint; an explicit `--headful` or `TERMINAL_HEADLESS=0` on a locked session still refuses.
