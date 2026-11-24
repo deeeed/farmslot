@@ -316,7 +316,10 @@ test('REMOVE_STALE_TMP_PACKS_COMMAND removes nothing when lsof cannot check owne
     ],
     {
       encoding: 'utf8',
-      env: { ...process.env, CMD: REMOVE_STALE_TMP_PACKS_COMMAND.replace(/\bgit /g, `${'/usr/bin/git'} `) },
+      env: {
+        ...process.env,
+        CMD: REMOVE_STALE_TMP_PACKS_COMMAND.replace(/\bgit /g, `${'/usr/bin/git'} `),
+      },
     },
   );
 

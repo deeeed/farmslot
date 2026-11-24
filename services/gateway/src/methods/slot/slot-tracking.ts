@@ -36,8 +36,8 @@ import { mutateSlotGit } from '../../run-lifecycle/validation-run-commits.js';
 
 import {
   CLEAR_INDEX_FLAGS_COMMAND,
-  REFRESH_INDEX_AND_UNLOCK_COMMAND,
   PRE_FETCH_CLEANUP_COMMAND,
+  REFRESH_INDEX_AND_UNLOCK_COMMAND,
 } from './git-cleanup-commands.js';
 
 export type MergeMainStrategy = 'merge' | 'rebase';
