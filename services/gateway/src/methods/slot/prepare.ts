@@ -949,11 +949,46 @@ async function slotPrepareInner(
   // the frozen validation head the gateway derived from the PR: the slot lands
   // on that exact commit, on the PR branch, and nothing is pushed.
   const startRefPolicyApplies = params.flowType === 'dev' || params.flowType === 'fix-bug';
+  // Release keeps a work branch that holds unpushed commits, so a new run of the ticket finds
+  // it (dropParkedBranch). Before prepare deletes or resets that branch, those commits get a
+  // branch of their own: the guard's parked ref alone is pruned after the retention window.
+  // `target` is where the branch moves; commits it still reaches are not stranded.
+  const keepUnpushedBranch = async (target?: string) => {
+    if (!branch) return;
+    const ref = shellQuote(`refs/heads/${branch}`);
+    const probe = await execGit(
+      'probe-unpushed-branch',
+      vars,
+      withFarmGitConfig(
+        `cd ${shellQuote(vars.remoteRepo)} && { git rev-parse --verify --quiet ${ref} || exit 0; } && git rev-list --max-count=1 ${ref} --not --remotes ${target ? shellQuote(target) : ''}`,
+      ),
+    );
+    if (probe.exitCode !== 0)
+      throw new Error(
+        `Cannot check ${branch} for unpushed commits on ${vars.slotId}: ${(probe.stderr || probe.stdout).trim().slice(-200)}`,
+      );
+    const [head = '', stranded = ''] = probe.stdout.trim().split('\n');
+    if (!stranded) return;
+    const kept = `${branch}-kept-${head.slice(0, 12)}`;
+    const keep = await execGit(
+      'keep-unpushed-branch',
+      vars,
+      withFarmGitConfig(
+        `cd ${shellQuote(vars.remoteRepo)} && { [ "$(git rev-parse --verify --quiet ${shellQuote(`refs/heads/${kept}`)})" = ${shellQuote(head)} ] || git branch ${shellQuote(kept)} ${shellQuote(head)}; }`,
+      ),
+    );
+    if (keep.exitCode !== 0)
+      throw new Error(
+        `Cannot keep the unpushed commits of ${branch} on ${kept} (${vars.slotId}); ${branch} was not changed: ${(keep.stderr || keep.stdout).trim().slice(-200)}`,
+      );
+    step('branch', `Kept unpushed commits of ${branch} on ${kept}`);
+  };
   // Whatever path put the slot on the branch, the provenance must describe the
   // tree the run executes on: with a start ref the branch is reset to the
   // resolved commit, never left at whatever origin or the local branch holds.
   const resetBranchToStartRef = async () => {
     if (!resolvedStartRef) return;
+    await keepUnpushedBranch(resolvedStartRef.resolvedSha);
     // The same index refresh every other reset --hard in this file runs first,
     // so a stale index.lock cannot fail it (the flag sweep runs as its own
     // command on the paths that need it: it ends with exit).
@@ -1106,6 +1141,7 @@ async function slotPrepareInner(
             `failed to clear skip-worktree/assume-unchanged flags on ${vars.slotId} (${vars.remoteRepo}): ${refreshCurrentBranchR.stderr.slice(-200) || refreshCurrentBranchR.stdout.slice(-200)}`,
           );
         }
+        await keepUnpushedBranch();
         const resetBranchR = await mutateGit(
           'reset-current-branch',
           `cd ${shellQuote(vars.remoteRepo)} && git reset --hard ${shellQuote(`origin/${branch}`)} && git clean -fd`,
@@ -1364,6 +1400,7 @@ async function slotPrepareInner(
             `cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch} 2>/dev/null`,
           );
         }
+        await keepUnpushedBranch();
         await mutateGit(
           'delete-local-branch',
           `cd ${shellQuote(vars.remoteRepo)} && git branch -D ${shellQuote(branch)} 2>/dev/null`,
@@ -1394,6 +1431,7 @@ async function slotPrepareInner(
             )
           ).exitCode === 0;
         if (localExists) {
+          await keepUnpushedBranch();
           const coR = await mutateGit(
             'reset-tracking-branch',
             `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)} && git reset --hard ${shellQuote(`origin/${branch}`)}`,
@@ -1432,6 +1470,7 @@ async function slotPrepareInner(
         if (localExists) {
           if (forceNewBranch) {
             branchCreatedFromBase = true;
+            await keepUnpushedBranch();
             if (linkedWorktree) {
               await mutateGit(
                 'delete-local-replay-branch',
