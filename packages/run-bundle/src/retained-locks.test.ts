@@ -73,6 +73,13 @@ test('store operation times are self times: a nested operation is not counted in
     outer + inner <= wall + 5,
     `outer ${outer} + inner ${inner} > wall ${Math.round(wall)}`,
   );
+  // Sub-millisecond calls add up instead of each rounding to 0.
+  const tiny: RunBundleLockTime = { acquisitions: 0, waitMs: 0, heldMs: 0 };
+  await withRunBundleLockTime(tiny, async () => {
+    for (let i = 0; i < 200; i++) await timeBundleOp('tiny', () => Promise.resolve());
+  });
+  assert.equal(tiny.opsMs?.tiny?.count, 200);
+  assert.ok((tiny.opsMs?.tiny?.ms ?? 0) > 0, 'sub-millisecond calls summed to 0');
   // Outside a measured caller an operation only runs.
   assert.equal(await timeBundleOp('unmeasured', async () => 'ran'), 'ran');
 });

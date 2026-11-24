@@ -477,9 +477,12 @@ const bundleOps = new AsyncLocalStorage<BundleOpFrame>();
  * Adds `operation`'s self time (its wall time minus the timed operations it ran inside) to the
  * measured caller's `opsMs[name]`, so the names do not count the same time twice. Outside a
  * measured operation it only runs it. Concurrent children can exceed their parent's wall time;
- * the parent's self time then reads 0.
+ * the parent's self time then reads 0. Times are summed unrounded, so many sub-millisecond
+ * calls (fsyncs, record writes) still add up; a reader rounds once.
+ *
+ * Public through the package index; store code here calls it through the wrappers at the end
+ * of this file.
  */
-/** Exported for its tests; store code calls it through the wrappers at the end of this file. */
 export async function timeBundleOp<T>(name: string, operation: () => Promise<T>): Promise<T> {
   const time = lockTimes.getStore();
   if (!time) return operation();
@@ -494,7 +497,7 @@ export async function timeBundleOp<T>(name: string, operation: () => Promise<T>)
     const ops = (time.opsMs ??= {});
     const entry = (ops[name] ??= { count: 0, ms: 0 });
     entry.count += 1;
-    entry.ms += Math.max(0, Math.round(elapsed - frame.childMs));
+    entry.ms += Math.max(0, elapsed - frame.childMs);
   }
 }
 
