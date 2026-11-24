@@ -307,6 +307,7 @@ test('workspace progress and child metrics read the live task, then the view aft
 
 test("a static review's open child reads as ended once its reviewer has failed", async () => {
   await withFixture(async (f) => {
+    activeResourceFixture = f;
     await materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps);
     const mark = marker(f);
     await mark('start');
@@ -332,8 +333,12 @@ test("a static review's open child reads as ended once its reviewer has failed",
         .flatMap((phase) => phase.steps)
         .find((step) => step.index === 1)?.subtask?.ownerEnded;
     };
-    assert.equal(await ownerEnded('working'), undefined);
-    assert.equal(await ownerEnded('failed'), true);
+    try {
+      assert.equal(await ownerEnded('working'), undefined);
+      assert.equal(await ownerEnded('failed'), true);
+    } finally {
+      activeResourceFixture = undefined;
+    }
   });
 });
 
