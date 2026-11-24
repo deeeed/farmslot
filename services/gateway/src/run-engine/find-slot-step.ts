@@ -106,6 +106,7 @@ import {
   isCancelledSlotHolder,
   reclaimCancelledSlot,
 } from '../run-lifecycle/cancelled-slot-reclaim.js';
+import { cleanupHoldClearsSoon, type CleanupHoldRun } from '../run-lifecycle/cleanup-hold.js';
 import { reclaimFinishedSlot } from '../run-lifecycle/finished-slot-reclaim.js';
 import { assertNativeSlotReplacementOwner } from '../runners/native/worker.js';
 import {
@@ -596,6 +597,7 @@ export async function commitSlotClaim(
     readRow?: typeof readSlotRow;
     runLookup?: (id: string) => Pick<Run, 'status' | 'engineState'> | undefined;
     listSlotRuns?: () => Promise<SlotHistoryRun[]>;
+    cleanupHoldRun?: (id: string) => CleanupHoldRun | undefined;
   } = {},
 ): Promise<void> {
   const {
@@ -605,6 +607,7 @@ export async function commitSlotClaim(
     readRow = readSlotRow,
     runLookup = getRun,
     listSlotRuns = getAllRunsWithArchived,
+    cleanupHoldRun = getRun,
   } = deps;
   const reservation = Boolean(opts?.takeoverLiveOwner || opts?.reserveOnly);
   const releaseRecoveryClaim = async (
@@ -696,7 +699,11 @@ export async function commitSlotClaim(
       blocker
         ? await describeSlotClaimBlocker(slotId, blocker, listSlotRuns)
         : 'slot changed hands during the claim',
-      !blocker || blocker.kind === 'live-owner',
+      // A hold the previous run's cleanup is about to clear sends the run back to selection,
+      // whose preview waits for it on a pinned slot.
+      !blocker ||
+        blocker.kind === 'live-owner' ||
+        (blocker.kind === 'occupied' && cleanupHoldClearsSoon(slotId, row, cleanupHoldRun)),
     );
   }
   // The predicate passed, but a cancel, pause or replay can still land while
@@ -777,6 +784,8 @@ export function splitGuardedFreeSlots<
 
 /** How long an explicit slot pick waits for an in-flight release to land. */
 export const EXPLICIT_SLOT_RELEASE_WAIT_MS = 5 * 60 * 1000;
+/** How long a pinned slot waits for the previous run's cleanup; the held-slot pass runs each minute. */
+export const CLEANUP_HOLD_WAIT_MS = 2 * 60 * 1000;
 const EXPLICIT_SLOT_RELEASE_POLL_MS = 2000;
 
 /**
@@ -884,9 +893,10 @@ async function reclaimCancelledSlotForSelection(
 }
 
 /**
- * Guard an already chosen slot before preview. A release gets a bounded queue wait.
+ * Guard an already chosen slot before preview. A release gets a bounded queue wait, and so
+ * does a pinned slot whose finished run's cleanup waits on a process still exiting.
  * A live owner becomes a claim conflict: the caller reselects an automatic pick
- * or waits for its pin. Handoffs and occupied holds are refused. Cancel, pause or
+ * or waits for its pin. Handoffs and other occupied holds are refused. Cancel, pause or
  * replay stops this attempt. Unconstrained scoring previews directly.
  */
 export async function previewWhenSlotClaimable<T>(
@@ -905,6 +915,10 @@ export async function previewWhenSlotClaimable<T>(
     wrapWait?: <W>(wait: () => Promise<W>) => Promise<W>;
     /** An in-process prepare, recovery or upkeep still holds the slot's prepare guard. */
     preparing?: (slotId: string) => boolean;
+    /** The slot is the run's own pin, so it may wait for the previous run's cleanup. */
+    waitForCleanupHold?: boolean;
+    cleanupHoldRun?: (id: string) => CleanupHoldRun | undefined;
+    cleanupHoldTimeoutMs?: number;
   } = {},
 ): Promise<T> {
   if (!slotId) return preview();
@@ -918,6 +932,9 @@ export async function previewWhenSlotClaimable<T>(
     reclaimCancelled = reclaimCancelledSlotForSelection,
     wrapWait = (wait) => awaitAsQueueTime(runId, 'find-slot', wait),
     preparing = (id) => activePrepareSlots.has(id),
+    waitForCleanupHold = false,
+    cleanupHoldRun = getRun,
+    cleanupHoldTimeoutMs = CLEANUP_HOLD_WAIT_MS,
   } = deps;
   const assertRunUnchanged = () => {
     if (runSupersededSince(runLookup(runId), generation)) throw runChangedError(runId, slotId);
@@ -933,18 +950,40 @@ export async function previewWhenSlotClaimable<T>(
 
   await reclaimCancelled(slotId, runId);
   assertRunUnchanged();
-  let blocker = blockerOf(await readRow(slotId));
+  let row = await readRow(slotId);
+  let blocker = blockerOf(row);
+  const cleanupHeld = (
+    currentRow: Readonly<Record<string, unknown>> | null,
+    current: typeof blocker,
+  ) =>
+    waitForCleanupHold &&
+    current?.kind === 'occupied' &&
+    cleanupHoldClearsSoon(slotId, currentRow, cleanupHoldRun);
   // A slot mid-release, or one that reads free while a prepare guard still holds it (it would
   // refuse this run's prepare 'already preparing', 1b542e2f), is waited for, not refused.
-  const waiting = (current: typeof blocker) =>
-    current?.kind === 'releasing' || (!current && preparing(slotId));
-  if (waiting(blocker)) {
+  const waiting = (currentRow: Readonly<Record<string, unknown>> | null, current: typeof blocker) =>
+    current?.kind === 'releasing' ||
+    (!current && preparing(slotId)) ||
+    cleanupHeld(currentRow, current);
+  if (waiting(row, blocker)) {
     // One read decides both whether to wait and whether it counts as queue time.
     blocker = await wrapWait(async () => {
       const deadline = now() + timeoutMs;
+      // The held-slot pass fences the slot while it retries the cleanup, so the hold and a
+      // release alternate: the cleanup bound runs from the first hold seen, not per phase.
+      let cleanupSince: number | undefined;
       let current = blocker;
-      while (waiting(current)) {
-        if (now() >= deadline) {
+      while (waiting(row, current)) {
+        if (current?.kind === 'occupied' && cleanupHeld(row, current)) {
+          cleanupSince ??= now();
+          if (now() - cleanupSince >= cleanupHoldTimeoutMs) {
+            const minutes = Math.round(cleanupHoldTimeoutMs / 60_000);
+            throw slotClaimRefusedError(
+              slotId,
+              `${await describeSlotClaimBlocker(slotId, current, listSlotRuns)}; still held after ${minutes}m`,
+            );
+          }
+        } else if (now() >= deadline) {
           const minutes = Math.round(timeoutMs / 60_000);
           throw slotClaimRefusedError(
             slotId,
@@ -955,7 +994,8 @@ export async function previewWhenSlotClaimable<T>(
         }
         await sleep(EXPLICIT_SLOT_RELEASE_POLL_MS);
         assertRunUnchanged();
-        current = blockerOf(await readRow(slotId));
+        row = await readRow(slotId);
+        current = blockerOf(row);
       }
       return current;
     });
@@ -2382,31 +2422,37 @@ async function findSlotAttempt(
 
   let result: DispatchPreviewResult;
   try {
-    result = await previewWhenSlotClaimable(runId, generation, run.slotId || reusableSlotId, () =>
-      dispatchPreview(
-        {
-          ...buildDispatchPreviewParamsForRun(run),
-          // The preview's node check needs the model the run names.
-          ...runExplicitRunnerModel(run),
-          // A lower-load unsafe candidate must not win again after another was recovered.
-          ...(reusableSlotId ? { allowedSlots: [reusableSlotId] } : {}),
-          targetBranch,
-          ...(run.qa ? { qaProfileId: run.qa.profile.id, qaInputs: run.qa.inputs } : {}),
-          ...(skipPrepare ? { skipPrepare } : {}),
-        },
-        // Delayed engine preview: the audit principal was resolved and persisted
-        // at run.create; never re-derive it from ambient context here.
-        {
-          ...(run.pressureOverride
-            ? { overridePrincipalId: run.pressureOverride.principalId }
-            : {}),
-          includeProfileFit: false,
-          candidateTemplate: run.engineState?.evalExperiment?.candidateTemplate,
-          automaticLoadPinned,
-          sourcePlans,
-          ...capabilitySelection,
-        },
-      ),
+    result = await previewWhenSlotClaimable(
+      runId,
+      generation,
+      run.slotId || reusableSlotId,
+      () =>
+        dispatchPreview(
+          {
+            ...buildDispatchPreviewParamsForRun(run),
+            // The preview's node check needs the model the run names.
+            ...runExplicitRunnerModel(run),
+            // A lower-load unsafe candidate must not win again after another was recovered.
+            ...(reusableSlotId ? { allowedSlots: [reusableSlotId] } : {}),
+            targetBranch,
+            ...(run.qa ? { qaProfileId: run.qa.profile.id, qaInputs: run.qa.inputs } : {}),
+            ...(skipPrepare ? { skipPrepare } : {}),
+          },
+          // Delayed engine preview: the audit principal was resolved and persisted
+          // at run.create; never re-derive it from ambient context here.
+          {
+            ...(run.pressureOverride
+              ? { overridePrincipalId: run.pressureOverride.principalId }
+              : {}),
+            includeProfileFit: false,
+            candidateTemplate: run.engineState?.evalExperiment?.candidateTemplate,
+            automaticLoadPinned,
+            sourcePlans,
+            ...capabilitySelection,
+          },
+        ),
+      // Only the run's own pin waits for the previous run's cleanup; a scored pick moves on.
+      { waitForCleanupHold: Boolean(run.slotId) },
     );
   } catch (error) {
     if (!run.slotId && error instanceof AutomaticSlotLoadWaitError)
