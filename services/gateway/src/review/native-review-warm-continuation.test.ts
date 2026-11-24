@@ -495,6 +495,20 @@ for (const status of [' M a.ts\0', 'M  a.ts\0', '?? new.ts\0']) {
   });
 }
 
+test('an artifact-only run re-reviews its uncommitted fix at an unchanged head, reading the working tree', async (t) => {
+  const run = await prePublishRun(t);
+  updateRun(run.id, { completionPolicy: 'artifact-only' });
+  await review(run.id);
+  // The artifact-only task leaves the fix in the working tree; HEAD is the reviewed commit.
+  worktreeStatus = ' M a.ts\0';
+  await reReview(run.id);
+  assert.equal(dispatches.length, 2);
+  assert.equal(dispatches[1]?.retainedFrom?.contextId, dispatches[0]!.contextId);
+  const task = reviewerTask(run.id, dispatches[1]!.contextId);
+  assert.match(task, /This artifact-only run leaves its fix uncommitted/);
+  assert.ok(task.includes(`--stat ${head}`), 'the scope names the working-tree diff against HEAD');
+});
+
 test('generated untracked slot support does not block an evidence re-review', async (t) => {
   const run = await prePublishRun(t);
   await review(run.id);

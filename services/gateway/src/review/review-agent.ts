@@ -197,6 +197,8 @@ export function continuationReviewScope(params: {
   priorHeadSha: string | null;
   currentHeadSha: string | null;
   priorArtifactDir: string;
+  /** An artifact-only run: its fix is the uncommitted working tree, not new commits. */
+  workingTree?: boolean;
 }): string {
   const reviewRange =
     params.priorHeadSha && params.currentHeadSha
@@ -215,7 +217,15 @@ This scope overrides generic full-branch diff instructions below. When the exact
 available, inspect \`${GIT_DIFF_COMMAND} --stat ${reviewRange}\` and \`${GIT_DIFF_COMMAND} ${reviewRange}\` instead of
 \`main...HEAD\`. Recheck the prior findings and validate affected surfaces only. Expand beyond
 that range only when the delta invalidates a prior assumption, and explain why in the report.
-`;
+${
+  params.workingTree
+    ? `
+This artifact-only run leaves its fix uncommitted, so the range above may hold no commits. The fix
+is the working tree: inspect \`${GIT_DIFF_COMMAND} --stat ${params.currentHeadSha ?? 'HEAD'}\`,
+\`${GIT_DIFF_COMMAND} ${params.currentHeadSha ?? 'HEAD'}\` and \`git status --short\` for new files.
+`
+    : ''
+}`;
 }
 
 /** What an automatic re-review continues (ADR-063 Amendment 5). */

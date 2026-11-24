@@ -372,7 +372,10 @@ async function runNativeReviewAttempt(
       ),
     );
   const lastReviewedHeadSha = input.rereview?.lastReviewedHeadSha ?? retained?.lastReviewedHeadSha;
-  if (!recovering && lastReviewedHeadSha) {
+  // An artifact-only run's output is its uncommitted working tree (its task says not to commit),
+  // so its re-review reads that tree instead of waiting for a commit that never comes.
+  const artifactOnly = original.completionPolicy === 'artifact-only';
+  if (!recovering && lastReviewedHeadSha && !artifactOnly) {
     const tree = await execOnSlot(
       vars,
       'git rev-parse HEAD && git status --porcelain=v1 -z --untracked-files=all',
@@ -604,6 +607,7 @@ async function runNativeReviewAttempt(
                   priorHeadSha: retained.lastReviewedHeadSha,
                   currentHeadSha: snapshot.snapshot.headSha,
                   priorArtifactDir: `${retained.taskDir}/${reviewArtifactDir(retained.lastLoopNumber, retained.artifactScope)}`,
+                  workingTree: artifactOnly,
                 })) + template
           : fallback
             ? (snapshot.snapshot.interdiff
