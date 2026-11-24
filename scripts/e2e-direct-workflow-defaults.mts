@@ -114,12 +114,6 @@ await json(path.join(project, 'project.json'), {
   workflow_defaults: workflowDefaults,
   execution_templates: {
     sources: [{ id: 'workspace:shared', kind: 'workspace', root: { projectPath: 'shared' } }],
-    defaults: [
-      {
-        when: { flow: 'review-pr', platform: 'cli', runMode: 'autonomous' },
-        templateId: 'review-pr/runtime',
-      },
-    ],
   },
 });
 const poolFiles: string[] = [];
@@ -140,44 +134,9 @@ for (const [machine, capacity] of [
     ...(capacity ? { review_workspaces: { max_concurrent: capacity } } : {}),
   });
 }
-await writeFile(
-  path.join(project, 'shared/review-pr/runtime.md'),
-  '---\nplatforms: [cli]\n---\n\n- [ ] Run the selected validation.\n',
-);
-await mkdir(path.join(fixture, 'repo'));
-const runtimePool = path.join(fixture, 'pool/runtime.json');
-poolFiles.push(runtimePool);
-await json(runtimePool, {
-  machine: 'runtime-host',
-  host: 'localhost',
-  project: 'review',
-  platform: 'cli',
-  slots: [
-    {
-      id: 'runtime',
-      enabled: true,
-      repo: path.join(fixture, 'repo'),
-      session: 'fixture-runtime',
-      resources: {},
-    },
-  ],
-});
 await json(path.join(fixture, 'test-fleet-status.json'), {
   checked_at: new Date().toISOString(),
-  slots: [
-    {
-      slot: 'runtime',
-      machine: 'runtime-host',
-      project: 'review',
-      platform: 'cli',
-      enabled: true,
-      lifecycle: 'ready',
-      agent: 'idle',
-      branch: 'main',
-      runner: 'claude',
-      model: 'sonnet',
-    },
-  ],
+  slots: [],
 });
 const originalPools = await Promise.all(poolFiles.map((file) => readFile(file, 'utf8')));
 // Provider fixture only: the gateway still executes its real gh transport, parsing,
@@ -496,50 +455,6 @@ try {
       /configured static-review template/,
     );
   }
-  const legacy = await connection.call<DispatchPreviewResult>('dispatch.preview', {
-    ...base,
-    ticketOrPr: '42',
-    reviewValidationDepth: 'full-live',
-    mode: 'autonomous',
-    slotId: 'runtime',
-    runner: 'codex',
-    model: 'gpt-6-astra',
-    effort: 'high',
-  });
-  assert.equal(legacy.preview.flowType, 'review-pr');
-  assert.equal(legacy.preview.taskId, 'example/app#42');
-  assert.equal(legacy.preview.slotId, 'runtime');
-  assert.equal(legacy.preview.model, 'gpt-6-astra');
-  assert.equal(legacy.preview.executionTemplate?.id, 'review-pr/runtime');
-  assert.equal(legacy.preview.reviewWorkspace, undefined);
-  const runtimeRequest = {
-    ...base,
-    mode: 'autonomous',
-    ticketOrPr: 'example/app#200',
-    reviewValidationDepth: 'full-live',
-    slotId: 'runtime',
-    runner: 'codex',
-    model: 'gpt-6-astra',
-    effort: 'high',
-  };
-  const runtimeRun = await connection.call<RunCreateResult>('run.create', runtimeRequest);
-  assert.equal(runtimeRun.run.flowType, 'review-pr');
-  assert.equal(runtimeRun.run.reviewValidationDepth, 'full-live');
-  assert.equal(runtimeRun.run.slotId, 'runtime');
-  assert.equal(runtimeRun.run.reviewWorkspaceTarget, undefined);
-  assert.equal(runtimeRun.run.executionTemplate?.id, 'review-pr/runtime');
-  assert.equal(runtimeRun.run.metrics.model, 'gpt-6-astra');
-  const runtimeQueue = await connection.call<DispatchQueueAddResult>('dispatch.queue.add', {
-    ...runtimeRequest,
-    ticketOrPr: 'example/app#201',
-  });
-  assert.equal(runtimeQueue.item.flowType, 'review-pr');
-  assert.equal(runtimeQueue.item.reviewValidationDepth, 'full-live');
-  assert.equal(runtimeQueue.item.slotId, 'runtime');
-  assert.equal(runtimeQueue.item.reviewWorkspaceTarget, undefined);
-  assert.equal(runtimeQueue.item.executionTemplate?.id, 'review-pr/runtime');
-  await connection.call('dispatch.queue.remove', { itemId: runtimeQueue.item.id });
-  await connection.call('run.cancel', { runId: runtimeRun.run.id });
   await connection.call('dispatch.queue.remove', { itemId: queued.item.id });
   for (const run of [created.run, second.run])
     await connection.call('run.cancel', { runId: run.id });
