@@ -76,6 +76,7 @@ import {
   emptyArtifactBrowserView,
   hasArtifactBrowserView,
 } from '../shared/artifact-browser-model.js';
+import { evalRunBadgeStyles } from '../shared/eval-run-badge.js';
 import { type EvidenceReviewerSelection } from '../shared/evidence-reviewer.js';
 import { evidenceReviewerSelection } from '../shared/evidence-reviewer-recording.js';
 import {
@@ -342,7 +343,7 @@ export class RunDetail extends RunDetailState {
       });
     }
   }
-  static styles = runDetailStyles;
+  static styles = [runDetailStyles, evalRunBadgeStyles];
 
   private readonly _ciPoke = new CIWatchPokeController((state) => {
     this._ciPoking = state.poking;

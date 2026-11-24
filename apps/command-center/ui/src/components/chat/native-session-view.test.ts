@@ -5,6 +5,7 @@ import {
   Methods,
   type NativeCommandReceipt,
   type NativeSessionCatalogResult,
+  type NativeSessionEvent,
   type NativeSessionReadResult,
 } from '@farmslot/protocol';
 import {
@@ -993,4 +994,36 @@ test('a streamed delta computes rows once per render and re-renders only its own
   assert.equal(after[0], before[0], 'the unchanged answer passes the same message object');
   assert.notEqual(after[1], before[1]);
   assert.match(JSON.stringify(after[1]), /Streaming more/);
+});
+
+test('in Co-Pilot a request the operator has not seen scrolls its answer controls into view', () => {
+  const view = new NativeSessionView();
+  const scrolled: Array<{ id: string; options: unknown }> = [];
+  const card = (id: string) => ({
+    dataset: { requestId: id },
+    scrollIntoView: (options: unknown) => scrolled.push({ id, options }),
+  });
+  Object.defineProperty(view, 'renderRoot', {
+    value: { querySelectorAll: () => [card('other'), card('a')] },
+  });
+  const request = (id: string): NativeSessionEvent => ({
+    sessionId: 'copilot-session',
+    sequence: 1,
+    generation: 'generation',
+    at: '2026-11-24T00:00:00.000Z',
+    type: 'approval.requested',
+    request: { id, title: id },
+  });
+  const reveal = (previous: NativeSessionEvent[] | undefined) =>
+    Reflect.get(view, 'revealNewRequests').call(view, previous);
+  Reflect.set(view, 'requests', [request('a')]);
+  reveal([]);
+  assert.equal(scrolled.length, 0, 'Only the Co-Pilot route scrolls its panel');
+  view.navigationRoute = 'copilot';
+  reveal([]);
+  assert.deepEqual(scrolled, [{ id: 'a', options: { block: 'end' } }]);
+  reveal([request('a')]);
+  Reflect.set(view, 'requests', []);
+  reveal([request('a')]);
+  assert.equal(scrolled.length, 1, 'Seen or resolved requests do not move the view');
 });

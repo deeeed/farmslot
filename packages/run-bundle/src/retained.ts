@@ -446,6 +446,27 @@ interface BundleLockWaitBudget {
 
 const lockWaitBudgets = new AsyncLocalStorage<BundleLockWaitBudget>();
 
+/** Time an operation spent queued for and holding bundle locks, summed per acquisition. */
+export interface RunBundleLockTime {
+  acquisitions: number;
+  waitMs: number;
+  heldMs: number;
+}
+
+const lockTimes = new AsyncLocalStorage<RunBundleLockTime>();
+
+/**
+ * Adds the bundle-lock waits and holds `operation` causes to `time`. A nested call shares its
+ * caller's record; a lock taken inside another lock's hold counts in both holds.
+ */
+export function withRunBundleLockTime<T>(
+  time: RunBundleLockTime,
+  operation: () => Promise<T>,
+): Promise<T> {
+  if (lockTimes.getStore()) return operation();
+  return lockTimes.run(time, operation);
+}
+
 /** Bound cumulative queue waits without interrupting a holder or admitting a timed-out writer. */
 export function withRunBundleLockWaitBudget<T>(
   waitMs: number,
@@ -581,6 +602,11 @@ async function withBundleLock<T>(
       holdLimitMs: hold.holdLimitMs ?? STORE_LOCK_HOLD_LIMIT_MS,
     };
     const waited = holder.since - enqueuedAt;
+    const time = lockTimes.getStore();
+    if (time) {
+      time.acquisitions += 1;
+      time.waitMs += waited;
+    }
     if (waited >= SLOW_LOCK_WAIT_MS)
       console.warn(
         `[run-bundle] ${holder.label} waited ${(waited / 1000).toFixed(1)}s for ${name}`,
@@ -599,6 +625,7 @@ async function withBundleLock<T>(
       return await fn();
     } finally {
       const heldMs = Date.now() - holder.since;
+      if (time) time.heldMs += heldMs;
       if (heldMs >= SLOW_LOCK_WAIT_MS)
         console.warn(
           `[run-bundle] ${holder.label} held ${name} for ${(heldMs / 1000).toFixed(1)}s`,

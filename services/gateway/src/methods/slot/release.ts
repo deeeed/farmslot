@@ -108,6 +108,7 @@ import {
   listRunsForSlotHistory,
   runsDirectory,
   runSessionArchiveDir,
+  timeRunSlotRelease,
 } from '../../runs/store.js';
 import { killSlotScreenSessions } from '../../runtime/screen-session.js';
 import { buildDispatchRoleShellCommand } from '../dispatch/role-target.js';
@@ -217,42 +218,47 @@ export async function slotRelease(
   // this, a release that outlived the stale-fence bound would be reclaimed
   // mid-teardown, now that refresh keeps the fence stamp it ages.
   let recoverFailure: ((confirmed: boolean, reason: string) => Promise<void>) | undefined;
-  const teardown = withTerminalTeardown(
-    params.slotId,
-    () =>
-      slotReleaseImpl(params, emit, options, (recover) => {
-        recoverFailure = recover;
-      }),
-    params.keepWarm ? null : undefined,
-    async (confirmed, error) => {
-      if (!recoverFailure) return;
-      const recover = recoverFailure;
-      try {
-        const reason =
-          error instanceof TerminalTeardownTimeoutError
-            ? 'Cleanup timed out'
-            : `Cleanup failed: ${error instanceof Error ? error.message : String(error)}`;
-        await withoutCleanupSignal(() => recover(confirmed, reason));
-      } catch (recoveryError) {
-        throw new AggregateError(
-          [error, recoveryError],
-          'Terminal teardown and release-fence settlement failed',
-        );
-      }
-    },
-  )
-    .catch((error: unknown) => {
+  const releaseOnce = () =>
+    withTerminalTeardown(
+      params.slotId,
+      () =>
+        slotReleaseImpl(params, emit, options, (recover) => {
+          recoverFailure = recover;
+        }),
+      params.keepWarm ? null : undefined,
+      async (confirmed, error) => {
+        if (!recoverFailure) return;
+        const recover = recoverFailure;
+        try {
+          const reason =
+            error instanceof TerminalTeardownTimeoutError
+              ? 'Cleanup timed out'
+              : `Cleanup failed: ${error instanceof Error ? error.message : String(error)}`;
+          await withoutCleanupSignal(() => recover(confirmed, reason));
+        } catch (recoveryError) {
+          throw new AggregateError(
+            [error, recoveryError],
+            'Terminal teardown and release-fence settlement failed',
+          );
+        }
+      },
+    ).catch((error: unknown) => {
       // A bound teardown losing its claim is an expected no-op for archive and
       // replay rollback. The new owner's workspace has already been left alone.
       if (error instanceof BoundReleaseClaimLostError)
         return { released: false, reason: error.message };
       throw error;
-    })
-    .finally(() => {
-      if (inflightReleases.get(params.slotId)?.promise === teardown) {
-        inflightReleases.delete(params.slotId);
-      }
     });
+  // A release bound to its run records how long it took on that run.
+  const teardown = (
+    params.expectedRunId
+      ? timeRunSlotRelease(params.expectedRunId, params.slotId, releaseOnce)
+      : releaseOnce()
+  ).finally(() => {
+    if (inflightReleases.get(params.slotId)?.promise === teardown) {
+      inflightReleases.delete(params.slotId);
+    }
+  });
   inflightReleases.set(params.slotId, { key, promise: teardown });
   return teardown;
 }

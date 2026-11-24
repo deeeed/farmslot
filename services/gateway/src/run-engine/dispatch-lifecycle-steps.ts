@@ -457,6 +457,7 @@ export async function executePrepareStep(
   }
   activeMonitors.set(runId, prepareController);
   let selectedPrepareProfile: import('../methods/slot/shared.js').SlotPrepareResult['profile'];
+  let lockfilesRewritten: string[] | undefined;
   let keptBranches: string[] | undefined;
   try {
     const prepareResult = await slotPrepare(
@@ -541,6 +542,7 @@ export async function executePrepareStep(
       },
     );
     selectedPrepareProfile = prepareResult.profile;
+    lockfilesRewritten = prepareResult.lockfilesRewritten;
     keptBranches = prepareResult.keptBranches;
     if (current.startRef) {
       if (!prepareResult.startRef) {
@@ -617,6 +619,8 @@ export async function executePrepareStep(
         : {}),
       cliCommand,
       ...(selectedPrepareProfile ? { profile: selectedPrepareProfile } : {}),
+      // Lockfiles prepare rewrote for a drifted PR branch: the worker must commit them.
+      ...(lockfilesRewritten?.length ? { lockfilesRewritten } : {}),
       ...(keptBranches?.length ? { keptBranches } : {}),
       ...(preparedRun?.startRef ? { startRef: preparedRun.startRef } : {}),
       ...(lastOutput ? { lastOutput } : {}),
