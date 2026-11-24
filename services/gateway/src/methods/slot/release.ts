@@ -88,6 +88,7 @@ import {
   parksBranchCommits,
   recordReleasedCheckout,
 } from '../../run-lifecycle/validation-run-commits.js';
+import { recordGradedOutput } from '../../run-traces/output.js';
 import {
   assertNativeSlotReplacementOwner,
   cancelNativeRunWorkers,
@@ -983,6 +984,16 @@ async function slotReleaseImpl(
           runId: archiveRunId,
         });
         step('session-archive', archive.summary);
+        // ADR-039 Amendment 10: an unpublished output is graded from the tree before reset.
+        if (!getRun(archiveRunId)?.gradedOutput) {
+          const output = await recordGradedOutput({
+            runId: archiveRunId,
+            vars,
+            source: 'working-tree',
+            ref: null,
+          });
+          if (output) step('graded-output', `Graded diff ${output.sizeBytes} bytes`);
+        }
       } catch (err) {
         // Recycle must finish even if the transcript copy fails. The live file is
         // about to disappear with the slot workspace; aborting here would strand

@@ -46,6 +46,7 @@ export {
 import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
 import { computePRRecommendation, prStatus } from '../methods/pr.js';
 import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
+import { recordPrMerge } from '../run-traces/output.js';
 import { getRun, prRelinked, updateRun, updateRunStep } from '../runs/store.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
@@ -632,6 +633,8 @@ export async function monitorCI(
         return buildOutcome('aborted');
       }
       updateRun(runId, { prState: pr.prState, mergedAt: pr.mergedAt ?? null });
+      // ADR-039 Amendment 10: the merge commit, read once when the merge is observed.
+      if (merged && ciRepo) void recordPrMerge(runId, ciRepo, prNumber);
       broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
       return buildOutcome('passed');
     }

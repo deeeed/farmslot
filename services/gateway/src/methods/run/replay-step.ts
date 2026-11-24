@@ -98,6 +98,7 @@ import {
   acquireRunTransition,
   withRunTransition,
 } from '../../run-lifecycle/transition-coordinator.js';
+import { recordReplayedFailures } from '../../run-traces/output.js';
 import { captureSessionBeforeReplay } from '../../run-traces/session-capture.js';
 import {
   assertNativeRunner,
@@ -2583,6 +2584,8 @@ async function replayRunStep(
         : null;
     // ADR-039 Amendment 10: archive the worker session this replay replaces, synchronously and
     // bounded, before the relaunch clears its binding.
+    // The replay resets the steps it retries; keep their failures in the attempt log first.
+    recordReplayedFailures(params.runId, replayStepName);
     if (relaunchesWorker && effectiveSlotId !== null) {
       const { loadSlotVars } = await import('../../core/config.js');
       const vars = await loadSlotVars(effectiveSlotId).catch(() => undefined);
