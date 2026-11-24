@@ -1,1 +1,2 @@
 - `LLMConfigGetResult.tierModels` and `LLMConfigSetParams.tierModels` (`LLMTierModels`, `LLMTierName`): per-provider tier model overrides. A set replaces every saved override; `{}` clears them.
+- `LLM_TIER_NAMES` (`['fast', 'standard', 'smart']`): the tier names callers use instead of a model id, shared by the gateway and Command Center.

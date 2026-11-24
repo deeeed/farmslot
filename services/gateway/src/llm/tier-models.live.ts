@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import { type ChildProcess, execFile, spawn } from 'node:child_process';
 import { mkdir, mkdtemp, open, rm, symlink, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:http';
+import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -29,7 +29,7 @@ const step = (text: string) => console.error(`[proof] ${new Date().toISOString()
 
 test('Settings tier models route through the real codex LB', { timeout: 300_000 }, async (t) => {
   assert.ok(
-    out && !path.resolve(out).startsWith(code),
+    out && !path.resolve(out).startsWith(code + path.sep),
     'Set LLM_TIER_PROOF_OUT outside the checkout',
   );
   assert.ok(process.env.CODEX_LB_API_KEY, 'The gateway environment must carry CODEX_LB_API_KEY');
@@ -64,12 +64,56 @@ test('Settings tier models route through the real codex LB', { timeout: 300_000 
     'package.json',
   ])
     await symlink(path.join(code, name), path.join(root, name));
-  const children: ChildProcess[] = [];
+  const profile = path.join(root, 'chrome');
+  let vite: ChildProcess | undefined;
+  let viteExited: Promise<unknown> | undefined;
+  let http: Server | undefined;
+  let closeClient: (() => void) | undefined;
+  // One teardown, registered before anything starts. Each step runs even when an earlier one
+  // fails: Chrome (its profile is under root), Vite and the gateway stop before root goes.
   t.after(async () => {
-    // yarn starts vite in its own group; stop the whole group.
-    for (const child of children)
-      if (child.pid && child.exitCode === null) process.kill(-child.pid, 'SIGTERM');
-    await rm(root, { recursive: true, force: true });
+    const failures: unknown[] = [];
+    const attempt = async (stepName: string, action: () => Promise<void> | void) => {
+      try {
+        await action();
+      } catch (error) {
+        failures.push(new Error(`teardown ${stepName}: ${String(error)}`, { cause: error }));
+      }
+    };
+    await attempt('chrome', async () => {
+      try {
+        await execute('pkill', ['-f', profile]);
+      } catch (error) {
+        // pkill exits 1 when no process matched: Chrome is already gone.
+        if (!(typeof error === 'object' && error !== null && 'code' in error && error.code === 1))
+          throw error;
+      }
+    });
+    await attempt('vite', async () => {
+      if (!vite?.pid || !viteExited || vite.exitCode !== null || vite.signalCode !== null) return;
+      try {
+        // yarn starts vite in its own group; stop the whole group.
+        process.kill(-vite.pid, 'SIGTERM');
+      } catch (error) {
+        // ESRCH: the group exited between the check and the signal.
+        if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
+      }
+      await viteExited;
+    });
+    await attempt('gateway', async () => {
+      closeClient?.();
+      if (!http) return;
+      const server = http;
+      // Open sockets (the UI, the client) would keep close() waiting forever.
+      server.closeAllConnections();
+      const closed = new Promise<void>((resolve) => server.close(() => resolve()));
+      const stuck = delay(5_000).then(() => {
+        throw new Error('the gateway did not close within 5 s');
+      });
+      await Promise.race([closed, stuck]);
+    });
+    await attempt('root', () => rm(root, { recursive: true, force: true }));
+    if (failures.length > 0) throw new AggregateError(failures, 'proof teardown failed');
   });
 
   const { createGatewayAuthRuntime } = await import('../security/auth.js');
@@ -87,19 +131,16 @@ test('Settings tier models route through the real codex LB', { timeout: 300_000 
   const uiCredential = auth.writer.issueCredential(person.id, 'LLM tier proof browser');
   const { createWebSocketServer } = await import('../server.js');
   const { GatewayClient } = await import('../../../../packages/cli/src/gateway-client.js');
-  const http = createServer();
-  createWebSocketServer(http, auth);
-  await new Promise<void>((resolve) => http.listen(gatewayPort, '127.0.0.1', resolve));
-  t.after(() => {
-    // Open sockets (the UI, the client) would keep close() waiting forever.
-    http.closeAllConnections();
-    http.close();
-  });
+  const server = createServer();
+  http = server;
+  createWebSocketServer(server, auth);
+  await new Promise<void>((resolve) => server.listen(gatewayPort, '127.0.0.1', resolve));
   const client = await new GatewayClient({
     url: `ws://127.0.0.1:${gatewayPort}/ws`,
     credential: { token: grant.accessToken },
     timeout: 120_000,
   }).connect();
+  closeClient = () => client.close();
   const rpc = (method: string, params: Record<string, unknown> = {}) => client.call(method, params);
 
   // Today's operator file: anthropic, tiers by name, no overrides.
@@ -114,7 +155,7 @@ test('Settings tier models route through the real codex LB', { timeout: 300_000 
 
   // --- The real Settings UI: type the codex-lb cells, save, reload, clear. ---
   const viteLog = await open(path.join(out, 'vite.log'), 'w');
-  const vite = spawn('yarn', ['dev'], {
+  vite = spawn('yarn', ['dev'], {
     cwd: path.join(code, 'apps/command-center/ui'),
     env: {
       ...process.env,
@@ -125,8 +166,9 @@ test('Settings tier models route through the real codex LB', { timeout: 300_000 
     stdio: ['ignore', viteLog.fd, viteLog.fd],
     detached: true,
   });
-  children.push(vite);
-  vite.on('exit', (status) => step(`vite exited ${status}`));
+  const started = vite;
+  viteExited = new Promise((resolve) => started.on('exit', resolve));
+  vite.on('exit', (status, signal) => step(`vite exited ${status ?? signal}`));
   const uiUrl = `http://127.0.0.1:${vitePort}`;
   for (let attempt = 0; ; attempt++) {
     try {
@@ -138,7 +180,6 @@ test('Settings tier models route through the real codex LB', { timeout: 300_000 
     await delay(200);
   }
   step('ui up');
-  const profile = path.join(root, 'chrome');
   // Chrome outlives the launcher and holds any inherited pipe, so the launcher gets none.
   const launcher = spawn(
     'bash',
@@ -157,11 +198,6 @@ test('Settings tier models route through the real codex LB', { timeout: 300_000 
   const launched = await new Promise((resolve) => launcher.on('exit', resolve));
   assert.equal(launched, 0, `debug-chrome.sh exited ${String(launched)}`);
   step('chrome up');
-  t.after(async () => {
-    await execute('pkill', ['-f', profile]).catch(() => {
-      // No Chrome left for this profile.
-    });
-  });
   const cdpEnv = { ...process.env, FARMSLOT_CDP_PORT: cdpPort, FARMSLOT_UI_URL: uiUrl };
   const cdp = async (args: string[], input?: string) => {
     const child = execFile(
@@ -270,6 +306,7 @@ test('Settings tier models route through the real codex LB', { timeout: 300_000 
   const saveButton = await chainTo('tier-models-save');
   evidence.uiClick = await cdp(['click', page, saveButton]);
   evidence.uiSaveStatus = await status();
+  assert.equal(evidence.uiSaveStatus, 'Tier models saved');
   evidence.uiSavedBeforeReload = await rpc('llm.config.get');
   await cdp(['screenshot', page, path.join(out, 'settings-saved.png')]);
   await save();
@@ -283,6 +320,7 @@ test('Settings tier models route through the real codex LB', { timeout: 300_000 
   for (const tier of Object.keys(TIERS)) await cdp(['fill', page, await cell(tier), '']);
   await cdp(['click', page, await chainTo('tier-models-save')]);
   evidence.uiClearStatus = await status();
+  assert.equal(evidence.uiClearStatus, 'Tier models saved');
   await cdp(['reload', page]);
   evidence.uiAfterClear = await cellValues({ fast: '', standard: '', smart: '' });
   assert.deepEqual(evidence.uiAfterClear, { fast: '', standard: '', smart: '' });
@@ -312,6 +350,8 @@ test('Settings tier models route through the real codex LB', { timeout: 300_000 
     };
     assert.equal(result.ok, true, `${tier}: ${result.error}`);
     assert.equal(result.usage?.model, TIERS[tier as keyof typeof TIERS]);
+    // The test asks for exactly "OK"; an empty or cut-off reply is not an answer.
+    assert.match(result.responsePreview ?? '', /^\s*OK\b/, `${tier} reply`);
   }
 
   step('tier calls done');
@@ -326,22 +366,29 @@ test('Settings tier models route through the real codex LB', { timeout: 300_000 
     '',
     '  ? for shortcuts',
   ].join('\n');
-  const started = Date.now();
+  const classifyStarted = Date.now();
   const classified = await classifyRunnerPaneState({
     runner: 'claude',
     target: 'proof:0.0',
     pane,
     expected: 'interactive agent prompt ready for the task',
   });
-  evidence.classifier = { ...classified, elapsedMs: Date.now() - started };
+  const classifyMs = Date.now() - classifyStarted;
+  evidence.classifier = { ...classified, elapsedMs: classifyMs };
   await save();
   assert.notEqual(classified.reason, 'classifier returned invalid JSON');
-  assert.ok(Date.now() - started < 8_000);
+  assert.equal(classified.state, 'ready', 'the pane shows an idle agent prompt');
+  assert.ok(classifyMs < 8_000);
 
   // Reversal.
   await rpc('llm.config.set', { defaultProvider: 'anthropic', tierModels: {} });
-  evidence.reversed = await rpc('llm.config.get');
+  const reversed = (await rpc('llm.config.get')) as {
+    defaultProvider?: string;
+    tierModels?: unknown;
+  };
+  evidence.reversed = reversed;
   await save();
+  assert.equal(reversed.defaultProvider, 'anthropic');
+  assert.deepEqual(reversed.tierModels, {});
   console.log(JSON.stringify(evidence, null, 2));
-  client.close();
 });

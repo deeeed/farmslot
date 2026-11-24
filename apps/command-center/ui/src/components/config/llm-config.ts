@@ -849,8 +849,7 @@ export class LLMConfig extends LitElement {
       <div class="btn-row">
         <span style="font-size:0.8rem;color:${colors.textMuted}"
           >An empty cell uses the built-in model shown in grey. An id the provider does not serve
-          saves, but its calls fail with "unknown model" (codex-lb accepts any id its plans
-          serve).</span
+          saves, but its calls fail.</span
         >
         <button
           data-testid="tier-models-save"
