@@ -478,11 +478,10 @@ try {
     await writeFile(fallbackPool, originalFallbackPool);
   }
 
+  // Workflow defaults only preselect runner, model, effort and transport; a manual choice passes
+  // normal runner admission (review-workspaces/direct-defaults.ts). Placement stays refused.
   for (const patch of [
     { slotId: 'runtime' },
-    { model: 'not-allowed' },
-    { effort: 'low' },
-    { transport: 'tmux' },
     { reviewWorkspaceTarget: { machine: 'no-capacity' } },
   ]) {
     await assert.rejects(connection.call('dispatch.preview', { ...base, ...patch }));
