@@ -1360,7 +1360,10 @@ test('the shared pool watch reports a pool file a test created during the run', 
     const touched = watched.stop();
     assert.ok(touched.includes('fixture-a.json'), touched.join(', '));
     assert.ok(!touched.includes('farm.json'), 'a file that was already there is not reported');
-    assert.match(sharedPoolFailure(touched, directory), /tests wrote the shared pool directory/);
+    assert.match(
+      sharedPoolFailure(touched, directory),
+      /shared pool directory .* gained entries during the run/,
+    );
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

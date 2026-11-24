@@ -66,7 +66,7 @@ export function watchSharedPool(directory = SHARED_POOL) {
 /** The failure line for entries a run created or removed in the shared pool directory. */
 export function sharedPoolFailure(touched, directory = SHARED_POOL) {
   if (touched.length === 0) return null;
-  return `[tsx-tests] tests wrote the shared pool directory ${directory}: ${touched.join(', ')}. A test's pool files belong in a private FARMSLOT_POOL_DIR (gateway tests: import core/private-pool.test-support first and write under poolDirectory()).`;
+  return `[tsx-tests] the shared pool directory ${directory} gained entries during the run: ${touched.join(', ')}. A test's pool files belong in a private FARMSLOT_POOL_DIR (gateway tests: import core/private-pool.test-support first and write under poolDirectory()). In a live farm checkout, a gateway saving a pool config meanwhile shows up here too.`;
 }
 
 export const WORKERS_ENV = 'FARMSLOT_TSX_TEST_WORKERS';
