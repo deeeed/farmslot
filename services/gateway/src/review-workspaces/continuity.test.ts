@@ -567,3 +567,35 @@ test('workspace lineage normalizes current and prior GitHub pull URLs', () => {
       assert.equal(result.session?.sessionId, 'chat');
     }
 });
+
+test('a refused retained reviewer names each mismatch, requested against retained', () => {
+  // 8a67986e: the reviewer ran pi with a thinking-level model suffix and effort high.
+  const piPrior = {
+    ...prior,
+    agentContexts: [
+      {
+        ...prior.agentContexts![0],
+        runner: 'pi',
+        model: 'litellm/claude-opus-5-5:medium',
+        effort: 'high',
+      },
+    ],
+  } as Run;
+  const piCurrent = {
+    ...current,
+    effort: 'medium',
+    metrics: { runner: 'pi', model: 'litellm/claude-opus-5-5' },
+  } as Run;
+  assert.throws(() => configureWorkspaceContinuity(piCurrent, piPrior, context()), {
+    message:
+      'WARM review unavailable: missing or foreign reviewId lineage (mismatch: effort, model; requested pi litellm/claude-opus-5-5 effort medium, retained pi litellm/claude-opus-5-5:medium effort high)',
+  });
+  assert.throws(
+    () =>
+      configureWorkspaceContinuity(current, prior, {
+        ...context(),
+        session: { ...context().session!, reviewId: 'other-lineage' },
+      }),
+    /\(mismatch: reviewId; requested other-lineage, retained lineage\)/,
+  );
+});

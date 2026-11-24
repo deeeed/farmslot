@@ -7,6 +7,8 @@ import { test } from 'node:test';
 
 import type { FleetStatus, SlotStatus } from '@farmslot/protocol';
 
+import '../core/private-pool.test-support.js';
+
 import { validateTicketRef } from '../methods/dispatch/ticket-ref.js';
 import { farmslotRoot } from '../projects/repo-root.js';
 import { resourceRevisions } from '../resources/revisions.js';

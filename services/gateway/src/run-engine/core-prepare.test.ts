@@ -8,6 +8,9 @@ import { promisify } from 'node:util';
 
 import type { ExecResult } from '@farmslot/protocol';
 
+import '../core/private-pool.test-support.js';
+
+import { poolDirectory } from '../core/config.js';
 import { claimSlotStatusIf } from '../core/state.js';
 
 // Real tmux only on the test runner's private server (scripts/quality/run-tsx-tests.mjs):
@@ -59,9 +62,8 @@ test(
     const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'farmslot-core-prepare-'));
     const slotRepo = path.join(fixtureRoot, 'slot');
     const originRepo = path.join(fixtureRoot, 'origin.git');
-    const repoRoot = path.resolve(new URL('../../../../', import.meta.url).pathname);
     const slotId = `core-prepare-${process.pid}`;
-    const poolPath = path.join(repoRoot, 'pool', `${slotId}.json`);
+    const poolPath = path.join(poolDirectory(), `${slotId}.json`);
     t.after(async () => {
       const session = spawnSync('tmux', ['-S', tmuxSandbox!, 'has-session', '-t', `=${slotId}`], {
         encoding: 'utf8',

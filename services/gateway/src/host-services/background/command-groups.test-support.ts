@@ -2,10 +2,11 @@
 // that start commands through core/exec, as probes do. FIXTURE_MODE picks what the first
 // `fleet.probeMachine` runs; later ones never answer and start nothing. `decisions.scan` calls
 // process.exit(3).
-//   hang       a command and a descendant that sleep, with FIXTURE_TIMEOUT_MS; both pids are
-//              appended to FIXTURE_PID_FILE
+//   hang       a command and a descendant that sleep, with FIXTURE_TIMEOUT_MS
 //   untimed    the same command with no timeout
-//   resistant  a command that survives TERM (it records each one), with FIXTURE_TIMEOUT_MS
+//   resistant  a command that survives TERM (it writes 'term' for each one), with FIXTURE_TIMEOUT_MS
+// Those commands open the FIFO FIXTURE_PIPE, write their pids to it and hold it, so the test
+// sees the pipe end only once all of them have exited.
 //   results    each FIXTURE_COMMANDS entry with its timeout, the results written to FIXTURE_OUT
 // FIXTURE_CLOSEOUT_MS sets the TERM-to-KILL closeout; FIXTURE_NO_WATCHDOG=1 starts no command
 // watchdog (serve.ts's commandWatchdog).
@@ -31,14 +32,15 @@ export interface FixtureCommand {
 }
 
 const env = process.env;
-const pidFile = env.FIXTURE_PID_FILE;
-if (!pidFile) throw new Error('FIXTURE_PID_FILE is required');
-const hang = `echo $$ >> '${pidFile}'; sleep 60 & echo $! >> '${pidFile}'; wait`;
-const resistant = `echo $$ >> '${pidFile}'; trap 'echo term >> "${pidFile}.term"' TERM; while :; do sleep 0.1; done`;
+const pipe = env.FIXTURE_PIPE;
+// Past the runner's 180 s file timeout: only a kill ends them in time.
+const hang = `exec 3>'${pipe}'; echo $$ >&3; sleep 300 & echo $! >&3; wait`;
+const resistant = `exec 3>'${pipe}'; echo $$ >&3; trap 'echo term >&3' TERM; while :; do sleep 0.1; done`;
 const closeoutTimeoutMs = Number(env.FIXTURE_CLOSEOUT_MS ?? 200);
 const timeout = Number(env.FIXTURE_TIMEOUT_MS ?? 120_000);
 
 async function probe(): Promise<void> {
+  if (env.FIXTURE_MODE !== 'results' && !pipe) throw new Error('FIXTURE_PIPE is required');
   if (env.FIXTURE_MODE === 'untimed') await execLocal(hang);
   else if (env.FIXTURE_MODE === 'resistant')
     await execLocal(resistant, { timeout, closeoutTimeoutMs });

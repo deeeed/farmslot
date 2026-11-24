@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, openSync } from 'node:fs';
+import { open, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,9 +31,11 @@ import {
   nativeHostRunsCurrentRuntime,
   nativeHostVersionSkew,
   retireIdleNativeHost,
+  stopIdleSessionsNativeHost,
 } from './host-runtime.js';
 import { nativeHostUnavailableError } from './host-unavailable.js';
 import { type HostIdentity, type HostRequest, requestHost } from './ipc.js';
+import { currentRuntimeBuild, runtimeBuildIdentity } from './runtime-build.js';
 import { alive, privateDirectory, readJson } from './storage.js';
 import {
   NATIVE_WORKER_CANCEL,
@@ -62,15 +65,98 @@ export function observeExistingNativeHost<T>(read: () => Promise<T>): Promise<T>
   return passiveHostReads.run(true, read);
 }
 
+/**
+ * Says which idle live sessions of a host on another runtime must keep it running, as a
+ * reason per session id. A service that knows its sessions' callers sets one; without it, a
+ * client refreshes only a host whose runners have all stopped.
+ */
+export type NativeHostRefreshPolicy = (
+  sessions: NativeSessionInfo[],
+) => Promise<ReadonlyMap<string, string>>;
+
+/** How long a busy census answers launches before the host is asked again. */
+const NATIVE_REFRESH_BUSY_REUSE_MS = 5_000;
+
+const NATIVE_ADMISSION_METHODS: readonly string[] = [
+  'create',
+  'ensure',
+  NATIVE_WORKER_ENSURE,
+  NATIVE_WORKER_RESUME,
+  NATIVE_WORKER_TRANSFER,
+];
+
+/** Requests that start or change runner work; a refresh never stops a host under one. */
+const NATIVE_WORK_METHODS: readonly string[] = [
+  ...NATIVE_ADMISSION_METHODS,
+  'send',
+  'steer',
+  'setApprovalMode',
+  NATIVE_WORKER_SEND,
+  NATIVE_WORKER_STEER,
+  NATIVE_WORKER_COMPACT,
+];
+
+/** A session journal's owner, from its first line (the session's info record). */
+async function journalOwner(file: string): Promise<string | undefined> {
+  let handle;
+  try {
+    handle = await open(file, 'r');
+  } catch (error) {
+    // Removed since the directory was read: nothing to count.
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
+    throw error;
+  }
+  try {
+    const lines = handle.readLines({ start: 0 });
+    for await (const line of lines) {
+      lines.close();
+      let record: unknown;
+      try {
+        record = JSON.parse(line);
+      } catch (error) {
+        // A torn first line has no session in it yet, as the host's own reader treats it.
+        if (error instanceof SyntaxError) return undefined;
+        throw error;
+      }
+      if (!record || typeof record !== 'object' || !('info' in record)) return undefined;
+      const info: unknown = record.info;
+      return info && typeof info === 'object' && 'ownerPrincipalId' in info
+        ? typeof info.ownerPrincipalId === 'string'
+          ? info.ownerPrincipalId
+          : undefined
+        : undefined;
+    }
+    return undefined;
+  } finally {
+    await handle.close();
+  }
+}
+
 /** The same client is usable by gateway and execution-node services. */
 export class NativeSessionClient {
   readonly root: string;
   private starting?: Promise<HostIdentity>;
+  private refreshPolicy?: NativeHostRefreshPolicy;
+  private refreshing?: Promise<{ refreshed: boolean; busy: string[] }>;
+  /** A refresh that found the host busy, reused briefly so launches don't re-census it each time. */
+  private lastBusy?: { at: number; hostPid: number; result: { refreshed: false; busy: string[] } };
+  /** Requests adding work that are on their way to the host; any of them holds a refresh. */
+  private inFlight = 0;
+  /** Journal file name to owner: each journal's first line is read once. */
+  private readonly journalOwners = new Map<string, string>();
+  /** Whether this process runs older code than its checkout, rechecked at most every 5 s. */
+  private checkoutChecked?: { at: number; older: boolean };
+  /**
+   * @param checkoutBuild The runtime build in the checkout on disk, which a new host would run.
+   */
   constructor(
     root = currentFarmPaths('node').state.nativeSessions,
     readonly executionNodeId = 'local',
+    private readonly checkoutBuild: () => string = runtimeBuildIdentity,
   ) {
     this.root = resolve(root);
+    // This process's build is read now, before a checkout update can change the files under it.
+    currentRuntimeBuild();
   }
   /** Public target metadata only; never starts a host or exposes its IPC credential. */
   metadata() {
@@ -222,12 +308,192 @@ export class NativeSessionClient {
   async warm(): Promise<void> {
     const host = await this.host();
     if (nativeHostRunsCurrentRuntime(host)) return;
-    if (!(await retireIdleNativeHost(this.root, host))) throw nativeHostVersionSkew(host);
+    const { refreshed, busy } = await this.refreshStaleHost();
+    if (!refreshed) throw this.skew(host, busy);
     assertNativeHostRuntime(await this.host());
   }
+
+  /** Lets idle live sessions be stopped for a refresh, except those the policy keeps. */
+  setRefreshPolicy(policy: NativeHostRefreshPolicy): void {
+    this.refreshPolicy = policy;
+  }
+
+  /**
+   * Refresh a running host on another runtime, so new launches get the current one. It is
+   * retired once its runners have all stopped, or, under a refresh policy, when every live
+   * session is idle and the policy keeps none: those runners are stopped, their journals kept,
+   * and the next host reports them for resume. Returns the sessions that keep it running.
+   * Never starts a host; concurrent callers share one refresh.
+   */
+  refreshStaleHost(): Promise<{ refreshed: boolean; busy: string[] }> {
+    this.refreshing ??= this.refreshOnce().finally(() => {
+      this.refreshing = undefined;
+    });
+    return this.refreshing;
+  }
+
+  /** The running host's sessions whose runner is still live, for every owner; never starts one. */
+  liveSessions(): Promise<NativeSessionInfo[]> {
+    return this.liveSessionsOf(this.existingHost());
+  }
+
+  private async liveSessionsOf(host: HostIdentity): Promise<NativeSessionInfo[]> {
+    const directory = join(this.root, 'sessions');
+    const names = existsSync(directory)
+      ? (await readdir(directory)).filter((name) => name.endsWith('.journal'))
+      : [];
+    const present = new Set(names);
+    for (const name of this.journalOwners.keys())
+      if (!present.has(name)) this.journalOwners.delete(name);
+    for (const name of names)
+      if (!this.journalOwners.has(name)) {
+        const owner = await journalOwner(join(directory, name));
+        if (owner) this.journalOwners.set(name, owner);
+      }
+    const live: NativeSessionInfo[] = [];
+    for (const owner of new Set(names.map((name) => this.journalOwners.get(name))))
+      if (owner)
+        for (const session of await requestHost<NativeSessionInfo[]>(host, {
+          method: 'list',
+          owner,
+        }))
+          if (!session.processStopped) live.push(session);
+    return live;
+  }
+
+  /**
+   * This service runs code older than its own checkout (updated, not yet restarted): a new host
+   * would start from the checkout and be skewed too. Hashing the checkout takes about 10 ms.
+   */
+  private olderThanCheckout(): boolean {
+    const now = Date.now();
+    if (!this.checkoutChecked || now - this.checkoutChecked.at >= NATIVE_REFRESH_BUSY_REUSE_MS)
+      this.checkoutChecked = { at: now, older: this.checkoutBuild() !== currentRuntimeBuild() };
+    return this.checkoutChecked.older;
+  }
+
+  /** The version-skew error, saying when the host is refreshed. */
+  private skew(host: HostIdentity, busy: readonly string[]): Error {
+    if (this.olderThanCheckout())
+      return nativeHostVersionSkew(
+        host,
+        [],
+        'This service runs older code than its checkout: restart it to take the new runtime and refresh the host.',
+      );
+    return nativeHostVersionSkew(
+      host,
+      busy,
+      this.refreshPolicy
+        ? 'It is refreshed at a later launch or service restart once no live session is busy.'
+        : 'It is refreshed when its service next starts, once every runner has stopped.',
+    );
+  }
+
+  private async refreshOnce(): Promise<{ refreshed: boolean; busy: string[] }> {
+    let host: HostIdentity;
+    try {
+      host = this.existingHost();
+    } catch (error) {
+      // No running host: the next launch starts the current runtime.
+      if (error instanceof Error && 'code' in error && error.code === 'NATIVE_SOURCE_UNAVAILABLE')
+        return { refreshed: false, busy: [] };
+      throw error;
+    }
+    if (nativeHostRunsCurrentRuntime(host)) return { refreshed: false, busy: [] };
+    if (
+      this.lastBusy?.hostPid === host.pid &&
+      Date.now() - this.lastBusy.at < NATIVE_REFRESH_BUSY_REUSE_MS
+    )
+      return this.lastBusy.result;
+    // Stopping the host helps nothing: its replacement would be skewed too. The skew error
+    // says to restart the service.
+    if (this.olderThanCheckout()) return { refreshed: false, busy: [] };
+    // A request adding work is already on its way: stopping now could cut it off. It ends
+    // soon, so this answer is not reused like a census.
+    if (this.inFlight)
+      return { refreshed: false, busy: [`${this.inFlight} request(s) on their way to the host`] };
+    if (await retireIdleNativeHost(this.root, host)) return { refreshed: true, busy: [] };
+    if (!this.refreshPolicy) return { refreshed: false, busy: [] };
+    const live = await this.liveSessionsOf(host);
+    const kept = await this.refreshPolicy(live);
+    const busy = live.flatMap((session) => {
+      // A live runner (processStopped unset) whose session isn't idle is busy, whatever its
+      // state: a closed or failed one still has a process to reconcile.
+      const reason =
+        session.state !== 'idle'
+          ? session.state
+          : session.approvalModePending
+            ? 'approval mode change pending'
+            : session.contextCompactions?.some((row) => row.status === 'pending')
+              ? 'compacting'
+              : kept.get(session.id);
+      return reason ? [`${session.id} (${reason})`] : [];
+    });
+    if (busy.length) return this.busy(host, busy);
+    const stopped = await stopIdleSessionsNativeHost(this.root, host, live.length);
+    if (stopped.stopped) return { refreshed: true, busy: [] };
+    return this.busy(
+      host,
+      stopped.busy.length ? stopped.busy : ['the host process identity could not be verified'],
+    );
+  }
+
+  private busy(host: HostIdentity, busy: string[]): { refreshed: false; busy: string[] } {
+    const result = { refreshed: false as const, busy };
+    this.lastBusy = { at: Date.now(), hostPid: host.pid, result };
+    return result;
+  }
+
   private async call<T>(request: HostRequest): Promise<T> {
     const passive = request.method === 'list' || passiveHostReads.getStore() === true;
-    const host = passive ? this.existingHost() : await this.host();
+    if (passive) return this.dispatch<T>(request, this.existingHost(), []);
+    // Reads, interrupts, closes and answers add no work; they never wait for a refresh.
+    if (!NATIVE_WORK_METHODS.includes(request.method))
+      return this.dispatch<T>(request, await this.host(), []);
+    let host: HostIdentity | undefined;
+    if (this.refreshPolicy && NATIVE_ADMISSION_METHODS.includes(request.method)) {
+      // A launch checks the host before it counts itself: it never goes to an old host, so
+      // it must not hold that host's refresh, nor another launch's. A refresh's outcome
+      // belongs to the caller that asked for it, so its error is not this launch's; the
+      // launch reads the host again below.
+      while (this.refreshing) await this.refreshing.catch(() => undefined);
+      host = await this.host();
+      if (!nativeHostRunsCurrentRuntime(host)) {
+        const refresh = await this.refreshStaleHost();
+        // A stopped or vanished host is replaced by a current one; a skewed host refuses
+        // before any request reaches it (capability errors first).
+        host = await this.host();
+        if (!nativeHostRunsCurrentRuntime(host))
+          return this.dispatch<T>(request, host, refresh.busy);
+      }
+    }
+    // A refresh that ran while this request waited may have stopped the host read above.
+    if (await this.enterWork()) host = undefined;
+    try {
+      return await this.dispatch<T>(request, host ?? (await this.host()), []);
+    } finally {
+      this.inFlight -= 1;
+    }
+  }
+
+  /**
+   * Count a request that adds work, once no refresh is deciding: the count is taken in the
+   * same tick the wait ends, so a refresh that starts later sees it and leaves the host alone.
+   * Returns whether it waited for a refresh.
+   */
+  private async enterWork(): Promise<boolean> {
+    const waited = this.refreshing !== undefined;
+    // A refresh's outcome belongs to the caller that asked for it; a failure only ends this wait.
+    while (this.refreshing) await this.refreshing.catch(() => undefined);
+    this.inFlight += 1;
+    return waited;
+  }
+
+  private async dispatch<T>(
+    request: HostRequest,
+    host: HostIdentity,
+    busy: readonly string[],
+  ): Promise<T> {
     if (
       (request.method === 'setApprovalMode' ||
         ('params' in request &&
@@ -285,16 +551,8 @@ export class NativeSessionClient {
       throw new Error(
         'Native host upgrade required for conversation streaming before launching new work',
       );
-    if (
-      [
-        'create',
-        'ensure',
-        NATIVE_WORKER_ENSURE,
-        NATIVE_WORKER_RESUME,
-        NATIVE_WORKER_TRANSFER,
-      ].includes(request.method)
-    )
-      assertNativeHostRuntime(host);
+    if (NATIVE_ADMISSION_METHODS.includes(request.method) && !nativeHostRunsCurrentRuntime(host))
+      throw this.skew(host, busy);
     const result = await requestHost<T>(host, request);
     if ('params' in request && request.params.profileId) {
       const session = result as NativeSessionInfo;

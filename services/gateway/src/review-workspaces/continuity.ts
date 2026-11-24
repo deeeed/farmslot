@@ -29,8 +29,8 @@ type WorkspaceReviewerRun = Pick<
   | 'reviewContext'
 > & { metrics: Pick<Run['metrics'], 'runner' | 'model'> };
 
-/** Shared identity and stopped-reviewer metadata, independent of the lifecycle admission rule. */
-function matchingWorkspaceReviewer(run: WorkspaceReviewerRun, prior: Run) {
+/** Each identity or stopped-reviewer check the retained reviewer fails, by name. */
+function workspaceReviewerMismatches(run: WorkspaceReviewerRun, prior: Run): string[] {
   const reviewer = prior.agentContexts?.find((candidate) => candidate.id === 'review');
   const owner = runPrincipalOwner(run);
   const priorOwner = runPrincipalOwner(prior);
@@ -39,20 +39,51 @@ function matchingWorkspaceReviewer(run: WorkspaceReviewerRun, prior: Run) {
     Boolean(run.nativeOwnerPrincipalId) &&
     run.nativeOwnerPrincipalId === prior.nativeOwnerPrincipalId &&
     Boolean(owner && priorOwner && samePrincipalOwner(owner, priorOwner));
-  const compatible =
-    run.transport === 'tmux' &&
-    prior.transport === 'tmux' &&
-    (!prior.reviewWorkspace?.retainedAt || !!prior.reviewWorkspace.executionStoppedAt) &&
-    sameOwner &&
-    run.project === prior.project &&
-    reviewer?.role === 'review' &&
-    reviewer.status === 'complete' &&
-    ((reviewer.effort ?? null) === (run.effort ?? null) ||
-      (reviewer.runner === 'claude' && (run.effort ?? null) === null)) &&
-    prior.reviewWorkspace?.machine === run.reviewWorkspaceTarget?.machine &&
-    reviewer?.runner === run.metrics.runner &&
-    reviewer.model === run.metrics.model;
-  return compatible ? reviewer : undefined;
+  const mismatches: string[] = [];
+  if (run.transport !== 'tmux' || prior.transport !== 'tmux') mismatches.push('transport');
+  if (prior.reviewWorkspace?.retainedAt && !prior.reviewWorkspace.executionStoppedAt)
+    mismatches.push('execution not stopped');
+  if (!sameOwner) mismatches.push('owner');
+  if (run.project !== prior.project) mismatches.push('project');
+  if (prior.reviewWorkspace?.machine !== run.reviewWorkspaceTarget?.machine)
+    mismatches.push('machine');
+  if (reviewer?.role !== 'review' || reviewer.status !== 'complete') {
+    mismatches.push('no completed reviewer');
+    return mismatches;
+  }
+  if (
+    (reviewer.effort ?? null) !== (run.effort ?? null) &&
+    !(reviewer.runner === 'claude' && (run.effort ?? null) === null)
+  )
+    mismatches.push('effort');
+  if (reviewer.runner !== run.metrics.runner) mismatches.push('runner');
+  if (reviewer.model !== run.metrics.model) mismatches.push('model');
+  return mismatches;
+}
+
+/** Shared identity and stopped-reviewer metadata, independent of the lifecycle admission rule. */
+function matchingWorkspaceReviewer(run: WorkspaceReviewerRun, prior: Run) {
+  return workspaceReviewerMismatches(run, prior).length
+    ? undefined
+    : prior.agentContexts?.find((candidate) => candidate.id === 'review');
+}
+
+/** Why the retained reviewer cannot continue: the failed checks, requested vs retained. */
+function workspaceReviewerRefusalDetail(
+  run: WorkspaceReviewerRun,
+  prior: Run,
+  requestedReviewId: string | undefined,
+): string {
+  const reviewer = prior.agentContexts?.find((candidate) => candidate.id === 'review');
+  const mismatches = [
+    ...(isTerminalRunStatus(prior.status) ? [] : ['prior not terminal']),
+    ...workspaceReviewerMismatches(run, prior),
+  ];
+  if (!mismatches.length)
+    return `mismatch: reviewId; requested ${requestedReviewId ?? 'none'}, retained ${reviewer?.reviewId ?? 'none'}`;
+  const describe = (runner?: string | null, model?: string | null, effort?: string | null) =>
+    `${runner ?? 'no runner'} ${model ?? 'no model'} effort ${effort ?? 'default'}`;
+  return `mismatch: ${mismatches.join(', ')}; requested ${describe(run.metrics.runner, run.metrics.model, run.effort)}, retained ${describe(reviewer?.runner, reviewer?.model, reviewer?.effort)}`;
 }
 
 /** A continuation pairs only after its predecessor has actually reached a terminal state. */
@@ -203,7 +234,9 @@ export function configureWorkspaceContinuity(
     throw new Error('WARM review unavailable: repository/PR mismatch');
   const reviewer = compatibleWorkspaceReviewer(run, prior);
   if (!context.session?.reviewId || reviewer?.reviewId !== context.session.reviewId)
-    throw new Error('WARM review unavailable: missing or foreign reviewId lineage');
+    throw new Error(
+      `WARM review unavailable: missing or foreign reviewId lineage (${workspaceReviewerRefusalDetail(run, prior, context.session?.reviewId)})`,
+    );
   const source = resolveWorkspaceContinuationSource(
     run,
     prior,

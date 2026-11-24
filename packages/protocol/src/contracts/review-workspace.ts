@@ -9,7 +9,7 @@ export function staticReviewReplayBlock(
 ): string | null {
   if (!run.reviewWorkspaceTarget) return null;
   if (run.reviewWorkspace?.transferredTo)
-    return 'This review workspace belongs to its successor. Continue the latest review run.';
+    return `This review workspace belongs to run ${run.reviewWorkspace.transferredTo.runId}. Continue that review run's lineage.`;
   if (run.reviewWorkspace?.retirement && !run.reviewWorkspace.cleanedAt)
     return 'Workspace retention cleanup is pending; retry after the owned operation settles.';
   const ownsAttempt = Boolean(
@@ -119,7 +119,11 @@ export interface ReviewWorkspaceBinding {
   artifactPath: string;
   /** Exact predecessor source identity used for an exclusive stopped-session transfer. */
   continuedFrom?: { runId: string; headSha: string; baseSha: string; taskPath: string };
-  /** Durable successor claim. A predecessor can no longer execute or reclaim this workspace. */
+  /**
+   * Durable claim by another run: the successor that continued this workspace (this run can no
+   * longer execute or reclaim it), or, on a continuation that never launched its reviewer, the
+   * predecessor it handed the workspace back to.
+   */
   transferredTo?: { runId: string; generation: number };
   support?: ReviewWorkspaceSupportBinding;
   /** Frozen retention policy. Configuration changes do not move existing bindings. */

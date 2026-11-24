@@ -275,6 +275,58 @@ describe('web-dapp launcher on a locked session', () => {
     }
   });
 
+  it('launches headless on a locked session when nothing chose a display', async () => {
+    const s = await slot();
+    const args = await launchArgs(s, { headless: false });
+    let probes = 0;
+    const state = await launchWebDappBrowser(args, launchEnv(s), {
+      sessionLocked: () => {
+        probes += 1;
+        return true;
+      },
+    });
+    trackPids(s.runtime);
+    assert.equal(probes, 1);
+    assert.equal(state.reused, false);
+    assert.equal(
+      JSON.parse(messageOf(path.join(s.runtime, 'browser.json'))).browser.headless,
+      true,
+    );
+    await stopWebDappBrowser(s.root, { cdpPort: args['cdp-port'] });
+  });
+
+  it('probes an unknown session once and stays headful when nothing chose a display', async () => {
+    const s = await slot();
+    const args = await launchArgs(s, { headless: false });
+    let probes = 0;
+    await launchWebDappBrowser(args, launchEnv(s), {
+      sessionLocked: () => {
+        probes += 1;
+        return null;
+      },
+    });
+    trackPids(s.runtime);
+    assert.equal(probes, 1);
+    assert.equal(
+      JSON.parse(messageOf(path.join(s.runtime, 'browser.json'))).browser.headless,
+      false,
+    );
+    await stopWebDappBrowser(s.root, { cdpPort: args['cdp-port'] });
+  });
+
+  it('still refuses a locked session when TERMINAL_HEADLESS=0 asks for headful', async () => {
+    const s = await slot();
+    const args = await launchArgs(s, { headless: false });
+    await assert.rejects(
+      launchWebDappBrowser(
+        args,
+        { ...launchEnv(s), TERMINAL_HEADLESS: '0' },
+        { sessionLocked: () => true },
+      ),
+      /^Error: SESSION_LOCKED/u,
+    );
+  });
+
   it('launches a headless browser without probing the session', async () => {
     const s = await slot();
     const args = await launchArgs(s);

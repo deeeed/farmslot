@@ -1,0 +1,1 @@
+- A task progress read of an explicit checklist file (`taskFile`) fetches its files in one batch, as the active-checklist read does. A batch the node refuses is logged once per machine before the read falls back to per-file reads, and one batch names at most 64 files. Node info lists the capabilities each node declared (`observationCapabilities`, such as `batchReads`).

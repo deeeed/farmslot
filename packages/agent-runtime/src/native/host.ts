@@ -99,7 +99,10 @@ const server = createServer({ allowHalfOpen: true }, (socket) => {
         let value: unknown;
         switch (p.method) {
           case 'prepareUpgrade':
-            value = { idle: manager.prepareUpgrade() };
+            if (p.idleRunners) {
+              const busy = manager.prepareIdleRunnerUpgrade();
+              value = { idle: busy.length === 0, busy };
+            } else value = { idle: manager.prepareUpgrade() };
             break;
           case NATIVE_WORKER_COMPACT:
             socket.setTimeout(185_000);
