@@ -13,6 +13,7 @@ const {
   enumerateChecklistCheckboxes,
   isSettledSubtaskStatus,
   resolveChecklistTargetWithOverrides,
+  ROLE_SIGNAL_SUFFIX,
   signalFileForChecklist,
   SUBTASK_ID_PATTERN,
   SUBTASK_INDEX_FILE,
@@ -20,6 +21,7 @@ const {
   readFrozenTerminalContract,
   subtaskPaths,
   targetForChecklistBasename,
+  WORKER_SIGNAL_FILE,
 } = require('./checklist-target.cjs');
 const {
   atomicWrite,
@@ -141,13 +143,15 @@ function childStatus(taskDir, unit) {
  * undefined to gate on every open child (ADR-060: a parent's contract governs its own
  * children). A unit's parent signal is the one `mark` derives for its parent checklist, so the
  * worker's TASK.md and CHECKLIST.md are one parent and a reviewer's REVIEW.<context>.md is only
- * that reviewer's. A completion into a custom `--signal` cannot be matched that way and keeps
- * the unscoped check, which fails closed.
+ * that reviewer's. A completion into a custom `--signal`, or one with no checklist into a name
+ * `mark` never derives, cannot be matched that way and keeps the unscoped check, which fails
+ * closed.
  */
 function completingParentSignal(checklist, signal) {
   if (!signal) return undefined;
-  if (checklist && signalFileForChecklist(checklist) !== signal) return undefined;
-  return signal;
+  if (checklist) return signalFileForChecklist(checklist) === signal ? signal : undefined;
+  // No checklist to derive from: only a name `mark` itself derives can be matched.
+  return signal === WORKER_SIGNAL_FILE || signal.endsWith(ROLE_SIGNAL_SUFFIX) ? signal : undefined;
 }
 
 /**
@@ -706,7 +710,8 @@ function subComplete(taskDir, unit, rest) {
   }
 
   const child = parsedChecklistFile(taskDir, unit.checklist);
-  // Every check below runs before the first write: a refused `--rows` call ticks nothing.
+  // Every check below runs before the checklist is written, so a refused `--rows` call ticks
+  // nothing. (An acceptance-derivation submit still records the child signal before refusing.)
   const named = flags.rows !== undefined ? parseRowList(flags.rows, child, unit) : [];
   const unchecked = child.items.filter(
     (item) => !item.checked && !named.some((row) => row.stepNumber === item.stepNumber),

@@ -1659,7 +1659,7 @@ All checks passed.`;
       <progress-tracker .markdown=${md} .structured=${doneProgress}></progress-tracker>
 
       <p class="section-label" style="margin-top: 32px">
-        Structured progress — child checklist units (ADR-060): running, blocked, stale, complete
+        Structured progress — child checklist units (ADR-060): running, blocked, stale, complete, owner ended
       </p>
       <!-- A run id, as production passes: child-unit expand state is scoped by run. -->
       <progress-tracker

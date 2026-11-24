@@ -90,7 +90,7 @@ test('a unit left open by an ended owner reads as ended work, muted, with no cur
   assert.equal(view.currentStep, null);
   assert.equal(view.settled, false);
   assert.equal(view.ownerEnded, true);
-  assert.notEqual(view.color, subtaskProgressView(unit({ status: 'running' })).color);
+  assert.equal(view.color, colors.textSecondary, 'the muted tone Command Center uses');
 });
 
 test('blocked keeps ownership, complete settles', () => {

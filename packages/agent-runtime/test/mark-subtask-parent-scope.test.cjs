@@ -121,6 +121,9 @@ function workerComplete(dir) {
 assert.equal(completingParentSignal('CHECKLIST.md', 'SIGNAL.json'), 'SIGNAL.json');
 assert.equal(completingParentSignal('TASK.md', 'SIGNAL.json'), 'SIGNAL.json');
 assert.equal(completingParentSignal(undefined, 'SIGNAL.json'), 'SIGNAL.json');
+assert.equal(completingParentSignal(undefined, 'REVIEW.rev-1-SIGNAL.json'), 'REVIEW.rev-1-SIGNAL.json');
+// No checklist and a name mark never derives: unscoped, so every open child still refuses it.
+assert.equal(completingParentSignal(undefined, 'custom.json'), undefined);
 assert.equal(completingParentSignal('REVIEW.rev-1.md', 'custom.json'), undefined);
 assert.equal(completingParentSignal('CHECKLIST.md', undefined), undefined);
 {

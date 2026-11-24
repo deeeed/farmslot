@@ -373,7 +373,14 @@ async function readTaskProgress(
     };
     if (params.summary) return result;
     if (!params.taskFile) {
-      await attachSubtaskProgress(source.io, source.checklistPath, 'review-pr', structured);
+      await attachSubtaskProgress(
+        source.io,
+        source.checklistPath,
+        'review-pr',
+        structured,
+        '',
+        getRun(params.runId),
+      );
       await attachOperations(source.io, source.checklistPath, structured);
       await attachChecklistTiming(
         source.io,

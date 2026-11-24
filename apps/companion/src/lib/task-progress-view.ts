@@ -70,8 +70,8 @@ export function subtaskProgressView(subtask: TaskStepSubtaskProgress): SubtaskPr
     statusLabel: ownerEnded
       ? 'owner ended'
       : (SUBTASK_STATUS_LABELS[subtask.status] ?? subtask.status),
-    // Muted, like a skipped step: nobody is working it, and it is not an error.
-    color: ownerEnded ? colors.textMuted : subtaskStatusColor(subtask.status),
+    // Muted, as in Command Center's unit (`textSecondary`): nobody is working it, and it is not an error.
+    color: ownerEnded ? colors.textSecondary : subtaskStatusColor(subtask.status),
     counts: `${subtask.progress.completedSteps}/${subtask.progress.totalSteps}`,
     currentStep: ownerEnded ? null : subtask.progress.currentStep,
     staleNote: ownerEnded

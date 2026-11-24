@@ -15,6 +15,7 @@ import {
   isSettledSubtaskStatus,
   isTerminalWorkerSignalStatus,
   isWorkerSignalStatus,
+  ROLE_SIGNAL_SUFFIX,
   signalFileForChecklist,
   SUBTASK_ID_PATTERN,
   SUBTASK_INDEX_FILE,
@@ -27,6 +28,7 @@ import {
   type TaskStepSubtaskProgress,
   type WorkerSignalChecklistTiming,
   type WorkerSignalParentLink,
+  WORKER_SIGNAL_FILE,
   type WorkerSignalStatus,
 } from '@farmslot/protocol';
 
@@ -401,15 +403,17 @@ export interface OpenSubtaskUnit {
 /**
  * The parent signal whose own children gate a completion of `checklist` into `signal`, or
  * undefined to gate on every open child. Mirrors the mark engine's rule: a unit's parent signal
- * is the one derived from its parent checklist, so a completion into a custom signal cannot be
- * matched and keeps the unscoped check, which fails closed.
+ * is the one derived from its parent checklist, so a completion into a custom signal, or one
+ * with no checklist into a name `mark` never derives, cannot be matched and keeps the unscoped
+ * check, which fails closed.
  */
 export function completingParentSignal(
   checklist: string | null | undefined,
   signal: string,
 ): string | undefined {
-  if (checklist && signalFileForChecklist(checklist) !== signal) return undefined;
-  return signal;
+  if (checklist) return signalFileForChecklist(checklist) === signal ? signal : undefined;
+  // No checklist to derive from: only a name `mark` itself derives can be matched.
+  return signal === WORKER_SIGNAL_FILE || signal.endsWith(ROLE_SIGNAL_SUFFIX) ? signal : undefined;
 }
 
 /**

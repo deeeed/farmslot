@@ -121,6 +121,8 @@ export class SubtaskOpenState {
         const key = `${run}:${subtask.id}`;
         const remembered = this.open.get(key);
         // Open while the unit is live work; a settled unit, or one whose owner ended, is closed.
+        // The default applies on first render only: a unit the viewer saw open while it was live
+        // stays open when its owner ends, until the viewer closes it or the run changes.
         const initial =
           remembered ?? (!isSettledSubtaskStatus(subtask.status) && subtask.ownerEnded !== true);
         this.open.set(key, initial);

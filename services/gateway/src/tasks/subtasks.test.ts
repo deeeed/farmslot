@@ -363,8 +363,11 @@ test("a completion is refused only by its own children, not a parallel or stoppe
       parent: { checklist: 'REVIEW.rev-b.md', stepNumber: 2 },
     }),
   ];
+  // The worker unit hangs off TASK.md; the worker completes through CHECKLIST.md. Both are one
+  // parent, since both complete into SIGNAL.json.
   const files = (worker: string) =>
     makeTaskDir({
+      'TASK.md': PARENT_MARKDOWN,
       'CHECKLIST.md': PARENT_MARKDOWN,
       'subtasks/index.json': indexJson(units),
       'subtasks/worker-check.md': CHILD_MARKDOWN,
@@ -395,6 +398,10 @@ test("a completion is refused only by its own children, not a parallel or stoppe
     );
     // A completion into a signal its checklist would not write cannot be matched: unscoped.
     assert.equal(completingParentSignal('REVIEW.rev-a.md', 'custom.json'), undefined);
+    // No task file to derive from: only a derived name is scoped; anything else fails closed.
+    assert.equal(completingParentSignal(null, 'SIGNAL.json'), 'SIGNAL.json');
+    assert.equal(completingParentSignal(null, 'REVIEW.rev-a-SIGNAL.json'), 'REVIEW.rev-a-SIGNAL.json');
+    assert.equal(completingParentSignal(null, 'custom.json'), undefined);
     assert.match(
       (await subtaskTerminalRefusal(LOCAL, settled, 'complete', undefined)) ?? '',
       /review-b \(running\)/,
