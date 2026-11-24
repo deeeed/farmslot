@@ -176,6 +176,20 @@ function test(name: string, fn: (t: TestContext) => void | Promise<void>): void 
 }
 
 const probe = { entries: [], ssh: [] };
+
+/**
+ * Returns once the child has registered the command it is running with its watchdog. The child
+ * registers a command in the same synchronous step that spawns it, so the command can already
+ * be running, and writing its pids, before the registration (core/exec.ts names this window). A
+ * reply to a later request means the child's event loop has moved past that step.
+ */
+async function registered(background: ForkedBackgroundHost): Promise<void> {
+  await background.request(
+    'commands.read',
+    { command: 'true', cwd: '/', timeout: 30_000 },
+    { deadlineMs: 30_000 },
+  );
+}
 /** No watchdog: only the child can kill its commands. */
 const ownCleanup = { FIXTURE_NO_WATCHDOG: '1' };
 
@@ -245,6 +259,7 @@ test('an untimed command and its descendant die with a SIGKILLed child', async (
   background.start();
   const pending = background.request('fleet.probeMachine', probe, { deadlineMs: 120_000 });
   await fixture.pids();
+  await registered(background);
   const child = background.status().pid;
   assert.ok(child);
   process.kill(child, 'SIGKILL');
