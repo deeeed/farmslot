@@ -52,6 +52,7 @@ import {
   retentionContext,
   RUN_RETENTION_DEPS,
   runRetentionPass,
+  sharedStoreRetentionPass,
 } from './retention.js';
 import { makeRun } from './test-fixtures.js';
 
@@ -1297,3 +1298,33 @@ test(
     assert.deepEqual(await f.manifest(), completed);
   },
 );
+
+test('the hourly pass cleans review caches and archives orphan scaffolding, each despite the other failing', async () => {
+  const calls: string[] = [];
+  const failingCaches = await sharedStoreRetentionPass({
+    cleanReviewCaches: async () => {
+      calls.push('caches');
+      throw new Error('review cache store unreadable');
+    },
+    archiveScaffolding: async () => {
+      calls.push('scaffolding');
+      return {
+        archived: [{ source: '/runs/slot-scaffolding/s/c', bytes: 5 }],
+        pending: 0,
+        failed: [],
+      };
+    },
+  });
+  assert.deepEqual(calls, ['caches', 'scaffolding']);
+  assert.equal(failingCaches.reviewCaches, undefined);
+  assert.equal(failingCaches.scaffolding?.archived.length, 1);
+
+  const failingScaffolding = await sharedStoreRetentionPass({
+    cleanReviewCaches: async () => ['/runs/review-workspace-support/blobs/abc'],
+    archiveScaffolding: async () => {
+      throw new Error('scaffolding store unreadable');
+    },
+  });
+  assert.deepEqual(failingScaffolding.reviewCaches, ['/runs/review-workspace-support/blobs/abc']);
+  assert.equal(failingScaffolding.scaffolding, undefined);
+});

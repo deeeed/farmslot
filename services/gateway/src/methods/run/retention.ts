@@ -5,6 +5,7 @@ import type { Run } from '@farmslot/protocol';
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { runBundleRetentionSettings, withRunBundleStoreLock } from '@farmslot/run-bundle';
 
+import { reportGatewayWarning } from '../../chat/copilot-observer.js';
 import { projectTaskRoots } from '../../core/config.js';
 import { ownsRunSlotCleanup, readSlotRow } from '../../core/index.js';
 import {
@@ -16,6 +17,7 @@ import { loadProjectConfig } from '../../fleet/state.js';
 import { nodeTaskPinRetentionPass } from '../../host-services/node-task-pins.js';
 import { github } from '../../integrations/github-client.js';
 import { reviewPRIdentity } from '../../review/session-mode.js';
+import { cleanupReviewWorkspaceCaches } from '../../review-workspaces/cache-cleanup.js';
 import { reclaimReviewWorkspaceStorage } from '../../review-workspaces/storage-use.js';
 import {
   archiveRunArtifactHousekeeping,
@@ -26,6 +28,10 @@ import {
 import { captureMissingRunEpisodes } from '../../run-completion/run-episode.js';
 import { parkedWorkRetentionPass } from '../../run-lifecycle/parked-work-retention.js';
 import { nativeSessionManager } from '../../runners/native/manager.js';
+import {
+  archiveOrphanSlotScaffolding,
+  type OrphanScaffoldingResult,
+} from '../../runs/orphan-scaffolding.js';
 import {
   DAY_MS,
   diskBytes,
@@ -441,6 +447,68 @@ export async function runRetentionPass(
   return { runs: archived, held: plan.held, paths, stores };
 }
 
+/** The review execution caches, as `run.cleanup` and the hourly pass both clean them. */
+export function cleanGatewayReviewCaches(dryRun: boolean): Promise<string[]> {
+  const paths = currentFarmPaths('gateway');
+  return cleanupReviewWorkspaceCaches(dryRun, {
+    runs: getAllRunsWithArchived,
+    runsDir: runsDirectory(),
+    ...(paths.layout === 2 ? { supportRoot: paths.state.reviewWorkspaceSupport } : {}),
+    nativeRoot: nativeSessionManager.root,
+  });
+}
+
+export interface SharedStoreRetentionDeps {
+  cleanReviewCaches: () => Promise<string[]>;
+  archiveScaffolding: () => Promise<OrphanScaffoldingResult>;
+}
+
+export const SHARED_STORE_RETENTION_DEPS: SharedStoreRetentionDeps = {
+  cleanReviewCaches: () => cleanGatewayReviewCaches(false),
+  archiveScaffolding: async () =>
+    archiveOrphanSlotScaffolding({
+      scaffoldingRoot: path.join(runsDirectory(), 'slot-scaffolding'),
+      archiveRoot: runArchiveRoot(),
+      maxAgeMs: RUN_RETENTION_DEPS.retentionDays() * DAY_MS,
+    }),
+};
+
+/**
+ * ADR-039 Amendment 9: stores no run owns. Each step runs whatever the other or the run pass
+ * did; an unavailable archive root skips the scaffolding move and reports it.
+ */
+export async function sharedStoreRetentionPass(
+  deps: SharedStoreRetentionDeps = SHARED_STORE_RETENTION_DEPS,
+): Promise<{ reviewCaches?: string[]; scaffolding?: OrphanScaffoldingResult }> {
+  const result: { reviewCaches?: string[]; scaffolding?: OrphanScaffoldingResult } = {};
+  try {
+    result.reviewCaches = await deps.cleanReviewCaches();
+    if (result.reviewCaches.length)
+      console.log(`[run-retention] removed ${result.reviewCaches.length} review cache dir(s)`);
+  } catch (error) {
+    console.error(`[run-retention] review cache cleanup failed: ${(error as Error).message}`);
+  }
+  try {
+    const scaffolding = await deps.archiveScaffolding();
+    result.scaffolding = scaffolding;
+    const bytes = scaffolding.archived.reduce((total, entry) => total + entry.bytes, 0);
+    if (scaffolding.archived.length)
+      console.log(
+        `[run-retention] archived ${scaffolding.archived.length} orphan scaffolding collection(s) (${(bytes / 1e9).toFixed(2)} GB)`,
+      );
+    if (scaffolding.skipped)
+      reportGatewayWarning(
+        'run-retention.scaffolding-archive-skipped',
+        `${scaffolding.pending} orphan slot scaffolding collection(s) stay on local disk: ${scaffolding.skipped}`,
+      );
+    for (const failure of scaffolding.failed)
+      console.error(`[run-retention] scaffolding archive failed; source retained: ${failure}`);
+  } catch (error) {
+    console.error(`[run-retention] orphan scaffolding pass failed: ${(error as Error).message}`);
+  }
+  return result;
+}
+
 export function formatRunRetention(plan: RunRetentionPlan): string {
   const stores = Object.entries(plan.stores)
     .map(
@@ -469,6 +537,7 @@ export function startRunRetention(emit: Emit): void {
           `[run-retention] ARCHIVE FAILED; source storage retained: ${(err as Error).stack}`,
         ),
       )
+      .then(() => sharedStoreRetentionPass())
       .finally(() => {
         running = false;
       });

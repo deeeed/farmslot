@@ -292,6 +292,32 @@ Gateway startup and capture MUST NOT invoke destructive bundle/media GC. Capacit
 admission retains its current budget checks. Another node's storage and slot
 checkouts remain outside this pass. Automated restore is not part of this change.
 
+### Stores no run owns
+
+ADR-039 Amendment 9. After the run pass, whether it succeeded or failed, the same
+hourly turn MUST handle two gateway stores that no run record owns. Each step runs
+even when the other fails.
+
+- Review execution caches (`review-workspace-support`, idle review allocators and
+  their native sessions): the pass runs the cleanup `run.cleanup` runs, without a
+  dry run. It removes only caches that no run needing execution storage protects
+  and that no run record references; reports, task views, archives and retained
+  bundles are untouched. These caches are recreatable, so nothing is archived.
+- Orphan slot scaffolding: slot release collects scaffolding into
+  `.runs/slot-scaffolding/<slot>/<collection>` when no run owns the release. A
+  collection whose `manifest.json` (written last) is older than the retention age
+  MUST move to `FARMSLOT_RUN_ARCHIVE_ROOT` under the archive key
+  `slot-scaffolding-<slot>`, journaled in
+  `<archive-root>/slot-scaffolding-<slot>/manifest.json` exactly as a run's storage
+  manifest is, and restored the same way. A collection without `manifest.json` is
+  incomplete and stays. Nothing is deleted.
+
+When the archive root is unavailable (an unmounted volume, a failed write probe),
+the scaffolding move MUST skip, leave every collection in place, and raise a
+`run-retention.scaffolding-archive-skipped` gateway warning with the number of
+collections waiting. It MUST NOT fail the pass or the review cache cleanup. A
+move that fails part way keeps its journal and resumes with the run archives.
+
 ## Public surface and backfill
 
 The experimental public command is:
