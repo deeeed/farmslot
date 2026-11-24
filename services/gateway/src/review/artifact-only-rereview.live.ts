@@ -125,17 +125,19 @@ test(
     // A source-mode host can still be importing when the client's 10 s startup wait ends, so
     // start the private host and wait for it before the first launch.
     const { nativeSessionManager } = await import('../runners/native/manager.js');
-    await nativeSessionManager.warm().catch((error: unknown) => {
-      // The ready file below decides; a slow first start only ends the client's wait early.
-      console.log(`[proof] host still starting: ${String(error)}`);
-    });
+    // A slow first start only ends the client's wait early; the ready file decides, and a host
+    // that never gets ready reports this error with its log.
+    const warming = await nativeSessionManager.warm().then(
+      () => null,
+      (error: unknown) => error,
+    );
     for (
       const deadline = Date.now() + 120_000;
       !existsSync(path.join(root, 'native/ready.json'));
     ) {
       if (Date.now() > deadline)
         assert.fail(
-          `the private native host did not become ready:\n${await readFile(path.join(root, 'native/host.log'), 'utf8').catch(String)}`,
+          `the private native host did not become ready (${String(warming)}):\n${await readFile(path.join(root, 'native/host.log'), 'utf8').catch(String)}`,
         );
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
@@ -245,10 +247,12 @@ test(
     assert.ok(workingTree.includes(` ${head}\``) && !workingTree.includes(`${head}..`));
 
     // An artifact-only run outside the comparison lane must still commit its fix.
+    git('checkout', '--', 'message.txt');
     const other = await artifactOnlyRun('ARTIFACT-ONLY-PLAIN');
     await codex.scenario({ toolMs: 200, verdict: 'issues' });
     const plain = await other('cold review');
     assert.equal(plain.verdict, 'issues');
+    await write('repo/message.txt', 'hello, fixed but not committed\n');
     await assert.rejects(
       other('warm re-review', {
         mode: 'warm',
