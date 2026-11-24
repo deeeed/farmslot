@@ -48,6 +48,8 @@ type Ending =
   | 'stale-checklist'
   | 'accepted-start'
   | 'inactive'
+  | 'open-tool'
+  | 'hung-tool'
   | 'completion-turn'
   | 'completion-provider-error'
   | 'completion-unfinished'
@@ -152,7 +154,8 @@ mock.module('../run-engine/run-monitor.js', {
       if (ending === 'missing-terminal')
         return { ok: false, code: 'missing', message: 'review signal missing' };
       if (timeline) {
-        if (ending !== 'inactive' && timeline.polls >= 4) return { ok: true };
+        if (ending !== 'inactive' && ending !== 'hung-tool' && timeline.polls >= 4)
+          return { ok: true };
         return {
           ok: false,
           code: 'non_terminal',
@@ -339,8 +342,16 @@ mock.module('../runners/native/worker-control.js', {
           timeline.polls <= (timeline.maxPolls ?? Infinity),
           'Reviewer exceeded its millisecond inactivity limit',
         );
+        // One long tool call: started at the first read; open-tool ends it at the third.
+        const longTool =
+          (ending === 'open-tool' || ending === 'hung-tool') && timeline.polls === 1
+            ? 'tool.started'
+            : ending === 'open-tool' && timeline.polls === 3
+              ? 'tool.completed'
+              : undefined;
         const events: NativeSessionEvent[] = [
           {
+            ...(longTool ? { nativeId: 'toolu_long' } : {}),
             sessionId: binding.sessionId,
             generation: binding.generation,
             commandId: ending === 'foreign-tools' ? 'earlier-command' : binding.commandId,
@@ -348,8 +359,9 @@ mock.module('../runners/native/worker-control.js', {
             at: new Date(
               ending === 'paged-tools' && timeline.polls === 1 ? 0 : timeline.now,
             ).toISOString(),
-            type:
-              ending === 'accepted-start'
+            type: longTool
+              ? longTool
+              : ending === 'accepted-start'
                 ? timeline.polls === 1
                   ? 'command.accepted'
                   : 'tool.completed'
@@ -363,7 +375,7 @@ mock.module('../runners/native/worker-control.js', {
           commands:
             ending === 'never-started'
               ? [{ commandId: binding.commandId, state: 'accepted', accepted: true }]
-              : ending !== 'inactive' && timeline.polls >= 4
+              : ending !== 'inactive' && ending !== 'hung-tool' && timeline.polls >= 4
                 ? [{ commandId: binding.commandId, state: 'completed', outcome: 'completed' }]
                 : [],
           events: ending === 'never-started' ? [] : events,
@@ -935,6 +947,60 @@ test('restart recovery enforces the completion inactivity limit and drains fresh
   assert.equal(completionCommands.length, 1);
 });
 
+test('restart recovery waits on an open tool call up to the open-tool limit', async (t) => {
+  ending = 'completion-turn';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  await review(run.id);
+  const context = getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
+  const acceptedAt = Date.parse(context.nativeSession!.acceptedAt!);
+  let now = acceptedAt + 600001;
+  t.mock.method(Date, 'now', () => now);
+  ending = 'completion-unfinished';
+  const control = await import('../runners/native/worker-control.js');
+  const monitor = await import('../run-engine/run-monitor.js');
+  const { continueNativeReviewCompletion } = await import('./native-review-completion.js');
+  const read = await control.readNativeWorkerSnapshot(run.id, 'review', context.id);
+  const snapshot = {
+    ...read,
+    commands: read.commands.map((command) => ({
+      ...command,
+      state: 'accepted' as const,
+      outcome: undefined,
+    })),
+  };
+  const probe = await monitor.probeWorkerSignalForRun(run.id, vars.slotId, context);
+  // One tool call started as the turn began and has not ended.
+  completionActivityPages = [
+    [
+      {
+        nativeId: 'toolu_long',
+        sessionId: context.nativeSession!.sessionId,
+        generation: context.nativeSession!.generation!,
+        commandId: context.nativeCommandId!,
+        sequence: 1,
+        at: new Date(acceptedAt).toISOString(),
+        type: 'tool.started',
+      },
+    ],
+  ];
+  t.after(() => {
+    completionActivityPages = undefined;
+  });
+  const input = {
+    runId: run.id,
+    vars,
+    context,
+    snapshot: { ...snapshot, cursor: 0, hasMore: true },
+    probe,
+    assertCurrent: () => {},
+    enforceProgressTimeout: true,
+  };
+  assert.equal(await continueNativeReviewCompletion(input), false);
+  now = acceptedAt + 1800001;
+  await assert.rejects(continueNativeReviewCompletion(input), /inactivity limit/);
+});
+
 test('an accepted reviewer with no native turn reports never started', async (t) => {
   ending = 'never-started';
   const clock = { now: 0, polls: 0 };
@@ -962,6 +1028,35 @@ test('a completed native turn reports unavailable terminal signal at its existin
   ending = 'missing-terminal';
   const run = await nativeRun(t);
   await assert.rejects(review(run.id), /completed its turn but.*terminal signal/);
+});
+
+test('a reviewer waiting on one tool call past the inactivity limit is not stopped', async (t) => {
+  // 961d55d3: one Bash call ran ten minutes and the reviewer was killed 0.77 s before it ended.
+  ending = 'open-tool';
+  const clock = { now: 0, polls: 0 };
+  timeline = clock;
+  t.mock.method(Date, 'now', () => clock.now);
+  t.after(() => {
+    timeline = undefined;
+  });
+  const run = await nativeRun(t);
+  assert.equal((await review(run.id)).verdict, 'issues');
+  assert.equal(clock.polls >= 4, true);
+});
+
+test('a tool call that never ends is stopped at the open-tool limit', async (t) => {
+  ending = 'hung-tool';
+  const clock = { now: 0, polls: 0 };
+  timeline = clock;
+  t.mock.method(Date, 'now', () => clock.now);
+  t.after(() => {
+    timeline = undefined;
+  });
+  const run = await nativeRun(t);
+  await assert.rejects(
+    review(run.id),
+    /tool call made no progress for 1800000ms \(open-tool limit 1800000ms/,
+  );
 });
 
 test('a native reviewer with no checklist or tool progress fails at ten idle minutes, before a one-hour budget', async (t) => {

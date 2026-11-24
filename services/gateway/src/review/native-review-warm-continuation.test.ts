@@ -852,6 +852,20 @@ test('a reviewer still busy at the deadline falls back to the delta', async (t) 
   assert.equal(result.mode, 'cold');
 });
 
+// 961d55d3: a warm continuation stopped cleanly; the next round went cold over the whole change.
+test('a warm continuation that failed cleanly is resumed by the next round without a restart', async (t) => {
+  const run = await prePublishRun(t);
+  const first = await review(run.id);
+  commandFailed = true;
+  await assert.rejects(reReview(run.id));
+  const failed = reviewers(run.id).at(-1)!;
+  commandFailed = false;
+  const result = await reReview(run.id);
+  assert.equal(result.mode, 'warm');
+  assert.equal(result.reviewerSessionId, first.reviewerSessionId);
+  assert.equal(dispatches.at(-1)?.retainedFrom?.contextId, failed.id);
+});
+
 // A structured failed command is infrastructure failure, not another code verdict.
 test('a failed warm command retries its same session and refunded attempt after recovery', async (t) => {
   const run = await prePublishRun(t);
