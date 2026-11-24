@@ -1046,9 +1046,9 @@ export class RunList extends RunListState {
             >${timing.label}</span
           >
         </div>
+        ${showSummary && run.summary ? nothing : evalBadge}
         <div class="run-row-affordances" @click=${(e: Event) => e.stopPropagation()}>
-          ${showSummary && run.summary ? nothing : evalBadge} ${this.renderRunTags(run)}
-          ${this.renderEvidenceSignals(run, evidenceSummary)}
+          ${this.renderRunTags(run)} ${this.renderEvidenceSignals(run, evidenceSummary)}
           <a class="ext-link" href=${familyRunHash(run.familyId, run.id)}>retrospective</a>
           ${disposition
             ? html`<span
