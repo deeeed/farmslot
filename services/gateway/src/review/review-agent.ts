@@ -197,8 +197,6 @@ export function continuationReviewScope(params: {
   priorHeadSha: string | null;
   currentHeadSha: string | null;
   priorArtifactDir: string;
-  /** An artifact-only run: its fix is the uncommitted working tree, not new commits. */
-  workingTree?: boolean;
 }): string {
   const reviewRange =
     params.priorHeadSha && params.currentHeadSha
@@ -217,15 +215,22 @@ This scope overrides generic full-branch diff instructions below. When the exact
 available, inspect \`${GIT_DIFF_COMMAND} --stat ${reviewRange}\` and \`${GIT_DIFF_COMMAND} ${reviewRange}\` instead of
 \`main...HEAD\`. Recheck the prior findings and validate affected surfaces only. Expand beyond
 that range only when the delta invalidates a prior assumption, and explain why in the report.
-${
-  params.workingTree
-    ? `
-This artifact-only run leaves its fix uncommitted, so the range above may hold no commits. The fix
-is the working tree: inspect \`${GIT_DIFF_COMMAND} --stat ${params.currentHeadSha ?? 'HEAD'}\`,
-\`${GIT_DIFF_COMMAND} ${params.currentHeadSha ?? 'HEAD'}\` and \`git status --short\` for new files.
-`
-    : ''
-}`;
+`;
+}
+
+/**
+ * A comparison replay leaves its work uncommitted, so a re-review's commit range can be empty:
+ * the reviewer reads the working tree instead.
+ */
+export function workingTreeReviewScope(headSha: string | null): string {
+  const head = headSha ?? 'HEAD';
+  return `## The work is uncommitted
+
+This comparison run keeps its implementation and review fixes in the working tree, not in commits,
+so the range above may hold no commits. Read the working tree: \`${GIT_DIFF_COMMAND} --stat ${head}\`,
+\`${GIT_DIFF_COMMAND} ${head}\` and \`git status --short\` for new files. That diff holds the whole
+implementation; the worker's report says what this fix round changed.
+`;
 }
 
 /** What an automatic re-review continues (ADR-063 Amendment 5). */

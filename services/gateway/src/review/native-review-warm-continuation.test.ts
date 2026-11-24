@@ -495,18 +495,37 @@ for (const status of [' M a.ts\0', 'M  a.ts\0', '?? new.ts\0']) {
   });
 }
 
-test('an artifact-only run re-reviews its uncommitted fix at an unchanged head, reading the working tree', async (t) => {
+test('a comparison replay re-reviews its uncommitted fix at an unchanged head, reading the working tree', async (t) => {
   const run = await prePublishRun(t);
-  updateRun(run.id, { completionPolicy: 'artifact-only' });
+  updateRun(run.id, { completionPolicy: 'artifact-only', lane: 'comparison' });
   await review(run.id);
-  // The artifact-only task leaves the fix in the working tree; HEAD is the reviewed commit.
+  // The comparison task leaves the fix in the working tree; HEAD is the reviewed commit.
   worktreeStatus = ' M a.ts\0';
   await reReview(run.id);
   assert.equal(dispatches.length, 2);
   assert.equal(dispatches[1]?.retainedFrom?.contextId, dispatches[0]!.contextId);
   const task = reviewerTask(run.id, dispatches[1]!.contextId);
-  assert.match(task, /This artifact-only run leaves its fix uncommitted/);
+  assert.match(task, /## The work is uncommitted/);
   assert.ok(task.includes(`--stat ${head}`), 'the scope names the working-tree diff against HEAD');
+});
+
+test('a comparison replay whose reviewer cannot resume gets the working-tree scope in the fresh session', async (t) => {
+  const run = await prePublishRun(t, published);
+  updateRun(run.id, { completionPolicy: 'artifact-only', lane: 'comparison' });
+  await review(run.id);
+  worktreeStatus = ' M a.ts\0';
+  resumeFailure = 'handoff';
+  const result = await reReview(run.id);
+  assert.equal(result.mode, 'cold');
+  assert.match(reviewerTask(run.id, dispatches.at(-1)!.contextId), /## The work is uncommitted/);
+});
+
+test('an artifact-only run outside the comparison lane still commits its fix before a re-review', async (t) => {
+  const run = await prePublishRun(t);
+  updateRun(run.id, { completionPolicy: 'artifact-only' });
+  await review(run.id);
+  worktreeStatus = ' M a.ts\0';
+  await assert.rejects(reReview(run.id), /fix not committed/i);
 });
 
 test('generated untracked slot support does not block an evidence re-review', async (t) => {
