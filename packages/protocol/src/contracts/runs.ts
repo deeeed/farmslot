@@ -2032,6 +2032,8 @@ export interface RunMetrics {
    * live under `.runs/session-archives/`. Not eval evidence and not a farmrun payload.
    */
   runnerSessionArchive?: RunnerSessionArchiveRef;
+  /** One ref per worker session, in capture order (ADR-039 Amendment 10). */
+  runnerSessionArchives?: RunnerSessionArchiveRef[];
   /**
    * Operator-local provider subscription label that actually funded this run
    * (after any in-place failover). Label only — never an email, token, or home path.
