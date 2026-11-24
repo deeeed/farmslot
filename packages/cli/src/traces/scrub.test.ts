@@ -114,3 +114,24 @@ test('JSON keys are scrubbed and an unchanged line keeps its exact bytes', () =>
   assert.equal(keyed, '{"~/x":1}');
   assert.equal(untouched, '{"n":12345678901234567890}');
 });
+
+test('generic key names keep their values; ref is not exempt; redacted keys never collide', () => {
+  const s = scrubber();
+  const [plain, collide] = s
+    .text(
+      [
+        JSON.stringify({ key: 'Escape', cache_key: 'abc-123-def', public_key: 'pk-public-value' }),
+        JSON.stringify({ '/Users/deeeed/a': 1, '/Users/farmops/a': 2 }),
+      ].join('\n'),
+    )
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  assert.deepEqual(plain, {
+    key: 'Escape',
+    cache_key: 'abc-123-def',
+    public_key: 'pk-public-value',
+  });
+  assert.deepEqual(Object.values(collide), [1, 2]);
+  const ref = JSON.parse(s.text(JSON.stringify({ ref: 'mail someone@example.org' }))).ref;
+  assert.doesNotMatch(ref, /someone@example\.org/);
+});

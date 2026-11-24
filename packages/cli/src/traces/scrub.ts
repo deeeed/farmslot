@@ -37,7 +37,7 @@ const HOME = /(\/Users\/|\/home\/)([^/\s"'\\]+)/g;
 
 /** A JSON key whose string value is a secret: replaced whole, whatever the value looks like. */
 const SECRET_KEY =
-  /(?:^|[_-])(?:token|key|secret|password|passwd)$|(?:privatekey|private_key|secret|password|passwd|mnemonic|seed|apikey|api_key|accesstoken|access_token|refreshtoken|refresh_token|authtoken|auth_token|clientsecret|client_secret)$/i;
+  /(?:^|[_-])(?:token|secret|password|passwd)$|(?:privatekey|private_key|secretkey|secret_key|secret|password|passwd|mnemonic|seedphrase|seed_phrase|apikey|api_key|accesskey|access_key|accesstoken|access_token|refreshtoken|refresh_token|authtoken|auth_token|clientsecret|client_secret)$/i;
 const KEY_IS_PRIVATE_KEY = /private|mnemonic|seed/i;
 /** JSON keys Farmslot writes digests and SHAs under: never redacted by the publication patterns. */
 const OWN_DIGEST_KEYS = new Set([
@@ -50,7 +50,6 @@ const OWN_DIGEST_KEYS = new Set([
   'finalHead',
   'prHead',
   'mergeSha',
-  'ref',
 ]);
 
 /** Farmslot's own digests and SHA fields are kept: they are not secrets. */
@@ -151,13 +150,17 @@ export class TraceScrubber {
       return this.apply(value, token, { ownDigest: key !== undefined && OWN_DIGEST_KEYS.has(key) });
     }
     if (Array.isArray(value)) return value.map((entry) => this.value(entry, key));
-    if (value && typeof value === 'object')
-      return Object.fromEntries(
-        Object.entries(value).map(([entryKey, entry]) => [
-          this.apply(entryKey, token),
-          this.value(entry, entryKey),
-        ]),
-      );
+    if (value && typeof value === 'object') {
+      const out: Record<string, unknown> = {};
+      for (const [entryKey, entry] of Object.entries(value)) {
+        const base = this.apply(entryKey, token);
+        let scrubbedKey = base;
+        // Two keys redacted to the same token stay apart instead of overwriting each other.
+        for (let n = 2; scrubbedKey in out; n++) scrubbedKey = `${base}#${n}`;
+        out[scrubbedKey] = this.value(entry, entryKey);
+      }
+      return out;
+    }
     return value;
   }
 

@@ -1,6 +1,6 @@
 // ADR-039 Amendment 10: grade, interview and episode-recapture records for run traces.
 import { existsSync } from 'node:fs';
-import { appendFile, mkdir, open, readdir, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, open, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -131,10 +131,15 @@ export async function runEpisodeRecapture(
     ? (await readdir(dir)).filter((name) => name.endsWith('.json'))
     : [];
   const candidates: string[] = [];
+  const sinceMs = Date.parse(since);
   for (const name of names) {
+    // An episode file not written since `since` cannot describe a run updated since: skip the
+    // parse, so the cost is one stat per older episode.
+    const file = path.join(dir, name);
+    if ((await stat(file)).mtimeMs < sinceMs) continue;
     let episode: { schema?: string; runId?: string; runUpdatedAt?: string };
     try {
-      episode = JSON.parse(await readFile(path.join(dir, name), 'utf8'));
+      episode = JSON.parse(await readFile(file, 'utf8'));
     } catch (error) {
       console.warn(`[run-episode] recapture skips ${name}: ${(error as Error).message}`);
       continue;

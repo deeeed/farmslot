@@ -151,8 +151,13 @@ export function archiveRefsOf(
   list: readonly RunnerSessionArchiveRef[] | undefined,
   single: RunnerSessionArchiveRef | undefined,
 ): RunnerSessionArchiveRef[] {
-  if (list?.length) return [...list];
-  return single ? [{ ...single, sessionKey: single.sessionKey ?? LEGACY_SESSION_KEY }] : [];
+  // A ref with no session key is a legacy archive, in the list or alone; it reads as `legacy`.
+  const view = (ref: RunnerSessionArchiveRef) => ({
+    ...ref,
+    sessionKey: ref.sessionKey ?? LEGACY_SESSION_KEY,
+  });
+  if (list?.length) return list.map(view);
+  return single ? [view(single)] : [];
 }
 
 function sessionKeyFor(
@@ -262,15 +267,16 @@ async function copyJsonlArchive(params: {
         ref.originalPath === sourcePath,
     );
     if (legacy) return legacy;
-    // An unchanged source already captured is not copied again.
-    const prior = params.refs.find((ref) => ref.sessionKey === sessionKey);
-    if (
-      prior?.status === 'captured' &&
-      prior.originalPath === sourcePath &&
-      prior.sourceSize === stat.size &&
-      prior.sourceMtimeMs === stat.mtimeMs
-    )
-      return prior;
+    // An unchanged source already captured under any key (a round included) is not copied
+    // again: the release backstop, which carries no round, finds a warm reviewer's last round.
+    const prior = params.refs.find(
+      (ref) =>
+        ref.status === 'captured' &&
+        ref.originalPath === sourcePath &&
+        ref.sourceSize === stat.size &&
+        ref.sourceMtimeMs === stat.mtimeMs,
+    );
+    if (prior) return prior;
 
     const destDir = path.join(
       runnerSessionArchiveContextDir(params.runId, params.target.contextId),

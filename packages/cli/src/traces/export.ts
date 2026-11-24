@@ -180,11 +180,19 @@ export async function traceScrubInputs(
   const secretValues = Object.entries(env)
     .filter(([name, value]) => secretName.test(name) && value && value.length >= 8)
     .map(([, value]) => value!);
-  // Every value in the private provider environment file is treated as a secret.
+  // Secret-named values of the private provider environment file (base URLs and model ids are
+  // left alone, so labels keep them).
   const providers = await optionalText(path.join(stores.home, 'providers.env'));
   for (const line of providers?.split('\n') ?? []) {
-    const match = /^\s*(?:export\s+)?[A-Za-z0-9_]+\s*=\s*["']?([^"'\n]+?)["']?\s*$/.exec(line);
-    if (match && match[1]!.length >= 8) secretValues.push(match[1]!);
+    const match = /^\s*(?:export\s+)?([A-Za-z0-9_]+)\s*=\s*["']?([^"'\n]+?)["']?\s*$/.exec(line);
+    if (match && secretName.test(match[1]!) && match[2]!.length >= 8) secretValues.push(match[2]!);
+  }
+  // Gateway tokens: the gateway stores only their hashes, so the raw tokens come from the client
+  // profiles on this host.
+  const profiles = await readJson(path.join(stores.home, 'gateways.json'));
+  for (const profile of Object.values((profiles?.gateways as Json | undefined) ?? {})) {
+    const secret = (profile as Json).secret;
+    if (typeof secret === 'string' && secret.length >= 8) secretValues.push(secret);
   }
   const automationDir = path.join(userHome, '.farmslot-automation');
   const automation = existsSync(automationDir)
@@ -242,7 +250,14 @@ async function selectEpisodes(
     if (options.until && ended > options.until) continue;
     if (options.family && familyId !== options.family) continue;
     if (options.hasGrade && !(await gradeLines(stores, runId)).length) continue;
-    if (!(await tracesEnabled(stores, String(episode.project)))) {
+    let enabled: boolean;
+    try {
+      enabled = await tracesEnabled(stores, String(episode.project));
+    } catch (error) {
+      skipped.push({ runId, reason: (error as Error).message });
+      continue;
+    }
+    if (!enabled) {
       skipped.push({ runId, reason: 'project opted out (traces.enabled: false)' });
       continue;
     }
@@ -251,7 +266,6 @@ async function selectEpisodes(
   return selected;
 }
 
-/** Builds (or with `update`, refreshes) a redacted dataset directory from a run filter. */
 /** ISO bounds; a date-only `until` covers the whole day. */
 export function normalizeTraceRange(options: Pick<TraceExportOptions, 'since' | 'until'>) {
   const bound = (value: string | undefined, name: string, endOfDay: boolean) => {
@@ -268,6 +282,7 @@ export function normalizeTraceRange(options: Pick<TraceExportOptions, 'since' | 
   };
 }
 
+/** Builds (or with `update`, refreshes) a redacted dataset directory from a run filter. */
 export async function exportRunTraces(
   options: TraceExportOptions,
   stores: TraceExportStores = gatewayTraceStores(),
@@ -298,167 +313,175 @@ export async function exportRunTraces(
 
   const allCounts: Record<string, number> = {};
 
+  let exported = 0;
   for (const { episode, runId } of selected) {
-    const scrubber = new TraceScrubber(scrubInputs);
-    const runDir = path.join(out, 'runs', scrubber.name(runId));
-    await mkdir(path.join(runDir, 'transcripts'), { recursive: true });
-    const record = await runRecord(stores, runId);
-    const labels = structuredClone((episode.labels ?? {}) as Json);
-    const roles = (labels.roles as Json[] | undefined) ?? [];
-    const modelOf = (contextId: unknown) =>
-      (roles.find((role) => role.contextId === contextId)?.model as string | null) ?? null;
-    if (Array.isArray(labels.cost))
-      labels.cost = (labels.cost as Json[]).map((cost) =>
-        priceCost(
-          {
-            ...cost,
-            inputTokens: (cost.inputTokens as number | null) ?? null,
-            outputTokens: (cost.outputTokens as number | null) ?? null,
-            cacheReadTokens: (cost.cacheReadTokens as number | null) ?? null,
-            usd: (cost.usd as number | null) ?? null,
-            usdSource: (cost.usdSource as 'recorded' | null) ?? null,
-          },
-          modelOf(cost.contextId),
-        ),
-      );
-
-    // Transcripts, one per captured session.
-    const transcripts: Json[] = [];
-    let unmapped = 0;
-    for (const agent of ((episode.trajectory as Json | undefined)?.agents as Json[]) ?? []) {
-      const sessions = (agent.sessions as Json[] | undefined) ?? [];
-      for (const session of sessions) {
-        const key = String(session.sessionKey ?? 'session');
-        const label = { contextId: agent.contextId, sessionKey: key, runner: agent.runner };
-        if (session.status === 'unsupported') {
-          transcripts.push({ ...label, status: 'unsupported' });
-          continue;
-        }
-        const bytes =
-          session.status === 'captured' && typeof session.relativeDir === 'string'
-            ? await transcriptBytes(stores, runId, session.relativeDir)
-            : null;
-        if (!bytes) {
-          transcripts.push({
-            ...label,
-            status: 'missing',
-            reason:
-              session.status === 'captured' ? 'not found in the stores' : String(session.status),
-          });
-          totals.missing += 1;
-          continue;
-        }
-        if (typeof session.sha256 === 'string' && sha256(bytes) !== session.sha256) {
-          transcripts.push({ ...label, status: 'sha256-mismatch' });
-          totals.missing += 1;
-          continue;
-        }
-        let lines = bytes.toString('utf8').split('\n');
-        if (agent.runner === 'grok') {
-          const converted = grokToSessionTrace({
-            lines,
-            runId,
-            sessionId: key,
-            runner: String(agent.runner),
-          });
-          lines = converted.lines;
-          unmapped += converted.unmapped;
-        }
-        const file = scrubber.name(`${agent.contextId}-${key}.jsonl`);
-        const target = path.join(runDir, 'transcripts', file);
-        // Written every time, --update included: a recaptured transcript replaces its old copy
-        // and the redaction counts cover every exported file.
-        await writeFile(target, scrubber.text(lines.join('\n')));
-        transcripts.push({ ...label, status: 'present', file, bytes: bytes.byteLength });
-        totals.present += 1;
-      }
-    }
-
-    // The graded diff, kept beside the episode.
-    const output = labels.output as Json | null | undefined;
-    if (output && typeof output.path === 'string') {
-      try {
-        const diff = await readFile(path.join(stores.episodes, output.path));
-        if (sha256(diff) === output.diffSha256)
-          await writeFile(path.join(runDir, 'output.diff'), scrubber.text(diff.toString('utf8')));
-      } catch {
-        // Not retained: labels.output still names its sha256 and size.
-      }
-    }
-
-    // TASK.md from the retained bundle, read without opening the store.
-    const bundle = record?.artifactBundle as Json | undefined;
-    let taskError: string | undefined;
-    if (bundle && typeof bundle.bundleDigest === 'string' && typeof bundle.taskKey === 'string') {
-      const task = await readRetainedTaskFileReadOnly({
-        storeRoot: stores.bundleStoreRoot,
-        bundleDigest: bundle.bundleDigest,
-        taskKey: bundle.taskKey,
-        relativePath: 'TASK.md',
-      }).catch((error: unknown) => {
-        taskError = (error as Error).message;
-        return null;
-      });
-      if (task) await writeFile(path.join(runDir, 'task.md'), scrubber.text(task.toString('utf8')));
-    }
-
-    // Interviews.
-    const interviewDir = path.join(stores.episodes, 'interviews', runId);
-    if (existsSync(interviewDir)) {
-      await mkdir(path.join(runDir, 'interviews'), { recursive: true });
-      for (const name of (await readdir(interviewDir)).filter((entry) => !entry.startsWith('.')))
-        await writeFile(
-          path.join(runDir, 'interviews', scrubber.name(name)),
-          scrubber.text(await readFile(path.join(interviewDir, name), 'utf8')),
+    // One unreadable store file (run record, archive manifest) skips its run, not the export.
+    try {
+      const scrubber = new TraceScrubber(scrubInputs);
+      const runDir = path.join(out, 'runs', scrubber.name(runId));
+      await mkdir(path.join(runDir, 'transcripts'), { recursive: true });
+      const record = await runRecord(stores, runId);
+      const labels = structuredClone((episode.labels ?? {}) as Json);
+      const roles = (labels.roles as Json[] | undefined) ?? [];
+      const modelOf = (contextId: unknown) =>
+        (roles.find((role) => role.contextId === contextId)?.model as string | null) ?? null;
+      if (Array.isArray(labels.cost))
+        labels.cost = (labels.cost as Json[]).map((cost) =>
+          priceCost(
+            {
+              ...cost,
+              inputTokens: (cost.inputTokens as number | null) ?? null,
+              outputTokens: (cost.outputTokens as number | null) ?? null,
+              cacheReadTokens: (cost.cacheReadTokens as number | null) ?? null,
+              usd: (cost.usd as number | null) ?? null,
+              usdSource: (cost.usdSource as 'recorded' | null) ?? null,
+            },
+            modelOf(cost.contextId),
+          ),
         );
-    }
 
-    const grades = latestGrades(await gradeLines(stores, runId));
-    await writeFile(
-      path.join(runDir, 'labels.json'),
-      `${scrubber.text(
-        JSON.stringify({
-          runId,
-          project: episode.project,
-          flowType: episode.flowType,
-          status: episode.status,
-          labels,
-          transcripts,
-          ...(taskError ? { taskError } : {}),
-          externalGrades: grades,
-          grade: record?.grade ?? null,
-          humanGrade: record?.humanGrade ?? null,
-        }),
-      )}\n`,
-    );
-    const counts = { ...scrubber.report(), ...(unmapped ? { unmapped } : {}) };
-    for (const [rule, n] of Object.entries(counts)) allCounts[rule] = (allCounts[rule] ?? 0) + n;
-    await writeFile(path.join(runDir, 'redaction.json'), `${JSON.stringify(counts, null, 2)}\n`);
-    const outcome = (labels as Json).outcome ?? null;
-    runIndex.set(runId, {
-      runId,
-      project: episode.project,
-      flow: episode.flowType,
-      status: episode.status,
-      outcome,
-      infraOnly: (labels as Json).infraOnly ?? null,
-      grades: grades.map((grade) => ({
-        source: grade.source,
-        grader: grade.grader,
-        verdict: grade.verdict,
-      })),
-      transcripts: {
-        present: transcripts.filter((entry) => entry.status === 'present').length,
-        missing: transcripts
-          .filter((entry) => entry.status !== 'present' && entry.status !== 'unsupported')
-          .map((entry) => ({
-            contextId: entry.contextId,
-            sessionKey: entry.sessionKey,
-            reason: entry.reason ?? entry.status,
-          })),
-      },
-      bytes: transcripts.reduce((sum, entry) => sum + (Number(entry.bytes) || 0), 0),
-    });
+      // Transcripts, one per captured session.
+      const transcripts: Json[] = [];
+      let unmapped = 0;
+      for (const agent of ((episode.trajectory as Json | undefined)?.agents as Json[]) ?? []) {
+        const sessions = (agent.sessions as Json[] | undefined) ?? [];
+        for (const session of sessions) {
+          const key = String(session.sessionKey ?? 'session');
+          const label = { contextId: agent.contextId, sessionKey: key, runner: agent.runner };
+          if (session.status === 'unsupported') {
+            transcripts.push({ ...label, status: 'unsupported' });
+            continue;
+          }
+          const bytes =
+            session.status === 'captured' && typeof session.relativeDir === 'string'
+              ? await transcriptBytes(stores, runId, session.relativeDir)
+              : null;
+          if (!bytes) {
+            transcripts.push({
+              ...label,
+              status: 'missing',
+              reason:
+                session.status === 'captured' ? 'not found in the stores' : String(session.status),
+            });
+            totals.missing += 1;
+            continue;
+          }
+          if (typeof session.sha256 === 'string' && sha256(bytes) !== session.sha256) {
+            transcripts.push({ ...label, status: 'sha256-mismatch' });
+            totals.missing += 1;
+            continue;
+          }
+          let lines = bytes.toString('utf8').split('\n');
+          if (agent.runner === 'grok') {
+            const converted = grokToSessionTrace({
+              lines,
+              runId,
+              sessionId: key,
+              runner: String(agent.runner),
+            });
+            lines = converted.lines;
+            unmapped += converted.unmapped;
+          }
+          const file = scrubber.name(`${agent.contextId}-${key}.jsonl`);
+          const target = path.join(runDir, 'transcripts', file);
+          // Written every time, --update included: a recaptured transcript replaces its old copy
+          // and the redaction counts cover every exported file.
+          await writeFile(target, scrubber.text(lines.join('\n')));
+          transcripts.push({ ...label, status: 'present', file, bytes: bytes.byteLength });
+          totals.present += 1;
+        }
+      }
+
+      // The graded diff, kept beside the episode.
+      const output = labels.output as Json | null | undefined;
+      if (output && typeof output.path === 'string') {
+        try {
+          const diff = await readFile(path.join(stores.episodes, output.path));
+          if (sha256(diff) === output.diffSha256)
+            await writeFile(path.join(runDir, 'output.diff'), scrubber.text(diff.toString('utf8')));
+        } catch {
+          // Not retained: labels.output still names its sha256 and size.
+        }
+      }
+
+      // TASK.md from the retained bundle, read without opening the store.
+      const bundle = record?.artifactBundle as Json | undefined;
+      let taskError: string | undefined;
+      if (bundle && typeof bundle.bundleDigest === 'string' && typeof bundle.taskKey === 'string') {
+        const task = await readRetainedTaskFileReadOnly({
+          storeRoot: stores.bundleStoreRoot,
+          bundleDigest: bundle.bundleDigest,
+          taskKey: bundle.taskKey,
+          relativePath: 'TASK.md',
+        }).catch((error: unknown) => {
+          taskError = (error as Error).message;
+          return null;
+        });
+        if (task)
+          await writeFile(path.join(runDir, 'task.md'), scrubber.text(task.toString('utf8')));
+      }
+
+      // Interviews.
+      const interviewDir = path.join(stores.episodes, 'interviews', runId);
+      if (existsSync(interviewDir)) {
+        await mkdir(path.join(runDir, 'interviews'), { recursive: true });
+        for (const name of (await readdir(interviewDir)).filter((entry) => !entry.startsWith('.')))
+          await writeFile(
+            path.join(runDir, 'interviews', scrubber.name(name)),
+            scrubber.text(await readFile(path.join(interviewDir, name), 'utf8')),
+          );
+      }
+
+      const grades = latestGrades(await gradeLines(stores, runId));
+      await writeFile(
+        path.join(runDir, 'labels.json'),
+        `${scrubber.text(
+          JSON.stringify({
+            runId,
+            project: episode.project,
+            flowType: episode.flowType,
+            status: episode.status,
+            labels,
+            transcripts,
+            ...(taskError ? { taskError } : {}),
+            externalGrades: grades,
+            grade: record?.grade ?? null,
+            humanGrade: record?.humanGrade ?? null,
+          }),
+        )}\n`,
+      );
+      const counts = { ...scrubber.report(), ...(unmapped ? { unmapped } : {}) };
+      for (const [rule, n] of Object.entries(counts)) allCounts[rule] = (allCounts[rule] ?? 0) + n;
+      await writeFile(path.join(runDir, 'redaction.json'), `${JSON.stringify(counts, null, 2)}\n`);
+      const outcome = (labels as Json).outcome ?? null;
+      runIndex.set(runId, {
+        runId,
+        project: episode.project,
+        flow: episode.flowType,
+        status: episode.status,
+        outcome,
+        infraOnly: (labels as Json).infraOnly ?? null,
+        grades: grades.map((grade) => ({
+          source: grade.source,
+          grader: grade.grader,
+          verdict: grade.verdict,
+        })),
+        transcripts: {
+          present: transcripts.filter((entry) => entry.status === 'present').length,
+          missing: transcripts
+            .filter((entry) => entry.status !== 'present' && entry.status !== 'unsupported')
+            .map((entry) => ({
+              contextId: entry.contextId,
+              sessionKey: entry.sessionKey,
+              reason: entry.reason ?? entry.status,
+            })),
+        },
+        bytes: transcripts.reduce((sum, entry) => sum + (Number(entry.bytes) || 0), 0),
+      });
+      exported += 1;
+    } catch (error) {
+      skipped.push({ runId, reason: (error as Error).message });
+    }
   }
 
   // The index and README carry run ids, session keys, reasons and the filter: scrubbed too.
@@ -479,7 +502,7 @@ export async function exportRunTraces(
         'Local only. Redaction is a best-effort backstop: review before sharing, even internally.',
         '',
         `Filter: ${JSON.stringify({ project: options.project, flow: options.flow, since: options.since, until: options.until, family: options.family, hasGrade: options.hasGrade ?? false })}`,
-        `Runs in index: ${runIndex.size}; exported this time: ${selected.length}`,
+        `Runs in index: ${runIndex.size}; exported this time: ${exported}`,
         `Transcripts present: ${totals.present}; missing: ${totals.missing}`,
         'Redaction rules: secret-value, publication-pattern, private-key, dsn, email, secret-variable, username, home-path, machine',
         `Redactions this time: ${JSON.stringify(allCounts)}`,
@@ -490,5 +513,10 @@ export async function exportRunTraces(
       ].join('\n'),
     ),
   );
-  return { exported: selected.length, skipped, transcripts: totals };
+  // Redactions in the index and README, which no run's redaction.json counts.
+  await writeFile(
+    path.join(out, 'redaction.json'),
+    `${JSON.stringify({ runs: allCounts, indexAndReadme: indexScrubber.report() }, null, 2)}\n`,
+  );
+  return { exported, skipped, transcripts: totals };
 }

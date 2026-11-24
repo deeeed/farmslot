@@ -41,6 +41,7 @@ const {
   archiveRunnerSessionsForSlotRelease,
   captureRunnerSession,
   captureRunnerSessionBeforeReplay,
+  archiveRefsOf,
   readRunnerSessionArchiveLines,
   runnerSessionArchiveContextDir,
 } = await import('./session-archive.js');
@@ -293,6 +294,30 @@ test('a session the legacy layout captured is not copied again, and legacy is ne
   assert.equal(context.runnerSessionArchives?.[0]?.sessionKey, undefined);
   assert.equal(context.runnerSessionArchive?.sessionKey, undefined);
   assert.ok(!existsSync(path.join(runnerSessionArchiveContextDir(run.id, 'review'), 'old')));
+  // The next capture (slot release, bundle retain) still sees it as legacy: no copy, no new entry.
+  await archiveRunnerSessionsForSlotRelease({ vars, runId: run.id });
+  const again = archives('review');
+  assert.equal(again.runnerSessionArchives?.length, 1);
+  assert.ok(!existsSync(path.join(runnerSessionArchiveContextDir(run.id, 'review'), 'old')));
+  assert.deepEqual(
+    archiveRefsOf(again.runnerSessionArchives, again.runnerSessionArchive).map(
+      (ref) => ref.sessionKey,
+    ),
+    ['legacy'],
+  );
+});
+
+test("the release backstop never copies a warm reviewer's last round again", async (t) => {
+  const { run, session, archives } = await fixture(t);
+  const file = await session('review', 'warm');
+  await captureRunnerSession({ vars, runId: run.id, contextId: 'review', round: 1 });
+  await appendFile(file, line('round two'));
+  await captureRunnerSession({ vars, runId: run.id, contextId: 'review', round: 2 });
+  await archiveRunnerSessionsForSlotRelease({ vars, runId: run.id });
+  assert.deepEqual(
+    archives('review').runnerSessionArchives?.map((ref) => ref.sessionKey),
+    ['warm-r1', 'warm-r2'],
+  );
 });
 
 test('a capture stands when only its manifest copy fails to write', async (t) => {

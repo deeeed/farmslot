@@ -280,9 +280,12 @@ JSONL stays valid, and applies to every file export writes: transcripts,
 `labels.json`, `task.md`, `output.diff`, interviews, `index.jsonl`, `README.md`
 and file names. Rules, in order:
 
-1. The exact values of the farm's configured secrets on the gateway host: provider
-   environment values, gateway and node tokens, and LiteLLM keys, read from the
-   gateway's configuration through the same paths.
+1. The exact values of the farm's configured secrets on the gateway host: the
+   secret-named values of `<home>/providers.env`, the node token
+   (`<home>/node.secret`, or `~/.farmslot-automation/*.secret`), the gateway
+   tokens in the client profiles of `<home>/gateways.json` (the gateway stores only
+   their hashes), the LiteLLM key (`~/.config/litellm/api-key`), and secret-named
+   variables of the exporting shell.
 2. The publication scan's patterns, made replacing.
 3. Private keys: a hex string of 64 or more characters (with or without `0x`)
    that is labelled as a key, meaning a key-like name (`privateKey`, `private_key`,
@@ -301,8 +304,15 @@ and file names. Rules, in order:
 
 Each rule replaces a match in file contents with `[REDACTED:<rule>]`, and in file
 names with `REDACTED-<rule>` (no brackets or colon, which file systems handle
-badly), and counts it in `redaction.json`. A file the scrubber cannot read is left
-out, never exported raw.
+badly), and counts it in the run's `redaction.json`; the export's root
+`redaction.json` totals the runs and counts the index and README. A JSON line is
+scrubbed value by value with its key in view: a string under a secret-like key
+(`*_TOKEN`, `*_SECRET`, `*_PASSWORD`, `privateKey`, `apiKey`, `clientSecret`,
+`accessToken`, `mnemonic` and the like) is replaced whole, keys are scrubbed too
+(two that redact alike stay apart), values under Farmslot's own digest fields skip
+rules 2 and 3, and a line with nothing redacted keeps its exact bytes. A file the
+scrubber cannot read is left out, never exported raw, and one unreadable store
+file skips only its run, with the reason in `README.md`.
 
 Redaction is a best-effort backstop, not a guarantee. An export is for the local
 machine only; sharing it, even internally, needs a human review first.

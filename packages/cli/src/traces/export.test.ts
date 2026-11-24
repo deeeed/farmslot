@@ -319,3 +319,37 @@ test('a date-only --until covers that whole day; a bad date is refused', async (
   });
   assert.throws(() => normalizeTraceRange({ since: 'last week' }), /--since must be an ISO date/);
 });
+
+test('provider values that are not secrets stay; client profile tokens are secrets', async (t) => {
+  const { root, s } = await stores(t);
+  const { traceScrubInputs } = await import('./export.js');
+  await put(
+    path.join(s.home, 'providers.env'),
+    'OPENAI_BASE_URL=https://api.example.test/v1\nDEFAULT_MODEL=claude-opus-5-5\n',
+  );
+  await put(
+    path.join(s.home, 'gateways.json'),
+    JSON.stringify({
+      active: 'local',
+      gateways: { local: { url: 'ws://x', authMode: 'token', secret: 'client-profile-token-1' } },
+    }),
+  );
+  const inputs = await traceScrubInputs(s, path.join(root, 'user'), {});
+  assert.ok(inputs.secretValues.includes('client-profile-token-1'));
+  assert.ok(!inputs.secretValues.includes('claude-opus-5-5'));
+  assert.ok(!inputs.secretValues.includes('https://api.example.test/v1'));
+});
+
+test('one unreadable run record skips its run, and index redactions are counted', async (t) => {
+  const { root, s } = await stores(t);
+  await put(path.join(s.runs, 'run-1.json'), '{not json');
+  const out = path.join(root, 'out');
+  const result = await exportRunTraces({ out }, s);
+  assert.equal(result.exported, 0);
+  assert.match(
+    result.skipped.find((entry) => entry.runId === 'run-1')?.reason ?? '',
+    /not valid JSON/,
+  );
+  const counts = JSON.parse(await readFile(path.join(out, 'redaction.json'), 'utf8'));
+  assert.ok('indexAndReadme' in counts);
+});
