@@ -4,7 +4,7 @@
 //   ... --refresh            retires the host only if all its runners have stopped.
 //   ... --refresh --stop-idle also stops idle live sessions (journals kept, resumable).
 // It never starts a host: the next launch from the gateway or node starts the current runtime.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
@@ -23,9 +23,11 @@ const { values } = parseArgs({
 });
 if (!values.root) throw new Error('--root <native state dir> is required');
 const machine = values.machine ?? 'local';
-const root = path.resolve(
+const given = path.resolve(
   machine === 'local' ? values.root : path.join(values.root, 'nodes', encodeURIComponent(machine)),
 );
+// The supervisor's command line names the real path; a symlinked --root would not match it.
+const root = existsSync(given) ? realpathSync(given) : given;
 const hostFile = path.join(root, 'host.json');
 const client = new NativeSessionClient(root, machine);
 let live;

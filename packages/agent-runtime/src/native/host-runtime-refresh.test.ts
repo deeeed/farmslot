@@ -372,3 +372,56 @@ test('a fenced host answers a steer replayed through send, and the fence lifts i
     await stopNativeStack(fixture);
   }
 });
+
+test('a legacy host without any upgrade fence is still stopped once its sessions are idle', async () => {
+  const fixture = setup({ manualTurns: true });
+  const client = new NativeSessionClient(fixture.root);
+  client.setRefreshPolicy(keepNone);
+  try {
+    const { session } = await skewedHost(fixture, client);
+    await fixture.completeTurn();
+    await until(async () => (await client.inspect('owner', session.id)).state === 'idle');
+    const hostFile = join(fixture.root, 'host.json');
+    const before = readJson<HostIdentity>(hostFile);
+    const legacy: Record<string, unknown> = { ...before };
+    for (const key of [
+      'runtimeVersion',
+      'runtimeBuild',
+      'supportsRuntimeUpgrade',
+      'supportsIdleRunnerUpgrade',
+    ])
+      delete legacy[key];
+    writeFileSync(hostFile, JSON.stringify(legacy));
+
+    assert.deepEqual(await client.refreshStaleHost(), { refreshed: true, busy: [] });
+    await client.warm();
+    assert.notEqual(readJson<HostIdentity>(hostFile).pid, before.pid);
+  } finally {
+    await stopNativeStack(fixture);
+  }
+});
+
+test('an idle-runner fence on a host already fenced for good never lifts that fence', async () => {
+  const fixture = setup({ manualTurns: true });
+  process.env.FARMSLOT_NATIVE_IDLE_FENCE_MS = '300';
+  const client = new NativeSessionClient(fixture.root);
+  try {
+    await client.warm();
+    const host = readJson<HostIdentity>(join(fixture.root, 'host.json'));
+    // No live runner: the plain fence holds for good.
+    assert.deepEqual(await requestHost(host, { method: 'prepareUpgrade', owner: 'owner' }), {
+      idle: true,
+    });
+    assert.deepEqual(
+      await requestHost(host, { method: 'prepareUpgrade', owner: 'owner', idleRunners: true }),
+      { idle: true, busy: [] },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    await assert.rejects(client.create('owner', { runner: 'codex', cwd: fixture.cwd }), {
+      message: /fenced for a runtime upgrade/,
+    });
+  } finally {
+    delete process.env.FARMSLOT_NATIVE_IDLE_FENCE_MS;
+    await stopNativeStack(fixture);
+  }
+});

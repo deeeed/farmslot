@@ -45,6 +45,8 @@ test('an active run’s own worker, CI fix and static review workspace keep the 
     {
       agentContexts: [
         context('dev', 'worker'),
+        context('primary', 'primary-worker'),
+        context('fix-bug', 'fix-bug-worker'),
         context('review', 'reviewer'),
         context('review-fix', 'review-fixer'),
         context('ci-fix', 'ci-fixer'),
@@ -63,11 +65,22 @@ test('an active run’s own worker, CI fix and static review workspace keep the 
     [
       ...needingAPerson(
         [pipeline, workspace],
-        ['worker', 'reviewer', 'review-fixer', 'ci-fixer', 'workspace', 'copilot'],
+        [
+          'worker',
+          'primary-worker',
+          'fix-bug-worker',
+          'reviewer',
+          'review-fixer',
+          'ci-fixer',
+          'workspace',
+          'copilot',
+        ],
       ),
     ],
     [
       ['worker', 'dev worker of run 2137ec52'],
+      ['primary-worker', 'primary worker of run 2137ec52'],
+      ['fix-bug-worker', 'fix-bug worker of run 2137ec52'],
       ['ci-fixer', 'ci-fix worker of run 2137ec52'],
       ['workspace', 'static review workspace of run aaaabbbb'],
     ],

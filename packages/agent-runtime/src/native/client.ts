@@ -35,6 +35,7 @@ import {
 } from './host-runtime.js';
 import { nativeHostUnavailableError } from './host-unavailable.js';
 import { type HostIdentity, type HostRequest, requestHost } from './ipc.js';
+import { currentRuntimeBuild, runtimeBuildIdentity } from './runtime-build.js';
 import { alive, privateDirectory, readJson } from './storage.js';
 import {
   NATIVE_WORKER_CANCEL,
@@ -374,6 +375,12 @@ export class NativeSessionClient {
       throw error;
     }
     if (nativeHostRunsCurrentRuntime(host)) return { refreshed: false, busy: [] };
+    // This service runs code older than its own checkout (updated, not yet restarted): a new
+    // host would start from the checkout and be skewed too, so stopping this one helps nothing.
+    if (runtimeBuildIdentity() !== currentRuntimeBuild())
+      return this.busy(host, [
+        'this service runs older code than its checkout; restart it to take the new runtime',
+      ]);
     if (
       this.lastBusy?.hostPid === host.pid &&
       Date.now() - this.lastBusy.at < NATIVE_REFRESH_BUSY_REUSE_MS
@@ -401,7 +408,7 @@ export class NativeSessionClient {
       return reason ? [`${session.id} (${reason})`] : [];
     });
     if (busy.length) return this.busy(host, busy);
-    const stopped = await stopIdleSessionsNativeHost(this.root, host);
+    const stopped = await stopIdleSessionsNativeHost(this.root, host, live.length);
     if (stopped.stopped) return { refreshed: true, busy: [] };
     return this.busy(
       host,
@@ -423,13 +430,19 @@ export class NativeSessionClient {
       return this.dispatch<T>(request, await this.host(), []);
     if (this.refreshPolicy && NATIVE_ADMISSION_METHODS.includes(request.method)) {
       // A launch checks the host before it counts itself: it never goes to an old host, so
-      // it must not hold that host's refresh, nor another launch's.
+      // it must not hold that host's refresh, nor another launch's. A refresh's outcome
+      // belongs to the caller that asked for it; a failure only ends this wait.
       while (this.refreshing) await this.refreshing.catch(() => undefined);
       const host = await this.host();
       if (!nativeHostRunsCurrentRuntime(host)) {
         const refresh = await this.refreshStaleHost();
-        // Refused before any request reaches the old host (capability errors first).
-        if (!refresh.refreshed) return this.dispatch<T>(request, host, refresh.busy);
+        if (!refresh.refreshed) {
+          // A host that went away meanwhile is replaced by a current one; a skewed host
+          // refuses before any request reaches it (capability errors first).
+          const current = await this.host();
+          if (!nativeHostRunsCurrentRuntime(current))
+            return this.dispatch<T>(request, current, refresh.busy);
+        }
       }
     }
     await this.enterWork();

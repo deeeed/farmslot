@@ -57,14 +57,26 @@ export async function retireIdleNativeHost(root: string, host: HostIdentity): Pr
 export function stopIdleSessionsNativeHost(
   root: string,
   host: HostIdentity,
+  runners: number,
 ): Promise<{ stopped: boolean; busy: string[] }> {
-  return stopNativeHost(root, host, host.supportsIdleRunnerUpgrade ? 'idle-runners' : 'none');
+  return stopNativeHost(
+    root,
+    host,
+    host.supportsIdleRunnerUpgrade ? 'idle-runners' : 'none',
+    // Cleanup stops and confirms each live runner in turn.
+    NATIVE_HOST_CLEANUP_MS + runners * NATIVE_RUNNER_CLEANUP_MS,
+  );
 }
+
+/** How long a host's own cleanup may take, and how much longer each live runner adds. */
+const NATIVE_HOST_CLEANUP_MS = 10_000;
+const NATIVE_RUNNER_CLEANUP_MS = 5_000;
 
 async function stopNativeHost(
   root: string,
   host: HostIdentity,
   fence: 'admissions' | 'idle-runners' | 'none',
+  cleanupMs = NATIVE_HOST_CLEANUP_MS,
 ): Promise<{ stopped: boolean; busy: string[] }> {
   const unverified = { stopped: false, busy: [] };
   const supervisor = readJson<RecordedProcess>(join(root, 'lock', 'owner.json'));
@@ -121,7 +133,7 @@ async function stopNativeHost(
     const timeout = setTimeout(() => {
       check();
       if (!settled) finish(new Error('Native host cleanup timed out; no replacement was started'));
-    }, 10_000);
+    }, cleanupMs);
     watcher.once('error', finish);
     try {
       process.kill(supervisor.pid, 'SIGTERM');
