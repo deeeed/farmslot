@@ -23,13 +23,24 @@ const gatewayPort = Number(process.env.LLM_TIER_PROOF_GATEWAY_PORT ?? 8893);
 const vitePort = Number(process.env.LLM_TIER_PROOF_VITE_PORT ?? 5193);
 const cdpPort = String(process.env.LLM_TIER_PROOF_CDP_PORT ?? 9437);
 const out = process.env.LLM_TIER_PROOF_OUT;
+// The operator's choice: every codex-lb tier on luna. With one id, the per-tier checks below
+// cannot tell one tier from another; tier-models.test.ts covers distinct ids per tier.
 const TIERS = { fast: 'gpt-6-luna', standard: 'gpt-6-luna', smart: 'gpt-6-luna' } as const;
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const step = (text: string) => console.error(`[proof] ${new Date().toISOString()} ${text}`);
+const hasCode = (error: unknown, code: unknown) =>
+  typeof error === 'object' && error !== null && 'code' in error && error.code === code;
+/** Poll until `gone` holds, or fail after `ceilingMs`. */
+async function waitUntil(gone: () => Promise<boolean> | boolean, ceilingMs: number, what: string) {
+  for (const deadline = Date.now() + ceilingMs; !(await gone()); ) {
+    if (Date.now() > deadline) throw new Error(`${what} still running after ${ceilingMs} ms`);
+    await delay(100);
+  }
+}
 
 test('Settings tier models route through the real codex LB', { timeout: 300_000 }, async (t) => {
   assert.ok(
-    out && !path.resolve(out).startsWith(code + path.sep),
+    out && path.resolve(out) !== code && !path.resolve(out).startsWith(code + path.sep),
     'Set LLM_TIER_PROOF_OUT outside the checkout',
   );
   assert.ok(process.env.CODEX_LB_API_KEY, 'The gateway environment must carry CODEX_LB_API_KEY');
@@ -66,7 +77,6 @@ test('Settings tier models route through the real codex LB', { timeout: 300_000 
     await symlink(path.join(code, name), path.join(root, name));
   const profile = path.join(root, 'chrome');
   let vite: ChildProcess | undefined;
-  let viteExited: Promise<unknown> | undefined;
   let http: Server | undefined;
   let closeClient: (() => void) | undefined;
   // One teardown, registered before anything starts. Each step runs even when an earlier one
@@ -85,20 +95,47 @@ test('Settings tier models route through the real codex LB', { timeout: 300_000 
         await execute('pkill', ['-f', profile]);
       } catch (error) {
         // pkill exits 1 when no process matched: Chrome is already gone.
-        if (!(typeof error === 'object' && error !== null && 'code' in error && error.code === 1))
-          throw error;
+        if (!hasCode(error, 1)) throw error;
       }
+      // pkill only signals; Chrome may still be writing its profile under root.
+      await waitUntil(
+        () =>
+          execute('pgrep', ['-f', profile]).then(
+            () => false,
+            (error: unknown) => {
+              // pgrep exits 1 when nothing matches; anything else is a real failure.
+              if (hasCode(error, 1)) return true;
+              throw error;
+            },
+          ),
+        10_000,
+        'Chrome',
+      );
     });
     await attempt('vite', async () => {
-      if (!vite?.pid || !viteExited || vite.exitCode !== null || vite.signalCode !== null) return;
+      const group = vite?.pid;
+      if (!group) return;
+      // yarn starts vite in its own group, and vite can outlive the yarn leader: signal the
+      // whole group whatever the leader's state, then wait for the group, not the leader.
       try {
-        // yarn starts vite in its own group; stop the whole group.
-        process.kill(-vite.pid, 'SIGTERM');
+        process.kill(-group, 'SIGTERM');
       } catch (error) {
-        // ESRCH: the group exited between the check and the signal.
-        if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
+        // ESRCH: the whole group has already exited.
+        if (!hasCode(error, 'ESRCH')) throw error;
       }
-      await viteExited;
+      await waitUntil(
+        () => {
+          try {
+            process.kill(-group, 0);
+            return false;
+          } catch (error) {
+            if (hasCode(error, 'ESRCH')) return true;
+            throw error;
+          }
+        },
+        10_000,
+        'the vite process group',
+      );
     });
     await attempt('gateway', async () => {
       closeClient?.();
@@ -166,8 +203,6 @@ test('Settings tier models route through the real codex LB', { timeout: 300_000 
     stdio: ['ignore', viteLog.fd, viteLog.fd],
     detached: true,
   });
-  const started = vite;
-  viteExited = new Promise((resolve) => started.on('exit', resolve));
   vite.on('exit', (status, signal) => step(`vite exited ${status ?? signal}`));
   const uiUrl = `http://127.0.0.1:${vitePort}`;
   for (let attempt = 0; ; attempt++) {
