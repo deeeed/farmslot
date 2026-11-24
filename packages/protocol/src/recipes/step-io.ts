@@ -414,7 +414,10 @@ export interface CompleteStepTiming {
     heldMs: number;
     /** Waits and holds by kind of holder (`capture`, `media admission`, `repair`, ...). */
     holds?: Record<string, { count: number; waitMs: number; heldMs: number }>;
-    /** Wall time of the store operations inside those holds (`storeWalk`, `payloadCopy`, ...). */
+    /**
+     * Self time of the store operations the step ran (`storeWalk`, `payloadCopy`, ...), held or
+     * not. Each excludes the timed operations nested inside it, so they do not overlap.
+     */
     opsMs?: Record<string, { count: number; ms: number }>;
   };
   /** Processes the step started, by kind (git, gh, ssh, ...), from the shared exec wrapper. */

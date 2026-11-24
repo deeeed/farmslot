@@ -453,7 +453,10 @@ export interface RunBundleLockTime {
   heldMs: number;
   /** Waits and holds by kind of holder (`capture`, `media admission`, `repair`, ...). */
   holds?: Record<string, { count: number; waitMs: number; heldMs: number }>;
-  /** Wall time of the store operations that run inside those holds, by name. */
+  /**
+   * Self time of the store operations the measured caller ran, by name, held or not: each name
+   * excludes the timed operations it ran inside, so the values do not overlap.
+   */
   opsMs?: Record<string, { count: number; ms: number }>;
 }
 
@@ -463,18 +466,35 @@ function holdKind(label: string): string {
   return label.replace(/ of run \S+$/u, '').replace(/\.lock$/u, '') || label;
 }
 
-/** Adds `operation`'s wall time to the measured caller's `opsMs[name]`; otherwise only runs it. */
-async function timeBundleOp<T>(name: string, operation: () => Promise<T>): Promise<T> {
+interface BundleOpFrame {
+  /** Wall time of the timed operations this one awaited directly. */
+  childMs: number;
+}
+
+const bundleOps = new AsyncLocalStorage<BundleOpFrame>();
+
+/**
+ * Adds `operation`'s self time (its wall time minus the timed operations it ran inside) to the
+ * measured caller's `opsMs[name]`, so the names do not count the same time twice. Outside a
+ * measured operation it only runs it. Concurrent children can exceed their parent's wall time;
+ * the parent's self time then reads 0.
+ */
+/** Exported for its tests; store code calls it through the wrappers at the end of this file. */
+export async function timeBundleOp<T>(name: string, operation: () => Promise<T>): Promise<T> {
   const time = lockTimes.getStore();
   if (!time) return operation();
+  const parent = bundleOps.getStore();
+  const frame: BundleOpFrame = { childMs: 0 };
   const start = performance.now();
   try {
-    return await operation();
+    return await bundleOps.run(frame, operation);
   } finally {
+    const elapsed = performance.now() - start;
+    if (parent) parent.childMs += elapsed;
     const ops = (time.opsMs ??= {});
     const entry = (ops[name] ??= { count: 0, ms: 0 });
     entry.count += 1;
-    entry.ms += Math.round(performance.now() - start);
+    entry.ms += Math.max(0, Math.round(elapsed - frame.childMs));
   }
 }
 
