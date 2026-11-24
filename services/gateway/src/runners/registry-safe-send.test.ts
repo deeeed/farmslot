@@ -2855,17 +2855,26 @@ const launch = (t: TestContext, runner = 'claude') =>
     ),
   );
 
-/** A pane that is busy until the readiness deadline, then `atDeadline()` until something is sent. */
-function busyUntilDeadline(t: TestContext, atDeadline: string, afterSend: string) {
+const composer = (text: string) => `────────────────\n❯ ${text}\n────────────────\n`;
+
+/**
+ * A pane that never settles (its status line ticks): `shown` until something is sent, then
+ * `afterSend`. `beforeDeadline` replaces `shown` until the readiness deadline.
+ */
+function unsettledPane(
+  t: TestContext,
+  shown: string,
+  afterSend: string,
+  beforeDeadline: string = shown,
+) {
   startingRunner(t, 0);
   paneTextByCapture = null;
   const deadline = Date.now() + slowStartOptions.readyTimeoutMs;
-  const sendsBefore = () => promptInputCommands.length;
-  let sentAtDeadline: number | null = null;
+  let ticks = 0;
   paneNow = () => {
-    if (Date.now() < deadline) return '✻ Working…\n';
-    sentAtDeadline ??= sendsBefore();
-    return promptInputCommands.length > sentAtDeadline ? afterSend : atDeadline;
+    ticks += 1;
+    if (promptInputCommands.length) return afterSend;
+    return `${Date.now() < deadline ? beforeDeadline : shown}ctx:12% · ${ticks}s\n`;
   };
 }
 
@@ -2877,26 +2886,92 @@ test('a runner that settles after the readiness deadline gets one more window, w
   assert.equal(llmCalls, 0);
 });
 
-test('a runner still busy after the extra window fails with its pane, naming both waits', async (t) => {
+test('a runner still busy after the extra window fails with its pane and snapshot, naming both waits', async (t) => {
   startingRunner(t, 1_000);
   await assert.rejects(
-    launch(t),
-    /within 10s \(and 10s more after the deadline recheck\) in tmux target .*Last pane content:\n✻ Working…/s,
+    withVirtualTime(t, () =>
+      sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', {
+        ...slowStartOptions,
+        blockerSnapshotPath: '/tmp/repo/.artifacts/dispatch-launch.txt',
+      }),
+    ),
+    /within 10s \(and 10s more after the deadline\) in tmux target .*Snapshot: \/tmp\/repo\/\.artifacts\/dispatch-launch\.txt\..*Last pane content:\n✻ Working…/s,
   );
+  assert.ok(callOrder.includes('python:write'), 'the ready-timeout snapshot was written');
   assert.equal(callOrder.includes('tmux:send'), false);
   assert.equal(llmCalls, 0);
 });
 
-test('an instruction still in the input line at the deadline gets one submit key and no resend', async (t) => {
+test('the instruction in the live composer at the deadline is submitted once by delivery, not retyped', async (t) => {
   promptInputCommands.length = 0;
-  busyUntilDeadline(t, `❯ ${message}\n`, `⏺ Reading TASK.md\n✻ Working…\n`);
+  unsettledPane(t, composer(message), '⏺ Reading TASK.md\n✻ Working…\n');
   await launch(t);
   assert.equal(callOrder.filter((entry) => entry === 'tmux:send').length, 1);
   assert.match(promptInputCommands[0]!, /send-keys -t '%1' Enter/);
-  assert.equal(
-    callOrder.includes('tmux:send-literal'),
-    false,
-    'the instruction is not typed again',
-  );
+  assert.equal(callOrder.includes('tmux:send-literal'), false, 'the instruction is not retyped');
   assert.equal(llmCalls, 0);
+});
+
+test('an authoritative idle hook at the deadline hands a never-settling pane to delivery', async (t) => {
+  unsettledPane(t, '✻ Working…\n', '⏺ Reading TASK.md\n✻ Working…\n');
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  await launch(t);
+  assert.ok(callOrder.includes('tmux:send-literal'), 'the prompt was delivered');
+  assert.equal(llmCalls, 0);
+});
+
+for (const [why, pane, reading] of [
+  [
+    'a permission dialog naming the task file',
+    'Do you want to make this edit to TASK.md?\n❯ 1. Yes\n  2. No\n\nEsc to cancel\n',
+    null,
+  ],
+  [
+    'an operator draft in the composer',
+    `⏺ Read TASK.md\n${composer('wait, use the other branch')}`,
+    null,
+  ],
+  ['an awaiting-input hook reading', composer(message), 'awaiting-input'],
+] as const)
+  test(`nothing is submitted at the deadline over ${why}`, async (t) => {
+    promptInputCommands.length = 0;
+    unsettledPane(t, `✻ Working…\n${pane}`, pane);
+    if (reading)
+      activityReading = {
+        value: reading,
+        source: 'hook',
+        confidence: 'high',
+        observedAt: Date.now(),
+      };
+    await assert.rejects(launch(t), /and 10s more after the deadline/);
+    assert.equal(callOrder.includes('tmux:send'), false);
+  });
+
+test('a trust prompt at the deadline gets no submit key; the loop resolves it, then delivers', async (t) => {
+  promptInputCommands.length = 0;
+  unsettledPane(
+    t,
+    ' Accessing workspace:\n\n /tmp/repo\n\n Quick safety check: Is this a project you created or one you trust?\n\n ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel\n',
+    '❯\nctx:12%\n',
+    '✻ Working…\n',
+  );
+  await launch(t);
+  // The fixture counts the trust key's echo as the prompt's acknowledgement; only the keys matter.
+  assert.match(promptInputCommands[0]!, /'Down' 'Enter'/, 'the detector key');
+  assert.equal(
+    promptInputCommands.some((command) => /send-keys -t '%1' Enter$/.test(command.trim())),
+    false,
+    'no bare submit key over the trust prompt',
+  );
+});
+
+test('a refused submit at the deadline handover fails the delivery instead of waiting', async (t) => {
+  promptInputCommands.length = 0;
+  unsettledPane(t, composer(message), composer(message));
+  failedPromptSends = 1;
+  t.after(() => {
+    failedPromptSends = 0;
+  });
+  await assert.rejects(launch(t));
+  assert.equal(callOrder.filter((entry) => entry === 'tmux:send').length, 1);
 });

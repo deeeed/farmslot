@@ -7,6 +7,7 @@ import { piProviderEnvironment } from '../../../../scripts/runners/pi-farmslot-p
 import { resolvePiBinary, resolvePiModel } from './launch-command.js';
 import {
   runnerPaneContainsInstruction,
+  runnerPaneHasBufferedInstruction as runnerComposerHoldsInstruction,
   runnerPaneHasQueuedInstruction,
   runnerPaneWithoutPromptSuggestion,
 } from './runner-pane-input.js';
@@ -113,7 +114,11 @@ import type {
   RunnerTaskProgressReader,
   SlotVars,
 } from './observability-types.js';
-import { lineHasAuthBlockerPhrase, readPaneStateFromCapture } from './pane-state-script.js';
+import {
+  lineHasAuthBlockerPhrase,
+  paneOpenQuestion,
+  readPaneStateFromCapture,
+} from './pane-state-script.js';
 import { createPiHookObservability } from './pi-observability.js';
 import {
   type LaunchAckSignalSnapshot,
@@ -1767,9 +1772,9 @@ export function runnerLaunchBlockerAutoActionKey(
  * Captures the pane untruncated (a `tail -80` window is what hid the prompt
  * from the deterministic detector in the first place) and sends the keystroke
  * the detector derives from that capture — never a key inferred from an older
- * pane, which could confirm the wrong UI
- * after a pane transition. `exec` runs a tmux subcommand on the slot; injected
- * so tests can pin target, key, and the no-evidence-no-send rule.
+ * pane, which could confirm the wrong UI after a pane transition. `exec` runs a
+ * tmux subcommand on the slot; injected so tests can pin target, key, and the
+ * no-evidence-no-send rule.
  */
 type LaunchBlockerCommand = (
   command: string,
@@ -3815,24 +3820,37 @@ export async function sendRunnerPostLaunchPrompt(
   let codexUpdatePromptAttempts = 0;
   const maxBlockerAutoAttempts = 2;
   const snapshottedBlockers = new Set<string>();
-  // At the deadline an instruction still sitting in the input line gets the submit key once (the
-  // loop already ran the launch-blocker detector on every full capture), and the hooks-first
-  // stable-pane rule gets one more readiness window. No model is asked.
+  // At the deadline, deterministic evidence alone may still hand the runner to delivery: an
+  // authoritative idle hook reading (a pane with a ticking status line never stabilises), or the
+  // exact instruction in the live composer, which delivery then submits through its own record.
+  // A launch blocker, an open question or a busy or awaiting-input hook reading hands over nothing.
+  // Otherwise the stable-pane rule gets one more readiness window. No model is asked.
   let deadlineActed = false;
   const actAtDeadline = async (): Promise<boolean> => {
     if (deadlineActed) return false;
     deadlineActed = true;
-    const pane = await captureTmuxPane(vars, target, 90);
-    if (
-      runnerPaneShouldSubmitExistingInstruction(pane, message, marker, runner, {
-        allowMarkerOnly: true,
-      })
-    ) {
-      const key = runnerPromptSubmitKey(runner);
+    const pane = await captureTmuxPane(vars, target, 90, true);
+    const hook = await readRunnerActivityFromObservability(vars, target, runner);
+    const hookActivity =
+      isObservabilityReadingAuthoritative(hook) && hook.value !== 'unknown' ? hook.value : null;
+    const plainPane = pane.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
+    const handover =
+      !detectRunnerLaunchBlocker(plainPane, runner) &&
+      !paneOpenQuestion(plainPane) &&
+      (hookActivity
+        ? !runnerActivityIsBusy(hookActivity)
+        : // Delivery must also read it as a buffered instruction, or it would type it again.
+          runnerComposerHoldsInstruction(pane, message) &&
+          runnerPaneShouldSubmitExistingInstruction(plainPane, message, marker, runner));
+    if (handover) {
       console.log(
-        `[${logPrefix}] the delivered instruction is still in the input line of ${target} at the readiness deadline; sending ${key} once`,
+        `[${logPrefix}] ${target} handed to delivery at the readiness deadline: ${
+          hookActivity ? `hook reports ${hookActivity}` : 'the instruction is in the live composer'
+        }`,
       );
-      await execRunnerKeys(vars, target, runner, key);
+      ready = true;
+      lastPane = plainPane;
+      return false;
     }
     readyDeadline = Date.now() + readyTimeoutMs;
     console.warn(
@@ -4081,7 +4099,7 @@ export async function sendRunnerPostLaunchPrompt(
     }
     throw new Error(
       `Runner launch (${runner}) did not reach a stable ready state within ${readyTimeoutMs / 1000}s` +
-        `${deadlineActed ? ` (and ${readyTimeoutMs / 1000}s more after the deadline recheck)` : ''} in tmux target ${target}. ` +
+        `${deadlineActed ? ` (and ${readyTimeoutMs / 1000}s more after the deadline)` : ''} in tmux target ${target}. ` +
         `Prompt delivery aborted to avoid sending into a half-booted runner TUI.${snapshotNote}\n` +
         `Last pane content:\n${timeoutPane}`,
     );
