@@ -1247,6 +1247,7 @@ async function runNativeReviewAttempt(
       }
     }
     let stopped = true;
+    let stopConfirmed = false;
     if (
       !isUncertainReviewerOperation(failure) &&
       context?.nativeSession &&
@@ -1260,6 +1261,7 @@ async function runNativeReviewAttempt(
           admit();
           await cancelNativeWorkerContext(runId, context!);
         });
+        stopConfirmed = true;
       } catch (stopError) {
         stopped = false;
         primaryFailure = new AggregateError(
@@ -1274,9 +1276,10 @@ async function runNativeReviewAttempt(
     // of a cold review of the whole change (961d55d3). The verdict's head, loop and artifacts
     // stay those of `retained`; only the session holder is this context.
     if (
-      stopped &&
+      stopConfirmed &&
       retained &&
       context?.runnerSessionId === retained.runnerSessionId &&
+      !(failure instanceof NativeReviewResumeFailure) &&
       !isTerminalReviewArtifactError(failure) &&
       !isUncertainReviewerOperation(failure) &&
       nativeReviewOperationIsCurrent() &&
@@ -1284,7 +1287,7 @@ async function runNativeReviewAttempt(
       !isTerminalRunStatus(run.status) &&
       (run.engineState?.generation ?? 0) === generation
     )
-      registerWarmReviewerSession({ ...retained, contextId, windowName: contextId });
+      registerWarmReviewerSession({ ...retained, runId, contextId, windowName: contextId });
     // Failed/no-verdict conversations still consumed tokens. Capture only a settled,
     // current binding; an uncertain or superseded attempt remains an offline repair.
     if (

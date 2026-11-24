@@ -1,3 +1,5 @@
+import type { NativeSessionEvent } from '@farmslot/protocol';
+
 /**
  * While a tool call is open the reviewer is waiting on it, not stuck: the silence allowed is this
  * many inactivity limits, still measured from the last progress, so a hung tool stays bounded.
@@ -7,11 +9,7 @@
 export const OPEN_TOOL_LIMIT_FACTOR = 3;
 
 /** The events of one reviewer command that show it is working. */
-export interface ReviewerProgressEvent {
-  type: string;
-  at: string;
-  nativeId?: string;
-}
+export type ReviewerProgressEvent = Pick<NativeSessionEvent, 'type' | 'at' | 'nativeId'>;
 
 /** A native reviewer's progress clock: tool starts and ends, and checklist marks. */
 export class ReviewerProgressClock {

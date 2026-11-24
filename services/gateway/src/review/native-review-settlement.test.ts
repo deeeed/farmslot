@@ -947,19 +947,17 @@ test('restart recovery enforces the completion inactivity limit and drains fresh
   assert.equal(completionCommands.length, 1);
 });
 
-test('restart recovery waits on an open tool call up to the open-tool limit', async (t) => {
+/** A finished review read back after a restart, its completion turn still accepted and open. */
+async function recoveredCompletion(t: TestContext) {
   ending = 'completion-turn';
   completionCommands.length = 0;
   const run = await nativeRun(t);
   await review(run.id);
   const context = getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
   const acceptedAt = Date.parse(context.nativeSession!.acceptedAt!);
-  let now = acceptedAt + 600001;
-  t.mock.method(Date, 'now', () => now);
   ending = 'completion-unfinished';
   const control = await import('../runners/native/worker-control.js');
   const monitor = await import('../run-engine/run-monitor.js');
-  const { continueNativeReviewCompletion } = await import('./native-review-completion.js');
   const read = await control.readNativeWorkerSnapshot(run.id, 'review', context.id);
   const snapshot = {
     ...read,
@@ -970,20 +968,19 @@ test('restart recovery waits on an open tool call up to the open-tool limit', as
     })),
   };
   const probe = await monitor.probeWorkerSignalForRun(run.id, vars.slotId, context);
-  // One tool call started as the turn began and has not ended.
-  completionActivityPages = [
-    [
-      {
-        nativeId: 'toolu_long',
-        sessionId: context.nativeSession!.sessionId,
-        generation: context.nativeSession!.generation!,
-        commandId: context.nativeCommandId!,
-        sequence: 1,
-        at: new Date(acceptedAt).toISOString(),
-        type: 'tool.started',
-      },
-    ],
-  ];
+  const toolEvent = (
+    type: 'tool.started' | 'tool.completed',
+    at: number,
+    sequence: number,
+  ): NativeSessionEvent => ({
+    nativeId: 'toolu_long',
+    sessionId: context.nativeSession!.sessionId,
+    generation: context.nativeSession!.generation!,
+    commandId: context.nativeCommandId!,
+    sequence,
+    at: new Date(at).toISOString(),
+    type,
+  });
   t.after(() => {
     completionActivityPages = undefined;
   });
@@ -996,9 +993,34 @@ test('restart recovery waits on an open tool call up to the open-tool limit', as
     assertCurrent: () => {},
     enforceProgressTimeout: true,
   };
+  return { acceptedAt, toolEvent, input };
+}
+
+test('restart recovery waits on an open tool call up to the open-tool limit', async (t) => {
+  const { acceptedAt, toolEvent, input } = await recoveredCompletion(t);
+  let now = acceptedAt + 600001;
+  t.mock.method(Date, 'now', () => now);
+  const { continueNativeReviewCompletion } = await import('./native-review-completion.js');
+  // One tool call started as the turn began and has not ended.
+  completionActivityPages = [[toolEvent('tool.started', acceptedAt, 1)]];
   assert.equal(await continueNativeReviewCompletion(input), false);
   now = acceptedAt + 1800001;
-  await assert.rejects(continueNativeReviewCompletion(input), /inactivity limit/);
+  await assert.rejects(continueNativeReviewCompletion(input), /exceeded its open-tool limit/);
+});
+
+test('restart recovery reads every page before it trusts an open tool call', async (t) => {
+  const { acceptedAt, toolEvent, input } = await recoveredCompletion(t);
+  t.mock.method(Date, 'now', () => acceptedAt + 17 * 60_000);
+  const { continueNativeReviewCompletion } = await import('./native-review-completion.js');
+  // The tool opened on the first page closed on the second, eleven idle minutes ago.
+  completionActivityPages = [
+    [toolEvent('tool.started', acceptedAt + 5 * 60_000, 1)],
+    [toolEvent('tool.completed', acceptedAt + 6 * 60_000, 2)],
+  ];
+  await assert.rejects(
+    continueNativeReviewCompletion(input),
+    /exceeded its checklist\/tool inactivity limit/,
+  );
 });
 
 test('an accepted reviewer with no native turn reports never started', async (t) => {

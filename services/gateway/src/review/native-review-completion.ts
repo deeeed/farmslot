@@ -99,28 +99,33 @@ export async function continueNativeReviewCompletion(
       ? (probe.signal?.checklistTiming?.events ?? [])
       : [])
       progress.record(event.checkedAt);
-    let page = snapshot;
-    while (progress.expired()) {
-      for (const event of page.events) {
-        if (
-          event.sessionId === context.nativeSession!.sessionId &&
-          event.commandId === context.nativeSession!.commandId &&
-          event.generation === context.nativeSession!.generation
-        ) {
-          if (event.type === 'command.accepted') progress.record(event.at);
-          else progress.observe(event);
+    // Only the whole history can say the reviewer is idle: a later page may close an open tool,
+    // which shortens its limit again.
+    if (progress.expired()) {
+      for (let page = snapshot; ; ) {
+        for (const event of page.events) {
+          if (
+            event.sessionId === context.nativeSession!.sessionId &&
+            event.commandId === context.nativeSession!.commandId &&
+            event.generation === context.nativeSession!.generation
+          ) {
+            if (event.type === 'command.accepted') progress.record(event.at);
+            else progress.observe(event);
+          }
         }
+        if (!page.hasMore) break;
+        page = await readNativeWorkerSnapshot(runId, 'review', context.id, {
+          after: page.cursor,
+          limit: 500,
+        });
+        current();
       }
-      if (!progress.expired()) break;
-      if (!page.hasMore)
+      if (progress.expired())
         throw new NativeReviewCompletionError(
-          'Native reviewer completion turn exceeded its checklist/tool inactivity limit',
+          progress.toolOpen
+            ? 'Native reviewer completion turn exceeded its open-tool limit'
+            : 'Native reviewer completion turn exceeded its checklist/tool inactivity limit',
         );
-      page = await readNativeWorkerSnapshot(runId, 'review', context.id, {
-        after: page.cursor,
-        limit: 500,
-      });
-      current();
     }
   }
   if (adopted) return false;
