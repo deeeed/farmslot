@@ -309,8 +309,8 @@ even when the other fails.
   (written last) is older than the retention age MUST move to
   `FARMSLOT_RUN_ARCHIVE_ROOT` under the archive key `slot-scaffolding-<slot>`,
   journaled in `<archive-root>/slot-scaffolding-<slot>/manifest.json` exactly as a
-  run's storage manifest is, and restored the same way. A collection without `manifest.json` is
-  incomplete and stays. Nothing is deleted.
+  run's storage manifest is, and restored the same way. A collection without
+  `manifest.json` is incomplete and stays. Nothing is deleted.
 
 When the archive root is unavailable (an unmounted volume, a failed write probe),
 the scaffolding move MUST skip, leave every collection in place, and raise a
