@@ -20,7 +20,7 @@ A native host is the detached supervisor and host process that runs native runne
   - A request from the gateway that adds work (a launch, a message, a compaction) and is already on its way to the host also holds it.
   - Hosts from this version onward fence admissions and new input atomically before they stop, and name any session that is still busy. If the stop doesn't follow within a minute, the fence lifts. An older host can't be fenced while a runner is live; the gateway relies on its own census and request count. A legacy host with no upgrade fence at all is stopped the same way once its sessions are idle. A request from another process on the same state directory, such as the manual script below or a CLI command pointed at the gateway's root, could still reach it in between.
 
-After a checkout update, a gateway that hasn't restarted yet runs older code than its checkout. It refuses to refresh then, because a host started from the checkout would be skewed against it too, and the error says to restart the gateway.
+After a checkout update, a gateway that hasn't restarted yet runs older code than its checkout (it reads its own build when it starts). It refuses to refresh then, because a host started from the checkout would be skewed against it too, and the error says to restart the gateway.
 
 A host with a busy session keeps running. New launches fail, and the error lists the busy sessions. Once they finish, the next launch, or the next gateway start, refreshes the host. A node refreshes its host only when the node starts, and only once every runner has stopped.
 

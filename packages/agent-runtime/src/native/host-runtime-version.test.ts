@@ -10,6 +10,7 @@ import { RUNTIME_VERSION } from '../version.js';
 
 import { NativeSessionClient } from './client.js';
 import { setup, stopNativeStack, until } from './durability.test-support.js';
+import { nativeIdleStopCleanupMs } from './host-runtime.js';
 import { type HostIdentity, requestHost } from './ipc.js';
 import { currentRuntimeBuild, runtimeBuildIdentity } from './runtime-build.js';
 import { readJson } from './storage.js';
@@ -244,4 +245,9 @@ test('an acknowledged upgrade fence refuses late admission through host IPC and 
   } finally {
     await stopNativeStack(fixture);
   }
+});
+
+test('the idle stop waits longer for each live runner the supervisor stops in turn', () => {
+  assert.equal(nativeIdleStopCleanupMs(0), 10_000);
+  assert.equal(nativeIdleStopCleanupMs(3), 55_000);
 });

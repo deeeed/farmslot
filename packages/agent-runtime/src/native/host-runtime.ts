@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, watch } from 'node:fs';
+import { existsSync, realpathSync, watch } from 'node:fs';
 import { join } from 'node:path';
 
 import { RUNTIME_VERSION } from '../version.js';
@@ -63,14 +63,34 @@ export function stopIdleSessionsNativeHost(
     root,
     host,
     host.supportsIdleRunnerUpgrade ? 'idle-runners' : 'none',
-    // Cleanup stops and confirms each live runner in turn.
-    NATIVE_HOST_CLEANUP_MS + runners * NATIVE_RUNNER_CLEANUP_MS,
+    nativeIdleStopCleanupMs(runners),
   );
 }
 
 /** How long a host's own cleanup may take, and how much longer each live runner adds. */
 const NATIVE_HOST_CLEANUP_MS = 10_000;
-const NATIVE_RUNNER_CLEANUP_MS = 5_000;
+/** Each runner's cleanup takes a process-tree census and two captures, each allowed 5 s. */
+const NATIVE_RUNNER_CLEANUP_MS = 15_000;
+
+/** The cleanup wait for a stop with live runners: the supervisor stops them one by one. */
+export function nativeIdleStopCleanupMs(runners: number): number {
+  return NATIVE_HOST_CLEANUP_MS + runners * NATIVE_RUNNER_CLEANUP_MS;
+}
+
+/**
+ * The supervisor's command line ends with the state directory it was started on, spelled as
+ * its client resolved it. Another spelling of the same directory, through a symlink, matches.
+ */
+function startedOn(command: string, root: string): boolean {
+  if (command.endsWith(` ${root}`)) return true;
+  const real = realpathSync(root);
+  // A path may contain spaces: try each suffix that starts an absolute path.
+  for (let at = command.indexOf(' /'); at !== -1; at = command.indexOf(' /', at + 1)) {
+    const candidate = command.slice(at + 1);
+    if (existsSync(candidate) && realpathSync(candidate) === real) return true;
+  }
+  return false;
+}
 
 async function stopNativeHost(
   root: string,
@@ -94,7 +114,7 @@ async function stopNativeHost(
     timeout: 5_000,
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
-  if (!command.includes('/native/supervisor.') || !command.endsWith(` ${root}`)) return unverified;
+  if (!command.includes('/native/supervisor.') || !startedOn(command, root)) return unverified;
   const current = readJson<HostIdentity>(join(root, 'host.json'));
   if (current.pid !== host.pid || current.token !== host.token) return unverified;
 

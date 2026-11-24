@@ -1,6 +1,6 @@
 // @farmslot:serial. Uses an owned detached host and OS process cleanup.
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 
@@ -40,8 +40,13 @@ test('a host on an older runtime whose live sessions are idle refreshes; they wa
     assert.notEqual(saved.processStopped, true, 'the idle runner is still live');
     const journal = join(fixture.root, 'sessions', session.id + '.journal');
     const before = skew(fixture);
+    // A client reaching the state directory through a symlink verifies the same supervisor.
+    const link = join(fixture.cwd, 'state-link');
+    symlinkSync(fixture.root, link);
+    const viaLink = new NativeSessionClient(link);
+    viaLink.setRefreshPolicy(keepNone);
 
-    assert.deepEqual(await client.refreshStaleHost(), { refreshed: true, busy: [] });
+    assert.deepEqual(await viaLink.refreshStaleHost(), { refreshed: true, busy: [] });
 
     // No host runs until the next launch, which starts the current runtime.
     const next = await client.create('owner', { runner: 'codex', cwd: fixture.cwd });
@@ -392,23 +397,31 @@ test('a legacy host without any upgrade fence is still stopped once its sessions
     ])
       delete legacy[key];
     writeFileSync(hostFile, JSON.stringify(legacy));
+    const journal = join(fixture.root, 'sessions', session.id + '.journal');
 
     assert.deepEqual(await client.refreshStaleHost(), { refreshed: true, busy: [] });
     await client.warm();
     assert.notEqual(readJson<HostIdentity>(hostFile).pid, before.pid);
+    assert.equal((await client.inspect('owner', session.id)).state, 'failed');
+    assert.ok(readFileSync(journal).length > 0, 'the stopped session keeps its journal');
   } finally {
     await stopNativeStack(fixture);
   }
 });
 
-test('an idle-runner fence on a host already fenced for good never lifts that fence', async () => {
+test('a fence for good is never lifted by an idle-runner fence, before or after it', async () => {
   const fixture = setup({ manualTurns: true });
   process.env.FARMSLOT_NATIVE_IDLE_FENCE_MS = '300';
   const client = new NativeSessionClient(fixture.root);
   try {
     await client.warm();
     const host = readJson<HostIdentity>(join(fixture.root, 'host.json'));
-    // No live runner: the plain fence holds for good.
+    // An idle-runner fence arms its timer; the plain fence that follows (no live runner)
+    // holds for good, and so does a later idle-runner request.
+    assert.deepEqual(
+      await requestHost(host, { method: 'prepareUpgrade', owner: 'owner', idleRunners: true }),
+      { idle: true, busy: [] },
+    );
     assert.deepEqual(await requestHost(host, { method: 'prepareUpgrade', owner: 'owner' }), {
       idle: true,
     });
@@ -422,6 +435,26 @@ test('an idle-runner fence on a host already fenced for good never lifts that fe
     });
   } finally {
     delete process.env.FARMSLOT_NATIVE_IDLE_FENCE_MS;
+    await stopNativeStack(fixture);
+  }
+});
+
+test('a service on older code than its checkout leaves the host alone and says to restart', async () => {
+  const fixture = setup({ manualTurns: true });
+  const client = new NativeSessionClient(fixture.root, 'local', () => 'a-newer-checkout');
+  client.setRefreshPolicy(keepNone);
+  try {
+    const { session } = await skewedHost(fixture, client);
+    await fixture.completeTurn();
+    await until(async () => (await client.inspect('owner', session.id)).state === 'idle');
+    const before = skew(fixture);
+
+    await assert.rejects(client.create('owner', { runner: 'codex', cwd: fixture.cwd }), {
+      message: /runs older code than its checkout: restart it/,
+    });
+    assert.equal(readJson<HostIdentity>(join(fixture.root, 'host.json')).pid, before.pid);
+    assert.notEqual((await client.inspect('owner', session.id)).processStopped, true);
+  } finally {
     await stopNativeStack(fixture);
   }
 });

@@ -144,11 +144,19 @@ export class NativeSessionClient {
   private inFlight = 0;
   /** Journal file name to owner: each journal's first line is read once. */
   private readonly journalOwners = new Map<string, string>();
+  /** Whether this process runs older code than its checkout, rechecked at most every 5 s. */
+  private checkoutChecked?: { at: number; older: boolean };
+  /**
+   * @param checkoutBuild The runtime build in the checkout on disk, which a new host would run.
+   */
   constructor(
     root = currentFarmPaths('node').state.nativeSessions,
     readonly executionNodeId = 'local',
+    private readonly checkoutBuild: () => string = runtimeBuildIdentity,
   ) {
     this.root = resolve(root);
+    // This process's build is read now, before a checkout update can change the files under it.
+    currentRuntimeBuild();
   }
   /** Public target metadata only; never starts a host or exposes its IPC credential. */
   metadata() {
@@ -353,8 +361,25 @@ export class NativeSessionClient {
     return live;
   }
 
-  /** The version-skew error, saying when this client refreshes the host on its own. */
+  /**
+   * This service runs code older than its own checkout (updated, not yet restarted): a new host
+   * would start from the checkout and be skewed too. Hashing the checkout takes about 10 ms.
+   */
+  private olderThanCheckout(): boolean {
+    const now = Date.now();
+    if (!this.checkoutChecked || now - this.checkoutChecked.at >= NATIVE_REFRESH_BUSY_REUSE_MS)
+      this.checkoutChecked = { at: now, older: this.checkoutBuild() !== currentRuntimeBuild() };
+    return this.checkoutChecked.older;
+  }
+
+  /** The version-skew error, saying when the host is refreshed. */
   private skew(host: HostIdentity, busy: readonly string[]): Error {
+    if (this.olderThanCheckout())
+      return nativeHostVersionSkew(
+        host,
+        [],
+        'This service runs older code than its checkout: restart it to take the new runtime and refresh the host.',
+      );
     return nativeHostVersionSkew(
       host,
       busy,
@@ -375,17 +400,14 @@ export class NativeSessionClient {
       throw error;
     }
     if (nativeHostRunsCurrentRuntime(host)) return { refreshed: false, busy: [] };
-    // This service runs code older than its own checkout (updated, not yet restarted): a new
-    // host would start from the checkout and be skewed too, so stopping this one helps nothing.
-    if (runtimeBuildIdentity() !== currentRuntimeBuild())
-      return this.busy(host, [
-        'this service runs older code than its checkout; restart it to take the new runtime',
-      ]);
     if (
       this.lastBusy?.hostPid === host.pid &&
       Date.now() - this.lastBusy.at < NATIVE_REFRESH_BUSY_REUSE_MS
     )
       return this.lastBusy.result;
+    // Stopping the host helps nothing: its replacement would be skewed too. The skew error
+    // says to restart the service.
+    if (this.olderThanCheckout()) return { refreshed: false, busy: [] };
     // A request adding work is already on its way: stopping now could cut it off. It ends
     // soon, so this answer is not reused like a census.
     if (this.inFlight)
@@ -428,26 +450,27 @@ export class NativeSessionClient {
     // Reads, interrupts, closes and answers add no work; they never wait for a refresh.
     if (!NATIVE_WORK_METHODS.includes(request.method))
       return this.dispatch<T>(request, await this.host(), []);
+    let host: HostIdentity | undefined;
     if (this.refreshPolicy && NATIVE_ADMISSION_METHODS.includes(request.method)) {
       // A launch checks the host before it counts itself: it never goes to an old host, so
       // it must not hold that host's refresh, nor another launch's. A refresh's outcome
-      // belongs to the caller that asked for it; a failure only ends this wait.
+      // belongs to the caller that asked for it, so its error is not this launch's; the
+      // launch reads the host again below.
       while (this.refreshing) await this.refreshing.catch(() => undefined);
-      const host = await this.host();
+      host = await this.host();
       if (!nativeHostRunsCurrentRuntime(host)) {
         const refresh = await this.refreshStaleHost();
-        if (!refresh.refreshed) {
-          // A host that went away meanwhile is replaced by a current one; a skewed host
-          // refuses before any request reaches it (capability errors first).
-          const current = await this.host();
-          if (!nativeHostRunsCurrentRuntime(current))
-            return this.dispatch<T>(request, current, refresh.busy);
-        }
+        // A stopped or vanished host is replaced by a current one; a skewed host refuses
+        // before any request reaches it (capability errors first).
+        host = await this.host();
+        if (!nativeHostRunsCurrentRuntime(host))
+          return this.dispatch<T>(request, host, refresh.busy);
       }
     }
-    await this.enterWork();
+    // A refresh that ran while this request waited may have stopped the host read above.
+    if (await this.enterWork()) host = undefined;
     try {
-      return await this.dispatch<T>(request, await this.host(), []);
+      return await this.dispatch<T>(request, host ?? (await this.host()), []);
     } finally {
       this.inFlight -= 1;
     }
@@ -456,11 +479,14 @@ export class NativeSessionClient {
   /**
    * Count a request that adds work, once no refresh is deciding: the count is taken in the
    * same tick the wait ends, so a refresh that starts later sees it and leaves the host alone.
+   * Returns whether it waited for a refresh.
    */
-  private async enterWork(): Promise<void> {
+  private async enterWork(): Promise<boolean> {
+    const waited = this.refreshing !== undefined;
     // A refresh's outcome belongs to the caller that asked for it; a failure only ends this wait.
     while (this.refreshing) await this.refreshing.catch(() => undefined);
     this.inFlight += 1;
+    return waited;
   }
 
   private async dispatch<T>(
