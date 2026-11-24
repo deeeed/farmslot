@@ -205,6 +205,9 @@ test(
       slots: [
         {
           slot: slotId,
+          // A refreshed fleet row names its machine; slot I/O routes by it (an empty one is refused).
+          machine: vars.machine,
+          project,
           current_run_id: run.id,
           slot_epoch: 1,
           task_file: path.join(repo, taskDir, 'TASK.md'),
