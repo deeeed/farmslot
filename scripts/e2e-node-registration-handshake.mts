@@ -110,7 +110,8 @@ const seeded = (() => {
     new CredentialStoreRuntime({ FARMSLOT_HOME: home }),
     true,
   );
-  const admin = writer.createPrincipal({ type: 'person', displayName: 'proof-admin' }, [
+  // A service principal: a long-lived credential for a person now needs a signed-in session.
+  const admin = writer.createPrincipal({ type: 'service', displayName: 'proof-admin' }, [
     { role: 'admin', scope: { kind: 'global' } },
   ]);
   const owner = writer.createPrincipal({ type: 'person', displayName: 'proof-owner' }, []);
@@ -286,7 +287,7 @@ try {
     allOk =
       record(
         'non-node-credential-refused',
-        'auth.connect with a person credential is refused AUTH_FORBIDDEN with a node-subject action',
+        'auth.connect with a non-node credential is refused AUTH_FORBIDDEN with a node-subject action',
         refusal?.code === 'AUTH_FORBIDDEN' &&
           /node-subject principal/u.test(refusal.message) &&
           /issue a node credential/u.test(refusal.userAction ?? ''),
