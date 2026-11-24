@@ -669,7 +669,7 @@ eligible.
 
 ## Amendment 10: 2026-11-24 run traces as private training data
 
-**Status:** Proposed (2026-11-24). Needs Arthur's approval before implementation.
+**Status:** Accepted by Arthur, 2026-11-24.
 **Builds on:** Amendment 4 (episodes), Amendments 3, 5 and 8 (archival and holds), [ADR-056](056-runner-session-archive.md) (session archives).
 **Amends:** Amendment 4's "No new RPC and no protocol type": this amendment adds three RPCs and additive types.
 **Specification:** [Run traces](../reference/run-traces.md).

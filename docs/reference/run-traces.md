@@ -1,7 +1,7 @@
 # Run traces
 
 Design specification for [ADR-039 Amendment 10](../adr/039-run-portable-bundles.md#amendment-10-2026-11-24-run-traces-as-private-training-data).
-**Status:** Proposed. Nothing here is implemented until the amendment is accepted.
+**Status:** Accepted by Arthur, 2026-11-24. Implementation pending.
 
 A run trace is a run's agent transcripts plus its outcome labels, kept so that past
 runs can train and compare models. It reuses the episode ([Run episodes](run-episodes.md))

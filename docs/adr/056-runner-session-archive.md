@@ -34,7 +34,7 @@ Operators can re-read Claude/Codex/Grok History after the slot forgets the file.
 
 ## Amendment 1: 2026-11-24 capture when each session ends
 
-**Status:** Proposed with [ADR-039 Amendment 10](039-run-portable-bundles.md#amendment-10-2026-11-24-run-traces-as-private-training-data).
+**Status:** Accepted by Arthur, 2026-11-24, with [ADR-039 Amendment 10](039-run-portable-bundles.md#amendment-10-2026-11-24-run-traces-as-private-training-data).
 
 The snapshot is taken when each agent session ends (worker completion, each
 review round and review fix, before a replay or an operator completion replaces
