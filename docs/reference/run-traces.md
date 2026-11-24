@@ -53,15 +53,15 @@ sha256, sizeBytes, capturedAt, answersRound?, reason?}`. A source whose size and
   `session-archives/<run>/<contextId>/transcript.jsonl` with only a single ref, reads
   as a one-element list whose `sessionKey` is `legacy`. That key exists only in
   this list view; it is never written to a ref. Nothing is moved or rewritten.
-- **Readers that change.** The episode writer
-  (`run-completion/run-episode.ts`) lists every session in `trajectory.agents` and
-  [Run episodes](run-episodes.md) documents the per-session shape; the archive read
-  helpers in `runners/session-archive.ts` resolve the path from the ref (above); the
-  run store and agent contexts (`runs/store.ts`, `agents/contexts.ts`) patch the
-  list; list rows (`protocol/runs/list-row.ts`, `list-trim.ts`) trim the list as
-  they trim the single ref; the portable bundle (`protocol/runs/portable-bundle.ts`)
-  strips the list's local paths as it strips the single ref's; the review QA
-  migration (`run-engine/review-qa-migration.ts`) carries the list with the ref.
+- **Readers that change.** The episode writer (`run-completion/run-episode.ts`)
+  lists every session in `trajectory.agents` and [Run episodes](run-episodes.md)
+  documents the per-session shape; the archive read helpers in
+  `runners/session-archive.ts` resolve the path from the ref (above); the run store
+  and agent contexts (`runs/store.ts`, `agents/contexts.ts`) patch the list; list
+  rows (`protocol/runs/list-row.ts`, `list-trim.ts`) trim the list as they trim the
+  single ref; the portable bundle (`protocol/runs/portable-bundle.ts`) strips the
+  list's local paths as it strips the single ref's; the review QA migration
+  (`run-engine/review-qa-migration.ts`) carries the list with the ref.
 - **Atomic write.** The copy goes to a temporary file in the session directory and
   is renamed into place. A failed copy deletes only its temporary file, never a
   previously captured transcript.
