@@ -49,9 +49,7 @@ const ACTIONS: ReadonlySet<PaneClassifierAction> = new Set([
 
 export function parsePaneClassifierResult(text: string): PaneClassifierResult | null {
   const trimmed = text.trim();
-  const jsonText = trimmed.startsWith('{')
-    ? trimmed
-    : (trimmed.match(/\{[\s\S]*\}/)?.[0] ?? '');
+  const jsonText = trimmed.startsWith('{') ? trimmed : (trimmed.match(/\{[\s\S]*\}/)?.[0] ?? '');
   if (!jsonText) return null;
 
   let parsed: unknown;

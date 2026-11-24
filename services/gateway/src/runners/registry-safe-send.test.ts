@@ -2856,7 +2856,15 @@ const slowStartOptions = {
 test('an unavailable pane classifier gives the stable-pane rule one more readiness window', async (t) => {
   startingRunner(t, 13);
   await withVirtualTime(t, () =>
-    sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', slowStartOptions),
+    sendRunnerPostLaunchPrompt(
+      vars,
+      target,
+      'claude',
+      message,
+      'TASK.md',
+      '[test]',
+      slowStartOptions,
+    ),
   );
   assert.equal(classifierCalls, 1);
   assert.ok(callOrder.includes('tmux:send'), 'the prompt was delivered after the extended wait');
@@ -2866,7 +2874,15 @@ test('a runner still busy after the outage wait fails naming both waits and the 
   startingRunner(t, 1_000);
   await assert.rejects(
     withVirtualTime(t, () =>
-      sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', slowStartOptions),
+      sendRunnerPostLaunchPrompt(
+        vars,
+        target,
+        'claude',
+        message,
+        'TASK.md',
+        '[test]',
+        slowStartOptions,
+      ),
     ),
     /within 10s \(and 10s more while the pane classifier was unavailable\) in tmux target/,
   );
@@ -2884,7 +2900,15 @@ test('an available pane classifier keeps the single readiness window and is aske
   };
   await assert.rejects(
     withVirtualTime(t, () =>
-      sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', slowStartOptions),
+      sendRunnerPostLaunchPrompt(
+        vars,
+        target,
+        'claude',
+        message,
+        'TASK.md',
+        '[test]',
+        slowStartOptions,
+      ),
     ),
     /within 10s in tmux target .*Pane classifier: busy\/0.9/s,
   );
