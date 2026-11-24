@@ -10,6 +10,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  watch,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -32,6 +33,41 @@ export { finish };
  * a time, never overlapping each other or the parallel lanes.
  */
 export const SERIAL_PRAGMA = '@farmslot:serial';
+
+/** The checkout's shared pool directory: the default FARMSLOT_POOL_DIR of every test file. */
+const SHARED_POOL = resolve(import.meta.dirname, '../../pool');
+
+/**
+ * Watches the shared pool directory for the length of a run. Test files run in parallel in one
+ * checkout, so a pool file one of them creates there reaches every other file's slot lookups
+ * (backlog/store.test.ts failed "allowed slot not found" that way). `stop()` returns the entries
+ * created meanwhile, removed again or not; none is expected. Nothing is watched when the
+ * directory is absent.
+ */
+export function watchSharedPool(directory = SHARED_POOL) {
+  if (!existsSync(directory)) return { stop: () => [] };
+  const before = new Set(readdirSync(directory));
+  const touched = new Set();
+  const watcher = watch(directory, (event, file) => {
+    if (event === 'rename' && file) touched.add(String(file));
+  });
+  watcher.unref();
+  return {
+    stop() {
+      watcher.close();
+      // A rename event can lag the write: compare the listing too. Entries that were there before
+      // the run are left out (macOS can report their earlier writes as events of this watch).
+      for (const entry of readdirSync(directory)) touched.add(entry);
+      return [...touched].filter((entry) => !before.has(entry)).sort();
+    },
+  };
+}
+
+/** The failure line for entries a run created or removed in the shared pool directory. */
+export function sharedPoolFailure(touched, directory = SHARED_POOL) {
+  if (touched.length === 0) return null;
+  return `[tsx-tests] tests wrote the shared pool directory ${directory}: ${touched.join(', ')}. A test's pool files belong in a private FARMSLOT_POOL_DIR (gateway tests: import core/private-pool.test-support first and write under poolDirectory()).`;
+}
 
 export const WORKERS_ENV = 'FARMSLOT_TSX_TEST_WORKERS';
 export const TEST_STATUS_ENV = 'FARMSLOT_TEST_STATUS_FILE';
@@ -880,6 +916,7 @@ async function main() {
   };
   const started = performance.now();
   const records = [];
+  const sharedPool = watchSharedPool();
 
   // One process per file, sequentially: module mocks are process-global, and a
   // shared process is what let `--test` skip the whole batch silently.
@@ -910,13 +947,15 @@ async function main() {
   };
 
   for (const line of summaryLines(report)) console.log(line);
+  const poolFailure = sharedPoolFailure(sharedPool.stop());
+  if (poolFailure) console.error(poolFailure);
   const artifactPath = writeTimingArtifact(
     `tsx-tests-${report.workspace}${selectionFile ? `-${createHash('sha256').update(roots.join('\0')).digest('hex').slice(0, 12)}` : ''}.json`,
     buildArtifact(report),
   );
   if (artifactPath) console.log(`[tsx-tests] timings artifact: ${artifactPath}`);
 
-  finish(failures.length > 0 ? 1 : 0);
+  finish(failures.length > 0 || poolFailure ? 1 : 0);
 }
 
 if (isMainModule(import.meta.url)) await main();

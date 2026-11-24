@@ -12,6 +12,7 @@ import {
   type ReviewStatus,
 } from '@farmslot/protocol';
 
+import '../core/private-pool.test-support.js';
 import '../runtime/mock-pty.test-support.js';
 
 import { shellQuote } from '../core/tmux.js';

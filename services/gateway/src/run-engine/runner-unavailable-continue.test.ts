@@ -25,8 +25,10 @@ import test from 'node:test';
 
 import type { MonitorViolation, WorkerSignal } from '@farmslot/protocol';
 
+import '../core/private-pool.test-support.js';
 import '../runtime/mock-pty.test-support.js';
 
+import { poolDirectory } from '../core/config.js';
 import { farmslotRoot } from '../fleet/state.js';
 import type {
   ObservabilityReading,
@@ -75,7 +77,7 @@ async function fixture(
 ) {
   const project = `unavailable-continue-${randomUUID()}`;
   const projectDir = path.join(farmslotRoot(), 'projects', project);
-  const poolFile = path.join(farmslotRoot(), 'pool', `${project}.json`);
+  const poolFile = path.join(poolDirectory(), `${project}.json`);
   const worker = await mkdtemp(path.join(os.tmpdir(), 'unavailable-continue-'));
   const taskDir = path.join(projectDir, 'tasks/dev/fixture');
   const signalFile = path.join(worker, 'SIGNAL.json');

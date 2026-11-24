@@ -15,6 +15,8 @@ import {
   type RunDecision,
 } from '@farmslot/protocol';
 
+import '../core/private-pool.test-support.js';
+
 await import('../runtime/mock-pty.test-support.js');
 const github = await import('../integrations/github-client.js');
 const githubCalls: string[][] = [];
@@ -108,6 +110,7 @@ mock.module('../run-completion/orchestrator.js', {
 });
 
 const { farmslotRoot } = await import('../fleet/state.js');
+const { poolDirectory } = await import('../core/config.js');
 const { runResolveDecision } = await import('../methods/run.js');
 const { capturePublicationSource } = await import('../run-completion/publication-source.js');
 const { computeReadyGatePackageHash, readReadyGatePreparedPackage } =
@@ -161,7 +164,7 @@ async function gateFixture(
   const testId = `gate-refresh-policy-${process.pid}-${Date.now()}`;
   const repo = await mkdtemp(path.join(os.tmpdir(), `${testId}-`));
   const taskDir = path.join(farmslotRoot(), '.sandbox/farmslot-farm/tasks/test', testId);
-  const poolFile = path.join(farmslotRoot(), 'pool', `${testId}.json`);
+  const poolFile = path.join(poolDirectory(), `${testId}.json`);
   const slotId = `${testId}-slot`;
   const run = createRun({
     flowType: 'dev',

@@ -10,6 +10,8 @@ import { WebSocket } from 'ws';
 
 import { type FsConflictDetails, FsErrorCodes } from '@farmslot/protocol';
 
+import '../core/private-pool.test-support.js';
+
 import * as nodeFs from '../../../node/src/commands/fs.js';
 import { poolDirectory } from '../core/config.js';
 import { statusFile } from '../core/state.js';
