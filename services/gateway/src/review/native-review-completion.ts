@@ -90,6 +90,8 @@ export async function continueNativeReviewCompletion(
   };
   let { run, context } = current();
   if (!context.taskFile || !context.reviewResultFile || !context.runnerSessionId) return false;
+  // current() pins the task file; these stay valid when `context` is re-read below.
+  const { taskFile, reviewResultFile } = context;
   const command = snapshot.commands.find(
     (entry) => entry.commandId === context.nativeSession!.commandId,
   );
@@ -97,33 +99,48 @@ export async function continueNativeReviewCompletion(
   const adopted = reserved && context.nativeSession!.commandId === reserved;
   const ended = command?.state === 'completed' || command?.state === 'failed';
   if (adopted && !probe.ok && ended) {
-    // The probe is read again on every poll; the monitor fails closed at its limit.
-    if (probe.code === 'terminal_contract_infrastructure') return false;
+    if (probe.code === 'terminal_contract_infrastructure') {
+      // Restart recovery (enforceProgressTimeout) has no poll loop, so it fails closed now
+      // rather than ingest a verdict whose contract check never ran. The live monitor reads
+      // the probe again on its next poll and fails closed at its inactivity limit.
+      if (input.enforceProgressTimeout)
+        throw new NativeReviewCompletionError(
+          `Native reviewer terminal signal could not be checked after a restart: ${probe.message}`,
+        );
+      return false;
+    }
     const failure =
       command.outcome === 'failed'
         ? await readNativeWorkerCommandError(runId, 'review', context.id)
         : undefined;
-    current();
-    const roundId = reviewContextRoundId(context);
-    const settlement = roundId ? run.reviewRoundSettlements?.[roundId] : undefined;
+    ({ run, context } = current());
+    // Only an active reviewer whose round has not settled can still produce its verdict.
+    const resultTakeable = (latest: ReturnType<typeof current>) => {
+      const roundId = reviewContextRoundId(latest.context);
+      const settlement = roundId ? latest.run.reviewRoundSettlements?.[roundId] : undefined;
+      return (
+        ['launching', 'working', 'waiting'].includes(latest.context.status) &&
+        Boolean(roundId) &&
+        (!settlement || settlement.kind === 'pending')
+      );
+    };
     if (
       command.outcome === 'completed' &&
       !['closed', 'failed'].includes(snapshot.session.state) &&
       COMPLETION_REASK_CODES.has(probe.code) &&
-      ['launching', 'working', 'waiting'].includes(context.status) &&
-      roundId &&
-      (!settlement || settlement.kind === 'pending')
+      resultTakeable({ run, context })
     ) {
       // 961d55d3: the reviewer wrote a valid result and ended the re-asked turn without its mark.
       const feedback = await readReviewFeedback(
         vars,
-        path.posix.dirname(context.taskFile),
+        path.posix.dirname(taskFile),
         reviewerFeedbackRelPath(context.id),
-        context.reviewResultFile,
+        reviewResultFile,
         reviewContextPolicyRound(run, context),
       );
-      current();
-      if (!feedback.incomplete && !feedback.terminalInvalidReason) {
+      // A cancel or settlement may have landed during the read.
+      const latest = current();
+      if (resultTakeable(latest) && !feedback.incomplete && !feedback.terminalInvalidReason) {
         if (feedback.verdict !== 'issues')
           throw new NativeReviewPassWithoutSignalError(
             `Native reviewer completion turn ended without a valid terminal signal (${probe.code}); its PASS result is not accepted without one`,

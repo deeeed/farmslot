@@ -489,8 +489,16 @@ test('restart after result persistence repairs accounting before skipping an alr
   assert.equal(getRun(f.run.id)!.reviewRoundSettlements?.[round]?.at, stamp);
 });
 
-// 961d55d3: the completion turn ended without its mark; the reviewer's ISSUES result is the verdict.
-test('restart recovery ingests the valid ISSUES result of a completion turn that ended without its mark', async (t) => {
+/**
+ * A reviewer whose completion turn ended (completed) after a gateway restart: its result says
+ * `verdict` and its signal says `signalStatus`. Recovery runs with the real completion decision.
+ */
+async function endedCompletionFixture(
+  t: TestContext,
+  verdict: 'issues' | 'pass',
+  signalStatus: WorkerSignal['status'],
+  probe: { ok: false; code: string; message: string; signalFile: null },
+) {
   const previousOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
   process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'owner';
   t.after(() => {
@@ -503,16 +511,17 @@ test('restart recovery ingests the valid ISSUES result of a completion turn that
     path.join(f.taskDir, f.ctx.reviewResultFile!),
     JSON.stringify({
       schemaVersion: 1,
-      verdict: 'issues',
-      issues: [{ file: 'src/example.ts', description: 'Remaining finding' }],
+      verdict,
+      issues:
+        verdict === 'issues' ? [{ file: 'src/example.ts', description: 'Remaining finding' }] : [],
     }),
   );
-  const running: WorkerSignal = {
-    status: 'running',
+  const signal: WorkerSignal = {
+    status: signalStatus,
     timestamp: f.ctx.completedAt!,
     attemptId: 'attempt-1',
   };
-  await writeFile(path.join(slotRepo, f.ctx.signalFile!), JSON.stringify(running));
+  await writeFile(path.join(slotRepo, f.ctx.signalFile!), JSON.stringify(signal));
   const nativeSession = {
     sessionId: 'native-session',
     commandId: 'completion-command',
@@ -582,19 +591,85 @@ test('restart recovery ingests the valid ISSUES result of a completion turn that
       },
     ],
   };
-  const completion = await import('../review/native-review-completion.js');
-  t.mock.module('../review/native-review-completion.js', {
-    namedExports: { ...completion, continueNativeReviewCompletion: async () => 'result' },
-  });
-  const recovery = await recoverInflightPublicationReviews(f.run.id, f.run.slotId!, {
-    captureArtifacts: copyWorkerArtifacts,
-    readers: {
-      config: async () => ({ enabled: true, max_retries: 3 }),
-      package: async () => f.prepared,
-      native: async () => snapshot,
+  // There is no node here: stopping a reviewer closes its binding, and the signal probe (which
+  // needs a project config) reports `probe`. The completion decision itself runs for real.
+  const worker = await import('../runners/native/worker.js');
+  t.mock.module('../runners/native/worker.js', {
+    namedExports: {
+      ...worker,
+      cancelNativeWorkerContext: async (runId: string, context: AgentContext) => {
+        updateRun(runId, {
+          agentContexts: getRun(runId)!.agentContexts!.map((entry) =>
+            entry.id === context.id
+              ? {
+                  ...entry,
+                  nativeSession: { ...entry.nativeSession!, closedAt: new Date().toISOString() },
+                }
+              : entry,
+          ),
+        });
+      },
     },
   });
+  const monitor = await import('./run-monitor.js');
+  t.mock.module('./run-monitor.js', {
+    namedExports: { ...monitor, probeWorkerSignalForRun: async () => probe },
+  });
+  const { recoverInflightPublicationReviews: recoverer } = (await import(
+    new URL(
+      `./recover-inflight-reviews.js?ended-completion-${probe.code}-${verdict}`,
+      import.meta.url,
+    ).href
+  )) as typeof import('./recover-inflight-reviews.js');
+  const recover = () =>
+    recoverer(f.run.id, f.run.slotId!, {
+      captureArtifacts: copyWorkerArtifacts,
+      readers: {
+        config: async () => ({ enabled: true, max_retries: 3 }),
+        package: async () => f.prepared,
+        native: async () => snapshot,
+      },
+    });
+  const outcome = () => {
+    const run = getRun(f.run.id)!;
+    return {
+      verdict: run.engineState?.publishGate?.reviews?.[0]?.verdict,
+      status: run.agentContexts?.[0]?.status,
+    };
+  };
+  return { f, recover, outcome };
+}
+
+const unfinished = {
+  ok: false,
+  code: 'non_terminal',
+  message: 'the checklist is not complete',
+  signalFile: null,
+} as const;
+
+// 961d55d3: the completion turn ended without its mark; the reviewer's ISSUES result is the verdict.
+test('restart recovery ingests the valid ISSUES result of a completion turn that ended without its mark', async (t) => {
+  const { f, recover, outcome } = await endedCompletionFixture(t, 'issues', 'running', unfinished);
+  const recovery = await recover();
   assert.deepEqual(recovery.recoveredIds, [f.existing.id]);
-  assert.equal(getRun(f.run.id)!.engineState?.publishGate?.reviews?.[0]?.verdict, 'issues');
-  assert.equal(getRun(f.run.id)!.agentContexts?.[0]?.status, 'complete');
+  assert.deepEqual(outcome(), { verdict: 'issues', status: 'complete' });
+});
+
+test('restart recovery refuses a PASS result of a completion turn that ended without its mark', async (t) => {
+  const { recover, outcome } = await endedCompletionFixture(t, 'pass', 'running', unfinished);
+  const recovery = await recover();
+  assert.deepEqual(recovery.recoveredIds, []);
+  assert.deepEqual(outcome(), { verdict: 'skipped', status: 'failed' });
+});
+
+test('restart recovery stamps no verdict when the terminal signal could not be checked', async (t) => {
+  const { recover, outcome } = await endedCompletionFixture(t, 'pass', 'complete', {
+    ok: false,
+    code: 'terminal_contract_infrastructure',
+    message: 'the artifact contract check could not run',
+    signalFile: null,
+  });
+  const recovery = await recover();
+  assert.deepEqual(recovery.recoveredIds, []);
+  assert.deepEqual(outcome(), { verdict: 'skipped', status: 'failed' });
 });

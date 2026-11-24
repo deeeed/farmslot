@@ -1,6 +1,6 @@
 // A scripted Codex app-server for review proofs over the real gateway review path and native
 // host. It follows the reviewer prompt mechanically: one shell tool call, the checklist marks,
-// then the result files (or, with withholdMark, the result files without the closing marks).
+// then the result files (withholdMark: without the closing marks; skipMarks: with no mark at all).
 // No model is called. Each turn's prompt, with the task file it names,
 // is kept as prompt-<n>.txt for the proof to read.
 import { chmod, readdir, readFile, writeFile } from 'node:fs/promises';
@@ -13,6 +13,8 @@ export interface ScriptedReviewScenario {
   verdict?: 'pass' | 'issues';
   /** Write the result files but end the turn without the closing marks. */
   withholdMark?: boolean;
+  /** Write the result files without running any mark, so no signal is ever written. */
+  skipMarks?: boolean;
 }
 
 const script = `#!/usr/bin/env node
@@ -54,16 +56,18 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     if (mark) {
       const verdict = scenario.verdict || 'pass';
       const issues = verdict === 'pass' ? [] : [{ file: 'message.txt', line: 1, description: 'scripted finding', severity: 'major' }];
-      execSync(mark + ' start', { stdio: 'ignore' });
-      execSync(mark + ' 1', { stdio: 'ignore' });
+      if (!scenario.skipMarks) {
+        execSync(mark + ' start', { stdio: 'ignore' });
+        execSync(mark + ' 1', { stdio: 'ignore' });
+      }
       fs.writeFileSync(files[1], (verdict === 'pass' ? 'VERDICT: PASS' : 'VERDICT: ISSUES') + '\\n');
       if (files[2]) fs.writeFileSync(files[2], JSON.stringify({ schemaVersion: 1, verdict, issues }));
-      if (!scenario.withholdMark) {
+      if (!scenario.withholdMark && !scenario.skipMarks) {
         execSync(mark + ' 2', { stdio: 'ignore' });
         execSync(mark + ' complete', { stdio: 'ignore' });
       }
     }
-    log({ completed: true, marked: Boolean(mark) && !scenario.withholdMark });
+    log({ completed: true, marked: Boolean(mark) && !scenario.withholdMark && !scenario.skipMarks });
     send({ method: 'turn/completed', params: { threadId: thread, turn: { id: turn, status: 'completed' } } });
   }, scenario.toolMs);
 });

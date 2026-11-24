@@ -22,7 +22,7 @@ const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..
 
 test(
   'a valid ISSUES result without its terminal mark is the verdict; a PASS is not',
-  { timeout: 180_000 },
+  { timeout: 300_000 },
   async (t) => {
     delete process.env.TMUX;
     delete process.env.TMUX_PANE;
@@ -116,7 +116,8 @@ test(
     await chmod(path.join(repo, taskDir, 'mark'), 0o700);
     const { loadSlotVars } = await import('../core/config.js');
     const { rewriteStatusFile } = await import('../core/state.js');
-    const { createRun, updateRun } = await import('../runs/store.js');
+    const { createRun, getRun, updateRun } = await import('../runs/store.js');
+    const { runReviewRoundBudget } = await import('./review-round-budget.js');
     const { runWithSessionOriginator } = await import('../security/work-originator.js');
     const { runNativeReviewAgent } = await import('./native-review-agent.js');
     const vars = await loadSlotVars(slotId);
@@ -124,17 +125,19 @@ test(
     // A source-mode host can still be importing when the client's 10 s startup wait ends, so
     // start the private host and wait for it before the first launch.
     const { nativeSessionManager } = await import('../runners/native/manager.js');
-    await nativeSessionManager.warm().catch((error: unknown) => {
-      // The ready file below decides; a slow first start only ends the client's wait early.
-      console.log(`[proof] host still starting: ${String(error)}`);
-    });
+    // A slow first start only ends the client's wait early; the ready file decides, and a host
+    // that never gets ready reports this error with its log.
+    const warming = await nativeSessionManager.warm().then(
+      () => null,
+      (error: unknown) => error,
+    );
     for (
       const deadline = Date.now() + 120_000;
       !existsSync(path.join(root, 'native/ready.json'));
     ) {
       if (Date.now() > deadline)
         assert.fail(
-          `the private native host did not become ready:\n${await readFile(path.join(root, 'native/host.log'), 'utf8').catch(String)}`,
+          `the private native host did not become ready (${String(warming)}):\n${await readFile(path.join(root, 'native/host.log'), 'utf8').catch(String)}`,
         );
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
@@ -196,7 +199,7 @@ test(
       console.log(
         `[proof] ${ticket}: ${'result' in outcome ? `verdict ${outcome.result.verdict}` : `failed: ${outcome.error instanceof Error ? outcome.error.stack : String(outcome.error)}`} after ${elapsedMs}ms`,
       );
-      return { ...outcome, elapsedMs };
+      return { ...outcome, elapsedMs, runId: run.id };
     };
 
     // The first turn writes the ISSUES result and stops before its closing marks; the gateway's
@@ -215,6 +218,23 @@ test(
     const pass = await review('NO-SIGNAL-PASS');
     assert.ok('error' in pass, 'a PASS without its terminal mark must not be accepted');
     assert.match(String(pass.error), /PASS result is not accepted without one/);
+    const passRun = getRun(pass.runId)!;
+    assert.equal(passRun.agentContexts?.find((entry) => entry.role === 'review')?.status, 'failed');
+    const passBudget = await runReviewRoundBudget(passRun);
+    assert.deepEqual([passBudget.used, passBudget.noVerdict], [0, 1], 'settled no-verdict');
+
+    // A reviewer that never ran `mark start` has no signal: its re-ask may bootstrap one.
+    const before = (await codex.prompts()).length;
+    await codex.scenario({ toolMs: 50, verdict: 'issues', skipMarks: true });
+    const missing = await review('NO-SIGNAL-MISSING');
+    assert.ok(
+      'result' in missing,
+      `the valid ISSUES result was not taken: ${String('error' in missing && missing.error)}`,
+    );
+    assert.equal(missing.result.verdict, 'issues');
+    const missingPrompts = (await codex.prompts()).slice(before);
+    assert.equal(missingPrompts.length, 2, 'one review turn and one completion re-ask');
+    assert.match(missingPrompts[1]!, /If you never ran .* start, run it once now/);
     console.log(`[proof] scripted turns:\n${await readFile(codex.turnsLog, 'utf8')}`);
   },
 );

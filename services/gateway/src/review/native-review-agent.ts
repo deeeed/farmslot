@@ -65,7 +65,10 @@ import { unwatchContext } from '../tasks/watcher.js';
 import { finishReviewCleanup } from './cleanup.js';
 import { logRecommendationCorrection, readReviewFeedback } from './feedback.js';
 import { interdiffFallback, interdiffReviewScope } from './interdiff.js';
-import { continueNativeReviewCompletion } from './native-review-completion.js';
+import {
+  continueNativeReviewCompletion,
+  NativeReviewPassWithoutSignalError,
+} from './native-review-completion.js';
 import {
   assertNativeReviewOperationCurrent,
   captureNativeReviewOperationCheck,
@@ -1029,6 +1032,11 @@ async function runNativeReviewAttempt(
       ),
       terminal,
     );
+    // The completion check accepted ISSUES only; a re-read that no longer says so is refused.
+    if (resultWithoutSignal && feedback.verdict !== 'issues')
+      throw new NativeReviewPassWithoutSignalError(
+        'Native reviewer result changed after it was accepted without a terminal signal; only an ISSUES result is taken without one',
+      );
     logRecommendationCorrection(contextId, feedback);
     const error = terminalReviewArtifactErrorForCompletion(
       contextId,

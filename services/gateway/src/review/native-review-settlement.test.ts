@@ -105,6 +105,11 @@ let reviewNodeOffline = false;
 const completionCommands: string[] = [];
 let loseCompletionReply = false;
 let completionLaunches = 0;
+/**
+ * Runs while the reviewer's feedback is read, as a cancel or settlement landing mid-read; the
+ * feedback it returns, if any, replaces the scripted one.
+ */
+let onFeedbackRead: (() => Promise<{ verdict: 'pass'; issues: [] } | void>) | undefined;
 let completionActivityPages: NativeSessionEvent[][] | undefined;
 let deferredClock: { now: number; polls: number } | undefined;
 /** Advanced by each read of an ended completion turn whose signal check cannot run. */
@@ -512,8 +517,10 @@ mock.module('../tasks/watcher.js', { namedExports: { ...watcher, unwatchContext:
 mock.module('./feedback.js', {
   namedExports: {
     ...feedback,
-    readReviewFeedback: async () =>
-      ['completion-invalid', 'completion-invalid-idle'].includes(ending)
+    readReviewFeedback: async () => {
+      const replaced = await onFeedbackRead?.();
+      if (replaced) return replaced;
+      return ['completion-invalid', 'completion-invalid-idle'].includes(ending)
         ? {
             verdict: 'issues',
             issues: [],
@@ -524,7 +531,8 @@ mock.module('./feedback.js', {
           ? { verdict: 'pass', issues: [], incomplete: true }
           : ending === 'completion-unfinished-pass'
             ? { verdict: 'pass', issues: [] }
-            : { verdict: 'issues', issues: [{ file: 'a.ts', description: 'finding' }] },
+            : { verdict: 'issues', issues: [{ file: 'a.ts', description: 'finding' }] };
+    },
   },
 });
 mock.module('./native-reviewer-approvals.js', {
@@ -623,7 +631,7 @@ mock.module('../runtime/session-usage.js', {
 const { publishNativeSessionChange } = await import('../resources/native-session-changes.js');
 const { emitWorkerSignal } = await import('../tasks/watcher.js');
 const { runNativeReviewAgent } = await import('./native-review-agent.js');
-const { runReviewRoundBudget } = await import('./review-round-budget.js');
+const { reviewContextRoundId, runReviewRoundBudget } = await import('./review-round-budget.js');
 
 async function nativeRun(t: TestContext) {
   const previous = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
@@ -860,15 +868,28 @@ test('an ended completion whose signal cannot be checked is re-read, then fails 
   assert.equal(completionCommands.length, 1);
 });
 
-test('a valid result is not taken as the verdict of a settled round or an inactive reviewer', async (t) => {
+test('a valid result is taken only from an active reviewer whose round has not settled', async (t) => {
   ending = 'completion-turn';
   completionCommands.length = 0;
   const run = await nativeRun(t);
   await review(run.id);
   ending = 'completion-unfinished';
+  t.after(() => {
+    onFeedbackRead = undefined;
+  });
   const { continueNativeReviewCompletion } = await import('./native-review-completion.js');
   const control = await import('../runners/native/worker-control.js');
   const reviewer = () => getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
+  const roundId = reviewContextRoundId(reviewer())!;
+  const settlements = getRun(run.id)!.reviewRoundSettlements!;
+  const setSettled = (settled: boolean) =>
+    updateRun(run.id, {
+      reviewRoundSettlements: Object.fromEntries(
+        Object.entries(settlements).filter(([id]) => settled || id !== roundId),
+      ),
+    });
+  const setStatus = (status: 'working' | 'failed') =>
+    upsertAgentContext(run.id, 'review', { id: reviewer().id, status });
   const attempt = async () =>
     continueNativeReviewCompletion({
       runId: run.id,
@@ -878,11 +899,50 @@ test('a valid result is not taken as the verdict of a settled round or an inacti
       probe: { ok: false, code: 'non_terminal', message: 'running', signalFile: null },
       assertCurrent: () => {},
     });
-  // Complete, with its round settled by the verdict.
-  await assert.rejects(attempt(), /completion turn ended without a valid terminal signal/);
-  // Working again, but its round is still settled.
-  await upsertAgentContext(run.id, 'review', { id: reviewer().id, status: 'working' });
-  await assert.rejects(attempt(), /completion turn ended without a valid terminal signal/);
+  const refused = /completion turn ended without a valid terminal signal/;
+  // Working, round settled: only the settlement guard refuses.
+  await setStatus('working');
+  await assert.rejects(attempt(), refused);
+  // Failed, round unsettled: only the status guard refuses.
+  setSettled(false);
+  await setStatus('failed');
+  await assert.rejects(attempt(), refused);
+  // A settlement or a failure that lands while the result is read is seen before it is taken.
+  await setStatus('working');
+  onFeedbackRead = async () => {
+    setSettled(true);
+  };
+  await assert.rejects(attempt(), refused);
+  setSettled(false);
+  onFeedbackRead = async () => {
+    await setStatus('failed');
+  };
+  await assert.rejects(attempt(), refused);
+  // Working, round unsettled: the result is taken.
+  onFeedbackRead = undefined;
+  await setStatus('working');
+  assert.equal(await attempt(), 'result');
+});
+
+test('an accepted result whose re-read verdict is no longer ISSUES is refused', async (t) => {
+  ending = 'completion-unfinished';
+  completionCommands.length = 0;
+  // Once the completion check has taken the ISSUES result, the agent's own read says PASS.
+  let accepted = false;
+  const warn = console.warn;
+  t.mock.method(console, 'warn', (...args: unknown[]) => {
+    if (String(args[0]).includes('accepting its valid ISSUES result')) accepted = true;
+    warn(...args);
+  });
+  onFeedbackRead = async () => (accepted ? { verdict: 'pass', issues: [] } : undefined);
+  t.after(() => {
+    onFeedbackRead = undefined;
+  });
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /only an ISSUES result is taken without one/);
+  assert.ok(accepted);
+  const budget = await runReviewRoundBudget(getRun(run.id)!);
+  assert.deepEqual([budget.used, budget.noVerdict], [0, 1]);
 });
 
 for (const progress of ['checklist-progress', 'tool-progress', 'paged-tools'] as const) {
