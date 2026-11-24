@@ -66,6 +66,7 @@ import {
   f324Shape,
   Inconclusive,
   judgeLifecycle,
+  type Log,
   nativeCheck,
   retire,
   type RunShape,
@@ -855,15 +856,13 @@ function survivePhase(
 // ---------------------------------------------------------------- scripted reviewer
 type AgentContext = NonNullable<Run['agentContexts']>[number];
 
-interface ScriptedReviewer {
+export interface ScriptedReviewer {
   /** Arms holds/review to swallow every reviewer turn; clears what an earlier run left. */
   start(): Promise<void>;
   /** The accepted reviewer whose swallowed turn the test has not answered. */
   pending(run: Run): AgentContext | undefined;
   /** The reviewer turns the proxy swallowed: one per reviewer unless a prompt was sent again. */
   turns(): number;
-  /** Answered turns the proxy never ended: their reviewer was gone. */
-  unended(): number;
   /** Answers it: `fix-then-pass` flags loop 1 and passes later loops; `pass` always passes. */
   answer(
     run: Run,
@@ -875,10 +874,12 @@ interface ScriptedReviewer {
 
 const execFileAsync = promisify(execFile);
 
-function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
+/** The scripted reviewer itself could not answer: a harness fault, never the product's. */
+export class ScriptedReviewerFault extends Inconclusive {}
+
+export function scriptedReviewer(stack: RemoteNodeStack, log: Log): ScriptedReviewer {
   const hold = path.join(stack.holds, 'review');
   const answered = new Set<string>();
-  let unended = 0;
   // The proxy logs `… swallowed` per turn it answered and `… completed` per batch it ended.
   const count = (word: string) =>
     (existsSync(`${hold}.hit`) ? readFileSync(`${hold}.hit`, 'utf8') : '')
@@ -887,12 +888,10 @@ function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
   return {
     async start() {
       answered.clear();
-      unended = 0;
       await rm(`${hold}.hit`, { force: true });
       await writeFile(hold, 'swallow\n');
     },
     turns: () => count(' swallowed'),
-    unended: () => unended,
     pending(run) {
       if (count(' swallowed') <= answered.size) return undefined;
       return contexts(run, 'review').find(
@@ -939,8 +938,20 @@ function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
         `${JSON.stringify({ schemaVersion: 1, verdict: issues ? 'issues' : 'pass', issues: issues ? [finding] : [] })}\n`,
       );
       const checklist = path.basename(context.taskFile);
-      // In the environment the reviewer's own commands get (the proxy records it, secrets left out).
-      const env = JSON.parse(await readFile(`${hold}-env.json`, 'utf8')) as NodeJS.ProcessEnv;
+      // In the environment the reviewer's own commands get (the proxy records it per thread and
+      // last-seen, secrets left out).
+      const envFile =
+        context.runnerSessionId && existsSync(`${hold}.env-${context.runnerSessionId}.json`)
+          ? `${hold}.env-${context.runnerSessionId}.json`
+          : `${hold}-env.json`;
+      let env: NodeJS.ProcessEnv;
+      try {
+        env = JSON.parse(await readFile(envFile, 'utf8')) as NodeJS.ProcessEnv;
+      } catch (error) {
+        throw new ScriptedReviewerFault(
+          `the scripted reviewer could not read the reviewer's environment: ${String(error)}`,
+        );
+      }
       const mark = async (...args: string[]) => {
         try {
           await execFileAsync(
@@ -950,7 +961,7 @@ function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
           );
         } catch (error) {
           const { stdout, stderr } = error as { stdout?: string; stderr?: string };
-          throw new Inconclusive(
+          throw new ScriptedReviewerFault(
             `the scripted reviewer's mark ${args.join(' ')} failed: ${`${stdout ?? ''}${stderr ?? ''}`.trim() || String(error)}`,
           );
         }
@@ -963,19 +974,52 @@ function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
       await mark('complete', '--mark-last');
       // End the swallowed turn, as the reviewer's own turn would end.
       const before = count(' completed');
-      await writeFile(hold, 'complete\n');
-      await poll(
-        'the proxy to end the swallowed turn',
-        async () => (count(' completed') > before ? true : undefined),
-        15_000,
-      ).catch(() => {
-        unended += 1;
-      });
+      // End this reviewer's thread first (the global `complete` would end any stale swallowed turn);
+      // the last attempt falls back to the global marker in case the thread id did not match. The
+      // proxy reacts to the marker's file event, so each attempt writes it again.
+      const thread = context.runnerSessionId
+        ? `${hold}.complete-${context.runnerSessionId}`
+        : undefined;
+      let ended = false;
+      let global = false;
+      for (let attempt = 0; attempt < 3 && !ended; attempt++) {
+        global = !thread || attempt === 2;
+        if (global) {
+          await writeFile(hold, 'swallow\n');
+          await writeFile(hold, 'complete\n');
+        } else {
+          await rm(thread!, { force: true });
+          await writeFile(thread!, 'complete\n');
+        }
+        ended = await poll(
+          'the proxy to end the swallowed turn',
+          async () => (count(' completed') > before ? true : undefined),
+          15_000,
+        ).catch(() => false);
+      }
+      // A later turn on the same thread (the loop-2 re-review) must be swallowed again.
+      if (thread) await rm(thread, { force: true });
       await writeFile(hold, 'swallow\n');
+      if (ended && global && thread)
+        await log('scripted reviewer: only the global marker ended a swallowed turn', {
+          runId: run.id,
+          loop,
+          // The proxy's `completed` line names no thread, so either cause fits.
+          cause: `thread ${context.runnerSessionId} did not end: its id did not match, or this reviewer is gone and an earlier run's stale turn ended instead (REVIEW then fails on inactivity)`,
+        });
+      // Then the run decides: REVIEW fails once its reviewer is gone or inactive past its limit.
+      if (!ended)
+        await log('scripted reviewer: the proxy never ended an answered reviewer turn', {
+          runId: run.id,
+          loop,
+          cause: 'the reviewer is gone, or the proxy missed three marker writes',
+        });
       return `loop ${loop}: ${issues ? 'issues' : 'pass'}`;
     },
     async stop(dir) {
-      await rm(hold, { force: true });
+      // Keep swallowing: a run still active after its scenario (retired only later) must not send a
+      // reviewer turn to a model.
+      await writeFile(hold, 'swallow\n');
       await rm(`${hold}-env.json`, { force: true });
       if (existsSync(`${hold}.hit`)) {
         await appendFile(path.join(dir, 'hold-review.hit'), await readFile(`${hold}.hit`, 'utf8'));
@@ -1258,8 +1302,6 @@ interface ScenarioResult extends DrivenRun {
   unreached: HoldStep[];
   /** Under a scripted review: the reviewer turns the proxy swallowed. */
   reviewerTurns?: number;
-  /** Under a scripted review: answered turns the proxy never ended. */
-  reviewerUnended?: number;
   /** For a worker-survives hold: what was watched, and what the restart did to it. */
   watched?: string[];
   survival?: string[];
@@ -1315,7 +1357,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
     ...(options.onCleanup ? { onCleanup: options.onCleanup } : {}),
     log,
   });
-  const reviewer = scriptedReviewer(stack);
+  const reviewer = scriptedReviewer(stack, log);
   const slotCounter: Record<string, number> = {};
   const modelCalls = async () =>
     (await readFile(path.join(stack.holds, 'model-calls.log'), 'utf8').catch(() => ''))
@@ -1534,9 +1576,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
         typedMidTurn: await readFile(path.join(stack.holds, 'claude-input.log'), 'utf8').catch(
           () => '',
         ),
-        ...(shape.scriptedReview
-          ? { reviewerTurns: reviewer.turns(), reviewerUnended: reviewer.unended() }
-          : {}),
+        ...(shape.scriptedReview ? { reviewerTurns: reviewer.turns() } : {}),
       };
     } finally {
       if (shape.scriptedReview) await reviewer.stop(dir);
@@ -1858,12 +1898,6 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
           ...(result.reviewerTurns === verdicts.reviewers
             ? []
             : [`${result.reviewerTurns ?? 0} reviewer turns for ${verdicts.reviewers} reviewers`]),
-          // The test writes each verdict itself: the reviewer must still be there to end its turn.
-          ...(result.reviewerUnended
-            ? [
-                `${result.reviewerUnended} answered reviewer turns never ended: the reviewer was gone`,
-              ]
-            : []),
           // The scripted re-review passes whatever it reads: the fix must still be in the checkout.
           ...(result.fixLanded === false
             ? ["the fix round's commit was gone from the checkout at the re-review"]
@@ -1946,7 +1980,13 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
             : undefined;
         },
         10 * 60_000,
-      );
+      ).catch((error: unknown) => {
+        if (error instanceof Inconclusive) throw error;
+        // The hold never caught: unverified, so the catch below retires the run and lifts the marker.
+        throw new Inconclusive(
+          `${label}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
       const reviewer = reviewerOf(run)!.id;
       await writeJson(path.join(dir, 'run-held.json'), run);
       const restart = await stack.restartGateway({ nodeAwayMs: options.reviewNodeAwayMs });
@@ -1967,8 +2007,10 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
       const differences = kept
         ? []
         : [`REVIEW did not keep its reviewer: ${stepStatus(run, 'review')} (${brief(run)})`];
-      await review.release(hold);
+      // Retire before the release: an active run could still send its reviewer a turn the proxy
+      // would no longer swallow.
       await retireRun(created.id);
+      await review.release(hold);
       const result: CheckResult = {
         ...base,
         target: 'isolated',
@@ -1981,20 +2023,23 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
         failureText: failureText(run),
         evidence: dir,
       };
-      await log(`${label}: ${result.status.toUpperCase()}`, { differences });
+      failOnModelCalls(result);
+      await log(`${label}: ${result.status.toUpperCase()}`, { differences: result.differences });
       return result;
     } catch (error) {
       if (!(error instanceof Inconclusive)) throw error;
+      await retireRun(created.id);
       await review.release(hold);
-      return {
+      return failOnModelCalls({
         ...base,
         target: 'isolated',
         status: 'unverified',
-        modelCalls: 0,
+        modelCalls: (await modelCalls()) - callsBefore,
+        runId: created.id,
         differences: [],
         observations: [],
         error: error.message,
-      };
+      });
     }
   }
 }

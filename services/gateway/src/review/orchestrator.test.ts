@@ -12,6 +12,8 @@ import {
   type WorkerSignal,
 } from '@farmslot/protocol';
 
+import '../core/private-pool.test-support.js';
+
 import {
   assertPublicationReviewPolicySatisfied,
   buildPublishGateReviewStatus,

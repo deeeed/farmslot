@@ -18,6 +18,8 @@ import {
   signalFileForTask,
 } from '@farmslot/protocol';
 
+import '../core/private-pool.test-support.js';
+
 import { resolveRecoverableCiFixContext } from '../ci-monitor/inline-fix.js';
 import { poolDirectory } from '../core/config.js';
 import { resolveAgentOrBareTarget, unavailableTerminalTarget } from '../methods/terminal.js';

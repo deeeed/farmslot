@@ -7,6 +7,8 @@ import test, { type TestContext } from 'node:test';
 
 import { type ArtifactRef, DEFAULT_TASK_DIR, type Run } from '@farmslot/protocol';
 
+import '../core/private-pool.test-support.js';
+
 import { sanitizeLatestValidRecipeRunPointer } from '../core/recipe-artifacts.js';
 import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
 import { farmslotRoot } from '../projects/repo-root.js';
@@ -670,7 +672,7 @@ async function withOfflineRemoteCachedArtifacts(
   const taskDir = path.join(projectDir, 'tasks', 'offline-cache');
   const artifactsDir = path.join(taskDir, 'artifacts');
   const passingRunDir = path.join(artifactsDir, 'recipe-runs', 'passing-run');
-  const poolFile = path.join(farmslotRoot(), 'pool', `remote-cache-${suffix}.json`);
+  const poolFile = path.join(poolDirectory(), `remote-cache-${suffix}.json`);
 
   await mkdir(passingRunDir, { recursive: true });
   await writeFile(path.join(projectDir, 'project.json'), JSON.stringify({ hooks: {} }), 'utf-8');
