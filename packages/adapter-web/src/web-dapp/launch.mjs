@@ -487,8 +487,15 @@ export async function launchWebDappBrowser(
   const appOrigin = `http://localhost:${appPort}`;
   // The session is probed at most once: by the default display choice, or by
   // the refusal below.
+  let probed = false;
   let locked;
-  const probeLock = () => (locked ??= sessionLocked());
+  const probeLock = () => {
+    if (!probed) {
+      probed = true;
+      locked = sessionLocked();
+    }
+    return locked;
+  };
   const headless = resolveHeadless({
     headless: args.headless,
     headful: args.headful,

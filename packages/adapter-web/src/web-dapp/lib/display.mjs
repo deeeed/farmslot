@@ -35,7 +35,10 @@ export function resolveHeadless({
   if (headful === true) return false;
   if (typeof nodeHeadless === 'boolean') return nodeHeadless;
   if (nodeHeadful === true) return false;
-  const fromEnv = envFlag(env.TERMINAL_HEADLESS, 'TERMINAL_HEADLESS');
+  // An empty TERMINAL_HEADLESS chooses nothing, like an unset one.
+  const raw = env.TERMINAL_HEADLESS;
+  const fromEnv =
+    raw == null || String(raw).trim() === '' ? undefined : envFlag(raw, 'TERMINAL_HEADLESS');
   if (fromEnv !== undefined) return fromEnv;
   return sessionLocked() === true;
 }
