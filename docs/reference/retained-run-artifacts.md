@@ -304,8 +304,8 @@ even when the other fails.
   and that no run record references; reports, task views, archives and retained
   bundles are untouched. These caches are recreatable, so nothing is archived.
 - Orphan slot scaffolding: slot release collects scaffolding into
-  `.runs/slot-scaffolding/<slot>/<collection>` when no run owns the release. A
-  collection whose `manifest.json` (written last) is older than the retention age
+  `.runs/slot-scaffolding/<slot>/<collection>` when no run owns the release, the
+  collection named by a UUID. A collection whose `manifest.json` (written last) is older than the retention age
   MUST move to `FARMSLOT_RUN_ARCHIVE_ROOT` under the archive key
   `slot-scaffolding-<slot>`, journaled in
   `<archive-root>/slot-scaffolding-<slot>/manifest.json` exactly as a run's storage
@@ -316,7 +316,9 @@ When the archive root is unavailable (an unmounted volume, a failed write probe)
 the scaffolding move MUST skip, leave every collection in place, and raise a
 `run-retention.scaffolding-archive-skipped` gateway warning with the number of
 collections waiting. It MUST NOT fail the pass or the review cache cleanup. A
-move that fails part way keeps its journal and resumes with the run archives.
+move that fails part way keeps its journal and its staged `.retention-<generation>`
+sibling, which is never taken for a new collection; the run pass resumes it with
+the run archives, to the source the journal recorded.
 
 ## Public surface and backfill
 

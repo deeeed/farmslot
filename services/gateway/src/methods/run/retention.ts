@@ -461,6 +461,7 @@ export function cleanGatewayReviewCaches(dryRun: boolean): Promise<string[]> {
 export interface SharedStoreRetentionDeps {
   cleanReviewCaches: () => Promise<string[]>;
   archiveScaffolding: () => Promise<OrphanScaffoldingResult>;
+  warn: (type: string, summary: string) => void;
 }
 
 export const SHARED_STORE_RETENTION_DEPS: SharedStoreRetentionDeps = {
@@ -471,6 +472,7 @@ export const SHARED_STORE_RETENTION_DEPS: SharedStoreRetentionDeps = {
       archiveRoot: runArchiveRoot(),
       maxAgeMs: RUN_RETENTION_DEPS.retentionDays() * DAY_MS,
     }),
+  warn: reportGatewayWarning,
 };
 
 /**
@@ -497,7 +499,7 @@ export async function sharedStoreRetentionPass(
         `[run-retention] archived ${scaffolding.archived.length} orphan scaffolding collection(s) (${(bytes / 1e9).toFixed(2)} GB)`,
       );
     if (scaffolding.skipped)
-      reportGatewayWarning(
+      deps.warn(
         'run-retention.scaffolding-archive-skipped',
         `${scaffolding.pending} orphan slot scaffolding collection(s) stay on local disk: ${scaffolding.skipped}`,
       );
@@ -519,6 +521,21 @@ export function formatRunRetention(plan: RunRetentionPlan): string {
   return `${plan.runs.length} run(s): ${stores}`;
 }
 
+/** One hourly turn: the run pass, then the stores no run owns, whatever the run pass did. */
+export async function retentionTurn(
+  runPass: () => Promise<void>,
+  sharedPass: () => Promise<unknown> = () => sharedStoreRetentionPass(),
+): Promise<void> {
+  try {
+    await runPass();
+  } catch (err) {
+    console.error(
+      `[run-retention] ARCHIVE FAILED; source storage retained: ${(err as Error).stack}`,
+    );
+  }
+  await sharedPass();
+}
+
 /** The gateway itself checks its archive access, including removable-volume privacy, before every pass. */
 export function startRunRetention(emit: Emit): void {
   if (process.env.FARMSLOT_SANDBOX_HOME) return;
@@ -526,21 +543,14 @@ export function startRunRetention(emit: Emit): void {
   const pass = () => {
     if (running) return;
     running = true;
-    runRetentionPass({ apply: true, emit })
-      .then(async (plan) => {
-        await nodeTaskPinRetentionPass(Date.now(), (await retentionContext([])).ageMs);
-        await parkedWorkRetentionPass();
-        if (plan.runs.length) console.log(`[run-retention] ${formatRunRetention(plan)}`);
-      })
-      .catch((err) =>
-        console.error(
-          `[run-retention] ARCHIVE FAILED; source storage retained: ${(err as Error).stack}`,
-        ),
-      )
-      .then(() => sharedStoreRetentionPass())
-      .finally(() => {
-        running = false;
-      });
+    void retentionTurn(async () => {
+      const plan = await runRetentionPass({ apply: true, emit });
+      await nodeTaskPinRetentionPass(Date.now(), (await retentionContext([])).ageMs);
+      await parkedWorkRetentionPass();
+      if (plan.runs.length) console.log(`[run-retention] ${formatRunRetention(plan)}`);
+    }).finally(() => {
+      running = false;
+    });
   };
   assertArchiveRoot(runArchiveRoot())
     .then(() => console.log(`[run-retention] gateway archive root writable: ${runArchiveRoot()}`))

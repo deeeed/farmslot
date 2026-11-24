@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
-import test, { type TestContext } from 'node:test';
+import test, { mock, type TestContext } from 'node:test';
 
 import { archiveOrphanSlotScaffolding } from './orphan-scaffolding.js';
+import { resumeStorageArchives } from './storage-archive.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.parse('2026-11-24T12:00:00Z');
@@ -88,22 +91,92 @@ test('young and incomplete collections stay where they are', async (t) => {
   await fs.stat(partial);
 });
 
-test('an unavailable archive root skips the move and reports it instead of failing', async (t) => {
+test(
+  'an archive root on an unmounted volume skips the move and reports it instead of failing',
+  { skip: process.platform !== 'darwin' && 'the mount check reads /Volumes' },
+  async (t) => {
+    const { scaffoldingRoot, collection } = await fixture(t);
+    const old = await collection('macwork-mmt-3', '4ba84adb-90fd-49fb-9359-834217cb63e7', 30);
+    const unmounted = `/Volumes/farmslot-test-${randomUUID()}/farmslot-data/run-archive`;
+
+    const result = await archiveOrphanSlotScaffolding({
+      scaffoldingRoot,
+      archiveRoot: unmounted,
+      maxAgeMs: 7 * DAY,
+      now: NOW,
+    });
+
+    assert.deepEqual(result.archived, []);
+    assert.match(result.skipped ?? '', /is not mounted/);
+    assert.equal(result.pending, 1);
+    await fs.stat(path.join(old, 'scaffolding.tar'));
+  },
+);
+
+test('a missing archive root skips the move and reports it instead of failing', async (t) => {
   const { root, scaffoldingRoot, collection } = await fixture(t);
   const old = await collection('macwork-mmt-3', '4ba84adb-90fd-49fb-9359-834217cb63e7', 30);
-  const unmounted = path.join(root, 'Volumes/c910ssd/farmslot-data/run-archive');
 
   const result = await archiveOrphanSlotScaffolding({
     scaffoldingRoot,
-    archiveRoot: unmounted,
+    archiveRoot: path.join(root, 'missing/run-archive'),
     maxAgeMs: 7 * DAY,
     now: NOW,
   });
 
   assert.deepEqual(result.archived, []);
-  assert.match(result.skipped ?? '', /run-archive/);
+  assert.match(result.skipped ?? '', /missing\/run-archive/);
   assert.equal(result.pending, 1);
   await fs.stat(path.join(old, 'scaffolding.tar'));
+});
+
+test('an interrupted move is reported, never staged again, and resumes to its original source', async (t) => {
+  const { scaffoldingRoot, archiveRoot, collection } = await fixture(t);
+  const old = await collection('macwork-mmt-3', '4a60ad57-d80b-4516-a32b-31f36433613c', 30);
+  const rename = fs.rename;
+  const copy = fs.cp;
+  let interrupted = true;
+  // The archive is on another volume: the staged tree is copied, and the copy fails.
+  mock.method(fs, 'rename', async (...[from, to]: Parameters<typeof fs.rename>) => {
+    if (path.basename(String(from)).startsWith('.retention-'))
+      throw Object.assign(new Error('external volume'), { code: 'EXDEV' });
+    return rename(from, to);
+  });
+  mock.method(fs, 'cp', async (...[from, to, options]: Parameters<typeof fs.cp>) => {
+    if (interrupted) throw new Error('external drive disconnected');
+    return copy(from, to, options);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  const pass = () =>
+    archiveOrphanSlotScaffolding({ scaffoldingRoot, archiveRoot, maxAgeMs: 7 * DAY, now: NOW });
+  const manifestFile = path.join(archiveRoot, 'slot-scaffolding-macwork-mmt-3/manifest.json');
+  const entries = async () => JSON.parse(await fs.readFile(manifestFile, 'utf8')).entries;
+
+  const first = await pass();
+  assert.deepEqual(first.archived, []);
+  assert.equal(first.pending, 1);
+  assert.match(first.failed[0], /slot-scaffolding-macwork-mmt-3\/manifest\.json: .*disconnected/);
+  const [staged] = await entries();
+  assert.equal(staged.source, old);
+  await fs.stat(staged.staged);
+
+  // The staged sibling has the old manifest.json too; it is not a collection.
+  assert.deepEqual(await pass(), { archived: [], pending: 0, failed: [] });
+  assert.equal((await entries()).length, 1);
+
+  interrupted = false;
+  assert.deepEqual(await resumeStorageArchives(archiveRoot), []);
+  const [entry] = await entries();
+  assert.equal(entry.source, old);
+  assert.equal(entry.state, 'archived');
+  assert.equal(
+    await fs.readFile(path.join(entry.destination, 'scaffolding.tar'), 'utf8'),
+    'tar of 4a60ad57-d80b-4516-a32b-31f36433613c',
+  );
 });
 
 test('no scaffolding store is nothing to do', async (t) => {
