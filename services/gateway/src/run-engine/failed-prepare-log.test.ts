@@ -101,6 +101,8 @@ test('a failed prepare names a per-run copy of its log, which the next prepare c
     path.dirname(copy as string),
     path.join(store.runSessionArchiveDir(run.id), 'prepare-logs'),
   );
+  // The test runner isolates run state under the OS temp dir; the copy never reaches operator state.
+  assert.ok((copy as string).startsWith(os.tmpdir()), `copy outside operator state: ${copy}`);
   assert.equal(run.status, 'failed');
   assert.equal(run.error, `yarn install failed (exit 1) — log: ${copy}`);
   assert.equal(step.detail, run.error);
