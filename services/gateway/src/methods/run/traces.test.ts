@@ -3,7 +3,7 @@ import { readdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
-import { runEpisodeDir } from '../../run-completion/run-episode.js';
+import { captureRunEpisode, runEpisodeDir } from '../../run-completion/run-episode.js';
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
 import { runEpisodeRecapture, runGradeExternalRecord, runInterviewRecord } from './traces.js';
@@ -88,7 +88,9 @@ test('interviews take the next number and refuse an unknown kind', async (t) => 
     runInterviewRecord({ runId, kind: 'why', text: 'Because the task said so.' }),
     runInterviewRecord({ runId, kind: 'note', text: 'Second.' }),
   ]);
-  assert.deepEqual(files.map((entry) => entry.file).sort(), ['001-why.md', '002-note.md'].sort());
+  // Concurrent records take 001 and 002 in either order, never the same number.
+  assert.deepEqual(files.map((entry) => entry.file.slice(0, 3)).sort(), ['001', '002']);
+  assert.deepEqual(files.map((entry) => entry.file.slice(4)).sort(), ['note.md', 'why.md']);
   const stored = (await readdir(path.join(runEpisodeDir(), 'interviews', runId))).filter(
     (name) => !name.startsWith('.'),
   );
@@ -100,14 +102,20 @@ test('interviews take the next number and refuse an unknown kind', async (t) => 
   );
 });
 
-test('recapture queues only runs that ended in the range', async (t) => {
-  endedRun(t, '2020-01-01T00:00:00Z');
+test('recapture queues only runs with an episode that ended in the range', async (t) => {
+  const before = endedRun(t, '2020-01-01T00:00:00Z');
   const inRange = endedRun(t, '2026-11-24T10:00:00Z');
+  const noEpisode = endedRun(t, '2026-11-24T11:00:00Z');
+  for (const id of [before, inRange]) await captureRunEpisode(getRun(id)!);
+  t.after(async () => {
+    for (const id of [before, inRange])
+      await rm(path.join(runEpisodeDir(), `${id}.json`), { force: true });
+  });
   const result = await runEpisodeRecapture({
     since: '2026-11-24T00:00:00Z',
     until: '2026-11-24T23:59:59Z',
   });
-  assert.ok(result.queued >= 1);
-  assert.ok(getRun(inRange));
+  assert.equal(result.queued, 1);
+  assert.ok(getRun(noEpisode));
   await assert.rejects(runEpisodeRecapture({ since: 'yesterday-ish' }), /ISO timestamp/);
 });

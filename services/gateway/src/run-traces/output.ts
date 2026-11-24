@@ -51,7 +51,8 @@ export function gradedDiffScript(input: {
     `wc -c < "$d/diff" | tr -d ' '`,
     `(sha256sum "$d/diff" 2>/dev/null || shasum -a 256 "$d/diff") | cut -d' ' -f1`,
     `echo ${BODY_MARKER}`,
-    `if [ "$(wc -c < "$d/diff")" -le ${GRADED_DIFF_MAX_BYTES} ]; then cat "$d/diff"; fi`,
+    // Base64, so the bytes arrive intact whatever their encoding.
+    `if [ "$(wc -c < "$d/diff")" -le ${GRADED_DIFF_MAX_BYTES} ]; then base64 < "$d/diff"; fi`,
   ].join('\n');
 }
 
@@ -62,7 +63,10 @@ export function parseGradedDiffOutput(stdout: string) {
   if (!/^[0-9a-f]{40,64}$/.test(head ?? '') || !/^[0-9a-f]{64}$/.test(sha256 ?? ''))
     throw new Error('graded diff output is malformed');
   const sizeBytes = Number(size);
-  const body = stdout.slice(marker + BODY_MARKER.length + 1);
+  const body = Buffer.from(
+    stdout.slice(marker + BODY_MARKER.length + 1).replace(/\s/g, ''),
+    'base64',
+  );
   return {
     head: head!,
     sizeBytes,
@@ -90,7 +94,7 @@ export async function recordGradedOutput(input: {
     const result = await readSlotCommand(
       input.vars,
       gradedDiffScript({ repo: input.vars.remoteRepo, base, source: input.source, ref: input.ref }),
-      { timeout: 60_000, maxBuffer: GRADED_DIFF_MAX_BYTES + 64 * 1024 },
+      { timeout: 60_000, maxBuffer: Math.ceil((GRADED_DIFF_MAX_BYTES * 4) / 3) + 64 * 1024 },
     );
     if (result.exitCode !== 0) throw new Error(result.stderr.trim() || 'graded diff failed');
     const parsed = parseGradedDiffOutput(result.stdout);
@@ -109,6 +113,12 @@ export async function recordGradedOutput(input: {
       sizeBytes: parsed.sizeBytes,
       recordedAt: new Date().toISOString(),
     };
+    // Checked again at the write: a committed output recorded meanwhile (finalize running beside
+    // release) is never replaced by a working-tree read that started earlier.
+    const latest = getRun(input.runId);
+    if (!latest) return undefined;
+    if (latest.gradedOutput?.source === 'committed' && input.source !== 'committed')
+      return latest.gradedOutput;
     updateRun(input.runId, { gradedOutput: output, finalHead: parsed.head });
     return output;
   } catch (error) {
@@ -128,7 +138,12 @@ export async function recordGradedOutputOnSlot(input: {
   const slotId = getRun(input.runId)?.slotId;
   if (!slotId) return undefined;
   const { loadSlotVars } = await import('../core/config.js');
-  const vars = await loadSlotVars(slotId).catch(() => undefined);
+  const vars = await loadSlotVars(slotId).catch((error: unknown) => {
+    console.warn(
+      `[run-traces] ${input.runId.slice(0, 8)}: slot ${slotId} unavailable: ${(error as Error).message}`,
+    );
+    return undefined;
+  });
   return vars ? recordGradedOutput({ ...input, vars }) : undefined;
 }
 
@@ -164,27 +179,32 @@ export async function recordPrMerge(runId: string, repo: string, prNumber: numbe
 const INFRA_STEPS = new Set(['find-slot', 'write-task', 'prepare', 'dispatch']);
 
 /**
- * Appends the failed steps a replay is about to reset to the run's attempt log, so the failure
- * survives the replay (ADR-039 Amendment 10). Append-only.
+ * Appends the infra failures a replay is about to reset to the run's attempt log, so they survive
+ * it (ADR-039 Amendment 10). Only steps the replay resets, only infra steps (the replay itself is
+ * already a recovery attempt), and never the same failure twice. Append-only.
  */
-export function recordReplayedFailures(runId: string, replayedStep: string): void {
+export function recordReplayedFailures(
+  runId: string,
+  replayedStep: string,
+  resetSteps: readonly string[],
+): void {
   const run = getRun(runId);
   if (!run) return;
-  const failed = run.steps.filter((step) => step.status === 'failed');
-  if (!failed.length) return;
-  const at = new Date().toISOString();
-  updateRun(runId, {
-    attemptLog: [
-      ...(run.attemptLog ?? []),
-      ...failed.map((step) => ({
-        kind: INFRA_STEPS.has(step.name) ? ('infra-failure' as const) : ('replay' as const),
-        step: step.name,
-        at: step.completedAt ?? at,
-        ...(step.detail ? { error: step.detail } : {}),
-        recovery: `replay ${replayedStep}`,
-      })),
-    ],
-  });
+  const logged = new Set((run.attemptLog ?? []).map((entry) => `${entry.step}\u0000${entry.at}`));
+  const entries = run.steps
+    .filter(
+      (step) =>
+        step.status === 'failed' && INFRA_STEPS.has(step.name) && resetSteps.includes(step.name),
+    )
+    .map((step) => ({
+      kind: 'infra-failure' as const,
+      step: step.name,
+      at: step.completedAt ?? step.startedAt ?? run.updatedAt,
+      ...(step.detail ? { error: step.detail } : {}),
+      recovery: `replay ${replayedStep}`,
+    }))
+    .filter((entry) => !logged.has(`${entry.step}\u0000${entry.at}`));
+  if (entries.length) updateRun(runId, { attemptLog: [...(run.attemptLog ?? []), ...entries] });
 }
 
 /**
@@ -214,4 +234,11 @@ export async function recordCompletionAcceptance(runId: string): Promise<void> {
       `[run-traces] ${runId.slice(0, 8)}: completion acceptance not recorded: ${(error as Error).message}`,
     );
   }
+}
+
+/** A graded working tree names the ref release parked its commits under. */
+export function recordParkedRef(runId: string, ref: string): void {
+  const graded = getRun(runId)?.gradedOutput;
+  if (graded?.source === 'working-tree' && !graded.ref)
+    updateRun(runId, { gradedOutput: { ...graded, ref } });
 }

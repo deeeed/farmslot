@@ -12,7 +12,13 @@ import { getRun } from '../runs/store.js';
 
 /** Training traces are on unless the project sets `traces.enabled: false`. */
 export async function tracesEnabled(project: string): Promise<boolean> {
-  const config = await loadProjectConfig(project).catch(() => undefined);
+  const config = await loadProjectConfig(project).catch((error: unknown) => {
+    // An unreadable config keeps the default (on) and says why.
+    console.warn(
+      `[session-archive] ${project}: project config unreadable: ${(error as Error).message}`,
+    );
+    return undefined;
+  });
   return config?.traces?.enabled !== false;
 }
 
@@ -23,7 +29,13 @@ export function workerContextId(run: Pick<Run, 'flowType'>): string {
 
 async function sessionVars(run: Run, vars?: SlotLocality): Promise<SlotLocality | undefined> {
   if (vars) return vars;
-  return run.slotId ? loadSlotVars(run.slotId).catch(() => undefined) : undefined;
+  if (!run.slotId) return undefined;
+  return loadSlotVars(run.slotId).catch((error: unknown) => {
+    console.warn(
+      `[session-archive] ${run.id.slice(0, 8)}: slot ${run.slotId} unavailable: ${(error as Error).message}`,
+    );
+    return undefined;
+  });
 }
 
 /**
@@ -35,6 +47,8 @@ export function captureSessionAtEnd(params: {
   contextId?: string;
   vars?: SlotLocality;
   answersRound?: number;
+  /** The review round a reviewer capture belongs to. */
+  round?: number;
 }): void {
   void (async () => {
     const run = getRun(params.runId);
@@ -46,6 +60,7 @@ export function captureSessionAtEnd(params: {
       runId: params.runId,
       contextId: params.contextId ?? workerContextId(run),
       answersRound: params.answersRound,
+      round: params.round,
     });
   })().catch((error: unknown) =>
     console.warn(

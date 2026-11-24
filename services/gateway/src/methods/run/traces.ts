@@ -1,5 +1,6 @@
 // ADR-039 Amendment 10: grade, interview and episode-recapture records for run traces.
-import { appendFile, mkdir, open, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { appendFile, mkdir, open, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -17,7 +18,7 @@ import {
 
 import { GatewayMethodError } from '../../core/method-error.js';
 import { captureRunEpisode, runEpisodeDir } from '../../run-completion/run-episode.js';
-import { getAllRunsWithArchived, getRunWithArchived } from '../../runs/store.js';
+import { getRunWithArchived } from '../../runs/store.js';
 
 const INTERVIEW_KINDS: readonly RunInterviewKind[] = ['why', 'debrief', 'note'];
 const MAX_TEXT = 64 * 1024;
@@ -62,9 +63,12 @@ export async function runGradeExternalRecord(
     grader: text(params.grader, 'grader', 200),
     scale,
     verdict,
-    ...(params.rubric
+    ...(params.rubric !== undefined
       ? {
-          rubric: params.rubric.map((entry) => ({
+          rubric: (Array.isArray(params.rubric)
+            ? params.rubric
+            : invalid('rubric must be a list')
+          ).map((entry) => ({
             point: text(entry?.point, 'rubric[].point'),
             verdict: text(entry?.verdict, 'rubric[].verdict', 100),
           })),
@@ -114,23 +118,51 @@ export async function runInterviewRecord(
 
 /**
  * Rewrites the episodes of runs that ended in the range, through the same writer the retention
- * pass uses (one run at a time, replaced by rename). Returns at once; the rewrite runs behind.
+ * pass uses (one run at a time, replaced by rename). The episode store is the index: only runs
+ * with an episode in the range are loaded. Returns at once; the rewrite runs behind.
  */
 export async function runEpisodeRecapture(
   params: RunEpisodeRecaptureParams,
 ): Promise<RunEpisodeRecaptureResult> {
   const since = isoTime(text(params.since, 'since', 64), 'since')!;
   const until = isoTime(params.until, 'until');
-  const runs = (await getAllRunsWithArchived()).filter((run) => {
-    const ended = run.completedAt ?? run.updatedAt;
-    return isTerminalRunStatus(run.status) && ended >= since && (!until || ended <= until);
-  });
+  const dir = runEpisodeDir();
+  const names = existsSync(dir)
+    ? (await readdir(dir)).filter((name) => name.endsWith('.json'))
+    : [];
+  const candidates: string[] = [];
+  for (const name of names) {
+    let episode: { schema?: string; runId?: string; runUpdatedAt?: string };
+    try {
+      episode = JSON.parse(await readFile(path.join(dir, name), 'utf8'));
+    } catch (error) {
+      console.warn(`[run-episode] recapture skips ${name}: ${(error as Error).message}`);
+      continue;
+    }
+    // A run that ended in the range was last updated at or after its end: a cheap prefilter.
+    if (
+      episode.schema === 'farmslot-episode-v1' &&
+      episode.runId &&
+      (episode.runUpdatedAt ?? '') >= since
+    )
+      candidates.push(episode.runId);
+  }
+  const runIds: string[] = [];
+  for (const runId of candidates) {
+    const run = await getRunWithArchived(runId);
+    const ended = run?.completedAt ?? run?.updatedAt ?? '';
+    if (run && isTerminalRunStatus(run.status) && ended >= since && (!until || ended <= until))
+      runIds.push(runId);
+  }
   void (async () => {
-    for (const run of runs)
+    for (const runId of runIds) {
+      const run = await getRunWithArchived(runId);
+      if (!run) continue;
       await captureRunEpisode(run).catch((error: unknown) =>
         console.warn(`[run-episode] recapture ${run.id}: ${(error as Error).message}`),
       );
-    console.log(`[run-episode] recaptured ${runs.length} episode(s) since ${since}`);
+    }
+    console.log(`[run-episode] recaptured ${runIds.length} episode(s) since ${since}`);
   })();
-  return { queued: runs.length };
+  return { queued: runIds.length };
 }

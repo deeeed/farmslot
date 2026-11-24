@@ -72,6 +72,8 @@ export function runBundleList(params: RunBundleListParams): RunBundleListResult 
 async function retainRunnerSessions(runId: string): Promise<void> {
   const run = getRun(runId);
   if (!run?.slotId) return;
+  const { tracesEnabled } = await import('../run-traces/session-capture.js');
+  if (!(await tracesEnabled(run.project))) return;
   try {
     const { loadSlotVars } = await import('../core/config.js');
     const { captureAllRunnerSessions } = await import('../runners/session-archive.js');

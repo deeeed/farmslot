@@ -1272,8 +1272,6 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
           updateRunStep(runId, steps[j], { status: 'skipped' });
         }
         const monitorRun = getRun(runId)!;
-        // ADR-039 Amendment 10: a blocked or failed worker's session ends here too.
-        captureSessionAtEnd({ runId });
         // The step itself completed, so its completion event is independent of
         // the run's terminal transition and is published first.
         broadcastFn(Events.RUN_STEP_COMPLETED, { runId, step: stepName });
@@ -1301,6 +1299,8 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
             ),
           ),
         });
+        // ADR-039 Amendment 10: a blocked or failed worker's session, after the transition.
+        captureSessionAtEnd({ runId });
         return;
       }
 

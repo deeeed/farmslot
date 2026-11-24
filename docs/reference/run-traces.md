@@ -27,8 +27,11 @@ only on the node that ran them.
 - **Keying.** An archive lives at
   `session-archives/<run>/<contextId>/<sessionKey>/transcript.jsonl`, where
   `sessionKey` is the runner session id, or the attempt index when there is none. A
-  context reused across rounds (`review-fix`) keeps every round. A review-fix ref
-  records `answersRound`, the review round it fixes.
+  warm reviewer or a fix keeps one runner session across rounds, so a reviewer or
+  fix capture adds its round (`<id>-r<n>`, with the ref's `round`) and every round
+  keeps its own snapshot. A review-fix ref records `answersRound`, the review round
+  it fixes. A native fix runs inside the worker's conversation: its capture copies
+  that session and records it on the fix context.
 - **Ref.** `{status, sessionKey, runner, originalPath, sourceSize, sourceMtimeMs,
 sha256, sizeBytes, capturedAt, answersRound?, reason?}`. A source whose size and
   mtime match a `captured` ref is not copied again; slot release stats it once to
@@ -67,8 +70,9 @@ sha256, sizeBytes, capturedAt, answersRound?, reason?}`. A source whose size and
   previously captured transcript.
 - **One capture per run at a time.** Captures for a run run one after another.
   Slot release joins a pending capture instead of starting a second one. A ref is
-  written with a patch of that context's archive list alone, never by rewriting the
-  run's whole metrics object.
+  written as a synchronous patch of that context's archive list, and of the worker's
+  metrics refs read from the current run with no await between the read and the
+  write, never from a snapshot taken before an await.
 - **Replay.** The old session's path is saved on its context when the session
   ends. Before a replay relaunches the step, that path is captured synchronously.
   The 30-second bound includes waiting for the run's in-flight capture to finish;
@@ -103,9 +107,9 @@ the implementing PR adds them, and until then the label is `null`.
 | `labels.acceptance`     | `source (registered, derived or none), criteria[] {id, text, verdict}`                                           | the acceptance ledger snapshot on the run: the gate's `acceptanceStatus`, else a completion snapshot (_new run field_)                                                                                         |
 | `labels.reviewRounds[]` | `round, contextId, sessionKey, reviewer {runner, model}, verdict, unresolvedCount, fix {contextId, sessionKey}?` | review loops and their attempts (`loopNumber`, `verdict`, `unresolvedCount`)                                                                                                                                   |
 | `labels.gate`           | `outcome, decision, decidedAt`                                                                                   | the latest resolved `engine_human_gate` decision, with the run's outcome                                                                                                                                       |
-| `labels.attempts[]`     | `kind (dispatch, replay, recovery, infra-failure, operator), step, at, error?, recovery?`                        | step history and recovery records; replays and infra failures that leave no record today get an append-only attempt log (_new run field_)                                                                      |
+| `labels.attempts[]`     | `kind (dispatch, replay, recovery, infra-failure, operator), step, at, error?, recovery?`                        | step history and recovery records; the infra failures (find-slot, write-task, prepare, dispatch) a replay resets are kept in an append-only attempt log (_new run field_)                                      |
 | `labels.infraOnly`      | true when the run ended on infra failures alone, with no agent outcome                                           | derived from `attempts` and the outcome                                                                                                                                                                        |
-| `labels.output`         | `diffSha256, source (committed, working-tree or parked-ref), ref, path`                                          | _new run field_, written at finalize and at release (a parked ref when release parks unpushed work); `path` names the retained diff (below)                                                                    |
+| `labels.output`         | `diffSha256, source (committed or working-tree), ref, path`                                                      | _new run field_, written at finalize and at release (`ref` names the parked ref when release parks unpushed work); `path` names the retained diff (below)                                                      |
 | `labels.git`            | `startRef, dispatchHead, finalHead, prHead, mergeSha`                                                            | `startRef` and `dispatchHead` as today; the other three are _new run fields_                                                                                                                                   |
 
 **The graded diff is retained.** When finalize or release records `labels.output`,
@@ -114,13 +118,21 @@ the gateway also writes the diff it graded, against `dispatchHead`, as
 sha256 it records. Retained bundles are content-addressed and immutable, so the
 diff sits beside the episode instead, and is kept as long as the episode:
 
-- **Committed** or **parked-ref** output: `git diff <dispatchHead> <ref>`.
+- **Committed** output: `git diff <dispatchHead> <ref>`.
 - **Working-tree** output: the tree is staged into a temporary index, then
   `git diff --cached <dispatchHead>` reads it, so new untracked files are included
   and the slot's own index is not touched. The temporary index starts as a copy of
   the slot's index, so Git's stat cache hashes only changed files, at a fresh path
   (a file that exists but is empty is not a valid index); then
-  `GIT_INDEX_FILE=<that path> git add -A`, which honours `.gitignore`.
+  `GIT_INDEX_FILE=<that path> git add -A`, which honours `.gitignore`. This writes
+  the new files' blobs (and any LFS clean-filter output) into the slot's object
+  store, where `git gc` reclaims them; very large untracked files make it slower.
+
+The diff is read back base64-encoded and hashed as bytes, so a diff that is not
+UTF-8 keeps its sha256. Release grades the working tree before it parks or resets
+the slot, so a run whose commits release parks keeps `source: working-tree`, and
+`ref` names the parked ref (the working-tree diff can hold uncommitted changes the
+parked commits do not).
 
 `labels.output.path` names that file, relative to the episode store. A diff larger
 than 32 MiB is recorded with its sha256 and size and no bytes. Finalize records
@@ -134,8 +146,10 @@ ended reaches the episode within an hour.
 
 Episodes captured before this change gain label values through a bulk recapture.
 `farmslot runs episodes recapture --since <date> [--until <date>]` calls the gateway
-method `run.episode.recapture { since, until? }`, which returns the number of runs
-queued and writes each episode through the same writer the retention pass uses. That
+method `run.episode.recapture { since, until? }`. It uses the episode store as its
+index: it loads only runs whose episode was updated since `since`, keeps those that
+ended in the range, returns their number, and writes each episode through the same
+writer the retention pass uses. That
 writer writes one run's episode at a time and replaces the file by rename, so a
 retention recapture of the same run at the same moment writes the same content
 again rather than racing it.
@@ -230,10 +244,11 @@ not count.
 - A missing transcript (node offline, slot reset, size limit) is reported in
   `index.jsonl` and `README.md` with its reason. Export never fails for it.
   Without `--update`, export refuses a non-empty `<dir>`.
-- `--update` on an existing export, for each run that matches the filter: adds
-  transcripts captured since (for example after the node returns and
-  `bundle retain` recaptures them), and rewrites that run's `labels.json` (new
-  grades and label values) and `redaction.json`. It then rewrites `index.jsonl` and
+- `--update` on an existing export, for each run that matches the filter: writes
+  its transcripts again (adding those captured since, for example after the node
+  returns and `bundle retain` recaptures them, and replacing any recaptured one),
+  and rewrites that run's `labels.json` (new grades and label values) and
+  `redaction.json`. It then rewrites `index.jsonl` and
   `README.md` for the whole export. It never deletes an exported file, so a run that
   no longer matches the filter keeps its folder and stays in the index.
 - Export never invents a transcript or a label value. Cost is the one derived value:

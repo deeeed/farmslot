@@ -45,6 +45,8 @@ interface ArchiveTarget {
   runnerSessionPath: string;
   /** For a review-fix session, the review round it answers. */
   answersRound?: number;
+  /** The review round a reviewer or fix capture belongs to. */
+  round?: number;
   /** The worker session recorded only on run metrics (no agent context holds it). */
   metricsOwner?: boolean;
 }
@@ -159,13 +161,36 @@ function sessionKeyFor(
   sourcePath: string,
 ) {
   const id = target.runnerSessionId?.trim();
-  if (id) return safeSegment(id);
+  // A runner session reused across review rounds keeps one snapshot per round.
+  const round = target.round !== undefined ? `-r${target.round}` : '';
+  if (id) return `${safeSegment(id)}${round}`;
   // No runner session id: the same source keeps its attempt, a new one gets the next index.
   const same = refs.find((ref) => ref.originalPath === sourcePath && ref.sessionKey);
   return (
     same?.sessionKey ??
     `attempt-${refs.filter((ref) => ref.sessionKey !== LEGACY_SESSION_KEY).length + 1}`
   );
+}
+
+/** The `legacy` key exists only in the list view; it is never written to a ref. */
+function withoutLegacyKey<
+  T extends {
+    list: RunnerSessionArchiveRef[];
+    single: RunnerSessionArchiveRef;
+    ref: RunnerSessionArchiveRef;
+  },
+>(merged: T): T {
+  const strip = (ref: RunnerSessionArchiveRef): RunnerSessionArchiveRef => {
+    if (ref.sessionKey !== LEGACY_SESSION_KEY) return ref;
+    const { sessionKey: _legacy, ...rest } = ref;
+    return rest;
+  };
+  return {
+    ...merged,
+    list: merged.list.map(strip),
+    single: strip(merged.single),
+    ref: strip(merged.ref),
+  };
 }
 
 /** Merge a ref into its list; the single ref is the latest captured session, else the newest ref. */
@@ -202,6 +227,7 @@ async function copyJsonlArchive(params: {
     runner: params.target.runner,
     originalPath: sourcePath,
     sessionKey,
+    ...(params.target.round !== undefined ? { round: params.target.round } : {}),
     ...(params.target.answersRound !== undefined
       ? { answersRound: params.target.answersRound }
       : {}),
@@ -228,6 +254,14 @@ async function copyJsonlArchive(params: {
         sizeBytes: stat.size,
         ...source,
       });
+    // A session captured under the legacy layout, from this same file, is not copied again.
+    const legacy = params.refs.find(
+      (ref) =>
+        ref.sessionKey === LEGACY_SESSION_KEY &&
+        ref.status === 'captured' &&
+        ref.originalPath === sourcePath,
+    );
+    if (legacy) return legacy;
     // An unchanged source already captured is not copied again.
     const prior = params.refs.find((ref) => ref.sessionKey === sessionKey);
     if (
@@ -276,13 +310,19 @@ async function copyJsonlArchive(params: {
       };
       // Rename into place: a failed copy never removes an earlier captured transcript.
       await rename(temporary, destFile);
+      // The bytes are in place: the capture stands. The manifest is a convenience copy of the
+      // ref, so a failure to write it is logged rather than recorded as a missing transcript.
       await writeAtomicJSON(path.join(destDir, SESSION_ARCHIVE_MANIFEST), {
         version: 2,
         ...ref,
         contextId: params.target.contextId,
         role: params.target.role,
         runnerSessionId: params.target.runnerSessionId ?? null,
-      });
+      }).catch((error: unknown) =>
+        console.warn(
+          `[session-archive] ${params.runId.slice(0, 8)}: manifest not written: ${(error as Error).message}`,
+        ),
+      );
       return ref;
     } finally {
       await rm(temporary, { force: true });
@@ -307,11 +347,6 @@ function inCaptureQueue<T>(runId: string, work: () => Promise<T>): Promise<T> {
   return next;
 }
 
-/** Waits for the run's queued captures, so slot release never races a pending one. */
-export async function settleRunnerSessionCaptures(runId: string): Promise<void> {
-  await captureQueues.get(runId)?.catch(() => undefined);
-}
-
 function targetRefs(run: Run, target: ArchiveTarget): RunnerSessionArchiveRef[] {
   const ctx = getAgentContexts(run).find((context) => context.id === target.contextId);
   return ctx
@@ -323,7 +358,7 @@ function targetRefs(run: Run, target: ArchiveTarget): RunnerSessionArchiveRef[] 
 function recordArchiveRef(runId: string, target: ArchiveTarget, ref: RunnerSessionArchiveRef) {
   const run = getRun(runId);
   if (!run) return ref;
-  const merged = mergeArchiveRef(targetRefs(run, target), ref);
+  const merged = withoutLegacyKey(mergeArchiveRef(targetRefs(run, target), ref));
   if (getAgentContexts(run).some((context) => context.id === target.contextId)) {
     updateRunAgentContexts(runId, (_current, contexts) =>
       contexts.map((ctx) =>
@@ -338,10 +373,16 @@ function recordArchiveRef(runId: string, target: ArchiveTarget, ref: RunnerSessi
   if (target.metricsOwner || primaryContextId(latest) === target.contextId) {
     const metrics = target.metricsOwner
       ? merged
-      : mergeArchiveRef(
-          archiveRefsOf(latest.metrics.runnerSessionArchives, latest.metrics.runnerSessionArchive),
-          ref,
+      : withoutLegacyKey(
+          mergeArchiveRef(
+            archiveRefsOf(
+              latest.metrics.runnerSessionArchives,
+              latest.metrics.runnerSessionArchive,
+            ),
+            ref,
+          ),
         );
+    // Read and written with no await between: a patch of the current metrics' archive refs.
     updateRun(runId, {
       metrics: {
         ...latest.metrics,
@@ -377,13 +418,33 @@ export async function captureRunnerSession(params: {
   runId: string;
   contextId: string;
   answersRound?: number;
+  round?: number;
 }): Promise<RunnerSessionArchiveRef | undefined> {
   const run = getRun(params.runId);
-  const target = run && archiveTargets(run).find((entry) => entry.contextId === params.contextId);
+  const target = run && sessionTarget(run, params.contextId);
   if (!target) return undefined;
   return inCaptureQueue(params.runId, () =>
-    captureTarget(params.vars, params.runId, { ...target, answersRound: params.answersRound }),
+    captureTarget(params.vars, params.runId, {
+      ...target,
+      answersRound: params.answersRound,
+      round: params.round ?? params.answersRound,
+    }),
   );
+}
+
+/**
+ * The session a context ran in: its own, or for a native fix that runs inside the worker's
+ * conversation, the owner context's session, recorded on the fix context.
+ */
+function sessionTarget(run: Run, contextId: string): ArchiveTarget | undefined {
+  const own = archiveTargets(run).find((entry) => entry.contextId === contextId);
+  if (own) return own;
+  const context = getAgentContexts(run).find((entry) => entry.id === contextId);
+  const ownerId = context?.nativeSessionOwner?.contextId;
+  const owner = ownerId && archiveTargets(run).find((entry) => entry.contextId === ownerId);
+  return owner && context
+    ? { ...owner, contextId, role: context.role, metricsOwner: false }
+    : undefined;
 }
 
 /**
@@ -405,7 +466,7 @@ export async function captureRunnerSessionBeforeReplay(params: {
     const result = await Promise.race([captureRunnerSession(params), timeout]);
     if (result !== 'timeout') return result;
     const run = getRun(params.runId);
-    const target = run && archiveTargets(run).find((entry) => entry.contextId === params.contextId);
+    const target = run && sessionTarget(run, params.contextId);
     if (!target) return undefined;
     const sourcePath = runnerHistorySessionFilePath(target.runnerSessionPath, target.runner);
     return recordArchiveRef(params.runId, target, {

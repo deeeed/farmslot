@@ -8,6 +8,8 @@ import {
   type RunnerSessionUsage,
 } from '@farmslot/protocol';
 
+import { archiveRefsOf } from '../runners/session-archive.js';
+
 export interface TraceSessionLabel {
   sessionKey: string | null;
   status: RunnerSessionArchiveRef['status'];
@@ -62,7 +64,7 @@ export interface TraceLabels {
     fix: { contextId: string; sessionKey: string | null } | null;
   }[];
   gate: { outcome: string | null; decision: string | null; decidedAt: string | null } | null;
-  attempts: (RunAttemptLogEntry & { kind: RunAttemptLogEntry['kind'] })[];
+  attempts: RunAttemptLogEntry[];
   infraOnly: boolean;
   output: Run['gradedOutput'] | null;
   git: {
@@ -74,10 +76,8 @@ export interface TraceLabels {
   };
 }
 
-const archiveRefs = (
-  list: RunnerSessionArchiveRef[] | undefined,
-  single: RunnerSessionArchiveRef | undefined,
-): RunnerSessionArchiveRef[] => (list?.length ? list : single ? [single] : []);
+/** The same session view the episode lists, legacy archives included. */
+const archiveRefs = archiveRefsOf;
 
 function sessions(refs: RunnerSessionArchiveRef[]): TraceSessionLabel[] {
   return refs.map((ref) => ({
@@ -85,6 +85,26 @@ function sessions(refs: RunnerSessionArchiveRef[]): TraceSessionLabel[] {
     status: ref.status,
     ...(ref.answersRound !== undefined ? { answersRound: ref.answersRound } : {}),
   }));
+}
+
+/** A reviewer's cost summed over its attempts; a total is null when no attempt recorded it. */
+function reviewCost(contextId: string, usages: (RunnerSessionUsage | undefined)[]): TraceCostLabel {
+  const recorded = usages.filter((usage): usage is RunnerSessionUsage => Boolean(usage));
+  const sum = (pick: (usage: RunnerSessionUsage) => number | null | undefined) => {
+    const values = recorded.map(pick).filter((value): value is number => typeof value === 'number');
+    return values.length ? values.reduce((total, value) => total + value, 0) : null;
+  };
+  const usd = sum((usage) => usage.costUsd);
+  return {
+    contextId,
+    role: 'review',
+    inputTokens: sum((usage) => usage.inputTokens),
+    outputTokens: sum((usage) => usage.outputTokens),
+    cacheReadTokens: sum((usage) => usage.cacheRead),
+    totalTokens: sum((usage) => usage.totalTokens),
+    usd,
+    usdSource: usd === null ? null : 'recorded',
+  };
 }
 
 function usageCost(contextId: string, role: string, usage?: RunnerSessionUsage): TraceCostLabel {
@@ -173,7 +193,12 @@ export function buildTraceLabels(run: Run): TraceLabels {
           return cost;
         }),
       ...reviews.map((review) =>
-        usageCost(review.id, 'review', review.attempts?.at(-1)?.usage ?? review.usage),
+        reviewCost(
+          review.id,
+          review.attempts?.length
+            ? review.attempts.map((attempt) => attempt.usage)
+            : [review.usage],
+        ),
       ),
     ],
     acceptance: ledger
@@ -189,10 +214,18 @@ export function buildTraceLabels(run: Run): TraceLabels {
     reviewRounds: reviews.flatMap((review) =>
       (review.attempts?.length ? review.attempts : [review]).map((attempt) => {
         const fix = fixRefs.find((ref) => ref.answersRound === attempt.loopNumber);
+        const reviewer = contexts.find((context) => context.id === review.id);
+        const archived = reviewer
+          ? archiveRefs(reviewer.runnerSessionArchives, reviewer.runnerSessionArchive).find(
+              (ref) => ref.round === attempt.loopNumber,
+            )
+          : undefined;
         return {
           round: attempt.loopNumber,
           contextId: review.id,
-          sessionKey: attempt.session?.sessionId ?? review.reviewerSessionId ?? null,
+          // The archived session of this round, else the runner session it reported.
+          sessionKey:
+            archived?.sessionKey ?? attempt.session?.sessionId ?? review.reviewerSessionId ?? null,
           reviewer: { runner: review.runner ?? null, model: review.model ?? null },
           verdict: attempt.verdict,
           unresolvedCount: attempt.unresolvedCount,

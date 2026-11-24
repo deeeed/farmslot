@@ -88,7 +88,11 @@ import {
   parksBranchCommits,
   recordReleasedCheckout,
 } from '../../run-lifecycle/validation-run-commits.js';
-import { recordCompletionAcceptance, recordGradedOutput } from '../../run-traces/output.js';
+import {
+  recordCompletionAcceptance,
+  recordGradedOutput,
+  recordParkedRef,
+} from '../../run-traces/output.js';
 import {
   assertNativeSlotReplacementOwner,
   cancelNativeRunWorkers,
@@ -1037,6 +1041,8 @@ async function slotReleaseImpl(
         discard: namedDiscard,
       })
     : null;
+  // ADR-039 Amendment 10: a graded working tree names the ref its commits were parked under.
+  if (parked && parkOwner) recordParkedRef(parkOwner.id, parked.ref);
   // A recovery started to park a run's commits never resets a checkout that turned out not to be them.
   if (options?.workspaceRecovery?.parkRunId && !parked) {
     await markSlotBusy(params.slotId, 'working');

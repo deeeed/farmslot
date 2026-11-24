@@ -1150,7 +1150,7 @@ async function runNativeReviewAttempt(
     else await recordReviewRoundVerdict(runId, roundId, context);
     await stopSettledReviewer(runId, contextId);
     // ADR-039 Amendment 10: this round's reviewer session is archived when the round settles.
-    captureSessionAtEnd({ runId, contextId, vars });
+    captureSessionAtEnd({ runId, contextId, vars, round: loopNumber });
 
     if (retained && context.runnerSessionId !== retained.runnerSessionId)
       throw new WarmReviewRefusal(

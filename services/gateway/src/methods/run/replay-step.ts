@@ -2584,11 +2584,14 @@ async function replayRunStep(
         : null;
     // ADR-039 Amendment 10: archive the worker session this replay replaces, synchronously and
     // bounded, before the relaunch clears its binding.
-    // The replay resets the steps it retries; keep their failures in the attempt log first.
-    recordReplayedFailures(params.runId, replayStepName);
     if (relaunchesWorker && effectiveSlotId !== null) {
       const { loadSlotVars } = await import('../../core/config.js');
-      const vars = await loadSlotVars(effectiveSlotId).catch(() => undefined);
+      const vars = await loadSlotVars(effectiveSlotId).catch((error: unknown) => {
+        console.warn(
+          `[session-archive] pre-replay capture: slot ${effectiveSlotId} unavailable: ${(error as Error).message}`,
+        );
+        return undefined;
+      });
       if (vars) await captureSessionBeforeReplay({ runId: params.runId, vars });
     }
     if (clearing) {
@@ -2892,6 +2895,8 @@ async function replayRunStep(
     }
     assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
     assertNativeReplayCurrent();
+    // ADR-039 Amendment 10: the infra failures this replay resets survive in the attempt log.
+    recordReplayedFailures(params.runId, replayStepName, flowSteps?.slice(targetIdx) ?? []);
     const gateReceipts = replayGateReceipts(params.runId, retiringGates);
     const retainedUsage = replayLifetimeSessions
       ? retainReplayLifetimeUsage(currentBeforeReplayUpdate, replayLifetimeSessions)

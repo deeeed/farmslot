@@ -24,6 +24,17 @@ mock.module('../core/slot-io.js', {
     },
   },
 });
+let failManifest = false;
+const atomic = await import('../core/atomic-json.js');
+mock.module('../core/atomic-json.js', {
+  namedExports: {
+    ...atomic,
+    writeAtomicJSON: async (...args: Parameters<typeof atomic.writeAtomicJSON>) => {
+      if (failManifest) throw new Error('disk full');
+      return atomic.writeAtomicJSON(...args);
+    },
+  },
+});
 const { createRun, deleteRun, getRun, runSessionArchiveDir, updateRun } =
   await import('../runs/store.js');
 const {
@@ -51,6 +62,7 @@ async function fixture(t: TestContext) {
   t.after(async () => {
     copyGate = undefined;
     failCopy = false;
+    failManifest = false;
     if (!getRun(run.id)) return;
     updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
     await deleteRun(run.id);
@@ -221,4 +233,72 @@ test('a legacy archive reads as one session and is not moved', async (t) => {
   assert.equal(read?.lines[0], line('legacy').trim());
   assert.ok(existsSync(path.join(legacyDir, 'transcript.jsonl')));
   assert.ok(runSessionArchiveDir(run.id));
+});
+
+test('a warm session reused across rounds keeps one archive per round', async (t) => {
+  const { run, session, archives } = await fixture(t);
+  const file = await session('review', 'warm');
+  await captureRunnerSession({ vars, runId: run.id, contextId: 'review', round: 1 });
+  await appendFile(file, line('round two'));
+  await captureRunnerSession({ vars, runId: run.id, contextId: 'review', round: 2 });
+  assert.deepEqual(
+    archives('review').runnerSessionArchives?.map((ref) => [ref.sessionKey, ref.round]),
+    [
+      ['warm-r1', 1],
+      ['warm-r2', 2],
+    ],
+  );
+});
+
+test("a native fix that runs in the worker's conversation archives that session on the fix", async (t) => {
+  const { run, session, archives } = await fixture(t);
+  await session('review', 'worker-session');
+  const current = getRun(run.id)!;
+  updateRun(run.id, {
+    agentContexts: [
+      ...current.agentContexts!,
+      {
+        id: 'review-fix',
+        role: 'review-fix',
+        label: 'fix',
+        status: 'complete',
+        runId: run.id,
+        slotId: null,
+        runner: 'claude',
+        runnerSessionId: 'worker-session',
+        nativeSessionOwner: { contextId: 'review', sessionId: 'n1', leaseId: 'l1' },
+      },
+    ],
+  });
+  await captureRunnerSession({ vars, runId: run.id, contextId: 'review-fix', answersRound: 1 });
+  const ref = archives('review-fix').runnerSessionArchives?.[0];
+  assert.equal(ref?.status, 'captured');
+  assert.equal(ref?.answersRound, 1);
+  assert.equal(ref?.sessionKey, 'worker-session-r1');
+});
+
+test('a session the legacy layout captured is not copied again, and legacy is never stored', async (t) => {
+  const { run, session, archives } = await fixture(t);
+  const file = await session('review', 'old');
+  const current = getRun(run.id)!;
+  updateRun(run.id, {
+    agentContexts: current.agentContexts!.map((c) => ({
+      ...c,
+      runnerSessionArchive: { status: 'captured', originalPath: file },
+    })),
+  });
+  await captureRunnerSession({ vars, runId: run.id, contextId: 'review' });
+  const context = archives('review');
+  assert.equal(context.runnerSessionArchives?.length, 1);
+  assert.equal(context.runnerSessionArchives?.[0]?.sessionKey, undefined);
+  assert.equal(context.runnerSessionArchive?.sessionKey, undefined);
+  assert.ok(!existsSync(path.join(runnerSessionArchiveContextDir(run.id, 'review'), 'old')));
+});
+
+test('a capture stands when only its manifest copy fails to write', async (t) => {
+  const { run, session, archives } = await fixture(t);
+  await session('review', 'round-1');
+  failManifest = true;
+  await captureRunnerSession({ vars, runId: run.id, contextId: 'review' });
+  assert.equal(archives('review').runnerSessionArchive?.status, 'captured');
 });

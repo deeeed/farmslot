@@ -116,6 +116,11 @@ export interface RunnerSessionArchiveRef {
   sourceMtimeMs?: number;
   /** For a review-fix session, the review round it answers. */
   answersRound?: number;
+  /**
+   * The review round this capture belongs to. A warm reviewer or a native fix keeps one runner
+   * session across rounds, so the round keeps each round's snapshot apart.
+   */
+  round?: number;
   sha256?: string;
   sizeBytes?: number;
   capturedAt?: string;

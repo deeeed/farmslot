@@ -220,3 +220,46 @@ test('a run that ended on infra failures alone is infraOnly; unknown values are 
   assert.deepEqual(labels.acceptance, { source: 'none', criteria: [] });
   assert.equal(labels.git.finalHead, null);
 });
+
+test('a reviewer costs the sum of its attempts and each round names its archived session', () => {
+  const run = gradedRun();
+  const usage = (tokens: number, usd: number) => ({
+    measuredAt: '2026-11-24T10:00:00Z',
+    source: 'runner-transcript' as const,
+    inputTokens: tokens,
+    outputTokens: tokens,
+    totalTokens: tokens * 2,
+    costUsd: usd,
+  });
+  const reviews = run.engineState!.publishGate!.reviews!;
+  reviews[0]!.attempts![0]!.usage = usage(100, 0.5);
+  reviews[0]!.attempts![1]!.usage = usage(50, 0.25);
+  run.agentContexts!.push(
+    context({
+      id: 'review',
+      role: 'review',
+      runnerSessionArchives: [
+        { status: 'captured', sessionKey: 'r1-r1', round: 1 },
+        { status: 'captured', sessionKey: 'r1-r2', round: 2 },
+      ],
+    }),
+  );
+  const labels = buildTraceLabels(run);
+  const cost = labels.cost.find((entry) => entry.contextId === 'review' && entry.role === 'review');
+  assert.equal(cost?.inputTokens, 150);
+  assert.equal(cost?.usd, 0.75);
+  assert.deepEqual(
+    labels.reviewRounds.map((round) => round.sessionKey),
+    ['r1-r1', 'r1-r2'],
+  );
+});
+
+test('a legacy archive reads as session legacy in labels, as in the episode', () => {
+  const run = gradedRun();
+  run.agentContexts = [
+    context({ id: 'dev', role: 'dev', runnerSessionArchive: { status: 'captured' } }),
+  ];
+  assert.deepEqual(buildTraceLabels(run).roles[0]!.sessions, [
+    { sessionKey: 'legacy', status: 'captured' },
+  ]);
+});

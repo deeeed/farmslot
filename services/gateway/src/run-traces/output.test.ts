@@ -33,9 +33,9 @@ test('a committed output diffs the dispatch head against the commit', async (t) 
     run(gradedDiffScript({ repo: dir, base, source: 'committed', ref: head })),
   );
   assert.equal(parsed.head, head);
-  assert.match(parsed.body ?? '', /-one\n\+two/);
+  assert.match(parsed.body?.toString('utf8') ?? '', /-one\n\+two/);
   assert.equal(parsed.sha256, createHash('sha256').update(parsed.body!).digest('hex'));
-  assert.equal(parsed.sizeBytes, Buffer.byteLength(parsed.body!));
+  assert.equal(parsed.sizeBytes, parsed.body!.byteLength);
 });
 
 test('a working-tree output includes untracked files and leaves the slot index alone', async (t) => {
@@ -46,8 +46,8 @@ test('a working-tree output includes untracked files and leaves the slot index a
   const parsed = parseGradedDiffOutput(
     run(gradedDiffScript({ repo: dir, base, source: 'working-tree', ref: null })),
   );
-  assert.match(parsed.body ?? '', /new-file\.ts/);
-  assert.match(parsed.body ?? '', /\+edited/);
+  assert.match(parsed.body?.toString('utf8') ?? '', /new-file\.ts/);
+  assert.match(parsed.body?.toString('utf8') ?? '', /\+edited/);
   assert.deepEqual(await readFile(path.join(dir, '.git', 'index')), indexBefore);
   assert.equal(git('status', '--porcelain'), 'M a.txt\n?? new-file.ts');
 });
@@ -85,8 +85,11 @@ test('a replay keeps the failures it resets in the append-only attempt log', asy
     completedAt: '2026-11-24T09:00:00Z',
     detail: 'node offline',
   });
-  recordReplayedFailures(created.id, 'prepare');
-  recordReplayedFailures(created.id, 'prepare');
+  // Called again for the same failure (a retried replay), it is logged once.
+  recordReplayedFailures(created.id, 'prepare', ['prepare', 'dispatch', 'monitor']);
+  recordReplayedFailures(created.id, 'prepare', ['prepare', 'dispatch', 'monitor']);
+  // A step this replay does not reset is not logged.
+  recordReplayedFailures(created.id, 'monitor', ['monitor']);
   assert.deepEqual(getRun(created.id)!.attemptLog, [
     {
       kind: 'infra-failure',
@@ -95,12 +98,18 @@ test('a replay keeps the failures it resets in the append-only attempt log', asy
       error: 'node offline',
       recovery: 'replay prepare',
     },
-    {
-      kind: 'infra-failure',
-      step: 'prepare',
-      at: '2026-11-24T09:00:00Z',
-      error: 'node offline',
-      recovery: 'replay prepare',
-    },
   ]);
+});
+
+test('a diff that is not UTF-8 arrives byte for byte', async (t) => {
+  const { dir, git, base } = await repo(t);
+  await writeFile(path.join(dir, 'latin1.txt'), Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x0a]));
+  git('add', '.');
+  git('commit', '-qm', 'latin1');
+  const head = git('rev-parse', 'HEAD');
+  const parsed = parseGradedDiffOutput(
+    run(gradedDiffScript({ repo: dir, base, source: 'committed', ref: head })),
+  );
+  assert.equal(parsed.sha256, createHash('sha256').update(parsed.body!).digest('hex'));
+  assert.ok(parsed.body!.includes(Buffer.from([0x66, 0xe9])));
 });

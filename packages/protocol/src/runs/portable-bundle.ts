@@ -9,10 +9,12 @@ export function stripRunnerSessionArchives<T extends Pick<Run, 'metrics' | 'agen
 ): T {
   const next = { ...run, metrics: { ...run.metrics } };
   delete next.metrics.runnerSessionArchive;
+  delete next.metrics.runnerSessionArchives;
   if (next.agentContexts) {
     next.agentContexts = next.agentContexts.map((ctx) => {
       const copy = { ...ctx };
       delete copy.runnerSessionArchive;
+      delete copy.runnerSessionArchives;
       return copy;
     });
   }

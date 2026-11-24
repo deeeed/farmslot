@@ -62,19 +62,31 @@ export function gatewayTraceStores(env: NodeJS.ProcessEnv = process.env): TraceE
 
 const sha256 = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
 
+const missing = (error: unknown) =>
+  ['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '');
+
+/** A JSON file, or undefined when it does not exist; unreadable or malformed files throw. */
 async function readJson(file: string): Promise<Json | undefined> {
+  let raw: string;
   try {
-    return JSON.parse(await readFile(file, 'utf8')) as Json;
-  } catch {
-    return undefined;
+    raw = await readFile(file, 'utf8');
+  } catch (error) {
+    if (missing(error)) return undefined;
+    throw error;
+  }
+  try {
+    return JSON.parse(raw) as Json;
+  } catch (error) {
+    throw new Error(`${file} is not valid JSON: ${(error as Error).message}`);
   }
 }
 
 async function jsonFiles(dir: string): Promise<string[]> {
   try {
     return (await readdir(dir)).filter((name) => name.endsWith('.json')).sort();
-  } catch {
-    return [];
+  } catch (error) {
+    if (missing(error)) return [];
+    throw error;
   }
 }
 
@@ -95,7 +107,8 @@ async function transcriptBytes(
   const source = path.join(stores.runs, relativeDir, 'transcript.jsonl');
   try {
     return await readFile(source);
-  } catch {
+  } catch (error) {
+    if (!missing(error)) throw error;
     const manifest = await readJson(path.join(stores.runArchive, runId, 'manifest.json'));
     const entries = (manifest?.entries as Json[] | undefined) ?? [];
     for (const entry of entries) {
@@ -105,8 +118,9 @@ async function transcriptBytes(
       if (rel.startsWith('..') || path.isAbsolute(rel)) continue;
       try {
         return await readFile(path.join(entry.destination, rel));
-      } catch {
+      } catch (error) {
         // Archived elsewhere or gone: reported missing below.
+        if (!missing(error)) throw error;
       }
     }
     return null;
@@ -114,21 +128,19 @@ async function transcriptBytes(
 }
 
 async function gradeLines(stores: TraceExportStores, runId: string): Promise<Json[]> {
-  try {
-    const raw = await readFile(path.join(stores.episodes, 'grades', `${runId}.jsonl`), 'utf8');
-    return raw
-      .split('\n')
-      .filter(Boolean)
-      .flatMap((line) => {
-        try {
-          return [JSON.parse(line) as Json];
-        } catch {
-          return [];
-        }
-      });
-  } catch {
-    return [];
-  }
+  const file = path.join(stores.episodes, 'grades', `${runId}.jsonl`);
+  const raw = await optionalText(file);
+  // The gateway writes each grade line whole; a malformed one is an error, never skipped.
+  return (raw ?? '')
+    .split('\n')
+    .filter(Boolean)
+    .map((line, index) => {
+      try {
+        return JSON.parse(line) as Json;
+      } catch {
+        throw new Error(`${file}:${index + 1} is not valid JSON`);
+      }
+    });
 }
 
 /** The latest line per (source, grader); every line stays append-only in the store. */
@@ -143,22 +155,50 @@ async function tracesEnabled(stores: TraceExportStores, project: string): Promis
   return (config?.traces as Json | undefined)?.enabled !== false;
 }
 
-/** Secret values, users and machines the scrubber removes; read from the gateway host. */
-export async function traceScrubInputs(stores: TraceExportStores): Promise<ScrubInputs> {
+/** A file's text, or undefined when it does not exist; any other read error is raised. */
+async function optionalText(file: string): Promise<string | undefined> {
+  try {
+    return await readFile(file, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+}
+
+/**
+ * Secret values, users and machines the scrubber removes, read from the gateway host: the
+ * provider environment (`<home>/providers.env`), the node token (`<home>/node.secret`, or the
+ * farm automation secrets the dev gateway uses), the LiteLLM key, and secret-named variables in
+ * the exporting shell.
+ */
+export async function traceScrubInputs(
+  stores: TraceExportStores,
+  userHome = os.homedir(),
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<ScrubInputs> {
   const secretName = /(?:TOKEN|KEY|SECRET|PASSWORD|DSN)$/;
-  const secretValues = Object.entries(process.env)
+  const secretValues = Object.entries(env)
     .filter(([name, value]) => secretName.test(name) && value && value.length >= 8)
     .map(([, value]) => value!);
-  for (const file of [path.join(stores.home, '.env'), path.join(stores.home, 'gateway.env')]) {
-    try {
-      for (const line of (await readFile(file, 'utf8')).split('\n')) {
-        const match = /^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*["']?([^"'\n]+)["']?\s*$/.exec(line);
-        if (match && secretName.test(match[1]!) && match[2]!.length >= 8)
-          secretValues.push(match[2]!);
-      }
-    } catch {
-      // No env file: nothing to add.
-    }
+  // Every value in the private provider environment file is treated as a secret.
+  const providers = await optionalText(path.join(stores.home, 'providers.env'));
+  for (const line of providers?.split('\n') ?? []) {
+    const match = /^\s*(?:export\s+)?[A-Za-z0-9_]+\s*=\s*["']?([^"'\n]+?)["']?\s*$/.exec(line);
+    if (match && match[1]!.length >= 8) secretValues.push(match[1]!);
+  }
+  const automationDir = path.join(userHome, '.farmslot-automation');
+  const automation = existsSync(automationDir)
+    ? (await readdir(automationDir))
+        .filter((name) => name.endsWith('.secret'))
+        .map((name) => path.join(automationDir, name))
+    : [];
+  for (const file of [
+    path.join(stores.home, 'node.secret'),
+    path.join(userHome, '.config', 'litellm', 'api-key'),
+    ...automation,
+  ]) {
+    const value = (await optionalText(file))?.trim();
+    if (value && value.length >= 8) secretValues.push(value);
   }
   const usernames = new Set([os.userInfo().username]);
   const machines = new Set<string>();
@@ -184,7 +224,13 @@ async function selectEpisodes(
 ): Promise<Selected[]> {
   const selected: Selected[] = [];
   for (const name of await jsonFiles(stores.episodes)) {
-    const episode = await readJson(path.join(stores.episodes, name));
+    let episode: Json | undefined;
+    try {
+      episode = await readJson(path.join(stores.episodes, name));
+    } catch (error) {
+      skipped.push({ runId: name.replace(/\.json$/, ''), reason: (error as Error).message });
+      continue;
+    }
     if (!episode || episode.schema !== 'farmslot-episode-v1') continue;
     const runId = String(episode.runId);
     const ended = String(episode.runUpdatedAt ?? episode.capturedAt ?? '');
@@ -206,10 +252,27 @@ async function selectEpisodes(
 }
 
 /** Builds (or with `update`, refreshes) a redacted dataset directory from a run filter. */
+/** ISO bounds; a date-only `until` covers the whole day. */
+export function normalizeTraceRange(options: Pick<TraceExportOptions, 'since' | 'until'>) {
+  const bound = (value: string | undefined, name: string, endOfDay: boolean) => {
+    if (value === undefined) return undefined;
+    const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+    const parsed = Date.parse(dateOnly && endOfDay ? `${value}T23:59:59.999Z` : value);
+    if (Number.isNaN(parsed))
+      throw new Error(`--${name} must be an ISO date or timestamp: ${value}`);
+    return new Date(parsed).toISOString();
+  };
+  return {
+    since: bound(options.since, 'since', false),
+    until: bound(options.until, 'until', true),
+  };
+}
+
 export async function exportRunTraces(
   options: TraceExportOptions,
   stores: TraceExportStores = gatewayTraceStores(),
 ): Promise<TraceExportResult> {
+  options = { ...options, ...normalizeTraceRange(options) };
   const out = path.resolve(options.out);
   if (existsSync(out) && (await readdir(out)).length && !options.update)
     throw new Error(`${out} is not empty; pass --update to refresh an existing export`);
@@ -221,16 +284,18 @@ export async function exportRunTraces(
   const runIndex = new Map<string, Json>();
   // `--update` keeps the index rows of runs exported earlier that no longer match the filter.
   if (options.update) {
-    try {
-      for (const line of (await readFile(path.join(out, 'index.jsonl'), 'utf8')).split('\n'))
-        if (line.trim()) {
-          const row = JSON.parse(line) as Json;
-          runIndex.set(String(row.runId), row);
-        }
-    } catch {
-      // No earlier index.
+    const indexFile = path.join(out, 'index.jsonl');
+    for (const [index, line] of ((await optionalText(indexFile)) ?? '').split('\n').entries()) {
+      if (!line.trim()) continue;
+      try {
+        const row = JSON.parse(line) as Json;
+        runIndex.set(String(row.runId), row);
+      } catch {
+        throw new Error(`${indexFile}:${index + 1} is not valid JSON`);
+      }
     }
   }
+
   const allCounts: Record<string, number> = {};
 
   for (const { episode, runId } of selected) {
@@ -301,9 +366,9 @@ export async function exportRunTraces(
         }
         const file = scrubber.name(`${agent.contextId}-${key}.jsonl`);
         const target = path.join(runDir, 'transcripts', file);
-        // --update adds transcripts captured since; one already exported is left as it is.
-        if (!(options.update && existsSync(target)))
-          await writeFile(target, scrubber.text(lines.join('\n')));
+        // Written every time, --update included: a recaptured transcript replaces its old copy
+        // and the redaction counts cover every exported file.
+        await writeFile(target, scrubber.text(lines.join('\n')));
         transcripts.push({ ...label, status: 'present', file, bytes: bytes.byteLength });
         totals.present += 1;
       }
@@ -323,12 +388,16 @@ export async function exportRunTraces(
 
     // TASK.md from the retained bundle, read without opening the store.
     const bundle = record?.artifactBundle as Json | undefined;
+    let taskError: string | undefined;
     if (bundle && typeof bundle.bundleDigest === 'string' && typeof bundle.taskKey === 'string') {
       const task = await readRetainedTaskFileReadOnly({
         storeRoot: stores.bundleStoreRoot,
         bundleDigest: bundle.bundleDigest,
         taskKey: bundle.taskKey,
         relativePath: 'TASK.md',
+      }).catch((error: unknown) => {
+        taskError = (error as Error).message;
+        return null;
       });
       if (task) await writeFile(path.join(runDir, 'task.md'), scrubber.text(task.toString('utf8')));
     }
@@ -355,6 +424,7 @@ export async function exportRunTraces(
           status: episode.status,
           labels,
           transcripts,
+          ...(taskError ? { taskError } : {}),
           externalGrades: grades,
           grade: record?.grade ?? null,
           humanGrade: record?.humanGrade ?? null,
@@ -391,28 +461,34 @@ export async function exportRunTraces(
     });
   }
 
+  // The index and README carry run ids, session keys, reasons and the filter: scrubbed too.
+  const indexScrubber = new TraceScrubber(scrubInputs);
   await writeFile(
     path.join(out, 'index.jsonl'),
-    [...runIndex.values()].map((row) => JSON.stringify(row)).join('\n') +
-      (runIndex.size ? '\n' : ''),
+    indexScrubber.text(
+      [...runIndex.values()].map((row) => JSON.stringify(row)).join('\n') +
+        (runIndex.size ? '\n' : ''),
+    ),
   );
   await writeFile(
     path.join(out, 'README.md'),
-    [
-      '# Farmslot run traces (private)',
-      '',
-      'Local only. Redaction is a best-effort backstop: review before sharing, even internally.',
-      '',
-      `Filter: ${JSON.stringify({ project: options.project, flow: options.flow, since: options.since, until: options.until, family: options.family, hasGrade: options.hasGrade ?? false })}`,
-      `Runs in index: ${runIndex.size}; exported this time: ${selected.length}`,
-      `Transcripts present: ${totals.present}; missing: ${totals.missing}`,
-      'Redaction rules: secret-value, publication-pattern, private-key, dsn, email, secret-variable, username, home-path, machine',
-      `Redactions this time: ${JSON.stringify(allCounts)}`,
-      ...(skipped.length
-        ? ['', 'Skipped:', ...skipped.map((entry) => `- ${entry.runId}: ${entry.reason}`)]
-        : []),
-      '',
-    ].join('\n'),
+    indexScrubber.text(
+      [
+        '# Farmslot run traces (private)',
+        '',
+        'Local only. Redaction is a best-effort backstop: review before sharing, even internally.',
+        '',
+        `Filter: ${JSON.stringify({ project: options.project, flow: options.flow, since: options.since, until: options.until, family: options.family, hasGrade: options.hasGrade ?? false })}`,
+        `Runs in index: ${runIndex.size}; exported this time: ${selected.length}`,
+        `Transcripts present: ${totals.present}; missing: ${totals.missing}`,
+        'Redaction rules: secret-value, publication-pattern, private-key, dsn, email, secret-variable, username, home-path, machine',
+        `Redactions this time: ${JSON.stringify(allCounts)}`,
+        ...(skipped.length
+          ? ['', 'Skipped:', ...skipped.map((entry) => `- ${entry.runId}: ${entry.reason}`)]
+          : []),
+        '',
+      ].join('\n'),
+    ),
   );
   return { exported: selected.length, skipped, transcripts: totals };
 }

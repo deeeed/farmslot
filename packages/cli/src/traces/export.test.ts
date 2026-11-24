@@ -268,3 +268,54 @@ test('TASK.md comes from the retained bundle, read without opening the store', a
   await exportRunTraces({ out: second }, s);
   assert.ok(!existsSync(path.join(second, 'runs/run-1/task.md')));
 });
+
+test('the index and README are scrubbed like every other file', async (t) => {
+  const { root, s } = await stores(t);
+  // A run id carrying the pool user's name must not leak through the index or README.
+  await put(
+    path.join(s.episodes, 'ops-run.json'),
+    JSON.stringify({
+      schema: 'farmslot-episode-v1',
+      runId: 'ops-run',
+      project: 'private',
+      status: 'done',
+    }),
+  );
+  const out = path.join(root, 'out');
+  await exportRunTraces({ out }, s);
+  assert.doesNotMatch(await readFile(path.join(out, 'README.md'), 'utf8'), /\bops-run\b/);
+  assert.doesNotMatch(await readFile(path.join(out, 'index.jsonl'), 'utf8'), /\bops\b/);
+});
+
+test("the gateway host's secret files feed the secret-value rule", async (t) => {
+  const { root, s } = await stores(t);
+  const { traceScrubInputs } = await import('./export.js');
+  const userHome = path.join(root, 'user');
+  await put(
+    path.join(s.home, 'providers.env'),
+    'export OPENAI_API_KEY="sk-provider-value-1234"\nBASE=https://x\n',
+  );
+  await put(path.join(s.home, 'node.secret'), 'node-token-value-5678\n');
+  await put(
+    path.join(userHome, '.farmslot-automation', 'macwork-node-automation.secret'),
+    'automation-token-9999\n',
+  );
+  await put(path.join(userHome, '.config', 'litellm', 'api-key'), 'litellm-key-0000\n');
+  const inputs = await traceScrubInputs(s, userHome, {});
+  for (const value of [
+    'sk-provider-value-1234',
+    'node-token-value-5678',
+    'automation-token-9999',
+    'litellm-key-0000',
+  ])
+    assert.ok(inputs.secretValues.includes(value), value);
+});
+
+test('a date-only --until covers that whole day; a bad date is refused', async () => {
+  const { normalizeTraceRange } = await import('./export.js');
+  assert.deepEqual(normalizeTraceRange({ since: '2026-11-24', until: '2026-11-24' }), {
+    since: '2026-11-24T00:00:00.000Z',
+    until: '2026-11-24T23:59:59.999Z',
+  });
+  assert.throws(() => normalizeTraceRange({ since: 'last week' }), /--since must be an ISO date/);
+});

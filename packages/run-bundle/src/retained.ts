@@ -2718,20 +2718,26 @@ export async function readRetainedTaskFileReadOnly(input: {
   taskKey: string;
   relativePath: string;
 }): Promise<Buffer | null> {
-  try {
-    if (!BUNDLE_DIGEST.test(input.bundleDigest)) return null;
-    assertSafeBundleSegment(input.taskKey, 'task key');
-    assertSafeBundleRelativePath(input.relativePath);
-    const directory = path.join(input.storeRoot, 'sha256', input.bundleDigest);
-    const raw = await readFile(path.join(directory, 'manifest.json'), 'utf8');
-    if (sha256Text(raw) !== input.bundleDigest) return null;
-    const manifest = JSON.parse(raw) as RunBundleManifest;
-    const key = `tasks/${input.taskKey}/${input.relativePath}`;
-    const meta = manifest.entries[key];
-    if (!meta) return null;
-    const bytes = await readFile(resolvePathInsideRoot(directory, key));
-    return createHash('sha256').update(bytes).digest('hex') === meta.sha256 ? bytes : null;
-  } catch {
-    return null;
-  }
+  if (!BUNDLE_DIGEST.test(input.bundleDigest)) return null;
+  assertSafeBundleSegment(input.taskKey, 'task key');
+  assertSafeBundleRelativePath(input.relativePath);
+  const directory = path.join(input.storeRoot, 'sha256', input.bundleDigest);
+  const read = async (file: string) => {
+    try {
+      return await readFile(file);
+    } catch (error) {
+      if (hasCode(error, 'ENOENT') || hasCode(error, 'ENOTDIR')) return null;
+      throw error;
+    }
+  };
+  const raw = await read(path.join(directory, 'manifest.json'));
+  if (!raw || sha256Text(raw.toString('utf8')) !== input.bundleDigest) return null;
+  const manifest = JSON.parse(raw.toString('utf8')) as RunBundleManifest;
+  const key = `tasks/${input.taskKey}/${input.relativePath}`;
+  const meta = manifest.entries[key];
+  if (!meta) return null;
+  // A payload kept elsewhere (deduplicated or archived) is not read here.
+  const bytes = await read(resolvePathInsideRoot(directory, key));
+  if (!bytes) return null;
+  return createHash('sha256').update(bytes).digest('hex') === meta.sha256 ? bytes : null;
 }

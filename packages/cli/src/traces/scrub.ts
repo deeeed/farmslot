@@ -35,6 +35,24 @@ const SECRET_VARIABLE =
   /\b([A-Z][A-Z0-9_]*_(?:TOKEN|KEY|SECRET|PASSWORD))(\s*[=:]\s*["']?)([^\s"']+)/g;
 const HOME = /(\/Users\/|\/home\/)([^/\s"'\\]+)/g;
 
+/** A JSON key whose string value is a secret: replaced whole, whatever the value looks like. */
+const SECRET_KEY =
+  /(?:^|[_-])(?:token|key|secret|password|passwd)$|(?:privatekey|private_key|secret|password|passwd|mnemonic|seed|apikey|api_key|accesstoken|access_token|refreshtoken|refresh_token|authtoken|auth_token|clientsecret|client_secret)$/i;
+const KEY_IS_PRIVATE_KEY = /private|mnemonic|seed/i;
+/** JSON keys Farmslot writes digests and SHAs under: never redacted by the publication patterns. */
+const OWN_DIGEST_KEYS = new Set([
+  'sha256',
+  'diffSha256',
+  'templateSha256',
+  'bundleDigest',
+  'startRef',
+  'dispatchHead',
+  'finalHead',
+  'prHead',
+  'mergeSha',
+  'ref',
+]);
+
 /** Farmslot's own digests and SHA fields are kept: they are not secrets. */
 const OWN_DIGEST =
   /("(?:sha256|diffSha256|templateSha256|bundleDigest|startRef|dispatchHead|finalHead|prHead|mergeSha|ref)"\s*:\s*")|sha256:/;
@@ -87,9 +105,14 @@ export class TraceScrubber {
     if (n) this.counts.set(rule, (this.counts.get(rule) ?? 0) + n);
   }
 
-  private apply(text: string, token: (rule: ScrubRule) => string): string {
+  private apply(
+    text: string,
+    token: (rule: ScrubRule) => string,
+    options: { ownDigest?: boolean } = {},
+  ): string {
     let out = text;
     for (const { rule, pattern, replace } of this.rules) {
+      if (options.ownDigest && (rule === 'publication-pattern' || rule === 'private-key')) continue;
       pattern.lastIndex = 0;
       let n = 0;
       out = out.replace(pattern, (...match: string[]) => {
@@ -112,12 +135,28 @@ export class TraceScrubber {
     return out;
   }
 
-  private value(value: unknown): unknown {
-    if (typeof value === 'string') return this.apply(value, (rule) => `[REDACTED:${rule}]`);
-    if (Array.isArray(value)) return value.map((entry) => this.value(entry));
+  /**
+   * One JSON value, scrubbed with its key in view: a value under a secret-like key is replaced
+   * whole (labelled rules cannot see the key once a value is scrubbed alone), keys are scrubbed,
+   * and Farmslot's own digest fields skip the publication patterns.
+   */
+  private value(value: unknown, key?: string): unknown {
+    const token = (rule: ScrubRule) => `[REDACTED:${rule}]`;
+    if (typeof value === 'string') {
+      if (key && value.length >= 6 && SECRET_KEY.test(key)) {
+        const rule: ScrubRule = KEY_IS_PRIVATE_KEY.test(key) ? 'private-key' : 'secret-variable';
+        this.count(rule, 1);
+        return token(rule);
+      }
+      return this.apply(value, token, { ownDigest: key !== undefined && OWN_DIGEST_KEYS.has(key) });
+    }
+    if (Array.isArray(value)) return value.map((entry) => this.value(entry, key));
     if (value && typeof value === 'object')
       return Object.fromEntries(
-        Object.entries(value).map(([key, entry]) => [key, this.value(entry)]),
+        Object.entries(value).map(([entryKey, entry]) => [
+          this.apply(entryKey, token),
+          this.value(entry, entryKey),
+        ]),
       );
     return value;
   }
@@ -132,10 +171,16 @@ export class TraceScrubber {
       .map((line) => {
         const trimmed = line.trim();
         if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+          let parsed: unknown;
           try {
-            return JSON.stringify(this.value(JSON.parse(trimmed)));
+            parsed = JSON.parse(trimmed);
           } catch {
-            // Not JSON after all: scrubbed as text below.
+            parsed = undefined;
+          }
+          if (parsed !== undefined) {
+            const scrubbed = JSON.stringify(this.value(parsed));
+            // A line with nothing redacted keeps its bytes (and numbers past 2^53 their digits).
+            return scrubbed === JSON.stringify(parsed) ? line : scrubbed;
           }
         }
         return this.apply(line, (rule) => `[REDACTED:${rule}]`);

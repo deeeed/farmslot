@@ -85,3 +85,32 @@ test('a hex key labelled without an assignment is caught by the private-key rule
   assert.equal(out, 'wallet seed [REDACTED:private-key]');
   assert.equal(s.report()['private-key'], 1);
 });
+
+test('labelled secrets inside JSON are redacted with their key in view', () => {
+  const s = scrubber();
+  const out = s
+    .text(
+      [
+        JSON.stringify({ privateKey: `0x${'ab'.repeat(32)}` }),
+        JSON.stringify({ env: { FOO_TOKEN: 'abc-def-ghi', HOME: '/Users/deeeed' } }),
+        JSON.stringify({ auth: { clientSecret: 'shh-very-secret' } }),
+        JSON.stringify({ sessionKey: 'abc123def', taskKey: 'task-1', inputTokens: 1200 }),
+      ].join('\n'),
+    )
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  assert.equal(out[0].privateKey, '[REDACTED:private-key]');
+  assert.equal(out[1].env.FOO_TOKEN, '[REDACTED:secret-variable]');
+  assert.equal(out[1].env.HOME, '~');
+  assert.equal(out[2].auth.clientSecret, '[REDACTED:secret-variable]');
+  assert.deepEqual(out[3], { sessionKey: 'abc123def', taskKey: 'task-1', inputTokens: 1200 });
+});
+
+test('JSON keys are scrubbed and an unchanged line keeps its exact bytes', () => {
+  const s = scrubber();
+  const [keyed, untouched] = s
+    .text(`{"/Users/deeeed/x":1}\n{"n":12345678901234567890}`)
+    .split('\n');
+  assert.equal(keyed, '{"~/x":1}');
+  assert.equal(untouched, '{"n":12345678901234567890}');
+});

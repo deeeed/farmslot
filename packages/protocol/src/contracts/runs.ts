@@ -2462,10 +2462,11 @@ export interface RunRecoveryRuntimeProposal {
 export interface RunGradedOutput {
   /** sha256 of the graded diff against the dispatch head. */
   diffSha256: string;
-  source: 'committed' | 'working-tree' | 'parked-ref';
-  /** The commit or parked ref graded; the working tree has none. */
+  /** The published commit, or the working tree release graded before it reset the slot. */
+  source: 'committed' | 'working-tree';
+  /** The commit graded; for a working tree, the ref release parked its commits under, if any. */
   ref: string | null;
-  /** Retained-artifact path of the diff bytes; absent when the diff exceeded the bundle cap. */
+  /** The diff bytes, relative to the episode store; absent when the diff exceeded 32 MiB. */
   path?: string;
   sizeBytes: number;
   recordedAt: string;
