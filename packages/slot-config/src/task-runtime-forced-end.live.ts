@@ -56,7 +56,9 @@ test('cancelling a task stops what it runs synchronously', { timeout: 30_000 }, 
   );
 });
 
-// Also bounded by the closeout: the group only dies at its SIGKILL.
+// Also bounded by the closeout: the group only dies at its SIGKILL. The census ends when the
+// closeout's own SIGKILL fires, so this shows the group is eventually killed; the default
+// suite's failed-census test is the one that fails without the census's kill.
 test(
   'a crashed task’s group that ignores SIGTERM is still killed',
   { timeout: 90_000 },

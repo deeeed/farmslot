@@ -581,7 +581,6 @@ export async function runTaskRuntime(
           // A cancellation result confirms both the task process and its async child
           // groups stopped. A forced end kills the task's own group, synchronous subprocesses included.
           // Bounded: a group whose remaining member this process may not signal stays listed.
-          // Each ps can take its 2 s timeout, so the last one starts in time to end by then.
           // It runs until the closeout's own SIGKILL is due (a crash starts the closeout only
           // at close), or one more second when that is past; each ps can add its 2 s timeout.
           const census = Math.max(
@@ -613,7 +612,8 @@ export async function runTaskRuntime(
               }),
             );
             for (const pid of children) if (!live.has(pid)) children.delete(pid);
-            if (children.size) await new Promise((done) => setTimeout(done, 10));
+            // One ps -axo per pass: a 100 ms pause keeps a long wait cheap.
+            if (children.size) await new Promise((done) => setTimeout(done, 100));
           }
           const outcome = result ?? {
             stdout: '',
@@ -623,11 +623,14 @@ export async function runTaskRuntime(
           // The census ended with groups left (its bound or a failed ps), possibly before the
           // closeout's SIGKILL fired; dispose() below would cancel that, so kill them now.
           if (stopped) for (const pid of children) signalChild(pid, 'SIGKILL');
-          // What is still tracked after the signals: groups that answered ESRCH or EPERM left.
+          // Still tracked after the signals: running in the last census pass (or never confirmed,
+          // after a failed ps). One the closeout's SIGKILL caught just before may be dying.
           const left = stopped ? [...children] : [];
           const survivors =
             censusFailure +
-            (left.length ? `Task groups SIGKILLed after the census: ${left.join(', ')}\n` : '');
+            (left.length
+              ? `Task groups SIGKILLed after the census (running at its last pass): ${left.join(', ')}\n`
+              : '');
           resolve({
             ...outcome,
             stdout: stdout + outcome.stdout,
