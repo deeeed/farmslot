@@ -671,7 +671,7 @@ eligible.
 
 **Status:** Proposed (2026-11-24). Needs Arthur's approval before implementation.
 **Builds on:** Amendment 4 (episodes), Amendments 3, 5 and 8 (archival and holds), [ADR-056](056-runner-session-archive.md) (session archives).
-**Amends:** Amendment 4's "No new RPC and no protocol type": this amendment adds two RPCs and additive types.
+**Amends:** Amendment 4's "No new RPC and no protocol type": this amendment adds three RPCs and additive types.
 **Specification:** [Run traces](../reference/run-traces.md).
 **External format:** [Hugging Face agent traces](https://huggingface.co/docs/hub/en/agent-traces) and its [Session Trace Simple Format](https://huggingface.co/docs/hub/en/session-traces-format).
 
@@ -709,7 +709,9 @@ at slot release: worker completion, each review round, each review fix, and befo
 a replay or an operator completion replaces a session. Slot release stays the
 backstop and retries any session still recorded `missing`. Each archive is keyed by
 context and runner session, so a later round or replay never overwrites an earlier
-one. A copy writes to a temporary file and renames it; a failed copy never removes
+one. Contexts and run metrics gain a list of per-session refs; the existing single
+ref stays and points at the latest session, so History and usage read it unchanged.
+Archives written before this change read as a one-session list and are never moved. A copy writes to a temporary file and renames it; a failed copy never removes
 an earlier good one. One capture runs per run at a time, and slot release joins a
 pending one rather than racing it. The archive ref is patched on its own, never by
 rewriting the whole metrics object. Before a replay relaunches a step, the old
@@ -727,8 +729,12 @@ capture still opens no task artifact. The graded output (diff sha256 and whether
 it was committed, left in the working tree or parked), the final head, PR head and
 merge SHA, a completion acceptance snapshot and an attempt log become new run
 fields, written when the run records them; writing them updates the run, and the
-existing retention pass then recaptures its episode. External grades are appended
-to a per-run sidecar in the episode store, through one RPC. A grade names its
+existing retention pass then recaptures its episode. When the graded output is
+recorded, the diff bytes it names are written into the run's retained artifacts, so
+the graded diff survives slot reset. Episodes that ended before this change gain
+label values through a gateway bulk-recapture method using the same writer.
+External grades are appended to a per-run sidecar in the episode store, through one
+RPC. A grade names its
 source, grader, scale, rubric points and reason, several graders may grade one
 run, and the schema stays project-neutral. Optional post-run interviews, such as
 an ask-why `why.md`, are attached through a second RPC. An absent label field
@@ -745,7 +751,8 @@ snapshot for History only, and export skips the project's runs; export reads the
 flag when it runs. Run retention itself is not changed by the opt-out.
 
 **Export.** `farmslot runs traces export` runs in the CLI process, offline from the
-gateway. It reads the stores read-only (run records, episodes, grade sidecars,
+gateway, on the gateway's host, with the stores resolved through
+`farmslot paths --json` (Amendment 6). It reads the stores read-only (run records, episodes, grade sidecars,
 session archives, and archived copies through their manifests) and builds a
 dataset directory from a run filter: project, flow, date range, run family,
 has-grade. Each run gets a folder with its transcripts, `labels.json`, the task and
@@ -764,7 +771,8 @@ private and local. Export redacts every file it writes, transcripts and labels
 alike, never an archive in place. The publication scan only detects and cannot
 replace, so export gets its own replacing scrubber, applied line by line to file
 contents and file names: the exact values of the farm's configured secrets, the
-publication rules, labelled and unlabeled hex keys, e-mail addresses and DSNs,
+publication rules, hex keys labelled as keys (bare digests are kept), e-mail
+addresses and DSNs,
 secret variable names matched case-sensitively (so code identifiers survive),
 usernames, home paths and machine names. Redaction is a
 best-effort backstop, not a guarantee: an export is for the local machine only, and
@@ -789,18 +797,21 @@ and export makes the corpus usable without touching live stores.
 
 Runs that ended before this change keep the coverage they have; a bulk episode
 recapture adds their label values. Export reports a missing transcript or label
-honestly and never fills one in.
+honestly and never invents one; the only derived values are prices computed at
+export, marked `export-table`.
 
 ### Public surface
 
 - Additive episode fields under `labels` (the schema id stays `farmslot-episode-v1`)
   and additive run fields: graded output, final head, PR head, merge SHA,
-  completion acceptance snapshot and attempt log.
-- Per-session archive refs on agent contexts, listed per session in `trajectory.agents`.
+  completion acceptance snapshot and attempt log; the graded diff in the retained
+  artifacts.
+- Per-session archive ref lists on agent contexts and run metrics (the single refs
+  stay, pointing at the latest session), listed per session in `trajectory.agents`.
 - The grade and interview sidecars in the episode store, and the RPCs
-  `run.grade.external.record` and `run.interview.record`.
+  `run.grade.external.record`, `run.interview.record` and `run.episode.recapture`.
 - `farmslot runs traces export [--project] [--flow] [--since] [--until] [--family] [--has-grade] [--update] --out <dir>`, offline.
-- `farmslot runs episodes recapture --since <date>`, a bulk episode rewrite for runs
-  that ended before this change; `farmslot runs bundle retain <runId>` also retries
+- `farmslot runs episodes recapture --since <date> [--until <date>]`, a bulk episode
+  rewrite (through `run.episode.recapture`) for runs that ended before this change; `farmslot runs bundle retain <runId>` also retries
   sessions still recorded `missing`.
 - `traces.enabled` in `project.json` (default `true`).

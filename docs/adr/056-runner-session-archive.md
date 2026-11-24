@@ -42,7 +42,10 @@ it), with slot release kept as the backstop that retries `missing` sessions.
 Reviewer transcripts were often gone by slot release, and a context reused across
 rounds kept only its last session. Archives are keyed by context and runner
 session, written through a temporary file and a rename, and captured one at a time
-per run; the details are in [Run traces](../reference/run-traces.md).
+per run. Contexts gain a list of per-session refs; the existing single ref stays
+and always points at the latest session, so History and usage read it as before.
+Archives written before the change read as one session and are never moved. The
+details are in [Run traces](../reference/run-traces.md).
 
 Two statements in the decision above are out of date and are corrected here:
 

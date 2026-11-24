@@ -24,14 +24,36 @@ only on the node that ran them.
 | Slot release (backstop)                                                         | every session not yet `captured`, including `missing` ones      |
 | `farmslot runs bundle retain <runId>`                                           | every session not yet `captured`, while its node still holds it |
 
-- **Keying.** An archive lives at `session-archives/<run>/<contextId>/<sessionKey>/`,
-  where `sessionKey` is the runner session id, or the attempt index when there is
-  none. Agent contexts carry a list of archive refs, one per session; a context
-  reused across rounds (`review-fix`) keeps every round. A review-fix ref records
-  `answersRound`, the review round it fixes.
+- **Keying.** An archive lives at
+  `session-archives/<run>/<contextId>/<sessionKey>/transcript.jsonl`, where
+  `sessionKey` is the runner session id, or the attempt index when there is none. A
+  context reused across rounds (`review-fix`) keeps every round. A review-fix ref
+  records `answersRound`, the review round it fixes.
 - **Ref.** `{status, sessionKey, runner, originalPath, sourceSize, sourceMtimeMs,
-sha256, sizeBytes, capturedAt, reason?}`. A source whose size and mtime match a
-  `captured` ref is not copied again; slot release stats it once to check.
+sha256, sizeBytes, capturedAt, answersRound?, reason?}`. A source whose size and
+  mtime match a `captured` ref is not copied again; slot release stats it once to
+  check.
+- **Ref lists and the single ref.** Agent contexts gain `runnerSessionArchives[]`
+  and run metrics gain `metrics.runnerSessionArchives[]` (the worker), one ref per
+  session in capture order. The existing single refs (`runnerSessionArchive` on a
+  context, `metrics.runnerSessionArchive` for the worker) stay, and each always
+  points at that context's latest captured session. Readers that show or price one
+  session keep reading the single ref unchanged: History
+  (`methods/worker-session-history.ts`, `runners/session-archive.ts`) and usage
+  (`runtime/session-usage.ts`, `runners/claude-usage-sessions.ts`). Usage therefore
+  still counts the latest session per context, as today; summing every session is
+  not part of this change.
+- **Legacy archives.** An archive written before this change, at
+  `session-archives/<run>/<contextId>/transcript.jsonl` with only a single ref, reads
+  as a one-element list whose `sessionKey` is `legacy`. Nothing is moved or rewritten.
+- **Readers that change (PR 1).** The episode writer (`run-completion/run-episode.ts`)
+  lists every session in `trajectory.agents` and [Run episodes](run-episodes.md)
+  documents the per-session shape; the run store and agent contexts
+  (`runs/store.ts`, `agents/contexts.ts`) patch the list; list rows
+  (`protocol/runs/list-row.ts`, `list-trim.ts`) trim the list as they trim the single
+  ref; the portable bundle (`protocol/runs/portable-bundle.ts`) strips the list's
+  local paths as it strips the single ref's; the review QA migration
+  (`run-engine/review-qa-migration.ts`) carries the list with the ref.
 - **Atomic write.** The copy goes to a temporary file in the session directory and
   is renamed into place. A failed copy deletes only its temporary file, never a
   previously captured transcript.
@@ -40,8 +62,11 @@ sha256, sizeBytes, capturedAt, reason?}`. A source whose size and mtime match a
   written with a patch of that context's archive list alone, never by rewriting the
   run's whole metrics object.
 - **Replay.** The old session's path is saved on its context when the session
-  ends. Before a replay relaunches the step, that path is captured synchronously,
-  bounded by 30 seconds; a timeout records `missing` and the replay goes on.
+  ends. Before a replay relaunches the step, that path is captured synchronously.
+  The 30-second bound includes waiting for the run's in-flight capture to finish;
+  if the queue has not drained or the copy has not finished by then, the session
+  is recorded `missing` (reason `capture-timeout`) and the replay goes on. Slot
+  release retries it while the file still exists.
 - **Elsewhere, after the commit.** Other captures run after the transition
   commits; a failure records `missing` with a reason and never blocks or reverts
   the transition.
@@ -64,30 +89,42 @@ the implementing PR adds them, and until then the label is `null`.
 
 | Field                   | Content                                                                                                          | Source                                                                                                                                                                                                         |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `labels.task`           | `lane, variant, familyId, mode, completionPolicy, templateHash, note, candidateId`                               | run record (`note` is the operator task note text; `candidateId` is the launch-plan candidate)                                                                                                                 |
+| `labels.task`           | `lane, variant, familyId, mode, completionPolicy, templateId, templateSha256, note, launchPlanId, candidateId`   | run record: `executionTemplate.id` and `.sha256`, `taskNote` (the operator task note text), `launchPlanId` and `launchCandidateId` (the launch-plan candidate)                                                 |
 | `labels.roles[]`        | `role, contextId, runner, model, effort, sessions[] {sessionKey, status, answersRound?}`                         | agent contexts                                                                                                                                                                                                 |
-| `labels.cost[]`         | per role: `inputTokens, outputTokens, cacheReadTokens, totalTokens, usd, usdSource`                              | worker: run metrics (`costEstimate` is the worker session's USD cost, plus the session token counts); reviewers: each review attempt's `usage`; `usdSource` is `recorded` or `null` when no price was recorded |
+| `labels.cost[]`         | per context: `contextId, role, inputTokens, outputTokens, cacheReadTokens, totalTokens, usd, usdSource`          | worker: run metrics (`costEstimate` is the worker session's USD cost, plus the session token counts); reviewers: each review attempt's `usage`; `usdSource` is `recorded` or `null` when no price was recorded |
 | `labels.acceptance`     | `source (registered, derived or none), criteria[] {id, text, verdict}`                                           | the acceptance ledger snapshot on the run: the gate's `acceptanceStatus`, else a completion snapshot (_new run field_)                                                                                         |
 | `labels.reviewRounds[]` | `round, contextId, sessionKey, reviewer {runner, model}, verdict, unresolvedCount, fix {contextId, sessionKey}?` | review loops and their attempts (`loopNumber`, `verdict`, `unresolvedCount`)                                                                                                                                   |
 | `labels.gate`           | `outcome, decision, decidedAt`                                                                                   | resolved gate decisions                                                                                                                                                                                        |
 | `labels.attempts[]`     | `kind (dispatch, replay, recovery, infra-failure, operator), step, at, error?, recovery?`                        | step history and recovery records; replays and infra failures that leave no record today get an append-only attempt log (_new run field_)                                                                      |
 | `labels.infraOnly`      | true when the run ended on infra failures alone, with no agent outcome                                           | derived from `attempts` and the outcome                                                                                                                                                                        |
-| `labels.output`         | `diffSha256, source (committed, working-tree or parked-ref), ref`                                                | _new run field_, written at finalize and at release (a parked ref when release parks unpushed work)                                                                                                            |
+| `labels.output`         | `diffSha256, source (committed, working-tree or parked-ref), ref, path`                                          | _new run field_, written at finalize and at release (a parked ref when release parks unpushed work); `path` names the retained diff (below)                                                                    |
 | `labels.git`            | `startRef, dispatchHead, finalHead, prHead, mergeSha`                                                            | `startRef` and `dispatchHead` as today; the other three are _new run fields_                                                                                                                                   |
+
+**The graded diff is retained.** When finalize or release records `labels.output`,
+the gateway also writes the diff it graded, `git diff <dispatchHead>` against the
+committed head, the working tree or the parked ref, as `output/graded.diff` in the
+run's retained artifacts (Amendment 1), under the bundle lock, with the sha256 it
+records. The episode lists that file among its references. A diff larger than the
+retained-artifact limit is recorded with its sha256 and size and no bytes.
 
 Writing a new run field updates the run. The retention pass recaptures every
 episode whose run changed since its last pass, so a merge recorded after the run
 ended reaches the episode within an hour.
 
-Episodes captured before this change gain label values through a bulk recapture
-(`farmslot runs episodes recapture --since <date>`), the same writer run over each
-ended run in the range.
+Episodes captured before this change gain label values through a bulk recapture.
+`farmslot runs episodes recapture --since <date> [--until <date>]` calls the gateway
+method `run.episode.recapture { since, until? }`, which returns the number of runs
+queued and writes each episode through the same writer the retention pass uses. That
+writer writes one run's episode at a time and replaces the file by rename, so a
+retention recapture of the same run at the same moment writes the same content
+again rather than racing it.
 
 ## External grades
 
-`run.grade.external.record` appends one line to `grades/<run-id>.jsonl` in the
-episode store (`currentFarmPaths('gateway').state.episodes`, or `<runs dir>/episodes`
-in the legacy layout):
+`run.grade.external.record { runId, source, grader, scale, verdict, rubric?, reason?, gradedAt? }`
+appends one line to `grades/<run-id>.jsonl` in the episode store
+(`currentFarmPaths('gateway').state.episodes`, or `<runs dir>/episodes` in the legacy
+layout). The gateway adds `recordedBy` (the calling principal) and `recordedAt`:
 
 ```json
 {
@@ -98,9 +135,15 @@ in the legacy layout):
   "rubric": [{ "point": "Default panel is the order book", "verdict": "met" }],
   "reason": "…",
   "gradedAt": "2026-11-24T10:00:00Z",
-  "gradedBy": "sparks"
+  "recordedBy": "farm-automation",
+  "recordedAt": "2026-11-24T10:05:00Z"
 }
 ```
+
+- `source` names the evaluation that produced the grade (a dataset or phase id).
+  `grader` names who or what judged: a person, a model id or a script. `gradedAt`
+  is when the judgement was made (default: `recordedAt`). `recordedBy` is the
+  principal that recorded it, which may differ from the grader.
 
 - `verdict` must be one of `scale`. Several graders may grade one run. Lines are
   append-only; a correction is a new line, and export takes the latest line per
@@ -113,7 +156,14 @@ in the legacy layout):
 
 `run.interview.record { runId, kind, text }` stores a post-run interview, such as
 an ask-why `why.md`, as `interviews/<run-id>/<n>-<kind>.md` in the episode store.
-Interviews are optional, append-only and exported beside the labels.
+
+- `kind` is one of `why`, `debrief` or `note`; any other value is refused, so it
+  never reaches a path unchecked.
+- `<n>` is the next three-digit number for the run, allocated by creating the file
+  with an exclusive create and retrying with the next number when it exists, so
+  concurrent records never overwrite each other.
+- Interviews are optional, append-only and exported beside the labels. Like
+  episodes and grade files, they are kept forever with the run record.
 
 ## Opt-out
 
@@ -130,8 +180,12 @@ Run retention is not changed by the opt-out.
 ## Export
 
 `farmslot runs traces export --out <dir> [--project <name>] [--flow <type>] [--since <date>] [--until <date>] [--family <id>] [--has-grade] [--update]`
-runs in the CLI process, offline from the gateway. It reads the stores read-only
-and writes only `<dir>`:
+runs in the CLI process, offline from the gateway, on the gateway's host: it reads
+the gateway's stores directly, resolved through `farmslot paths --json` for the
+gateway role (ADR-039 Amendment 6), and refuses on a host where those stores are
+absent. It reads them read-only and writes only `<dir>`. `--has-grade` keeps runs
+with at least one external grade line; a run's `humanGrade` is exported but does
+not count.
 
 ```text
 <dir>/
@@ -153,10 +207,15 @@ and writes only `<dir>`:
   mismatch is listed in `index.jsonl` and the file is skipped.
 - A missing transcript (node offline, slot reset, size limit) is reported in
   `index.jsonl` and `README.md` with its reason. Export never fails for it.
-  `--update` on an existing export adds transcripts captured since, for example
-  after the node returns and `bundle retain` recaptures them, and leaves other files
-  as they are. Without `--update`, export refuses a non-empty `<dir>`.
-- Cost: tokens are always exported. When `usd` is `null`, export prices the tokens
+  Without `--update`, export refuses a non-empty `<dir>`.
+- `--update` on an existing export, for each run that matches the filter: adds
+  transcripts captured since (for example after the node returns and
+  `bundle retain` recaptures them), and rewrites that run's `labels.json` (new
+  grades and label values) and `redaction.json`. It then rewrites `index.jsonl` and
+  `README.md` for the whole export. It never deletes an exported file, so a run that
+  no longer matches the filter keeps its folder and stays in the index.
+- Export never invents a transcript or a label value. Cost is the one derived value:
+  tokens are always exported, and when `usd` is `null`, export prices the tokens
   from the model price table it ships with and marks `usdSource: "export-table"`;
   a model without a price stays `null`.
 - Filters are applied to episodes in the CLI process. The gateway does no work.
@@ -184,10 +243,16 @@ JSONL stays valid, and applies to every file export writes: transcripts,
 `labels.json`, `task.md`, `output.diff`, interviews, `index.jsonl`, `README.md`
 and file names. Rules, in order:
 
-1. The exact values of the farm's configured secrets: provider environment values,
-   gateway and node tokens, and LiteLLM keys.
+1. The exact values of the farm's configured secrets on the gateway host: provider
+   environment values, gateway and node tokens, and LiteLLM keys, read from the
+   gateway's configuration through the same paths.
 2. The publication scan's patterns, made replacing.
-3. Private keys: labelled hex, and unlabeled 64-hex strings.
+3. Private keys: a hex string of 64 or more characters (with or without `0x`)
+   that is labelled as a key, meaning a key-like name (`privateKey`, `private_key`,
+   `secret`, `seed`, `mnemonic`) on the same line or assigned the value. Bare hex is
+   kept, because it is usually a digest. Digests Farmslot writes itself (`sha256`,
+   `diffSha256`, the SHA and head fields in `labels.git`, and `sha256:` references)
+   are never redacted.
 4. E-mail addresses and DSNs, such as Sentry DSNs.
 5. Secret variable names, matched case-sensitively in `SCREAMING_SNAKE_CASE` with
    a secret-like suffix (`_TOKEN`, `_KEY`, `_SECRET`, `_PASSWORD`). Their values
@@ -197,8 +262,9 @@ and file names. Rules, in order:
 7. Home directories (`/Users/<name>`, `/home/<name>`), which become `~`.
 8. Machine names from the pool, which become `<machine>`.
 
-Each rule replaces a match with `[REDACTED:<rule>]` and counts it in
-`redaction.json`. A file the scrubber cannot read is left out, never exported raw.
+Each rule replaces a match in file contents with `[REDACTED:<rule>]`, and in file
+names with `REDACTED-<rule>` (no brackets or colon, which file systems handle badly),
+and counts it in `redaction.json`. A file the scrubber cannot read is left out, never exported raw.
 
 Redaction is a best-effort backstop, not a guarantee. An export is for the local
 machine only; sharing it, even internally, needs a human review first.
