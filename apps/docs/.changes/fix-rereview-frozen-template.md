@@ -1,0 +1,1 @@
+- The review modes reference states that a re-review that never launched hands its workspace back, freezes the current static-review template, and names the mismatch when a retained reviewer is refused.
