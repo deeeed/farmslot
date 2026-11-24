@@ -256,10 +256,15 @@ interface SessionRecord {
   turnEnd?: { done: Promise<void>; abandon(reason: string): void };
 }
 
+/** How long an idle-runner upgrade fence holds without the stop that should follow it. */
+const IDLE_RUNNER_FENCE_MS = Number(process.env.FARMSLOT_NATIVE_IDLE_FENCE_MS) || 60_000;
+
 /** Runs only inside the local host. Synchronous fsync orders intent before native input. */
 export class NativeSessionManager {
   private sessions = new Map<string, SessionRecord>();
   private upgradePrepared = false;
+  /** Lifts the idle-runner fence; cleared when another fence replaces it, so it lifts only its own. */
+  private idleRunnerFence?: ReturnType<typeof setTimeout>;
   private pendingAdmissions = 0;
 
   /** Atomically fence new admissions only when no live or pre-reservation work exists. */
@@ -276,13 +281,63 @@ export class NativeSessionManager {
       )
         return false;
     this.upgradePrepared = true;
+    // This fence holds for good: an earlier idle-runner fence must not lift it.
+    clearTimeout(this.idleRunnerFence);
+    this.idleRunnerFence = undefined;
     return true;
+  }
+
+  /**
+   * Fence admissions and new input for a refresh that stops idle runners too: a live runner
+   * whose session is idle, with nothing being sent, configured, compacted, finished or asked,
+   * doesn't block it; the supervisor's cleanup stops that runner. Returns the busy sessions
+   * and fences only when there are none.
+   */
+  prepareIdleRunnerUpgrade(): string[] {
+    // Already fenced for good (every runner stopped): nothing to add, and no timer may lift it.
+    if (this.upgradePrepared && !this.idleRunnerFence) return [];
+    const busy: string[] = [];
+    if (this.pendingAdmissions) busy.push(`${this.pendingAdmissions} launch(es) starting`);
+    for (const record of this.sessions.values()) {
+      if (record.info.processStopped) continue;
+      const reason =
+        record.info.state !== 'idle'
+          ? record.info.state
+          : record.sending
+            ? 'sending'
+            : record.configuring
+              ? 'configuring'
+              : record.compacting
+                ? 'compacting'
+                : record.turnEnd
+                  ? 'finishing a turn'
+                  : record.pendingRequests.size
+                    ? 'waiting on a request'
+                    : record.info.approvalModePending
+                      ? 'approval mode change pending'
+                      : undefined;
+      if (reason) busy.push(`${record.info.id} (${reason})`);
+    }
+    if (!busy.length) {
+      this.upgradePrepared = true;
+      // The supervisor's stop follows at once. If it never comes (the stop failed, or the
+      // service that fenced died), the fence lifts so the idle sessions take input again.
+      clearTimeout(this.idleRunnerFence);
+      this.idleRunnerFence = setTimeout(() => {
+        this.idleRunnerFence = undefined;
+        this.upgradePrepared = false;
+      }, IDLE_RUNNER_FENCE_MS);
+      this.idleRunnerFence.unref();
+    }
+    return busy;
   }
 
   private assertAdmissionOpen(): void {
     if (this.upgradePrepared)
       throw Object.assign(
-        new Error('Native host is fenced for a runtime upgrade; new admission is blocked'),
+        new Error(
+          'Native host is fenced for a runtime upgrade; new launches and input are blocked while it refreshes',
+        ),
         { code: NATIVE_HOST_VERSION_SKEW },
       );
   }
@@ -1555,6 +1610,7 @@ export class NativeSessionManager {
     id: string,
     mode: NativeApprovalMode,
   ): Promise<NativeSessionInfo> {
+    this.assertAdmissionOpen();
     if (mode !== 'ask' && mode !== 'bypass') throw new Error('Unknown native approval mode');
     const record = this.owned(owner, id);
     this.assertUnmanagedSession(owner, id);
@@ -1595,6 +1651,7 @@ export class NativeSessionManager {
     leaseId: string,
     request: NativeContextCompactionRequest,
   ): Promise<NativeContextCompactionRecord> {
+    this.assertAdmissionOpen();
     this.assertWorkerLease(owner, id, generation, leaseId);
     const record = this.owned(owner, id);
     this.assertAccountCurrent(record);
@@ -1824,6 +1881,8 @@ export class NativeSessionManager {
         ...(existing.steered ? { steered: true } : {}),
       };
     }
+    // A fenced host takes no new input; a replay of a command it already has is answered above.
+    this.assertAdmissionOpen();
     if (
       record.compacting ||
       record.info.contextCompactions?.some((row) => ['pending', 'unconfirmed'].includes(row.status))
@@ -1888,6 +1947,9 @@ export class NativeSessionManager {
       record.sending
     )
       return this.send(owner, id, commandId, text);
+    // A replay goes through send above, which answers it. Defensive: a fence is only taken with
+    // no session running, and steering needs a running one.
+    this.assertAdmissionOpen();
     this.assertAccountCurrent(record);
     const command: StoredCommand = {
       text,

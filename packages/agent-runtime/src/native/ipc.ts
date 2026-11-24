@@ -40,6 +40,8 @@ export interface HostIdentity {
   /** Content hash of the runtime code the host loaded (runtime-build.ts). */
   runtimeBuild?: string;
   supportsRuntimeUpgrade?: boolean;
+  /** prepareUpgrade can fence with idle live runners and name the busy sessions. */
+  supportsIdleRunnerUpgrade?: boolean;
   supportsApprovalMode?: boolean;
   conversationStreaming?: 1;
   supportsStandaloneDelegation?: boolean;
@@ -57,7 +59,7 @@ export interface HostIdentity {
   socket: string;
 }
 export type HostRequest =
-  | { method: 'prepareUpgrade'; owner: string }
+  | { method: 'prepareUpgrade'; owner: string; idleRunners?: boolean }
   | {
       method: typeof NATIVE_WORKER_COMPACT;
       owner: string;
@@ -207,7 +209,9 @@ export function decodeRequest(value: unknown): HostRequest {
   const p = object(value);
   const owner = string(p, 'owner');
   const method = p.method;
-  if (method === 'list' || method === 'prepareUpgrade') return { method, owner };
+  if (method === 'list') return { method, owner };
+  if (method === 'prepareUpgrade')
+    return p.idleRunners === true ? { method, owner, idleRunners: true } : { method, owner };
   if (
     method === 'create' ||
     method === 'ensure' ||
