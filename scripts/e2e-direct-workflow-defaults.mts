@@ -134,9 +134,41 @@ for (const [machine, capacity] of [
     ...(capacity ? { review_workspaces: { max_concurrent: capacity } } : {}),
   });
 }
+// A runtime slot direct reviews must leave alone: they run in review workspaces.
+await mkdir(path.join(fixture, 'repo'));
+const runtimePool = path.join(fixture, 'pool/runtime.json');
+poolFiles.push(runtimePool);
+await json(runtimePool, {
+  machine: 'runtime-host',
+  host: 'localhost',
+  project: 'review',
+  platform: 'cli',
+  slots: [
+    {
+      id: 'runtime',
+      enabled: true,
+      repo: path.join(fixture, 'repo'),
+      session: 'fixture-runtime',
+      resources: {},
+    },
+  ],
+});
 await json(path.join(fixture, 'test-fleet-status.json'), {
   checked_at: new Date().toISOString(),
-  slots: [],
+  slots: [
+    {
+      slot: 'runtime',
+      machine: 'runtime-host',
+      project: 'review',
+      platform: 'cli',
+      enabled: true,
+      lifecycle: 'ready',
+      agent: 'idle',
+      branch: 'main',
+      runner: 'claude',
+      model: 'sonnet',
+    },
+  ],
 });
 const originalPools = await Promise.all(poolFiles.map((file) => readFile(file, 'utf8')));
 // Provider fixture only: the gateway still executes its real gh transport, parsing,
