@@ -12,6 +12,7 @@ import { CopilotRuntimeStore } from './session-store.js';
 import {
   FakeCopilotNative,
   FakeCopilotTmux,
+  testCheckout,
   testController,
   testWorkload,
 } from './test-helpers.js';
@@ -352,11 +353,58 @@ test('start and stop take a new checkout snapshot when a checkout write supersed
   await rm(home, { recursive: true, force: true });
 });
 
+test('a write that leaves the checkout snapshot as it was does not fail a status read', async () => {
+  // .pr-rules.archive.jsonl, .runs/ and .omx/logs/ are written under the gateway checkout all
+  // the time; each write fires the checkout watch without changing branch, head or dirty paths.
+  const home = await mkdtemp(path.join(tmpdir(), 'copilot-churn-'));
+  const { controller } = testController({
+    home,
+    checkout: process.cwd(),
+    observeCheckout: async () => async () => {
+      throw new GatewayMethodError(
+        'RESOURCE_OBSERVATION_CHANGED',
+        'Workspace contents changed during the read',
+      );
+    },
+  });
+  assert.equal((await controller.status()).session.checkout.path, process.cwd());
+  await rm(home, { recursive: true, force: true });
+});
+
+test('a status read still fails when the dirty paths changed during it', async () => {
+  const home = await mkdtemp(path.join(tmpdir(), 'copilot-churn-new-file-'));
+  let reads = 0;
+  const { controller } = testController({
+    home,
+    checkout: process.cwd(),
+    // A new untracked file appears between the read and its confirmation.
+    inspectCheckout: async (checkout) => {
+      const identity = testCheckout(checkout);
+      const dirtyPaths = ++reads > 1 ? [...identity.dirtyPaths, 'new.txt'] : identity.dirtyPaths;
+      return { ...identity, dirtyPaths, dirtyFileCount: dirtyPaths.length };
+    },
+    observeCheckout: async () => async () => {
+      throw new GatewayMethodError(
+        'RESOURCE_OBSERVATION_CHANGED',
+        'Workspace contents changed during the read',
+      );
+    },
+  });
+  await assert.rejects(() => controller.status(), /changed during the read/);
+  await rm(home, { recursive: true, force: true });
+});
+
 test('an action still fails when every checkout snapshot is superseded', async () => {
   const home = await mkdtemp(path.join(tmpdir(), 'copilot-superseded-always-'));
+  let commits = 0;
   const { controller, native } = testController({
     home,
     checkout: process.cwd(),
+    // A commit lands during every read.
+    inspectCheckout: async (checkout) => ({
+      ...testCheckout(checkout),
+      head: String(++commits).padStart(40, '0'),
+    }),
     observeCheckout: async () => async () => {
       throw new GatewayMethodError(
         'RESOURCE_OBSERVATION_CHANGED',

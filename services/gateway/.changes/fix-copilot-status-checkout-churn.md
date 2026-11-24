@@ -1,0 +1,1 @@
+- A Co-Pilot status read no longer fails with "Workspace contents changed during the read" when a write under the gateway checkout leaves its branch, head and dirty paths as they were (the gateway writes `.runs/`, `.omx/logs/` and the PR rule archive there continuously), and the PR rule archive `.pr-rules.archive.jsonl` is gitignored like the store beside it.
