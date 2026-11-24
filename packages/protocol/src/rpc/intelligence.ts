@@ -255,7 +255,9 @@ export interface ImprovementApplyResult {
 
 export type LLMReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
-export type LLMTierName = 'fast' | 'standard' | 'smart';
+/** The model tiers callers name instead of a provider's model id. */
+export const LLM_TIER_NAMES = ['fast', 'standard', 'smart'] as const;
+export type LLMTierName = (typeof LLM_TIER_NAMES)[number];
 
 /**
  * Per-provider model ids that replace the built-in tier map (`llm.tiers`), e.g.

@@ -1,0 +1,1 @@
+- Settings → LLM: the tier table cells are editable. An empty cell uses the built-in model shown in grey; Save tier models stores the overrides; text typed while a save is in flight is kept, and a failed save shows as an error.

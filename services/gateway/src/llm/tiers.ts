@@ -1,9 +1,9 @@
 // llm/tiers.ts — the built-in cross-provider tier map.
-import type { LLMTierName } from '@farmslot/protocol';
+import { LLM_TIER_NAMES } from '@farmslot/protocol';
 
 import { CODEX_ASTRA_MODEL } from './codex-astra.js';
 
-export const LLM_TIERS: readonly LLMTierName[] = ['fast', 'standard', 'smart'];
+export const LLM_TIERS = LLM_TIER_NAMES;
 
 // Tiers resolve to provider-specific alias names, then through MODEL_ALIASES.
 // This lets callers use `model: 'fast'` regardless of provider.

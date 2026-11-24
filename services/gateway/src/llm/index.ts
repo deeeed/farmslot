@@ -14,7 +14,7 @@ import {
   type ToolResultMessage,
 } from '@earendil-works/pi-ai';
 
-import type { ChatToolTraceEntry, LLMTierModels, StepLLMUsage } from '@farmslot/protocol';
+import type { ChatToolTraceEntry, StepLLMUsage } from '@farmslot/protocol';
 
 import { execLocal } from '../core/exec.js';
 import { lazyImport } from '../core/lazy-import.js';
@@ -190,15 +190,11 @@ const MODEL_ALIASES: Record<string, Record<string, string>> = {
 // The built-in map lives in ./tiers.ts; llm-config's `tierModels` overrides it per provider.
 export { TIER_MAP };
 
-export function resolveTier(
-  provider: string,
-  model: string,
-  tierModels: LLMTierModels | undefined = getLLMConfig().tierModels,
-): string {
+export function resolveTier(provider: string, model: string): string {
   const tier = LLM_TIERS.find((name) => name === model);
   if (!tier) return model; // not a tier name, pass through
   // A configured id wins: it names a model the provider serves (codex-lb's plan, for one).
-  return tierModels?.[provider]?.[tier] ?? TIER_MAP[tier]?.[provider] ?? model;
+  return getLLMConfig().tierModels?.[provider]?.[tier] ?? TIER_MAP[tier]?.[provider] ?? model;
 }
 
 export function resolveModelId(provider: string, model: string): string {

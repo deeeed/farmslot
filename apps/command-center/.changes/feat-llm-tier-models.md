@@ -1,1 +1,0 @@
-- Settings → LLM: the tier table cells are editable. An empty cell uses the built-in model shown in grey; Save tier models stores the overrides.

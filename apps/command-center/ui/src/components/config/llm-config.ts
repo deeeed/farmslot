@@ -18,7 +18,12 @@ import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { ResourceQueryController } from '../shared/resource-query-controller.js';
 
-import { type TierModelEdits, tierModelOverride, tierModelsToSave } from './llm-tier-models.js';
+import {
+  editsTypedSince,
+  type TierModelEdits,
+  tierModelOverride,
+  tierModelsToSave,
+} from './llm-tier-models.js';
 
 interface ProviderCard {
   name: string;
@@ -46,7 +51,7 @@ export class LLMConfig extends LitElement {
   @state() private _tiers: Record<string, Record<string, string>> = {};
   /** Tier cells typed since the last save; the saved overrides fill the rest. */
   @state() private _tierEdits: TierModelEdits = {};
-  @state() private _tierStatus = '';
+  @state() private _tierStatus: { text: string; failed: boolean } | null = null;
   @state() private _loading = true;
   @state() private _testing: string | null = null;
   @state() private _testResult: LLMAuthTestResult | null = null;
@@ -315,13 +320,15 @@ export class LLMConfig extends LitElement {
 
   private async _saveTierModels() {
     this._configQuery.requireReady();
-    const tierModels = tierModelsToSave(this._config?.tierModels, this._tierEdits, this._tiers);
+    const sent = this._tierEdits;
+    const tierModels = tierModelsToSave(this._config?.tierModels, sent, this._tiers);
     try {
       await gateway.request(Methods.LLM_CONFIG_SET, { tierModels });
-      this._tierEdits = {};
-      this._tierStatus = 'Tier overrides saved';
+      // A cell typed while the save was in flight keeps its new text.
+      this._tierEdits = editsTypedSince(sent, this._tierEdits);
+      this._tierStatus = { text: 'Tier models saved', failed: false };
     } catch (error) {
-      this._tierStatus = `Save failed: ${(error as Error).message}`;
+      this._tierStatus = { text: `Save failed: ${(error as Error).message}`, failed: true };
     }
   }
 
@@ -841,7 +848,9 @@ export class LLMConfig extends LitElement {
       </table>
       <div class="btn-row">
         <span style="font-size:0.8rem;color:${colors.textMuted}"
-          >An empty cell uses the built-in model shown in grey.</span
+          >An empty cell uses the built-in model shown in grey. An id the provider does not serve
+          saves, but its calls fail with "unknown model" (codex-lb accepts any id its plans
+          serve).</span
         >
         <button
           data-testid="tier-models-save"
@@ -851,7 +860,14 @@ export class LLMConfig extends LitElement {
           Save tier models
         </button>
       </div>
-      ${this._tierStatus ? html`<div class="import-status">${this._tierStatus}</div>` : nothing}
+      ${this._tierStatus
+        ? html`<div
+            class="test-result ${this._tierStatus.failed ? 'test-fail' : 'test-ok'}"
+            data-testid="tier-models-status"
+          >
+            ${this._tierStatus.text}
+          </div>`
+        : nothing}
     `;
   }
 }

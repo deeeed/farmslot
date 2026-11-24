@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 
-import { tierModelOverride, tierModelsToSave } from './llm-tier-models.js';
+import { editsTypedSince, tierModelOverride, tierModelsToSave } from './llm-tier-models.js';
 
 const builtIn = {
   fast: { anthropic: 'haiku', 'codex-lb': 'gpt-6.2-astra' },
@@ -30,4 +30,13 @@ test('an emptied cell or one set to the built-in id saves no override', () => {
     tierModelsToSave(saved, { 'codex-lb': { fast: '' }, anthropic: { fast: 'haiku' } }, builtIn),
     {},
   );
+});
+
+test('a cell typed while a save was in flight keeps its text after the save', () => {
+  const sent = { 'codex-lb': { fast: 'gpt-5.6-terra', standard: 'gpt-6-luna' } };
+  assert.deepEqual(
+    editsTypedSince(sent, { 'codex-lb': { fast: 'gpt-5.6-terra', standard: 'gpt-6-lu' } }),
+    { 'codex-lb': { standard: 'gpt-6-lu' } },
+  );
+  assert.deepEqual(editsTypedSince(sent, sent), {});
 });

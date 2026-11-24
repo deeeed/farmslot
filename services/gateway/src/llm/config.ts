@@ -6,7 +6,7 @@ import path from 'node:path';
 
 import type { ThinkingLevel } from '@earendil-works/pi-ai';
 
-import type { LLMTierModels } from '@farmslot/protocol';
+import type { LLMTierModels, LLMTierName } from '@farmslot/protocol';
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { publishConfigurationResources } from '../resources/configuration-changes.js';
@@ -70,15 +70,15 @@ export function getLLMConfig(): LLMConfig {
         ...llmDefaultsForProvider(parsed.defaultProvider ?? DEFAULTS.defaultProvider),
         ...parsed,
       };
-      // A hand-edited override the setter would refuse is dropped, not routed: its ids reach
-      // provider requests and the CLI fallback.
+      // A hand-edited entry the setter would refuse is dropped, not routed: its id reaches
+      // provider requests and the CLI fallback. The valid entries stay, so the next Settings
+      // save keeps them.
       if (loaded.tierModels !== undefined) {
-        try {
-          validateTierModels(loaded.tierModels);
-        } catch (error) {
-          console.warn(`[llm] ignoring tierModels in ${cfgPath}: ${(error as Error).message}`);
-          delete loaded.tierModels;
-        }
+        const { kept, problems } = checkTierModels(loaded.tierModels);
+        for (const problem of problems)
+          console.warn(`[llm] ignoring part of tierModels in ${cfgPath}: ${problem}`);
+        if (kept) loaded.tierModels = kept;
+        else delete loaded.tierModels;
       }
       _cache = loaded;
       return loaded;
@@ -100,28 +100,40 @@ export function getLLMConfig(): LLMConfig {
   return _cache!;
 }
 
-const SAFE_VALUE = /^[\w.-]+$/;
+// A leading word character keeps an id from reading as a command-line flag.
+const SAFE_VALUE = /^\w[\w.-]*$/;
 
 /**
- * Tier overrides replace the whole saved map. Providers and tiers must be ones the tier map
- * knows, and every id is a safe value: it reaches provider requests and the CLI fallback.
+ * The tier overrides that are safe to route, and why the rest are not. Providers and tiers must
+ * be ones the tier map knows, and every id a safe value: it reaches provider requests and the
+ * CLI fallback. `kept` is undefined when the value is not a map at all.
  */
-function validateTierModels(tierModels: unknown): void {
-  const providers = tierProviders();
+function checkTierModels(tierModels: unknown): { kept?: LLMTierModels; problems: string[] } {
   if (typeof tierModels !== 'object' || tierModels === null || Array.isArray(tierModels))
-    throw new Error('[llm] tierModels must be an object of provider → tier → model id');
+    return { problems: ['tierModels must be an object of provider → tier → model id'] };
+  const providers = tierProviders();
+  const kept: LLMTierModels = {};
+  const problems: string[] = [];
   for (const [provider, tiers] of Object.entries(tierModels)) {
-    if (!providers.includes(provider))
-      throw new Error(`[llm] tierModels names an unknown provider: ${provider}`);
-    if (typeof tiers !== 'object' || tiers === null || Array.isArray(tiers))
-      throw new Error(`[llm] tierModels.${provider} must be an object of tier → model id`);
-    for (const [tier, model] of Object.entries(tiers)) {
-      if (!LLM_TIERS.some((name) => name === tier))
-        throw new Error(`[llm] tierModels.${provider} names an unknown tier: ${tier}`);
-      if (typeof model !== 'string' || !SAFE_VALUE.test(model))
-        throw new Error(`[llm] invalid model id for tierModels.${provider}.${tier}: ${model}`);
+    if (!providers.includes(provider)) {
+      problems.push(`tierModels names an unknown provider: ${provider}`);
+      continue;
     }
+    if (typeof tiers !== 'object' || tiers === null || Array.isArray(tiers)) {
+      problems.push(`tierModels.${provider} must be an object of tier → model id`);
+      continue;
+    }
+    const valid: Partial<Record<LLMTierName, string>> = {};
+    for (const [tier, model] of Object.entries(tiers)) {
+      const name = LLM_TIERS.find((candidate) => candidate === tier);
+      if (!name) problems.push(`tierModels.${provider} names an unknown tier: ${tier}`);
+      else if (typeof model !== 'string' || !SAFE_VALUE.test(model))
+        problems.push(`invalid model id for tierModels.${provider}.${tier}: ${String(model)}`);
+      else valid[name] = model;
+    }
+    if (Object.keys(valid).length > 0) kept[provider] = valid;
   }
+  return { kept, problems };
 }
 
 export function setLLMConfig(partial: Partial<LLMConfig>): LLMConfig {
@@ -131,7 +143,11 @@ export function setLLMConfig(partial: Partial<LLMConfig>): LLMConfig {
       throw new Error(`[llm] invalid config value for ${key}: ${val}`);
     }
   }
-  if (partial.tierModels !== undefined) validateTierModels(partial.tierModels);
+  // Settings sends the whole map; a save with any bad entry is refused as a whole.
+  if (partial.tierModels !== undefined) {
+    const [problem] = checkTierModels(partial.tierModels).problems;
+    if (problem) throw new Error(`[llm] ${problem}`);
+  }
   for (const key of ['copilotEffort', 'intelligenceEffort'] as const) {
     const effort = partial[key];
     if (

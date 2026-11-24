@@ -45,6 +45,7 @@ test('tier overrides refuse unknown providers and tiers, unsafe ids and malforme
   const cases: Array<[unknown, RegExp]> = [
     [{ 'codex-lb': { fast: 'gpt-6-luna; touch /tmp/x' } }, /invalid model id for tierModels/],
     [{ 'codex-lb': { fast: '' } }, /invalid model id for tierModels/],
+    [{ 'codex-lb': { fast: '--help' } }, /invalid model id for tierModels/],
     [{ 'codex-lb': { fast: 7 } }, /invalid model id for tierModels/],
     [{ 'codex-lb': { turbo: 'gpt-6-luna' } }, /unknown tier: turbo/],
     [{ 'not-a-provider': { fast: 'gpt-6-luna' } }, /unknown provider: not-a-provider/],
@@ -56,14 +57,20 @@ test('tier overrides refuse unknown providers and tiers, unsafe ids and malforme
     assert.throws(() => setLLMConfig(JSON.parse(JSON.stringify({ tierModels }))), pattern);
   }
   assert.equal(getLLMConfig().tierModels, undefined, 'nothing refused was saved');
-  // A hand-edited file with an unsafe id is ignored on load, not routed.
+  // A hand-edited unsafe id is ignored on load, not routed; the valid entries beside it stay.
   writeFileSync(
     path.join(home, 'llm-config.json'),
-    JSON.stringify({ defaultProvider: 'codex-lb', tierModels: { 'codex-lb': { fast: 'a b' } } }),
+    JSON.stringify({
+      defaultProvider: 'codex-lb',
+      tierModels: { 'codex-lb': { fast: 'a b', standard: 'gpt-6-luna' }, nope: { fast: 'x' } },
+    }),
   );
   invalidateLLMConfig();
-  assert.equal(getLLMConfig().tierModels, undefined);
+  assert.deepEqual(getLLMConfig().tierModels, { 'codex-lb': { standard: 'gpt-6-luna' } });
   assert.equal(resolveTier('codex-lb', 'fast'), 'gpt-6.2-astra');
+  writeFileSync(path.join(home, 'llm-config.json'), JSON.stringify({ tierModels: 'codex-lb' }));
+  invalidateLLMConfig();
+  assert.equal(getLLMConfig().tierModels, undefined);
 });
 
 test('Settings round trip: llm.config.set saves the overrides llm.config.get returns', (t) => {
@@ -92,6 +99,10 @@ test('Settings round trip: llm.config.set saves the overrides llm.config.get ret
 
 test('codex-lb routes configured terra and luna tiers to the LB with their effort', async (t) => {
   isolatedHome(t);
+  // The model collection loads first, as in a running gateway: the tiers set after it must
+  // route without a restart.
+  const models = await piModels();
+  assert.equal(models.getModel('codex-lb', 'gpt-6-luna'), undefined);
   setLLMConfig({
     defaultProvider: 'codex-lb',
     intelligenceEffort: 'low',
@@ -130,15 +141,21 @@ test('codex-lb routes configured terra and luna tiers to the LB with their effor
     { url: `${CODEX_LB_BASE_URL}/responses`, model: 'gpt-5.6-terra', effort: 'low' },
     { url: `${CODEX_LB_BASE_URL}/responses`, model: 'gpt-6-luna', effort: 'low' },
   ]);
-  // Terra keeps PI's OpenAI catalog levels (no `minimal`); luna, unknown to PI, the Astra shape.
-  const models = await piModels();
+  // Terra keeps PI's OpenAI catalog levels; luna, unknown to PI, gets the Astra shape. Only
+  // `off` tells them apart: the catalog sends 'none', the Astra shape sends nothing.
   const terra = models.getModel('codex-lb', 'gpt-5.6-terra');
   const luna = models.getModel('codex-lb', 'gpt-6-luna');
   assert.equal(terra?.api, 'openai-responses');
   assert.equal(terra?.baseUrl, CODEX_LB_BASE_URL);
-  assert.equal(terra?.thinkingLevelMap?.minimal, null);
-  assert.equal(terra?.thinkingLevelMap?.max, 'max');
+  assert.equal(terra?.thinkingLevelMap?.off, 'none');
+  assert.equal(terra?.name, 'GPT-5.6 Terra');
+  assert.equal(luna?.thinkingLevelMap?.off, null);
   assert.equal(luna?.reasoning, true);
-  assert.equal(luna?.thinkingLevelMap?.low, 'low');
   assert.equal(luna?.cost.input, 0, 'an LB call is never priced as an API charge');
+  // Clearing the tier unregisters its id from the LB again, still without a restart.
+  setLLMConfig({ tierModels: { 'codex-lb': { fast: 'gpt-5.6-terra' } } });
+  assert.equal(models.getModel('codex-lb', 'gpt-6-luna'), undefined);
+  setLLMConfig({ tierModels: {} });
+  assert.equal(models.getModel('codex-lb', 'gpt-5.6-terra'), undefined);
+  assert.ok(models.getModel('codex-lb', 'gpt-6.2-astra'), 'the built-in ids stay');
 });
