@@ -6,11 +6,13 @@ import path from 'node:path';
 
 import type { ThinkingLevel } from '@earendil-works/pi-ai';
 
+import type { LLMTierModels } from '@farmslot/protocol';
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { publishConfigurationResources } from '../resources/configuration-changes.js';
 
 import { CODEX_ASTRA_MODEL } from './codex-astra.js';
+import { LLM_TIERS, tierProviders } from './tiers.js';
 
 export interface LLMConfig {
   defaultProvider: string;
@@ -19,6 +21,8 @@ export interface LLMConfig {
   improvementModel: string;
   copilotEffort: ThinkingLevel;
   intelligenceEffort: ThinkingLevel;
+  /** Per-provider ids that replace the built-in tier map, so a tier can follow a served model. */
+  tierModels?: LLMTierModels;
 }
 
 // Resolve at call time, not import time: the gateway loads its .env (which may set
@@ -62,11 +66,22 @@ export function getLLMConfig(): LLMConfig {
     if (existsSync(cfgPath)) {
       const raw = readFileSync(cfgPath, 'utf-8');
       const parsed = JSON.parse(raw);
-      _cache = {
+      const loaded: LLMConfig = {
         ...llmDefaultsForProvider(parsed.defaultProvider ?? DEFAULTS.defaultProvider),
         ...parsed,
       };
-      return _cache!;
+      // A hand-edited override the setter would refuse is dropped, not routed: its ids reach
+      // provider requests and the CLI fallback.
+      if (loaded.tierModels !== undefined) {
+        try {
+          validateTierModels(loaded.tierModels);
+        } catch (error) {
+          console.warn(`[llm] ignoring tierModels in ${cfgPath}: ${(error as Error).message}`);
+          delete loaded.tierModels;
+        }
+      }
+      _cache = loaded;
+      return loaded;
     }
   } catch {
     // fall through
@@ -87,6 +102,28 @@ export function getLLMConfig(): LLMConfig {
 
 const SAFE_VALUE = /^[\w.-]+$/;
 
+/**
+ * Tier overrides replace the whole saved map. Providers and tiers must be ones the tier map
+ * knows, and every id is a safe value: it reaches provider requests and the CLI fallback.
+ */
+function validateTierModels(tierModels: unknown): void {
+  const providers = tierProviders();
+  if (typeof tierModels !== 'object' || tierModels === null || Array.isArray(tierModels))
+    throw new Error('[llm] tierModels must be an object of provider → tier → model id');
+  for (const [provider, tiers] of Object.entries(tierModels)) {
+    if (!providers.includes(provider))
+      throw new Error(`[llm] tierModels names an unknown provider: ${provider}`);
+    if (typeof tiers !== 'object' || tiers === null || Array.isArray(tiers))
+      throw new Error(`[llm] tierModels.${provider} must be an object of tier → model id`);
+    for (const [tier, model] of Object.entries(tiers)) {
+      if (!LLM_TIERS.some((name) => name === tier))
+        throw new Error(`[llm] tierModels.${provider} names an unknown tier: ${tier}`);
+      if (typeof model !== 'string' || !SAFE_VALUE.test(model))
+        throw new Error(`[llm] invalid model id for tierModels.${provider}.${tier}: ${model}`);
+    }
+  }
+}
+
 export function setLLMConfig(partial: Partial<LLMConfig>): LLMConfig {
   // Validate inputs — these flow into shell commands and API calls
   for (const [key, val] of Object.entries(partial)) {
@@ -94,6 +131,7 @@ export function setLLMConfig(partial: Partial<LLMConfig>): LLMConfig {
       throw new Error(`[llm] invalid config value for ${key}: ${val}`);
     }
   }
+  if (partial.tierModels !== undefined) validateTierModels(partial.tierModels);
   for (const key of ['copilotEffort', 'intelligenceEffort'] as const) {
     const effort = partial[key];
     if (

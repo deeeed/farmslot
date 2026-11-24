@@ -14,21 +14,17 @@ import {
   type ToolResultMessage,
 } from '@earendil-works/pi-ai';
 
-import type { ChatToolTraceEntry, StepLLMUsage } from '@farmslot/protocol';
+import type { ChatToolTraceEntry, LLMTierModels, StepLLMUsage } from '@farmslot/protocol';
 
 import { execLocal } from '../core/exec.js';
 import { lazyImport } from '../core/lazy-import.js';
 import { captureHelperAttempt, observeHelperUsage } from '../runtime/agent-usage-context.js';
 
 import { resolveAuth } from './auth-resolve.js';
-import {
-  CODEX_ASTRA_MODEL,
-  registerCodexAstra,
-  reportedLlmCost,
-  requiresExactAstraProvider,
-} from './codex-astra.js';
+import { registerCodexAstra, reportedLlmCost, requiresExactAstraProvider } from './codex-astra.js';
 import { CODEX_LB_PROVIDER, registerCodexLb } from './codex-lb.js';
 import { getLLMConfig } from './config.js';
+import { LLM_TIERS, TIER_MAP } from './tiers.js';
 
 // pi-ai ≥0.82 replaces the module-level getModel/completeSimple/streamSimple
 // functions with a Models collection. One lazily-created collection with every
@@ -191,36 +187,18 @@ const MODEL_ALIASES: Record<string, Record<string, string>> = {
 };
 
 // ─── Tier mapping (cross-provider) ───
-// Tiers resolve to provider-specific alias names, then through MODEL_ALIASES.
-// This lets callers use `model: 'fast'` regardless of provider.
-export const TIER_MAP: Record<string, Record<string, string>> = {
-  fast: {
-    anthropic: 'haiku',
-    openai: 'gpt-4.1-mini',
-    'openai-codex': 'gpt-5.6-luna',
-    'codex-lb': CODEX_ASTRA_MODEL,
-    google: 'gemini-flash',
-  },
-  standard: {
-    anthropic: 'sonnet',
-    openai: 'gpt-4.1',
-    'openai-codex': 'gpt-5.6-terra',
-    'codex-lb': CODEX_ASTRA_MODEL,
-    google: 'gemini-pro',
-  },
-  smart: {
-    anthropic: 'opus',
-    openai: 'gpt-4.1',
-    'openai-codex': 'gpt-5.6-sol',
-    'codex-lb': CODEX_ASTRA_MODEL,
-    google: 'gemini-pro',
-  },
-};
+// The built-in map lives in ./tiers.ts; llm-config's `tierModels` overrides it per provider.
+export { TIER_MAP };
 
-export function resolveTier(provider: string, model: string): string {
-  const tierEntry = TIER_MAP[model];
-  if (!tierEntry) return model; // not a tier name, pass through
-  return tierEntry[provider] ?? model; // resolve to provider-specific alias
+export function resolveTier(
+  provider: string,
+  model: string,
+  tierModels: LLMTierModels | undefined = getLLMConfig().tierModels,
+): string {
+  const tier = LLM_TIERS.find((name) => name === model);
+  if (!tier) return model; // not a tier name, pass through
+  // A configured id wins: it names a model the provider serves (codex-lb's plan, for one).
+  return tierModels?.[provider]?.[tier] ?? TIER_MAP[tier]?.[provider] ?? model;
 }
 
 export function resolveModelId(provider: string, model: string): string {

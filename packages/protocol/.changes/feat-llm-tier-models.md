@@ -1,0 +1,1 @@
+- `LLMConfigGetResult.tierModels` and `LLMConfigSetParams.tierModels` (`LLMTierModels`, `LLMTierName`): per-provider tier model overrides. A set replaces every saved override; `{}` clears them.
