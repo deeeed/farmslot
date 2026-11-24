@@ -9,11 +9,17 @@ import { type HostIdentity, requestHost } from './ipc.js';
 import { currentRuntimeBuild } from './runtime-build.js';
 import { readJson, type RecordedProcess, recordedProcessAlive } from './storage.js';
 
-export function nativeHostVersionSkew(host: HostIdentity) {
+/**
+ * New launches refused by a host on another runtime. `busy` names the live sessions that keep
+ * it from refreshing on its own; an empty list means it refreshes once its sessions go idle.
+ */
+export function nativeHostVersionSkew(host: HostIdentity, busy: readonly string[] = []) {
   return Object.assign(
     new Error(
       `Native host runtime version skew: node ${RUNTIME_VERSION} (build ${currentRuntimeBuild().slice(0, 12)}), host ${host.runtimeVersion ?? 'unknown (legacy)'} (build ${host.runtimeBuild?.slice(0, 12) ?? 'unknown'}). ` +
-        'Existing sessions remain available. Finish or close them, then redeploy. Legacy hosts without an upgrade fence require the documented controlled native-host refresh.',
+        'Existing sessions remain available; new launches wait for the host to refresh, which it does on its own once no live session is busy. ' +
+        (busy.length ? `Busy: ${busy.join('; ')}. ` : '') +
+        'See docs/operations/native-host-refresh.md.',
     ),
     { code: NATIVE_HOST_VERSION_SKEW },
   );
@@ -33,6 +39,25 @@ export async function retireIdleNativeHost(root: string, host: HostIdentity): Pr
   // Only the running host can fence admissions and account for launches before their
   // first reservation. A legacy journal census cannot establish quiescence.
   if (!host.supportsRuntimeUpgrade) return false;
+  return stopNativeHost(root, host, true);
+}
+
+/**
+ * Lifecycle only: stop a host whose live sessions the caller found idle, under the caller's
+ * own admission lock (a skewed host gets no new admissions from it). The supervisor's cleanup
+ * stops each idle runner and confirms it; the next host keeps their journals and reports them
+ * for resume. Unlike retireIdleNativeHost there is no host-side fence: an older host only
+ * fences once every runner process has already stopped.
+ */
+export function stopIdleSessionsNativeHost(root: string, host: HostIdentity): Promise<boolean> {
+  return stopNativeHost(root, host, false);
+}
+
+async function stopNativeHost(
+  root: string,
+  host: HostIdentity,
+  fenceAdmissions: boolean,
+): Promise<boolean> {
   const supervisor = readJson<RecordedProcess>(join(root, 'lock', 'owner.json'));
   const worker = readJson<RecordedProcess>(join(root, 'worker.json'));
   if (
@@ -52,11 +77,13 @@ export async function retireIdleNativeHost(root: string, host: HostIdentity): Pr
   const current = readJson<HostIdentity>(join(root, 'host.json'));
   if (current.pid !== host.pid || current.token !== host.token) return false;
 
-  const prepared = await requestHost<{ idle: boolean }>(host, {
-    method: 'prepareUpgrade',
-    owner: 'node-runtime-upgrade',
-  });
-  if (prepared.idle !== true) return false;
+  if (fenceAdmissions) {
+    const prepared = await requestHost<{ idle: boolean }>(host, {
+      method: 'prepareUpgrade',
+      owner: 'node-runtime-upgrade',
+    });
+    if (prepared.idle !== true) return false;
+  }
 
   await new Promise<void>((resolve, reject) => {
     let settled = false;

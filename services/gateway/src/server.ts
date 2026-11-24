@@ -112,6 +112,7 @@ import {
 } from './resources/workspace-read.js';
 import { handleReviewFsChanged } from './review/orchestrator.js';
 import { invalidateReviewProgressForMachine } from './review/progress.js';
+import { nativeSessionManager } from './runners/native/manager.js';
 import { resolveNativeExecutionNode } from './runners/native/node.js';
 import { onPtyExit, unsubscribeAllPty } from './runtime/pty-stream.js';
 import {
@@ -600,12 +601,24 @@ export function initServerGlobals(): void {
   startScreenRelaunchWatcher();
 
   // Init thumbnail cache (demand-driven — only polls when clients subscribe)
+  // A deploy can leave the gateway-local native host on the previous runtime: refresh it
+  // before observing it. A busy host keeps running and refreshes on a later launch.
+  const nativeRefresh = nativeSessionManager.refreshStaleHost().then(
+    ({ refreshed, busy }) => {
+      if (refreshed) console.log('[native] refreshed the local host onto the current runtime');
+      else if (busy.length)
+        console.warn(`[native] local host refresh waits for: ${busy.join('; ')}`);
+    },
+    (error: unknown) => console.error('[native] local host refresh failed:', error),
+  );
   const nativeOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
   if (nativeOwner)
-    void nativeObservations.startLocal(nativeOwner).catch((error) => {
-      if (!(error instanceof NativeSourceUnavailable)) throw error;
-      // Source failure is published and marked reads expose error/Retry; no host launches.
-    });
+    void nativeRefresh.then(() =>
+      nativeObservations.startLocal(nativeOwner).catch((error) => {
+        if (!(error instanceof NativeSourceUnavailable)) throw error;
+        // Source failure is published and marked reads expose error/Retry; no host launches.
+      }),
+    );
   initThumbnailCache(broadcastEvent);
   resourceRevisions.setPublisher((payload) => {
     if (

@@ -130,7 +130,8 @@ branch. Merge required installation fixes before installing the release.
    update procedure, verify `git rev-parse HEAD`, and install immutable dependencies.
    Restart through its existing supervisor so the new checkout supplies the gateway
    version, protocol and release notes. Restarting an unchanged checkout keeps the
-   old gateway. Restarting only the gateway does not upgrade a detached native host.
+   old gateway. A gateway restart refreshes its local native host only when no live session
+   is busy; see [native host refresh](native-host-refresh.md).
    The shared `farmdev` UI disables automatic source/reconnect reloads so open
    review actions survive a stack restart. Reload the browser manually to load new
    UI code. Isolated stacks retain HMR; `FARMSLOT_DEV_UI_HMR=1` explicitly enables
@@ -148,8 +149,9 @@ branch. Merge required installation fixes before installing the release.
    refreshes after its own atomic admission fence confirms no pending starts or live
    sessions, through verified supervisor shutdown and confirmed cleanup. A busy or
    unconfirmed host keeps its sessions and remains readable; new launches, resumes
-   and transfers fail with `NATIVE_HOST_VERSION_SKEW`. Finish/close that work and
-   redeploy the node to retry the refresh. A legacy host without the upgrade-fence
+   and transfers fail with `NATIVE_HOST_VERSION_SKEW`, naming the busy sessions. Finish/close
+   that work and redeploy the node to retry the refresh, or follow
+   [native host refresh](native-host-refresh.md). A legacy host without the upgrade-fence
    capability cannot certify quiescence: use the controlled drain and verified native
    supervisor shutdown in step 2 once. Subsequent versioned hosts support automatic
    idle refresh. Session journals and credentials stay in place.

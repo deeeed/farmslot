@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, existsSync, openSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readdirSync, readSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,6 +30,7 @@ import {
   nativeHostRunsCurrentRuntime,
   nativeHostVersionSkew,
   retireIdleNativeHost,
+  stopIdleSessionsNativeHost,
 } from './host-runtime.js';
 import { nativeHostUnavailableError } from './host-unavailable.js';
 import { type HostIdentity, type HostRequest, requestHost } from './ipc.js';
@@ -62,10 +63,50 @@ export function observeExistingNativeHost<T>(read: () => Promise<T>): Promise<T>
   return passiveHostReads.run(true, read);
 }
 
+/**
+ * Says which idle live sessions of a host on another runtime must keep it running, as a
+ * reason per session id. A service that knows its sessions' callers sets one; without it, a
+ * client refreshes only a host whose runners have all stopped.
+ */
+export type NativeHostRefreshPolicy = (
+  sessions: NativeSessionInfo[],
+) => Promise<ReadonlyMap<string, string>>;
+
+const NATIVE_ADMISSION_METHODS: readonly string[] = [
+  'create',
+  'ensure',
+  NATIVE_WORKER_ENSURE,
+  NATIVE_WORKER_RESUME,
+  NATIVE_WORKER_TRANSFER,
+];
+
+/** Owners recorded in the first line of each session journal; no host request. */
+function journalOwners(root: string): string[] {
+  const directory = join(root, 'sessions');
+  if (!existsSync(directory)) return [];
+  const owners = new Set<string>();
+  const buffer = Buffer.alloc(64 * 1024);
+  for (const name of readdirSync(directory)) {
+    if (!name.endsWith('.journal')) continue;
+    const fd = openSync(join(directory, name), 'r');
+    let head: string;
+    try {
+      head = buffer.toString('utf8', 0, readSync(fd, buffer, 0, buffer.length, 0));
+    } finally {
+      closeSync(fd);
+    }
+    const owner = /"ownerPrincipalId":"([^"]+)"/.exec(head.split('\n', 1)[0] ?? '')?.[1];
+    if (owner) owners.add(owner);
+  }
+  return [...owners];
+}
+
 /** The same client is usable by gateway and execution-node services. */
 export class NativeSessionClient {
   readonly root: string;
   private starting?: Promise<HostIdentity>;
+  private refreshPolicy?: NativeHostRefreshPolicy;
+  private refreshing?: Promise<{ refreshed: boolean; busy: string[] }>;
   constructor(
     root = currentFarmPaths('node').state.nativeSessions,
     readonly executionNodeId = 'local',
@@ -222,12 +263,83 @@ export class NativeSessionClient {
   async warm(): Promise<void> {
     const host = await this.host();
     if (nativeHostRunsCurrentRuntime(host)) return;
-    if (!(await retireIdleNativeHost(this.root, host))) throw nativeHostVersionSkew(host);
+    const { refreshed, busy } = await this.refreshStaleHost();
+    if (!refreshed) throw nativeHostVersionSkew(host, busy);
     assertNativeHostRuntime(await this.host());
+  }
+
+  /** Lets idle live sessions be stopped for a refresh, except those the policy keeps. */
+  setRefreshPolicy(policy: NativeHostRefreshPolicy): void {
+    this.refreshPolicy = policy;
+  }
+
+  /**
+   * Refresh a running host on another runtime, so new launches get the current one. It is
+   * retired once its runners have all stopped, or, under a refresh policy, when every live
+   * session is idle and the policy keeps none: those runners are stopped, their journals kept,
+   * and the next host reports them for resume. Returns the sessions that keep it running.
+   * Never starts a host; concurrent callers share one refresh.
+   */
+  refreshStaleHost(): Promise<{ refreshed: boolean; busy: string[] }> {
+    this.refreshing ??= this.refreshOnce().finally(() => {
+      this.refreshing = undefined;
+    });
+    return this.refreshing;
+  }
+
+  /** The running host's sessions whose runner is still live, for every owner; never starts one. */
+  liveSessions(): Promise<NativeSessionInfo[]> {
+    return this.liveSessionsOf(this.existingHost());
+  }
+
+  private async liveSessionsOf(host: HostIdentity): Promise<NativeSessionInfo[]> {
+    const live: NativeSessionInfo[] = [];
+    for (const owner of journalOwners(this.root))
+      for (const session of await requestHost<NativeSessionInfo[]>(host, { method: 'list', owner }))
+        if (!session.processStopped) live.push(session);
+    return live;
+  }
+
+  private async refreshOnce(): Promise<{ refreshed: boolean; busy: string[] }> {
+    let host: HostIdentity;
+    try {
+      host = this.existingHost();
+    } catch (error) {
+      // No running host: the next launch starts the current runtime.
+      if (error instanceof Error && 'code' in error && error.code === 'NATIVE_SOURCE_UNAVAILABLE')
+        return { refreshed: false, busy: [] };
+      throw error;
+    }
+    if (nativeHostRunsCurrentRuntime(host)) return { refreshed: false, busy: [] };
+    if (await retireIdleNativeHost(this.root, host)) return { refreshed: true, busy: [] };
+    if (!this.refreshPolicy) return { refreshed: false, busy: [] };
+    const live = await this.liveSessionsOf(host);
+    const kept = await this.refreshPolicy(live);
+    const busy = live.flatMap((session) => {
+      const reason =
+        session.state !== 'idle'
+          ? session.state
+          : session.approvalModePending
+            ? 'approval mode change pending'
+            : kept.get(session.id);
+      return reason ? [`${session.id} (${reason})`] : [];
+    });
+    if (busy.length) return { refreshed: false, busy };
+    if (!(await stopIdleSessionsNativeHost(this.root, host)))
+      return { refreshed: false, busy: ['the host process identity could not be verified'] };
+    return { refreshed: true, busy: [] };
   }
   private async call<T>(request: HostRequest): Promise<T> {
     const passive = request.method === 'list' || passiveHostReads.getStore() === true;
-    const host = passive ? this.existingHost() : await this.host();
+    // A refresh in progress decides which sessions to stop; nothing else reaches the host then.
+    // Its outcome is reported to the caller that asked for it; this request just waits.
+    if (!passive && this.refreshing) await this.refreshing.catch(() => undefined);
+    let host = passive ? this.existingHost() : await this.host();
+    if (NATIVE_ADMISSION_METHODS.includes(request.method) && !nativeHostRunsCurrentRuntime(host)) {
+      const { refreshed, busy } = await this.refreshStaleHost();
+      if (!refreshed) throw nativeHostVersionSkew(host, busy);
+      host = await this.host();
+    }
     if (
       (request.method === 'setApprovalMode' ||
         ('params' in request &&
@@ -285,16 +397,7 @@ export class NativeSessionClient {
       throw new Error(
         'Native host upgrade required for conversation streaming before launching new work',
       );
-    if (
-      [
-        'create',
-        'ensure',
-        NATIVE_WORKER_ENSURE,
-        NATIVE_WORKER_RESUME,
-        NATIVE_WORKER_TRANSFER,
-      ].includes(request.method)
-    )
-      assertNativeHostRuntime(host);
+    if (NATIVE_ADMISSION_METHODS.includes(request.method)) assertNativeHostRuntime(host);
     const result = await requestHost<T>(host, request);
     if ('params' in request && request.params.profileId) {
       const session = result as NativeSessionInfo;
