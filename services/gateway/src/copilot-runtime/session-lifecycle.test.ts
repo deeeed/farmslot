@@ -337,6 +337,11 @@ test('start and stop take a new checkout snapshot when a checkout write supersed
   const { controller, native } = testController({
     home,
     checkout: process.cwd(),
+    // Each superseding write is a commit, so the snapshot really changed and the action retries.
+    inspectCheckout: async (checkout) => ({
+      ...testCheckout(checkout),
+      head: String(superseded).padStart(40, '0'),
+    }),
     // Each action's first snapshot is superseded by a write; the next one is current.
     observeCheckout: async () => async () => {
       if (superseded++ % 2 === 0)
@@ -391,6 +396,48 @@ test('a status read still fails when the dirty paths changed during it', async (
     },
   });
   await assert.rejects(() => controller.status(), /changed during the read/);
+  await rm(home, { recursive: true, force: true });
+});
+
+test('a status read still fails when the branch changed during it, and keeps the new snapshot', async () => {
+  const home = await mkdtemp(path.join(tmpdir(), 'copilot-churn-branch-'));
+  let reads = 0;
+  const { controller } = testController({
+    home,
+    checkout: process.cwd(),
+    inspectCheckout: async (checkout) => ({
+      ...testCheckout(checkout),
+      branch: ++reads > 1 ? 'feat/switched' : 'feat/copilot-test',
+    }),
+    observeCheckout: async () => async () => {
+      throw new GatewayMethodError(
+        'RESOURCE_OBSERVATION_CHANGED',
+        'Workspace contents changed during the read',
+      );
+    },
+  });
+  await assert.rejects(() => controller.status(), /changed during the read/);
+  assert.equal(controller.currentSession()?.checkout.branch, 'feat/switched');
+  assert.equal(controller.currentSession()?.dangerousLaunch.branch, 'feat/switched');
+  await rm(home, { recursive: true, force: true });
+});
+
+test('a status read whose watch failed for another reason is not re-inspected', async () => {
+  const home = await mkdtemp(path.join(tmpdir(), 'copilot-churn-unavailable-'));
+  let reads = 0;
+  const { controller } = testController({
+    home,
+    checkout: process.cwd(),
+    inspectCheckout: async (checkout) => {
+      reads += 1;
+      return testCheckout(checkout);
+    },
+    observeCheckout: async () => async () => {
+      throw new GatewayMethodError('RESOURCE_OBSERVATION_UNAVAILABLE', 'Workspace source replaced');
+    },
+  });
+  await assert.rejects(() => controller.status(), /Workspace source replaced/);
+  assert.equal(reads, 1);
   await rm(home, { recursive: true, force: true });
 });
 
