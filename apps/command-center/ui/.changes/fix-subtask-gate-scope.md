@@ -1,0 +1,1 @@
+- A child unit left open by a stopped or replaced reviewer reads "owner ended", muted and collapsed by default, instead of live running work.

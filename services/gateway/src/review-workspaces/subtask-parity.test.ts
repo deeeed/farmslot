@@ -305,6 +305,43 @@ test('workspace progress and child metrics read the live task, then the view aft
   });
 });
 
+test("a static review's open child reads as ended once its reviewer has failed", async () => {
+  await withFixture(async (f) => {
+    activeResourceFixture = f;
+    await materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps);
+    const mark = marker(f);
+    await mark('start');
+    await mark(
+      'sub',
+      'start',
+      'perps-review',
+      '--step',
+      '1',
+      '--from',
+      'inline:- [ ] **1. read**\n- [ ] **2. write**\n',
+    );
+    await mark('sub', 'perps-review', '1');
+    const ownerEnded = async (status: 'working' | 'failed') => {
+      acceptedContext(f, new Date().toISOString());
+      f.run.agentContexts = f.run.agentContexts!.map((context) => ({
+        ...context,
+        status,
+        taskFile: path.join(f.task, 'CHECKLIST.md'),
+      }));
+      const progress = await readActualProgress({ slotId: '', runId: f.run.id });
+      return (progress.structured?.phases ?? [])
+        .flatMap((phase) => phase.steps)
+        .find((step) => step.index === 1)?.subtask?.ownerEnded;
+    };
+    try {
+      assert.equal(await ownerEnded('working'), undefined);
+      assert.equal(await ownerEnded('failed'), true);
+    } finally {
+      activeResourceFixture = undefined;
+    }
+  });
+});
+
 test('workspace completion refuses a terminal signal written around an open child', async () => {
   await withFixture(async (f) => {
     await materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps);
@@ -372,6 +409,23 @@ test('workspace completion refuses a terminal signal written around an open chil
     // rewrites the parent signal to the state the parent is actually in, so the
     // hand-written one is restored to isolate the child rule from that.
     await mark('sub', 'evidence-pack', 'complete', '--mark-last');
+    // Another checklist's open unit (a parallel or stopped reviewer's) is that checklist's proof,
+    // not this one's: the worker's SIGNAL.json completes past it.
+    const indexPath = path.join(f.task, 'subtasks/index.json');
+    const index = JSON.parse(await readFile(indexPath, 'utf8'));
+    index.units.push({
+      ...index.units[0],
+      id: 'other-review',
+      parent: { checklist: 'REVIEW.other.md', stepNumber: 1 },
+      checklist: 'subtasks/other-review.md',
+      signal: 'subtasks/other-review-SIGNAL.json',
+    });
+    await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+    await writeFile(path.join(f.task, 'subtasks/other-review.md'), '- [ ] **1. read**\n');
+    await writeFile(
+      path.join(f.task, 'subtasks/other-review-SIGNAL.json'),
+      `${JSON.stringify({ role: 'subtask', status: 'running' })}\n`,
+    );
     await handWrittenCompletion();
     const completion = await readReviewWorkspaceCompletion(f.run.id, f.deps);
     assert.equal(completion?.result?.recommendation, 'APPROVE');
@@ -380,6 +434,8 @@ test('workspace completion refuses a terminal signal written around an open chil
       'evidence-pack-SIGNAL.json',
       'evidence-pack.md',
       'index.json',
+      'other-review-SIGNAL.json',
+      'other-review.md',
     ]);
   });
 });

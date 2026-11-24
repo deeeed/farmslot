@@ -50,7 +50,7 @@ function corruptRegistry(dir: string, body: string): void {
   writeFileSync(path.join(dir, 'subtasks', 'index.json'), body);
 }
 
-function writeTaskDir(childStatus: string | null): string {
+function writeTaskDir(childStatus: string | null, parentChecklist = 'CHECKLIST.md'): string {
   const root = mkdtempSync(path.join(os.tmpdir(), 'gw-subtask-contract-'));
   const dir = path.join(root, 'task');
   mkdirSync(path.join(dir, 'subtasks'), { recursive: true });
@@ -62,7 +62,7 @@ function writeTaskDir(childStatus: string | null): string {
       units: [
         {
           id: 'perps-review',
-          parent: { checklist: 'CHECKLIST.md', stepNumber: 1 },
+          parent: { checklist: parentChecklist, stepNumber: 1 },
           checklist: 'subtasks/perps-review.md',
           signal: 'subtasks/perps-review-SIGNAL.json',
           source: { kind: 'skill', ref: 'skills/review.md', sha256: 'aa', renderedSha256: 'bb' },
@@ -78,7 +78,7 @@ function writeTaskDir(childStatus: string | null): string {
       `${JSON.stringify({
         role: 'subtask',
         contextId: 'perps-review',
-        parent: { checklist: 'CHECKLIST.md', stepNumber: 1 },
+        parent: { checklist: parentChecklist, stepNumber: 1 },
         status: childStatus,
         timestamp: '2026-09-19T10:05:00Z',
       })}\n`,
@@ -165,6 +165,40 @@ test('a settled child lets the terminal check continue to the artifact checker',
     assert.equal(result.ok === false && result.kind, 'infrastructure');
     assert.equal(execCalls.length, 1);
     assert.match(execCalls[0], /check-task-artifact-contract\.mjs/);
+  } finally {
+    rmSync(path.dirname(taskDir), { recursive: true, force: true });
+  }
+});
+
+test("a worker's signal is not refused by a reviewer's open child, whatever the manifest names", async () => {
+  // 961d55d3: a killed reviewer's unit stays running on its own REVIEW.<context>.md, and the
+  // task dir's checklist manifest still points at that reviewer.
+  taskDir = writeTaskDir('running', 'REVIEW.rev-1.md');
+  writeFileSync(path.join(taskDir, 'REVIEW.rev-1.md'), '- [ ] **1. run the review skill**\n');
+  writeFileSync(
+    path.join(taskDir, 'checklist-target.json'),
+    `${JSON.stringify({ checklist: 'REVIEW.rev-1.md', signal: 'REVIEW.rev-1-SIGNAL.json' })}\n`,
+  );
+  execCalls = [];
+  try {
+    const worker = await validateTerminalSignalArtifacts(
+      'slot-subtask-contract',
+      path.join(taskDir, 'SIGNAL.json'),
+      TERMINAL_SIGNAL,
+      path.join(taskDir, 'CHECKLIST.md'),
+    );
+    // Past the open-child gate to the (mocked, missing) checker.
+    assert.equal(worker.ok === false && worker.kind, 'infrastructure');
+    assert.equal(execCalls.length, 1);
+    // The reviewer's own completion is still refused by its open child.
+    const reviewer = await validateTerminalSignalArtifacts(
+      'slot-subtask-contract',
+      path.join(taskDir, 'REVIEW.rev-1-SIGNAL.json'),
+      TERMINAL_SIGNAL,
+      path.join(taskDir, 'REVIEW.rev-1.md'),
+    );
+    assert.equal(reviewer.ok === false && reviewer.kind, 'artifact');
+    assert.match(reviewer.ok === false ? reviewer.message : '', /perps-review \(running\)/);
   } finally {
     rmSync(path.dirname(taskDir), { recursive: true, force: true });
   }

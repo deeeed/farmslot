@@ -344,6 +344,9 @@ function progressRunIdentity(run: Run, params: TaskProgressParams): string {
     context?.status,
     context?.completedAt,
     params.taskFile ? declaredProgressFiles(run) : undefined,
+    // A child unit's display follows the state of the context owning its checklist, which
+    // need not be the context being viewed.
+    run.agentContexts?.map((row) => [row.id, row.status]),
   ]);
 }
 
@@ -370,7 +373,14 @@ async function readTaskProgress(
     };
     if (params.summary) return result;
     if (!params.taskFile) {
-      await attachSubtaskProgress(source.io, source.checklistPath, 'review-pr', structured);
+      await attachSubtaskProgress(
+        source.io,
+        source.checklistPath,
+        'review-pr',
+        structured,
+        '',
+        getRun(params.runId),
+      );
       await attachOperations(source.io, source.checklistPath, structured);
       await attachChecklistTiming(
         source.io,
@@ -472,7 +482,7 @@ async function readTaskProgress(
   if (schema.phases.length > 0) {
     result.structured = joinSchemaWithMarkdown(schema, markdown);
     if (!params.summary)
-      await attachSubtaskProgress(io, effectiveMdPath, flowType, result.structured);
+      await attachSubtaskProgress(io, effectiveMdPath, flowType, result.structured, '', activeRun);
     // Self-review (and similar) templates' last step is "write SIGNAL.json + /exit".
     // The worker exits before it can mark the box `[x]`, so the markdown stays at
     // N-1/N forever even though the role's signal already declared completion.
@@ -542,6 +552,7 @@ async function progressFromChecklist(
         flowType,
         result.structured,
         retained ? WORKER_MIRROR_SUFFIX : '',
+        run,
       );
       await attachOperations(io, mdPath, result.structured);
       await attachChecklistTiming(
@@ -763,6 +774,7 @@ async function attachSubtaskProgress(
   flowType: string,
   structured: TaskProgressStructured,
   suffix = '',
+  run?: Run,
 ): Promise<void> {
   const taskDir = path.dirname(effectiveMdPath);
   const parentChecklist = path.basename(effectiveMdPath);
@@ -772,10 +784,20 @@ async function attachSubtaskProgress(
   );
   if (units.length === 0) return;
   const nowMs = Date.now();
+  // The context that owns this checklist (a reviewer for REVIEW.<context>.md). Once it has
+  // completed or failed, or the run is over, its open units are no longer anyone's live work.
+  // A blocked or idle owner may resume; a refunded retry reuses the context and turns it
+  // working again. No owner found means no claim either way.
+  const owner = run ? checklistTimingContext(run, parentChecklist) : undefined;
+  const ownerEnded = Boolean(
+    run &&
+    (isTerminalRunStatus(run.status) ||
+      (owner && (owner.status === 'complete' || owner.status === 'failed'))),
+  );
   for (const read of await readSubtaskUnits(vars, taskDir, units, suffix)) {
     const childSchema = generateTaskSchema(read.markdown, flowType);
     const childProgress = joinSchemaWithMarkdown(childSchema, read.markdown);
-    const entry = buildSubtaskEntry(read.unit, childProgress, read.signal, nowMs);
+    const entry = buildSubtaskEntry(read.unit, childProgress, read.signal, nowMs, ownerEnded);
     if (!attachSubtaskToStep(structured, read.unit.parent.stepNumber, entry)) {
       console.warn(
         `[task-progress] subtask ${read.unit.id} names ${parentChecklist} step ` +

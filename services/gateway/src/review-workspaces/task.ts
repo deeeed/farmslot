@@ -839,7 +839,7 @@ export async function readReviewWorkspaceCompletion(
   // a signal that arrives here with one was written around the engine. Same
   // refusal the slot terminal check applies, on this task's own directory.
   if (!blocked) {
-    const openChild = await subtaskTerminalRefusal(io, taskDir, 'complete');
+    const openChild = await subtaskTerminalRefusal(io, taskDir, 'complete', 'SIGNAL.json');
     if (openChild) throw new Error(openChild);
   }
   const raw = await confinedRead(io, taskDir, RESULT);

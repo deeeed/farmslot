@@ -1,0 +1,1 @@
+- `TaskStepSubtaskProgress.ownerEnded` (display only): the unit is unsettled but the context owning its parent checklist has ended. The child's status is unchanged.
