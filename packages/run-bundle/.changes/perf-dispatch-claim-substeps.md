@@ -1,0 +1,1 @@
+- `withRunBundleLockTime` also reports holds by kind of holder and the wall time of each store operation inside them (store walk, reservations, housekeeping inventory, media archive, payload completion and copy, fsync, record writes, acquisition scan, manifest reads, pairing check).

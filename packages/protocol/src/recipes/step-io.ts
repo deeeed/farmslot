@@ -408,7 +408,15 @@ export interface CompleteStepTiming {
   totalMs: number;
   phasesMs: Record<string, number>;
   /** Queueing for and holding run-bundle locks, summed over acquisitions. */
-  bundleLock: { acquisitions: number; waitMs: number; heldMs: number };
+  bundleLock: {
+    acquisitions: number;
+    waitMs: number;
+    heldMs: number;
+    /** Waits and holds by kind of holder (`capture`, `media admission`, `repair`, ...). */
+    holds?: Record<string, { count: number; waitMs: number; heldMs: number }>;
+    /** Wall time of the store operations inside those holds (`storeWalk`, `payloadCopy`, ...). */
+    opsMs?: Record<string, { count: number; ms: number }>;
+  };
   /** Processes the step started, by kind (git, gh, ssh, ...), from the shared exec wrapper. */
   exec: Record<string, { calls: number; ms: number }>;
 }

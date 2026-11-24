@@ -1,0 +1,1 @@
+- `CompleteStepTiming.bundleLock` gains optional `holds` (wait and hold by kind of holder) and `opsMs` (store operations inside those holds).

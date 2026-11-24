@@ -43,6 +43,11 @@ test('lock time charges a waiter for its queue wait behind another holder and it
   assert.equal(time.acquisitions, 1);
   assert.ok(time.waitMs >= 50, `waited ${time.waitMs}ms`);
   assert.ok(time.heldMs >= 25 && time.heldMs < time.waitMs + 1_000, `held ${time.heldMs}ms`);
+  // Holds are also kept by kind of holder, and the store operations inside them by name.
+  assert.deepEqual(Object.keys(time.holds ?? {}), ['bundle-store']);
+  assert.equal(time.holds?.['bundle-store']?.count, 1);
+  assert.equal(time.holds?.['bundle-store']?.heldMs, time.heldMs);
+  assert.equal(time.opsMs?.pairingCheck?.count, 1);
 });
 
 test('capture, GC and admission in one process wait without exhausting filesystem lock retries', async (t) => {
