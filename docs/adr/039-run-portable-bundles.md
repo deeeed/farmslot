@@ -634,8 +634,10 @@ member from its archive manifest.
 ## Amendment 9: 2026-11-24 run traces as private training data
 
 **Status:** Proposed (2026-11-24). Needs Arthur's approval before implementation.
-**Builds on:** Amendment 4 (episodes), Amendments 3 and 7 (archival), [ADR-056](056-runner-session-archive.md) (session archives).
+**Builds on:** Amendment 4 (episodes), Amendments 3, 5 and 8 (archival and holds), [ADR-056](056-runner-session-archive.md) (session archives).
+**Amends:** Amendment 4's "No new RPC and no protocol type": this amendment adds two RPCs and additive types.
 **Specification:** [Run traces](../reference/run-traces.md).
+**External format:** [Hugging Face agent traces](https://huggingface.co/docs/hub/en/agent-traces) and its [Session Trace Simple Format](https://huggingface.co/docs/hub/en/session-traces-format).
 
 ### Context
 
@@ -645,81 +647,124 @@ validation model (task and evidence in, verdict out). The episode is the right
 anchor, but the corpus behind it has three gaps.
 
 1. **Transcripts are missing for many agents.** ADR-056 copies a transcript once,
-   at slot release. By then a reviewer's session may be gone with its review
-   workspace, or a slot reset removed it. On the dev gateway, 605 of 1083 episodes
-   (56%) hold any transcript. Claude reviewers are archived 12% of the time, Pi
-   reviewers 33% and Codex reviewers 72%; workers 57% to 97%.
+   at slot release, one copy per agent context. By then a reviewer's session may be
+   gone with its review workspace, or a slot reset removed it, and a context reused
+   across rounds keeps only its last session. On the dev gateway, 605 of 1083
+   episodes (56%) hold any transcript. Claude reviewers are archived 12% of the
+   time, Pi reviewers 33% and Codex reviewers 72%; workers 57% to 97%. A prototype
+   export of 22 graded runs found 5 worker and 18 reviewer sessions only on the
+   node that ran them.
 2. **Labels are references, not values.** An episode points at review results and
    acceptance manifests by digest. A training row needs the values: per-role model
-   and effort, cost and tokens, criterion verdicts, review verdicts per round, the
-   gate outcome, the final and PR head SHAs, and an external grade where one exists
-   (an eval's match/partial/wrong). The run record holds most of these today, but
-   nothing collects them, and no field holds an external grade.
+   and effort, cost and tokens per role, criterion verdicts, review verdicts per
+   round and the fix that answered it, the gate outcome, head SHAs, which diff was
+   graded and where it lived, whether acceptance criteria were registered or
+   derived, the task note text, attempt history, and external grades with their
+   grader and rubric. The run record holds most of these; the graded output, the
+   final and PR head SHAs, a completion acceptance snapshot, an attempt log and
+   external grades have no field yet.
 3. **There is no export.** Nothing builds a redacted, indexed dataset from a run
    filter, so every analysis reads live stores by hand.
 
 ### Decision
 
-**Capture.** A runner transcript is archived when its agent context ends, not
-only at slot release: worker completion, each review round, each review fix, and
-before a replay or an operator completion replaces a context. Slot release stays
-the backstop. Capture uses ADR-056's copy from the node that ran the context,
-keeps the runner-native bytes unchanged, and records `missing` with a reason
-instead of failing the run. Every context with a session path is covered,
-reviewers included. Runners without a native file record `unsupported`, as today.
+**Capture.** A runner transcript is archived when its agent session ends, not only
+at slot release: worker completion, each review round, each review fix, and before
+a replay or an operator completion replaces a session. Slot release stays the
+backstop and retries any session still recorded `missing`. Each archive is keyed by
+context and runner session, so a later round or replay never overwrites an earlier
+one. A copy writes to a temporary file and renames it; a failed copy never removes
+an earlier good one. One capture runs per run at a time, and slot release joins a
+pending one rather than racing it. The archive ref is patched on its own, never by
+rewriting the whole metrics object. Before a replay relaunches a step, the old
+session is captured synchronously from the path saved when it ended, within a time
+limit; a timeout records `missing` and the replay proceeds. Other captures run
+after the transition commits and never block it. Bytes stay runner-native.
 
-**Labels.** The episode carries the label values inline, as additive
-`farmslot-episode-v1` fields (`labels.roles`, `labels.cost`, `labels.acceptance`,
-`labels.reviewRounds`, `labels.gate`, `labels.git`). They are copied from the run
-record and the small manifests capture already reads; no artifact is re-read or
-re-hashed. External grades are appended to a per-run sidecar,
-`<runs dir>/grades/<run-id>.jsonl`, through one RPC. A grade names its source
-and scale, so the schema stays project-neutral.
+**Labels.** The episode carries label values inline, as additive
+`farmslot-episode-v1` fields beside the existing references: `labels.task`,
+`labels.roles`, `labels.cost`, `labels.acceptance`, `labels.reviewRounds`,
+`labels.gate`, `labels.attempts`, `labels.infraOnly`, `labels.output` and
+`labels.git`. Every value comes from a run-record field (agent contexts, run
+metrics, review attempts, the gate's acceptance ledger snapshot, decisions), so
+capture still opens no task artifact. The graded output (diff sha256 and whether
+it was committed, left in the working tree or parked), the final head, PR head and
+merge SHA, a completion acceptance snapshot and an attempt log become new run
+fields, written when the run records them; writing them updates the run, and the
+existing retention pass then recaptures its episode. External grades are appended
+to a per-run sidecar in the episode store, through one RPC. A grade names its
+source, grader, scale, rubric points and reason, several graders may grade one
+run, and the schema stays project-neutral. Optional post-run interviews, such as
+an ask-why `why.md`, are attached through a second RPC. An absent label field
+means the episode was captured before it existed; `null` means its value is not
+known.
 
-**Storage and retention.** Transcripts stay in `session-archives`, episodes and
-grade files beside the run record. Retention is unchanged: episodes and grades are
-kept forever with the record; transcripts follow Amendments 3 and 7 archival, so
-they remain readable from the run archive. A project can opt out with
-`traces.capture: false` in `project.json`. Its transcripts are then archived only
-at slot release, as ADR-056 does for History, and export skips its runs.
+**Storage, retention and opt-out.** Transcripts stay in `session-archives`, and
+episodes and grade files in the episode store. Retention is unchanged: episodes
+and grades are kept forever with the run record, and transcripts follow archival
+under Amendments 3 and 5 with Amendment 8's holds, staying readable through each
+run's archive manifest. A project opts out of training traces with
+`traces.enabled: false` in `project.json`. Capture then keeps ADR-056's slot-release
+snapshot for History only, and export skips the project's runs; export reads the
+flag when it runs. Run retention itself is not changed by the opt-out.
 
-**Export.** `farmslot runs traces export` and its RPC build a dataset directory
-from a run filter (project, flow, date range, run family, has-grade). Each run
-gets a folder with its transcripts and a `labels.json`. An `index.jsonl` lists one
-row per run. Export redacts the copies it writes: the publication secret scan,
-home paths and machine names. It never edits an archive in place. It writes
-runner-native JSONL where the Hub viewer reads it natively (Claude Code, Codex,
-Pi). For other runners it writes the Session Trace Simple Format, or records
+**Export.** `farmslot runs traces export` runs in the CLI process, offline from the
+gateway. It reads the stores read-only (run records, episodes, grade sidecars,
+session archives, and archived copies through their manifests) and builds a
+dataset directory from a run filter: project, flow, date range, run family,
+has-grade. Each run gets a folder with its transcripts, `labels.json`, the task and
+graded diff when their bytes are retained, and its interviews; an `index.jsonl`
+lists one row per run. Files are verified against their recorded sha256. A
+transcript that is missing (node offline, slot reset) is reported, never a failure,
+and `--update` fills it in once a later capture has it. Tokens are always exported;
+a missing price is computed at export from a shipped price table and marked as
+such. Claude Code, Codex and Pi stay native JSONL, which the Hub viewer
+reads; Grok is converted to the Session Trace Simple Format; other runners record
 that no transcript exists.
 
-**Privacy.** Traces contain private code, testnet account data and anything sent
-through the LiteLLM gateway, which is employer-owned. They are private and local
-by default. Farmslot has no upload path: export writes a local directory, and
-publishing it is a separate, manual decision outside Farmslot.
+**Privacy and redaction.** Traces contain private code, testnet account data and
+anything sent through the LiteLLM gateway, which is employer-owned. They are
+private and local. Export redacts every file it writes, transcripts and labels
+alike, never an archive in place. The publication scan only detects and cannot
+replace, so export gets its own replacing scrubber, applied line by line to file
+contents and file names: the exact values of the farm's configured secrets, the
+publication rules, labelled and unlabeled hex keys, e-mail addresses and DSNs,
+secret variable names matched case-sensitively (so code identifiers survive),
+usernames, home paths and machine names. Redaction is a
+best-effort backstop, not a guarantee: an export is for the local machine only, and
+sharing it, even internally, needs a human review. Farmslot has no upload path.
 
-**Cost.** Today's dev gateway holds a median of 7.7 MB of transcripts per run
-(p90 42 MB, max 154 MB). Earlier capture adds the reviewer transcripts that are
-missing now, at roughly the same per-context size. The copies run at context end,
-off the slot's critical path, and capture never blocks a transition. Gzip
-reduced a 40-transcript sample only 2.5x, so transcripts stay uncompressed at
-rest. Label values add a few kilobytes to an episode (median 2.7 KB today).
-Export is offline and reads only stores the gateway already keeps.
+**Cost.** Today's dev gateway holds a median of 7.7 MB of transcripts per run (p90
+42 MB, max 154 MB). Earlier capture adds the missing reviewer and earlier-round
+transcripts, at about the same size per session. Each capture costs three node
+calls (exists, stat, copy) plus a local read and hash. Slot release adds one stat
+per already-captured session to detect a changed source. Transcripts stay raw JSONL
+because the Hub viewer and the History readers read it directly. Label values add a
+few kilobytes per episode (median 2.7 KB today). Export runs outside the gateway.
 
 ### Rationale and consequences
 
 This extends the capture point, store and retention that Amendment 4 already
 settled, rather than adding a parallel trace store or a second schema. Episodes
 stay the index; transcripts stay opaque runner bytes; labels become values; export
-is a read-only projection. Each gap closes independently: earlier capture raises
-coverage for every later run, inline labels make episodes self-contained, and
-export makes the corpus usable without touching live stores.
+is a read-only, offline projection. Each part lands on its own: earlier capture
+raises coverage for every later run, inline labels make episodes self-contained,
+and export makes the corpus usable without touching live stores.
 
-Runs that ended before this change keep whatever coverage they have. Export
-reports a missing transcript or label honestly; it never fills one in.
+Runs that ended before this change keep the coverage they have; a bulk episode
+recapture adds their label values. Export reports a missing transcript or label
+honestly and never fills one in.
 
 ### Public surface
 
-- Additive episode fields under `labels` (the schema id stays `farmslot-episode-v1`).
-- `<runs dir>/grades/<run-id>.jsonl` and an RPC, `run.grade.external.record`.
-- `farmslot runs traces export [--project] [--flow] [--since] [--until] [--family] [--has-grade] --out <dir>` and `run.traces.export`.
-- `traces.capture` in `project.json` (default `true`).
+- Additive episode fields under `labels` (the schema id stays `farmslot-episode-v1`)
+  and additive run fields: graded output, final head, PR head, merge SHA,
+  completion acceptance snapshot and attempt log.
+- Per-session archive refs on agent contexts, listed per session in `trajectory.agents`.
+- The grade and interview sidecars in the episode store, and the RPCs
+  `run.grade.external.record` and `run.interview.record`.
+- `farmslot runs traces export [--project] [--flow] [--since] [--until] [--family] [--has-grade] [--update] --out <dir>`, offline.
+- `farmslot runs episodes recapture --since <date>`, a bulk episode rewrite for runs
+  that ended before this change; `farmslot runs bundle retain <runId>` also retries
+  sessions still recorded `missing`.
+- `traces.enabled` in `project.json` (default `true`).

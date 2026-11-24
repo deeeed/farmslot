@@ -32,14 +32,26 @@ Operators can re-read Claude/Codex/Grok History after the slot forgets the file.
 - [ADR-039](039-run-portable-bundles.md) — farmrun stays free of session bytes
 - [ADR-047](047-worker-session-history-panel.md) — History projection this snapshot feeds
 
-## Amendment 1: 2026-11-24 capture when the context ends
+## Amendment 1: 2026-11-24 capture when each session ends
 
 **Status:** Proposed with [ADR-039 Amendment 9](039-run-portable-bundles.md#amendment-9-2026-11-24-run-traces-as-private-training-data).
 
-The snapshot is taken when an agent context ends (worker completion, each review
-round and review fix, before a replay or operator completion replaces it), with
-slot release kept as the backstop. Reviewer transcripts were often gone by slot
-release. The copy, the `missing`/`unsupported` records and the capability list are
-unchanged. The archive is still not eval evidence and still not a farmrun payload;
-it also feeds ADR-039 Amendment 9's private dataset export, which redacts its own
-copies and never edits the archive.
+The snapshot is taken when each agent session ends (worker completion, each
+review round and review fix, before a replay or an operator completion replaces
+it), with slot release kept as the backstop that retries `missing` sessions.
+Reviewer transcripts were often gone by slot release, and a context reused across
+rounds kept only its last session. Archives are keyed by context and runner
+session, written through a temporary file and a rename, and captured one at a time
+per run; the details are in [Run traces](../reference/run-traces.md).
+
+Two statements in the decision above are out of date and are corrected here:
+
+- The capability list is wider than Claude, Codex and Grok: Pi also archives
+  (`jsonl`), and `claude-acp` inherits `none`.
+- Deleting a run no longer deletes its archive directory: since ADR-039
+  Amendment 3, retention moves it to the run archive with the rest of the run's
+  storage.
+
+The archive is still not eval evidence and still not a farmrun payload. It also
+feeds ADR-039 Amendment 9's private dataset export, which redacts its own copies
+and never edits the archive.

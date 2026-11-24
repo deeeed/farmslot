@@ -3,115 +3,205 @@
 Design specification for [ADR-039 Amendment 9](../adr/039-run-portable-bundles.md#amendment-9-2026-11-24-run-traces-as-private-training-data).
 **Status:** Proposed. Nothing here is implemented until the amendment is accepted.
 
-A run trace is a run's agent transcripts plus its outcome labels, kept so that
-past runs can train and compare models. It reuses the episode
-([Run episodes](run-episodes.md)) as its index and the ADR-056 session archive as
-its transcript store.
+A run trace is a run's agent transcripts plus its outcome labels, kept so that past
+runs can train and compare models. It reuses the episode ([Run episodes](run-episodes.md))
+as its index and the ADR-056 session archive as its transcript store. The external
+format is the [Hugging Face agent traces](https://huggingface.co/docs/hub/en/agent-traces)
+viewer and its [Session Trace Simple Format](https://huggingface.co/docs/hub/en/session-traces-format).
+
+The design was checked against a prototype export of 22 graded runs (Part B, local
+only). In that set, 5 of 22 worker sessions and 18 of 22 reviewer sessions existed
+only on the node that ran them.
 
 ## Transcript capture
 
-| Moment                                                                          | Contexts archived                             |
-| ------------------------------------------------------------------------------- | --------------------------------------------- |
-| Worker completion (signal `complete`, `no-change` or `blocked`)                 | the worker context                            |
-| A review round settles                                                          | that round's reviewer context(s)              |
-| A review fix settles                                                            | the review-fix context                        |
-| Before a replay relaunches a step, or an operator completion replaces a context | every context the step or completion replaces |
-| Slot release (unchanged backstop)                                               | every context still unarchived                |
+| Moment                                                                          | Sessions archived                                               |
+| ------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Worker completion (signal `complete`, `no-change` or `blocked`)                 | the worker session                                              |
+| A review round settles                                                          | that round's reviewer session(s)                                |
+| A review fix settles                                                            | the review-fix session                                          |
+| Before a replay relaunches a step, or an operator completion replaces a session | every session the step or completion replaces                   |
+| Slot release (backstop)                                                         | every session not yet `captured`, including `missing` ones      |
+| `farmslot runs bundle retain <runId>`                                           | every session not yet `captured`, while its node still holds it |
 
-- The copy is ADR-056's: from the node that ran the context, runner-native bytes,
-  `sha256` and size recorded on the agent context, `missing` or `unsupported` with
-  a reason. Capture never fails or delays a transition; the copy runs after the
-  transition commits.
-- A context archived once is not copied again unless its source changed (size or
-  mtime), so slot release finds most work done.
-- The 32 MiB per-transcript limit stays. A transcript over it is recorded
-  `missing` with its size, so the corpus shows what was dropped.
+- **Keying.** An archive lives at `session-archives/<run>/<contextId>/<sessionKey>/`,
+  where `sessionKey` is the runner session id, or the attempt index when there is
+  none. Agent contexts carry a list of archive refs, one per session; a context
+  reused across rounds (`review-fix`) keeps every round. A review-fix ref records
+  `answersRound`, the review round it fixes.
+- **Ref.** `{status, sessionKey, runner, originalPath, sourceSize, sourceMtimeMs,
+sha256, sizeBytes, capturedAt, reason?}`. A source whose size and mtime match a
+  `captured` ref is not copied again; slot release stats it once to check.
+- **Atomic write.** The copy goes to a temporary file in the session directory and
+  is renamed into place. A failed copy deletes only its temporary file, never a
+  previously captured transcript.
+- **One capture per run at a time.** Captures for a run run one after another.
+  Slot release joins a pending capture instead of starting a second one. A ref is
+  written with a patch of that context's archive list alone, never by rewriting the
+  run's whole metrics object.
+- **Replay.** The old session's path is saved on its context when the session
+  ends. Before a replay relaunches the step, that path is captured synchronously,
+  bounded by 30 seconds; a timeout records `missing` and the replay goes on.
+- **Elsewhere, after the commit.** Other captures run after the transition
+  commits; a failure records `missing` with a reason and never blocks or reverts
+  the transition.
+- **Node unreachable.** The capture records `missing` with the error. Slot release
+  and `bundle retain` retry it. A later slot reset leaves it `missing`, with the
+  first reason and the time of the last attempt.
+- **Limits.** The 32 MiB per-transcript limit stays. A larger transcript is
+  recorded `missing` with its size, so the dataset shows what was dropped.
+- **Runners.** Claude Code, Codex, Grok and Pi archive JSONL. Cursor, OpenCode,
+  scripted, none and `claude-acp` record `unsupported`.
 
 ## Labels
 
-Additive fields under `labels` in `farmslot-episode-v1`. Values are copied from
-the run record and from manifests episode capture already reads; capture never
-opens or re-hashes an artifact. A value that is not known is `null`, never guessed.
+Additive fields under `labels` in `farmslot-episode-v1`, beside the existing
+reference lists (`reviews[]`, `evidence[]` and the rest stay as they are). Every
+value comes from a run-record field; capture opens no task artifact. A field that
+is absent means the episode was captured before it existed. A value that is
+`null` is not known. Fields marked _new run field_ do not exist on the run today;
+the implementing PR adds them, and until then the label is `null`.
 
-| Field                   | Content                                                           | Source                                             |
-| ----------------------- | ----------------------------------------------------------------- | -------------------------------------------------- |
-| `labels.roles[]`        | `role, contextId, runner, model, effort`                          | agent contexts, run metrics                        |
-| `labels.cost`           | `usd, inputTokens, outputTokens, totalTokens, source`             | run metrics (`costEstimate`, session token counts) |
-| `labels.acceptance[]`   | `criterionId, verdict, source`                                    | acceptance status manifest already referenced      |
-| `labels.reviewRounds[]` | `round, contextId, reviewer {runner, model}, verdict, issueCount` | review results already referenced                  |
-| `labels.gate`           | `outcome, decidedAt, decision`                                    | resolved gate decisions                            |
-| `labels.git`            | `startRef, dispatchHead, finalHead, prHead, mergeSha`             | run record and PR integration                      |
-| `labels.grades`         | count of external grades at capture time                          | grade sidecar                                      |
+| Field                   | Content                                                                                                          | Source                                                                                                                                                                                                         |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `labels.task`           | `lane, variant, familyId, mode, completionPolicy, templateHash, note, candidateId`                               | run record (`note` is the operator task note text; `candidateId` is the launch-plan candidate)                                                                                                                 |
+| `labels.roles[]`        | `role, contextId, runner, model, effort, sessions[] {sessionKey, status, answersRound?}`                         | agent contexts                                                                                                                                                                                                 |
+| `labels.cost[]`         | per role: `inputTokens, outputTokens, cacheReadTokens, totalTokens, usd, usdSource`                              | worker: run metrics (`costEstimate` is the worker session's USD cost, plus the session token counts); reviewers: each review attempt's `usage`; `usdSource` is `recorded` or `null` when no price was recorded |
+| `labels.acceptance`     | `source (registered, derived or none), criteria[] {id, text, verdict}`                                           | the acceptance ledger snapshot on the run: the gate's `acceptanceStatus`, else a completion snapshot (_new run field_)                                                                                         |
+| `labels.reviewRounds[]` | `round, contextId, sessionKey, reviewer {runner, model}, verdict, unresolvedCount, fix {contextId, sessionKey}?` | review loops and their attempts (`loopNumber`, `verdict`, `unresolvedCount`)                                                                                                                                   |
+| `labels.gate`           | `outcome, decision, decidedAt`                                                                                   | resolved gate decisions                                                                                                                                                                                        |
+| `labels.attempts[]`     | `kind (dispatch, replay, recovery, infra-failure, operator), step, at, error?, recovery?`                        | step history and recovery records; replays and infra failures that leave no record today get an append-only attempt log (_new run field_)                                                                      |
+| `labels.infraOnly`      | true when the run ended on infra failures alone, with no agent outcome                                           | derived from `attempts` and the outcome                                                                                                                                                                        |
+| `labels.output`         | `diffSha256, source (committed, working-tree or parked-ref), ref`                                                | _new run field_, written at finalize and at release (a parked ref when release parks unpushed work)                                                                                                            |
+| `labels.git`            | `startRef, dispatchHead, finalHead, prHead, mergeSha`                                                            | `startRef` and `dispatchHead` as today; the other three are _new run fields_                                                                                                                                   |
+
+Writing a new run field updates the run. The retention pass recaptures every
+episode whose run changed since its last pass, so a merge recorded after the run
+ended reaches the episode within an hour.
+
+Episodes captured before this change gain label values through a bulk recapture
+(`farmslot runs episodes recapture --since <date>`), the same writer run over each
+ended run in the range.
 
 ## External grades
 
-`run.grade.external.record { runId, source, scale, verdict, note?, gradedBy }`
-appends one line to `<runs dir>/grades/<run-id>.jsonl`:
+`run.grade.external.record` appends one line to `grades/<run-id>.jsonl` in the
+episode store (`currentFarmPaths('gateway').state.episodes`, or `<runs dir>/episodes`
+in the legacy layout):
 
 ```json
 {
   "source": "sparks-eval-phase2",
-  "scale": ["match", "partial", "wrong"],
+  "grader": "sparks",
+  "scale": ["match", "core", "partial", "worse", "wrong"],
   "verdict": "partial",
-  "note": "…",
-  "gradedBy": "sparks",
-  "gradedAt": "2026-11-24T10:00:00Z"
+  "rubric": [{ "point": "Default panel is the order book", "verdict": "met" }],
+  "reason": "…",
+  "gradedAt": "2026-11-24T10:00:00Z",
+  "gradedBy": "sparks"
 }
 ```
 
-- `verdict` must be one of `scale`. Lines are append-only; a correction is a new
-  line, and the latest line per `source` wins at export.
-- The existing `grade` (difficulty) and `humanGrade` (recipe semantics) fields on
-  the run are unchanged and exported as they are.
+- `verdict` must be one of `scale`. Several graders may grade one run. Lines are
+  append-only; a correction is a new line, and export takes the latest line per
+  `(source, grader)`.
+- Recording a grade does not rewrite the episode; export reads the sidecar.
+- The run's existing `grade` (difficulty) and `humanGrade` (recipe semantics) are
+  unchanged and exported as they are.
+
+## Interviews (optional)
+
+`run.interview.record { runId, kind, text }` stores a post-run interview, such as
+an ask-why `why.md`, as `interviews/<run-id>/<n>-<kind>.md` in the episode store.
+Interviews are optional, append-only and exported beside the labels.
+
+## Opt-out
+
+`traces.enabled: false` in `project.json` opts a project out of training traces:
+
+- Capture keeps ADR-056's slot-release snapshot for History only.
+- Inline labels are still written, because they are part of the episode.
+- The grade and interview RPCs still accept records.
+- Export skips the project's runs. It reads the flag at export time, so a project
+  that opts in later exports runs whose transcripts were captured only at release.
+
+Run retention is not changed by the opt-out.
 
 ## Export
 
-`farmslot runs traces export --out <dir> [--project <name>] [--flow <type>] [--since <date>] [--until <date>] [--family <id>] [--has-grade]`
-calls `run.traces.export` and writes:
+`farmslot runs traces export --out <dir> [--project <name>] [--flow <type>] [--since <date>] [--until <date>] [--family <id>] [--has-grade] [--update]`
+runs in the CLI process, offline from the gateway. It reads the stores read-only
+and writes only `<dir>`:
 
 ```text
 <dir>/
-  index.jsonl                 one row per run: runId, project, flow, status, outcome, grade verdicts, transcript counts, bytes
+  index.jsonl                 one row per run: runId, project, flow, status, outcome, infraOnly, grade verdicts, transcripts present/missing, bytes
   runs/<run-id>/
-    labels.json               identity, episode labels, grades, run-level grade fields
-    transcripts/<contextId>.jsonl
-    redaction.json            what was replaced, by rule and count (never the values)
-  README.md                   filter, Farmslot version, redaction rules, counts
+    labels.json               identity, episode labels, external grades, grade, humanGrade
+    transcripts/<contextId>-<sessionKey>.jsonl
+    task.md                   TASK.md, when its bytes are retained
+    output.diff               the graded diff, when its bytes are retained
+    interviews/*.md
+    redaction.json            counts per rule, never the values
+  README.md                   filter, Farmslot version, redaction rules, counts, runs skipped and why
 ```
 
-- `labels.json` = episode identity (`runId, project, flowType, status, input.ticket`)
-  - `labels` + external grades + `grade` and `humanGrade`.
-- Transcripts come from `session-archives`, or from the run archive after
-  Amendments 3 and 7 archival. Each copy's bytes are checked against the recorded
-  `sha256` before export; a mismatch is listed in `index.jsonl` and the transcript
-  is skipped.
-- A project with `traces.capture: false` is skipped and counted in `README.md`.
-- Export is read-only against all stores, writes only `<dir>`, and refuses a
-  non-empty `<dir>`.
+- Transcripts are read from `session-archives`, or from the run archive through
+  `<archive-root>/<run-id>/manifest.json` after archival. `task.md` and `output.diff`
+  come from the retained bundle or the archived task directory, through the
+  episode's file references. Each copy is checked against its recorded `sha256`; a
+  mismatch is listed in `index.jsonl` and the file is skipped.
+- A missing transcript (node offline, slot reset, size limit) is reported in
+  `index.jsonl` and `README.md` with its reason. Export never fails for it.
+  `--update` on an existing export adds transcripts captured since, for example
+  after the node returns and `bundle retain` recaptures them, and leaves other files
+  as they are. Without `--update`, export refuses a non-empty `<dir>`.
+- Cost: tokens are always exported. When `usd` is `null`, export prices the tokens
+  from the model price table it ships with and marks `usdSource: "export-table"`;
+  a model without a price stays `null`.
+- Filters are applied to episodes in the CLI process. The gateway does no work.
 
 ### Formats
 
-| Runner                           | Written as                                                                    |
-| -------------------------------- | ----------------------------------------------------------------------------- |
-| Claude Code, Codex, Pi           | native JSONL, unchanged except redaction (the Hub viewer reads these)         |
-| Grok                             | Session Trace Simple Format (STS-Format), converted from `chat_history.jsonl` |
-| Cursor, OpenCode, scripted, none | no transcript; `labels.json` records `unsupported`                            |
+| Runner                                         | Written as                                                            |
+| ---------------------------------------------- | --------------------------------------------------------------------- |
+| Claude Code, Codex, Pi                         | native JSONL, unchanged except redaction (the Hub viewer reads these) |
+| Grok                                           | Session Trace Simple Format, converted from `chat_history.jsonl`      |
+| Cursor, OpenCode, scripted, none, `claude-acp` | no transcript; `labels.json` records `unsupported`                    |
 
-STS-Format: a header line `{"type":"session","harness":"farmslot-<runner>","id":<runnerSessionId>,"name":<run summary>}`,
+Session Trace Simple Format: a header line
+`{"type":"session","harness":"farmslot-<runner>","id":<runnerSessionId>,"name":<run id>}`,
 then one `{"type":"message","message":{role, content, reasoningContent?, toolCalls?, toolCallId?, timestamp?, model?}}`
-per turn. Records a converter cannot map are skipped and counted in
-`redaction.json` as `unmapped`.
+per turn, with `role` one of `user`, `assistant`, `system` or `tool`. The header
+name is the run id, not a summary, so it carries no task text. Records a
+converter cannot map are skipped and counted in `redaction.json` as `unmapped`.
 
 ### Redaction
 
-Applied to the exported copies only, in this order:
+The publication secret scan only detects (it reports a kind and a fingerprint, with
+no position), so export uses its own replacing scrubber. It runs line by line, so
+JSONL stays valid, and applies to every file export writes: transcripts,
+`labels.json`, `task.md`, `output.diff`, interviews, `index.jsonl`, `README.md`
+and file names. Rules, in order:
 
-1. The publication secret scan (`host-services/secret-scan`): each finding is
-   replaced with `[REDACTED:<rule>]`.
-2. Home directories (`/Users/<name>`, `/home/<name>`) become `~`.
-3. Machine names from the pool become `<machine>`.
+1. The exact values of the farm's configured secrets: provider environment values,
+   gateway and node tokens, and LiteLLM keys.
+2. The publication scan's patterns, made replacing.
+3. Private keys: labelled hex, and unlabeled 64-hex strings.
+4. E-mail addresses and DSNs, such as Sentry DSNs.
+5. Secret variable names, matched case-sensitively in `SCREAMING_SNAKE_CASE` with
+   a secret-like suffix (`_TOKEN`, `_KEY`, `_SECRET`, `_PASSWORD`). Their values
+   are replaced; code identifiers such as `tokenAmount` are left alone.
+6. Usernames: the local user and every pool host's SSH user, in text and in file
+   names (session directory names encode them).
+7. Home directories (`/Users/<name>`, `/home/<name>`), which become `~`.
+8. Machine names from the pool, which become `<machine>`.
 
-A transcript that the scanner cannot read is left out, not exported raw.
+Each rule replaces a match with `[REDACTED:<rule>]` and counts it in
+`redaction.json`. A file the scrubber cannot read is left out, never exported raw.
+
+Redaction is a best-effort backstop, not a guarantee. An export is for the local
+machine only; sharing it, even internally, needs a human review first.
 
 ## Privacy
 
@@ -123,12 +213,17 @@ RPC; publishing an export is a manual decision taken outside Farmslot.
 
 Measured on the dev gateway, 2026-11-24:
 
-| Item                   | Today                                           |
-| ---------------------- | ----------------------------------------------- |
-| Transcripts per run    | median 7.7 MB, p90 42 MB, max 154 MB (159 runs) |
-| Episode                | median 2.7 KB, max 724 KB (1083 episodes)       |
-| Gzip on 40 transcripts | 2.5x, so transcripts stay uncompressed          |
+| Item                | Today                                                |
+| ------------------- | ---------------------------------------------------- |
+| Transcripts per run | median 7.7 MB, p90 42 MB, max 154 MB (159 runs)      |
+| Episode             | median 2.7 KB, max 724 KB (1083 episodes)            |
+| Prototype export    | 22 runs, 66 MB, 3–9 MB per run with a worker session |
 
-Earlier capture adds the missing reviewer transcripts, at about the same
-per-context size. The copy happens once per context, after the transition
-commits. Inline labels add a few kilobytes per episode. Export runs offline.
+- **Per capture:** three node calls (exists, stat, copy) plus a local read and
+  sha256 of the copy. Slot release adds one stat per already-captured session.
+  Earlier capture adds the missing reviewer and earlier-round sessions, at about
+  the same size per session.
+- **Uncompressed at rest:** transcripts stay raw JSONL, because the Hub viewer and
+  the History readers read it directly. Gzip reached 2.5x on a 40-transcript sample.
+- **Labels:** a few kilobytes per episode.
+- **Export:** runs outside the gateway, so it costs the gateway nothing.
