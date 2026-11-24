@@ -336,10 +336,11 @@ export class ChatPanel extends LitElement {
           padding: 8px 16px;
           border-bottom: 1px solid var(--fs-border, #333);
         }
-        /* Room for the session's own header rows plus a readable timeline and a full composer. */
+        /* Room for the session's own header rows (about 230px), a readable timeline and a composer
+           whose 70% cap still fits a whole approval card, title and buttons together. */
         chat-panel native-session-view {
           flex: 1 1 0;
-          min-height: 480px;
+          min-height: 560px;
         }
         chat-panel .copilot-notice {
           min-height: 24px;

@@ -4,6 +4,8 @@ import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
+import { probeUntil, watchPageErrors } from './proof-until.mjs';
+
 const WIDTH = 1005;
 const HEIGHT = 504;
 
@@ -117,13 +119,15 @@ export function copilotPanelFixture(now, nativeFixture) {
 
 /**
  * At Arthur's 1005x504 window with Co-Pilot settings open, the pending approval scrolls into view
- * inside the content box, is the element under its own centre, is not covered by the status row
- * or transfer bar, and a real click reaches the gateway.
+ * inside the content box with its title readable, Approve is the element under its own centre,
+ * neither is covered by the status row or transfer bar, and a real click reaches the gateway.
  */
 export async function proveCopilotPanel({
   cdp,
   target,
   browserCall,
+  emulation,
+  broadcast,
   output,
   save,
   frames,
@@ -132,23 +136,25 @@ export async function proveCopilotPanel({
   const before = process.env.FARMSLOT_LAYOUT_EXPECT_SHIFT === '1';
   const inspect = () =>
     cdp('eval', target, '--file', path.join(import.meta.dirname, 'probes/copilot-panel.js'));
-  async function until(accept, label, timeout = 45_000) {
-    const end = Date.now() + timeout;
-    let value;
-    do {
-      value = await inspect();
-      if (accept(value)) return value;
-      await delay(100);
-    } while (Date.now() < end);
-    await save('copilot-timeout-' + label, value);
-    assert.fail(label + ': ' + JSON.stringify(value));
-  }
+  const pageErrors = await watchPageErrors({ emulation, browserCall });
+  const until = probeUntil({ inspect, save, errors: pageErrors.errors, prefix: 'copilot-' });
   await browserCall('Emulation.setDeviceMetricsOverride', {
     width: WIDTH,
     height: HEIGHT,
     deviceScaleFactor: 1,
     mobile: false,
   });
+  // A running transfer from the gateway gives the docked transfer bar real height.
+  broadcast('file.transfer.progress', {
+    transferId: 'copilot-transfer',
+    path: '/workspace/panel-fixture/after.mp4',
+    label: 'after.mp4',
+    phase: 'mirror',
+    bytesTransferred: 20_000_000,
+    totalBytes: 50_000_000,
+    state: 'running',
+  });
+  await until((v) => v.transferHeight > 0, 'transfer-rendered');
   await cdp('eval', target, "location.hash='copilot?panels=copilot-settings'; return true;");
   const loaded = await until((v) => v.settingsOpen && v.approve, 'approval-rendered');
   // The new request scrolls itself into view; give the smooth layout one settle period.
@@ -168,19 +174,25 @@ export async function proveCopilotPanel({
     value.viewport.height === HEIGHT &&
     value.approveInsideContent &&
     value.approveHit &&
+    value.titleHit &&
     !value.overlaysCoverContent;
   if (before) {
     assert(!reachable, 'The original layout must reproduce the unreachable approval');
+    pageErrors.stop();
     await save('copilot-result', { result: 'PASS', expected: 'unreachable approval', value });
     return;
   }
   assert(value.approveInsideContent, 'Approve must be inside the visible content box');
   assert(value.approveHit, 'Approve must be the element under its own centre');
+  assert(value.titleHit, 'The request title must be visible beside its Approve button');
   assert(!value.overlaysCoverContent, 'The status row and transfer bar must not cover content');
+  assert(value.transferHeight > 0, 'The transfer bar must be on screen for the overlap check');
   await cdp('click', target, 'native-session-view >>> [data-testid="native-approve"]');
   await until(() => fixture.responses.length > 0, 'approve-delivered', 10_000);
   assert.equal(fixture.responses[0].decision, 'approve');
   assert.equal(fixture.responses[0].requestId, fixture.requestId);
+  pageErrors.stop();
+  assert.deepEqual(pageErrors.errors, [], 'No uncaught rendering errors');
   await save('copilot-result', {
     result: 'PASS',
     value,

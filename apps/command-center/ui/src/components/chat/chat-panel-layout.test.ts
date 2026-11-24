@@ -44,5 +44,5 @@ test('the Co-Pilot panel scrolls as a whole and keeps a usable conversation when
   assert.match(host, /min-height: 0;/);
   assert.match(host, /overflow-y: auto;/);
   assert.match(text, /chat-panel > :not\(native-session-view\) \{\s*flex: none;\s*\}/);
-  assert.match(text, /chat-panel native-session-view \{\s*flex: 1 1 0;\s*min-height: 480px;\s*\}/);
+  assert.match(text, /chat-panel native-session-view \{\s*flex: 1 1 0;\s*min-height: 560px;\s*\}/);
 });

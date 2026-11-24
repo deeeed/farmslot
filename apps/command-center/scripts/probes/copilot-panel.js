@@ -15,6 +15,16 @@ const centre = approveBox && {
   x: (approveBox.left + approveBox.right) / 2,
   y: (approveBox.top + approveBox.bottom) / 2,
 };
+// The operator must see what they approve: the request's title is visible, not only its button.
+const title = approve?.closest('.request')?.querySelector('h3');
+const titleBox = box(title);
+const titleHit = Boolean(
+  titleBox &&
+  view.shadowRoot.elementFromPoint(
+    (titleBox.left + titleBox.right) / 2,
+    (titleBox.top + titleBox.bottom) / 2,
+  ) === title,
+);
 const status = box(document.querySelector('farm-resource-store-notice'));
 const transfers = box(document.querySelector('file-transfer-progress-banner'));
 return {
@@ -56,8 +66,11 @@ return {
       }
     );
   }),
+  titleBox,
+  titleHit,
   approveHit: Boolean(
     centre && view.shadowRoot.elementFromPoint(centre.x, centre.y)?.closest('button') === approve,
   ),
+  transferHeight: transfers ? transfers.bottom - transfers.top : 0,
   overlaysCoverContent: overlaps(status, content) || overlaps(transfers, content),
 };

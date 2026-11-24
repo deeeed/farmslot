@@ -632,6 +632,11 @@ try {
       cdp,
       target,
       browserCall,
+      emulation,
+      broadcast: (event, payload) => {
+        for (const socket of wss.clients)
+          socket.send(JSON.stringify({ type: 'event', event, payload }));
+      },
       output,
       save,
       frames,
