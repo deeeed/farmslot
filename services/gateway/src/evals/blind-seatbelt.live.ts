@@ -708,6 +708,7 @@ for (const provider of ['localsparks', 'router', 'litellm', 'ollama'] as const) 
           ['ROUTER', 'LITELLM', 'OLLAMA'].flatMap((kind) => [
             [`FARMSLOT_PI_${kind}_CONTEXT`, '64000'],
             [`FARMSLOT_PI_${kind}_MAX_TOKENS`, '4096'],
+            [`FARMSLOT_PI_${kind}_MAX_IMAGES`, '50'],
             [`FARMSLOT_PI_${kind}_REASONING`, 'true'],
             [
               `FARMSLOT_PI_${kind}_MODEL_LIMITS`,
@@ -760,6 +761,7 @@ assert.equal(source.id, ${JSON.stringify(selectedKind === 'router' ? 'localspark
 assert.equal(source.apiKey, 'synthetic-selected-auth');
 assert.equal(source.models[0].contextWindow, 32000);
 assert.equal(source.models[0].maxTokens, 2048);
+assert.deepEqual(source.models[0].inputLimits, { images: { maxPerRequest: 50 } });
 assert.equal(source.models[0].reasoning, true);
 console.log('synthetic provider config and scoped auth passed');
 `,
