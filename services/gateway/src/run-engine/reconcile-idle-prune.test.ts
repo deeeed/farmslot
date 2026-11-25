@@ -7,7 +7,10 @@ test("the orphan reconciler's pass hands its fleet snapshot and active slots to 
   const { reconcileOrphanedSlots } = await import('./recovery.js');
   const calls: Array<{ slots: string[]; active: string[] }> = [];
   const { createRun, deleteRun, updateRun } = await import('../runs/store.js');
-  const created = createRun({ flowType: 'dev', project: 'fixture', ticketOrPr: 'TAT-1' }, { deferBackgroundPersist: true });
+  const created = createRun(
+    { flowType: 'dev', project: 'fixture', ticketOrPr: 'TAT-1' },
+    { deferBackgroundPersist: true },
+  );
   const active = updateRun(created.id, { status: 'dispatching', slotId: 'busy-1' })!;
   t.after(async () => {
     updateRun(active.id, { status: 'done', completedAt: new Date().toISOString() });
