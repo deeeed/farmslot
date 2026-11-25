@@ -77,16 +77,21 @@ export function buildTempScrubCommand(input: {
       ...PY_CHECKOUT,
       'def git(*args):',
       '    return subprocess.run(["git"] + list(args), env=env, capture_output=True, text=True)',
+      'def kept_or_outside(where):',
+      '    return not where.startswith(temp + os.sep) or any(where == k or where.startswith(k + os.sep) for k in keep)',
       'def outside_worktree(store):',
-      '    # A worktree this repository owns outside temp/ would lose its Git data with it.',
+      '    # A worktree this repository owns outside temp/ or in a kept dir, mounted or not, would',
+      '    # lose its Git data with it.',
       '    admin = os.path.join(store, "worktrees")',
       '    for name in sorted(os.listdir(admin)) if os.path.isdir(admin) else []:',
       '        try:',
       '            with open(os.path.join(admin, name, "gitdir")) as f:',
-      '                where = os.path.realpath(os.path.dirname(f.read().strip()))',
-      '        except OSError:',
-      '            continue  # No gitdir record: Git treats it as prunable, so nothing outside depends on it.',
-      '        if os.path.lexists(where) and not where.startswith(temp + os.sep):',
+      '                record = f.read().strip()',
+      '        except (FileNotFoundError, NotADirectoryError):',
+      '            continue  # No gitdir record: Git treats it as prunable, so nothing depends on it.',
+      '        # worktree.useRelativePaths records the path relative to its admin dir.',
+      '        where = os.path.realpath(os.path.dirname(os.path.join(admin, name, record)))',
+      '        if kept_or_outside(where):',
       '            return where',
       '    return None',
       'def registered(owner, path):',
@@ -100,7 +105,7 @@ export function buildTempScrubCommand(input: {
       '    store = dot if os.path.isdir(dot) else path',
       '    elsewhere = None if os.path.isfile(dot) else outside_worktree(store)',
       '    if elsewhere:',
-      '        emit("refused", path, "a repository whose worktree " + os.path.relpath(elsewhere, repo) + " is outside temp/")',
+      '        emit("refused", path, "a repository whose worktree " + os.path.relpath(elsewhere, repo) + " is outside temp/ or kept")',
       '        return False',
       '    if os.path.isfile(dot):',
       '        common = git("-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir")',
@@ -113,10 +118,12 @@ export function buildTempScrubCommand(input: {
       '            if done.returncode != 0:',
       '                emit("refused", path, "git worktree remove failed: " + done.stderr.strip()[-300:])',
       '                return False',
-      '        if os.path.lexists(path):',
-      '            shutil.rmtree(path)',
-      '        # The branch stays: no worktree branch here is one Farmslot created.',
-      '        emit("removed", path, "linked worktree" + (" (branch " + head + " kept)" if head else ""))',
+      '            # Its branch is left: where that branch came from is not known here.',
+      '            emit("removed", path, "linked worktree" + (" (branch " + head + " kept)" if head else ""))',
+      '            return True',
+      '        # A `.git` file Git does not list here (copied, moved, --separate-git-dir): a dir.',
+      '        shutil.rmtree(path)',
+      '        emit("removed", path, "clone")',
       '    else:',
       '        kind = "clone" if os.path.lexists(dot) else "bare"',
       '        shutil.rmtree(path)',
@@ -229,17 +236,19 @@ export function buildTempScratchDeleteCommand(input: { repo: string }): string {
 
 type ScrubRecord = { kind?: unknown; path?: unknown; detail?: unknown };
 
-/** One record per line; a line cut off by a timeout or crash is dropped, not the rest. */
-function records(stdout: string): ScrubRecord[] {
+/**
+ * One record per line. `partial`: the command stopped, so a line cut off by the timeout or crash
+ * is dropped instead of hiding the rest; on a clean exit every line must parse.
+ */
+function records(stdout: string, partial = false): ScrubRecord[] {
   return stdout.split('\n').flatMap((line): ScrubRecord[] => {
     if (!line.trim()) return [];
     try {
       const parsed: unknown = JSON.parse(line);
       return parsed && typeof parsed === 'object' ? [parsed] : [];
     } catch (error) {
-      // Only the last line of a stopped command can be partial; the failure is reported by
-      // the caller from the exit status.
-      if (error instanceof SyntaxError) return [];
+      // The caller reports the stopped command from its exit status.
+      if (partial && error instanceof SyntaxError) return [];
       throw error;
     }
   });
@@ -247,9 +256,9 @@ function records(stdout: string): ScrubRecord[] {
 
 const text = (value: unknown) => (typeof value === 'string' ? value : null);
 
-export function parseTempScrubOutput(stdout: string): TempScrubResult {
+export function parseTempScrubOutput(stdout: string, partial = false): TempScrubResult {
   const result: TempScrubResult = { removed: [], kept: [], refused: [] };
-  for (const record of records(stdout)) {
+  for (const record of records(stdout, partial)) {
     const where = text(record.path);
     const detail = text(record.detail);
     if (where === null || detail === null) continue;
@@ -284,7 +293,7 @@ export async function scrubSlotTemp(
     { cwd: vars.remoteRepo, timeout: SCRUB_TIMEOUT_MS },
   );
   if (result.exitCode !== 0) {
-    const removed = parseTempScrubOutput(result.stdout)
+    const removed = parseTempScrubOutput(result.stdout, true)
       .removed.map((entry) => `${entry.path} (${entry.kind})`)
       .join(', ');
     throw new Error(

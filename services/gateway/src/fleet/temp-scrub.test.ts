@@ -221,42 +221,40 @@ test('a symlinked ancestor of a kept path is left, and a symlinked temp/ is refu
   assert.equal(existsSync(path.join(repo, 'elsewhere/runtime/terminal/browser.pid')), true);
 });
 
-// macOS nodes run slot commands with `zsh -f -c`, where an unmatched shell glob aborts.
-test('the task-dir listing runs under zsh -f with no task root, an empty one or empty flows', async (t) => {
-  const { parent, repo } = await slotWith(['outside/feat/x/TASK.md']);
-  t.after(() => rm(parent, { recursive: true, force: true }));
-  const list = async () =>
-    (
-      await execFileAsync('/bin/zsh', [
-        '-f',
-        '-c',
-        buildTempTaskDirListCommand({ repo, taskRoot: 'temp/tasks' }),
-      ])
-    ).stdout;
-  assert.equal(await list(), '', 'no temp/tasks');
-  await mkdir(path.join(repo, 'temp/tasks/feat'), { recursive: true });
-  assert.equal(await list(), '', 'only an empty flow folder');
-  await mkdir(path.join(repo, 'temp/tasks/fix/tat-1'), { recursive: true });
-  await writeFile(path.join(repo, 'temp/tasks/fix/tat-1/TASK.md'), 'x');
-  await mkdir(path.join(repo, 'temp/tasks/goal3-x'), { recursive: true });
-  await writeFile(path.join(repo, 'temp/tasks/goal3-x/TASK.md'), 'x');
-  // A symlinked flow folder is not entered: its task dirs are not this slot's.
-  await symlink(path.join(repo, 'outside/feat'), path.join(repo, 'temp/tasks/linked'));
-  assert.deepEqual((await list()).split('\n').filter(Boolean), [
-    'temp/tasks/fix/tat-1',
-    'temp/tasks/goal3-x',
-  ]);
-  const scrubbed = parseTempScrubOutput(
-    (
-      await execFileAsync(
-        '/bin/zsh',
-        ['-f', '-c', buildTempScrubCommand({ repo, keep: [], taskRoot: 'temp/tasks' })],
-        { env: gitEnv },
-      )
-    ).stdout,
+// macOS nodes run slot commands with `zsh -f -c`, where an unmatched shell glob aborts; CI
+// (Ubuntu) has no zsh, so the same checks also run under bash.
+for (const [shell, args] of [
+  ['/bin/zsh', ['-f', '-c']],
+  ['/bin/bash', ['-c']],
+] as const)
+  test(
+    `the task-dir listing runs under ${shell} with no task root, an empty one or empty flows`,
+    { skip: !existsSync(shell) && `${shell} is not installed` },
+    async (t) => {
+      const { parent, repo } = await slotWith(['outside/feat/x/TASK.md']);
+      t.after(() => rm(parent, { recursive: true, force: true }));
+      const inShell = async (command: string) =>
+        (await execFileAsync(shell, [...args, command], { env: gitEnv })).stdout;
+      const list = () => inShell(buildTempTaskDirListCommand({ repo, taskRoot: 'temp/tasks' }));
+      assert.equal(await list(), '', 'no temp/tasks');
+      await mkdir(path.join(repo, 'temp/tasks/feat'), { recursive: true });
+      assert.equal(await list(), '', 'only an empty flow folder');
+      await mkdir(path.join(repo, 'temp/tasks/fix/tat-1'), { recursive: true });
+      await writeFile(path.join(repo, 'temp/tasks/fix/tat-1/TASK.md'), 'x');
+      await mkdir(path.join(repo, 'temp/tasks/goal3-x'), { recursive: true });
+      await writeFile(path.join(repo, 'temp/tasks/goal3-x/TASK.md'), 'x');
+      // A symlinked flow folder is not entered: its task dirs are not this slot's.
+      await symlink(path.join(repo, 'outside/feat'), path.join(repo, 'temp/tasks/linked'));
+      assert.deepEqual((await list()).split('\n').filter(Boolean), [
+        'temp/tasks/fix/tat-1',
+        'temp/tasks/goal3-x',
+      ]);
+      const scrubbed = parseTempScrubOutput(
+        await inShell(buildTempScrubCommand({ repo, keep: [], taskRoot: 'temp/tasks' })),
+      );
+      assert.deepEqual(scrubbed.refused, [], `the scrub runs under ${shell} too`);
+    },
   );
-  assert.deepEqual(scrubbed.refused, [], 'the scrub runs under zsh -f too');
-});
 
 test('a locked or unregistered worktree is deleted; a clone owning one outside temp/ is refused', async (t) => {
   const { parent, repo } = await slotWith([]);
@@ -284,31 +282,67 @@ test('a locked or unregistered worktree is deleted; a clone owning one outside t
 
   assert.deepEqual(
     result.removed
-      .filter(({ kind }) => kind.startsWith('linked worktree'))
-      .map(({ path: p }) => p)
+      .filter(({ kind }) => kind !== 'dir')
+      .map(({ path: p, kind }) => [p, kind])
       .sort(),
-    ['temp/scratch-copy', 'temp/tasks/locked-wt'],
+    [
+      ['temp/scratch-copy', 'clone'],
+      ['temp/tasks/locked-wt', 'linked worktree (branch locked kept)'],
+    ],
   );
   assert.doesNotMatch(await git(origin, 'worktree', 'list'), /locked-wt/);
   assert.deepEqual(result.refused, [
     {
       path: 'temp/tasks/owner-clone',
-      reason: `a repository whose worktree ${path.relative(repo, path.join(parent, 'away-wt'))} is outside temp/`,
+      reason: `a repository whose worktree ${path.relative(repo, path.join(parent, 'away-wt'))} is outside temp/ or kept`,
     },
   ]);
   assert.equal(existsSync(path.join(parent, 'away-wt/.git')), true);
 });
 
-test('a cut-off last line drops only itself; earlier removals stay named', () => {
-  const result = parseTempScrubOutput(
-    [
-      JSON.stringify({ kind: 'removed', path: 'temp/a', detail: 'dir' }),
-      JSON.stringify({ kind: 'removed', path: 'temp/b', detail: 'clone' }),
-      '{"kind": "removed", "path": "temp/c", "de',
-    ].join('\n'),
-  );
-  assert.deepEqual(result.removed, [
+test('a cut-off last line of a stopped scrub drops only itself; a clean exit parses every line', () => {
+  const stdout = [
+    JSON.stringify({ kind: 'removed', path: 'temp/a', detail: 'dir' }),
+    JSON.stringify({ kind: 'removed', path: 'temp/b', detail: 'clone' }),
+    '{"kind": "removed", "path": "temp/c", "de',
+  ].join('\n');
+  assert.deepEqual(parseTempScrubOutput(stdout, true).removed, [
     { path: 'temp/a', kind: 'dir' },
     { path: 'temp/b', kind: 'clone' },
   ]);
+  assert.throws(() => parseTempScrubOutput(stdout), SyntaxError);
+});
+
+test('a clone whose worktree is kept, unmounted or recorded relatively is refused', async (t) => {
+  const { parent, repo } = await slotWith(['temp/tasks/feat/parked-task/TASK.md']);
+  t.after(() => rm(parent, { recursive: true, force: true }));
+  const clone = async (name: string) => {
+    const dir = path.join(repo, 'temp/tasks', name);
+    await git(parent, 'init', '-q', '-b', 'main', dir);
+    await git(dir, 'commit', '-q', '--allow-empty', '-m', 'base');
+    return dir;
+  };
+  // A worktree in a parked run's kept task dir.
+  const keeper = await clone('ref-clone');
+  await git(keeper, 'worktree', 'add', '-q', '-b', 'kept', path.join(repo, 'temp/tasks/feat/parked-task/wt'));
+  // A worktree on a volume that is not mounted now.
+  const mounted = await clone('mount-clone');
+  await git(mounted, 'worktree', 'add', '-q', '-b', 'away', path.join(parent, 'volume/wt'));
+  await rm(path.join(parent, 'volume'), { recursive: true });
+  // worktree.useRelativePaths: the record is relative to its admin dir.
+  const relative = await clone('relative-clone');
+  const outside = path.join(parent, 'rel-wt');
+  await git(relative, 'worktree', 'add', '-q', '-b', 'rel', outside);
+  const admin = path.join(relative, '.git/worktrees/rel-wt');
+  await writeFile(path.join(admin, 'gitdir'), `${path.relative(admin, path.join(outside, '.git'))}\n`);
+
+  const result = await scrub(repo, ['temp/tasks/feat/parked-task']);
+
+  assert.deepEqual(result.refused.map(({ path: p }) => p).sort(), [
+    'temp/tasks/mount-clone',
+    'temp/tasks/ref-clone',
+    'temp/tasks/relative-clone',
+  ]);
+  for (const kept of ['ref-clone/.git', 'mount-clone/.git', 'relative-clone/.git'])
+    assert.equal(existsSync(path.join(repo, 'temp/tasks', kept)), true, kept);
 });
