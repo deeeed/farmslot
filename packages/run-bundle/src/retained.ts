@@ -1169,8 +1169,6 @@ interface StableStoreCharge {
   stamps: string[];
   bytes: number;
   retentionCharges: [string, number][];
-  /** The `sha256/` names the walk charged, so a publish can prove it is the only change. */
-  bundleNames: Set<string>;
 }
 
 /**
@@ -1224,12 +1222,10 @@ async function walkStableStoreCharge(
   stableStoreWalks += 1;
   let bytes = 0;
   const retentionCharges: [string, number][] = [];
-  const bundleNames = new Set<string>();
   for (const entry of await readdir(store.root, { withFileTypes: true })) {
     const file = path.join(store.root, entry.name);
     if (entry.name === 'sha256' && entry.isDirectory()) {
       for (const name of await readdir(file)) {
-        bundleNames.add(name);
         const directory = path.join(file, name);
         const charged = BUNDLE_DIGEST.test(name)
           ? await recordedBundleBytes(store, name)
@@ -1245,32 +1241,36 @@ async function walkStableStoreCharge(
       continue;
     bytes += entry.isDirectory() ? await physicalBytes(file) : (await stat(file)).size;
   }
-  return { bytes, retentionCharges, bundleNames };
+  return { bytes, retentionCharges };
 }
 
-async function listBundleNames(store: RunBundleStore): Promise<string[]> {
-  try {
-    return await readdir(path.join(store.root, 'sha256'));
-  } catch (error) {
-    if (!hasCode(error, 'ENOENT')) throw error;
-    return [];
+/**
+ * Bundles leave sha256/ outside the store lock only as `.retention-*` entries the retention
+ * pass moved aside under it (its archive finish). Checking that each one the cache charged is
+ * still there bounds the check by those few entries, not by the store's bundles.
+ */
+async function retentionEntriesPresent(charge: StableStoreCharge): Promise<boolean> {
+  for (const [directory] of charge.retentionCharges) {
+    try {
+      await lstat(directory);
+    } catch (error) {
+      if (!hasCode(error, 'ENOENT')) throw error;
+      return false;
+    }
   }
+  return true;
 }
-
-const sameBundleNames = (expected: Set<string>, listed: string[]) =>
-  listed.length === expected.size && listed.every((name) => expected.has(name));
 
 async function stableStoreCharge(store: RunBundleStore): Promise<StableStoreCharge> {
   const key = stableChargeKey(store);
   const before = await storeStamps(store);
   const cached = stableStoreCharges.get(key);
-  // Bundles leave sha256/ outside the store lock (the retention pass's archive finish). A
-  // removal in the same timestamp tick as a write this process adjusted for leaves the stamp
-  // equal, so the names are checked too: one directory listing, not a walk.
+  // A `.retention-*` removal in the same timestamp tick as a write this process adjusted for
+  // leaves the stamp equal, so those entries are checked too.
   if (
     cached &&
     cached.stamps.every((stamp, i) => stamp === before[i]) &&
-    sameBundleNames(cached.bundleNames, await listBundleNames(store))
+    (await retentionEntriesPresent(cached))
   )
     return cached;
   stableStoreCharges.delete(key);
@@ -1283,7 +1283,13 @@ async function stableStoreCharge(store: RunBundleStore): Promise<StableStoreChar
   const quiet = after.every((stamp) =>
     stampTimesNs(stamp).every((time) => time < walkStartNs - STABLE_CHARGE_QUIET_NS),
   );
-  if (quiet && after.every((stamp, i) => stamp === before[i])) stableStoreCharges.set(key, charge);
+  // A volume whose timestamps carry no sub-millisecond part (exFAT, HFS+, FAT) can leave a
+  // stamp equal across changes for up to seconds, which no window here covers: walk there.
+  const fineGrained = after.some((stamp) =>
+    stampTimesNs(stamp).some((time) => time % 1_000_000n !== 0n),
+  );
+  if (fineGrained && quiet && after.every((stamp, i) => stamp === before[i]))
+    stableStoreCharges.set(key, charge);
   return charge;
 }
 
@@ -1308,22 +1314,14 @@ async function adjustStableStoreCharge(
   const changed = STAMPED_STORE_DIRS.indexOf(directory);
   if (!after.every((stamp, i) => i === changed || stamp === cached.stamps[i]))
     return void stableStoreCharges.delete(key);
-  let bundleNames = cached.bundleNames;
   if (directory === 'sha256') {
     // The retention pass finishes archives outside the store lock, removing `.retention-*`
-    // bundles from sha256/; that would move the same stamp in this window. Listed after the
-    // stamp, so a later removal moves the stamp again and the next read walks.
-    if (!addedBundle) return void stableStoreCharges.delete(key);
-    bundleNames = new Set(cached.bundleNames).add(addedBundle);
-    if (!sameBundleNames(bundleNames, await listBundleNames(store)))
+    // bundles from sha256/; that would move the same stamp in this window. Checked after the
+    // stamp, so a later removal moves it again, or the next read's check finds it gone.
+    if (!addedBundle || !(await retentionEntriesPresent(cached)))
       return void stableStoreCharges.delete(key);
   }
-  stableStoreCharges.set(key, {
-    ...cached,
-    bytes: cached.bytes + delta,
-    stamps: after,
-    bundleNames,
-  });
+  stableStoreCharges.set(key, { ...cached, bytes: cached.bytes + delta, stamps: after });
 }
 
 async function chargedStoreBytesUntimed(
@@ -2714,6 +2712,7 @@ export async function collectRunBundleGarbage(
           (await readBundleRecord(store, digest)) ?? (await physicalBytes(directory));
         await rm(directory, { recursive: true });
         await rm(bundleUsagePath(store, digest), { force: true });
+        stableStoreCharges.delete(stableChargeKey(store));
         // A reclaimed payload cannot satisfy its old retry intent. Future explicit
         // acquisition of these bytes starts a new capture instead of a lost stage.
         for (const intent of committedIntents.get(digest) ?? []) await rm(intent);
@@ -2769,8 +2768,8 @@ export async function materializeRunBundle(
   const acquisitionSize = acquisitionScan.bytes;
   if (request.housekeepBeforeCapture) {
     // The archiver's own pressure test (archiveRunBundleMediaLocked), with this capture's
-    // declared bytes and its manifest reserve as the required room. Read outside the lock: a
-    // stale charge only decides whether to tidy first, and admission checks again under it.
+    // declared bytes and its manifest reserve as the required room. Read under the store lock
+    // and released before housekeeping, which takes it itself; admission checks again under it.
     // The run record, its decision history and the manifest are charged too. The history is
     // the whole journal, an upper bound of the prefix the capture freezes under its lock. An
     // artifact without a declared size cannot be bounded, so it always tidies first.
