@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 
 import { prepareHookEnvExports } from './prepare-hook-env.js';
@@ -20,4 +21,17 @@ test('prepare hooks see the profile and the flow type; a flowless prepare unsets
     "export FARMSLOT_PREPARE_PROFILE='o'\\''dd'",
     "export FARMSLOT_FLOW_TYPE='fix-bug'",
   ]);
+});
+
+// The lines run in the hook's shell: a flowless prepare drops a value the gateway's own
+// environment carries, and a flow replaces it.
+test('in a shell, the exports replace or drop an inherited FARMSLOT_FLOW_TYPE', () => {
+  const seen = (flowType?: string) =>
+    spawnSync(
+      'bash',
+      ['-c', `${prepareHookEnvExports('full', flowType).join('; ')}; printf '%s' "\${FARMSLOT_FLOW_TYPE-unset}"`],
+      { encoding: 'utf8', env: { ...process.env, FARMSLOT_FLOW_TYPE: 'inherited-from-the-gateway' } },
+    ).stdout;
+  assert.equal(seen('dev'), 'dev');
+  assert.equal(seen(), 'unset');
 });

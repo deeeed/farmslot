@@ -444,7 +444,7 @@ test('checkPrepareRequirement required_skills_present asks only for the matching
 // The probes run under the prepare's effective domain, not the slot's default one.
 test('checkPrepareRequirement dev_server_up and artifact_available use the run domain env', async () => {
   const probed: string[] = [];
-  const exec = async (_vars: unknown, command: string) => {
+  const exec: NonNullable<Parameters<typeof checkPrepareRequirement>[2]> = async (_vars, command) => {
     probed.push(command);
     return { exitCode: 0, stdout: '', stderr: '' };
   };
@@ -467,7 +467,7 @@ test('checkPrepareRequirement dev_server_up and artifact_available use the run d
         runtimeDir: '.agent',
         domain: 'money-movement',
       },
-      exec as never,
+      exec,
     );
     assert.equal(result.ok, true, `${requirement}: ${result.detail}`);
     assert.match(probed[0] ?? '', /PROBE_DOMAIN=.?money-movement/, requirement);

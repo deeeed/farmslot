@@ -2,7 +2,10 @@
 // a runtime for a dev run without doing it for a review of the same domain. A flowless prepare
 // unsets it, so a value inherited from the gateway's environment never leaks in.
 import assert from 'node:assert/strict';
-import { mock, test } from 'node:test';
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { after, mock, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import type { ExecResult } from '@farmslot/protocol';
@@ -10,9 +13,17 @@ import type { ExecResult } from '@farmslot/protocol';
 import '../core/hermetic-git.test-support.js';
 import '../core/private-pool.test-support.js';
 
-// The fixture reads the tracked farmslot-farm pack, whatever the caller's environment points at.
-process.env.FARMSLOT_PROJECTS_DIR = fileURLToPath(new URL('../../../../projects', import.meta.url));
-process.env.FARMSLOT_FLOW_TYPE = 'inherited-from-the-gateway';
+// A private copy of the tracked farmslot-farm pack, with an unlock hook so that phase is covered too,
+// whatever the caller's environment points at.
+const projects = mkdtempSync(path.join(os.tmpdir(), 'prepare-flow-env-projects-'));
+after(() => rmSync(projects, { recursive: true, force: true }));
+cpSync(fileURLToPath(new URL('../../../../projects/farmslot-farm', import.meta.url)), path.join(projects, 'farmslot-farm'), {
+  recursive: true,
+});
+const packJson = path.join(projects, 'farmslot-farm/project.json');
+const pack = JSON.parse(readFileSync(packJson, 'utf8'));
+writeFileSync(packJson, JSON.stringify({ ...pack, hooks: { ...pack.hooks, unlock: 'unlock-slot' } }, null, 2));
+process.env.FARMSLOT_PROJECTS_DIR = projects;
 
 // Health and unlock commands reach verifyPrepareHealth, not runPrepareCommand.
 const healthCommands: string[] = [];
@@ -46,7 +57,8 @@ async function preparedHooks(t: import('node:test').TestContext, label: string, 
   const hooks = {
     deps: commands.filter((command) => command.includes('yarn install')),
     preflight: commands.filter((command) => command.includes('yarn typecheck')),
-    health: [...healthCommands],
+    health: healthCommands.filter((command) => !command.includes('unlock-slot')),
+    unlock: healthCommands.filter((command) => command.includes('unlock-slot')),
   };
   for (const [phase, ran] of Object.entries(hooks)) assert.ok(ran.length > 0, `${phase} ran`);
   return Object.values(hooks).flat();
@@ -54,7 +66,7 @@ async function preparedHooks(t: import('node:test').TestContext, label: string, 
 
 for (const flowType of ['dev', 'review-pr']) {
   test(
-    `a ${flowType} prepare's deps, preflight and health hooks see FARMSLOT_FLOW_TYPE=${flowType}`,
+    `a ${flowType} prepare's deps, preflight, health and unlock hooks see FARMSLOT_FLOW_TYPE=${flowType}`,
     needsTmuxSandbox,
     async (t) => {
       for (const command of await preparedHooks(t, flowType, flowType))
