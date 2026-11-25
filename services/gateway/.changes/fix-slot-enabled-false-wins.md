@@ -1,0 +1,1 @@
+- `enabled: false` disables a pool slot whatever its `mode` says. A slot held as `{ mode: "dispatch", enabled: false }` stayed dispatchable, and a run could claim it right after a release. Dispatch selection now refuses it, and so does the prepare step. A `custom` slot with `enabled: false` is now disabled rather than manual, so its idle dev server can be stopped.

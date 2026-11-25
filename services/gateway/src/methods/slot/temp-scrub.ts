@@ -1,7 +1,14 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { isSlotFreedByPark, isTerminalRunStatus, type Run } from '@farmslot/protocol';
+import {
+  isSlotFreedByPark,
+  isTerminalRunStatus,
+  type Run,
+  type TempScrubReasonEntry,
+  type TempScrubReceipt,
+  type TempScrubRemovedEntry,
+} from '@farmslot/protocol';
 
 import { resolveProjectRuntimeDirName, resolveProjectTaskDirName } from '../../core/config.js';
 import { type RawProjectJson, readSlotRow, type SlotVars } from '../../core/index.js';
@@ -195,14 +202,130 @@ export async function scrubTempForRun(
   }
 
   const result = await scrubSlotTemp(vars, keep, taskDirName);
+  // A task dir went only if nothing at, below or above it was refused.
   const taskDirs = named.filter(
     (dir) =>
       !result.refused.some(
-        (entry) => entry.path === dir.path || entry.path.startsWith(`${dir.path}/`),
+        (entry) =>
+          entry.path === dir.path ||
+          entry.path.startsWith(`${dir.path}/`) ||
+          dir.path.startsWith(`${entry.path}/`),
       ),
   );
-  const checkouts = result.removed.filter((entry) =>
-    CHECKOUT_KINDS.some((kind) => entry.kind === kind || entry.kind.startsWith(`${kind} (`)),
-  );
+  const checkouts = result.removed.filter((entry) => isCheckoutKind(entry.kind));
   return { ...result, taskDirs, checkouts };
+}
+
+/** A removed entry's kind names a nested Git checkout (`linked worktree (branch … kept)` too). */
+function isCheckoutKind(kind: string): boolean {
+  return CHECKOUT_KINDS.some((checkout) => kind === checkout || kind.startsWith(`${checkout} (`));
+}
+
+/** The prepare output and the run's record name at most this many entries of each list. */
+export const TEMP_SCRUB_LISTED = 50;
+/** Longest path, kind or reason the record keeps, so one entry can't grow the run without bound. */
+const TEMP_SCRUB_TEXT = 300;
+
+function clip(text: string): string {
+  return text.length > TEMP_SCRUB_TEXT ? `${text.slice(0, TEMP_SCRUB_TEXT - 1)}…` : text;
+}
+
+function reasons(entries: TempScrubReasonEntry[]): TempScrubReasonEntry[] {
+  return entries
+    .slice(0, TEMP_SCRUB_LISTED)
+    .map(({ path, reason }) => ({ path: clip(path), reason: clip(reason) }));
+}
+
+/**
+ * The bounded record of one clear-out. A task dir that is also a checkout, or sits inside a
+ * removed checkout or another removed task dir, is not listed again; nor is anything else under
+ * a listed one. A checkout inside a task dir is still listed, as its own deletion.
+ */
+export function tempScrubReceipt(outcome: TempScrubOutcome): TempScrubReceipt {
+  const checkoutPaths = outcome.checkouts.map((entry) => entry.path);
+  const within = (entry: string, roots: readonly string[]) =>
+    roots.some((root) => entry === root || entry.startsWith(`${root}/`));
+  const taskDirPaths = outcome.taskDirs.map((dir) => dir.path);
+  const taskDirs = outcome.taskDirs.filter(
+    (dir) =>
+      !within(dir.path, checkoutPaths) &&
+      !taskDirPaths.some((other) => dir.path.startsWith(`${other}/`)),
+  );
+  const roots = [...checkoutPaths, ...taskDirs.map((dir) => dir.path)];
+  const listedAbove = (entry: string) => within(entry, roots);
+  const removed: TempScrubRemovedEntry[] = [
+    ...outcome.checkouts.map(
+      ({ path, kind }): TempScrubRemovedEntry => ({
+        type: 'checkout',
+        path: clip(path),
+        kind: clip(kind),
+      }),
+    ),
+    ...taskDirs.map(
+      (dir): TempScrubRemovedEntry => ({
+        type: 'task-dir',
+        path: clip(dir.path),
+        run: dir.runId,
+        bundle: clip(dir.bundle),
+      }),
+    ),
+    ...outcome.removed
+      .filter((entry) => !listedAbove(entry.path))
+      .map(
+        ({ path, kind }): TempScrubRemovedEntry => ({
+          type: 'entry',
+          path: clip(path),
+          kind: clip(kind),
+        }),
+      ),
+  ];
+  return {
+    removed: removed.slice(0, TEMP_SCRUB_LISTED),
+    removedCount: removed.length,
+    kept: reasons(outcome.kept),
+    keptCount: outcome.kept.length,
+    refused: reasons(outcome.refused),
+    refusedCount: outcome.refused.length,
+  };
+}
+
+function removedLine(entry: TempScrubRemovedEntry): string {
+  switch (entry.type) {
+    case 'checkout':
+      return `Deleted nested ${entry.kind} ${entry.path}`;
+    case 'task-dir':
+      return `Removed earlier task dir ${entry.path} (${entry.run ? `run ${entry.run.slice(0, 8)}, ${entry.bundle}` : entry.bundle})`;
+    case 'entry':
+      return `Removed ${entry.kind} ${entry.path}`;
+  }
+}
+
+/** One prepare output line per listed entry, then a count of any the cap left out. */
+export function tempScrubLines(receipt: TempScrubReceipt): string[] {
+  const unlisted = (count: number, listed: number, what: string) => {
+    const rest = count - listed;
+    return rest > 0
+      ? [`${rest} more ${what} temp/ entr${rest === 1 ? 'y' : 'ies'} not listed`]
+      : [];
+  };
+  return [
+    ...receipt.removed.map(removedLine),
+    ...unlisted(receipt.removedCount, receipt.removed.length, 'removed'),
+    ...receipt.kept.map((entry) => `Left ${entry.path}: ${entry.reason}`),
+    ...unlisted(receipt.keptCount, receipt.kept.length, 'kept'),
+  ];
+}
+
+/**
+ * The one prepare step the clear-out reports (its lines go out as one output chunk), or null
+ * when it found nothing to remove, keep or refuse.
+ */
+export function tempScrubSummary(receipt: TempScrubReceipt): string | null {
+  const { removedCount, keptCount, refusedCount } = receipt;
+  if (removedCount + keptCount + refusedCount === 0) return null;
+  const plural = (count: number) => `${count} entr${count === 1 ? 'y' : 'ies'}`;
+  const done = `removed ${plural(removedCount)}, kept ${plural(keptCount)}`;
+  return refusedCount > 0
+    ? `temp/ clear-out refused ${plural(refusedCount)}; ${done}`
+    : `Cleared temp/ for this run: ${done}`;
 }

@@ -2485,6 +2485,31 @@ for (const verdict of ['issues', 'pass'] as const)
       ),
     );
     assert.ok(staleCi.reasons.some(({ code }) => code === 'deterministic-not-passed'));
+    // 961d55d3: a refusal that names its checks keeps them, so the hold says what to rerun.
+    const owed = {
+      code: 'deterministic-stale',
+      prerequisite: 'deterministic' as const,
+      reference: 'ci.local_check',
+      message:
+        'REVIEW-FIX.md step 4 (ci.local_check) is stale. Rerun step 4 (`yarn ci:local`) to record a current receipt.',
+      actionId: 'hold',
+    };
+    const { DeterministicGateBlockedError } = await import('../tasks/worker-terminal-contract.js');
+    const namedStale = await collectRunGateReadiness(run, prepared, {
+      ...readers,
+      deterministic: async () => {
+        throw new DeterministicGateBlockedError('Deterministic CI gate blocked: stale', [owed]);
+      },
+    });
+    assert.deepEqual(
+      namedStale.reasons.filter(({ prerequisite }) => prerequisite === 'deterministic'),
+      [owed],
+    );
+    assert.ok(
+      !projectRunGateActions(definitions, namedStale).actions.some(({ id }) =>
+        id.startsWith('approve-publish'),
+      ),
+    );
     const unreadable = certifyingReview(prepared, {
       id: 'missing-result',
       reviewerSessionId: 'other-session',

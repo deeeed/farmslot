@@ -1618,6 +1618,8 @@ test('pi install copies the Farmslot observability extension into the slot runti
   assert.equal(fs.existsSync(path.join(obsDir, 'bin', 'pi-farmslot-observability.ts')), true);
   assert.equal(fs.existsSync(path.join(obsDir, 'bin', 'pi-farmslot-hook-writer.mjs')), true);
   assert.equal(fs.existsSync(path.join(obsDir, 'bin', 'pi-farmslot-providers.mjs')), true);
+  // The extension imports the image cap; it cannot load without it.
+  assert.equal(fs.existsSync(path.join(obsDir, 'bin', 'pi-image-cap.mjs')), true);
   assert.equal(fs.existsSync(path.join(obsDir, 'bin', 'litellm-model-info.mjs')), true);
   const installed = await import(
     new URL('file://' + path.join(obsDir, 'bin', 'pi-farmslot-providers.mjs'))

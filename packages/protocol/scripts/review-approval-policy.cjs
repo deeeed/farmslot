@@ -42,14 +42,17 @@ function normalizeReviewSeverity(value) {
   return severity;
 }
 
+/** Findings per severity. Older results omitted severity; those count as major. */
+function reviewSeverityCounts(findings) {
+  const counts = { blocker: 0, major: 0, minor: 0, nit: 0 };
+  for (const finding of findings) counts[normalizeReviewSeverity(finding.severity)]++;
+  return counts;
+}
+
 function reviewRecommendation(findings, value) {
   const policy = resolveApprovalPolicy(value);
-  const counts = { blocker: 0, major: 0, minor: 0, nit: 0 };
-  for (const finding of findings) {
-    // Older results omitted severity; they cannot grant an approval.
-    const severity = normalizeReviewSeverity(finding.severity);
-    counts[severity]++;
-  }
+  // Older results omitted severity; they cannot grant an approval.
+  const counts = reviewSeverityCounts(findings);
   const required = ['APPROVE'];
   if (counts.blocker) required.push('REQUEST_CHANGES');
   if (counts.major) required.push(policy.majorVerdict);
@@ -111,6 +114,7 @@ The JSON verdict and issues are authoritative; the Markdown file is the human-re
 
 module.exports = {
   normalizeReviewSeverity,
+  reviewSeverityCounts,
   renderReviewResultInstructions,
   isReviewSeverity,
   DEFAULT_APPROVAL_POLICY,

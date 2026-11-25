@@ -964,3 +964,25 @@ The existing `RESULT_DECISION_ACTION_LABELS` export in `@farmslot/protocol`
 changes its `accept-result` label. The gateway, CLI and shared Command Center
 and Companion view model consume it. No action id, RPC, SDK field or harness
 extension changes. Release fragments record the presentation change.
+
+## Amendment 14: open blockers stop at REVIEW; a stale CI receipt is sent back once, 2026-11-25
+
+**Status:** Accepted (lead, 2026-11-25).
+**Trigger:** run 961d55d3 (TAT-4769) ended review with 6 blockers and 8 majors, reached COMPLETE and failed on a stale `REVIEW-FIX.md` `ci.local_check` receipt, twice.
+
+### Decision
+
+An autonomous publishing run whose review ends with an open blocker or major finding
+does not reach COMPLETE. A delivered result waits at the Amendment 7 result decision,
+a spent review budget keeping its budget stop and so Accept (Amendment 13); an
+undelivered one fails under Amendment 6. `engineState.openReviewFindings` keeps
+those findings across a replay, so a refused review launch stops the same way.
+Minor and nit findings still reach the publication gate, and interactive runs keep
+their human gate. A no-verdict cap stop is not recorded as exhausted fix rounds, and
+the decision names which stop it was.
+
+Amendment 7's COMPLETE send-back is an operator action. The engine takes it once,
+on its own, when every prerequisite COMPLETE refused is a stale deterministic
+receipt: the worker gets the steps and their `mark` commands, and the receipt names
+the system, not a person. `engineState.staleReceiptSendBack` records it because a
+completion replay drops resolved decisions. Any later refusal waits for a person.

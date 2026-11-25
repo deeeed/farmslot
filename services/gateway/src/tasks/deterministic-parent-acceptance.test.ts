@@ -19,9 +19,13 @@ const declared = {
   reference: 'checks.unit',
   command: 'true',
 };
-let status: 'passed' | 'stale' = 'passed';
+let status: 'passed' | 'stale' | 'failed' = 'passed';
 let exitCode = 0;
 let realCheck = false;
+/** Raw checker stdout instead of the evaluated checks. */
+let checkerOutput: string | undefined;
+/** The returned check's command, when a test replaces the declared one. */
+let checkCommand: string | null | undefined;
 const require = createRequire(import.meta.url);
 mock.module('../core/config.js', {
   namedExports: {
@@ -65,6 +69,7 @@ mock.module('../core/exec.js', {
           return { exitCode: 1, stderr: String(failure), stdout };
         }
       }
+      if (checkerOutput !== undefined) return { exitCode, stderr: '', stdout: checkerOutput };
       return {
         exitCode,
         stderr: '',
@@ -74,6 +79,7 @@ mock.module('../core/exec.js', {
             checks: [
               {
                 ...declared,
+                ...(checkCommand !== undefined ? { command: checkCommand } : {}),
                 status,
                 exitCode: 0,
                 logPath: 'artifacts/ci.log',
@@ -87,7 +93,8 @@ mock.module('../core/exec.js', {
     },
   },
 });
-const { validateDeterministicChecksForRun } = await import('./worker-terminal-contract.js');
+const { DeterministicGateBlockedError, validateDeterministicChecksForRun } =
+  await import('./worker-terminal-contract.js');
 const { makeRun } = await import('../run-engine/test-fixtures.js');
 
 test('current-checkout CI stays mandatory and independent of an absent follow-up acceptance ledger', async (t) => {
@@ -112,6 +119,80 @@ test('current-checkout CI stays mandatory and independent of an absent follow-up
   status = 'passed';
   exitCode = 1;
   await assert.rejects(validateDeterministicChecksForRun(child), /Deterministic CI gate blocked/);
+});
+
+// 961d55d3 (TAT-4769): a stale receipt failed the run. The refusal names each check
+// the worker owes, so COMPLETE can send it back to rerun that one mark.
+test('a refused receipt names its checklist step, status and command', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'refused-receipt-ci-'));
+  t.after(async () => {
+    status = 'passed';
+    exitCode = 0;
+    await rm(root, { recursive: true, force: true });
+  });
+  taskDir = path.join(root, 'task');
+  await mkdir(path.join(taskDir, 'inputs'), { recursive: true });
+  await writeFile(
+    path.join(taskDir, 'inputs/worker-terminal-contract.json'),
+    JSON.stringify({ deterministicChecks: [declared] }),
+  );
+  const run = makeRun({
+    flowType: 'fix-bug',
+    slotId: 'fixture',
+    taskFile: path.join(taskDir, 'TASK.md'),
+  });
+  const stale = {
+    code: 'deterministic-stale',
+    prerequisite: 'deterministic',
+    reference: 'checks.unit',
+    message: `CHECKLIST.md step 9 (checks.unit) is stale. Mark it again with \`${taskDir}/mark --checklist CHECKLIST.md --signal SIGNAL.json 9\` (it runs \`true\`) to record a current receipt.`,
+    actionId: 'hold',
+  };
+  status = 'stale';
+  // Exit 0 with a non-passing check, and exit 1 with its issue (the 961d55d3 shape).
+  for (const code of [0, 1]) {
+    exitCode = code;
+    await assert.rejects(validateDeterministicChecksForRun(run), (error: unknown) => {
+      assert.ok(error instanceof DeterministicGateBlockedError);
+      assert.match(
+        error.message,
+        code
+          ? /^Deterministic CI gate blocked: 1 declared check\(s\) have no current passing receipt\.$/
+          : /^Deterministic CI gate blocked: no verified receipts were returned for .*worker-terminal-contract\.json/,
+      );
+      assert.deepEqual(error.reasons, [stale]);
+      return true;
+    });
+  }
+  // A checker that returned nothing names no check, so readiness keeps its generic reason.
+  checkerOutput = 'not json';
+  await assert.rejects(validateDeterministicChecksForRun(run), (error: unknown) => {
+    assert.ok(error instanceof DeterministicGateBlockedError);
+    assert.deepEqual(error.reasons, []);
+    assert.equal(error.message, 'Deterministic CI gate blocked: not json');
+    return true;
+  });
+  checkerOutput = undefined;
+  // A check whose frozen command is missing names no command.
+  checkCommand = null;
+  await assert.rejects(validateDeterministicChecksForRun(run), (error: unknown) => {
+    assert.ok(error instanceof DeterministicGateBlockedError);
+    assert.ok(error.reasons.length > 0);
+    for (const reason of error.reasons) assert.doesNotMatch(reason.message, /undefined|null/);
+    assert.doesNotMatch(error.reasons[0]!.message, /it runs/);
+    return true;
+  });
+  checkCommand = undefined;
+  // A failed check is not a mark to rerun: it holds for a person.
+  status = 'failed';
+  await assert.rejects(validateDeterministicChecksForRun(run), (error: unknown) => {
+    assert.ok(error instanceof DeterministicGateBlockedError);
+    assert.deepEqual(
+      error.reasons.map((reason) => reason.code),
+      ['deterministic-failed'],
+    );
+    return true;
+  });
 });
 
 function git(root: string, ...args: string[]) {

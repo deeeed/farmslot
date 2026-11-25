@@ -7,6 +7,7 @@ import {
   extractRunArtifactManifest,
   isRunArtifactImagePath,
   isRunArtifactMediaPath,
+  listStepArtifactPaths,
   runEvidenceArtifacts,
   type RunEvidenceSummary,
   runListEvidenceSummary,
@@ -185,6 +186,50 @@ test('step output prose and host paths are not run artifacts', () => {
     artifacts.map((artifact) => artifact.path),
     ['inputs/handoff.json', 'artifacts/run.mov', 'artifacts/v1..v2.diff'],
   );
+});
+
+test("files a prepare deleted from temp/ are not the run's artifacts", () => {
+  const prepared = run({
+    steps: [
+      {
+        name: 'prepare',
+        status: 'done',
+        outputs: {
+          artifacts: [{ path: 'artifacts/proof.md', purpose: 'proof' }],
+          tempScrub: {
+            removed: [
+              { type: 'entry', path: 'temp/old-fix.patch', kind: 'file' },
+              { type: 'entry', path: 'temp/before.png', kind: 'file' },
+              { type: 'entry', path: 'temp/after.png', kind: 'file' },
+              { type: 'entry', path: 'temp/demo.mov', kind: 'file' },
+              {
+                type: 'task-dir',
+                path: 'temp/tasks/feat/old/notes.md',
+                run: null,
+                bundle: 'no run record',
+              },
+            ],
+            removedCount: 5,
+            kept: [{ path: 'temp/link.json', reason: 'a symlink holding a kept path' }],
+            keptCount: 1,
+            refused: [],
+            refusedCount: 0,
+          },
+        },
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    extractRunArtifactManifest(prepared).map((artifact) => artifact.path),
+    ['artifacts/proof.md'],
+  );
+  const summary = summarizeRunEvidence(prepared);
+  assert.equal(summary.videoCount, 0);
+  assert.equal(summary.visualPairCount, 0);
+  assert.equal(summary.artifactCount, 1);
+  assert.equal(summary.diffArtifactPath, undefined, 'a deleted .patch is not the run diff');
+  assert.deepEqual([...listStepArtifactPaths(prepared.steps[0]?.outputs)], ['artifacts/proof.md']);
 });
 
 test('a gate keeps the frozen metadata of a file the run output recaptured', () => {

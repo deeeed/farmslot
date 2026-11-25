@@ -126,7 +126,7 @@ test('a slot whose guard clears into a release waits for the release, not a refu
 
 test('scored selection skips a free slot that a prepare guard still holds', () => {
   const slot = (id: string, lifecycle: 'ready' | 'busy') =>
-    ({ slot: id, lifecycle, agent: 'idle' }) as const;
+    ({ slot: id, lifecycle, agent: 'idle', enabled: true }) as const;
   const split = splitGuardedFreeSlots(
     [slot('free', 'ready'), slot('guarded', 'ready'), slot('busy', 'busy')],
     (slotId) => slotId === 'guarded',
