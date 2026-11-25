@@ -3588,6 +3588,13 @@ export interface RunEngineState {
  * Per-run CI-watch inline-fix state — persisted on {@link Run} so dedup signatures
  * and attempt counters survive gateway restart (ADR-027).
  */
+/** CI-watch gates that can auto-dispatch, and so offer "Keep holding" while a PR is held. */
+export type CIHoldGate =
+  | 'merge_conflict'
+  | 'ci_failed'
+  | 'review_comments'
+  | 'review_comments_early';
+
 export interface RunCiWatchState {
   /** Scope refusals stop automatic CI fix retries. */
   fixScopeRefusal?: string;
@@ -3605,7 +3612,7 @@ export interface RunCiWatchState {
    * before it no longer quiets the gate, so a state that clears and returns asks
    * again, across a gateway restart too.
    */
-  holdClearedAt?: Record<string, string>;
+  holdClearedAt?: Partial<Record<CIHoldGate, string>>;
   branchMaintenanceOperation?: BranchMaintenanceOperation;
   /** Last successfully-dispatched fix fingerprint (bot-comment signature + HEAD sha). */
   dedup?: { signature: string; commitSha: string };

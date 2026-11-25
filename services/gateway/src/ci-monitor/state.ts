@@ -1,5 +1,6 @@
 import {
   type BotComment,
+  type CIHoldGate,
   type CIWatchFixProgress,
   type CIWatchFixTrigger,
   type CIWatchPhase,
@@ -185,7 +186,7 @@ export function ciHoldBarrier(
  */
 export function ciHoldIsQuiet(
   run: Pick<Run, 'decisions' | 'ciWatchState'> | undefined,
-  gate: string,
+  gate: CIHoldGate,
   holdKey: string,
 ): boolean {
   const since = ciHoldSince(run);

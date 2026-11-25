@@ -118,6 +118,9 @@ mock.module('./inline-fix.js', {
 
 const { monitorCI, pokeCIPoll, resolveCIDecision } = await import('./service.js');
 const { buildCIBotCommentFingerprint } = await import('./state.js');
+/** The hold key the review gates record for the fixed head and the one mock comment. */
+const commentsKey = () =>
+  `pr-head-1:${buildCIBotCommentFingerprint([comment] as Parameters<typeof buildCIBotCommentFingerprint>[0])}`;
 const { createRun, getRun, loadAllRuns, updateRun } = await import('../runs/store.js');
 
 test('ci-watch rechecks GitHub and completes when the unchanged HEAD turns green', async () => {
@@ -751,11 +754,7 @@ test('held review comments that clear and return ask again', async () => {
       updateRun(runId, {
         decisions: [
           holdDecision(HELD_AT),
-          keptHolding(
-            'ci_review_comments_early',
-            KEPT_AT,
-            `pr-head-1:${buildCIBotCommentFingerprint([comment] as Parameters<typeof buildCIBotCommentFingerprint>[0])}`,
-          ),
+          keptHolding('ci_review_comments_early', KEPT_AT, commentsKey()),
         ],
       }),
     );
@@ -830,7 +829,7 @@ test('a held PR whose checks read failed records no clear', async () => {
     );
     try {
       await w.firstPoll();
-      assert.equal(getRun(w.run.id)?.ciWatchState?.holdClearedAt, undefined);
+      assert.equal(getRun(w.run.id)?.ciWatchState?.holdClearedAt?.ci_failed, undefined);
       await w.pollOnce();
       assert.deepEqual(w.openCards(), [], 'the unchanged failure stays quiet');
     } finally {
@@ -841,7 +840,7 @@ test('a held PR whose checks read failed records no clear', async () => {
 
 test('a held PR whose comments read failed records no clear', async () => {
   await held(async () => {
-    const key = `pr-head-1:${buildCIBotCommentFingerprint([comment] as Parameters<typeof buildCIBotCommentFingerprint>[0])}`;
+    const key = commentsKey();
     snapshots.push(
       {
         checks: [pendingCheck],
@@ -858,11 +857,39 @@ test('a held PR whose comments read failed records no clear', async () => {
     );
     try {
       await w.firstPoll();
-      assert.equal(getRun(w.run.id)?.ciWatchState?.holdClearedAt, undefined);
+      const cleared = getRun(w.run.id)?.ciWatchState?.holdClearedAt;
+      assert.equal(cleared?.review_comments_early, undefined);
+      assert.equal(cleared?.review_comments, undefined);
       await w.pollOnce();
       assert.deepEqual(w.openCards(), [], 'the unchanged comments stay quiet');
     } finally {
       w.controller.abort();
     }
   }, null);
+});
+
+test('a held conflict at a new head asks even when no check has reported yet', async () => {
+  // GitHub starts no pull_request workflow on a conflicted PR, so a rebase pushed by
+  // the operator can leave the new head with no checks at all. The conflict needs
+  // only the head and the mergeability read.
+  await held(async () => {
+    snapshots.push(conflicted, {
+      checks: [],
+      allPassed: false,
+      mergeConflict: true,
+      headSha: 'pr-head-2',
+      checksUnreadable: true,
+      readErrors: ['pr.checks#10384: no checks reported'],
+    });
+    const w = watch((runId) => updateRun(runId, { decisions: [holdDecision(HELD_AT)] }));
+    try {
+      const first = await w.open('ci_merge_conflict');
+      assert.ok(first);
+      resolveCIDecision(first.id, 'wait');
+      await w.pollOnce();
+      assert.ok(await w.open('ci_merge_conflict'), 'the conflict on the new head is asked about');
+    } finally {
+      w.controller.abort();
+    }
+  });
 });

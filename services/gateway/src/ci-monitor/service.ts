@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import {
   type CiCheckSummary,
   ciDecisionSnapshotContext,
+  type CIHoldGate,
   type CIWatchPhase,
   Events,
   type PRStatus,
@@ -133,9 +134,9 @@ const ciPokeCooldown = new Map<string, number>();
 // Minimum gap between pokes per run (anti-hammer)
 const POKE_MIN_GAP_MS = 5_000;
 
-/** Gates that can auto-dispatch, and so offer "Keep holding" while the PR is held. */
-type CIHoldGate = 'merge_conflict' | 'ci_failed' | 'review_comments' | 'review_comments_early';
 const KEEP_HOLDING = { id: 'wait', label: 'Keep holding', style: 'secondary' } as const;
+/** The raw-cache reads whose failure leaves a PR's comments unknown. */
+const CI_COMMENT_READS = ['issues.comments#', 'pulls.reviewThreads#'];
 
 /** Force the active `pokeablePoll` for this run to resolve early. */
 export function pokeCIPoll(runId: string): { ok: boolean; woken?: boolean; reason?: string } {
@@ -385,11 +386,13 @@ export async function monitorCI(
   // the decision with the state it was given for, so the gate stays quiet, across a
   // restart too, until GitHub shows another head or failure, a read shows the state
   // clear, or the hold ends.
+  // No key means the read GitHub returned cannot show this gate's state: while held,
+  // that neither asks nor answers, and the poll waits inside the wait caps.
   const heldGate = (gate: CIHoldGate, holdKey: string | undefined) => {
     const current = getRun(runId);
     if (!ciHoldSince(current)) return null;
     return {
-      quiet: holdKey !== undefined && ciHoldIsQuiet(current, gate, holdKey),
+      quiet: holdKey === undefined || ciHoldIsQuiet(current, gate, holdKey),
       action: KEEP_HOLDING,
       context: holdKey === undefined ? {} : { holdKey },
     };
@@ -691,25 +694,27 @@ export async function monitorCI(
     }
 
     // "Keep holding" keys: a held gate stays quiet only for the PR head and the
-    // watched failures or comments the answer was given for.
-    const holdKeys = pr.headSha
-      ? {
-          conflict: pr.headSha,
-          failed: `${pr.headSha}:${[...failedNames].sort().join(',')}`,
-          comments: `${pr.headSha}:${actionableFingerprint}`,
-        }
-      : undefined;
-    // While held, a read GitHub could not complete is not a state: it neither asks nor
-    // clears anything, and the poll waits inside the wait caps. A complete read that
-    // shows a gate's state clear ends that gate's answer, recorded on the run.
-    const holdHeld = ciHoldSince(getRun(runId)) !== undefined;
-    const readIncomplete = !pr.headSha || !pr.checkSnapshot || Boolean(pr.readErrors?.length);
-    const holdBlind = holdHeld && readIncomplete;
-    if (holdHeld && !readIncomplete) {
+    // watched failures or comments the answer was given for. Each gate needs only its
+    // own reads: the conflict the head (one read with mergeability), failed checks the
+    // check snapshot, comments both comment reads. A failed read leaves its key unset.
+    const commentsRead =
+      !!pr.headSha &&
+      !pr.readErrors?.some((error) => CI_COMMENT_READS.some((read) => error.startsWith(read)));
+    const holdKeys = {
+      conflict: pr.headSha,
+      failed:
+        pr.headSha && pr.checkSnapshot
+          ? `${pr.headSha}:${[...failedNames].sort().join(',')}`
+          : undefined,
+      comments: commentsRead ? `${pr.headSha}:${actionableFingerprint}` : undefined,
+    };
+    // A read that shows a gate's state clear ends that gate's answer, recorded on the
+    // run; a gate whose reads failed records nothing.
+    if (ciHoldSince(getRun(runId))) {
       const cleared: CIHoldGate[] = [
-        ...(pr.mergeable === 'MERGEABLE' ? (['merge_conflict'] as const) : []),
-        ...(!anyFailed ? (['ci_failed'] as const) : []),
-        ...(effectiveActionable.length === 0
+        ...(holdKeys.conflict && pr.mergeable === 'MERGEABLE' ? (['merge_conflict'] as const) : []),
+        ...(holdKeys.failed && !anyFailed ? (['ci_failed'] as const) : []),
+        ...(holdKeys.comments && effectiveActionable.length === 0
           ? (['review_comments', 'review_comments_early'] as const)
           : []),
       ];
@@ -728,10 +733,10 @@ export async function monitorCI(
     // GitHub reports UNKNOWN while it recomputes mergeability after the base moves. A
     // held conflict quieted at this head keeps that state, rather than reading UNKNOWN
     // as "no conflict" and asking about the failed checks instead.
-    const conflictGate = heldGate('merge_conflict', holdKeys?.conflict);
+    const conflictGate = heldGate('merge_conflict', holdKeys.conflict);
     const quietConflict =
       conflictGate?.quiet === true && (mergeConflict || pr.mergeable === 'UNKNOWN');
-    if (mergeConflict && !quietConflict && !holdBlind) {
+    if (mergeConflict && !quietConflict) {
       console.log(`[ci-monitor] run ${runId.slice(0, 8)} — merge conflict detected`);
       const autoAction = pickCIAutoDispatchAction('merge_conflict', [], config, !!conflictGate);
       if (autoAction) {
@@ -772,7 +777,7 @@ export async function monitorCI(
     const now = Date.now();
     const progressWindowExpired = now - timeoutWindowStartedAt > config.maxPollTimeMs;
     const totalWindowExpired = now - totalTimeoutWindowStartedAt > config.maxTotalPollTimeMs;
-    const waitingForCI = quietConflict || holdBlind || !allPassed || effectiveActionable.length > 0;
+    const waitingForCI = quietConflict || !allPassed || effectiveActionable.length > 0;
     if (waitingForCI && (progressWindowExpired || totalWindowExpired)) {
       const elapsedMs = progressWindowExpired
         ? now - timeoutWindowStartedAt
@@ -814,9 +819,9 @@ export async function monitorCI(
       continue;
     }
 
-    // A conflict the operator keeps holding, or a held PR GitHub could not read in
-    // full, waits here, inside the wait caps above.
-    if (quietConflict || holdBlind) {
+    // A conflict the operator keeps holding, or a held PR whose head GitHub could not
+    // read, waits here, inside the wait caps above.
+    if (quietConflict) {
       forceNextRefresh = await waitForNextPoll('polling');
       continue;
     }
@@ -887,7 +892,7 @@ export async function monitorCI(
           });
         }
 
-        const commentsGate = heldGate('review_comments', holdKeys?.comments);
+        const commentsGate = heldGate('review_comments', holdKeys.comments);
         const autoAction = pickCIAutoDispatchAction('bot_comments', [], config, !!commentsGate);
         if (autoAction) {
           console.log(
@@ -1037,7 +1042,7 @@ export async function monitorCI(
         });
       }
 
-      const failedGate = heldGate('ci_failed', holdKeys?.failed);
+      const failedGate = heldGate('ci_failed', holdKeys.failed);
       const autoAction = pickCIAutoDispatchAction('ci_failed', failedNames, config, !!failedGate);
       if (autoAction) {
         console.log(
@@ -1166,7 +1171,7 @@ export async function monitorCI(
         });
       }
 
-      const earlyGate = heldGate('review_comments_early', holdKeys?.comments);
+      const earlyGate = heldGate('review_comments_early', holdKeys.comments);
       const autoAction = pickCIAutoDispatchAction('bot_comments_early', [], config, !!earlyGate);
       if (autoAction) {
         console.log(
