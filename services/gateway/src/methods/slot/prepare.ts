@@ -170,6 +170,7 @@ import {
   shouldSoftFailPrepareIntegration,
   worktreeBaseResetRef,
 } from './slot-tracking.js';
+import { prepareHookEnvExports } from './prepare-hook-env.js';
 import { scrubTempForRun, shouldScrubTempForRun } from './temp-scrub.js';
 import { assertPublishedPrepareBranchContained } from './unmerged-work.js';
 
@@ -513,11 +514,11 @@ async function slotPrepareInner(
   const profileName = (): string => prepareProfile?.name ?? 'full';
   const phaseEnabled = (phase: PreparePhase): boolean =>
     !prepareProfile || prepareProfile.phases.has(phase);
-  // Every hook a prepare runs sees the selected profile, so a single project
-  // script can branch on FARMSLOT_PREPARE_PROFILE instead of per-profile hooks.
+  // Every hook a prepare runs sees the selected profile and the flow type, so a single project
+  // script can branch on FARMSLOT_PREPARE_PROFILE / FARMSLOT_FLOW_TYPE instead of per-profile hooks.
   // Subshell form keeps the wrapper safe inside `a && b` chains.
   const withProfileEnv = (cmd: string): string =>
-    `( export FARMSLOT_PREPARE_PROFILE=${shellQuote(profileName())}; ${cmd} )`;
+    `( ${prepareHookEnvExports(profileName(), params.flowType).join('; ')}; ${cmd} )`;
 
   const expandPrepareHook = (hookName: string): string => {
     const cmd = expandPrepareProfileHook(hookName, prepareProfile, projectJson, vars, projectVars);
@@ -2034,7 +2035,7 @@ async function slotPrepareInner(
     let phaseBuffer = '';
     const stripAnsi = (text: string) => text.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
     const varExports: string[] = [
-      `export FARMSLOT_PREPARE_PROFILE=${shellQuote(profileName())}`,
+      ...prepareHookEnvExports(profileName(), params.flowType),
       ...(pinned ? [`export FARMSLOT_PREPARE_BASE_SHA=${shellQuote(pinnedBaseSha())}`] : []),
     ];
     for (const [rawKey, rawValue] of Object.entries(params.vars ?? {})) {
