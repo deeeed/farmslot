@@ -2,8 +2,15 @@ import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 import { setImmediate as flushed } from 'node:timers/promises';
 
-// HUMAN_GATE holds on the operator's answer until the test releases it.
-let releaseGate = () => {};
+// HUMAN_GATE holds on the operator's answer until the test releases it. The release is sticky: a
+// loop that enters the gate after it (late, on a busy runner) passes straight through, so a
+// teardown that awaits the loop cannot wait on a gate nobody will release.
+let gateReleased = false;
+let releaseHeld = () => {};
+const releaseGate = () => {
+  gateReleased = true;
+  releaseHeld();
+};
 const heldGateResult = { inputs: {}, outputs: { skipped: true } };
 let gateEntered = 0;
 let parkOnGateDecision = false;
@@ -28,6 +35,7 @@ mock.module('./post-dispatch-steps.js', {
     executeCompleteStep: unexpectedStep,
     executeHumanGateStep: async (runId: string) => {
       gateEntered += 1;
+      if (gateReleased) return heldGateResult;
       if (parkOnGateDecision) {
         // The loop presents its gate and waits on the operator, as HUMAN_GATE does.
         await createEngineDecision(runId, 'engine_human_gate', 'Approve publication', [
@@ -36,7 +44,7 @@ mock.module('./post-dispatch-steps.js', {
         return heldGateResult;
       }
       return new Promise<typeof heldGateResult>((resolve) => {
-        releaseGate = () => resolve(heldGateResult);
+        releaseHeld = () => resolve(heldGateResult);
       });
     },
   },
@@ -63,10 +71,14 @@ const { createEngineDecision, resolveEngineDecision } = await import('./engine-d
 const created: string[] = [];
 /**
  * A run whose HUMAN_GATE is still preparing its decision, on a slot of its own. No earlier test's
- * engine may still drive a run: one left running finishes on its slot while the next test watches
- * its gate (gateway-7 on #2496 saw the retry take the replay path that way).
+ * engine may still drive a run. One left running (gateway-7 on #2496) finished its terminal
+ * teardown in the next test: that teardown clears a 5 min timer it armed under the previous test's
+ * mocked timers, and a Node MockTimers clearTimeout of a timer from a reset mock removes the head of
+ * the current queue, here the 10 s recovery retry, so tick() fired nothing.
  */
 function preparingGate(): string {
+  gateReleased = false;
+  releaseHeld = () => {};
   assert.deepEqual(
     created.filter((id) => isRunEngineDriven(id)),
     [],
@@ -179,9 +191,18 @@ test('a gate replay still runs for a loop parked on its open gate decision', asy
   let engine: Promise<void> | undefined;
   t.after(async () => {
     parkOnGateDecision = false;
-    for (const decision of getRun(runId)?.decisions ?? [])
-      resolveEngineDecision(decision.id, 'approve');
-    await engine;
+    releaseGate();
+    // Answer whatever gate the loop presents until it settles: it may present one only now.
+    let settled = engine === undefined;
+    const done = () => {
+      settled = true;
+    };
+    void engine?.then(done, done);
+    while (!settled) {
+      for (const decision of getRun(runId)?.decisions ?? [])
+        if (!decision.resolvedAt) resolveEngineDecision(decision.id, 'approve');
+      await flushed();
+    }
     suspendPublicationReviewRecoveryForRun(runId);
     // A finished loop ends in a completion failure, which deleteRun refuses while the run names a
     // slot; this fixture slot exists only in the run.
