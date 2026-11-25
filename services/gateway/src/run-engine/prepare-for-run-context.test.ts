@@ -35,7 +35,7 @@ async function prepareFor(
   label: string,
   run: { project: string; flowType: 'dev' | 'qa'; domain?: string },
   ids: (runId: string) => Record<string, string>,
-  other?: { project: string; flowType: 'dev' | 'qa' },
+  other?: { project: string; flowType: 'dev' },
 ) {
   const { slotId } = await stackFixture(t, `for-run-${label}`, 48828);
   const synced: Array<{ flowType?: string; domain?: string }> = [];
@@ -139,7 +139,7 @@ test(
       'other-bind',
       { project: 'farmslot-farm', flowType: 'dev', domain: 'perps' },
       (runId) => ({ runId }),
-      { project: 'another-project', flowType: 'qa' },
+      { project: 'another-project', flowType: 'dev' },
     );
     await assert.rejects(prepare(), /belongs to project another-project, not .*farmslot-farm/);
     assert.deepEqual(synced, []);
