@@ -343,7 +343,10 @@ test('a clone whose worktree is kept, unmounted, recorded relatively or unreadab
   const inside = path.join(repo, 'temp/zz-rel-wt');
   await git(relative, 'worktree', 'add', '-q', '-b', 'rel', inside);
   const admin = path.join(relative, '.git/worktrees/zz-rel-wt');
-  await writeFile(path.join(admin, 'gitdir'), `${path.relative(admin, path.join(inside, '.git'))}\n`);
+  await writeFile(
+    path.join(admin, 'gitdir'),
+    `${path.relative(admin, path.join(inside, '.git'))}\n`,
+  );
   // A record that cannot be read is not a missing one: refused, not deleted.
   const unreadable = await clone('unreadable-clone');
   await git(unreadable, 'worktree', 'add', '-q', '-b', 'locked-record', path.join(parent, 'u-wt'));
