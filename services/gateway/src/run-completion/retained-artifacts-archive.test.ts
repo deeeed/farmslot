@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
@@ -104,6 +105,27 @@ test('hourly housekeeping archives referenced media and publishes capacity and p
     run.id,
     'run record remains',
   );
+});
+
+test('housekeeping archives the records a bundle left behind and keeps them restorable', async () => {
+  const store = await runBundleStore(true);
+  const digest = createHash('sha256').update('archived before its records').digest('hex');
+  const record = path.join(store.root, 'availability', `${digest}.json`);
+  const body = JSON.stringify({ revision: 1, prunedPaths: [] });
+  await mkdir(path.dirname(record), { recursive: true });
+  await writeFile(record, body);
+  await archiveRunArtifactHousekeeping(false);
+  assert.equal(existsSync(record), false, 'the record left the store');
+  const archiveRoot = process.env.FARMSLOT_RUN_ARCHIVE_ROOT!;
+  const keys = (await readdir(archiveRoot)).filter((name) => name.startsWith('bundle-records-'));
+  assert.equal(keys.length, 1);
+  const manifest = JSON.parse(
+    await readFile(path.join(archiveRoot, keys[0], 'manifest.json'), 'utf8'),
+  );
+  const entry = manifest.entries.find((item: { source: string }) => item.source === record);
+  assert.equal(entry.store, 'bundle-records');
+  assert.ok(entry.completedAt);
+  assert.equal(await readFile(entry.destination, 'utf8'), body, 'moved, never deleted');
 });
 
 test('gateway materialization retries admission after archiving old media', async (t) => {

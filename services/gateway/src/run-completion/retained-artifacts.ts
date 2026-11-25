@@ -441,11 +441,18 @@ export async function archiveRunArtifactHousekeeping(includeReferencedMedia = tr
     const entries = await runBundleHousekeepingPaths(store);
     if (!entries.length) return;
     await assertArchiveRoot(root);
-    for (const entry of entries) {
-      if (await getRunWithArchived(entry.runId))
-        await recordRunStorageArchive(entry.runId, storageArchiveManifest(root, entry.runId));
-      await stageStoragePaths(root, entry.runId, [{ source: entry.path, store: entry.store }]);
-      staged.add(entry.runId);
+    // One staging call per archive key, in selection order: one journal write for its entries.
+    const byRun = new Map<string, { source: string; store: string }[]>();
+    for (const entry of entries)
+      byRun.set(entry.runId, [
+        ...(byRun.get(entry.runId) ?? []),
+        { source: entry.path, store: entry.store },
+      ]);
+    for (const [runId, files] of byRun) {
+      if (await getRunWithArchived(runId))
+        await recordRunStorageArchive(runId, storageArchiveManifest(root, runId));
+      await stageStoragePaths(root, runId, files);
+      staged.add(runId);
     }
   });
   for (const id of staged) {

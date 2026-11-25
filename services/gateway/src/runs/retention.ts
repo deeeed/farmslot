@@ -2,7 +2,11 @@ import { lstat, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { Run } from '@farmslot/protocol';
-import { resolveRetainedRunBundleRef, runBundleRefs } from '@farmslot/run-bundle';
+import {
+  resolveRetainedRunBundleRef,
+  runBundleRecordPaths,
+  runBundleRefs,
+} from '@farmslot/run-bundle';
 
 import { runNeedsExecutionStorage } from '../review-workspaces/storage-use.js';
 
@@ -181,7 +185,11 @@ function ownedPaths(
     'review-workspaces': owned('review-workspaces'),
     'native-sessions': owned('native-sessions'),
     'run-bundles': bundles
-      ? owned('run-bundles').map((digest) => path.join(bundles.root, 'sha256', digest))
+      ? // The directory before its records; housekeeping archives records a crash leaves behind.
+        owned('run-bundles').flatMap((digest) => [
+          path.join(bundles.root, 'sha256', digest),
+          ...runBundleRecordPaths(bundles.root, digest),
+        ])
       : [],
   };
 }
@@ -318,6 +326,10 @@ export async function diskBytes(file: string): Promise<number> {
   return bytes;
 }
 
+/** Whether `file` counts as an entry of `store`: a run bundle's records travel with it. */
+export const countsAsRetentionEntry = (store: RunRetentionStore, file: string): boolean =>
+  store !== 'run-bundles' || path.basename(path.dirname(file)) === 'sha256';
+
 /** Keep the paths that exist and count their entries and bytes per store. */
 export async function measureRetention(
   runs: Run[],
@@ -335,7 +347,10 @@ export async function measureRetention(
       bytes += await diskBytes(file);
     }
     paths[store] = present;
-    stores[store] = { entries: present.length, bytes };
+    stores[store] = {
+      entries: present.filter((file) => countsAsRetentionEntry(store, file)).length,
+      bytes,
+    };
   }
   return { runs: runs.map((run) => run.id), held, paths, stores };
 }

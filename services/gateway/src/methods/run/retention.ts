@@ -33,6 +33,7 @@ import {
   type OrphanScaffoldingResult,
 } from '../../runs/orphan-scaffolding.js';
 import {
+  countsAsRetentionEntry,
   DAY_MS,
   diskBytes,
   exists,
@@ -440,7 +441,7 @@ export async function runRetentionPass(
     archived.push(staged.id);
     for (const file of staged.files) {
       paths[file.store].push(file.source);
-      stores[file.store].entries++;
+      if (countsAsRetentionEntry(file.store, file.source)) stores[file.store].entries++;
       stores[file.store].bytes += file.bytes;
     }
   }
