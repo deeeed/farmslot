@@ -352,7 +352,6 @@ test('a clone whose worktree is kept, unmounted, recorded relatively or unreadab
   await git(unreadable, 'worktree', 'add', '-q', '-b', 'locked-record', path.join(parent, 'u-wt'));
   const record = path.join(unreadable, '.git/worktrees/u-wt/gitdir');
   await chmod(record, 0o000);
-  t.after(() => chmod(record, 0o644));
 
   const result = await scrub(repo, ['temp/tasks/feat/parked-task']);
 
