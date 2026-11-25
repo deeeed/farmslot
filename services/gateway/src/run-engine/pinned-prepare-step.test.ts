@@ -10,6 +10,7 @@ import type { slotPrepare } from '../methods/slot/prepare.js';
 import type { SlotPrepareInternalOptions, SlotPrepareResult } from '../methods/slot/shared.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
+import type { StepIO } from './dispatch-lifecycle-steps.js';
 import { makeRun } from './test-fixtures.js';
 
 // The prepare step's pinned wiring, with slot.prepare stubbed: what it passes to
@@ -93,10 +94,15 @@ mock.module('../runners/launch-command.js', {
 mock.module('./eval-harness-lifecycle.js', {
   namedExports: { executeEvalHarnessLifecycle: async () => ({ skipped: true }) },
 });
+let scrubReceipt: Awaited<ReturnType<typeof slotPrepare>>['tempScrub'];
+let failAfterScrub = false;
 const prepare: typeof slotPrepare = async (_params, _emit, _signal, options) => {
   prepareOptions = options;
   recordWhenPrepared = run.prepareArtifact;
+  if (scrubReceipt) options?.onTempScrubbed?.(scrubReceipt);
+  if (failAfterScrub) throw new Error("temp/ still holds another run's files: temp (refused)");
   return {
+    ...(scrubReceipt ? { tempScrub: scrubReceipt } : {}),
     prepared: true,
     requestId: 'fixture-prepare',
     startRef: { requestedRef: BASE, resolvedSha: BASE, resolvedAt: '2026-11-25T10:00:00.000Z' },
@@ -120,6 +126,8 @@ const stale: RunPrepareArtifact = {
 };
 
 beforeEach(() => {
+  scrubReceipt = undefined;
+  failAfterScrub = false;
   persisted.length = 0;
   prepareOptions = undefined;
   recordWhenPrepared = undefined;
@@ -141,13 +149,13 @@ beforeEach(() => {
   run.prepareArtifact = stale;
 });
 
-function prepareRun(flags?: { skipPrepare?: true }) {
+function prepareRun(flags?: { skipPrepare?: true }, stepPartialIO = new Map<string, StepIO>()) {
   return executePrepareStep(run.id, {
     activeMonitors: new Map(),
     broadcastFn: () => {},
     getRunFlags: () => flags,
     normalizeEvalReplayForTaskWrite: async (_id, current) => current,
-    stepPartialIO: new Map(),
+    stepPartialIO,
   });
 }
 
@@ -173,6 +181,28 @@ test('a pinned prepare clears the old record, asks for pinning, and records the 
     cleared >= 0 && cleared < persisted.indexOf('pinned build recorded'),
     persisted.join(', '),
   );
+});
+
+const receipt = (refusedCount = 0) => ({
+  removed: [{ type: 'entry' as const, path: 'temp/probe.json', kind: 'file' }],
+  removedCount: 1,
+  kept: [],
+  keptCount: 0,
+  refused: refusedCount ? [{ path: 'temp', reason: 'refused' }] : [],
+  refusedCount,
+});
+
+test("the prepare step's outputs keep the temp/ clear-out", async () => {
+  scrubReceipt = receipt();
+  assert.deepEqual((await prepareRun()).outputs?.tempScrub, scrubReceipt);
+});
+
+test('a prepare that fails after its clear-out leaves the record in the partial outputs', async () => {
+  scrubReceipt = receipt(1);
+  failAfterScrub = true;
+  const stepPartialIO = new Map<string, StepIO>();
+  await assert.rejects(prepareRun(undefined, stepPartialIO), /still holds another run's files/);
+  assert.deepEqual(stepPartialIO.get(run.id)?.outputs?.tempScrub, scrubReceipt);
 });
 
 test('a pinned run cannot skip prepare at the prepare step', async () => {

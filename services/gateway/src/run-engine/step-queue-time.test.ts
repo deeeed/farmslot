@@ -9,6 +9,7 @@ import {
   createPrepareProgressEmitter,
   keptBranchRecorder,
   type StepIO,
+  tempScrubRecorder,
 } from './dispatch-lifecycle-steps.js';
 import { awaitAsQueueTime } from './find-slot-step.js';
 import { stepEntryTiming } from './orchestrator.js';
@@ -278,4 +279,34 @@ test('a kept branch stays in the prepare outputs through later progress, for a p
     'TAT-1-fix-kept-0123456789ab',
   ]);
   assert.deepEqual(step(run.id, 'prepare').outputs?.keptBranches, ['TAT-1-fix-kept-0123456789ab']);
+});
+
+test('the temp/ clear-out stays in the prepare outputs through later progress', (t) => {
+  const run = devRun(t);
+  updateRunStep(run.id, 'prepare', { status: 'running', startedAt: iso(T0) });
+  const stepPartialIO = new Map<string, StepIO>();
+  const baseOutputs: Record<string, unknown> = { cliCommand: 'farmslot slot prepare slot-1' };
+  const emit = createPrepareProgressEmitter({
+    runId: run.id,
+    inputs: {},
+    baseOutputs,
+    collector: createSubStepCollector(),
+    stepPartialIO,
+    broadcastFn: () => {},
+  });
+  const receipt = {
+    removed: [{ type: 'entry' as const, path: 'temp/scratch', kind: 'dir' }],
+    removedCount: 1,
+    kept: [],
+    keptCount: 0,
+    refused: [],
+    refusedCount: 0,
+  };
+
+  tempScrubRecorder(run.id, {}, baseOutputs, stepPartialIO)(receipt);
+  emit('script.step', { name: 'clean', detail: 'Removed dir temp/scratch' });
+  emit('script.step', { name: 'deps', detail: 'Installing deps' });
+
+  assert.deepEqual(stepPartialIO.get(run.id)?.outputs?.tempScrub, receipt);
+  assert.deepEqual(step(run.id, 'prepare').outputs?.tempScrub, receipt);
 });
