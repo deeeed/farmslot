@@ -285,9 +285,10 @@ test('an unowned force release restores a detached blind trial Git before resett
 
   assert.deepEqual(result, { released: true });
   assert.doesNotMatch(String(slotRow.repo_blocker ?? ''), /isolated for blind trial/);
+  // The trial's origin is back, and the idle reset then narrowed its fetch to the default branch.
   assert.equal(
     git(repo, 'config', '--get', 'remote.origin.fetch'),
-    '+refs/heads/*:refs/remotes/origin/*',
+    '+refs/heads/main:refs/remotes/origin/main',
   );
   assert.equal(gitStatus('config', '--get', 'farmslot.blindRun'), 1);
   assert.equal(gitStatus('config', '--get', 'protocol.allow'), 1);
@@ -363,9 +364,10 @@ test('a done blind trial whose slot pointer was cleared releases its own isolate
   );
 
   assert.deepEqual(result, { released: true });
+  // Restored, then narrowed by the idle reset.
   assert.equal(
     git(repo, 'config', '--get', 'remote.origin.fetch'),
-    '+refs/heads/*:refs/remotes/origin/*',
+    '+refs/heads/main:refs/remotes/origin/main',
   );
   assert.equal(gitStatus('config', '--get', 'farmslot.blindRun'), 1);
   assert.equal(git(repo, 'rev-parse', `refs/heads/${BRANCH}`), candidate);
