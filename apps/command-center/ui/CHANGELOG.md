@@ -6,6 +6,17 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.36.12 - 2026-11-25
+
+- Eval and comparison runs carry an EVAL badge with their variant on run list rows and in the run detail header, and list after product runs (eval-only families after product families). The lane filter adds Hide evals.
+- The eval-run predicate, badge text and product-first ordering now come from the shared protocol helpers that Companion also uses; behaviour is unchanged.
+- Co-Pilot chat scrolls on short windows, including with Settings open, and a new pending approval scrolls into view with its title and buttons. The native session composer scrolls as a whole instead of squeezing pending requests (every native session view). The cache status and the file transfer bar sit below the content instead of covering the bottom of every view.
+- The publish gate labels a fix the gateway accepted without a reviewer "fix accepted without re-review" instead of showing it as a pass.
+- The run list and the fleet canvas read the task progress summary (done/total and the current step) instead of the full checklist. The fleet canvas expanded run panel reads the full checklist for that one slot, with the same slot and run as its row.
+- Settings → LLM: the tier table cells are editable. An empty cell uses the built-in model shown in grey; Save tier models stores the overrides; text typed while a save is in flight is kept, and a failed save shows as an error.
+- A review run's PR publication reads `Publishing…` until its receipt or an error lands, and Publish now is hidden meanwhile, so a pending post isn't duplicated.
+- A child unit left open by a stopped or replaced reviewer reads "owner ended", muted and collapsed by default, instead of live running work.
+
 ## 0.36.11 - 2026-11-21
 
 - Show the full execution timeline in evidence review, including setup and steps with no verified video position.

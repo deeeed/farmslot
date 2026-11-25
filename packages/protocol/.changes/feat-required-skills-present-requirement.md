@@ -1,1 +1,0 @@
-- `PREPARE_REQUIREMENTS` gains `required_skills_present`, so a prepare profile can require that the files its pack's `required_skills` rules name exist in the checkout before it is selected.

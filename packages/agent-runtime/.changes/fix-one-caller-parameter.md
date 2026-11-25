@@ -1,1 +1,0 @@
-- The review scope rule on new abstractions with one caller now says a parameter added to an existing function is not one.

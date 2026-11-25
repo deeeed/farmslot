@@ -1,4 +1,0 @@
-- `RunCiWatchState.holdReleasedAt` records when a replay that re-ran ci-watch handed a held PR back to automation. An operator hold is derived from `Run.decisions` (a `wait` at `inline_fix_blocked` while that gate offered a dispatch). A post-gate replay keeps those resolved decisions, so a hold resolved before this time no longer applies; a pr-complete replay drops them.
-- `PRStatus.headSha` is the PR's head commit on GitHub, when the read returned it.
-- `RunCiWatchState.holdClearedAt` records, per held gate, the last time a complete read showed its state clear; a "Keep holding" answered before it no longer quiets the gate.
-- `PRStatus.readErrors` lists the component reads GitHub could not complete for that snapshot.

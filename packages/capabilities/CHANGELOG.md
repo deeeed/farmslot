@@ -6,6 +6,10 @@ All notable changes to `@farmslot/capabilities` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.7.11 - 2026-11-25
+
+- Republished in the 25 Nov cohort release with the other @farmslot packages, so an install resolves one copy of each.
+
 ## 0.7.10 - 2026-11-21
 
 - Pin the Protocol 0.92.0 producer cohort.

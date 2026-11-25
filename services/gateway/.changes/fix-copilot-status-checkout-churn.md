@@ -1,1 +1,0 @@
-- Co-Pilot status and actions no longer fail while the gateway writes its own files in its checkout, and the PR rule archive (`.pr-rules.archive.jsonl`) is gitignored like its store.

@@ -1,1 +1,0 @@
-- `TaskProgressParams.summary` asks `task.progress` for `TaskProgressResult.summary` (done/total, current phase and step) instead of the full checklist. A summary read depends on `progress` and `run` only; a full read still follows `artifacts`, which acceptance and evidence views need.

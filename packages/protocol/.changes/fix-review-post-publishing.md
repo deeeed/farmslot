@@ -1,1 +1,0 @@
-- `reviewPublicationPending(run)` is true for a finished review whose requested PR publication has neither a published receipt nor an error. While it is true, `runDisplayStatus` and `deriveRunLifecycleView` show the run as `Publishing review` instead of done.

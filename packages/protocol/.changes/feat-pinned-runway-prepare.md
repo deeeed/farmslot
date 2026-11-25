@@ -1,1 +1,0 @@
-- `prepare.pinned_profiles` (`ProjectPrepareConfig.pinnedProfiles`) and `pinned_kind` (`PrepareProfileConfig.pinnedKind`, `PREPARE_PINNED_KINDS`) declare what a pinned comparison run prepares with. `Run.prepareArtifact` (`RunPrepareArtifact`) records the build on the slot for the run's `startRef`: installed and verified (`enforced: true`) or observed (`enforced: false`).

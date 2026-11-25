@@ -6,6 +6,12 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.20.11 - 2026-11-25
+
+- New Co-Pilot browser proof (FARMSLOT_LAYOUT_COPILOT=1 with prove-stable-layout): at 1005x504 with settings open and a running transfer, a pending approval's title and Approve button are visible and clear of the bottom rows, and a click delivers native.session.respond. Proof scripts share one probe polling helper that fails on page errors.
+- The offline-runs proof's replaced node peer answers `NODE_SHUTTING_DOWN` before its replacement connects, as a stopping node does, now that the gateway refuses a second live node for a machine.
+- The type-escape baseline drops the gateway orchestrator's `as any` entry, which the gateway's typed prepare-failure reads removed.
+
 ## 0.20.10 - 2026-11-21
 
 - Add a connected browser probe for recording timeline paging, verified playback and link restore.

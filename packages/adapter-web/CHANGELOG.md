@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.19.34 - 2026-11-25
+
+- Republished in the 25 Nov cohort release with the other @farmslot packages, so an install resolves one copy of each.
+
 ## 0.19.33 - 2026-11-24
 
 - A Terminal (web-dapp) launch with no display choice runs headless when the macOS session is locked, instead of refusing with SESSION_LOCKED. Headful stays the default when the screen can paint; an explicit `--headful` or `TERMINAL_HEADLESS=0` on a locked session still refuses.

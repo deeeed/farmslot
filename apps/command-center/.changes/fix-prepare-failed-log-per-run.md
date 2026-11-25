@@ -1,1 +1,0 @@
-- The type-escape baseline drops the gateway orchestrator's `as any` entry, which the gateway's typed prepare-failure reads removed.
