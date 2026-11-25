@@ -129,6 +129,21 @@ export interface NativeExecutionNodeDeclaration {
   supportsWorkerStopAttestation?: boolean;
   supportsStructuredResults?: boolean;
   supportsProfiles?: boolean;
+  /** A launch carrying the gateway's release list may refresh a host on another runtime. */
+  supportsHostRefresh?: boolean;
+}
+/** The gateway's `native.session` request to an execution node. */
+export interface NativeNodeSessionEnvelope {
+  owner: string;
+  method: string;
+  params: Record<string, unknown>;
+  requester?: NativeSessionRequester;
+  observe?: true;
+  /**
+   * Sessions a launch may stop to refresh a host on another runtime, sent only to a node that
+   * declares supportsHostRefresh, after that node refused the launch as skewed.
+   */
+  hostRelease?: string[];
 }
 export interface NativeSessionListResult {
   sessions: NativeSessionInfo[];

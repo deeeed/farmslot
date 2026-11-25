@@ -1,0 +1,1 @@
+- A launch, resume or transfer to a node host on another runtime refreshes it first when every live session is idle and released by the gateway's run census, instead of failing until the next node restart. Only fenced idle stops, at most 6 runners.

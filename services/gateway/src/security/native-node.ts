@@ -18,6 +18,7 @@ const BOOLEAN_CAPABILITIES: Record<BooleanCapability, true> = {
   supportsProfiles: true,
   supportsObservations: true,
   supportsStructuredResults: true,
+  supportsHostRefresh: true,
 };
 
 export function nativeNodeDeclaration(
