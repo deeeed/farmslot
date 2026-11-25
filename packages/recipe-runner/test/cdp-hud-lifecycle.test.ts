@@ -70,7 +70,7 @@ for (const mode of ['suspended', 'cancelled', 'complete', 'busy'] as const) {
     const page = new CdpWebPage(session);
     const transport = createCdpWebUiTransport({ withPage: (_input, use) => use(page) });
     const controller = new AbortController();
-    if (mode === 'suspended') t.mock.timers.enable({ apis: ['setTimeout'] });
+    if (mode === 'suspended') t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
     const context: ActionExecutionContext = {
       nodeId: 'hud',
       recipe: {},
