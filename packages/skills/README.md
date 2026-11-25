@@ -66,8 +66,8 @@ A template step registers the installed skill and finishes it:
 
 ```bash
 {{TASK_DIR}}/mark sub start perps-review --step 21 --from .agents/skills/mms-perps-review-pr/skill.md
-{{TASK_DIR}}/mark sub perps-review 1        # …one per row
-{{TASK_DIR}}/mark sub perps-review complete --report artifacts/review.md
+{{TASK_DIR}}/mark sub perps-review 1-4      # rows done so far, in one call: n or 2,4-6
+{{TASK_DIR}}/mark sub perps-review complete --rows 5-9 --report artifacts/review.md
 ```
 
 The step's own box is ticked by that `complete`, so the template says what to register, and the

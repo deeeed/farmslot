@@ -138,6 +138,12 @@ const choiceValue = /\.[\w$]*(?:runner|model|effort)[\w$]*\b/i;
 const choiceHandler =
   /\b(?:\w*(?:set|change|select|choose)\w*(?:runner|model|effort)|\w*(?:runner|model|effort)\w*(?:set|change|select|choose))\w*\b|\b(?:runner|model|effort)\s*:/i;
 
+function isChoiceValue(expression: string) {
+  // Settings → LLM edits a provider's tier → model map (`tierModels`): gateway configuration,
+  // not a run's runner/model/effort choice. Only that property name is exempt.
+  return choiceValue.test(expression.replace(/\.tierModels\b/g, ''));
+}
+
 function isChoiceHandler(expression: string) {
   // Opening the picker and selecting an ASR voice model are not execution choices.
   const selection = expression
@@ -166,7 +172,7 @@ function hasIndependentChoices(source: string, filename: string): boolean {
       for (const control of text.matchAll(/<(?:select|input|button|choice-picker)\b[^>]*>/g)) {
         for (const binding of control[0].matchAll(/(\.value|@\w+)\s*=\s*["']?EXPRESSION_(\d+)_/g)) {
           const expression = expressions[Number(binding[2])];
-          if (binding[1] === '.value' ? choiceValue.test(expression) : isChoiceHandler(expression))
+          if (binding[1] === '.value' ? isChoiceValue(expression) : isChoiceHandler(expression))
             found = true;
         }
       }
@@ -183,7 +189,7 @@ function hasIndependentChoices(source: string, filename: string): boolean {
           const expression = attr.initializer.expression?.getText(file) ?? '';
           if (
             attr.name.getText(file) === 'value'
-              ? choiceValue.test(expression)
+              ? isChoiceValue(expression)
               : /^(onPress|onChange|onChangeText|onValueChange)$/.test(attr.name.getText(file)) &&
                 isChoiceHandler(expression)
           )
@@ -243,6 +249,21 @@ test('choice guard catches native, custom and native-app duplicates but permits 
   assert.equal(
     hasIndependentChoices('<Metric label="Model" value={run.model} />', 'fixture.tsx'),
     false,
+  );
+  // A provider tier map is configuration; the exemption covers that property only.
+  assert.equal(
+    hasIndependentChoices(
+      'html`<input .value=${tierModelOverride(this._config?.tierModels, p, tier)} />`',
+      'fixture.ts',
+    ),
+    false,
+  );
+  assert.equal(
+    hasIndependentChoices(
+      'html`<input .value=${this._config?.tierModels?.[p] ?? candidate.model} />`',
+      'fixture.ts',
+    ),
+    true,
   );
 });
 

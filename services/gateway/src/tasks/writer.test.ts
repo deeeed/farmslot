@@ -1551,3 +1551,252 @@ test('a node older than the renderer keeps the note, as the end-of-document sect
     'no step the old renderer never explained',
   );
 });
+
+// ─── Linked tickets in the task document ───
+// The writer built LINKED_TICKETS from ticketData.linkedTickets alone, which only
+// the PR-data path fills, so dev and fix-bug runs got no section at all. Operator
+// additions live on run.linkedTicketRefs and reached no task document on any flow.
+// runLinkedTicketsView already merges and resolves both; these pin that behaviour
+// through the rendered document.
+async function linkedTicketsSection(
+  t: import('node:test').TestContext,
+  variant: string,
+  apply: (run: Run) => void,
+  jiraBaseUrl: string | null = 'https://jira.example.test',
+): Promise<string> {
+  const { invalidateProjectVarsCache } = await import('@farmslot/slot-config');
+  const configFile = path.join(legacyPack, 'project.json');
+  const originalConfig = await readFile(configFile, 'utf8');
+  const config = JSON.parse(originalConfig);
+  if (jiraBaseUrl) config.jira = { base_url: jiraBaseUrl };
+  else delete config.jira;
+  await writeFile(configFile, JSON.stringify(config));
+  invalidateProjectVarsCache(legacyProject);
+  let taskPath = '';
+  t.after(async () => {
+    await writeFile(configFile, originalConfig);
+    invalidateProjectVarsCache(legacyProject);
+    if (taskPath) await rm(path.dirname(taskPath), { recursive: true, force: true });
+  });
+  const run = makeRun('PROJ-100', variant);
+  run.project = legacyProject;
+  run.flowType = 'fix-bug';
+  apply(run);
+  taskPath = await writeTaskFixture(run, { skipCollisionCheck: true });
+  const task = await readFile(taskPath, 'utf8');
+  const section = task.split('## Linked Tickets')[1];
+  return section === undefined ? '' : section.split(/\n## /)[0];
+}
+
+test('an operator-added key reaches the task document beside the run ticket', async (t) => {
+  const section = await linkedTicketsSection(t, 'linked-operator', (run) => {
+    run.ticketOrPr = 'TAT-4752';
+    run.ticketData = { ...run.ticketData!, source: 'jira', jiraKey: 'TAT-4752' };
+    run.linkedTicketRefs = ['TAT-4740'];
+  });
+  assert.match(section, /\[TAT-4752\]\(https:\/\/jira\.example\.test\/browse\/TAT-4752\)/);
+  assert.match(section, /\[TAT-4740\]\(https:\/\/jira\.example\.test\/browse\/TAT-4740\)/);
+});
+
+test('a Jira fix-bug run lists its own ticket as a link, with no placeholder', async (t) => {
+  const section = await linkedTicketsSection(t, 'linked-single', (run) => {
+    run.ticketOrPr = 'TAT-4752';
+    run.ticketData = { ...run.ticketData!, source: 'jira', jiraKey: 'TAT-4752' };
+  });
+  assert.match(section, /\[TAT-4752\]\(https:\/\/jira\.example\.test\/browse\/TAT-4752\)/);
+  assert.doesNotMatch(section, /_No linked tickets_/);
+});
+
+test('recorded linked tickets keep their own url and title', async (t) => {
+  const section = await linkedTicketsSection(t, 'linked-recorded', (run) => {
+    run.ticketOrPr = 'owner/repo#7';
+    run.ticketData = {
+      ...run.ticketData!,
+      source: 'both',
+      jiraKey: 'TAT-4752',
+      linkedTickets: [
+        {
+          ref: 'TAT-4752',
+          url: 'https://recorded.example.test/browse/TAT-4752',
+          title: 'Recorded title',
+          description: '',
+          source: 'jira',
+        },
+      ],
+    };
+  });
+  assert.match(
+    section,
+    /\[TAT-4752\]\(https:\/\/recorded\.example\.test\/browse\/TAT-4752\) — Recorded title/,
+  );
+  // The GitHub source ref must not acquire a Jira-shaped URL.
+  assert.doesNotMatch(section, /jira\.example\.test\/browse\/owner/);
+});
+
+test('with no project jira base url a key stays unlinked rather than inventing a host', async (t) => {
+  const section = await linkedTicketsSection(
+    t,
+    'linked-no-base',
+    (run) => {
+      run.ticketOrPr = 'TAT-4752';
+      run.ticketData = { ...run.ticketData!, source: 'jira', jiraKey: 'TAT-4752' };
+      run.linkedTicketRefs = ['TAT-4740'];
+    },
+    null,
+  );
+  assert.match(section, /TAT-4740/);
+  assert.doesNotMatch(section, /\[TAT-4740\]\(/);
+  assert.doesNotMatch(section, /https?:\/\//);
+});
+
+test('a manual backlog ref is not published as a Jira link', async (t) => {
+  // MANUAL-000124 matches the Jira key shape, so resolving identities from
+  // ticketOrPr alone would hand the worker a dead browse URL on any project with
+  // a Jira base, while TICKET_URL stays empty for the same run.
+  const section = await linkedTicketsSection(t, 'linked-manual', (run) => {
+    run.ticketOrPr = 'MANUAL-000124';
+    run.ticketData = { ...run.ticketData!, source: 'manual' };
+  });
+  assert.equal(section, '');
+});
+
+test('a key named by every source renders exactly once', async (t) => {
+  // assert.match would pass a rendering that repeated the key, so this one pins
+  // the whole section.
+  const section = await linkedTicketsSection(t, 'linked-dedupe', (run) => {
+    run.ticketOrPr = 'TAT-4752';
+    run.linkedTicketRefs = ['TAT-4752'];
+    run.ticketData = {
+      ...run.ticketData!,
+      source: 'jira',
+      jiraKey: 'TAT-4752',
+      linkedTickets: [
+        {
+          ref: 'TAT-4752',
+          url: 'https://jira.example.test/browse/TAT-4752',
+          title: 'Only once',
+          description: '',
+          source: 'jira',
+        },
+      ],
+    };
+  });
+  assert.equal(
+    section.trim(),
+    '- [TAT-4752](https://jira.example.test/browse/TAT-4752) — Only once',
+  );
+});
+
+test('a review-pr run renders exactly the recorded bullets', async (t) => {
+  // The PR-bound flows are the behaviour that must not move, so assert the whole
+  // section on the flow that actually populates linkedTickets, with one entry
+  // whose title is empty.
+  const section = await linkedTicketsSection(t, 'linked-review-pr', (run) => {
+    run.flowType = 'review-pr';
+    run.ticketOrPr = 'owner/repo#7';
+    run.ticketData = {
+      ...run.ticketData!,
+      source: 'both',
+      jiraKey: 'TAT-4752',
+      linkedTickets: [
+        {
+          ref: 'TAT-4752',
+          url: 'https://recorded.example.test/browse/TAT-4752',
+          title: 'Recorded title',
+          description: '',
+          source: 'jira',
+        },
+        {
+          ref: 'TAT-4740',
+          url: 'https://recorded.example.test/browse/TAT-4740',
+          title: '',
+          description: '',
+          source: 'jira',
+        },
+      ],
+    };
+    // An operator addition on a PR flow: the CHANGELOG claims PR runs are
+    // covered, so pin it here rather than only on fix-bug.
+    run.linkedTicketRefs = ['TAT-4700'];
+  });
+  assert.equal(
+    section.trim(),
+    [
+      '- [TAT-4752](https://recorded.example.test/browse/TAT-4752) — Recorded title',
+      '- [TAT-4740](https://recorded.example.test/browse/TAT-4740)',
+      '- [TAT-4700](https://recorded.example.test/browse/TAT-4700)',
+    ].join('\n'),
+  );
+});
+
+test('the run Jira link supplies the browse root on a dev run, ahead of the project base', async (t) => {
+  // refreshRunLinks stores the run's Jira link before the task is written, so a
+  // real dev run resolves through that link and the project base is only the
+  // fallback after it. Every other case here runs with no links at all.
+  const section = await linkedTicketsSection(t, 'linked-run-link', (run) => {
+    run.flowType = 'dev';
+    run.ticketOrPr = 'TAT-4752';
+    run.ticketData = { ...run.ticketData!, source: 'jira', jiraKey: 'TAT-4752' };
+    run.linkedTicketRefs = ['TAT-4740'];
+    run.links = [{ label: 'Jira', url: 'https://runlink.example.test/browse/TAT-4752' }];
+  });
+  assert.equal(
+    section.trim(),
+    [
+      '- [TAT-4752](https://runlink.example.test/browse/TAT-4752)',
+      '- [TAT-4740](https://runlink.example.test/browse/TAT-4740)',
+    ].join('\n'),
+  );
+});
+
+test('a base url with a trailing slash does not double it', async (t) => {
+  const section = await linkedTicketsSection(
+    t,
+    'linked-trailing-slash',
+    (run) => {
+      run.ticketOrPr = 'TAT-4752';
+      run.ticketData = { ...run.ticketData!, source: 'jira', jiraKey: 'TAT-4752' };
+    },
+    'https://jira.example.test/',
+  );
+  assert.match(section, /\(https:\/\/jira\.example\.test\/browse\/TAT-4752\)/);
+  assert.doesNotMatch(section, /\/\/browse/);
+});
+
+test('a failed first fetch does not reorder a review-pr run bullets', async (t) => {
+  // jiraKey is the first key whose fetch succeeded, and runLinkedTicketRefs leads
+  // with it, so without the document builder's ordering a run whose first linked
+  // key 404'd would publish its bullets in a different order than before.
+  const section = await linkedTicketsSection(t, 'linked-order', (run) => {
+    run.flowType = 'review-pr';
+    run.ticketOrPr = 'owner/repo#7';
+    run.ticketData = {
+      ...run.ticketData!,
+      source: 'both',
+      jiraKey: 'TAT-4752',
+      linkedTickets: [
+        {
+          ref: 'TAT-4740',
+          url: 'https://recorded.example.test/browse/TAT-4740',
+          title: '',
+          description: '',
+          source: 'jira',
+        },
+        {
+          ref: 'TAT-4752',
+          url: 'https://recorded.example.test/browse/TAT-4752',
+          title: 'Fetched second',
+          description: '',
+          source: 'jira',
+        },
+      ],
+    };
+  });
+  assert.equal(
+    section.trim(),
+    [
+      '- [TAT-4740](https://recorded.example.test/browse/TAT-4740)',
+      '- [TAT-4752](https://recorded.example.test/browse/TAT-4752) — Fetched second',
+    ].join('\n'),
+  );
+});

@@ -14,6 +14,7 @@ import {
 import { assertCleanupCurrent, trackCleanupCommand } from '../core/cleanup-scope.js';
 import type { SlotVars } from '../core/config.js';
 import { readSlotRow } from '../core/state.js';
+import { parentHoldForWarmChild } from '../methods/dispatch/slot-scoring.js';
 import { getRun } from '../runs/store.js';
 import { currentSessionOriginator } from '../security/work-originator.js';
 import { isWorkerMirrorEntry, TASK_ROOT_SIDECARS } from '../tasks/sidecars.js';
@@ -51,12 +52,15 @@ export async function createNodeLinkTaskStager(
       'STALE_AUTHORITY',
       'Task staging needs its existing workspace epoch.',
     );
+  // A warm child stages its task before claiming the hold its parent's cleanup left for it.
+  const sourceRun = source.runId ? getRun(source.runId) : undefined;
   if (
-    (row.current_run_id &&
+    !(sourceRun && parentHoldForWarmChild(row, sourceRun)) &&
+    ((row.current_run_id &&
       (!source.runId ||
         (row.current_run_id !== source.runId && row.handoff_run_id !== source.runId))) ||
-    (row.handoff_run_id && !source.runId) ||
-    (row.cleanup_run_id && row.cleanup_run_id !== source.runId)
+      (row.handoff_run_id && !source.runId) ||
+      (row.cleanup_run_id && row.cleanup_run_id !== source.runId))
   )
     throw new NodeLinkFailure('STALE_AUTHORITY', 'Task staging cannot replace another run owner.');
   const expected = rowFence(row);

@@ -43,6 +43,8 @@ export interface SubtaskProgressView {
   /** Shown instead of a tooltip: a stale unit names the last child mark. */
   staleNote: string | null;
   settled: boolean;
+  /** Unsettled, but its owner (a stopped or replaced reviewer) has ended: not live work. */
+  ownerEnded: boolean;
 }
 
 /** Step-row colour, used for parent rows and for a child unit's own rows. */
@@ -62,17 +64,23 @@ export function subtaskStatusColor(status: string): string {
 
 export function subtaskProgressView(subtask: TaskStepSubtaskProgress): SubtaskProgressView {
   const ref = subtask.source.ref?.trim();
+  const ownerEnded = subtask.ownerEnded === true;
   return {
     title: ref ? ref.split('/').pop() || ref : 'inline',
-    statusLabel: SUBTASK_STATUS_LABELS[subtask.status] ?? subtask.status,
-    color: subtaskStatusColor(subtask.status),
+    statusLabel: ownerEnded
+      ? 'owner ended'
+      : (SUBTASK_STATUS_LABELS[subtask.status] ?? subtask.status),
+    // Muted, as in Command Center's unit (`textSecondary`): nobody is working it, and it is not an error.
+    color: ownerEnded ? colors.textSecondary : subtaskStatusColor(subtask.status),
     counts: `${subtask.progress.completedSteps}/${subtask.progress.totalSteps}`,
-    currentStep: subtask.progress.currentStep,
-    staleNote:
-      subtask.status === 'stale'
+    currentStep: ownerEnded ? null : subtask.progress.currentStep,
+    staleNote: ownerEnded
+      ? `left ${subtask.status}: the context that owned it has ended`
+      : subtask.status === 'stale'
         ? `no mark since ${subtask.lastEventAt ?? 'the unit started'}`
         : null,
     settled: isSettledSubtaskStatus(subtask.status),
+    ownerEnded,
   };
 }
 

@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import '../../core/hermetic-git.test-support.js';
+
 import type { SlotVars } from '../../core/config.js';
 import { EXEC_TIMEOUT_EXIT_CODE, execOnSlot } from '../../core/exec.js';
 

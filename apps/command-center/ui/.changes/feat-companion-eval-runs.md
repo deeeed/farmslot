@@ -1,0 +1,1 @@
+- The eval-run predicate, badge text and product-first ordering now come from the shared protocol helpers that Companion also uses; behaviour is unchanged.
