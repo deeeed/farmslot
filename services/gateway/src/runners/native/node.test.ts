@@ -6,10 +6,11 @@ import { WebSocket } from 'ws';
 import {
   NATIVE_WORKER_CANCEL,
   NATIVE_WORKER_COMPACT,
+  NATIVE_WORKER_CONFIRM_STOPPED,
   NATIVE_WORKER_TRANSFER,
 } from '@farmslot/agent-runtime/native';
 import { NATIVE_NODE_ADMISSION_TIMEOUT_MS } from '@farmslot/agent-runtime/native/host-runtime';
-import { Methods } from '@farmslot/protocol';
+import { Methods, type Principal } from '@farmslot/protocol';
 
 import {
   getAllNodes,
@@ -23,6 +24,7 @@ import {
   withNodeReconnectWait,
 } from '../../fleet/node-rpc.js';
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
+import { nativeNodeDeclaration } from '../../security/native-node.js';
 
 import { nativeNodeSessionTimeout, routeNativeExecution } from './node.js';
 
@@ -296,6 +298,78 @@ test('older node decoders cannot silently drop an explicit approval mode before 
     assert.equal(requests, 0);
     getNode(machine)!.nativeSessions!.supportsApprovalMode = true;
     assert.deepEqual(await routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, params), {
+      session,
+    });
+    assert.equal(requests, 1);
+  } finally {
+    unregisterByWs(ws);
+  }
+});
+
+test('a node that declares stop attestation accepts explicit stopped-process confirmation', async () => {
+  const machine = 'native-stop-attestation';
+  const owner = 'native-owner';
+  const principal: Principal = {
+    id: 'node-stop-principal',
+    subject: {
+      type: 'node',
+      displayName: machine,
+      machine,
+      nativeOwnerPrincipalId: owner,
+    },
+    roles: [],
+  };
+  let requests = 0;
+  const session = {
+    id: 'session',
+    ownerPrincipalId: owner,
+    executionNodeId: machine,
+    processStopped: true,
+  };
+  const ws = {
+    readyState: WebSocket.OPEN,
+    send(raw: string) {
+      requests++;
+      const frame = JSON.parse(raw);
+      assert.equal(frame.params.method, NATIVE_WORKER_CONFIRM_STOPPED);
+      assert.equal(frame.params.owner, owner);
+      assert.equal(frame.params.params.generation, params.generation);
+      assert.equal(frame.params.params.leaseId, params.leaseId);
+      handleNodeResponse(frame.id, true, { session }, undefined, undefined, ws);
+    },
+  } as WebSocket;
+  const params = {
+    executionNodeId: machine,
+    sessionId: 'session',
+    generation: 'generation',
+    leaseId: 'lease',
+  };
+  const register = (supportsWorkerStopAttestation?: boolean) =>
+    registerNode(
+      machine,
+      1,
+      ws,
+      undefined,
+      undefined,
+      nativeNodeDeclaration(
+        { ownerPrincipalId: owner, supportsWorkers: true, supportsWorkerStopAttestation },
+        machine,
+        principal,
+        true,
+      ),
+      { principalId: principal.id, valid: () => true },
+    );
+  try {
+    register();
+    await assert.rejects(
+      routeNativeExecution(owner, NATIVE_WORKER_CONFIRM_STOPPED, params),
+      /Execution node upgrade required for explicit stopped-process confirmation/,
+    );
+    assert.equal(requests, 0);
+    unregisterByWs(ws);
+    register(true);
+    assert.equal(getNode(machine)?.nativeSessions?.supportsWorkerStopAttestation, true);
+    assert.deepEqual(await routeNativeExecution(owner, NATIVE_WORKER_CONFIRM_STOPPED, params), {
       session,
     });
     assert.equal(requests, 1);

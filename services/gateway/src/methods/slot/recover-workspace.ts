@@ -84,6 +84,9 @@ interface SlotRecoveryOptions {
   parkHeadSha?: string;
   /** Ordinary refresh keeps its existing resources instead of tearing them down. */
   resetOnly?: boolean;
+  /** Refuse, before anything is marked or stopped, unless the checkout is still exactly
+   * `expectedWorkspace` (branch, head and dirt), so an automatic return resets nothing newer. */
+  exactWorkspace?: boolean;
 }
 
 export async function recoverSlotWorkspace(
@@ -170,6 +173,11 @@ export async function recoverSlotWorkspace(
       )
     )
       return refuse('identity-changed', 'Slot ownership changed; inspect again', workspace.branch);
+    if (
+      options?.exactWorkspace &&
+      (!params.expectedWorkspace || !sameSlotWorkspace(params.expectedWorkspace, workspace))
+    )
+      return refuse('identity-changed', 'Checkout changed since inspection', workspace.branch);
     const fleet = await loadFleetStatus(true);
     const status = fleet.slots.find((slot) => slot.slot === params.slotId);
     let keepWarm = status?.warm ?? false;

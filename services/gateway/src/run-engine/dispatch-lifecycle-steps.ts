@@ -56,6 +56,7 @@ import { taskExecutionAtDispatch } from '../runs/task-execution.js';
 import { prepareConfiguredRunCapabilities } from './declared-capabilities.js';
 import { RETAINED_SESSION_HANDOFF_HOLD } from './errors.js';
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
+import { foreignTaskDirRefusal } from './foreign-task-dir.js';
 import {
   isObservedBuildRun,
   observedBuildFiles,
@@ -442,6 +443,13 @@ export async function executePrepareStep(
   // fails, or runs on another slot, would otherwise leave the old build standing.
   if (current.prepareArtifact) {
     await persistRunNow(updateRun(runId, { prepareArtifact: null }), 'prepare artifact cleared');
+  }
+
+  // Before slot prepare: a task dir another attempt initialized, whose slot copy is gone.
+  const foreignTaskDir = await foreignTaskDirRefusal(current);
+  if (foreignTaskDir) {
+    stepPartialIO.set(runId, { inputs, outputs: {} });
+    throw new Error(foreignTaskDir);
   }
 
   // Machine-pressure snapshot at prepare start — the analytics emitter reads this from

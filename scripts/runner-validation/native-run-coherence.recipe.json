@@ -17,6 +17,13 @@
         "cmd": "node --import tsx scripts/runner-validation/gateway/native-run-coherence.mjs --legacy",
         "timeout_ms": 360000,
         "intent": "Legacy recovery requires an explicit stop attestation for unknown descendants.",
+        "next": "node-legacy"
+      },
+      "node-legacy": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/runner-validation/gateway/node-stop-attestation.mts",
+        "timeout_ms": 360000,
+        "intent": "An explicit stop attestation reaches a native worker on an execution node: the node's declared capability survives gateway sanitising.",
         "next": "kernel-reuse"
       },
       "kernel-reuse": {

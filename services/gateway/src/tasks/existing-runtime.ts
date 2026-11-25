@@ -20,6 +20,7 @@ import { workerTaskDirectory } from '../run-engine/worker-task-dir.js';
 
 import { resolveConfiguredExecutionTemplateForSlot } from './execution-template-catalog.js';
 import { initializeHostedTaskOnSlot, verifyHostedTaskOnSlot } from './hosted-task-init.js';
+import { HANDOFF_INPUT } from './task-document.js';
 import {
   readWorkerTerminalProjectConfig,
   resolveWorkerTerminalContract,
@@ -53,6 +54,16 @@ export async function initializeExistingTaskRuntime(run: Run): Promise<void> {
   );
 }
 
+/** A task dir's handoff, or undefined when it has none. Any other read or parse error throws. */
+export async function readTaskHandoff(taskDir: string): Promise<HandoffMetadata | undefined> {
+  try {
+    return JSON.parse(await readFile(path.join(taskDir, HANDOFF_INPUT), 'utf8')) as HandoffMetadata;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+}
+
 /** Direct dispatch and run adoption share the node producer; neither invents a Run. */
 export async function initializeAuthoredTaskOnSlot(
   slot: SlotVars,
@@ -69,14 +80,7 @@ export async function initializeAuthoredTaskOnSlot(
     resolveProjectTaskDirName(project.projectJson),
   );
   const task = await readFile(run.taskFile, 'utf8');
-  let authored: HandoffMetadata | undefined;
-  try {
-    authored = JSON.parse(
-      await readFile(path.join(path.dirname(run.taskFile), 'inputs/handoff.json'), 'utf8'),
-    );
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-  }
+  const authored = await readTaskHandoff(path.dirname(run.taskFile));
   if (authored && (authored.project !== run.project || authored.flow !== run.flowType))
     throw new Error('Existing task handoff belongs to a different project or flow');
   if (retained) {

@@ -94,6 +94,7 @@ export async function reclaimFinishedSlot(
     });
     if (result.kind !== 'ready')
       throw new Error(`Finished slot ${slotId} cleanup refused: ${result.reason}`);
+    await clearRetainedNotes(finished);
     return;
   }
   const result = await slotRelease(
@@ -103,4 +104,11 @@ export async function reclaimFinishedSlot(
   );
   if (!result.released)
     throw new Error(`Finished slot ${slotId} cleanup refused: ${result.reason}`);
+  await clearRetainedNotes(finished);
+}
+
+/** The checkout is back at idle: an earlier refusal's "Checkout retained" note is stale. */
+async function clearRetainedNotes(finished: readonly Run[]): Promise<void> {
+  const { clearCheckoutRetainedNote } = await import('./slot-teardown.js');
+  for (const run of finished) await clearCheckoutRetainedNote(run);
 }

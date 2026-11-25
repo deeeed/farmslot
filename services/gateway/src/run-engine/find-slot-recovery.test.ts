@@ -140,3 +140,26 @@ test('supersession after a successful claim releases ownership without clearing 
   assert.equal(row?.phase, 'occupied');
   assert.deepEqual(row?.workspace_recovery, recovery);
 });
+
+test('a claim that meets a running recovery on an ownerless slot is a conflict to wait out', async () => {
+  await seed({
+    workspace_recovery: recovery,
+    current_run_id: null,
+    lifecycle: 'busy',
+    phase: 'releasing',
+  });
+  const refused: unknown = await commitSlotClaim(
+    'example-slot',
+    'example-run',
+    0,
+    'working',
+    'working',
+    undefined,
+    { runLookup: () => ({ status: 'slot-finding' }), listSlotRuns: async () => [] },
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  assert.ok(refused instanceof Error, 'the claim is refused');
+  assert.ok('claimConflict' in refused && refused.claimConflict, 'as a conflict, not a failure');
+});

@@ -531,6 +531,13 @@ export async function recordSlotTeardownSkipped(run: Run, reason: string | null)
   broadcastEvent(Events.RUN_UPDATED, { run: updated });
 }
 
+/** Once the checkout is back at idle, drop a stale "Checkout retained" note, and only that note.
+ * Live runs only: an archived run's note stays as history. */
+export async function clearCheckoutRetainedNote(run: Run): Promise<void> {
+  if (getRun(run.id)?.slotTeardownSkipped?.startsWith('Checkout retained:'))
+    await recordSlotTeardownSkipped(run, null);
+}
+
 /** Settle our fence before attempting fallible client notification. */
 export async function settleFailedRunSlotCleanup(
   run: Run,
