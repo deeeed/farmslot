@@ -114,12 +114,6 @@ await json(path.join(project, 'project.json'), {
   workflow_defaults: workflowDefaults,
   execution_templates: {
     sources: [{ id: 'workspace:shared', kind: 'workspace', root: { projectPath: 'shared' } }],
-    defaults: [
-      {
-        when: { flow: 'review-pr', platform: 'cli', runMode: 'autonomous' },
-        templateId: 'review-pr/runtime',
-      },
-    ],
   },
 });
 const poolFiles: string[] = [];
@@ -140,10 +134,7 @@ for (const [machine, capacity] of [
     ...(capacity ? { review_workspaces: { max_concurrent: capacity } } : {}),
   });
 }
-await writeFile(
-  path.join(project, 'shared/review-pr/runtime.md'),
-  '---\nplatforms: [cli]\n---\n\n- [ ] Run the selected validation.\n',
-);
+// A runtime slot direct reviews must leave alone: they run in review workspaces.
 await mkdir(path.join(fixture, 'repo'));
 const runtimePool = path.join(fixture, 'pool/runtime.json');
 poolFiles.push(runtimePool);
@@ -162,7 +153,7 @@ await json(runtimePool, {
     },
   ],
 });
-await json(path.join(fixture, '.farm-status.json'), {
+await json(path.join(fixture, 'test-fleet-status.json'), {
   checked_at: new Date().toISOString(),
   slots: [
     {
@@ -230,7 +221,7 @@ const gateway = spawn('yarn', ['workspace', '@farmslot/gateway', 'start'], {
     FARMSLOT_DISABLE_ORCHESTRATION: '1',
     NODE_TEST_CONTEXT: '1',
     FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
-    FARMSLOT_TEST_STATUS_FILE: path.join(fixture, '.farm-status.json'),
+    FARMSLOT_TEST_STATUS_FILE: path.join(fixture, 'test-fleet-status.json'),
     FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
     FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'test-automation',
   },
@@ -478,11 +469,15 @@ try {
     await writeFile(fallbackPool, originalFallbackPool);
   }
 
+  // Workflow defaults only preselect runner, model, effort and transport; a manual choice passes
+  // normal runner admission (review-workspaces/direct-defaults.ts). Placement stays refused.
+  const manual = await connection.call<DispatchPreviewResult>('dispatch.preview', {
+    ...base,
+    model: 'gpt-6.1-sol',
+  });
+  assert.equal(manual.preview.model, 'gpt-6.1-sol', 'a manual model replaces the preselected one');
   for (const patch of [
     { slotId: 'runtime' },
-    { model: 'not-allowed' },
-    { effort: 'low' },
-    { transport: 'tmux' },
     { reviewWorkspaceTarget: { machine: 'no-capacity' } },
   ]) {
     await assert.rejects(connection.call('dispatch.preview', { ...base, ...patch }));
@@ -497,50 +492,6 @@ try {
       /configured static-review template/,
     );
   }
-  const legacy = await connection.call<DispatchPreviewResult>('dispatch.preview', {
-    ...base,
-    ticketOrPr: '42',
-    reviewValidationDepth: 'full-live',
-    mode: 'autonomous',
-    slotId: 'runtime',
-    runner: 'codex',
-    model: 'gpt-6-astra',
-    effort: 'high',
-  });
-  assert.equal(legacy.preview.flowType, 'review-pr');
-  assert.equal(legacy.preview.taskId, 'example/app#42');
-  assert.equal(legacy.preview.slotId, 'runtime');
-  assert.equal(legacy.preview.model, 'gpt-6-astra');
-  assert.equal(legacy.preview.executionTemplate?.id, 'review-pr/runtime');
-  assert.equal(legacy.preview.reviewWorkspace, undefined);
-  const runtimeRequest = {
-    ...base,
-    mode: 'autonomous',
-    ticketOrPr: 'example/app#200',
-    reviewValidationDepth: 'full-live',
-    slotId: 'runtime',
-    runner: 'codex',
-    model: 'gpt-6-astra',
-    effort: 'high',
-  };
-  const runtimeRun = await connection.call<RunCreateResult>('run.create', runtimeRequest);
-  assert.equal(runtimeRun.run.flowType, 'review-pr');
-  assert.equal(runtimeRun.run.reviewValidationDepth, 'full-live');
-  assert.equal(runtimeRun.run.slotId, 'runtime');
-  assert.equal(runtimeRun.run.reviewWorkspaceTarget, undefined);
-  assert.equal(runtimeRun.run.executionTemplate?.id, 'review-pr/runtime');
-  assert.equal(runtimeRun.run.metrics.model, 'gpt-6-astra');
-  const runtimeQueue = await connection.call<DispatchQueueAddResult>('dispatch.queue.add', {
-    ...runtimeRequest,
-    ticketOrPr: 'example/app#201',
-  });
-  assert.equal(runtimeQueue.item.flowType, 'review-pr');
-  assert.equal(runtimeQueue.item.reviewValidationDepth, 'full-live');
-  assert.equal(runtimeQueue.item.slotId, 'runtime');
-  assert.equal(runtimeQueue.item.reviewWorkspaceTarget, undefined);
-  assert.equal(runtimeQueue.item.executionTemplate?.id, 'review-pr/runtime');
-  await connection.call('dispatch.queue.remove', { itemId: runtimeQueue.item.id });
-  await connection.call('run.cancel', { runId: runtimeRun.run.id });
   await connection.call('dispatch.queue.remove', { itemId: queued.item.id });
   for (const run of [created.run, second.run])
     await connection.call('run.cancel', { runId: run.id });

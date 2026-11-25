@@ -6,6 +6,7 @@ import { FLOW_COLORS, FLOW_LABELS } from '@farmslot/theme';
 
 import { colors, fonts, radii, spacing } from '../lib/theme';
 import {
+  FLOW_FILTERS,
   type FlowFilter,
   type LaneFilter,
   type SortOption,
@@ -14,22 +15,23 @@ import {
 
 import { FormSheetHeader } from './FormSheetHeader';
 
-const FLOW_OPTIONS: { label: string; value: FlowFilter; color: string }[] = [
-  { label: 'All', value: '', color: colors.textMuted },
-  ...(['fix-bug', 'review-pr', 'qa', 'dev', 'pr-complete', 'update-branch'] as const).map(
-    (flow) => ({
-      label: FLOW_LABELS[flow] ?? flow,
-      value: flow as FlowFilter,
-      color: FLOW_COLORS[flow] ?? colors.textMuted,
-    }),
-  ),
-];
+const FLOW_OPTIONS: { label: string; value: FlowFilter; color: string }[] = FLOW_FILTERS.map(
+  (flow) =>
+    flow
+      ? {
+          label: FLOW_LABELS[flow] ?? flow,
+          value: flow,
+          color: FLOW_COLORS[flow] ?? colors.textMuted,
+        }
+      : { label: 'All', value: flow, color: colors.textMuted },
+);
 
 const LANE_OPTIONS: { label: string; value: LaneFilter; color: string }[] = [
   { label: 'All', value: '', color: colors.textMuted },
+  { label: 'Hide evals', value: 'product', color: colors.accent },
   { label: 'Production', value: 'production', color: colors.statusOk },
   { label: 'Validation', value: 'validation', color: '#06b6d4' },
-  { label: 'Comparison', value: 'comparison', color: '#f59e0b' },
+  { label: 'Comparison (evals)', value: 'comparison', color: '#f59e0b' },
 ];
 
 const SORT_OPTIONS: { label: string; value: SortOption }[] = [

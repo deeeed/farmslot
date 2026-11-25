@@ -11,6 +11,7 @@ import { joinSchemaWithMarkdown } from '../methods/task.js';
 import {
   attachSubtaskToStep,
   buildSubtaskEntry,
+  completingParentSignal,
   listOpenSubtaskUnits,
   openSubtaskContractMessage,
   parseSubtaskIndex,
@@ -19,6 +20,7 @@ import {
   readSubtaskIndex,
   readSubtaskUnits,
   SUBTASK_STALE_AFTER_MS,
+  subtaskTerminalRefusal,
   subtaskUnitsForParentChecklist,
 } from './subtasks.js';
 import { generateTaskSchema } from './writer.js';
@@ -336,6 +338,80 @@ test('listOpenSubtaskUnits treats blocked as open and complete as settled', asyn
     assert.match(message, /\.\/mark complete cannot/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a completion is refused only by its own children, not a parallel or stopped reviewer's", async () => {
+  const childSignal = (status: string) => JSON.stringify({ role: 'subtask', status });
+  const units = [
+    unit({
+      id: 'worker-check',
+      checklist: 'subtasks/worker-check.md',
+      signal: 'subtasks/worker-check-SIGNAL.json',
+      parent: { checklist: 'TASK.md', stepNumber: 2 },
+    }),
+    unit({
+      id: 'review-a',
+      checklist: 'subtasks/review-a.md',
+      signal: 'subtasks/review-a-SIGNAL.json',
+      parent: { checklist: 'REVIEW.rev-a.md', stepNumber: 2 },
+    }),
+    unit({
+      id: 'review-b',
+      checklist: 'subtasks/review-b.md',
+      signal: 'subtasks/review-b-SIGNAL.json',
+      parent: { checklist: 'REVIEW.rev-b.md', stepNumber: 2 },
+    }),
+  ];
+  // The worker unit hangs off TASK.md; the worker completes through CHECKLIST.md. Both are one
+  // parent, since both complete into SIGNAL.json.
+  const files = (worker: string) =>
+    makeTaskDir({
+      'TASK.md': PARENT_MARKDOWN,
+      'CHECKLIST.md': PARENT_MARKDOWN,
+      'subtasks/index.json': indexJson(units),
+      'subtasks/worker-check.md': CHILD_MARKDOWN,
+      'subtasks/worker-check-SIGNAL.json': childSignal(worker),
+      'subtasks/review-a.md': CHILD_MARKDOWN,
+      'subtasks/review-a-SIGNAL.json': childSignal('complete'),
+      'subtasks/review-b.md': CHILD_MARKDOWN,
+      'subtasks/review-b-SIGNAL.json': childSignal('running'),
+    });
+  const settled = files('complete');
+  const open = files('running');
+  try {
+    // The worker's TASK.md unit belongs to SIGNAL.json, whichever worker checklist completes.
+    const worker = completingParentSignal('CHECKLIST.md', 'SIGNAL.json');
+    assert.equal(await subtaskTerminalRefusal(LOCAL, settled, 'complete', worker), null);
+    assert.match(
+      (await subtaskTerminalRefusal(LOCAL, open, 'complete', worker)) ?? '',
+      /worker-check \(running\)/,
+    );
+    // Parallel reviewer lanes: A completes while B's unit runs; B cannot.
+    assert.equal(
+      await subtaskTerminalRefusal(LOCAL, settled, 'complete', 'REVIEW.rev-a-SIGNAL.json'),
+      null,
+    );
+    assert.match(
+      (await subtaskTerminalRefusal(LOCAL, settled, 'complete', 'REVIEW.rev-b-SIGNAL.json')) ?? '',
+      /review-b \(running\)/,
+    );
+    // A completion into a signal its checklist would not write cannot be matched: unscoped.
+    assert.equal(completingParentSignal('REVIEW.rev-a.md', 'custom.json'), undefined);
+    // No task file to derive from: only a derived name is scoped; anything else fails closed.
+    assert.equal(completingParentSignal(null, 'SIGNAL.json'), 'SIGNAL.json');
+    assert.equal(
+      completingParentSignal(null, 'REVIEW.rev-a-SIGNAL.json'),
+      'REVIEW.rev-a-SIGNAL.json',
+    );
+    assert.equal(completingParentSignal(null, 'custom.json'), undefined);
+    assert.match(
+      (await subtaskTerminalRefusal(LOCAL, settled, 'complete', undefined)) ?? '',
+      /review-b \(running\)/,
+    );
+  } finally {
+    rmSync(settled, { recursive: true, force: true });
+    rmSync(open, { recursive: true, force: true });
   }
 });
 

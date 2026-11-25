@@ -34,7 +34,11 @@ import {
   SLOT_RELEASING_SINCE,
 } from '../core/state.js';
 import { onNodeConnected } from '../fleet/machine-registry.js';
-import { activeRunSlotIds } from '../methods/dispatch/slot-scoring.js';
+import {
+  activeRunSlotIds,
+  isActiveSlotHolder,
+  slotPinIsRequestOnly,
+} from '../methods/dispatch/slot-scoring.js';
 import { STEP_TO_STATUS } from '../run-lifecycle/step-status.js';
 import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import {
@@ -1528,6 +1532,18 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
   // helper with dispatch and fleet refresh also stops the terminal-status list
   // from drifting — the inline version missed `cancelled`.
   const activeSlotIds = activeRunSlotIds(active);
+  // A held slot whose only active runs are pins that have not claimed it yet: they wait for
+  // this pass to retry the previous run's cleanup, so they must not stop it. Slot teardown
+  // ignores them by the same rule (`findOtherActiveRunOnSlot`).
+  const heldOnlyForPendingPins = async (slot: FleetSlotSnapshot) => {
+    if (slot.lifecycle !== 'held' || slot.phase !== 'occupied') return false;
+    const handoff = await deps.readSlotField(slot.slot, 'handoff_run_id');
+    const row = { current_run_id: slot.currentRunId ?? null, handoff_run_id: handoff ?? null };
+    return !active.some(
+      (run) =>
+        run.slotId === slot.slot && isActiveSlotHolder(run) && !slotPinIsRequestOnly(run, row),
+    );
+  };
   const freshFleet = await deps.loadFleetStatus(true);
   for (const slot of freshFleet.slots) {
     if (!['busy', 'held'].includes(slot.lifecycle)) continue;
@@ -1535,7 +1551,8 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
       activeSlotIds.has(slot.slot) && slot.phase === SLOT_PHASE_RELEASING
         ? await interruptedBlockedReleaseOwner(deps, slot.slot, active)
         : undefined;
-    if (activeSlotIds.has(slot.slot) && !blockedOwner) continue;
+    if (activeSlotIds.has(slot.slot) && !blockedOwner && !(await heldOnlyForPendingPins(slot)))
+      continue;
     const workspaceRecovery = await deps.readSlotField(slot.slot, 'workspace_recovery');
     if (workspaceRecovery && typeof workspaceRecovery === 'object') {
       // Restart turns a live recovery fence into a failed hold and never advertises an

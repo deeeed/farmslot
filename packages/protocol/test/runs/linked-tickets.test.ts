@@ -190,3 +190,67 @@ test('PR body headings and acceptance text never infer tickets', () => {
   assert.deepEqual(view.pr, { label: 'PR', url: 'https://github.com/example/repo/pull/10' });
   assert.deepEqual(source, before);
 });
+
+test('named separates a ticket this run owns from a ref that only matches the key shape', () => {
+  // A backlog run's MANUAL-000124 matches the Jira key shape. Treating it as a
+  // ticket publishes a dead browse URL, so the resolver reports which refs the
+  // run actually named: its fetched key, a recorded ticket, or an operator's.
+  const backlog = run({
+    ticketOrPr: 'MANUAL-000124',
+    ticketData: { ...ticket, jiraKey: undefined, linkedTickets: [] },
+  });
+  assert.deepEqual(
+    runLinkedTicketsView(backlog).tickets.map(({ ref, named }) => ({ ref, named })),
+    [{ ref: 'MANUAL-000124', named: false }],
+  );
+
+  const named = run({
+    ticketOrPr: 'TEAM-400',
+    ticketData: {
+      ...ticket,
+      jiraKey: 'TEAM-400',
+      linkedTickets: [
+        {
+          ref: 'TEAM-500',
+          url: 'https://tracker.example/browse/TEAM-500',
+          title: 'Recorded summary',
+          description: '',
+          source: 'jira',
+        },
+      ],
+    },
+    linkedTicketRefs: ['TEAM-600'],
+  });
+  const view = runLinkedTicketsView(named);
+  assert.deepEqual(
+    view.tickets.map(({ ref, named: isNamed, title }) => ({ ref, named: isNamed, title })),
+    [
+      { ref: 'TEAM-400', named: true, title: null },
+      { ref: 'TEAM-500', named: true, title: 'Recorded summary' },
+      { ref: 'TEAM-600', named: true, title: null },
+    ],
+  );
+});
+
+test('an empty recorded title reports as null rather than an empty string', () => {
+  const source = run({
+    ticketOrPr: 'TEAM-400',
+    ticketData: {
+      ...ticket,
+      jiraKey: 'TEAM-400',
+      linkedTickets: [
+        {
+          ref: 'TEAM-400',
+          url: 'https://tracker.example/browse/TEAM-400',
+          title: '',
+          description: '',
+          source: 'jira',
+        },
+      ],
+    },
+  });
+  assert.deepEqual(
+    runLinkedTicketsView(source).tickets.map(({ ref, title }) => ({ ref, title })),
+    [{ ref: 'TEAM-400', title: null }],
+  );
+});
