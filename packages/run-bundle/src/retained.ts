@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   constants,
   createWriteStream,
+  type Dirent,
   existsSync,
   readFileSync,
   type Stats,
@@ -1230,12 +1231,13 @@ export function forgetRunBundleStoreChargeCache(): void {
 
 async function walkStableStoreCharge(
   store: RunBundleStore,
+  rootEntries: Dirent[],
 ): Promise<Omit<StableStoreCharge, 'stamps'>> {
   stableStoreWalks += 1;
   let bytes = 0;
   let bundleCount = 0;
   const retentionCharges: [string, number][] = [];
-  for (const entry of await readdir(store.root, { withFileTypes: true })) {
+  for (const entry of rootEntries) {
     const file = path.join(store.root, entry.name);
     if (entry.name === 'sha256' && entry.isDirectory()) {
       const names = await readdir(file);
@@ -1286,9 +1288,13 @@ async function retentionEntriesPresent(charge: StableStoreCharge): Promise<boole
   return true;
 }
 
-async function stableStoreCharge(store: RunBundleStore): Promise<StableStoreCharge> {
+/** `before` is stamped before `rootEntries` was listed, so a change after it moves a stamp. */
+async function stableStoreCharge(
+  store: RunBundleStore,
+  before: string[],
+  rootEntries: Dirent[],
+): Promise<StableStoreCharge> {
   const key = stableChargeKey(store);
-  const before = await storeStamps(store);
   const cached = stableStoreCharges.get(key);
   // A `.retention-*` removal in the same timestamp tick as a write this process adjusted for
   // leaves the stamp equal, so those entries are checked too.
@@ -1303,7 +1309,7 @@ async function stableStoreCharge(store: RunBundleStore): Promise<StableStoreChar
     return cached;
   stableStoreCharges.delete(key);
   const walkStartNs = BigInt(Date.now()) * 1_000_000n;
-  const walked = await walkStableStoreCharge(store);
+  const walked = await walkStableStoreCharge(store, rootEntries);
   const after = await storeStamps(store);
   const charge = { ...walked, stamps: after };
   // Something changed a stamped directory during the walk, or too close to its start to tell:
@@ -1365,11 +1371,14 @@ async function chargedStoreBytesUntimed(
   store: RunBundleStore,
   stagedCharges?: Map<string, number>,
 ): Promise<number> {
-  const stable = await stableStoreCharge(store);
+  // One listing of the root serves the stable part and the parts walked on every read.
+  const before = await storeStamps(store);
+  const rootEntries = await readdir(store.root, { withFileTypes: true });
+  const stable = await stableStoreCharge(store, before, rootEntries);
   let bytes = stable.bytes;
   for (const [directory, charged] of stable.retentionCharges)
     stagedCharges?.set(directory, charged);
-  for (const entry of await readdir(store.root, { withFileTypes: true })) {
+  for (const entry of rootEntries) {
     const file = path.join(store.root, entry.name);
     if (!entry.isDirectory()) continue;
     if (entry.name === 'reservations') {
