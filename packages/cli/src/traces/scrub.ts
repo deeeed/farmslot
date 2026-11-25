@@ -64,11 +64,13 @@ const TOKEN = new RegExp(
 /**
  * A PEM private key: from its header to its end line, whatever lies between (escaped or real
  * newlines, line numbers, diff markers), when the end comes within 16 KB and before another
- * header. A header with no end in reach is only the header. The bound and the stop at the next
- * header keep a run of unterminated headers linear.
+ * header. With no end in reach (cut output, such as `head -3 key.pem`), the header and the
+ * base64 chunks that follow it: each a run of 16+ base64 characters after a short separator of
+ * newlines, escaped newlines, spaces, line numbers or diff and quote markers. Prose, blank
+ * lines and short words survive. The bounds, and the stop at the next header, keep it linear.
  */
 const PEM_KEY =
-  /-----BEGIN [A-Z ]{0,30}PRIVATE KEY-----(?:(?:(?!-----BEGIN )[\s\S]){0,16384}?-----END [A-Z ]{0,30}PRIVATE KEY-----)?/g;
+  /-----BEGIN [A-Z ]{0,30}PRIVATE KEY-----(?:(?:(?!-----BEGIN )[\s\S]){0,16384}?-----END [A-Z ]{0,30}PRIVATE KEY-----|(?:(?:\\[rn]|[\s\d+>|-]){1,16}[A-Za-z0-9+/=]{16,})+)?/g;
 /** Hex of 64+ characters labelled as a key: a key-like name on the line, or assigned the value. */
 const LABELLED_KEY =
   /((?:private[_-]?key|privateKey|secret|seed|mnemonic)[^\n]{0,40}?[:=>"'\s]{1,4})(0x)?[0-9a-fA-F]{64,}/gi;

@@ -284,8 +284,9 @@ Export applies a basic replacing scrubber to every file it writes: transcripts,
 `labels.json`, `task.md`, `output.diff`, interviews, `index.jsonl`, `README.md`
 and file names. It is a small fixed set of obvious secret shapes, not a secret
 scanner: each pattern starts at a fixed or bounded prefix or the edge of a run of
-characters, so its time grows with the input, not its square (about 8 MB of
-adversarial input in under a second). It runs line by line, so JSONL stays valid.
+characters, so its time grows with the input, not its square (about 10 MB of
+adversarial input in under half a second on an idle Mac mini). It runs line by
+line, so JSONL stays valid.
 Rules, in order:
 
 1. The exact values of the farm's configured secrets on the gateway host: the
@@ -301,8 +302,10 @@ Rules, in order:
 3. Private keys: a PEM private key from its header to its end line, whatever lies
    between (escaped newlines, line numbers, diff markers), when the end comes
    within 16 KB; across the lines of a text file each line it covers becomes a
-   marker. One count per key. A header with no end line in reach loses only the
-   header. Also a hex string of 64 or more characters (with or without `0x`)
+   marker. One count per key. A key with no end line in reach (cut output) loses
+   its header and the base64 chunks of 16 or more characters that follow it;
+   prose, blank lines and short words after a header are kept. Also a hex string
+   of 64 or more characters (with or without `0x`)
    labelled as a key, meaning a key-like name (`privateKey`, `private_key`,
    `secret`, `seed`, `mnemonic`) on the same line or assigned the value. Bare hex
    is kept, because it is usually a digest. Digests Farmslot writes itself

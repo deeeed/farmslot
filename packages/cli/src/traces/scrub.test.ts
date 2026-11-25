@@ -288,7 +288,29 @@ test('a PEM key is redacted from header to end line, however its lines are writt
   assert.equal(s.report()['private-key'], values.length + 2);
 });
 
-test('a PEM header with no end line in reach removes nothing after it', () => {
+test('a cut PEM key loses its header and the base64 body that follows', () => {
+  const s = scrubber();
+  const head = '-----BEGIN EC PRIVATE KEY-----';
+  const body = ['MHcCAQEEIOfgXyZ1kq0aBc4xY0eQ7BF', 'UKg1aBc4xY0eMHcCAQEEIOfgXyZ1kq0'];
+  const values = [
+    [head, ...body].join('\n'),
+    `KEY="${[head, ...body].join('\\n')}"`,
+    [head, ...body].map((line, n) => `     ${n + 1}\t${line}`).join('\n'),
+    [head, ...body].map((line) => `+${line}`).join('\n'),
+  ];
+  for (const value of values) {
+    const out = JSON.parse(s.text(JSON.stringify({ text: `${value}\nDone` }))).text as string;
+    assert.doesNotMatch(out, /MHcC|UKg1/, out);
+    assert.match(out, /\nDone$/);
+  }
+  // Across text lines, with the prose after the key kept.
+  assert.deepEqual(
+    s.text([`+${head}`, `+${body[0]}`, `+${body[1]}`, ' context'].join('\n')).split('\n'),
+    ['+[REDACTED:private-key]', '[REDACTED:private-key]', '[REDACTED:private-key]', ' context'],
+  );
+});
+
+test('a PEM header with no key after it removes nothing after it', () => {
   const s = scrubber();
   const lines = [
     'grep for "-----BEGIN RSA PRIVATE KEY-----"',
@@ -321,11 +343,13 @@ test('scrubbing time grows with the input, not its square', () => {
     // Failed JWTs, with a word boundary at every `-`.
     'eyJaaaaaaaaaa-'.repeat(70_000),
     'sk-'.repeat(330_000),
+    '-----BEGIN PRIVATE KEY----- '.repeat(35_000),
+    `-----BEGIN PRIVATE KEY-----${'\n1\t'.repeat(1)}${'A'.repeat(15)}-`.repeat(25_000),
   ];
   const started = performance.now();
   for (const input of inputs)
     s.text(JSON.stringify({ type: 'image', mimeType: 'image/png', data: input }));
   const ms = performance.now() - started;
-  // About 8 MB in all; the gitleaks patterns took about 12 s a megabyte.
+  // About 10 MB in all; the gitleaks patterns took about 12 s a megabyte.
   assert.ok(ms < 5000, `${Math.round(ms)} ms`);
 });
