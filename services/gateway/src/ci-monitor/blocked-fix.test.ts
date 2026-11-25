@@ -294,11 +294,13 @@ function watch(seed: (runId: string) => void = () => {}) {
         | { nextPollAt?: string | null }
         | undefined
     )?.nextPollAt ?? null;
-  // Wait until the loop has handled a read: it either armed a new sleep (a fresh
-  // nextPollAt), stopped to ask (an open card), or the watch ended.
-  const handled = async (reads: number, before: string | null) => {
+  // Wait until the loop has handled a read: it either armed a new sleep, stopped to
+  // ask (an open card), or the watch ended. Each poll clears nextPollAt before it
+  // reads, so a nextPollAt seen after the read belongs to a sleep armed after it.
+  // Its value cannot tell: two sleeps armed in the same millisecond share it.
+  const handled = async (reads: number) => {
     for (let attempts = 0; attempts < 200; attempts++) {
-      const slept = nextPollAt() !== null && nextPollAt() !== before;
+      const slept = nextPollAt() !== null;
       if (settled || (forcedReads.length > reads && (slept || openCards().length > 0))) return;
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
@@ -310,14 +312,13 @@ function watch(seed: (runId: string) => void = () => {}) {
     for (let attempts = 0; attempts < 200 && !nextPollAt(); attempts++)
       await new Promise((resolve) => setTimeout(resolve, 10));
     const reads = forcedReads.length;
-    const before = nextPollAt();
     let woken = false;
     for (let attempts = 0; attempts < 200 && !woken; attempts++) {
       woken = pokeCIPoll(run.id).woken === true;
       if (!woken) await new Promise((resolve) => setTimeout(resolve, 10));
     }
     assert.ok(woken, 'the watch was asleep and took the poke');
-    await handled(reads, before);
+    await handled(reads);
   };
   return {
     run,
@@ -327,7 +328,7 @@ function watch(seed: (runId: string) => void = () => {}) {
     openCards,
     open,
     pollOnce,
-    firstPoll: () => handled(0, null),
+    firstPoll: () => handled(0),
     settled: () => settled,
   };
 }
