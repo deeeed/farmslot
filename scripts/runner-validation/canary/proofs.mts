@@ -5,9 +5,10 @@
 //   direct-workflow   scripts/e2e-direct-workflow-defaults.mts direct (no model)
 //   warm-review       services/gateway/src/review/native-warm-continuation.rpc.live.ts, a real
 //                     codex reviewer on config.json's proofs.reviewModel (receipt `pass: true`)
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { closeSync, mkdtempSync, openSync } from 'node:fs';
 import { mkdir, readFile, rm } from 'node:fs/promises';
+import { setTimeout as delay } from 'node:timers/promises';
 import path from 'node:path';
 
 import type { Reaper } from '../lib/isolated-stack.mjs';
@@ -71,7 +72,7 @@ function spec(
  * provider token, as remote-node-stack's childEnv does. The reviewer reaches its model through
  * the local LB with CODEX_LB_API_KEY.
  */
-function proofEnv(tmp: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+export function proofEnv(tmp: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (/^(FARMSLOT_|GATEWAY_|TMUX|TSX_|NODE_TEST_CONTEXT$)/.test(key)) continue;
@@ -82,12 +83,48 @@ function proofEnv(tmp: string, extra: Record<string, string> = {}): NodeJS.Proce
   return { ...env, TMPDIR: tmp, GIT_TERMINAL_PROMPT: '0', ...extra };
 }
 
+const errno = (error: unknown) => (error as NodeJS.ErrnoException).code;
+
+/** SIGKILLs `target` (a pid, or a negated group id); false when nothing of ours is left there. */
+function kill(target: number): boolean {
+  try {
+    process.kill(target, 'SIGKILL');
+    return true;
+  } catch (error) {
+    // ESRCH: gone, or not a group leader. EPERM: only a zombie macOS has not reaped yet is left.
+    if (errno(error) === 'ESRCH' || errno(error) === 'EPERM') return false;
+    throw error;
+  }
+}
+
 /**
- * SIGKILLs `pid`, every process descended from it and their groups. The proofs start their gateway
- * and native host detached (own groups), so killing the proof's group alone would leave them; while
- * the proof lives they are still its descendants. Then anything left naming the proof's TMPDIR.
+ * Processes whose command line names `tmp`, or that hold a file under it: an e2e proof's gateway
+ * names its fixture only in its environment, but keeps its log there open.
  */
-function killProofTree(pid: number | undefined, tmp: string): void {
+export function processesUsing(tmp: string): number[] {
+  const found = new Set<number>();
+  for (const [command, args] of [
+    ['pgrep', ['-f', tmp]],
+    ['lsof', ['-t', '+D', tmp]],
+  ] as const) {
+    const result = spawnSync(command, args, { encoding: 'utf8' });
+    if (result.error) throw result.error;
+    // Both exit 1 when nothing matches.
+    if (result.status !== 0 && result.status !== 1)
+      throw new Error(`${command} exited ${result.status}: ${result.stderr.trim()}`);
+    for (const line of result.stdout.split('\n')) if (Number(line)) found.add(Number(line));
+  }
+  found.delete(process.pid);
+  return [...found];
+}
+
+/**
+ * SIGKILLs `pid`, every process descended from it and their groups, then every process still using
+ * the proof's TMPDIR. The proofs start their gateway and native host detached (own groups), so the
+ * proof's group alone would leave them; while the proof lives they are still its descendants.
+ * Resolves what survived, as cleanup errors.
+ */
+export async function killProofTree(pid: number | undefined, tmp: string): Promise<string[]> {
   if (pid !== undefined) {
     const children = new Map<number, number[]>();
     for (const line of execFileSync('ps', ['-Ao', 'pid=,ppid='], { encoding: 'utf8' }).split(
@@ -100,23 +137,28 @@ function killProofTree(pid: number | undefined, tmp: string): void {
     const tree = [pid];
     for (let index = 0; index < tree.length; index++)
       tree.push(...(children.get(tree[index]) ?? []));
-    for (const target of tree)
-      for (const signalled of [-target, target]) {
-        try {
-          process.kill(signalled, 'SIGKILL');
-        } catch {
-          // Already gone, or not a group leader: the next target.
-        }
-      }
+    for (const target of tree) {
+      kill(-target);
+      kill(target);
+    }
   }
-  try {
-    execFileSync('pkill', ['-9', '-f', tmp], { stdio: 'ignore' });
-  } catch {
-    // pkill exits 1 when nothing matched.
-  }
+  for (const target of processesUsing(tmp)) kill(target);
+  await delay(200);
+  const survivors = processesUsing(tmp);
+  return survivors.length
+    ? [`proof processes survived SIGKILL under ${tmp}: ${survivors.join(', ')}`]
+    : [];
 }
 
-interface ProofExit {
+/** How a proof process ended, as check differences (none for a clean exit). */
+export function exitDifferences(exit: ProofExit, timeoutMs = PROOF_TIMEOUT_MS): string[] {
+  if (exit.timedOut) return [`did not finish within ${timeoutMs / 60_000} min`];
+  if (exit.signal) return [`killed by ${exit.signal}`];
+  if (exit.code !== 0) return [`exited ${exit.code}`];
+  return [];
+}
+
+export interface ProofExit {
   code: number | null;
   signal: NodeJS.Signals | null;
   timedOut: boolean;
@@ -136,19 +178,26 @@ export async function runProofs(options: {
   onCheck: (check: CheckResult) => void;
 }): Promise<void> {
   let current: { pid: number | undefined; tmp: string } | undefined;
-  options.onCleanup(async () => {
-    if (current) killProofTree(current.pid, current.tmp);
-    return [];
-  });
+  options.onCleanup(async () => (current ? killProofTree(current.pid, current.tmp) : []));
   for (const proof of options.proofs ?? PROOFS) {
     if (options.cleaning()) return;
     const dir = path.join(options.evidence, 'proofs', proof);
     await mkdir(dir, { recursive: true });
     // Short: the proofs' tmux and native host sockets live under it.
     const tmp = mkdtempSync('/tmp/fsp-');
+    // A canary killed outright (SIGKILL, a dropped ssh session) leaves the proof to the reaper.
+    options.reaper.command(['pkill', '-KILL', '-f', tmp], {});
+    options.reaper.command(['sh', '-c', `lsof -t +D '${tmp}' | xargs kill -9`], {});
+    options.reaper.path(tmp);
     const { argv, env, model } = spec(proof, options.root, dir, tmp, options.reviewModel);
     const log = path.join(dir, 'proof.log');
     const started = Date.now();
+    // Cleanup may have begun while this one was being set up.
+    if (options.cleaning()) {
+      await rm(tmp, { recursive: true, force: true });
+      return;
+    }
+    const timeoutErrors: string[] = [];
     const exit = await new Promise<ProofExit>((resolve, reject) => {
       const output = openSync(log, 'w');
       const child = spawn(process.execPath, argv, {
@@ -159,12 +208,14 @@ export async function runProofs(options: {
       });
       closeSync(output);
       current = { pid: child.pid, tmp };
-      // A canary killed outright leaves the proof to the reaper, which stops its group.
       options.reaper.group(child.pid);
       let timedOut = false;
       const timer = setTimeout(() => {
         timedOut = true;
-        killProofTree(child.pid, tmp);
+        killProofTree(child.pid, tmp).then(
+          (survived) => timeoutErrors.push(...survived),
+          (error: unknown) => timeoutErrors.push(`timeout kill failed: ${String(error)}`),
+        );
       }, PROOF_TIMEOUT_MS);
       child.once('error', reject);
       child.once('exit', (code, signal) => {
@@ -172,18 +223,27 @@ export async function runProofs(options: {
         resolve({ code, signal, timedOut });
       });
     });
-    // A proof that exited cleans up after itself; this only catches what one left behind.
-    killProofTree(undefined, tmp);
+    // What the proof left running, e.g. a gateway it sent SIGTERM and did not wait for.
+    const differences = [
+      ...exitDifferences(exit),
+      ...timeoutErrors,
+      ...(await killProofTree(undefined, tmp)),
+    ];
     current = undefined;
-    await rm(tmp, { recursive: true, force: true });
-    const differences: string[] = [];
-    if (exit.timedOut) differences.push(`did not finish within ${PROOF_TIMEOUT_MS / 60_000} min`);
-    else if (exit.signal) differences.push(`killed by ${exit.signal}`);
-    else if (exit.code !== 0) differences.push(`exited ${exit.code}`);
     const observations = [`log: ${log}`];
+    // A process that exited during the removal can still write into it: retry, then report.
+    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(
+      (error: unknown) => observations.push(`could not remove ${tmp}: ${String(error)}`),
+    );
     let reviewerRounds = 0;
     if (proof === 'warm-review') {
-      const receipt = await readFile(path.join(dir, 'receipt.json'), 'utf8').catch(() => '');
+      const receipt = await readFile(path.join(dir, 'receipt.json'), 'utf8').catch(
+        (error: unknown) => {
+          // No receipt is a proof result; any other read failure is not.
+          if (errno(error) === 'ENOENT') return '';
+          throw error;
+        },
+      );
       if (!receipt) {
         if (exit.code === 0) differences.push('wrote no receipt');
         // The receipt is written after the last round: a failed proof's spend is not recorded.
