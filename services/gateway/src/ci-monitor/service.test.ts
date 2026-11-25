@@ -164,5 +164,8 @@ test('a recorded operator wait stops every automatic dispatch category', () => {
 
   // Without the wait, the same inputs still auto-dispatch, so the guard cannot
   // be a blanket disable.
-  assert.equal(pickCIAutoDispatchAction('merge_conflict', [], config, {}), 'dispatch-update-branch');
+  assert.equal(
+    pickCIAutoDispatchAction('merge_conflict', [], config, {}),
+    'dispatch-update-branch',
+  );
 });

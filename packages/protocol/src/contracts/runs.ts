@@ -3594,7 +3594,7 @@ export interface RunCiWatchState {
   /**
    * When an operator resolved a CI decision with `wait`. The operator has taken
    * manual control of the PR, so every automatic dispatch category stays off for
-   * the rest of this watch; the decision gates still offer a dispatch explicitly.
+   * the rest of the run; the decision gates still offer a dispatch explicitly.
    */
   operatorWaitAt?: string;
   branchMaintenanceOperation?: BranchMaintenanceOperation;

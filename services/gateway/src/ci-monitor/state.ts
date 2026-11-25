@@ -125,8 +125,9 @@ export function readDedup(runId: string): RunCiWatchState {
 
 /**
  * True once an operator resolved a CI decision with `wait`. Automatic dispatch
- * stays off for the rest of the watch: the operator is waiting on something the
- * gateway cannot see, such as another PR merging.
+ * stays off for the rest of the run: the operator is waiting on something the
+ * gateway cannot see, such as another PR merging. Like `fixScopeRefusal`, it is
+ * never cleared, because nothing the gateway observes proves the wait is over.
  */
 export function autoDispatchSuppressed(state: Pick<RunCiWatchState, 'operatorWaitAt'>): boolean {
   return Boolean(state.operatorWaitAt);

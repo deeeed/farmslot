@@ -22,6 +22,7 @@ import {
   tryInlineCIFix,
 } from './inline-fix.js';
 import {
+  autoDispatchSuppressed,
   buildCIBotCommentFingerprint,
   buildCIWatchCheckFingerprint,
   type CICheckTimelineEntry,
@@ -34,7 +35,6 @@ import {
   mergeCIWatchOutputPatch,
   mutateDedup,
   readCIWatchPhaseSnapshot,
-  autoDispatchSuppressed,
   readDedup,
   recordCIDecisionAction,
   recordInlineFixSuccess,
@@ -955,7 +955,12 @@ export async function monitorCI(
         });
       }
 
-      const autoAction = pickCIAutoDispatchAction('ci_failed', failedNames, config, readDedup(runId));
+      const autoAction = pickCIAutoDispatchAction(
+        'ci_failed',
+        failedNames,
+        config,
+        readDedup(runId),
+      );
       if (autoAction) {
         console.log(
           `[ci-monitor] run ${runId.slice(0, 8)} — auto-dispatching ${autoAction} for failed checks`,
@@ -1074,7 +1079,12 @@ export async function monitorCI(
         });
       }
 
-      const autoAction = pickCIAutoDispatchAction('bot_comments_early', [], config, readDedup(runId));
+      const autoAction = pickCIAutoDispatchAction(
+        'bot_comments_early',
+        [],
+        config,
+        readDedup(runId),
+      );
       if (autoAction) {
         console.log(
           `[ci-monitor] run ${runId.slice(0, 8)} — auto-dispatching ${autoAction} for early actionable bot comments`,
@@ -1265,8 +1275,8 @@ export function pickCIAutoDispatchAction(
   state: Pick<RunCiWatchState, 'operatorWaitAt'> = {},
 ): 'dispatch-update-branch' | 'dispatch-pr-complete' | null {
   // An operator who chose `wait` is waiting on something the gateway cannot see.
-  // Nothing dispatches automatically after that, whatever the category config
-  // says; the decision gates still offer a dispatch explicitly.
+  // Nothing dispatches automatically for the rest of the run, whatever the
+  // category config says; the decision gates still offer a dispatch explicitly.
   if (autoDispatchSuppressed(state)) return null;
   switch (reason) {
     case 'merge_conflict':

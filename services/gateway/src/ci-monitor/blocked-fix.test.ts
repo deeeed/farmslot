@@ -22,6 +22,7 @@ const snapshots: Array<{
   checks: (typeof failedCheck)[];
   allPassed: boolean;
   comments?: (typeof comment)[];
+  mergeConflict?: boolean;
 }> = [];
 const forcedReads: boolean[] = [];
 
@@ -38,7 +39,7 @@ mock.module('../methods/pr.js', {
           prNumber: 10384,
           prState: 'OPEN',
           merged: false,
-          mergeConflict: false,
+          mergeConflict: snapshot.mergeConflict ?? false,
           checks: snapshot.checks,
           checkSnapshot: {
             pr: 10384,
@@ -87,7 +88,7 @@ mock.module('./inline-fix.js', {
   },
 });
 
-const { monitorCI, resolveCIDecision } = await import('./service.js');
+const { monitorCI, pokeCIPoll, resolveCIDecision } = await import('./service.js');
 const { createRun, getRun, loadAllRuns } = await import('../runs/store.js');
 
 test('ci-watch rechecks GitHub and completes when the unchanged HEAD turns green', async () => {
@@ -173,4 +174,67 @@ test('ci-watch rechecks pending CI and finishes when checks turn green', async (
   assert.equal(outcome.result, 'passed');
   assert.deepEqual(forcedReads, [false, true, true]);
   assert.equal(getRun(run.id)?.decisions.length, 0);
+});
+
+test('choosing wait at an inline-fix gate stops a later merge conflict from auto-dispatching', async () => {
+  // Run fcfb5124 (Mobile #39654): the operator chose wait at inline_fix_blocked
+  // to wait for another PR to merge. The next poll found the expected merge
+  // conflict and, because nothing recorded the wait, merge_conflict
+  // auto-dispatch - on by default - spawned an update-branch child and completed
+  // the parent. With the wait recorded, the conflict must reach its decision gate.
+  const conflicted = { checks: [failedCheck], allPassed: false, mergeConflict: true };
+  snapshots.push(
+    { checks: [failedCheck], allPassed: false },
+    { checks: [failedCheck], allPassed: false },
+    conflicted,
+    conflicted,
+    conflicted,
+  );
+  const run = createRun({
+    flowType: 'pr-complete',
+    project: 'farmslot-farm',
+    ticketOrPr: 'CI-TEST',
+  });
+  let settled = false;
+  // Abort in finally, so a failed assertion cannot leave the watch sleeping out
+  // its 600 s poll interval and run the file into its time budget.
+  const controller = new AbortController();
+  const monitoring = monitorCI(run.id, 10384, 'MetaMask/core', controller.signal).then(
+    (outcome) => {
+      settled = true;
+      return outcome;
+    },
+  );
+
+  const openDecision = async (type: string) => {
+    for (let attempts = 0; attempts < 200; attempts++) {
+      const found = getRun(run.id)?.decisions.find(
+        (item) => item.type === type && !item.resolvedAt,
+      );
+      if (found || settled) return found;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    return undefined;
+  };
+
+  try {
+    const blocked = await openDecision('ci_inline_fix_blocked');
+    assert.ok(blocked, 'the inline-fix gate is raised first');
+    resolveCIDecision(blocked.id, 'wait');
+
+    // wait sleeps a full poll interval before the next read; wake it the way a
+    // push would, once the sleep is armed.
+    for (let attempts = 0; attempts < 200 && !pokeCIPoll(run.id).woken; attempts++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const conflict = await openDecision('ci_merge_conflict');
+    assert.equal(settled, false, 'the watch must not finish by auto-dispatching after a wait');
+    assert.ok(conflict, 'the merge conflict is put to the operator instead');
+    assert.ok(getRun(run.id)?.ciWatchState?.operatorWaitAt, 'the wait is recorded on the run');
+
+    resolveCIDecision(conflict.id, 'skip');
+    assert.equal((await monitoring).result, 'passed');
+  } finally {
+    controller.abort();
+  }
 });
