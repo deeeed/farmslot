@@ -81,7 +81,7 @@ test('run detail binds the run flow type and domain on its prepare popover', () 
   assert.equal(litBinding(rendered, 'run-domain='), 'perps');
 });
 
-test('slot history binds the run flow type on its prepare popover', () => {
+test('slot history binds the run flow type and domain on its prepare popover', () => {
   const modal = new SlotHistoryModal();
   Object.assign(modal, { slotId: 'slot-1', slotBranch: 'main', project: 'p' });
   const entry: SlotRunHistoryEntry = {
@@ -89,6 +89,7 @@ test('slot history binds the run flow type on its prepare popover', () => {
     familyId: 'run-4',
     status: 'done',
     flowType: 'dev',
+    domain: 'perps',
     ticketOrPr: 'TAT-1',
     project: 'p',
     branch: 'feat/w',
@@ -109,4 +110,5 @@ test('slot history binds the run flow type on its prepare popover', () => {
   Reflect.set(modal, '_expanded', new Set([entry.runId]));
   const rendered = Reflect.get(modal, '_renderRow').call(modal, entry);
   assert.equal(litBinding(rendered, 'run-flow-type='), 'dev');
+  assert.equal(litBinding(rendered, 'run-domain='), 'perps');
 });

@@ -166,3 +166,8 @@ test('buildSlotRunHistoryEntry includes compact before-after count for workspace
 
   assert.equal(buildSlotRunHistoryEntry(run).visualPairCount, 1);
 });
+
+test('a slot history entry carries the run domain, and none when the run has none', () => {
+  assert.equal(buildSlotRunHistoryEntry({ ...makeRun(), domain: 'perps' }).domain, 'perps');
+  assert.equal('domain' in buildSlotRunHistoryEntry(makeRun()), false);
+});
