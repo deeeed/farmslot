@@ -61,6 +61,8 @@ type Ending =
   | 'completion-invalid-idle'
   | 'completion-unfinished-pass'
   | 'completion-late-signal'
+  | 'completion-never-marked'
+  | 'completion-reask-missing'
   | 'completion-invalid-schema'
   | 'completion-infra'
   | 'reattach-config-changed'
@@ -159,6 +161,11 @@ mock.module('../run-engine/run-monitor.js', {
           return ++lateSignalProbes <= 2
             ? { ok: false, code: 'missing', message: 'review signal missing' }
             : { ok: true };
+        if (
+          ending === 'completion-never-marked' ||
+          (continued && ending === 'completion-reask-missing')
+        )
+          return { ok: false, code: 'missing', message: 'review signal missing' };
         if (!continued && ending === 'completion-invalid-schema')
           return { ok: false, code: 'invalid_schema', message: 'review signal has no status' };
         if (
@@ -325,6 +332,7 @@ mock.module('../runners/native/worker-control.js', {
           'completion-live',
           'completion-invalid-idle',
           'completion-late-signal',
+          'completion-never-marked',
         ].includes(ending);
         return {
           session: {
@@ -689,6 +697,7 @@ const review = (runId: string, runner = 'claude') =>
     reviewTimeoutMs: [
       'timeout',
       'missing-terminal',
+      'completion-never-marked',
       'completion-invalid-idle',
       'completion-interrupted',
     ].includes(ending)
@@ -866,6 +875,26 @@ test('a terminal mark written after the turn ended is accepted without a complet
   assert.equal((await review(run.id)).verdict, 'issues');
   assert.equal(completionCommands.length, 0, 'a missing signal waits instead of re-asking');
   assert.ok(lateSignalProbes > 2);
+});
+
+test('a clean turn that never writes its terminal mark gets no re-ask and fails at its deadline', async (t) => {
+  ending = 'completion-never-marked';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  await assert.rejects(
+    review(run.id),
+    /completed its turn but its terminal signal remains unavailable: review signal missing/,
+  );
+  assert.equal(completionCommands.length, 0, 'a missing signal is not re-asked');
+});
+
+test('a completion re-ask that ends with its signal missing keeps its valid ISSUES result', async (t) => {
+  // A re-ask reserved before an upgrade, or one whose signal read fails, ends with `missing`.
+  ending = 'completion-reask-missing';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  assert.equal((await review(run.id)).verdict, 'issues');
+  assert.equal(completionCommands.length, 1);
 });
 
 test('an ended completion whose signal cannot be checked is re-read, then fails closed', async (t) => {
