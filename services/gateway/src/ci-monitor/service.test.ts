@@ -87,14 +87,20 @@ test('detectCIWatchProgress resets on PR head or watched check changes', () => {
 test('pickCIAutoDispatchAction respects addendum category defaults', () => {
   const config = resolveCIMonitorConfig({});
 
-  assert.equal(pickCIAutoDispatchAction('merge_conflict', [], config), 'dispatch-update-branch');
-  assert.equal(pickCIAutoDispatchAction('bot_comments', [], config), 'dispatch-pr-complete');
-  assert.equal(pickCIAutoDispatchAction('bot_comments_early', [], config), 'dispatch-pr-complete');
   assert.equal(
-    pickCIAutoDispatchAction('ci_failed', ['unit-tests', 'playwright e2e'], config),
+    pickCIAutoDispatchAction('merge_conflict', [], config, false),
+    'dispatch-update-branch',
+  );
+  assert.equal(pickCIAutoDispatchAction('bot_comments', [], config, false), 'dispatch-pr-complete');
+  assert.equal(
+    pickCIAutoDispatchAction('bot_comments_early', [], config, false),
     'dispatch-pr-complete',
   );
-  assert.equal(pickCIAutoDispatchAction('ci_failed', ['lint', 'typecheck'], config), null);
+  assert.equal(
+    pickCIAutoDispatchAction('ci_failed', ['unit-tests', 'playwright e2e'], config, false),
+    'dispatch-pr-complete',
+  );
+  assert.equal(pickCIAutoDispatchAction('ci_failed', ['lint', 'typecheck'], config, false), null);
 });
 
 test('pickCIAutoDispatchAction honors per-project overrides', () => {
@@ -108,9 +114,9 @@ test('pickCIAutoDispatchAction honors per-project overrides', () => {
     },
   });
 
-  assert.equal(pickCIAutoDispatchAction('merge_conflict', [], config), null);
-  assert.equal(pickCIAutoDispatchAction('bot_comments', [], config), null);
-  assert.equal(pickCIAutoDispatchAction('ci_failed', ['integration tests'], config), null);
+  assert.equal(pickCIAutoDispatchAction('merge_conflict', [], config, false), null);
+  assert.equal(pickCIAutoDispatchAction('bot_comments', [], config, false), null);
+  assert.equal(pickCIAutoDispatchAction('ci_failed', ['integration tests'], config, false), null);
 });
 
 test('shouldReuseResolvedCIDecisionAction treats transient wait controls as one-shot', () => {
@@ -144,4 +150,26 @@ test('parseCIFixProgress extracts checkbox counts and current item', () => {
 
 test('parseCIFixProgress returns undefined when no checkbox progress exists', () => {
   assert.equal(parseCIFixProgress('No structured progress here'), undefined);
+});
+
+test('an operator hold stops every automatic dispatch category', () => {
+  // merge_conflict auto-dispatch is on by default (the assertion above proves
+  // it), which is how run fcfb5124 spawned an update-branch child after the
+  // operator asked to wait. The hold has to beat the config, not sit beside it.
+  const config = resolveCIMonitorConfig({});
+
+  assert.equal(pickCIAutoDispatchAction('merge_conflict', [], config, true), null);
+  assert.equal(pickCIAutoDispatchAction('bot_comments', [], config, true), null);
+  assert.equal(pickCIAutoDispatchAction('bot_comments_early', [], config, true), null);
+  assert.equal(
+    pickCIAutoDispatchAction('ci_failed', ['unit-tests'], config, true),
+    null,
+    'a test failure must not auto-chain pr-complete while held either',
+  );
+
+  // Without the hold the same inputs still auto-dispatch, so it is not a blanket disable.
+  assert.equal(
+    pickCIAutoDispatchAction('merge_conflict', [], config, false),
+    'dispatch-update-branch',
+  );
 });

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 ## Unreleased
 
+- `@farmslot/handoff/scrub` exports the publication floor patterns and gitleaks rules, so run trace export can apply them as replacing rules.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.4.12 - 2026-11-21

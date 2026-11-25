@@ -1895,6 +1895,65 @@ test('replay does not reclaim a replacement plan reusing the same candidate id',
   );
 });
 
+test('a ci-watch replay hands a held PR back to automation', async (t) => {
+  // An operator hold (wait at inline_fix_blocked while it offered a dispatch) is
+  // derived from run.decisions. A post-gate replay of a dev run keeps resolved
+  // decisions, so without an explicit release the hold would outlive the replay
+  // that is the operator handing the PR back.
+  const { ciHoldSince } = await import('../../ci-monitor/state.js');
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  const ciWatchAt = run.steps.findIndex((step) => step.name === 'ci-watch');
+  assert.ok(ciWatchAt > 0, 'the dev flow has a ci-watch step');
+  const hold = {
+    id: 'hold',
+    type: 'ci_inline_fix_blocked' as const,
+    title: 'inline fix blocked',
+    description: 'inline fix blocked',
+    actions: [
+      { id: 'dispatch-pr-complete', label: 'Dispatch pr-complete', style: 'primary' as const },
+      { id: 'wait', label: 'Keep watching CI', style: 'secondary' as const },
+    ],
+    createdAt: '2026-11-24T13:28:57.000Z',
+    resolvedAt: '2026-11-24T13:28:57.000Z',
+    resolvedAction: 'wait',
+  };
+  updateRun(run.id, {
+    status: 'cancelled',
+    completedAt: new Date().toISOString(),
+    decisions: [hold],
+    ciWatchState: { consecutiveAttempts: 0, totalAttempts: 0, skips: 0 },
+    steps: run.steps.map((step, index) =>
+      index < ciWatchAt
+        ? { ...step, status: 'done', completedAt: new Date().toISOString() }
+        : index === ciWatchAt
+          ? { ...step, status: 'failed', completedAt: new Date().toISOString() }
+          : step,
+    ),
+  });
+  assert.ok(ciHoldSince(getRun(run.id)), 'held before the replay');
+  t.after(async () => {
+    if (getRun(run.id)) await evictTestRun(run.id, 'cancelled');
+  });
+
+  await assert.doesNotReject(() =>
+    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}, {
+      startEngine: async () => {},
+    }),
+  );
+
+  const after = getRun(run.id);
+  assert.ok(
+    after?.decisions.some((decision) => decision.id === 'hold'),
+    'the post-gate replay kept the resolved hold, so a release is needed',
+  );
+  assert.ok(after?.ciWatchState?.holdReleasedAt, 'the replay recorded the release');
+  assert.equal(ciHoldSince(after), undefined, 'and the PR is no longer held');
+});
+
 test('runReplayStep rejects monitor replay when dispatch is still running', async (t) => {
   const run = createRun({
     flowType: 'dev',
@@ -3100,6 +3159,216 @@ test('runReplayStep forces eval worker replays through prepare to reinstall harn
   assert.equal(replayed.steps.find((step) => step.name === 'dispatch')?.status, 'pending');
   assert.equal(replayed.steps.find((step) => step.name === 'monitor')?.status, 'pending');
   assert.equal(replayed.recoveryAttempts?.at(-1)?.stepName, 'prepare');
+});
+
+// A pinned comparison run (comparison dev run with a start ref) whose project config
+// cannot be read counts as taking part, so the project name below pins it without a pack.
+function pinnedRunFailedAt(failedStep: 'dispatch' | 'monitor') {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'pinned-prepare-absent-project',
+    ticketOrPr: `PROJ-${Date.now() + (failedStep === 'dispatch' ? 0 : 1)}`,
+  });
+  const failedAt = run.steps.findIndex((step) => step.name === failedStep);
+  updateRun(run.id, {
+    status: 'failed',
+    lane: 'comparison',
+    startRef: { requestedRef: '260bd3a5', resolvedSha: '260bd3a5b20c3f9126510b7b71d0e5527f395b5d' },
+    steps: run.steps.map((step, index) =>
+      index < failedAt
+        ? { ...step, status: 'done' }
+        : index === failedAt
+          ? { ...step, status: 'failed' }
+          : step,
+    ),
+  });
+  return run;
+}
+
+test('a pinned run replayed from dispatch prepares its build again', async (t) => {
+  const run = pinnedRunFailedAt('dispatch');
+  t.after(async () => {
+    if (getRun(run.id)) await evictTestRun(run.id, 'failed');
+  });
+  await runReplayStep({ runId: run.id, stepName: 'dispatch', triggeredBy: 'operator' }, () => {}, {
+    startEngine: async () => {},
+  });
+  const replayed = getRun(run.id);
+  assert.equal(replayed?.steps.find((step) => step.name === 'prepare')?.status, 'pending');
+  assert.equal(replayed?.recoveryAttempts?.at(-1)?.stepName, 'prepare');
+});
+
+test('a pinned run replayed from monitor keeps its prepared slot', async (t) => {
+  const run = pinnedRunFailedAt('monitor');
+  t.after(async () => {
+    if (getRun(run.id)) await evictTestRun(run.id, 'failed');
+  });
+  await runReplayStep({ runId: run.id, stepName: 'monitor', triggeredBy: 'operator' }, () => {}, {
+    startEngine: async () => {},
+  });
+  const replayed = getRun(run.id);
+  assert.equal(replayed?.steps.find((step) => step.name === 'prepare')?.status, 'done');
+  assert.equal(replayed?.steps.find((step) => step.name === 'dispatch')?.status, 'done');
+});
+
+test('a pinned dispatch replay that adopts the original worker stays out of prepare', async (t) => {
+  const run = pinnedRunFailedAt('dispatch');
+  const startedAt = new Date(Date.now() - 2000).toISOString();
+  updateRun(run.id, {
+    recordedEvidenceContractVersion: 0,
+    status: 'blocked',
+    slotId: 'macwork-ff-5',
+    taskFile: '/tmp/TASK.md',
+    metrics: { ...run.metrics, runner: 'claude', model: 'sonnet', runnerSessionId: 'session' },
+    agentContexts: [
+      {
+        id: 'dev',
+        role: 'dev',
+        label: 'Dev',
+        status: 'blocked',
+        runId: run.id,
+        slotId: 'macwork-ff-5',
+        runner: 'claude',
+        model: 'sonnet',
+        runnerSessionId: 'session',
+        signalAttemptId: 'original-attempt',
+      },
+    ],
+    steps: getRun(run.id)!.steps.map((step) =>
+      step.name === 'dispatch' ? { ...step, startedAt } : step,
+    ),
+  });
+  await holdOnlySlot(t, 'macwork-ff-5', {
+    lifecycle: 'busy',
+    phase: 'occupied',
+    current_run_id: run.id,
+    slot_epoch: 12,
+  });
+  t.after(() => evictTestRun(run.id, 'failed'));
+  await runReplayStep({ runId: run.id, stepName: 'dispatch' }, () => {}, {
+    probeTaskSignal: async () => ({
+      status: 'running' as const,
+      attemptId: 'original-attempt',
+      timestamp: new Date(Date.now() - 1000).toISOString(),
+    }),
+    startEngine: async () => {},
+  });
+  const after = getRun(run.id)!;
+  assert.equal(after.steps.find((step) => step.name === 'prepare')?.status, 'done');
+  assert.equal(after.status, 'monitoring', 'the adopted worker keeps running');
+});
+
+for (const closed of [false, true]) {
+  test(`a pinned dispatch replay with a ${closed ? 'closed' : 'held, launched'} native worker ${closed ? 'prepares again' : 'keeps it'}`, async (t) => {
+    const previousOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'pinned-replay-owner';
+    const created = createRun(
+      {
+        flowType: 'dev',
+        project: 'pinned-prepare-absent-project',
+        ticketOrPr: `PROJ-${Date.now() + (closed ? 3 : 2)}`,
+        transport: 'native',
+      },
+      { nativeOwnerPrincipalId: 'pinned-replay-owner' },
+    );
+    const failedAt = created.steps.findIndex((step) => step.name === 'dispatch');
+    const nativeSession = {
+      sessionId: 'session',
+      executionNodeId: 'node',
+      ownerPrincipalId: 'pinned-replay-owner',
+      leaseId: 'lease',
+      commandId: 'command',
+      launchRequestedAt: '2026-11-25T10:00:00.000Z',
+      ...(closed ? { closedAt: '2026-11-25T10:05:00.000Z' } : {}),
+    };
+    updateRun(created.id, {
+      status: 'failed',
+      lane: 'comparison',
+      startRef: {
+        requestedRef: '260bd3a5',
+        resolvedSha: '260bd3a5b20c3f9126510b7b71d0e5527f395b5d',
+      },
+      agentContexts: [
+        {
+          id: 'dev',
+          role: 'dev',
+          label: 'Dev',
+          status: 'working',
+          slotId: null,
+          runId: created.id,
+          nativeSession,
+        },
+      ],
+      steps: created.steps.map((step, index) =>
+        index < failedAt
+          ? { ...step, status: 'done' }
+          : index === failedAt
+            ? { ...step, status: 'failed' }
+            : step,
+      ),
+    });
+    t.after(async () => {
+      if (previousOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+      else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = previousOwner;
+      const current = getRun(created.id);
+      if (!current) return;
+      updateRun(created.id, {
+        agentContexts: current.agentContexts?.map((context) =>
+          context.nativeSession
+            ? {
+                ...context,
+                nativeSession: { ...context.nativeSession, closedAt: new Date().toISOString() },
+              }
+            : context,
+        ),
+      });
+      await evictTestRun(created.id, 'failed');
+    });
+    const replay = await runReplayStep(
+      { runId: created.id, stepName: 'dispatch', triggeredBy: 'operator' },
+      () => {},
+      { startEngine: async () => {} },
+    ).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    // A replay rerouted to prepare would restart the native task, which this fixture
+    // has no node for; the retained worker path needs none.
+    assert.equal(replay instanceof Error ? replay.message : undefined, undefined);
+    assert.equal(
+      getRun(created.id)?.recoveryAttempts?.at(-1)?.stepName,
+      closed ? 'prepare' : 'dispatch',
+    );
+    const prepare = getRun(created.id)?.steps.find((step) => step.name === 'prepare')?.status;
+    assert.equal(
+      prepare,
+      closed ? 'pending' : 'done',
+      `replay ${replay instanceof Error ? `failed: ${replay.message}` : 'ran'}`,
+    );
+  });
+}
+
+test('a pinned run cannot skip prepare on a replay that re-dispatches, but can on a monitor replay', async (t) => {
+  const run = pinnedRunFailedAt('dispatch');
+  const monitorRun = pinnedRunFailedAt('monitor');
+  t.after(async () => {
+    for (const id of [run.id, monitorRun.id]) if (getRun(id)) await evictTestRun(id, 'failed');
+  });
+  await assert.rejects(
+    runReplayStep(
+      { runId: run.id, stepName: 'dispatch', triggeredBy: 'operator', skipPrepare: true },
+      () => {},
+      { startEngine: async () => {} },
+    ),
+    /A pinned comparison run cannot skip prepare/,
+  );
+  await assert.doesNotReject(
+    runReplayStep(
+      { runId: monitorRun.id, stepName: 'monitor', triggeredBy: 'operator', skipPrepare: true },
+      () => {},
+      { startEngine: async () => {} },
+    ),
+  );
 });
 
 test('blocked eval monitor without a slot restarts at find-slot instead of requiring proof', async (t) => {

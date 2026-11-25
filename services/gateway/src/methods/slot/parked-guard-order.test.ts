@@ -11,6 +11,8 @@ const events: string[] = [];
 // Runs in the middle of an awaited step, as another holder taking the guard would.
 let duringCheck = () => {};
 let duringReady = () => {};
+// False when a claim commits between the guard and the releasing fence.
+let fenceApplies = true;
 
 const { activePrepareSlots } = await import('./shared.js');
 const protocol = await import('@farmslot/protocol');
@@ -28,6 +30,7 @@ mock.module('../../core/index.js', {
     loadProjectVars: async () => ({ projectJson: {} }),
     readSlotRow: async () => ({ lifecycle: 'ready', phase: null, slot_epoch: 1 }),
     markSlotStatusIf: async () => {
+      if (!fenceApplies) return { applied: false, epoch: 2 };
       events.push('releasing fence');
       return { applied: true, epoch: 1 };
     },
@@ -88,6 +91,14 @@ mock.module('./workspace.js', {
     },
   },
 });
+mock.module('./idle-remote-prune.js', {
+  namedExports: {
+    pruneSlotRemoteRefs: async (slotId: string) =>
+      events.push(
+        `remote prune ${slotId}, guard ${activePrepareSlots.has(SLOT) ? 'held' : 'free'}`,
+      ),
+  },
+});
 const { slotParked } = await import('./parked.js');
 const { parkedWorkRetentionPass } = await import('../../run-lifecycle/parked-work-retention.js');
 
@@ -95,6 +106,7 @@ beforeEach(() => {
   events.length = 0;
   duringCheck = () => {};
   duringReady = () => {};
+  fenceApplies = true;
   activePrepareSlots.delete(SLOT);
 });
 
@@ -122,7 +134,19 @@ test('a parked restore refuses a slot another holder guarded while it checked th
 
 test('parked-work retention frees the prepare guard before the slot reads ready', async () => {
   await parkedWorkRetentionPass();
-  assert.deepEqual(events, ['releasing fence', 'ready, guard free']);
+  assert.deepEqual(events, [
+    'releasing fence',
+    `remote prune ${SLOT}, guard held`,
+    'ready, guard free',
+  ]);
+  assert.equal(activePrepareSlots.has(SLOT), false);
+});
+
+test('a claim that commits between the guard and the fence keeps the remote prune out', async () => {
+  // find-slot's claim checked the guard before this pass took it, then wrote the row.
+  fenceApplies = false;
+  await parkedWorkRetentionPass();
+  assert.deepEqual(events, [], 'no fence, no prune, no restore');
   assert.equal(activePrepareSlots.has(SLOT), false);
 });
 

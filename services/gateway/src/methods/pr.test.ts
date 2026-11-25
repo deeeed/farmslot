@@ -824,6 +824,15 @@ test('retained raw projection follows current local owner, summary and check con
     raw.prStateStdout.split('\t').at(-1),
     'The existing active CI reader keeps its established incomplete-read policy',
   );
+  const incomplete = projectPRData(
+    { ...raw, headSha: 'd'.repeat(40), errors: ['issues.comments#42: HTTP 502'] },
+    opts,
+    config,
+  );
+  assert.deepEqual(incomplete.readErrors, ['issues.comments#42: HTTP 502']);
+  assert.equal(incomplete.headSha, 'd'.repeat(40));
+  assert.equal(changed.readErrors, undefined, 'a complete read lists no failed reads');
+  assert.equal(changed.headSha, undefined, 'a snapshot retained without a head reports none');
 });
 
 test('infrastructure conclusions stay non-passing and retain watched shard details', () => {

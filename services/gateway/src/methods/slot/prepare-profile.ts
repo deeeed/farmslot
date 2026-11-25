@@ -455,13 +455,19 @@ export async function selectPrepareProfile(
   requested?: string,
   onCheck?: (profile: string, result: RequirementCheckResult) => void,
   check: typeof checkPrepareRequirement = checkPrepareRequirement,
-  options?: { strict?: boolean },
+  options?: {
+    strict?: boolean;
+    /** Requirements the caller proves another way; a pinned run's preflight proves its build. */
+    skip?: readonly PrepareRequirement[];
+  },
 ): Promise<PrepareProfileSelection> {
   let profile = resolvePrepareProfile(ctx.projectJson, requested);
   const fallbacks: PrepareProfileFallback[] = [];
-  while (profile.requires.length > 0) {
+  const checked = () =>
+    profile.requires.filter((requirement) => !options?.skip?.includes(requirement));
+  while (checked().length > 0) {
     const failures: RequirementCheckResult[] = [];
-    for (const requirement of profile.requires) {
+    for (const requirement of checked()) {
       const result = await check(requirement, ctx);
       onCheck?.(profile.name, result);
       if (!result.ok) failures.push(result);

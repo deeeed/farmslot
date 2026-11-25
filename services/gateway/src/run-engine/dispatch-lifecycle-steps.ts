@@ -1,6 +1,8 @@
-import { Events, isTerminalRunStatus, type Run } from '@farmslot/protocol';
+import path from 'node:path';
 
-import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
+import { Events, isTerminalRunStatus, type Run, type RunPrepareArtifact } from '@farmslot/protocol';
+
+import { loadSlotVars, resolveProjectRuntimeDir, type SlotVars } from '../core/config.js';
 import { execArgvOnSlot, execOnSlot, isLocal } from '../core/exec.js';
 import { claimSlotStatusIf, nextSlotEpoch, readSlotRow } from '../core/state.js';
 import { shellQuote } from '../core/tmux.js';
@@ -13,6 +15,8 @@ import {
   slotClaimBlockedByRelease,
 } from '../methods/dispatch/slot-scoring.js';
 import { slotPrepare } from '../methods/slot.js';
+import { parseJsonObject } from '../methods/slot/pinned-prepare.js';
+import { PINNED_SKIP_PREPARE_REFUSAL } from '../projects/pinned-prepare-policy.js';
 import { ensureFrozenQaSource } from '../qa/frozen-source.js';
 import {
   BEFORE_WORKER_LAUNCH,
@@ -46,6 +50,14 @@ import { taskExecutionAtDispatch } from '../runs/task-execution.js';
 import { prepareConfiguredRunCapabilities } from './declared-capabilities.js';
 import { RETAINED_SESSION_HANDOFF_HOLD } from './errors.js';
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
+import {
+  isObservedBuildRun,
+  observedBuildFiles,
+  observedRunwayArtifact,
+  prepareObservesBuild,
+  runPrepareIsPinned,
+} from './pinned-prepare.js';
+import { loadProjectVarsOrNull } from './project-vars.js';
 import { probeRemotePath } from './remote-probes.js';
 import { runSupersededSince } from './run-generation.js';
 import { prepareWarmBudgetBaselineForHandoff } from './run-monitor.js';
@@ -147,31 +159,32 @@ export function safeReferenceRepoProvenance(
   };
 }
 
+/**
+ * A JSON object file on a slot, read within 5 s, or undefined when absent, empty or
+ * not an object. Optional enrichment only: a malformed file is logged and skipped.
+ */
+async function readSlotJsonObject(
+  vars: SlotVars,
+  file: string,
+): Promise<Record<string, unknown> | undefined> {
+  const result = await execOnSlot(vars, `cat ${shellQuote(file)} 2>/dev/null`, {
+    timeout: 5_000,
+    maxBuffer: 256 * 1024,
+  });
+  if (result.exitCode !== 0 || !result.stdout.trim()) return undefined;
+  const record = parseJsonObject(result.stdout);
+  if (!record)
+    console.warn(
+      `[run-engine] ignoring optional prepare record ${path.basename(file)}: not a JSON object`,
+    );
+  return record;
+}
+
 async function readPrepareProvenance(slotId: string, project: string): Promise<PrepareProvenance> {
   const vars = await loadSlotVars(slotId);
   const runtimeDir = await resolveProjectRuntimeDir(project);
-  const readJson = async (basename: string): Promise<Record<string, unknown> | undefined> => {
-    const result = await execOnSlot(
-      vars,
-      `cat ${shellQuote(`${vars.remoteRepo}/${runtimeDir}/${basename}`)} 2>/dev/null`,
-      { timeout: 5_000, maxBuffer: 256 * 1024 },
-    );
-    if (result.exitCode !== 0 || !result.stdout.trim()) return undefined;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(result.stdout);
-    } catch (error) {
-      // Each provenance file is optional enrichment. A malformed file must not
-      // prevent the other independent provenance source from being preserved.
-      console.warn(
-        `[run-engine] ignoring malformed optional prepare provenance ${basename}: ${(error as Error).message}`,
-      );
-      return undefined;
-    }
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : undefined;
-  };
+  const readJson = (basename: string) =>
+    readSlotJsonObject(vars, `${vars.remoteRepo}/${runtimeDir}/${basename}`);
   const recipeToolingProvenance = await readJson('recipe-tooling-provenance.json');
   const referenceRepoProvenance = await readJson('reference-repos.json');
   return {
@@ -182,6 +195,37 @@ async function readPrepareProvenance(slotId: string, project: string): Promise<P
       ? safeReferenceRepoProvenance(referenceRepoProvenance)
       : undefined,
   };
+}
+
+/**
+ * For an eval trial pinning excludes, the Runway build the slot reports. Isolation
+ * moves ignored files into the capsule, so the capsule copy is read when the
+ * checkout has none; an explicit runway prepare after isolation rewrites the
+ * checkout copy, which therefore wins. Best effort: never fails a prepare.
+ */
+async function readObservedBuild(
+  run: Run,
+  slotId: string,
+): Promise<RunPrepareArtifact | undefined> {
+  const baseSha = run.startRef?.resolvedSha;
+  // Lane and flow first, so a run that is neither pinned nor excluded does no new work.
+  if (!baseSha || !isObservedBuildRun(run)) return undefined;
+  const projectVars = await loadProjectVarsOrNull(run.project, 'observed build', run.id);
+  if (!prepareObservesBuild(run, projectVars?.projectJson)) return undefined;
+  const vars = await loadSlotVars(slotId);
+  const runtimeDir = await resolveProjectRuntimeDir(run.project);
+  const capsule = run.engineState?.evalExperiment?.blind?.isolation?.capsulePath;
+  for (const file of observedBuildFiles(vars.remoteRepo, runtimeDir, capsule)) {
+    const record = await readSlotJsonObject(vars, file);
+    if (!record) continue;
+    return observedRunwayArtifact(record, {
+      slotId,
+      baseSha,
+      platform: vars.platform,
+      ...(vars.resourceVars.simulator ? { simulator: vars.resourceVars.simulator } : {}),
+    });
+  }
+  return undefined;
 }
 
 type BroadcastFn = (event: string, payload: unknown) => void;
@@ -361,10 +405,18 @@ export async function executePrepareStep(
       'Eval replay cannot skip prepare; prepare installs and verifies the pinned recipe harness.',
     );
   }
+  const pinned = await runPrepareIsPinned(current);
+  if (skipPrepare && pinned) throw new Error(PINNED_SKIP_PREPARE_REFUSAL);
   if (skipPrepare) {
     console.log(`[run-engine] skipping prepare for ${runId.slice(0, 8)} (${skipReason})`);
     await completeRunTaskInitialization(runId);
     return { inputs, outputs: { skipped: true, reason: skipReason } };
+  }
+
+  // A record from an earlier prepare must not outlive this one: a prepare that
+  // fails, or runs on another slot, would otherwise leave the old build standing.
+  if (current.prepareArtifact) {
+    await persistRunNow(updateRun(runId, { prepareArtifact: null }), 'prepare artifact cleared');
   }
 
   // Machine-pressure snapshot at prepare start — the analytics emitter reads this from
@@ -481,6 +533,7 @@ export async function executePrepareStep(
       prepareController.signal,
       {
         requireRunOwnership: true,
+        ...(pinned ? { pinned: true } : {}),
         ...(warmRecovery ? { stripClean: true } : {}),
         ...(isPrepareReplay ||
         usesEvalTrialCapsule(current.engineState?.evalExperiment?.blind) ||
@@ -559,6 +612,31 @@ export async function executePrepareStep(
           resolvedAt: prepareResult.startRef.resolvedAt,
         },
       });
+    }
+    if (prepareResult.prepareArtifact) {
+      await persistRunNow(
+        updateRun(runId, {
+          prepareArtifact: {
+            ...prepareResult.prepareArtifact,
+            slotId: current.slotId,
+            enforced: true,
+          },
+        }),
+        'pinned build recorded',
+      );
+    } else {
+      try {
+        const observed = await readObservedBuild(getRun(runId)!, current.slotId);
+        if (observed)
+          await persistRunNow(
+            updateRun(runId, { prepareArtifact: observed }),
+            'observed build recorded',
+          );
+      } catch (error) {
+        console.warn(
+          `[run-engine] observed build not recorded for ${runId.slice(0, 8)}: ${(error as Error).message.slice(0, 200)}`,
+        );
+      }
     }
     const afterPrepare = getRun(runId)!;
     if (afterPrepare.flowType === 'qa' && afterPrepare.qaSource) {

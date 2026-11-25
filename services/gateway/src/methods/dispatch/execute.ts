@@ -175,6 +175,7 @@ export {
 import { blindLaunchScript, blindTrialWorkerBoundary } from '../../evals/blind-git.js';
 import { usesEvalTrialCapsule } from '../../evals/trial-policy.js';
 import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
+import { assertPinnedRunDispatchable } from '../../run-engine/pinned-prepare.js';
 import { admitWorkerLaunch } from '../../run-engine/worker-launch-preflight.js';
 
 /**
@@ -1421,6 +1422,11 @@ export async function dispatchExecute(
       );
     }
   }
+  // Prepare refuses a build that does not match. This covers every path that
+  // reaches a new launch without that prepare (skipPrepare, restart recovery),
+  // before the slot is claimed; a native worker reconciled above keeps running.
+  // A config that failed to load counts as pinned.
+  if (currentRun) assertPinnedRunDispatchable(currentRun, projectVars?.projectJson);
 
   step(
     'info',

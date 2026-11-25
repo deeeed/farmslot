@@ -1,12 +1,16 @@
 import {
   type BotComment,
+  type CIHoldGate,
   type CIWatchFixProgress,
   type CIWatchFixTrigger,
   type CIWatchPhase,
   Events,
+  type Run,
   type RunCiWatchState,
+  type RunDecision,
 } from '@farmslot/protocol';
 
+import { resolveCIWatchChainFlowType } from '../run-engine/ci-watch-chain-flow.js';
 import { clearRunActiveTaskFile, getRun, updateRun, updateRunStep } from '../runs/store.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
@@ -121,6 +125,92 @@ export function detectCIWatchProgress(
 
 export function readDedup(runId: string): RunCiWatchState {
   return getRun(runId)?.ciWatchState ?? emptyCiWatchState();
+}
+
+/**
+ * When the operator holds this PR, the time they took the hold; otherwise undefined.
+ *
+ * A hold is a `wait` chosen at `inline_fix_blocked` while that gate offered a
+ * dispatch: the inline fix had already failed and the operator declined to hand
+ * the PR to a worker, because they are waiting on something the gateway cannot
+ * see, such as another PR merging. Run fcfb5124 was the case. While held, nothing
+ * dispatches automatically and no new inline fix starts.
+ *
+ * It is derived from `run.decisions`, which the live gate and the restart-recovery
+ * path both persist, so a wait chosen after a gateway restart still holds. Waits
+ * on other gates keep their one-shot meaning, and a wait at an
+ * `inline_fix_blocked` gate that offered no dispatch (a cancelled or timed-out
+ * check) means "keep watching", not a hold. The hold ends at a later `retry` on
+ * any CI gate, or at a replay that re-ran ci-watch (`holdReleasedAt`).
+ */
+export function ciHoldSince(
+  run: Pick<Run, 'decisions' | 'ciWatchState'> | undefined,
+): string | undefined {
+  if (!run) return undefined;
+  const heldAt = latestCIWait(
+    run,
+    (decision) =>
+      decision.type === 'ci_inline_fix_blocked' &&
+      !!decision.actions?.some((action) => resolveCIWatchChainFlowType(action.id)),
+  )?.resolvedAt;
+  if (!heldAt) return undefined;
+  const retried = (run.decisions ?? []).some(
+    (decision) =>
+      decision.type.startsWith('ci_') &&
+      decision.resolvedAction === 'retry' &&
+      !!decision.resolvedAt &&
+      decision.resolvedAt > heldAt,
+  );
+  const releasedAt = run.ciWatchState?.holdReleasedAt;
+  if (retried || (releasedAt && releasedAt > heldAt)) return undefined;
+  return heldAt;
+}
+
+/**
+ * The operator's latest `wait` on any CI gate in the current hold, the hold itself
+ * included; undefined when the PR is not held. A dispatch answered at or before it
+ * is not reused: the operator has said to wait since.
+ */
+export function ciHoldBarrier(
+  run: Pick<Run, 'decisions' | 'ciWatchState'> | undefined,
+): string | undefined {
+  if (!run || !ciHoldSince(run)) return undefined;
+  return latestCIWait(run, (decision) => decision.type.startsWith('ci_'))?.resolvedAt;
+}
+
+/**
+ * Whether a gate of this type may stay quiet: in the current hold, the operator's
+ * latest "Keep holding" there was given for exactly this state (`context.holdKey`),
+ * after the last time a read showed that state clear (`ciWatchState.holdClearedAt`).
+ * Read from the run, so it survives a gateway restart.
+ */
+export function ciHoldIsQuiet(
+  run: Pick<Run, 'decisions' | 'ciWatchState'> | undefined,
+  gate: CIHoldGate,
+  holdKey: string,
+): boolean {
+  const since = ciHoldSince(run);
+  if (!run || !since) return false;
+  const answer = latestCIWait(
+    run,
+    (decision) => decision.type === `ci_${gate}` && (decision.resolvedAt ?? '') > since,
+  );
+  const clearedAt = run.ciWatchState?.holdClearedAt?.[gate];
+  if (!answer?.resolvedAt || (clearedAt && answer.resolvedAt <= clearedAt)) return false;
+  return answer.context?.holdKey === holdKey;
+}
+
+/** The latest resolved `wait` among the decisions `match` accepts. */
+function latestCIWait(
+  run: Pick<Run, 'decisions'>,
+  match: (decision: RunDecision) => boolean,
+): RunDecision | undefined {
+  let latest: RunDecision | undefined;
+  for (const decision of run.decisions ?? []) {
+    if (decision.resolvedAction !== 'wait' || !decision.resolvedAt || !match(decision)) continue;
+    if (!latest?.resolvedAt || decision.resolvedAt > latest.resolvedAt) latest = decision;
+  }
+  return latest;
 }
 
 /** Operator chose Retry CI — allow inline fix another consecutive-attempt window. */

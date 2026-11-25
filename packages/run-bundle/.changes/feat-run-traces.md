@@ -1,0 +1,1 @@
+- `readRetainedTaskFileReadOnly` reads one retained task file, digest-checked, without opening or repairing the store.

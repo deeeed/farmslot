@@ -302,7 +302,14 @@ export interface TaskScratchParkResult {
 }
 
 // The flow folders Farmslot creates under the task root (tasks/writer.ts: flowDir(flowType)).
-const FLOW_TYPES = ['fix-bug', 'review-pr', 'qa', 'dev', 'pr-complete', 'update-branch'] as const;
+export const FLOW_TYPES = [
+  'fix-bug',
+  'review-pr',
+  'qa',
+  'dev',
+  'pr-complete',
+  'update-branch',
+] as const;
 
 /**
  * Workers sometimes write scratch beside their task dir (temp/tasks/scratch-probe,

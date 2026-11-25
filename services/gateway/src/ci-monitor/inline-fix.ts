@@ -118,6 +118,7 @@ import { isNoCodeTerminalDisposition, normalizeWorkerSignal } from '../tasks/wor
 import { validateTerminalSignalArtifacts } from '../tasks/worker-terminal-contract.js';
 
 import {
+  ciHoldSince,
   clearInlineFixState,
   type InlineCIFix,
   isInlineFixRedundant,
@@ -1660,6 +1661,16 @@ export async function tryInlineCIFix(
     };
   const runner = normalizeRunner(run.metrics.runner);
   const recoveringDelivery = resolveRecoverableCiFixContext(run) !== null;
+  // A held PR gets no new inline fix: the fix prompt rebases and pushes, which is an
+  // update-branch without a child run. A delivery already in flight still finishes.
+  // Return null rather than "blocked", which would re-raise the gate the operator
+  // just answered.
+  if (!recoveringDelivery && ciHoldSince(run)) {
+    console.log(
+      `[ci-monitor] run ${runId.slice(0, 8)} — operator holds the PR; no new inline CI fix`,
+    );
+    return null;
+  }
 
   const dedup = readDedup(runId);
   if (!recoveringDelivery && dedup.totalAttempts >= MAX_INLINE_CI_FIX_TOTAL) {

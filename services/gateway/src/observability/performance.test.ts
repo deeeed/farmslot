@@ -165,6 +165,23 @@ test('overlapping background requests keep separate execution tallies', async ()
   assert.equal(second.shell, undefined);
 });
 
+test('a nested execution tally keeps its own counts and adds them to the outer one', async () => {
+  const { withExecutionTally } = await import('./performance.js');
+  const outer: import('./performance.js').ExecTally = {};
+  const inner: import('./performance.js').ExecTally = {};
+  await withExecutionTally(outer, async () => {
+    await measureManagedOperation('exec', 'git', async () => undefined);
+    await withExecutionTally(inner, () =>
+      measureManagedOperation('exec', 'shell', async () => undefined),
+    );
+  });
+  assert.equal(inner.shell?.calls, 1);
+  assert.equal(inner.git, undefined);
+  // Before, the inner tally shadowed the outer one and the outer lost the shell call.
+  assert.equal(outer.shell?.calls, 1);
+  assert.equal(outer.git?.calls, 1);
+});
+
 test('a background IPC reply retains its initiating request attribution', async () => {
   const { captureHostOperationExec } = await import('./performance.js');
   const metrics = new PerformanceRecorder('gateway', { methods: new Set(['foreground']) });

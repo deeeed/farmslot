@@ -46,18 +46,21 @@ export class NativeReviewPassWithoutSignalError extends NativeReviewCompletionEr
 
 /**
  * Signal states that get the one completion re-ask: the reviewer stopped before its terminal
- * mark (`non_terminal`), never wrote a signal (`missing`), or wrote one that cannot be read as
- * this attempt's. `artifact_contract` is a real gate and `terminal_contract_infrastructure` a
- * gateway-side check that could not run, so neither is re-asked.
+ * mark (`non_terminal`), or wrote a signal that cannot be read as this attempt's. A `missing`
+ * signal is not re-asked: a reviewer may write its mark after its turn ends, and the monitor waits
+ * for it. `artifact_contract` is a real gate and `terminal_contract_infrastructure` a gateway-side
+ * check that could not run, so neither is re-asked.
  */
 const COMPLETION_REASK_CODES = new Set([
   'non_terminal',
-  'missing',
   'invalid_json',
   'invalid_schema',
   'stale',
   'context_mismatch',
 ]);
+
+/** After a re-ask has ended, a signal that is still missing leaves the reviewer's result to decide. */
+const RESULT_AFTER_REASK_CODES = new Set([...COMPLETION_REASK_CODES, 'missing']);
 
 /** One durable completion instruction per admitted reviewer, shared by live and restart recovery. */
 export async function continueNativeReviewCompletion(
@@ -127,7 +130,7 @@ export async function continueNativeReviewCompletion(
     if (
       command.outcome === 'completed' &&
       !['closed', 'failed'].includes(snapshot.session.state) &&
-      COMPLETION_REASK_CODES.has(probe.code) &&
+      RESULT_AFTER_REASK_CODES.has(probe.code) &&
       resultTakeable({ run, context })
     ) {
       // 961d55d3: the reviewer wrote a valid result and ended the re-asked turn without its mark.
@@ -230,14 +233,10 @@ export async function continueNativeReviewCompletion(
   if (!reserved) {
     const target = targetForChecklistBasename(path.posix.basename(context.taskFile));
     const mark = checklistMarkerCommand(taskDir, target);
-    // A reviewer that never wrote a signal may never have run `mark start`.
     const text =
       `Continue this exact reviewer task in ${context.taskFile}. Preserve the existing findings, report and completed checklist steps. ` +
-      (probe.code === 'missing'
-        ? `Its checklist signal is missing. If you never ran ${mark} start, run it once now, then mark each step you completed with ${mark} <N>, finish the rest and run ${mark} complete. ` +
-          'Do not reset completed steps, rerun the diff or start /review. Return the required review output schema after the terminal mark.'
-        : `Finish its remaining checklist and run ${mark} complete. ` +
-          'Do not run start, reset the checklist, rerun the diff or start /review. Return the required review output schema after the terminal mark.');
+      `Finish its remaining checklist and run ${mark} complete. ` +
+      'Do not run start, reset the checklist, rerun the diff or start /review. Return the required review output schema after the terminal mark.';
     await withNativeReviewOperation(run, () =>
       withNativeReviewMutation(async () => {
         current();

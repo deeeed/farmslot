@@ -1884,7 +1884,12 @@ interface PrepareRecoveryCalls {
 
 function buildPrepareRecoveryDeps(
   run: Run,
-  opts: { killed: boolean; healthExit?: number; healthStdout?: string },
+  opts: {
+    killed: boolean;
+    healthExit?: number;
+    healthStdout?: string;
+    projectJson?: Record<string, unknown>;
+  },
 ): { deps: RunRecoveryCollaborators; calls: PrepareRecoveryCalls } {
   const calls: PrepareRecoveryCalls = {
     healthChecked: false,
@@ -1908,7 +1913,7 @@ function buildPrepareRecoveryDeps(
     loadSlotVars: async () => ({ remoteRepo: '/repo', slotId: run.slotId }),
     loadProjectVarsOrNull: async () => ({
       runtimeDir: 'temp/recipe/runtime',
-      projectJson: {},
+      projectJson: opts.projectJson ?? {},
     }),
     getProjectFieldRaw: () => [],
     expandTemplate: (t: string) => t,
@@ -1981,6 +1986,47 @@ test('prepare recovery skips prepare only when nothing killed and sub-steps comp
     'run advances to dispatching',
   );
   assert.equal(calls.warmRecovery, false, 'no warm re-run when the skip is legitimate');
+});
+
+test('a pinned run with no recorded build prepares again after a restart', async () => {
+  // A healthy app says nothing about which build it is. Without the record a pinned
+  // prepare writes, recovery must not mark prepare done.
+  const BASE = '260bd3a5b20c3f9126510b7b71d0e5527f395b5d';
+  const pinned = (prepareArtifact: Run['prepareArtifact']) => {
+    const run = preparingRun([
+      { name: 'preflight', outcome: 'ok', durationMs: 1, detail: 'Preflight completed (log: x)' },
+      { name: 'health', outcome: 'ok', durationMs: 1, detail: 'Health check — OK' },
+    ]);
+    run.lane = 'comparison';
+    run.startRef = { requestedRef: '260bd3a5', resolvedSha: BASE };
+    run.prepareArtifact = prepareArtifact;
+    return run;
+  };
+  const mobile = { hooks: { artifact_check: 'probe' } };
+
+  const missing = buildPrepareRecoveryDeps(pinned(null), { killed: false, projectJson: mobile });
+  await recoverActiveRuns(missing.deps);
+  assert.equal(missing.calls.healthChecked, false, 'health is not trusted');
+  assert.equal(missing.calls.warmRecovery, true, 'prepare runs again');
+
+  const recorded = buildPrepareRecoveryDeps(
+    pinned({
+      kind: 'runway',
+      slotId: 'macwork-mmedev-2',
+      baseSha: BASE,
+      runId: '41900351233',
+      revision: BASE,
+      platform: 'ios',
+      installedAt: '2026-11-25T10:00:00.000Z',
+      enforced: true,
+    }),
+    { killed: false, projectJson: mobile },
+  );
+  await recoverActiveRuns(recorded.deps);
+  assert.ok(
+    recorded.calls.prepareStepUpdates.some((f) => f.detail === 'Recovered (slot healthy)'),
+    'a matching record keeps the warm recovery',
+  );
 });
 
 test('prepare recovery re-runs prepare when sub-steps show incomplete phases', async () => {

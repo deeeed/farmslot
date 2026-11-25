@@ -8,6 +8,7 @@ import {
 } from '../../core/index.js';
 import type { StartRefResolution } from '../../projects/start-ref-resolution.js';
 
+import type { PinnedPrepareArtifact } from './pinned-prepare.js';
 import type { PrepareProfileFallback } from './prepare-profile.js';
 
 /** Names the supported exit from a held slot whose workspace recovery failed. */
@@ -27,6 +28,8 @@ export type SlotPrepareResult = {
   lockfilesRewritten?: string[];
   /** Branches prepare created to keep unpushed commits of a branch it deleted or reset. */
   keptBranches?: string[];
+  /** The build a pinned prepare installed, from its preflight's receipt. */
+  prepareArtifact?: PinnedPrepareArtifact & { installedAt: string };
 };
 export interface SlotPrepareInternalOptions {
   /** The keep-warm re-prepare a release runs while it still holds the releasing fence. */
@@ -44,6 +47,13 @@ export interface SlotPrepareInternalOptions {
   allowMissingReplayBranch?: boolean;
   beforeBranchSetup?: () => Promise<void>;
   startRef?: { requestedRef: string };
+  /**
+   * A pinned comparison run (`isPinnedPrepareRun`). When the project takes part
+   * (`projectPinsPrepare`), prepare selects only from `prepare.pinned_profiles`,
+   * strictly, hands the resolved start commit to preflight and requires its
+   * receipt; a project config that fails to load refuses the prepare.
+   */
+  pinned?: boolean;
   /** Stacked run: create a new work branch from this pushed ref instead of the default branch. */
   stackBase?: { requestedRef: string };
   /** Called as soon as the stack base resolves, before any later prepare phase can fail. */
