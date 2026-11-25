@@ -171,6 +171,7 @@ function readSignal(signalPath: string): SignalView {
 function completedSignal(
   taskDir: string,
   overrides: ChecklistTargetOverrides,
+  canCloseout: boolean,
 ): { learningsWaived: boolean } | null {
   let signal: SignalView;
   try {
@@ -180,8 +181,11 @@ function completedSignal(
   } catch (error) {
     // The mark wrote or matched the signal, so this is unexpected. Its verdict
     // stands; only completion staging can't be decided, so say how to finish it.
+    const next = canCloseout
+      ? `; if the run completed, run: ${harnessHost().name} checklist closeout ${taskDir}`
+      : '';
     console.error(
-      `Warning: the signal could not be read after the mark (${error instanceof Error ? error.message : String(error)}); if the run completed, rerun: ${harnessHost().name} checklist closeout ${taskDir}; task verdict is unchanged.`,
+      `Warning: the signal could not be read after the mark (${error instanceof Error ? error.message : String(error)})${next}; task verdict is unchanged.`,
     );
     return null;
   }
