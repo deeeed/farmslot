@@ -148,6 +148,21 @@ for (const status of ['done', 'failed'] as const) {
   });
 }
 
+test('an archive that returns the checkout to idle drops an earlier "Checkout retained" note', async (t) => {
+  const run = blockedRun(t, 'archive-retained-note', [{ name: 'review', status: 'done' }]);
+  updateRun(run.id, {
+    status: 'done',
+    completedAt: new Date().toISOString(),
+    slotTeardownSkipped: 'Checkout retained: Slot is working',
+  });
+  await holdSlotFor(t, run.id);
+  const { calls, slot } = recordingSlot();
+  await runArchive({ runId: run.id }, noopEmit, slot);
+  assert.deepEqual(calls.idleReturns, [slotId]);
+  assert.equal((await getRunWithArchived(run.id))?.slotTeardownSkipped, undefined);
+  t.after(() => rm(path.join(runsDirectory(), 'archive', `${run.id}.json`), { force: true }));
+});
+
 test('terminal archive retains a live ownership record when cleanup fails and protects a successor', async (t) => {
   const run = blockedRun(t, 'archive-terminal-cleanup', [{ name: 'monitor', status: 'done' }]);
   updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });

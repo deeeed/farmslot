@@ -16,6 +16,7 @@ import path from 'node:path';
 import { after, mock, test } from 'node:test';
 
 import type { Run, RunOutput } from '@farmslot/protocol';
+import { strictTaskRelativePathFromFarmslotRoot } from '@farmslot/protocol/runs/portable-bundle';
 
 // The scrub runs for real against a temp slot repo; only the transport, the slot row and the
 // bundle store are faked: `<bundles>/<runId>/manifest.json` and
@@ -133,13 +134,12 @@ function bundleHas(run: Run, files: string[], taskRelativePath?: string) {
     mkdirSync(path.dirname(path.join(dir, 'tasks/t', rel)), { recursive: true });
     writeFileSync(path.join(dir, 'tasks/t', rel), 'x');
   }
-  const taskFile = run.taskFile ?? '';
-  const folder = path.basename(path.dirname(path.dirname(taskFile)));
-  const name = path.basename(path.dirname(taskFile));
-  const record: { originalRunId: string; taskRelativePath: string } = {
-    originalRunId: run.id,
-    taskRelativePath: taskRelativePath ?? `projects/va-mmcx-terminal-farm/tasks/${folder}/${name}`,
-  };
+  // What the bundle writer records (packages/run-bundle/src/retained.ts): the task file's path
+  // from the Farmslot root, so `.../tasks/<flow>/<name>/TASK.md`.
+  const recorded =
+    taskRelativePath ?? strictTaskRelativePathFromFarmslotRoot('/farm', run.taskFile);
+  assert.ok(recorded, 'the fixture task lies under the Farmslot root');
+  const record = { originalRunId: run.id, taskRelativePath: recorded };
   writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ runs: [record] }));
 }
 /** A park that freed the slot at an operator wait (ADR-054). */
@@ -304,18 +304,29 @@ test('a bundle confirms a task only for this task, with TASK.md and every artifa
     confirmed: false,
     reason: 'bundle lacks artifacts/fix.diff',
   });
-  bundleHas(run, ['artifacts/fix.diff'], 'projects/va-mmcx-terminal-farm/tasks/feat/other-task');
+  bundleHas(
+    run,
+    ['artifacts/fix.diff'],
+    'projects/va-mmcx-terminal-farm/tasks/feat/other-task/TASK.md',
+  );
   assert.deepEqual(await taskBundleCheck(runs.getRun(run.id)!), {
     confirmed: false,
     reason: 'bundle record names another task',
   });
-  bundleHas(run, [], 'projects/va-mmcx-terminal-farm/tasks/xfeat/tat-5000');
+  bundleHas(run, [], 'projects/va-mmcx-terminal-farm/tasks/xfeat/tat-5000/TASK.md');
   assert.equal(
     (await taskBundleCheck(runs.getRun(run.id)!)).confirmed,
     false,
     'the folder matches at a path boundary only',
   );
   bundleHas(run, []);
+  assert.equal(
+    (await taskBundleCheck(runs.getRun(run.id)!)).confirmed,
+    true,
+    "the writer's own TASK.md path confirms its task",
+  );
+  // A record naming the folder itself still confirms it.
+  bundleHas(run, [], 'projects/va-mmcx-terminal-farm/tasks/feat/tat-5000');
   assert.equal((await taskBundleCheck(runs.getRun(run.id)!)).confirmed, true);
   runs.updateRun(run.id, { output: { ...captured, retentionMissingData: ['media'] } });
   assert.equal((await taskBundleCheck(runs.getRun(run.id)!)).confirmed, false);

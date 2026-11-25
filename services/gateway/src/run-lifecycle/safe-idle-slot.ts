@@ -128,6 +128,11 @@ export async function reuseSafeIdleSlot(
     retainedCandidate?: boolean;
     /** Only this head may be parked (an ownerless checkout COMPLETE already released). */
     parkHeadSha?: string;
+    /**
+     * Refuse unless the checkout is exactly the recorded run head on its branch with a clean tree,
+     * so an automatic retry never resets work anyone added after the release.
+     */
+    exactHead?: boolean;
   },
 ): Promise<SafeIdleSlotResult> {
   try {
@@ -167,6 +172,14 @@ export async function reuseSafeIdleSlot(
       }
     }
     if (atVerifiedDefault(workspace)) return { kind: 'ready' };
+    if (
+      expected?.exactHead &&
+      (!parkRunId || workspace.dirtyCount || workspace.headSha !== expected.parkHeadSha)
+    )
+      return {
+        kind: 'unavailable',
+        reason: 'Checkout changed since the run released it; it is not returned automatically',
+      };
     await retainCheckout(slotId, workspace, expected?.recordRunId);
     const { recoverSlotWorkspace } = await import('../methods/slot/recover-workspace.js');
     const result = await recoverSlotWorkspace(
@@ -181,6 +194,8 @@ export async function reuseSafeIdleSlot(
       {
         skipRecycle: true,
         ...(parkRunId ? { parkRunId, parkHeadSha } : {}),
+        // Recovery inspects again: the strict return holds for what it finds, too.
+        ...(expected?.exactHead ? { exactWorkspace: true } : {}),
       },
     );
     if (result.refreshed) emit(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
@@ -205,6 +220,7 @@ export async function reuseSafeIdleSlot(
 export async function returnReleasedCheckoutToIdle(
   run: Run,
   emit: EventEmitter,
+  options?: { exactHead?: boolean },
 ): Promise<SafeIdleSlotResult | null> {
   const released = run.releasedCheckout;
   if (
@@ -222,8 +238,13 @@ export async function returnReleasedCheckoutToIdle(
     runId: null,
     recordRunId: run.id,
     parkHeadSha: released.headSha,
+    ...(options?.exactHead ? { exactHead: true } : {}),
   });
-  if (result.kind !== 'ready')
+  if (result.kind === 'ready') {
+    const { clearCheckoutRetainedNote } = await import('./slot-teardown.js');
+    await clearCheckoutRetainedNote(run);
+  } else if (!options?.exactHead)
+    // The automatic retry throttles its own log.
     console.warn(
       `[slot.release] ${run.slotId}: released checkout of run ${run.id.slice(0, 8)} stays: ${result.reason}`,
     );

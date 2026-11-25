@@ -1992,6 +1992,20 @@ for (const status of ['done', 'failed'] as const) {
   });
 }
 
+test('an idle return that succeeds after release clears the first attempt note', async () => {
+  run.status = 'done';
+  idleReturnResult = { kind: 'unavailable', reason: 'Slot is working' };
+  onIdleReturn = () => {
+    if (idleReturnCalls === 2) idleReturnResult = { kind: 'ready' };
+  };
+  await releaseCompletedRunSlot(run);
+  assert.equal(idleReturnCalls, 2);
+  const notes = runUpdates.filter((patch) => 'slotTeardownSkipped' in patch);
+  assert.equal(notes[0]?.slotTeardownSkipped, 'Checkout retained: Slot is working');
+  assert.equal(notes.at(-1)?.slotTeardownSkipped, undefined);
+  assert.equal(run.slotTeardownSkipped, undefined);
+});
+
 test('a blind trial whose Git cannot be restored keeps the slot held for retry', async () => {
   run.status = 'done';
   asFinishedBlindTrial();

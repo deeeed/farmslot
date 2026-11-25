@@ -44,7 +44,10 @@ import {
   isRunArchiving,
 } from '../../run-lifecycle/archive-fence.js';
 import { reuseSafeIdleSlot } from '../../run-lifecycle/safe-idle-slot.js';
-import { slotOwnershipBlocker } from '../../run-lifecycle/slot-teardown.js';
+import {
+  clearCheckoutRetainedNote,
+  slotOwnershipBlocker,
+} from '../../run-lifecycle/slot-teardown.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import {
   archiveRun as storeArchiveRun,
@@ -312,7 +315,8 @@ async function releaseKeptSlot(
       runId: null,
       recordRunId: run.id,
     });
-    if (result.kind !== 'ready') {
+    if (result.kind === 'ready') await clearCheckoutRetainedNote(run);
+    else {
       const retained = updateRun(run.id, {
         slotTeardownSkipped: `Checkout retained: ${result.reason}`,
       });
