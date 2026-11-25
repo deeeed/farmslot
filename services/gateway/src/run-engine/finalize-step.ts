@@ -43,6 +43,7 @@ import {
   verifyReadyGateSelectedEvidenceFiles,
 } from '../run-completion/ready-gate-package.js';
 import { rerequestChangesRequestedReviewers } from '../run-completion/review-rerequest.js';
+import { recordGradedOutputOnSlot, recordPrHead } from '../run-traces/output.js';
 import { workspaceSessionUsageArgv } from '../runners/native-session-usage-command.js';
 import { getRunnerSessionUsageProvider } from '../runners/registry.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
@@ -570,6 +571,13 @@ export async function executeFinalizeStep(
     publishBodyPostProcessed = published.bodyPostProcessed;
     publishedHeadSha = approvedPackage.headSha;
     publishedBranch = approvedPackage.branch;
+    // ADR-039 Amendment 10: the published commit is the graded output and the PR head.
+    recordPrHead(runId, approvedPackage.headSha);
+    void recordGradedOutputOnSlot({
+      runId,
+      source: 'committed',
+      ref: approvedPackage.headSha ?? null,
+    });
     emitWithBroadcast('substep', { name: 'refresh-links', detail: 'Refreshing PR run links' });
     await refreshRunLinks(runId);
   }

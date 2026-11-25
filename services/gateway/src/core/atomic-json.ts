@@ -8,8 +8,8 @@ export async function writeAtomicJSON(file: string, data: unknown): Promise<void
   await writeAtomicText(file, JSON.stringify(data));
 }
 
-/** Atomically replace a file with text a caller already serialized, such as a store's JSON. */
-export async function writeAtomicText(file: string, text: string): Promise<void> {
+/** Atomically replace a file with text (or bytes) a caller already serialized, such as a store's JSON. */
+export async function writeAtomicText(file: string, text: string | Uint8Array): Promise<void> {
   assertStorageVolumePresent(file);
   await mkdir(dirname(file), { recursive: true });
   const temporary = `${file}.${randomUUID()}.tmp`;

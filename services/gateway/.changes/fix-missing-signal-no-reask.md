@@ -1,0 +1,1 @@
+- A native reviewer whose turn ends before it writes its terminal mark is waited for again instead of re-asked at once, so a mark written after the turn is accepted. Only an unfinished checklist or an unreadable signal gets the completion re-ask.

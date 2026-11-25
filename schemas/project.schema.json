@@ -1085,6 +1085,14 @@
         }
       }
     },
+    "traces": {
+      "type": "object",
+      "description": "Run traces as private training data (ADR-039 Amendment 10). enabled: false opts the project out: transcripts are archived only at slot release, for History, and export skips its runs.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": true }
+      }
+    },
     "static_review": {
       "type": "object",
       "description": "Canonical static-review template and optional frozen fixture guidance, without project prepare.",

@@ -374,6 +374,7 @@ export function runListRow(run: Run): RunListRow {
       pipelineVisualReviewInput,
       pipelineVisualReviewResult,
       runnerSessionArchive,
+      runnerSessionArchives,
       usage,
       ...context
     }) => {
@@ -381,13 +382,14 @@ export function runListRow(run: Run): RunListRow {
         pipelineVisualReviewInput,
         pipelineVisualReviewResult,
         runnerSessionArchive,
+        runnerSessionArchives,
         usage,
       );
       return context;
     },
   );
-  const { subtasks, checklistTiming, ...metrics } = run.metrics;
-  heavy.push(subtasks, checklistTiming);
+  const { subtasks, checklistTiming, runnerSessionArchives, ...metrics } = run.metrics;
+  heavy.push(subtasks, checklistTiming, runnerSessionArchives);
   let ticketData: RunListRow['ticketData'];
   if (run.ticketData) {
     const { description, ...ticket } = run.ticketData;

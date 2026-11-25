@@ -1,4 +1,5 @@
-export { type FloorHit, type FloorPattern, scanForFloorSecrets } from './floor.js';
+export { GITLEAKS_RULES, type GitleaksRule } from './data/gitleaks-rules.js';
+export { FLOOR_PATTERNS, type FloorHit, type FloorPattern, scanForFloorSecrets } from './floor.js';
 export {
   type RedactionTokens,
   type RetainedTextFile,

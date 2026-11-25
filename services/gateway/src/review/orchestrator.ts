@@ -59,6 +59,7 @@ import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 import { prepareRetainedRunCapabilities } from '../run-engine/declared-capabilities.js';
 import { reportRunnerProgressWarning } from '../run-engine/progress-warning.js';
 import { runSupersededSince } from '../run-engine/run-generation.js';
+import { captureSessionAtEnd } from '../run-traces/session-capture.js';
 import {
   buildLaunchCommand,
   modelQuestionsForRun,
@@ -1576,6 +1577,13 @@ export async function runReviewRetryLoop({
         { lastSignalAt: new Date().toISOString() },
       );
       await deps.unwatchContext(slotId, 'review-fix');
+      // ADR-039 Amendment 10: the fix session answers the round before nextLoopNumber.
+      captureSessionAtEnd({
+        runId,
+        contextId: 'review-fix',
+        vars,
+        answersRound: nextLoopNumber - 1,
+      });
       const fixDelta = await deps.captureFixDelta(
         vars,
         taskDir,
