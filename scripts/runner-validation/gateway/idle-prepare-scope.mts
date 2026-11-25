@@ -33,6 +33,9 @@ for (const [key, value] of Object.entries({
   FARMSLOT_RUNS_DIR: path.join(scratch, 'root', '.runs'),
   FARMSLOT_CAPABILITY_STORE_FILE: path.join(scratch, 'root', '.runs', 'capabilities.json'),
   FARMSLOT_DEMO_POOL: '0',
+  // The slot row lives in this proof's own status store, never the shared fleet file.
+  NODE_TEST_CONTEXT: '1',
+  FARMSLOT_TEST_STATUS_FILE: path.join(scratch, 'status.json'),
   TMUX_TMPDIR: socketDir,
   TMUX: '',
 }))
