@@ -1,0 +1,1 @@
+- `effectiveSlotMode(slot)` gives `disabled` for `enabled: false`, otherwise the slot's `mode`, then `dispatch`. `RawPoolSlot.mode` and the pool schema now accept `disabled`, which the slot editors already write.

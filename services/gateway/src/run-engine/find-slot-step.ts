@@ -768,7 +768,7 @@ activePrepareSlots.onCleared((slotId) => resourceRevisions.advance({ family: 'sl
  * not picked and then refused at prepare ('already preparing', 1b542e2f on macpro-mmt-4).
  */
 export function splitGuardedFreeSlots<
-  S extends Pick<SlotStatus, 'slot' | 'missingFromPool' | 'lifecycle' | 'agent'>,
+  S extends Pick<SlotStatus, 'slot' | 'missingFromPool' | 'lifecycle' | 'agent' | 'enabled'>,
 >(
   slots: readonly S[],
   guarded: (slotId: string) => boolean = (slotId) => activePrepareSlots.has(slotId),

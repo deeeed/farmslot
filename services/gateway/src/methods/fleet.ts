@@ -20,7 +20,7 @@ import {
   staleFleet,
 } from '@farmslot/protocol';
 import { RESOURCE_REREAD_INTERVAL_MS } from '@farmslot/protocol/client-cache';
-import { poolDirectory } from '@farmslot/slot-config';
+import { effectiveSlotMode, poolDirectory } from '@farmslot/slot-config';
 
 import { summarizeAgentContexts } from '../agents/contexts.js';
 import {
@@ -1045,10 +1045,7 @@ export async function checkSSHPerMachine(
     seen.add(key);
 
     // Skip probe if all slots disabled
-    const hasEnabled = pool.slots.some((s) => {
-      const mode = s.mode || (s.enabled === false ? 'disabled' : 'dispatch');
-      return mode !== 'disabled';
-    });
+    const hasEnabled = pool.slots.some((s) => effectiveSlotMode(s) !== 'disabled');
 
     if (isLocal(pool.host, pool.machine)) {
       status.set(key, 'local');
@@ -1190,9 +1187,7 @@ async function checkSingleSlot(
   const sid = rawSlot.id;
   const slotProject = rawSlot.project || pool.project || '';
 
-  // Determine mode
-  let mode = rawSlot.mode || '';
-  if (!mode) mode = rawSlot.enabled === false ? 'disabled' : 'dispatch';
+  const mode = effectiveSlotMode(rawSlot);
 
   const platform = rawSlot.platform || pool.platform;
   const deviceName =

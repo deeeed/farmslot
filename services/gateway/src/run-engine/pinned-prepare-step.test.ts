@@ -94,11 +94,13 @@ mock.module('../runners/launch-command.js', {
 mock.module('./eval-harness-lifecycle.js', {
   namedExports: { executeEvalHarnessLifecycle: async () => ({ skipped: true }) },
 });
+let slotDisabled = false;
 let scrubReceipt: Awaited<ReturnType<typeof slotPrepare>>['tempScrub'];
 let failAfterScrub = false;
 const prepare: typeof slotPrepare = async (_params, _emit, _signal, options) => {
   prepareOptions = options;
   recordWhenPrepared = run.prepareArtifact;
+  if (slotDisabled) return { prepared: false, requestId: 'fixture-prepare' };
   if (scrubReceipt) options?.onTempScrubbed?.(scrubReceipt);
   if (failAfterScrub) throw new Error("temp/ still holds another run's files: temp (refused)");
   return {
@@ -126,6 +128,7 @@ const stale: RunPrepareArtifact = {
 };
 
 beforeEach(() => {
+  slotDisabled = false;
   scrubReceipt = undefined;
   failAfterScrub = false;
   persisted.length = 0;
@@ -181,6 +184,11 @@ test('a pinned prepare clears the old record, asks for pinning, and records the 
     cleared >= 0 && cleared < persisted.indexOf('pinned build recorded'),
     persisted.join(', '),
   );
+});
+
+test('a slot that prepare skipped as disabled fails the prepare step', async () => {
+  slotDisabled = true;
+  await assert.rejects(prepareRun(), /is disabled; prepare did not prepare it/);
 });
 
 const receipt = (refusedCount = 0) => ({
