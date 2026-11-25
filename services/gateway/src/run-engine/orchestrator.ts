@@ -1897,6 +1897,16 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
       const { releaseFenceCensus } = await import('./release-fence-census.js');
       return releaseFenceCensus(run, slotId);
     },
+    cancelledReplayBlocker: async (run, slotId) => {
+      if (run.slotId !== slotId) return `Run ${run.id} is no longer bound to ${slotId}`;
+      const { fencedSlotOwnershipBlocker } = await import('../run-lifecycle/slot-teardown.js');
+      return fencedSlotOwnershipBlocker(run);
+    },
+    resumeInterruptedCancel: async (run, slotId, fence) => {
+      const { resumeInterruptedCancelCleanup } =
+        await import('../run-lifecycle/cancel-transition.js');
+      return resumeInterruptedCancelCleanup(run, slotId, fence);
+    },
     quarantineLeakedRun,
     stopRunOwnedWorkers: async (run) => {
       const { stopRunOwnedTmuxWorkers } = await import('../runners/owned-stop.js');
