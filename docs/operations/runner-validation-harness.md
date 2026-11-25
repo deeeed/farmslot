@@ -79,7 +79,8 @@ Registry source of truth: `services/gateway/src/runners/registry.ts` (`observabi
 | `dispatch-prompt-smoke`             | Gateway `sendRunnerPostLaunchPrompt` (dispatch parity)                 | skip         | **interactive**   | **interactive** launch |
 | `dispatch-prompt-dropped-enter`     | Buffered prompt recovery after a deterministically omitted submit key  | Codex live   | skip              | skip                   |
 | `dispatch-prompt-mcp-race`          | MCP init race: fixture repro + live force-fail + fix pass              | skip         | skip              | **interactive** launch |
-| `dispatch-prompt-trust`             | Directory-trust / project-directory + classifier send_yes              | skip         | skip              | **fixture**            |
+| `dispatch-prompt-trust`             | Directory-trust / project-directory detection + deadline bump          | skip         | skip              | **fixture**            |
+| `dispatch-prompt-deadline`          | Readiness deadline: composer handover, extra window then failure       | **scripted** | skip              | skip                   |
 | `prompt-accepted`                   | Sentinel digest ↔ UserPromptSubmit                                     | live         | skip              | skip                   |
 | `review-recovery-terminal-contract` | Runner-agnostic recovery, wait, replay, and slot cleanup (once)        | gateway E2E  | not repeated      | not repeated           |
 | `warm-publication-review`           | Publication RPC review after restart; disabled recovery must fail      | live         | skip              | skip                   |

@@ -1,7 +1,7 @@
 # Run traces
 
 Design specification for [ADR-039 Amendment 10](../adr/039-run-portable-bundles.md#amendment-10-2026-11-24-run-traces-as-private-training-data).
-**Status:** Accepted by Arthur, 2026-11-24. Implementation pending.
+**Status:** Accepted by Arthur, 2026-11-24. Implemented.
 
 A run trace is a run's agent transcripts plus its outcome labels, kept so that past
 runs can train and compare models. It reuses the episode ([Run episodes](run-episodes.md))
@@ -27,8 +27,11 @@ only on the node that ran them.
 - **Keying.** An archive lives at
   `session-archives/<run>/<contextId>/<sessionKey>/transcript.jsonl`, where
   `sessionKey` is the runner session id, or the attempt index when there is none. A
-  context reused across rounds (`review-fix`) keeps every round. A review-fix ref
-  records `answersRound`, the review round it fixes.
+  warm reviewer or a fix keeps one runner session across rounds, so a reviewer or
+  fix capture adds its round (`<id>-r<n>`, with the ref's `round`) and every round
+  keeps its own snapshot. A review-fix ref records `answersRound`, the review round
+  it fixes. A native fix runs inside the worker's conversation: its capture copies
+  that session and records it on the fix context.
 - **Ref.** `{status, sessionKey, runner, originalPath, sourceSize, sourceMtimeMs,
 sha256, sizeBytes, capturedAt, answersRound?, reason?}`. A source whose size and
   mtime match a `captured` ref is not copied again; slot release stats it once to
@@ -67,8 +70,9 @@ sha256, sizeBytes, capturedAt, answersRound?, reason?}`. A source whose size and
   previously captured transcript.
 - **One capture per run at a time.** Captures for a run run one after another.
   Slot release joins a pending capture instead of starting a second one. A ref is
-  written with a patch of that context's archive list alone, never by rewriting the
-  run's whole metrics object.
+  written as a synchronous patch of that context's archive list, and of the worker's
+  metrics refs read from the current run with no await between the read and the
+  write, never from a snapshot taken before an await.
 - **Replay.** The old session's path is saved on its context when the session
   ends. Before a replay relaunches the step, that path is captured synchronously.
   The 30-second bound includes waiting for the run's in-flight capture to finish;
@@ -102,28 +106,39 @@ the implementing PR adds them, and until then the label is `null`.
 | `labels.cost[]`         | per context: `contextId, role, inputTokens, outputTokens, cacheReadTokens, totalTokens, usd, usdSource`          | worker: run metrics (`costEstimate` is the worker session's USD cost, plus the session token counts); reviewers: each review attempt's `usage`; `usdSource` is `recorded` or `null` when no price was recorded |
 | `labels.acceptance`     | `source (registered, derived or none), criteria[] {id, text, verdict}`                                           | the acceptance ledger snapshot on the run: the gate's `acceptanceStatus`, else a completion snapshot (_new run field_)                                                                                         |
 | `labels.reviewRounds[]` | `round, contextId, sessionKey, reviewer {runner, model}, verdict, unresolvedCount, fix {contextId, sessionKey}?` | review loops and their attempts (`loopNumber`, `verdict`, `unresolvedCount`)                                                                                                                                   |
-| `labels.gate`           | `outcome, decision, decidedAt`                                                                                   | resolved gate decisions                                                                                                                                                                                        |
-| `labels.attempts[]`     | `kind (dispatch, replay, recovery, infra-failure, operator), step, at, error?, recovery?`                        | step history and recovery records; replays and infra failures that leave no record today get an append-only attempt log (_new run field_)                                                                      |
+| `labels.gate`           | `outcome, decision, decidedAt`                                                                                   | the latest resolved `engine_human_gate` decision, with the run's outcome                                                                                                                                       |
+| `labels.attempts[]`     | `kind (dispatch, replay, recovery, infra-failure, operator), step, at, error?, recovery?`                        | step history and recovery records; the infra failures (find-slot, write-task, prepare, dispatch) a replay resets are kept in an append-only attempt log (_new run field_)                                      |
 | `labels.infraOnly`      | true when the run ended on infra failures alone, with no agent outcome                                           | derived from `attempts` and the outcome                                                                                                                                                                        |
-| `labels.output`         | `diffSha256, source (committed, working-tree or parked-ref), ref, path`                                          | _new run field_, written at finalize and at release (a parked ref when release parks unpushed work); `path` names the retained diff (below)                                                                    |
+| `labels.output`         | `diffSha256, source (committed or working-tree), ref, path`                                                      | _new run field_, written at finalize and at release (`ref` names the parked ref when release parks unpushed work); `path` names the retained diff (below)                                                      |
 | `labels.git`            | `startRef, dispatchHead, finalHead, prHead, mergeSha`                                                            | `startRef` and `dispatchHead` as today; the other three are _new run fields_                                                                                                                                   |
 
 **The graded diff is retained.** When finalize or release records `labels.output`,
 the gateway also writes the diff it graded, against `dispatchHead`, as
-`output/graded.diff` in the run's retained artifacts (Amendment 1), inside
-`withRunBundleStoreLock`, with the sha256 it records:
+`outputs/<run-id>/graded.diff` in the episode store, replaced by rename, with the
+sha256 it records. Retained bundles are content-addressed and immutable, so the
+diff sits beside the episode instead, and is kept as long as the episode:
 
-- **Committed** or **parked-ref** output: `git diff <dispatchHead> <ref>`.
+- **Committed** output: `git diff <dispatchHead> <ref>`.
 - **Working-tree** output: the tree is staged into a temporary index, then
   `git diff --cached <dispatchHead>` reads it, so new untracked files are included
   and the slot's own index is not touched. The temporary index starts as a copy of
   the slot's index, so Git's stat cache hashes only changed files, at a fresh path
   (a file that exists but is empty is not a valid index); then
-  `GIT_INDEX_FILE=<that path> git add -A`, which honours `.gitignore`.
+  `GIT_INDEX_FILE=<that path> git add -A`, which honours `.gitignore`. This writes
+  the new files' blobs (and any LFS clean-filter output) into the slot's object
+  store, where `git gc` reclaims them; very large untracked files make it slower.
 
-The episode lists that file among its references. A diff larger than
-`runBundleRetention.maxBundleBytes` is recorded with its sha256 and size and no
-bytes.
+The diff is read back base64-encoded and hashed as bytes, so a diff that is not
+UTF-8 keeps its sha256. Release grades the working tree before it parks or resets
+the slot, so a run whose commits release parks keeps `source: working-tree`, and
+`ref` names the parked ref (the working-tree diff can hold uncommitted changes the
+parked commits do not).
+
+`labels.output.path` names that file, relative to the episode store. A diff larger
+than 32 MiB is recorded with its sha256 and size and no bytes. Finalize records
+the published commit; release records an unpublished working tree before the slot
+resets. A run with no ready-gate acceptance gets its completion snapshot from the
+ledger in its retained task directory, at release or `bundle retain`.
 
 Writing a new run field updates the run. The retention pass recaptures every
 episode whose run changed since its last pass, so a merge recorded after the run
@@ -131,8 +146,10 @@ ended reaches the episode within an hour.
 
 Episodes captured before this change gain label values through a bulk recapture.
 `farmslot runs episodes recapture --since <date> [--until <date>]` calls the gateway
-method `run.episode.recapture { since, until? }`, which returns the number of runs
-queued and writes each episode through the same writer the retention pass uses. That
+method `run.episode.recapture { since, until? }`. It uses the episode store as its
+index: it loads only runs whose episode was updated since `since`, keeps those that
+ended in the range, returns their number, and writes each episode through the same
+writer the retention pass uses. That
 writer writes one run's episode at a time and replaces the file by rename, so a
 retention recapture of the same run at the same moment writes the same content
 again rather than racing it.
@@ -177,9 +194,10 @@ an ask-why `why.md`, as `interviews/<run-id>/<n>-<kind>.md` in the episode store
 
 - `kind` is one of `why`, `debrief` or `note`; any other value is refused, so it
   never reaches a path unchecked.
-- `<n>` is the next three-digit number for the run, allocated by creating the file
-  with an exclusive create and retrying with the next number when it exists, so
-  concurrent records never overwrite each other.
+- `<n>` is the next three-digit number for the run, shared by every kind. It is
+  reserved by exclusively creating a hidden `.<n>` marker, retrying with the next
+  number when one exists, so concurrent records never take the same number or
+  overwrite each other. Export skips the markers.
 - Interviews are optional, append-only and exported beside the labels. Like
   episodes and grade files, they are kept forever with the run record.
 
@@ -219,17 +237,18 @@ not count.
 ```
 
 - Transcripts are read from `session-archives`, or from the run archive through
-  `<archive-root>/<run-id>/manifest.json` after archival. `task.md` and `output.diff`
-  come from the retained bundle or the archived task directory, through the
-  episode's file references. Each copy is checked against its recorded `sha256`; a
-  mismatch is listed in `index.jsonl` and the file is skipped.
+  `<archive-root>/<run-id>/manifest.json` after archival. `task.md` comes from the
+  run's retained bundle, read without opening or repairing the bundle store, and
+  `output.diff` from the episode store. Each copy is checked against its recorded
+  `sha256`; a mismatch is listed in `labels.json` and the file is skipped.
 - A missing transcript (node offline, slot reset, size limit) is reported in
   `index.jsonl` and `README.md` with its reason. Export never fails for it.
   Without `--update`, export refuses a non-empty `<dir>`.
-- `--update` on an existing export, for each run that matches the filter: adds
-  transcripts captured since (for example after the node returns and
-  `bundle retain` recaptures them), and rewrites that run's `labels.json` (new
-  grades and label values) and `redaction.json`. It then rewrites `index.jsonl` and
+- `--update` on an existing export, for each run that matches the filter: writes
+  its transcripts again (adding those captured since, for example after the node
+  returns and `bundle retain` recaptures them, and replacing any recaptured one),
+  and rewrites that run's `labels.json` (new grades and label values) and
+  `redaction.json`. It then rewrites `index.jsonl` and
   `README.md` for the whole export. It never deletes an exported file, so a run that
   no longer matches the filter keeps its folder and stays in the index.
 - Export never invents a transcript or a label value. Cost is the one derived value:
@@ -261,9 +280,12 @@ JSONL stays valid, and applies to every file export writes: transcripts,
 `labels.json`, `task.md`, `output.diff`, interviews, `index.jsonl`, `README.md`
 and file names. Rules, in order:
 
-1. The exact values of the farm's configured secrets on the gateway host: provider
-   environment values, gateway and node tokens, and LiteLLM keys, read from the
-   gateway's configuration through the same paths.
+1. The exact values of the farm's configured secrets on the gateway host: the
+   secret-named values of `<home>/providers.env`, the node token
+   (`<home>/node.secret`, or `~/.farmslot-automation/*.secret`), the gateway
+   tokens in the client profiles of `<home>/gateways.json` (the gateway stores only
+   their hashes), the LiteLLM key (`~/.config/litellm/api-key`), and secret-named
+   variables of the exporting shell.
 2. The publication scan's patterns, made replacing.
 3. Private keys: a hex string of 64 or more characters (with or without `0x`)
    that is labelled as a key, meaning a key-like name (`privateKey`, `private_key`,
@@ -282,8 +304,15 @@ and file names. Rules, in order:
 
 Each rule replaces a match in file contents with `[REDACTED:<rule>]`, and in file
 names with `REDACTED-<rule>` (no brackets or colon, which file systems handle
-badly), and counts it in `redaction.json`. A file the scrubber cannot read is left
-out, never exported raw.
+badly), and counts it in the run's `redaction.json`; the export's root
+`redaction.json` totals the runs and counts the index and README. A JSON line is
+scrubbed value by value with its key in view: a string under a secret-like key
+(`*_TOKEN`, `*_SECRET`, `*_PASSWORD`, `privateKey`, `apiKey`, `clientSecret`,
+`accessToken`, `mnemonic` and the like) is replaced whole, keys are scrubbed too
+(two that redact alike stay apart), values under Farmslot's own digest fields skip
+rules 2 and 3, and a line with nothing redacted keeps its exact bytes. A file the
+scrubber cannot read is left out, never exported raw, and one unreadable store
+file skips only its run, with the reason in `README.md`.
 
 Redaction is a best-effort backstop, not a guarantee. An export is for the local
 machine only; sharing it, even internally, needs a human review first.
@@ -312,6 +341,6 @@ Measured on the dev gateway, 2026-11-24:
   the History readers read it directly. Gzip reached 2.5x on a 40-transcript sample.
 - **Graded diff:** one batched Git command per finalize and per release that records
   the output (on the slot's node for a remote slot, one node call), plus a local
-  write of the diff into the retained artifacts.
+  write of the diff beside the episode.
 - **Labels:** a few kilobytes per episode.
 - **Export:** runs outside the gateway, so it costs the gateway nothing.

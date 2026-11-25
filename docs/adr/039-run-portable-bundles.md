@@ -727,14 +727,15 @@ the transition commits and never block it. Bytes stay runner-native.
 `labels.gate`, `labels.attempts`, `labels.infraOnly`, `labels.output` and
 `labels.git`. Every value comes from a run-record field (agent contexts, run
 metrics, review attempts, the gate's acceptance ledger snapshot, decisions), so
-capture still opens no task artifact. The graded output (diff sha256 and whether it
-was committed, left in the working tree or parked), the final head, PR head and
-merge SHA, a completion acceptance snapshot and an attempt log become new run
-fields, written when the run records them; writing them updates the run, and the
-existing retention pass then recaptures its episode. When the graded output is
-recorded, the diff bytes it names are written into the run's retained artifacts, so
-the graded diff survives slot reset. Episodes that ended before this change gain
-label values through a gateway bulk-recapture method using the same writer. External
+capture still opens no task artifact. The graded output (diff sha256, whether it was
+committed or left in the working tree, and the ref release parked it under), the
+final head, PR head and merge SHA, a completion acceptance snapshot and an attempt
+log become new run fields, written when the run records them; writing them updates
+the run, and the existing retention pass then recaptures its episode. When the
+graded output is recorded, the diff bytes it names are written beside the episode in
+the episode store (retained bundles are content-addressed and immutable), so the
+graded diff survives slot reset. Episodes that ended before this change gain label
+values through a gateway bulk-recapture method using the same writer. External
 grades are appended to a per-run sidecar in the episode store, through one RPC. A
 grade names its source, grader, scale, rubric points and reason, several graders may
 grade one run, and the schema stays project-neutral. Optional post-run interviews,
@@ -793,9 +794,9 @@ episode (median 2.7 KB today). Export runs outside the gateway.
 This extends the capture point, store and retention that Amendment 4 already
 settled, rather than adding a parallel trace store or a second schema. Episodes
 stay the index; transcripts stay opaque runner bytes; labels become values; export
-is a read-only, offline projection. Each part lands on its own: earlier capture
-raises coverage for every later run, inline labels make episodes self-contained,
-and export makes the corpus usable without touching live stores.
+is a read-only, offline projection. Each part adds value on its own: earlier
+capture raises coverage for every later run, inline labels make episodes
+self-contained, and export makes the corpus usable without touching live stores.
 
 Runs that ended before this change keep the coverage they have; a bulk episode
 recapture adds their label values. Export reports a missing transcript or label
@@ -806,8 +807,8 @@ export, marked `export-table`.
 
 - Additive episode fields under `labels` (the schema id stays `farmslot-episode-v1`)
   and additive run fields: graded output, final head, PR head, merge SHA,
-  completion acceptance snapshot and attempt log; the graded diff in the retained
-  artifacts.
+  completion acceptance snapshot and attempt log; the graded diff beside the
+  episode.
 - Per-session archive ref lists on agent contexts and run metrics (the single refs
   stay, pointing at the latest session), listed per session in `trajectory.agents`.
 - The grade and interview sidecars in the episode store, and the RPCs

@@ -321,6 +321,8 @@ export interface RawProjectJson {
   required_skills?: RequiredSkillsConfig;
   /** Task domain when neither the run, the slot nor the pool names one. */
   default_domain?: string;
+  /** ADR-039 Amendment 10: `enabled: false` opts the project out of training traces. */
+  traces?: { enabled?: boolean };
   static_review?: {
     workspace?: { retention_days?: number; root?: string };
     domain?: string;

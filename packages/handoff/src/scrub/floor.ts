@@ -54,7 +54,8 @@ function fingerprint(match: string): string {
  * primary control is the producer-instruction in the closeout prompt; the human
  * approval gate is the reliability guarantee.
  */
-const FLOOR_PATTERNS: FloorPattern[] = [
+/** The publication floor's detectors; trace export reuses them as replacing rules. */
+export const FLOOR_PATTERNS: FloorPattern[] = [
   { kind: 'private-key', pattern: /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/g },
   // Labeled-value separator: an actual assignment operator (: = >) with
   // UNBOUNDED quote/backslash/whitespace decoration on both sides - covers

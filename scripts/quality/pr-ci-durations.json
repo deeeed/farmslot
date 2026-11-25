@@ -1111,7 +1111,6 @@
     "services/gateway/src/runners/observability-send-decision.test.ts": 2283,
     "services/gateway/src/runners/operator-instruction.test.ts": 2108,
     "services/gateway/src/runners/owned-stop.test.ts": 1543,
-    "services/gateway/src/runners/pane-classifier.test.ts": 3452,
     "services/gateway/src/runners/pi-observability.test.ts": 4329,
     "services/gateway/src/runners/pi-review-effort.test.ts": 2554,
     "services/gateway/src/runners/prompt-delivery-evidence.test.ts": 3971,

@@ -1895,6 +1895,65 @@ test('replay does not reclaim a replacement plan reusing the same candidate id',
   );
 });
 
+test('a ci-watch replay hands a held PR back to automation', async (t) => {
+  // An operator hold (wait at inline_fix_blocked while it offered a dispatch) is
+  // derived from run.decisions. A post-gate replay of a dev run keeps resolved
+  // decisions, so without an explicit release the hold would outlive the replay
+  // that is the operator handing the PR back.
+  const { ciHoldSince } = await import('../../ci-monitor/state.js');
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  const ciWatchAt = run.steps.findIndex((step) => step.name === 'ci-watch');
+  assert.ok(ciWatchAt > 0, 'the dev flow has a ci-watch step');
+  const hold = {
+    id: 'hold',
+    type: 'ci_inline_fix_blocked' as const,
+    title: 'inline fix blocked',
+    description: 'inline fix blocked',
+    actions: [
+      { id: 'dispatch-pr-complete', label: 'Dispatch pr-complete', style: 'primary' as const },
+      { id: 'wait', label: 'Keep watching CI', style: 'secondary' as const },
+    ],
+    createdAt: '2026-11-24T13:28:57.000Z',
+    resolvedAt: '2026-11-24T13:28:57.000Z',
+    resolvedAction: 'wait',
+  };
+  updateRun(run.id, {
+    status: 'cancelled',
+    completedAt: new Date().toISOString(),
+    decisions: [hold],
+    ciWatchState: { consecutiveAttempts: 0, totalAttempts: 0, skips: 0 },
+    steps: run.steps.map((step, index) =>
+      index < ciWatchAt
+        ? { ...step, status: 'done', completedAt: new Date().toISOString() }
+        : index === ciWatchAt
+          ? { ...step, status: 'failed', completedAt: new Date().toISOString() }
+          : step,
+    ),
+  });
+  assert.ok(ciHoldSince(getRun(run.id)), 'held before the replay');
+  t.after(async () => {
+    if (getRun(run.id)) await evictTestRun(run.id, 'cancelled');
+  });
+
+  await assert.doesNotReject(() =>
+    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}, {
+      startEngine: async () => {},
+    }),
+  );
+
+  const after = getRun(run.id);
+  assert.ok(
+    after?.decisions.some((decision) => decision.id === 'hold'),
+    'the post-gate replay kept the resolved hold, so a release is needed',
+  );
+  assert.ok(after?.ciWatchState?.holdReleasedAt, 'the replay recorded the release');
+  assert.equal(ciHoldSince(after), undefined, 'and the PR is no longer held');
+});
+
 test('runReplayStep rejects monitor replay when dispatch is still running', async (t) => {
   const run = createRun({
     flowType: 'dev',

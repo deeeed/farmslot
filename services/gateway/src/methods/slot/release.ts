@@ -89,6 +89,11 @@ import {
   recordReleasedCheckout,
 } from '../../run-lifecycle/validation-run-commits.js';
 import {
+  recordCompletionAcceptance,
+  recordGradedOutput,
+  recordParkedRef,
+} from '../../run-traces/output.js';
+import {
   assertNativeSlotReplacementOwner,
   cancelNativeRunWorkers,
   retireNativeWorkersForSlot,
@@ -989,6 +994,17 @@ async function slotReleaseImpl(
           runId: archiveRunId,
         });
         step('session-archive', archive.summary);
+        // ADR-039 Amendment 10: an unpublished output is graded from the tree before reset.
+        if (!getRun(archiveRunId)?.gradedOutput) {
+          const output = await recordGradedOutput({
+            runId: archiveRunId,
+            vars,
+            source: 'working-tree',
+            ref: null,
+          });
+          if (output) step('graded-output', `Graded diff ${output.sizeBytes} bytes`);
+        }
+        void recordCompletionAcceptance(archiveRunId);
       } catch (err) {
         // Recycle must finish even if the transcript copy fails. The live file is
         // about to disappear with the slot workspace; aborting here would strand
@@ -1031,6 +1047,8 @@ async function slotReleaseImpl(
         discard: namedDiscard,
       })
     : null;
+  // ADR-039 Amendment 10: a graded working tree names the ref its commits were parked under.
+  if (parked && parkOwner) recordParkedRef(parkOwner.id, parked.ref);
   // A recovery started to park a run's commits never resets a checkout that turned out not to be them.
   if (options?.workspaceRecovery?.parkRunId && !parked) {
     await markSlotBusy(params.slotId, 'working');
