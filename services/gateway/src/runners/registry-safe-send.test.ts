@@ -2869,7 +2869,7 @@ const launch = (t: TestContext, runner = 'claude') =>
 const composer = (text: string) => `────────────────\n❯ ${text}\n────────────────\n`;
 
 /**
- * A pane that never settles (its status line ticks): `beforeDeadline` until the readiness
+ * A pane that never settles (a ticker line above it): `beforeDeadline` until the readiness
  * deadline's own capture, then `shown`, then `afterSend` once anything is sent.
  */
 function unsettledPane(
@@ -2893,7 +2893,8 @@ function unsettledPane(
     const deadline =
       loopStartedAt === null ? Infinity : loopStartedAt + slowStartOptions.readyTimeoutMs;
     if (!switched && command.includes(' -e ') && Date.now() >= deadline) switched = true;
-    return `${switched ? shown : beforeDeadline}ctx:12% · ${ticks}s\n`;
+    // The ticker sits above the runner's own layout, so composer footers stay intact.
+    return `elapsed ${ticks}s\n${switched ? shown : beforeDeadline}`;
   };
 }
 
@@ -2938,6 +2939,21 @@ test('an authoritative idle hook at the deadline hands a never-settling pane to 
   assert.ok(callOrder.includes('tmux:send-literal'), 'the prompt was delivered');
   assert.equal(llmCalls, 0);
 });
+for (const [why, pane, runner] of [
+  [
+    "claude's dim prompt suggestion",
+    '────────────────\n❯ \x1b[2mTry "fix lint errors"\x1b[22m\n────────────────\n',
+    'claude',
+  ],
+  ["codex's placeholder", '› Ask Codex to do anything\n\n  gpt-5.5 · ~/repo\n', 'codex'],
+] as const)
+  test(`an idle hook hands over a composer showing only ${why}`, async (t) => {
+    promptInputCommands.length = 0;
+    unsettledPane(t, pane, '⏺ Reading TASK.md\n✻ Working…\n');
+    activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+    await launch(t, runner);
+    assert.ok(callOrder.includes('tmux:send-literal'), 'the prompt was delivered');
+  });
 
 const idle: RunnerActivity = 'idle';
 const trustPrompt =
@@ -2964,7 +2980,7 @@ for (const [why, pane, reading, runner] of [
   ],
   [
     'a codex draft under the instruction in scrollback while the hook reads idle',
-    `› ${message}\n\n• Reading TASK.md\n\n› hold on\n\n  gpt-5.5 · ~/repo\n`,
+    `› ${message}\n\n• Sure.\n\n› hold on\n\n  gpt-5.5 · ~/repo\n`,
     idle,
     'codex',
   ],
@@ -2973,6 +2989,36 @@ for (const [why, pane, reading, runner] of [
     `Would you like to continue? [y/N]\n${composer('')}`,
     idle,
     'claude',
+  ],
+  [
+    'a claude draft whose first row is blank while the hook reads idle',
+    '────────────────\n❯ \n  do not touch main\n────────────────\n',
+    idle,
+    'claude',
+  ],
+  [
+    'a claude draft with a bare prompt on a later row while the hook reads idle',
+    '────────────────\n❯ see this\n❯\n────────────────\n',
+    idle,
+    'claude',
+  ],
+  [
+    'claude bash mode below an older bare prompt while the hook reads idle',
+    '❯\n\n────────────────\n! rm -rf x\n────────────────\n',
+    idle,
+    'claude',
+  ],
+  [
+    'a codex draft whose first row is blank while the hook reads idle',
+    '› \n  hold on\n\n  gpt-5.5 · ~/repo\n',
+    idle,
+    'codex',
+  ],
+  [
+    'an empty codex composer below the already-submitted instruction while the hook reads idle',
+    `› ${message}\n\n› \n\n  gpt-5.5 · ~/repo\n`,
+    idle,
+    'codex',
   ],
 ] as const)
   test(`nothing is submitted at the deadline over ${why}`, async (t) => {

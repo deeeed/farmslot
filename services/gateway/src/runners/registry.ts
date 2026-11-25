@@ -7,6 +7,7 @@ import { piProviderEnvironment } from '../../../../scripts/runners/pi-farmslot-p
 import { resolvePiBinary, resolvePiModel } from './launch-command.js';
 import {
   liveComposerHoldsInstruction,
+  liveComposerState,
   runnerPaneContainsInstruction,
   runnerPaneHasQueuedInstruction,
   runnerPaneWithoutPromptSuggestion,
@@ -3842,23 +3843,34 @@ export async function sendRunnerPostLaunchPrompt(
     const hookActivity =
       isObservabilityReadingAuthoritative(hook) && hook.value !== 'unknown' ? hook.value : null;
     const plainPane = pane.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
-    // Delivery must also read it as buffered, or it would type the instruction again. A bordered
-    // grok composer (`│ ❯ … │`) does not match `liveComposer`: without an authoritative reading
-    // grok gets the extra window and fails closed.
-    const composerHoldsInstruction =
-      liveComposerHoldsInstruction(pane, message) &&
-      runnerPaneShouldSubmitExistingInstruction(plainPane, message, marker, runner);
+    // The live composer decides, on the ANSI pane: it recognises suggestions, placeholders and
+    // multi-row drafts. A bordered grok composer (`│ ❯ … │`) is not recognised, so without an
+    // authoritative reading grok gets the extra window and fails closed.
+    const composerState = liveComposerState(pane);
+    const composerHoldsInstruction = liveComposerHoldsInstruction(pane, message);
+    // Delivery submits whatever it reads as a buffered instruction. Hand over only when that is
+    // this instruction in the live composer: it never types it again, and never presses submit
+    // on a draft or an empty composer below a scrollback copy.
+    const deliveryReadsBuffered = runnerPaneShouldSubmitExistingInstruction(
+      plainPane,
+      message,
+      marker,
+      runner,
+    );
     const quiet = !detectRunnerLaunchBlocker(plainPane, runner) && !paneOpenQuestion(plainPane);
     const handover =
       quiet &&
+      deliveryReadsBuffered === composerHoldsInstruction &&
       (hookActivity
         ? !runnerActivityIsBusy(hookActivity) &&
-          (composerHoldsInstruction || runnerPaneComposerDraftState(plainPane, runner) === 'empty')
+          (composerHoldsInstruction || composerState === 'empty')
         : composerHoldsInstruction);
     if (handover) {
       console.log(
         `[${logPrefix}] ${target} handed to delivery at the readiness deadline: ${
-          hookActivity ? `hook reports ${hookActivity}` : 'the instruction is in the live composer'
+          hookActivity
+            ? `activity reports ${hookActivity}`
+            : 'the instruction is in the live composer'
         }`,
       );
       ready = true;

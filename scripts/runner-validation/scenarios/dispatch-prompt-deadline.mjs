@@ -134,8 +134,10 @@ function check(report) {
     throw new Error(`busy: the failure does not name both waits: ${busy.result.error}`);
   if (!busy.snapshotWritten) throw new Error('busy: no ready-timeout snapshot');
   if (busy.keys.length) throw new Error(`busy: keys were sent: ${busy.keys}`);
-  if (!typedText(idle.keys).includes(MESSAGE))
-    throw new Error(`idle: the instruction was not delivered: ${JSON.stringify(idle.keys)}`);
+  if (typedText(idle.keys) !== MESSAGE || idle.keys.filter(isSubmit).length !== 1)
+    throw new Error(
+      `idle: expected the instruction once, then one submit: ${JSON.stringify(idle.keys)}`,
+    );
   if (!UNACKNOWLEDGED.test(idle.result.error ?? ''))
     throw new Error(`idle: delivery did not end unacknowledged: ${idle.result.error}`);
   if (idleDraft.keys.length)
@@ -182,7 +184,8 @@ export async function runScenario({ runnerAdapter, outDir }) {
   } catch (error) {
     report.error = error?.message || String(error);
   } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+    // A killed TUI can still be rewriting its statusline for a moment.
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5 });
   }
   const outPath = writeEvidence(report, SCENARIO_ID, runner, outDir);
   return { scenario: SCENARIO_ID, runner, outPath, pass: report.pass, report };
