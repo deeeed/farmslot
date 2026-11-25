@@ -8,7 +8,7 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 ## 0.31.37 - 2026-11-25
 
-- Uses recipe-runner 0.52.5: `ui.wait_for` on a busy page ends with its own timeout instead of a raw CDP timeout.
+- Republished with recipe-runner 0.52.5, so an install resolves one copy of each.
 
 ## 0.31.36 - 2026-11-25
 
