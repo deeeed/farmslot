@@ -320,17 +320,21 @@ mock.module('../runners/native/worker-control.js', {
         const current = getRun(_runId)!.agentContexts!.find((entry) => entry.role === 'review')!;
         const continued = current.nativeSession!.commandId !== binding.commandId;
         if (continued && infraClock) infraClock.now += 11 * 60_000;
+        // These first turns end cleanly and leave the session idle.
+        const idleEnding = [
+          'completion-live',
+          'completion-invalid-idle',
+          'completion-late-signal',
+        ].includes(ending);
         return {
           session: {
             state:
               ending === 'completion-closed-restart'
                 ? 'closed'
-                : continued || ['completion-live', 'completion-invalid-idle'].includes(ending)
+                : continued || idleEnding
                   ? 'idle'
                   : 'closed',
-            processStopped:
-              ending === 'completion-closed-restart' ||
-              (!continued && !['completion-live', 'completion-invalid-idle'].includes(ending)),
+            processStopped: ending === 'completion-closed-restart' || (!continued && !idleEnding),
             nativeSessionId: 'saved-review-conversation',
           },
           commands: [
@@ -341,7 +345,7 @@ mock.module('../runners/native/worker-control.js', {
               state:
                 continued && ending === 'completion-provider-error'
                   ? 'failed'
-                  : continued || ['completion-live', 'completion-invalid-idle'].includes(ending)
+                  : continued || idleEnding
                     ? 'completed'
                     : 'failed',
               outcome:
@@ -349,7 +353,7 @@ mock.module('../runners/native/worker-control.js', {
                   ? 'failed'
                   : continued && ending === 'completion-interrupted'
                     ? 'interrupted'
-                    : continued || ['completion-live', 'completion-invalid-idle'].includes(ending)
+                    : continued || idleEnding
                       ? 'completed'
                       : 'failed',
             },
