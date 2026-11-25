@@ -337,16 +337,13 @@ test('a clone whose worktree is kept, unmounted, recorded relatively or unreadab
   const mounted = await clone('mount-clone');
   await git(mounted, 'worktree', 'add', '-q', '-b', 'away', path.join(parent, 'volume/wt'));
   await rm(path.join(parent, 'volume'), { recursive: true });
-  // worktree.useRelativePaths: the record is relative to its admin dir.
+  // worktree.useRelativePaths: the record is relative to its admin dir, not the process cwd. Its
+  // worktree is inside temp/ (sorted after the clone), so the clone may go.
   const relative = await clone('relative-clone');
-  const outside = path.join(parent, 'rel-wt');
-  await git(relative, 'worktree', 'add', '-q', '-b', 'rel', outside);
-  const admin = path.join(relative, '.git/worktrees/rel-wt');
-  await writeFile(
-    path.join(admin, 'gitdir'),
-    `${path.relative(admin, path.join(outside, '.git'))}\n`,
-  );
-
+  const inside = path.join(repo, 'temp/zz-rel-wt');
+  await git(relative, 'worktree', 'add', '-q', '-b', 'rel', inside);
+  const admin = path.join(relative, '.git/worktrees/zz-rel-wt');
+  await writeFile(path.join(admin, 'gitdir'), `${path.relative(admin, path.join(inside, '.git'))}\n`);
   // A record that cannot be read is not a missing one: refused, not deleted.
   const unreadable = await clone('unreadable-clone');
   await git(unreadable, 'worktree', 'add', '-q', '-b', 'locked-record', path.join(parent, 'u-wt'));
@@ -358,9 +355,9 @@ test('a clone whose worktree is kept, unmounted, recorded relatively or unreadab
   assert.deepEqual(result.refused.map(({ path: p }) => p).sort(), [
     'temp/tasks/mount-clone',
     'temp/tasks/ref-clone',
-    'temp/tasks/relative-clone',
     'temp/tasks/unreadable-clone',
   ]);
-  for (const kept of ['ref-clone/.git', 'mount-clone/.git', 'relative-clone/.git', 'unreadable-clone/.git'])
+  assert.equal(existsSync(path.join(repo, 'temp/tasks/relative-clone')), false);
+  for (const kept of ['ref-clone/.git', 'mount-clone/.git', 'unreadable-clone/.git'])
     assert.equal(existsSync(path.join(repo, 'temp/tasks', kept)), true, kept);
 });
