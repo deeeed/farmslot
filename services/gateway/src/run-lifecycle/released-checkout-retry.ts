@@ -180,7 +180,12 @@ export async function retryReleasedCheckoutIdleReturns(
   try {
     const now = deps.now();
     const candidates: SlotStatus[] = [];
-    for (const slot of (await deps.fleetSlots()).filter(unownedReady)) {
+    const ready = (await deps.fleetSlots()).filter(unownedReady);
+    // A slot claimed or gone since starts afresh: the same error on its return is logged again.
+    const readyIds = new Set(ready.map((slot) => slot.slot));
+    for (const slotId of [...configErrors.keys()])
+      if (!readyIds.has(slotId)) configErrors.delete(slotId);
+    for (const slot of ready) {
       let idle: { defaultBranch: string; tracking: string };
       try {
         idle = await deps.idleBranches(slot);

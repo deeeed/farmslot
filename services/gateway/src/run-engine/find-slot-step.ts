@@ -608,8 +608,9 @@ function workspaceRecoveryInFlight(
 }
 
 /** Another actor changed the slot while this run tried it: a recovery is running, a claim moved
- * its ownership epoch (every claim does), or a recovery started or finished meanwhile (its
- * marker, head or branch differs; recovery keeps the epoch). */
+ * its ownership epoch (every claim does), or another recovery finished meanwhile: the slot is
+ * ready again with a different marker, head or branch (recovery keeps the epoch). This run's own
+ * recovery that failed leaves the slot held instead, which is its real refusal, not a change. */
 function slotChangedUnderAttempt(
   slotId: string,
   before: Readonly<Record<string, unknown>> | null | undefined,
@@ -619,9 +620,10 @@ function slotChangedUnderAttempt(
   return (
     workspaceRecoveryInFlight(slotId, after) ||
     (Number(before?.slot_epoch) || 0) !== (Number(after?.slot_epoch) || 0) ||
-    recoveryId(before) !== recoveryId(after) ||
-    (before?.head_sha ?? null) !== (after?.head_sha ?? null) ||
-    (before?.branch ?? null) !== (after?.branch ?? null)
+    (after?.lifecycle === 'ready' &&
+      (recoveryId(before) !== recoveryId(after) ||
+        (before?.head_sha ?? null) !== (after?.head_sha ?? null) ||
+        (before?.branch ?? null) !== (after?.branch ?? null)))
   );
 }
 

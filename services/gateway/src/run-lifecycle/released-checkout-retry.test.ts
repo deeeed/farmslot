@@ -303,6 +303,23 @@ test('a project config error is logged once while it lasts, and again if it retu
   assert.equal(logs.filter((line) => line.includes('project.json is invalid')).length, 2);
 });
 
+test('a config error is logged again when its slot comes back after a claim', async () => {
+  await withDep(
+    'idleBranches',
+    async () => {
+      throw new Error('project.json is invalid');
+    },
+    async () => {
+      await pass();
+      fleet = [slot({ currentRunId: 'claimed' })];
+      await pass();
+      fleet = [slot()];
+      await pass();
+    },
+  );
+  assert.equal(logs.filter((line) => line.includes('project.json is invalid')).length, 2);
+});
+
 test('a busy or absent pass keeps the back-off', async () => {
   outcomes = [{ kind: 'unavailable', reason: 'Slot agent is working' }];
   await twoPasses();
