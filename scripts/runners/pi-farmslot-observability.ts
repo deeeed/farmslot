@@ -31,6 +31,7 @@ import {
   readTaskMarkdown,
   runFarmslotMark,
 } from './pi-farmslot-task.mjs';
+import { capContextImages, modelImageCaps } from './pi-image-cap.mjs';
 
 function obsDir() {
   return process.env.FARMSLOT_OBS_DIR || path.join(process.cwd(), '.agent', '.observability');
@@ -257,6 +258,7 @@ export default async function (pi: {
             maxTokens: model.maxTokens,
             reasoning: model.reasoning,
             cost: model.cost,
+            inputLimits: model.inputLimits,
           }),
         );
     }
@@ -352,6 +354,13 @@ export default async function (pi: {
   pi.on('tool_call', (event: { toolName?: string; input?: { timeout?: unknown } }) => {
     if (event.toolName === 'bash' && event.input && event.input.timeout === undefined)
       event.input.timeout = 600;
+  });
+
+  // Providers refuse a request over their image cap (Sparks vLLM: --vision-max-images). Pi keeps
+  // every image in history, so each request drops its oldest images to the selected model's cap.
+  pi.on('context', (event: { messages: unknown[] }, ctx: { model?: unknown }) => {
+    const capped = capContextImages(event.messages, modelImageCaps(ctx.model));
+    return capped && { messages: capped.messages };
   });
 
   pi.on('model_select', (event: { model: PiThinkingModel }, ctx: PiShutdownContext) => {
@@ -507,8 +516,7 @@ export default async function (pi: {
       // `timeoutFailure` is reported only when it is what ended the turn. Read
       // unconditionally, it outranked the turn's own ending for the rest of the
       // turn, which is how an intentional abort was labelled a model timeout.
-      const failure =
-        configurationFailure ?? (abortedByTimeout ? timeoutFailure : terminalFailure);
+      const failure = configurationFailure ?? (abortedByTimeout ? timeoutFailure : terminalFailure);
       writePiHook({
         obsDir: obsDir(),
         event: failure ? 'StopFailure' : 'Stop',

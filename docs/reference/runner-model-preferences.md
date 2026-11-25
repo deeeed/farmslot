@@ -115,6 +115,14 @@ the model's `thinkingLevelMap`, or the same level when no mapping is declared.
 Every worker model declares text and image input. There is no image admission
 check; a provider that cannot accept images reports its own error.
 
+A provider can also cap how many images one request carries (Sparks vLLM refuses
+more than its `--vision-max-images`, 50). Set `FARMSLOT_PI_ROUTER_MAX_IMAGES=50`
+(or the `_MAX_IMAGES` suffix of another source) for every model of that source, or
+`maxImages` for one model in its `_MODEL_LIMITS`. A static `models.json` model sets
+`inputLimits.images.maxPerRequest` (and `maxPerMessage`) itself, and keeps the
+source's cap when it declares none. Before each request the extension replaces the
+oldest images over the cap with a short note; the session history keeps them all.
+
 For a comparison budget on a shared provider, use `FARMSLOT_PI_LITELLM_MODEL_LIMITS`,
 a JSON object keyed by exact model ID, for example:
 

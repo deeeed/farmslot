@@ -44,7 +44,7 @@ const PI_PROVIDER_ENVIRONMENT = Object.fromEntries(
     kind,
     [
       ...names,
-      ...['CONTEXT', 'MAX_TOKENS', 'REASONING', 'MODEL_LIMITS'].map(
+      ...['CONTEXT', 'MAX_TOKENS', 'MAX_IMAGES', 'REASONING', 'MODEL_LIMITS'].map(
         (setting) => `FARMSLOT_PI_${kind.toUpperCase()}_${setting}`,
       ),
     ],
@@ -486,11 +486,16 @@ export async function preservePiStaticModels(catalog, loadStaticRuntime, env = p
               // Static defaults must not erase the pool's declared reasoning support.
               // Keep discovery's endpoint validation and supported effort levels.
               const live = discovered.get(model.id);
-              return [
-                model.id,
+              const kept =
                 live && limits.get(model.id)?.reasoning !== undefined
                   ? { ...model, reasoning: live.reasoning, thinkingLevelMap: live.thinkingLevelMap }
-                  : model,
+                  : model;
+              // An image cap from the pool environment survives a static entry that sets none.
+              return [
+                model.id,
+                live?.inputLimits && !kept.inputLimits
+                  ? { ...kept, inputLimits: live.inputLimits }
+                  : kept,
               ];
             }),
           ]).values(),
@@ -542,17 +547,18 @@ function configuredModelLimits(raw, name) {
         typeof settings !== 'object' ||
         Array.isArray(settings) ||
         Object.keys(settings).some(
-          (key) => !['contextWindow', 'maxTokens', 'reasoning'].includes(key),
+          (key) => !['contextWindow', 'maxTokens', 'maxImages', 'reasoning'].includes(key),
         )
       )
         throw new PiProviderConfigurationError(
-          `${name}/${id} must contain contextWindow, maxTokens or reasoning`,
+          `${name}/${id} must contain contextWindow, maxTokens, maxImages or reasoning`,
         );
       return [
         id,
         {
           contextWindow: positiveInteger(settings.contextWindow, `${name}/${id} contextWindow`),
           maxTokens: positiveInteger(settings.maxTokens, `${name}/${id} maxTokens`),
+          maxImages: positiveInteger(settings.maxImages, `${name}/${id} maxImages`),
           reasoning: reasoningSetting(settings.reasoning, `${name}/${id} reasoning`),
         },
       ];
@@ -626,6 +632,7 @@ function modelEntry(row, source, defaults, info = {}, configured = {}) {
     ) ??
     configured.reasoning ??
     defaults.reasoning;
+  const maxImages = configured.maxImages ?? defaults.maxImages;
   if ((source.kind === 'router' || configured.reasoning === true) && !reasoning)
     throw new PiProviderConfigurationError(
       `Model ${provider}/${row.id} requires reasoning for code work`,
@@ -653,6 +660,8 @@ function modelEntry(row, source, defaults, info = {}, configured = {}) {
       defaults.maxTokens,
       `${provider}/${row.id} maxTokens`,
     ),
+    // Images one request may carry (Sparks vLLM: --vision-max-images); the extension trims to it.
+    ...(maxImages ? { inputLimits: { images: { maxPerRequest: maxImages } } } : {}),
   };
 }
 
@@ -667,6 +676,7 @@ async function resolvePiSources(sources, env, opts) {
       const defaults = {
         contextWindow: positiveInteger(env[`${prefix}_CONTEXT`], `${prefix}_CONTEXT`) ?? 128000,
         maxTokens: positiveInteger(env[`${prefix}_MAX_TOKENS`], `${prefix}_MAX_TOKENS`) ?? 8192,
+        maxImages: positiveInteger(env[`${prefix}_MAX_IMAGES`], `${prefix}_MAX_IMAGES`),
         reasoning:
           reasoningSetting(env[`${prefix}_REASONING`], `${prefix}_REASONING`) ??
           source.kind === 'router',
