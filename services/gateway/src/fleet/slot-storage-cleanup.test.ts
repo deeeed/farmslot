@@ -456,10 +456,13 @@ test('scratch of a run whose bundle retains its output is deleted, not parked', 
   assert.equal(await exists(path.join(repo, 'temp/scratch-tat4752')), false);
   assert.equal(await exists(path.join(repo, 'temp/tasks/feat/scratch-tat4555-pc23')), false);
   assert.equal(await exists(path.join(home, 'parked-scratch')), false, 'nothing kept on the node');
-  assert.equal(await exists(path.join(repo, 'temp/tasks/fix/scratch-12-1123-101010/TASK.md')), true);
+  assert.equal(
+    await exists(path.join(repo, 'temp/tasks/fix/scratch-12-1123-101010/TASK.md')),
+    true,
+  );
 });
 
-test('earlier runs\' task dirs are removed by name; anything not a task dir under the root is left', async () => {
+test("earlier runs' task dirs are removed by name; anything not a task dir under the root is left", async () => {
   const repo = await mkdtemp(path.join(tmpdir(), 'farmslot-taskdir-remove-'));
   const write = async (rel: string) => {
     await mkdir(path.dirname(path.join(repo, rel)), { recursive: true });
@@ -478,7 +481,13 @@ test('earlier runs\' task dirs are removed by name; anything not a task dir unde
         buildRetainedTaskDirRemoveCommand({
           repo,
           taskDirName: 'temp/tasks',
-          relDirs: ['feat/tat-4752-1123-101010', 'fix/no-marker', 'feat/linked', '../../outside', 'fix/gone'],
+          relDirs: [
+            'feat/tat-4752-1123-101010',
+            'fix/no-marker',
+            'feat/linked',
+            '../../outside',
+            'fix/gone',
+          ],
         }),
       ])
     ).stdout,
@@ -488,10 +497,10 @@ test('earlier runs\' task dirs are removed by name; anything not a task dir unde
     result.removed.map((entry) => path.relative(realRepo, entry.path)),
     ['temp/tasks/feat/tat-4752-1123-101010'],
   );
-  assert.deepEqual(
-    result.refused.map((entry) => path.relative(realRepo, entry.path)).sort(),
-    ['temp/tasks/feat/linked', 'temp/tasks/fix/no-marker'],
-  );
+  assert.deepEqual(result.refused.map((entry) => path.relative(realRepo, entry.path)).sort(), [
+    'temp/tasks/feat/linked',
+    'temp/tasks/fix/no-marker',
+  ]);
   assert.equal(await exists(path.join(repo, 'temp/tasks/feat/tat-4752-1123-101010')), false);
   assert.equal(await exists(path.join(repo, 'temp/tasks/fix/no-marker/notes.md')), true);
   assert.equal(await exists(path.join(repo, 'temp/tasks/feat/current/TASK.md')), true);

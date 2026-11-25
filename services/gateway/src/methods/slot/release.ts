@@ -1186,8 +1186,7 @@ async function slotReleaseImpl(
           remove: Boolean(releasing && runOutputRetained(releasing)),
         });
         scratchKeep = scratch.refused.map((entry) => entry.path);
-        for (const entry of scratch.removed)
-          step('storage-clean', `Removed scratch ${entry.path}`);
+        for (const entry of scratch.removed) step('storage-clean', `Removed scratch ${entry.path}`);
         for (const entry of scratch.parked)
           step('storage-clean', `Parked scratch ${entry.path} at ${entry.to}`);
         for (const entry of scratch.refused)

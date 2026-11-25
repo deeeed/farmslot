@@ -17,6 +17,7 @@ import {
 import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 import { loadMachineSlots, resolveEffectiveDomain } from '@farmslot/slot-config';
 
+import { resolveProjectTaskDirName } from '../../core/config.js';
 import { withFarmGitConfig } from '../../core/farm-git.js';
 import {
   execOnSlot,
@@ -37,7 +38,6 @@ import {
   updateSlotStatus,
   withProjectMachineEnv,
 } from '../../core/index.js';
-import { resolveProjectTaskDirName } from '../../core/config.js';
 import { assertNoNativeWorkerRecovery } from '../../core/native-worker-exclusion.js';
 import { assertStorageVolumePresent } from '../../core/storage-volume.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
@@ -118,7 +118,6 @@ import {
   selectPrepareProfile,
 } from './prepare-profile.js';
 import { syncPrepareFixtures } from './prepare-runtime-context.js';
-import { retainedPriorTaskDirs } from './retained-task-dirs.js';
 import {
   acquirePrepareSentinel,
   type PrepareSentinelLock,
@@ -139,6 +138,7 @@ import {
   type TrackedFilesSnapshot,
 } from './prepare-tracked-files.js';
 import { checkProjectPrerequisites } from './prerequisites.js';
+import { retainedPriorTaskDirs } from './retained-task-dirs.js';
 import {
   activePrepareAborts,
   activePrepareSessions,

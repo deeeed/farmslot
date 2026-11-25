@@ -196,14 +196,15 @@ function finishedRun(ticket: string, task: string, retained: boolean) {
   return run.id;
 }
 
-const parked = () => (existsSync(path.join(parkHome, 'parked-scratch')) ? readdirSync(parkHome) : []);
+const parked = () =>
+  existsSync(path.join(parkHome, 'parked-scratch')) ? readdirSync(parkHome) : [];
 
 beforeEach(() => {
   slotRow = { slot: SLOT_ID, lifecycle: 'ready', phase: null, slot_epoch: 9 };
   rmSync(path.join(parkHome, 'parked-scratch'), { recursive: true, force: true });
 });
 
-test('release leaves no earlier run\'s retained task dir or scratch in temp/', async () => {
+test("release leaves no earlier run's retained task dir or scratch in temp/", async () => {
   slotWithLeftovers('retained');
   finishedRun('TAT-4752', 'feat/tat-4752-1123-101010', true);
   const notRetained = finishedRun('TAT-4591', 'fix/tat-4591-1111-173307', false);
@@ -220,7 +221,7 @@ test('release leaves no earlier run\'s retained task dir or scratch in temp/', a
   assert.equal(existsSync(path.join(repo, 'temp/tasks/fix/tat-4591-1111-173307/TASK.md')), true);
 });
 
-test('when the releasing run\'s bundle copy failed, its scratch is kept off the checkout', async () => {
+test("when the releasing run's bundle copy failed, its scratch is kept off the checkout", async () => {
   slotWithLeftovers('capture-failed');
   finishedRun('TAT-4801', 'feat/tat-4801-1124-100000', false);
 
