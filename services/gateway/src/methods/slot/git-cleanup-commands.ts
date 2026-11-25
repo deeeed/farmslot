@@ -19,8 +19,17 @@ export const REFRESH_REMOTE_REF_LOCKS_COMMAND = `now=$(date +%s); cleanup_git_lo
 // It never fails the command it precedes.
 export const REMOVE_STALE_TMP_PACKS_COMMAND = `pack_dir=$(git rev-parse --git-path objects/pack 2>/dev/null) && pack_dir=$(cd "$pack_dir" 2>/dev/null && pwd -P) && if command -v lsof >/dev/null 2>&1; then open_packs=$(lsof -Fn +d "$pack_dir" 2>/dev/null | sed -n 's/^n//p'); find "$pack_dir" -maxdepth 1 -type f \\( -name 'tmp_pack_*' -o -name 'tmp_idx_*' \\) -mmin +60 -print | while IFS= read -r tmp_pack; do case "\n$open_packs\n" in *"\n$tmp_pack\n"*) ;; *) rm -f "$tmp_pack" ;; esac; done; fi; true`;
 
-/** Before a fetch: stale remote ref locks, then stale temporary packs. */
-export const PRE_FETCH_CLEANUP_COMMAND = `${REFRESH_REMOTE_REF_LOCKS_COMMAND}; ${REMOVE_STALE_TMP_PACKS_COMMAND}`;
+// Git's auto-maintenance (`gc --auto`, `maintenance run --auto --detach`) starts in the background
+// after a fetch. On a farm slot that fetches often it ran many concurrent cruft repacks (mini-mm-3:
+// 8+ repacks, load 29), and each one killed left tmp packs. Farm slots turn it off and drop any
+// `git maintenance register` schedule for the repo. Reads first, so a slot already set writes nothing.
+export const DISABLE_AUTO_MAINTENANCE_COMMAND = `[ "$(git config --get maintenance.auto)" = false ] || git config maintenance.auto false; [ "$(git config --get gc.auto)" = 0 ] || git config gc.auto 0; maintained_repo=$(git rev-parse --show-toplevel 2>/dev/null) && git config --global --get-all maintenance.repo 2>/dev/null | grep -qxF "$maintained_repo" && git maintenance unregister 2>/dev/null; true`;
+
+/** Prepare's first fetch: git's own auto-maintenance off, then stale temporary packs. */
+export const FETCH_MAINTENANCE_COMMAND = `${DISABLE_AUTO_MAINTENANCE_COMMAND}; ${REMOVE_STALE_TMP_PACKS_COMMAND}`;
+
+/** Before a fetch: stale remote ref locks, git's own auto-maintenance off, stale temporary packs. */
+export const PRE_FETCH_CLEANUP_COMMAND = `${REFRESH_REMOTE_REF_LOCKS_COMMAND}; ${FETCH_MAINTENANCE_COMMAND}`;
 
 // Same-branch prepares should still refresh/unlock after flag-sweep failures,
 // but the final exit status must preserve the flag-sweep failure.

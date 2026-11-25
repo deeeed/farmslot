@@ -8,6 +8,8 @@ import test from 'node:test';
 import {
   CLEAR_INDEX_FLAGS_COMMAND,
   CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND,
+  DISABLE_AUTO_MAINTENANCE_COMMAND,
+  FETCH_MAINTENANCE_COMMAND,
   PRE_FETCH_CLEANUP_COMMAND,
   recreateBranchCommand,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
@@ -327,7 +329,34 @@ test('REMOVE_STALE_TMP_PACKS_COMMAND removes nothing when lsof cannot check owne
   assert.match(result.stdout, /tmp_pack_stale/);
 });
 
-test('the pre-fetch cleanup clears ref locks and stale temporary packs', () => {
-  assert.ok(PRE_FETCH_CLEANUP_COMMAND.includes(REMOVE_STALE_TMP_PACKS_COMMAND));
+test('DISABLE_AUTO_MAINTENANCE_COMMAND turns off git auto-maintenance once and unregisters the repo', () => {
+  const result = spawnSync(
+    'bash',
+    [
+      '-c',
+      `ROOT=$(mktemp -d)
+      trap 'chmod -R u+w "$ROOT"; command rm -rf "$ROOT"' EXIT
+      git init -q "$ROOT/repo"
+      cd "$ROOT/repo"
+      export GIT_CONFIG_GLOBAL="$ROOT/global"
+      git config --global --add maintenance.repo "$(git rev-parse --show-toplevel)"
+      git config --global --add maintenance.repo /some/other/repo
+      eval "$CMD"
+      echo "auto=$(git config --get maintenance.auto) gc=$(git config --get gc.auto) repos=$(git config --global --get-all maintenance.repo | tr '\\n' ' ')"
+      # Already set: a second run reads the config and writes nothing, even to a read-only file.
+      chmod a-w .git/config
+      eval "$CMD" 2>&1`,
+    ],
+    { encoding: 'utf8', env: { ...process.env, CMD: DISABLE_AUTO_MAINTENANCE_COMMAND } },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), 'auto=false gc=0 repos=/some/other/repo');
+});
+
+test('the pre-fetch cleanups clear ref locks, auto-maintenance and stale temporary packs', () => {
+  assert.ok(FETCH_MAINTENANCE_COMMAND.includes(DISABLE_AUTO_MAINTENANCE_COMMAND));
+  assert.ok(FETCH_MAINTENANCE_COMMAND.includes(REMOVE_STALE_TMP_PACKS_COMMAND));
+  assert.ok(PRE_FETCH_CLEANUP_COMMAND.includes(FETCH_MAINTENANCE_COMMAND));
   assert.ok(PRE_FETCH_CLEANUP_COMMAND.includes(REFRESH_REMOTE_REF_LOCKS_COMMAND));
 });

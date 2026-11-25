@@ -76,9 +76,9 @@ import { runFixtureSync } from './fixtures.js';
 import {
   CLEAR_INDEX_FLAGS_COMMAND,
   CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND,
+  FETCH_MAINTENANCE_COMMAND,
   recreateBranchCommand,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
-  REMOVE_STALE_TMP_PACKS_COMMAND,
 } from './git-cleanup-commands.js';
 import {
   checkCommitSigning,
@@ -1187,7 +1187,7 @@ async function slotPrepareInner(
         'fetch-current-branch',
         vars,
         withFarmGitConfig(
-          `cd ${shellQuote(vars.remoteRepo)} && { ${REMOVE_STALE_TMP_PACKS_COMMAND}; } && git fetch origin ${shellQuote(remoteBranchRefspec(branch))}`,
+          `cd ${shellQuote(vars.remoteRepo)} && { ${FETCH_MAINTENANCE_COMMAND}; } && git fetch origin ${shellQuote(remoteBranchRefspec(branch))}`,
         ),
       );
       if (fetchBranchR.exitCode === 0) {
@@ -1279,7 +1279,7 @@ async function slotPrepareInner(
         'fetch-default',
         vars,
         withFarmGitConfig(
-          `cd ${shellQuote(vars.remoteRepo)} && { ${REMOVE_STALE_TMP_PACKS_COMMAND}; } && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+          `cd ${shellQuote(vars.remoteRepo)} && { ${FETCH_MAINTENANCE_COMMAND}; } && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
         ),
       );
       if (fetchDefaultR.exitCode !== 0)

@@ -243,7 +243,7 @@ test('idle refresh repairs an old unowned remote-ref lock before fetching', asyn
   git(repo, 'fetch', 'origin', 'main');
 });
 
-test('idle refresh removes temporary packs a killed fetch left, before fetching', async (t) => {
+test('idle refresh turns off git auto-maintenance and removes temporary packs a killed fetch left', async (t) => {
   const root = mkdtempSync(path.join(tmpdir(), 'idle-stale-tmp-pack-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const repo = path.join(root, 'slot');
@@ -258,4 +258,6 @@ test('idle refresh removes temporary packs a killed fetch left, before fetching'
   await reset(slotVars(repo, 'stale-tmp-pack'), {}, undefined, 'main');
   assert.equal(existsSync(stale), false, 'an hour-old temporary pack is removed');
   assert.equal(existsSync(fresh), true, 'a pack still being written is kept');
+  assert.equal(git(repo, 'config', '--get', 'maintenance.auto'), 'false');
+  assert.equal(git(repo, 'config', '--get', 'gc.auto'), '0');
 });
