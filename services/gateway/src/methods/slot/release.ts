@@ -67,6 +67,7 @@ import {
   normalizeTaskRelativeDir,
   parkTaskScratch,
 } from '../../fleet/slot-storage-cleanup.js';
+import { deleteTempScratch, TEMP_TASK_ROOT } from '../../fleet/temp-scrub.js';
 import { publicationStatusForRun } from '../../run-completion/publication-status.js';
 import {
   findActiveGateHeldRunForSlot,
@@ -1185,23 +1186,29 @@ async function slotReleaseImpl(
       step('clean', `Task dir ${taskDirName}/${taskRel} cleaned`);
     }
 
-    // Before the age prune, so stale scratch is parked rather than deleted; refused scratch
-    // is kept out of the prune, and the prune skips task dirs when parking failed. Full
-    // release only: a preserveAgents release keeps workers that may still own it.
+    // Before the age prune, so stale scratch is cleared rather than pruned; refused scratch
+    // is kept out of the prune, and the prune skips task dirs when that failed. The temp/tasks
+    // layout deletes scratch, which a later trial must not read; others park it. Full release
+    // only: a preserveAgents release keeps workers that may still own it.
     let scratchKeep: string[] = [];
     let scratchFailed = false;
     if (!preserveAgents) {
       await assertReleaseClaim();
       try {
-        const scratch = await parkTaskScratch(vars, projectJson);
+        const scratch =
+          taskDirName.replace(/\/+$/, '') === TEMP_TASK_ROOT
+            ? await deleteTempScratch(vars)
+            : await parkTaskScratch(vars, projectJson);
         scratchKeep = scratch.refused.map((entry) => entry.path);
-        for (const entry of scratch.parked)
+        for (const entry of 'parked' in scratch ? scratch.parked : [])
           step('storage-clean', `Parked scratch ${entry.path} at ${entry.to}`);
+        for (const entry of 'deleted' in scratch ? scratch.deleted : [])
+          step('storage-clean', `Deleted scratch ${entry}`);
         for (const entry of scratch.refused)
           step('storage-clean', `Left scratch ${entry.path}: ${entry.reason}`);
       } catch (err) {
         scratchFailed = true;
-        step('storage-clean', `Scratch parking failed: ${(err as Error).message.slice(0, 200)}`);
+        step('storage-clean', `Scratch clean-up failed: ${(err as Error).message.slice(0, 200)}`);
       }
     }
 

@@ -207,3 +207,37 @@ test('ordinary details carry the stored list version before display enrichment',
   assert.equal(result.listVersion, expected);
   assert.equal(result.run.id, run.id);
 });
+
+test('run.get returns the installed build beside the start ref', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PINNED-BUILD-${Date.now()}`,
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+  const startRef = {
+    requestedRef: '260bd3a5',
+    resolvedSha: '260bd3a5b20c3f9126510b7b71d0e5527f395b5d',
+  };
+  const prepareArtifact = {
+    kind: 'runway' as const,
+    slotId: 'macwork-mm-2',
+    baseSha: startRef.resolvedSha,
+    runId: '41900351233',
+    revision: startRef.resolvedSha,
+    platform: 'ios',
+    installedAt: '2026-11-25T10:00:00.000Z',
+    enforced: true,
+  };
+  updateRun(run.id, { lane: 'comparison', startRef, prepareArtifact });
+  for (const view of [undefined, 'snapshot' as const]) {
+    const { run: read } = await runGet({ runId: run.id, ...(view ? { view } : {}) });
+    assert.deepEqual(read.startRef, startRef);
+    assert.deepEqual(read.prepareArtifact, prepareArtifact, `view ${view ?? 'default'}`);
+  }
+  updateRun(run.id, { prepareArtifact: { ...prepareArtifact, enforced: false } });
+  assert.equal((await runGet({ runId: run.id })).run.prepareArtifact?.enforced, false);
+});

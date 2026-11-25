@@ -60,7 +60,9 @@ type Ending =
   | 'completion-interrupted'
   | 'completion-invalid-idle'
   | 'completion-unfinished-pass'
-  | 'completion-missing'
+  | 'completion-late-signal'
+  | 'completion-never-marked'
+  | 'completion-reask-missing'
   | 'completion-invalid-schema'
   | 'completion-infra'
   | 'reattach-config-changed'
@@ -69,6 +71,7 @@ let ending: Ending = 'verdict';
 let completionReadWake: ((runId: string, contextId: string) => void) | undefined;
 let dispatchCalls = 0;
 let signalReadErrorProbes = 0;
+let lateSignalProbes = 0;
 let markerPresent = true;
 let provenancePresent = true;
 let restoreTaskFails = false;
@@ -153,7 +156,15 @@ mock.module('../run-engine/run-monitor.js', {
             code: 'terminal_contract_infrastructure',
             message: 'slot contract check unavailable',
           };
-        if (!continued && ending === 'completion-missing')
+        // The reviewer writes its terminal mark after its turn has ended.
+        if (ending === 'completion-late-signal')
+          return ++lateSignalProbes <= 2
+            ? { ok: false, code: 'missing', message: 'review signal missing' }
+            : { ok: true };
+        if (
+          ending === 'completion-never-marked' ||
+          (continued && ending === 'completion-reask-missing')
+        )
           return { ok: false, code: 'missing', message: 'review signal missing' };
         if (!continued && ending === 'completion-invalid-schema')
           return { ok: false, code: 'invalid_schema', message: 'review signal has no status' };
@@ -316,17 +327,22 @@ mock.module('../runners/native/worker-control.js', {
         const current = getRun(_runId)!.agentContexts!.find((entry) => entry.role === 'review')!;
         const continued = current.nativeSession!.commandId !== binding.commandId;
         if (continued && infraClock) infraClock.now += 11 * 60_000;
+        // These first turns end cleanly and leave the session idle.
+        const idleEnding = [
+          'completion-live',
+          'completion-invalid-idle',
+          'completion-late-signal',
+          'completion-never-marked',
+        ].includes(ending);
         return {
           session: {
             state:
               ending === 'completion-closed-restart'
                 ? 'closed'
-                : continued || ['completion-live', 'completion-invalid-idle'].includes(ending)
+                : continued || idleEnding
                   ? 'idle'
                   : 'closed',
-            processStopped:
-              ending === 'completion-closed-restart' ||
-              (!continued && !['completion-live', 'completion-invalid-idle'].includes(ending)),
+            processStopped: ending === 'completion-closed-restart' || (!continued && !idleEnding),
             nativeSessionId: 'saved-review-conversation',
           },
           commands: [
@@ -337,7 +353,7 @@ mock.module('../runners/native/worker-control.js', {
               state:
                 continued && ending === 'completion-provider-error'
                   ? 'failed'
-                  : continued || ['completion-live', 'completion-invalid-idle'].includes(ending)
+                  : continued || idleEnding
                     ? 'completed'
                     : 'failed',
               outcome:
@@ -345,7 +361,7 @@ mock.module('../runners/native/worker-control.js', {
                   ? 'failed'
                   : continued && ending === 'completion-interrupted'
                     ? 'interrupted'
-                    : continued || ['completion-live', 'completion-invalid-idle'].includes(ending)
+                    : continued || idleEnding
                       ? 'completed'
                       : 'failed',
             },
@@ -681,6 +697,7 @@ const review = (runId: string, runner = 'claude') =>
     reviewTimeoutMs: [
       'timeout',
       'missing-terminal',
+      'completion-never-marked',
       'completion-invalid-idle',
       'completion-interrupted',
     ].includes(ending)
@@ -840,19 +857,45 @@ test('a PASS result without its terminal mark is not accepted and settles no-ver
   assert.deepEqual([budget.used, budget.noVerdict], [0, 1]);
 });
 
-for (const [code, instruction] of [
-  ['missing', /If you never ran .* start, run it once now/],
-  ['invalid-schema', /Do not run start/],
-] as const)
-  test(`valid findings whose signal reads ${code} get the one completion re-ask`, async (t) => {
-    ending = `completion-${code}`;
-    completionCommands.length = 0;
-    const run = await nativeRun(t);
-    assert.equal((await review(run.id)).verdict, 'issues');
-    assert.equal(completionCommands.length, 1);
-    const context = getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
-    assert.match(context.nativeCommandText ?? '', instruction);
-  });
+test('valid findings whose signal reads invalid-schema get the one completion re-ask', async (t) => {
+  ending = 'completion-invalid-schema';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  assert.equal((await review(run.id)).verdict, 'issues');
+  assert.equal(completionCommands.length, 1);
+  const context = getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
+  assert.match(context.nativeCommandText ?? '', /Do not run start/);
+});
+
+test('a terminal mark written after the turn ended is accepted without a completion re-ask', async (t) => {
+  ending = 'completion-late-signal';
+  lateSignalProbes = 0;
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  assert.equal((await review(run.id)).verdict, 'issues');
+  assert.equal(completionCommands.length, 0, 'a missing signal waits instead of re-asking');
+  assert.ok(lateSignalProbes > 2);
+});
+
+test('a clean turn that never writes its terminal mark gets no re-ask and fails at its deadline', async (t) => {
+  ending = 'completion-never-marked';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  await assert.rejects(
+    review(run.id),
+    /completed its turn but its terminal signal remains unavailable: review signal missing/,
+  );
+  assert.equal(completionCommands.length, 0, 'a missing signal is not re-asked');
+});
+
+test('a completion re-ask that ends with its signal missing keeps its valid ISSUES result', async (t) => {
+  // A re-ask reserved before an upgrade, or one whose signal read fails, ends with `missing`.
+  ending = 'completion-reask-missing';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  assert.equal((await review(run.id)).verdict, 'issues');
+  assert.equal(completionCommands.length, 1);
+});
 
 test('an ended completion whose signal cannot be checked is re-read, then fails closed', async (t) => {
   ending = 'completion-infra';

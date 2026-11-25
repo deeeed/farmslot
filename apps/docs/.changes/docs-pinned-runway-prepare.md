@@ -1,0 +1,1 @@
+- Document pinned comparison runs in the prepare lifecycle reference: `prepare.pinned_profiles`, `pinned_kind`, the `FARMSLOT_PREPARE_BASE_SHA` preflight contract and its `prepare-artifact.json` receipt, and `run.prepareArtifact`.

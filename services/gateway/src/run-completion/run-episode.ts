@@ -15,6 +15,7 @@ import {
   type Run,
   type RunArtifactBundleRef,
   type RunBundleEntryMeta,
+  type RunPrepareArtifact,
 } from '@farmslot/protocol';
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import {
@@ -56,6 +57,8 @@ export interface RunEpisode {
     summary?: string;
     branch?: string | null;
     startRef?: string;
+    /** The build on the slot for `startRef` (see Run.prepareArtifact). */
+    prepareArtifact?: RunPrepareArtifact;
     dispatchHead?: string | null;
     pr?: { repo?: string; number: number };
     files: RunEpisodeFile[];
@@ -271,6 +274,7 @@ export function buildRunEpisode(
       summary: run.summary,
       branch: run.branch,
       startRef: run.startRef?.resolvedSha ?? run.startRef?.requestedRef,
+      ...(run.prepareArtifact ? { prepareArtifact: run.prepareArtifact } : {}),
       dispatchHead: run.worktreeHeadAtDispatch,
       pr,
       files: inputs,

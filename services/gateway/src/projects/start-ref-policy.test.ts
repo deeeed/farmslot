@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import type { FlowType } from '@farmslot/protocol';
 
 import {
+  assertStartRefSkipPrepareEligible,
   assertStartRefWorkBranchIsLocalOnly,
   normalizeStartRefRequest,
   StartRefPolicyError,
@@ -112,5 +116,55 @@ test('assertStartRefWorkBranchIsLocalOnly rejects remote branch reuse for startR
         startRef: { requestedRef: 'd0932457' },
       }),
     /refuses to mutate or reuse existing remote branch 'feat\/proj-1-candidate'/,
+  );
+});
+
+test('a pinned comparison run cannot skip prepare, whatever its slot HEAD', async () => {
+  // A project config that cannot be read counts as one that pins prepare.
+  await assert.rejects(
+    assertStartRefSkipPrepareEligible({
+      startRef: '260bd3a5',
+      skipPrepare: true,
+      slotId: 'macwork-mm-2',
+      project: 'pinned-prepare-absent-project',
+      flowType: 'dev',
+    }),
+    /A pinned comparison run cannot skip prepare/,
+  );
+  // A project that does not pin keeps the HEAD check, which needs the slot.
+  await assert.rejects(
+    assertStartRefSkipPrepareEligible({
+      startRef: '260bd3a5',
+      skipPrepare: true,
+      project: 'farmslot-farm',
+      flowType: 'dev',
+    }),
+    /startRef with skipPrepare requires slotId/,
+  );
+});
+
+test('a project that pins prepare refuses skipPrepare on a start-ref run', async (t) => {
+  const projects = mkdtempSync(path.join(tmpdir(), 'start-ref-pinned-'));
+  const previous = process.env.FARMSLOT_PROJECTS_DIR;
+  process.env.FARMSLOT_PROJECTS_DIR = projects;
+  t.after(() => {
+    if (previous === undefined) delete process.env.FARMSLOT_PROJECTS_DIR;
+    else process.env.FARMSLOT_PROJECTS_DIR = previous;
+    rmSync(projects, { recursive: true, force: true });
+  });
+  mkdirSync(path.join(projects, 'pinning-pack'));
+  writeFileSync(
+    path.join(projects, 'pinning-pack', 'project.json'),
+    JSON.stringify({ name: 'pinning-pack', hooks: { artifact_check: 'probe' } }),
+  );
+  await assert.rejects(
+    assertStartRefSkipPrepareEligible({
+      startRef: '260bd3a5',
+      skipPrepare: true,
+      slotId: 'macwork-mm-2',
+      project: 'pinning-pack',
+      flowType: 'dev',
+    }),
+    /A pinned comparison run cannot skip prepare/,
   );
 });

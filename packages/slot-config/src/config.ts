@@ -22,6 +22,7 @@ import {
   type PhysicalDeviceSlotPolicy,
   type PoolSlotMode,
   PREPARE_PHASES,
+  PREPARE_PINNED_KINDS,
   PREPARE_REQUIREMENTS,
   type PreparePhase,
   type PrepareRequirement,
@@ -479,8 +480,10 @@ export interface RawProjectJson {
         hooks?: Record<string, string>;
         requires?: string[];
         fallback?: string;
+        pinned_kind?: string;
       }
     >;
+    pinned_profiles?: string[] | Record<string, string[]>;
   };
   runtime_capabilities?: {
     providers?: Record<
@@ -1778,6 +1781,16 @@ export function validatePrepareConfig(projectJson: RawProjectJson, projectConfig
     if (Array.isArray(requires) && requires.length > 0 && !profile.fallback) {
       throw new Error(`${projectConfig}: ${field} declares requires but no fallback profile`);
     }
+    if (profile.pinned_kind !== undefined) {
+      if (!options.allowFallback) {
+        throw new Error(`${projectConfig}: ${field}.pinned_kind is not valid for core prepare`);
+      }
+      if (!(PREPARE_PINNED_KINDS as readonly unknown[]).includes(profile.pinned_kind)) {
+        throw new Error(
+          `${projectConfig}: ${field}.pinned_kind must be one of: ${PREPARE_PINNED_KINDS.join(', ')}`,
+        );
+      }
+    }
   };
 
   if (cfg.core) {
@@ -1814,6 +1827,7 @@ export function validatePrepareConfig(projectJson: RawProjectJson, projectConfig
       throw new Error(`${projectConfig}: prepare.default must name an existing profile`);
     }
   }
+  validatePinnedProfiles(projectJson, profiles, projectConfig);
   if (
     cfg.compatibility_profile !== undefined &&
     (typeof cfg.compatibility_profile !== 'string' || !(cfg.compatibility_profile in profiles))
@@ -1821,6 +1835,62 @@ export function validatePrepareConfig(projectJson: RawProjectJson, projectConfig
     throw new Error(
       `${projectConfig}: prepare.compatibility_profile must name an existing profile`,
     );
+  }
+}
+
+/**
+ * `prepare.pinned_profiles`: a pinned comparison run selects strictly from these, so
+ * every entry must be a profile that declares what it installs (`pinned_kind`);
+ * otherwise a profile with no `requires` would pass strict selection vacuously.
+ */
+function validatePinnedProfiles(
+  projectJson: RawProjectJson,
+  profiles: NonNullable<NonNullable<RawProjectJson['prepare']>['profiles']>,
+  projectConfig: string,
+): void {
+  const pinned = projectJson.prepare?.pinned_profiles;
+  if (pinned === undefined) return;
+  const checkList = (field: string, list: unknown): void => {
+    if (!Array.isArray(list) || list.length === 0) {
+      throw new Error(`${projectConfig}: ${field} must be a non-empty array`);
+    }
+    if (new Set(list).size !== list.length) {
+      throw new Error(`${projectConfig}: ${field} contains duplicates`);
+    }
+    for (const name of list) {
+      if (typeof name !== 'string' || !Object.prototype.hasOwnProperty.call(profiles, name)) {
+        throw new Error(`${projectConfig}: ${field} names unknown profile "${String(name)}"`);
+      }
+      if (!profiles[name].pinned_kind) {
+        throw new Error(
+          `${projectConfig}: ${field} lists "${name}", which declares no pinned_kind`,
+        );
+      }
+    }
+  };
+  if (Array.isArray(pinned)) {
+    checkList('prepare.pinned_profiles', pinned);
+    return;
+  }
+  if (!pinned || typeof pinned !== 'object') {
+    throw new Error(
+      `${projectConfig}: prepare.pinned_profiles must be an array or an object keyed by platform`,
+    );
+  }
+  const platforms = Object.keys(pinned);
+  if (platforms.length === 0) {
+    throw new Error(`${projectConfig}: prepare.pinned_profiles must name at least one platform`);
+  }
+  for (const platform of platforms) {
+    if (
+      projectJson.platforms &&
+      !Object.prototype.hasOwnProperty.call(projectJson.platforms, platform)
+    ) {
+      throw new Error(
+        `${projectConfig}: prepare.pinned_profiles.${platform} is not a platform of this project`,
+      );
+    }
+    checkList(`prepare.pinned_profiles.${platform}`, pinned[platform]);
   }
 }
 
@@ -2327,6 +2397,7 @@ export function normalizeRawProjectPrepare(
       );
       continue;
     }
+    const pinnedKind = PREPARE_PINNED_KINDS.find((kind) => kind === profile.pinned_kind);
     profiles[name] = {
       phases,
       ...(typeof profile.label === 'string' ? { label: profile.label } : {}),
@@ -2342,6 +2413,7 @@ export function normalizeRawProjectPrepare(
           }
         : {}),
       ...(typeof profile.fallback === 'string' ? { fallback: profile.fallback } : {}),
+      ...(pinnedKind ? { pinnedKind } : {}),
     };
   }
   const normalizeCore = (): NonNullable<ProjectConfig['prepare']>['core'] | undefined => {
@@ -2371,7 +2443,25 @@ export function normalizeRawProjectPrepare(
       : {}),
     ...(typeof raw.default === 'string' ? { default: raw.default } : {}),
     ...(Object.keys(profiles).length > 0 ? { profiles } : {}),
+    ...normalizePinnedProfiles(raw.pinned_profiles),
   };
+}
+
+function normalizePinnedProfiles(
+  raw: NonNullable<RawProjectJson['prepare']>['pinned_profiles'],
+): Pick<NonNullable<ProjectConfig['prepare']>, 'pinnedProfiles'> {
+  const names = (list: unknown): string[] | undefined =>
+    Array.isArray(list)
+      ? list.filter((name): name is string => typeof name === 'string')
+      : undefined;
+  if (Array.isArray(raw)) return { pinnedProfiles: names(raw) ?? [] };
+  if (!raw || typeof raw !== 'object') return {};
+  const perPlatform: Record<string, string[]> = {};
+  for (const [platform, list] of Object.entries(raw)) {
+    const listed = names(list);
+    if (listed) perPlatform[platform] = listed;
+  }
+  return { pinnedProfiles: perPlatform };
 }
 
 function normalizePostureRetentionMap(
