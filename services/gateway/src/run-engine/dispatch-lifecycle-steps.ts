@@ -439,14 +439,17 @@ export async function executePrepareStep(
     return { inputs, outputs: { skipped: true, reason: skipReason } };
   }
 
-  // Before any slot work: a task dir another run initialized, whose slot copy is gone.
-  const foreignTaskDir = await foreignTaskDirRefusal(current);
-  if (foreignTaskDir) throw new Error(foreignTaskDir);
-
   // A record from an earlier prepare must not outlive this one: a prepare that
   // fails, or runs on another slot, would otherwise leave the old build standing.
   if (current.prepareArtifact) {
     await persistRunNow(updateRun(runId, { prepareArtifact: null }), 'prepare artifact cleared');
+  }
+
+  // Before slot prepare: a task dir another attempt initialized, whose slot copy is gone.
+  const foreignTaskDir = await foreignTaskDirRefusal(current);
+  if (foreignTaskDir) {
+    stepPartialIO.set(runId, { inputs, outputs: {} });
+    throw new Error(foreignTaskDir);
   }
 
   // Machine-pressure snapshot at prepare start — the analytics emitter reads this from

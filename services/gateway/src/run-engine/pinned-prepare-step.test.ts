@@ -273,21 +273,22 @@ test('a failed observed read never fails the prepare and leaves no stale record'
   assert.equal(run.prepareArtifact, null, 'the earlier record was cleared and nothing replaced it');
 });
 
-test('a task dir another run initialized is refused before slot prepare runs', async () => {
+const REFUSAL =
+  'Task dir /tasks/dev/rerun was initialized by run archived-run (its handoff names it), and slot slot-1 no longer has its copy. Re-dispatch with --ticket, or author a fresh task dir.';
+
+test('a task dir another run initialized is refused before slot prepare, with no stale record', async () => {
   run = { ...run, project: 'extension' };
-  foreignTaskDir =
-    'Task dir /tasks/dev/rerun was initialized by run archived-run; author a fresh task dir (copy TASK.md to a new folder) or re-dispatch with --ticket.';
-  await assert.rejects(
-    prepareRun(),
-    /was initialized by run archived-run; author a fresh task dir/,
-  );
+  foreignTaskDir = REFUSAL;
+  const stepPartialIO = new Map<string, StepIO>();
+  await assert.rejects(prepareRun(undefined, stepPartialIO), { message: REFUSAL });
   assert.equal(prepareOptions, undefined, 'slot prepare never ran');
+  assert.equal(run.prepareArtifact, null, 'the earlier record was cleared before the refusal');
+  assert.ok(stepPartialIO.get(run.id)?.inputs, 'the failed step records its inputs');
 });
 
 test('a skipped prepare (warm handoff, operator skip) is not refused for its task dir', async () => {
   run = { ...run, project: 'extension' };
-  foreignTaskDir =
-    'Task dir /tasks/dev/rerun was initialized by run archived-run; author a fresh task dir (copy TASK.md to a new folder) or re-dispatch with --ticket.';
+  foreignTaskDir = REFUSAL;
   assert.equal((await prepareRun({ skipPrepare: true })).outputs?.skipped, true);
   assert.equal(prepareOptions, undefined);
 });

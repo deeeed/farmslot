@@ -1,5 +1,5 @@
-// A run whose task dir another run initialized, with the slot copy gone, is refused before any
-// slot work, naming the owner and the fix. Adoption, retained resume and replay still pass.
+// A run whose task dir another attempt initialized, with the slot copy gone, is refused before
+// slot prepare, naming the owner and the fix. A slot copy, its own attempt, or no receipt passes.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -46,20 +46,27 @@ const owner: string = './foreign-task-dir.js?foreign-task-dir-test';
 const { foreignTaskDirRefusal }: typeof import('./foreign-task-dir.js') = await import(owner);
 
 const SLOT_RECEIPT = `${remoteRepo}/temp/tasks/dev/rerun/artifacts/harness-provenance.json`;
+const REMEDY =
+  'Re-dispatch with --ticket, or author a fresh task dir: copy TASK.md and CHECKLIST.md to a new folder, leave out artifacts/ and inputs/handoff.json, and update the task paths written inside them.';
 
-function taskDir(t: TestContext, attemptId: string | null) {
+/** tasks/dev/rerun with TASK.md and CHECKLIST.md, plus a receipt and a handoff when asked. */
+function taskDir(t: TestContext, files: { attemptId?: string; receipt?: boolean }) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreign-task-dir-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const dir = path.join(root, 'tasks/dev/rerun');
   fs.mkdirSync(path.join(dir, 'artifacts'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'inputs'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'TASK.md'), '# Task\n');
-  if (attemptId !== null) {
-    fs.writeFileSync(path.join(dir, 'artifacts/harness-provenance.json'), '{}');
-    fs.writeFileSync(path.join(dir, 'inputs/handoff.json'), JSON.stringify({ attemptId }));
-  }
+  fs.writeFileSync(path.join(dir, 'CHECKLIST.md'), '- [ ] one\n');
+  if (files.receipt) fs.writeFileSync(path.join(dir, 'artifacts/harness-provenance.json'), '{}');
+  if (files.attemptId)
+    fs.writeFileSync(
+      path.join(dir, 'inputs/handoff.json'),
+      JSON.stringify({ attemptId: files.attemptId }),
+    );
   knownRuns.clear();
   slotFiles.clear();
+  knownRuns.set('archived-run', { id: 'archived-run', status: 'cancelled' });
   return dir;
 }
 
@@ -75,41 +82,42 @@ function run(dir: string, overrides: Partial<Run> = {}): Run {
 }
 
 test('a task dir another run initialized, with its slot copy gone, is refused naming that run', async (t) => {
-  const dir = taskDir(t, 'archived-run');
-  knownRuns.set('archived-run', { id: 'archived-run', status: 'cancelled' });
+  const dir = taskDir(t, { attemptId: 'archived-run', receipt: true });
   assert.equal(
     await foreignTaskDirRefusal(run(dir)),
-    `Task dir ${dir} was initialized by run archived-run; author a fresh task dir (copy TASK.md to a new folder) or re-dispatch with --ticket.`,
+    `Task dir ${dir} was initialized by run archived-run (its handoff names it), and slot slot-1 no longer has its copy. ${REMEDY}`,
   );
 });
 
 test('a retained task whose slot copy still holds its receipt is left to verification', async (t) => {
-  const dir = taskDir(t, 'archived-run');
-  knownRuns.set('archived-run', { id: 'archived-run', status: 'cancelled' });
+  const dir = taskDir(t, { attemptId: 'archived-run', receipt: true });
   slotFiles.add(SLOT_RECEIPT);
   assert.equal(await foreignTaskDirRefusal(run(dir)), null);
 });
 
-test('an authored task adopted under its own attempt is not refused, with or without a slot copy', async (t) => {
-  const dir = taskDir(t, 'author-owned-attempt');
-  assert.equal(await foreignTaskDirRefusal(run(dir)), null);
+test('an author-owned attempt is adopted with its slot copy and refused without one', async (t) => {
+  const dir = taskDir(t, { attemptId: 'author-owned-attempt', receipt: true });
+  assert.match(
+    (await foreignTaskDirRefusal(run(dir))) ?? '',
+    /was initialized by attempt author-owned-attempt \(its handoff names it\)/,
+  );
   slotFiles.add(SLOT_RECEIPT);
   assert.equal(await foreignTaskDirRefusal(run(dir)), null);
 });
 
 test("a run's own attempt (replay, resume) is not refused", async (t) => {
-  const dir = taskDir(t, 'new-run');
+  const dir = taskDir(t, { attemptId: 'new-run', receipt: true });
   knownRuns.set('new-run', { id: 'new-run', status: 'monitoring' });
   assert.equal(await foreignTaskDirRefusal(run(dir)), null);
 });
 
-test('a task dir without a receipt is not refused', async (t) => {
-  assert.equal(await foreignTaskDirRefusal(run(taskDir(t, null))), null);
+test('a task dir without a receipt is not refused, even with another run in its handoff', async (t) => {
+  const dir = taskDir(t, { attemptId: 'archived-run' });
+  assert.equal(await foreignTaskDirRefusal(run(dir)), null);
 });
 
 test('a re-dispatched task file marked pending by write-task is still refused', async (t) => {
-  const dir = taskDir(t, 'archived-run');
-  knownRuns.set('archived-run', { id: 'archived-run', status: 'cancelled' });
+  const dir = taskDir(t, { attemptId: 'archived-run', receipt: true });
   const taskFile = path.join(dir, 'TASK.md');
   assert.match(
     (await foreignTaskDirRefusal(
@@ -119,11 +127,19 @@ test('a re-dispatched task file marked pending by write-task is still refused', 
   );
 });
 
-test('a malformed or missing handoff is left to the existing initialization checks', async (t) => {
-  const dir = taskDir(t, 'archived-run');
-  knownRuns.set('archived-run', { id: 'archived-run', status: 'cancelled' });
+test('the advised fresh task dir is not refused', async (t) => {
+  const dir = taskDir(t, { attemptId: 'archived-run', receipt: true });
+  const fresh = path.join(path.dirname(dir), 'rerun-2');
+  fs.mkdirSync(fresh);
+  for (const file of ['TASK.md', 'CHECKLIST.md'])
+    fs.copyFileSync(path.join(dir, file), path.join(fresh, file));
+  assert.equal(await foreignTaskDirRefusal(run(fresh)), null);
+});
+
+test('a malformed handoff fails the check; a missing one is left to task init', async (t) => {
+  const dir = taskDir(t, { attemptId: 'archived-run', receipt: true });
   fs.writeFileSync(path.join(dir, 'inputs/handoff.json'), '{not json');
-  assert.equal(await foreignTaskDirRefusal(run(dir)), null);
+  await assert.rejects(foreignTaskDirRefusal(run(dir)), SyntaxError);
   fs.rmSync(path.join(dir, 'inputs/handoff.json'));
   assert.equal(await foreignTaskDirRefusal(run(dir)), null);
 });
