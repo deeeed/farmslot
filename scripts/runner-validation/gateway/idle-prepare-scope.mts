@@ -76,6 +76,17 @@ async function cleanup(): Promise<void> {
 try {
   await mkdir(path.join(repo, runtimeDir), { recursive: true });
   await mkdir(path.join(scratch, 'root', 'pool'), { recursive: true });
+  // A disposable Farmslot root, the shape the gateway's root check accepts.
+  const root = path.join(scratch, 'root');
+  await mkdir(path.join(root, 'scripts'), { recursive: true });
+  await mkdir(path.join(root, 'services', 'gateway'), { recursive: true });
+  await writeFile(path.join(root, 'CLAUDE.md'), '# Disposable idle prepare-scope fixture\n');
+  await writeFile(path.join(root, 'scripts', 'dev.sh'), '#!/bin/sh\n');
+  await writeFile(
+    path.join(root, 'services', 'gateway', 'package.json'),
+    JSON.stringify({ name: 'fixture', version: '0.0.0' }),
+  );
+  await execute('git', ['init', '-q'], { cwd: root });
   await mkdir(path.join(scratch, 'root', 'projects', project), { recursive: true });
   await mkdir(path.join(scratch, 'other'), { recursive: true });
   await writeFile(
