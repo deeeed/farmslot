@@ -31,12 +31,13 @@ export const REMOVE_STALE_TMP_PACKS_COMMAND = `pack_dir=$(git rev-parse --git-pa
 // reads the repo-local value first, so a slot already set writes nothing. A linked worktree shares
 // its config with every worktree of that repository (the farm checkout, for one), so its config is
 // left as it is; that expected state prints only a debug line, which no caller surfaces.
-export const DISABLE_AUTO_MAINTENANCE_COMMAND = `repo_paths=$(git rev-parse --git-dir --git-common-dir --show-toplevel 2>/dev/null) && git_dir=$(cd "$(printf '%s\\n' "$repo_paths" | sed -n 1p)" 2>/dev/null && pwd -P) && common_dir=$(cd "$(printf '%s\\n' "$repo_paths" | sed -n 2p)" 2>/dev/null && pwd -P) && maintained_repo=$(printf '%s\\n' "$repo_paths" | sed -n 3p) && if [ "$git_dir" != "$common_dir" ]; then echo "${GIT_MAINTENANCE_DEBUG} config left on: this linked worktree shares it with $common_dir"; else [ "$(git config --local --get maintenance.auto)" = false ] || git config --local maintenance.auto false 2>/dev/null || echo "${GIT_MAINTENANCE_NOTE} could not set maintenance.auto=false"; [ "$(git config --local --get gc.auto)" = 0 ] || git config --local gc.auto 0 2>/dev/null || echo "${GIT_MAINTENANCE_NOTE} could not set gc.auto=0"; git config --global --get-all maintenance.repo 2>/dev/null | grep -qxF "$maintained_repo" && { git maintenance unregister 2>/dev/null || echo "${GIT_MAINTENANCE_NOTE} could not unregister git maintenance for $maintained_repo"; }; fi; true`;
+export const DISABLE_AUTO_MAINTENANCE_COMMAND = `repo_paths=$(git rev-parse --git-dir --git-common-dir --show-toplevel 2>/dev/null) && git_dir=$(cd "$(printf '%s\\n' "$repo_paths" | sed -n 1p)" 2>/dev/null && pwd -P) && common_dir=$(cd "$(printf '%s\\n' "$repo_paths" | sed -n 2p)" 2>/dev/null && pwd -P) && maintained_repo=$(printf '%s\\n' "$repo_paths" | sed -n 3p) && if [ "$git_dir" != "$common_dir" ]; then echo "${GIT_MAINTENANCE_DEBUG} config left unchanged: this linked worktree shares it with $common_dir"; else [ "$(git config --local --get maintenance.auto)" = false ] || git config --local maintenance.auto false 2>/dev/null || echo "${GIT_MAINTENANCE_NOTE} could not set maintenance.auto=false"; [ "$(git config --local --get gc.auto)" = 0 ] || git config --local gc.auto 0 2>/dev/null || echo "${GIT_MAINTENANCE_NOTE} could not set gc.auto=0"; git config --global --get-all maintenance.repo 2>/dev/null | grep -qxF "$maintained_repo" && { git maintenance unregister 2>/dev/null || echo "${GIT_MAINTENANCE_NOTE} could not unregister git maintenance for $maintained_repo"; }; fi; true`;
 
 /**
  * Prepare's fetches that start a branch refresh (current branch, default branch, both replay
- * fetches): git's own auto-maintenance off, then stale temporary packs. Later fetches in the same
- * prepare follow one of these.
+ * fetches): git's own auto-maintenance off, then stale temporary packs. Most later fetches in the
+ * same prepare follow one of these; a replay whose branch is already on origin skips the replay
+ * base fetch, so its integration fetch can run without one.
  */
 export const FETCH_MAINTENANCE_COMMAND = `${DISABLE_AUTO_MAINTENANCE_COMMAND}; ${REMOVE_STALE_TMP_PACKS_COMMAND}`;
 

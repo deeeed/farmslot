@@ -407,7 +407,7 @@ test('DISABLE_AUTO_MAINTENANCE_COMMAND leaves the config of a linked worktree, w
   assert.deepEqual(gitMaintenanceNotes(result.stdout), []);
   assert.match(
     result.stdout,
-    /^farmslot-git-maintenance-debug: config left on: this linked worktree shares it with \/.+\/repo\/\.git$/m,
+    /^farmslot-git-maintenance-debug: config left unchanged: this linked worktree shares it with \/.+\/repo\/\.git$/m,
   );
 });
 
