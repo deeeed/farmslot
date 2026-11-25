@@ -538,7 +538,9 @@ test('case twins: a loose twin keeps its group, packed twins go one per pass, a 
     `# GitHub keeps both names apart; on APFS one loose file serves both.
     git update-ref refs/remotes/origin/WPN-435 origin/main
     git -C "$ROOT/origin.git" update-ref refs/heads/wpn-435 main
+    # Loose twins share one file on APFS, so each name is packed before the next is written.
     git update-ref refs/remotes/origin/Packed-Twin origin/main
+    git pack-refs --all
     git update-ref refs/remotes/origin/packed-twin origin/main
     git update-ref refs/remotes/origin/OLD-1 origin/main
     git pack-refs --all
