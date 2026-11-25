@@ -13,7 +13,7 @@ import {
   writePiReasoningReceipt,
 } from './pi-farmslot-hook-writer.mjs';
 import {
-  assertPiImageSettings,
+  assertPiLimitSettings,
   assertPiModelThinking,
   deadlinePiFetch,
   PI_REQUEST_TIMEOUT_RETRIES,
@@ -136,7 +136,7 @@ export default async function (pi: {
   const timeoutMode = process.env.FARMSLOT_PI_REQUEST_TIMEOUT_MODE ?? 'total';
   if (timeoutMode !== 'total' && timeoutMode !== 'idle')
     throw new Error('FARMSLOT_PI_REQUEST_TIMEOUT_MODE must be total or idle');
-  assertPiImageSettings();
+  assertPiLimitSettings();
   // Allow retry backoff, terminal-hook persistence and gateway observation after exhaustion.
   const retrySettlementMarginMs = 30_000;
   const startupGraceMs =

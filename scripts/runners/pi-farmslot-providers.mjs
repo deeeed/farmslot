@@ -120,11 +120,11 @@ export function piModelImageCaps(model, env = process.env) {
 }
 
 /**
- * Refuse a bad image setting when the extension loads. A source that is not configured skips
- * discovery, so its settings would otherwise first be read by a request, which Pi then sends
- * untrimmed when the read throws.
+ * Refuse a bad `_MAX_IMAGES` or `_MODEL_LIMITS` value (any of its fields) when the extension
+ * loads. A source that is not configured skips discovery, so the image cap would otherwise first
+ * read them in a request, which Pi then sends untrimmed when the read throws.
  */
-export function assertPiImageSettings(env = process.env) {
+export function assertPiLimitSettings(env = process.env) {
   for (const kind of Object.keys(PI_PROVIDER_ENVIRONMENT)) {
     const prefix = `FARMSLOT_PI_${kind.toUpperCase()}`;
     positiveInteger(env[`${prefix}_MAX_IMAGES`], `${prefix}_MAX_IMAGES`);
