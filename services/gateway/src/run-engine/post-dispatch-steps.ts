@@ -921,6 +921,7 @@ export async function executeReviewStep(
   // The engine records partial I/O on failure; keep the selected reviewer for its next retry.
   stepPartialIO.set(runId, { inputs });
   const review = context.executeReviewForRun ?? executeReview;
+  const reviewGeneration = current.engineState?.generation ?? 0;
   let publicationReviewBudgetSpent = false;
   const executeReviewForRun: typeof executeReview = async (...args) => {
     let reviewed: ReviewResult;
@@ -935,7 +936,10 @@ export async function executeReviewStep(
         reviewLaunchRejection: rejection,
       });
     }
-    if (reviewed.verdict === 'issues' || reviewed.verdict === 'pass') {
+    if (
+      (reviewed.verdict === 'issues' || reviewed.verdict === 'pass') &&
+      !runSupersededSince(getRun(runId), reviewGeneration)
+    ) {
       const open =
         reviewed.verdict === 'issues' && blockingReviewFindings(reviewed.issues ?? []).length
           ? reviewed.issues
@@ -1030,12 +1034,17 @@ export async function executeReviewStep(
       const latest = getRun(runId) ?? current;
       const open = latest.engineState?.openReviewFindings;
       if (open?.length && latest.mode !== 'interactive') {
-        if (!runDeliveredResult(latest)) throw new Error(error.message);
-        throw new ResultDecisionHoldError(error.message, inputs, {
+        const outputs = {
           ...error.stepOutputs,
           verdict: 'issues',
           issues: open,
-        });
+          // A refused launch ran no review: the findings are the last verdict's.
+          ...(error.stepOutputs.verdict === 'issues' ? {} : { findingsFromLastReview: true }),
+        };
+        if (runDeliveredResult(latest))
+          throw new ResultDecisionHoldError(error.message, inputs, outputs);
+        stepPartialIO.set(runId, { inputs, outputs });
+        throw new Error(error.message);
       }
       stepPartialIO.delete(runId);
       return { inputs, outputs: { ...error.stepOutputs, cliCommand } };

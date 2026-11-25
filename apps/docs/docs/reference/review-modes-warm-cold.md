@@ -161,10 +161,11 @@ With its result delivered it waits at the same result decision; a spent review
 budget keeps its budget stop, so Accept stays available. Without a delivered result
 it fails. The run records those findings in `engineState.openReviewFindings`, which
 a replay keeps and the next review verdict replaces, so a refused review launch
-after a replay stops the same way. Minor and nit findings still go to the
-publication gate, and an interactive run keeps its human gate as before. The decision names the stop: spent fix
-rounds, a spent review budget, the no-verdict cap (which stops automatic reviews
-before the fix rounds are spent), fix rounds that are off, or fixing that stopped.
+after a replay stops the same way; its decision says the findings are from the last
+review. Minor and nit findings still go to the publication gate, and an interactive
+run keeps its human gate as before. The decision names the stop: spent fix rounds,
+a spent review budget, the no-verdict cap (which stops automatic reviews before the
+fix rounds are spent), fix rounds that are off, or fixing that stopped.
 
 ### Scoped extension
 

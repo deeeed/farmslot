@@ -3292,6 +3292,34 @@ test('961d55d3: a held blocker survives a real replay, so a refused launch holds
   const held = await heldReview(runId, refusedLaunch(runId));
   assert.deepEqual(held.stepOutputs.issues, severeFindings);
   assert.ok(held.stepOutputs.reviewLaunchRejection);
+  const latest = getRun(runId)!;
+  const decision = await buildResultDecision(
+    {
+      ...latest,
+      steps: latest.steps.map((step) =>
+        step.name === 'review' ? { ...step, status: 'failed', outputs: held.stepOutputs } : step,
+      ),
+    },
+    'review',
+  );
+  assert(decision.payload?.kind === 'result-decision');
+  assert.match(decision.payload.reason, / The findings listed are from the last review\.$/);
+});
+
+test('a review that returns after its loop was superseded leaves the recorded findings alone', async (t) => {
+  const runId = await deliveredPublicationRun(t);
+  await executeReviewStep(runId, {
+    ...restartReplayContext(),
+    executeReviewForRun: async () => {
+      // A takeover bumps the generation while this review is still running.
+      const run = getRun(runId)!;
+      updateRun(runId, {
+        engineState: { ...run.engineState, generation: (run.engineState?.generation ?? 0) + 1 },
+      });
+      return { verdict: 'issues', issues: severeFindings, retryCount: 2, maxRetries: 2 };
+    },
+  }).catch(() => undefined);
+  assert.equal(getRun(runId)!.engineState?.openReviewFindings, undefined);
 });
 
 test('a passing review clears the recorded open findings', async (t) => {
@@ -3317,16 +3345,13 @@ test('an undelivered publishing run at a spent budget with an open blocker fails
   updateRun(runId, {
     ...recordedReviewRounds(Array.from({ length: 5 }, (_, i) => `undelivered-severe-${i}`)),
   });
-  await assert.rejects(
-    executeReviewStep(
-      runId,
-      reviewEnded({ retryCount: 1, maxRetries: 2, maxRetriesExhausted: true }),
-    ),
-    (error: unknown) => {
-      assert.ok(!(error instanceof ResultDecisionHoldError), String(error));
-      return true;
-    },
-  );
+  const context = reviewEnded({ retryCount: 1, maxRetries: 2, maxRetriesExhausted: true });
+  await assert.rejects(executeReviewStep(runId, context), (error: unknown) => {
+    assert.ok(!(error instanceof ResultDecisionHoldError), String(error));
+    return true;
+  });
+  // The failed REVIEW step still shows what was open.
+  assert.deepEqual(context.stepPartialIO.get(runId)?.outputs?.issues, severeFindings);
 });
 
 // Round-2 M2: an interactive publishing run keeps its human gate at a spent budget.

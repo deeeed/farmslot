@@ -188,7 +188,13 @@ function decisionReason(
       typeof review?.fixDeliveryFailure === 'string'
         ? ` The fix was not delivered: ${review.fixDeliveryFailure}`
         : '';
-    if (budgetStop) return undelivered ? `${undelivered.trim()} ${budgetStop}` : budgetStop;
+    // A refused launch ran no review; its findings are the last verdict's, perhaps since fixed.
+    const lastReview =
+      review?.findingsFromLastReview === true
+        ? ' The findings listed are from the last review.'
+        : '';
+    if (budgetStop)
+      return `${undelivered ? `${undelivered.trim()} ` : ''}${budgetStop}${lastReview}`;
     const counts = Object.entries(reviewSeverityCounts(findings ?? []))
       .filter(([, count]) => count > 0)
       .map(([severity, count]) => `${count} ${severity}`);
