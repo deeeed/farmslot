@@ -1845,14 +1845,6 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
       const { retryOccupiedRunSlot } = await import('../run-lifecycle/slot-teardown.js');
       return retryOccupiedRunSlot(slotId);
     },
-    pruneIdleRemoteRefs: (slots, activeSlotIds) => {
-      // Imported on first use, like the other slot-git collaborators here.
-      import('../methods/slot/idle-remote-prune.js')
-        .then(({ pruneIdleSlotRemoteRefs }) => pruneIdleSlotRemoteRefs(slots, activeSlotIds))
-        .catch((error: unknown) => {
-          console.error(`[run-engine] idle remote prune failed: ${String(error)}`);
-        });
-    },
     resumeInterruptedRecovery: (slotId) => {
       void (async () => {
         const { reuseSafeIdleSlot } = await import('../run-lifecycle/safe-idle-slot.js');

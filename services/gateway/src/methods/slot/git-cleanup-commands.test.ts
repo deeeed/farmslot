@@ -569,6 +569,16 @@ test('remotePruneCommand leaves a git dir live worktrees share alone, and ignore
   assert.match(stdout, /after=HEAD feat\/later main/);
 });
 
+test('remotePruneCommand fails closed when it cannot list the worktrees', () => {
+  const { notes, lines } = runPrune(
+    `git -C "$ROOT/origin.git" update-ref -d refs/heads/feat/gone
+    git() { if [ "$1" = worktree ]; then return 1; fi; command git "$@"; }
+    prune; echo "refs=$(remote_refs)"`,
+  );
+  assert.deepEqual(notes, ['remote prune failed: could not resolve the git dir or list its worktrees']);
+  assert.deepEqual(lines, ['exit=3', 'refs=HEAD feat/gone feat/later main ']);
+});
+
 test('case twins: a loose twin keeps its group, a packed twin pair loses one per pass, a live twin is no block', () => {
   const { notes, lines } = runPrune(
     `# GitHub keeps both names apart; on APFS one loose file serves both.

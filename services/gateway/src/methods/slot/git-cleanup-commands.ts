@@ -44,8 +44,9 @@ export const FETCH_MAINTENANCE_COMMAND = `${DISABLE_AUTO_MAINTENANCE_COMMAND}; $
 /** Before a fetch: stale remote ref locks, git's own auto-maintenance off, stale temporary packs. */
 export const PRE_FETCH_CLEANUP_COMMAND = `${REFRESH_REMOTE_REF_LOCKS_COMMAND}; ${FETCH_MAINTENANCE_COMMAND}`;
 
-/** Hours between two remote prunes of one slot repo, and the wait after a failed one. */
+/** Hours between two remote prunes of one slot repo. */
 export const REMOTE_PRUNE_INTERVAL_HOURS = 24;
+/** Hours before a failed remote prune is tried again. */
 export const REMOTE_PRUNE_RETRY_HOURS = 1;
 /**
  * A remote ref is deleted only once it has been seen stale for this long: a replay of a
@@ -57,7 +58,7 @@ export const REMOTE_PRUNE_FAILED_EXIT = 3;
 
 // The prune's shell, in named parts. `$git_dir`/`$common_dir` are absolute, `$stamp` holds `ok` or
 // `failed`, `$seen` holds `<ref> <first-seen epoch>` per stale ref.
-const PRUNE_LOCATE = `export LC_ALL=C; repo_paths=$(git rev-parse --git-dir --git-common-dir 2>&1) || { echo "${GIT_MAINTENANCE_NOTE} remote prune failed: $(printf '%s\\n' "$repo_paths" | tail -n 1)"; exit ${REMOTE_PRUNE_FAILED_EXIT}; }; git_dir=$(cd "$(printf '%s\\n' "$repo_paths" | sed -n 1p)" && pwd -P) && common_dir=$(cd "$(printf '%s\\n' "$repo_paths" | sed -n 2p)" && pwd -P) && live_worktrees=$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{n++} /^prunable/{p++} END{print n-p}')`;
+const PRUNE_LOCATE = `export LC_ALL=C; repo_paths=$(git rev-parse --git-dir --git-common-dir 2>&1) || { echo "${GIT_MAINTENANCE_NOTE} remote prune failed: $(printf '%s\\n' "$repo_paths" | tail -n 1)"; exit ${REMOTE_PRUNE_FAILED_EXIT}; }; git_dir=$(cd "$(printf '%s\\n' "$repo_paths" | sed -n 1p)" && pwd -P) && common_dir=$(cd "$(printf '%s\\n' "$repo_paths" | sed -n 2p)" && pwd -P) && live_worktrees=$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{n++} /^prunable/{p++} END{if (n < 1) exit 1; print n-p}') || { echo "${GIT_MAINTENANCE_NOTE} remote prune failed: could not resolve the git dir or list its worktrees"; exit ${REMOTE_PRUNE_FAILED_EXIT}; }`;
 const PRUNE_SHARED_SKIP = `if [ "$git_dir" != "$common_dir" ] || [ "$live_worktrees" -gt 1 ]; then echo "${GIT_MAINTENANCE_DEBUG} remote prune skipped: $common_dir is shared by $live_worktrees worktrees"; exit 0; fi`;
 const pruneWindowSkip = (minutes: number, retryMinutes: number) =>
   `stamp="$git_dir/farmslot-remote-prune.stamp"; seen="$git_dir/farmslot-remote-prune.seen"; prune_err="$git_dir/farmslot-remote-prune.err"; rm -f "$prune_err"; state=$(cat "$stamp" 2>/dev/null); if { [ "$state" = ok ] && [ -n "$(find "$stamp" -mmin -${minutes} 2>/dev/null)" ]; } || { [ "$state" = failed ] && [ -n "$(find "$stamp" -mmin -${retryMinutes} 2>/dev/null)" ]; }; then exit 0; fi`;
@@ -78,7 +79,7 @@ const pruneApply = (minStaleDays: number) =>
  * Deletes remote-tracking refs whose branch is gone from origin: one `ls-remote --heads` and one
  * `update-ref --stdin` (each delete names the value it read), at most once per `hours`, or once per
  * `REMOTE_PRUNE_RETRY_HOURS` after a failure, timed by a stamp in the git dir. For a released idle
- * slot only, under the slot's prepare guard (see `idle-remote-prune.ts`).
+ * slot only, inside the parked-work retention fence (see `idle-remote-prune.ts`).
  * - A git dir other live worktrees share is left alone (a debug note).
  * - A ref is deleted only after `REMOTE_PRUNE_MIN_STALE_DAYS` of being seen stale (a seen file in
  *   the git dir records when).
@@ -89,7 +90,7 @@ export function remotePruneCommand(
   hours = REMOTE_PRUNE_INTERVAL_HOURS,
   minStaleDays = REMOTE_PRUNE_MIN_STALE_DAYS,
 ): string {
-  return `( ${PRUNE_LOCATE} || exit ${REMOTE_PRUNE_FAILED_EXIT}; ${PRUNE_SHARED_SKIP}; ${pruneWindowSkip(hours * 60, REMOTE_PRUNE_RETRY_HOURS * 60)}; ${PRUNE_LIST}; ${pruneApply(minStaleDays)} )`;
+  return `( ${PRUNE_LOCATE}; ${PRUNE_SHARED_SKIP}; ${pruneWindowSkip(hours * 60, REMOTE_PRUNE_RETRY_HOURS * 60)}; ${PRUNE_LIST}; ${pruneApply(minStaleDays)} )`;
 }
 
 /** The notes a fetch maintenance command printed: kept or removed packs, a failed config write. */
