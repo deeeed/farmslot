@@ -504,8 +504,10 @@ test('a launch to a node that refreshes its host waits past 60 s for its answer'
       runner: 'codex',
       cwd: '/tmp',
     }).finally(() => (settled = true));
-    launch.catch(() => undefined);
-    while (!sent.length) await new Promise((resolve) => setImmediate(resolve));
+    // A launch refused before it sends ends the wait and fails the assertion below.
+    for (let turn = 0; turn < 1_000 && !sent.length && !settled; turn++)
+      await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(sent.length, 1);
     mock.timers.tick(60_001);
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(settled, false, 'still waiting after the usual 60 s');
