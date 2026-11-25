@@ -122,7 +122,6 @@ import {
   detachRunsForReleasedSlot,
   markCompletionFailureDiscarded,
 } from './release-run-ownership.js';
-import { ownTaskDirInBundle, TEMP_TASK_ROOT } from './temp-scrub.js';
 import {
   activePrepareAborts,
   applySelectedApp,
@@ -134,6 +133,7 @@ import {
   resetSlotRepoToIdle,
   slotIdleResetStepDetail,
 } from './slot-tracking.js';
+import { ownTaskDirInBundle, TEMP_TASK_ROOT } from './temp-scrub.js';
 
 // In-flight teardown coalescing: two concurrent releases for the same slot
 // must be ONE teardown — the slower duplicate previously re-killed and reset

@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
-  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -228,7 +227,10 @@ function releasingRun(bundled: string[]) {
     path.join(dir, 'manifest.json'),
     JSON.stringify({
       runs: [
-        { originalRunId: run.id, taskRelativePath: 'projects/fixture/tasks/feat/tat-4801-1124-100000' },
+        {
+          originalRunId: run.id,
+          taskRelativePath: 'projects/fixture/tasks/feat/tat-4801-1124-100000',
+        },
       ],
     }),
   );
@@ -280,6 +282,10 @@ test('a release keeps its own task dir when a file in it is not in the bundle', 
   assert.deepEqual(result, { released: true });
   assert.deepEqual(
     tempEntries(),
-    [...foreign, 'temp/tasks/feat/tat-4801-1124-100000/TASK.md', 'temp/tasks/feat/tat-4801-1124-100000/late.md'].sort(),
+    [
+      ...foreign,
+      'temp/tasks/feat/tat-4801-1124-100000/TASK.md',
+      'temp/tasks/feat/tat-4801-1124-100000/late.md',
+    ].sort(),
   );
 });

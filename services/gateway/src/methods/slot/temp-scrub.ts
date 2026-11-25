@@ -45,7 +45,9 @@ export function slotTaskRelDir(run: Pick<Run, 'taskFile'>, taskDirName: string):
     : null;
 }
 
-export type BundleCheck = { confirmed: true; taskDir: string } | { confirmed: false; reason: string };
+export type BundleCheck =
+  | { confirmed: true; taskDir: string }
+  | { confirmed: false; reason: string };
 
 /**
  * The run's final bundle holds this task: the final ref, a complete capture, a bundle record
@@ -60,7 +62,9 @@ export async function taskBundleCheck(run: Run): Promise<BundleCheck> {
     return { confirmed: false, reason: 'capture incomplete' };
   const taskDir = await retainedRunTaskDirectory(run, ref);
   const manifest = path.join(path.dirname(path.dirname(taskDir)), 'manifest.json');
-  const recorded: unknown = existsSync(manifest) ? JSON.parse(readFileSync(manifest, 'utf8')) : null;
+  const recorded: unknown = existsSync(manifest)
+    ? JSON.parse(readFileSync(manifest, 'utf8'))
+    : null;
   const folder = path.posix.join(
     path.basename(path.dirname(path.dirname(run.taskFile))),
     path.basename(path.dirname(run.taskFile)),
@@ -113,9 +117,7 @@ export async function ownTaskDirInBundle(
     .split('\n')
     .map((line) => line.replace(/^\.\//, ''))
     .find((rel) => rel && !existsSync(path.join(check.taskDir, rel)));
-  return notCaptured
-    ? { confirmed: false, reason: `${notCaptured} is not in the bundle` }
-    : check;
+  return notCaptured ? { confirmed: false, reason: `${notCaptured} is not in the bundle` } : check;
 }
 
 /** A new run's prepare clears temp/; a warm handoff, a replay or a resumed task keeps it. */

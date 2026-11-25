@@ -96,10 +96,11 @@ test('a nested checkout, bare repos included, moves out of the checkout; its tas
 
   const retainRoot = path.join(parent, '.farmslot-retained/slot/stamp');
   assert.deepEqual(result.refused, []);
-  assert.deepEqual(
-    result.retained.map(({ path: p }) => p).sort(),
-    ['temp/clone-top', 'temp/scratch-x/bare.git', 'temp/tasks/feat/tat-4800/clone'],
-  );
+  assert.deepEqual(result.retained.map(({ path: p }) => p).sort(), [
+    'temp/clone-top',
+    'temp/scratch-x/bare.git',
+    'temp/tasks/feat/tat-4800/clone',
+  ]);
   assert.equal(existsSync(path.join(retainRoot, 'temp/tasks/feat/tat-4800/clone/fix.ts')), true);
   assert.equal(existsSync(path.join(retainRoot, 'temp/scratch-x/bare.git/HEAD')), true);
   assert.equal(existsSync(path.join(repo, 'temp/tasks/feat/tat-4800')), false);

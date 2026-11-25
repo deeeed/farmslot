@@ -36,8 +36,13 @@ mock.module('../../run-completion/retained-artifacts.js', {
 
 const runs = await import('../../runs/store.js');
 const { makeVars } = await import('../../runners/test-fixtures.js');
-const { ownTaskDirInBundle, scrubTempForRun, shouldScrubTempForRun, taskBundleCheck, tempStatePaths } =
-  await import('./temp-scrub.js');
+const {
+  ownTaskDirInBundle,
+  scrubTempForRun,
+  shouldScrubTempForRun,
+  taskBundleCheck,
+  tempStatePaths,
+} = await import('./temp-scrub.js');
 
 const SLOT_ID = 'macpro-mme-1';
 const repo = path.join(root, 'slot');
@@ -229,13 +234,18 @@ test('a warm handoff, a replay or a resumed task keeps temp/; a failed handoff d
   assert.equal(
     shouldScrubTempForRun({
       ...fresh,
-      engineState: { taskInit: { taskFile: orchestratorTask('feat', 'old'), status: 'initialized' } },
+      engineState: {
+        taskInit: { taskFile: orchestratorTask('feat', 'old'), status: 'initialized' },
+      },
     }),
     true,
     'an initialized earlier task is not this one',
   );
   assert.equal(
-    shouldScrubTempForRun({ ...fresh, steps: [...fresh.steps, { name: 'dispatch', status: 'done' }] }),
+    shouldScrubTempForRun({
+      ...fresh,
+      steps: [...fresh.steps, { name: 'dispatch', status: 'done' }],
+    }),
     false,
   );
   assert.equal(shouldScrubTempForRun(undefined), false);
