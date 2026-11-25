@@ -261,3 +261,23 @@ test('idle refresh turns off git auto-maintenance and removes temporary packs a 
   assert.equal(git(repo, 'config', '--get', 'maintenance.auto'), 'false');
   assert.equal(git(repo, 'config', '--get', 'gc.auto'), '0');
 });
+
+test('idle refresh narrows the fetch refspec to the default branch and prunes stale remote refs', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'idle-narrow-refspec-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'slot');
+  initPrimaryRepo(repo, path.join(root, 'origin.git'));
+  for (const branch of ['feat/old-task', 'other/stale'])
+    git(repo, 'push', 'origin', `main:refs/heads/${branch}`);
+  git(repo, 'fetch', 'origin');
+  assert.equal(git(repo, 'for-each-ref', 'refs/remotes/origin').split('\n').length, 3);
+  await reset(slotVars(repo, 'narrow-refspec'), {}, undefined, 'main');
+  assert.equal(
+    git(repo, 'config', '--get-all', 'remote.origin.fetch'),
+    '+refs/heads/main:refs/remotes/origin/main',
+  );
+  assert.equal(
+    git(repo, 'for-each-ref', '--format=%(refname)', 'refs/remotes/origin'),
+    'refs/remotes/origin/main',
+  );
+});

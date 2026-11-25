@@ -147,6 +147,20 @@ test('the section names the findings and says when the pre-check could not run',
   );
 });
 
+test('a stacked base is fetched into its tracking ref by name, as a narrowed slot needs', () => {
+  const section = buildDescriptionCheckSection({
+    repo: '/repo',
+    taskDir: 't',
+    baseBranch: 'stack/base',
+    preCheck: [],
+  });
+  assert.ok(
+    section.includes("git fetch origin '+refs/heads/stack/base:refs/remotes/origin/stack/base'"),
+    'a bare `git fetch origin stack/base` leaves origin/stack/base stale on a narrowed slot',
+  );
+  assert.match(section, /origin\/stack\/base\.\.\.HEAD/);
+});
+
 async function git(repo: string, ...args: string[]): Promise<string> {
   const { stdout } = await execFileAsync('git', [
     '-C',

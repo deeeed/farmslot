@@ -10,6 +10,7 @@ import {
   CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND,
   DISABLE_AUTO_MAINTENANCE_COMMAND,
   FETCH_MAINTENANCE_COMMAND,
+  narrowFetchRefspecCommand,
   gitMaintenanceNotes,
   PRE_FETCH_CLEANUP_COMMAND,
   recreateBranchCommand,
@@ -438,4 +439,94 @@ test('gitMaintenanceNotes keeps only the maintenance notes', () => {
     ),
     ['removed 2 stale tmp packs'],
   );
+});
+
+const shQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+
+/** An origin with main, a task branch, a stacked base and an unrelated branch, and a clone of it. */
+const NARROW_FIXTURE = `ROOT=$(mktemp -d)
+  trap 'chmod -R u+w "$ROOT"; command rm -rf "$ROOT"' EXIT
+  g() { git -c user.name=T -c user.email=t@localhost -c commit.gpgsign=false "$@"; }
+  git init -q --bare -b main "$ROOT/origin.git"
+  g clone -q "$ROOT/origin.git" "$ROOT/seed" 2>/dev/null
+  (cd "$ROOT/seed" && g commit -q --allow-empty -m base && g push -q origin main && for b in feat/task stack/base other/stale; do g push -q origin "main:refs/heads/$b"; done)
+  g clone -q "$ROOT/origin.git" "$ROOT/slot"
+  cd "$ROOT/slot"
+  git branch -q feat/task origin/feat/task`;
+
+test('narrowFetchRefspecCommand narrows the fetch refspec and prunes stale remote refs, once', () => {
+  const result = spawnSync(
+    'bash',
+    [
+      '-c',
+      `${NARROW_FIXTURE}
+      eval "$CMD"
+      echo "refspec=$(git config --get-all remote.origin.fetch)"
+      echo "refs=$(git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/origin | tr '\\n' ' ')"
+      # Already narrowed: a second run writes nothing, even to a read-only config.
+      chmod a-w .git/config
+      eval "$CMD"
+      chmod u+w .git/config
+      # A plain fetch now brings only the default branch.
+      (cd "$ROOT/seed" && g push -q origin "main:refs/heads/new/branch")
+      git fetch -q origin
+      echo "after-fetch=$(git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/origin | tr '\\n' ' ')"`,
+    ],
+    { encoding: 'utf8', env: { ...process.env, CMD: narrowFetchRefspecCommand('main', shQuote) } },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    result.stdout.trim(),
+    [
+      'refspec=+refs/heads/main:refs/remotes/origin/main',
+      'refs=HEAD feat/task main ',
+      'after-fetch=HEAD feat/task main',
+    ].join('\n'),
+  );
+});
+
+test('narrowFetchRefspecCommand leaves a git dir other worktrees share alone', () => {
+  const result = spawnSync(
+    'bash',
+    [
+      '-c',
+      `${NARROW_FIXTURE}
+      git worktree add -q "$ROOT/linked" -b linked-work origin/main
+      eval "$CMD"
+      (cd "$ROOT/linked" && eval "$CMD")
+      echo "refspec=$(git config --get-all remote.origin.fetch)"
+      echo "refs=$(git for-each-ref refs/remotes/origin | wc -l | tr -d ' ')"`,
+    ],
+    { encoding: 'utf8', env: { ...process.env, CMD: narrowFetchRefspecCommand('main', shQuote) } },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  const notes = gitMaintenanceNotes(result.stdout);
+  assert.equal(notes.length, 2);
+  assert.match(notes[0]!, /fetch refspec left as is: the git dir .* is shared by 2 worktrees/);
+  assert.match(result.stdout, /refspec=\+refs\/heads\/\*:refs\/remotes\/origin\/\*/);
+  assert.match(result.stdout, /refs=5/);
+});
+
+test('after narrowing, a stacked base is fetched into its tracking ref only by name', () => {
+  const result = spawnSync(
+    'bash',
+    [
+      '-c',
+      `${NARROW_FIXTURE}
+      eval "$CMD"
+      (cd "$ROOT/seed" && g commit -q --allow-empty -m moved && g push -q origin "HEAD:refs/heads/stack/base")
+      git fetch -q origin stack/base
+      echo "bare=$(git rev-parse -q --verify refs/remotes/origin/stack/base || echo missing)"
+      git fetch -q origin '+refs/heads/stack/base:refs/remotes/origin/stack/base'
+      echo "named=$(git rev-parse refs/remotes/origin/stack/base) seed=$(git -C "$ROOT/seed" rev-parse HEAD)"`,
+    ],
+    { encoding: 'utf8', env: { ...process.env, CMD: narrowFetchRefspecCommand('main', shQuote) } },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /bare=missing/);
+  const [named, seed] = /named=(\w+) seed=(\w+)/.exec(result.stdout)!.slice(1);
+  assert.equal(named, seed);
 });

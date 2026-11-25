@@ -37,6 +37,7 @@ import { mutateSlotGit } from '../../run-lifecycle/validation-run-commits.js';
 import {
   CLEAR_INDEX_FLAGS_COMMAND,
   gitMaintenanceNotes,
+  narrowFetchRefspecCommand,
   PRE_FETCH_CLEANUP_COMMAND,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
 } from './git-cleanup-commands.js';
@@ -250,7 +251,7 @@ export async function resetSlotRepoToIdle(
   const fetched = await execOnSlot(
     vars,
     withFarmGitConfig(
-      `cd ${repo} && { ${PRE_FETCH_CLEANUP_COMMAND}; } && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+      `cd ${repo} && { ${PRE_FETCH_CLEANUP_COMMAND}; ${narrowFetchRefspecCommand(defaultBranch, shellQuote)}; } && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
     ),
   );
   for (const note of gitMaintenanceNotes(fetched.stdout))

@@ -36,6 +36,23 @@ export const FETCH_MAINTENANCE_COMMAND = `${DISABLE_AUTO_MAINTENANCE_COMMAND}; $
 /** Before a fetch: stale remote ref locks, git's own auto-maintenance off, stale temporary packs. */
 export const PRE_FETCH_CLEANUP_COMMAND = `${REFRESH_REMOTE_REF_LOCKS_COMMAND}; ${FETCH_MAINTENANCE_COMMAND}`;
 
+/**
+ * Narrows the slot's fetch refspec to its default branch, so git a worker runs in the slot
+ * (`git fetch`, `git pull`) brings one branch instead of every head (3,800 to 8,800 remote refs
+ * per slot). Farm fetches already name their refspecs, and prepare fetches the task and stack
+ * branches explicitly. It also deletes the stale remote-tracking refs, keeping `origin/HEAD`, the
+ * default branch and each local branch's `origin/<name>`. Run it only on an idle slot: a remote
+ * ref fetched for a running run must not be pruned. It reads first, so a narrowed slot writes
+ * nothing. A repo whose git dir other worktrees share is left alone and the note says why.
+ */
+export function narrowFetchRefspecCommand(
+  defaultBranch: string,
+  quote: (value: string) => string,
+): string {
+  const refspec = quote(`+refs/heads/${defaultBranch}:refs/remotes/origin/${defaultBranch}`);
+  return `git_dir=$(cd "$(git rev-parse --git-dir 2>/dev/null)" 2>/dev/null && pwd -P) && common_dir=$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P) && worktrees=$(git worktree list --porcelain 2>/dev/null | grep -c '^worktree ') && if [ "$git_dir" != "$common_dir" ] || [ "$worktrees" -gt 1 ]; then echo "${GIT_MAINTENANCE_NOTE} fetch refspec left as is: the git dir $common_dir is shared by $worktrees worktrees"; else [ "$(git config --local --get-all remote.origin.fetch)" = ${refspec} ] || git config --local --replace-all remote.origin.fetch ${refspec} 2>/dev/null || echo "${GIT_MAINTENANCE_NOTE} could not narrow remote.origin.fetch"; { git for-each-ref --format='keep %(refname:lstrip=2)' refs/heads; git for-each-ref --format='ref %(refname)' refs/remotes/origin; } | awk -v db=${quote(defaultBranch)} '$1 == "keep" { k[$2] = 1; next } { n = substr($2, 21); if (n != "HEAD" && n != db && !(n in k)) print "delete " $2 }' | git update-ref --stdin 2>/dev/null || echo "${GIT_MAINTENANCE_NOTE} could not prune stale remote-tracking refs"; fi; true`;
+}
+
 /** The notes a fetch maintenance command printed: kept packs, removed packs, skipped config. */
 export function gitMaintenanceNotes(output: string): string[] {
   return output
