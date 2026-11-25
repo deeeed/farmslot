@@ -361,7 +361,9 @@ export async function handleChecklist(
     // A numbered mark on an already-terminal signal never gets here
     // (preserveTerminalSignal), so a complete signal now means this mark completed it.
     const completion =
-      numericMarkStep(step) === null ? null : completedSignal(resolvedTaskDir, targetOverrides);
+      numericMarkStep(step) === null
+        ? null
+        : completedSignal(resolvedTaskDir, targetOverrides, Boolean(options.closeout));
     if (completion) options.beforeComplete?.(resolvedTaskDir);
     stageLearningPackage(
       resolvedTaskDir,
