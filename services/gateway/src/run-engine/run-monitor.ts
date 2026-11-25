@@ -2759,9 +2759,10 @@ function artifactContractNoticeText(
 
 /**
  * One-shot instruction into the worker pane: a usage-budget warning, the resume
- * that follows an operator clearing a runner failure, or an artifact-contract notice. Does not increment
- * metrics.nudgeCount (stuck/idle max_nudges is a separate escalation budget, and
- * a provider outage the operator fixed must not burn it).
+ * that follows an operator clearing a runner failure, or an artifact-contract
+ * notice. Does not increment metrics.nudgeCount (stuck/idle max_nudges is a
+ * separate escalation budget, and a provider outage the operator fixed must not
+ * burn it).
  *
  * The caller owns the exact text, the dedup key and the send channel. This used
  * to wrap every message as a usage-budget warning, which told a worker being

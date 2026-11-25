@@ -174,16 +174,10 @@ async function fixture(
   updateRun(run.id, {
     status: 'monitoring',
     ...(transport === 'native' ? { transport: 'native' as const } : {}),
-    ...(transport === 'scripted'
+    // Every scripted run has no worker, whether or not it is an artifact-only command run.
+    ...(transport === 'scripted' || transport === 'scripted-non-artifact'
       ? {
-          completionPolicy: 'artifact-only' as const,
-          scripted: { mode: 'command' as const, commandRef: 'fixture-command' },
-          metrics: { ...current.metrics, runner: 'scripted' },
-        }
-      : {}),
-    // A scripted run that is not an artifact-only command run has no worker either.
-    ...(transport === 'scripted-non-artifact'
-      ? {
+          ...(transport === 'scripted' ? { completionPolicy: 'artifact-only' as const } : {}),
           scripted: { mode: 'command' as const, commandRef: 'fixture-command' },
           metrics: { ...current.metrics, runner: 'scripted' },
         }
@@ -257,9 +251,9 @@ const NOTICES = [NOTIFIED, UNCONFIRMED, NOT_NOTIFIED, /has no worker to notify/]
 
 function assertCard(card: RunDecision, expected: RegExp) {
   const text = card.description ?? '';
+  assert.match(text, expected);
   for (const notice of NOTICES) {
-    if (notice.source === expected.source) assert.match(text, notice);
-    else assert.doesNotMatch(text, notice);
+    if (notice.source !== expected.source) assert.doesNotMatch(text, notice);
   }
   assert.match(text, /step 10 \(ci\.local_check\)/);
 }
