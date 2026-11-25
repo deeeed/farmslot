@@ -183,7 +183,7 @@ export function normalizeRawReviewWorkspaces(
 export interface RawPoolSlot {
   id: string;
   enabled?: boolean;
-  mode?: 'dispatch' | 'custom';
+  mode?: PoolSlotMode;
   project?: string;
   platform?: string;
   repo: string;
@@ -196,6 +196,12 @@ export interface RawPoolSlot {
   agent?: string;
   task?: string | null;
   resources?: Record<string, Record<string, string | number | boolean>>;
+}
+
+/** A slot's effective mode: `enabled: false` disables it whatever `mode` says, then mode, then dispatch. */
+export function effectiveSlotMode(slot: Pick<RawPoolSlot, 'mode' | 'enabled'>): PoolSlotMode {
+  if (slot.enabled === false) return 'disabled';
+  return slot.mode || 'dispatch';
 }
 
 // ─── Resolved slot config (mirrors bash load_slot_vars globals) ───
@@ -833,15 +839,7 @@ export async function loadSlotVars(slotId: string, pools?: SlotPools): Promise<S
   const repo = slot.repo;
   const session = slot.session;
 
-  // Slot mode: explicit mode > enabled flag > dispatch
-  let slotMode: PoolSlotMode;
-  if (slot.mode) {
-    slotMode = slot.mode as PoolSlotMode;
-  } else if (slot.enabled === false) {
-    slotMode = 'disabled';
-  } else {
-    slotMode = 'dispatch';
-  }
+  const slotMode = effectiveSlotMode(slot);
 
   const slotEnabled = slotMode !== 'disabled';
   const sshTarget = `${sshUser}@${host}`;

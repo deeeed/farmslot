@@ -944,8 +944,8 @@ function renderSlotContext(project: string, pools: PoolConfig[]): string {
         `repo=${slot.repo}`,
         `tmux=${slot.session}`,
         `platform=${platform}`,
+        // The snapshot's mode is effective: `enabled: false` already reads as disabled.
         `mode=${slot.mode}`,
-        slot.enabled === false ? 'disabled' : 'enabled',
       ].join(' · '),
     ),
   ].join('\n');

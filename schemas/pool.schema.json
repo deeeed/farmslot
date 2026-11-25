@@ -247,8 +247,8 @@
         },
         "mode": {
           "type": "string",
-          "enum": ["dispatch", "custom"],
-          "description": "Slot mode. 'dispatch' = available for automated dispatch. 'custom' = reserved for manual use.",
+          "enum": ["dispatch", "custom", "disabled"],
+          "description": "Slot mode. 'dispatch' = available for automated dispatch. 'custom' = reserved for manual use. 'disabled' = off. enabled: false disables the slot whatever its mode.",
           "default": "dispatch"
         },
         "repo": {
