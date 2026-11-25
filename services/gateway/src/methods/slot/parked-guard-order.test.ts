@@ -94,7 +94,9 @@ mock.module('./workspace.js', {
 mock.module('./idle-remote-prune.js', {
   namedExports: {
     pruneSlotRemoteRefs: async (slotId: string) =>
-      events.push(`remote prune ${slotId}, guard ${activePrepareSlots.has(SLOT) ? 'held' : 'free'}`),
+      events.push(
+        `remote prune ${slotId}, guard ${activePrepareSlots.has(SLOT) ? 'held' : 'free'}`,
+      ),
   },
 });
 const { slotParked } = await import('./parked.js');

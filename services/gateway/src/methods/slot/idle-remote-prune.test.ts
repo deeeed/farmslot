@@ -42,7 +42,9 @@ test('a pruned slot is pruned again only after a day', async (t) => {
   t.after(resetSlotRemotePruneForTest);
   const h = harness();
   await pruneSlotRemoteRefs('idle-1', h.deps);
-  assert.ok(h.logs.includes('[slot] idle-1: git maintenance: pruned 2 remote refs whose branch is gone'));
+  assert.ok(
+    h.logs.includes('[slot] idle-1: git maintenance: pruned 2 remote refs whose branch is gone'),
+  );
   h.advance(hours(23));
   await pruneSlotRemoteRefs('idle-1', h.deps);
   h.advance(hours(1));
@@ -68,8 +70,12 @@ test('a failed prune, a timeout or an unreachable node is retried after an hour,
       '[slot] failed-1: git maintenance: remote prune failed: fatal: could not read from remote',
     ),
   );
-  assert.ok(h.logs.includes('[slot] timeout-1: remote prune exited 124: command timed out after 60000ms'));
-  assert.ok(h.logs.includes('[slot] offline-1: remote prune unavailable: node mini is disconnected'));
+  assert.ok(
+    h.logs.includes('[slot] timeout-1: remote prune exited 124: command timed out after 60000ms'),
+  );
+  assert.ok(
+    h.logs.includes('[slot] offline-1: remote prune unavailable: node mini is disconnected'),
+  );
   h.advance(hours(1) - 1);
   for (const slot of slots) await pruneSlotRemoteRefs(slot, h.deps);
   assert.equal(h.ran.length, 3, 'inside the backoff nothing is retried');

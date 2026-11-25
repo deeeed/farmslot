@@ -575,7 +575,9 @@ test('remotePruneCommand fails closed when it cannot list the worktrees', () => 
     git() { if [ "$1" = worktree ]; then return 1; fi; command git "$@"; }
     prune; echo "refs=$(remote_refs)"`,
   );
-  assert.deepEqual(notes, ['remote prune failed: could not resolve the git dir or list its worktrees']);
+  assert.deepEqual(notes, [
+    'remote prune failed: could not resolve the git dir or list its worktrees',
+  ]);
   assert.deepEqual(lines, ['exit=3', 'refs=HEAD feat/gone feat/later main ']);
 });
 
